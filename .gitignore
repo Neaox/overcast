@@ -1,0 +1,5 @@
+coverage.out
+coverage.html
+
+# air hot-reload output
+tmp/

@@ -1,0 +1,66 @@
+# golangci-lint configuration
+# Run: make lint  (or: golangci-lint run ./...)
+# Docs: https://golangci-lint.run/usage/configuration/
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - errcheck        # check that errors are handled
+    - govet           # go vet checks
+    - staticcheck     # staticcheck suite (SA, S, ST lints)
+    - unused          # report unused code
+    - gosimple        # simplification suggestions
+    - ineffassign     # detect ineffectual assignments
+    - typecheck       # type checking
+    - godot           # check that comments end with a period
+    - gofmt           # check formatting
+    - goimports       # check import ordering
+    - misspell        # spelling mistakes in comments
+    - revive          # fast, configurable replacement for golint
+    - exhaustive      # check exhaustiveness of enum switches
+    - noctx           # http.Request without context
+    - bodyclose       # http response body not closed
+    # exportloopref removed — deprecated since v1.60.2, replaced by copyloopvar in Go 1.22+
+
+linters-settings:
+  revive:
+    rules:
+      - name: exported
+        arguments:
+          - "checkPrivateReceivers"
+          - "sayRepetitiveInsteadOfStutters"
+  godot:
+    scope: declarations  # only check exported declaration comments
+    capital: false
+
+  errcheck:
+    # ResponseWriter.Write errors are not actionable in HTTP handlers.
+    exclude-functions:
+      - (net/http.ResponseWriter).Write
+      - (*encoding/json.Encoder).Encode
+      - (*encoding/json.Decoder).Decode
+
+issues:
+  exclude-rules:
+    # Test files are exempt from some doc-comment and style requirements.
+    - path: "_test.go"
+      linters:
+        - godot
+        - revive
+        - errcheck
+        - noctx
+        - bodyclose
+    # The main package entry point doesn't need godot.
+    - path: "cmd/"
+      linters:
+        - godot
+        - errcheck
+    # Exhaustive switch is not useful for string-typed enums with a default case.
+    - path: "cmd/"
+      linters:
+        - exhaustive
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -1,0 +1,24 @@
+# Automatically create GitHub issues from TODO comments in code.
+# Format: // TODO(priority:P1): description of the work
+# Supported priorities: P1, P2, P3 (default P3 if omitted)
+#
+# Uses: https://github.com/alstr/todo-to-issue-action
+name: TODO to Issue
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  todo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: alstr/todo-to-issue-action@v5
+        with:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LABEL: auto-todo
+          # Map priority markers to labels
+          # TODO(priority:P1): → labels: P1, auto-todo
+          # TODO(priority:P2): → labels: P2, auto-todo
+          # TODO:              → labels: P3, auto-todo (default)

@@ -1,0 +1,65 @@
+# .air.toml — configuration for https://github.com/air-verse/air
+#
+# Usage:
+#   air                          # picks up this file automatically
+#   make dev-server              # same, via make
+#   task dev-server              # same, via task
+#
+# Air watches *.go files under cmd/ and internal/, rebuilds the binary into
+# tmp/overcast, and restarts it on every save. State is preserved across
+# restarts because the SQLite file lives outside the tmp/ directory.
+#
+# Dev defaults match scripts/run.go:
+#   port  4566  (override: OVERCAST_PORT=9000 air)
+#   state sqlite
+#   log   debug
+
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  # Build command — matches the flags in scripts/run.go / Makefile.
+  cmd = "go build -trimpath -ldflags='-w -s' -o ./tmp/overcast ./cmd/overcast"
+
+  # Binary to run after a successful build.
+  bin = "./tmp/overcast"
+
+  # Environment variables passed to the running binary.
+  # Override any of these by setting them in your shell before running air.
+  env = [
+    "OVERCAST_PORT=4566",
+    "OVERCAST_STATE=sqlite",
+    "OVERCAST_LOG_LEVEL=debug",
+  ]
+
+  # Watch only Go source files — ignore generated files, web assets, and tests.
+  include_ext = ["go"]
+  include_dir = ["cmd", "internal"]
+  exclude_dir  = ["vendor", "web", "tests", "docs", "scripts", "tmp", "bin"]
+  exclude_file = []
+  exclude_regex = ["_test\\.go$"]
+
+  # Don't re-run the old binary while the new one is building.
+  stop_on_error = true
+
+  # Milliseconds to wait for additional changes before triggering a rebuild.
+  # Low enough to feel instant; high enough to batch rapid saves.
+  delay = 300
+
+  # Send SIGTERM then SIGKILL when restarting.
+  kill_timeout = 2000
+  send_interrupt = true
+
+[log]
+  time = false        # air already adds timestamps; avoid doubling up
+  main_only = false   # show watcher events so you can see what triggered a rebuild
+
+[color]
+  main     = "magenta"
+  watcher  = "cyan"
+  build    = "yellow"
+  runner   = "green"
+
+[misc]
+  # Clean the tmp directory when air exits.
+  clean_on_exit = true

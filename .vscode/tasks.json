@@ -1,0 +1,167 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "setup: verify dev tools",
+      "type": "shell",
+      "command": "go run ./scripts/check-tools.go",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "build",
+      "type": "shell",
+      "command": "make build",
+      "windows": { "command": "task build" },
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": "$go"
+    },
+    {
+      "label": "run (native)",
+      "type": "shell",
+      "command": "go run ./scripts/run.go",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": { "regexp": "^$" },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "building overcast",
+          "endsPattern": "overcast listening"
+        }
+      }
+    },
+    {
+      "label": "test: all (native)",
+      "type": "shell",
+      "command": "make test",
+      "windows": { "command": "task test" },
+      "group": { "kind": "test", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": "$go"
+    },
+    {
+      "label": "test: unit (native)",
+      "type": "shell",
+      "command": "make test-unit",
+      "windows": { "command": "task test-unit" },
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": "$go"
+    },
+    {
+      "label": "test: integration (native)",
+      "type": "shell",
+      "command": "make test-integration",
+      "windows": { "command": "task test-integration" },
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": "$go"
+    },
+    {
+      "label": "test: coverage",
+      "type": "shell",
+      "command": "make test-coverage",
+      "windows": { "command": "task test-coverage" },
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "bench",
+      "type": "shell",
+      "command": "make bench",
+      "windows": { "command": "task bench" },
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "check: all (fmt + vet + lint + test)",
+      "type": "shell",
+      "command": "make check",
+      "windows": { "command": "task check" },
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": "$go"
+    },
+    {
+      "label": "lint",
+      "type": "shell",
+      "command": "make lint",
+      "windows": { "command": "task lint" },
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "tidy",
+      "type": "shell",
+      "command": "make tidy",
+      "windows": { "command": "task tidy" },
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "clean",
+      "type": "shell",
+      "command": "make clean",
+      "windows": { "command": "task clean" },
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "container: test all (cross-platform — just needs Docker)",
+      "type": "shell",
+      "command": "docker compose -f docker-compose.dev.yml run --rm test",
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": "$go"
+    },
+    {
+      "label": "container: test unit",
+      "type": "shell",
+      "command": "docker compose -f docker-compose.dev.yml run --rm test go test -race -count=1 -timeout=60s ./internal/...",
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": "$go"
+    },
+    {
+      "label": "container: test integration",
+      "type": "shell",
+      "command": "docker compose -f docker-compose.dev.yml run --rm test go test -race -count=1 -timeout=120s ./tests/...",
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": "$go"
+    },
+    {
+      "label": "container: start dev server",
+      "type": "shell",
+      "command": "docker compose -f docker-compose.dev.yml up overcast",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": { "regexp": "^$" },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "Starting",
+          "endsPattern": "overcast listening"
+        }
+      }
+    },
+    {
+      "label": "container: rebuild and start dev server",
+      "type": "shell",
+      "command": "docker compose -f docker-compose.dev.yml up --build overcast",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "docker compose: up (production-like)",
+      "type": "shell",
+      "command": "docker compose up --build",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" }
+    }
+  ]
+}

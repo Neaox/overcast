@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Support matrix
+    url: https://github.com/your-org/overcast/tree/main/docs/services
+    about: Check whether an endpoint is supported before filing a bug
+  - name: Migration from LocalStack
+    url: https://github.com/your-org/overcast/blob/main/docs/migration-from-localstack.md
+    about: Moving from LocalStack to Overcast

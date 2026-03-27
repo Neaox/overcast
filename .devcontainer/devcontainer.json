@@ -1,0 +1,122 @@
+{
+  // Dev Container for Overcast.
+  //
+  // Gives every contributor an identical, pre-configured Linux dev environment
+  // inside Docker. Edit files on your host — they're mounted into the container.
+  // Builds, tests, and the debugger all run inside Linux regardless of host OS.
+  //
+  // Requirements:
+  //   - Docker Desktop (Windows/Mac) or Docker Engine (Linux)
+  //   - VS Code + "Dev Containers" extension (ms-vscode-remote.remote-containers)
+  //
+  // First-time setup:
+  //   1. Open the project in VS Code
+  //   2. Ctrl+Shift+P → "Dev Containers: Reopen in Container"
+  //   3. Wait ~2-3 minutes (first build only — subsequent opens are ~5 seconds)
+  //
+  // Step debugging:
+  //   - Set breakpoints by clicking the gutter (the space left of line numbers)
+  //   - Press F5 or use Run → Start Debugging
+  //   - F10 = step over, F11 = step into, Shift+F11 = step out
+  //   - Hover a variable to inspect its value
+  //   - The Debug Console supports expression evaluation
+  //   - See .vscode/launch.json for all debug configurations
+  //
+  // This same config works with GitHub Codespaces.
+
+  "name": "Overcast Dev",
+  "dockerFile": "Dockerfile",
+
+  // ---- Security: required for step debugging ------------------------------
+  //
+  // Delve (Go's debugger) uses ptrace(2) to control the debugged process.
+  // Docker's default seccomp profile blocks ptrace, which causes Delve to
+  // silently fail or hang. We lift this restriction in the dev container only.
+  //
+  // This is safe for a local development container — it does NOT affect the
+  // production Dockerfile (project root), which remains locked down.
+  "runArgs": ["--cap-add=SYS_PTRACE", "--security-opt", "seccomp=unconfined"],
+
+  // ---- Ports --------------------------------------------------------------
+  // 4566: Overcast API — forwarded so your Windows AWS CLI/SDK hits the container
+  // 3000: Web UI dev server (Vite)
+  // 2345: Delve remote debug port — used when attaching to a running server
+  "forwardPorts": [4566, 3000, 2345],
+  "portsAttributes": {
+    "4566": {
+      "label": "Overcast API",
+      "onAutoForward": "notify"
+    },
+    "3000": {
+      "label": "Web UI",
+      "onAutoForward": "openBrowser"
+    },
+    "2345": {
+      "label": "Delve debugger",
+      "onAutoForward": "silent"
+    }
+  },
+
+  // ---- Source mount -------------------------------------------------------
+  // consistency=cached: host→container writes are buffered. Fast for go test.
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+  "workspaceFolder": "/workspace",
+
+  // ---- Post-create setup --------------------------------------------------
+  // Runs once after the container is first created.
+  // go mod download: pre-warms the module cache so first `go build` is fast.
+  // go install dlv: installs Delve explicitly (the Go extension also installs
+  // it, but doing it here ensures it's ready before VS Code opens).
+  "postCreateCommand": "go mod download && go install github.com/go-delve/delve/cmd/dlv@v1.24.2 && go run ./scripts/check-tools.go",
+
+  // ---- VS Code customisation ----------------------------------------------
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        // Required
+        "golang.go", // Go language support, Delve integration, test runner
+        "anthropic.claude-code", // Claude AI — reads AGENTS.md and CLAUDE.md
+
+        // Strongly recommended
+        "ms-azuretools.vscode-docker",
+        "redhat.vscode-yaml",
+        "task.vscode-task",
+        "yzhang.markdown-all-in-one",
+        "eamodio.gitlens"
+      ],
+      "settings": {
+        "go.useLanguageServer": true,
+
+        // Debugger: use Delve DAP (Debug Adapter Protocol) mode.
+        // This is the modern, stable integration — faster than legacy mode.
+        "go.delveConfig": {
+          "debugAdapter": "dlv-dap",
+          // Don't stop on signals that the Go runtime uses internally
+          // (e.g. SIGURG for goroutine preemption). Without this, the
+          // debugger would halt on every goroutine switch.
+          "showGlobalVariables": true,
+          "substitutePath": [
+            {
+              "from": "${workspaceFolder}",
+              "to": "/workspace"
+            }
+          ]
+        },
+
+        "terminal.integrated.defaultProfile.linux": "bash",
+
+        "go.testFlags": ["-v", "-count=1"],
+        "go.testTimeout": "120s",
+        "go.coverOnSingleTest": true,
+        "[go]": {
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+          }
+        }
+      }
+    }
+  },
+
+  "remoteUser": "vscode"
+}

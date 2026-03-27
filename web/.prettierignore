@@ -1,0 +1,5 @@
+dist/
+node_modules/
+src/routeTree.gen.ts
+api/node_modules/
+api/dist/

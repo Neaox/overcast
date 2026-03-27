@@ -1,0 +1,184 @@
+# Taskfile.yml — cross-platform task runner.
+# Works on Mac, Linux, and Windows without GNU Make.
+#
+# Install Task:
+#   Mac/Linux: brew install go-task
+#   Windows:   scoop install task  OR  winget install Task.Task
+#   Any:       https://taskfile.dev/installation/
+#
+# Usage:
+#   task build
+#   task test
+#   task --list    (show all tasks)
+#
+# All targets are equivalent to their Makefile counterparts.
+
+version: "3"
+
+vars:
+  BINARY: overcast
+  BUILD_DIR: ./bin
+
+tasks:
+  default:
+    cmds:
+      - task --list
+    silent: true
+
+  # ---- Setup ----------------------------------------------------------------
+
+  setup:
+    desc: Verify all dev tools are installed
+    cmds:
+      - go run ./scripts/check-tools.go
+
+  # ---- Build ----------------------------------------------------------------
+
+  build:
+    desc: Compile the binary for the current platform
+    cmds:
+      - cmd: mkdir -p {{.BUILD_DIR}}
+        platforms: [darwin, linux]
+      - cmd: if not exist {{.BUILD_DIR}} mkdir {{.BUILD_DIR}}
+        platforms: [windows]
+      - go build -trimpath -ldflags="-w -s" -o {{.BUILD_DIR}}/{{.BINARY}}{{exeExt}} ./cmd/overcast
+    sources:
+      - "**/*.go"
+      - go.mod
+      - go.sum
+    generates:
+      - "{{.BUILD_DIR}}/{{.BINARY}}{{exeExt}}"
+
+  # ---- Run ------------------------------------------------------------------
+
+  run:
+    desc: Build and run with dev defaults (cross-platform Go script)
+    cmds:
+      - go run ./scripts/run.go
+
+  dev-server:
+    desc: Watch Go sources and hot-reload the server (requires air)
+    cmds:
+      - air
+
+  # ---- Test -----------------------------------------------------------------
+
+  test:
+    desc: Run all tests (race detector enabled where supported)
+    cmds:
+      - go test -race -count=1 -timeout=120s ./...
+
+  test-unit:
+    desc: Run unit tests only (fast — no server startup)
+    cmds:
+      - go test -race -count=1 -timeout=60s ./internal/...
+
+  test-integration:
+    desc: Run integration tests only
+    cmds:
+      - go test -race -count=1 -timeout=120s ./tests/...
+
+  test-coverage:
+    desc: Run tests and open HTML coverage report
+    cmds:
+      - go test -race -count=1 -coverprofile=coverage.out ./...
+      - go tool cover -html=coverage.out -o coverage.html
+      - cmd: open coverage.html
+        platforms: [darwin]
+      - cmd: start coverage.html
+        platforms: [windows]
+      - cmd: xdg-open coverage.html
+        platforms: [linux]
+
+  # ---- Quality --------------------------------------------------------------
+
+  bench:
+    desc: Run benchmarks with memory allocation reporting
+    cmds:
+      - go test -bench=. -benchmem -count=3 ./...
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run ./...
+
+  fmt:
+    desc: Format all Go source files
+    cmds:
+      - go fmt ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  tidy:
+    desc: Tidy and verify go.mod / go.sum
+    cmds:
+      - go mod tidy
+      - go mod verify
+
+  check:
+    desc: Run all pre-PR checks (fmt + vet + lint + test)
+    deps: [fmt, vet, lint, test]
+
+  # ---- Docker ---------------------------------------------------------------
+
+  docker:
+    desc: Build the Docker image
+    cmds:
+      - docker build -t overcast:dev .
+
+  docker-run:
+    desc: Run the Docker image with debug logging
+    cmds:
+      - docker run --rm -p 4566:4566 -e OVERCAST_LOG_LEVEL=debug overcast:dev
+
+  docker-compose:
+    desc: Start with docker compose (rebuilds image)
+    cmds:
+      - docker compose up --build
+
+  # ---- Clean ----------------------------------------------------------------
+
+  clean:
+    desc: Remove build artefacts
+    cmds:
+      - go clean ./...
+      - cmd: rm -rf {{.BUILD_DIR}} coverage.out coverage.html
+        platforms: [darwin, linux]
+      - cmd: if exist {{.BUILD_DIR}} rmdir /s /q {{.BUILD_DIR}}
+        platforms: [windows]
+      - cmd: if exist coverage.out del /q coverage.out
+        platforms: [windows]
+      - cmd: if exist coverage.html del /q coverage.html
+        platforms: [windows]
+
+  # ---- Container-based development (cross-platform) ------------------------
+  # These targets work identically on Mac, Linux, and Windows.
+  # Require Docker but not a local Go installation.
+
+  container-test:
+    desc: Run all tests inside a Linux container (works on any OS with Docker)
+    cmds:
+      - docker compose -f docker-compose.dev.yml run --rm test
+
+  container-test-unit:
+    desc: Run unit tests inside a container
+    cmds:
+      - docker compose -f docker-compose.dev.yml run --rm test go test -race -count=1 -timeout=60s ./internal/...
+
+  container-test-integration:
+    desc: Run integration tests inside a container
+    cmds:
+      - docker compose -f docker-compose.dev.yml run --rm test go test -race -count=1 -timeout=120s ./tests/...
+
+  dev:
+    desc: Start the dev server with source mounted (no local Go needed)
+    cmds:
+      - docker compose -f docker-compose.dev.yml up overcast
+
+  dev-build:
+    desc: Force rebuild of the dev server container
+    cmds:
+      - docker compose -f docker-compose.dev.yml up --build overcast

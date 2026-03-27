@@ -1,0 +1,85 @@
+# docker-compose.dev.yml
+#
+# Development server with live source mounting.
+# The binary is built INSIDE the container but reads source from your host.
+# Use this if you prefer not to use the VS Code Dev Container.
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up
+#
+# Workflow:
+#   1. Make code changes on your host (Windows/Mac/Linux)
+#   2. The `build` service compiles inside Linux — no local Go needed
+#   3. The `overcast` service runs the freshly built binary
+#   4. Port 4566 is forwarded — your AWS SDK / CLI on the host hits the container
+#
+# To rebuild after changes:
+#   docker compose -f docker-compose.dev.yml up --build
+#
+# To run tests:
+#   docker compose -f docker-compose.dev.yml run --rm test
+
+version: "3.9"
+
+services:
+
+  # Run all tests inside the container against the mounted source.
+  # Usage: docker compose -f docker-compose.dev.yml run --rm test
+  test:
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
+    working_dir: /workspace
+    volumes:
+      - type: bind
+        source: .
+        target: /workspace
+        # 'cached' consistency: host → container writes are buffered.
+        # Fastest option for read-heavy workloads like `go test`.
+        consistency: cached
+    environment:
+      CGO_ENABLED: "0"
+    command: go test -race -count=1 -timeout=120s ./...
+    # No port mapping — this is a one-shot test runner.
+
+  # Build and run the server with source mounted for development.
+  overcast:
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
+    working_dir: /workspace
+    ports:
+      - "4566:4566"
+    volumes:
+      - type: bind
+        source: .
+        target: /workspace
+        consistency: cached
+      # Separate volume for the compiled binary so it doesn't pollute
+      # the host source tree and avoids Windows/Linux binary incompatibility.
+      - overcast-bin:/workspace/bin
+      # Module cache: reused across rebuilds for fast dependency resolution.
+      - go-mod-cache:/home/vscode/go/pkg/mod
+    environment:
+      OVERCAST_PORT: "4566"
+      OVERCAST_STATE: memory
+      OVERCAST_LOG_LEVEL: debug
+      OVERCAST_DEBUG: "true"
+      OVERCAST_SERVICES: s3,sqs,dynamodb,sns,lambda
+      CGO_ENABLED: "0"
+    # Build then run in one command. The binary is rebuilt on every `up --build`.
+    command: >
+      sh -c "
+        go build -trimpath -ldflags='-w -s' -o bin/overcast ./cmd/overcast &&
+        bin/overcast
+      "
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4566/_health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+
+volumes:
+  overcast-bin:
+  go-mod-cache:

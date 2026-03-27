@@ -1,0 +1,32 @@
+version: "3.9"
+
+services:
+  overcast:
+    build: .
+    image: overcast:dev
+    container_name: overcast
+    ports:
+      - "4566:4566"
+    environment:
+      OVERCAST_PORT: "4566"
+      OVERCAST_STATE: memory          # change to 'sqlite' for persistence
+      OVERCAST_DATA_DIR: /data
+      OVERCAST_LOG_LEVEL: debug
+      OVERCAST_REGION: us-east-1
+      OVERCAST_ACCOUNT_ID: "000000000000"
+      OVERCAST_SERVICES: s3,sqs,dynamodb,sns,lambda
+      # OVERCAST_SIGV4_VALIDATE: "false"  # TODO: set to true once implemented
+    volumes:
+      # Persist SQLite data across container restarts when STATE=sqlite.
+      # Has no effect when STATE=memory.
+      - overcast-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4566/_health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+    restart: unless-stopped
+
+volumes:
+  overcast-data:

@@ -1,0 +1,21 @@
+{
+  "name": "@overcast/api",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/node.ts",
+    "build": "tsc -p tsconfig.json && node -e \"require('esbuild').buildSync({entryPoints:['src/node.ts'],bundle:true,platform:'node',target:'node20',outfile:'dist/server.js',format:'esm'})\"",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "hono": "*",
+    "@hono/node-server": "*"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3",
+    "esbuild": "^0.25.2",
+    "@types/node": "^22.13.16"
+  }
+}

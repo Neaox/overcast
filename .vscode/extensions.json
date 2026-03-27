@@ -1,0 +1,14 @@
+{
+  "recommendations": [
+    "golang.go",
+    "anthropic.claude-code",
+    "ms-vscode-remote.remote-containers",
+    "ms-azuretools.vscode-docker",
+    "redhat.vscode-yaml",
+    "task.vscode-task",
+    "yzhang.markdown-all-in-one",
+    "eamodio.gitlens",
+    "esbenp.prettier-vscode",
+    "bradlc.vscode-tailwindcss"
+  ]
+}

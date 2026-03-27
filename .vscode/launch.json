@@ -1,0 +1,182 @@
+{
+  // Debug configurations for Overcast.
+  //
+  // ---- How to use step debugging -----------------------------------------
+  //
+  // 1. Set a breakpoint: click in the gutter (left of the line number)
+  //    A red dot appears. The debugger pauses here when execution reaches it.
+  //
+  // 2. Start debugging: press F5, or click Run → Start Debugging,
+  //    or click the green play button in the Run & Debug panel (Ctrl+Shift+D).
+  //
+  // 3. While paused at a breakpoint:
+  //    F10          = Step Over    (run this line, pause on the next one)
+  //    F11          = Step Into    (follow execution into the function call)
+  //    Shift+F11    = Step Out     (run to the end of the current function)
+  //    F5           = Continue     (run until the next breakpoint)
+  //    Shift+F5     = Stop         (terminate the debug session)
+  //
+  // 4. Inspect state while paused:
+  //    - Hover over any variable to see its current value
+  //    - The VARIABLES panel (left) shows all locals and their values
+  //    - The WATCH panel lets you evaluate expressions (e.g. `len(h.store.data)`)
+  //    - The CALL STACK panel shows the full goroutine call chain
+  //    - The DEBUG CONSOLE lets you evaluate arbitrary Go expressions
+  //
+  // ---- Inside Dev Container -----------------------------------------------
+  // All configurations work inside the Dev Container (recommended).
+  // The container has SYS_PTRACE capability and seccomp=unconfined so Delve
+  // can control processes. Port 2345 is forwarded for remote debugging.
+  //
+  // ---- Native (Mac/Linux/Windows amd64) -----------------------------------
+  // All configurations also work natively. Install Delve if needed:
+  //   go install github.com/go-delve/delve/cmd/dlv@latest
+
+  "version": "0.2.0",
+  "configurations": [
+
+    // ---- Server debugging -------------------------------------------------
+
+    {
+      // Debug the Overcast server. Set breakpoints in any handler file,
+      // then send a request — the debugger pauses when execution hits the breakpoint.
+      //
+      // Typical workflow:
+      //   1. Open internal/services/s3/handler.go
+      //   2. Set a breakpoint in GetObject (click left of line number)
+      //   3. F5 to start
+      //   4. From another terminal: aws --endpoint-url http://localhost:4566 s3 cp ...
+      //   5. Debugger pauses — inspect the request, step through the handler
+      "name": "Debug: server (memory state)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/overcast",
+      "env": {
+        "OVERCAST_PORT": "4566",
+        "OVERCAST_STATE": "memory",
+        "OVERCAST_LOG_LEVEL": "debug",
+        "OVERCAST_DEBUG": "true",
+        "OVERCAST_REGION": "us-east-1",
+        "OVERCAST_ACCOUNT_ID": "000000000000"
+      },
+      "console": "integratedTerminal",
+      // Build with full debug info — don't strip symbols.
+      // This is separate from the production build which uses -w -s.
+      "buildFlags": "",
+      // Stop on entry lets you inspect state before any requests arrive.
+      "stopOnEntry": false
+    },
+
+    {
+      // Same as above but with SQLite persistence — useful for debugging
+      // store interaction or testing state between restarts.
+      "name": "Debug: server (sqlite state)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/overcast",
+      "env": {
+        "OVERCAST_PORT": "4566",
+        "OVERCAST_STATE": "sqlite",
+        "OVERCAST_LOG_LEVEL": "debug",
+        "OVERCAST_DEBUG": "true"
+      },
+      "console": "integratedTerminal",
+      "buildFlags": ""
+    },
+
+    // ---- Test debugging ---------------------------------------------------
+
+    {
+      // Debug the test whose name matches the selected text.
+      //
+      // Usage:
+      //   1. Open any _test.go file
+      //   2. Select a test function name (e.g. highlight "TestGetObject_success")
+      //   3. Press F5 — only that test runs under the debugger
+      //   4. Set breakpoints in the handler or store files it exercises
+      //
+      // Tip: you can also set breakpoints BEFORE selecting the test name —
+      // the debugger will stop there when the test triggers that code path.
+      "name": "Debug: test under cursor",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${fileDirname}",
+      "args": ["-test.v", "-test.run", "^${selectedText}$", "-test.count=1"],
+      "console": "integratedTerminal",
+      "buildFlags": ""
+    },
+
+    {
+      // Debug ALL tests in the currently open file.
+      // Useful when you want to step through a whole test suite.
+      "name": "Debug: all tests in current file",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${fileDirname}",
+      "args": ["-test.v", "-test.count=1"],
+      "console": "integratedTerminal",
+      "buildFlags": ""
+    },
+
+    {
+      // Debug all integration tests for a specific service.
+      // Change "s3" in the program path to the service you want to debug.
+      "name": "Debug: S3 integration tests",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${workspaceFolder}/tests/integration/s3",
+      "args": ["-test.v", "-test.count=1"],
+      "console": "integratedTerminal",
+      "buildFlags": ""
+    },
+
+    {
+      "name": "Debug: SQS integration tests",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${workspaceFolder}/tests/integration/sqs",
+      "args": ["-test.v", "-test.count=1"],
+      "console": "integratedTerminal",
+      "buildFlags": ""
+    },
+
+    {
+      "name": "Debug: DynamoDB integration tests",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${workspaceFolder}/tests/integration/dynamodb",
+      "args": ["-test.v", "-test.count=1"],
+      "console": "integratedTerminal",
+      "buildFlags": ""
+    },
+
+    // ---- Remote debugging (advanced) --------------------------------------
+
+    {
+      // Attach to a Delve server already running in a container.
+      // Useful when you want to debug the server started by docker-compose.dev.yml.
+      //
+      // First start Delve manually in the container:
+      //   dlv debug ./cmd/overcast --headless --listen=:2345 --api-version=2 \
+      //     --accept-multiclient -- (env vars as normal)
+      //
+      // Then select this configuration and press F5.
+      "name": "Debug: attach to running Delve (port 2345)",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "remotePath": "/workspace",
+      "port": 2345,
+      "host": "127.0.0.1",
+      "showLog": true,
+      "trace": "verbose"
+    }
+  ]
+}

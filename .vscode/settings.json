@@ -1,0 +1,103 @@
+{
+  // ---- Go language server ------------------------------------------------
+  "go.useLanguageServer": true,
+  "[go]": {
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit"
+    },
+    "editor.defaultFormatter": "golang.go"
+  },
+  "go.lintTool": "golangci-lint",
+  "go.lintOnSave": "package",
+
+  // ---- Test runner --------------------------------------------------------
+  // Note: -race is intentionally omitted here.
+  // The inline "run test" codelens and test explorer run without -race for speed.
+  // Full test suite with -race runs via `make test` / `task test` in the terminal.
+  "go.testFlags": ["-v", "-count=1"],
+  "go.testTimeout": "120s",
+  "go.coverOnSingleTest": true,
+  "go.coverOnSingleTestFile": true,
+  "go.coverageDecorator": {
+    "type": "highlight",
+    "coveredHighlightColor": "rgba(64,128,64,0.15)",
+    "uncoveredHighlightColor": "rgba(128,64,64,0.15)"
+  },
+  "go.testExplorer.enable": true,
+  "go.testExplorer.packageDisplayMode": "nested",
+
+  // ---- Debugger (Delve) ---------------------------------------------------
+  //
+  // Delve is Go's step debugger. The VS Code Go extension integrates with it
+  // automatically — just press F5 with a launch.json configuration selected.
+  //
+  // debugAdapter: "dlv-dap" is the modern DAP-protocol integration.
+  // It is faster and more stable than the legacy "legacy" adapter.
+  "go.delveConfig": {
+    "debugAdapter": "dlv-dap",
+    "showGlobalVariables": true,
+    // Show the values of function arguments in the VARIABLES panel.
+    "showRegisters": false,
+    // dlv-dap handles goroutines well — show them all in the call stack.
+    "goroutineFilters": []
+  },
+  // Automatically install Delve when the Go extension is first used.
+  "go.toolsManagement.autoUpdate": true,
+
+  // ---- Editor -------------------------------------------------------------
+  "editor.rulers": [100],
+  "editor.tabSize": 4,
+  "editor.insertSpaces": false,
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+
+  // ---- TypeScript / React (web/) -----------------------------------------
+  "[typescript]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[typescriptreact]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[json]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[css]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+
+  // ---- File associations --------------------------------------------------
+  "files.associations": {
+    "*.go": "go",
+    "Dockerfile*": "dockerfile",
+    "docker-compose*.yml": "dockercompose",
+    "Taskfile.yml": "yaml",
+    "AGENTS.md": "markdown",
+    "CLAUDE.md": "markdown"
+  },
+
+  // ---- Search/file exclusions ---------------------------------------------
+  // Exclude build artefacts and generated files from search results.
+  "search.exclude": {
+    "**/bin/**": true,
+    "**/coverage.out": true,
+    "**/coverage.html": true,
+    "**/*.db": true,
+    "**/*.db-wal": true,
+    "**/*.db-shm": true
+  },
+  "files.watcherExclude": {
+    "**/bin/**": true,
+    "**/*.db": true
+  },
+
+  // ---- Claude extension ---------------------------------------------------
+  "claude.projectInstructions": "See AGENTS.md and CLAUDE.md at the project root.",
+  "chat.tools.terminal.autoApprove": {
+    "go": true
+  }
+}
