@@ -145,8 +145,9 @@ The Dev Container is pre-configured for debugging:
   control processes (Docker's default seccomp profile blocks this)
 - Delve is installed during container setup (`postCreateCommand`)
 - Port 2345 is forwarded for remote attach scenarios
-- The `substitutePath` in `devcontainer.json` maps `/workspace` to `${workspaceFolder}`
-  so source paths resolve correctly in the debugger
+- The `substitutePath` in `devcontainer.json` maps the current container workspace
+  folder to `${workspaceFolder}` so source paths resolve correctly in normal
+  checkouts and git worktrees
 
 If debugging stops working after a container rebuild, run:
 

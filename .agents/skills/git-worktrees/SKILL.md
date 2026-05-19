@@ -28,9 +28,23 @@ If fewer than two apply, work directly in the main checkout.
 
 ## End-to-End Workflow
 
-### 1. Create the Worktree
+### 1. Confirm Worktree-Aware Devcontainer Support
 
-From the main checkout at `/workspace`:
+Overcast's devcontainer is worktree-aware. It runs `.devcontainer/init-worktree.sh` on the host before container creation, generates `.devcontainer/docker-compose.yaml`, and mounts Git metadata at the same absolute path Git records in worktree `.git` pointer files.
+
+Agents running inside an existing devcontainer must still verify the current checkout is host-mounted before creating sibling worktrees:
+
+```bash
+pwd
+git rev-parse --show-toplevel
+git worktree list
+```
+
+If the checkout is mounted at a host-equivalent absolute path, create sibling worktrees normally. If the checkout is only mounted at an isolated container path and the new sibling would be container-local, stop and ask the user to reopen the repo with the worktree-aware devcontainer config.
+
+### 2. Create the Worktree
+
+From the main checkout or any existing Overcast worktree:
 
 ```bash
 # Pick a descriptive branch name — use your task or feature as the suffix
@@ -47,9 +61,11 @@ git worktree add ../worktree-fix-sqs-visibility -b fix/sqs-visibility-timeout
 
 **Rule:** Two worktrees cannot have the same branch checked out. Each agent must use a unique branch name.
 
-**Placement:** Always create worktrees as siblings of `/workspace` (i.e. `../worktree-<name>`), not inside the repo. Putting them inside would confuse `go test ./...` and other recursive tools.
+**Placement:** Always create worktrees as siblings of the current checkout (i.e. `../worktree-<name>`), not inside the repo. Putting them inside would confuse `go test ./...` and other recursive tools.
 
-### 2. Install Dependencies
+**Devcontainer:** Open the new worktree as its own VS Code window and run `Dev Containers: Reopen in Container`. The generated compose project name includes the worktree folder name, so containers and the `web/node_modules` volume are isolated per worktree.
+
+### 3. Install Dependencies
 
 Go modules are cached globally (`~/go/pkg/mod`) and shared automatically — no action needed.
 
@@ -67,7 +83,7 @@ cd compat && npm install && cd ..
 
 Skip these if your work is purely in Go.
 
-### 3. Verify the Worktree Builds
+### 4. Verify the Worktree Builds
 
 ```bash
 cd ../worktree-<name>
@@ -77,7 +93,7 @@ go vet ./...
 
 Fix any issues before starting work. You should see zero errors — worktrees start from the same commit as the source branch.
 
-### 4. Do Your Work
+### 5. Do Your Work
 
 Work normally — edit files, write tests, build, iterate. The worktree is a fully independent checkout. All standard project workflows apply:
 
@@ -92,7 +108,7 @@ go test -race -count=1 -timeout=120s ./...
 
 **Tests are fully isolated.** Each test creates its own `httptest.Server` on a random OS-assigned port with a fresh `MemoryStore`. Multiple worktrees can run `go test` simultaneously with zero port conflicts.
 
-### 5. Running a Dev Server (If Needed)
+### 6. Running a Dev Server (If Needed)
 
 If you need a running emulator (e.g. for manual testing or compat suites), you must avoid port collisions with other worktrees:
 
@@ -115,7 +131,7 @@ OVERCAST_PORT=4567 docker compose -f docker-compose.dev.yml up overcast
 
 **Recommended:** Use `OVERCAST_STATE=memory` in worktrees to avoid SQLite file contention entirely. Tests already do this automatically.
 
-### 6. Commit Your Work
+### 7. Commit Your Work
 
 Commit from inside the worktree as normal:
 
@@ -127,30 +143,27 @@ git commit -m "feat(kinesis): add PutRecord and GetRecords"
 
 The commit is visible from the main checkout and all other worktrees immediately (they share the object store).
 
-### 7. Merge Back
+### 8. Merge Back
 
-When your work is ready, merge into the target branch from the main checkout:
+When your work is ready, merge into the target branch from the main checkout or target worktree:
 
 ```bash
-cd /workspace
 git merge feat/kinesis-service
 ```
 
 Or if you prefer rebase:
 
 ```bash
-cd /workspace
 git rebase main feat/kinesis-service
 git checkout main
 git merge --ff-only feat/kinesis-service
 ```
 
-### 8. Clean Up
+### 9. Clean Up
 
 Remove the worktree when done:
 
 ```bash
-cd /workspace
 git worktree remove ../worktree-<name>
 
 # Delete the branch if it's been merged
@@ -167,18 +180,18 @@ git worktree list
 
 ## What's Shared vs. Isolated
 
-| Resource                             | Shared?           | Notes                                                           |
-| ------------------------------------ | ----------------- | --------------------------------------------------------------- |
-| `.git` object store                  | Shared            | Commits, branches, history visible everywhere                   |
-| Go module cache (`~/go/pkg/mod`)     | Shared            | Safe — read-only after download                                 |
-| Go build cache (`~/.cache/go-build`) | Shared            | Safe, but can cause lock contention under heavy parallel builds |
-| `bin/` (compiled binaries)           | Isolated          | Gitignored — each worktree builds its own                       |
-| `web/node_modules/`                  | Isolated          | Gitignored — `npm install` per worktree                         |
-| `compat/node_modules/`               | Isolated          | Gitignored — `npm install` per worktree                         |
-| `go.sum`                             | Shared            | Tracked by git — automatic                                      |
-| Test state (`MemoryStore`)           | Isolated          | Each test creates its own in-process store                      |
-| SQLite data (`~/.overcast/data`)     | Shared by default | Override `OVERCAST_DATA_DIR` if running dev servers             |
-| Port `4566`                          | Shared by default | Override `OVERCAST_PORT` if running dev servers                 |
+| Resource                             | Shared?                   | Notes                                                                                                       |
+| ------------------------------------ | ------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `.git` object store                  | Shared                    | Commits, branches, history visible everywhere                                                               |
+| Go module cache (`~/go/pkg/mod`)     | Shared                    | Safe — read-only after download                                                                             |
+| Go build cache (`~/.cache/go-build`) | Shared                    | Safe, but can cause lock contention under heavy parallel builds                                             |
+| `bin/` (compiled binaries)           | Isolated                  | Gitignored — each worktree builds its own                                                                   |
+| `web/node_modules/`                  | Isolated in devcontainers | Named volume includes the worktree folder name; host-only checkouts use gitignored per-worktree directories |
+| `compat/node_modules/`               | Isolated                  | Gitignored — `npm install` per worktree                                                                     |
+| `go.sum`                             | Shared                    | Tracked by git — automatic                                                                                  |
+| Test state (`MemoryStore`)           | Isolated                  | Each test creates its own in-process store                                                                  |
+| SQLite data (`~/.overcast/data`)     | Shared by default         | Override `OVERCAST_DATA_DIR` if running dev servers                                                         |
+| Port `4566`                          | Shared by default         | Override `OVERCAST_PORT` if running dev servers                                                             |
 
 ## Avoiding Go Build Cache Contention
 
@@ -195,14 +208,15 @@ This is rarely needed — the default shared cache handles concurrent reads well
 
 ## Common Mistakes
 
-| Mistake                                   | Why it fails                             | Fix                                                       |
-| ----------------------------------------- | ---------------------------------------- | --------------------------------------------------------- |
-| Creating worktree inside `/workspace`     | `go test ./...` picks up nested Go files | Create as siblings: `../worktree-<name>`                  |
-| Two worktrees on the same branch          | Git forbids this                         | Use unique branch names per agent                         |
-| Forgetting `npm install` in `web/`        | TypeScript/Vite builds fail              | Run it after creating the worktree                        |
-| Running two dev servers on port 4566      | Port already in use                      | Set `OVERCAST_PORT` to a unique value                     |
-| Editing shared SQLite data dir            | Corrupt or conflicting state             | Use `OVERCAST_STATE=memory` or unique `OVERCAST_DATA_DIR` |
-| Deleting a worktree with uncommitted work | Work is lost                             | Always commit or stash before removing                    |
+| Mistake                                             | Why it fails                                                              | Fix                                                                   |
+| --------------------------------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Creating worktree inside the repo                   | `go test ./...` picks up nested Go files                                  | Create as siblings: `../worktree-<name>`                              |
+| Creating a worktree from a container-local checkout | The new checkout is not host-visible and may disappear with the container | Use the worktree-aware devcontainer or ask the user to reopen with it |
+| Two worktrees on the same branch                    | Git forbids this                                                          | Use unique branch names per agent                                     |
+| Forgetting `npm install` in `web/`                  | TypeScript/Vite builds fail                                               | Run it after creating the worktree                                    |
+| Running two dev servers on port 4566                | Port already in use                                                       | Set `OVERCAST_PORT` to a unique value                                 |
+| Editing shared SQLite data dir                      | Corrupt or conflicting state                                              | Use `OVERCAST_STATE=memory` or unique `OVERCAST_DATA_DIR`             |
+| Deleting a worktree with uncommitted work           | Work is lost                                                              | Always commit or stash before removing                                |
 
 ---
 
