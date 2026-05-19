@@ -100,7 +100,8 @@
   // Docker CLI is installed via the feature below so Lambda ContainerRuntime
   // can manage sibling containers via the mounted Docker socket.
   "features": {
-    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
   },
 
   "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/go ${containerWorkspaceFolder}/web/node_modules && go mod download && go install golang.org/x/tools/gopls@v0.17.1 && go install github.com/go-delve/delve/cmd/dlv@v1.24.2 && make build-mcp && mkcert -install && cd web && npm install && cd .. && pip3 install --break-system-packages --quiet -r compat/suites/python-sdk/requirements.txt && go run ./scripts/check-tools.go",
