@@ -13,7 +13,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/your-org/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // ---- XML wire types --------------------------------------------------------
@@ -64,7 +67,7 @@ type xmlFilterRule struct {
 
 // ---- Handlers --------------------------------------------------------------
 
-// GetBucketNotificationConfiguration handles GET /{bucket}?notification
+// GetBucketNotificationConfiguration handles GET /{bucket}?notification.
 func (h *Handler) GetBucketNotificationConfiguration(w http.ResponseWriter, r *http.Request) {
 	bucket := chi.URLParam(r, "bucket")
 
@@ -83,7 +86,7 @@ func (h *Handler) GetBucketNotificationConfiguration(w http.ResponseWriter, r *h
 	protocol.WriteXML(w, r, http.StatusOK, out)
 }
 
-// PutBucketNotificationConfiguration handles PUT /{bucket}?notification
+// PutBucketNotificationConfiguration handles PUT /{bucket}?notification.
 func (h *Handler) PutBucketNotificationConfiguration(w http.ResponseWriter, r *http.Request) {
 	bucket := chi.URLParam(r, "bucket")
 
@@ -102,12 +105,34 @@ func (h *Handler) PutBucketNotificationConfiguration(w http.ResponseWriter, r *h
 		return
 	}
 
+	// Real AWS requires Lambda notification destinations to be in the same
+	// region as the bucket.
+	bucketRegion := middleware.RegionFromContext(r.Context(), h.cfg.Region)
+	for _, lc := range in.LambdaConfigurations {
+		if fnRegion := serviceutil.ARNRegion(lc.Function); fnRegion != "" && fnRegion != bucketRegion {
+			protocol.WriteXMLError(w, r, &protocol.AWSError{
+				Code:       "InvalidArgument",
+				Message:    "Unable to validate the following destination configurations: Lambda function ARN must be in the same region as the S3 bucket.",
+				HTTPStatus: http.StatusBadRequest,
+			})
+			return
+		}
+	}
+
 	cfg := notificationConfigFromXML(&in)
 	if aerr := h.store.putNotificationConfig(r.Context(), bucket, cfg); aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
 		return
 	}
 
+	if h.bus != nil {
+		h.bus.Publish(r.Context(), events.Event{
+			Type:    events.S3NotificationConfigured,
+			Time:    h.clk.Now(),
+			Source:  "s3",
+			Payload: events.ResourcePayload{Name: bucket},
+		})
+	}
 	protocol.WriteEmpty(w, r, http.StatusOK)
 }
 
@@ -202,10 +227,7 @@ func notificationConfigToXML(cfg *NotificationConfig) *xmlNotificationConfigurat
 func filterFromXML(f *xmlFilter) *NotificationFilter {
 	nf := &NotificationFilter{}
 	for _, r := range f.S3Key.FilterRules {
-		nf.Key.Rules = append(nf.Key.Rules, NotificationFilterRule{
-			Name:  r.Name,
-			Value: r.Value,
-		})
+		nf.Key.Rules = append(nf.Key.Rules, NotificationFilterRule(r))
 	}
 	return nf
 }
@@ -213,10 +235,7 @@ func filterFromXML(f *xmlFilter) *NotificationFilter {
 func filterToXML(f *NotificationFilter) *xmlFilter {
 	xf := &xmlFilter{}
 	for _, r := range f.Key.Rules {
-		xf.S3Key.FilterRules = append(xf.S3Key.FilterRules, xmlFilterRule{
-			Name:  r.Name,
-			Value: r.Value,
-		})
+		xf.S3Key.FilterRules = append(xf.S3Key.FilterRules, xmlFilterRule(r))
 	}
 	return xf
 }

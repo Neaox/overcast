@@ -3,8 +3,8 @@ package s3
 // notifications.go — S3 event notification dispatcher.
 //
 // This subscribes to the event bus for S3 object mutations and routes
-// matching events to configured SQS queues (and in future, SNS topics
-// and Lambda functions) based on per-bucket notification configuration.
+// matching events to configured SQS queues, SNS topics, and Lambda functions
+// based on per-bucket notification configuration.
 //
 // Architecture:
 //
@@ -14,6 +14,7 @@ package s3
 //	      → load bucket's NotificationConfig from store
 //	      → match event type + key filter rules
 //	      → call MessageEnqueuer for each matching queue config
+//	      → call FunctionInvoker for each matching lambda config
 
 import (
 	"context"
@@ -23,7 +24,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/your-org/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/events"
 )
 
 // NotificationDispatcher reads per-bucket notification configs and routes
@@ -31,6 +32,7 @@ import (
 type NotificationDispatcher struct {
 	store    *s3Store
 	enqueuer events.MessageEnqueuer
+	invoker  events.FunctionInvoker // nil if lambda service is disabled
 	logger   *zap.Logger
 	region   string
 }
@@ -38,9 +40,13 @@ type NotificationDispatcher struct {
 // NewNotificationDispatcher creates a dispatcher and subscribes it to the
 // given event bus for all S3 event types. The returned cancel function
 // removes the subscriptions (useful in tests).
+//
+// invoker may be nil when the lambda service is disabled; Lambda
+// notification configs will be skipped in that case.
 func NewNotificationDispatcher(
 	store *s3Store,
 	enqueuer events.MessageEnqueuer,
+	invoker events.FunctionInvoker,
 	bus *events.Bus,
 	logger *zap.Logger,
 	region string,
@@ -48,6 +54,7 @@ func NewNotificationDispatcher(
 	d = &NotificationDispatcher{
 		store:    store,
 		enqueuer: enqueuer,
+		invoker:  invoker,
 		logger:   logger,
 		region:   region,
 	}
@@ -102,7 +109,26 @@ func (d *NotificationDispatcher) handle(ctx context.Context, e events.Event) {
 	}
 
 	// TODO(priority:P3): deliver to TopicConfigurations (SNS) when SNS is implemented
-	// TODO(priority:P3): deliver to LambdaConfigurations when Lambda is implemented
+
+	// Lambda delivery
+	if d.invoker != nil {
+		for _, lc := range cfg.LambdaConfigurations {
+			if !matchesEvent(lc.Events, eventType) {
+				continue
+			}
+			if !matchesFilter(lc.Filter, p.Key) {
+				continue
+			}
+
+			body := buildNotificationJSON(p, e.Time, lc.ID, d.region)
+			if err := d.invoker.InvokeAsync(ctx, lc.ARN, []byte(body)); err != nil {
+				d.logger.Warn("s3: notification delivery to Lambda failed",
+					zap.String("function", lc.ARN),
+					zap.Error(err),
+				)
+			}
+		}
+	}
 }
 
 // matchesEvent checks whether eventType matches any of the configured events.
@@ -145,7 +171,7 @@ func matchesFilter(f *NotificationFilter, key string) bool {
 }
 
 // queueNameFromARN extracts the queue name from an SQS ARN.
-// ARN format: arn:aws:sqs:<region>:<account>:<queue-name>
+// ARN format: arn:aws:sqs:<region>:<account>:<queue-name>.
 func queueNameFromARN(arn string) string {
 	parts := strings.Split(arn, ":")
 	if len(parts) < 6 {

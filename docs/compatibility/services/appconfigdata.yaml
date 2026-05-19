@@ -1,0 +1,21 @@
+service: appconfigdata
+status: not_started
+priority: p2
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [rest_json, aws_json_1_0, aws_json_1_1, rpcv2_cbor]
+implementation: [internal/services/appconfigdata]
+integration_tests: [tests/integration/appconfigdata]
+capability_docs: docs/services/appconfigdata.md
+operation_count_estimate: 2 API operations plus response header tracking
+current_support_level: Data-plane sessions supported; depends on AppConfig hosted versions.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Verify control-plane/data-plane split and token rotation semantics.
+  intentionally_partial: []
+handoff:
+  start_with: [StartConfigurationSession, GetLatestConfiguration]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/appconfigdata/... ./tests/integration/appconfigdata/...]

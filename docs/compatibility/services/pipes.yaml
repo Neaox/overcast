@@ -1,0 +1,22 @@
+service: pipes
+status: not_started
+priority: p1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [rest_json]
+implementation: [internal/services/pipes]
+integration_tests: [tests/integration/pipes]
+capability_docs: docs/services/pipes.md
+operation_count_estimate: 5 supported
+current_support_level: Pipe CRUD supported; delivery limited to DynamoDB Streams to SQS.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Mark source/target delivery compatibility as partial.
+    - Reconcile stale service comment saying UpdatePipe is 501 with docs/tests showing support.
+  intentionally_partial: []
+handoff:
+  start_with: [CreatePipe, UpdatePipe, target delivery]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/pipes/... ./tests/integration/pipes/...]

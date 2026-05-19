@@ -9,14 +9,14 @@
  *   source=s3          filter to one source (may be repeated)
  */
 import { Hono } from "hono"
-import { ENDPOINT_HEADER, REGION_HEADER } from "../service-discovery.js"
+import { ENDPOINT_HEADER, REGION_HEADER, DEFAULT_ENDPOINT } from "../service-discovery.js"
 
 export const eventsRoutes = new Hono()
 
 eventsRoutes.get("/", async (c) => {
   // Support header OR query-param delivery (EventSource can't send custom headers).
-  const endpointUrl = c.req.header(ENDPOINT_HEADER) ?? c.req.query("ep") ?? "http://localhost:4566"
-  const region = c.req.header(REGION_HEADER) ?? c.req.query("region") ?? "us-east-1"
+  const endpointUrl = c.req.header(ENDPOINT_HEADER) ?? c.req.query("ep") ?? DEFAULT_ENDPOINT.baseUrl
+  const region = c.req.header(REGION_HEADER) ?? c.req.query("region") ?? DEFAULT_ENDPOINT.region
 
   // Build upstream URL: preserve any source filters passed by the client.
   const upstream = new URL("/_events", endpointUrl)
@@ -31,14 +31,20 @@ eventsRoutes.get("/", async (c) => {
   const ac = new AbortController()
   c.req.raw.signal.addEventListener("abort", () => ac.abort())
 
-  const response = await fetch(upstream.toString(), {
-    headers: {
-      Accept: "text/event-stream",
-      "x-overcast-endpoint": endpointUrl,
-      "x-overcast-region": region,
-    },
-    signal: ac.signal,
-  })
+  let response: Response
+  try {
+    response = await fetch(upstream.toString(), {
+      headers: {
+        Accept: "text/event-stream",
+        "x-overcast-endpoint": endpointUrl,
+        "x-overcast-region": region,
+      },
+      signal: ac.signal,
+    })
+  } catch {
+    // Emulator is not reachable (e.g. starting up or stopped).
+    return c.json({ error: "event stream unavailable" }, 502)
+  }
 
   if (!response.ok || !response.body) {
     return c.json({ error: "event stream unavailable" }, 502)

@@ -1,0 +1,22 @@
+service: glue
+status: not_started
+priority: p2
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]
+implementation: [internal/services/glue]
+integration_tests: [tests/integration/glue]
+capability_docs: docs/services/glue.md
+operation_count_estimate: 8 supported
+current_support_level: Data Catalog subset only; databases and tables supported; ETL/crawlers/workflows unsupported.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Compare catalog shapes against AWS SDK expectations.
+    - Track unsupported Glue operation families.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateDatabase, CreateTable, GetTable]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/glue/... ./tests/integration/glue/...]

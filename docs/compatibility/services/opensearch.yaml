@@ -1,0 +1,21 @@
+service: opensearch
+status: not_started
+priority: p0
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [rest_json, aws_json_1_0, aws_json_1_1, rpcv2_cbor]
+implementation: [internal/services/opensearch]
+integration_tests: [tests/integration/opensearch]
+capability_docs: docs/services/opensearch.md
+operation_count_estimate: 8 supported
+current_support_level: Basic domain CRUD, batch describe, and tagging; no real OpenSearch cluster.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Review AWS wire compatibility because custom /_opensearch prefix likely diverges from real OpenSearch Service REST paths.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateDomain, DescribeDomain, tagging]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/opensearch/... ./tests/integration/opensearch/...]

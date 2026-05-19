@@ -1,0 +1,22 @@
+service: cloudwatch
+status: not_started
+priority: p1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [query, aws_json_inferred]
+implementation: [internal/services/cloudwatch]
+integration_tests: [tests/integration/cloudwatch]
+capability_docs: docs/services/cloudwatch.md
+operation_count_estimate: 12 supported
+current_support_level: Alarms, metrics, metric retrieval, state setting, and alarm tagging supported; no real metric evaluation.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Reconcile docs saying Query-only with implementation JSON target path.
+    - Review alarm and metric wire parity.
+  intentionally_partial: []
+handoff:
+  start_with: [PutMetricAlarm, GetMetricData, PutMetricData]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/cloudwatch/... ./tests/integration/cloudwatch/...]

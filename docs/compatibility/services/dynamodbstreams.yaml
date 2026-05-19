@@ -1,0 +1,22 @@
+service: dynamodbstreams
+status: not_started
+priority: p1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [aws_json_1_0, aws_json_1_1, rpcv2_cbor]
+implementation: [internal/services/dynamodbstreams]
+integration_tests: []
+capability_docs: docs/services/dynamodbstreams.md
+operation_count_estimate: 4 supported
+current_support_level: Focused DynamoDB Streams read API backed by DynamoDB stream-enabled tables.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Add integration coverage.
+    - Review JSON target dispatch and CBOR compatibility.
+  intentionally_partial: []
+handoff:
+  start_with: [ListStreams, DescribeStream, GetShardIterator, GetRecords]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/dynamodbstreams/...]

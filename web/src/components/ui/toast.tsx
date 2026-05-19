@@ -1,48 +1,48 @@
 import * as React from "react"
 import * as ToastPrimitive from "@radix-ui/react-toast"
 import { X } from "lucide-react"
+import { cva } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 const ToastProvider = ToastPrimitive.Provider
 const ToastViewport = React.forwardRef<
-  React.ElementRef<typeof ToastPrimitive.Viewport>,
+  React.ComponentRef<typeof ToastPrimitive.Viewport>,
   React.ComponentPropsWithoutRef<typeof ToastPrimitive.Viewport>
 >(({ className, ...props }, ref) => (
   <ToastPrimitive.Viewport
     ref={ref}
-    className={cn(
-      "fixed right-4 bottom-4 z-[100] flex max-h-screen w-80 flex-col gap-2",
-      className,
-    )}
+    className={cn("fixed right-4 bottom-4 z-[10001] flex max-h-screen w-80 flex-col gap-2", className)}
     {...props}
   />
 ))
 ToastViewport.displayName = "ToastViewport"
 
+const toastVariants = cva(
+  "flex items-start gap-3 rounded-lg border p-3 text-sm shadow-lg border-border bg-bg-elevated text-fg data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-right-full",
+  {
+    variants: {
+      variant: {
+        default: "",
+        success: "border-success/30 bg-success/5",
+        danger: "border-danger/30 bg-danger/5",
+      },
+    },
+    defaultVariants: { variant: "default" },
+  },
+)
+
 const Toast = React.forwardRef<
-  React.ElementRef<typeof ToastPrimitive.Root>,
+  React.ComponentRef<typeof ToastPrimitive.Root>,
   React.ComponentPropsWithoutRef<typeof ToastPrimitive.Root> & {
     variant?: "default" | "success" | "danger"
   }
 >(({ className, variant = "default", ...props }, ref) => (
-  <ToastPrimitive.Root
-    ref={ref}
-    className={cn(
-      "flex items-start gap-3 rounded-lg border p-3 text-sm shadow-lg",
-      "border-border bg-bg-elevated text-fg",
-      variant === "success" && "border-success/30 bg-success/5",
-      variant === "danger" && "border-danger/30 bg-danger/5",
-      "data-[state=open]:animate-in data-[state=closed]:animate-out",
-      "data-[state=closed]:slide-out-to-right-full",
-      className,
-    )}
-    {...props}
-  />
+  <ToastPrimitive.Root ref={ref} className={cn(toastVariants({ variant }), className)} {...props} />
 ))
 Toast.displayName = "Toast"
 
 const ToastTitle = React.forwardRef<
-  React.ElementRef<typeof ToastPrimitive.Title>,
+  React.ComponentRef<typeof ToastPrimitive.Title>,
   React.ComponentPropsWithoutRef<typeof ToastPrimitive.Title>
 >(({ className, ...props }, ref) => (
   <ToastPrimitive.Title ref={ref} className={cn("font-medium", className)} {...props} />
@@ -50,7 +50,7 @@ const ToastTitle = React.forwardRef<
 ToastTitle.displayName = "ToastTitle"
 
 const ToastDescription = React.forwardRef<
-  React.ElementRef<typeof ToastPrimitive.Description>,
+  React.ComponentRef<typeof ToastPrimitive.Description>,
   React.ComponentPropsWithoutRef<typeof ToastPrimitive.Description>
 >(({ className, ...props }, ref) => (
   <ToastPrimitive.Description
@@ -62,7 +62,7 @@ const ToastDescription = React.forwardRef<
 ToastDescription.displayName = "ToastDescription"
 
 const ToastClose = React.forwardRef<
-  React.ElementRef<typeof ToastPrimitive.Close>,
+  React.ComponentRef<typeof ToastPrimitive.Close>,
   React.ComponentPropsWithoutRef<typeof ToastPrimitive.Close>
 >(({ className, ...props }, ref) => (
   <ToastPrimitive.Close
@@ -96,7 +96,11 @@ export function ToastContextProvider({ children }: { children: React.ReactNode }
   const [toasts, setToasts] = React.useState<ToastItem[]>([])
 
   const toast = React.useCallback((item: Omit<ToastItem, "id">) => {
-    setToasts((prev) => [...prev, { ...item, id: crypto.randomUUID() }])
+    const id =
+      typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    setToasts((prev) => [...prev, { ...item, id }])
   }, [])
 
   return (
@@ -124,6 +128,7 @@ export function ToastContextProvider({ children }: { children: React.ReactNode }
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useToast() {
   const ctx = React.useContext(ToastContext)
   if (!ctx) throw new Error("useToast must be used within ToastContextProvider")

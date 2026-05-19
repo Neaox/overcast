@@ -1,0 +1,21 @@
+service: appregistry
+status: not_started
+priority: p1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [rest_json, aws_json_1_0, aws_json_1_1, rpcv2_cbor]
+implementation: [internal/services/appregistry]
+integration_tests: [tests/integration/appregistry]
+capability_docs: docs/services/appregistry.md
+operation_count_estimate: 21 tracked items
+current_support_level: Applications, attribute groups, associations, and CloudFormation resource types supported; some behavior is config-only.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Review inert/config-only behavior and no-pagination behavior.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateApplication, AssociateResource, tagging]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/appregistry/... ./tests/integration/appregistry/...]

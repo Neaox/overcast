@@ -1,0 +1,40 @@
+{
+  "name": "@overcast/compat-cdk",
+  "version": "0.0.1",
+  "description": "AWS CDK v2 compatibility tests for Overcast",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --import tsx/esm src/runner.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-api-gateway": "^3.1020.0",
+    "@aws-sdk/client-cloudformation": "^3.1020.0",
+    "@aws-sdk/client-cloudwatch-logs": "^3.1020.0",
+    "@aws-sdk/client-dynamodb": "^3.1020.0",
+    "@aws-sdk/client-ec2": "^3.1020.0",
+    "@aws-sdk/client-eventbridge": "^3.1020.0",
+    "@aws-sdk/client-iam": "^3.1020.0",
+    "@aws-sdk/client-kms": "^3.1020.0",
+    "@aws-sdk/client-lambda": "^3.1020.0",
+    "@aws-sdk/client-s3": "^3.1020.0",
+    "@aws-sdk/client-secrets-manager": "^3.1020.0",
+    "@aws-sdk/client-sfn": "^3.1020.0",
+    "@aws-sdk/client-sns": "^3.1020.0",
+    "@aws-sdk/client-sqs": "^3.1020.0",
+    "@aws-sdk/client-ssm": "^3.1020.0",
+    "@smithy/node-http-handler": "^4.4.4",
+    "aws-cdk-lib": "^2.220.0",
+    "constructs": "^10.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "aws-cdk": "^2.1118.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

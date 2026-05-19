@@ -1,0 +1,22 @@
+service: transfer
+status: not_started
+priority: p1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [aws_json_1_0, aws_json_1_1, rpcv2_cbor]
+implementation: [internal/services/transfer]
+integration_tests: [tests/integration/transfer]
+capability_docs: docs/services/transfer.md
+operation_count_estimate: 10 tracked, all inert
+current_support_level: Metadata-only server/user CRUD; no SFTP/FTPS/FTP daemon or auth data plane.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Add explicit protocol notes to docs.
+    - Review inert status versus supported status for SDK-facing CRUD compatibility.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateServer, CreateUser, DescribeServer]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/transfer/... ./tests/integration/transfer/...]

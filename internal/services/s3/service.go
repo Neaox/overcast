@@ -25,14 +25,18 @@
 package s3
 
 import (
+	"context"
+	"fmt"
+	"io"
+
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
-	"github.com/your-org/overcast/internal/clock"
-	"github.com/your-org/overcast/internal/config"
-	"github.com/your-org/overcast/internal/events"
-	"github.com/your-org/overcast/internal/serviceutil"
-	"github.com/your-org/overcast/internal/state"
+	"github.com/Neaox/overcast/internal/clock"
+	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/Neaox/overcast/internal/state"
 )
 
 const serviceName = "s3"
@@ -63,8 +67,21 @@ func (s *Service) Name() string { return serviceName }
 // InitNotifications wires up the S3 event notification dispatcher.
 // Call this after constructing both the S3 and SQS services so the router can
 // pass the SQS enqueuer without creating an import cycle between services.
-func (s *Service) InitNotifications(enqueuer events.MessageEnqueuer, bus *events.Bus, logger *zap.Logger) {
-	NewNotificationDispatcher(s.handler.store, enqueuer, bus, logger, s.cfg.Region)
+// invoker may be nil when the lambda service is disabled.
+func (s *Service) InitNotifications(enqueuer events.MessageEnqueuer, invoker events.FunctionInvoker, bus *events.Bus, logger *zap.Logger) {
+	NewNotificationDispatcher(s.handler.store, enqueuer, invoker, bus, logger, s.cfg.Region)
+}
+
+// GetObjectBytes returns the full body of an S3 object for internal callers
+// such as the Lambda S3-reactive sync watcher.
+// Returns an error if the bucket or key does not exist.
+func (s *Service) GetObjectBytes(ctx context.Context, bucket, key string) ([]byte, error) {
+	f, aerr := s.handler.store.openBody(bucket, key)
+	if aerr != nil {
+		return nil, fmt.Errorf("s3: get object %s/%s: %w", bucket, key, aerr)
+	}
+	defer f.Close()
+	return io.ReadAll(f)
 }
 
 // RegisterRoutes mounts all S3 endpoints onto the given router.

@@ -1,0 +1,22 @@
+service: scheduler
+status: not_started
+priority: p1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [rest_json, aws_json_1_0, aws_json_1_1, rpcv2_cbor]
+implementation: [internal/services/scheduler]
+integration_tests: [tests/integration/scheduler]
+capability_docs: docs/services/scheduler.md
+operation_count_estimate: 12 supported
+current_support_level: Schedule groups, schedules, and tags supported; target dispatch limited.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Review target dispatch docs versus code.
+    - Mark unsupported target types and advanced scheduler features as partial.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateSchedule, target dispatch, flexible windows]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/scheduler/... ./tests/integration/scheduler/...]

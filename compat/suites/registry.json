@@ -1,0 +1,2476 @@
+{
+  "$schema": "./registry.schema.json",
+  "version": 1,
+  "comment": "Canonical list of all compat test groups and tests. This is the single source of truth shared across all SDK/CLI suites. Every suite runner should load this file and emit 'skip' for any test it has not yet implemented, ensuring the dashboard always shows a consistent test matrix regardless of which suite is running.",
+  "groups": [
+    {
+      "service": "s3",
+      "name": "s3-crud",
+      "tests": [
+        {
+          "name": "CreateBucket"
+        },
+        {
+          "name": "PutObject",
+          "depends": ["CreateBucket"]
+        },
+        {
+          "name": "HeadObject",
+          "depends": ["PutObject"]
+        },
+        {
+          "name": "GetObject",
+          "depends": ["PutObject"]
+        },
+        {
+          "name": "ListObjectsV2",
+          "depends": ["PutObject"]
+        },
+        {
+          "name": "PutObjectMultipleKeys",
+          "op": "PutObject",
+          "depends": ["CreateBucket"]
+        },
+        {
+          "name": "ListObjectsV2Delimiter",
+          "op": "ListObjectsV2",
+          "depends": ["PutObjectMultipleKeys"]
+        },
+        {
+          "name": "DeleteObject",
+          "depends": ["PutObject"]
+        },
+        {
+          "name": "DeleteObjects",
+          "depends": ["PutObjectMultipleKeys"]
+        },
+        {
+          "name": "DeleteBucket",
+          "depends": ["DeleteObject", "DeleteObjects"]
+        }
+      ]
+    },
+    {
+      "service": "s3",
+      "name": "s3-copy",
+      "tests": [
+        {
+          "name": "CreateSourceBucket",
+          "op": null
+        },
+        {
+          "name": "PutSourceObject",
+          "depends": ["CreateSourceBucket"]
+        },
+        {
+          "name": "CopyObject",
+          "depends": ["PutSourceObject"]
+        }
+      ]
+    },
+    {
+      "service": "s3",
+      "name": "s3-multipart",
+      "tests": [
+        {
+          "name": "CreateMultipartUpload"
+        },
+        {
+          "name": "UploadPart",
+          "depends": ["CreateMultipartUpload"]
+        },
+        {
+          "name": "CompleteMultipartUpload",
+          "depends": ["UploadPart"]
+        },
+        {
+          "name": "AbortMultipartUpload",
+          "depends": ["CreateMultipartUpload"]
+        }
+      ]
+    },
+    {
+      "service": "s3",
+      "name": "s3-versioning",
+      "tests": [
+        {
+          "name": "PutBucketVersioning"
+        },
+        {
+          "name": "GetBucketVersioning",
+          "depends": ["PutBucketVersioning"]
+        }
+      ]
+    },
+    {
+      "service": "s3",
+      "name": "s3-tagging",
+      "tests": [
+        {
+          "name": "PutObjectTagging"
+        },
+        {
+          "name": "GetObjectTagging",
+          "depends": ["PutObjectTagging"]
+        },
+        {
+          "name": "PutBucketTagging"
+        },
+        {
+          "name": "GetBucketTagging",
+          "depends": ["PutBucketTagging"]
+        }
+      ]
+    },
+    {
+      "service": "s3",
+      "name": "s3-website",
+      "tests": [
+        {
+          "name": "PutBucketWebsite"
+        },
+        {
+          "name": "GetBucketWebsite",
+          "depends": ["PutBucketWebsite"]
+        }
+      ]
+    },
+    {
+      "service": "s3",
+      "name": "s3-cors",
+      "tests": [
+        {
+          "name": "PutBucketCors"
+        },
+        {
+          "name": "GetBucketCors",
+          "depends": ["PutBucketCors"]
+        }
+      ]
+    },
+    {
+      "service": "sqs",
+      "name": "sqs-queues",
+      "tests": [
+        {
+          "name": "CreateQueue"
+        },
+        {
+          "name": "GetQueueUrl",
+          "depends": ["CreateQueue"]
+        },
+        {
+          "name": "ListQueues",
+          "depends": ["CreateQueue"]
+        },
+        {
+          "name": "SetQueueAttributes",
+          "depends": ["CreateQueue"]
+        },
+        {
+          "name": "GetQueueAttributes",
+          "depends": ["SetQueueAttributes"]
+        },
+        {
+          "name": "TagQueue",
+          "depends": ["CreateQueue"]
+        },
+        {
+          "name": "UntagQueue",
+          "depends": ["TagQueue"]
+        },
+        {
+          "name": "DeleteQueue",
+          "depends": [
+            "GetQueueUrl",
+            "ListQueues",
+            "GetQueueAttributes",
+            "UntagQueue"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "sqs",
+      "name": "sqs-messages",
+      "tests": [
+        {
+          "name": "SendMessage"
+        },
+        {
+          "name": "SendMessageBatch",
+          "depends": ["SendMessage"]
+        },
+        {
+          "name": "ReceiveMessage",
+          "depends": ["SendMessageBatch"]
+        },
+        {
+          "name": "DeleteMessage",
+          "depends": ["ReceiveMessage"]
+        },
+        {
+          "name": "ChangeMessageVisibility",
+          "depends": ["SendMessage"]
+        },
+        {
+          "name": "DeleteMessageBatch",
+          "depends": ["SendMessageBatch"]
+        },
+        {
+          "name": "PurgeQueue",
+          "depends": ["SendMessage"]
+        }
+      ]
+    },
+    {
+      "service": "sqs",
+      "name": "sqs-dlq",
+      "tests": [
+        {
+          "name": "CreateDLQ",
+          "op": "CreateQueue"
+        },
+        {
+          "name": "SetRedrivePolicy",
+          "op": "SetQueueAttributes",
+          "depends": ["CreateDLQ"]
+        },
+        {
+          "name": "GetRedrivePolicy",
+          "op": "GetQueueAttributes",
+          "depends": ["SetRedrivePolicy"]
+        }
+      ]
+    },
+    {
+      "service": "sqs",
+      "name": "sqs-fifo",
+      "tests": [
+        {
+          "name": "CreateFifoQueue",
+          "op": "CreateQueue"
+        },
+        {
+          "name": "SendFifoMessage",
+          "op": "SendMessage",
+          "depends": ["CreateFifoQueue"]
+        },
+        {
+          "name": "ReceiveFifoMessage",
+          "op": "ReceiveMessage",
+          "depends": ["SendFifoMessage"]
+        }
+      ]
+    },
+    {
+      "service": "dynamodb",
+      "name": "dynamodb-tables",
+      "tests": [
+        {
+          "name": "CreateTable"
+        },
+        {
+          "name": "DescribeTable",
+          "depends": ["CreateTable"]
+        },
+        {
+          "name": "ListTables",
+          "depends": ["CreateTable"]
+        },
+        {
+          "name": "UpdateTable",
+          "depends": ["CreateTable"]
+        },
+        {
+          "name": "DeleteTable",
+          "depends": ["DescribeTable", "ListTables", "UpdateTable"]
+        }
+      ]
+    },
+    {
+      "service": "dynamodb",
+      "name": "dynamodb-items",
+      "tests": [
+        {
+          "name": "PutItem"
+        },
+        {
+          "name": "GetItem",
+          "depends": ["PutItem"]
+        },
+        {
+          "name": "UpdateItem",
+          "depends": ["PutItem"]
+        },
+        {
+          "name": "PutItemConditionFail",
+          "op": "PutItem",
+          "depends": ["PutItem"]
+        },
+        {
+          "name": "DeleteItem",
+          "depends": ["PutItem"]
+        }
+      ]
+    },
+    {
+      "service": "dynamodb",
+      "name": "dynamodb-query",
+      "tests": [
+        {
+          "name": "Query"
+        },
+        {
+          "name": "QueryWithFilterExpression",
+          "op": "Query",
+          "depends": ["Query"]
+        },
+        {
+          "name": "QueryWithLimit",
+          "op": "Query",
+          "depends": ["Query"]
+        },
+        {
+          "name": "QueryPagination",
+          "op": "Query",
+          "depends": ["Query"]
+        },
+        {
+          "name": "Scan"
+        },
+        {
+          "name": "ScanWithFilter",
+          "op": "Scan",
+          "depends": ["Scan"]
+        }
+      ]
+    },
+    {
+      "service": "dynamodb",
+      "name": "dynamodb-batch",
+      "tests": [
+        {
+          "name": "BatchWriteItem"
+        },
+        {
+          "name": "BatchGetItem",
+          "depends": ["BatchWriteItem"]
+        }
+      ]
+    },
+    {
+      "service": "dynamodb",
+      "name": "dynamodb-txn",
+      "tests": [
+        {
+          "name": "TransactWriteItems"
+        },
+        {
+          "name": "TransactGetItems",
+          "depends": ["TransactWriteItems"]
+        },
+        {
+          "name": "TransactWriteConditionFail",
+          "op": "TransactWriteItems",
+          "depends": ["TransactWriteItems"]
+        }
+      ]
+    },
+    {
+      "service": "dynamodb",
+      "name": "dynamodb-ttl",
+      "tests": [
+        {
+          "name": "UpdateTimeToLive"
+        },
+        {
+          "name": "DescribeTimeToLive",
+          "depends": ["UpdateTimeToLive"]
+        }
+      ]
+    },
+    {
+      "service": "sns",
+      "name": "sns-topics",
+      "tests": [
+        {
+          "name": "CreateTopic"
+        },
+        {
+          "name": "ListTopics",
+          "depends": ["CreateTopic"]
+        },
+        {
+          "name": "GetTopicAttributes",
+          "depends": ["CreateTopic"]
+        },
+        {
+          "name": "SetTopicAttributes",
+          "depends": ["CreateTopic"]
+        },
+        {
+          "name": "DeleteTopic",
+          "depends": ["ListTopics", "GetTopicAttributes", "SetTopicAttributes"]
+        }
+      ]
+    },
+    {
+      "service": "sns",
+      "name": "sns-publish",
+      "tests": [
+        {
+          "name": "Publish"
+        },
+        {
+          "name": "PublishWithAttributes",
+          "op": "Publish",
+          "depends": ["Publish"]
+        },
+        {
+          "name": "PublishBatch",
+          "depends": ["Publish"]
+        }
+      ]
+    },
+    {
+      "service": "sns",
+      "name": "sns-subscriptions",
+      "tests": [
+        {
+          "name": "SubscribeSQS"
+        },
+        {
+          "name": "ListSubscriptionsByTopic",
+          "depends": ["SubscribeSQS"]
+        },
+        {
+          "name": "GetSubscriptionAttributes",
+          "depends": ["SubscribeSQS"]
+        },
+        {
+          "name": "PublishDeliveredToSQS",
+          "op": "Publish",
+          "depends": ["SubscribeSQS"]
+        },
+        {
+          "name": "SetSubscriptionAttributes",
+          "depends": ["SubscribeSQS"]
+        },
+        {
+          "name": "Unsubscribe",
+          "depends": [
+            "ListSubscriptionsByTopic",
+            "GetSubscriptionAttributes",
+            "PublishDeliveredToSQS",
+            "SetSubscriptionAttributes"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "lambda",
+      "name": "lambda-crud",
+      "tests": [
+        {
+          "name": "CreateFunction"
+        },
+        {
+          "name": "GetFunction",
+          "depends": ["CreateFunction"]
+        },
+        {
+          "name": "ListFunctions",
+          "depends": ["CreateFunction"]
+        },
+        {
+          "name": "UpdateFunctionCode",
+          "depends": ["CreateFunction"]
+        },
+        {
+          "name": "UpdateFunctionConfiguration",
+          "depends": ["CreateFunction"]
+        },
+        {
+          "name": "DeleteFunction",
+          "depends": [
+            "GetFunction",
+            "ListFunctions",
+            "UpdateFunctionCode",
+            "UpdateFunctionConfiguration"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "lambda",
+      "name": "lambda-invoke",
+      "tests": [
+        {
+          "name": "InvokeDryRun",
+          "op": "Invoke"
+        },
+        {
+          "name": "InvokeSync",
+          "op": "Invoke",
+          "requires": ["docker"],
+          "depends": ["InvokeDryRun"]
+        },
+        {
+          "name": "InvokeAsync",
+          "op": "Invoke",
+          "requires": ["docker"],
+          "depends": ["InvokeDryRun"]
+        }
+      ]
+    },
+    {
+      "service": "lambda",
+      "name": "lambda-invoke-stream",
+      "tests": [
+        {
+          "name": "InvokeWithResponseStream",
+          "op": "InvokeWithResponseStream",
+          "requires": ["docker"]
+        }
+      ]
+    },
+    {
+      "service": "lambda",
+      "name": "lambda-aliases",
+      "tests": [
+        {
+          "name": "PublishVersion"
+        },
+        {
+          "name": "ListVersionsByFunction",
+          "depends": ["PublishVersion"]
+        },
+        {
+          "name": "CreateAlias",
+          "depends": ["PublishVersion"]
+        },
+        {
+          "name": "GetAlias",
+          "depends": ["CreateAlias"]
+        },
+        {
+          "name": "ListAliases",
+          "depends": ["CreateAlias"]
+        },
+        {
+          "name": "UpdateAlias",
+          "depends": ["CreateAlias"]
+        },
+        {
+          "name": "DeleteAlias",
+          "depends": ["GetAlias", "ListAliases", "UpdateAlias"]
+        }
+      ]
+    },
+    {
+      "service": "lambda",
+      "name": "lambda-layers",
+      "tests": [
+        {
+          "name": "PublishLayerVersion"
+        },
+        {
+          "name": "ListLayers",
+          "depends": ["PublishLayerVersion"]
+        },
+        {
+          "name": "DeleteLayerVersion",
+          "depends": ["ListLayers"]
+        }
+      ]
+    },
+    {
+      "service": "cloudwatch-logs",
+      "name": "logs-groups",
+      "tests": [
+        {
+          "name": "CreateLogGroup"
+        },
+        {
+          "name": "DescribeLogGroups",
+          "depends": ["CreateLogGroup"]
+        },
+        {
+          "name": "PutRetentionPolicy",
+          "depends": ["CreateLogGroup"]
+        },
+        {
+          "name": "VerifyRetentionPolicy",
+          "op": null,
+          "depends": ["PutRetentionPolicy"]
+        },
+        {
+          "name": "DeleteRetentionPolicy",
+          "depends": ["VerifyRetentionPolicy"]
+        },
+        {
+          "name": "DeleteLogGroup",
+          "depends": [
+            "DescribeLogGroups",
+            "DeleteRetentionPolicy",
+            "CreateLogStream",
+            "TagLogGroup"
+          ]
+        },
+        {
+          "name": "CreateLogStream",
+          "depends": ["CreateLogGroup"]
+        },
+        {
+          "name": "TagLogGroup",
+          "depends": ["CreateLogGroup"]
+        }
+      ]
+    },
+    {
+      "service": "cloudwatch-logs",
+      "name": "logs-events",
+      "tests": [
+        {
+          "name": "PutLogEvents"
+        },
+        {
+          "name": "GetLogEvents",
+          "depends": ["PutLogEvents"]
+        },
+        {
+          "name": "FilterLogEvents",
+          "depends": ["PutLogEvents"]
+        },
+        {
+          "name": "DescribeLogStreams",
+          "depends": ["PutLogEvents"]
+        },
+        {
+          "name": "DeleteLogStream",
+          "depends": ["GetLogEvents", "FilterLogEvents", "DescribeLogStreams"]
+        }
+      ]
+    },
+    {
+      "service": "ses",
+      "name": "ses-send",
+      "tests": [
+        {
+          "name": "SendEmail"
+        },
+        {
+          "name": "SendRawEmail",
+          "depends": ["SendEmail"]
+        },
+        {
+          "name": "SendEmailWithReplyTo",
+          "op": "SendEmail",
+          "depends": ["SendEmail"]
+        },
+        {
+          "name": "GetSendQuota"
+        }
+      ]
+    },
+    {
+      "service": "ses",
+      "name": "ses-identities",
+      "tests": [
+        {
+          "name": "VerifyEmailIdentity"
+        },
+        {
+          "name": "ListIdentities",
+          "depends": ["VerifyEmailIdentity"]
+        },
+        {
+          "name": "GetIdentityVerificationAttributes",
+          "depends": ["VerifyEmailIdentity"]
+        },
+        {
+          "name": "VerifyEmailAddress",
+          "depends": ["VerifyEmailIdentity"]
+        },
+        {
+          "name": "ListVerifiedEmailAddresses",
+          "depends": ["VerifyEmailAddress"]
+        },
+        {
+          "name": "DeleteIdentity",
+          "depends": [
+            "ListIdentities",
+            "GetIdentityVerificationAttributes",
+            "ListVerifiedEmailAddresses"
+          ]
+        },
+        {
+          "name": "SetIdentityFeedbackForwardingEnabled",
+          "depends": ["VerifyEmailIdentity"]
+        }
+      ]
+    },
+    {
+      "service": "ses",
+      "name": "ses-templates",
+      "tests": [
+        {
+          "name": "CreateTemplate"
+        },
+        {
+          "name": "GetTemplate",
+          "depends": ["CreateTemplate"]
+        },
+        {
+          "name": "UpdateTemplate",
+          "depends": ["CreateTemplate"]
+        },
+        {
+          "name": "ListTemplates",
+          "depends": ["CreateTemplate"]
+        },
+        {
+          "name": "SendTemplatedEmail",
+          "depends": ["CreateTemplate"]
+        },
+        {
+          "name": "DeleteTemplate",
+          "depends": [
+            "GetTemplate",
+            "UpdateTemplate",
+            "ListTemplates",
+            "SendTemplatedEmail"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "iam",
+      "name": "iam-users",
+      "tests": [
+        {
+          "name": "CreateUser"
+        },
+        {
+          "name": "GetUser",
+          "depends": ["CreateUser"]
+        },
+        {
+          "name": "ListUsers",
+          "depends": ["CreateUser"]
+        },
+        {
+          "name": "CreateAccessKey",
+          "depends": ["CreateUser"]
+        },
+        {
+          "name": "DeleteAccessKey",
+          "depends": ["CreateAccessKey"]
+        },
+        {
+          "name": "PutUserPolicy",
+          "depends": ["CreateUser"]
+        },
+        {
+          "name": "GetUserPolicy",
+          "depends": ["PutUserPolicy"]
+        },
+        {
+          "name": "DeleteUserPolicy",
+          "depends": ["GetUserPolicy"]
+        },
+        {
+          "name": "UpdateUser",
+          "depends": ["CreateUser"]
+        },
+        {
+          "name": "ListAccessKeys",
+          "depends": ["CreateUser"]
+        },
+        {
+          "name": "DeleteUser",
+          "depends": [
+            "DeleteAccessKey",
+            "DeleteUserPolicy",
+            "UpdateUser",
+            "ListAccessKeys"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "iam",
+      "name": "iam-roles",
+      "tests": [
+        {
+          "name": "CreateRole"
+        },
+        {
+          "name": "GetRole",
+          "depends": ["CreateRole"]
+        },
+        {
+          "name": "ListRoles",
+          "depends": ["CreateRole"]
+        },
+        {
+          "name": "AttachRolePolicy",
+          "depends": ["CreateRole"]
+        },
+        {
+          "name": "ListAttachedRolePolicies",
+          "depends": ["AttachRolePolicy"]
+        },
+        {
+          "name": "DetachRolePolicy",
+          "depends": ["ListAttachedRolePolicies"]
+        },
+        {
+          "name": "CreateInstanceProfile",
+          "depends": ["CreateRole"]
+        },
+        {
+          "name": "AddRoleToInstanceProfile",
+          "depends": ["CreateInstanceProfile"]
+        },
+        {
+          "name": "GetInstanceProfile",
+          "depends": ["AddRoleToInstanceProfile"]
+        },
+        {
+          "name": "DeleteRole",
+          "depends": [
+            "DetachRolePolicy",
+            "DeleteRolePolicy",
+            "GetInstanceProfile"
+          ]
+        },
+        {
+          "name": "PutRolePolicy",
+          "depends": ["CreateRole"]
+        },
+        {
+          "name": "GetRolePolicy",
+          "depends": ["PutRolePolicy"]
+        },
+        {
+          "name": "ListRolePolicies",
+          "depends": ["PutRolePolicy"]
+        },
+        {
+          "name": "DeleteRolePolicy",
+          "depends": ["GetRolePolicy", "ListRolePolicies"]
+        }
+      ]
+    },
+    {
+      "service": "iam",
+      "name": "iam-policies",
+      "tests": [
+        {
+          "name": "CreatePolicy"
+        },
+        {
+          "name": "GetPolicy",
+          "depends": ["CreatePolicy"]
+        },
+        {
+          "name": "ListPolicies",
+          "depends": ["CreatePolicy"]
+        },
+        {
+          "name": "DeletePolicy",
+          "depends": ["GetPolicy", "ListPolicies"]
+        }
+      ]
+    },
+    {
+      "service": "iam",
+      "name": "iam-groups",
+      "tests": [
+        {
+          "name": "CreateGroup"
+        },
+        {
+          "name": "AddUserToGroup",
+          "depends": ["CreateGroup"]
+        },
+        {
+          "name": "ListGroupsForUser",
+          "depends": ["AddUserToGroup"]
+        },
+        {
+          "name": "RemoveUserFromGroup",
+          "depends": ["ListGroupsForUser"]
+        },
+        {
+          "name": "GetGroup",
+          "depends": ["CreateGroup"]
+        },
+        {
+          "name": "DeleteGroup",
+          "depends": ["GetGroup"]
+        }
+      ]
+    },
+    {
+      "service": "sts",
+      "name": "sts-identity",
+      "tests": [
+        {
+          "name": "GetCallerIdentity"
+        },
+        {
+          "name": "GetSessionToken"
+        },
+        {
+          "name": "GetFederationToken"
+        }
+      ]
+    },
+    {
+      "service": "sts",
+      "name": "sts-assume",
+      "tests": [
+        {
+          "name": "AssumeRole"
+        },
+        {
+          "name": "AssumeRoleWithWebIdentity"
+        }
+      ]
+    },
+    {
+      "service": "secretsmanager",
+      "name": "secretsmanager-crud",
+      "tests": [
+        {
+          "name": "CreateSecret"
+        },
+        {
+          "name": "GetSecretValue",
+          "depends": ["CreateSecret"]
+        },
+        {
+          "name": "DescribeSecret",
+          "depends": ["CreateSecret"]
+        },
+        {
+          "name": "PutSecretValue",
+          "depends": ["CreateSecret"]
+        },
+        {
+          "name": "ListSecretVersionIds",
+          "depends": ["PutSecretValue"]
+        },
+        {
+          "name": "UpdateSecret",
+          "depends": ["CreateSecret"]
+        },
+        {
+          "name": "TagResource",
+          "depends": ["CreateSecret"]
+        },
+        {
+          "name": "UntagResource",
+          "depends": ["TagResource"]
+        },
+        {
+          "name": "GetRandomPassword"
+        },
+        {
+          "name": "BatchGetSecretValue",
+          "depends": ["CreateSecret"]
+        },
+        {
+          "name": "ListSecrets",
+          "depends": ["CreateSecret"]
+        },
+        {
+          "name": "DeleteSecret",
+          "depends": [
+            "GetSecretValue",
+            "DescribeSecret",
+            "ListSecretVersionIds",
+            "UpdateSecret",
+            "UntagResource",
+            "BatchGetSecretValue",
+            "ListSecrets"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "secretsmanager",
+      "name": "secretsmanager-rotate",
+      "tests": [
+        {
+          "name": "RotateSecret"
+        },
+        {
+          "name": "CancelRotateSecret",
+          "depends": ["RotateSecret"]
+        }
+      ]
+    },
+    {
+      "service": "kms",
+      "name": "kms-keys",
+      "tests": [
+        {
+          "name": "CreateKey"
+        },
+        {
+          "name": "DescribeKey",
+          "depends": ["CreateKey"]
+        },
+        {
+          "name": "CreateKmsAlias",
+          "depends": ["CreateKey"]
+        },
+        {
+          "name": "ListKmsAliases",
+          "depends": ["CreateKmsAlias"]
+        },
+        {
+          "name": "ListKeys",
+          "depends": ["CreateKey"]
+        },
+        {
+          "name": "DisableKey",
+          "depends": ["CreateKey"]
+        },
+        {
+          "name": "EnableKey",
+          "depends": ["DisableKey"]
+        },
+        {
+          "name": "ScheduleKeyDeletion",
+          "depends": ["EnableKey"]
+        },
+        {
+          "name": "CancelKeyDeletion",
+          "depends": ["ScheduleKeyDeletion"]
+        },
+        {
+          "name": "TagKMSResource",
+          "op": "TagResource",
+          "depends": ["CreateKey"]
+        },
+        {
+          "name": "ListKMSResourceTags",
+          "op": "ListResourceTags",
+          "depends": ["TagKMSResource"]
+        },
+        {
+          "name": "UntagKMSResource",
+          "op": "UntagResource",
+          "depends": ["ListKMSResourceTags"]
+        }
+      ]
+    },
+    {
+      "service": "kms",
+      "name": "kms-crypto",
+      "tests": [
+        {
+          "name": "Encrypt"
+        },
+        {
+          "name": "Decrypt",
+          "depends": ["Encrypt"]
+        },
+        {
+          "name": "GenerateDataKey"
+        },
+        {
+          "name": "GenerateDataKeyWithoutPlaintext"
+        }
+      ]
+    },
+    {
+      "service": "kms",
+      "name": "kms-asymmetric",
+      "tests": [
+        {
+          "name": "Sign"
+        },
+        {
+          "name": "Verify",
+          "depends": ["Sign"]
+        }
+      ]
+    },
+    {
+      "service": "ssm",
+      "name": "ssm-parameters",
+      "tests": [
+        {
+          "name": "PutParameter"
+        },
+        {
+          "name": "GetParameter",
+          "depends": ["PutParameter"]
+        },
+        {
+          "name": "PutParameterOverwrite",
+          "op": "PutParameter",
+          "depends": ["PutParameter"]
+        },
+        {
+          "name": "GetParameterHistory",
+          "depends": ["PutParameterOverwrite"]
+        },
+        {
+          "name": "PutMultipleParameters",
+          "op": "PutParameter",
+          "depends": ["PutParameter"]
+        },
+        {
+          "name": "GetParameters",
+          "depends": ["PutMultipleParameters"]
+        },
+        {
+          "name": "DescribeParameters",
+          "depends": ["PutParameter"]
+        },
+        {
+          "name": "TagParameter",
+          "op": "AddTagsToResource",
+          "depends": ["PutParameter"]
+        },
+        {
+          "name": "ListSSMTagsForResource",
+          "depends": ["TagParameter"]
+        },
+        {
+          "name": "DeleteParameters",
+          "depends": [
+            "GetParameter",
+            "GetParameterHistory",
+            "GetParameters",
+            "DescribeParameters",
+            "ListSSMTagsForResource"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "ssm",
+      "name": "ssm-secure",
+      "tests": [
+        {
+          "name": "PutSecureStringParameter",
+          "op": "PutParameter"
+        },
+        {
+          "name": "GetSecureStringParameter",
+          "op": "GetParameter",
+          "depends": ["PutSecureStringParameter"]
+        },
+        {
+          "name": "GetSecureStringWithoutDecryption",
+          "op": "GetParameter",
+          "depends": ["PutSecureStringParameter"]
+        }
+      ]
+    },
+    {
+      "service": "ssm",
+      "name": "ssm-path",
+      "tests": [
+        {
+          "name": "GetParametersByPath"
+        },
+        {
+          "name": "GetParametersByPathRecursive",
+          "op": "GetParametersByPath",
+          "depends": ["GetParametersByPath"]
+        },
+        {
+          "name": "GetParametersByPathPaginated",
+          "op": "GetParametersByPath",
+          "depends": ["GetParametersByPath"]
+        }
+      ]
+    },
+    {
+      "service": "kinesis",
+      "name": "kinesis-streams",
+      "tests": [
+        {
+          "name": "CreateStream"
+        },
+        {
+          "name": "DescribeStream",
+          "depends": ["CreateStream"]
+        },
+        {
+          "name": "DescribeStreamSummary",
+          "depends": ["CreateStream"]
+        },
+        {
+          "name": "ListStreams",
+          "depends": ["CreateStream"]
+        },
+        {
+          "name": "AddTagsToStream",
+          "depends": ["CreateStream"]
+        },
+        {
+          "name": "ListTagsForStream",
+          "depends": ["AddTagsToStream"]
+        },
+        {
+          "name": "DeleteStream",
+          "depends": [
+            "DescribeStream",
+            "DescribeStreamSummary",
+            "ListStreams",
+            "ListTagsForStream"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "kinesis",
+      "name": "kinesis-records",
+      "tests": [
+        {
+          "name": "PutRecord"
+        },
+        {
+          "name": "PutRecords",
+          "depends": ["PutRecord"]
+        },
+        {
+          "name": "GetShardIterator",
+          "depends": ["PutRecord"]
+        },
+        {
+          "name": "GetRecords",
+          "depends": ["GetShardIterator"]
+        }
+      ]
+    },
+    {
+      "service": "kinesis",
+      "name": "kinesis-shards",
+      "tests": [
+        {
+          "name": "ListShards"
+        },
+        {
+          "name": "SplitShard",
+          "depends": ["ListShards"]
+        },
+        {
+          "name": "MergeShards",
+          "depends": ["SplitShard"]
+        }
+      ]
+    },
+    {
+      "service": "eventbridge",
+      "name": "eventbridge-buses",
+      "tests": [
+        {
+          "name": "CreateEventBus"
+        },
+        {
+          "name": "DescribeEventBus",
+          "depends": ["CreateEventBus"]
+        },
+        {
+          "name": "ListEventBuses",
+          "depends": ["CreateEventBus"]
+        },
+        {
+          "name": "TagEventBus",
+          "op": "TagResource",
+          "depends": ["CreateEventBus"]
+        },
+        {
+          "name": "ListEventBridgeTagsForResource",
+          "depends": ["TagEventBus"]
+        },
+        {
+          "name": "DeleteEventBus",
+          "depends": [
+            "DescribeEventBus",
+            "ListEventBuses",
+            "ListEventBridgeTagsForResource"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "eventbridge",
+      "name": "eventbridge-rules",
+      "tests": [
+        {
+          "name": "PutRule"
+        },
+        {
+          "name": "DescribeRule",
+          "depends": ["PutRule"]
+        },
+        {
+          "name": "ListRules",
+          "depends": ["PutRule"]
+        },
+        {
+          "name": "PutTargets",
+          "depends": ["PutRule"]
+        },
+        {
+          "name": "ListTargetsByRule",
+          "depends": ["PutTargets"]
+        },
+        {
+          "name": "DisableRule",
+          "depends": ["PutRule"]
+        },
+        {
+          "name": "EnableRule",
+          "depends": ["DisableRule"]
+        },
+        {
+          "name": "RemoveTargets",
+          "depends": ["ListTargetsByRule", "EnableRule"]
+        },
+        {
+          "name": "DeleteRule",
+          "depends": ["RemoveTargets"]
+        }
+      ]
+    },
+    {
+      "service": "eventbridge",
+      "name": "eventbridge-events",
+      "tests": [
+        {
+          "name": "PutEvents"
+        },
+        {
+          "name": "PutEventsBatch",
+          "op": "PutEvents",
+          "depends": ["PutEvents"]
+        }
+      ]
+    },
+    {
+      "service": "cloudformation",
+      "name": "cloudformation-stacks",
+      "tests": [
+        {
+          "name": "CreateStack"
+        },
+        {
+          "name": "DescribeStacks",
+          "depends": ["CreateStack"]
+        },
+        {
+          "name": "ListStacks",
+          "depends": ["CreateStack"]
+        },
+        {
+          "name": "DeleteStack",
+          "depends": ["DescribeStacks", "ListStacks", "UpdateStack"]
+        },
+        {
+          "name": "ValidateTemplate"
+        },
+        {
+          "name": "UpdateStack",
+          "depends": ["CreateStack"]
+        }
+      ]
+    },
+    {
+      "service": "ec2",
+      "name": "ec2-instances",
+      "tests": [
+        {
+          "name": "DescribeRegions"
+        },
+        {
+          "name": "DescribeAvailabilityZones"
+        },
+        {
+          "name": "DescribeInstanceTypes"
+        },
+        {
+          "name": "DescribeImages"
+        },
+        {
+          "name": "RunInstances"
+        },
+        {
+          "name": "DescribeInstances",
+          "depends": ["RunInstances"]
+        },
+        {
+          "name": "StopInstances",
+          "depends": ["RunInstances"]
+        },
+        {
+          "name": "StartInstances",
+          "depends": ["StopInstances"]
+        },
+        {
+          "name": "TerminateInstances",
+          "depends": ["DescribeInstances", "StartInstances"]
+        }
+      ]
+    },
+    {
+      "service": "ec2",
+      "name": "ec2-vpc",
+      "tests": [
+        {
+          "name": "CreateVpc"
+        },
+        {
+          "name": "CreateInternetGateway"
+        },
+        {
+          "name": "DescribeVpcs",
+          "depends": ["CreateVpc"]
+        },
+        {
+          "name": "CreateSubnet",
+          "depends": ["CreateVpc"]
+        },
+        {
+          "name": "CreateSecurityGroup",
+          "depends": ["CreateVpc"]
+        },
+        {
+          "name": "AttachInternetGateway",
+          "depends": ["CreateVpc", "CreateInternetGateway"]
+        },
+        {
+          "name": "DescribeSubnets",
+          "depends": ["CreateSubnet"]
+        },
+        {
+          "name": "DeleteSecurityGroup",
+          "depends": ["CreateSecurityGroup"]
+        },
+        {
+          "name": "DeleteSubnet",
+          "depends": ["DescribeSubnets"]
+        },
+        {
+          "name": "DeleteVpc",
+          "depends": [
+            "DeleteSecurityGroup",
+            "DeleteSubnet",
+            "AttachInternetGateway"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "ec2",
+      "name": "ec2-security-group-rules",
+      "tests": [
+        {
+          "name": "AuthorizeSecurityGroupIngress"
+        },
+        {
+          "name": "DescribeSecurityGroups",
+          "depends": ["AuthorizeSecurityGroupIngress"]
+        },
+        {
+          "name": "RevokeSecurityGroupIngress",
+          "depends": ["DescribeSecurityGroups"]
+        }
+      ]
+    },
+    {
+      "service": "ec2",
+      "name": "ec2-keypairs",
+      "tests": [
+        {
+          "name": "CreateKeyPair"
+        },
+        {
+          "name": "DescribeKeyPairs",
+          "depends": ["CreateKeyPair"]
+        },
+        {
+          "name": "DeleteKeyPair",
+          "depends": ["DescribeKeyPairs"]
+        }
+      ]
+    },
+    {
+      "service": "ecs",
+      "name": "ecs-clusters",
+      "tests": [
+        {
+          "name": "CreateCluster"
+        },
+        {
+          "name": "DescribeClusters",
+          "depends": ["CreateCluster"]
+        },
+        {
+          "name": "ListClusters",
+          "depends": ["CreateCluster"]
+        },
+        {
+          "name": "RegisterTaskDefinition",
+          "depends": ["CreateCluster"]
+        },
+        {
+          "name": "ListTaskDefinitions",
+          "depends": ["RegisterTaskDefinition"]
+        },
+        {
+          "name": "DeregisterTaskDefinition",
+          "depends": ["ListTaskDefinitions"]
+        },
+        {
+          "name": "DeleteCluster",
+          "depends": [
+            "DescribeClusters",
+            "ListClusters",
+            "DeregisterTaskDefinition"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "ecs",
+      "name": "ecs-tasks",
+      "tests": [
+        {
+          "name": "RunTask"
+        },
+        {
+          "name": "DescribeTasks",
+          "depends": ["RunTask"]
+        },
+        {
+          "name": "ListTasks",
+          "depends": ["RunTask"]
+        },
+        {
+          "name": "StopTask",
+          "depends": ["DescribeTasks", "ListTasks"]
+        }
+      ]
+    },
+    {
+      "service": "ecs",
+      "name": "ecs-services",
+      "tests": [
+        {
+          "name": "CreateService"
+        },
+        {
+          "name": "DescribeServices",
+          "depends": ["CreateService"]
+        },
+        {
+          "name": "ListServices",
+          "depends": ["CreateService"]
+        },
+        {
+          "name": "UpdateService",
+          "depends": ["CreateService"]
+        },
+        {
+          "name": "DeleteService",
+          "depends": ["DescribeServices", "ListServices", "UpdateService"]
+        }
+      ]
+    },
+    {
+      "service": "elasticache",
+      "name": "elasticache-clusters",
+      "tests": [
+        {
+          "name": "CreateCacheCluster"
+        },
+        {
+          "name": "DescribeCacheClusters",
+          "depends": ["CreateCacheCluster"]
+        },
+        {
+          "name": "DeleteCacheCluster",
+          "depends": ["DescribeCacheClusters"]
+        }
+      ]
+    },
+    {
+      "service": "elasticache",
+      "name": "elasticache-modify",
+      "tests": [
+        {
+          "name": "ModifyCacheCluster"
+        },
+        {
+          "name": "ModifyReplicationGroup"
+        }
+      ]
+    },
+    {
+      "service": "elasticache",
+      "name": "elasticache-replication-groups",
+      "tests": [
+        {
+          "name": "CreateReplicationGroup"
+        },
+        {
+          "name": "DescribeReplicationGroups",
+          "depends": ["CreateReplicationGroup"]
+        }
+      ]
+    },
+    {
+      "service": "elasticache",
+      "name": "elasticache-subnet-groups",
+      "tests": [
+        {
+          "name": "CreateCacheSubnetGroup"
+        },
+        {
+          "name": "DescribeCacheSubnetGroups",
+          "depends": ["CreateCacheSubnetGroup"]
+        }
+      ]
+    },
+    {
+      "service": "elasticache",
+      "name": "elasticache-parameter-groups",
+      "tests": [
+        {
+          "name": "CreateCacheParameterGroup"
+        },
+        {
+          "name": "DescribeCacheParameterGroups",
+          "depends": ["CreateCacheParameterGroup"]
+        },
+        {
+          "name": "DeleteCacheParameterGroup",
+          "depends": ["DescribeCacheParameterGroups"]
+        }
+      ]
+    },
+    {
+      "service": "cognito",
+      "name": "cognito-userpools",
+      "tests": [
+        {
+          "name": "CreateUserPool"
+        },
+        {
+          "name": "DescribeUserPool",
+          "depends": ["CreateUserPool"]
+        },
+        {
+          "name": "ListUserPools",
+          "depends": ["CreateUserPool"]
+        },
+        {
+          "name": "CreateUserPoolClient",
+          "depends": ["CreateUserPool"]
+        },
+        {
+          "name": "ListUserPoolClients",
+          "depends": ["CreateUserPoolClient"]
+        },
+        {
+          "name": "AdminCreateUser",
+          "depends": ["CreateUserPool"]
+        },
+        {
+          "name": "ListUsers",
+          "depends": ["AdminCreateUser"]
+        },
+        {
+          "name": "AdminDeleteUser",
+          "depends": ["ListUsers"]
+        },
+        {
+          "name": "DeleteUserPool",
+          "depends": ["ListUserPoolClients", "AdminDeleteUser"]
+        }
+      ]
+    },
+    {
+      "service": "cognito",
+      "name": "cognito-token-validity",
+      "tests": [
+        {
+          "name": "CreateUserPoolClient with token validity",
+          "op": "CreateUserPoolClient"
+        },
+        {
+          "name": "DescribeUserPoolClient returns token validity",
+          "op": "DescribeUserPoolClient",
+          "depends": ["CreateUserPoolClient with token validity"]
+        },
+        {
+          "name": "UpdateUserPoolClient changes token validity",
+          "op": "UpdateUserPoolClient",
+          "depends": ["DescribeUserPoolClient returns token validity"]
+        },
+        {
+          "name": "DeleteUserPoolClient",
+          "depends": ["UpdateUserPoolClient changes token validity"]
+        }
+      ]
+    },
+    {
+      "service": "appsync",
+      "name": "appsync-apis",
+      "tests": [
+        {
+          "name": "CreateGraphqlApi"
+        },
+        {
+          "name": "GetGraphqlApi",
+          "depends": ["CreateGraphqlApi"]
+        },
+        {
+          "name": "UpdateGraphqlApi",
+          "depends": ["CreateGraphqlApi"]
+        },
+        {
+          "name": "ListGraphqlApis",
+          "depends": ["CreateGraphqlApi"]
+        },
+        {
+          "name": "DeleteGraphqlApi",
+          "depends": ["GetGraphqlApi", "UpdateGraphqlApi", "ListGraphqlApis"]
+        }
+      ]
+    },
+    {
+      "service": "appsync",
+      "name": "appsync-schemas",
+      "tests": [
+        {
+          "name": "StartSchemaCreation"
+        },
+        {
+          "name": "GetSchemaCreationStatus",
+          "depends": ["StartSchemaCreation"]
+        }
+      ]
+    },
+    {
+      "service": "appsync",
+      "name": "appsync-api-keys",
+      "tests": [
+        {
+          "name": "CreateApiKey"
+        },
+        {
+          "name": "ListApiKeys",
+          "depends": ["CreateApiKey"]
+        },
+        {
+          "name": "UpdateApiKey",
+          "depends": ["CreateApiKey"]
+        },
+        {
+          "name": "DeleteApiKey",
+          "depends": ["ListApiKeys", "UpdateApiKey"]
+        }
+      ]
+    },
+    {
+      "service": "appsync",
+      "name": "appsync-datasources",
+      "tests": [
+        {
+          "name": "CreateDataSource"
+        },
+        {
+          "name": "GetDataSource",
+          "depends": ["CreateDataSource"]
+        },
+        {
+          "name": "UpdateDataSource",
+          "depends": ["CreateDataSource"]
+        },
+        {
+          "name": "ListDataSources",
+          "depends": ["CreateDataSource"]
+        },
+        {
+          "name": "DeleteDataSource",
+          "depends": ["GetDataSource", "UpdateDataSource", "ListDataSources"]
+        }
+      ]
+    },
+    {
+      "service": "appsync",
+      "name": "appsync-functions",
+      "tests": [
+        {
+          "name": "CreateFunction"
+        },
+        {
+          "name": "GetFunction",
+          "depends": ["CreateFunction"]
+        },
+        {
+          "name": "UpdateFunction",
+          "depends": ["CreateFunction"]
+        },
+        {
+          "name": "ListFunctions",
+          "depends": ["CreateFunction"]
+        },
+        {
+          "name": "DeleteFunction",
+          "depends": ["GetFunction", "UpdateFunction", "ListFunctions"]
+        }
+      ]
+    },
+    {
+      "service": "appsync",
+      "name": "appsync-resolvers",
+      "tests": [
+        {
+          "name": "CreateResolver"
+        },
+        {
+          "name": "GetResolver",
+          "depends": ["CreateResolver"]
+        },
+        {
+          "name": "UpdateResolver",
+          "depends": ["CreateResolver"]
+        },
+        {
+          "name": "ListResolvers",
+          "depends": ["CreateResolver"]
+        },
+        {
+          "name": "ListResolversByFunction",
+          "depends": ["CreateResolver"]
+        },
+        {
+          "name": "DeleteResolver",
+          "depends": [
+            "GetResolver",
+            "UpdateResolver",
+            "ListResolvers",
+            "ListResolversByFunction"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "appsync",
+      "name": "appsync-types",
+      "tests": [
+        {
+          "name": "CreateType"
+        },
+        {
+          "name": "GetType",
+          "depends": ["CreateType"]
+        },
+        {
+          "name": "UpdateType",
+          "depends": ["CreateType"]
+        },
+        {
+          "name": "ListTypes",
+          "depends": ["CreateType"]
+        },
+        {
+          "name": "DeleteType",
+          "depends": ["GetType", "UpdateType", "ListTypes"]
+        }
+      ]
+    },
+    {
+      "service": "appsync",
+      "name": "appsync-tags",
+      "tests": [
+        {
+          "name": "TagResource"
+        },
+        {
+          "name": "ListTagsForResource",
+          "depends": ["TagResource"]
+        },
+        {
+          "name": "UntagResource",
+          "depends": ["ListTagsForResource"]
+        }
+      ]
+    },
+    {
+      "service": "appsync",
+      "name": "appsync-env-vars",
+      "tests": [
+        {
+          "name": "PutGraphqlApiEnvironmentVariables"
+        },
+        {
+          "name": "GetGraphqlApiEnvironmentVariables",
+          "depends": ["PutGraphqlApiEnvironmentVariables"]
+        }
+      ]
+    },
+    {
+      "service": "appsync",
+      "name": "appsync-domains",
+      "tests": [
+        {
+          "name": "CreateDomainName"
+        },
+        {
+          "name": "GetDomainName",
+          "depends": ["CreateDomainName"]
+        },
+        {
+          "name": "UpdateDomainName",
+          "depends": ["CreateDomainName"]
+        },
+        {
+          "name": "ListDomainNames",
+          "depends": ["CreateDomainName"]
+        },
+        {
+          "name": "AssociateApi",
+          "depends": ["CreateDomainName"]
+        },
+        {
+          "name": "GetApiAssociation",
+          "depends": ["AssociateApi"]
+        },
+        {
+          "name": "DisassociateApi",
+          "depends": ["GetApiAssociation"]
+        },
+        {
+          "name": "DeleteDomainName",
+          "depends": ["UpdateDomainName", "ListDomainNames", "DisassociateApi"]
+        }
+      ]
+    },
+    {
+      "service": "appsync",
+      "name": "appsync-cache",
+      "tests": [
+        {
+          "name": "CreateApiCache"
+        },
+        {
+          "name": "GetApiCache",
+          "depends": ["CreateApiCache"]
+        },
+        {
+          "name": "UpdateApiCache",
+          "depends": ["CreateApiCache"]
+        },
+        {
+          "name": "FlushApiCache",
+          "depends": ["CreateApiCache"]
+        },
+        {
+          "name": "DeleteApiCache",
+          "depends": ["GetApiCache", "UpdateApiCache", "FlushApiCache"]
+        }
+      ]
+    },
+    {
+      "service": "apigateway",
+      "name": "apigateway-rest",
+      "tests": [
+        {
+          "name": "CreateRestApi"
+        },
+        {
+          "name": "GetRestApis",
+          "depends": ["CreateRestApi"]
+        },
+        {
+          "name": "DeleteRestApi",
+          "depends": ["GetRestApis"]
+        }
+      ]
+    },
+    {
+      "service": "apigateway",
+      "name": "apigateway-http",
+      "tests": [
+        {
+          "name": "CreateApi"
+        },
+        {
+          "name": "GetApis",
+          "depends": ["CreateApi"]
+        },
+        {
+          "name": "DeleteApi",
+          "depends": ["GetApis"]
+        }
+      ]
+    },
+    {
+      "service": "cloudfront",
+      "name": "cloudfront-oac",
+      "tests": [
+        {
+          "name": "CreateOriginAccessControl"
+        },
+        {
+          "name": "GetOriginAccessControl",
+          "depends": ["CreateOriginAccessControl"]
+        },
+        {
+          "name": "UpdateOriginAccessControl",
+          "depends": ["CreateOriginAccessControl"]
+        },
+        {
+          "name": "ListOriginAccessControls",
+          "depends": ["CreateOriginAccessControl"]
+        },
+        {
+          "name": "DeleteOriginAccessControl",
+          "depends": [
+            "GetOriginAccessControl",
+            "UpdateOriginAccessControl",
+            "ListOriginAccessControls"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "cloudfront",
+      "name": "cloudfront-cache-policy",
+      "tests": [
+        {
+          "name": "CreateCachePolicy"
+        },
+        {
+          "name": "GetCachePolicy",
+          "depends": ["CreateCachePolicy"]
+        },
+        {
+          "name": "GetCachePolicyConfig",
+          "depends": ["CreateCachePolicy"]
+        },
+        {
+          "name": "UpdateCachePolicy",
+          "depends": ["CreateCachePolicy"]
+        },
+        {
+          "name": "ListCachePolicies",
+          "depends": ["CreateCachePolicy"]
+        },
+        {
+          "name": "DeleteCachePolicy",
+          "depends": [
+            "GetCachePolicy",
+            "GetCachePolicyConfig",
+            "UpdateCachePolicy",
+            "ListCachePolicies"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "cloudfront",
+      "name": "cloudfront-key-group",
+      "tests": [
+        {
+          "name": "CreateKeyGroup"
+        },
+        {
+          "name": "GetKeyGroup",
+          "depends": ["CreateKeyGroup"]
+        },
+        {
+          "name": "GetKeyGroupConfig",
+          "depends": ["CreateKeyGroup"]
+        },
+        {
+          "name": "UpdateKeyGroup",
+          "depends": ["CreateKeyGroup"]
+        },
+        {
+          "name": "ListKeyGroups",
+          "depends": ["CreateKeyGroup"]
+        },
+        {
+          "name": "DeleteKeyGroup",
+          "depends": [
+            "GetKeyGroup",
+            "GetKeyGroupConfig",
+            "UpdateKeyGroup",
+            "ListKeyGroups"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "cloudfront",
+      "name": "cloudfront-realtime-log",
+      "tests": [
+        {
+          "name": "CreateRealtimeLogConfig"
+        },
+        {
+          "name": "GetRealtimeLogConfig",
+          "depends": ["CreateRealtimeLogConfig"]
+        },
+        {
+          "name": "UpdateRealtimeLogConfig",
+          "depends": ["CreateRealtimeLogConfig"]
+        },
+        {
+          "name": "ListRealtimeLogConfigs",
+          "depends": ["CreateRealtimeLogConfig"]
+        },
+        {
+          "name": "DeleteRealtimeLogConfig",
+          "depends": [
+            "GetRealtimeLogConfig",
+            "UpdateRealtimeLogConfig",
+            "ListRealtimeLogConfigs"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "cloudfront",
+      "name": "cloudfront-monitoring",
+      "tests": [
+        {
+          "name": "CreateMonitoringSubscription"
+        },
+        {
+          "name": "GetMonitoringSubscription",
+          "depends": ["CreateMonitoringSubscription"]
+        },
+        {
+          "name": "DeleteMonitoringSubscription",
+          "depends": ["GetMonitoringSubscription"]
+        }
+      ]
+    },
+    {
+      "service": "cloudfront",
+      "name": "cloudfront-fle-config",
+      "tests": [
+        {
+          "name": "CreateFieldLevelEncryptionConfig"
+        },
+        {
+          "name": "GetFieldLevelEncryption",
+          "depends": ["CreateFieldLevelEncryptionConfig"]
+        },
+        {
+          "name": "GetFieldLevelEncryptionConfig",
+          "depends": ["CreateFieldLevelEncryptionConfig"]
+        },
+        {
+          "name": "UpdateFieldLevelEncryptionConfig",
+          "depends": ["CreateFieldLevelEncryptionConfig"]
+        },
+        {
+          "name": "ListFieldLevelEncryptionConfigs",
+          "depends": ["CreateFieldLevelEncryptionConfig"]
+        },
+        {
+          "name": "DeleteFieldLevelEncryption",
+          "depends": [
+            "GetFieldLevelEncryption",
+            "GetFieldLevelEncryptionConfig",
+            "UpdateFieldLevelEncryptionConfig",
+            "ListFieldLevelEncryptionConfigs"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "cloudfront",
+      "name": "cloudfront-fle-profile",
+      "tests": [
+        {
+          "name": "CreateFieldLevelEncryptionProfile"
+        },
+        {
+          "name": "GetFieldLevelEncryptionProfile",
+          "depends": ["CreateFieldLevelEncryptionProfile"]
+        },
+        {
+          "name": "GetFieldLevelEncryptionProfileConfig",
+          "depends": ["CreateFieldLevelEncryptionProfile"]
+        },
+        {
+          "name": "UpdateFieldLevelEncryptionProfile",
+          "depends": ["CreateFieldLevelEncryptionProfile"]
+        },
+        {
+          "name": "ListFieldLevelEncryptionProfiles",
+          "depends": ["CreateFieldLevelEncryptionProfile"]
+        },
+        {
+          "name": "DeleteFieldLevelEncryptionProfile",
+          "depends": [
+            "GetFieldLevelEncryptionProfile",
+            "GetFieldLevelEncryptionProfileConfig",
+            "UpdateFieldLevelEncryptionProfile",
+            "ListFieldLevelEncryptionProfiles"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "cloudfront",
+      "name": "cloudfront-continuous-deployment",
+      "tests": [
+        {
+          "name": "CreateContinuousDeploymentPolicy"
+        },
+        {
+          "name": "GetContinuousDeploymentPolicy",
+          "depends": ["CreateContinuousDeploymentPolicy"]
+        },
+        {
+          "name": "GetContinuousDeploymentPolicyConfig",
+          "depends": ["CreateContinuousDeploymentPolicy"]
+        },
+        {
+          "name": "UpdateContinuousDeploymentPolicy",
+          "depends": ["CreateContinuousDeploymentPolicy"]
+        },
+        {
+          "name": "ListContinuousDeploymentPolicies",
+          "depends": ["CreateContinuousDeploymentPolicy"]
+        },
+        {
+          "name": "DeleteContinuousDeploymentPolicy",
+          "depends": [
+            "GetContinuousDeploymentPolicy",
+            "GetContinuousDeploymentPolicyConfig",
+            "UpdateContinuousDeploymentPolicy",
+            "ListContinuousDeploymentPolicies"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "cloudfront",
+      "name": "cloudfront-distributions",
+      "tests": [
+        {
+          "name": "CreateDistribution"
+        },
+        {
+          "name": "GetDistribution",
+          "depends": ["CreateDistribution"]
+        },
+        {
+          "name": "ListDistributions",
+          "depends": ["CreateDistribution"]
+        },
+        {
+          "name": "DeleteDistribution",
+          "depends": ["GetDistribution", "ListDistributions"]
+        }
+      ]
+    },
+    {
+      "service": "rds",
+      "name": "rds-instances",
+      "slow": true,
+      "tests": [
+        {
+          "name": "DescribeDBEngineVersions"
+        },
+        {
+          "name": "CreateDBInstance"
+        },
+        {
+          "name": "DescribeDBInstances",
+          "depends": ["CreateDBInstance"]
+        },
+        {
+          "name": "ModifyDBInstance",
+          "depends": ["CreateDBInstance"]
+        },
+        {
+          "name": "StopDBInstance",
+          "depends": ["CreateDBInstance"]
+        },
+        {
+          "name": "StartDBInstance",
+          "depends": ["StopDBInstance"]
+        },
+        {
+          "name": "DeleteDBInstance",
+          "depends": [
+            "DescribeDBInstances",
+            "ModifyDBInstance",
+            "StartDBInstance"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "rds",
+      "name": "rds-subnet-groups",
+      "tests": [
+        {
+          "name": "CreateDBSubnetGroup"
+        },
+        {
+          "name": "DescribeDBSubnetGroups",
+          "depends": ["CreateDBSubnetGroup"]
+        },
+        {
+          "name": "DeleteDBSubnetGroup",
+          "depends": ["DescribeDBSubnetGroups"]
+        }
+      ]
+    },
+    {
+      "service": "rds",
+      "name": "rds-parameter-groups",
+      "tests": [
+        {
+          "name": "CreateDBParameterGroup"
+        },
+        {
+          "name": "DescribeDBParameterGroups",
+          "depends": ["CreateDBParameterGroup"]
+        },
+        {
+          "name": "DeleteDBParameterGroup",
+          "depends": ["DescribeDBParameterGroups"]
+        }
+      ]
+    },
+    {
+      "service": "stepfunctions",
+      "name": "sfn-statemachines",
+      "tests": [
+        {
+          "name": "CreateStateMachine"
+        },
+        {
+          "name": "DescribeStateMachine",
+          "depends": ["CreateStateMachine"]
+        },
+        {
+          "name": "ListStateMachines",
+          "depends": ["CreateStateMachine"]
+        },
+        {
+          "name": "StartExecution",
+          "depends": ["CreateStateMachine"]
+        },
+        {
+          "name": "DeleteStateMachine",
+          "depends": [
+            "DescribeStateMachine",
+            "ListStateMachines",
+            "StartExecution"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "waf",
+      "name": "waf-webacls",
+      "tests": [
+        {
+          "name": "CreateWebACL"
+        },
+        {
+          "name": "GetWebACL",
+          "depends": ["CreateWebACL"]
+        },
+        {
+          "name": "ListWebACLs",
+          "depends": ["CreateWebACL"]
+        },
+        {
+          "name": "DeleteWebACL",
+          "depends": ["GetWebACL", "ListWebACLs"]
+        }
+      ]
+    },
+    {
+      "service": "shield",
+      "name": "shield-protections",
+      "tests": [
+        {
+          "name": "DescribeSubscription"
+        },
+        {
+          "name": "CreateProtection",
+          "depends": ["DescribeSubscription"]
+        },
+        {
+          "name": "ListProtections",
+          "depends": ["CreateProtection"]
+        },
+        {
+          "name": "DescribeProtection",
+          "depends": ["CreateProtection"]
+        },
+        {
+          "name": "DeleteProtection",
+          "depends": ["DescribeProtection"]
+        }
+      ]
+    },
+    {
+      "service": "cdk",
+      "name": "cdk-lifecycle",
+      "tests": [
+        {"name": "Bootstrap"},
+        {"name": "Synth", "depends": ["Bootstrap"]},
+        {"name": "Deploy", "depends": ["Synth"]},
+        {"name": "VerifyStackStatus", "depends": ["Deploy"]},
+        {"name": "VerifyBucket", "depends": ["VerifyStackStatus"]},
+        {"name": "VerifyQueues", "depends": ["VerifyStackStatus"]},
+        {"name": "VerifyTopicSubscription", "depends": ["VerifyQueues"]},
+        {"name": "VerifyTable", "depends": ["VerifyStackStatus"]},
+        {"name": "VerifyRole", "depends": ["VerifyStackStatus"]},
+        {"name": "VerifyFunctionConfig", "depends": ["VerifyStackStatus", "VerifyRole"]},
+        {"name": "VerifyEventSourceMapping", "depends": ["VerifyQueues", "VerifyFunctionConfig"]},
+        {"name": "VerifyDynamoDBStream", "depends": ["VerifyStackStatus"]},
+        {"name": "VerifyDynamoDBEsm", "depends": ["VerifyDynamoDBStream", "VerifyFunctionConfig"]},
+        {"name": "PutStreamTriggerItem", "depends": ["VerifyDynamoDBEsm"]},
+        {"name": "VerifyLambdaInvokedByStream", "depends": ["PutStreamTriggerItem"]},
+        {"name": "VerifyLogGroup", "depends": ["VerifyStackStatus"]},
+        {"name": "VerifyKmsKey", "depends": ["VerifyStackStatus"]},
+        {"name": "VerifySecret", "depends": ["VerifyStackStatus"]},
+        {"name": "VerifyParameter", "depends": ["VerifyStackStatus"]},
+        {"name": "VerifyPolicy", "depends": ["VerifyStackStatus"]},
+        {"name": "VerifyVpc", "depends": ["VerifyStackStatus"]},
+        {"name": "VerifySecurityGroup", "depends": ["VerifyVpc"]},
+        {"name": "VerifyRestApi", "depends": ["VerifyStackStatus"]},
+        {"name": "VerifyEventBus", "depends": ["VerifyStackStatus"]},
+        {"name": "VerifyStateMachine", "depends": ["VerifyStackStatus"]},
+        {"name": "VerifyStateMachineStatus", "depends": ["VerifyStateMachine"]},
+        {"name": "VerifyNestedStack", "depends": ["VerifyStackStatus"]},
+        {"name": "VerifyNestedQueue", "depends": ["VerifyNestedStack"]},
+        {"name": "UpdateLambdaTimeout", "depends": ["VerifyFunctionConfig"]},
+        {"name": "VerifyUpdateStatus", "depends": ["UpdateLambdaTimeout"]},
+        {"name": "VerifyUpdatedFunctionConfig", "depends": ["VerifyUpdateStatus"]},
+        {"name": "Destroy"},
+        {"name": "VerifyDestroyed", "depends": ["Destroy"]}
+      ]
+    }
+  ]
+}

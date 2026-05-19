@@ -4,9 +4,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"unicode/utf8"
 
-	"github.com/your-org/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/protocol"
 )
 
 // ---- S3 validation ---------------------------------------------------------
@@ -86,7 +85,7 @@ func QueueName(name string) *protocol.AWSError {
 // Rules: 3–255 chars, alphanumeric + hyphens + underscores + periods.
 // https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.NamingRulesDataTypes.html
 func TableName(name string) *protocol.AWSError {
-	if len(name) < 3 || utf8.RuneCountInString(name) > 255 {
+	if len(name) < 3 || len(name) > 255 {
 		return &protocol.AWSError{
 			Code:       "ValidationException",
 			Message:    "Table name must be between 3 and 255 characters.",

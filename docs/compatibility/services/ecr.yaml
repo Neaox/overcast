@@ -1,0 +1,21 @@
+service: ecr
+status: not_started
+priority: p1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]
+implementation: [internal/services/ecr]
+integration_tests: [tests/integration/ecr]
+capability_docs: docs/services/ecr.md
+operation_count_estimate: 20 supported
+current_support_level: Repository and image metadata control plane supported; Docker registry integration optional; scanning inert/not-scanned.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Downgrade or annotate Docker-dependent and scanner-unavailable behavior as partial/inert.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateRepository, PutImage, GetAuthorizationToken]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/ecr/... ./tests/integration/ecr/...]

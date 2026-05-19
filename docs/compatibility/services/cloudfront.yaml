@@ -1,0 +1,22 @@
+service: cloudfront
+status: not_started
+priority: p0
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [rest_xml]
+implementation: [internal/services/cloudfront]
+integration_tests: [tests/integration/cloudfront]
+capability_docs: docs/services/cloudfront.md
+operation_count_estimate: 89 tracked, all marked supported
+current_support_level: Broad metadata/control-plane support plus emulator-only proxy extension.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Separate emulator-only ProxyRequest from AWS compatibility counts.
+    - Review ETag and XML response fidelity.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateDistribution, UpdateDistribution, invalidations]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/cloudfront/... ./tests/integration/cloudfront/...]

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/your-org/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/protocol"
 )
 
 // TestWriteXMLError_structuredResponse verifies the XML error envelope is correct.

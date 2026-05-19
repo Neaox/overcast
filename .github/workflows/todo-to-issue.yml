@@ -1,6 +1,10 @@
-# Automatically create GitHub issues from TODO comments in code.
+# Automatically create GitHub issues from TODO comments added in PRs.
 # Format: // TODO(priority:P1): description of the work
-# Supported priorities: P1, P2, P3 (default P3 if omitted)
+# Supported priorities: P1, P2, P3 (mapped via !label syntax)
+#
+# Only newly added TODOs are detected (the action diffs the push).
+# Created issues use the feature request template structure and are
+# labelled `needs-info` so maintainers know to fill in details.
 #
 # Uses: https://github.com/alstr/todo-to-issue-action
 name: TODO to Issue
@@ -8,6 +12,9 @@ name: TODO to Issue
 on:
   push:
     branches: [main]
+
+permissions:
+  issues: write
 
 jobs:
   todo:
@@ -17,8 +24,35 @@ jobs:
       - uses: alstr/todo-to-issue-action@v5
         with:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          LABEL: auto-todo
-          # Map priority markers to labels
-          # TODO(priority:P1): → labels: P1, auto-todo
-          # TODO(priority:P2): → labels: P2, auto-todo
-          # TODO:              → labels: P3, auto-todo (default)
+          IDENTIFIERS: |
+            [
+              {"name": "TODO", "labels": ["auto-todo", "needs-info"]}
+            ]
+          ISSUE_TEMPLATE: |
+            ## What would you like
+
+            {{ body }}
+
+            ## Which service and operation
+
+            **Service:** _fill in_
+            **Operation(s):** _fill in_
+            **AWS docs link:** _fill in_
+
+            ---
+
+            ## Source
+
+            {{ url }}
+
+            ```
+            {{ snippet }}
+            ```
+
+            ---
+
+            > This issue was auto-created from a TODO comment.
+            > Please add acceptance criteria, priority (`P1`/`P2`/`P3`),
+            > and effort (`small`/`medium`/`large`) labels.
+          CLOSE_ISSUES: "false"
+          ESCAPE: "true"

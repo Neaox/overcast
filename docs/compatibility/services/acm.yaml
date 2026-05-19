@@ -1,0 +1,22 @@
+service: acm
+status: not_started
+priority: p2
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]
+implementation: [internal/services/acm]
+integration_tests: [tests/integration/acm]
+capability_docs: docs/services/acm.md
+operation_count_estimate: 7 tracked, 7 supported
+current_support_level: Minimal certificate lifecycle and tags; certificates immediately ISSUED.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Expand integration coverage for tags.
+    - Document JSON 1.0 and CBOR support if intentional.
+  intentionally_partial: []
+handoff:
+  start_with: [RequestCertificate, DescribeCertificate, tag operations]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/acm/... ./tests/integration/acm/...]

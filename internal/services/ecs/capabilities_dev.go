@@ -1,0 +1,58 @@
+//go:build dev
+
+package ecs
+
+import "github.com/Neaox/overcast/internal/capabilities"
+
+func init() {
+	capabilities.Default.Register(
+		capabilities.Capability{Service: "ecs", Operation: "CreateCapacityProvider", Category: "General", Status: capabilities.StatusSupported, Notes: "FARGATE and FARGATE_SPOT built-ins seeded automatically; rejects FARGATE\\* prefix for custom providers"},
+		capabilities.Capability{Service: "ecs", Operation: "CreateCluster", Category: "General", Status: capabilities.StatusSupported, Notes: "Defaults name to \"default\" if empty"},
+		capabilities.Capability{Service: "ecs", Operation: "CreateService", Category: "General", Status: capabilities.StatusSupported, Notes: "Validates cluster + task def; creates PRIMARY deployment; reconciler starts tasks; Fargate: networkConfiguration required, deploymentController defaults to ECS"},
+		capabilities.Capability{Service: "ecs", Operation: "CreateTaskSet", Category: "General", Status: capabilities.StatusSupported, Notes: "Requires CODE_DEPLOY or EXTERNAL deployment controller; Scale defaults to 100%; ComputedDesiredCount calculated from scale"},
+		capabilities.Capability{Service: "ecs", Operation: "DeleteAccountSetting", Category: "General", Status: capabilities.StatusSupported, Notes: "Removes override; subsequent reads return the hardcoded default"},
+		capabilities.Capability{Service: "ecs", Operation: "DeleteAttributes", Category: "General", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
+		capabilities.Capability{Service: "ecs", Operation: "DeleteCluster", Category: "General", Status: capabilities.StatusSupported, Notes: "Sets status INACTIVE"},
+		capabilities.Capability{Service: "ecs", Operation: "DeleteService", Category: "General", Status: capabilities.StatusSupported, Notes: "Sets DRAINING, desired=0; reconciler stops excess tasks"},
+		capabilities.Capability{Service: "ecs", Operation: "DeleteTaskSet", Category: "General", Status: capabilities.StatusSupported, Notes: "Returns DRAINING status; removes from service task set list"},
+		capabilities.Capability{Service: "ecs", Operation: "DeregisterContainerInstance", Category: "General", Status: capabilities.StatusSupported, Notes: "Removes from store; returns INACTIVE instance"},
+		capabilities.Capability{Service: "ecs", Operation: "DeregisterTaskDefinition", Category: "General", Status: capabilities.StatusSupported, Notes: "Marks INACTIVE"},
+		capabilities.Capability{Service: "ecs", Operation: "DescribeCapacityProviders", Category: "General", Status: capabilities.StatusSupported, Notes: "Filter by name or return all; failures array for missing providers"},
+		capabilities.Capability{Service: "ecs", Operation: "DescribeClusters", Category: "General", Status: capabilities.StatusSupported, Notes: "By name or ARN; returns failures for missing"},
+		capabilities.Capability{Service: "ecs", Operation: "DescribeContainerInstances", Category: "General", Status: capabilities.StatusSupported, Notes: "By ARN; failures array for missing"},
+		capabilities.Capability{Service: "ecs", Operation: "DescribeServices", Category: "General", Status: capabilities.StatusSupported, Notes: "By name or ARN; recounts task state; returns failures for missing"},
+		capabilities.Capability{Service: "ecs", Operation: "DescribeTaskDefinition", Category: "General", Status: capabilities.StatusSupported, Notes: "By family, family:rev, or ARN"},
+		capabilities.Capability{Service: "ecs", Operation: "DescribeTaskSets", Category: "General", Status: capabilities.StatusSupported, Notes: "Filter by task set ID or ARN; returns failures for missing"},
+		capabilities.Capability{Service: "ecs", Operation: "DescribeTasks", Category: "General", Status: capabilities.StatusSupported, Notes: "By task ID or ARN; returns failures for missing"},
+		capabilities.Capability{Service: "ecs", Operation: "DiscoverPollEndpoint", Category: "General", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
+		capabilities.Capability{Service: "ecs", Operation: "ExecuteCommand", Category: "General", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
+		capabilities.Capability{Service: "ecs", Operation: "ListAccountSettings", Category: "General", Status: capabilities.StatusSupported, Notes: "Returns all known settings with effective values; filter by name; hardcoded defaults"},
+		capabilities.Capability{Service: "ecs", Operation: "ListAttributes", Category: "General", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
+		capabilities.Capability{Service: "ecs", Operation: "ListClusters", Category: "General", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "ecs", Operation: "ListContainerInstances", Category: "General", Status: capabilities.StatusSupported, Notes: "Filter by cluster and optional status"},
+		capabilities.Capability{Service: "ecs", Operation: "ListServices", Category: "General", Status: capabilities.StatusSupported, Notes: "Filter by cluster; optional launchType filter"},
+		capabilities.Capability{Service: "ecs", Operation: "ListTagsForResource", Category: "General", Status: capabilities.StatusSupported, Notes: "List tags for an ECS resource"},
+		capabilities.Capability{Service: "ecs", Operation: "ListTaskDefinitionFamilies", Category: "General", Status: capabilities.StatusSupported, Notes: "Optional familyPrefix filter"},
+		capabilities.Capability{Service: "ecs", Operation: "ListTaskDefinitions", Category: "General", Status: capabilities.StatusSupported, Notes: "Optional familyPrefix filter"},
+		capabilities.Capability{Service: "ecs", Operation: "ListTasks", Category: "General", Status: capabilities.StatusSupported, Notes: "Filter by cluster, desiredStatus, family"},
+		capabilities.Capability{Service: "ecs", Operation: "PutAccountSetting", Category: "General", Status: capabilities.StatusSupported, Notes: "Stores override for the caller; no per-principal scoping in emulator"},
+		capabilities.Capability{Service: "ecs", Operation: "PutAccountSettingDefault", Category: "General", Status: capabilities.StatusSupported, Notes: "Identical to PutAccountSetting in emulator (no principal distinction)"},
+		capabilities.Capability{Service: "ecs", Operation: "PutAttributes", Category: "General", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
+		capabilities.Capability{Service: "ecs", Operation: "PutClusterCapacityProviders", Category: "General", Status: capabilities.StatusSupported, Notes: "Associates providers and default strategy with a cluster"},
+		capabilities.Capability{Service: "ecs", Operation: "RegisterContainerInstance", Category: "General", Status: capabilities.StatusSupported, Notes: "Metadata-only; auto-generates ARN; status ACTIVE; agentConnected true"},
+		capabilities.Capability{Service: "ecs", Operation: "RegisterTaskDefinition", Category: "General", Status: capabilities.StatusSupported, Notes: "Family:revision versioning; Fargate: validates awsvpc networkMode, cpu/memory required with valid combos"},
+		capabilities.Capability{Service: "ecs", Operation: "RunTask", Category: "General", Status: capabilities.StatusSupported, Notes: "Docker-backed when available; async state transitions; falls back to metadata-only; Fargate: networkConfiguration required, synthetic ENI attachment returned, platformVersion defaults to LATEST"},
+		capabilities.Capability{Service: "ecs", Operation: "StartTask", Category: "General", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
+		capabilities.Capability{Service: "ecs", Operation: "StopTask", Category: "General", Status: capabilities.StatusSupported, Notes: "Stops Docker containers; sets STOPPED; cancels pending transitions"},
+		capabilities.Capability{Service: "ecs", Operation: "TagResource", Category: "General", Status: capabilities.StatusSupported, Notes: "Add tags to any ECS resource by ARN"},
+		capabilities.Capability{Service: "ecs", Operation: "UntagResource", Category: "General", Status: capabilities.StatusSupported, Notes: "Remove tags by key"},
+		capabilities.Capability{Service: "ecs", Operation: "UpdateCapacityProvider", Category: "General", Status: capabilities.StatusSupported, Notes: "Rejects updates to built-in FARGATE/FARGATE_SPOT providers"},
+		capabilities.Capability{Service: "ecs", Operation: "UpdateCluster", Category: "General", Status: capabilities.StatusSupported, Notes: "Validates cluster exists; returns current state"},
+		capabilities.Capability{Service: "ecs", Operation: "UpdateClusterSettings", Category: "General", Status: capabilities.StatusSupported, Notes: "Accepts settings array (metadata only)"},
+		capabilities.Capability{Service: "ecs", Operation: "UpdateContainerAgent", Category: "General", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
+		capabilities.Capability{Service: "ecs", Operation: "UpdateContainerInstancesState", Category: "General", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
+		capabilities.Capability{Service: "ecs", Operation: "UpdateService", Category: "General", Status: capabilities.StatusSupported, Notes: "Update desiredCount and/or taskDefinition; new deployment on task def change; propagates networkConfiguration/platformVersion"},
+		capabilities.Capability{Service: "ecs", Operation: "UpdateServicePrimaryTaskSet", Category: "General", Status: capabilities.StatusSupported, Notes: "Promotes target to PRIMARY; demotes all other task sets to ACTIVE"},
+		capabilities.Capability{Service: "ecs", Operation: "UpdateTaskSet", Category: "General", Status: capabilities.StatusSupported, Notes: "Updates Scale and recalculates ComputedDesiredCount"},
+	)
+}

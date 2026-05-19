@@ -1,0 +1,4 @@
+#!/bin/sh
+# awslocal — AWS CLI wrapper pre-configured for the local Overcast/LocalStack endpoint.
+# Drop-in replacement for LocalStack's awslocal.
+exec aws --endpoint-url="${AWS_ENDPOINT_URL:-http://localhost:${OVERCAST_PORT:-4566}}" "$@"

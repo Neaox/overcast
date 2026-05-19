@@ -1,0 +1,48 @@
+service: apigateway
+status: in_progress
+priority: p0
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-19
+protocols: [rest_json]
+implementation: [internal/services/apigateway]
+integration_tests: [tests/integration/apigateway]
+capability_docs: docs/services/apigateway.md
+operation_count_estimate: 105 tracked; 103 supported, 2 unsupported
+current_support_level: Broad REST API v1 and HTTP API v2 management and execution support; some enforcement features are partial.
+operations:
+  ExecuteRestAPI:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/apigateway/latest/api/API_ExecuteRestAPI.html
+      - https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-lambda-proxy-integrations.html
+    scenarios:
+      - name: Lambda proxy response headers and multiValueHeaders merge
+        status: fixed
+        evidence:
+          - internal/services/apigateway/handler_execution_test.go: TestWriteLambdaProxyResponse_multiValueHeadersOverrideSingleHeaders
+        notes: AWS Lambda proxy docs say multiValueHeaders may contain single and multi-value response headers, and if the same key appears in headers and multiValueHeaders then only multiValueHeaders values appear in the merged response. Overcast now applies that precedence case-insensitively.
+      - name: Lambda proxy request event shape
+        status: fixed
+        evidence:
+          - internal/services/apigateway/handler_execution_test.go: TestExecuteRestLambdaProxy_absentRequestMapsAreNull
+        notes: Docs reviewed for resource, path, method, headers, multiValueHeaders, query strings, pathParameters, stageVariables, requestContext, body, and isBase64Encoded. Overcast now emits null for absent queryStringParameters, multiValueQueryStringParameters, pathParameters, and stageVariables instead of empty objects. Full scenario coverage is not complete.
+      - name: Lambda proxy malformed output
+        status: docs_reviewed
+        notes: Docs state incompatible Lambda proxy output returns 502 Bad Gateway. Existing implementation returns 502 for unparseable structured proxy output; statusCode-required and invalid-base64 edge cases remain unreviewed.
+findings:
+  fixed:
+    - ExecuteRestAPI Lambda proxy responses no longer emit conflicting single-value header entries when the same header is returned via multiValueHeaders; multiValueHeaders now win as AWS documents.
+    - ExecuteRestAPI Lambda proxy request events now encode absent query string and path parameter maps as JSON null rather than empty objects.
+  remaining_gaps:
+    - Finish ExecuteRestAPI Lambda proxy scenario coverage for duplicate query/header value ordering, binary/base64 request handling, malformed output validation, and Lambda function-error mapping.
+    - Review Lambda, HTTP, MOCK integration execution fidelity.
+    - Review route matching and authorizer behavior.
+    - Review CloudFormation/CDK resource coverage.
+  intentionally_partial: []
+handoff:
+  start_with: [ExecuteRestAPI Lambda proxy request event edge cases, HTTP API route matching, authorizers]
+  do_not_redo:
+    - Lambda proxy response headers-vs-multiValueHeaders precedence for REST/HTTP shared writer.
+    - REST Lambda proxy absent query/path/stage variable maps are null.
+  commands:
+    - go test -count=1 ./internal/services/apigateway/... ./tests/integration/apigateway/...

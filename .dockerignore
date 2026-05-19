@@ -1,9 +1,23 @@
-.git
-.gitignore
-.vscode
-bin/
-coverage.out
-coverage.html
-*.md
-docs/
-tests/
+# Ignore everything, then allowlist only what the build needs.
+*
+
+# ---- Go builder (stage 1) ---------------------------------------------------
+!go.mod
+!go.sum
+!embed.go
+!embed_slim.go
+!cmd/
+!internal/
+!docs/services/
+
+# ---- Web builder (stage 2) --------------------------------------------------
+!web/
+# npm ci runs inside the container — host node_modules are dead weight (~800 MB).
+web/node_modules/
+web/api/node_modules/
+# Build outputs that may exist locally.
+web/dist/
+web/dist-server/
+
+# ---- Console stage (stage 4) ------------------------------------------------
+!docker/

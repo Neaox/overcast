@@ -1,0 +1,21 @@
+service: ssm
+status: not_started
+priority: p0
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]
+implementation: [internal/services/ssm]
+integration_tests: [tests/integration/ssm]
+capability_docs: docs/services/ssm.md
+operation_count_estimate: 10 tracked in capabilities; older manual summary lists 18 total
+current_support_level: Parameter Store core operations supported; advanced/misc operations may be stale in docs.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Add unsupported SSM operations to capabilities_dev.go or remove stale manual summary.
+  intentionally_partial: []
+handoff:
+  start_with: [PutParameter, GetParametersByPath, parameter history]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/ssm/... ./tests/integration/ssm/...]

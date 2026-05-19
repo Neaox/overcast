@@ -1,0 +1,22 @@
+service: ec2
+status: not_started
+priority: p0
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [query]
+implementation: [internal/services/ec2]
+integration_tests: [tests/integration/ec2]
+capability_docs: docs/services/ec2.md
+operation_count_estimate: 64 API operations supported plus documented VPC network states
+current_support_level: Broad CDK/VPC metadata support with Docker-backed VPC network approximation and documented divergences.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Focus VPC, subnet, security group, route table, and ENI behavior.
+    - Review AWS Query XML shapes.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateVpc, CreateSubnet, security groups, route tables]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/ec2/... ./tests/integration/ec2/...]

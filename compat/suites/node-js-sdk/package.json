@@ -1,0 +1,49 @@
+{
+  "name": "@overcast/compat-node-js-sdk",
+  "version": "0.0.1",
+  "description": "AWS SDK v3 (Node.js) compatibility tests for Overcast",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --import tsx/esm src/runner.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-api-gateway": "^3.1020.0",
+    "@aws-sdk/client-apigatewayv2": "^3.1020.0",
+    "@aws-sdk/client-appsync": "^3.1020.0",
+    "@aws-sdk/client-cloudformation": "^3.1020.0",
+    "@aws-sdk/client-cloudfront": "^3.1020.0",
+    "@aws-sdk/client-cloudwatch-logs": "^3",
+    "@aws-sdk/client-cognito-identity-provider": "^3.1020.0",
+    "@aws-sdk/client-dynamodb": "^3",
+    "@aws-sdk/client-ec2": "^3.1020.0",
+    "@aws-sdk/client-ecr": "^3.1041.0",
+    "@aws-sdk/client-ecs": "^3.1020.0",
+    "@aws-sdk/client-elasticache": "^3.1020.0",
+    "@aws-sdk/client-eventbridge": "^3",
+    "@aws-sdk/client-iam": "^3",
+    "@aws-sdk/client-kinesis": "^3",
+    "@aws-sdk/client-kms": "^3",
+    "@aws-sdk/client-lambda": "^3",
+    "@aws-sdk/client-rds": "^3.1020.0",
+    "@aws-sdk/client-s3": "^3",
+    "@aws-sdk/client-secrets-manager": "^3",
+    "@aws-sdk/client-ses": "^3",
+    "@aws-sdk/client-sfn": "^3.1020.0",
+    "@aws-sdk/client-shield": "^3.1020.0",
+    "@aws-sdk/client-sns": "^3",
+    "@aws-sdk/client-sqs": "^3",
+    "@aws-sdk/client-ssm": "^3",
+    "@aws-sdk/client-sts": "^3",
+    "@aws-sdk/client-wafv2": "^3.1020.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "tsx": "^4",
+    "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

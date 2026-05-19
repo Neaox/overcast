@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/your-org/overcast/internal/state"
+	"github.com/Neaox/overcast/internal/state"
 )
 
 // These tests define the contract for ALL Store implementations.

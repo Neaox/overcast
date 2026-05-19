@@ -9,28 +9,144 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as StepfunctionsRouteImport } from './routes/stepfunctions'
+import { Route as SesRouteImport } from './routes/ses'
+import { Route as MetricsRouteImport } from './routes/metrics'
+import { Route as MapRouteImport } from './routes/map'
+import { Route as MailRouteImport } from './routes/mail'
+import { Route as InboxRouteImport } from './routes/inbox'
+import { Route as IamRouteImport } from './routes/iam'
 import { Route as EventsRouteImport } from './routes/events'
+import { Route as ServiceRouteImport } from './routes/$service'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as StsIndexRouteImport } from './routes/sts/index'
+import { Route as SsmIndexRouteImport } from './routes/ssm/index'
 import { Route as SqsIndexRouteImport } from './routes/sqs/index'
 import { Route as SnsIndexRouteImport } from './routes/sns/index'
+import { Route as SecretsmanagerIndexRouteImport } from './routes/secretsmanager/index'
 import { Route as S3IndexRouteImport } from './routes/s3/index'
+import { Route as RdsIndexRouteImport } from './routes/rds/index'
+import { Route as PipesIndexRouteImport } from './routes/pipes/index'
+import { Route as MskIndexRouteImport } from './routes/msk/index'
 import { Route as LambdaIndexRouteImport } from './routes/lambda/index'
+import { Route as KmsIndexRouteImport } from './routes/kms/index'
+import { Route as KinesisIndexRouteImport } from './routes/kinesis/index'
+import { Route as EventbridgeIndexRouteImport } from './routes/eventbridge/index'
+import { Route as ElasticacheIndexRouteImport } from './routes/elasticache/index'
+import { Route as EksIndexRouteImport } from './routes/eks/index'
+import { Route as EcsIndexRouteImport } from './routes/ecs/index'
+import { Route as EcrIndexRouteImport } from './routes/ecr/index'
+import { Route as Ec2IndexRouteImport } from './routes/ec2/index'
 import { Route as DynamodbIndexRouteImport } from './routes/dynamodb/index'
+import { Route as CognitoIndexRouteImport } from './routes/cognito/index'
+import { Route as CloudwatchIndexRouteImport } from './routes/cloudwatch/index'
+import { Route as CloudfrontIndexRouteImport } from './routes/cloudfront/index'
+import { Route as CloudformationIndexRouteImport } from './routes/cloudformation/index'
+import { Route as AppsyncIndexRouteImport } from './routes/appsync/index'
+import { Route as ApplicationsIndexRouteImport } from './routes/applications/index'
+import { Route as ApigatewayIndexRouteImport } from './routes/apigateway/index'
+import { Route as SsmNameRouteImport } from './routes/ssm/$name'
 import { Route as SqsQueueRouteImport } from './routes/sqs/$queue'
+import { Route as SnsTopicRouteImport } from './routes/sns/$topic'
+import { Route as SecretsmanagerSecretNameRouteImport } from './routes/secretsmanager/$secretName'
 import { Route as S3BucketRouteImport } from './routes/s3/$bucket'
+import { Route as RdsInstanceRouteImport } from './routes/rds/$instance'
+import { Route as LambdaNameRouteImport } from './routes/lambda/$name'
+import { Route as KmsKeyIdRouteImport } from './routes/kms/$keyId'
+import { Route as KinesisStreamNameRouteImport } from './routes/kinesis/$streamName'
+import { Route as EventbridgeBusNameRouteImport } from './routes/eventbridge/$busName'
+import { Route as EcsClusterRouteImport } from './routes/ecs/$cluster'
+import { Route as EcrRepositoryNameRouteImport } from './routes/ecr/$repositoryName'
+import { Route as Ec2InstanceIdRouteImport } from './routes/ec2/$instanceId'
+import { Route as DynamodbTableNameRouteImport } from './routes/dynamodb/$tableName'
+import { Route as CognitoPoolIdRouteImport } from './routes/cognito/$poolId'
+import { Route as CloudfrontRealtimeLogConfigsRouteImport } from './routes/cloudfront/realtime-log-configs'
+import { Route as CloudfrontKeyGroupsRouteImport } from './routes/cloudfront/key-groups'
+import { Route as CloudfrontFleProfilesRouteImport } from './routes/cloudfront/fle-profiles'
+import { Route as CloudfrontFleConfigsRouteImport } from './routes/cloudfront/fle-configs'
+import { Route as CloudfrontContinuousDeploymentPoliciesRouteImport } from './routes/cloudfront/continuous-deployment-policies'
+import { Route as CloudfrontDistributionIdRouteImport } from './routes/cloudfront/$distributionId'
+import { Route as CloudformationStackNameRouteImport } from './routes/cloudformation/$stackName'
+import { Route as AppsyncApiIdRouteImport } from './routes/appsync/$apiId'
+import { Route as ApplicationsApplicationIdRouteImport } from './routes/applications/$applicationId'
+import { Route as ApigatewayUsagePlansRouteImport } from './routes/apigateway/usage-plans'
+import { Route as ApigatewayApiKeysRouteImport } from './routes/apigateway/api-keys'
 import { Route as SqsQueueIndexRouteImport } from './routes/sqs/$queue/index'
 import { Route as S3BucketIndexRouteImport } from './routes/s3/$bucket/index'
+import { Route as LambdaLayersIndexRouteImport } from './routes/lambda/layers/index'
+import { Route as CloudwatchLogsIndexRouteImport } from './routes/cloudwatch/logs/index'
+import { Route as CloudfrontDistributionIdIndexRouteImport } from './routes/cloudfront/$distributionId/index'
+import { Route as AppsyncApiIdIndexRouteImport } from './routes/appsync/$apiId/index'
 import { Route as S3BucketUploadRouteImport } from './routes/s3/$bucket/upload'
 import { Route as S3BucketConfigRouteImport } from './routes/s3/$bucket/config'
+import { Route as LambdaLayersLayerNameRouteImport } from './routes/lambda/layers/$layerName'
+import { Route as Ec2VpcVpcIdRouteImport } from './routes/ec2/vpc.$vpcId'
+import { Route as CloudwatchLogsStreamRouteImport } from './routes/cloudwatch/logs/stream'
+import { Route as CloudwatchLogsGroupRouteImport } from './routes/cloudwatch/logs/group'
+import { Route as ApigatewayRestApiIdRouteImport } from './routes/apigateway/rest.$apiId'
+import { Route as ApigatewayHttpApiIdRouteImport } from './routes/apigateway/http.$apiId'
+import { Route as CloudwatchLogsGroupNameIndexRouteImport } from './routes/cloudwatch/logs/$groupName/index'
+import { Route as EcsClusterTasksTaskIdRouteImport } from './routes/ecs/$cluster.tasks.$taskId'
+import { Route as CloudwatchLogsGroupNameStreamNameRouteImport } from './routes/cloudwatch/logs/$groupName/$streamName'
 
+const StepfunctionsRoute = StepfunctionsRouteImport.update({
+  id: '/stepfunctions',
+  path: '/stepfunctions',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SesRoute = SesRouteImport.update({
+  id: '/ses',
+  path: '/ses',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MetricsRoute = MetricsRouteImport.update({
+  id: '/metrics',
+  path: '/metrics',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MapRoute = MapRouteImport.update({
+  id: '/map',
+  path: '/map',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MailRoute = MailRouteImport.update({
+  id: '/mail',
+  path: '/mail',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InboxRoute = InboxRouteImport.update({
+  id: '/inbox',
+  path: '/inbox',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IamRoute = IamRouteImport.update({
+  id: '/iam',
+  path: '/iam',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const EventsRoute = EventsRouteImport.update({
   id: '/events',
   path: '/events',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ServiceRoute = ServiceRouteImport.update({
+  id: '/$service',
+  path: '/$service',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StsIndexRoute = StsIndexRouteImport.update({
+  id: '/sts/',
+  path: '/sts/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SsmIndexRoute = SsmIndexRouteImport.update({
+  id: '/ssm/',
+  path: '/ssm/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SqsIndexRoute = SqsIndexRouteImport.update({
@@ -43,9 +159,29 @@ const SnsIndexRoute = SnsIndexRouteImport.update({
   path: '/sns/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SecretsmanagerIndexRoute = SecretsmanagerIndexRouteImport.update({
+  id: '/secretsmanager/',
+  path: '/secretsmanager/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const S3IndexRoute = S3IndexRouteImport.update({
   id: '/s3/',
   path: '/s3/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RdsIndexRoute = RdsIndexRouteImport.update({
+  id: '/rds/',
+  path: '/rds/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PipesIndexRoute = PipesIndexRouteImport.update({
+  id: '/pipes/',
+  path: '/pipes/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MskIndexRoute = MskIndexRouteImport.update({
+  id: '/msk/',
+  path: '/msk/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LambdaIndexRoute = LambdaIndexRouteImport.update({
@@ -53,9 +189,89 @@ const LambdaIndexRoute = LambdaIndexRouteImport.update({
   path: '/lambda/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const KmsIndexRoute = KmsIndexRouteImport.update({
+  id: '/kms/',
+  path: '/kms/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const KinesisIndexRoute = KinesisIndexRouteImport.update({
+  id: '/kinesis/',
+  path: '/kinesis/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EventbridgeIndexRoute = EventbridgeIndexRouteImport.update({
+  id: '/eventbridge/',
+  path: '/eventbridge/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ElasticacheIndexRoute = ElasticacheIndexRouteImport.update({
+  id: '/elasticache/',
+  path: '/elasticache/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EksIndexRoute = EksIndexRouteImport.update({
+  id: '/eks/',
+  path: '/eks/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EcsIndexRoute = EcsIndexRouteImport.update({
+  id: '/ecs/',
+  path: '/ecs/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EcrIndexRoute = EcrIndexRouteImport.update({
+  id: '/ecr/',
+  path: '/ecr/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const Ec2IndexRoute = Ec2IndexRouteImport.update({
+  id: '/ec2/',
+  path: '/ec2/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DynamodbIndexRoute = DynamodbIndexRouteImport.update({
   id: '/dynamodb/',
   path: '/dynamodb/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CognitoIndexRoute = CognitoIndexRouteImport.update({
+  id: '/cognito/',
+  path: '/cognito/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CloudwatchIndexRoute = CloudwatchIndexRouteImport.update({
+  id: '/cloudwatch/',
+  path: '/cloudwatch/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CloudfrontIndexRoute = CloudfrontIndexRouteImport.update({
+  id: '/cloudfront/',
+  path: '/cloudfront/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CloudformationIndexRoute = CloudformationIndexRouteImport.update({
+  id: '/cloudformation/',
+  path: '/cloudformation/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppsyncIndexRoute = AppsyncIndexRouteImport.update({
+  id: '/appsync/',
+  path: '/appsync/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApplicationsIndexRoute = ApplicationsIndexRouteImport.update({
+  id: '/applications/',
+  path: '/applications/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApigatewayIndexRoute = ApigatewayIndexRouteImport.update({
+  id: '/apigateway/',
+  path: '/apigateway/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SsmNameRoute = SsmNameRouteImport.update({
+  id: '/ssm/$name',
+  path: '/ssm/$name',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SqsQueueRoute = SqsQueueRouteImport.update({
@@ -63,9 +279,129 @@ const SqsQueueRoute = SqsQueueRouteImport.update({
   path: '/sqs/$queue',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SnsTopicRoute = SnsTopicRouteImport.update({
+  id: '/sns/$topic',
+  path: '/sns/$topic',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SecretsmanagerSecretNameRoute =
+  SecretsmanagerSecretNameRouteImport.update({
+    id: '/secretsmanager/$secretName',
+    path: '/secretsmanager/$secretName',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const S3BucketRoute = S3BucketRouteImport.update({
   id: '/s3/$bucket',
   path: '/s3/$bucket',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RdsInstanceRoute = RdsInstanceRouteImport.update({
+  id: '/rds/$instance',
+  path: '/rds/$instance',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LambdaNameRoute = LambdaNameRouteImport.update({
+  id: '/lambda/$name',
+  path: '/lambda/$name',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const KmsKeyIdRoute = KmsKeyIdRouteImport.update({
+  id: '/kms/$keyId',
+  path: '/kms/$keyId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const KinesisStreamNameRoute = KinesisStreamNameRouteImport.update({
+  id: '/kinesis/$streamName',
+  path: '/kinesis/$streamName',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EventbridgeBusNameRoute = EventbridgeBusNameRouteImport.update({
+  id: '/eventbridge/$busName',
+  path: '/eventbridge/$busName',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EcsClusterRoute = EcsClusterRouteImport.update({
+  id: '/ecs/$cluster',
+  path: '/ecs/$cluster',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EcrRepositoryNameRoute = EcrRepositoryNameRouteImport.update({
+  id: '/ecr/$repositoryName',
+  path: '/ecr/$repositoryName',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const Ec2InstanceIdRoute = Ec2InstanceIdRouteImport.update({
+  id: '/ec2/$instanceId',
+  path: '/ec2/$instanceId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DynamodbTableNameRoute = DynamodbTableNameRouteImport.update({
+  id: '/dynamodb/$tableName',
+  path: '/dynamodb/$tableName',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CognitoPoolIdRoute = CognitoPoolIdRouteImport.update({
+  id: '/cognito/$poolId',
+  path: '/cognito/$poolId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CloudfrontRealtimeLogConfigsRoute =
+  CloudfrontRealtimeLogConfigsRouteImport.update({
+    id: '/cloudfront/realtime-log-configs',
+    path: '/cloudfront/realtime-log-configs',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const CloudfrontKeyGroupsRoute = CloudfrontKeyGroupsRouteImport.update({
+  id: '/cloudfront/key-groups',
+  path: '/cloudfront/key-groups',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CloudfrontFleProfilesRoute = CloudfrontFleProfilesRouteImport.update({
+  id: '/cloudfront/fle-profiles',
+  path: '/cloudfront/fle-profiles',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CloudfrontFleConfigsRoute = CloudfrontFleConfigsRouteImport.update({
+  id: '/cloudfront/fle-configs',
+  path: '/cloudfront/fle-configs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CloudfrontContinuousDeploymentPoliciesRoute =
+  CloudfrontContinuousDeploymentPoliciesRouteImport.update({
+    id: '/cloudfront/continuous-deployment-policies',
+    path: '/cloudfront/continuous-deployment-policies',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const CloudfrontDistributionIdRoute =
+  CloudfrontDistributionIdRouteImport.update({
+    id: '/cloudfront/$distributionId',
+    path: '/cloudfront/$distributionId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const CloudformationStackNameRoute = CloudformationStackNameRouteImport.update({
+  id: '/cloudformation/$stackName',
+  path: '/cloudformation/$stackName',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppsyncApiIdRoute = AppsyncApiIdRouteImport.update({
+  id: '/appsync/$apiId',
+  path: '/appsync/$apiId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApplicationsApplicationIdRoute =
+  ApplicationsApplicationIdRouteImport.update({
+    id: '/applications/$applicationId',
+    path: '/applications/$applicationId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApigatewayUsagePlansRoute = ApigatewayUsagePlansRouteImport.update({
+  id: '/apigateway/usage-plans',
+  path: '/apigateway/usage-plans',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApigatewayApiKeysRoute = ApigatewayApiKeysRouteImport.update({
+  id: '/apigateway/api-keys',
+  path: '/apigateway/api-keys',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SqsQueueIndexRoute = SqsQueueIndexRouteImport.update({
@@ -78,6 +414,27 @@ const S3BucketIndexRoute = S3BucketIndexRouteImport.update({
   path: '/',
   getParentRoute: () => S3BucketRoute,
 } as any)
+const LambdaLayersIndexRoute = LambdaLayersIndexRouteImport.update({
+  id: '/lambda/layers/',
+  path: '/lambda/layers/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CloudwatchLogsIndexRoute = CloudwatchLogsIndexRouteImport.update({
+  id: '/cloudwatch/logs/',
+  path: '/cloudwatch/logs/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CloudfrontDistributionIdIndexRoute =
+  CloudfrontDistributionIdIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => CloudfrontDistributionIdRoute,
+  } as any)
+const AppsyncApiIdIndexRoute = AppsyncApiIdIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppsyncApiIdRoute,
+} as any)
 const S3BucketUploadRoute = S3BucketUploadRouteImport.update({
   id: '/upload',
   path: '/upload',
@@ -88,111 +445,662 @@ const S3BucketConfigRoute = S3BucketConfigRouteImport.update({
   path: '/config',
   getParentRoute: () => S3BucketRoute,
 } as any)
+const LambdaLayersLayerNameRoute = LambdaLayersLayerNameRouteImport.update({
+  id: '/lambda/layers/$layerName',
+  path: '/lambda/layers/$layerName',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const Ec2VpcVpcIdRoute = Ec2VpcVpcIdRouteImport.update({
+  id: '/ec2/vpc/$vpcId',
+  path: '/ec2/vpc/$vpcId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CloudwatchLogsStreamRoute = CloudwatchLogsStreamRouteImport.update({
+  id: '/cloudwatch/logs/stream',
+  path: '/cloudwatch/logs/stream',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CloudwatchLogsGroupRoute = CloudwatchLogsGroupRouteImport.update({
+  id: '/cloudwatch/logs/group',
+  path: '/cloudwatch/logs/group',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApigatewayRestApiIdRoute = ApigatewayRestApiIdRouteImport.update({
+  id: '/apigateway/rest/$apiId',
+  path: '/apigateway/rest/$apiId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApigatewayHttpApiIdRoute = ApigatewayHttpApiIdRouteImport.update({
+  id: '/apigateway/http/$apiId',
+  path: '/apigateway/http/$apiId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CloudwatchLogsGroupNameIndexRoute =
+  CloudwatchLogsGroupNameIndexRouteImport.update({
+    id: '/cloudwatch/logs/$groupName/',
+    path: '/cloudwatch/logs/$groupName/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const EcsClusterTasksTaskIdRoute = EcsClusterTasksTaskIdRouteImport.update({
+  id: '/tasks/$taskId',
+  path: '/tasks/$taskId',
+  getParentRoute: () => EcsClusterRoute,
+} as any)
+const CloudwatchLogsGroupNameStreamNameRoute =
+  CloudwatchLogsGroupNameStreamNameRouteImport.update({
+    id: '/cloudwatch/logs/$groupName/$streamName',
+    path: '/cloudwatch/logs/$groupName/$streamName',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/$service': typeof ServiceRoute
   '/events': typeof EventsRoute
+  '/iam': typeof IamRoute
+  '/inbox': typeof InboxRoute
+  '/mail': typeof MailRoute
+  '/map': typeof MapRoute
+  '/metrics': typeof MetricsRoute
+  '/ses': typeof SesRoute
+  '/stepfunctions': typeof StepfunctionsRoute
+  '/apigateway/api-keys': typeof ApigatewayApiKeysRoute
+  '/apigateway/usage-plans': typeof ApigatewayUsagePlansRoute
+  '/applications/$applicationId': typeof ApplicationsApplicationIdRoute
+  '/appsync/$apiId': typeof AppsyncApiIdRouteWithChildren
+  '/cloudformation/$stackName': typeof CloudformationStackNameRoute
+  '/cloudfront/$distributionId': typeof CloudfrontDistributionIdRouteWithChildren
+  '/cloudfront/continuous-deployment-policies': typeof CloudfrontContinuousDeploymentPoliciesRoute
+  '/cloudfront/fle-configs': typeof CloudfrontFleConfigsRoute
+  '/cloudfront/fle-profiles': typeof CloudfrontFleProfilesRoute
+  '/cloudfront/key-groups': typeof CloudfrontKeyGroupsRoute
+  '/cloudfront/realtime-log-configs': typeof CloudfrontRealtimeLogConfigsRoute
+  '/cognito/$poolId': typeof CognitoPoolIdRoute
+  '/dynamodb/$tableName': typeof DynamodbTableNameRoute
+  '/ec2/$instanceId': typeof Ec2InstanceIdRoute
+  '/ecr/$repositoryName': typeof EcrRepositoryNameRoute
+  '/ecs/$cluster': typeof EcsClusterRouteWithChildren
+  '/eventbridge/$busName': typeof EventbridgeBusNameRoute
+  '/kinesis/$streamName': typeof KinesisStreamNameRoute
+  '/kms/$keyId': typeof KmsKeyIdRoute
+  '/lambda/$name': typeof LambdaNameRoute
+  '/rds/$instance': typeof RdsInstanceRoute
   '/s3/$bucket': typeof S3BucketRouteWithChildren
+  '/secretsmanager/$secretName': typeof SecretsmanagerSecretNameRoute
+  '/sns/$topic': typeof SnsTopicRoute
   '/sqs/$queue': typeof SqsQueueRouteWithChildren
+  '/ssm/$name': typeof SsmNameRoute
+  '/apigateway/': typeof ApigatewayIndexRoute
+  '/applications/': typeof ApplicationsIndexRoute
+  '/appsync/': typeof AppsyncIndexRoute
+  '/cloudformation/': typeof CloudformationIndexRoute
+  '/cloudfront/': typeof CloudfrontIndexRoute
+  '/cloudwatch/': typeof CloudwatchIndexRoute
+  '/cognito/': typeof CognitoIndexRoute
   '/dynamodb/': typeof DynamodbIndexRoute
+  '/ec2/': typeof Ec2IndexRoute
+  '/ecr/': typeof EcrIndexRoute
+  '/ecs/': typeof EcsIndexRoute
+  '/eks/': typeof EksIndexRoute
+  '/elasticache/': typeof ElasticacheIndexRoute
+  '/eventbridge/': typeof EventbridgeIndexRoute
+  '/kinesis/': typeof KinesisIndexRoute
+  '/kms/': typeof KmsIndexRoute
   '/lambda/': typeof LambdaIndexRoute
+  '/msk/': typeof MskIndexRoute
+  '/pipes/': typeof PipesIndexRoute
+  '/rds/': typeof RdsIndexRoute
   '/s3/': typeof S3IndexRoute
+  '/secretsmanager/': typeof SecretsmanagerIndexRoute
   '/sns/': typeof SnsIndexRoute
   '/sqs/': typeof SqsIndexRoute
+  '/ssm/': typeof SsmIndexRoute
+  '/sts/': typeof StsIndexRoute
+  '/apigateway/http/$apiId': typeof ApigatewayHttpApiIdRoute
+  '/apigateway/rest/$apiId': typeof ApigatewayRestApiIdRoute
+  '/cloudwatch/logs/group': typeof CloudwatchLogsGroupRoute
+  '/cloudwatch/logs/stream': typeof CloudwatchLogsStreamRoute
+  '/ec2/vpc/$vpcId': typeof Ec2VpcVpcIdRoute
+  '/lambda/layers/$layerName': typeof LambdaLayersLayerNameRoute
   '/s3/$bucket/config': typeof S3BucketConfigRoute
   '/s3/$bucket/upload': typeof S3BucketUploadRoute
+  '/appsync/$apiId/': typeof AppsyncApiIdIndexRoute
+  '/cloudfront/$distributionId/': typeof CloudfrontDistributionIdIndexRoute
+  '/cloudwatch/logs/': typeof CloudwatchLogsIndexRoute
+  '/lambda/layers/': typeof LambdaLayersIndexRoute
   '/s3/$bucket/': typeof S3BucketIndexRoute
   '/sqs/$queue/': typeof SqsQueueIndexRoute
+  '/cloudwatch/logs/$groupName/$streamName': typeof CloudwatchLogsGroupNameStreamNameRoute
+  '/ecs/$cluster/tasks/$taskId': typeof EcsClusterTasksTaskIdRoute
+  '/cloudwatch/logs/$groupName/': typeof CloudwatchLogsGroupNameIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/$service': typeof ServiceRoute
   '/events': typeof EventsRoute
+  '/iam': typeof IamRoute
+  '/inbox': typeof InboxRoute
+  '/mail': typeof MailRoute
+  '/map': typeof MapRoute
+  '/metrics': typeof MetricsRoute
+  '/ses': typeof SesRoute
+  '/stepfunctions': typeof StepfunctionsRoute
+  '/apigateway/api-keys': typeof ApigatewayApiKeysRoute
+  '/apigateway/usage-plans': typeof ApigatewayUsagePlansRoute
+  '/applications/$applicationId': typeof ApplicationsApplicationIdRoute
+  '/cloudformation/$stackName': typeof CloudformationStackNameRoute
+  '/cloudfront/continuous-deployment-policies': typeof CloudfrontContinuousDeploymentPoliciesRoute
+  '/cloudfront/fle-configs': typeof CloudfrontFleConfigsRoute
+  '/cloudfront/fle-profiles': typeof CloudfrontFleProfilesRoute
+  '/cloudfront/key-groups': typeof CloudfrontKeyGroupsRoute
+  '/cloudfront/realtime-log-configs': typeof CloudfrontRealtimeLogConfigsRoute
+  '/cognito/$poolId': typeof CognitoPoolIdRoute
+  '/dynamodb/$tableName': typeof DynamodbTableNameRoute
+  '/ec2/$instanceId': typeof Ec2InstanceIdRoute
+  '/ecr/$repositoryName': typeof EcrRepositoryNameRoute
+  '/ecs/$cluster': typeof EcsClusterRouteWithChildren
+  '/eventbridge/$busName': typeof EventbridgeBusNameRoute
+  '/kinesis/$streamName': typeof KinesisStreamNameRoute
+  '/kms/$keyId': typeof KmsKeyIdRoute
+  '/lambda/$name': typeof LambdaNameRoute
+  '/rds/$instance': typeof RdsInstanceRoute
+  '/secretsmanager/$secretName': typeof SecretsmanagerSecretNameRoute
+  '/sns/$topic': typeof SnsTopicRoute
+  '/ssm/$name': typeof SsmNameRoute
+  '/apigateway': typeof ApigatewayIndexRoute
+  '/applications': typeof ApplicationsIndexRoute
+  '/appsync': typeof AppsyncIndexRoute
+  '/cloudformation': typeof CloudformationIndexRoute
+  '/cloudfront': typeof CloudfrontIndexRoute
+  '/cloudwatch': typeof CloudwatchIndexRoute
+  '/cognito': typeof CognitoIndexRoute
   '/dynamodb': typeof DynamodbIndexRoute
+  '/ec2': typeof Ec2IndexRoute
+  '/ecr': typeof EcrIndexRoute
+  '/ecs': typeof EcsIndexRoute
+  '/eks': typeof EksIndexRoute
+  '/elasticache': typeof ElasticacheIndexRoute
+  '/eventbridge': typeof EventbridgeIndexRoute
+  '/kinesis': typeof KinesisIndexRoute
+  '/kms': typeof KmsIndexRoute
   '/lambda': typeof LambdaIndexRoute
+  '/msk': typeof MskIndexRoute
+  '/pipes': typeof PipesIndexRoute
+  '/rds': typeof RdsIndexRoute
   '/s3': typeof S3IndexRoute
+  '/secretsmanager': typeof SecretsmanagerIndexRoute
   '/sns': typeof SnsIndexRoute
   '/sqs': typeof SqsIndexRoute
+  '/ssm': typeof SsmIndexRoute
+  '/sts': typeof StsIndexRoute
+  '/apigateway/http/$apiId': typeof ApigatewayHttpApiIdRoute
+  '/apigateway/rest/$apiId': typeof ApigatewayRestApiIdRoute
+  '/cloudwatch/logs/group': typeof CloudwatchLogsGroupRoute
+  '/cloudwatch/logs/stream': typeof CloudwatchLogsStreamRoute
+  '/ec2/vpc/$vpcId': typeof Ec2VpcVpcIdRoute
+  '/lambda/layers/$layerName': typeof LambdaLayersLayerNameRoute
   '/s3/$bucket/config': typeof S3BucketConfigRoute
   '/s3/$bucket/upload': typeof S3BucketUploadRoute
+  '/appsync/$apiId': typeof AppsyncApiIdIndexRoute
+  '/cloudfront/$distributionId': typeof CloudfrontDistributionIdIndexRoute
+  '/cloudwatch/logs': typeof CloudwatchLogsIndexRoute
+  '/lambda/layers': typeof LambdaLayersIndexRoute
   '/s3/$bucket': typeof S3BucketIndexRoute
   '/sqs/$queue': typeof SqsQueueIndexRoute
+  '/cloudwatch/logs/$groupName/$streamName': typeof CloudwatchLogsGroupNameStreamNameRoute
+  '/ecs/$cluster/tasks/$taskId': typeof EcsClusterTasksTaskIdRoute
+  '/cloudwatch/logs/$groupName': typeof CloudwatchLogsGroupNameIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/$service': typeof ServiceRoute
   '/events': typeof EventsRoute
+  '/iam': typeof IamRoute
+  '/inbox': typeof InboxRoute
+  '/mail': typeof MailRoute
+  '/map': typeof MapRoute
+  '/metrics': typeof MetricsRoute
+  '/ses': typeof SesRoute
+  '/stepfunctions': typeof StepfunctionsRoute
+  '/apigateway/api-keys': typeof ApigatewayApiKeysRoute
+  '/apigateway/usage-plans': typeof ApigatewayUsagePlansRoute
+  '/applications/$applicationId': typeof ApplicationsApplicationIdRoute
+  '/appsync/$apiId': typeof AppsyncApiIdRouteWithChildren
+  '/cloudformation/$stackName': typeof CloudformationStackNameRoute
+  '/cloudfront/$distributionId': typeof CloudfrontDistributionIdRouteWithChildren
+  '/cloudfront/continuous-deployment-policies': typeof CloudfrontContinuousDeploymentPoliciesRoute
+  '/cloudfront/fle-configs': typeof CloudfrontFleConfigsRoute
+  '/cloudfront/fle-profiles': typeof CloudfrontFleProfilesRoute
+  '/cloudfront/key-groups': typeof CloudfrontKeyGroupsRoute
+  '/cloudfront/realtime-log-configs': typeof CloudfrontRealtimeLogConfigsRoute
+  '/cognito/$poolId': typeof CognitoPoolIdRoute
+  '/dynamodb/$tableName': typeof DynamodbTableNameRoute
+  '/ec2/$instanceId': typeof Ec2InstanceIdRoute
+  '/ecr/$repositoryName': typeof EcrRepositoryNameRoute
+  '/ecs/$cluster': typeof EcsClusterRouteWithChildren
+  '/eventbridge/$busName': typeof EventbridgeBusNameRoute
+  '/kinesis/$streamName': typeof KinesisStreamNameRoute
+  '/kms/$keyId': typeof KmsKeyIdRoute
+  '/lambda/$name': typeof LambdaNameRoute
+  '/rds/$instance': typeof RdsInstanceRoute
   '/s3/$bucket': typeof S3BucketRouteWithChildren
+  '/secretsmanager/$secretName': typeof SecretsmanagerSecretNameRoute
+  '/sns/$topic': typeof SnsTopicRoute
   '/sqs/$queue': typeof SqsQueueRouteWithChildren
+  '/ssm/$name': typeof SsmNameRoute
+  '/apigateway/': typeof ApigatewayIndexRoute
+  '/applications/': typeof ApplicationsIndexRoute
+  '/appsync/': typeof AppsyncIndexRoute
+  '/cloudformation/': typeof CloudformationIndexRoute
+  '/cloudfront/': typeof CloudfrontIndexRoute
+  '/cloudwatch/': typeof CloudwatchIndexRoute
+  '/cognito/': typeof CognitoIndexRoute
   '/dynamodb/': typeof DynamodbIndexRoute
+  '/ec2/': typeof Ec2IndexRoute
+  '/ecr/': typeof EcrIndexRoute
+  '/ecs/': typeof EcsIndexRoute
+  '/eks/': typeof EksIndexRoute
+  '/elasticache/': typeof ElasticacheIndexRoute
+  '/eventbridge/': typeof EventbridgeIndexRoute
+  '/kinesis/': typeof KinesisIndexRoute
+  '/kms/': typeof KmsIndexRoute
   '/lambda/': typeof LambdaIndexRoute
+  '/msk/': typeof MskIndexRoute
+  '/pipes/': typeof PipesIndexRoute
+  '/rds/': typeof RdsIndexRoute
   '/s3/': typeof S3IndexRoute
+  '/secretsmanager/': typeof SecretsmanagerIndexRoute
   '/sns/': typeof SnsIndexRoute
   '/sqs/': typeof SqsIndexRoute
+  '/ssm/': typeof SsmIndexRoute
+  '/sts/': typeof StsIndexRoute
+  '/apigateway/http/$apiId': typeof ApigatewayHttpApiIdRoute
+  '/apigateway/rest/$apiId': typeof ApigatewayRestApiIdRoute
+  '/cloudwatch/logs/group': typeof CloudwatchLogsGroupRoute
+  '/cloudwatch/logs/stream': typeof CloudwatchLogsStreamRoute
+  '/ec2/vpc/$vpcId': typeof Ec2VpcVpcIdRoute
+  '/lambda/layers/$layerName': typeof LambdaLayersLayerNameRoute
   '/s3/$bucket/config': typeof S3BucketConfigRoute
   '/s3/$bucket/upload': typeof S3BucketUploadRoute
+  '/appsync/$apiId/': typeof AppsyncApiIdIndexRoute
+  '/cloudfront/$distributionId/': typeof CloudfrontDistributionIdIndexRoute
+  '/cloudwatch/logs/': typeof CloudwatchLogsIndexRoute
+  '/lambda/layers/': typeof LambdaLayersIndexRoute
   '/s3/$bucket/': typeof S3BucketIndexRoute
   '/sqs/$queue/': typeof SqsQueueIndexRoute
+  '/cloudwatch/logs/$groupName/$streamName': typeof CloudwatchLogsGroupNameStreamNameRoute
+  '/ecs/$cluster/tasks/$taskId': typeof EcsClusterTasksTaskIdRoute
+  '/cloudwatch/logs/$groupName/': typeof CloudwatchLogsGroupNameIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/$service'
     | '/events'
+    | '/iam'
+    | '/inbox'
+    | '/mail'
+    | '/map'
+    | '/metrics'
+    | '/ses'
+    | '/stepfunctions'
+    | '/apigateway/api-keys'
+    | '/apigateway/usage-plans'
+    | '/applications/$applicationId'
+    | '/appsync/$apiId'
+    | '/cloudformation/$stackName'
+    | '/cloudfront/$distributionId'
+    | '/cloudfront/continuous-deployment-policies'
+    | '/cloudfront/fle-configs'
+    | '/cloudfront/fle-profiles'
+    | '/cloudfront/key-groups'
+    | '/cloudfront/realtime-log-configs'
+    | '/cognito/$poolId'
+    | '/dynamodb/$tableName'
+    | '/ec2/$instanceId'
+    | '/ecr/$repositoryName'
+    | '/ecs/$cluster'
+    | '/eventbridge/$busName'
+    | '/kinesis/$streamName'
+    | '/kms/$keyId'
+    | '/lambda/$name'
+    | '/rds/$instance'
     | '/s3/$bucket'
+    | '/secretsmanager/$secretName'
+    | '/sns/$topic'
     | '/sqs/$queue'
+    | '/ssm/$name'
+    | '/apigateway/'
+    | '/applications/'
+    | '/appsync/'
+    | '/cloudformation/'
+    | '/cloudfront/'
+    | '/cloudwatch/'
+    | '/cognito/'
     | '/dynamodb/'
+    | '/ec2/'
+    | '/ecr/'
+    | '/ecs/'
+    | '/eks/'
+    | '/elasticache/'
+    | '/eventbridge/'
+    | '/kinesis/'
+    | '/kms/'
     | '/lambda/'
+    | '/msk/'
+    | '/pipes/'
+    | '/rds/'
     | '/s3/'
+    | '/secretsmanager/'
     | '/sns/'
     | '/sqs/'
+    | '/ssm/'
+    | '/sts/'
+    | '/apigateway/http/$apiId'
+    | '/apigateway/rest/$apiId'
+    | '/cloudwatch/logs/group'
+    | '/cloudwatch/logs/stream'
+    | '/ec2/vpc/$vpcId'
+    | '/lambda/layers/$layerName'
     | '/s3/$bucket/config'
     | '/s3/$bucket/upload'
+    | '/appsync/$apiId/'
+    | '/cloudfront/$distributionId/'
+    | '/cloudwatch/logs/'
+    | '/lambda/layers/'
     | '/s3/$bucket/'
     | '/sqs/$queue/'
+    | '/cloudwatch/logs/$groupName/$streamName'
+    | '/ecs/$cluster/tasks/$taskId'
+    | '/cloudwatch/logs/$groupName/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/$service'
     | '/events'
+    | '/iam'
+    | '/inbox'
+    | '/mail'
+    | '/map'
+    | '/metrics'
+    | '/ses'
+    | '/stepfunctions'
+    | '/apigateway/api-keys'
+    | '/apigateway/usage-plans'
+    | '/applications/$applicationId'
+    | '/cloudformation/$stackName'
+    | '/cloudfront/continuous-deployment-policies'
+    | '/cloudfront/fle-configs'
+    | '/cloudfront/fle-profiles'
+    | '/cloudfront/key-groups'
+    | '/cloudfront/realtime-log-configs'
+    | '/cognito/$poolId'
+    | '/dynamodb/$tableName'
+    | '/ec2/$instanceId'
+    | '/ecr/$repositoryName'
+    | '/ecs/$cluster'
+    | '/eventbridge/$busName'
+    | '/kinesis/$streamName'
+    | '/kms/$keyId'
+    | '/lambda/$name'
+    | '/rds/$instance'
+    | '/secretsmanager/$secretName'
+    | '/sns/$topic'
+    | '/ssm/$name'
+    | '/apigateway'
+    | '/applications'
+    | '/appsync'
+    | '/cloudformation'
+    | '/cloudfront'
+    | '/cloudwatch'
+    | '/cognito'
     | '/dynamodb'
+    | '/ec2'
+    | '/ecr'
+    | '/ecs'
+    | '/eks'
+    | '/elasticache'
+    | '/eventbridge'
+    | '/kinesis'
+    | '/kms'
     | '/lambda'
+    | '/msk'
+    | '/pipes'
+    | '/rds'
     | '/s3'
+    | '/secretsmanager'
     | '/sns'
     | '/sqs'
+    | '/ssm'
+    | '/sts'
+    | '/apigateway/http/$apiId'
+    | '/apigateway/rest/$apiId'
+    | '/cloudwatch/logs/group'
+    | '/cloudwatch/logs/stream'
+    | '/ec2/vpc/$vpcId'
+    | '/lambda/layers/$layerName'
     | '/s3/$bucket/config'
     | '/s3/$bucket/upload'
+    | '/appsync/$apiId'
+    | '/cloudfront/$distributionId'
+    | '/cloudwatch/logs'
+    | '/lambda/layers'
     | '/s3/$bucket'
     | '/sqs/$queue'
+    | '/cloudwatch/logs/$groupName/$streamName'
+    | '/ecs/$cluster/tasks/$taskId'
+    | '/cloudwatch/logs/$groupName'
   id:
     | '__root__'
     | '/'
+    | '/$service'
     | '/events'
+    | '/iam'
+    | '/inbox'
+    | '/mail'
+    | '/map'
+    | '/metrics'
+    | '/ses'
+    | '/stepfunctions'
+    | '/apigateway/api-keys'
+    | '/apigateway/usage-plans'
+    | '/applications/$applicationId'
+    | '/appsync/$apiId'
+    | '/cloudformation/$stackName'
+    | '/cloudfront/$distributionId'
+    | '/cloudfront/continuous-deployment-policies'
+    | '/cloudfront/fle-configs'
+    | '/cloudfront/fle-profiles'
+    | '/cloudfront/key-groups'
+    | '/cloudfront/realtime-log-configs'
+    | '/cognito/$poolId'
+    | '/dynamodb/$tableName'
+    | '/ec2/$instanceId'
+    | '/ecr/$repositoryName'
+    | '/ecs/$cluster'
+    | '/eventbridge/$busName'
+    | '/kinesis/$streamName'
+    | '/kms/$keyId'
+    | '/lambda/$name'
+    | '/rds/$instance'
     | '/s3/$bucket'
+    | '/secretsmanager/$secretName'
+    | '/sns/$topic'
     | '/sqs/$queue'
+    | '/ssm/$name'
+    | '/apigateway/'
+    | '/applications/'
+    | '/appsync/'
+    | '/cloudformation/'
+    | '/cloudfront/'
+    | '/cloudwatch/'
+    | '/cognito/'
     | '/dynamodb/'
+    | '/ec2/'
+    | '/ecr/'
+    | '/ecs/'
+    | '/eks/'
+    | '/elasticache/'
+    | '/eventbridge/'
+    | '/kinesis/'
+    | '/kms/'
     | '/lambda/'
+    | '/msk/'
+    | '/pipes/'
+    | '/rds/'
     | '/s3/'
+    | '/secretsmanager/'
     | '/sns/'
     | '/sqs/'
+    | '/ssm/'
+    | '/sts/'
+    | '/apigateway/http/$apiId'
+    | '/apigateway/rest/$apiId'
+    | '/cloudwatch/logs/group'
+    | '/cloudwatch/logs/stream'
+    | '/ec2/vpc/$vpcId'
+    | '/lambda/layers/$layerName'
     | '/s3/$bucket/config'
     | '/s3/$bucket/upload'
+    | '/appsync/$apiId/'
+    | '/cloudfront/$distributionId/'
+    | '/cloudwatch/logs/'
+    | '/lambda/layers/'
     | '/s3/$bucket/'
     | '/sqs/$queue/'
+    | '/cloudwatch/logs/$groupName/$streamName'
+    | '/ecs/$cluster/tasks/$taskId'
+    | '/cloudwatch/logs/$groupName/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ServiceRoute: typeof ServiceRoute
   EventsRoute: typeof EventsRoute
+  IamRoute: typeof IamRoute
+  InboxRoute: typeof InboxRoute
+  MailRoute: typeof MailRoute
+  MapRoute: typeof MapRoute
+  MetricsRoute: typeof MetricsRoute
+  SesRoute: typeof SesRoute
+  StepfunctionsRoute: typeof StepfunctionsRoute
+  ApigatewayApiKeysRoute: typeof ApigatewayApiKeysRoute
+  ApigatewayUsagePlansRoute: typeof ApigatewayUsagePlansRoute
+  ApplicationsApplicationIdRoute: typeof ApplicationsApplicationIdRoute
+  AppsyncApiIdRoute: typeof AppsyncApiIdRouteWithChildren
+  CloudformationStackNameRoute: typeof CloudformationStackNameRoute
+  CloudfrontDistributionIdRoute: typeof CloudfrontDistributionIdRouteWithChildren
+  CloudfrontContinuousDeploymentPoliciesRoute: typeof CloudfrontContinuousDeploymentPoliciesRoute
+  CloudfrontFleConfigsRoute: typeof CloudfrontFleConfigsRoute
+  CloudfrontFleProfilesRoute: typeof CloudfrontFleProfilesRoute
+  CloudfrontKeyGroupsRoute: typeof CloudfrontKeyGroupsRoute
+  CloudfrontRealtimeLogConfigsRoute: typeof CloudfrontRealtimeLogConfigsRoute
+  CognitoPoolIdRoute: typeof CognitoPoolIdRoute
+  DynamodbTableNameRoute: typeof DynamodbTableNameRoute
+  Ec2InstanceIdRoute: typeof Ec2InstanceIdRoute
+  EcrRepositoryNameRoute: typeof EcrRepositoryNameRoute
+  EcsClusterRoute: typeof EcsClusterRouteWithChildren
+  EventbridgeBusNameRoute: typeof EventbridgeBusNameRoute
+  KinesisStreamNameRoute: typeof KinesisStreamNameRoute
+  KmsKeyIdRoute: typeof KmsKeyIdRoute
+  LambdaNameRoute: typeof LambdaNameRoute
+  RdsInstanceRoute: typeof RdsInstanceRoute
   S3BucketRoute: typeof S3BucketRouteWithChildren
+  SecretsmanagerSecretNameRoute: typeof SecretsmanagerSecretNameRoute
+  SnsTopicRoute: typeof SnsTopicRoute
   SqsQueueRoute: typeof SqsQueueRouteWithChildren
+  SsmNameRoute: typeof SsmNameRoute
+  ApigatewayIndexRoute: typeof ApigatewayIndexRoute
+  ApplicationsIndexRoute: typeof ApplicationsIndexRoute
+  AppsyncIndexRoute: typeof AppsyncIndexRoute
+  CloudformationIndexRoute: typeof CloudformationIndexRoute
+  CloudfrontIndexRoute: typeof CloudfrontIndexRoute
+  CloudwatchIndexRoute: typeof CloudwatchIndexRoute
+  CognitoIndexRoute: typeof CognitoIndexRoute
   DynamodbIndexRoute: typeof DynamodbIndexRoute
+  Ec2IndexRoute: typeof Ec2IndexRoute
+  EcrIndexRoute: typeof EcrIndexRoute
+  EcsIndexRoute: typeof EcsIndexRoute
+  EksIndexRoute: typeof EksIndexRoute
+  ElasticacheIndexRoute: typeof ElasticacheIndexRoute
+  EventbridgeIndexRoute: typeof EventbridgeIndexRoute
+  KinesisIndexRoute: typeof KinesisIndexRoute
+  KmsIndexRoute: typeof KmsIndexRoute
   LambdaIndexRoute: typeof LambdaIndexRoute
+  MskIndexRoute: typeof MskIndexRoute
+  PipesIndexRoute: typeof PipesIndexRoute
+  RdsIndexRoute: typeof RdsIndexRoute
   S3IndexRoute: typeof S3IndexRoute
+  SecretsmanagerIndexRoute: typeof SecretsmanagerIndexRoute
   SnsIndexRoute: typeof SnsIndexRoute
   SqsIndexRoute: typeof SqsIndexRoute
+  SsmIndexRoute: typeof SsmIndexRoute
+  StsIndexRoute: typeof StsIndexRoute
+  ApigatewayHttpApiIdRoute: typeof ApigatewayHttpApiIdRoute
+  ApigatewayRestApiIdRoute: typeof ApigatewayRestApiIdRoute
+  CloudwatchLogsGroupRoute: typeof CloudwatchLogsGroupRoute
+  CloudwatchLogsStreamRoute: typeof CloudwatchLogsStreamRoute
+  Ec2VpcVpcIdRoute: typeof Ec2VpcVpcIdRoute
+  LambdaLayersLayerNameRoute: typeof LambdaLayersLayerNameRoute
+  CloudwatchLogsIndexRoute: typeof CloudwatchLogsIndexRoute
+  LambdaLayersIndexRoute: typeof LambdaLayersIndexRoute
+  CloudwatchLogsGroupNameStreamNameRoute: typeof CloudwatchLogsGroupNameStreamNameRoute
+  CloudwatchLogsGroupNameIndexRoute: typeof CloudwatchLogsGroupNameIndexRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/stepfunctions': {
+      id: '/stepfunctions'
+      path: '/stepfunctions'
+      fullPath: '/stepfunctions'
+      preLoaderRoute: typeof StepfunctionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ses': {
+      id: '/ses'
+      path: '/ses'
+      fullPath: '/ses'
+      preLoaderRoute: typeof SesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/metrics': {
+      id: '/metrics'
+      path: '/metrics'
+      fullPath: '/metrics'
+      preLoaderRoute: typeof MetricsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/map': {
+      id: '/map'
+      path: '/map'
+      fullPath: '/map'
+      preLoaderRoute: typeof MapRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mail': {
+      id: '/mail'
+      path: '/mail'
+      fullPath: '/mail'
+      preLoaderRoute: typeof MailRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/inbox': {
+      id: '/inbox'
+      path: '/inbox'
+      fullPath: '/inbox'
+      preLoaderRoute: typeof InboxRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/iam': {
+      id: '/iam'
+      path: '/iam'
+      fullPath: '/iam'
+      preLoaderRoute: typeof IamRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/events': {
       id: '/events'
       path: '/events'
@@ -200,11 +1108,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof EventsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/$service': {
+      id: '/$service'
+      path: '/$service'
+      fullPath: '/$service'
+      preLoaderRoute: typeof ServiceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sts/': {
+      id: '/sts/'
+      path: '/sts'
+      fullPath: '/sts/'
+      preLoaderRoute: typeof StsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ssm/': {
+      id: '/ssm/'
+      path: '/ssm'
+      fullPath: '/ssm/'
+      preLoaderRoute: typeof SsmIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sqs/': {
@@ -221,11 +1150,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SnsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/secretsmanager/': {
+      id: '/secretsmanager/'
+      path: '/secretsmanager'
+      fullPath: '/secretsmanager/'
+      preLoaderRoute: typeof SecretsmanagerIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/s3/': {
       id: '/s3/'
       path: '/s3'
       fullPath: '/s3/'
       preLoaderRoute: typeof S3IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rds/': {
+      id: '/rds/'
+      path: '/rds'
+      fullPath: '/rds/'
+      preLoaderRoute: typeof RdsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pipes/': {
+      id: '/pipes/'
+      path: '/pipes'
+      fullPath: '/pipes/'
+      preLoaderRoute: typeof PipesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/msk/': {
+      id: '/msk/'
+      path: '/msk'
+      fullPath: '/msk/'
+      preLoaderRoute: typeof MskIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/lambda/': {
@@ -235,11 +1192,123 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LambdaIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/kms/': {
+      id: '/kms/'
+      path: '/kms'
+      fullPath: '/kms/'
+      preLoaderRoute: typeof KmsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/kinesis/': {
+      id: '/kinesis/'
+      path: '/kinesis'
+      fullPath: '/kinesis/'
+      preLoaderRoute: typeof KinesisIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/eventbridge/': {
+      id: '/eventbridge/'
+      path: '/eventbridge'
+      fullPath: '/eventbridge/'
+      preLoaderRoute: typeof EventbridgeIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/elasticache/': {
+      id: '/elasticache/'
+      path: '/elasticache'
+      fullPath: '/elasticache/'
+      preLoaderRoute: typeof ElasticacheIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/eks/': {
+      id: '/eks/'
+      path: '/eks'
+      fullPath: '/eks/'
+      preLoaderRoute: typeof EksIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ecs/': {
+      id: '/ecs/'
+      path: '/ecs'
+      fullPath: '/ecs/'
+      preLoaderRoute: typeof EcsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ecr/': {
+      id: '/ecr/'
+      path: '/ecr'
+      fullPath: '/ecr/'
+      preLoaderRoute: typeof EcrIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ec2/': {
+      id: '/ec2/'
+      path: '/ec2'
+      fullPath: '/ec2/'
+      preLoaderRoute: typeof Ec2IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/dynamodb/': {
       id: '/dynamodb/'
       path: '/dynamodb'
       fullPath: '/dynamodb/'
       preLoaderRoute: typeof DynamodbIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cognito/': {
+      id: '/cognito/'
+      path: '/cognito'
+      fullPath: '/cognito/'
+      preLoaderRoute: typeof CognitoIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cloudwatch/': {
+      id: '/cloudwatch/'
+      path: '/cloudwatch'
+      fullPath: '/cloudwatch/'
+      preLoaderRoute: typeof CloudwatchIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cloudfront/': {
+      id: '/cloudfront/'
+      path: '/cloudfront'
+      fullPath: '/cloudfront/'
+      preLoaderRoute: typeof CloudfrontIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cloudformation/': {
+      id: '/cloudformation/'
+      path: '/cloudformation'
+      fullPath: '/cloudformation/'
+      preLoaderRoute: typeof CloudformationIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/appsync/': {
+      id: '/appsync/'
+      path: '/appsync'
+      fullPath: '/appsync/'
+      preLoaderRoute: typeof AppsyncIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/applications/': {
+      id: '/applications/'
+      path: '/applications'
+      fullPath: '/applications/'
+      preLoaderRoute: typeof ApplicationsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/apigateway/': {
+      id: '/apigateway/'
+      path: '/apigateway'
+      fullPath: '/apigateway/'
+      preLoaderRoute: typeof ApigatewayIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ssm/$name': {
+      id: '/ssm/$name'
+      path: '/ssm/$name'
+      fullPath: '/ssm/$name'
+      preLoaderRoute: typeof SsmNameRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sqs/$queue': {
@@ -249,11 +1318,172 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SqsQueueRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/sns/$topic': {
+      id: '/sns/$topic'
+      path: '/sns/$topic'
+      fullPath: '/sns/$topic'
+      preLoaderRoute: typeof SnsTopicRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/secretsmanager/$secretName': {
+      id: '/secretsmanager/$secretName'
+      path: '/secretsmanager/$secretName'
+      fullPath: '/secretsmanager/$secretName'
+      preLoaderRoute: typeof SecretsmanagerSecretNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/s3/$bucket': {
       id: '/s3/$bucket'
       path: '/s3/$bucket'
       fullPath: '/s3/$bucket'
       preLoaderRoute: typeof S3BucketRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rds/$instance': {
+      id: '/rds/$instance'
+      path: '/rds/$instance'
+      fullPath: '/rds/$instance'
+      preLoaderRoute: typeof RdsInstanceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/lambda/$name': {
+      id: '/lambda/$name'
+      path: '/lambda/$name'
+      fullPath: '/lambda/$name'
+      preLoaderRoute: typeof LambdaNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/kms/$keyId': {
+      id: '/kms/$keyId'
+      path: '/kms/$keyId'
+      fullPath: '/kms/$keyId'
+      preLoaderRoute: typeof KmsKeyIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/kinesis/$streamName': {
+      id: '/kinesis/$streamName'
+      path: '/kinesis/$streamName'
+      fullPath: '/kinesis/$streamName'
+      preLoaderRoute: typeof KinesisStreamNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/eventbridge/$busName': {
+      id: '/eventbridge/$busName'
+      path: '/eventbridge/$busName'
+      fullPath: '/eventbridge/$busName'
+      preLoaderRoute: typeof EventbridgeBusNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ecs/$cluster': {
+      id: '/ecs/$cluster'
+      path: '/ecs/$cluster'
+      fullPath: '/ecs/$cluster'
+      preLoaderRoute: typeof EcsClusterRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ecr/$repositoryName': {
+      id: '/ecr/$repositoryName'
+      path: '/ecr/$repositoryName'
+      fullPath: '/ecr/$repositoryName'
+      preLoaderRoute: typeof EcrRepositoryNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ec2/$instanceId': {
+      id: '/ec2/$instanceId'
+      path: '/ec2/$instanceId'
+      fullPath: '/ec2/$instanceId'
+      preLoaderRoute: typeof Ec2InstanceIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dynamodb/$tableName': {
+      id: '/dynamodb/$tableName'
+      path: '/dynamodb/$tableName'
+      fullPath: '/dynamodb/$tableName'
+      preLoaderRoute: typeof DynamodbTableNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cognito/$poolId': {
+      id: '/cognito/$poolId'
+      path: '/cognito/$poolId'
+      fullPath: '/cognito/$poolId'
+      preLoaderRoute: typeof CognitoPoolIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cloudfront/realtime-log-configs': {
+      id: '/cloudfront/realtime-log-configs'
+      path: '/cloudfront/realtime-log-configs'
+      fullPath: '/cloudfront/realtime-log-configs'
+      preLoaderRoute: typeof CloudfrontRealtimeLogConfigsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cloudfront/key-groups': {
+      id: '/cloudfront/key-groups'
+      path: '/cloudfront/key-groups'
+      fullPath: '/cloudfront/key-groups'
+      preLoaderRoute: typeof CloudfrontKeyGroupsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cloudfront/fle-profiles': {
+      id: '/cloudfront/fle-profiles'
+      path: '/cloudfront/fle-profiles'
+      fullPath: '/cloudfront/fle-profiles'
+      preLoaderRoute: typeof CloudfrontFleProfilesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cloudfront/fle-configs': {
+      id: '/cloudfront/fle-configs'
+      path: '/cloudfront/fle-configs'
+      fullPath: '/cloudfront/fle-configs'
+      preLoaderRoute: typeof CloudfrontFleConfigsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cloudfront/continuous-deployment-policies': {
+      id: '/cloudfront/continuous-deployment-policies'
+      path: '/cloudfront/continuous-deployment-policies'
+      fullPath: '/cloudfront/continuous-deployment-policies'
+      preLoaderRoute: typeof CloudfrontContinuousDeploymentPoliciesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cloudfront/$distributionId': {
+      id: '/cloudfront/$distributionId'
+      path: '/cloudfront/$distributionId'
+      fullPath: '/cloudfront/$distributionId'
+      preLoaderRoute: typeof CloudfrontDistributionIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cloudformation/$stackName': {
+      id: '/cloudformation/$stackName'
+      path: '/cloudformation/$stackName'
+      fullPath: '/cloudformation/$stackName'
+      preLoaderRoute: typeof CloudformationStackNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/appsync/$apiId': {
+      id: '/appsync/$apiId'
+      path: '/appsync/$apiId'
+      fullPath: '/appsync/$apiId'
+      preLoaderRoute: typeof AppsyncApiIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/applications/$applicationId': {
+      id: '/applications/$applicationId'
+      path: '/applications/$applicationId'
+      fullPath: '/applications/$applicationId'
+      preLoaderRoute: typeof ApplicationsApplicationIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/apigateway/usage-plans': {
+      id: '/apigateway/usage-plans'
+      path: '/apigateway/usage-plans'
+      fullPath: '/apigateway/usage-plans'
+      preLoaderRoute: typeof ApigatewayUsagePlansRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/apigateway/api-keys': {
+      id: '/apigateway/api-keys'
+      path: '/apigateway/api-keys'
+      fullPath: '/apigateway/api-keys'
+      preLoaderRoute: typeof ApigatewayApiKeysRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sqs/$queue/': {
@@ -270,6 +1500,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof S3BucketIndexRouteImport
       parentRoute: typeof S3BucketRoute
     }
+    '/lambda/layers/': {
+      id: '/lambda/layers/'
+      path: '/lambda/layers'
+      fullPath: '/lambda/layers/'
+      preLoaderRoute: typeof LambdaLayersIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cloudwatch/logs/': {
+      id: '/cloudwatch/logs/'
+      path: '/cloudwatch/logs'
+      fullPath: '/cloudwatch/logs/'
+      preLoaderRoute: typeof CloudwatchLogsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cloudfront/$distributionId/': {
+      id: '/cloudfront/$distributionId/'
+      path: '/'
+      fullPath: '/cloudfront/$distributionId/'
+      preLoaderRoute: typeof CloudfrontDistributionIdIndexRouteImport
+      parentRoute: typeof CloudfrontDistributionIdRoute
+    }
+    '/appsync/$apiId/': {
+      id: '/appsync/$apiId/'
+      path: '/'
+      fullPath: '/appsync/$apiId/'
+      preLoaderRoute: typeof AppsyncApiIdIndexRouteImport
+      parentRoute: typeof AppsyncApiIdRoute
+    }
     '/s3/$bucket/upload': {
       id: '/s3/$bucket/upload'
       path: '/upload'
@@ -284,8 +1542,109 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof S3BucketConfigRouteImport
       parentRoute: typeof S3BucketRoute
     }
+    '/lambda/layers/$layerName': {
+      id: '/lambda/layers/$layerName'
+      path: '/lambda/layers/$layerName'
+      fullPath: '/lambda/layers/$layerName'
+      preLoaderRoute: typeof LambdaLayersLayerNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ec2/vpc/$vpcId': {
+      id: '/ec2/vpc/$vpcId'
+      path: '/ec2/vpc/$vpcId'
+      fullPath: '/ec2/vpc/$vpcId'
+      preLoaderRoute: typeof Ec2VpcVpcIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cloudwatch/logs/stream': {
+      id: '/cloudwatch/logs/stream'
+      path: '/cloudwatch/logs/stream'
+      fullPath: '/cloudwatch/logs/stream'
+      preLoaderRoute: typeof CloudwatchLogsStreamRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cloudwatch/logs/group': {
+      id: '/cloudwatch/logs/group'
+      path: '/cloudwatch/logs/group'
+      fullPath: '/cloudwatch/logs/group'
+      preLoaderRoute: typeof CloudwatchLogsGroupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/apigateway/rest/$apiId': {
+      id: '/apigateway/rest/$apiId'
+      path: '/apigateway/rest/$apiId'
+      fullPath: '/apigateway/rest/$apiId'
+      preLoaderRoute: typeof ApigatewayRestApiIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/apigateway/http/$apiId': {
+      id: '/apigateway/http/$apiId'
+      path: '/apigateway/http/$apiId'
+      fullPath: '/apigateway/http/$apiId'
+      preLoaderRoute: typeof ApigatewayHttpApiIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cloudwatch/logs/$groupName/': {
+      id: '/cloudwatch/logs/$groupName/'
+      path: '/cloudwatch/logs/$groupName'
+      fullPath: '/cloudwatch/logs/$groupName/'
+      preLoaderRoute: typeof CloudwatchLogsGroupNameIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ecs/$cluster/tasks/$taskId': {
+      id: '/ecs/$cluster/tasks/$taskId'
+      path: '/tasks/$taskId'
+      fullPath: '/ecs/$cluster/tasks/$taskId'
+      preLoaderRoute: typeof EcsClusterTasksTaskIdRouteImport
+      parentRoute: typeof EcsClusterRoute
+    }
+    '/cloudwatch/logs/$groupName/$streamName': {
+      id: '/cloudwatch/logs/$groupName/$streamName'
+      path: '/cloudwatch/logs/$groupName/$streamName'
+      fullPath: '/cloudwatch/logs/$groupName/$streamName'
+      preLoaderRoute: typeof CloudwatchLogsGroupNameStreamNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
+
+interface AppsyncApiIdRouteChildren {
+  AppsyncApiIdIndexRoute: typeof AppsyncApiIdIndexRoute
+}
+
+const AppsyncApiIdRouteChildren: AppsyncApiIdRouteChildren = {
+  AppsyncApiIdIndexRoute: AppsyncApiIdIndexRoute,
+}
+
+const AppsyncApiIdRouteWithChildren = AppsyncApiIdRoute._addFileChildren(
+  AppsyncApiIdRouteChildren,
+)
+
+interface CloudfrontDistributionIdRouteChildren {
+  CloudfrontDistributionIdIndexRoute: typeof CloudfrontDistributionIdIndexRoute
+}
+
+const CloudfrontDistributionIdRouteChildren: CloudfrontDistributionIdRouteChildren =
+  {
+    CloudfrontDistributionIdIndexRoute: CloudfrontDistributionIdIndexRoute,
+  }
+
+const CloudfrontDistributionIdRouteWithChildren =
+  CloudfrontDistributionIdRoute._addFileChildren(
+    CloudfrontDistributionIdRouteChildren,
+  )
+
+interface EcsClusterRouteChildren {
+  EcsClusterTasksTaskIdRoute: typeof EcsClusterTasksTaskIdRoute
+}
+
+const EcsClusterRouteChildren: EcsClusterRouteChildren = {
+  EcsClusterTasksTaskIdRoute: EcsClusterTasksTaskIdRoute,
+}
+
+const EcsClusterRouteWithChildren = EcsClusterRoute._addFileChildren(
+  EcsClusterRouteChildren,
+)
 
 interface S3BucketRouteChildren {
   S3BucketConfigRoute: typeof S3BucketConfigRoute
@@ -317,14 +1676,79 @@ const SqsQueueRouteWithChildren = SqsQueueRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ServiceRoute: ServiceRoute,
   EventsRoute: EventsRoute,
+  IamRoute: IamRoute,
+  InboxRoute: InboxRoute,
+  MailRoute: MailRoute,
+  MapRoute: MapRoute,
+  MetricsRoute: MetricsRoute,
+  SesRoute: SesRoute,
+  StepfunctionsRoute: StepfunctionsRoute,
+  ApigatewayApiKeysRoute: ApigatewayApiKeysRoute,
+  ApigatewayUsagePlansRoute: ApigatewayUsagePlansRoute,
+  ApplicationsApplicationIdRoute: ApplicationsApplicationIdRoute,
+  AppsyncApiIdRoute: AppsyncApiIdRouteWithChildren,
+  CloudformationStackNameRoute: CloudformationStackNameRoute,
+  CloudfrontDistributionIdRoute: CloudfrontDistributionIdRouteWithChildren,
+  CloudfrontContinuousDeploymentPoliciesRoute:
+    CloudfrontContinuousDeploymentPoliciesRoute,
+  CloudfrontFleConfigsRoute: CloudfrontFleConfigsRoute,
+  CloudfrontFleProfilesRoute: CloudfrontFleProfilesRoute,
+  CloudfrontKeyGroupsRoute: CloudfrontKeyGroupsRoute,
+  CloudfrontRealtimeLogConfigsRoute: CloudfrontRealtimeLogConfigsRoute,
+  CognitoPoolIdRoute: CognitoPoolIdRoute,
+  DynamodbTableNameRoute: DynamodbTableNameRoute,
+  Ec2InstanceIdRoute: Ec2InstanceIdRoute,
+  EcrRepositoryNameRoute: EcrRepositoryNameRoute,
+  EcsClusterRoute: EcsClusterRouteWithChildren,
+  EventbridgeBusNameRoute: EventbridgeBusNameRoute,
+  KinesisStreamNameRoute: KinesisStreamNameRoute,
+  KmsKeyIdRoute: KmsKeyIdRoute,
+  LambdaNameRoute: LambdaNameRoute,
+  RdsInstanceRoute: RdsInstanceRoute,
   S3BucketRoute: S3BucketRouteWithChildren,
+  SecretsmanagerSecretNameRoute: SecretsmanagerSecretNameRoute,
+  SnsTopicRoute: SnsTopicRoute,
   SqsQueueRoute: SqsQueueRouteWithChildren,
+  SsmNameRoute: SsmNameRoute,
+  ApigatewayIndexRoute: ApigatewayIndexRoute,
+  ApplicationsIndexRoute: ApplicationsIndexRoute,
+  AppsyncIndexRoute: AppsyncIndexRoute,
+  CloudformationIndexRoute: CloudformationIndexRoute,
+  CloudfrontIndexRoute: CloudfrontIndexRoute,
+  CloudwatchIndexRoute: CloudwatchIndexRoute,
+  CognitoIndexRoute: CognitoIndexRoute,
   DynamodbIndexRoute: DynamodbIndexRoute,
+  Ec2IndexRoute: Ec2IndexRoute,
+  EcrIndexRoute: EcrIndexRoute,
+  EcsIndexRoute: EcsIndexRoute,
+  EksIndexRoute: EksIndexRoute,
+  ElasticacheIndexRoute: ElasticacheIndexRoute,
+  EventbridgeIndexRoute: EventbridgeIndexRoute,
+  KinesisIndexRoute: KinesisIndexRoute,
+  KmsIndexRoute: KmsIndexRoute,
   LambdaIndexRoute: LambdaIndexRoute,
+  MskIndexRoute: MskIndexRoute,
+  PipesIndexRoute: PipesIndexRoute,
+  RdsIndexRoute: RdsIndexRoute,
   S3IndexRoute: S3IndexRoute,
+  SecretsmanagerIndexRoute: SecretsmanagerIndexRoute,
   SnsIndexRoute: SnsIndexRoute,
   SqsIndexRoute: SqsIndexRoute,
+  SsmIndexRoute: SsmIndexRoute,
+  StsIndexRoute: StsIndexRoute,
+  ApigatewayHttpApiIdRoute: ApigatewayHttpApiIdRoute,
+  ApigatewayRestApiIdRoute: ApigatewayRestApiIdRoute,
+  CloudwatchLogsGroupRoute: CloudwatchLogsGroupRoute,
+  CloudwatchLogsStreamRoute: CloudwatchLogsStreamRoute,
+  Ec2VpcVpcIdRoute: Ec2VpcVpcIdRoute,
+  LambdaLayersLayerNameRoute: LambdaLayersLayerNameRoute,
+  CloudwatchLogsIndexRoute: CloudwatchLogsIndexRoute,
+  LambdaLayersIndexRoute: LambdaLayersIndexRoute,
+  CloudwatchLogsGroupNameStreamNameRoute:
+    CloudwatchLogsGroupNameStreamNameRoute,
+  CloudwatchLogsGroupNameIndexRoute: CloudwatchLogsGroupNameIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

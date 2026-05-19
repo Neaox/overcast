@@ -1,0 +1,21 @@
+service: eks
+status: not_started
+priority: p1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [rest_json]
+implementation: [internal/services/eks]
+integration_tests: [tests/integration/eks]
+capability_docs: docs/services/eks.md
+operation_count_estimate: unknown from initial subagent inventory
+current_support_level: EKS implementation present; compatibility inventory still needs service-specific audit.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Run a focused EKS inventory and AWS docs mapping.
+  intentionally_partial: []
+handoff:
+  start_with: [service-specific inventory]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/eks/... ./tests/integration/eks/...]

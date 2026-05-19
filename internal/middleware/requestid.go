@@ -17,7 +17,7 @@ package middleware
 import (
 	"net/http"
 
-	"github.com/your-org/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/protocol"
 )
 
 // RequestID attaches a unique request ID to every request context and response

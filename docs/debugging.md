@@ -22,15 +22,15 @@ variables, watch expressions, and navigate the call stack — all from VS Code.
 
 ## Keyboard reference
 
-| Key | Action |
-|-----|--------|
-| F5 | Start / Continue (run to next breakpoint) |
-| F10 | Step Over — run this line, pause on the next |
-| F11 | Step Into — follow the call into the function |
-| Shift+F11 | Step Out — run to end of current function |
-| Shift+F5 | Stop the debug session |
-| Ctrl+Shift+F5 | Restart the debug session |
-| F9 | Toggle breakpoint on current line |
+| Key           | Action                                        |
+| ------------- | --------------------------------------------- |
+| F5            | Start / Continue (run to next breakpoint)     |
+| F10           | Step Over — run this line, pause on the next  |
+| F11           | Step Into — follow the call into the function |
+| Shift+F11     | Step Out — run to end of current function     |
+| Shift+F5      | Stop the debug session                        |
+| Ctrl+Shift+F5 | Restart the debug session                     |
+| F9            | Toggle breakpoint on current line             |
 
 ---
 
@@ -44,6 +44,7 @@ it's been fetched.
 
 **WATCH panel**
 Type any Go expression and it's evaluated in the current scope:
+
 - `len(req.Body)` — body size
 - `r.Header.Get("X-Amz-Target")` — target header
 - `h.store` — the entire store object
@@ -68,16 +69,16 @@ value. For structs, the tooltip is expandable.
 All configurations are in `.vscode/launch.json`. Select one in the Run & Debug
 panel (`Ctrl+Shift+D`) before pressing F5.
 
-| Configuration | What it does |
-|--------------|--------------|
-| **Debug: server (memory state)** | Start the full server under the debugger. Set breakpoints in handler files, then send requests. |
-| **Debug: server (sqlite state)** | Same but with SQLite persistence. |
-| **Debug: test under cursor** | Highlight a test function name, press F5. Only that test runs. |
-| **Debug: all tests in current file** | Debug every test in the open file. |
-| **Debug: S3 integration tests** | Full S3 integration suite under the debugger. |
-| **Debug: SQS integration tests** | Full SQS integration suite under the debugger. |
-| **Debug: DynamoDB integration tests** | Full DynamoDB integration suite under the debugger. |
-| **Debug: attach to running Delve** | Attach to a Delve server on port 2345 (advanced — see below). |
+| Configuration                         | What it does                                                                                    |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| **Debug: server (memory state)**      | Start the full server under the debugger. Set breakpoints in handler files, then send requests. |
+| **Debug: server (sqlite state)**      | Same but with SQLite persistence.                                                               |
+| **Debug: test under cursor**          | Highlight a test function name, press F5. Only that test runs.                                  |
+| **Debug: all tests in current file**  | Debug every test in the open file.                                                              |
+| **Debug: S3 integration tests**       | Full S3 integration suite under the debugger.                                                   |
+| **Debug: SQS integration tests**      | Full SQS integration suite under the debugger.                                                  |
+| **Debug: DynamoDB integration tests** | Full DynamoDB integration suite under the debugger.                                             |
+| **Debug: attach to running Delve**    | Attach to a Delve server on port 2345 (advanced — see below).                                   |
 
 ---
 
@@ -115,11 +116,13 @@ To debug a specific endpoint being called by an external client:
 ## Conditional breakpoints
 
 Right-click a breakpoint dot and choose "Edit Breakpoint" to add a condition:
+
 ```
 bucket == "production-bucket"
 aerr != nil
 req.MaxNumberOfMessages > 1
 ```
+
 The debugger only pauses when the condition is true — useful for finding the
 specific case that fails in a loop or across many requests.
 
@@ -146,6 +149,7 @@ The Dev Container is pre-configured for debugging:
   so source paths resolve correctly in the debugger
 
 If debugging stops working after a container rebuild, run:
+
 ```bash
 go install github.com/go-delve/delve/cmd/dlv@latest
 ```
@@ -155,6 +159,7 @@ go install github.com/go-delve/delve/cmd/dlv@latest
 ## Native Windows (without Dev Container)
 
 Step debugging works natively on Windows amd64. Install Delve:
+
 ```powershell
 go install github.com/go-delve/delve/cmd/dlv@latest
 ```

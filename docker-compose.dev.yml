@@ -42,7 +42,7 @@ services:
     command: go test -race -count=1 -timeout=120s ./...
     # No port mapping — this is a one-shot test runner.
 
-  # Build and run the server with source mounted for development.
+    # Build and run the server with source mounted for development.
   overcast:
     build:
       context: .
@@ -65,16 +65,16 @@ services:
       OVERCAST_STATE: memory
       OVERCAST_LOG_LEVEL: debug
       OVERCAST_DEBUG: "true"
-      OVERCAST_SERVICES: s3,sqs,dynamodb,sns,lambda
+      OVERCAST_SERVICES: s3,sqs,dynamodb,sns,lambda,logs,cloudwatch
       CGO_ENABLED: "0"
     # Build then run in one command. The binary is rebuilt on every `up --build`.
     command: >
       sh -c "
         go build -trimpath -ldflags='-w -s' -o bin/overcast ./cmd/overcast &&
-        bin/overcast
+        bin/overcast serve
       "
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:4566/_health"]
+      test: [ "CMD", "wget", "-qO-", "http://localhost:4566/_health" ]
       interval: 5s
       timeout: 3s
       retries: 10

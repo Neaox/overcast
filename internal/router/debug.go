@@ -4,15 +4,23 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/pprof"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/your-org/overcast/internal/config"
-	"github.com/your-org/overcast/internal/state"
+	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/state"
 )
+
+// debugEC2Provider is the subset of the EC2 service needed by the debug
+// namespace. Defined here to avoid a circular import between router and
+// internal/services/ec2.
+type debugEC2Provider interface {
+	DebugVPCsHandler() http.HandlerFunc
+}
 
 // debugHandlers registers the /_debug/* endpoint namespace.
 // These are only mounted when cfg.Debug == true.
@@ -23,7 +31,7 @@ import (
 //   - Verifying configuration is what you expect
 //
 // A web UI for these endpoints is planned. For now they return JSON.
-func debugHandlers(cfg *config.Config, store state.Store) func(chi.Router) {
+func debugHandlers(cfg *config.Config, store state.Store, ec2 debugEC2Provider) func(chi.Router) {
 	return func(r chi.Router) {
 		r.Get("/health", debugHealth(cfg))
 		r.Get("/config", debugConfig(cfg))
@@ -32,65 +40,95 @@ func debugHandlers(cfg *config.Config, store state.Store) func(chi.Router) {
 		r.Post("/reset", debugReset(store))
 		r.Post("/reset/{service}", debugResetService(store))
 		r.Get("/metrics", debugMetrics())
+
+		// ---- Service-specific debug endpoints ---------------------------------
+		if ec2 != nil {
+			r.Get("/ec2/vpcs", ec2.DebugVPCsHandler())
+		}
+
+		// pprof endpoints — goroutine, heap, CPU, etc.
+		r.HandleFunc("/pprof/", pprof.Index)
+		r.HandleFunc("/pprof/cmdline", pprof.Cmdline)
+		r.HandleFunc("/pprof/profile", pprof.Profile)
+		r.HandleFunc("/pprof/symbol", pprof.Symbol)
+		r.HandleFunc("/pprof/trace", pprof.Trace)
+		r.Handle("/pprof/goroutine", pprof.Handler("goroutine"))
+		r.Handle("/pprof/heap", pprof.Handler("heap"))
+		r.Handle("/pprof/allocs", pprof.Handler("allocs"))
+		r.Handle("/pprof/block", pprof.Handler("block"))
+		r.Handle("/pprof/mutex", pprof.Handler("mutex"))
+		r.Handle("/pprof/threadcreate", pprof.Handler("threadcreate"))
 	}
 }
 
 // ---- Handler implementations -----------------------------------------------
 
 type debugHealthResponse struct {
-	Status    string          `json:"status"`
-	Timestamp string          `json:"timestamp"`
-	Uptime    string          `json:"uptime"`
-	GoVersion string          `json:"go_version"`
-	Services  map[string]bool `json:"services"`
-	State     string          `json:"state"`
-	Debug     bool            `json:"debug"`
+	Status        string            `json:"status"`
+	Timestamp     string            `json:"timestamp"`
+	Uptime        string            `json:"uptime"`
+	GoVersion     string            `json:"go_version"`
+	Services      map[string]bool   `json:"services"`
+	State         string            `json:"state"`
+	ServiceStates map[string]string `json:"serviceStates,omitempty"`
+	Debug         bool              `json:"debug"`
 }
 
-var startTime = time.Now()
+var startTime = processStartTime()
 
 func debugHealth(cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		svcStates := make(map[string]string, len(cfg.ServiceStates))
+		for svc, mode := range cfg.ServiceStates {
+			svcStates[svc] = string(mode)
+		}
 		resp := &debugHealthResponse{
-			Status:    "ok",
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-			Uptime:    time.Since(startTime).Round(time.Second).String(),
-			GoVersion: runtime.Version(),
-			Services:  cfg.Services,
-			State:     string(cfg.State),
-			Debug:     cfg.Debug,
+			Status:        "ok",
+			Timestamp:     time.Now().UTC().Format(time.RFC3339),
+			Uptime:        time.Since(startTime).Round(time.Second).String(),
+			GoVersion:     runtime.Version(),
+			Services:      cfg.Services,
+			State:         string(cfg.State),
+			ServiceStates: svcStates,
+			Debug:         cfg.Debug,
 		}
 		writeDebugJSON(w, http.StatusOK, resp)
 	}
 }
 
 type debugConfigResponse struct {
-	Host      string          `json:"host"`
-	Port      int             `json:"port"`
-	Services  map[string]bool `json:"services"`
-	State     string          `json:"state"`
-	DataDir   string          `json:"data_dir"`
-	Region    string          `json:"region"`
-	AccountID string          `json:"account_id"`
-	LogLevel  string          `json:"log_level"`
-	Debug     bool            `json:"debug"`
-	TLS       bool            `json:"tls_enabled"`
+	Host          string            `json:"host"`
+	Port          int               `json:"port"`
+	Services      map[string]bool   `json:"services"`
+	State         string            `json:"state"`
+	ServiceStates map[string]string `json:"serviceStates,omitempty"`
+	DataDir       string            `json:"data_dir"`
+	Region        string            `json:"region"`
+	AccountID     string            `json:"account_id"`
+	LogLevel      string            `json:"log_level"`
+	Debug         bool              `json:"debug"`
+	TLS           bool              `json:"tls_enabled"`
 	// TLS cert/key paths are deliberately omitted from the response.
 }
 
 func debugConfig(cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		svcStates := make(map[string]string, len(cfg.ServiceStates))
+		for svc, mode := range cfg.ServiceStates {
+			svcStates[svc] = string(mode)
+		}
 		resp := &debugConfigResponse{
-			Host:      cfg.Host,
-			Port:      cfg.Port,
-			Services:  cfg.Services,
-			State:     string(cfg.State),
-			DataDir:   cfg.DataDir,
-			Region:    cfg.Region,
-			AccountID: cfg.AccountID,
-			LogLevel:  cfg.LogLevel,
-			Debug:     cfg.Debug,
-			TLS:       cfg.TLSEnabled(),
+			Host:          cfg.Host,
+			Port:          cfg.Port,
+			Services:      cfg.Services,
+			State:         string(cfg.State),
+			ServiceStates: svcStates,
+			DataDir:       cfg.DataDir,
+			Region:        cfg.Region,
+			AccountID:     cfg.AccountID,
+			LogLevel:      cfg.LogLevel,
+			Debug:         cfg.Debug,
+			TLS:           cfg.TLSEnabled(),
 		}
 		writeDebugJSON(w, http.StatusOK, resp)
 	}

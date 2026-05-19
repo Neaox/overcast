@@ -1,0 +1,183 @@
+/**
+ * Lambda function detail page — Overview, Code, Test, and Configuration tabs.
+ */
+import { useState, useCallback, useEffect } from "react"
+import { createFileRoute, useNavigate } from "@tanstack/react-router"
+import { useQuery } from "@tanstack/react-query"
+import { useResourceMutation } from "@/hooks/use-resource-mutation"
+import { Button } from "@/components/ui/button"
+import { Spinner, PageHeader, Breadcrumb } from "@/components/ui/primitives"
+import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
+import {
+  lambdaFunctionsQueryOptions,
+  lambdaSourceQueryOptions,
+  putSourceMutationOptions,
+  lambdaKeys,
+} from "@/features/lambda/data"
+import { FunctionOverview } from "@/features/lambda/components/function-overview"
+import { CodeTab } from "@/features/lambda/components/code-tab"
+import { TestTab } from "@/features/lambda/components/test-tab"
+import { VersionsTab } from "@/features/lambda/components/versions-tab"
+import { MonitorTab } from "@/features/lambda/components/monitor-tab"
+import { ConfigurationTab } from "@/features/lambda/components/configuration-tab"
+import { TriggersTab } from "@/features/lambda/components/triggers-tab"
+import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
+
+export const Route = createFileRoute("/lambda/$name")({
+  head: ({ params }) => ({ meta: [{ title: `${params.name} — Lambda — Overcast` }] }),
+  component: FunctionDetail,
+})
+
+type TabKey = "code" | "test" | "versions" | "monitor" | "configuration" | "triggers"
+
+const VALID_TABS = new Set<TabKey>([
+  "code",
+  "test",
+  "versions",
+  "monitor",
+  "configuration",
+  "triggers",
+])
+
+function FunctionDetail() {
+  const { name } = Route.useParams()
+  const navigate = useNavigate()
+
+  const hashToTab = useCallback((): TabKey => {
+    const h = window.location.hash.slice(1) as TabKey
+    return VALID_TABS.has(h) ? h : "code"
+  }, [])
+
+  const [activeTab, setActiveTab] = useState<TabKey>(hashToTab)
+
+  // Sync state when the user navigates back/forward
+  useEffect(() => {
+    const onHashChange = () => setActiveTab(hashToTab())
+    window.addEventListener("hashchange", onHashChange)
+    return () => window.removeEventListener("hashchange", onHashChange)
+  }, [hashToTab])
+
+  const switchTab = useCallback((t: string) => {
+    window.location.hash = t
+    setActiveTab(t as TabKey)
+  }, [])
+
+  const { data: functions, isLoading: functionsLoading } = useQuery(lambdaFunctionsQueryOptions())
+  const fn = functions?.find((f) => f.FunctionName === name)
+
+  const {
+    data: source,
+    isLoading: sourceLoading,
+    isError: sourceError,
+  } = useQuery(lambdaSourceQueryOptions(name))
+
+  const [editedFiles, setEditedFiles] = useState<Record<string, string>>({})
+  const [activeFilePath, setActiveFilePath] = useState<string | undefined>(undefined)
+  const initialSource = source?.source ?? ""
+  const activeFile = activeFilePath ?? source?.filename ?? ""
+  const currentEditorValue = editedFiles[activeFile] ?? initialSource
+
+  const { mutate: deploy, isPending: isDeploying } = useResourceMutation({
+    options: putSourceMutationOptions(),
+    invalidateKeys: [lambdaKeys.sourceFiles(name), lambdaKeys.functions()],
+    successTitle: "Deployed",
+    successDescription: () => `${name} updated successfully.`,
+    errorTitle: "Deploy failed",
+    onSuccess: (updated) => {
+      setEditedFiles((prev) => ({ ...prev, [updated.filename]: updated.source }))
+    },
+  })
+
+  const handleDeploy = useCallback(() => {
+    if (!source) return
+    deploy({ name, source: currentEditorValue, filename: activeFile })
+  }, [name, source, currentEditorValue, activeFile, deploy])
+
+  if (functionsLoading) {
+    return (
+      <div className="flex items-center justify-center py-32">
+        <Spinner className="h-6 w-6" />
+      </div>
+    )
+  }
+
+  if (!fn) {
+    return (
+      <div className="flex flex-col items-center gap-3 py-32 text-center">
+        <p className="text-fg-muted">Function not found.</p>
+        <Button variant="secondary" size="sm" onClick={() => navigate({ to: "/lambda" })}>
+          Back to functions
+        </Button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-4 p-4 pb-8">
+      <PageHeader
+        title={fn.FunctionName ?? ""}
+        description={fn.Description || undefined}
+        breadcrumb={
+          <Breadcrumb
+            items={[
+              { label: "Lambda", onClick: () => navigate({ to: "/lambda" }) },
+              { label: fn.FunctionName ?? "" },
+            ]}
+          />
+        }
+        actions={
+          activeTab === "code" ? (
+            <Button onClick={handleDeploy} disabled={isDeploying || sourceLoading} size="md">
+              {isDeploying ? <Spinner className="mr-2 h-3.5 w-3.5" /> : null}
+              Deploy
+            </Button>
+          ) : null
+        }
+      />
+
+      <ApplicationOwnershipBanner candidates={[fn.FunctionArn, fn.FunctionName]} />
+
+      {/* ── Function overview ──────────────────────────────────────────── */}
+      <FunctionOverview fn={fn} />
+
+      {/* ── Tabs ───────────────────────────────────────────────────────── */}
+      <Tabs selectedKey={activeTab} onSelectionChange={switchTab}>
+        <TabList>
+          <Tab id="code">Code</Tab>
+          <Tab id="test">Test</Tab>
+          <Tab id="versions">Versions</Tab>
+          <Tab id="monitor">Monitor</Tab>
+          <Tab id="configuration">Configuration</Tab>
+          <Tab id="triggers">Triggers</Tab>
+        </TabList>
+
+        <TabPanel id="code">
+          <CodeTab
+            source={source}
+            sourceLoading={sourceLoading}
+            sourceError={sourceError}
+            currentEditorValue={currentEditorValue}
+            setEditedFiles={setEditedFiles}
+            setActiveFilePath={setActiveFilePath}
+            name={name}
+          />
+        </TabPanel>
+        <TabPanel id="test">
+          <TestTab name={name} />
+        </TabPanel>
+        <TabPanel id="versions">
+          <VersionsTab name={name} />
+        </TabPanel>
+        <TabPanel id="monitor">
+          <MonitorTab fn={fn} />
+        </TabPanel>
+        <TabPanel id="configuration">
+          <ConfigurationTab fn={fn} />
+        </TabPanel>
+        <TabPanel id="triggers">
+          <TriggersTab name={name} />
+        </TabPanel>
+      </Tabs>
+    </div>
+  )
+}

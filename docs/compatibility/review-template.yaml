@@ -1,0 +1,51 @@
+service: example
+status: not_started
+priority: p?
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: YYYY-MM-DD
+protocols: []
+implementation: []
+integration_tests: []
+capability_docs: ""
+operations:
+  ExampleOperation:
+    status: not_started
+    aws_docs: []
+    tests: []
+    checklist:
+      request_protocol: not_started
+      required_parameters: not_started
+      optional_parameters_defaults: not_started
+      validation: not_started
+      success_response: not_started
+      empty_result: not_started
+      errors: not_started
+      pagination: not_started
+      idempotency: not_started
+      state_transitions: not_started
+      identifiers: not_started
+      timestamps: not_started
+      sdk_compatibility: not_started
+      capability_docs: not_started
+    scenarios:
+      - name: default resource
+        status: not_started
+        tests: []
+        notes: baseline behavior
+      - name: configured resource variant
+        status: not_started
+        tests: []
+        notes: doc callout or common setup
+    evidence: []
+    gaps: []
+    next_action: read AWS docs
+findings:
+  fixed: []
+  remaining_gaps: []
+  intentionally_partial: []
+verification:
+  commands: []
+handoff:
+  start_with: []
+  do_not_redo: []
+  commands: []

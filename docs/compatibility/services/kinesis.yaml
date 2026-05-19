@@ -1,0 +1,22 @@
+service: kinesis
+status: not_started
+priority: p1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]
+implementation: [internal/services/kinesis]
+integration_tests: [tests/integration/kinesis]
+capability_docs: docs/services/kinesis.md
+operation_count_estimate: 17 supported
+current_support_level: Core Data Streams support for lifecycle, records, shards, retention, and tagging; some pagination gaps noted.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Review pagination and error-shape fidelity.
+    - Reconcile JSON 1.0 support versus docs claiming JSON 1.1.
+  intentionally_partial: []
+handoff:
+  start_with: [PutRecord, GetRecords, ListShards]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/kinesis/... ./tests/integration/kinesis/...]

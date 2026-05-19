@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 )
 
 // AssertStatus fails the test if the response status code doesn't match expected.
@@ -43,8 +44,8 @@ func AssertRequestID(t *testing.T, resp *http.Response) {
 func DecodeJSON(t *testing.T, resp *http.Response, v any) {
 	t.Helper()
 	defer resp.Body.Close()
-	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
-		body, _ := io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(resp.Body)
+	if err := json.Unmarshal(body, v); err != nil {
 		t.Fatalf("failed to decode JSON response: %v\nbody: %s", err, string(body))
 	}
 }
@@ -92,5 +93,21 @@ func AssertXMLError(t *testing.T, resp *http.Response, expectedCode string) {
 	DecodeXML(t, resp, &errResp)
 	if errResp.Code != expectedCode {
 		t.Errorf("expected error code %q, got %q (message: %s)", expectedCode, errResp.Code, errResp.Message)
+	}
+}
+
+// Eventually retries fn every interval until it returns true or timeout
+// elapses. Calls t.Fatal with msg if the deadline is reached without success.
+func Eventually(t *testing.T, timeout, interval time.Duration, fn func() bool, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if fn() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal(msg)
+		}
+		time.Sleep(interval)
 	}
 }

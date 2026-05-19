@@ -1,0 +1,238 @@
+// Package sts_test contains integration tests for the STS service emulator.
+//
+// Run: go test ./tests/integration/sts/...
+package sts_test
+
+import (
+	"encoding/xml"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"testing"
+
+	"github.com/Neaox/overcast/tests/helpers"
+)
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+func stsCall(t *testing.T, srv *helpers.TestServer, action string, params url.Values) *http.Response {
+	t.Helper()
+	if params == nil {
+		params = url.Values{}
+	}
+	params.Set("Action", action)
+	params.Set("Version", "2011-06-15")
+	body := strings.NewReader(params.Encode())
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/", body)
+	if err != nil {
+		t.Fatalf("stsCall: new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("stsCall: do: %v", err)
+	}
+	return resp
+}
+
+func decodeXML(t *testing.T, resp *http.Response, dst any) {
+	t.Helper()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("decodeXML: read: %v", err)
+	}
+	if err := xml.Unmarshal(b, dst); err != nil {
+		t.Fatalf("decodeXML: unmarshal %T: %v\nbody: %s", dst, err, b)
+	}
+}
+
+// ─── GetCallerIdentity ───────────────────────────────────────────────────────
+
+func TestGetCallerIdentity_success(t *testing.T) {
+	// Given: an STS service
+	srv := helpers.NewTestServer(t)
+
+	// When: calling GetCallerIdentity
+	resp := stsCall(t, srv, "GetCallerIdentity", nil)
+	defer resp.Body.Close()
+
+	// Then: response has Account, UserId, and Arn
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var result struct {
+		XMLName xml.Name `xml:"GetCallerIdentityResponse"`
+		Result  struct {
+			Account string `xml:"Account"`
+			UserId  string `xml:"UserId"`
+			Arn     string `xml:"Arn"`
+		} `xml:"GetCallerIdentityResult"`
+	}
+	decodeXML(t, resp, &result)
+	if result.Result.Account == "" {
+		t.Error("expected Account to be set")
+	}
+	if result.Result.UserId == "" {
+		t.Error("expected UserId to be set")
+	}
+	if result.Result.Arn == "" {
+		t.Error("expected Arn to be set")
+	}
+}
+
+// ─── GetSessionToken ─────────────────────────────────────────────────────────
+
+func TestGetSessionToken_success(t *testing.T) {
+	// Given: an STS service
+	srv := helpers.NewTestServer(t)
+
+	// When: calling GetSessionToken
+	resp := stsCall(t, srv, "GetSessionToken", nil)
+	defer resp.Body.Close()
+
+	// Then: response has Credentials with AccessKeyId, SecretAccessKey, SessionToken, Expiration
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var result struct {
+		XMLName xml.Name `xml:"GetSessionTokenResponse"`
+		Result  struct {
+			Credentials struct {
+				AccessKeyId     string `xml:"AccessKeyId"`
+				SecretAccessKey string `xml:"SecretAccessKey"`
+				SessionToken    string `xml:"SessionToken"`
+				Expiration      string `xml:"Expiration"`
+			} `xml:"Credentials"`
+		} `xml:"GetSessionTokenResult"`
+	}
+	decodeXML(t, resp, &result)
+	creds := result.Result.Credentials
+	if !strings.HasPrefix(creds.AccessKeyId, "ASIA") {
+		t.Errorf("expected AccessKeyId to start with ASIA, got %q", creds.AccessKeyId)
+	}
+	if creds.SecretAccessKey == "" {
+		t.Error("expected SecretAccessKey to be set")
+	}
+	if creds.SessionToken == "" {
+		t.Error("expected SessionToken to be set")
+	}
+	if creds.Expiration == "" {
+		t.Error("expected Expiration to be set")
+	}
+}
+
+// ─── GetFederationToken ──────────────────────────────────────────────────────
+
+func TestGetFederationToken_success(t *testing.T) {
+	// Given: an STS service
+	srv := helpers.NewTestServer(t)
+	params := url.Values{"Name": {"Jane"}}
+
+	// When: calling GetFederationToken
+	resp := stsCall(t, srv, "GetFederationToken", params)
+	defer resp.Body.Close()
+
+	// Then: response has Credentials and FederatedUser
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var result struct {
+		XMLName xml.Name `xml:"GetFederationTokenResponse"`
+		Result  struct {
+			Credentials struct {
+				AccessKeyId string `xml:"AccessKeyId"`
+			} `xml:"Credentials"`
+			FederatedUser struct {
+				Arn             string `xml:"Arn"`
+				FederatedUserId string `xml:"FederatedUserId"`
+			} `xml:"FederatedUser"`
+		} `xml:"GetFederationTokenResult"`
+	}
+	decodeXML(t, resp, &result)
+	if !strings.HasPrefix(result.Result.Credentials.AccessKeyId, "ASIA") {
+		t.Errorf("expected ASIA prefix, got %q", result.Result.Credentials.AccessKeyId)
+	}
+	if result.Result.FederatedUser.Arn == "" {
+		t.Error("expected FederatedUser.Arn to be set")
+	}
+}
+
+func TestGetFederationToken_missingName(t *testing.T) {
+	// Given: an STS service
+	srv := helpers.NewTestServer(t)
+
+	// When: calling GetFederationToken without Name
+	resp := stsCall(t, srv, "GetFederationToken", nil)
+	defer resp.Body.Close()
+
+	// Then: 400 error
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+}
+
+// ─── AssumeRole ──────────────────────────────────────────────────────────────
+
+func TestAssumeRole_success(t *testing.T) {
+	// Given: an STS service
+	srv := helpers.NewTestServer(t)
+	params := url.Values{
+		"RoleArn":         {"arn:aws:iam::000000000000:role/MyRole"},
+		"RoleSessionName": {"test-session"},
+	}
+
+	// When: calling AssumeRole
+	resp := stsCall(t, srv, "AssumeRole", params)
+	defer resp.Body.Close()
+
+	// Then: response has Credentials and AssumedRoleUser
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var result struct {
+		XMLName xml.Name `xml:"AssumeRoleResponse"`
+		Result  struct {
+			Credentials struct {
+				AccessKeyId string `xml:"AccessKeyId"`
+			} `xml:"Credentials"`
+			AssumedRoleUser struct {
+				Arn           string `xml:"Arn"`
+				AssumedRoleId string `xml:"AssumedRoleId"`
+			} `xml:"AssumedRoleUser"`
+		} `xml:"AssumeRoleResult"`
+	}
+	decodeXML(t, resp, &result)
+	if !strings.HasPrefix(result.Result.Credentials.AccessKeyId, "ASIA") {
+		t.Errorf("expected ASIA prefix, got %q", result.Result.Credentials.AccessKeyId)
+	}
+	if result.Result.AssumedRoleUser.Arn == "" {
+		t.Error("expected AssumedRoleUser.Arn to be set")
+	}
+}
+
+// ─── AssumeRoleWithWebIdentity ────────────────────────────────────────────────
+
+func TestAssumeRoleWithWebIdentity_success(t *testing.T) {
+	// Given: an STS service
+	srv := helpers.NewTestServer(t)
+	params := url.Values{
+		"RoleArn":          {"arn:aws:iam::000000000000:role/WebRole"},
+		"RoleSessionName":  {"web-session"},
+		"WebIdentityToken": {"some.jwt.token"},
+	}
+
+	// When: calling AssumeRoleWithWebIdentity
+	resp := stsCall(t, srv, "AssumeRoleWithWebIdentity", params)
+	defer resp.Body.Close()
+
+	// Then: response has valid Credentials
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var result struct {
+		XMLName xml.Name `xml:"AssumeRoleWithWebIdentityResponse"`
+		Result  struct {
+			Credentials struct {
+				AccessKeyId string `xml:"AccessKeyId"`
+			} `xml:"Credentials"`
+		} `xml:"AssumeRoleWithWebIdentityResult"`
+	}
+	decodeXML(t, resp, &result)
+	if !strings.HasPrefix(result.Result.Credentials.AccessKeyId, "ASIA") {
+		t.Errorf("expected ASIA prefix, got %q", result.Result.Credentials.AccessKeyId)
+	}
+}

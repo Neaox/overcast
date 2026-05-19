@@ -1,5 +1,3 @@
-# Logs
-logs
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -9,16 +7,18 @@ lerna-debug.log*
 
 node_modules
 dist
+!dist/.gitkeep
 dist-ssr
 *.local
+*.tsbuildinfo
 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
 .idea
-.DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+.tanstack

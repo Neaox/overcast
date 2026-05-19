@@ -1,0 +1,22 @@
+service: ses
+status: not_started
+priority: p0
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [query, rest_json]
+implementation: [internal/services/ses]
+integration_tests: [tests/integration/ses]
+capability_docs: docs/services/ses.md
+operation_count_estimate: 42 tracked; 24 supported, 18 unsupported
+current_support_level: SES v1 sending, identities, and templates mostly supported; SES v2 minimal send/identity support; many config/receipt/DKIM operations stubbed.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Review multi-protocol tracking for v2 REST-JSON doc-only operations.
+    - Verify unsupported v1 stubs match AWS error shape.
+  intentionally_partial: []
+handoff:
+  start_with: [SendEmail, SendRawEmail, SES v2 routes]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/ses/... ./tests/integration/ses/...]

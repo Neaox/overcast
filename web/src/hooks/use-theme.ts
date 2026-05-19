@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react"
+import { useEffect } from "react"
+import { useLocalStorage } from "@/hooks/use-local-storage"
 
 type Theme = "light" | "dark" | "system"
 
@@ -14,19 +15,11 @@ function applyTheme(theme: Theme) {
 }
 
 export function useTheme() {
-  const [theme, setThemeState] = useState<Theme>(() => {
-    return (localStorage.getItem(STORAGE_KEY) as Theme | null) ?? "system"
-  })
+  const [theme, setTheme] = useLocalStorage<Theme>(STORAGE_KEY, "system")
 
   useEffect(() => {
     applyTheme(theme)
-    localStorage.setItem(STORAGE_KEY, theme)
   }, [theme])
 
-  // Apply on mount (before first render flicker)
-  useEffect(() => {
-    applyTheme(theme)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  return { theme, setTheme: setThemeState }
+  return { theme, setTheme }
 }

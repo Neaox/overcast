@@ -11,8 +11,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/your-org/overcast/internal/protocol"
-	"github.com/your-org/overcast/internal/serviceutil"
+	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // ---- DecodeJSON ------------------------------------------------------------

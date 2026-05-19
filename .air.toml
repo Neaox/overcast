@@ -6,7 +6,7 @@
 #   task dev-server              # same, via task
 #
 # Air watches *.go files under cmd/ and internal/, rebuilds the binary into
-# tmp/overcast, and restarts it on every save. State is preserved across
+# tmp/overcastd, and restarts it on every save. State is preserved across
 # restarts because the SQLite file lives outside the tmp/ directory.
 #
 # Dev defaults match scripts/run.go:
@@ -19,10 +19,10 @@ tmp_dir = "tmp"
 
 [build]
   # Build command — matches the flags in scripts/run.go / Makefile.
-  cmd = "go build -trimpath -ldflags='-w -s' -o ./tmp/overcast ./cmd/overcast"
+  cmd = "go build -trimpath -ldflags='-w -s' -o ./tmp/overcastd ./cmd/overcastd"
 
   # Binary to run after a successful build.
-  bin = "./tmp/overcast"
+  bin = "./tmp/overcastd"
 
   # Environment variables passed to the running binary.
   # Override any of these by setting them in your shell before running air.

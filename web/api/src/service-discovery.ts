@@ -19,10 +19,12 @@ export interface EmulatorEndpoint {
 export const ENDPOINT_HEADER = "x-overcast-endpoint"
 export const REGION_HEADER = "x-overcast-region"
 
-/** Default endpoint — used when header is absent. */
+const apiPort = process.env.OVERCAST_PORT || "4566"
+
+/** Default endpoint — constructed from env vars or falls back to localhost:4566. */
 export const DEFAULT_ENDPOINT: EmulatorEndpoint = {
-  baseUrl: "http://localhost:4566",
-  region: "us-east-1",
+  baseUrl: process.env.EMULATOR_ENDPOINT || `http://localhost:${apiPort}`,
+  region: process.env.OVERCAST_DEFAULT_REGION || "us-east-1",
 }
 
 /**

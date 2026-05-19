@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go: ['1.23', '1.22']
+        go: ["1.24", "1.23"]
 
     steps:
       - uses: actions/checkout@v4
@@ -32,7 +32,10 @@ jobs:
         run: go test -race -count=1 -timeout=60s ./internal/...
 
       - name: Integration tests
-        run: go test -race -count=1 -timeout=120s ./tests/...
+        run: go test -race -count=1 -timeout=300s ./tests/...
+
+      - name: SQS integration tests (protocol dispatch)
+        run: OVERCAST_PROTOCOL_DISPATCH=1 go test -race -count=1 -timeout=300s ./tests/integration/sqs/...
 
       - name: Coverage
         run: |
@@ -46,8 +49,47 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: "1.24"
           cache: true
       - uses: golangci/golangci-lint-action@v6
         with:
           version: latest
+
+  web:
+    name: Web UI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Build SPA
+        run: VITE_BUNDLED=true npm run build
+      - name: Build BFF server
+        run: npm run build:server
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build console image
+        run: docker build -t overcast:ci .
+      - name: Build slim image
+        run: docker build --target slim -t overcast-slim:ci .
+      - name: Smoke test (slim)
+        run: |
+          docker run -d --name oc-smoke -p 4566:4566 overcast-slim:ci
+          sleep 2
+          curl -sf http://localhost:4566/_health
+          docker rm -f oc-smoke

@@ -1,0 +1,22 @@
+service: dynamodb
+status: not_started
+priority: p0
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [aws_json_1_0, rpcv2_cbor]
+implementation: [internal/services/dynamodb]
+integration_tests: [tests/integration/dynamodb]
+capability_docs: docs/services/dynamodb.md
+operation_count_estimate: 19 tracked; 18 supported, 1 unsupported
+current_support_level: Strong table, item, query, transaction, index, and stream support; PartiQL out of scope.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Review expression edge cases, pagination semantics, and GSI/LSI behavior.
+    - Review CBOR coverage against SDK expectations.
+  intentionally_partial: []
+handoff:
+  start_with: [Query, Scan, UpdateItem, transactions]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/dynamodb/... ./tests/integration/dynamodb/...]

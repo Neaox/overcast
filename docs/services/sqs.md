@@ -2,77 +2,16 @@
 
 > AWS docs: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/Welcome.html
 
-SQS uses a JSON (or form-encoded) API over HTTPS. All operations share a single
-endpoint URL; the action is identified by the `Action` query parameter or the
-`X-Amz-Target` header in SDK requests.
+SQS supports AWS JSON 1.0, AWS Query, and Smithy RPC v2 CBOR. JSON and Query
+requests share the root endpoint; the action is identified by the `Action`
+query parameter or the `X-Amz-Target` header in SDK requests. RPC v2 CBOR
+requests use `/service/AmazonSQS/operation/<Operation>` with
+`Smithy-Protocol: rpc-v2-cbor`.
 
 Queue URLs are returned in the form `http://localhost:4566/<account-id>/<queue-name>`.
 For local use, `<account-id>` defaults to `000000000000`.
 
 ---
-
-## Summary
-
-| Category | ✅ Supported | ⚠️ Partial | 🚧 WIP | ❌ Unsupported |
-|----------|------------|-----------|--------|--------------|
-| Queue management | 0 | 0 | 0 | 7 |
-| Message operations | 0 | 0 | 0 | 5 |
-| Permissions | 0 | 0 | 0 | 2 |
-| Dead-letter queues | 0 | 0 | 0 | 2 |
-| FIFO queues | 0 | 0 | 0 | 3 |
-
----
-
-## Endpoints
-
-### Queue management
-
-| Operation | Status | Notes | AWS Docs |
-|-----------|--------|-------|----------|
-| `CreateQueue` | ❌ Unsupported | | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_CreateQueue.html) |
-| `DeleteQueue` | ❌ Unsupported | | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteQueue.html) |
-| `GetQueueUrl` | ❌ Unsupported | | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_GetQueueUrl.html) |
-| `ListQueues` | ❌ Unsupported | | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListQueues.html) |
-| `ListQueueTags` | ❌ Unsupported | | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListQueueTags.html) |
-| `TagQueue` | ❌ Unsupported | | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_TagQueue.html) |
-| `UntagQueue` | ❌ Unsupported | | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_UntagQueue.html) |
-| `GetQueueAttributes` | ❌ Unsupported | | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_GetQueueAttributes.html) |
-| `SetQueueAttributes` | ❌ Unsupported | | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SetQueueAttributes.html) |
-| `PurgeQueue` | ❌ Unsupported | | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_PurgeQueue.html) |
-
-### Message operations
-
-| Operation | Status | Notes | AWS Docs |
-|-----------|--------|-------|----------|
-| `SendMessage` | ❌ Unsupported | | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessage.html) |
-| `SendMessageBatch` | ❌ Unsupported | Up to 10 messages per batch | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessageBatch.html) |
-| `ReceiveMessage` | ❌ Unsupported | Long-polling (`WaitTimeSeconds`) requires async timer support | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ReceiveMessage.html) |
-| `DeleteMessage` | ❌ Unsupported | | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteMessage.html) |
-| `DeleteMessageBatch` | ❌ Unsupported | | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteMessageBatch.html) |
-| `ChangeMessageVisibility` | ❌ Unsupported | Requires visibility-timeout ticker | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ChangeMessageVisibility.html) |
-| `ChangeMessageVisibilityBatch` | ❌ Unsupported | | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ChangeMessageVisibilityBatch.html) |
-
-### Permissions
-
-| Operation | Status | Notes | AWS Docs |
-|-----------|--------|-------|----------|
-| `AddPermission` | ❌ Unsupported | | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_AddPermission.html) |
-| `RemovePermission` | ❌ Unsupported | | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_RemovePermission.html) |
-
-### Dead-letter queues
-
-| Operation | Status | Notes | AWS Docs |
-|-----------|--------|-------|----------|
-| `ListDeadLetterSourceQueues` | ❌ Unsupported | | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListDeadLetterSourceQueues.html) |
-| DLQ redrive (attribute on CreateQueue) | ❌ Unsupported | Set via `RedrivePolicy` queue attribute | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html) |
-
-### FIFO queues
-
-| Operation | Status | Notes | AWS Docs |
-|-----------|--------|-------|----------|
-| FIFO queue creation (`QueueName.fifo`) | ❌ Unsupported | Requires deduplication ID tracking | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/FIFO-queues.html) |
-| Message deduplication (`MessageDeduplicationId`) | ❌ Unsupported | | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/FIFO-queues-exactly-once-processing.html) |
-| Message group ordering (`MessageGroupId`) | ❌ Unsupported | | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/FIFO-queues-message-order.html) |
 
 ---
 
@@ -82,3 +21,60 @@ For local use, `<account-id>` defaults to `000000000000`.
   high load in the in-memory backend.
 - Message attribute data types `Binary` and `Number` are stored but not validated.
 - SQS → Lambda event source mapping requires the Lambda service; see `lambda.md`.
+
+<!-- BEGIN overcast:capabilities -->
+
+## Summary
+
+| Category           | ✅ Supported | ❌ Unsupported |
+| ------------------ | ------------ | -------------- |
+| Queue management   | 10           |                |
+| Message operations | 7            |                |
+| Permissions        |              | 2              |
+| Dead-letter queues | 1            |                |
+
+---
+
+## Endpoints
+
+### Queue management
+
+| Operation            | Status       | Notes                                            | AWS Docs                                                                                                  |
+| -------------------- | ------------ | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `CreateQueue`        | ✅ Supported | Idempotent; FIFO queues supported (.fifo suffix) | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_CreateQueue.html)        |
+| `DeleteQueue`        | ✅ Supported |                                                  | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteQueue.html)        |
+| `GetQueueUrl`        | ✅ Supported |                                                  | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_GetQueueUrl.html)        |
+| `ListQueues`         | ✅ Supported | Optional QueueNamePrefix filter                  | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListQueues.html)         |
+| `GetQueueAttributes` | ✅ Supported | All standard attributes; All wildcard supported  | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_GetQueueAttributes.html) |
+| `SetQueueAttributes` | ✅ Supported |                                                  | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SetQueueAttributes.html) |
+| `PurgeQueue`         | ✅ Supported | Deletes all messages immediately                 | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_PurgeQueue.html)         |
+| `ListQueueTags`      | ✅ Supported |                                                  | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListQueueTags.html)      |
+| `TagQueue`           | ✅ Supported | Merges with existing tags                        | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_TagQueue.html)           |
+| `UntagQueue`         | ✅ Supported |                                                  | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_UntagQueue.html)         |
+
+### Message operations
+
+| Operation                      | Status       | Notes                                                                  | AWS Docs                                                                                                            |
+| ------------------------------ | ------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `SendMessage`                  | ✅ Supported | DelaySeconds, MessageAttributes supported                              | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessage.html)                  |
+| `SendMessageBatch`             | ✅ Supported | Up to 10 messages per batch                                            | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessageBatch.html)             |
+| `ReceiveMessage`               | ✅ Supported | MaxNumberOfMessages, VisibilityTimeout, WaitTimeSeconds (long polling) | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ReceiveMessage.html)               |
+| `DeleteMessage`                | ✅ Supported |                                                                        | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteMessage.html)                |
+| `DeleteMessageBatch`           | ✅ Supported | Up to 10 messages per batch                                            | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteMessageBatch.html)           |
+| `ChangeMessageVisibility`      | ✅ Supported | Sets new visibility timeout on an in-flight message                    | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ChangeMessageVisibility.html)      |
+| `ChangeMessageVisibilityBatch` | ✅ Supported | Batch visibility timeout changes; per-entry success/failure response   | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ChangeMessageVisibilityBatch.html) |
+
+### Permissions
+
+| Operation          | Status         | Notes             | AWS Docs                                                                                                |
+| ------------------ | -------------- | ----------------- | ------------------------------------------------------------------------------------------------------- |
+| `AddPermission`    | ❌ Unsupported | stub; returns 501 | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_AddPermission.html)    |
+| `RemovePermission` | ❌ Unsupported | stub; returns 501 | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_RemovePermission.html) |
+
+### Dead-letter queues
+
+| Operation                    | Status       | Notes                                | AWS Docs                                                                                                          |
+| ---------------------------- | ------------ | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `ListDeadLetterSourceQueues` | ✅ Supported | Lists queues that target a given DLQ | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListDeadLetterSourceQueues.html) |
+
+<!-- END overcast:capabilities -->

@@ -16,9 +16,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/your-org/overcast/internal/events"
-	"github.com/your-org/overcast/internal/protocol"
-	"github.com/your-org/overcast/internal/serviceutil"
+	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // initObjectRoutes populates the four object-level dispatch tables.
@@ -88,15 +88,20 @@ func (h *Handler) PutObject(w http.ResponseWriter, r *http.Request) {
 		LastModified:       h.clk.Now().UTC(),
 		Metadata:           meta,
 		ContentDisposition: r.Header.Get("Content-Disposition"),
-		ContentEncoding:    r.Header.Get("Content-Encoding"),
+		ContentEncoding:    stripAWSChunkedEncoding(r.Header.Get("Content-Encoding")),
 		ContentLanguage:    r.Header.Get("Content-Language"),
 		CacheControl:       r.Header.Get("Cache-Control"),
 		Expires:            r.Header.Get("Expires"),
 	}
 
+	// Decode aws-chunked streaming uploads (SDK for .NET v4, Rust, newer
+	// Java) transparently so we store the raw object bytes, not the chunk
+	// framing. See aws_chunked.go.
+	body, _ := maybeDecodeAWSChunked(r)
+
 	// Stream the body to disk while computing the MD5 ETag in one pass.
 	// The body is never fully buffered in memory.
-	etag, size, aerr := h.store.putObjectStream(r.Context(), obj, r.Body)
+	etag, size, aerr := h.store.putObjectStream(r.Context(), obj, body)
 	if aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
 		return
@@ -168,8 +173,114 @@ func (h *Handler) GetObject(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("x-amz-meta-"+k, v)
 	}
 
+	// ETag conditional requests (RFC 7232).
+	// If-Match: return 412 if ETags don't match.
+	if ifMatch := r.Header.Get("If-Match"); ifMatch != "" && ifMatch != "*" {
+		if !etagMatches(obj.ETag, ifMatch) {
+			w.WriteHeader(http.StatusPreconditionFailed)
+			return
+		}
+	}
+	// If-None-Match: return 304 if ETags match.
+	if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" {
+		if ifNoneMatch == "*" || etagMatches(obj.ETag, ifNoneMatch) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
+
+	// Handle Range request (RFC 7233 / AWS S3 spec).
+	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
+		start, end, ok := parseByteRange(rangeHeader, obj.ContentLength)
+		if !ok {
+			w.Header().Set("Content-Range", "bytes */"+strconv.FormatInt(obj.ContentLength, 10))
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		rangeLen := end - start + 1
+		if _, err := f.Seek(start, io.SeekStart); err != nil {
+			protocol.WriteXMLError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
+			return
+		}
+		w.Header().Set("Content-Range", "bytes "+
+			strconv.FormatInt(start, 10)+"-"+
+			strconv.FormatInt(end, 10)+"/"+
+			strconv.FormatInt(obj.ContentLength, 10))
+		w.Header().Set("Content-Length", strconv.FormatInt(rangeLen, 10))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = io.Copy(w, io.LimitReader(f, rangeLen))
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
-	io.Copy(w, f)
+	_, _ = io.Copy(w, f)
+}
+
+// parseByteRange parses a "Range: bytes=X-Y" header value and returns the
+// resolved (start, end) byte positions (both inclusive) relative to a body of
+// totalSize bytes.  Returns (0, 0, false) for any unsatisfiable range.
+func parseByteRange(header string, totalSize int64) (start, end int64, ok bool) {
+	header = strings.TrimSpace(header)
+	if !strings.HasPrefix(header, "bytes=") {
+		return 0, 0, false
+	}
+	spec := strings.TrimPrefix(header, "bytes=")
+	// Only the first range specifier is handled (no multi-range).
+	first := strings.SplitN(spec, ",", 2)[0]
+	first = strings.TrimSpace(first)
+	dashIdx := strings.Index(first, "-")
+	if dashIdx < 0 {
+		return 0, 0, false
+	}
+	lhs := first[:dashIdx]
+	rhs := first[dashIdx+1:]
+
+	switch {
+	case lhs == "" && rhs != "":
+		// bytes=-N  →  last N bytes
+		n, err := strconv.ParseInt(rhs, 10, 64)
+		if err != nil || n <= 0 {
+			return 0, 0, false
+		}
+		if n > totalSize {
+			n = totalSize
+		}
+		return totalSize - n, totalSize - 1, true
+	case lhs != "" && rhs == "":
+		// bytes=N-  →  from N to end
+		s, err := strconv.ParseInt(lhs, 10, 64)
+		if err != nil || s < 0 || s >= totalSize {
+			return 0, 0, false
+		}
+		return s, totalSize - 1, true
+	default:
+		s, err1 := strconv.ParseInt(lhs, 10, 64)
+		e, err2 := strconv.ParseInt(rhs, 10, 64)
+		if err1 != nil || err2 != nil {
+			return 0, 0, false
+		}
+		if s < 0 || e < s || s >= totalSize {
+			return 0, 0, false
+		}
+		if e >= totalSize {
+			e = totalSize - 1
+		}
+		return s, e, true
+	}
+}
+
+// etagMatches reports whether objectETag matches any ETag in headerVal.
+// headerVal is a comma-separated list as sent in If-Match / If-None-Match.
+// Comparison strips surrounding quotes for robustness.
+func etagMatches(objectETag, headerVal string) bool {
+	bare := strings.Trim(objectETag, `"`)
+	for _, tok := range strings.Split(headerVal, ",") {
+		tok = strings.TrimSpace(tok)
+		if tok == "*" || strings.Trim(tok, `"`) == bare {
+			return true
+		}
+	}
+	return false
 }
 
 // HeadObject handles HEAD /{bucket}/{key}
@@ -297,9 +408,7 @@ func (h *Handler) DeleteObjects(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(http.StatusOK)
-	xml.NewEncoder(w).Encode(resp)
+	protocol.WriteXML(w, r, http.StatusOK, resp)
 }
 
 // DeleteObject handles DELETE /{bucket}/{key}.

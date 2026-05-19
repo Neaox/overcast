@@ -15,14 +15,15 @@ import {
 } from "lucide-react"
 import { Route } from "@/routes/s3/$bucket/index"
 import {
-  s3Queries,
+  s3ObjectsQueryOptions,
+  s3ObjectMetaQueryOptions,
   s3Keys,
   deleteObjectMutationOptions,
   deleteByPrefixMutationOptions,
+  deleteBucketMutationOptions,
 } from "@/features/s3/data"
-import { api } from "@/services/api"
+import { s3 } from "@/services/api"
 import { uploadStore } from "@/lib/upload-store"
-import { useEndpoint } from "@/hooks/use-endpoint"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -33,13 +34,15 @@ import {
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
 import { PageHeader, Breadcrumb, Spinner, EmptyState, CodeBlock } from "@/components/ui/primitives"
+import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { useToast } from "@/components/ui/toast"
 import { formatBytes, formatDate, formatStorageClass } from "@/lib/format"
 import { BucketTabs } from "./bucket-tabs"
+import { cn } from "@/lib/utils"
 
 export function BucketDetail() {
+  'use no memo'
   const { bucket } = Route.useParams()
-  const { endpoint } = useEndpoint()
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { toast } = useToast()
@@ -50,12 +53,27 @@ export function BucketDetail() {
   const [deleteTarget, setDeleteTarget] = useState<string>()
   const [deletePrefixTarget, setDeletePrefixTarget] = useState<string>()
   const [isDragOver, setIsDragOver] = useState(false)
+  const [showDeleteBucket, setShowDeleteBucket] = useState(false)
   const dragCounterRef = useRef(0)
 
-  function openUpload(files: File[]) {
-    uploadStore.set(files, prefix)
-    navigate({ to: "/s3/$bucket/upload", params: { bucket } })
-  }
+  const deleteBucketMutation = useMutation({
+    ...deleteBucketMutationOptions(),
+    onSuccess: () => {
+      toast({ title: `Bucket "${bucket}" deleted` })
+      void navigate({ to: "/s3" })
+    },
+    onError: (err: Error) => {
+      toast({ title: "Delete failed", description: err.message, variant: "danger" })
+    },
+  })
+
+  const openUpload = useCallback(
+    (files: File[]) => {
+      uploadStore.set(files, prefix)
+      void navigate({ to: "/s3/$bucket/upload", params: { bucket } })
+    },
+    [prefix, bucket, navigate],
+  )
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -73,26 +91,29 @@ export function BucketDetail() {
     e.preventDefault()
   }, [])
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    dragCounterRef.current = 0
-    setIsDragOver(false)
-    const files = Array.from(e.dataTransfer.files)
-    if (files.length > 0) openUpload(files)
-  }, [])
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault()
+      dragCounterRef.current = 0
+      setIsDragOver(false)
+      const files = Array.from(e.dataTransfer.files)
+      if (files.length > 0) openUpload(files)
+    },
+    [openUpload],
+  )
 
   const { data, isLoading, isFetching, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
-    useInfiniteQuery(s3Queries.objects(endpoint.baseUrl, bucket, prefix))
+    useInfiniteQuery(s3ObjectsQueryOptions(bucket, prefix))
 
   const { data: meta, isLoading: metaLoading } = useQuery({
-    ...s3Queries.objectMeta(endpoint.baseUrl, bucket, metaTarget ?? ""),
+    ...s3ObjectMetaQueryOptions(bucket, metaTarget ?? ""),
     enabled: !!metaTarget,
   })
 
   const deleteMutation = useMutation({
     ...deleteObjectMutationOptions(bucket),
     onSuccess: (_, key) => {
-      qc.invalidateQueries({ queryKey: s3Keys.objects() })
+      void qc.invalidateQueries({ queryKey: s3Keys.objects() })
       setDeleteTarget(undefined)
       if (selected === key) setSelected(undefined)
       toast({ title: "Object deleted", description: key })
@@ -104,7 +125,7 @@ export function BucketDetail() {
   const deletePrefixMutation = useMutation({
     ...deleteByPrefixMutationOptions(bucket),
     onSuccess: (res, prefix) => {
-      qc.invalidateQueries({ queryKey: s3Keys.objects() })
+      void qc.invalidateQueries({ queryKey: s3Keys.objects() })
       setDeletePrefixTarget(undefined)
       toast({
         title: "Folder deleted",
@@ -176,13 +197,13 @@ export function BucketDetail() {
     const last = virtualItems.at(-1)
     if (!last) return
     if (last.index >= allItems.length - 10 && hasNextPage && !isFetchingNextPage) {
-      fetchNextPage()
+      void fetchNextPage()
     }
   }, [virtualItems, allItems.length, hasNextPage, isFetchingNextPage, fetchNextPage])
 
   return (
     <div
-      className="relative flex w-full max-w-screen-xl flex-col gap-4"
+      className="relative flex w-full flex-col gap-4"
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
@@ -219,15 +240,26 @@ export function BucketDetail() {
               disabled={isFetching}
               title="Refresh"
             >
-              <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
+              <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
             </Button>
             <Button variant="secondary" size="md" onClick={() => navigate({ to: "/s3" })}>
               <ArrowLeft className="h-4 w-4" /> Buckets
             </Button>
             <UploadButton onOpen={openUpload} />
+            <span className="mx-1 h-5 w-px bg-border" />
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowDeleteBucket(true)}
+              title="Delete bucket"
+            >
+              <Trash2 className="h-4 w-4 text-fg-muted" />
+            </Button>
           </>
         }
       />
+
+      <ApplicationOwnershipBanner candidates={[`arn:aws:s3:::${bucket}`, bucket]} />
 
       <BucketTabs bucket={bucket} active="objects" />
 
@@ -295,9 +327,7 @@ export function BucketDetail() {
                       key={vr.key}
                       data-index={vr.index}
                       ref={rowVirtualizer.measureElement}
-                      className={`cursor-pointer transition-colors hover:bg-bg-subtle ${!isLastRow ? "border-b border-border-muted" : ""} ${
-                        item.type === "object" && selected === item.key ? "bg-accent-muted" : ""
-                      }`}
+                      className={cn("cursor-pointer transition-colors hover:bg-bg-subtle", !isLastRow && "border-b border-border-muted", (item.type === "object" && selected === item.key) && "bg-accent-muted")}
                       onClick={() => {
                         if (item.type === "prefix") navigateInto(item.prefix)
                         else setSelected(selected === item.key ? undefined : item.key)
@@ -370,7 +400,7 @@ export function BucketDetail() {
                                 asChild
                                 onClick={(e) => e.stopPropagation()}
                               >
-                                <a href={api.s3.getObjectDownloadUrl(bucket, item.key)} download>
+                                <a href={s3.getObjectDownloadUrl(bucket, item.key)} download>
                                   <Download className="h-3.5 w-3.5" />
                                 </a>
                               </Button>
@@ -446,7 +476,7 @@ export function BucketDetail() {
             </Button>
             {metaTarget && (
               <Button asChild>
-                <a href={api.s3.getObjectDownloadUrl(bucket, metaTarget)} download>
+                <a href={s3.getObjectDownloadUrl(bucket, metaTarget)} download>
                   <Download className="h-4 w-4" /> Download
                 </a>
               </Button>
@@ -506,6 +536,31 @@ export function BucketDetail() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete bucket confirmation */}
+      <Dialog open={showDeleteBucket} onOpenChange={(o) => !o && setShowDeleteBucket(false)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete bucket?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm break-all text-fg-muted">
+            <span className="font-medium text-fg">{bucket}</span> will be permanently deleted. The
+            bucket must be empty before it can be deleted.
+          </p>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setShowDeleteBucket(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              disabled={deleteBucketMutation.isPending}
+              onClick={() => deleteBucketMutation.mutate(bucket)}
+            >
+              {deleteBucketMutation.isPending ? "Deleting…" : "Delete bucket"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -514,7 +569,7 @@ function MetaRow({ label, value, mono }: { label: string; value: string; mono?: 
   return (
     <div className="flex gap-3">
       <span className="w-32 shrink-0 text-sm text-fg-muted">{label}</span>
-      <span className={`text-sm break-all text-fg ${mono ? "font-mono" : ""}`}>{value}</span>
+      <span className={cn("text-sm break-all text-fg", mono && "font-mono")}>{value}</span>
     </div>
   )
 }

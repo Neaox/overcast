@@ -1,0 +1,19 @@
+{
+  "servers": {
+    "overcastWorkspace": {
+      "type": "stdio",
+      "command": "sh",
+      "args": [
+        "-c",
+        "mkdir -p '${workspaceFolder}/.overcast' && exec 2>>'${workspaceFolder}/.overcast/mcp-workspace.log' && go build -o '${workspaceFolder}/bin/overcast-mcp' ./cmd/overcast-mcp && exec '${workspaceFolder}/bin/overcast-mcp' --workspace '${workspaceFolder}' --stdio"
+      ],
+      "dev": {
+        "watch": "{cmd/overcast-mcp,internal/mcp}/**/*"
+      }
+    },
+    "overcastCompat": {
+      "type": "http",
+      "url": "http://localhost:7777/mcp/"
+    }
+  }
+}

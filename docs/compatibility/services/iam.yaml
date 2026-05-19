@@ -1,0 +1,22 @@
+service: iam
+status: not_started
+priority: p0
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [query]
+implementation: [internal/services/iam]
+integration_tests: [tests/integration/iam]
+capability_docs: docs/services/iam.md
+operation_count_estimate: 61 tracked, 61 supported
+current_support_level: Broad IAM resource-management support; enforcement behavior needs docs/test reconciliation.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Reconcile docs/capability wording with IAM enforcement tests.
+    - Review CDK role, policy, and instance profile compatibility.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateRole, PutRolePolicy, AttachRolePolicy, instance profiles]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/iam/... ./tests/integration/iam/...]

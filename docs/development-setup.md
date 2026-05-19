@@ -8,13 +8,13 @@ fits your environment.
 
 ## TL;DR — which approach should I use?
 
-| Your situation | Recommended approach |
-|----------------|---------------------|
-| Windows (any setup) | **Option A: Dev Container** |
-| Mac or Linux, want simplest setup | **Option A: Dev Container** |
-| Mac or Linux, prefer native tools | **Option B: Native** |
-| No local Go, just Docker | **Option C: Docker Compose** |
-| GitHub Codespaces | **Option A: Dev Container** (works automatically) |
+| Your situation                    | Recommended approach                              |
+| --------------------------------- | ------------------------------------------------- |
+| Windows (any setup)               | **Option A: Dev Container**                       |
+| Mac or Linux, want simplest setup | **Option A: Dev Container**                       |
+| Mac or Linux, prefer native tools | **Option B: Native**                              |
+| No local Go, just Docker          | **Option C: Docker Compose**                      |
+| GitHub Codespaces                 | **Option A: Dev Container** (works automatically) |
 
 ---
 
@@ -103,7 +103,7 @@ sudo apt-get install golang-go
 ### Setup
 
 ```bash
-git clone https://github.com/your-org/overcast
+git clone https://github.com/Neaox/overcast
 cd overcast
 
 # Verify tools
@@ -163,7 +163,7 @@ use `task` instead.
 ### Setup
 
 ```powershell
-git clone https://github.com/your-org/overcast
+git clone https://github.com/Neaox/overcast
 cd overcast
 
 # Check tools
@@ -217,17 +217,17 @@ catch any platform-specific issues. The recommended workflow is:
 
 All three tools produce identical results:
 
-| Target | make | task | go run (zero-install) |
-|--------|------|------|-----------------------|
-| Build | `make build` | `task build` | `go build ./cmd/overcast` |
-| Run | `make run` | `task run` | `go run ./scripts/run.go` |
-| Test | `make test` | `task test` | `go test -race ./...` |
-| Unit test | `make test-unit` | `task test-unit` | `go test -race ./internal/...` |
-| Integration | `make test-integration` | `task test-integration` | `go test -race ./tests/...` |
-| Lint | `make lint` | `task lint` | `golangci-lint run ./...` |
-| Format | `make fmt` | `task fmt` | `go fmt ./...` |
-| Pre-PR check | `make check` | `task check` | run fmt + vet + lint + test manually |
-| Container test | `make container-test` | `task container-test` | `docker compose -f docker-compose.dev.yml run --rm test` |
+| Target         | make                    | task                    | go run (zero-install)                                    |
+| -------------- | ----------------------- | ----------------------- | -------------------------------------------------------- |
+| Build          | `make build`            | `task build`            | `go build ./cmd/overcast`                               |
+| Run            | `make run`              | `task run`              | `go run ./scripts/run.go`                                |
+| Test           | `make test`             | `task test`             | `go test -race ./...`                                    |
+| Unit test      | `make test-unit`        | `task test-unit`        | `go test -race ./internal/...`                           |
+| Integration    | `make test-integration` | `task test-integration` | `go test -race ./tests/...`                              |
+| Lint           | `make lint`             | `task lint`             | `golangci-lint run ./...`                                |
+| Format         | `make fmt`              | `task fmt`              | `go fmt ./...`                                           |
+| Pre-PR check   | `make check`            | `task check`            | run fmt + vet + lint + test manually                     |
+| Container test | `make container-test`   | `task container-test`   | `docker compose -f docker-compose.dev.yml run --rm test` |
 
 ## Step debugging
 
@@ -235,6 +235,7 @@ Full step debugging with breakpoints is supported in all development setups.
 See **[docs/debugging.md](./debugging.md)** for the complete guide.
 
 Quick version for the Dev Container:
+
 1. Click left of a line number to set a breakpoint (red dot appears)
 2. Press **F5** → select "Debug: server (memory state)"
 3. Send a request from another terminal — debugger pauses at your breakpoint

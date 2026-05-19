@@ -1,0 +1,22 @@
+service: firehose
+status: not_started
+priority: p2
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]
+implementation: [internal/services/firehose]
+integration_tests: [tests/integration/firehose]
+capability_docs: docs/services/firehose.md
+operation_count_estimate: 6 supported
+current_support_level: Basic delivery stream CRUD plus record accept/ack; records are discarded.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Review request/response shapes.
+    - Document inert delivery semantics explicitly.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateDeliveryStream, PutRecord, PutRecordBatch]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/firehose/... ./tests/integration/firehose/...]

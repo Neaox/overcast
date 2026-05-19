@@ -13,27 +13,34 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 
-	"github.com/your-org/overcast/internal/clock"
-	"github.com/your-org/overcast/internal/config"
-	"github.com/your-org/overcast/internal/serviceutil"
-	"github.com/your-org/overcast/internal/state"
+	"github.com/Neaox/overcast/internal/clock"
+	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/protocol/op"
+	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/Neaox/overcast/internal/state"
 )
 
 // Handler holds SQS handler dependencies.
 type Handler struct {
-	cfg   *config.Config
-	store *sqsStore
-	log   *serviceutil.ServiceLogger
-	clk   clock.Clock
-	ops   map[string]http.HandlerFunc
+	cfg     *config.Config
+	store   *sqsStore
+	log     *serviceutil.ServiceLogger
+	clk     clock.Clock
+	bus     *events.Bus
+	ops     map[string]http.HandlerFunc
+	typedOp map[string]op.Operation // Smithy-aligned typed registry; see typed_ops.go
+	seqNum  atomic.Int64            // FIFO sequence number counter
 }
 
 func newHandler(cfg *config.Config, store state.Store, log *serviceutil.ServiceLogger, clk clock.Clock) *Handler {
-	h := &Handler{cfg: cfg, store: newSQSStore(store, clk), log: log, clk: clk}
+	h := &Handler{cfg: cfg, store: newSQSStore(store, clk, cfg.Region), log: log, clk: clk}
 	h.initOps()
+	h.typedOp = h.typedOps()
 	return h
 }
 
@@ -62,8 +69,14 @@ func (h *Handler) initOps() {
 		// TODO(priority:P3): implement queue permissions
 		"AddPermission":    h.AddPermission,
 		"RemovePermission": h.RemovePermission,
-		// TODO(priority:P3): implement dead-letter queue support
+		// ListDeadLetterSourceQueues implemented in handler_dlq.go
 		"ListDeadLetterSourceQueues": h.ListDeadLetterSourceQueues,
+		// StartMessageMoveTask implemented in handler_dlq.go
+		"StartMessageMoveTask": h.StartMessageMoveTask,
+		// TODO(priority:P2): implement queue tagging
+		"ListQueueTags": h.ListQueueTags,
+		"TagQueue":      h.TagQueue,
+		"UntagQueue":    h.UntagQueue,
 	}
 }
 
@@ -72,12 +85,21 @@ func (h *Handler) initOps() {
 // queueURL builds the SQS queue URL for a given queue name.
 // Format matches LocalStack: http://<host>:<port>/<accountID>/<queueName>
 func (h *Handler) queueURL(queueName string) string {
-	return fmt.Sprintf("http://localhost:%d/%s/%s",
-		h.cfg.Port, h.cfg.AccountID, queueName)
+	return fmt.Sprintf("%s/%s/%s",
+		h.cfg.ExternalBaseURL(), h.cfg.AccountID, queueName)
 }
 
-// queueNameFromURL extracts the queue name from a queue URL.
+// queueNameFromURL extracts the queue name from a queue URL or ARN.
+// Handles both URL format (http://host/accountID/queueName) and ARN
+// format (arn:aws:sqs:region:account:queueName).
 func queueNameFromURL(queueURL string) string {
+	// ARN format: colon-delimited, at least 6 parts, starts with "arn:"
+	if strings.HasPrefix(queueURL, "arn:") {
+		parts := strings.SplitN(queueURL, ":", 6)
+		if len(parts) == 6 {
+			return parts[5]
+		}
+	}
 	return path.Base(strings.TrimRight(queueURL, "/"))
 }
 
@@ -104,4 +126,9 @@ func decodeReceiptHandle(handle string) (queueName, messageID string, err error)
 		return "", "", fmt.Errorf("invalid receipt handle format: expected 3 parts, got %d", len(parts))
 	}
 	return parts[0], parts[1], nil
+}
+
+// isFifoQueue returns true if the queue has FifoQueue=true in its attributes.
+func isFifoQueue(q *Queue) bool {
+	return q.Attributes["FifoQueue"] == "true"
 }

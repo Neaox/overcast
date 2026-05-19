@@ -1,73 +1,93 @@
-# React + TypeScript + Vite
+# Overcast Web UI
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The management console for [Overcast](../README.md) — a local AWS emulator. Provides a browser-based interface for inspecting and interacting with all emulated services.
 
-Currently, two official plugins are available:
+## Tech stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+| Layer         | Library                      |
+| ------------- | ---------------------------- |
+| Framework     | React 19 + TypeScript        |
+| Bundler       | Vite                         |
+| Routing       | TanStack Router (file-based) |
+| Data fetching | TanStack Query v5            |
+| Styles        | Tailwind CSS v4              |
+| Components    | Radix UI primitives          |
+| BFF server    | Hono (Node.js)               |
+| Flow diagrams | React Flow / XYFlow          |
+| Code editor   | Monaco Editor                |
 
-## React Compiler
+## Getting started
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+The emulator must be running on port 4566 before starting the dev server.
 
-## Expanding the ESLint configuration
+```bash
+# From the repo root — start the emulator
+make run
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(["dist"]),
-  {
-    files: ["**/*.{ts,tsx}"],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ["./tsconfig.node.json", "./tsconfig.app.json"],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+# In a separate terminal — start the web UI
+cd web
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+The UI is served at `http://localhost:5173`. The BFF proxy runs on port 5174 and forwards requests to the emulator at `http://localhost:4566`.
 
-```js
-// eslint.config.js
-import reactX from "eslint-plugin-react-x"
-import reactDom from "eslint-plugin-react-dom"
+## Available scripts
 
-export default defineConfig([
-  globalIgnores(["dist"]),
-  {
-    files: ["**/*.{ts,tsx}"],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs["recommended-typescript"],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ["./tsconfig.node.json", "./tsconfig.app.json"],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+| Command                | Description                          |
+| ---------------------- | ------------------------------------ |
+| `npm run dev`          | Start Vite dev server with HMR       |
+| `npm run build`        | Type-check and build for production  |
+| `npm run lint`         | Run ESLint                           |
+| `npm run format`       | Format all files with Prettier       |
+| `npm run format:check` | Check formatting without writing     |
+| `npm run preview`      | Preview the production build locally |
+
+## Directory layout
+
 ```
+src/
+  routes/              # TanStack Router file-based pages (one per service)
+    index.tsx          # Dashboard / overview
+    map.tsx            # Topology map
+    s3/                # S3 bucket browser
+    sqs/               # SQS queue browser
+    sns/               # SNS topic browser
+    dynamodb/          # DynamoDB table browser
+    lambda/            # Lambda function browser
+    cloudwatch/        # CloudWatch Logs viewer
+    ses.tsx            # SES email viewer
+    pipes/             # EventBridge Pipes browser
+    events.tsx         # Live event stream
+    metrics.tsx        # Emulator metrics
+    mail.tsx           # SMTP mock inbox
+  components/
+    ui/                # Shared, reusable UI components (Combobox, Table, etc.)
+  features/            # Service-scoped data layer (api.ts queries, data.ts options)
+  services/
+    api.ts             # Typed API client — all fetch calls go through apiFetch()
+  hooks/               # Shared React hooks
+  lib/                 # Utilities (cn, etc.)
+  styles/              # Global CSS / Tailwind tokens
+api/
+  src/
+    routes/            # Hono BFF proxy routes — one file per service
+    app.ts             # Hono app wiring
+    vite-plugin.ts     # Vite plugin that starts the BFF alongside the dev server
+```
+
+## Architecture
+
+The UI uses a **BFF (Backend-for-Frontend)** pattern. The browser talks only to the Hono server in `api/`; that server proxies to the emulator at `:4566`. This keeps CORS and credential concerns out of the browser entirely.
+
+Data fetching follows the TanStack Query pattern:
+
+- `web/src/services/api.ts` — typed API client with one function per operation
+- `web/src/features/<service>/data.ts` — key factories and `queryOptions()` / `mutationOptions()` factories
+- Route components consume these options via `useSuspenseQuery` / `useMutation`
+
+## Contributing
+
+See [AGENTS.md](./AGENTS.md) for conventions specific to this package (routing, data fetching, ARN inputs, Tailwind usage, TypeScript rules).
+
+For project-wide conventions, see the [root AGENTS.md](../AGENTS.md).

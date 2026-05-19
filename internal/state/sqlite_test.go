@@ -1,10 +1,13 @@
+//go:build !nosqlite
+
 package state_test
 
 import (
 	"context"
 	"testing"
+	"time"
 
-	"github.com/your-org/overcast/internal/state"
+	"github.com/Neaox/overcast/internal/state"
 )
 
 // ---- SQLiteStore contract tests --------------------------------------------
@@ -138,6 +141,47 @@ func TestSQLiteStore_Close(t *testing.T) {
 	}
 	if err := s.Close(); err != nil {
 		t.Errorf("Close returned error: %v", err)
+	}
+}
+
+// Close must wait for the background migration goroutine to finish before
+// it closes the underlying *sql.DB. If it didn't, the migrate goroutine
+// would race with handle teardown — a regression worth pinning down with
+// the race detector enabled (`go test -race`).
+func TestSQLiteStore_CloseImmediatelyAfterOpen_isRaceFree(t *testing.T) {
+	for i := 0; i < 3; i++ {
+		s, err := state.NewSQLiteStore(t.TempDir())
+		if err != nil {
+			t.Fatalf("NewSQLiteStore #%d: %v", i, err)
+		}
+		if err := s.Close(); err != nil {
+			t.Errorf("Close #%d returned error: %v", i, err)
+		}
+	}
+}
+
+// Operations issued with an already-cancelled context must surface ctx.Err()
+// instead of blocking on the migration ready channel. The cancelled-ctx case
+// before migration completes is the only way a fast caller can bail out of
+// the cold-start ~200–300 ms migrate cost.
+func TestSQLiteStore_CancelledContext_doesNotBlockOnMigrate(t *testing.T) {
+	s := newSQLiteStore(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before migration may have completed
+
+	// We don't assert which error we get — Go's select is free to pick the
+	// already-ready channel. We assert only that the call returns promptly
+	// (the test would deadlock or be killed by `go test -timeout` otherwise).
+	done := make(chan struct{})
+	go func() {
+		_, _, _ = s.Get(ctx, "ns", "k")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Get with cancelled context did not return within 2s")
 	}
 }
 

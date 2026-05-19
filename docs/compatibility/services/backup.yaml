@@ -1,0 +1,22 @@
+service: backup
+status: not_started
+priority: p1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [aws_json_1_0, aws_json_1_1, rpcv2_cbor]
+implementation: [internal/services/backup]
+integration_tests: [tests/integration/backup]
+capability_docs: docs/services/backup.md
+operation_count_estimate: 9 tracked, all inert
+current_support_level: Metadata-only backup vault and backup plan CRUD; no jobs, recovery points, or scheduling.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Add explicit protocol notes to docs.
+    - Verify inert capabilities match intended AWS SDK/IaC semantics.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateBackupVault, CreateBackupPlan]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/backup/... ./tests/integration/backup/...]

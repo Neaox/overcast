@@ -1,0 +1,90 @@
+# compat/docker-compose.yml
+#
+# Cross-platform compat test runner. Requires only Docker — no local Go,
+# Node.js, or any other toolchain.
+#
+# Usage (from repo root):
+#   docker compose -f compat/docker-compose.yml run --rm compat
+#
+# CI (GitHub Actions etc.):
+#   - name: Run compat tests
+#     run: docker compose -f compat/docker-compose.yml run --rm compat
+#
+# Configuration via environment variables (all optional):
+#   OVERCAST_COMPAT_SKIP_DOCKER=1   Skip Lambda invocation tests that
+#                                   require a nested Docker daemon.
+#   OVERCAST_LOG_LEVEL=info         Overcast log verbosity (default: warn).
+#   OVERCAST_COMPAT_FORMAT=json     Go runner output format: pretty|json
+#                                   (default: pretty).
+
+version: "3.9"
+
+services:
+  # ── Overcast emulator ─────────────────────────────────────────────────────
+  overcast:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "4566" # internal only — compat service reaches it via the network
+    environment:
+      OVERCAST_PORT: "4566"
+      OVERCAST_STATE: memory
+      OVERCAST_LOG_LEVEL: ${OVERCAST_LOG_LEVEL:-warn}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4566/_health"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+      start_period: 5s
+
+  # ── node-js-sdk suite image ───────────────────────────────────────────────
+  node-js-sdk:
+    build:
+      context: suites/node-js-sdk
+      dockerfile: Dockerfile
+    # This service is only a build target — the compat runner spawns it
+    # as a subprocess rather than starting it directly via compose.
+    profiles:
+      - build-only
+
+  # ── Go compat runner (CLI) ────────────────────────────────────────────────
+  # Builds the Overcast repo with Go, then runs:
+  #   go run ./cmd/compat --endpoint http://overcast:4566
+  compat:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    working_dir: /workspace
+    volumes:
+      - type: bind
+        source: ..
+        target: /workspace
+        consistency: cached
+      # Module cache so repeated runs don't re-download modules.
+      - go-mod-cache:/home/vscode/go/pkg/mod
+    environment:
+      CGO_ENABLED: "0"
+      OVERCAST_ENDPOINT: http://overcast:4566
+      OVERCAST_COMPAT_SKIP_DOCKER: ${OVERCAST_COMPAT_SKIP_DOCKER:-1}
+      OVERCAST_COMPAT_FORMAT: ${OVERCAST_COMPAT_FORMAT:-pretty}
+      # Pass the pre-built node-js-sdk image name so the Go runner can exec it.
+      OVERCAST_COMPAT_NODEJS_IMAGE: overcast-compat-node-js-sdk
+    depends_on:
+      overcast:
+        condition: service_healthy
+    # Install suite prerequisites, then run the compat CLI.
+    # node-js-sdk: npm ci (tsx + AWS SDK v3).
+    # python-sdk:  pip install boto3/botocore.
+    # go-sdk, cli: 'go run' handles deps automatically.
+    command: >
+      sh -c "
+        npm ci --prefix compat/suites/node-js-sdk --silent &&
+        pip install --quiet -r compat/suites/python-sdk/requirements.txt &&
+        go run ./cmd/compat \
+          --endpoint http://overcast:4566 \
+          --format ${OVERCAST_COMPAT_FORMAT:-pretty}
+      "
+
+volumes:
+  go-mod-cache:

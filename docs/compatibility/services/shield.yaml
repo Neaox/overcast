@@ -1,0 +1,21 @@
+service: shield
+status: not_started
+priority: p2
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]
+implementation: [internal/services/shield]
+integration_tests: []
+capability_docs: docs/services/shield.md
+operation_count_estimate: 5 tracked, all supported
+current_support_level: Basic subscription stub and protection metadata CRUD.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Add integration tests for tracked operations before expanding compatibility review.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateProtection, DescribeSubscription]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/shield/...]

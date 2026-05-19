@@ -18,14 +18,17 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"syscall"
+	"time"
 )
 
 func main() {
 	port := flag.String("port", envOr("OVERCAST_PORT", "4566"), "Port to listen on")
 	services := flag.String("services", os.Getenv("OVERCAST_SERVICES"), "Comma-separated services to enable (default: all)")
-	state := flag.String("state", envOr("OVERCAST_STATE", "memory"), "State backend: memory or sqlite")
+	state := flag.String("state", envOr("OVERCAST_STATE", "hybrid"), "State backend: memory, persistent, hybrid or wal")
 	logLevel := flag.String("log", envOr("OVERCAST_LOG_LEVEL", "debug"), "Log level: debug, info, warn, error")
 	flag.Parse()
 
@@ -47,11 +50,12 @@ func main() {
 		binary += ".exe"
 	}
 
-	// Build
+	// Build — skip -trimpath and -ldflags="-w -s" during development.
+	// Those flags are for release builds; in dev, they defeat the Go build
+	// cache and add ~6s of extra compilation on every run.
 	fmt.Println("→ building overcast...")
+	buildStart := time.Now()
 	build := exec.Command("go", "build",
-		"-trimpath",
-		"-ldflags=-w -s",
 		"-o", binary,
 		"./cmd/overcast",
 	)
@@ -60,23 +64,43 @@ func main() {
 	if err := build.Run(); err != nil {
 		fatalf("build failed: %v", err)
 	}
+	fmt.Printf("→ build complete (%.2fs)\n", time.Since(buildStart).Seconds())
 
 	// Run
-	fmt.Printf("→ starting overcast on :%s\n", *port)
-	run := exec.Command(binary)
+	fmt.Printf("→ starting overcast serve on :%s\n", *port)
+	run := exec.Command(binary, "serve")
 	run.Stdout = os.Stdout
 	run.Stderr = os.Stderr
 	run.Env = append(os.Environ(),
 		"OVERCAST_PORT="+*port,
 		"OVERCAST_STATE="+*state,
 		"OVERCAST_LOG_LEVEL="+*logLevel,
+		"OVERCAST_DEBUG=true",
 	)
 	if *services != "" {
 		run.Env = append(run.Env, "OVERCAST_SERVICES="+*services)
 	}
 
-	if err := run.Run(); err != nil {
-		// Exit code 1 when the server is killed by signal is expected.
+	// Start the child process and forward signals so it can shut down
+	// cleanly before we exit. Without this, Go's default SIGINT handler
+	// kills the wrapper and the child may not finish cleanup (e.g.
+	// closing the SMTP listener), causing "address already in use" on
+	// the next start.
+	if err := run.Start(); err != nil {
+		fatalf("failed to start server: %v", err)
+	}
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		s := <-sig
+		// Forward signal to child; ignore error (process may already be gone).
+		if run.Process != nil {
+			run.Process.Signal(s)
+		}
+	}()
+
+	if err := run.Wait(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
 			return
 		}

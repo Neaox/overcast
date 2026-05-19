@@ -1,0 +1,70 @@
+service: appsync
+status: fixed
+priority: p0
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-19
+protocols: [rest_json, graphql_execution, websocket_realtime, aws_json_1_0, aws_json_1_1, rpcv2_cbor]
+implementation: [internal/services/appsync]
+integration_tests: [tests/integration/appsync]
+capability_docs: docs/services/appsync.md
+operation_count_estimate: 82 tracked items
+current_support_level: Large AppSync surface with config, execution, auth, domains, functions, resolvers, and realtime support; some behaviors are config-only/inert.
+operations:
+  CreateGraphqlApi:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/appsync/latest/APIReference/API_CreateGraphqlApi.html
+    protocol:
+      method: POST
+      path: /v1/apis
+      content_type: application/json
+      success_status: 200
+    scenario_matrix:
+      - scenario: Minimal API_KEY GraphQL API
+        status: fixed
+        evidence: TestCreateGraphqlApi_success
+        notes: Returns graphqlApi with generated apiId/arn/uris/dns and defaults apiType=GRAPHQL, visibility=GLOBAL, introspectionConfig=ENABLED.
+      - scenario: Missing required name
+        status: fixed
+        evidence: TestCreateGraphqlApi_missingName
+        notes: Returns BadRequestException instead of creating an unnamed API.
+      - scenario: Missing required authenticationType
+        status: fixed
+        evidence: TestCreateGraphqlApi_missingAuthenticationType
+        notes: Returns BadRequestException instead of creating an API with empty auth type.
+      - scenario: Invalid authenticationType enum
+        status: fixed
+        evidence: TestCreateGraphqlApi_invalidAuthenticationType
+        notes: Valid values are API_KEY, AWS_IAM, AMAZON_COGNITO_USER_POOLS, OPENID_CONNECT, and AWS_LAMBDA.
+      - scenario: Invalid apiType enum
+        status: fixed
+        evidence: TestCreateGraphqlApi_invalidApiType
+        notes: Valid values are GRAPHQL and MERGED; omitted defaults to GRAPHQL.
+      - scenario: Additional auth providers and nested auth/log/metrics config passthrough
+        status: tests_missing
+        evidence: Existing passthrough fields are stored as raw JSON, but nested shape validation is not reviewed.
+      - scenario: Tag regex validation
+        status: intentionally_partial
+        evidence: "Handler now validates count, key/value lengths, and aws: prefix; exact AWS key/value regexes remain unimplemented."
+      - scenario: Visibility, introspection, queryDepthLimit, resolverCountLimit, ownerContact boundaries
+        status: fixed
+        evidence: Handler validation added; focused boundary tests still need expansion before marking reviewed.
+    findings:
+      fixed:
+        - CreateGraphqlApi now returns HTTP 200 per AWS docs instead of 201.
+        - CreateGraphqlApi now rejects missing name/authenticationType and invalid top-level enum/limit inputs with BadRequestException.
+      remaining_gaps:
+        - Add focused tests for visibility, introspectionConfig, queryDepthLimit, resolverCountLimit, ownerContact, tag boundaries, and nested auth config scenarios.
+        - Review default API key auto-creation against AWS SDK behavior; current implementation auto-creates one for API_KEY APIs but this was not re-verified in this operation review.
+findings:
+  fixed:
+    - CreateGraphqlApi HTTP status and top-level request validation now better match AWS docs.
+  remaining_gaps:
+    - Audit support claims category by category.
+    - Downgrade or annotate config-only and inert behavior where AWS compatibility is limited.
+    - Continue CreateGraphqlApi boundary/nested-config coverage before marking reviewed.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateGraphqlApi remaining boundaries, GraphQL execution, auth modes, resolver/data-source behavior]
+  do_not_redo: [CreateGraphqlApi success status, required name/authenticationType, authenticationType enum, apiType enum]
+  commands: [go test -count=1 ./internal/services/appsync/... ./tests/integration/appsync/...]

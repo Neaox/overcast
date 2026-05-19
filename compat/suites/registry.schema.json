@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/overcast-dev/overcast/compat/suites/registry.schema.json",
+  "title": "Overcast Compat Test Registry",
+  "description": "Canonical list of test groups and tests shared across all SDK/CLI compat suites.",
+  "type": "object",
+  "required": ["version", "groups"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "comment": {
+      "type": "string"
+    },
+    "groups": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/TestGroup" }
+    }
+  },
+  "definitions": {
+    "TestGroup": {
+      "type": "object",
+      "required": ["service", "name", "tests"],
+      "properties": {
+        "service": {
+          "type": "string",
+          "description": "AWS service identifier, e.g. 's3', 'sqs', 'cloudwatch-logs'."
+        },
+        "name": {
+          "type": "string",
+          "description": "Group identifier, e.g. 's3-crud'. Convention: <service>-<feature>, kebab-case.",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+        },
+        "slow": {
+          "type": "boolean",
+          "description": "Mark a group as slow so runners can schedule it first. Groups with slow=true are sorted to the front of the execution queue, allowing them to run in parallel with fast groups instead of becoming a long tail."
+        },
+        "tests": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/TestCase" },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "TestCase": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Test name — PascalCase, matches the AWS API operation where applicable.",
+          "pattern": "^[A-Z][A-Za-z0-9]+$"
+        },
+        "op": {
+          "description": "AWS API operation name when it differs from the test name. null = no documentation link (internal setup step).",
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
+        },
+        "requires": {
+          "type": "array",
+          "description": "Runtime capabilities required to run this test. Suite runners should skip if any capability is unavailable.",
+          "items": {
+            "type": "string",
+            "enum": ["docker", "smtp", "network"]
+          }
+        },
+        "skip": {
+          "type": "string",
+          "description": "If present, the test is always emitted as 'skip' with this reason. Only use for tests that can never run in a standard compat environment."
+        },
+        "depends": {
+          "type": "array",
+          "description": "Names of other tests in the SAME group that must run (and pass) before this test. Runners topologically sort tests by dependency order and auto-skip dependents when a dependency fails.",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

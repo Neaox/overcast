@@ -2,10 +2,11 @@ package config_test
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/your-org/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/config"
 )
 
 // TestLoad_defaults verifies that Load() returns sensible defaults when no
@@ -33,20 +34,56 @@ func TestLoad_defaults(t *testing.T) {
 	if cfg.AccountID != "000000000000" {
 		t.Errorf("AccountID: expected 000000000000, got %q", cfg.AccountID)
 	}
-	if cfg.State != config.StateBackendMemory {
-		t.Errorf("State: expected memory, got %q", cfg.State)
+	if cfg.State != config.StateBackendHybrid {
+		t.Errorf("State: expected hybrid, got %q", cfg.State)
+	}
+	if cfg.HybridFlushInterval != 5*time.Second {
+		t.Errorf("HybridFlushInterval: expected 5s, got %v", cfg.HybridFlushInterval)
+	}
+	if cfg.WALFsyncMode != "interval" {
+		t.Errorf("WALFsyncMode: expected interval, got %q", cfg.WALFsyncMode)
+	}
+	if cfg.WALFsyncInterval != 100*time.Millisecond {
+		t.Errorf("WALFsyncInterval: expected 100ms, got %v", cfg.WALFsyncInterval)
+	}
+	if cfg.WALMaxLogBytes != 67108864 {
+		t.Errorf("WALMaxLogBytes: expected 67108864, got %d", cfg.WALMaxLogBytes)
 	}
 	if cfg.LogLevel != "info" {
 		t.Errorf("LogLevel: expected info, got %q", cfg.LogLevel)
 	}
-	if cfg.ShutdownTimeout != 30*time.Second {
-		t.Errorf("ShutdownTimeout: expected 30s, got %v", cfg.ShutdownTimeout)
+	if cfg.ShutdownTimeout != 5*time.Second {
+		t.Errorf("ShutdownTimeout: expected 5s, got %v", cfg.ShutdownTimeout)
+	}
+	if cfg.LambdaHotReload {
+		t.Error("LambdaHotReload: expected false by default")
 	}
 	if cfg.Debug {
 		t.Error("Debug: expected false by default")
 	}
 	if cfg.TLSEnabled() {
 		t.Error("TLS: expected disabled by default")
+	}
+	if cfg.Hostname != "" {
+		t.Errorf("Hostname: expected empty, got %q", cfg.Hostname)
+	}
+	if cfg.ExternalHostname() != "localhost" {
+		t.Errorf("ExternalHostname(): expected localhost, got %q", cfg.ExternalHostname())
+	}
+	if cfg.ExternalBaseURL() != "http://localhost:4566" {
+		t.Errorf("ExternalBaseURL(): expected http://localhost:4566, got %q", cfg.ExternalBaseURL())
+	}
+	if cfg.MCPReplayLimit != 256 {
+		t.Errorf("MCPReplayLimit: expected 256, got %d", cfg.MCPReplayLimit)
+	}
+	if cfg.MCPRemoteExposure {
+		t.Error("MCPRemoteExposure: expected false by default")
+	}
+	if cfg.MCPAuthToken != "" {
+		t.Errorf("MCPAuthToken: expected empty by default, got %q", cfg.MCPAuthToken)
+	}
+	if cfg.EnforceIAM {
+		t.Error("EnforceIAM: expected false by default")
 	}
 }
 
@@ -141,25 +178,187 @@ func TestLoad_portOutOfRange(t *testing.T) {
 	}
 }
 
-// TestLoad_sqliteState verifies SQLite backend is selected correctly.
-func TestLoad_sqliteState(t *testing.T) {
-	// Given: OVERCAST_STATE=sqlite
+// TestLoad_persistentState verifies the persistent (SQLite) backend is selected correctly.
+func TestLoad_persistentState(t *testing.T) {
+	// Given: OVERCAST_STATE=persistent
 	clearEnv(t)
-	t.Setenv("OVERCAST_STATE", "sqlite")
+	t.Setenv("OVERCAST_STATE", "persistent")
 	t.Setenv("OVERCAST_DATA_DIR", "/tmp/test-overcast")
 
 	// When: we load config
 	cfg, err := config.Load()
 
-	// Then: SQLite backend is selected
+	// Then: persistent backend is selected
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.State != config.StateBackendSQLite {
-		t.Errorf("expected sqlite backend, got %q", cfg.State)
+	if cfg.State != config.StateBackendPersistent {
+		t.Errorf("expected persistent backend, got %q", cfg.State)
 	}
 	if cfg.DataDir != "/tmp/test-overcast" {
 		t.Errorf("DataDir: expected /tmp/test-overcast, got %q", cfg.DataDir)
+	}
+}
+
+// TestLoad_sqliteAlias verifies "sqlite" is accepted as a deprecated alias for "persistent".
+func TestLoad_sqliteAlias(t *testing.T) {
+	// Given: OVERCAST_STATE=sqlite (deprecated alias)
+	clearEnv(t)
+	t.Setenv("OVERCAST_STATE", "sqlite")
+
+	// When: we load config
+	cfg, err := config.Load()
+
+	// Then: it resolves to persistent
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.State != config.StateBackendPersistent {
+		t.Errorf("expected sqlite alias to resolve to persistent, got %q", cfg.State)
+	}
+}
+
+// TestLoad_hybridState verifies the hybrid backend is selected correctly.
+func TestLoad_hybridState(t *testing.T) {
+	// Given: OVERCAST_STATE=hybrid
+	clearEnv(t)
+	t.Setenv("OVERCAST_STATE", "hybrid")
+
+	// When: we load config
+	cfg, err := config.Load()
+
+	// Then: hybrid backend is selected with the default flush interval
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.State != config.StateBackendHybrid {
+		t.Errorf("expected hybrid backend, got %q", cfg.State)
+	}
+	if cfg.HybridFlushInterval != 5*time.Second {
+		t.Errorf("HybridFlushInterval: expected 5s default, got %v", cfg.HybridFlushInterval)
+	}
+}
+
+// TestLoad_hybridFlushInterval verifies the flush interval can be overridden.
+func TestLoad_hybridFlushInterval(t *testing.T) {
+	// Given: OVERCAST_HYBRID_FLUSH_INTERVAL=10s
+	clearEnv(t)
+	t.Setenv("OVERCAST_STATE", "hybrid")
+	t.Setenv("OVERCAST_HYBRID_FLUSH_INTERVAL", "10s")
+
+	// When: we load config
+	cfg, err := config.Load()
+
+	// Then: the flush interval is 10 seconds
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.HybridFlushInterval != 10*time.Second {
+		t.Errorf("HybridFlushInterval: expected 10s, got %v", cfg.HybridFlushInterval)
+	}
+}
+
+// TestLoad_walState verifies the WAL backend is selected correctly.
+func TestLoad_walState(t *testing.T) {
+	// Given: OVERCAST_STATE=wal
+	clearEnv(t)
+	t.Setenv("OVERCAST_STATE", "wal")
+
+	// When: we load config
+	cfg, err := config.Load()
+
+	// Then: wal backend is selected
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.State != config.StateBackendWAL {
+		t.Errorf("expected wal backend, got %q", cfg.State)
+	}
+}
+
+func TestLoad_walConfigOverrides(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_WAL_FSYNC", "always")
+	t.Setenv("OVERCAST_WAL_FSYNC_INTERVAL", "250ms")
+	t.Setenv("OVERCAST_WAL_MAX_LOG_BYTES", "4096")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.WALFsyncMode != "always" {
+		t.Errorf("WALFsyncMode: expected always, got %q", cfg.WALFsyncMode)
+	}
+	if cfg.WALFsyncInterval != 250*time.Millisecond {
+		t.Errorf("WALFsyncInterval: expected 250ms, got %v", cfg.WALFsyncInterval)
+	}
+	if cfg.WALMaxLogBytes != 4096 {
+		t.Errorf("WALMaxLogBytes: expected 4096, got %d", cfg.WALMaxLogBytes)
+	}
+}
+
+func TestLoad_invalidWALConfig(t *testing.T) {
+	t.Run("invalid fsync mode", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("OVERCAST_WAL_FSYNC", "sometimes")
+		if _, err := config.Load(); err == nil {
+			t.Fatal("expected error for invalid OVERCAST_WAL_FSYNC")
+		}
+	})
+
+	t.Run("invalid interval", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("OVERCAST_WAL_FSYNC_INTERVAL", "0s")
+		if _, err := config.Load(); err == nil {
+			t.Fatal("expected error for invalid OVERCAST_WAL_FSYNC_INTERVAL")
+		}
+	})
+
+	t.Run("invalid max log bytes", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("OVERCAST_WAL_MAX_LOG_BYTES", "0")
+		if _, err := config.Load(); err == nil {
+			t.Fatal("expected error for invalid OVERCAST_WAL_MAX_LOG_BYTES")
+		}
+	})
+}
+
+// TestLoad_perServiceState verifies per-service storage overrides are parsed.
+func TestLoad_perServiceState(t *testing.T) {
+	// Given: OVERCAST_STATE=hybrid and per-service overrides
+	clearEnv(t)
+	t.Setenv("OVERCAST_STATE", "hybrid")
+	t.Setenv("OVERCAST_STATE_S3", "memory")
+	t.Setenv("OVERCAST_STATE_SQS", "persistent")
+
+	// When: we load config
+	cfg, err := config.Load()
+
+	// Then: per-service modes are recorded
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ServiceStates["s3"] != config.StateBackendMemory {
+		t.Errorf("s3: expected memory, got %q", cfg.ServiceStates["s3"])
+	}
+	if cfg.ServiceStates["sqs"] != config.StateBackendPersistent {
+		t.Errorf("sqs: expected persistent, got %q", cfg.ServiceStates["sqs"])
+	}
+	if _, ok := cfg.ServiceStates["dynamodb"]; ok {
+		t.Errorf("dynamodb: expected no override, but found one")
+	}
+}
+
+// TestLoad_perServiceInvalidState verifies invalid per-service modes are rejected.
+func TestLoad_perServiceInvalidState(t *testing.T) {
+	// Given: per-service override has an unknown backend
+	clearEnv(t)
+	t.Setenv("OVERCAST_STATE_S3", "redis")
+
+	// When + Then
+	_, err := config.Load()
+	if err == nil {
+		t.Error("expected error for unknown per-service state backend, got nil")
 	}
 }
 
@@ -227,6 +426,20 @@ func TestLoad_debugEnabled(t *testing.T) {
 	}
 }
 
+// TestLoad_lambdaHotReloadEnabled verifies Lambda hot-reload mode is enabled via env var.
+func TestLoad_lambdaHotReloadEnabled(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_LAMBDA_HOT_RELOAD", "true")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.LambdaHotReload {
+		t.Error("expected LambdaHotReload to be true")
+	}
+}
+
 // TestLoad_hostBinding verifies custom host binding.
 func TestLoad_hostBinding(t *testing.T) {
 	// Given: OVERCAST_HOST is set to localhost only
@@ -243,6 +456,114 @@ func TestLoad_hostBinding(t *testing.T) {
 	}
 	if cfg.Addr() != "127.0.0.1:9000" {
 		t.Errorf("Addr(): expected 127.0.0.1:9000, got %q", cfg.Addr())
+	}
+}
+
+// TestLoad_hostname verifies OVERCAST_HOSTNAME is used for external URLs.
+func TestLoad_hostname(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_HOSTNAME", "overcast.local")
+	t.Setenv("OVERCAST_PORT", "5000")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Hostname != "overcast.local" {
+		t.Errorf("Hostname: expected overcast.local, got %q", cfg.Hostname)
+	}
+	if cfg.ExternalHostname() != "overcast.local" {
+		t.Errorf("ExternalHostname(): expected overcast.local, got %q", cfg.ExternalHostname())
+	}
+	if cfg.ExternalBaseURL() != "http://overcast.local:5000" {
+		t.Errorf("ExternalBaseURL(): expected http://overcast.local:5000, got %q", cfg.ExternalBaseURL())
+	}
+}
+
+// TestLoad_hostnameWithTLS verifies ExternalBaseURL uses https when TLS is enabled.
+func TestLoad_hostnameWithTLS(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_HOSTNAME", "secure.local")
+	t.Setenv("OVERCAST_TLS_CERT", "/tmp/cert.pem")
+	t.Setenv("OVERCAST_TLS_KEY", "/tmp/key.pem")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ExternalBaseURL() != "https://secure.local:4566" {
+		t.Errorf("ExternalBaseURL(): expected https://secure.local:4566, got %q", cfg.ExternalBaseURL())
+	}
+}
+
+func TestLoad_eksModeDefault(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.EKSMode != config.EKSModeMock {
+		t.Fatalf("EKSMode: expected %q, got %q", config.EKSModeMock, cfg.EKSMode)
+	}
+}
+
+func TestLoad_eksModeLive(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_EKS_MODE", "live")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.EKSMode != config.EKSModeLive {
+		t.Fatalf("EKSMode: expected %q, got %q", config.EKSModeLive, cfg.EKSMode)
+	}
+}
+
+func TestLoad_eksModeRejectsInvalidValues(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_EKS_MODE", "sidecar")
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected error for invalid OVERCAST_EKS_MODE, got nil")
+	}
+	if got := err.Error(); got == "" || !containsAll(got, "OVERCAST_EKS_MODE", "mock", "live") {
+		t.Fatalf("unexpected error message: %q", got)
+	}
+}
+
+func TestLoad_eksDockerDefaults(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("LAMBDA_DOCKER_SOCKET", "tcp://dind:2375")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.EKSDockerSocket != "tcp://dind:2375" {
+		t.Fatalf("EKSDockerSocket: expected tcp://dind:2375, got %q", cfg.EKSDockerSocket)
+	}
+	if cfg.EKSNetwork != "overcast_eks" {
+		t.Fatalf("EKSNetwork: expected overcast_eks, got %q", cfg.EKSNetwork)
+	}
+}
+
+func TestLoad_eksDockerOverrides(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("EKS_DOCKER_SOCKET", "tcp://eksdind:2375")
+	t.Setenv("EKS_NETWORK", "custom_eks")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.EKSDockerSocket != "tcp://eksdind:2375" {
+		t.Fatalf("EKSDockerSocket: expected tcp://eksdind:2375, got %q", cfg.EKSDockerSocket)
+	}
+	if cfg.EKSNetwork != "custom_eks" {
+		t.Fatalf("EKSNetwork: expected custom_eks, got %q", cfg.EKSNetwork)
 	}
 }
 
@@ -293,6 +614,89 @@ func TestLoad_boolVariants(t *testing.T) {
 	}
 }
 
+// TestLoad_ec2VPCStrategyNetnsRejected verifies netns strategy fails fast
+// during configuration load with a clear remediation hint.
+func TestLoad_ec2VPCStrategyNetnsRejected(t *testing.T) {
+	// Given: netns is explicitly selected
+	clearEnv(t)
+	t.Setenv("OVERCAST_EC2_VPC_STRATEGY", "netns")
+
+	// When: config is loaded
+	_, err := config.Load()
+
+	// Then: startup is rejected with guidance
+	if err == nil {
+		t.Fatal("expected error for OVERCAST_EC2_VPC_STRATEGY=netns, got nil")
+	}
+	if got := err.Error(); got == "" || !containsAll(got, "OVERCAST_EC2_VPC_STRATEGY", "netns", "shared", "strict", "remapped") {
+		t.Fatalf("unexpected error message: %q", got)
+	}
+}
+
+func TestLoad_mcpReplayLimitOverride(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_MCP_REPLAY_LIMIT", "64")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.MCPReplayLimit != 64 {
+		t.Fatalf("MCPReplayLimit = %d, want 64", cfg.MCPReplayLimit)
+	}
+}
+
+func TestLoad_mcpReplayLimitRejectsInvalidValues(t *testing.T) {
+	for _, value := range []string{"abc", "-1"} {
+		t.Run(value, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("OVERCAST_MCP_REPLAY_LIMIT", value)
+			if _, err := config.Load(); err == nil {
+				t.Fatalf("expected error for OVERCAST_MCP_REPLAY_LIMIT=%q", value)
+			}
+		})
+	}
+}
+
+func TestLoad_mcpRemoteExposureRequiresAuthToken(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_MCP_REMOTE_EXPOSURE", "true")
+
+	if _, err := config.Load(); err == nil {
+		t.Fatal("expected error when OVERCAST_MCP_REMOTE_EXPOSURE=true without token")
+	}
+}
+
+func TestLoad_mcpRemoteExposureWithAuthToken(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_MCP_REMOTE_EXPOSURE", "true")
+	t.Setenv("OVERCAST_MCP_AUTH_TOKEN", "test-token")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.MCPRemoteExposure {
+		t.Fatal("expected MCPRemoteExposure=true")
+	}
+	if cfg.MCPAuthToken != "test-token" {
+		t.Fatalf("MCPAuthToken = %q, want test-token", cfg.MCPAuthToken)
+	}
+}
+
+func TestLoad_enforceIAMEnabled(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_ENFORCE_IAM", "true")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.EnforceIAM {
+		t.Fatal("expected EnforceIAM=true")
+	}
+}
+
 // ---- Helpers ---------------------------------------------------------------
 
 // clearEnv unsets all OVERCAST_* environment variables for test isolation.
@@ -301,9 +705,14 @@ func clearEnv(t *testing.T) {
 	t.Helper()
 	awsEmuVars := []string{
 		"OVERCAST_HOST", "OVERCAST_PORT", "OVERCAST_SERVICES", "OVERCAST_STATE",
-		"OVERCAST_DATA_DIR", "OVERCAST_REGION", "OVERCAST_ACCOUNT_ID",
-		"OVERCAST_SIGV4_VALIDATE", "OVERCAST_LOG_LEVEL", "OVERCAST_SHUTDOWN_TIMEOUT",
+		"OVERCAST_WAL_FSYNC", "OVERCAST_WAL_FSYNC_INTERVAL", "OVERCAST_WAL_MAX_LOG_BYTES",
+		"OVERCAST_DATA_DIR", "OVERCAST_DEFAULT_REGION", "OVERCAST_ACCOUNT_ID",
+		"OVERCAST_SIGV4_VALIDATE", "OVERCAST_ENFORCE_IAM", "OVERCAST_LOG_LEVEL", "OVERCAST_SHUTDOWN_TIMEOUT",
+		"OVERCAST_LAMBDA_HOT_RELOAD",
 		"OVERCAST_LAMBDA_NODE_BIN", "OVERCAST_DEBUG", "OVERCAST_TLS_CERT", "OVERCAST_TLS_KEY",
+		"OVERCAST_HOSTNAME", "OVERCAST_EKS_MODE", "OVERCAST_EC2_VPC_STRATEGY",
+		"OVERCAST_MCP_REPLAY_LIMIT", "OVERCAST_MCP_REMOTE_EXPOSURE", "OVERCAST_MCP_AUTH_TOKEN",
+		"EKS_DOCKER_SOCKET", "EKS_NETWORK",
 	}
 	for _, v := range awsEmuVars {
 		original := os.Getenv(v)
@@ -316,4 +725,13 @@ func clearEnv(t *testing.T) {
 			}
 		})
 	}
+}
+
+func containsAll(s string, parts ...string) bool {
+	for _, p := range parts {
+		if !strings.Contains(s, p) {
+			return false
+		}
+	}
+	return true
 }

@@ -1,0 +1,21 @@
+service: rds
+status: not_started
+priority: p1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [query]
+implementation: [internal/services/rds]
+integration_tests: [tests/integration/rds]
+capability_docs: docs/services/rds.md
+operation_count_estimate: 33 supported
+current_support_level: DB instances, Aurora clusters, subnet/parameter groups, snapshots, logs, and tagging supported; Docker-backed where possible.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Review CreateDBInstance/CreateDBCluster lifecycle, validation errors, and XML response parity.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateDBInstance, CreateDBCluster, lifecycle states]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/rds/... ./tests/integration/rds/...]

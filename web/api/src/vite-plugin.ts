@@ -14,24 +14,44 @@ import { Readable } from "node:stream"
 import type { ReadableStream } from "node:stream/web"
 import type { Plugin } from "vite"
 import type { IncomingMessage, ServerResponse } from "node:http"
-import { app } from "./app.js"
+import type { Hono } from "hono"
+
+// Lazy-load the Hono app on first API request so the AWS SDK clients
+// (imported by route files) don't block Vite startup (~7s saved).
+let _app: Hono | undefined
+async function getApp(): Promise<Hono> {
+  if (!_app) {
+    const mod = await import("./app.js")
+    _app = mod.app
+  }
+  return _app
+}
 
 export function honoDevPlugin(): Plugin {
   return {
     name: "overcast-api",
     configureServer(server) {
       server.middlewares.use(async (req: IncomingMessage, res: ServerResponse, next) => {
-        if (!req.url?.startsWith("/api")) return next()
+        if (!req.url?.startsWith("/api/") && req.url !== "/api") return next()
+
+        const app = await getApp()
 
         try {
           const protocol = "http"
           const host = req.headers.host ?? "localhost"
           const url = `${protocol}://${host}${req.url}`
 
-          // Flatten Node headers (string | string[] | undefined) → Headers
+          // Flatten Node headers (string | string[] | undefined) → Headers.
+          // Skip HTTP/2 pseudo-headers (`:method`, `:path`, etc.) — they are
+          // not valid in the Headers API and cause errors when the Vite dev
+          // server runs over HTTPS (HTTP/2).
           const headers = new Headers()
           for (const [key, val] of Object.entries(req.headers)) {
-            if (val === undefined) continue
+            if (val === undefined || key.startsWith(":")) continue
+            // Skip hop-by-hop headers — they are connection-scoped and
+            // forbidden in the Fetch API (causes UnsupportedWarning).
+            const lk = key.toLowerCase()
+            if (lk === "connection" || lk === "keep-alive" || lk === "transfer-encoding") continue
             if (Array.isArray(val)) {
               val.forEach((v) => headers.append(key, v))
             } else {

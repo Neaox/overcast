@@ -6,7 +6,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/your-org/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/protocol"
 )
 
 // Recovery catches any panic from a handler, logs it with a stack trace, and
@@ -28,7 +28,11 @@ func Recovery(logger *zap.Logger) func(http.Handler) http.Handler {
 					)
 					// Write a well-formed AWS error so the SDK gets a
 					// parseable response rather than an empty connection close.
-					protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+					if detectService(r) == "s3" {
+						protocol.WriteXMLError(w, r, protocol.ErrInternalError)
+					} else {
+						protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+					}
 				}
 			}()
 			next.ServeHTTP(w, r)

@@ -1,0 +1,1123 @@
+package apigateway
+
+// handler_execution.go — API Gateway request execution engine.
+//
+// This file implements the actual API gateway proxy: incoming HTTP requests
+// are matched against configured resources/routes, the backend integration
+// is invoked (Lambda proxy, MOCK), and the response is written back.
+//
+// Execution routes:
+//   REST v1: /restapis/{restApiId}/{stageName}/_user_request_/{path}
+//   HTTP v2: /@connections/{apiId}/{stageName}/{path}
+//
+// Supported integration types:
+//   AWS_PROXY  — Lambda proxy integration (v1 and v2)
+//   AWS        — Lambda non-proxy integration (v1)
+//   HTTP_PROXY — HTTP proxy integration (v1 and v2)
+//   HTTP       — HTTP integration (v1, passthrough)
+//   MOCK       — returns a static response based on integration responses
+//
+// TODO(priority:P3): implement VTL request/response template mapping
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/textproto"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
+
+	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/Neaox/overcast/internal/protocol"
+)
+
+// proxyHTTPClient is used for HTTP_PROXY integrations. A 30-second timeout
+// prevents unresponsive backends from holding a goroutine forever.
+var proxyHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+// ---- REST API v1 execution ------------------------------------------------
+
+// ExecuteRestAPI handles incoming requests to a deployed REST API stage.
+// Route: /restapis/{restApiId}/{stageName}/_user_request_/*.
+func (h *Handler) ExecuteRestAPI(w http.ResponseWriter, r *http.Request) {
+	apiID := chi.URLParam(r, "restApiId")
+	requestPath := chi.URLParam(r, "*")
+	if requestPath == "" {
+		requestPath = "/"
+	} else if !strings.HasPrefix(requestPath, "/") {
+		requestPath = "/" + requestPath
+	}
+
+	// 1. Verify API exists. Path-style invoke URLs (
+	//   /restapis/{id}/{stage}/_user_request_/...) carry no region hint —
+	// no SigV4, no Host. If the API isn't in the request's region, fall back
+	// to a cross-region scan and re-bind the request context to the resolved
+	// region so all subsequent store reads (stage, resources, methods,
+	// integrations, API keys, usage plans) see the same partition.
+	api, aerr := h.store.getRestAPI(r.Context(), apiID)
+	if aerr != nil {
+		if region := h.store.findRestAPIRegion(r.Context(), apiID); region != "" {
+			r = r.WithContext(middleware.ContextWithRegion(r.Context(), region))
+			api, aerr = h.store.getRestAPI(r.Context(), apiID)
+		}
+	}
+	if aerr != nil {
+		writeGatewayError(w, http.StatusForbidden, "Forbidden")
+		return
+	}
+
+	// 1b. Load stage for stage variables.
+	stageName := chi.URLParam(r, "stageName")
+	var stageVars map[string]string
+	stage, serr := h.store.getStage(r.Context(), apiID, stageName)
+	if serr == nil && stage != nil {
+		stageVars = stage.Variables
+	}
+
+	// 2. Find matching resource by path.
+	resources, aerr := h.store.listResources(r.Context(), api.ID)
+	if aerr != nil {
+		writeGatewayError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+
+	resource := matchResource(resources, requestPath)
+	if resource == nil {
+		writeGatewayError(w, http.StatusForbidden, "Missing Authentication Token")
+		return
+	}
+
+	// 3. Find matching method.
+	method, ok := resource.ResourceMethods[r.Method]
+	if !ok {
+		// Try ANY fallback.
+		method, ok = resource.ResourceMethods["ANY"]
+	}
+	if !ok {
+		writeGatewayError(w, http.StatusForbidden, "Missing Authentication Token")
+		return
+	}
+
+	// 3b. Enforce Cognito authorizer before forwarding to the integration.
+	if !h.checkRestCognitoAuthorizer(w, r, apiID, method) {
+		return
+	}
+
+	// 3c. Enforce API key requirement (apiKeyRequired=true on the method).
+	// AWS responds with 403 Forbidden when the x-api-key header is missing,
+	// invalid, disabled, or not associated (via a usage plan) with this stage.
+	if method.APIKeyRequired {
+		if !h.checkAPIKey(w, r, apiID, stageName) {
+			return
+		}
+	}
+
+	// 4. Get integration.
+	integration := method.MethodIntegration
+	if integration == nil {
+		writeGatewayError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+
+	// 5. Substitute stage variables in integration URI.
+	effectiveIntegration := integration
+	if len(stageVars) > 0 && integration.URI != "" {
+		resolved := substituteStageVars(integration.URI, stageVars)
+		if resolved != integration.URI {
+			// Copy to avoid mutating the stored integration.
+			cp := *integration
+			cp.URI = resolved
+			effectiveIntegration = &cp
+		}
+	}
+
+	// 6. Dispatch to integration.
+	switch effectiveIntegration.Type {
+	case "AWS_PROXY":
+		h.executeRestLambdaProxy(w, r, api, resource, method, effectiveIntegration, stageVars, requestPath)
+	case "AWS":
+		h.executeRestLambdaNonProxy(w, r, api, effectiveIntegration, requestPath)
+	case "HTTP_PROXY":
+		h.executeHTTPProxy(w, r, effectiveIntegration)
+	case "HTTP":
+		h.executeHTTPProxy(w, r, effectiveIntegration)
+	case "MOCK":
+		h.executeRestMock(w, integration)
+	default:
+		writeGatewayError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Integration type %s not yet supported", integration.Type))
+	}
+}
+
+// executeRestLambdaProxy builds a Lambda proxy event (v1) and invokes the function.
+func (h *Handler) executeRestLambdaProxy(
+	w http.ResponseWriter, r *http.Request,
+	api *RestAPI, resource *Resource, _ *Method,
+	integration *Integration, stageVars map[string]string, requestPath string,
+) {
+	if h.invoker == nil {
+		writeGatewayError(w, http.StatusServiceUnavailable, "Lambda service not available")
+		return
+	}
+
+	functionName := lambdaFunctionNameFromURI(integration.URI)
+	if functionName == "" {
+		writeGatewayError(w, http.StatusInternalServerError, "Invalid integration URI")
+		return
+	}
+
+	// Build the API Gateway v1 proxy event.
+	body, err := io.ReadAll(io.LimitReader(r.Body, 6*1024*1024)) // 6 MiB payload limit
+	if err != nil {
+		writeGatewayError(w, http.StatusBadRequest, "Could not read request body")
+		return
+	}
+
+	headers := make(map[string]string, len(r.Header))
+	multiValueHeaders := make(map[string][]string, len(r.Header))
+	for k, vals := range r.Header {
+		headers[k] = vals[0]
+		multiValueHeaders[k] = vals
+	}
+
+	var queryParams map[string]string
+	var multiValueQueryParams map[string][]string
+	if rawQuery := r.URL.Query(); len(rawQuery) > 0 {
+		queryParams = make(map[string]string, len(rawQuery))
+		multiValueQueryParams = make(map[string][]string, len(rawQuery))
+		for k, vals := range rawQuery {
+			queryParams[k] = vals[0]
+			multiValueQueryParams[k] = vals
+		}
+	}
+
+	pathParams := extractPathParams(resource.Path, requestPath)
+	if len(pathParams) == 0 {
+		pathParams = nil
+	}
+
+	proxyEvent := lambdaV1ProxyEvent{
+		Resource:                        resource.Path,
+		Path:                            requestPath,
+		HTTPMethod:                      r.Method,
+		Headers:                         headers,
+		MultiValueHeaders:               multiValueHeaders,
+		QueryStringParameters:           queryParams,
+		MultiValueQueryStringParameters: multiValueQueryParams,
+		PathParameters:                  pathParams,
+		StageVariables:                  stageVars,
+		RequestContext: v1RequestContext{
+			AccountID:        "000000000000",
+			APIID:            api.ID,
+			ResourceID:       resource.ID,
+			Stage:            chi.URLParam(r, "stageName"),
+			RequestID:        protocol.NewRequestID(),
+			Identity:         v1Identity{SourceIP: clientIP(r)},
+			HTTPMethod:       r.Method,
+			Protocol:         requestProtocol(r),
+			Path:             requestPath,
+			ResourcePath:     resource.Path,
+			RequestTime:      h.clk.Now().Format("02/Jan/2006:15:04:05 +0000"),
+			RequestTimeEpoch: h.clk.Now().UnixMilli(),
+		},
+		Body:            string(body),
+		IsBase64Encoded: false,
+	}
+
+	payload, err := json.Marshal(proxyEvent)
+	if err != nil {
+		writeGatewayError(w, http.StatusInternalServerError, "Failed to build proxy event")
+		return
+	}
+
+	outcome, err := h.invoker.Invoke(r.Context(), functionName, payload)
+	if err != nil {
+		h.log.Error("lambda invocation failed",
+			zap.String("function", functionName),
+			zap.Error(err),
+		)
+		writeGatewayError(w, http.StatusBadGateway, "Internal server error")
+		return
+	}
+	if outcome == nil {
+		h.log.Warn("lambda function not available",
+			zap.String("function", functionName),
+		)
+		writeGatewayError(w, http.StatusServiceUnavailable, "Service Unavailable")
+		return
+	}
+
+	if outcome.FunctionError != "" {
+		h.log.Warn("lambda function error",
+			zap.String("function", functionName),
+			zap.String("error", outcome.FunctionError),
+		)
+		writeGatewayError(w, http.StatusBadGateway, "Internal server error")
+		return
+	}
+
+	var proxyResp lambdaProxyResponse
+	if err := json.Unmarshal(outcome.Payload, &proxyResp); err != nil {
+		writeGatewayError(w, http.StatusBadGateway, "Malformed Lambda proxy response")
+		return
+	}
+
+	writeLambdaProxyResponse(w, &proxyResp)
+}
+
+// executeRestMock returns a response based on integration response configuration.
+func (h *Handler) executeRestMock(w http.ResponseWriter, integration *Integration) {
+	statusCode := 200
+	body := ""
+
+	if len(integration.IntegrationResponses) > 0 {
+		for sc, iresp := range integration.IntegrationResponses {
+			statusCode = parseStatusCode(sc)
+			if tmpl, ok := iresp.ResponseTemplates["application/json"]; ok {
+				body = tmpl
+			}
+			break
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	_, _ = w.Write([]byte(body))
+}
+
+// ---- HTTP API v2 execution ------------------------------------------------
+
+// ExecuteV2API handles incoming requests to a deployed HTTP API stage.
+func (h *Handler) ExecuteV2API(w http.ResponseWriter, r *http.Request) {
+	apiID := chi.URLParam(r, "apiId")
+	requestPath := chi.URLParam(r, "*")
+	if requestPath == "" {
+		requestPath = "/"
+	} else if !strings.HasPrefix(requestPath, "/") {
+		requestPath = "/" + requestPath
+	}
+
+	// 1. Verify API exists. See ExecuteRestAPI for the cross-region rationale.
+	api, aerr := h.store.getV2API(r.Context(), apiID)
+	if aerr != nil {
+		if region := h.store.findV2APIRegion(r.Context(), apiID); region != "" {
+			r = r.WithContext(middleware.ContextWithRegion(r.Context(), region))
+			api, aerr = h.store.getV2API(r.Context(), apiID)
+		}
+	}
+	if aerr != nil {
+		writeGatewayError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	// 1b. Load stage for stage variables.
+	stageName := chi.URLParam(r, "stageName")
+	var stageVars map[string]string
+	stg, serr := h.store.getV2Stage(r.Context(), apiID, stageName)
+	if serr == nil && stg != nil {
+		stageVars = stg.StageVariables
+	}
+
+	// 2. Find matching route.
+	routes, aerr := h.store.listV2Routes(r.Context(), api.ApiID)
+	if aerr != nil {
+		writeGatewayError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+
+	route := matchV2Route(routes, r.Method, requestPath)
+	if route == nil {
+		writeGatewayError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	// 2b. Enforce JWT authorizer before forwarding to the integration.
+	if !h.checkV2JWTAuthorizer(w, r, apiID, route) {
+		return
+	}
+
+	// 3. Resolve integration.
+	var integrationID string
+	if strings.HasPrefix(route.Target, "integrations/") {
+		integrationID = strings.TrimPrefix(route.Target, "integrations/")
+	}
+
+	if integrationID == "" {
+		writeGatewayError(w, http.StatusInternalServerError, "No integration configured")
+		return
+	}
+
+	integ, aerr := h.store.getV2Integration(r.Context(), apiID, integrationID)
+	if aerr != nil {
+		writeGatewayError(w, http.StatusInternalServerError, "Integration not found")
+		return
+	}
+
+	// 4. Substitute stage variables in integration URI.
+	if len(stageVars) > 0 && integ.IntegrationURI != "" {
+		resolved := substituteStageVars(integ.IntegrationURI, stageVars)
+		if resolved != integ.IntegrationURI {
+			cp := *integ
+			cp.IntegrationURI = resolved
+			integ = &cp
+		}
+	}
+
+	// 5. Dispatch by integration type.
+	switch integ.IntegrationType {
+	case "AWS_PROXY":
+		h.executeV2LambdaProxy(w, r, api, route, integ, stageVars, requestPath)
+	case "HTTP_PROXY":
+		h.executeV2HTTPProxy(w, r, integ)
+	default:
+		writeGatewayError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Integration type %s not yet supported", integ.IntegrationType))
+	}
+}
+
+// executeV2LambdaProxy builds a Lambda proxy event (v2 / payload format 2.0) and invokes.
+func (h *Handler) executeV2LambdaProxy(
+	w http.ResponseWriter, r *http.Request,
+	api *APIV2, route *RouteV2, integ *IntegrationV2,
+	stageVars map[string]string, requestPath string,
+) {
+	if h.invoker == nil {
+		writeGatewayError(w, http.StatusServiceUnavailable, "Lambda service not available")
+		return
+	}
+
+	functionName := lambdaFunctionNameFromURI(integ.IntegrationURI)
+	if functionName == "" {
+		writeGatewayError(w, http.StatusInternalServerError, "Invalid integration URI")
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 6*1024*1024))
+	if err != nil {
+		writeGatewayError(w, http.StatusBadRequest, "Could not read request body")
+		return
+	}
+
+	headers := make(map[string]string, len(r.Header))
+	for k, vals := range r.Header {
+		headers[strings.ToLower(k)] = strings.Join(vals, ",")
+	}
+
+	queryParams := make(map[string]string)
+	for k, vals := range r.URL.Query() {
+		queryParams[k] = strings.Join(vals, ",")
+	}
+
+	cookies := make([]string, 0)
+	for _, c := range r.Cookies() {
+		cookies = append(cookies, c.String())
+	}
+
+	pathParams := extractV2PathParams(route.RouteKey, requestPath)
+
+	var payload []byte
+	if integ.PayloadFormatVersion == "2.0" {
+		event := lambdaV2ProxyEvent{
+			Version:               "2.0",
+			RouteKey:              route.RouteKey,
+			RawPath:               requestPath,
+			RawQueryString:        r.URL.RawQuery,
+			Headers:               headers,
+			QueryStringParameters: queryParams,
+			PathParameters:        pathParams,
+			StageVariables:        stageVars,
+			Cookies:               cookies,
+			RequestContext: v2RequestContext{
+				AccountID:    "000000000000",
+				APIID:        api.ApiID,
+				DomainName:   r.Host,
+				DomainPrefix: domainPrefix(r.Host),
+				HTTP: v2HTTP{
+					Method:    r.Method,
+					Path:      requestPath,
+					Protocol:  requestProtocol(r),
+					SourceIP:  clientIP(r),
+					UserAgent: r.Header.Get("User-Agent"),
+				},
+				RequestID: protocol.NewRequestID(),
+				RouteKey:  route.RouteKey,
+				Stage:     chi.URLParam(r, "stageName"),
+				Time:      h.clk.Now().Format("02/Jan/2006:15:04:05 +0000"),
+				TimeEpoch: h.clk.Now().UnixMilli(),
+			},
+			Body:            string(body),
+			IsBase64Encoded: false,
+		}
+		payload, err = json.Marshal(event)
+	} else {
+		// Default to 1.0 format (same shape as REST v1 proxy event).
+		queryParamsMulti := make(map[string][]string)
+		for k, vals := range r.URL.Query() {
+			queryParamsMulti[k] = vals
+		}
+		headersMulti := make(map[string][]string, len(r.Header))
+		for k, vals := range r.Header {
+			headersMulti[k] = vals
+		}
+		event := lambdaV1ProxyEvent{
+			Resource:                        route.RouteKey,
+			Path:                            requestPath,
+			HTTPMethod:                      r.Method,
+			Headers:                         headers,
+			MultiValueHeaders:               headersMulti,
+			QueryStringParameters:           queryParams,
+			MultiValueQueryStringParameters: queryParamsMulti,
+			PathParameters:                  pathParams,
+			StageVariables:                  stageVars,
+			RequestContext: v1RequestContext{
+				AccountID:        "000000000000",
+				APIID:            api.ApiID,
+				Stage:            chi.URLParam(r, "stageName"),
+				RequestID:        protocol.NewRequestID(),
+				Identity:         v1Identity{SourceIP: clientIP(r)},
+				HTTPMethod:       r.Method,
+				Protocol:         requestProtocol(r),
+				Path:             requestPath,
+				ResourcePath:     route.RouteKey,
+				RequestTime:      h.clk.Now().Format("02/Jan/2006:15:04:05 +0000"),
+				RequestTimeEpoch: h.clk.Now().UnixMilli(),
+			},
+			Body:            string(body),
+			IsBase64Encoded: false,
+		}
+		payload, err = json.Marshal(event)
+	}
+
+	if err != nil {
+		writeGatewayError(w, http.StatusInternalServerError, "Failed to build proxy event")
+		return
+	}
+
+	outcome, invokeErr := h.invoker.Invoke(r.Context(), functionName, payload)
+	if invokeErr != nil {
+		h.log.Error("lambda invocation failed",
+			zap.String("function", functionName),
+			zap.Error(invokeErr),
+		)
+		writeGatewayError(w, http.StatusBadGateway, "Internal server error")
+		return
+	}
+	if outcome == nil {
+		h.log.Warn("lambda function not available",
+			zap.String("function", functionName),
+		)
+		writeGatewayError(w, http.StatusServiceUnavailable, "Service Unavailable")
+		return
+	}
+
+	if outcome.FunctionError != "" {
+		h.log.Warn("lambda function error",
+			zap.String("function", functionName),
+			zap.String("error", outcome.FunctionError),
+		)
+		writeGatewayError(w, http.StatusBadGateway, "Internal server error")
+		return
+	}
+
+	var proxyResp lambdaProxyResponse
+	if err := json.Unmarshal(outcome.Payload, &proxyResp); err != nil {
+		// Payload format 2.0 allows simple string responses.
+		if integ.PayloadFormatVersion == "2.0" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(outcome.Payload)
+			return
+		}
+		writeGatewayError(w, http.StatusBadGateway, "Malformed Lambda proxy response")
+		return
+	}
+
+	writeLambdaProxyResponse(w, &proxyResp)
+}
+
+// ---- Event types ----------------------------------------------------------
+
+// lambdaV1ProxyEvent is the API Gateway REST (v1) Lambda proxy request format.
+type lambdaV1ProxyEvent struct {
+	Resource                        string              `json:"resource"`
+	Path                            string              `json:"path"`
+	HTTPMethod                      string              `json:"httpMethod"`
+	Headers                         map[string]string   `json:"headers"`
+	MultiValueHeaders               map[string][]string `json:"multiValueHeaders"`
+	QueryStringParameters           map[string]string   `json:"queryStringParameters"`
+	MultiValueQueryStringParameters map[string][]string `json:"multiValueQueryStringParameters"`
+	PathParameters                  map[string]string   `json:"pathParameters"`
+	StageVariables                  map[string]string   `json:"stageVariables"`
+	RequestContext                  v1RequestContext    `json:"requestContext"`
+	Body                            string              `json:"body"`
+	IsBase64Encoded                 bool                `json:"isBase64Encoded"`
+}
+
+type v1RequestContext struct {
+	AccountID        string     `json:"accountId"`
+	APIID            string     `json:"apiId"`
+	ResourceID       string     `json:"resourceId,omitempty"`
+	Stage            string     `json:"stage"`
+	RequestID        string     `json:"requestId"`
+	Identity         v1Identity `json:"identity"`
+	HTTPMethod       string     `json:"httpMethod"`
+	Protocol         string     `json:"protocol"`
+	Path             string     `json:"path"`
+	ResourcePath     string     `json:"resourcePath"`
+	RequestTime      string     `json:"requestTime"`
+	RequestTimeEpoch int64      `json:"requestTimeEpoch"`
+}
+
+type v1Identity struct {
+	SourceIP string `json:"sourceIp"`
+}
+
+// lambdaV2ProxyEvent is the API Gateway HTTP API (v2) payload format 2.0.
+type lambdaV2ProxyEvent struct {
+	Version               string            `json:"version"`
+	RouteKey              string            `json:"routeKey"`
+	RawPath               string            `json:"rawPath"`
+	RawQueryString        string            `json:"rawQueryString"`
+	Headers               map[string]string `json:"headers"`
+	QueryStringParameters map[string]string `json:"queryStringParameters,omitempty"`
+	PathParameters        map[string]string `json:"pathParameters,omitempty"`
+	StageVariables        map[string]string `json:"stageVariables,omitempty"`
+	Cookies               []string          `json:"cookies,omitempty"`
+	RequestContext        v2RequestContext  `json:"requestContext"`
+	Body                  string            `json:"body,omitempty"`
+	IsBase64Encoded       bool              `json:"isBase64Encoded"`
+}
+
+type v2RequestContext struct {
+	AccountID    string `json:"accountId"`
+	APIID        string `json:"apiId"`
+	DomainName   string `json:"domainName"`
+	DomainPrefix string `json:"domainPrefix"`
+	HTTP         v2HTTP `json:"http"`
+	RequestID    string `json:"requestId"`
+	RouteKey     string `json:"routeKey"`
+	Stage        string `json:"stage"`
+	Time         string `json:"time"`
+	TimeEpoch    int64  `json:"timeEpoch"`
+}
+
+type v2HTTP struct {
+	Method    string `json:"method"`
+	Path      string `json:"path"`
+	Protocol  string `json:"protocol"`
+	SourceIP  string `json:"sourceIp"`
+	UserAgent string `json:"userAgent"`
+}
+
+// clientIP returns the bare IP from r.RemoteAddr (which is "host:port"),
+// preferring X-Forwarded-For when present. Falls back to "127.0.0.1" so the
+// field is always a valid IP literal — Powertools / pydantic schemas reject
+// non-IP values like "[::1]:54321".
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if i := strings.IndexByte(xff, ','); i >= 0 {
+			xff = xff[:i]
+		}
+		if ip := strings.TrimSpace(xff); ip != "" && net.ParseIP(ip) != nil {
+			return ip
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if net.ParseIP(host) != nil {
+		return host
+	}
+	return "127.0.0.1"
+}
+
+// requestProtocol normalises r.Proto into the form Powertools/pydantic expects
+// (e.g. "HTTP/1.1"). Defaults to "HTTP/1.1" when missing.
+func requestProtocol(r *http.Request) string {
+	if r.Proto != "" {
+		return r.Proto
+	}
+	return "HTTP/1.1"
+}
+
+// domainPrefix returns the first label of host (e.g. "api" for "api.example.com").
+// Falls back to "localhost".
+func domainPrefix(host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	if host == "" {
+		return "localhost"
+	}
+	if i := strings.IndexByte(host, '.'); i > 0 {
+		return host[:i]
+	}
+	return host
+}
+
+// lambdaProxyResponse is the unified response format from Lambda proxy integration.
+type lambdaProxyResponse struct {
+	StatusCode        int                 `json:"statusCode"`
+	Headers           map[string]string   `json:"headers,omitempty"`
+	MultiValueHeaders map[string][]string `json:"multiValueHeaders,omitempty"`
+	Body              string              `json:"body,omitempty"`
+	IsBase64Encoded   bool                `json:"isBase64Encoded,omitempty"`
+	Cookies           []string            `json:"cookies,omitempty"`
+}
+
+// ---- Helpers --------------------------------------------------------------
+
+// matchResource finds the resource whose path matches the request path.
+// Supports exact matches and simple {proxy+} / {param} patterns.
+func matchResource(resources []*Resource, requestPath string) *Resource {
+	// First try exact match.
+	for _, res := range resources {
+		if res.Path == requestPath {
+			return res
+		}
+	}
+
+	// Try parametric matches (e.g. /users/{id}, /{proxy+}).
+	var bestMatch *Resource
+	bestScore := -1
+	for _, res := range resources {
+		score := pathMatchScore(res.Path, requestPath)
+		if score > bestScore {
+			bestScore = score
+			bestMatch = res
+		}
+	}
+	if bestScore > 0 {
+		return bestMatch
+	}
+	return nil
+}
+
+// pathMatchScore computes a match score between a resource path template and
+// a concrete request path. Returns -1 for no match; higher is better.
+func pathMatchScore(template, requestPath string) int {
+	if template == "/" {
+		return 0
+	}
+
+	tParts := strings.Split(strings.Trim(template, "/"), "/")
+	rParts := strings.Split(strings.Trim(requestPath, "/"), "/")
+
+	score := 0
+	for i, tPart := range tParts {
+		if strings.HasSuffix(tPart, "+}") {
+			// Greedy path parameter — must have at least one remaining segment.
+			if i >= len(rParts) || (i == 0 && rParts[0] == "") {
+				return -1
+			}
+			return score + 1
+		}
+		if i >= len(rParts) {
+			return -1
+		}
+		if strings.HasPrefix(tPart, "{") && strings.HasSuffix(tPart, "}") {
+			score++
+		} else if tPart == rParts[i] {
+			score += 2 // Exact segment match is higher priority.
+		} else {
+			return -1
+		}
+	}
+	if len(rParts) > len(tParts) {
+		return -1
+	}
+	return score
+}
+
+// extractPathParams extracts parameter values from a REST API resource path template.
+func extractPathParams(template, requestPath string) map[string]string {
+	params := make(map[string]string)
+	tParts := strings.Split(strings.Trim(template, "/"), "/")
+	rParts := strings.Split(strings.Trim(requestPath, "/"), "/")
+
+	for i, tPart := range tParts {
+		if strings.HasPrefix(tPart, "{") && strings.HasSuffix(tPart, "}") {
+			paramName := strings.TrimSuffix(strings.TrimPrefix(tPart, "{"), "}")
+			paramName = strings.TrimSuffix(paramName, "+")
+			if strings.HasSuffix(tPart, "+}") {
+				if i < len(rParts) {
+					params[paramName] = strings.Join(rParts[i:], "/")
+				}
+			} else if i < len(rParts) {
+				params[paramName] = rParts[i]
+			}
+		}
+	}
+	return params
+}
+
+// matchV2Route finds the best route for the given method + path among v2 routes.
+// AWS prioritises: exact match > most-specific parametric > $default.
+func matchV2Route(routes []*RouteV2, method, path string) *RouteV2 {
+	methodPath := method + " " + path
+
+	// First try exact match.
+	for _, route := range routes {
+		if route.RouteKey == methodPath {
+			return route
+		}
+	}
+
+	// Try parametric matches, picking the highest-scoring route.
+	var bestRoute *RouteV2
+	bestScore := -1
+	for _, route := range routes {
+		if score := routeV2MatchScore(route.RouteKey, method, path); score > bestScore {
+			bestScore = score
+			bestRoute = route
+		}
+	}
+	if bestScore > 0 {
+		return bestRoute
+	}
+
+	// Fallback to $default route.
+	for _, route := range routes {
+		if route.RouteKey == "$default" {
+			return route
+		}
+	}
+	return nil
+}
+
+// routeV2Matches checks if a v2 route key (e.g. "GET /users/{id}") matches the request.
+func routeV2Matches(routeKey, method, path string) bool {
+	return routeV2MatchScore(routeKey, method, path) > 0
+}
+
+// routeV2MatchScore returns a specificity score for how well a v2 route key
+// matches the given method + path. Returns -1 for no match; higher is better.
+// Exact segments score +2, single path params score +1, greedy {param+} scores +1
+// but requires at least one remaining segment.
+func routeV2MatchScore(routeKey, method, path string) int {
+	parts := strings.SplitN(routeKey, " ", 2)
+	if len(parts) != 2 {
+		return -1
+	}
+	routeMethod := parts[0]
+	routePath := parts[1]
+
+	if routeMethod != method && routeMethod != "ANY" {
+		return -1
+	}
+
+	rParts := strings.Split(strings.Trim(routePath, "/"), "/")
+	pParts := strings.Split(strings.Trim(path, "/"), "/")
+
+	score := 0
+	for i, rp := range rParts {
+		if strings.HasSuffix(rp, "+}") {
+			// Greedy path parameter — must have at least one remaining segment.
+			if i >= len(pParts) || (i == 0 && pParts[0] == "") {
+				return -1
+			}
+			return score + 1
+		}
+		if i >= len(pParts) {
+			return -1
+		}
+		if strings.HasPrefix(rp, "{") && strings.HasSuffix(rp, "}") {
+			score++
+		} else if rp == pParts[i] {
+			score += 2
+		} else {
+			return -1
+		}
+	}
+	if len(pParts) != len(rParts) {
+		return -1
+	}
+	return score
+}
+
+// extractV2PathParams extracts path parameters from a v2 route key.
+func extractV2PathParams(routeKey, requestPath string) map[string]string {
+	params := make(map[string]string)
+	parts := strings.SplitN(routeKey, " ", 2)
+	if len(parts) != 2 {
+		return params
+	}
+
+	rParts := strings.Split(strings.Trim(parts[1], "/"), "/")
+	pParts := strings.Split(strings.Trim(requestPath, "/"), "/")
+
+	for i, rp := range rParts {
+		if strings.HasPrefix(rp, "{") && strings.HasSuffix(rp, "}") {
+			name := strings.TrimSuffix(strings.TrimPrefix(rp, "{"), "}")
+			name = strings.TrimSuffix(name, "+")
+			if strings.HasSuffix(rp, "+}") && i < len(pParts) {
+				params[name] = strings.Join(pParts[i:], "/")
+			} else if i < len(pParts) {
+				params[name] = pParts[i]
+			}
+		}
+	}
+	return params
+}
+
+// writeLambdaProxyResponse translates a Lambda proxy response to an HTTP response.
+func writeLambdaProxyResponse(w http.ResponseWriter, resp *lambdaProxyResponse) {
+	multiValueKeys := make(map[string]struct{}, len(resp.MultiValueHeaders))
+	for k := range resp.MultiValueHeaders {
+		multiValueKeys[textproto.CanonicalMIMEHeaderKey(k)] = struct{}{}
+	}
+	for k, v := range resp.Headers {
+		if _, overridden := multiValueKeys[textproto.CanonicalMIMEHeaderKey(k)]; overridden {
+			continue
+		}
+		w.Header().Set(k, v)
+	}
+	for k, vals := range resp.MultiValueHeaders {
+		for _, v := range vals {
+			w.Header().Add(k, v)
+		}
+	}
+	for _, cookie := range resp.Cookies {
+		w.Header().Add("Set-Cookie", cookie)
+	}
+
+	status := resp.StatusCode
+	if status == 0 {
+		status = http.StatusOK
+	}
+
+	w.WriteHeader(status)
+	if resp.Body != "" {
+		if resp.IsBase64Encoded {
+			decoded, err := base64.StdEncoding.DecodeString(resp.Body)
+			if err == nil {
+				_, _ = w.Write(decoded)
+			} else {
+				// Fallback: write raw body if base64 decode fails.
+				_, _ = w.Write([]byte(resp.Body))
+			}
+		} else {
+			_, _ = w.Write([]byte(resp.Body))
+		}
+	}
+}
+
+// writeGatewayError writes a JSON error in the API Gateway error format.
+func writeGatewayError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	body, _ := json.Marshal(struct {
+		Message string `json:"message"`
+	}{Message: message})
+	_, _ = w.Write(body)
+}
+
+// parseStatusCode converts a status code string to int, defaulting to 200.
+func parseStatusCode(s string) int {
+	if s == "" {
+		return 200
+	}
+	n := 0
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			n = n*10 + int(c-'0')
+		} else {
+			return 200
+		}
+	}
+	if n >= 100 && n <= 599 {
+		return n
+	}
+	return 200
+}
+
+// substituteStageVars replaces ${stageVariables.<name>} in a string with actual values.
+func substituteStageVars(uri string, vars map[string]string) string {
+	result := uri
+	for name, value := range vars {
+		placeholder := "${stageVariables." + name + "}"
+		result = strings.ReplaceAll(result, placeholder, value)
+	}
+	return result
+}
+
+// ---- HTTP_PROXY / HTTP integration ----------------------------------------
+
+// executeHTTPProxy makes an outbound HTTP request (REST v1 HTTP_PROXY or HTTP integration).
+func (h *Handler) executeHTTPProxy(w http.ResponseWriter, r *http.Request, integration *Integration) {
+	if integration.URI == "" {
+		writeGatewayError(w, http.StatusInternalServerError, "Integration URI not configured")
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 6*1024*1024))
+	if err != nil {
+		writeGatewayError(w, http.StatusBadGateway, "Could not read request body")
+		return
+	}
+
+	method := r.Method
+	if integration.HTTPMethod != "" {
+		method = integration.HTTPMethod
+	}
+
+	outReq, err := http.NewRequestWithContext(r.Context(), method, integration.URI, strings.NewReader(string(body)))
+	if err != nil {
+		writeGatewayError(w, http.StatusBadGateway, "Invalid integration URI")
+		return
+	}
+
+	// Forward a subset of request headers.
+	for _, hdr := range []string{"Content-Type", "Accept", "Authorization"} {
+		if v := r.Header.Get(hdr); v != "" {
+			outReq.Header.Set(hdr, v)
+		}
+	}
+
+	resp, err := proxyHTTPClient.Do(outReq)
+	if err != nil {
+		h.log.Error("HTTP_PROXY integration request failed",
+			zap.String("uri", integration.URI),
+			zap.Error(err),
+		)
+		writeGatewayError(w, http.StatusBadGateway, "Integration request failed")
+		return
+	}
+	defer resp.Body.Close()
+
+	// Copy response headers.
+	for k, vals := range resp.Header {
+		for _, v := range vals {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+// executeV2HTTPProxy makes an outbound HTTP request (HTTP API v2 HTTP_PROXY integration).
+func (h *Handler) executeV2HTTPProxy(w http.ResponseWriter, r *http.Request, integ *IntegrationV2) {
+	if integ.IntegrationURI == "" {
+		writeGatewayError(w, http.StatusInternalServerError, "Integration URI not configured")
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 6*1024*1024))
+	if err != nil {
+		writeGatewayError(w, http.StatusBadGateway, "Could not read request body")
+		return
+	}
+
+	method := r.Method
+	if integ.IntegrationMethod != "" {
+		method = integ.IntegrationMethod
+	}
+
+	outReq, err := http.NewRequestWithContext(r.Context(), method, integ.IntegrationURI, strings.NewReader(string(body)))
+	if err != nil {
+		writeGatewayError(w, http.StatusBadGateway, "Invalid integration URI")
+		return
+	}
+
+	// Forward request headers.
+	for _, hdr := range []string{"Content-Type", "Accept", "Authorization"} {
+		if v := r.Header.Get(hdr); v != "" {
+			outReq.Header.Set(hdr, v)
+		}
+	}
+
+	resp, err := proxyHTTPClient.Do(outReq)
+	if err != nil {
+		h.log.Error("HTTP_PROXY v2 integration request failed",
+			zap.String("uri", integ.IntegrationURI),
+			zap.Error(err),
+		)
+		writeGatewayError(w, http.StatusBadGateway, "Integration request failed")
+		return
+	}
+	defer resp.Body.Close()
+
+	for k, vals := range resp.Header {
+		for _, v := range vals {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+// ---- AWS integration (non-proxy Lambda) -----------------------------------
+
+// executeRestLambdaNonProxy invokes Lambda directly (AWS integration type),
+// passing the body as-is without the proxy event wrapper.
+func (h *Handler) executeRestLambdaNonProxy(
+	w http.ResponseWriter, r *http.Request,
+	_ *RestAPI, integration *Integration, _ string,
+) {
+	if h.invoker == nil {
+		writeGatewayError(w, http.StatusServiceUnavailable, "Lambda service not available")
+		return
+	}
+
+	functionName := lambdaFunctionNameFromURI(integration.URI)
+	if functionName == "" {
+		writeGatewayError(w, http.StatusInternalServerError, "Invalid integration URI")
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 6*1024*1024))
+	if err != nil {
+		writeGatewayError(w, http.StatusBadRequest, "Could not read request body")
+		return
+	}
+
+	// For AWS (non-proxy) integration, pass body directly to Lambda.
+	// Path parameters are only accessible via VTL mapping templates in real AWS,
+	// which are not yet implemented (TODO P3). Until then, path params are
+	// unavailable to the Lambda function — matching real AWS behaviour when no
+	// mapping template is configured.
+	payload := body
+	if len(payload) == 0 {
+		// Send empty JSON object if body is empty.
+		payload = []byte("{}")
+	}
+
+	outcome, invokeErr := h.invoker.Invoke(r.Context(), functionName, payload)
+	if invokeErr != nil {
+		h.log.Error("lambda invocation failed (AWS integration)",
+			zap.String("function", functionName),
+			zap.Error(invokeErr),
+		)
+		writeGatewayError(w, http.StatusBadGateway, "Internal server error")
+		return
+	}
+	if outcome == nil {
+		h.log.Warn("lambda function not available (AWS integration)",
+			zap.String("function", functionName),
+		)
+		writeGatewayError(w, http.StatusServiceUnavailable, "Service Unavailable")
+		return
+	}
+
+	if outcome.FunctionError != "" {
+		h.log.Warn("lambda function error (AWS integration)",
+			zap.String("function", functionName),
+			zap.String("error", outcome.FunctionError),
+		)
+		writeGatewayError(w, http.StatusBadGateway, "Internal server error")
+		return
+	}
+
+	// For AWS integration, the raw Lambda output is returned.
+	// In real AWS, response templates (VTL) would transform this.
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(outcome.Payload)
+}

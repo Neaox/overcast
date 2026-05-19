@@ -6,8 +6,8 @@ export function formatBytes(bytes: number, decimals = 1): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(decimals))} ${sizes[i]}`
 }
 
-export function formatDate(iso: string): string {
-  if (!iso) return "—"
+export function formatDate(date: string | Date | number | undefined): string {
+  if (!date) return "—"
   try {
     return new Intl.DateTimeFormat(undefined, {
       year: "numeric",
@@ -15,9 +15,9 @@ export function formatDate(iso: string): string {
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
-    }).format(new Date(iso))
+    }).format(typeof date === "number" ? new Date(date) : typeof date === "string" ? new Date(date) : date)
   } catch {
-    return iso
+    return String(date)
   }
 }
 

@@ -35,24 +35,40 @@
   //
   // This is safe for a local development container — it does NOT affect the
   // production Dockerfile (project root), which remains locked down.
-  "runArgs": ["--cap-add=SYS_PTRACE", "--security-opt", "seccomp=unconfined"],
+  "runArgs": [
+    "--cap-add=SYS_PTRACE",
+    "--security-opt",
+    "seccomp=unconfined",
+    "-v",
+    "/var/run/docker.sock:/var/run/docker.sock"
+  ],
 
   // ---- Ports --------------------------------------------------------------
-  // 4566: Overcast API — forwarded so your Windows AWS CLI/SDK hits the container
+  // 4566: Overcast API — forwarded so your Windows AWS CLI/SDK hits the container - not autoforwarded as it may conflict with an instance running on the host
   // 3000: Web UI dev server (Vite)
   // 2345: Delve remote debug port — used when attaching to a running server
-  "forwardPorts": [4566, 3000, 2345],
+  //
+  // NOTE: Port 8080 is NOT forwarded here. The web console runs inside the
+  // production Docker image (overcast:dev), not in the dev container. If VS Code
+  // forwards 8080 from this container (where nothing listens), it shadows the
+  // Docker Desktop port-publish and some browsers can't reach the console.
+  "forwardPorts": [3000, 2345, 5173, 7777],
   "portsAttributes": {
-    "4566": {
-      "label": "Overcast API",
-      "onAutoForward": "notify"
-    },
     "3000": {
       "label": "Web UI",
-      "onAutoForward": "openBrowser"
+      "onAutoForward": "openBrowser",
+      "protocol": "https"
     },
     "2345": {
       "label": "Delve debugger",
+      "onAutoForward": "silent"
+    },
+    "5173": {
+      "label": "Compat UI (Vite)",
+      "onAutoForward": "notify"
+    },
+    "7777": {
+      "label": "Compat API",
       "onAutoForward": "silent"
     }
   },
@@ -62,27 +78,76 @@
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
   "workspaceFolder": "/workspace",
 
+  // ---- Performance: local volumes for heavy I/O directories ---------------
+  // node_modules and Go module cache contain thousands of small files that are
+  // extremely slow to read over a 9p/grpcfuse host mount (Windows/macOS).
+  // Named Docker volumes keep them on the container's local ext4 filesystem,
+  // cutting Vite startup from ~15s to ~4s and Go builds by ~50%.
+  // After rebuilding the container, run: npm install (in web/) and go mod download.
+  "mounts": [
+    "source=overcast-node-modules,target=/workspace/web/node_modules,type=volume",
+    "source=overcast-go-mod-cache,target=/home/vscode/go/pkg/mod,type=volume"
+  ],
+
+  // ---- TLS for the Vite dev server ----------------------------------------
+  // CAROOT tells mkcert where to store its root CA. Placing it under the
+  // workspace mount makes rootCA.pem accessible from the host so you can
+  // trust it once: open .cert/rootCA.pem on the host and add it to your OS
+  // trust store (Keychain on macOS, certmgr on Windows, update-ca-certificates
+  // on Linux). After that, https://localhost:3000 is fully trusted.
+  "containerEnv": {
+    "CAROOT": "/workspace/.cert"
+  },
+
   // ---- Post-create setup --------------------------------------------------
   // Runs once after the container is first created.
   // go mod download: pre-warms the module cache so first `go build` is fast.
   // go install dlv: installs Delve explicitly (the Go extension also installs
   // it, but doing it here ensures it's ready before VS Code opens).
-  "postCreateCommand": "go mod download && go install github.com/go-delve/delve/cmd/dlv@v1.24.2 && go run ./scripts/check-tools.go",
+  // Docker CLI is installed via the feature below so Lambda ContainerRuntime
+  // can manage sibling containers via the mounted Docker socket.
+  "features": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+  },
+
+  "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/go /workspace/web/node_modules && go mod download && go install golang.org/x/tools/gopls@v0.17.1 && go install github.com/go-delve/delve/cmd/dlv@v1.24.2 && make build-mcp && mkcert -install && cd web && npm install && cd .. && pip3 install --break-system-packages --quiet -r compat/suites/python-sdk/requirements.txt && go run ./scripts/check-tools.go",
+
+  // Fix Docker socket group on every container start.
+  // The docker-outside-of-docker feature proxies the host socket via socat,
+  // but the socat process isn't always running when the container resumes
+  // (e.g. after a Docker Desktop restart). In that case /var/run/docker.sock
+  // reverts to root:root; this ensures the vscode user (docker group) can
+  // always reach it without a full container rebuild.
+  "postStartCommand": "sudo chgrp docker /var/run/docker.sock 2>/dev/null || true",
 
   // ---- VS Code customisation ----------------------------------------------
   "customizations": {
     "vscode": {
+      "mcp": {
+        "servers": {
+          "overcastWorkspace": {
+            "command": "sh",
+            "args": [
+              "-c",
+              "mkdir -p /workspace/.overcast && exec 2>>/workspace/.overcast/mcp-workspace.log && go build -o /workspace/bin/overcast-mcp ./cmd/overcast-mcp && exec /workspace/bin/overcast-mcp --workspace /workspace --stdio"
+            ]
+          }
+        }
+      },
       "extensions": [
         // Required
         "golang.go", // Go language support, Delve integration, test runner
         "anthropic.claude-code", // Claude AI — reads AGENTS.md and CLAUDE.md
+        "sst-dev.opencode", // OpenCode — terminal AI coding assistant
 
         // Strongly recommended
         "ms-azuretools.vscode-docker",
+        "bradlc.vscode-tailwindcss", // Tailwind CSS IntelliSense
         "redhat.vscode-yaml",
         "task.vscode-task",
         "yzhang.markdown-all-in-one",
-        "eamodio.gitlens"
+        "eamodio.gitlens",
+        "esbenp.prettier-vscode" // Prettier — JS/TS/JSON/CSS/Markdown formatter
       ],
       "settings": {
         "go.useLanguageServer": true,
@@ -113,6 +178,38 @@
           "editor.codeActionsOnSave": {
             "source.organizeImports": "explicit"
           }
+        },
+        "[javascript]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode",
+          "editor.formatOnSave": true
+        },
+        "[javascriptreact]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode",
+          "editor.formatOnSave": true
+        },
+        "[typescript]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode",
+          "editor.formatOnSave": true
+        },
+        "[typescriptreact]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode",
+          "editor.formatOnSave": true
+        },
+        "[json]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode",
+          "editor.formatOnSave": true
+        },
+        "[jsonc]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode",
+          "editor.formatOnSave": true
+        },
+        "[css]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode",
+          "editor.formatOnSave": true
+        },
+        "[markdown]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode",
+          "editor.formatOnSave": true
         }
       }
     }
