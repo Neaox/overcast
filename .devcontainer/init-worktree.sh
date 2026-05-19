@@ -34,7 +34,7 @@ name: overcast-$safe_name
 services:
   devcontainer:
     build:
-      context: "$workspace_dir"
+      context: ..
       dockerfile: .devcontainer/Dockerfile
     command: sleep infinity
     cap_add:
@@ -43,15 +43,15 @@ services:
       - seccomp=unconfined
     volumes:
       - type: bind
-        source: "$workspace_dir"
-        target: "$workspace_dir"
+        source: ..
+        target: /workspace
         consistency: cached
       - type: bind
         source: /var/run/docker.sock
         target: /var/run/docker.sock
       - type: volume
         source: overcast-$safe_name-node-modules
-        target: "$workspace_dir/web/node_modules"
+        target: /workspace/web/node_modules
       - type: volume
         source: overcast-go-mod-cache
         target: /home/vscode/go/pkg/mod
@@ -73,7 +73,7 @@ esac
 
 cat >> .devcontainer/docker-compose.yaml <<EOF
     environment:
-      CAROOT: "$workspace_dir/.cert"
+      CAROOT: "/workspace/.cert"
 
 volumes:
   overcast-$safe_name-node-modules:

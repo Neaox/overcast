@@ -25,7 +25,7 @@
   // This same config works with GitHub Codespaces.
 
   "name": "Overcast Dev (${localWorkspaceFolderBasename})",
-  "initializeCommand": "sh .devcontainer/init-worktree.sh",
+  "initializeCommand": "sh .devcontainer/init-worktree.sh || powershell -NoProfile -ExecutionPolicy Bypass -File .devcontainer/init-worktree.ps1 -workspace \"${localWorkspaceFolder}\"",
   "dockerComposeFile": "docker-compose.yaml",
   "service": "devcontainer",
 
@@ -72,7 +72,7 @@
 
   // ---- Source mount -------------------------------------------------------
   // consistency=cached: host→container writes are buffered. Fast for go test.
-  "workspaceFolder": "${localWorkspaceFolder}",
+  "workspaceFolder": "/workspace",
 
   // ---- Performance: local volumes for heavy I/O directories ---------------
   // node_modules and Go module cache contain thousands of small files that are
