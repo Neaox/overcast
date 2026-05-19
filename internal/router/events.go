@@ -26,7 +26,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/your-org/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/events"
 )
 
 // sseEnvelope is the JSON shape streamed to each SSE client.
@@ -38,7 +38,7 @@ type sseEnvelope struct {
 }
 
 // eventsHandler returns an http.HandlerFunc that fans out all bus events as SSE.
-func eventsHandler(bus *events.Bus, logger *zap.Logger) http.HandlerFunc {
+func eventsHandler(bus *events.Bus, logger *zap.Logger, shutdownCh <-chan struct{}) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)
 		if !ok {
@@ -56,7 +56,6 @@ func eventsHandler(bus *events.Bus, logger *zap.Logger) http.HandlerFunc {
 		// SSE response headers.
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
 		// Disable buffering in reverse proxies (nginx, Caddy, etc.)
 		w.Header().Set("X-Accel-Buffering", "no")
 
@@ -77,9 +76,16 @@ func eventsHandler(bus *events.Bus, logger *zap.Logger) http.HandlerFunc {
 		})
 		defer cancel()
 
+		// Heartbeat ticker — sends an SSE comment every 15 s so clients can
+		// detect a stale connection even when no real events are flowing.
+		heartbeat := time.NewTicker(15 * time.Second)
+		defer heartbeat.Stop()
+
 		ctx := r.Context()
 		for {
 			select {
+			case <-shutdownCh:
+				return
 			case e := <-ch:
 				// Apply source filter.
 				if len(sourceSet) > 0 {
@@ -90,7 +96,7 @@ func eventsHandler(bus *events.Bus, logger *zap.Logger) http.HandlerFunc {
 
 				payload, err := json.Marshal(e.Payload)
 				if err != nil {
-					logger.Warn("events: marshal payload", zap.Error(err))
+					logger.Error("events: marshal payload", zap.Error(err))
 					continue
 				}
 
@@ -103,10 +109,23 @@ func eventsHandler(bus *events.Bus, logger *zap.Logger) http.HandlerFunc {
 
 				data, err := json.Marshal(env)
 				if err != nil {
-					logger.Warn("events: marshal envelope", zap.Error(err))
+					logger.Error("events: marshal envelope", zap.Error(err))
 					continue
 				}
 
+				fmt.Fprintf(w, "data: %s\n\n", data)
+				flusher.Flush()
+
+			case <-heartbeat.C:
+				// Lightweight heartbeat — lets clients detect a stale
+				// connection even when no real events are flowing.
+				logger.Debug("events: heartbeat sent")
+				env := sseEnvelope{
+					Type:   "heartbeat",
+					Time:   time.Now().UTC().Format(time.RFC3339Nano),
+					Source: "system",
+				}
+				data, _ := json.Marshal(env)
 				fmt.Fprintf(w, "data: %s\n\n", data)
 				flusher.Flush()
 

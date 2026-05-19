@@ -1,0 +1,84 @@
+service: sns
+status: implementation_mismatch
+priority: p1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-19
+protocols: [query, aws_json_typed]
+implementation: [internal/services/sns]
+integration_tests: [tests/integration/sns]
+capability_docs: docs/services/sns.md
+operation_count_estimate: 24 tracked; 16 supported, 8 unsupported
+current_support_level: Topics, subscriptions, Publish/PublishBatch, filtering, and async fan-out supported; mobile push and SMS management unsupported.
+operations:
+  Publish:
+    status: implementation_mismatch
+    priority: p1
+    aws_docs:
+      - https://docs.aws.amazon.com/sns/latest/api/API_Publish.html
+      - https://docs.aws.amazon.com/sns/latest/dg/mobile-push-send-custommessage.html
+    implementation:
+      - internal/services/sns/handler_publish.go
+      - internal/services/sns/typed_logic.go
+    tests:
+      present:
+        - tests/integration/sns/sns_test.go::TestPublish_deliversToSQSSubscriber
+        - tests/integration/sns/sns_test.go::TestPublish_fanOutToMultipleQueues
+        - tests/integration/sns/sns_test.go::TestPublish_topicNotFound
+        - tests/integration/sns/sns_test.go::TestPublish_snsOnlyServiceSet
+        - tests/integration/sns/sns_test.go::TestPublish_filterPolicy_matchesDelivery
+        - tests/integration/sns/sns_test.go::TestPublish_filterPolicy_noMatchSkipsDelivery
+        - tests/integration/sns/sns_test.go::TestPublish_filterPolicy_noAttributeSkipsDelivery
+        - tests/integration/sns/sns_test.go::TestPublish_noFilterPolicy_alwaysDelivers
+        - tests/integration/sns/sns_test.go::TestPublish_unsubscribeURLContainsSubscriptionArn
+      missing:
+        - Target selection validation across TopicArn, PhoneNumber, and TargetArn.
+        - Direct SMS publish via PhoneNumber.
+        - Mobile endpoint publish via TargetArn returning an explicit unsupported/invalid-parameter response for current emulator scope.
+        - MessageStructure=json parsing, validation, default-message requirement, and per-protocol payload selection.
+        - Message and Subject size/character validation.
+        - FIFO-only MessageGroupId/MessageDeduplicationId validation and SequenceNumber behavior.
+        - RawMessageDelivery behavior for SQS subscriptions.
+        - Delivery of MessageAttributes in the SNS notification envelope.
+    scenario_matrix:
+      - scenario: Minimal topic publish with TopicArn and Message.
+        status: tested and partially matching AWS docs
+        evidence: Returns 200 XML with MessageId and asynchronously fans out to SQS subscribers.
+      - scenario: Missing TopicArn but PhoneNumber or TargetArn supplied.
+        status: implementation_mismatch
+        evidence: AWS allows exactly one destination among TopicArn, PhoneNumber, or TargetArn; Overcast requireForm currently requires TopicArn.
+      - scenario: MessageStructure=json with default and protocol-specific payloads.
+        status: implementation_mismatch
+        evidence: AWS requires valid JSON with a string default key and uses protocol-specific strings; Overcast treats Message as an opaque string for all protocols.
+      - scenario: Oversized Message or invalid Subject.
+        status: implementation_mismatch
+        evidence: AWS documents 256 KB non-SMS message limit and Subject less than 100 characters with no line breaks/control characters; Overcast has no validation.
+      - scenario: FIFO topic publish parameters.
+        status: unsupported
+        evidence: AWS documents MessageGroupId, MessageDeduplicationId, content-based dedupe, and SequenceNumber for FIFO topics; SNS FIFO topic semantics are not implemented.
+      - scenario: MessageAttributes used by subscription filter policies.
+        status: tested and partially matching AWS docs
+        evidence: Query-form String/Number attributes are parsed for simple allow-list FilterPolicy matching only.
+      - scenario: RawMessageDelivery for SQS subscriptions.
+        status: implementation_mismatch
+        evidence: Subscription attributes can store RawMessageDelivery, but fan-out always enqueues the SNS JSON notification envelope.
+    findings:
+      - Overcast requires TopicArn even though AWS Publish accepts TopicArn, PhoneNumber, or TargetArn as the destination.
+      - Overcast does not implement direct SMS publish with PhoneNumber; SMS is only modeled as a subscription protocol.
+      - Overcast does not implement MessageStructure=json validation or per-protocol message selection.
+      - Overcast does not validate Subject constraints or the documented message size limits.
+      - Overcast stores but does not apply RawMessageDelivery for SQS fan-out.
+      - FIFO Publish behavior is unsupported and should be documented as such until FIFO topics exist.
+    next:
+      - Add failing Publish tests for destination selection and MessageStructure=json before changing behavior.
+      - Decide whether PhoneNumber direct publish should be implemented as inbox-captured SMS or documented as intentionally partial.
+findings:
+  fixed: []
+  remaining_gaps:
+    - Publish reviewed against AWS docs; fix destination selection, MessageStructure=json, validation, RawMessageDelivery, and FIFO/documentation gaps before marking reviewed.
+    - Review Query/JSON protocol parity; current service advertises QueryXML via SupportedProtocols despite tracker listing aws_json_typed.
+    - Review async delivery behavior, filter policy fidelity, and SQS/Lambda/email/SMS fan-out compatibility.
+  intentionally_partial: []
+handoff:
+  start_with: [Publish destination selection, Publish MessageStructure=json, Subscribe, filter policies]
+  do_not_redo: [Publish AWS docs parameter/response overview from 2026-05-19]
+  commands: [go test -count=1 ./internal/services/sns/... ./tests/integration/sns/...]

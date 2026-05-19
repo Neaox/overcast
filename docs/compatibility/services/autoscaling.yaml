@@ -1,0 +1,21 @@
+service: autoscaling
+status: not_started
+priority: p1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [query]
+implementation: [internal/services/autoscaling]
+integration_tests: [tests/integration/autoscaling]
+capability_docs: docs/services/autoscaling.md
+operation_count_estimate: 19 tracked, all inert
+current_support_level: Metadata-only Auto Scaling resources; no EC2 instance management.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Review inert versus supported classification for Query XML CRUD responses.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateAutoScalingGroup, launch configurations, tags]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/autoscaling/... ./tests/integration/autoscaling/...]

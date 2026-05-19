@@ -1,0 +1,63 @@
+version: 1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+status_values:
+  - not_started
+  - docs_reviewed
+  - tests_missing
+  - tests_added
+  - implementation_mismatch
+  - fixed
+  - reviewed
+  - blocked
+  - intentionally_partial
+  - unsupported
+services:
+  acm: {status: not_started, priority: p2, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/acm.yaml, last_updated: 2026-05-17, next_action: Review minimal certificate lifecycle and tag behavior.}
+  apigateway: {status: in_progress, priority: p0, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/apigateway.yaml, last_updated: 2026-05-19, next_action: Continue ExecuteRestAPI Lambda proxy request event edge cases, then review HTTP API route matching, authorizers, and CDK resources.}
+  appconfig: {status: not_started, priority: p0, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/appconfig.yaml, last_updated: 2026-05-17, next_action: Reconcile hosted configuration version operations with capabilities/docs.}
+  appconfigdata: {status: not_started, priority: p2, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/appconfigdata.yaml, last_updated: 2026-05-17, next_action: Review session token rotation and control-plane dependency.}
+  appregistry: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/appregistry.yaml, last_updated: 2026-05-17, next_action: Review config-only behavior and pagination gaps.}
+  appsync: {status: fixed, priority: p0, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/appsync.yaml, last_updated: 2026-05-19, next_action: Finish CreateGraphqlApi boundary/nested-config review, then audit GraphQL execution, auth modes, and resolver fidelity.}
+  athena: {status: not_started, priority: p2, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/athena.yaml, last_updated: 2026-05-17, next_action: Review inert query execution and result shapes.}
+  autoscaling: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/autoscaling.yaml, last_updated: 2026-05-17, next_action: Review inert ASG CRUD response shapes.}
+  backup: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/backup.yaml, last_updated: 2026-05-17, next_action: Review inert backup vault and plan semantics.}
+  bedrock: {status: not_started, priority: p0, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/bedrock.yaml, last_updated: 2026-05-17, next_action: Review Bedrock Runtime path and canned response compatibility.}
+  cloudformation: {status: not_started, priority: p0, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/cloudformation.yaml, last_updated: 2026-05-17, next_action: Audit resource handlers, update/delete semantics, and CDK paths.}
+  cloudfront: {status: not_started, priority: p0, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/cloudfront.yaml, last_updated: 2026-05-17, next_action: Separate emulator proxy from AWS API compatibility and review ETag/XML fidelity.}
+  cloudtrail: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/cloudtrail.yaml, last_updated: 2026-05-17, next_action: Review inert trail metadata behavior and protocol docs.}
+  cloudwatch: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/cloudwatch.yaml, last_updated: 2026-05-17, next_action: Reconcile Query docs with JSON target path and review metric/alarm shapes.}
+  cloudwatch-logs: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/cloudwatch-logs.yaml, last_updated: 2026-05-17, next_action: Review PutLogEvents sequence token and FilterLogEvents fidelity.}
+  cognito: {status: in_progress, priority: p0, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/cognito.yaml, last_updated: 2026-05-19, next_action: Review exact device validation errors, app-tier restrictions for ALLOW_USER_AUTH, and exact verification-code TTL/throttling gaps.}
+  dynamodb: {status: not_started, priority: p0, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/dynamodb.yaml, last_updated: 2026-05-17, next_action: Review expressions, pagination, GSI/LSI, and CBOR compatibility.}
+  dynamodbstreams: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/dynamodbstreams.yaml, last_updated: 2026-05-17, next_action: Add integration coverage and review target dispatch.}
+  ec2: {status: not_started, priority: p0, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/ec2.yaml, last_updated: 2026-05-17, next_action: Review VPC, subnet, security group, route table, ENI, and Query XML fidelity.}
+  ecr: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/ecr.yaml, last_updated: 2026-05-17, next_action: Review Docker-dependent and scanner-unavailable behavior.}
+  ecs: {status: not_started, priority: p0, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/ecs.yaml, last_updated: 2026-05-17, next_action: Review task definitions, RunTask, CreateService, and Fargate awsvpc.}
+  eks: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/eks.yaml, last_updated: 2026-05-17, next_action: Run focused EKS inventory and AWS docs mapping.}
+  elasticache: {status: not_started, priority: p2, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/elasticache.yaml, last_updated: 2026-05-17, next_action: Review cluster/replication group validation, lifecycle, and XML shapes.}
+  elbv2: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/elbv2.yaml, last_updated: 2026-05-17, next_action: Review metadata-only load balancer semantics and doc naming.}
+  eventbridge: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/eventbridge.yaml, last_updated: 2026-05-17, next_action: Review inert routing, targets, rules, and tags.}
+  firehose: {status: not_started, priority: p2, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/firehose.yaml, last_updated: 2026-05-17, next_action: Review discarded-record semantics and response shapes.}
+  glue: {status: not_started, priority: p2, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/glue.yaml, last_updated: 2026-05-17, next_action: Review Data Catalog shapes and unsupported Glue families.}
+  iam: {status: not_started, priority: p0, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/iam.yaml, last_updated: 2026-05-17, next_action: Reconcile IAM enforcement docs and review CDK role/policy flows.}
+  kinesis: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/kinesis.yaml, last_updated: 2026-05-17, next_action: Review pagination, errors, and JSON protocol docs.}
+  kms: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/kms.yaml, last_updated: 2026-05-17, next_action: Review crypto, policy, and grant edge cases.}
+  lambda: {status: fixed, priority: p0, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/lambda.yaml, last_updated: 2026-05-19, next_action: Finish CreateFunction Publish=true and advanced optional configuration review, then review invocation fidelity, errors, layers, and event source mappings.}
+  msk: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/msk.yaml, last_updated: 2026-05-17, next_action: Audit REST path/status/header fidelity and unsupported operations.}
+  opensearch: {status: not_started, priority: p0, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/opensearch.yaml, last_updated: 2026-05-17, next_action: Review custom path compatibility against AWS OpenSearch Service paths.}
+  organizations: {status: not_started, priority: p2, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/organizations.yaml, last_updated: 2026-05-17, next_action: Verify minimal DescribeOrganization stub behavior.}
+  pipes: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/pipes.yaml, last_updated: 2026-05-17, next_action: Review source/target delivery partiality and UpdatePipe docs.}
+  rds: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/rds.yaml, last_updated: 2026-05-17, next_action: Review instance/cluster lifecycle, validation, and XML parity.}
+  route53: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/route53.yaml, last_updated: 2026-05-17, next_action: Review REST XML, Query compatibility, and pagination markers.}
+  s3: {status: in_progress, priority: p0, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/s3.yaml, last_updated: 2026-05-19, next_action: Finish ListObjectsV2 max-keys validation and optional-parameter gaps, then review policies, versioning, tagging, and CDK bootstrap flows.}
+  scheduler: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/scheduler.yaml, last_updated: 2026-05-17, next_action: Review target dispatch and advanced scheduler feature partiality.}
+  secretsmanager: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/secretsmanager.yaml, last_updated: 2026-05-17, next_action: Review deletion recovery, policies, replication, and staging labels.}
+  ses: {status: not_started, priority: p0, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/ses.yaml, last_updated: 2026-05-17, next_action: Review SES v1/v2 protocol tracking and unsupported stub shapes.}
+  shield: {status: not_started, priority: p2, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/shield.yaml, last_updated: 2026-05-17, next_action: Add integration tests for tracked operations.}
+  sns: {status: implementation_mismatch, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/sns.yaml, last_updated: 2026-05-19, next_action: Add failing Publish tests for TopicArn/PhoneNumber/TargetArn selection and MessageStructure=json, then fix or document direct SMS/mobile/FIFO partiality.}
+  sqs: {status: in_progress, priority: p0, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/sqs.yaml, last_updated: 2026-05-19, next_action: Review ReceiveMessage FIFO ReceiveRequestAttemptId behavior, queue-level wait defaults, visibility timeout validation, and DLQ semantics.}
+  ssm: {status: not_started, priority: p0, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/ssm.yaml, last_updated: 2026-05-17, next_action: Reconcile manual doc summary with capabilities and review Parameter Store semantics.}
+  stepfunctions: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/stepfunctions.yaml, last_updated: 2026-05-17, next_action: Review inert execution semantics and capability classification.}
+  sts: {status: not_started, priority: p0, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/sts.yaml, last_updated: 2026-05-17, next_action: Review credential shapes and add unsupported operations to capabilities.}
+  transfer: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/transfer.yaml, last_updated: 2026-05-17, next_action: Review inert Transfer CRUD and protocol docs.}
+  waf: {status: not_started, priority: p1, claimed_by: "", claim_expires: "", service_review: docs/compatibility/services/waf.yaml, last_updated: 2026-05-17, next_action: Review WAFv2 naming/scope compatibility and WebACL basics.}

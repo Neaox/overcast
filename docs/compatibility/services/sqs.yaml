@@ -1,0 +1,101 @@
+service: sqs
+status: in_progress
+priority: p0
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-19
+protocols:
+  - aws_json_1_0
+  - query
+implementation:
+  - internal/services/sqs
+integration_tests:
+  - tests/integration/sqs
+capability_docs: docs/services/sqs.md
+operations:
+  ReceiveMessage:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ReceiveMessage.html
+    tests:
+      - internal/services/sqs/handler_test.go
+      - tests/integration/sqs/sqs_test.go
+    scenarios:
+      - name: standard queue empty short poll
+        status: reviewed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: Returns zero messages.
+      - name: standard queue empty long poll
+        status: fixed
+        tests:
+          - internal/services/sqs/handler_test.go
+          - tests/integration/sqs/sqs_test.go
+        notes: Context cancellation before or during empty long poll no longer returns 500; HTTP handler isolates store reads from request cancellation while still using the request context to stop waiting.
+      - name: standard queue one visible message
+        status: reviewed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: Returns message and receipt handle.
+      - name: message invisible due to visibility timeout
+        status: reviewed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: Subsequent receive returns zero messages.
+      - name: FIFO queue with message groups
+        status: not_started
+        tests: []
+        notes: Must review ordering, blocked groups, and receive attempt IDs.
+      - name: queue with DLQ redrive policy
+        status: not_started
+        tests: []
+        notes: Must review max receive count transition.
+      - name: JSON protocol empty response shape
+        status: fixed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: Empty AWS JSON ReceiveMessage responses now omit the Messages member instead of returning an empty array.
+      - name: Query protocol empty response shape
+        status: reviewed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: Empty Query ReceiveMessage responses include an empty ReceiveMessageResult with no Message elements.
+      - name: invalid MaxNumberOfMessages and WaitTimeSeconds
+        status: fixed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: MaxNumberOfMessages rejects explicit values outside 1..10 for JSON and Query; WaitTimeSeconds rejects explicit values outside 0..20.
+    evidence:
+      - AWS docs state WaitTimeSeconds long polling returns no message list when no messages are available, not an error.
+      - AWS API Reference documents MaxNumberOfMessages valid values as 1 to 10 and default 1.
+      - AWS Developer Guide documents the maximum long polling wait time as 20 seconds and short polling when WaitTimeSeconds is 0.
+    gaps:
+      - ReceiveRequestAttemptId behavior for FIFO queues needs review.
+      - VisibilityTimeout validation and in-flight semantics need review.
+      - Queue-level ReceiveMessageWaitTimeSeconds default interaction needs broader review.
+    next_action: Review ReceiveMessage FIFO ReceiveRequestAttemptId behavior and queue-level wait defaults.
+findings:
+  fixed:
+    - Empty long-poll receives no longer surface transient InternalError when the backing state layer observes context cancellation during the poll loop.
+    - Initial empty long-poll scans and HTTP requests with already-canceled contexts no longer convert cancellation into SQS InternalError.
+    - The documented behavior is an HTTP 200 response with no messages when no messages become available before the wait expires.
+    - Empty JSON receives now omit the Messages member, and empty Query receives are covered by XML shape tests.
+    - Explicit MaxNumberOfMessages outside 1..10 and WaitTimeSeconds outside 0..20 now return InvalidParameterValue instead of silently clamping or accepting the request.
+  remaining_gaps:
+    - Review ReceiveRequestAttemptId behavior for FIFO queues.
+    - Review VisibilityTimeout validation and in-flight semantics.
+    - Review queue-level ReceiveMessageWaitTimeSeconds default interaction.
+  intentionally_partial: []
+verification:
+  commands:
+    - go test -count=1 ./internal/services/sqs/... ./tests/integration/sqs/...
+    - go vet ./internal/services/sqs/... ./tests/integration/sqs/...
+    - go build ./...
+    - go vet ./...
+handoff:
+  start_with:
+    - ReceiveMessage FIFO ReceiveRequestAttemptId behavior and same-group retry semantics.
+    - Queue-level ReceiveMessageWaitTimeSeconds default interaction because ReceiveMessage depends on queue-level attributes.
+  do_not_redo:
+    - Context-cancellation long-poll fix unless the regression fails.
+  commands:
+    - go test -count=1 ./internal/services/sqs/... ./tests/integration/sqs/...

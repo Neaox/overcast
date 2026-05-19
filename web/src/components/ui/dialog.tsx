@@ -9,7 +9,7 @@ const DialogPortal = DialogPrimitive.Portal
 const DialogClose = DialogPrimitive.Close
 
 const DialogOverlay = React.forwardRef<
-  React.ElementRef<typeof DialogPrimitive.Overlay>,
+  React.ComponentRef<typeof DialogPrimitive.Overlay>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Overlay
@@ -26,16 +26,18 @@ const DialogOverlay = React.forwardRef<
 DialogOverlay.displayName = "DialogOverlay"
 
 const DialogContent = React.forwardRef<
-  React.ElementRef<typeof DialogPrimitive.Content>,
+  React.ComponentRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
 >(({ className, children, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}
+      aria-describedby={props["aria-describedby"] ?? undefined}
+      onClick={(e) => e.stopPropagation()}
       className={cn(
         "fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2",
-        "w-full max-w-lg rounded-xl border border-border bg-bg-elevated shadow-2xl",
+        "@container flex max-h-[calc(100vh-4rem)] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-bg-elevated shadow-2xl",
         "data-[state=open]:animate-in data-[state=closed]:animate-out",
         "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
         "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
@@ -55,11 +57,15 @@ const DialogContent = React.forwardRef<
 DialogContent.displayName = "DialogContent"
 
 function DialogHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("mb-4 flex flex-col gap-1.5", className)} {...props} />
+  return <div className={cn("mb-4 flex shrink-0 flex-col gap-1.5", className)} {...props} />
 }
 
 function DialogFooter({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("mt-6 flex justify-end gap-2", className)} {...props} />
+  return <div className={cn("mt-6 flex shrink-0 justify-end gap-2", className)} {...props} />
+}
+
+function DialogBody({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+  return <div className={cn("min-h-0 flex-1 overflow-y-auto", className)} {...props} />
 }
 
 function DialogTitle({
@@ -88,6 +94,7 @@ export {
   DialogTrigger,
   DialogContent,
   DialogHeader,
+  DialogBody,
   DialogFooter,
   DialogTitle,
   DialogDescription,

@@ -1,0 +1,1046 @@
+service: cognito
+status: in_progress
+priority: p0
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-18
+protocols:
+  - aws_json_1_1
+implementation:
+  - internal/services/cognito
+integration_tests:
+  - tests/integration/cognito
+capability_docs: docs/services/cognito.md
+operations:
+  AdminCreateUser:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminCreateUser.html
+      - https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-attributes.html
+    tests:
+      - tests/integration/cognito/cognito_username_attributes_test.go
+    scenarios:
+      - name: plain username pool
+        status: reviewed
+        tests:
+          - tests/integration/cognito/cognito_username_attributes_test.go
+        notes: Username is stored as provided.
+      - name: UsernameAttributes email
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_username_attributes_test.go
+        notes: Stored username is generated UUID and email attribute is auto-populated.
+      - name: UsernameAttributes phone_number
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_username_attributes_test.go
+        notes: Stored username is generated UUID and phone_number attribute is auto-populated.
+      - name: AliasAttributes email
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_aliases_test.go
+        notes: Verified email aliases resolve for sign-in while preserving stable usernames.
+      - name: AliasAttributes phone_number
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_aliases_test.go
+        notes: Verified phone aliases resolve for sign-in while preserving stable usernames.
+      - name: ForceAliasCreation with verified duplicate alias
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_aliases_test.go
+        notes: Duplicate verified email aliases return AliasExistsException unless ForceAliasCreation migrates ownership.
+    evidence:
+      - AWS docs state Username is auto-generated when username attributes are email/phone-only sign-in identifiers.
+      - AWS AdminCreateUser docs state ForceAliasCreation only applies to verified email/phone aliases and migrates the alias when true.
+    gaps:
+      - Self-service ConfirmSignUp ForceAliasCreation alias migration not yet reviewed.
+    next_action: Review ConfirmSignUp ForceAliasCreation and phone_number alias semantics.
+  AdminGetUser:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminGetUser.html
+      - https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-attributes.html
+    tests:
+      - tests/integration/cognito/cognito_username_attributes_test.go
+    scenarios:
+      - name: username-attribute pool with email as Username
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_username_attributes_test.go
+        notes: Email resolves to generated UUID user.
+      - name: plain username pool with sub as Username
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_sub_lookup_test.go
+        notes: Local user's sub resolves to the stored username.
+    evidence:
+      - AWS Developer Guide states email/phone can be used in place of username in all APIs except ListUsers for username-attribute pools.
+      - AWS AdminGetUser docs state Username can be the sub of a local user when not using an alias value.
+    gaps: []
+    next_action: Include in broader admin-user operation sweep.
+  AdminSetUserPassword:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminSetUserPassword.html
+      - https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-attributes.html
+    tests:
+      - tests/integration/cognito/cognito_username_attributes_test.go
+    scenarios:
+      - name: username-attribute pool with email as Username
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_username_attributes_test.go
+        notes: Password update resolves to generated UUID user.
+      - name: plain username pool with sub as Username
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_sub_lookup_test.go
+        notes: Password update resolves local user's sub to the stored username.
+    evidence:
+      - Shared username-attribute resolution now covers admin operations accepting Username.
+      - AWS AdminSetUserPassword docs state Username can be the sub of a local user when not using an alias value.
+    gaps: []
+    next_action: Include in broader admin-user operation sweep.
+  AdminUpdateUserAttributes:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminUpdateUserAttributes.html
+    tests:
+      - tests/integration/cognito/cognito_aliases_test.go
+      - tests/integration/cognito/cognito_attributes_test.go
+    scenarios:
+      - name: duplicate verified email alias
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_aliases_test.go
+        notes: Updating email and email_verified=true rejects an alias already verified on another user.
+      - name: duplicate verified phone alias
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_aliases_test.go
+        notes: Updating phone_number and phone_number_verified=true rejects an alias already verified on another user.
+      - name: verification-before-update delayed update
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_attributes_test.go
+        notes: When UserAttributeUpdateSettings requires verification, admin updates to email/phone_number create a pending update and leave the current value unchanged unless the request also sets the corresponding *_verified=true flag.
+    evidence:
+      - AWS AdminUpdateUserAttributes docs list AliasExistsException and state email_verified/phone_number_verified=true permits immediate sign-in.
+      - AWS AdminUpdateUserAttributes docs state required-verification updates don't immediately change the stored attribute unless email_verified/phone_number_verified=true is included.
+    gaps: []
+    next_action: Include in broader admin-user operation validation sweep.
+  UpdateUserAttributes:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UpdateUserAttributes.html
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UserAttributeUpdateSettingsType.html
+    tests:
+      - tests/integration/cognito/cognito_attributes_test.go
+    scenarios:
+      - name: generic self-service attribute update
+        status: reviewed
+        tests:
+          - tests/integration/cognito/cognito_attributes_test.go
+        notes: Non-verification-gated attributes are immediately stored for the signed-in user.
+      - name: verification-before-update email change
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_attributes_test.go
+        notes: Email changes in pools requiring verification return CodeDeliveryDetailsList, store a pending update, and leave the current value active until verification.
+    evidence:
+      - AWS UpdateUserAttributes docs state gated email/phone changes don't immediately update the stored value and return CodeDeliveryDetailsList for verification messages.
+    gaps:
+      - AutoVerifiedAttributes-specific CodeDeliveryDetails behavior when verification-before-update is disabled is not fully reviewed.
+    next_action: Review AutoVerifiedAttributes and GetUserAttributeVerificationCode behavior.
+  VerifyUserAttribute:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_VerifyUserAttribute.html
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UserAttributeUpdateSettingsType.html
+    tests:
+      - tests/integration/cognito/cognito_attributes_test.go
+    scenarios:
+      - name: pending email update verification
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_attributes_test.go
+        notes: Matching verification code applies the pending email value and sets email_verified=true.
+      - name: expired pending update code
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_attributes_test.go
+        notes: Expired pending-update verification codes return ExpiredCodeException and don't apply the pending value.
+    evidence:
+      - AWS VerifyUserAttribute docs state successful verification sets email_verified/phone_number_verified and applies a pending value when verification-before-update is enabled.
+    gaps: []
+    next_action: Include in broader self-service attribute operation validation sweep.
+  GetUserAttributeVerificationCode:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_GetUserAttributeVerificationCode.html
+    tests:
+      - tests/integration/cognito/cognito_attributes_test.go
+    scenarios:
+      - name: resend pending email update code
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_attributes_test.go
+        notes: Sends another verification code to the pending email value, returns CodeDeliveryDetails, invalidates the previous code, and permits VerifyUserAttribute with the new code.
+    evidence:
+      - AWS GetUserAttributeVerificationCode docs state the operation sends a verification code for the requested signed-in user's attribute and returns CodeDeliveryDetails.
+    gaps:
+      - Exact code TTL, throttling, delivery failures, and Lambda ClientMetadata behavior are intentionally not emulated.
+    next_action: Review detailed validation errors for unsupported AttributeName values.
+  RespondToAuthChallenge:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_RespondToAuthChallenge.html
+      - https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-attributes.html
+    tests:
+      - tests/integration/cognito/cognito_username_attributes_test.go
+      - tests/integration/cognito/cognito_user_auth_test.go
+    scenarios:
+      - name: SELECT_CHALLENGE with PASSWORD answer
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Password choice challenge validates the USER_AUTH session, ANSWER=PASSWORD, and PASSWORD before returning AuthenticationResult tokens.
+      - name: PASSWORD challenge response
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Direct PASSWORD challenge from PREFERRED_CHALLENGE=PASSWORD validates the USER_AUTH session and PASSWORD before returning AuthenticationResult tokens.
+      - name: username-attribute pool NEW_PASSWORD_REQUIRED using email
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_username_attributes_test.go
+        notes: Session completion resolves generated UUID user.
+      - name: secret client challenge response requires SECRET_HASH
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_secrethash_test.go
+        notes: Missing SECRET_HASH in ChallengeResponses returns InvalidParameterException.
+    evidence:
+      - AWS RespondToAuthChallenge docs state SELECT_CHALLENGE can complete PASSWORD authentication with ANSWER, USERNAME, and PASSWORD.
+      - AWS RespondToAuthChallenge docs state PASSWORD challenges use USERNAME and PASSWORD responses.
+      - NEW_PASSWORD_REQUIRED flow succeeds when initial auth used email as USERNAME.
+      - AWS API docs state all challenge responses require SECRET_HASH when the app client has a client secret.
+    gaps:
+      - ChallengeResponses USERNAME edge cases not fully reviewed.
+      - MFA challenge behavior not fully reviewed.
+    next_action: Review all challenge flows against AWS docs.
+  AdminInitiateAuth:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminInitiateAuth.html
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ConfirmSignUp.html
+    tests:
+      - tests/integration/cognito/cognito_secrethash_test.go
+      - tests/integration/cognito/cognito_aliases_test.go
+    scenarios:
+      - name: secret client password auth requires SECRET_HASH
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_secrethash_test.go
+        notes: ADMIN_USER_PASSWORD_AUTH validates SECRET_HASH before password auth.
+      - name: USER_AUTH with ConfirmSignUp Session
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_aliases_test.go
+        notes: Uses the ConfirmSignUp Session to return AuthenticationResult tokens without resubmitting the confirmation code.
+      - name: USER_AUTH password choice start
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: USER_AUTH with USERNAME returns SELECT_CHALLENGE, AvailableChallenges=[PASSWORD], ChallengeParameters.USERNAME, and a Session.
+      - name: USER_AUTH preferred PASSWORD start
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: USER_AUTH with PREFERRED_CHALLENGE=PASSWORD returns a direct PASSWORD challenge, AvailableChallenges=[PASSWORD], ChallengeParameters.USERNAME, and a Session.
+      - name: USER_AUTH unavailable preferred challenge fallback
+        status: reviewed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: USER_AUTH with an unavailable preferred challenge such as WEB_AUTHN falls back to SELECT_CHALLENGE with available local factors.
+      - name: USER_AUTH EMAIL_OTP choice flow
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: EMAIL_OTP is offered when AllowedFirstAuthFactors permits it and the user has an email attribute; SELECT_CHALLENGE starts an EMAIL_OTP challenge and the code response returns tokens.
+      - name: USER_SRP_AUTH flow
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: USER_SRP_AUTH requires USERNAME and SRP_A, returns PASSWORD_VERIFIER with SALT/SRP_B/SECRET_BLOCK/USER_ID_FOR_SRP, and AdminRespondToAuthChallenge accepts PASSWORD_CLAIM_SIGNATURE/PASSWORD_CLAIM_SECRET_BLOCK/TIMESTAMP to return tokens. Cryptographic SRP proof validation is intentionally partial.
+      - name: USER_AUTH WEB_AUTHN preferred challenge
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Registered passkey users can request PREFERRED_CHALLENGE=WEB_AUTHN and receive CREDENTIAL_REQUEST_OPTIONS before completing WEB_AUTHN with a credential. WebAuthn assertion signature validation is intentionally partial.
+      - name: CUSTOM_AUTH direct custom challenge
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: CUSTOM_AUTH requires ALLOW_CUSTOM_AUTH or legacy CUSTOM_AUTH_FLOW_ONLY, returns CUSTOM_CHALLENGE with a Session for direct custom challenge starts, and AdminRespondToAuthChallenge completes CUSTOM_CHALLENGE with ANSWER to issue tokens. Lambda trigger execution and answer verification are intentionally partial.
+      - name: CUSTOM_AUTH SRP prelude
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: CUSTOM_AUTH with CHALLENGE_NAME=SRP_A and SRP_A returns PASSWORD_VERIFIER challenge parameters before the custom challenge. Cryptographic SRP proof validation and Lambda-defined challenge sequencing are intentionally partial.
+      - name: remembered-device sign-in
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: With DeviceConfiguration enabled, password sign-in without DEVICE_KEY returns NewDeviceMetadata; after ConfirmDevice stores a remembered device, password sign-in with DEVICE_KEY returns DEVICE_SRP_AUTH. Device SRP cryptographic proof validation is intentionally partial.
+      - name: USER_AUTH app-client ExplicitAuthFlows enforcement
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Clients without ALLOW_USER_AUTH return UnsupportedOperationException for USER_AUTH.
+      - name: user-pool first-factor policy excludes PASSWORD
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Password-only USER_AUTH returns InvalidUserPoolConfigurationException when SignInPolicy.AllowedFirstAuthFactors excludes PASSWORD.
+    evidence:
+      - AWS API docs state AdminInitiateAuth AuthParameters include SECRET_HASH when the app client has a client secret.
+      - AWS AdminInitiateAuth docs state Session from ConfirmSignUp can be used with USER_AUTH for direct sign-in.
+      - AWS AdminInitiateAuth docs state USER_AUTH with USERNAME returns choice-based authentication challenges.
+      - AWS AdminInitiateAuth docs state PREFERRED_CHALLENGE can request a preferred USER_AUTH challenge.
+      - AWS AdminInitiateAuth docs state Cognito returns SELECT_CHALLENGE with available options when a preferred challenge isn't available.
+      - AWS AdminInitiateAuth docs state USER_SRP_AUTH requires USERNAME and SRP_A and returns PASSWORD_VERIFIER SRP challenge parameters.
+      - AWS AdminInitiateAuth docs state USER_AUTH can return WEB_AUTHN with CREDENTIAL_REQUEST_OPTIONS for passkey sign-in.
+      - AWS AdminInitiateAuth docs state CUSTOM_AUTH requires USERNAME and can start custom challenge flows, including CHALLENGE_NAME=SRP_A with SRP_A for SRP-before-custom authentication.
+      - AWS device-tracking docs state sign-in without DEVICE_KEY returns NewDeviceMetadata and remembered DEVICE_KEY sign-in returns DEVICE_SRP_AUTH before token issuance.
+      - AWS app-client docs state USER_AUTH requires ALLOW_USER_AUTH in ExplicitAuthFlows and defaults don't include it.
+      - AWS SignInPolicy docs state AllowedFirstAuthFactors controls permitted first factors for a user pool.
+    gaps:
+      - CUSTOM_AUTH Lambda Define/Create/Verify trigger execution, multiple custom-challenge loops, and answer verification are intentionally partial.
+      - Device SRP verifier cryptographic proof validation is intentionally partial.
+      - Device opt-in confirmation edge cases, exact validation errors, and user ListDevices pagination are not fully reviewed.
+      - SRP responses use AWS-shaped challenge parameters but don't perform full cryptographic proof validation.
+      - WebAuthn registration and assertion responses are accepted with AWS-shaped fields but don't perform attestation/assertion cryptographic validation.
+    next_action: Review exact device validation errors and opt-in confirmation edge cases.
+  AdminRespondToAuthChallenge:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminRespondToAuthChallenge.html
+    tests:
+      - tests/integration/cognito/cognito_secrethash_test.go
+      - tests/integration/cognito/cognito_user_auth_test.go
+    scenarios:
+      - name: SELECT_CHALLENGE with PASSWORD answer
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Admin password choice challenge validates the USER_AUTH session, ANSWER=PASSWORD, and PASSWORD before returning AuthenticationResult tokens.
+      - name: PASSWORD challenge response
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Direct admin PASSWORD challenge from PREFERRED_CHALLENGE=PASSWORD validates the USER_AUTH session and PASSWORD before returning AuthenticationResult tokens.
+      - name: secret client challenge response requires SECRET_HASH
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_secrethash_test.go
+        notes: Missing SECRET_HASH in ChallengeResponses returns InvalidParameterException.
+      - name: PASSWORD_VERIFIER SRP response
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Accepts PASSWORD_CLAIM_SIGNATURE, PASSWORD_CLAIM_SECRET_BLOCK, and TIMESTAMP for SRP sessions and returns tokens. Cryptographic SRP proof validation is intentionally partial.
+      - name: CUSTOM_CHALLENGE response
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Accepts ANSWER for CUSTOM_AUTH sessions and returns tokens. Lambda trigger execution and answer verification are intentionally partial.
+      - name: DEVICE_SRP_AUTH and DEVICE_PASSWORD_VERIFIER responses
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Accepts DEVICE_KEY and SRP_A for remembered-device sessions, returns DEVICE_PASSWORD_VERIFIER, and accepts PASSWORD_CLAIM_SIGNATURE/PASSWORD_CLAIM_SECRET_BLOCK/TIMESTAMP to issue tokens. Device SRP cryptographic validation is intentionally partial.
+    evidence:
+      - AWS AdminRespondToAuthChallenge docs state SELECT_CHALLENGE can complete PASSWORD authentication with ANSWER, USERNAME, and PASSWORD.
+      - AWS AdminRespondToAuthChallenge docs state PASSWORD challenges use USERNAME and PASSWORD responses.
+      - AWS AdminRespondToAuthChallenge docs state PASSWORD_VERIFIER responses include PASSWORD_CLAIM_SIGNATURE, PASSWORD_CLAIM_SECRET_BLOCK, TIMESTAMP, and USERNAME.
+      - AWS AdminRespondToAuthChallenge docs state CUSTOM_CHALLENGE responses include USERNAME and ANSWER.
+      - AWS AdminRespondToAuthChallenge docs include DEVICE_SRP_AUTH and DEVICE_PASSWORD_VERIFIER as device-auth challenge responses.
+      - AWS API docs state all admin challenge responses require SECRET_HASH when the app client has a client secret.
+    gaps:
+      - ChallengeResponses USERNAME edge cases not fully reviewed.
+      - CUSTOM_AUTH Lambda trigger execution and repeated custom-challenge loops are intentionally partial.
+      - Device SRP verifier cryptographic proof validation is intentionally partial.
+      - MFA challenge behavior not fully reviewed.
+    next_action: Review all admin challenge flows against AWS docs.
+  AdminDeleteUser:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminDeleteUser.html
+      - https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-attributes.html
+    tests:
+      - tests/integration/cognito/cognito_username_attributes_test.go
+    scenarios:
+      - name: username-attribute pool with email as Username
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_username_attributes_test.go
+        notes: Delete removes generated UUID user.
+      - name: plain username pool with sub as Username
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_sub_lookup_test.go
+        notes: Delete resolves local user's sub to the stored username before removing user state.
+    evidence:
+      - Deletion resolves email/phone sign-in identifiers to the internal UUID username before removing stored user state.
+      - AWS AdminDeleteUser docs state Username can be the sub of a local user when not using an alias value.
+    gaps: []
+    next_action: Include in broader admin-user operation sweep.
+  SignUp:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_SignUp.html
+      - https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-attributes.html
+    tests:
+      - tests/integration/cognito/cognito_username_attributes_test.go
+    scenarios:
+      - name: UsernameAttributes email
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_username_attributes_test.go
+        notes: Stored username generation covered; sub equality still needs assertion.
+      - name: ListUsers username filter for username-attribute pool
+        status: not_started
+        tests: []
+        notes: Username filter should use stored UUID; email should use email filter.
+    evidence:
+      - AWS Developer Guide states SignUp with username attributes populates email/phone and stores UUID username with same value as sub claim.
+    gaps:
+      - UUID equals sub behavior needs dedicated assertion.
+      - Duplicate username-attribute validation needs review.
+    next_action: Add sub equality assertion and review duplicate username-attribute validation.
+  ConfirmSignUp:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ConfirmSignUp.html
+    tests:
+      - tests/integration/cognito/cognito_aliases_test.go
+    scenarios:
+      - name: duplicate verified alias without ForceAliasCreation
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_aliases_test.go
+        notes: Confirming a user whose email alias belongs to another verified user returns AliasExistsException.
+      - name: duplicate verified alias with ForceAliasCreation
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_aliases_test.go
+        notes: ForceAliasCreation migrates the email alias to the newly confirmed user.
+      - name: phone alias with ForceAliasCreation
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_aliases_test.go
+        notes: ForceAliasCreation migrates the phone alias to the newly confirmed user.
+      - name: successful response Session
+        status: reviewed
+        tests:
+          - tests/integration/cognito/cognito_aliases_test.go
+        notes: Successful confirmation returns a non-empty Session field matching the documented response shape.
+      - name: immediate sign-in with returned Session
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_aliases_test.go
+        notes: InitiateAuth and AdminInitiateAuth accept USER_AUTH with the ConfirmSignUp Session and return AuthenticationResult tokens without resubmitting the confirmation code.
+    evidence:
+      - AWS ConfirmSignUp docs state ForceAliasCreation migrates an existing email/phone alias when true and returns AliasExistsException when false.
+      - AWS ConfirmSignUp, InitiateAuth, and AdminInitiateAuth docs state the ConfirmSignUp Session can be passed to USER_AUTH for immediate sign-in.
+    gaps:
+      - General choice-based USER_AUTH without a ConfirmSignUp Session is not implemented/reviewed.
+    next_action: Review general USER_AUTH choice-based challenge behavior.
+  ListUsers:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ListUsers.html
+    tests:
+      - tests/integration/cognito/cognito_list_users_test.go
+      - tests/integration/cognito/cognito_username_attributes_test.go
+    scenarios:
+      - name: username exact filter
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_list_users_test.go
+        notes: Supports `username = "value"` as a case-sensitive server-side filter.
+      - name: email prefix filter
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_list_users_test.go
+        notes: Supports `email ^= "prefix"` server-side filtering.
+      - name: Limit and PaginationToken
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_list_users_test.go
+        notes: Uses deterministic in-memory offset tokens to page without duplicates.
+      - name: AttributesToGet response shaping
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_list_users_test.go
+        notes: Returns only requested attributes for matching users.
+      - name: AttributesToGet missing attribute
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_list_users_test.go
+        notes: Returns InvalidParameterException when any returned user lacks a requested attribute.
+    evidence:
+      - AWS ListUsers docs define single-attribute server-side filters with `=` and `^=` and Limit/PaginationToken pagination.
+    gaps:
+      - Full invalid-filter error-message parity not verified against real AWS.
+    next_action: Review AttributesToGet and invalid filter validation details.
+  ListGroups:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ListGroups.html
+    tests:
+      - tests/integration/cognito/cognito_jwt_mfa_groups_test.go
+    scenarios:
+      - name: Limit and NextToken
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_jwt_mfa_groups_test.go
+        notes: Pages groups with deterministic ordering and NextToken.
+    evidence:
+      - AWS ListGroups docs define Limit and NextToken pagination.
+    gaps: []
+    next_action: Include in broader group operation sweep.
+  AdminListGroupsForUser:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminListGroupsForUser.html
+    tests:
+      - tests/integration/cognito/cognito_jwt_mfa_groups_test.go
+    scenarios:
+      - name: Limit and NextToken
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_jwt_mfa_groups_test.go
+        notes: Pages user group memberships with deterministic ordering and NextToken.
+    evidence:
+      - AWS AdminListGroupsForUser docs define Limit and NextToken pagination.
+    gaps: []
+    next_action: Include in broader group operation sweep.
+  ListUsersInGroup:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ListUsersInGroup.html
+    tests:
+      - tests/integration/cognito/cognito_jwt_mfa_groups_test.go
+    scenarios:
+      - name: Limit and NextToken
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_jwt_mfa_groups_test.go
+        notes: Pages users in a group with deterministic ordering and NextToken.
+    evidence:
+      - AWS ListUsersInGroup docs define Limit and NextToken pagination.
+    gaps: []
+    next_action: Include in broader group operation sweep.
+  InitiateAuth:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_InitiateAuth.html
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ConfirmSignUp.html
+    tests:
+      - tests/integration/cognito/cognito_aliases_test.go
+      - tests/integration/cognito/cognito_jwt_mfa_groups_test.go
+      - tests/integration/cognito/cognito_secrethash_test.go
+    scenarios:
+      - name: USER_AUTH with ConfirmSignUp Session
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_aliases_test.go
+        notes: Uses the ConfirmSignUp Session to return AuthenticationResult tokens without resubmitting the confirmation code.
+      - name: USER_AUTH password choice start
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: USER_AUTH with USERNAME returns SELECT_CHALLENGE, AvailableChallenges=[PASSWORD], ChallengeParameters.USERNAME, and a Session.
+      - name: USER_AUTH preferred PASSWORD start
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: USER_AUTH with PREFERRED_CHALLENGE=PASSWORD returns a direct PASSWORD challenge, AvailableChallenges=[PASSWORD], ChallengeParameters.USERNAME, and a Session.
+      - name: USER_AUTH unavailable preferred challenge fallback
+        status: reviewed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: USER_AUTH with an unavailable preferred challenge such as WEB_AUTHN falls back to SELECT_CHALLENGE with available local factors.
+      - name: USER_AUTH EMAIL_OTP choice flow
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: EMAIL_OTP is offered when AllowedFirstAuthFactors permits it and the user has an email attribute; SELECT_CHALLENGE starts an EMAIL_OTP challenge and the code response returns tokens.
+      - name: USER_AUTH PASSWORD_SRP choice flow
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: PASSWORD_SRP is offered with password auth, SELECT_CHALLENGE with ANSWER=PASSWORD_SRP and SRP_A returns PASSWORD_VERIFIER challenge parameters, and PASSWORD_VERIFIER returns tokens. Cryptographic SRP proof validation is intentionally partial.
+      - name: USER_AUTH WEB_AUTHN preferred challenge
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Registered passkey users can request PREFERRED_CHALLENGE=WEB_AUTHN and receive CREDENTIAL_REQUEST_OPTIONS before completing WEB_AUTHN with a credential. WebAuthn assertion signature validation is intentionally partial.
+      - name: USER_AUTH app-client ExplicitAuthFlows enforcement
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Clients without ALLOW_USER_AUTH return UnsupportedOperationException for USER_AUTH.
+      - name: user-pool first-factor policy excludes PASSWORD
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Password-only USER_AUTH returns InvalidUserPoolConfigurationException when SignInPolicy.AllowedFirstAuthFactors excludes PASSWORD.
+      - name: USER_PASSWORD_AUTH and refresh token flows
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_jwt_mfa_groups_test.go
+          - tests/integration/cognito/cognito_secrethash_test.go
+        notes: Existing coverage exercises password auth, refresh token auth, SECRET_HASH, and MFA challenge routing.
+      - name: USER_SRP_AUTH flow
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: USER_SRP_AUTH requires USERNAME and SRP_A, returns PASSWORD_VERIFIER with SALT/SRP_B/SECRET_BLOCK/USER_ID_FOR_SRP, and RespondToAuthChallenge accepts PASSWORD_CLAIM_SIGNATURE/PASSWORD_CLAIM_SECRET_BLOCK/TIMESTAMP to return tokens. Cryptographic SRP proof validation is intentionally partial.
+      - name: CUSTOM_AUTH direct custom challenge
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: CUSTOM_AUTH requires ALLOW_CUSTOM_AUTH or legacy CUSTOM_AUTH_FLOW_ONLY, returns CUSTOM_CHALLENGE with a Session for direct custom challenge starts, and RespondToAuthChallenge completes CUSTOM_CHALLENGE with ANSWER to issue tokens. Lambda trigger execution and answer verification are intentionally partial.
+      - name: CUSTOM_AUTH SRP prelude
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: CUSTOM_AUTH with CHALLENGE_NAME=SRP_A and SRP_A returns PASSWORD_VERIFIER challenge parameters before the custom challenge. Cryptographic SRP proof validation and Lambda-defined challenge sequencing are intentionally partial.
+      - name: remembered-device sign-in
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: With DeviceConfiguration enabled, password sign-in without DEVICE_KEY returns NewDeviceMetadata; after ConfirmDevice stores a remembered device, password sign-in with DEVICE_KEY returns DEVICE_SRP_AUTH. Device SRP cryptographic proof validation is intentionally partial.
+    evidence:
+      - AWS InitiateAuth docs state Session from ConfirmSignUp can be used with USER_AUTH for direct sign-in.
+      - AWS InitiateAuth docs state USER_AUTH with USERNAME returns choice-based authentication challenges.
+      - AWS InitiateAuth docs state PREFERRED_CHALLENGE can request a preferred USER_AUTH challenge.
+      - AWS InitiateAuth docs state Cognito returns SELECT_CHALLENGE with available options when a preferred challenge isn't available.
+      - AWS InitiateAuth docs state USER_SRP_AUTH requires USERNAME and SRP_A and returns PASSWORD_VERIFIER SRP challenge parameters.
+      - AWS InitiateAuth docs state USER_AUTH can return WEB_AUTHN with CREDENTIAL_REQUEST_OPTIONS for passkey sign-in.
+      - AWS InitiateAuth docs state CUSTOM_AUTH requires USERNAME and can start custom challenge flows, including CHALLENGE_NAME=SRP_A with SRP_A for SRP-before-custom authentication.
+      - AWS device-tracking docs state sign-in without DEVICE_KEY returns NewDeviceMetadata and remembered DEVICE_KEY sign-in returns DEVICE_SRP_AUTH before token issuance.
+      - AWS app-client docs state USER_AUTH requires ALLOW_USER_AUTH in ExplicitAuthFlows and defaults don't include it.
+      - AWS SignInPolicy docs state AllowedFirstAuthFactors controls permitted first factors for a user pool.
+    gaps:
+      - CUSTOM_AUTH Lambda Define/Create/Verify trigger execution, multiple custom-challenge loops, and answer verification are intentionally partial.
+      - Device SRP verifier cryptographic proof validation is intentionally partial.
+      - Device opt-in confirmation edge cases, exact validation errors, and user ListDevices pagination are not fully reviewed.
+      - SRP responses use AWS-shaped challenge parameters but don't perform full cryptographic proof validation.
+      - WebAuthn registration and assertion responses are accepted with AWS-shaped fields but don't perform attestation/assertion cryptographic validation.
+    next_action: Review exact device validation errors, opt-in confirmation edge cases, and app-tier restrictions for ALLOW_USER_AUTH.
+  ConfirmDevice:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ConfirmDevice.html
+      - https://docs.aws.amazon.com/cognito/latest/developerguide/amazon-cognito-user-pools-device-tracking.html
+    tests:
+      - tests/integration/cognito/cognito_user_auth_test.go
+    scenarios:
+      - name: always-remember device confirmation
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Confirms a NewDeviceMetadata device key with verifier config, stores the device as remembered, and returns UserConfirmationNecessary=false when DeviceOnlyRememberedOnUserPrompt=false.
+    evidence:
+      - AWS ConfirmDevice docs state AccessToken and DeviceKey confirm a device and UserConfirmationNecessary is false for always-remember pools.
+    gaps:
+      - Device verifier cryptographic validation, duplicate-device edge cases, opt-in confirmation edge cases, and exact validation errors are not fully reviewed.
+    next_action: Review opt-in device configuration edge cases.
+  GetDevice:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_GetDevice.html
+    tests:
+      - tests/integration/cognito/cognito_user_auth_test.go
+    scenarios:
+      - name: get signed-in user's confirmed device
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Returns Device with DeviceKey and device attributes for the access-token user.
+    evidence:
+      - AWS GetDevice docs state the operation returns details for the requested signed-in user's device.
+    gaps:
+      - Exact not-found and malformed-device-key validation messages are not reviewed.
+    next_action: Review exact GetDevice validation errors.
+  ListDevices:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ListDevices.html
+    tests:
+      - tests/integration/cognito/cognito_user_auth_test.go
+    scenarios:
+      - name: list signed-in user's confirmed devices
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Returns confirmed devices with DeviceKey and device_status/device_name attributes for the access-token user.
+    evidence:
+      - AWS ListDevices docs state the operation lists registered devices for the signed-in user and includes device attributes and timestamps.
+    gaps:
+      - User ListDevices pagination and exact Limit validation messages are not fully reviewed.
+    next_action: Review user ListDevices pagination edge cases.
+  UpdateDeviceStatus:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UpdateDeviceStatus.html
+    tests:
+      - tests/integration/cognito/cognito_user_auth_test.go
+    scenarios:
+      - name: mark signed-in user's device not_remembered
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Updates DeviceRememberedStatus to not_remembered and subsequent DEVICE_KEY password sign-in returns tokens directly instead of DEVICE_SRP_AUTH.
+    evidence:
+      - AWS UpdateDeviceStatus docs state remembered enables device authentication and not_remembered disables it without deleting the device.
+    gaps:
+      - Exact invalid status and missing-device validation messages are not fully reviewed.
+    next_action: Review exact UpdateDeviceStatus validation errors.
+  ForgetDevice:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ForgetDevice.html
+    tests:
+      - tests/integration/cognito/cognito_user_auth_test.go
+    scenarios:
+      - name: forget signed-in user's confirmed device
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Removes a confirmed device for the access-token user and subsequent ListDevices omits it.
+    evidence:
+      - AWS ForgetDevice docs state the operation deletes a remembered device by DeviceKey for the signed-in user.
+    gaps:
+      - Exact not-found semantics are not reviewed.
+    next_action: Review exact ForgetDevice not-found behavior.
+  AdminGetDevice:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminGetDevice.html
+    tests:
+      - tests/integration/cognito/cognito_user_auth_test.go
+    scenarios:
+      - name: get user's confirmed device as admin
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Resolves Username and returns the requested Device by DeviceKey.
+    evidence:
+      - AWS AdminGetDevice docs state UserPoolId, Username, and DeviceKey return the user's device details.
+    gaps:
+      - Exact IAM enforcement and device attribute set are intentionally partial.
+    next_action: Review exact AdminGetDevice error shapes.
+  AdminListDevices:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminListDevices.html
+    tests:
+      - tests/integration/cognito/cognito_user_auth_test.go
+    scenarios:
+      - name: list user's confirmed devices with pagination as admin
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Returns devices for the resolved Username and supports Limit/PaginationToken offset pagination.
+    evidence:
+      - AWS AdminListDevices docs state Limit and PaginationToken paginate a user's registered devices.
+    gaps:
+      - Exact pagination-token encoding and validation messages are emulator-specific.
+    next_action: Review exact AdminListDevices validation errors.
+  AdminUpdateDeviceStatus:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminUpdateDeviceStatus.html
+    tests:
+      - tests/integration/cognito/cognito_user_auth_test.go
+    scenarios:
+      - name: mark user's device not_remembered as admin
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Updates DeviceRememberedStatus for a user's confirmed device.
+    evidence:
+      - AWS AdminUpdateDeviceStatus docs state DeviceRememberedStatus can be remembered or not_remembered.
+    gaps:
+      - Exact invalid status and not-found validation messages are not fully reviewed.
+    next_action: Review exact AdminUpdateDeviceStatus validation errors.
+  AdminForgetDevice:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminForgetDevice.html
+    tests:
+      - tests/integration/cognito/cognito_user_auth_test.go
+    scenarios:
+      - name: forget user's confirmed device as admin
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Removes a confirmed device from the resolved user and subsequent AdminListDevices omits it.
+    evidence:
+      - AWS AdminForgetDevice docs state UserPoolId, Username, and DeviceKey delete a user's remembered device.
+    gaps:
+      - Exact not-found semantics are not reviewed.
+    next_action: Review exact AdminForgetDevice not-found behavior.
+  CreateUserPool:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_CreateUserPool.html
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UserPoolPolicyType.html
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_SignInPolicyType.html
+    tests:
+      - tests/integration/cognito/cognito_user_auth_test.go
+    scenarios:
+      - name: SignInPolicy.AllowedFirstAuthFactors response shape
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Stores and returns SignInPolicy.AllowedFirstAuthFactors.
+      - name: SignInPolicy.AllowedFirstAuthFactors validation
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Empty factor lists, overlong factor lists, duplicate factors, and unknown factor values return InvalidParameterException.
+      - name: UserAttributeUpdateSettings response shape
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_attributes_test.go
+        notes: Stores and returns AttributesRequireVerificationBeforeUpdate for email/phone_number.
+    evidence:
+      - AWS UserPoolPolicyType docs include SignInPolicy and AWS SignInPolicyType docs define AllowedFirstAuthFactors.
+      - AWS UserAttributeUpdateSettingsType docs define AttributesRequireVerificationBeforeUpdate as a CreateUserPool request/response setting.
+    gaps:
+      - Essentials-tier restrictions are not reviewed.
+    next_action: Review app-tier restrictions.
+  UpdateUserPool:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UpdateUserPool.html
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UserPoolPolicyType.html
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_SignInPolicyType.html
+    tests:
+      - tests/integration/cognito/cognito_user_auth_test.go
+    scenarios:
+      - name: SignInPolicy.AllowedFirstAuthFactors update
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Updates SignInPolicy.AllowedFirstAuthFactors and returns it in DescribeUserPool.
+      - name: SignInPolicy.AllowedFirstAuthFactors validation
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Empty factor lists, overlong factor lists, duplicate factors, and unknown factor values return InvalidParameterException.
+      - name: UserAttributeUpdateSettings update
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_attributes_test.go
+        notes: Updates AttributesRequireVerificationBeforeUpdate and returns it in DescribeUserPool.
+    evidence:
+      - AWS UserPoolPolicyType docs include SignInPolicy and AWS SignInPolicyType docs define AllowedFirstAuthFactors.
+      - AWS UserAttributeUpdateSettingsType docs define AttributesRequireVerificationBeforeUpdate as an UpdateUserPool request setting and DescribeUserPool response setting.
+    gaps:
+      - Essentials-tier restrictions are not reviewed.
+    next_action: Review app-tier restrictions.
+  CreateUserPoolClient:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_CreateUserPoolClient.html
+    tests:
+      - tests/integration/cognito/cognito_user_auth_test.go
+    scenarios:
+      - name: ExplicitAuthFlows storage and response shape
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Stores ExplicitAuthFlows and returns them in UserPoolClient response.
+      - name: invalid ExplicitAuthFlows value
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Unknown flow values return InvalidParameterException.
+      - name: legacy and ALLOW_ flow mixing
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Mixing legacy flow names with ALLOW_ flow names returns InvalidParameterException.
+    evidence:
+      - AWS CreateUserPoolClient docs include ExplicitAuthFlows in request and response and document default auth flows.
+    gaps:
+      - App-tier restrictions for ALLOW_USER_AUTH are not reviewed.
+    next_action: Review full app-client auth flow validation.
+  UpdateUserPoolClient:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UpdateUserPoolClient.html
+    tests:
+      - tests/integration/cognito/cognito_user_auth_test.go
+    scenarios:
+      - name: ExplicitAuthFlows storage and enforcement
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Updates ExplicitAuthFlows, returns them in UserPoolClient response, and enables USER_AUTH when ALLOW_USER_AUTH is set.
+      - name: invalid ExplicitAuthFlows value
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Unknown flow values return InvalidParameterException.
+    evidence:
+      - AWS UpdateUserPoolClient docs include ExplicitAuthFlows in request and response and document default auth flows.
+    gaps:
+      - App-tier restrictions for ALLOW_USER_AUTH are not reviewed.
+    next_action: Review full app-client auth flow validation.
+  SetUserPoolMfaConfig:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_SetUserPoolMfaConfig.html
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_WebAuthnConfigurationType.html
+    tests:
+      - tests/integration/cognito/cognito_user_auth_test.go
+    scenarios:
+      - name: WebAuthnConfiguration storage
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Stores and returns WebAuthnConfiguration.RelyingPartyId/UserVerification for passkey sign-in.
+    evidence:
+      - AWS SetUserPoolMfaConfig docs define WebAuthnConfiguration with RelyingPartyId, UserVerification, and FactorConfiguration.
+    gaps:
+      - Email/SMS/software-token MFA config details in this operation are not fully reviewed.
+      - Exact WebAuthn configuration validation against public suffix/custom-domain constraints is intentionally partial.
+    next_action: Review complete MFA config validation and response shape.
+  GetUserPoolMfaConfig:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_GetUserPoolMfaConfig.html
+    tests:
+      - tests/integration/cognito/cognito_user_auth_test.go
+    scenarios:
+      - name: WebAuthnConfiguration response
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Returns stored WebAuthnConfiguration and MfaConfiguration.
+    evidence:
+      - AWS GetUserPoolMfaConfig docs define WebAuthnConfiguration in the response.
+    gaps:
+      - Email/SMS/software-token MFA config response details are not fully reviewed.
+    next_action: Review complete MFA config response shape.
+  StartWebAuthnRegistration:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_StartWebAuthnRegistration.html
+    tests:
+      - tests/integration/cognito/cognito_user_auth_test.go
+    scenarios:
+      - name: signed-in user registration options
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Valid access tokens return CredentialCreationOptions with authenticatorSelection, challenge, pubKeyCredParams, rp, timeout, and user.
+    evidence:
+      - AWS StartWebAuthnRegistration docs define CredentialCreationOptions for signed-in users and require WebAuthn configuration.
+    gaps:
+      - Exact challenge expiry and all WebAuthn error variants are intentionally partial.
+    next_action: Review WebAuthn registration error parity.
+  CompleteWebAuthnRegistration:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_CompleteWebAuthnRegistration.html
+    tests:
+      - tests/integration/cognito/cognito_user_auth_test.go
+    scenarios:
+      - name: signed-in user credential registration
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_user_auth_test.go
+        notes: Valid access tokens with a credential id register passkey metadata for subsequent WEB_AUTHN sign-in. Attestation validation is intentionally partial.
+    evidence:
+      - AWS CompleteWebAuthnRegistration docs define Credential as RegistrationResponseJSON and an empty HTTP 200 response on success.
+    gaps:
+      - WebAuthn attestation, origin, relying-party, algorithm, and client mismatch validation are intentionally partial.
+    next_action: Review WebAuthn registration error parity.
+findings:
+  fixed:
+    - Username-attribute pools now resolve email/phone sign-in identifiers through the shared user lookup path for admin, auth, challenge, MFA, group, and self-service operations that call the shared helpers.
+    - Shared user lookup now resolves local user sub values for Username parameters in plain username pools.
+    - AdminDeleteUser now deletes the resolved internal UUID username instead of attempting to delete by email/phone identifier.
+    - SignUp now stores a generated UUID username for username-attribute pools and auto-populates the corresponding email or phone attribute.
+    - Secret clients now require SECRET_HASH in AdminInitiateAuth password auth and RespondToAuthChallenge/AdminRespondToAuthChallenge ChallengeResponses.
+    - AdminCreateUser now persists AliasAttributes, resolves verified email/phone aliases for sign-in, rejects duplicate verified aliases, and migrates aliases when ForceAliasCreation is true.
+    - ConfirmSignUp now rejects duplicate verified aliases unless ForceAliasCreation is true, migrates email/phone alias ownership when forced, and returns a Session field on success.
+    - InitiateAuth and AdminInitiateAuth now accept USER_AUTH with a ConfirmSignUp Session and return tokens for immediate post-confirmation sign-in.
+    - InitiateAuth/AdminInitiateAuth USER_AUTH now return SELECT_CHALLENGE with PASSWORD/EMAIL_OTP/SMS_OTP available when permitted, and RespondToAuthChallenge/AdminRespondToAuthChallenge complete PASSWORD and OTP choice authentication.
+    - InitiateAuth/AdminInitiateAuth now support USER_SRP_AUTH and USER_AUTH PASSWORD_SRP with AWS-shaped PASSWORD_VERIFIER challenges and verifier responses that return tokens.
+    - SetUserPoolMfaConfig/GetUserPoolMfaConfig now store and return WebAuthnConfiguration, StartWebAuthnRegistration/CompleteWebAuthnRegistration register passkey metadata, and USER_AUTH can complete WEB_AUTHN sign-in with AWS-shaped credential request options.
+    - DeviceConfiguration now triggers NewDeviceMetadata on sign-in, ConfirmDevice stores remembered devices, GetDevice/ListDevices/UpdateDeviceStatus/ForgetDevice and admin device management operations work on confirmed devices, and remembered DEVICE_KEY sign-in completes DEVICE_SRP_AUTH/DEVICE_PASSWORD_VERIFIER challenge shapes.
+    - InitiateAuth USER_AUTH with PREFERRED_CHALLENGE=PASSWORD now returns a direct PASSWORD challenge, and RespondToAuthChallenge completes it with PASSWORD.
+    - AdminInitiateAuth USER_AUTH with PREFERRED_CHALLENGE=PASSWORD now returns a direct PASSWORD challenge, and AdminRespondToAuthChallenge completes it with PASSWORD.
+    - InitiateAuth/AdminInitiateAuth USER_AUTH unavailable preferred challenges now fall back to SELECT_CHALLENGE with PASSWORD available.
+    - CreateUserPool/UpdateUserPool now store, validate, and return SignInPolicy.AllowedFirstAuthFactors; password-based USER_AUTH respects PASSWORD first-factor availability.
+    - CreateUserPoolClient/UpdateUserPoolClient now store and validate ExplicitAuthFlows, and InitiateAuth/AdminInitiateAuth enforce ALLOW_USER_AUTH for USER_AUTH.
+    - AdminUpdateUserAttributes now rejects duplicate verified email/phone aliases when an update would immediately verify the alias.
+    - UserAttributeUpdateSettings is stored and returned on user pools; UpdateUserAttributes and AdminUpdateUserAttributes now create pending email/phone changes when verification before update is required, VerifyUserAttribute applies pending values with *_verified=true, and GetUserAttributeVerificationCode resends pending attribute verification codes.
+    - ListUsers now supports documented standard-attribute filters, AttributesToGet shaping/validation, and Limit/PaginationToken pagination.
+    - ListGroups, AdminListGroupsForUser, and ListUsersInGroup now support Limit/NextToken pagination.
+  remaining_gaps:
+    - SRP challenge parameters and verifier response shape are emulated, but full cryptographic SRP proof validation is intentionally partial.
+    - Device SRP challenge parameters and verifier response shape are emulated, but full cryptographic device SRP proof validation is intentionally partial.
+    - Review exact device validation errors, user ListDevices pagination edge cases, and opt-in confirmation behavior.
+    - WebAuthn challenge and registration shapes are emulated, but attestation/assertion cryptographic validation and exact origin/RP mismatch errors are intentionally partial.
+    - Review app-tier restrictions for ALLOW_USER_AUTH.
+    - Review app-tier restrictions for SignInPolicy and ALLOW_USER_AUTH.
+    - Review exact verification-code TTL, throttling, delivery failures, and Lambda ClientMetadata behavior.
+    - Review exact ListUsers invalid-filter validation parity.
+    - Review SECRET_HASH expectations when username aliases are used.
+    - Review all challenge flows, including MFA and NEW_PASSWORD_REQUIRED, against AWS docs.
+    - Review every admin user operation that accepts Username for validation, errors, and response shape.
+  intentionally_partial:
+    - SRP proof validation is not cryptographically verified; verifier responses are shape-checked and complete authentication for SDK-compatible local testing.
+    - Device SRP proof validation is not cryptographically verified; DEVICE_PASSWORD_VERIFIER responses are shape-checked and complete authentication for SDK-compatible local testing.
+    - CUSTOM_AUTH Lambda Define/Create/Verify triggers, challenge answer verification, and repeated custom-challenge loops are not executed; Overcast emits AWS-shaped challenge/session responses and accepts ANSWER for SDK-compatible local testing.
+    - WebAuthn attestation/assertion signatures, origin validation, and relying-party mismatch validation are not cryptographically verified; credential metadata and challenge shapes are emulated for SDK-compatible local testing.
+verification:
+  commands:
+    - go test -count=1 ./internal/services/cognito/... ./tests/integration/cognito/...
+    - go vet ./internal/services/cognito/... ./tests/integration/cognito/...
+    - go build ./...
+    - go vet ./...
+handoff:
+  start_with:
+    - Exact device validation errors, user ListDevices pagination edge cases, and opt-in confirmation behavior.
+    - App-tier restrictions for ALLOW_USER_AUTH.
+    - App-tier restrictions for SignInPolicy and ALLOW_USER_AUTH.
+    - Exact verification-code TTL, throttling, delivery failures, and Lambda ClientMetadata behavior.
+  do_not_redo:
+    - Username-attribute email lookup fix for AdminGetUser.
+    - Username-attribute email lookup fix for AdminSetUserPassword.
+    - Username-attribute email lookup fix for RespondToAuthChallenge.
+    - Username-attribute email lookup fix for AdminDeleteUser.
+    - ConfirmSignUp Session immediate sign-in for InitiateAuth/AdminInitiateAuth USER_AUTH.
+    - USER_AUTH SELECT_CHALLENGE/PASSWORD challenge flow.
+    - USER_AUTH PASSWORD_SRP and USER_SRP_AUTH SRP-shaped challenge flows.
+    - USER_AUTH WEB_AUTHN and WebAuthn registration shape flows.
+    - CUSTOM_AUTH direct custom challenge and SRP-prelude shape flows.
+    - NewDeviceMetadata, ConfirmDevice, GetDevice/ListDevices/UpdateDeviceStatus/ForgetDevice, admin device management operations, and remembered-device DEVICE_SRP_AUTH/DEVICE_PASSWORD_VERIFIER shape flows.
+    - USER_AUTH PREFERRED_CHALLENGE=PASSWORD flow for InitiateAuth/AdminInitiateAuth and challenge responses.
+    - USER_AUTH unavailable preferred challenge fallback to SELECT_CHALLENGE.
+    - SignInPolicy.AllowedFirstAuthFactors storage and PASSWORD gating for USER_AUTH.
+    - ALLOW_USER_AUTH app-client enforcement for USER_AUTH.
+  commands:
+    - go test -count=1 ./internal/services/cognito/... ./tests/integration/cognito/...

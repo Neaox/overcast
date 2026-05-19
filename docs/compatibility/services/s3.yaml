@@ -1,0 +1,76 @@
+service: s3
+status: in_progress
+priority: p0
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-19
+protocols: [rest_xml]
+implementation: [internal/services/s3]
+integration_tests: [tests/integration/s3]
+capability_docs: docs/services/s3.md
+operation_count_estimate: 44 tracked; 33 supported, 11 unsupported
+current_support_level: Broad core S3 support; lifecycle, ACL, select, and restore gaps.
+operations:
+  ListObjectsV2:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
+    implementation:
+      - internal/services/s3/handler_bucket.go
+    tests:
+      - tests/integration/s3/s3_test.go::TestListObjectsV2_empty
+      - tests/integration/s3/s3_test.go::TestListObjectsV2_withObjects
+      - tests/integration/s3/s3_test.go::TestListObjectsV2_withPrefix
+      - tests/integration/s3/s3_test.go::TestListObjectsV2_withDelimiter_collapsesPrefixes
+      - tests/integration/s3/s3_test.go::TestListObjectsV2_withDelimiterAndPrefix_drillsIntoFolder
+      - tests/integration/s3/s3_test.go::TestListObjectsV2_withDelimiterAndPrefix_listsLeafObjects
+      - tests/integration/s3/s3_test.go::TestListObjectsV2_bucketNotFound
+      - tests/integration/s3/s3_test.go::TestListObjectsV2_maxKeys_truncatesResult
+      - tests/integration/s3/s3_test.go::TestListObjectsV2_continuationToken_resumesFromCorrectKey
+      - tests/integration/s3/s3_test.go::TestListObjectsV2_continuationToken_lastPage_isNotTruncated
+      - tests/integration/s3/s3_test.go::TestListObjectsV2_startAfter
+    scenarios:
+      - name: default empty bucket
+        status: tested and matching AWS docs
+      - name: lexicographic object listing
+        status: tested and matching AWS docs
+      - name: prefix filtering
+        status: tested and matching AWS docs
+      - name: delimiter common-prefix grouping
+        status: tested and matching AWS docs
+      - name: missing bucket
+        status: tested and matching AWS docs
+      - name: max-keys truncation and continuation-token pagination
+        status: tested and matching AWS docs for claimed opaque-token support
+      - name: start-after filtering and response echo
+        status: fixed
+      - name: fetch-owner owner elements
+        status: intentionally_partial
+        gap: Not implemented; owner metadata is not returned.
+      - name: encoding-type=url percent-encoding
+        status: intentionally_partial
+        gap: Not implemented; keys are returned as stored.
+      - name: request-payer and request-charged
+        status: intentionally_partial
+        gap: Requester Pays headers are not implemented.
+      - name: optional-object-attributes RestoreStatus
+        status: intentionally_partial
+        gap: RestoreStatus is not implemented.
+      - name: directory buckets, access points, and S3 on Outposts
+        status: unsupported
+        gap: Overcast supports general purpose bucket paths only.
+    findings:
+      fixed:
+        - start-after was ignored and StartAfter was omitted from successful responses; fixed in this session.
+      remaining_gaps:
+        - Validate max-keys boundary and malformed values against AWS behavior.
+        - Review encoding-type=url, fetch-owner, requester-pays, optional-object-attributes, and directory bucket caveats before marking reviewed.
+findings:
+  fixed: []
+  remaining_gaps:
+    - Finish ListObjectsV2 optional-parameter review before marking the operation reviewed.
+    - Verify CDK bootstrap bucket flows and policy/versioning/tagging edge cases.
+  intentionally_partial: []
+handoff:
+  start_with: [ListObjectsV2 max-keys validation, ListObjectsV2 encoding-type, PutBucketPolicy, versioning, tagging]
+  do_not_redo: [ListObjectsV2 start-after, ListObjectsV2 continuation-token happy path]
+  commands: [go test -count=1 ./internal/services/s3/... ./tests/integration/s3/...]

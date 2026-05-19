@@ -1,0 +1,18 @@
+goos: linux
+goarch: amd64
+pkg: github.com/Neaox/overcast/internal/protocol/codec
+cpu: AMD Ryzen 9 5900X 12-Core Processor            
+BenchmarkCodec_JSON10_Decode_SmallStruct-24     	 1000000	      2073 ns/op	    6134 B/op	      20 allocs/op
+BenchmarkCodec_JSON10_Encode_SmallStruct-24     	 1622343	      1481 ns/op	    1177 B/op	      15 allocs/op
+BenchmarkCodec_JSON11_Encode_SmallStruct-24     	 1603267	      1494 ns/op	    1177 B/op	      15 allocs/op
+BenchmarkCodec_QueryXML_Encode_Nested-24        	  856062	      2576 ns/op	    5987 B/op	      26 allocs/op
+BenchmarkCodec_RESTXML_Encode_SmallStruct-24    	  898098	      2538 ns/op	    5904 B/op	      25 allocs/op
+PASS
+ok  	github.com/Neaox/overcast/internal/protocol/codec	14.463s
+goos: linux
+goarch: amd64
+pkg: github.com/Neaox/overcast/internal/protocol/op
+cpu: AMD Ryzen 9 5900X 12-Core Processor            
+BenchmarkDispatcher_TypedInvoke-24    	  624506	      3428 ns/op	    7270 B/op	      34 allocs/op
+PASS
+ok  	github.com/Neaox/overcast/internal/protocol/op	2.190s

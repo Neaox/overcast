@@ -1,0 +1,396 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
+	"time"
+
+	"github.com/mattn/go-isatty"
+	"github.com/spf13/cobra"
+	"go.uber.org/zap"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
+
+	"github.com/Neaox/overcast/internal/clock"
+	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/inithooks"
+	"github.com/Neaox/overcast/internal/router"
+	"github.com/Neaox/overcast/internal/state"
+)
+
+const defaultUIPort = 4567
+
+func newServeCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Start the AWS service emulator daemon",
+		Long: `Start the emulator daemon and serve AWS API requests on the configured port.
+
+All configuration is via environment variables. See internal/config/config.go.
+
+Examples:
+  overcast serve
+  OVERCAST_STATE=memory overcast serve
+  OVERCAST_SERVICES=s3,sqs overcast serve
+  OVERCAST_HOST=127.0.0.1 overcast serve`,
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			uiPort, _ := cmd.Flags().GetInt("ui-port")
+			bridgeEnabled, _ := cmd.Flags().GetBool("bridge")
+			bridgeBindIP, _ := cmd.Flags().GetString("bridge-bind-ip")
+			return runServe(uiPort, bridgeEnabled, bridgeBindIP)
+		},
+	}
+	cmd.Flags().Int("ui-port", defaultUIPort, "port for the web UI (0 = disable; env: OVERCAST_UI_PORT)")
+	cmd.Flags().Bool("bridge", false, "also run the mDNS bridge and port-80 reverse proxy (see: overcast bridge --help)")
+	cmd.Flags().String("bridge-bind-ip", "127.0.0.1", "IP to advertise in mDNS when --bridge is set")
+	return cmd
+}
+
+func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error {
+	profileStartup := os.Getenv("OVERCAST_PROFILE_STARTUP") == "1"
+	prof := newPhaseTimer(profileStartup)
+	prof.mark("Go runtime + package init")
+
+	// ---- Config ------------------------------------------------------------
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	cfg.Version = version
+	prof.mark("config.Load")
+
+	// ---- Logger ------------------------------------------------------------
+	// Use the human-friendly development encoder when stdout is a terminal so
+	// that coloured [SERVICE] tags and readable timestamps are shown. In
+	// non-interactive environments (CI, Docker, pipe) use the JSON production
+	// encoder so structured fields are machine-parseable.
+	isTTY := isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())
+	var logger *zap.Logger
+	if isTTY || cfg.LogLevel == "debug" {
+		logger, err = zap.NewDevelopment()
+	} else {
+		logger, err = zap.NewProduction()
+	}
+	if err != nil {
+		return fmt.Errorf("init logger: %w", err)
+	}
+	defer logger.Sync()
+	prof.mark("logger init")
+
+	if cfg.SigV4Validate {
+		logger.Warn("OVERCAST_SIGV4_VALIDATE is set but SigV4 validation is not yet implemented — all requests are accepted")
+	}
+	if cfg.Debug {
+		logger.Warn("debug endpoints enabled (/_debug/*) — do not expose this port publicly")
+	}
+
+	// ---- Init hooks -----------------------------------------------------------
+	var hookRunner *inithooks.Runner
+	if cfg.InitEnabled {
+		hookRunner = inithooks.NewRunner(cfg.InitDirs, buildHookEnv(cfg), cfg.InitTimeout, logger)
+		hookRunner.Discover()
+		prof.mark("hookRunner.Discover")
+
+		// START hooks run before store/router init — useful for pre-flight setup.
+		hookRunner.Run(context.Background(), inithooks.StageStart)
+		prof.mark("hookRunner.Run(START)")
+	}
+
+	// ---- State backend -----------------------------------------------------
+	store, err := buildStore(cfg, cfg.State, cfg.DataDir, logger)
+	if err != nil {
+		return fmt.Errorf("init state backend: %w", err)
+	}
+	// Use a closure so the defer always calls Close on the final value of store
+	// (which may be replaced by a NamespacedStore below).
+	defer func() { store.Close() }()
+
+	logStoreMode(logger, cfg)
+	prof.mark("buildStore")
+
+	// Per-service overrides: build a NamespacedStore when any service requests
+	// a different mode from the global default.
+	if len(cfg.ServiceStates) > 0 {
+		routes := make(map[string]state.Store, len(cfg.ServiceStates))
+		var perSvcStores []state.Store // tracked for cleanup on error
+
+		for svc, mode := range cfg.ServiceStates {
+			if mode == cfg.State {
+				continue // same mode as global default — no need to create a separate store
+			}
+			// Each service gets its own sub-directory so db files don't collide.
+			svcDir := filepath.Join(cfg.DataDir, svc)
+			svcStore, err := buildStore(cfg, mode, svcDir, logger.With(zap.String("service_state", svc)))
+			if err != nil {
+				for _, s := range perSvcStores {
+					s.Close()
+				}
+				return fmt.Errorf("init state backend for service %s: %w", svc, err)
+			}
+			routes[svc] = svcStore
+			perSvcStores = append(perSvcStores, svcStore)
+			logger.Info("service state override",
+				zap.String("service", svc),
+				zap.String("mode", string(mode)),
+			)
+		}
+		if len(routes) > 0 {
+			// Replace store with a dispatcher; NamespacedStore.Close() handles
+			// closing all underlying stores, so we swap the deferred Close target.
+			newStore := state.NewNamespacedStore(store, routes)
+			store = newStore
+		}
+		prof.mark("buildStore: per-svc overrides")
+	}
+
+	// ---- HTTP server -------------------------------------------------------
+	handler, preShutdown, cleanup, _ := router.New(cfg, store, logger, clock.New(), hookRunner)
+	prof.mark("router.New (full)")
+
+	// When TLS is enabled the standard library automatically negotiates HTTP/2
+	// via ALPN. For plain-text connections we wrap the handler with h2c so that
+	// clients can use HTTP/2 via the Upgrade mechanism or HTTP/2 prior-knowledge.
+	var srvHandler http.Handler
+	if cfg.TLSEnabled() {
+		srvHandler = handler
+	} else {
+		srvHandler = h2c.NewHandler(handler, &http2.Server{})
+	}
+
+	srv := &http.Server{
+		Handler: srvHandler,
+		// IdleTimeout governs how long a keep-alive connection may sit idle
+		// between requests. Without this, every AWS SDK connection (which uses
+		// HTTP keep-alive by default) holds a goroutine open indefinitely —
+		// after a compat/integration test run this can accumulate hundreds of
+		// goroutines. 60 s matches the AWS service default and is safe for all
+		// SDK clients, which retry on connection reset.
+		IdleTimeout: 60 * time.Second,
+	}
+
+	// Bind the listener explicitly so we know the port is ready before running
+	// READY hooks and before entering the select loop.
+	ln, err := net.Listen("tcp", cfg.Addr())
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", cfg.Addr(), err)
+	}
+
+	// ---- Web UI server -----------------------------------------------------
+	// Resolve the UI port: env var overrides flag; 0 disables the UI server.
+	// When the default port (4567) is taken we fall back to an ephemeral port
+	// so the emulator still starts. An explicit non-zero port fails hard.
+	uiPort := uiPortFlag
+	if ep := os.Getenv("OVERCAST_UI_PORT"); ep != "" {
+		fmt.Sscanf(ep, "%d", &uiPort)
+	}
+	var uiLn net.Listener
+	if uiPort != 0 {
+		uiHandler, err := newUIHandler(cfg.Port, cfg.Region)
+		if err != nil {
+			logger.Warn("web UI unavailable", zap.Error(err))
+		} else {
+			uiAddr := fmt.Sprintf(":%d", uiPort)
+			uiLn, err = net.Listen("tcp", uiAddr)
+			if err != nil {
+				if uiPort == defaultUIPort {
+					logger.Warn("web UI default port busy; selecting an ephemeral UI port",
+						zap.Int("requested_port", defaultUIPort),
+						zap.Error(err),
+					)
+					// Default port busy — pick any free port.
+					uiLn, err = net.Listen("tcp", ":0")
+					if err != nil {
+						logger.Warn("web UI listener failed", zap.Error(err))
+					} else {
+						logger.Info("web UI fallback port selected",
+							zap.String("addr", uiLn.Addr().String()),
+						)
+					}
+				} else {
+					return fmt.Errorf("listen (ui) %s: %w", uiAddr, err)
+				}
+			}
+			if uiLn != nil {
+				uiSrv := &http.Server{Handler: uiHandler, IdleTimeout: 60 * time.Second}
+				go func() {
+					logger.Info("web UI listening", zap.String("addr", uiLn.Addr().String()))
+					if err := uiSrv.Serve(uiLn); err != nil && err != http.ErrServerClosed {
+						logger.Warn("web UI server error", zap.Error(err))
+					}
+				}()
+				defer uiSrv.Shutdown(context.Background()) //nolint:errcheck
+			}
+		}
+	}
+
+	// ---- Bridge (optional) ------------------------------------------------
+	if bridgeEnabled {
+		bindIP := net.ParseIP(bridgeBindIPStr)
+		if bindIP == nil {
+			return fmt.Errorf("invalid --bridge-bind-ip %q", bridgeBindIPStr)
+		}
+		apiAddr := fmt.Sprintf("http://%s", ln.Addr())
+		uiAddr := fmt.Sprintf("http://localhost:%d", defaultUIPort)
+		if uiLn != nil {
+			uiAddr = fmt.Sprintf("http://%s", uiLn.Addr())
+		}
+		bridgeCtx, cancelBridge := context.WithCancel(context.Background())
+		stopBridge, err := startBridge(bridgeCtx, apiAddr, bindIP, apiAddr, uiAddr, 80, logger)
+		if err != nil {
+			cancelBridge()
+			logger.Warn("bridge unavailable", zap.Error(err))
+		} else {
+			defer func() {
+				stopBridge()
+				cancelBridge()
+			}()
+		}
+	}
+
+	// Signals for graceful shutdown (Ctrl+C or SIGTERM from Docker/Kubernetes).
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	serverErr := make(chan error, 1)
+	go func() {
+		proto := "h2c"
+		if cfg.TLSEnabled() {
+			proto = "https" // HTTP/2 over TLS via ALPN
+		}
+		logger.Info("overcast listening",
+			zap.String("addr", ln.Addr().String()),
+			zap.String("protocol", proto),
+			zap.String("state", string(cfg.State)),
+			zap.Bool("debug", cfg.Debug),
+		)
+
+		if cfg.TLSEnabled() {
+			err = srv.ServeTLS(ln, cfg.TLSCertFile, cfg.TLSKeyFile)
+		} else {
+			err = srv.Serve(ln)
+		}
+		if err != nil && err != http.ErrServerClosed {
+			serverErr <- err
+		}
+	}()
+
+	// READY hooks run asynchronously after the port is bound so the server
+	// can accept requests while init scripts execute (matches LocalStack).
+	if hookRunner != nil {
+		go hookRunner.Run(context.Background(), inithooks.StageReady)
+	}
+
+	select {
+	case err := <-serverErr:
+		return fmt.Errorf("server error: %w", err)
+	case sig := <-quit:
+		logger.Info("shutdown signal received", zap.String("signal", sig.String()))
+	}
+
+	shutdownStart := time.Now()
+
+	// Unblock long-lived handlers (SSE) before asking the server to drain.
+	preShutdown()
+	logger.Info("pre-shutdown complete", zap.Duration("elapsed", time.Since(shutdownStart)))
+
+	// SHUTDOWN hooks run after SSE is unblocked but before HTTP drain.
+	if hookRunner != nil {
+		shutdownHookCtx, shutdownHookCancel := context.WithTimeout(context.Background(), cfg.InitTimeout*10)
+		hookRunner.Run(shutdownHookCtx, inithooks.StageShutdown)
+		shutdownHookCancel()
+	}
+
+	// Give in-flight HTTP requests a short grace period to finish. After
+	// preShutdown() all long-lived handlers (SSE) have already returned, so
+	// only short-lived requests remain. 2 s is generous for a local dev tool.
+	const drainGrace = 2 * time.Second
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), drainGrace)
+	defer drainCancel()
+
+	if err := srv.Shutdown(drainCtx); err != nil {
+		logger.Warn("http drain grace exceeded, force-closing connections", zap.Error(err))
+		srv.Close()
+	}
+	logger.Info("http server drained", zap.Duration("elapsed", time.Since(shutdownStart)))
+
+	// Always run cleanup — even when srv.Shutdown times out — so background
+	// resources (SMTP listener, Lambda Runtime API) are released promptly.
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer cleanupCancel()
+	cleanup(cleanupCtx)
+	logger.Info("cleanup complete", zap.Duration("elapsed", time.Since(shutdownStart)))
+
+	logger.Info("server stopped cleanly")
+	return nil
+}
+
+// buildStore creates a Store for the given mode and dataDir.
+// The caller is responsible for calling Close() on the returned store.
+func buildStore(cfg *config.Config, mode config.StateBackend, dataDir string, logger *zap.Logger) (state.Store, error) {
+	switch mode {
+	case config.StateBackendPersistent:
+		s, err := state.NewSQLiteStore(dataDir)
+		if err != nil {
+			return nil, fmt.Errorf("persistent store: %w", err)
+		}
+		return s, nil
+	case config.StateBackendWAL:
+		s, err := state.NewWALStore(dataDir, state.WALOptions{
+			SyncMode:     state.WALSyncMode(cfg.WALFsyncMode),
+			SyncInterval: cfg.WALFsyncInterval,
+			MaxLogBytes:  cfg.WALMaxLogBytes,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("wal store: %w", err)
+		}
+		return s, nil
+	case config.StateBackendHybrid:
+		s, err := state.NewHybridStoreWithLogger(dataDir, cfg.HybridFlushInterval, logger)
+		if err != nil {
+			return nil, fmt.Errorf("hybrid store: %w", err)
+		}
+		return s, nil
+	default: // memory
+		return state.NewMemoryStore(), nil
+	}
+}
+
+// logStoreMode logs a structured INFO event describing the active storage backend.
+func logStoreMode(logger *zap.Logger, cfg *config.Config) {
+	switch cfg.State {
+	case config.StateBackendPersistent:
+		logger.Info("state backend: persistent (SQLite, synchronous writes)",
+			zap.String("path", cfg.DataDir))
+	case config.StateBackendWAL:
+		logger.Info("state backend: wal (memory reads, append-log durability)",
+			zap.String("path", cfg.DataDir),
+			zap.String("wal_fsync", cfg.WALFsyncMode),
+			zap.Duration("wal_fsync_interval", cfg.WALFsyncInterval),
+			zap.Int64("wal_max_log_bytes", cfg.WALMaxLogBytes))
+	case config.StateBackendHybrid:
+		logger.Info("state backend: hybrid (memory reads, async SQLite flush)",
+			zap.String("path", cfg.DataDir),
+			zap.Duration("flush_interval", cfg.HybridFlushInterval))
+	default:
+		logger.Info("state backend: memory (data will not persist across restarts)")
+	}
+}
+
+// buildHookEnv returns the environment variables passed to init hook scripts.
+func buildHookEnv(cfg *config.Config) []string {
+	return []string{
+		fmt.Sprintf("AWS_ENDPOINT_URL=http://localhost:%d", cfg.Port),
+		"AWS_DEFAULT_REGION=" + cfg.Region,
+		"AWS_ACCESS_KEY_ID=test",
+		"AWS_SECRET_ACCESS_KEY=test",
+		"LOCALSTACK_HOSTNAME=localhost",
+		fmt.Sprintf("EDGE_PORT=%d", cfg.Port),
+	}
+}

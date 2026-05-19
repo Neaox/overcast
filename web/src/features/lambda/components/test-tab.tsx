@@ -1,0 +1,331 @@
+import { useState, useCallback } from "react"
+import { Link } from "@tanstack/react-router"
+import { useQuery } from "@tanstack/react-query"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { Spinner } from "@/components/ui/primitives"
+import { Input } from "@/components/ui/input"
+import { JsonEditor } from "@/components/ui/json-editor"
+import {
+  testEventsQueryOptions,
+  putTestEventMutationOptions,
+  deleteTestEventMutationOptions,
+  lambdaKeys,
+} from "@/features/lambda/data"
+import { eventTemplates, templateCategories } from "@/features/lambda/event-templates"
+import { lambda } from "@/services/api"
+import { useResourceMutation } from "@/hooks/use-resource-mutation"
+import type { InvokeResult } from "@/types"
+import { cn } from "@/lib/utils"
+
+export function TestTab({ name }: { name: string }) {
+  // Event state
+  const [eventPayload, setEventPayload] = useState('{\n  "key": "value"\n}')
+  const [jsonError, setJsonError] = useState<string | null>(null)
+  const [result, setResult] = useState<InvokeResult | null>(null)
+  const [eventName, setEventName] = useState("")
+  const [selectedSavedEvent, setSelectedSavedEvent] = useState<string | null>(null)
+
+  // Invoke progress state
+  const [isPending, setIsPending] = useState(false)
+  const [progressStep, setProgressStep] = useState<string | null>(null)
+  const [invokeError, setInvokeError] = useState<string | null>(null)
+
+  // Saved events query
+  const { data: savedEvents = [] } = useQuery(testEventsQueryOptions(name))
+
+  const { mutate: saveEvent, isPending: isSaving } = useResourceMutation({
+    options: putTestEventMutationOptions(),
+    invalidateKeys: [lambdaKeys.testEvents(name)],
+    successTitle: "Saved",
+    successDescription: () => `Test event "${eventName}" saved.`,
+    errorTitle: "Save failed",
+  })
+
+  const { mutate: deleteEvt } = useResourceMutation({
+    options: deleteTestEventMutationOptions(),
+    invalidateKeys: [lambdaKeys.testEvents(name)],
+    successTitle: "Deleted",
+    successDescription: (vars) => `Test event "${vars.eventName}" deleted.`,
+    onSuccess: (_, vars) => {
+      if (selectedSavedEvent === vars.eventName) {
+        setSelectedSavedEvent(null)
+      }
+    },
+  })
+
+  const handlePayloadChange = useCallback((val: string) => {
+    setEventPayload(val)
+    try {
+      if (val.trim()) JSON.parse(val)
+      setJsonError(null)
+    } catch (e) {
+      setJsonError((e as SyntaxError).message)
+    }
+  }, [])
+
+  const handleInvoke = useCallback(async () => {
+    if (jsonError || isPending) return
+    setResult(null)
+    setInvokeError(null)
+    setIsPending(true)
+    setProgressStep("Starting invocation")
+
+    try {
+      for await (const event of lambda.invokeStream(name, eventPayload)) {
+        if (event.type === "progress") setProgressStep(event.step)
+        else if (event.type === "result") setResult(event.data)
+      }
+    } catch (err) {
+      setInvokeError((err as Error).message)
+    } finally {
+      setProgressStep(null)
+      setIsPending(false)
+    }
+  }, [name, eventPayload, jsonError, isPending])
+
+  const handleSave = useCallback(() => {
+    if (!eventName.trim() || jsonError) return
+    saveEvent({ functionName: name, eventName: eventName.trim(), body: eventPayload })
+  }, [name, eventName, eventPayload, jsonError, saveEvent])
+
+  const handleSelectSavedEvent = useCallback(
+    (evtName: string) => {
+      const evt = savedEvents.find((e) => e.name === evtName)
+      if (evt) {
+        setSelectedSavedEvent(evtName)
+        setEventName(evtName)
+        setEventPayload(evt.body)
+        setJsonError(null)
+      }
+    },
+    [savedEvents],
+  )
+
+  const handleSelectTemplate = useCallback((templateName: string) => {
+    const tpl = eventTemplates.find((t) => t.name === templateName)
+    if (tpl) {
+      setEventPayload(tpl.body)
+      setEventName("")
+      setSelectedSavedEvent(null)
+      setJsonError(null)
+    }
+  }, [])
+
+  const handleNewEvent = useCallback(() => {
+    setSelectedSavedEvent(null)
+    setEventName("")
+    setEventPayload('{\n  "key": "value"\n}')
+    setJsonError(null)
+  }, [])
+
+  let parsedPayload: string | undefined
+  if (result?.payload) {
+    try {
+      parsedPayload = JSON.stringify(JSON.parse(result.payload), null, 2)
+    } catch {
+      parsedPayload = result.payload
+    }
+  }
+
+  return (
+    <div className="flex gap-6">
+      {/* ── Left sidebar: templates + saved events ── */}
+      <div className="flex w-56 shrink-0 flex-col gap-4">
+        {/* Saved events */}
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold tracking-wider text-fg-muted uppercase">
+              Saved events
+            </span>
+            <button
+              onClick={handleNewEvent}
+              className="text-xs text-accent hover:underline"
+              title="New blank event"
+            >
+              + New
+            </button>
+          </div>
+          {savedEvents.length === 0 && (
+            <p className="py-2 text-xs text-fg-muted italic">No saved events yet</p>
+          )}
+          {savedEvents.map((evt) => (
+            <div key={evt.name} className="group flex items-center gap-1">
+              <button
+                onClick={() => handleSelectSavedEvent(evt.name)}
+                className={cn(
+                  "flex-1 truncate rounded px-2 py-1 text-left text-xs transition-colors",
+                  selectedSavedEvent === evt.name
+                    ? "bg-accent-muted font-medium text-accent"
+                    : "text-fg hover:bg-bg-muted",
+                )}
+              >
+                {evt.name}
+              </button>
+              <button
+                onClick={() => deleteEvt({ functionName: name, eventName: evt.name })}
+                className="hidden shrink-0 rounded p-0.5 text-fg-muted group-hover:block hover:text-danger"
+                title="Delete"
+              >
+                <svg
+                  className="h-3 w-3"
+                  viewBox="0 0 12 12"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                >
+                  <path d="M3 3l6 6M9 3l-6 6" />
+                </svg>
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {/* Event templates */}
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-semibold tracking-wider text-fg-muted uppercase">
+            Event templates
+          </span>
+          {templateCategories.map((cat) => (
+            <div key={cat} className="flex flex-col">
+              <span className="mt-1 text-xs font-medium text-fg-muted">{cat}</span>
+              {eventTemplates
+                .filter((t) => t.category === cat)
+                .map((tpl) => (
+                  <button
+                    key={tpl.name}
+                    onClick={() => handleSelectTemplate(tpl.name)}
+                    className="truncate rounded px-2 py-1 text-left text-xs text-fg transition-colors hover:bg-bg-muted"
+                  >
+                    {tpl.name}
+                  </button>
+                ))}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Main content ── */}
+      <div className="flex min-w-0 flex-1 flex-col gap-4">
+        {/* Event header: name + actions */}
+        <div className="flex items-end gap-3">
+          <div className="flex flex-1 flex-col gap-1">
+            <label htmlFor="event-name" className="text-xs font-medium text-fg-muted">
+              Event name
+            </label>
+            <Input
+              id="event-name"
+              value={eventName}
+              onChange={(e) => setEventName(e.target.value)}
+              placeholder="my-test-event"
+              className="max-w-xs"
+            />
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={handleSave}
+              disabled={!eventName.trim() || !!jsonError || isSaving}
+            >
+              {isSaving ? <Spinner className="mr-2 h-3.5 w-3.5" /> : null}
+              Save
+            </Button>
+            <Button onClick={handleInvoke} disabled={isPending || !!jsonError} size="md">
+              {isPending ? <Spinner className="mr-2 h-3.5 w-3.5" /> : null}
+              Test
+            </Button>
+          </div>
+        </div>
+
+        {/* Event JSON editor */}
+        <JsonEditor
+          value={eventPayload}
+          onChange={handlePayloadChange}
+          error={jsonError}
+          placeholder='{ "key": "value" }'
+          minHeight={200}
+        />
+
+        {/* Invocation status alert */}
+        {isPending && (
+          <div className="flex items-start gap-3 rounded-lg border border-border bg-bg-muted p-4">
+            <Spinner className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+            <div>
+              <p className="text-sm font-medium text-fg">Executing function&hellip;</p>
+              <p className="mt-0.5 text-xs text-fg-muted">
+                {progressStep ?? "Waiting for the Lambda runtime to process the event."}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {!isPending && invokeError && (
+          <div className="flex flex-col gap-2 rounded-lg border border-danger/30 bg-danger/5 p-4">
+            <p className="text-sm font-medium text-danger">Invocation failed</p>
+            <pre className="max-h-48 overflow-auto rounded-md border border-danger/20 bg-bg-elevated p-3 font-mono text-xs text-fg">
+              {invokeError}
+            </pre>
+          </div>
+        )}
+
+        {!isPending && result && (
+          <div
+            className={cn(
+              "flex flex-col gap-3 rounded-lg border p-4",
+              result.functionError
+                ? "border-danger/30 bg-danger/5"
+                : "border-success/30 bg-success/5",
+            )}
+          >
+            <div className="flex items-center gap-2">
+              <h3
+                className={cn(
+                  "text-sm font-medium",
+                  result.functionError ? "text-danger" : "text-success",
+                )}
+              >
+                {result.functionError ? "Execution failed" : "Execution succeeded"}
+              </h3>
+              <Badge variant={result.functionError ? "danger" : "success"}>
+                {result.functionError
+                  ? `Error: ${result.functionError}`
+                  : `Status: ${result.statusCode}`}
+              </Badge>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-fg-muted">Response</span>
+              <pre className="max-h-64 overflow-auto rounded-md border border-border bg-bg-elevated p-3 font-mono text-xs text-fg">
+                {parsedPayload ?? "null"}
+              </pre>
+            </div>
+
+            {result.logResult && (
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-fg-muted">Log output</span>
+                  {result.logGroupName && result.logStreamName && (
+                    <Link
+                      to="/cloudwatch/logs/stream"
+                      search={{
+                        groupName: result.logGroupName,
+                        streamName: result.logStreamName,
+                      }}
+                      className="text-xs text-accent hover:underline"
+                    >
+                      View stream →
+                    </Link>
+                  )}
+                </div>
+                <pre className="max-h-48 overflow-auto rounded-md border border-border bg-bg-elevated p-3 font-mono text-xs text-fg">
+                  {atob(result.logResult)}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/your-org/overcast/internal/state"
-	"github.com/your-org/overcast/tests/helpers"
+	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/mcp"
+	"github.com/Neaox/overcast/internal/state"
+	"github.com/Neaox/overcast/tests/helpers"
 )
 
 // ---- Health ----------------------------------------------------------------
@@ -31,6 +33,79 @@ func TestHealth_returnsOK(t *testing.T) {
 	helpers.DecodeJSON(t, resp, &result)
 	if result.Status != "ok" {
 		t.Errorf("expected status 'ok', got %q", result.Status)
+	}
+}
+
+func TestHealth_includesStorageConfig(t *testing.T) {
+	srv := helpers.NewTestServer(t, helpers.WithServiceStates(map[string]config.StateBackend{
+		"s3":  config.StateBackendPersistent,
+		"sqs": config.StateBackendMemory,
+	}))
+
+	resp, err := http.Get(srv.URL + "/_health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var result struct {
+		Storage struct {
+			Default          string            `json:"default"`
+			ServiceOverrides map[string]string `json:"serviceOverrides"`
+		} `json:"storage"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+
+	if result.Storage.Default != "memory" {
+		t.Errorf("expected default storage 'memory', got %q", result.Storage.Default)
+	}
+	if got := result.Storage.ServiceOverrides["s3"]; got != "persistent" {
+		t.Errorf("expected s3 override 'persistent', got %q", got)
+	}
+	if got := result.Storage.ServiceOverrides["sqs"]; got != "memory" {
+		t.Errorf("expected sqs override 'memory', got %q", got)
+	}
+}
+
+func TestRuntimeMCPInitialize_returnsToolsCapability(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	payload, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": mcp.ProtocolVersion,
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "router-test", "version": "1.0"},
+		},
+	})
+
+	resp, err := http.Post(srv.URL+"/_mcp/", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var body map[string]any
+	helpers.DecodeJSON(t, resp, &body)
+	result, ok := body["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected result object, got %T", body["result"])
+	}
+	if result["protocolVersion"] != mcp.ProtocolVersion {
+		t.Fatalf("protocolVersion = %v, want %q", result["protocolVersion"], mcp.ProtocolVersion)
+	}
+	caps, ok := result["capabilities"].(map[string]any)
+	if !ok {
+		t.Fatalf("capabilities type = %T", result["capabilities"])
+	}
+	if _, ok := caps["tools"]; !ok {
+		t.Fatal("capabilities.tools must be present")
 	}
 }
 
@@ -238,5 +313,51 @@ func TestDebugReset_withSQLiteStore(t *testing.T) {
 	helpers.DecodeJSON(t, resetResp, &result)
 	if result["status"] != "reset" {
 		t.Errorf("expected status 'reset', got %q", result["status"])
+	}
+}
+
+// ---- Mixed-backend storage -------------------------------------------------
+
+func TestMixedBackend_isolatesPerServiceData(t *testing.T) {
+	// Given: SQS uses a dedicated MemoryStore, everything else uses the default.
+	defaultStore := state.NewMemoryStore()
+	sqsStore := state.NewMemoryStore()
+	ns := state.NewNamespacedStore(defaultStore, map[string]state.Store{
+		"sqs": sqsStore,
+	})
+
+	srv := helpers.NewTestServer(t,
+		helpers.WithServices("sqs", "sns"),
+		helpers.WithStore(ns),
+	)
+
+	// When: Create a queue via SQS (JSON protocol with X-Amz-Target header).
+	body, _ := json.Marshal(map[string]any{"QueueName": "test-queue"})
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+	req.Header.Set("X-Amz-Target", "AmazonSQS.CreateQueue")
+	qResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	qResp.Body.Close()
+	helpers.AssertStatus(t, qResp, http.StatusOK)
+
+	// Then: The queue data landed in the SQS-specific store.
+	keys, err := sqsStore.List(t.Context(), "sqs:queues", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) == 0 {
+		t.Fatal("expected queue to be stored in sqsStore, got 0 keys")
+	}
+
+	// And: The default store has no SQS data.
+	defaultKeys, err := defaultStore.List(t.Context(), "sqs:queues", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(defaultKeys) != 0 {
+		t.Errorf("expected 0 keys in defaultStore for sqs:queues, got %d", len(defaultKeys))
 	}
 }

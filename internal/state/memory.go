@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"sync"
+
+	"github.com/tidwall/btree"
 )
 
 // MemoryStore is the default Store implementation.
@@ -12,8 +14,8 @@ import (
 // instant startup, deterministic test state.
 //
 // Performance characteristics:
-//   - Get/Set/Delete: O(1) average, protected by RWMutex
-//   - List: O(n) scan over all keys in the store
+//   - Get/Set/Delete: O(log n) per namespace, protected by RWMutex
+//   - List/Scan: O(log n + m) prefix scan via btree (m = matching keys)
 //   - RWMutex allows many concurrent readers OR one exclusive writer
 //
 // Memory note: MemoryStore does not enforce size limits. For local dev and CI
@@ -21,14 +23,13 @@ import (
 // for production use where unbounded growth would be a concern.
 type MemoryStore struct {
 	mu   sync.RWMutex
-	data map[string]string // composite key: "namespace\x00key" → value
+	data map[string]*btree.Map[string, string] // namespace → sorted key-value map
 }
 
 // NewMemoryStore returns an initialised MemoryStore.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		// Pre-allocate with modest capacity to avoid early rehashes.
-		data: make(map[string]string, 64),
+		data: make(map[string]*btree.Map[string, string], 16),
 	}
 }
 
@@ -36,7 +37,11 @@ func (s *MemoryStore) Get(_ context.Context, namespace, key string) (string, boo
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	v, ok := s.data[storeKey(namespace, key)]
+	tree, ok := s.data[namespace]
+	if !ok {
+		return "", false, nil
+	}
+	v, ok := tree.Get(key)
 	return v, ok, nil
 }
 
@@ -44,7 +49,12 @@ func (s *MemoryStore) Set(_ context.Context, namespace, key, value string) error
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.data[storeKey(namespace, key)] = value
+	tree := s.data[namespace]
+	if tree == nil {
+		tree = &btree.Map[string, string]{}
+		s.data[namespace] = tree
+	}
+	tree.Set(key, value)
 	return nil
 }
 
@@ -52,7 +62,32 @@ func (s *MemoryStore) Delete(_ context.Context, namespace, key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	delete(s.data, storeKey(namespace, key))
+	if tree, ok := s.data[namespace]; ok {
+		tree.Delete(key)
+	}
+	return nil
+}
+
+// DeletePrefix removes all keys with prefix under a single write lock.
+func (s *MemoryStore) DeletePrefix(_ context.Context, namespace, prefix string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tree, ok := s.data[namespace]
+	if !ok {
+		return nil
+	}
+	var keys []string
+	tree.Ascend(prefix, func(key string, _ string) bool {
+		if !strings.HasPrefix(key, prefix) {
+			return false
+		}
+		keys = append(keys, key)
+		return true
+	})
+	for _, key := range keys {
+		tree.Delete(key)
+	}
 	return nil
 }
 
@@ -60,19 +95,49 @@ func (s *MemoryStore) List(_ context.Context, namespace, prefix string) ([]strin
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	fullPrefix := storeKey(namespace, prefix)
-	nsPrefix := namespace + "\x00"
+	tree, ok := s.data[namespace]
+	if !ok {
+		return []string{}, nil
+	}
 
 	var keys []string
-	for k := range s.data {
-		if strings.HasPrefix(k, fullPrefix) {
-			keys = append(keys, strings.TrimPrefix(k, nsPrefix))
+	tree.Ascend(prefix, func(key string, _ string) bool {
+		if !strings.HasPrefix(key, prefix) {
+			return false
 		}
-	}
+		keys = append(keys, key)
+		return true
+	})
 	if keys == nil {
 		return []string{}, nil // always a slice, never nil
 	}
 	return keys, nil
+}
+
+// Scan returns all key-value pairs whose keys start with prefix, under a single
+// RLock. This is the preferred way to read a batch of items — it avoids N
+// individual Get calls each acquiring their own lock.
+func (s *MemoryStore) Scan(_ context.Context, namespace, prefix string) ([]KV, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	tree, ok := s.data[namespace]
+	if !ok {
+		return []KV{}, nil
+	}
+
+	var pairs []KV
+	tree.Ascend(prefix, func(key string, value string) bool {
+		if !strings.HasPrefix(key, prefix) {
+			return false
+		}
+		pairs = append(pairs, KV{Key: key, Value: value})
+		return true
+	})
+	if pairs == nil {
+		return []KV{}, nil
+	}
+	return pairs, nil
 }
 
 func (s *MemoryStore) Close() error {
@@ -80,23 +145,38 @@ func (s *MemoryStore) Close() error {
 }
 
 // Reset wipes all stored data atomically.
-// Allocating a new map lets the GC reclaim the old map in full —
-// faster than ranging and deleting individual entries.
 func (s *MemoryStore) Reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data = make(map[string]string, 64)
+	s.data = make(map[string]*btree.Map[string, string], 16)
 }
 
 // Len returns the number of entries. Used by /_debug/state and tests.
 func (s *MemoryStore) Len() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return len(s.data)
+	total := 0
+	for _, tree := range s.data {
+		total += tree.Len()
+	}
+	return total
 }
 
 // storeKey builds the composite map key. Uses a null byte separator because
 // AWS resource names are always printable ASCII/UTF-8.
+// Still used by HybridStore for its dirty map.
 func storeKey(namespace, key string) string {
 	return namespace + "\x00" + key
+}
+
+// splitStoreKey is the inverse of storeKey: given "namespace\x00key" it
+// returns ("namespace", "key"). Callers must only pass values produced by
+// storeKey — the separator is always present.
+func splitStoreKey(composite string) (namespace, key string) {
+	i := strings.IndexByte(composite, '\x00')
+	if i < 0 {
+		// Should never happen — splitStoreKey is only called with keys we created.
+		return composite, ""
+	}
+	return composite[:i], composite[i+1:]
 }

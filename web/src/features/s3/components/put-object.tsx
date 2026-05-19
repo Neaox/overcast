@@ -13,7 +13,6 @@ import { Route } from "@/routes/s3/$bucket/upload"
 import { uploadStore } from "@/lib/upload-store"
 import { useQueryClient } from "@tanstack/react-query"
 import { s3Keys } from "@/features/s3/data"
-import { useEndpoint } from "@/hooks/use-endpoint"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -67,7 +66,6 @@ function makeRow(file: File, prefix: string): FileRow {
 export function PutObject() {
   const { bucket } = Route.useParams()
   const navigate = useNavigate()
-  const { endpoint } = useEndpoint()
   const qc = useQueryClient()
   const { toast } = useToast()
 
@@ -192,7 +190,9 @@ export function PutObject() {
               let msg = `HTTP ${xhr.status}`
               try {
                 msg = JSON.parse(xhr.responseText)?.message ?? msg
-              } catch {}
+              } catch {
+                /* ignore JSON parse errors */
+              }
               reject(new Error(msg))
             }
           }
@@ -208,14 +208,14 @@ export function PutObject() {
     }
 
     setUploading(false)
-    qc.invalidateQueries({ queryKey: s3Keys.objectList(endpoint.baseUrl, bucket, prefix) })
+    void qc.invalidateQueries({ queryKey: s3Keys.objectList(bucket, prefix) })
 
     if (errorCount === 0) {
       toast({
         title: `Uploaded ${rows.length} file${rows.length !== 1 ? "s" : ""}`,
         variant: "success",
       })
-      navigate({ to: "/s3/$bucket", params: { bucket } })
+      void navigate({ to: "/s3/$bucket", params: { bucket } })
     } else {
       toast({
         title: `${errorCount} file${errorCount !== 1 ? "s" : ""} failed to upload`,

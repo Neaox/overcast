@@ -1,0 +1,22 @@
+service: bedrock
+status: not_started
+priority: p0
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [rest_json, aws_json_1_0, aws_json_1_1, rpcv2_cbor]
+implementation: [internal/services/bedrock]
+integration_tests: [tests/integration/bedrock]
+capability_docs: docs/services/bedrock.md
+operation_count_estimate: 2 supported
+current_support_level: Runtime-only canned InvokeModel and Converse responses; no real inference.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Review AWS Bedrock Runtime path compatibility and canned response shapes.
+    - Custom /_bedrock prefix likely needs explicit compatibility classification.
+  intentionally_partial: []
+handoff:
+  start_with: [InvokeModel, Converse]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/bedrock/... ./tests/integration/bedrock/...]

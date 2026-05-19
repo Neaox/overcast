@@ -10,18 +10,25 @@ package s3_test
 
 import (
 	"bytes"
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/your-org/overcast/tests/helpers"
+	"github.com/Neaox/overcast/tests/helpers"
 )
 
 // ---- CreateBucket ----------------------------------------------------------
@@ -240,6 +247,171 @@ func TestGetObject_notFound(t *testing.T) {
 
 	helpers.AssertStatus(t, resp, http.StatusNotFound)
 	helpers.AssertXMLError(t, resp, "NoSuchKey")
+}
+
+func TestGetObject_rangeBytes(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "my-bucket")
+	content := []byte("abcdefghijklmnopqrstuvwxyz") // 26 bytes
+	putObject(t, srv, "my-bucket", "alpha.txt", content, "text/plain")
+
+	req := get(srv, "/my-bucket/alpha.txt")
+	req.Header.Set("Range", "bytes=0-4") // first 5 bytes: "abcde"
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusPartialContent)
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "abcde" {
+		t.Errorf("expected 'abcde', got %q", body)
+	}
+	if cr := resp.Header.Get("Content-Range"); cr != "bytes 0-4/26" {
+		t.Errorf("expected Content-Range: bytes 0-4/26, got %q", cr)
+	}
+	if cl := resp.Header.Get("Content-Length"); cl != "5" {
+		t.Errorf("expected Content-Length: 5, got %q", cl)
+	}
+}
+
+func TestGetObject_rangeSuffix(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "my-bucket")
+	content := []byte("hello world")
+	putObject(t, srv, "my-bucket", "msg.txt", content, "text/plain")
+
+	req := get(srv, "/my-bucket/msg.txt")
+	req.Header.Set("Range", "bytes=-5") // last 5 bytes: "world"
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusPartialContent)
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "world" {
+		t.Errorf("expected 'world', got %q", body)
+	}
+}
+
+func TestGetObject_rangeOpenEnd(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "my-bucket")
+	content := []byte("hello world")
+	putObject(t, srv, "my-bucket", "msg.txt", content, "text/plain")
+
+	req := get(srv, "/my-bucket/msg.txt")
+	req.Header.Set("Range", "bytes=6-") // from offset 6 to end: "world"
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusPartialContent)
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "world" {
+		t.Errorf("expected 'world', got %q", body)
+	}
+}
+
+func TestGetObject_rangeUnsatisfiable(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "my-bucket")
+	putObject(t, srv, "my-bucket", "tiny.txt", []byte("hi"), "text/plain")
+
+	req := get(srv, "/my-bucket/tiny.txt")
+	req.Header.Set("Range", "bytes=100-200") // beyond end of 2-byte file
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusRequestedRangeNotSatisfiable)
+}
+
+func TestGetObject_ifMatch_matches(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "my-bucket")
+	putObject(t, srv, "my-bucket", "doc.txt", []byte("hello"), "text/plain")
+
+	// Get ETag from HeadObject.
+	hr, err := http.DefaultClient.Do(head(srv, "/my-bucket/doc.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hr.Body.Close()
+	etag := hr.Header.Get("ETag")
+
+	req := get(srv, "/my-bucket/doc.txt")
+	req.Header.Set("If-Match", etag)
+	resp, err2 := http.DefaultClient.Do(req)
+	if err2 != nil {
+		t.Fatal(err2)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
+func TestGetObject_ifMatch_mismatch(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "my-bucket")
+	putObject(t, srv, "my-bucket", "doc.txt", []byte("hello"), "text/plain")
+
+	req := get(srv, "/my-bucket/doc.txt")
+	req.Header.Set("If-Match", `"wrongetag"`)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusPreconditionFailed)
+}
+
+func TestGetObject_ifNoneMatch_matches(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "my-bucket")
+	putObject(t, srv, "my-bucket", "doc.txt", []byte("hello"), "text/plain")
+
+	hr, err := http.DefaultClient.Do(head(srv, "/my-bucket/doc.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hr.Body.Close()
+	etag := hr.Header.Get("ETag")
+
+	// If-None-Match with the current ETag → 304 Not Modified.
+	req := get(srv, "/my-bucket/doc.txt")
+	req.Header.Set("If-None-Match", etag)
+	resp, err2 := http.DefaultClient.Do(req)
+	if err2 != nil {
+		t.Fatal(err2)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusNotModified)
+}
+
+func TestGetObject_ifNoneMatch_mismatch(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "my-bucket")
+	putObject(t, srv, "my-bucket", "doc.txt", []byte("hello"), "text/plain")
+
+	req := get(srv, "/my-bucket/doc.txt")
+	req.Header.Set("If-None-Match", `"different"`)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusOK)
 }
 
 // ---- HeadObject ------------------------------------------------------------
@@ -906,22 +1078,621 @@ func TestListObjectsV2_continuationToken_lastPage_isNotTruncated(t *testing.T) {
 	}
 }
 
-// ---- Unimplemented operations return 501, not 404 --------------------------
-
-func TestMultipartUpload_returns501(t *testing.T) {
+func TestListObjectsV2_startAfter(t *testing.T) {
+	// Given: a bucket with lexicographically ordered objects
 	srv := helpers.NewTestServer(t)
-	createBucket(t, srv, "my-bucket")
+	createBucket(t, srv, "paging-bucket")
+	for _, key := range []string{"a.txt", "b.txt", "c.txt"} {
+		putObject(t, srv, "paging-bucket", key, []byte("x"), "text/plain")
+	}
 
-	// POST to bucket initiates a multipart upload in real S3.
-	resp, err := http.Post(srv.URL+"/my-bucket?uploads", "", nil)
+	// When: we list after b.txt
+	resp, err := http.DefaultClient.Do(get(srv, "/paging-bucket?list-type=2&start-after=b.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
 
-	helpers.AssertStatus(t, resp, http.StatusNotImplemented)
-	if got := resp.Header.Get("x-emulator-unsupported"); got != "true" {
-		t.Errorf("expected x-emulator-unsupported: true header")
+	// Then: AWS returns only later keys and echoes StartAfter.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		Contents []struct {
+			Key string `xml:"Key"`
+		} `xml:"Contents"`
+		StartAfter string `xml:"StartAfter"`
+		KeyCount   int    `xml:"KeyCount"`
+	}
+	helpers.DecodeXML(t, resp, &result)
+
+	if result.StartAfter != "b.txt" {
+		t.Errorf("expected StartAfter b.txt, got %q", result.StartAfter)
+	}
+	if result.KeyCount != 1 {
+		t.Errorf("expected KeyCount=1, got %d", result.KeyCount)
+	}
+	if len(result.Contents) != 1 || result.Contents[0].Key != "c.txt" {
+		t.Fatalf("expected only c.txt after b.txt, got %#v", result.Contents)
+	}
+}
+
+// ---- ListObjects v1 --------------------------------------------------------
+
+func TestListObjects_v1_returnsObjects(t *testing.T) {
+	// Given: a bucket with three objects
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "v1-bucket")
+	for _, k := range []string{"a.txt", "b.txt", "c.txt"} {
+		putObject(t, srv, "v1-bucket", k, []byte("data"), "text/plain")
+	}
+
+	// When: ListObjects v1 (no list-type param)
+	resp, err := http.DefaultClient.Do(get(srv, "/v1-bucket"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 200 with Contents in v1 XML format (no KeyCount)
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		Name        string `xml:"Name"`
+		MaxKeys     int    `xml:"MaxKeys"`
+		IsTruncated bool   `xml:"IsTruncated"`
+		Contents    []struct {
+			Key string `xml:"Key"`
+		} `xml:"Contents"`
+		// v1 must NOT have KeyCount
+		KeyCount *int `xml:"KeyCount"`
+	}
+	helpers.DecodeXML(t, resp, &result)
+	if len(result.Contents) != 3 {
+		t.Errorf("expected 3 contents, got %d", len(result.Contents))
+	}
+	if result.KeyCount != nil {
+		t.Errorf("v1 response must not include KeyCount, got %d", *result.KeyCount)
+	}
+	if result.Name != "v1-bucket" {
+		t.Errorf("expected Name=v1-bucket, got %q", result.Name)
+	}
+}
+
+func TestListObjects_v1_paginatesWithMarker(t *testing.T) {
+	// Given: a bucket with 3 objects and max-keys=2
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "v1-paged")
+	for _, k := range []string{"a.txt", "b.txt", "c.txt"} {
+		putObject(t, srv, "v1-paged", k, []byte("body"), "text/plain")
+	}
+
+	// When: first page
+	resp1, err := http.DefaultClient.Do(get(srv, "/v1-paged?max-keys=2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp1.Body.Close()
+	helpers.AssertStatus(t, resp1, http.StatusOK)
+
+	var page1 struct {
+		IsTruncated bool   `xml:"IsTruncated"`
+		NextMarker  string `xml:"NextMarker"`
+		Contents    []struct {
+			Key string `xml:"Key"`
+		} `xml:"Contents"`
+	}
+	helpers.DecodeXML(t, resp1, &page1)
+
+	if !page1.IsTruncated {
+		t.Fatal("expected IsTruncated=true on first page")
+	}
+	if len(page1.Contents) != 2 {
+		t.Errorf("expected 2 contents on first page, got %d", len(page1.Contents))
+	}
+	if page1.NextMarker == "" {
+		t.Fatal("expected NextMarker on first page")
+	}
+
+	// When: second page using NextMarker
+	resp2, err := http.DefaultClient.Do(get(srv, "/v1-paged?max-keys=2&marker="+page1.NextMarker))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	helpers.AssertStatus(t, resp2, http.StatusOK)
+
+	var page2 struct {
+		IsTruncated bool `xml:"IsTruncated"`
+		Contents    []struct {
+			Key string `xml:"Key"`
+		} `xml:"Contents"`
+	}
+	helpers.DecodeXML(t, resp2, &page2)
+
+	if len(page2.Contents) != 1 {
+		t.Errorf("expected 1 content on second page, got %d", len(page2.Contents))
+	}
+	if page2.Contents[0].Key != "c.txt" {
+		t.Errorf("expected c.txt, got %q", page2.Contents[0].Key)
+	}
+	if page2.IsTruncated {
+		t.Error("expected IsTruncated=false on last page")
+	}
+}
+
+func TestListObjects_v1_listType1_alsoUsesV1Format(t *testing.T) {
+	// Given: a bucket with one object
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "lt1-bucket")
+	putObject(t, srv, "lt1-bucket", "file.txt", []byte("x"), "text/plain")
+
+	// When: explicit list-type=1
+	resp, err := http.DefaultClient.Do(get(srv, "/lt1-bucket?list-type=1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: v1 format (no KeyCount)
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		Contents []struct {
+			Key string `xml:"Key"`
+		} `xml:"Contents"`
+		KeyCount *int `xml:"KeyCount"`
+	}
+	helpers.DecodeXML(t, resp, &result)
+	if len(result.Contents) != 1 {
+		t.Errorf("expected 1 content, got %d", len(result.Contents))
+	}
+	if result.KeyCount != nil {
+		t.Errorf("v1 response must not include KeyCount, got %d", *result.KeyCount)
+	}
+}
+
+// ---- Unimplemented operations return 501, not 404 --------------------------
+
+// ---- Multipart upload ------------------------------------------------------
+
+// createMultipartUpload initiates a multipart upload and returns the uploadId.
+func createMultipartUpload(t *testing.T, srv *helpers.TestServer, bucket, key string) string {
+	t.Helper()
+	req := mustReq(http.MethodPost, srv.URL+"/"+bucket+"/"+key+"?uploads", nil, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("createMultipartUpload: %v", err)
+	}
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var result struct {
+		UploadId string `xml:"UploadId"`
+	}
+	helpers.DecodeXML(t, resp, &result)
+	if result.UploadId == "" {
+		t.Fatal("createMultipartUpload: expected non-empty UploadId")
+	}
+	return result.UploadId
+}
+
+// uploadPart uploads a single part and returns the ETag header.
+func uploadPart(t *testing.T, srv *helpers.TestServer, bucket, key, uploadID string, partNum int, body []byte) string {
+	t.Helper()
+	path := fmt.Sprintf("/%s/%s?partNumber=%d&uploadId=%s", bucket, key, partNum, uploadID)
+	req := mustReq(http.MethodPut, srv.URL+path, bytes.NewReader(body), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("uploadPart %d: %v", partNum, err)
+	}
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	etag := resp.Header.Get("ETag")
+	if etag == "" {
+		t.Fatalf("uploadPart %d: expected ETag header", partNum)
+	}
+	return etag
+}
+
+// completeMultipartUpload completes the upload using the given part ETags.
+func completeMultipartUpload(t *testing.T, srv *helpers.TestServer, bucket, key, uploadID string, parts []struct {
+	PartNumber int
+	ETag       string
+}) {
+	t.Helper()
+	var sb strings.Builder
+	sb.WriteString("<CompleteMultipartUpload>")
+	for _, p := range parts {
+		fmt.Fprintf(&sb, "<Part><PartNumber>%d</PartNumber><ETag>%s</ETag></Part>", p.PartNumber, p.ETag)
+	}
+	sb.WriteString("</CompleteMultipartUpload>")
+	path := fmt.Sprintf("/%s/%s?uploadId=%s", bucket, key, uploadID)
+	req := mustReq(http.MethodPost, srv.URL+path, strings.NewReader(sb.String()), map[string]string{
+		"Content-Type": "application/xml",
+	})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("completeMultipartUpload: %v", err)
+	}
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
+func TestMultipartUpload_fullCycle(t *testing.T) {
+	// Given a bucket
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "mp-bucket")
+
+	part1 := []byte("hello, ")
+	part2 := []byte("world!")
+
+	// When: create, upload two parts, complete
+	uploadID := createMultipartUpload(t, srv, "mp-bucket", "combined.txt")
+
+	// Verify request ID is present on initiate response
+	helpers.AssertRequestID(t, func() *http.Response {
+		req := mustReq(http.MethodPost, srv.URL+"/mp-bucket/combined.txt?uploads", nil, nil)
+		resp, _ := http.DefaultClient.Do(req)
+		resp.Body.Close() // drain second initiation - we just want the header check
+		return resp
+	}())
+
+	etag1 := uploadPart(t, srv, "mp-bucket", "combined.txt", uploadID, 1, part1)
+	etag2 := uploadPart(t, srv, "mp-bucket", "combined.txt", uploadID, 2, part2)
+
+	completeMultipartUpload(t, srv, "mp-bucket", "combined.txt", uploadID, []struct {
+		PartNumber int
+		ETag       string
+	}{
+		{1, etag1},
+		{2, etag2},
+	})
+
+	// Then: GetObject returns concatenated body
+	resp, err := http.DefaultClient.Do(get(srv, "/mp-bucket/combined.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	body, _ := io.ReadAll(resp.Body)
+	want := append(part1, part2...)
+	if !bytes.Equal(body, want) {
+		t.Errorf("expected body %q, got %q", want, body)
+	}
+
+	// And: the ETag has the multipart suffix -<n>
+	etag := resp.Header.Get("ETag")
+	if !strings.Contains(etag, "-2") {
+		t.Errorf("expected multipart ETag with -2 suffix, got %q", etag)
+	}
+}
+
+func TestMultipartUpload_createReturnsCorrectXML(t *testing.T) {
+	// Given a bucket
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "xml-bucket")
+
+	// When: create multipart upload
+	req := mustReq(http.MethodPost, srv.URL+"/xml-bucket/my/key.bin?uploads", nil, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: response XML has correct Bucket and Key
+	var result struct {
+		XMLName  interface{} `xml:"InitiateMultipartUploadResult"`
+		Bucket   string      `xml:"Bucket"`
+		Key      string      `xml:"Key"`
+		UploadId string      `xml:"UploadId"`
+	}
+	helpers.DecodeXML(t, resp, &result)
+
+	if result.Bucket != "xml-bucket" {
+		t.Errorf("expected Bucket=xml-bucket, got %q", result.Bucket)
+	}
+	if result.Key != "my/key.bin" {
+		t.Errorf("expected Key=my/key.bin, got %q", result.Key)
+	}
+	if result.UploadId == "" {
+		t.Error("expected non-empty UploadId")
+	}
+}
+
+func TestMultipartUpload_uploadPartReturnsETag(t *testing.T) {
+	// Given an initiated multipart upload
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "etag-bucket")
+	uploadID := createMultipartUpload(t, srv, "etag-bucket", "obj.bin")
+
+	// When: upload part 1
+	data := bytes.Repeat([]byte("x"), 512)
+	etag := uploadPart(t, srv, "etag-bucket", "obj.bin", uploadID, 1, data)
+
+	// Then: ETag is quoted hex MD5
+	if etag == "" {
+		t.Error("expected non-empty ETag")
+	}
+	if !strings.HasPrefix(etag, `"`) || !strings.HasSuffix(etag, `"`) {
+		t.Errorf("expected quoted ETag, got %q", etag)
+	}
+}
+
+func TestMultipartUpload_listParts(t *testing.T) {
+	// Given an initiated upload with two parts
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "lp-bucket")
+	uploadID := createMultipartUpload(t, srv, "lp-bucket", "file.bin")
+	etag1 := uploadPart(t, srv, "lp-bucket", "file.bin", uploadID, 1, []byte("part-one"))
+	etag2 := uploadPart(t, srv, "lp-bucket", "file.bin", uploadID, 2, []byte("part-two"))
+
+	// When: list parts
+	path := fmt.Sprintf("/lp-bucket/file.bin?uploadId=%s", uploadID)
+	resp, err := http.DefaultClient.Do(get(srv, path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: both parts are listed with correct ETag and size
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	helpers.AssertRequestID(t, resp)
+
+	var result struct {
+		Bucket   string `xml:"Bucket"`
+		Key      string `xml:"Key"`
+		UploadId string `xml:"UploadId"`
+		Parts    []struct {
+			PartNumber   int    `xml:"PartNumber"`
+			ETag         string `xml:"ETag"`
+			Size         int64  `xml:"Size"`
+			LastModified string `xml:"LastModified"`
+		} `xml:"Part"`
+	}
+	helpers.DecodeXML(t, resp, &result)
+
+	if result.Bucket != "lp-bucket" {
+		t.Errorf("expected Bucket lp-bucket, got %q", result.Bucket)
+	}
+	if result.Key != "file.bin" {
+		t.Errorf("expected Key file.bin, got %q", result.Key)
+	}
+	if result.UploadId != uploadID {
+		t.Errorf("expected UploadId %q, got %q", uploadID, result.UploadId)
+	}
+	if len(result.Parts) != 2 {
+		t.Fatalf("expected 2 parts, got %d", len(result.Parts))
+	}
+	if result.Parts[0].PartNumber != 1 || result.Parts[0].ETag != etag1 {
+		t.Errorf("part 1: expected PartNumber=1, ETag=%q; got PartNumber=%d, ETag=%q",
+			etag1, result.Parts[0].PartNumber, result.Parts[0].ETag)
+	}
+	if result.Parts[1].PartNumber != 2 || result.Parts[1].ETag != etag2 {
+		t.Errorf("part 2: expected PartNumber=2, ETag=%q; got PartNumber=%d, ETag=%q",
+			etag2, result.Parts[1].PartNumber, result.Parts[1].ETag)
+	}
+	if result.Parts[0].Size != int64(len("part-one")) {
+		t.Errorf("part 1: expected size %d, got %d", len("part-one"), result.Parts[0].Size)
+	}
+}
+
+func TestMultipartUpload_listMultipartUploads(t *testing.T) {
+	// Given a bucket with two initiated uploads
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "lmu-bucket")
+	id1 := createMultipartUpload(t, srv, "lmu-bucket", "file-a.bin")
+	id2 := createMultipartUpload(t, srv, "lmu-bucket", "file-b.bin")
+
+	// When: list multipart uploads
+	resp, err := http.DefaultClient.Do(get(srv, "/lmu-bucket?uploads"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: both uploads appear
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	helpers.AssertRequestID(t, resp)
+
+	var result struct {
+		Bucket  string `xml:"Bucket"`
+		Uploads []struct {
+			UploadId string `xml:"UploadId"`
+			Key      string `xml:"Key"`
+		} `xml:"Upload"`
+	}
+	helpers.DecodeXML(t, resp, &result)
+
+	if result.Bucket != "lmu-bucket" {
+		t.Errorf("expected Bucket lmu-bucket, got %q", result.Bucket)
+	}
+	if len(result.Uploads) != 2 {
+		t.Fatalf("expected 2 uploads, got %d", len(result.Uploads))
+	}
+
+	ids := map[string]string{}
+	for _, u := range result.Uploads {
+		ids[u.UploadId] = u.Key
+	}
+	if ids[id1] != "file-a.bin" {
+		t.Errorf("expected upload %q key=file-a.bin, got %q", id1, ids[id1])
+	}
+	if ids[id2] != "file-b.bin" {
+		t.Errorf("expected upload %q key=file-b.bin, got %q", id2, ids[id2])
+	}
+}
+
+func TestMultipartUpload_abort(t *testing.T) {
+	// Given an initiated upload with one part
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "abort-bucket")
+	uploadID := createMultipartUpload(t, srv, "abort-bucket", "gone.bin")
+	uploadPart(t, srv, "abort-bucket", "gone.bin", uploadID, 1, []byte("some data"))
+
+	// When: abort the upload
+	path := fmt.Sprintf("/abort-bucket/gone.bin?uploadId=%s", uploadID)
+	resp, err := http.DefaultClient.Do(del(srv, path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusNoContent)
+
+	// Then: the upload no longer appears in ListMultipartUploads
+	lresp, err := http.DefaultClient.Do(get(srv, "/abort-bucket?uploads"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lresp.Body.Close()
+	helpers.AssertStatus(t, lresp, http.StatusOK)
+
+	var result struct {
+		Uploads []struct {
+			UploadId string `xml:"UploadId"`
+		} `xml:"Upload"`
+	}
+	helpers.DecodeXML(t, lresp, &result)
+	for _, u := range result.Uploads {
+		if u.UploadId == uploadID {
+			t.Errorf("aborted upload %q still appears in ListMultipartUploads", uploadID)
+		}
+	}
+}
+
+func TestMultipartUpload_completeRemovesUploadFromList(t *testing.T) {
+	// Given a completed multipart upload
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "done-bucket")
+	uploadID := createMultipartUpload(t, srv, "done-bucket", "done.bin")
+	etag := uploadPart(t, srv, "done-bucket", "done.bin", uploadID, 1, []byte("content"))
+	completeMultipartUpload(t, srv, "done-bucket", "done.bin", uploadID, []struct {
+		PartNumber int
+		ETag       string
+	}{{1, etag}})
+
+	// When: list multipart uploads
+	resp, err := http.DefaultClient.Do(get(srv, "/done-bucket?uploads"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: completed upload is not listed
+	var result struct {
+		Uploads []struct {
+			UploadId string `xml:"UploadId"`
+		} `xml:"Upload"`
+	}
+	helpers.DecodeXML(t, resp, &result)
+	for _, u := range result.Uploads {
+		if u.UploadId == uploadID {
+			t.Errorf("completed upload %q should not appear in ListMultipartUploads", uploadID)
+		}
+	}
+}
+
+func TestMultipartUpload_unknownUploadID_uploadPart_returns404(t *testing.T) {
+	// Given a bucket with no active uploads
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "unknown-bucket")
+
+	// When: upload a part with an unknown uploadId
+	path := "/unknown-bucket/key.bin?partNumber=1&uploadId=no-such-upload"
+	req := mustReq(http.MethodPut, srv.URL+path, bytes.NewReader([]byte("data")), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 404 NoSuchUpload
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	helpers.AssertXMLError(t, resp, "NoSuchUpload")
+}
+
+func TestMultipartUpload_unknownUploadID_complete_returns404(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "unknown-bucket")
+
+	body := `<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"abc"</ETag></Part></CompleteMultipartUpload>`
+	path := "/unknown-bucket/key.bin?uploadId=no-such-upload"
+	req := mustReq(http.MethodPost, srv.URL+path, strings.NewReader(body), map[string]string{"Content-Type": "application/xml"})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	helpers.AssertXMLError(t, resp, "NoSuchUpload")
+}
+
+func TestMultipartUpload_unknownUploadID_abort_returns404(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "unknown-bucket")
+
+	path := "/unknown-bucket/key.bin?uploadId=no-such-upload"
+	resp, err := http.DefaultClient.Do(del(srv, path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	helpers.AssertXMLError(t, resp, "NoSuchUpload")
+}
+
+func TestMultipartUpload_unknownUploadID_listParts_returns404(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "unknown-bucket")
+
+	resp, err := http.DefaultClient.Do(get(srv, "/unknown-bucket/key.bin?uploadId=no-such-upload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	helpers.AssertXMLError(t, resp, "NoSuchUpload")
+}
+
+func TestMultipartUpload_listMultipartUploads_bucketNotFound(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp, err := http.DefaultClient.Do(get(srv, "/no-bucket?uploads"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	helpers.AssertXMLError(t, resp, "NoSuchBucket")
+}
+
+func TestMultipartUpload_bodyStoredOnDisk(t *testing.T) {
+	// Given a test server with a known data directory
+	dataDir := t.TempDir()
+	srv := helpers.NewTestServer(t, helpers.WithDataDir(dataDir))
+	createBucket(t, srv, "disk-bucket")
+
+	// When: complete a multipart upload
+	uploadID := createMultipartUpload(t, srv, "disk-bucket", "disk-obj.bin")
+	uploadPart(t, srv, "disk-bucket", "disk-obj.bin", uploadID, 1, []byte("hello"))
+	uploadPart(t, srv, "disk-bucket", "disk-obj.bin", uploadID, 2, []byte(" world"))
+
+	req := mustReq(http.MethodPost, srv.URL+"/disk-bucket/disk-obj.bin?uploadId="+uploadID,
+		strings.NewReader(`<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"a"</ETag></Part><Part><PartNumber>2</PartNumber><ETag>"b"</ETag></Part></CompleteMultipartUpload>`),
+		map[string]string{"Content-Type": "application/xml"})
+	resp, _ := http.DefaultClient.Do(req)
+	resp.Body.Close()
+
+	// Then: a body file exists
+	if files := findFiles(t, dataDir); len(files) == 0 {
+		t.Fatal("expected body file on disk after multipart complete")
 	}
 }
 
@@ -949,13 +1720,8 @@ func TestS3_UnimplementedOperations_return501(t *testing.T) {
 
 		// ---- Bucket GET sub-resources -----------------------------------
 		{"GetBucketAcl", http.MethodGet, "/stub-bucket?acl"},
-		{"GetBucketCors", http.MethodGet, "/stub-bucket?cors"},
-		{"GetBucketPolicy", http.MethodGet, "/stub-bucket?policy"},
 		{"GetBucketPolicyStatus", http.MethodGet, "/stub-bucket?policyStatus"},
 		{"GetBucketLifecycleConfiguration", http.MethodGet, "/stub-bucket?lifecycle"},
-		{"GetBucketVersioning", http.MethodGet, "/stub-bucket?versioning"},
-		{"GetBucketTagging", http.MethodGet, "/stub-bucket?tagging"},
-		{"GetBucketWebsite", http.MethodGet, "/stub-bucket?website"},
 		{"GetBucketLogging", http.MethodGet, "/stub-bucket?logging"},
 		{"GetBucketReplication", http.MethodGet, "/stub-bucket?replication"},
 		{"GetBucketEncryption", http.MethodGet, "/stub-bucket?encryption"},
@@ -963,8 +1729,6 @@ func TestS3_UnimplementedOperations_return501(t *testing.T) {
 		{"GetBucketRequestPayment", http.MethodGet, "/stub-bucket?requestPayment"},
 		{"GetBucketOwnershipControls", http.MethodGet, "/stub-bucket?ownershipControls"},
 		{"GetPublicAccessBlock", http.MethodGet, "/stub-bucket?publicAccessBlock"},
-		{"ListMultipartUploads", http.MethodGet, "/stub-bucket?uploads"},
-		{"ListObjectVersions", http.MethodGet, "/stub-bucket?versions"},
 		{"ListBucketAnalyticsConfigurations", http.MethodGet, "/stub-bucket?analytics"},
 		{"ListBucketIntelligentTieringConfigurations", http.MethodGet, "/stub-bucket?intelligent-tiering"},
 		{"ListBucketInventoryConfigurations", http.MethodGet, "/stub-bucket?inventory"},
@@ -977,12 +1741,7 @@ func TestS3_UnimplementedOperations_return501(t *testing.T) {
 
 		// ---- Bucket PUT sub-resources -----------------------------------
 		{"PutBucketAcl", http.MethodPut, "/stub-bucket?acl"},
-		{"PutBucketCors", http.MethodPut, "/stub-bucket?cors"},
-		{"PutBucketPolicy", http.MethodPut, "/stub-bucket?policy"},
 		{"PutBucketLifecycleConfiguration", http.MethodPut, "/stub-bucket?lifecycle"},
-		{"PutBucketVersioning", http.MethodPut, "/stub-bucket?versioning"},
-		{"PutBucketTagging", http.MethodPut, "/stub-bucket?tagging"},
-		{"PutBucketWebsite", http.MethodPut, "/stub-bucket?website"},
 		{"PutBucketLogging", http.MethodPut, "/stub-bucket?logging"},
 		{"PutBucketReplication", http.MethodPut, "/stub-bucket?replication"},
 		{"PutBucketEncryption", http.MethodPut, "/stub-bucket?encryption"},
@@ -1001,9 +1760,7 @@ func TestS3_UnimplementedOperations_return501(t *testing.T) {
 
 		// ---- Bucket DELETE sub-resources --------------------------------
 		{"DeleteBucketCors", http.MethodDelete, "/stub-bucket?cors"},
-		{"DeleteBucketPolicy", http.MethodDelete, "/stub-bucket?policy"},
 		{"DeleteBucketLifecycle", http.MethodDelete, "/stub-bucket?lifecycle"},
-		{"DeleteBucketTagging", http.MethodDelete, "/stub-bucket?tagging"},
 		{"DeleteBucketWebsite", http.MethodDelete, "/stub-bucket?website"},
 		{"DeleteBucketReplication", http.MethodDelete, "/stub-bucket?replication"},
 		{"DeleteBucketEncryption", http.MethodDelete, "/stub-bucket?encryption"},
@@ -1021,30 +1778,21 @@ func TestS3_UnimplementedOperations_return501(t *testing.T) {
 
 		// ---- Object GET sub-resources -----------------------------------
 		{"GetObjectAcl", http.MethodGet, "/stub-bucket/stub-key?acl"},
-		{"GetObjectTagging", http.MethodGet, "/stub-bucket/stub-key?tagging"},
 		{"GetObjectAttributes", http.MethodGet, "/stub-bucket/stub-key?attributes"},
 		{"GetObjectLegalHold", http.MethodGet, "/stub-bucket/stub-key?legal-hold"},
 		{"GetObjectRetention", http.MethodGet, "/stub-bucket/stub-key?retention"},
 		{"GetObjectTorrent", http.MethodGet, "/stub-bucket/stub-key?torrent"},
-		{"ListParts", http.MethodGet, "/stub-bucket/stub-key?uploadId=test-upload-id"},
 
 		// ---- Object PUT sub-resources -----------------------------------
 		{"PutObjectAcl", http.MethodPut, "/stub-bucket/stub-key?acl"},
-		{"PutObjectTagging", http.MethodPut, "/stub-bucket/stub-key?tagging"},
 		{"PutObjectLegalHold", http.MethodPut, "/stub-bucket/stub-key?legal-hold"},
 		{"PutObjectRetention", http.MethodPut, "/stub-bucket/stub-key?retention"},
 		{"RenameObject", http.MethodPut, "/stub-bucket/stub-key?rename"},
 		{"UpdateObjectEncryption", http.MethodPut, "/stub-bucket/stub-key?encryption"},
-		{"UploadPart", http.MethodPut, "/stub-bucket/stub-key?partNumber=1&uploadId=test-upload-id"},
 		{"UploadPartCopy", http.MethodPut, "/stub-bucket/stub-key?partNumber=1"},
 
 		// ---- Object DELETE sub-resources --------------------------------
-		{"DeleteObjectTagging", http.MethodDelete, "/stub-bucket/stub-key?tagging"},
-		{"AbortMultipartUpload", http.MethodDelete, "/stub-bucket/stub-key?uploadId=test-upload-id"},
-
 		// ---- Object POST sub-resources ----------------------------------
-		{"CreateMultipartUpload", http.MethodPost, "/stub-bucket/stub-key?uploads"},
-		{"CompleteMultipartUpload", http.MethodPost, "/stub-bucket/stub-key?uploadId=test-upload-id"},
 		{"RestoreObject", http.MethodPost, "/stub-bucket/stub-key?restore"},
 		{"SelectObjectContent", http.MethodPost, "/stub-bucket/stub-key?select"},
 		{"WriteGetObjectResponse", http.MethodPost, "/stub-bucket/stub-key?writeGetObjectResponse"},
@@ -1237,6 +1985,216 @@ func findFiles(t *testing.T, dir string) []string {
 		t.Fatalf("findFiles: %v", err)
 	}
 	return files
+}
+
+// ---- S3 Virtual-Hosted-Style Addressing ------------------------------------
+
+func TestS3VirtualHostedStyle_PutAndGetObject(t *testing.T) {
+	// Given a bucket created via path-style
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "vhost-bucket")
+
+	// When uploading an object via virtual-hosted-style (bucket in Host header)
+	body := []byte("virtual hosted content")
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/greeting.txt", bytes.NewReader(body))
+	req.Host = "vhost-bucket.localhost"
+	req.Header.Set("Content-Type", "text/plain")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	// Then the upload succeeds
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// And the object can be retrieved via path-style
+	getResp, err := http.DefaultClient.Do(get(srv, "/vhost-bucket/greeting.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer getResp.Body.Close()
+
+	helpers.AssertStatus(t, getResp, http.StatusOK)
+	got, _ := io.ReadAll(getResp.Body)
+	if string(got) != "virtual hosted content" {
+		t.Errorf("expected %q, got %q", "virtual hosted content", got)
+	}
+}
+
+func TestS3VirtualHostedStyle_HeadBucket(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "vhost-head-bucket")
+
+	// HEAD / with virtual-hosted Host header
+	req, _ := http.NewRequest(http.MethodHead, srv.URL+"/", nil)
+	req.Host = "vhost-head-bucket.localhost"
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
+func TestS3VirtualHostedStyle_ListObjectsV2(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "vhost-list-bucket")
+	putObject(t, srv, "vhost-list-bucket", "file1.txt", []byte("hello"), "text/plain")
+
+	// GET /?list-type=2 with virtual-hosted Host header
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/?list-type=2", nil)
+	req.Host = "vhost-list-bucket.localhost"
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	respBody, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(respBody), "file1.txt") {
+		t.Errorf("expected listing to contain file1.txt, got %s", respBody)
+	}
+}
+
+func TestS3VirtualHostedStyle_S3Subdomain(t *testing.T) {
+	// {bucket}.s3.localhost pattern (standard AWS virtual-hosted-style)
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "s3style-bucket")
+
+	body := []byte("s3 subdomain content")
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/my-key.json", bytes.NewReader(body))
+	req.Host = "s3style-bucket.s3.localhost"
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Verify via path-style
+	getResp, err := http.DefaultClient.Do(get(srv, "/s3style-bucket/my-key.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer getResp.Body.Close()
+
+	helpers.AssertStatus(t, getResp, http.StatusOK)
+	got, _ := io.ReadAll(getResp.Body)
+	if string(got) != "s3 subdomain content" {
+		t.Errorf("expected %q, got %q", "s3 subdomain content", got)
+	}
+}
+
+func TestS3VirtualHostedStyle_CreateBucket(t *testing.T) {
+	// CDK bootstrap creates buckets; the SDK may use virtual-hosted-style.
+	srv := helpers.NewTestServer(t)
+
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/", nil)
+	req.Host = "vhost-created-bucket.localhost"
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Verify bucket exists via path-style HeadBucket
+	headResp, err := http.DefaultClient.Do(head(srv, "/vhost-created-bucket"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	headResp.Body.Close()
+
+	helpers.AssertStatus(t, headResp, http.StatusOK)
+}
+
+// ---- S3 Virtual-Hosted-Style with configured wildcard DNS hostname ----------
+//
+// These tests cover the CDK asset-publisher path on Windows/Mac where
+// *.localhost does not resolve.  Setting OVERCAST_HOSTNAME to a wildcard-DNS
+// name (e.g. "localhost.localstack.cloud") makes CDK-generated bucket
+// hostnames resolvable without any hosts-file changes:
+//
+//	cdk-hnb659fds-assets-<account>-<region>.localhost.localstack.cloud
+//
+// The middleware rewrites the Host subdomain to a path-style bucket prefix,
+// so the request reaches the correct S3 handler.
+
+func TestS3VirtualHostedStyle_WildcardDNS_PutAndGetObject(t *testing.T) {
+	// Given: Overcast configured with a wildcard-DNS hostname
+	const wildcardBase = "localhost.localstack.cloud"
+	srv := helpers.NewTestServer(t, helpers.WithHostname(wildcardBase))
+	createBucket(t, srv, "wc-bucket")
+	putObject(t, srv, "wc-bucket", "hello.txt", []byte("hello"), "text/plain")
+
+	// When: GET via virtual-hosted-style Host with the wildcard base
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/hello.txt", nil)
+	req.Host = "wc-bucket." + wildcardBase
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the object is returned correctly
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "hello" {
+		t.Errorf("expected body %q, got %q", "hello", string(body))
+	}
+}
+
+func TestS3VirtualHostedStyle_WildcardDNS_CDKBootstrapBucketName(t *testing.T) {
+	// Given: a CDK bootstrap bucket name with account and region
+	// (the exact pattern CDK's asset publisher uses on Windows/Mac)
+	const wildcardBase = "localhost.localstack.cloud"
+	const cdkBucket = "cdk-hnb659fds-assets-000000000000-ap-southeast-2"
+
+	srv := helpers.NewTestServer(t, helpers.WithHostname(wildcardBase))
+	createBucket(t, srv, cdkBucket)
+
+	// When: HEAD via virtual-hosted Host — mimics CDK asset publisher probe
+	req, _ := http.NewRequest(http.MethodHead, srv.URL+"/", nil)
+	req.Host = cdkBucket + "." + wildcardBase + ":4566"
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	// Then: bucket is found (200)
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
+func TestS3VirtualHostedStyle_WildcardDNS_S3SubdomainStyle(t *testing.T) {
+	// {bucket}.s3.{base} style with wildcard base
+	const wildcardBase = "localhost.localstack.cloud"
+	srv := helpers.NewTestServer(t, helpers.WithHostname(wildcardBase))
+	createBucket(t, srv, "s3sub-bucket")
+	putObject(t, srv, "s3sub-bucket", "obj.txt", []byte("data"), "text/plain")
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/obj.txt", nil)
+	req.Host = "s3sub-bucket.s3." + wildcardBase
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusOK)
 }
 
 // ---- Test helpers ----------------------------------------------------------
@@ -1434,6 +2392,36 @@ func TestGetBucketNotificationConfiguration_bucketNotFound(t *testing.T) {
 	helpers.AssertXMLError(t, resp, "NoSuchBucket")
 }
 
+func TestPutBucketNotificationConfiguration_crossRegionLambda(t *testing.T) {
+	// Given: a bucket in the test server's default region (us-east-1)
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "cross-region-notify-bucket")
+
+	// When: a notification config points to a Lambda function in a different region
+	crossRegionXML := `<?xml version="1.0" encoding="UTF-8"?>
+<NotificationConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <CloudFunctionConfiguration>
+    <Id>cross-region-fn</Id>
+    <CloudFunction>arn:aws:lambda:eu-west-1:000000000000:function:my-fn</CloudFunction>
+    <Event>s3:ObjectCreated:*</Event>
+  </CloudFunctionConfiguration>
+</NotificationConfiguration>`
+
+	resp, err := http.DefaultClient.Do(
+		put(srv, "/cross-region-notify-bucket?notification", []byte(crossRegionXML), map[string]string{
+			"Content-Type": "application/xml",
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: real AWS rejects Lambda destinations in a different region from the bucket
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertXMLError(t, resp, "InvalidArgument")
+}
+
 func TestPutBucketNotificationConfiguration_replace(t *testing.T) {
 	// Given a bucket with an existing notification config
 	srv := helpers.NewTestServer(t)
@@ -1556,14 +2544,14 @@ func TestPutObject_sendsNotificationToSQS(t *testing.T) {
 	helpers.DecodeJSON(t, createResp, &qResult)
 
 	// Configure notifications: ObjectCreated → SQS queue
-	notifXML := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+	notifXML := `<?xml version="1.0" encoding="UTF-8"?>
 <NotificationConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
   <QueueConfiguration>
     <Id>put-to-queue</Id>
     <Queue>arn:aws:sqs:us-east-1:000000000000:event-queue</Queue>
     <Event>s3:ObjectCreated:*</Event>
   </QueueConfiguration>
-</NotificationConfiguration>`)
+</NotificationConfiguration>`
 
 	putNCResp, _ := http.DefaultClient.Do(
 		put(srv, "/event-bucket?notification", []byte(notifXML), map[string]string{"Content-Type": "application/xml"}),
@@ -1810,4 +2798,1158 @@ func TestPutObject_notificationFilteredByPrefix(t *testing.T) {
 	if msgBody == "" {
 		t.Fatal("expected notification for uploads/doc.txt, got none")
 	}
+}
+
+// ---- S3 Event Notifications → Lambda ----------------------------------------
+
+func TestPutObject_sendsNotificationToLambda(t *testing.T) {
+	// Given an S3 bucket with a Lambda notification config and a pre-seeded function
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "lambda-notify-bucket")
+
+	// Pre-seed a Lambda function directly in the state store
+	// (bypassing HTTP since Lambda CRUD is not yet implemented)
+	fn := map[string]interface{}{
+		"name":        "s3-handler",
+		"arn":         "arn:aws:lambda:us-east-1:000000000000:function:s3-handler",
+		"runtime":     "nodejs20.x",
+		"handler":     "index.handler",
+		"state":       "Active",
+		"timeout":     30,
+		"memory_size": 128,
+	}
+	fnJSON, _ := json.Marshal(fn)
+	if err := srv.Store.Set(context.Background(), "lambda:functions", "us-east-1/s3-handler", string(fnJSON)); err != nil {
+		t.Fatalf("pre-seeding function: %v", err)
+	}
+
+	// Configure S3 → Lambda notification
+	notifXML := `<?xml version="1.0" encoding="UTF-8"?>
+<NotificationConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <CloudFunctionConfiguration>
+    <Id>invoke-on-put</Id>
+    <CloudFunction>arn:aws:lambda:us-east-1:000000000000:function:s3-handler</CloudFunction>
+    <Event>s3:ObjectCreated:*</Event>
+  </CloudFunctionConfiguration>
+</NotificationConfiguration>`
+
+	putNCResp, _ := http.DefaultClient.Do(
+		put(srv, "/lambda-notify-bucket?notification", []byte(notifXML), map[string]string{"Content-Type": "application/xml"}),
+	)
+	putNCResp.Body.Close()
+	helpers.AssertStatus(t, putNCResp, http.StatusOK)
+
+	// When we upload an object
+	putObjResp, _ := http.DefaultClient.Do(
+		put(srv, "/lambda-notify-bucket/trigger.txt", []byte("hello"), map[string]string{"Content-Type": "text/plain"}),
+	)
+	putObjResp.Body.Close()
+	helpers.AssertStatus(t, putObjResp, http.StatusOK)
+
+	// Then an invocation record appears in lambda:invocations (async — small retry window)
+	var gotInvocation bool
+	for i := 0; i < 40; i++ {
+		kvs, err := srv.Store.Scan(context.Background(), "lambda:invocations", "us-east-1/s3-handler:")
+		if err == nil && len(kvs) > 0 {
+			gotInvocation = true
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if !gotInvocation {
+		t.Fatal("expected Lambda invocation record in state store, got none after retries")
+	}
+}
+
+func TestDeleteObject_sendsNotificationToLambda(t *testing.T) {
+	// Given a bucket with ObjectRemoved → Lambda notification and a pre-seeded function
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "lambda-del-bucket")
+
+	fn := map[string]interface{}{
+		"name":        "del-handler",
+		"arn":         "arn:aws:lambda:us-east-1:000000000000:function:del-handler",
+		"runtime":     "nodejs20.x",
+		"handler":     "index.handler",
+		"state":       "Active",
+		"timeout":     30,
+		"memory_size": 128,
+	}
+	fnJSON, _ := json.Marshal(fn)
+	if err := srv.Store.Set(context.Background(), "lambda:functions", "us-east-1/del-handler", string(fnJSON)); err != nil {
+		t.Fatalf("pre-seeding function: %v", err)
+	}
+
+	notifXML := `<?xml version="1.0" encoding="UTF-8"?>
+<NotificationConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <CloudFunctionConfiguration>
+    <Id>invoke-on-delete</Id>
+    <CloudFunction>arn:aws:lambda:us-east-1:000000000000:function:del-handler</CloudFunction>
+    <Event>s3:ObjectRemoved:*</Event>
+  </CloudFunctionConfiguration>
+</NotificationConfiguration>`
+
+	putNCResp, _ := http.DefaultClient.Do(
+		put(srv, "/lambda-del-bucket?notification", []byte(notifXML), map[string]string{"Content-Type": "application/xml"}),
+	)
+	putNCResp.Body.Close()
+	helpers.AssertStatus(t, putNCResp, http.StatusOK)
+
+	// Upload then delete an object
+	putObjResp, _ := http.DefaultClient.Do(
+		put(srv, "/lambda-del-bucket/item.txt", []byte("data"), map[string]string{"Content-Type": "text/plain"}),
+	)
+	putObjResp.Body.Close()
+
+	delResp, _ := http.DefaultClient.Do(del(srv, "/lambda-del-bucket/item.txt"))
+	delResp.Body.Close()
+	helpers.AssertStatus(t, delResp, http.StatusNoContent)
+
+	// Then an invocation record appears
+	var gotInvocation bool
+	for i := 0; i < 40; i++ {
+		kvs, err := srv.Store.Scan(context.Background(), "lambda:invocations", "us-east-1/del-handler:")
+		if err == nil && len(kvs) > 0 {
+			gotInvocation = true
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if !gotInvocation {
+		t.Fatal("expected Lambda invocation record for delete event, got none after retries")
+	}
+}
+
+func TestPutObject_lambdaNotification_functionNotFound(t *testing.T) {
+	// Given a bucket configured to send to a Lambda that doesn't exist
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "missing-fn-bucket")
+
+	notifXML := `<?xml version="1.0" encoding="UTF-8"?>
+<NotificationConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <CloudFunctionConfiguration>
+    <Id>invoke-missing</Id>
+    <CloudFunction>arn:aws:lambda:us-east-1:000000000000:function:does-not-exist</CloudFunction>
+    <Event>s3:ObjectCreated:*</Event>
+  </CloudFunctionConfiguration>
+</NotificationConfiguration>`
+
+	putNCResp, _ := http.DefaultClient.Do(
+		put(srv, "/missing-fn-bucket?notification", []byte(notifXML), map[string]string{"Content-Type": "application/xml"}),
+	)
+	putNCResp.Body.Close()
+	helpers.AssertStatus(t, putNCResp, http.StatusOK)
+
+	// When we upload an object — dispatcher should log a warning but not panic
+	putObjResp, _ := http.DefaultClient.Do(
+		put(srv, "/missing-fn-bucket/test.txt", []byte("hi"), map[string]string{"Content-Type": "text/plain"}),
+	)
+	putObjResp.Body.Close()
+
+	// Then the upload itself succeeds (graceful degradation)
+	helpers.AssertStatus(t, putObjResp, http.StatusOK)
+
+	// And no invocation record is written for the missing function
+	time.Sleep(20 * time.Millisecond)
+	kvs, err := srv.Store.Scan(context.Background(), "lambda:invocations", "us-east-1/does-not-exist:")
+	if err != nil {
+		t.Fatalf("scan error: %v", err)
+	}
+	if len(kvs) != 0 {
+		t.Errorf("expected no invocation records for missing function, got %d", len(kvs))
+	}
+}
+
+// ---- Bucket Policy ---------------------------------------------------------
+
+func TestPutBucketPolicy_success(t *testing.T) {
+	// Given: a bucket exists
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "policy-bucket")
+
+	// When: PutBucketPolicy is called with a valid JSON policy
+	policy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::policy-bucket/*"}]}`
+	resp, err := http.DefaultClient.Do(put(srv, "/policy-bucket?policy", []byte(policy), nil))
+	if err != nil {
+		t.Fatalf("PutBucketPolicy: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 200 OK
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
+func TestPutBucketPolicy_noSuchBucket(t *testing.T) {
+	// Given: no bucket exists
+	srv := helpers.NewTestServer(t)
+
+	// When: PutBucketPolicy is called on a non-existent bucket
+	policy := `{"Version":"2012-10-17","Statement":[]}`
+	resp, err := http.DefaultClient.Do(put(srv, "/no-such-bucket?policy", []byte(policy), nil))
+	if err != nil {
+		t.Fatalf("PutBucketPolicy: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 404 NoSuchBucket
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	helpers.AssertXMLError(t, resp, "NoSuchBucket")
+}
+
+func TestPutBucketPolicy_emptyBody(t *testing.T) {
+	// Given: a bucket exists
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "policy-bucket")
+
+	// When: PutBucketPolicy is called with an empty body
+	resp, err := http.DefaultClient.Do(put(srv, "/policy-bucket?policy", nil, nil))
+	if err != nil {
+		t.Fatalf("PutBucketPolicy: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 400 MalformedPolicy
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+}
+
+func TestGetBucketPolicy_success(t *testing.T) {
+	// Given: a bucket with a policy
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "policy-bucket")
+	policy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::policy-bucket/*"}]}`
+	resp, err := http.DefaultClient.Do(put(srv, "/policy-bucket?policy", []byte(policy), nil))
+	if err != nil {
+		t.Fatalf("PutBucketPolicy: %v", err)
+	}
+	resp.Body.Close()
+
+	// When: GetBucketPolicy is called
+	resp, err = http.DefaultClient.Do(get(srv, "/policy-bucket?policy"))
+	if err != nil {
+		t.Fatalf("GetBucketPolicy: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 200 OK with the policy JSON
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != policy {
+		t.Errorf("expected policy %q, got %q", policy, string(body))
+	}
+}
+
+func TestGetBucketPolicy_noPolicySet(t *testing.T) {
+	// Given: a bucket with no policy
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "policy-bucket")
+
+	// When: GetBucketPolicy is called
+	resp, err := http.DefaultClient.Do(get(srv, "/policy-bucket?policy"))
+	if err != nil {
+		t.Fatalf("GetBucketPolicy: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 404 NoSuchBucketPolicy
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	helpers.AssertXMLError(t, resp, "NoSuchBucketPolicy")
+}
+
+func TestGetBucketPolicy_noSuchBucket(t *testing.T) {
+	// Given: no bucket exists
+	srv := helpers.NewTestServer(t)
+
+	// When: GetBucketPolicy is called
+	resp, err := http.DefaultClient.Do(get(srv, "/no-such-bucket?policy"))
+	if err != nil {
+		t.Fatalf("GetBucketPolicy: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 404 NoSuchBucket
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	helpers.AssertXMLError(t, resp, "NoSuchBucket")
+}
+
+func TestDeleteBucketPolicy_success(t *testing.T) {
+	// Given: a bucket with a policy
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "policy-bucket")
+	policy := `{"Version":"2012-10-17","Statement":[]}`
+	resp, err := http.DefaultClient.Do(put(srv, "/policy-bucket?policy", []byte(policy), nil))
+	if err != nil {
+		t.Fatalf("PutBucketPolicy: %v", err)
+	}
+	resp.Body.Close()
+
+	// When: DeleteBucketPolicy is called
+	resp, err = http.DefaultClient.Do(del(srv, "/policy-bucket?policy"))
+	if err != nil {
+		t.Fatalf("DeleteBucketPolicy: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 204 No Content
+	helpers.AssertStatus(t, resp, http.StatusNoContent)
+
+	// And: GetBucketPolicy returns 404
+	resp2, err := http.DefaultClient.Do(get(srv, "/policy-bucket?policy"))
+	if err != nil {
+		t.Fatalf("GetBucketPolicy after delete: %v", err)
+	}
+	defer resp2.Body.Close()
+	helpers.AssertStatus(t, resp2, http.StatusNotFound)
+}
+
+func TestDeleteBucketPolicy_noPolicySet(t *testing.T) {
+	// Given: a bucket with no policy
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "policy-bucket")
+
+	// When: DeleteBucketPolicy is called
+	resp, err := http.DefaultClient.Do(del(srv, "/policy-bucket?policy"))
+	if err != nil {
+		t.Fatalf("DeleteBucketPolicy: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 204 No Content (idempotent)
+	helpers.AssertStatus(t, resp, http.StatusNoContent)
+}
+
+// ---- Object Tagging --------------------------------------------------------
+
+func TestPutObjectTagging_success(t *testing.T) {
+	// Given: a bucket and object exist
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "tag-bucket")
+	putObject(t, srv, "tag-bucket", "tagged.txt", []byte("hello"), "text/plain")
+
+	// When: PutObjectTagging is called with two tags
+	taggingXML := `<Tagging><TagSet><Tag><Key>env</Key><Value>prod</Value></Tag><Tag><Key>team</Key><Value>platform</Value></Tag></TagSet></Tagging>`
+	resp, err := http.DefaultClient.Do(put(srv, "/tag-bucket/tagged.txt?tagging", []byte(taggingXML), map[string]string{"Content-Type": "application/xml"}))
+	if err != nil {
+		t.Fatalf("PutObjectTagging: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 200 OK
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
+func TestGetObjectTagging_success(t *testing.T) {
+	// Given: an object exists with tags
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "tag-bucket")
+	putObject(t, srv, "tag-bucket", "tagged.txt", []byte("hello"), "text/plain")
+	taggingXML := `<Tagging><TagSet><Tag><Key>env</Key><Value>prod</Value></Tag></TagSet></Tagging>`
+	putResp, err := http.DefaultClient.Do(put(srv, "/tag-bucket/tagged.txt?tagging", []byte(taggingXML), map[string]string{"Content-Type": "application/xml"}))
+	if err != nil {
+		t.Fatalf("PutObjectTagging setup: %v", err)
+	}
+	putResp.Body.Close()
+
+	// When: GetObjectTagging is called
+	resp, err := http.DefaultClient.Do(get(srv, "/tag-bucket/tagged.txt?tagging"))
+	if err != nil {
+		t.Fatalf("GetObjectTagging: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 200 with the tag in the response
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		XMLName xml.Name `xml:"Tagging"`
+		TagSet  struct {
+			Tags []struct {
+				Key   string `xml:"Key"`
+				Value string `xml:"Value"`
+			} `xml:"Tag"`
+		} `xml:"TagSet"`
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if err := xml.Unmarshal(body, &result); err != nil {
+		t.Fatalf("unmarshal tagging response: %v", err)
+	}
+	if len(result.TagSet.Tags) != 1 || result.TagSet.Tags[0].Key != "env" || result.TagSet.Tags[0].Value != "prod" {
+		t.Errorf("unexpected tags: %+v", result.TagSet.Tags)
+	}
+}
+
+func TestGetObjectTagging_emptyTagSet(t *testing.T) {
+	// Given: an object exists with no tags set
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "tag-bucket")
+	putObject(t, srv, "tag-bucket", "untagged.txt", []byte("hello"), "text/plain")
+
+	// When: GetObjectTagging is called
+	resp, err := http.DefaultClient.Do(get(srv, "/tag-bucket/untagged.txt?tagging"))
+	if err != nil {
+		t.Fatalf("GetObjectTagging: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 200 with empty TagSet
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		XMLName xml.Name `xml:"Tagging"`
+		TagSet  struct {
+			Tags []struct {
+				Key string `xml:"Key"`
+			} `xml:"Tag"`
+		} `xml:"TagSet"`
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if err := xml.Unmarshal(body, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(result.TagSet.Tags) != 0 {
+		t.Errorf("expected empty TagSet, got %+v", result.TagSet.Tags)
+	}
+}
+
+func TestDeleteObjectTagging_success(t *testing.T) {
+	// Given: an object exists with tags
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "tag-bucket")
+	putObject(t, srv, "tag-bucket", "tagged.txt", []byte("hello"), "text/plain")
+	taggingXML := `<Tagging><TagSet><Tag><Key>env</Key><Value>prod</Value></Tag></TagSet></Tagging>`
+	putResp, err := http.DefaultClient.Do(put(srv, "/tag-bucket/tagged.txt?tagging", []byte(taggingXML), map[string]string{"Content-Type": "application/xml"}))
+	if err != nil {
+		t.Fatalf("PutObjectTagging setup: %v", err)
+	}
+	putResp.Body.Close()
+
+	// When: DeleteObjectTagging is called
+	resp, err := http.DefaultClient.Do(del(srv, "/tag-bucket/tagged.txt?tagging"))
+	if err != nil {
+		t.Fatalf("DeleteObjectTagging: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 204 No Content
+	helpers.AssertStatus(t, resp, http.StatusNoContent)
+
+	// And: GetObjectTagging returns empty TagSet
+	getResp, err := http.DefaultClient.Do(get(srv, "/tag-bucket/tagged.txt?tagging"))
+	if err != nil {
+		t.Fatalf("GetObjectTagging: %v", err)
+	}
+	defer getResp.Body.Close()
+	var result struct {
+		TagSet struct {
+			Tags []struct {
+				Key string `xml:"Key"`
+			} `xml:"Tag"`
+		} `xml:"TagSet"`
+	}
+	body, _ := io.ReadAll(getResp.Body)
+	xml.Unmarshal(body, &result) //nolint:errcheck
+	if len(result.TagSet.Tags) != 0 {
+		t.Errorf("expected empty tags after delete, got %+v", result.TagSet.Tags)
+	}
+}
+
+func TestPutObjectTagging_objectNotFound(t *testing.T) {
+	// Given: bucket exists but object does not
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "tag-bucket")
+
+	// When: PutObjectTagging is called for missing key
+	taggingXML := `<Tagging><TagSet></TagSet></Tagging>`
+	resp, err := http.DefaultClient.Do(put(srv, "/tag-bucket/no-such-key?tagging", []byte(taggingXML), map[string]string{"Content-Type": "application/xml"}))
+	if err != nil {
+		t.Fatalf("PutObjectTagging: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 404 NoSuchKey
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+}
+
+// ---- Bucket Tagging --------------------------------------------------------
+
+func TestPutBucketTagging_success(t *testing.T) {
+	// Given: a bucket exists
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "btag-bucket")
+
+	// When: PutBucketTagging is called
+	taggingXML := `<Tagging><TagSet><Tag><Key>project</Key><Value>overcast</Value></Tag></TagSet></Tagging>`
+	resp, err := http.DefaultClient.Do(put(srv, "/btag-bucket?tagging", []byte(taggingXML), map[string]string{"Content-Type": "application/xml"}))
+	if err != nil {
+		t.Fatalf("PutBucketTagging: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 204 No Content
+	helpers.AssertStatus(t, resp, http.StatusNoContent)
+}
+
+func TestGetBucketTagging_success(t *testing.T) {
+	// Given: a bucket exists with a tag
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "btag-bucket")
+	taggingXML := `<Tagging><TagSet><Tag><Key>project</Key><Value>overcast</Value></Tag></TagSet></Tagging>`
+	putResp, err := http.DefaultClient.Do(put(srv, "/btag-bucket?tagging", []byte(taggingXML), map[string]string{"Content-Type": "application/xml"}))
+	if err != nil {
+		t.Fatalf("PutBucketTagging setup: %v", err)
+	}
+	putResp.Body.Close()
+
+	// When: GetBucketTagging is called
+	resp, err := http.DefaultClient.Do(get(srv, "/btag-bucket?tagging"))
+	if err != nil {
+		t.Fatalf("GetBucketTagging: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 200 with tag set
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		XMLName xml.Name `xml:"Tagging"`
+		TagSet  struct {
+			Tags []struct {
+				Key   string `xml:"Key"`
+				Value string `xml:"Value"`
+			} `xml:"Tag"`
+		} `xml:"TagSet"`
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if err := xml.Unmarshal(body, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(result.TagSet.Tags) != 1 || result.TagSet.Tags[0].Key != "project" {
+		t.Errorf("unexpected tags: %+v", result.TagSet.Tags)
+	}
+}
+
+func TestDeleteBucketTagging_success(t *testing.T) {
+	// Given: a bucket with a tag
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "btag-bucket")
+	taggingXML := `<Tagging><TagSet><Tag><Key>k</Key><Value>v</Value></Tag></TagSet></Tagging>`
+	putResp, err := http.DefaultClient.Do(put(srv, "/btag-bucket?tagging", []byte(taggingXML), map[string]string{"Content-Type": "application/xml"}))
+	if err != nil {
+		t.Fatalf("PutBucketTagging setup: %v", err)
+	}
+	putResp.Body.Close()
+
+	// When: DeleteBucketTagging is called
+	resp, err := http.DefaultClient.Do(del(srv, "/btag-bucket?tagging"))
+	if err != nil {
+		t.Fatalf("DeleteBucketTagging: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 204 No Content
+	helpers.AssertStatus(t, resp, http.StatusNoContent)
+}
+
+func TestGetBucketTagging_noTags(t *testing.T) {
+	// Given: a bucket with no tags
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "btag-bucket")
+
+	// When: GetBucketTagging is called
+	resp, err := http.DefaultClient.Do(get(srv, "/btag-bucket?tagging"))
+	if err != nil {
+		t.Fatalf("GetBucketTagging: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 200 with empty TagSet (not an error)
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
+// ---- Bucket Versioning -----------------------------------------------------
+
+func TestPutBucketVersioning_enable(t *testing.T) {
+	// Given: a bucket exists
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "ver-bucket")
+
+	// When: PutBucketVersioning enables versioning
+	versioningXML := `<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration>`
+	resp, err := http.DefaultClient.Do(put(srv, "/ver-bucket?versioning", []byte(versioningXML), map[string]string{"Content-Type": "application/xml"}))
+	if err != nil {
+		t.Fatalf("PutBucketVersioning: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 200 OK
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
+func TestGetBucketVersioning_enabled(t *testing.T) {
+	// Given: a bucket with versioning enabled
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "ver-bucket")
+	versioningXML := `<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration>`
+	putResp, err := http.DefaultClient.Do(put(srv, "/ver-bucket?versioning", []byte(versioningXML), map[string]string{"Content-Type": "application/xml"}))
+	if err != nil {
+		t.Fatalf("PutBucketVersioning setup: %v", err)
+	}
+	putResp.Body.Close()
+
+	// When: GetBucketVersioning is called
+	resp, err := http.DefaultClient.Do(get(srv, "/ver-bucket?versioning"))
+	if err != nil {
+		t.Fatalf("GetBucketVersioning: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 200 with Status=Enabled
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		XMLName xml.Name `xml:"VersioningConfiguration"`
+		Status  string   `xml:"Status"`
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if err := xml.Unmarshal(body, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if result.Status != "Enabled" {
+		t.Errorf("expected Status=Enabled, got %q", result.Status)
+	}
+}
+
+func TestGetBucketVersioning_notConfigured(t *testing.T) {
+	// Given: a bucket with no versioning config
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "ver-bucket")
+
+	// When: GetBucketVersioning is called
+	resp, err := http.DefaultClient.Do(get(srv, "/ver-bucket?versioning"))
+	if err != nil {
+		t.Fatalf("GetBucketVersioning: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 200 with empty Status (AWS returns empty VersioningConfiguration)
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		XMLName xml.Name `xml:"VersioningConfiguration"`
+		Status  string   `xml:"Status"`
+	}
+	body, _ := io.ReadAll(resp.Body)
+	xml.Unmarshal(body, &result) //nolint:errcheck
+	if result.Status != "" {
+		t.Errorf("expected empty Status for unconfigured bucket, got %q", result.Status)
+	}
+}
+
+func TestPutBucketVersioning_suspend(t *testing.T) {
+	// Given: a bucket with versioning enabled
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "ver-bucket")
+	vEnable := `<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration>`
+	r, err := http.DefaultClient.Do(put(srv, "/ver-bucket?versioning", []byte(vEnable), map[string]string{"Content-Type": "application/xml"}))
+	if err != nil {
+		t.Fatalf("PutBucketVersioning enable: %v", err)
+	}
+	r.Body.Close()
+
+	// When: PutBucketVersioning suspends versioning
+	vSuspend := `<VersioningConfiguration><Status>Suspended</Status></VersioningConfiguration>`
+	resp, err := http.DefaultClient.Do(put(srv, "/ver-bucket?versioning", []byte(vSuspend), map[string]string{"Content-Type": "application/xml"}))
+	if err != nil {
+		t.Fatalf("PutBucketVersioning suspend: %v", err)
+	}
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// And: GetBucketVersioning reflects Suspended
+	getResp, err := http.DefaultClient.Do(get(srv, "/ver-bucket?versioning"))
+	if err != nil {
+		t.Fatalf("GetBucketVersioning: %v", err)
+	}
+	defer getResp.Body.Close()
+	var result struct {
+		Status string `xml:"Status"`
+	}
+	body, _ := io.ReadAll(getResp.Body)
+	xml.Unmarshal(body, &result) //nolint:errcheck
+	if result.Status != "Suspended" {
+		t.Errorf("expected Status=Suspended, got %q", result.Status)
+	}
+}
+
+// ---- ListObjectVersions ---------------------------------------------------
+
+// listVersionsResult is the XML envelope for ListObjectVersions.
+type listVersionsResult struct {
+	XMLName             xml.Name       `xml:"ListVersionsResult"`
+	Name                string         `xml:"Name"`
+	Prefix              string         `xml:"Prefix"`
+	MaxKeys             int            `xml:"MaxKeys"`
+	IsTruncated         bool           `xml:"IsTruncated"`
+	KeyMarker           string         `xml:"KeyMarker"`
+	NextKeyMarker       string         `xml:"NextKeyMarker"`
+	VersionIdMarker     string         `xml:"VersionIdMarker"`
+	NextVersionIdMarker string         `xml:"NextVersionIdMarker"`
+	Versions            []versionEntry `xml:"Version"`
+	DeleteMarkers       []deleteMarker `xml:"DeleteMarker"`
+}
+
+type versionEntry struct {
+	Key          string    `xml:"Key"`
+	VersionId    string    `xml:"VersionId"`
+	IsLatest     bool      `xml:"IsLatest"`
+	LastModified time.Time `xml:"LastModified"`
+	ETag         string    `xml:"ETag"`
+	Size         int64     `xml:"Size"`
+	StorageClass string    `xml:"StorageClass"`
+}
+
+type deleteMarker struct {
+	Key       string `xml:"Key"`
+	VersionId string `xml:"VersionId"`
+	IsLatest  bool   `xml:"IsLatest"`
+}
+
+func listVersions(t *testing.T, srv *helpers.TestServer, bucket, query string) listVersionsResult {
+	t.Helper()
+	path := "/" + bucket + "?versions"
+	if query != "" {
+		path += "&" + query
+	}
+	resp, err := http.DefaultClient.Do(get(srv, path))
+	if err != nil {
+		t.Fatalf("ListObjectVersions: %v", err)
+	}
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result listVersionsResult
+	body, _ := io.ReadAll(resp.Body)
+	if err := xml.Unmarshal(body, &result); err != nil {
+		t.Fatalf("ListObjectVersions: unmarshal XML: %v\nbody: %s", err, body)
+	}
+	return result
+}
+
+// TestListObjectVersions_nonVersionedBucket verifies that objects in a bucket
+// without versioning are returned as Version entries with VersionId="null".
+func TestListObjectVersions_nonVersionedBucket(t *testing.T) {
+	// Given: a non-versioned bucket with two objects
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "ver-list-bucket")
+	putObject(t, srv, "ver-list-bucket", "a.txt", []byte("aaa"), "text/plain")
+	putObject(t, srv, "ver-list-bucket", "b.txt", []byte("bbb"), "text/plain")
+
+	// When: caller lists object versions
+	result := listVersions(t, srv, "ver-list-bucket", "")
+
+	// Then: both objects appear as Version entries with VersionId="null", IsLatest=true
+	if result.Name != "ver-list-bucket" {
+		t.Errorf("Name: want %q, got %q", "ver-list-bucket", result.Name)
+	}
+	if len(result.Versions) != 2 {
+		t.Fatalf("want 2 versions, got %d", len(result.Versions))
+	}
+	if result.IsTruncated {
+		t.Error("IsTruncated should be false")
+	}
+	for _, v := range result.Versions {
+		if v.VersionId != "null" {
+			t.Errorf("key %q: want VersionId=%q, got %q", v.Key, "null", v.VersionId)
+		}
+		if !v.IsLatest {
+			t.Errorf("key %q: want IsLatest=true", v.Key)
+		}
+		if v.StorageClass != "STANDARD" {
+			t.Errorf("key %q: want StorageClass=STANDARD, got %q", v.Key, v.StorageClass)
+		}
+	}
+	// Versions should be sorted by key
+	if result.Versions[0].Key != "a.txt" || result.Versions[1].Key != "b.txt" {
+		t.Errorf("want keys [a.txt b.txt], got [%s %s]", result.Versions[0].Key, result.Versions[1].Key)
+	}
+}
+
+// TestListObjectVersions_noSuchBucket verifies that a 404 is returned for missing buckets.
+func TestListObjectVersions_noSuchBucket(t *testing.T) {
+	// Given: no bucket
+	srv := helpers.NewTestServer(t)
+
+	// When: caller lists object versions on a non-existent bucket
+	resp, err := http.DefaultClient.Do(get(srv, "/no-such-bucket?versions"))
+	if err != nil {
+		t.Fatalf("ListObjectVersions: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 404 NoSuchBucket
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	helpers.AssertXMLError(t, resp, "NoSuchBucket")
+}
+
+// TestListObjectVersions_prefix verifies prefix filtering.
+func TestListObjectVersions_prefix(t *testing.T) {
+	// Given: a bucket with objects under different prefixes
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "ver-prefix-bucket")
+	putObject(t, srv, "ver-prefix-bucket", "docs/readme.txt", []byte("r"), "text/plain")
+	putObject(t, srv, "ver-prefix-bucket", "docs/guide.txt", []byte("g"), "text/plain")
+	putObject(t, srv, "ver-prefix-bucket", "src/main.go", []byte("m"), "text/plain")
+
+	// When: listing with prefix="docs/"
+	result := listVersions(t, srv, "ver-prefix-bucket", "prefix=docs/")
+
+	// Then: only docs/ objects are returned
+	if len(result.Versions) != 2 {
+		t.Fatalf("want 2 versions, got %d: %v", len(result.Versions), result.Versions)
+	}
+	for _, v := range result.Versions {
+		if !strings.HasPrefix(v.Key, "docs/") {
+			t.Errorf("unexpected key %q (expected docs/ prefix)", v.Key)
+		}
+	}
+}
+
+// TestListObjectVersions_maxKeys verifies pagination via max-keys.
+func TestListObjectVersions_maxKeys(t *testing.T) {
+	// Given: a bucket with 3 objects
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "ver-page-bucket")
+	putObject(t, srv, "ver-page-bucket", "k1.txt", []byte("1"), "text/plain")
+	putObject(t, srv, "ver-page-bucket", "k2.txt", []byte("2"), "text/plain")
+	putObject(t, srv, "ver-page-bucket", "k3.txt", []byte("3"), "text/plain")
+
+	// When: listing with max-keys=2
+	result := listVersions(t, srv, "ver-page-bucket", "max-keys=2")
+
+	// Then: first page has 2 versions, IsTruncated=true, NextKeyMarker set
+	if len(result.Versions) != 2 {
+		t.Fatalf("want 2 versions on first page, got %d", len(result.Versions))
+	}
+	if !result.IsTruncated {
+		t.Error("IsTruncated should be true")
+	}
+	if result.NextKeyMarker == "" {
+		t.Error("NextKeyMarker should be set when truncated")
+	}
+	if result.MaxKeys != 2 {
+		t.Errorf("MaxKeys: want 2, got %d", result.MaxKeys)
+	}
+
+	// When: fetching next page using key-marker
+	result2 := listVersions(t, srv, "ver-page-bucket", "max-keys=2&key-marker="+result.NextKeyMarker)
+
+	// Then: second page has the remaining version
+	if len(result2.Versions) != 1 {
+		t.Fatalf("want 1 version on second page, got %d", len(result2.Versions))
+	}
+	if result2.IsTruncated {
+		t.Error("IsTruncated should be false on last page")
+	}
+	if result2.Versions[0].Key != "k3.txt" {
+		t.Errorf("want key k3.txt, got %q", result2.Versions[0].Key)
+	}
+}
+
+// TestListObjectVersions_emptyBucket verifies that an empty bucket returns no versions.
+func TestListObjectVersions_emptyBucket(t *testing.T) {
+	// Given: an empty bucket
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "ver-empty-bucket")
+
+	// When: listing object versions
+	result := listVersions(t, srv, "ver-empty-bucket", "")
+
+	// Then: no versions returned, not truncated
+	if len(result.Versions) != 0 {
+		t.Fatalf("want 0 versions, got %d", len(result.Versions))
+	}
+	if result.IsTruncated {
+		t.Error("IsTruncated should be false for empty bucket")
+	}
+}
+
+// ---- Presigned URL ----------------------------------------------------------
+
+func TestPresignedURL_getObject(t *testing.T) {
+	// Given: a server with SigV4 validation, IAM user with access key, bucket, and object
+	srv := helpers.NewTestServer(t, helpers.WithSigV4Validate(true))
+
+	// Create IAM user
+	iamCall(t, srv, "CreateUser", url.Values{"UserName": {"presign-user"}})
+
+	// Create access key and extract credentials
+	akResp := iamCall(t, srv, "CreateAccessKey", url.Values{"UserName": {"presign-user"}})
+	defer akResp.Body.Close()
+	akBody := helpers.ReadBody(t, akResp)
+	helpers.AssertStatus(t, akResp, http.StatusOK)
+
+	accessKeyID := extractXMLTag(akBody, "AccessKeyId")
+	secretAccessKey := extractXMLTag(akBody, "SecretAccessKey")
+	if accessKeyID == "" || secretAccessKey == "" {
+		t.Fatalf("failed to parse access key from response: %s", akBody)
+	}
+
+	// Create bucket and put an object
+	createBucket(t, srv, "presign-bucket")
+	putObject(t, srv, "presign-bucket", "hello.txt", []byte("presigned content"), "text/plain")
+
+	// When: we generate a presigned GET URL and access it
+	presignedURL := buildPresignedGetURL(t, srv.URL, accessKeyID, secretAccessKey,
+		"us-east-1", "presign-bucket", "hello.txt", 300)
+
+	resp, err := http.Get(presignedURL)
+	if err != nil {
+		t.Fatalf("GET presigned URL: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the object is returned correctly
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	body := helpers.ReadBody(t, resp)
+	if body != "presigned content" {
+		t.Errorf("expected body %q, got %q", "presigned content", body)
+	}
+}
+
+func TestPresignedURL_getObject_wrongSignature_returns403(t *testing.T) {
+	// Given: a server with SigV4 validation, IAM user, bucket, object
+	srv := helpers.NewTestServer(t, helpers.WithSigV4Validate(true))
+
+	iamCall(t, srv, "CreateUser", url.Values{"UserName": {"presign-user2"}})
+	akResp := iamCall(t, srv, "CreateAccessKey", url.Values{"UserName": {"presign-user2"}})
+	defer akResp.Body.Close()
+	akBody := helpers.ReadBody(t, akResp)
+	accessKeyID := extractXMLTag(akBody, "AccessKeyId")
+	secretAccessKey := extractXMLTag(akBody, "SecretAccessKey")
+
+	createBucket(t, srv, "presign-bucket2")
+	putObject(t, srv, "presign-bucket2", "hello.txt", []byte("data"), "text/plain")
+
+	// Generate a valid presigned URL, then corrupt the signature
+	presignedURL := buildPresignedGetURL(t, srv.URL, accessKeyID, secretAccessKey,
+		"us-east-1", "presign-bucket2", "hello.txt", 300)
+	corruptedURL := presignedURL + "ff"
+
+	// When: we access the corrupted presigned URL
+	resp, err := http.Get(corruptedURL)
+	if err != nil {
+		t.Fatalf("GET corrupted presigned URL: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 403 is returned because signature validation fails
+	helpers.AssertStatus(t, resp, http.StatusForbidden)
+}
+
+func TestPresignedURL_getObject_expired_returns403(t *testing.T) {
+	// Given: a server with SigV4 validation + mock clock, IAM user, bucket, object
+	srv := helpers.NewTestServer(t, helpers.WithSigV4Validate(true), helpers.WithMockClock())
+
+	iamCall(t, srv, "CreateUser", url.Values{"UserName": {"presign-user3"}})
+	akResp := iamCall(t, srv, "CreateAccessKey", url.Values{"UserName": {"presign-user3"}})
+	defer akResp.Body.Close()
+	akBody := helpers.ReadBody(t, akResp)
+	accessKeyID := extractXMLTag(akBody, "AccessKeyId")
+	secretAccessKey := extractXMLTag(akBody, "SecretAccessKey")
+
+	createBucket(t, srv, "presign-bucket3")
+	putObject(t, srv, "presign-bucket3", "hello.txt", []byte("data"), "text/plain")
+
+	// Generate a presigned URL valid for 1 second
+	presignedURL := buildPresignedGetURL(t, srv.URL, accessKeyID, secretAccessKey,
+		"us-east-1", "presign-bucket3", "hello.txt", 1)
+
+	// Advance the mock clock past the expiry
+	srv.Clock.Add(2 * time.Second)
+
+	// When: we access the expired presigned URL
+	resp, err := http.Get(presignedURL)
+	if err != nil {
+		t.Fatalf("GET expired presigned URL: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 403 is returned because the presigned URL has expired
+	helpers.AssertStatus(t, resp, http.StatusForbidden)
+}
+
+func TestPresignedURL_getObject_stsSessionCredentials(t *testing.T) {
+	// Given: SigV4 validation, IAM role, STS session credentials, bucket, object
+	srv := helpers.NewTestServer(t, helpers.WithSigV4Validate(true))
+
+	// Call STS AssumeRole to get temporary credentials
+	stsResp := stsCall(t, srv, "AssumeRole", url.Values{
+		"RoleArn":         {"arn:aws:iam::000000000000:role/PresignRole"},
+		"RoleSessionName": {"presign-session"},
+	})
+	defer stsResp.Body.Close()
+	helpers.AssertStatus(t, stsResp, http.StatusOK)
+	stsBody := helpers.ReadBody(t, stsResp)
+
+	tempAccessKeyID := extractXMLTag(stsBody, "AccessKeyId")
+	tempSecretKey := extractXMLTag(stsBody, "SecretAccessKey")
+	if tempAccessKeyID == "" || tempSecretKey == "" {
+		t.Fatalf("failed to extract STS credentials: %s", stsBody)
+	}
+
+	// Create bucket and object
+	createBucket(t, srv, "presign-sts-bucket")
+	putObject(t, srv, "presign-sts-bucket", "sts.txt", []byte("sts presigned content"), "text/plain")
+
+	// When: generate a presigned URL with STS session credentials and GET it
+	presignedURL := buildPresignedGetURL(t, srv.URL, tempAccessKeyID, tempSecretKey,
+		"us-east-1", "presign-sts-bucket", "sts.txt", 300)
+
+	resp, err := http.Get(presignedURL)
+	if err != nil {
+		t.Fatalf("GET STS presigned URL: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the object is returned
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	body := helpers.ReadBody(t, resp)
+	if body != "sts presigned content" {
+		t.Errorf("expected body %q, got %q", "sts presigned content", body)
+	}
+}
+
+// ---- Presigned URL helpers --------------------------------------------------
+
+// iamCall performs an IAM Query-protocol request.
+func iamCall(t *testing.T, srv *helpers.TestServer, action string, params url.Values) *http.Response {
+	t.Helper()
+	if params == nil {
+		params = url.Values{}
+	}
+	params.Set("Action", action)
+	params.Set("Version", "2010-05-08")
+	body := strings.NewReader(params.Encode())
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/", body)
+	if err != nil {
+		t.Fatalf("iamCall: new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("iamCall: do: %v", err)
+	}
+	return resp
+}
+
+// stsCall performs an STS Query-protocol request.
+func stsCall(t *testing.T, srv *helpers.TestServer, action string, params url.Values) *http.Response {
+	t.Helper()
+	if params == nil {
+		params = url.Values{}
+	}
+	params.Set("Action", action)
+	params.Set("Version", "2011-06-15")
+	body := strings.NewReader(params.Encode())
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/", body)
+	if err != nil {
+		t.Fatalf("stsCall: new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("stsCall: do: %v", err)
+	}
+	return resp
+}
+
+func extractXMLTag(xmlStr, tag string) string {
+	start := strings.Index(xmlStr, "<"+tag+">")
+	if start == -1 {
+		return ""
+	}
+	start += len("<" + tag + ">")
+	end := strings.Index(xmlStr[start:], "</"+tag+">")
+	if end == -1 {
+		return ""
+	}
+	return xmlStr[start : start+end]
+}
+
+// buildPresignedGetURL constructs a SigV4-presigned GET URL for an S3 object.
+// This replicates what the AWS SDK does client-side.
+func buildPresignedGetURL(t *testing.T, baseURL, accessKey, secret, region, bucket, key string, expires int) string {
+	t.Helper()
+	now := time.Now().UTC()
+	date := now.Format("20060102")
+	amzDate := now.Format("20060102T150405Z")
+	scope := date + "/" + region + "/s3/aws4_request"
+
+	u, err := url.Parse(baseURL + "/" + bucket + "/" + key)
+	if err != nil {
+		t.Fatalf("parse base URL: %v", err)
+	}
+
+	q := u.Query()
+	q.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA256")
+	q.Set("X-Amz-Credential", accessKey+"/"+scope)
+	q.Set("X-Amz-Date", amzDate)
+	q.Set("X-Amz-Expires", strconv.Itoa(expires))
+	q.Set("X-Amz-SignedHeaders", "host")
+	u.RawQuery = q.Encode()
+
+	canonicalRequest := buildCanonicalRequest("GET", u.Path, q, "host:"+u.Host, "UNSIGNED-PAYLOAD")
+	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + sha256Hex([]byte(canonicalRequest))
+	signature := computeSigV4(secret, date, region, "s3", stringToSign)
+
+	q.Set("X-Amz-Signature", signature)
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+func buildCanonicalRequest(method, path string, query url.Values, canonicalHeaders, payloadHash string) string {
+	type pair struct{ k, v string }
+	pairs := make([]pair, 0, len(query))
+	for k, vs := range query {
+		if strings.EqualFold(k, "X-Amz-Signature") {
+			continue
+		}
+		sort.Strings(vs)
+		for _, v := range vs {
+			pairs = append(pairs, pair{sigV4Escape(k), sigV4Escape(v)})
+		}
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].k == pairs[j].k {
+			return pairs[i].v < pairs[j].v
+		}
+		return pairs[i].k < pairs[j].k
+	})
+	canonicalParts := make([]string, len(pairs))
+	for i, p := range pairs {
+		canonicalParts[i] = p.k + "=" + p.v
+	}
+	return method + "\n" + path + "\n" + strings.Join(canonicalParts, "&") + "\n" + canonicalHeaders + "\n\nhost\n" + payloadHash
+}
+
+func sigV4Escape(s string) string {
+	e := url.QueryEscape(s)
+	e = strings.ReplaceAll(e, "+", "%20")
+	e = strings.ReplaceAll(e, "*", "%2A")
+	e = strings.ReplaceAll(e, "%7E", "~")
+	return e
+}
+
+func computeSigV4(secret, date, region, service, stringToSign string) string {
+	kDate := hmacSHA256([]byte("AWS4"+secret), date)
+	kRegion := hmacSHA256(kDate, region)
+	kService := hmacSHA256(kRegion, service)
+	kSigning := hmacSHA256(kService, "aws4_request")
+	return hex.EncodeToString(hmacSHA256(kSigning, stringToSign))
+}
+
+func hmacSHA256(key []byte, msg string) []byte {
+	h := hmac.New(sha256.New, key)
+	h.Write([]byte(msg))
+	return h.Sum(nil)
+}
+
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }

@@ -1,8 +1,8 @@
 ---
 name: Bug report
 about: An endpoint returns wrong behaviour, wrong format, or an unexpected error
-title: '[BUG] <service>: <operation> - <short description>'
-labels: bug, needs-triage
+title: 'Bug: <service> <operation> <short symptom>'
+labels: bug, area/emulation, status/needs-triage
 assignees: ''
 ---
 
@@ -63,12 +63,12 @@ paste here
 
 <!--
 Priority labels (add one):
-  P1 - Blocks a core use case (affects a ✅ Supported endpoint)
-  P2 - Affects a common workflow but has a workaround
-  P3 - Minor issue or edge case
+  priority/p1 - Blocks a core use case (affects a supported endpoint)
+  priority/p2 - Affects a common workflow but has a workaround
+  priority/p3 - Minor issue or edge case
 
 Effort labels (added by maintainers after triage):
-  effort:small  - <2h
-  effort:medium - 2–8h
-  effort:large  - >8h, likely needs design discussion
+  effort/small  - <2h
+  effort/medium - 2-8h
+  effort/large  - >8h, likely needs design discussion
 -->

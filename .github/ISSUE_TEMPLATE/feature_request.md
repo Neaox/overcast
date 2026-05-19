@@ -1,8 +1,8 @@
 ---
 name: Feature request
 about: Request a new endpoint, service, or capability
-title: '[FEATURE] <service>: <operation or feature>'
-labels: enhancement, needs-triage
+title: 'Implement endpoint: <service> <operation or feature>'
+labels: enhancement, area/emulation, status/needs-triage
 assignees: ''
 ---
 
@@ -48,12 +48,12 @@ assignees: ''
 
 <!--
 Priority labels (add one):
-  P1 - Blocks a core use case; many users affected
-  P2 - Important but has a workaround
-  P3 - Nice to have / edge case
+  priority/p1 - Blocks a core use case; many users affected
+  priority/p2 - Important but has a workaround
+  priority/p3 - Nice to have / edge case
 
 Effort labels (added by maintainers after triage):
-  effort:small  - <2h (single endpoint, simple response)
-  effort:medium - 2–8h (multiple endpoints, or expression parsing required)
-  effort:large  - >8h (new service, complex state, or event pipeline)
+  effort/small  - <2h (single endpoint, simple response)
+  effort/medium - 2-8h (multiple endpoints, or expression parsing required)
+  effort/large  - >8h (new service, complex state, or event pipeline)
 -->

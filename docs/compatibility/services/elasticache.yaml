@@ -1,0 +1,21 @@
+service: elasticache
+status: not_started
+priority: p2
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [query]
+implementation: [internal/services/elasticache]
+integration_tests: [tests/integration/elasticache]
+capability_docs: docs/services/elasticache.md
+operation_count_estimate: 20 supported
+current_support_level: Cache clusters, replication groups, subnet/parameter groups, engine metadata, and tagging supported; replication is single-primary only.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Review CreateCacheCluster/CreateReplicationGroup validation, lifecycle states, and XML shapes.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateCacheCluster, CreateReplicationGroup]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/elasticache/... ./tests/integration/elasticache/...]

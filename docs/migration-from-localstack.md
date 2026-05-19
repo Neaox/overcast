@@ -32,7 +32,7 @@ services:
 # After
 services:
   overcast:
-    image: ghcr.io/your-org/overcast:latest
+    image: ghcr.io/neaox/overcast:latest
     ports: ["4566:4566"]
     environment:
       OVERCAST_SERVICES: s3,sqs,dynamodb
@@ -43,30 +43,100 @@ services:
 
 ## Environment variable mapping
 
-| LocalStack | overcast | Notes |
-|------------|--------|-------|
-| `LOCALSTACK_HOST` | `OVERCAST_HOST` | Hostname to bind. Default: `0.0.0.0` |
-| `EDGE_PORT` | `OVERCAST_PORT` | Default: `4566` |
-| `SERVICES` | `OVERCAST_SERVICES` | Comma-separated. Same service names. |
-| `DATA_DIR` | `OVERCAST_DATA_DIR` | SQLite persistence directory |
-| `DEBUG=1` | `OVERCAST_LOG_LEVEL=debug` | Verbose logging |
-| `DEFAULT_REGION` | `OVERCAST_REGION` | Default: `us-east-1` |
-| `GATEWAY_LISTEN` | `OVERCAST_HOST:OVERCAST_PORT` | Split into two variables |
-| — | `OVERCAST_STATE=sqlite` | Explicit persistence opt-in (LocalStack uses `DATA_DIR` presence) |
-| — | `OVERCAST_DEBUG=true` | Enable `/_debug/*` endpoints |
-| — | `OVERCAST_TLS_CERT` / `OVERCAST_TLS_KEY` | HTTPS support |
+| LocalStack        | overcast                                 | Notes                                                             |
+| ----------------- | ---------------------------------------- | ----------------------------------------------------------------- |
+| `LOCALSTACK_HOST` | `OVERCAST_HOST`                          | Hostname to bind. Default: `0.0.0.0`                              |
+| `EDGE_PORT`       | `OVERCAST_PORT`                          | Default: `4566`                                                   |
+| `SERVICES`        | `OVERCAST_SERVICES`                      | Comma-separated. Same service names.                              |
+| `DATA_DIR`        | `OVERCAST_DATA_DIR`                      | SQLite persistence directory                                      |
+| `DEBUG=1`         | `OVERCAST_LOG_LEVEL=debug`               | Verbose logging                                                   |
+| `DEFAULT_REGION`  | `OVERCAST_DEFAULT_REGION`                | Default: `us-east-1`                                              |
+| `GATEWAY_LISTEN`  | `OVERCAST_HOST:OVERCAST_PORT`            | Split into two variables                                          |
+| —                 | `OVERCAST_STATE=persistent`              | Explicit persistence opt-in (LocalStack uses `DATA_DIR` presence) |
+| —                 | `OVERCAST_DEBUG=true`                    | Enable `/_debug/*` endpoints                                      |
+| —                 | `OVERCAST_TLS_CERT` / `OVERCAST_TLS_KEY` | HTTPS support                                                     |
 
 ---
 
 ## Endpoint mapping
 
-| LocalStack | overcast | Notes |
-|------------|--------|-------|
-| `/_localstack/health` | `/_health` | Always enabled |
-| `/_localstack/health` (detailed) | `/_debug/health` | Requires `OVERCAST_DEBUG=true` |
-| `/_localstack/state/reset` | `/_debug/reset` | Requires `OVERCAST_DEBUG=true` |
-| `/_localstack/info` | `/_debug/config` | Requires `OVERCAST_DEBUG=true` |
-| `/_localstack/state` | `/_debug/state` | Requires `OVERCAST_DEBUG=true` |
+| LocalStack                       | overcast                  | Notes                          |
+| -------------------------------- | ------------------------- | ------------------------------ |
+| `/_localstack/health`            | `/_health`                | Always enabled                 |
+| `/_localstack/health` (detailed) | `/_debug/health`          | Requires `OVERCAST_DEBUG=true` |
+| `/_localstack/init`              | `/_overcast/init`         | Always enabled                 |
+| `/_localstack/init/{stage}`      | `/_overcast/init/{stage}` | Always enabled                 |
+| `/_localstack/state/reset`       | `/_debug/reset`           | Requires `OVERCAST_DEBUG=true` |
+| `/_localstack/info`              | `/_debug/config`          | Requires `OVERCAST_DEBUG=true` |
+| `/_localstack/state`             | `/_debug/state`           | Requires `OVERCAST_DEBUG=true` |
+
+---
+
+## Init hooks
+
+overcast supports LocalStack-compatible initialization hooks. Shell scripts
+placed in `/etc/localstack/init/<stage>.d/` are executed at the corresponding
+lifecycle stage — no configuration needed.
+
+An Overcast-native path `/etc/overcast/init/<stage>.d/` is also supported.
+Both paths are scanned in order (LocalStack first, then Overcast).
+
+| Stage      | Directory                          | When it runs                      |
+| ---------- | ---------------------------------- | --------------------------------- |
+| `BOOT`     | `/etc/localstack/init/boot.d/`     | Before overcastd starts (as root) |
+| `START`    | `/etc/localstack/init/start.d/`    | After config loaded, before HTTP  |
+| `READY`    | `/etc/localstack/init/ready.d/`    | After server is listening         |
+| `SHUTDOWN` | `/etc/localstack/init/shutdown.d/` | On graceful shutdown              |
+
+Scripts must have the `.sh` extension and be executable (`chmod +x`). They are
+run in alphabetical order; subdirectories are traversed depth-first. A failing
+script does not block subsequent scripts.
+
+### Status endpoint
+
+```bash
+# All stages
+curl -s localhost:4566/_overcast/init | jq .
+
+# Single stage
+curl -s localhost:4566/_overcast/init/ready | jq .completed
+```
+
+The status endpoint is always available (no debug flag required).
+
+### `awslocal` wrapper
+
+The container image includes `awslocal`, a thin wrapper around `aws` CLI that
+automatically sets `--endpoint-url` to the local Overcast instance. Use it in
+init scripts:
+
+```bash
+#!/bin/bash
+awslocal s3 mb s3://my-bucket
+awslocal sqs create-queue --queue-name my-queue
+```
+
+Note: `awslocal` requires `aws` CLI to be installed in the container. Install it
+in a `boot.d` hook or use a custom Dockerfile layer.
+
+### Example docker-compose.yml
+
+```yaml
+services:
+  overcast:
+    image: ghcr.io/neaox/overcast:latest
+    ports: ["4566:4566"]
+    volumes:
+      - "./init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh"
+```
+
+### Configuration
+
+| Variable                | Default                                   | Description              |
+| ----------------------- | ----------------------------------------- | ------------------------ |
+| `OVERCAST_INIT_ENABLED` | `true`                                    | Disable init hooks       |
+| `OVERCAST_INIT_DIRS`    | `/etc/localstack/init,/etc/overcast/init` | Base directories to scan |
+| `OVERCAST_INIT_TIMEOUT` | `30s`                                     | Per-script timeout       |
 
 ---
 
@@ -84,6 +154,7 @@ This matches what most local dev setups need. Virtual-hosted style requires DNS
 resolution of `*.localhost` which doesn't work without extra configuration.
 
 **Impact:** If your SDK is configured for virtual-hosted style, set:
+
 ```bash
 # AWS CLI
 aws configure set s3.addressing_style path
@@ -92,25 +163,29 @@ aws configure set s3.addressing_style path
 s3 = boto3.client('s3', config=Config(s3={'addressing_style': 'path'}))
 ```
 
-### Lambda: no real execution in v1
+> **CDK asset publisher on Windows:** CDK's internal Node.js asset publisher
+> always uses virtual-hosted style and ignores `forcePathStyle`. On Windows,
+> `*.localhost` subdomains don't resolve by default — see the
+> [CDK S3 asset upload troubleshooting](./cdk.md#s3-asset-upload-fails-on-windows)
+> section for the `OVERCAST_HOSTNAME` workaround.
 
-LocalStack Community executes Lambda functions (with limitations). overcast v1
-returns a configurable stub response for Lambda invocations.
+### Lambda: Docker-based execution
 
-**Impact:** If your tests rely on real Lambda execution, they will need to be
-updated once overcast Node.js execution is implemented (planned for v2).
+Overcast executes Lambda functions inside Docker containers using the official
+AWS Lambda base images (`public.ecr.aws/lambda/<runtime>`). This requires Docker
+to be available (either via socket mount or TCP). If Docker is not available,
+Lambda functions can still be created and managed, but invocations fall back to
+a built-in Node.js runtime for simple handlers.
 
-To configure the stub response for a function:
-```bash
-curl -X PUT http://localhost:4566/_debug/lambda/my-function/stub \
-  -H 'Content-Type: application/json' \
-  -d '{"statusCode": 200, "body": "{\"result\": \"ok\"}"}'
-```
+**Impact:** Lambda execution should be compatible with LocalStack Community
+Edition. Ensure Docker is accessible to the overcast container (see the
+`LAMBDA_DOCKER_SOCKET` and `LAMBDA_NETWORK` configuration variables).
 
 ### Persistence: explicit opt-in
 
 LocalStack enables persistence when `DATA_DIR` is set. overcast requires an
-explicit `OVERCAST_STATE=sqlite` in addition to `OVERCAST_DATA_DIR`.
+explicit `OVERCAST_STATE=persistent` (or `hybrid`, `wal`) in addition to
+`OVERCAST_DATA_DIR`.
 
 This makes the intent unambiguous — you can set `OVERCAST_DATA_DIR` for other
 purposes without accidentally enabling persistence.
@@ -124,19 +199,26 @@ response including errors. Some LocalStack error responses omit this header.
 
 ## Known gaps (features LocalStack has that overcast doesn't yet)
 
-| Feature | overcast status | Notes |
-|---------|---------------|-------|
-| Lambda execution | Stub only in v1 | Node.js execution planned |
-| DynamoDB Streams | Planned | |
-| SNS → SQS fan-out | In progress | |
-| SQS → Lambda ESM | In progress | |
-| CloudFormation | Out of scope | |
-| IAM | Out of scope | All credentials accepted |
-| SigV4 validation | TODO | Accepted but not validated |
-| S3 multipart upload | Planned (P3) | |
-| S3 versioning | Planned (P3) | |
-| DynamoDB GSI | Planned (P3) | |
-| DynamoDB transactions | Planned (P3) | |
+| Feature               | overcast status | Notes                               |
+| --------------------- | --------------- | ----------------------------------- |
+| SigV4 validation      | TODO            | Accepted but not validated          |
+| CloudWatch Metrics    | Not implemented | Logs are supported; metrics are not |
+| Kinesis Data Firehose | Not implemented |                                     |
+| Route 53              | Not implemented |                                     |
+| ElastiCache           | Not implemented |                                     |
+
+The following features that were previously missing are now implemented:
+
+- **Lambda execution** — full Docker-based container execution
+- **DynamoDB Streams** — ListStreams, DescribeStream, GetShardIterator, GetRecords
+- **DynamoDB transactions** — TransactWriteItems, TransactGetItems
+- **DynamoDB GSI** — Global Secondary Indexes supported
+- **S3 multipart upload** — CreateMultipartUpload, UploadPart, CompleteMultipartUpload, AbortMultipartUpload, ListParts
+- **S3 versioning** — PutBucketVersioning, GetBucketVersioning, ListObjectVersions
+- **SNS → SQS fan-out** — working
+- **SQS → Lambda ESM** — event source mapping with CRUD and polling delivery
+- **CloudFormation** — CreateStack, UpdateStack, DeleteStack, DescribeStacks, ListStacks with ~50 resource types
+- **IAM** — users, roles, groups, policies, instance profiles (credentials accepted but not enforced)
 
 If a feature you need is missing, check `docs/services/<service>.md` for the
 detailed support matrix, then open an issue or PR.
@@ -148,6 +230,7 @@ detailed support matrix, then open an issue or PR.
 ### "Connection refused" on port 4566
 
 Confirm the container is running and healthy:
+
 ```bash
 docker compose ps
 curl http://localhost:4566/_health

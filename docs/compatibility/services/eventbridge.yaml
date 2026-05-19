@@ -1,0 +1,22 @@
+service: eventbridge
+status: not_started
+priority: p1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [aws_json_1_1, rpcv2_cbor]
+implementation: [internal/services/eventbridge]
+integration_tests: [tests/integration/eventbridge]
+capability_docs: docs/services/eventbridge.md
+operation_count_estimate: 28 tracked; 16 supported, 12 unsupported
+current_support_level: Management-plane/CDK-compatible but inert event routing; PutEvents accepted without target invocation.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Decide whether inert routing is acceptable for compatibility goals.
+    - Review target, rule, and tag protocol fidelity.
+  intentionally_partial: []
+handoff:
+  start_with: [PutEvents, PutRule, PutTargets]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/eventbridge/... ./tests/integration/eventbridge/...]

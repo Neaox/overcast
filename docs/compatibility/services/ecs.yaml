@@ -1,0 +1,21 @@
+service: ecs
+status: not_started
+priority: p0
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [aws_json_1_1, rpcv2_cbor]
+implementation: [internal/services/ecs]
+integration_tests: [tests/integration/ecs]
+capability_docs: docs/services/ecs.md
+operation_count_estimate: 40 supported, 8 unsupported
+current_support_level: Substantial cluster, task, service, task set, and Fargate support; some agent/attribute/exec operations stubbed.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Prioritize RunTask, CreateService, RegisterTaskDefinition, Fargate awsvpc, and CDK paths.
+  intentionally_partial: []
+handoff:
+  start_with: [RegisterTaskDefinition, RunTask, CreateService]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/ecs/... ./tests/integration/ecs/...]

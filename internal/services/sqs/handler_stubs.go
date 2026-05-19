@@ -8,12 +8,21 @@ package sqs
 // actually works.
 
 import (
+	"context"
 	"net/http"
 	"time"
 
-	"github.com/your-org/overcast/internal/protocol"
-	"github.com/your-org/overcast/internal/serviceutil"
+	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
+
+func (h *Handler) addPermissionTyped(context.Context, *struct{}) (*struct{}, *protocol.AWSError) {
+	return nil, protocol.ErrNotImplemented
+}
+
+func (h *Handler) removePermissionTyped(context.Context, *struct{}) (*struct{}, *protocol.AWSError) {
+	return nil, protocol.ErrNotImplemented
+}
 
 // ChangeMessageVisibility adjusts the visibility timeout of an in-flight message.
 // AWS docs: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ChangeMessageVisibility.html
@@ -62,12 +71,6 @@ func (h *Handler) ChangeMessageVisibility(w http.ResponseWriter, r *http.Request
 	protocol.WriteJSON(w, r, http.StatusOK, struct{}{})
 }
 
-// ChangeMessageVisibilityBatch handles the SQS ChangeMessageVisibilityBatch operation.
-// AWS docs: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ChangeMessageVisibilityBatch.html
-func (h *Handler) ChangeMessageVisibilityBatch(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedJSON(w, r)
-}
-
 // AddPermission handles the SQS AddPermission operation.
 // AWS docs: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_AddPermission.html
 func (h *Handler) AddPermission(w http.ResponseWriter, r *http.Request) {
@@ -77,11 +80,5 @@ func (h *Handler) AddPermission(w http.ResponseWriter, r *http.Request) {
 // RemovePermission handles the SQS RemovePermission operation.
 // AWS docs: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_RemovePermission.html
 func (h *Handler) RemovePermission(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedJSON(w, r)
-}
-
-// ListDeadLetterSourceQueues handles the SQS ListDeadLetterSourceQueues operation.
-// AWS docs: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListDeadLetterSourceQueues.html
-func (h *Handler) ListDeadLetterSourceQueues(w http.ResponseWriter, r *http.Request) {
 	protocol.NotImplementedJSON(w, r)
 }

@@ -1,0 +1,22 @@
+service: waf
+status: not_started
+priority: p1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]
+implementation: [internal/services/waf]
+integration_tests: [tests/integration/waf]
+capability_docs: docs/services/waf.md
+operation_count_estimate: 4 supported
+current_support_level: WAFv2 WebACL CRUD subset only.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Review service naming and scope compatibility for WAFv2.
+    - Expand tracking beyond WebACL basics if SDK coverage is desired.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateWebACL, GetWebACL, ListWebACLs]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/waf/... ./tests/integration/waf/...]

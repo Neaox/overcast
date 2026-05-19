@@ -1,0 +1,22 @@
+service: cloudtrail
+status: not_started
+priority: p1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]
+implementation: [internal/services/cloudtrail]
+integration_tests: [tests/integration/cloudtrail]
+capability_docs: docs/services/cloudtrail.md
+operation_count_estimate: 9 tracked, 9 inert
+current_support_level: Metadata-only CloudTrail; no event delivery.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Add protocol section to docs.
+    - Decide whether inert operations should be reviewed as supported metadata or partial.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateTrail, StartLogging, DescribeTrails]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/cloudtrail/... ./tests/integration/cloudtrail/...]

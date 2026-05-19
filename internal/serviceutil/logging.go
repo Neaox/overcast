@@ -11,7 +11,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/your-org/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/protocol"
 )
 
 // ── Console-mode detection ───────────────────────────────────────────────────
@@ -136,6 +136,10 @@ type ServiceLogger struct {
 	log     *zap.Logger
 	service string
 }
+
+// ZapLogger returns the underlying *zap.Logger so callers that require the raw
+// logger (e.g. Docker GC) can create named children from the service-scoped logger.
+func (l *ServiceLogger) ZapLogger() *zap.Logger { return l.log }
 
 // NewServiceLogger returns a ServiceLogger scoped to the named service.
 // When stdout is an interactive terminal, log messages are prefixed with a

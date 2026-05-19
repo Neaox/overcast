@@ -1,0 +1,21 @@
+service: sts
+status: not_started
+priority: p0
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [query]
+implementation: [internal/services/sts]
+integration_tests: [tests/integration/sts]
+capability_docs: docs/services/sts.md
+operation_count_estimate: 5 tracked in capabilities; older manual summary lists 11 total
+current_support_level: Fake identity and temporary credential operations supported; SAML/OIDC/federation misc unsupported operations documented manually but not tracked in capabilities_dev.go.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Add unsupported STS operations to capabilities_dev.go so generated docs reflect manual compatibility matrix.
+  intentionally_partial: []
+handoff:
+  start_with: [AssumeRole, GetCallerIdentity, credentials shape]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/sts/... ./tests/integration/sts/...]

@@ -18,6 +18,8 @@ version: "3"
 vars:
   BINARY: overcast
   BUILD_DIR: ./bin
+  VERSION:
+    sh: cat VERSION
 
 tasks:
   default:
@@ -35,19 +37,36 @@ tasks:
   # ---- Build ----------------------------------------------------------------
 
   build:
-    desc: Compile the binary for the current platform
+    desc: Compile the binary for the current platform (includes embedded web UI)
     cmds:
       - cmd: mkdir -p {{.BUILD_DIR}}
         platforms: [darwin, linux]
       - cmd: if not exist {{.BUILD_DIR}} mkdir {{.BUILD_DIR}}
         platforms: [windows]
-      - go build -trimpath -ldflags="-w -s" -o {{.BUILD_DIR}}/{{.BINARY}}{{exeExt}} ./cmd/overcast
+      - go build -trimpath -ldflags="-w -s -X main.version={{.VERSION}}" -o {{.BUILD_DIR}}/{{.BINARY}}{{exeExt}} ./cmd/overcast
     sources:
       - "**/*.go"
       - go.mod
       - go.sum
     generates:
       - "{{.BUILD_DIR}}/{{.BINARY}}{{exeExt}}"
+
+  build-web:
+    desc: Build the web UI (run before build if assets are stale)
+    dir: web
+    env:
+      VITE_BUNDLED: "true"
+    cmds:
+      - npm run build
+
+  build-slim:
+    desc: Compile the slim binary (no web UI) for the current platform
+    cmds:
+      - cmd: mkdir -p {{.BUILD_DIR}}
+        platforms: [darwin, linux]
+      - cmd: if not exist {{.BUILD_DIR}} mkdir {{.BUILD_DIR}}
+        platforms: [windows]
+      - go build -trimpath -tags slim -ldflags="-w -s -X main.version={{.VERSION}}" -o {{.BUILD_DIR}}/overcastd{{exeExt}} ./cmd/overcast
 
   # ---- Run ------------------------------------------------------------------
 
@@ -125,9 +144,18 @@ tasks:
   # ---- Docker ---------------------------------------------------------------
 
   docker:
-    desc: Build the Docker image
+    desc: Build both Docker images (console + slim)
+    deps: [docker-console, docker-slim]
+
+  docker-console:
+    desc: Build the Docker image with web console
     cmds:
       - docker build -t overcast:dev .
+
+  docker-slim:
+    desc: Build the slim Docker image (no web UI, for CI)
+    cmds:
+      - docker build --target slim -t overcast-slim:dev .
 
   docker-run:
     desc: Run the Docker image with debug logging

@@ -1,0 +1,22 @@
+service: route53
+status: not_started
+priority: p1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [rest_xml, query]
+implementation: [internal/services/route53]
+integration_tests: [tests/integration/route53]
+capability_docs: docs/services/route53.md
+operation_count_estimate: 10 tracked; 7 supported, 3 unsupported
+current_support_level: Hosted zones, record sets, and change status supported; traffic policy, health check, and name listing unsupported.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Clarify QueryXML compatibility in docs or remove if accidental.
+    - Review pagination and marker semantics.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateHostedZone, ChangeResourceRecordSets, ListResourceRecordSets]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/route53/... ./tests/integration/route53/...]

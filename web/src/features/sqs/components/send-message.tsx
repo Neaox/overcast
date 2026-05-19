@@ -1,8 +1,6 @@
 import { useState } from "react"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Plus, Trash2 } from "lucide-react"
 import { sendMessageMutationOptions, sqsKeys } from "@/features/sqs/data"
-import { useEndpoint } from "@/hooks/use-endpoint"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormField } from "@/components/ui/form"
@@ -13,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { useToast } from "@/components/ui/toast"
+import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Spinner } from "@/components/ui/primitives"
 
 const DATA_TYPES = ["String", "Number", "Binary"]
@@ -29,34 +27,32 @@ let nextId = 0
 
 interface Props {
   queueName: string
+  isFifo?: boolean
   open: boolean
   onClose: () => void
 }
 
-export function SendMessageDialog({ queueName, open, onClose }: Props) {
-  const { endpoint } = useEndpoint()
-  const qc = useQueryClient()
-  const { toast } = useToast()
-
+export function SendMessageDialog({ queueName, isFifo, open, onClose }: Props) {
   const [body, setBody] = useState("")
   const [delaySeconds, setDelaySeconds] = useState("")
+  const [messageGroupId, setMessageGroupId] = useState("")
+  const [messageDeduplicationId, setMessageDeduplicationId] = useState("")
   const [attrRows, setAttrRows] = useState<MessageAttributeRow[]>([])
 
-  const mutation = useMutation({
-    ...sendMessageMutationOptions(queueName),
-    onSuccess: ({ messageId }) => {
-      qc.invalidateQueries({ queryKey: sqsKeys.messageList(endpoint.baseUrl, queueName) })
-      qc.invalidateQueries({ queryKey: sqsKeys.queue(endpoint.baseUrl, queueName) })
-      toast({ title: "Message sent", description: `ID: ${messageId}`, variant: "success" })
-      handleClose()
-    },
-    onError: (err: Error) =>
-      toast({ title: "Send failed", description: err.message, variant: "danger" }),
+  const mutation = useResourceMutation({
+    options: sendMessageMutationOptions(queueName),
+    invalidateKeys: [sqsKeys.messageList(queueName), sqsKeys.queueDetail(queueName)],
+    successTitle: "Message sent",
+    successDescription: () => "",
+    errorTitle: "Send failed",
+    onSuccess: () => handleClose(),
   })
 
   function handleClose() {
     setBody("")
     setDelaySeconds("")
+    setMessageGroupId("")
+    setMessageDeduplicationId("")
     setAttrRows([])
     onClose()
   }
@@ -89,6 +85,9 @@ export function SendMessageDialog({ queueName, open, onClose }: Props) {
     mutation.mutate({
       body: body.trim(),
       delaySeconds: delaySeconds ? parseInt(delaySeconds, 10) : undefined,
+      messageGroupId: isFifo && messageGroupId.trim() ? messageGroupId.trim() : undefined,
+      messageDeduplicationId:
+        isFifo && messageDeduplicationId.trim() ? messageDeduplicationId.trim() : undefined,
       messageAttributes: Object.keys(messageAttributes).length > 0 ? messageAttributes : undefined,
     })
   }
@@ -103,7 +102,7 @@ export function SendMessageDialog({ queueName, open, onClose }: Props) {
         <div className="flex flex-col gap-4">
           <FormField label="Message Body" required>
             <textarea
-              className="min-h-[120px] w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg placeholder:text-fg-subtle focus:ring-2 focus:ring-accent/50 focus:outline-none"
+              className="min-h-30 w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg placeholder:text-fg-subtle focus:ring-2 focus:ring-accent/50 focus:outline-none"
               placeholder="Enter message body..."
               value={body}
               onChange={(e) => setBody(e.target.value)}
@@ -124,6 +123,29 @@ export function SendMessageDialog({ queueName, open, onClose }: Props) {
               className="w-40"
             />
           </FormField>
+
+          {/* FIFO-specific fields */}
+          {isFifo && (
+            <div className="flex gap-4">
+              <FormField label="Message Group ID" required hint="Groups messages for FIFO ordering">
+                <Input
+                  placeholder="e.g. order-123"
+                  value={messageGroupId}
+                  onChange={(e) => setMessageGroupId(e.target.value)}
+                />
+              </FormField>
+              <FormField
+                label="Deduplication ID"
+                hint="Optional — uses content-based dedup if enabled on queue"
+              >
+                <Input
+                  placeholder="Optional"
+                  value={messageDeduplicationId}
+                  onChange={(e) => setMessageDeduplicationId(e.target.value)}
+                />
+              </FormField>
+            </div>
+          )}
 
           {/* Message attributes */}
           <div className="flex flex-col gap-2">
@@ -188,7 +210,10 @@ export function SendMessageDialog({ queueName, open, onClose }: Props) {
           <Button variant="ghost" onClick={handleClose}>
             Cancel
           </Button>
-          <Button onClick={handleSend} disabled={!body.trim() || mutation.isPending}>
+          <Button
+            onClick={handleSend}
+            disabled={!body.trim() || mutation.isPending || (isFifo && !messageGroupId.trim())}
+          >
             {mutation.isPending && <Spinner className="mr-2" />}
             Send Message
           </Button>

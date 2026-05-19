@@ -1,0 +1,22 @@
+service: cloudformation
+status: not_started
+priority: p0
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [query]
+implementation: [internal/services/cloudformation]
+integration_tests: [tests/integration/cloudformation]
+capability_docs: docs/services/cloudformation.md
+operation_count_estimate: 47 API/intrinsic/resource rows; 19 supported, 28 unsupported; separate resource type matrix
+current_support_level: CDK stack lifecycle and provisioner support; many StackSet/type registry features unsupported.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Audit resource-type tracking against provisioner registrations.
+    - Review update/delete semantics and unsupported-resource stubbing.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateStack, DeleteStack, resource handlers]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/cloudformation/... ./tests/integration/cloudformation/...]

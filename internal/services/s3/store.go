@@ -12,11 +12,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
-	"github.com/your-org/overcast/internal/protocol"
-	"github.com/your-org/overcast/internal/state"
+	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/state"
 )
 
 // Namespaces used in the state store. Keeping them as constants avoids
@@ -24,14 +25,33 @@ import (
 const (
 	nsBuckets = "s3:buckets"
 	nsObjects = "s3:objects"
-	nsMeta    = "s3:meta"
 )
+
+// WebsiteConfiguration stores S3 website configuration for a bucket.
+type WebsiteConfiguration struct {
+	IndexDocument string `json:"index_document,omitempty"`
+	ErrorDocument string `json:"error_document,omitempty"`
+}
+
+// CORSRule stores a single CORS rule for an S3 bucket.
+type CORSRule struct {
+	AllowedHeaders []string `json:"allowed_headers,omitempty"`
+	AllowedMethods []string `json:"allowed_methods"`
+	AllowedOrigins []string `json:"allowed_origins"`
+	ExposeHeaders  []string `json:"expose_headers,omitempty"`
+	MaxAgeSeconds  int      `json:"max_age_seconds,omitempty"`
+}
 
 // Bucket represents a stored S3 bucket.
 type Bucket struct {
-	Name         string    `json:"name"`
-	Region       string    `json:"region"`
-	CreationDate time.Time `json:"creation_date"`
+	Name             string                `json:"name"`
+	Region           string                `json:"region"`
+	CreationDate     time.Time             `json:"creation_date"`
+	VersioningStatus string                `json:"versioning_status,omitempty"` // "Enabled", "Suspended", or ""
+	Tags             map[string]string     `json:"tags,omitempty"`
+	WebsiteConfig    *WebsiteConfiguration `json:"website_config,omitempty"`
+	CORSRules        []CORSRule            `json:"cors_rules,omitempty"`
+	Policy           string                `json:"policy,omitempty"`
 }
 
 // Object represents a stored S3 object.
@@ -47,6 +67,7 @@ type Object struct {
 	ETag               string            `json:"etag"`
 	LastModified       time.Time         `json:"last_modified"`
 	Metadata           map[string]string `json:"metadata,omitempty"`
+	Tags               map[string]string `json:"tags,omitempty"`
 	ContentDisposition string            `json:"content_disposition,omitempty"`
 	ContentEncoding    string            `json:"content_encoding,omitempty"`
 	ContentLanguage    string            `json:"content_language,omitempty"`
@@ -106,6 +127,9 @@ func (s *s3Store) deleteBucket(ctx context.Context, name string) *protocol.AWSEr
 	if err := s.store.Delete(ctx, nsBuckets, name); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
+	// Remove the on-disk body directory for the bucket (and any remaining
+	// body files). Ignore errors — the directory may not exist.
+	_ = os.RemoveAll(filepath.Join(s.bodyDir, name))
 	return nil
 }
 
@@ -127,6 +151,10 @@ func (s *s3Store) listBuckets(ctx context.Context) ([]*Bucket, *protocol.AWSErro
 	for _, k := range keys {
 		b, aerr := s.getBucket(ctx, k)
 		if aerr != nil {
+			// Bucket was deleted between List and getBucket (TOCTOU race).
+			if aerr.HTTPStatus == http.StatusNotFound {
+				continue
+			}
 			return nil, aerr
 		}
 		buckets = append(buckets, b)
@@ -159,21 +187,6 @@ func (s *s3Store) getObjectMeta(ctx context.Context, bucket, key string) (*Objec
 	return &obj, nil
 }
 
-// getObject returns object metadata and loads the full body from disk.
-// Use getObjectMeta + openBody for streaming large bodies to clients.
-func (s *s3Store) getObject(ctx context.Context, bucket, key string) (*Object, *protocol.AWSError) {
-	obj, aerr := s.getObjectMeta(ctx, bucket, key)
-	if aerr != nil {
-		return nil, aerr
-	}
-	body, err := os.ReadFile(s.bodyPath(bucket, key))
-	if err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("s3: read body %s/%s: %w", bucket, key, err))
-	}
-	obj.Body = body
-	return obj, nil
-}
-
 // openBody returns an open file handle for the object's body.
 // The caller is responsible for closing it.
 func (s *s3Store) openBody(bucket, key string) (*os.File, *protocol.AWSError) {
@@ -182,22 +195,6 @@ func (s *s3Store) openBody(bucket, key string) (*os.File, *protocol.AWSError) {
 		return nil, protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("s3: open body %s/%s: %w", bucket, key, err))
 	}
 	return f, nil
-}
-
-func (s *s3Store) putObject(ctx context.Context, obj *Object) *protocol.AWSError {
-	// Write body to disk first — if this fails we haven't touched the metadata store.
-	if err := s.writeBody(obj.Bucket, obj.Key, obj.Body); err != nil {
-		return protocol.Wrap(protocol.ErrInternalError, err)
-	}
-
-	raw, err := json.Marshal(obj)
-	if err != nil {
-		return protocol.Wrap(protocol.ErrInternalError, err)
-	}
-	if err := s.store.Set(ctx, nsObjects, objectStoreKey(obj.Bucket, obj.Key), string(raw)); err != nil {
-		return protocol.Wrap(protocol.ErrInternalError, err)
-	}
-	return nil
 }
 
 // putObjectStream streams the request body to disk while computing size and
@@ -241,6 +238,20 @@ func (s *s3Store) putObjectStream(ctx context.Context, obj *Object, body io.Read
 	return etag, n, nil
 }
 
+// putObjectMeta persists object metadata changes (e.g. tags) without touching
+// the body file on disk. The caller is responsible for reading the Object via
+// getObjectMeta first so that existing fields are preserved.
+func (s *s3Store) putObjectMeta(ctx context.Context, obj *Object) *protocol.AWSError {
+	raw, err := json.Marshal(obj)
+	if err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if err := s.store.Set(ctx, nsObjects, objectStoreKey(obj.Bucket, obj.Key), string(raw)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
 func (s *s3Store) deleteObject(ctx context.Context, bucket, key string) *protocol.AWSError {
 	if err := s.store.Delete(ctx, nsObjects, objectStoreKey(bucket, key)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
@@ -250,6 +261,9 @@ func (s *s3Store) deleteObject(ctx context.Context, bucket, key string) *protoco
 	if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 		return protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("s3: remove body %s/%s: %w", bucket, key, err))
 	}
+	// Remove the bucket directory if it is now empty; ignore errors since
+	// other objects may still be present or the directory may not exist.
+	_ = os.Remove(filepath.Dir(p))
 	return nil
 }
 
@@ -261,20 +275,6 @@ func (s *s3Store) deleteObject(ctx context.Context, bucket, key string) *protoco
 func (s *s3Store) bodyPath(bucket, key string) string {
 	h := sha256.Sum256([]byte(key))
 	return filepath.Join(s.bodyDir, bucket, hex.EncodeToString(h[:]))
-}
-
-// writeBody persists the object body to disk, creating directories as needed.
-// Used by putObject for small/known bodies. For streaming uploads, use
-// putObjectStream instead.
-func (s *s3Store) writeBody(bucket, key string, data []byte) error {
-	p := s.bodyPath(bucket, key)
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		return fmt.Errorf("s3: create body dir for %s/%s: %w", bucket, key, err)
-	}
-	if err := os.WriteFile(p, data, 0o644); err != nil {
-		return fmt.Errorf("s3: write body %s/%s: %w", bucket, key, err)
-	}
-	return nil
 }
 
 // copyBody copies one object's body file to another while computing the MD5
@@ -311,6 +311,7 @@ func (s *s3Store) copyBody(srcBucket, srcKey, dstBucket, dstKey string) (etag st
 }
 
 // listObjects returns all objects in bucket whose keys start with prefix.
+// Uses getObjectMeta to avoid loading object bodies from disk.
 func (s *s3Store) listObjects(ctx context.Context, bucket, prefix string) ([]*Object, *protocol.AWSError) {
 	scanPrefix := objectStoreKey(bucket, prefix)
 	keys, err := s.store.List(ctx, nsObjects, scanPrefix)
@@ -323,7 +324,7 @@ func (s *s3Store) listObjects(ctx context.Context, bucket, prefix string) ([]*Ob
 		// List returns keys that include the bucket/ prefix — strip it to get
 		// just the object key for the individual get.
 		objKey := strings.TrimPrefix(k, bucket+"/")
-		obj, aerr := s.getObject(ctx, bucket, objKey)
+		obj, aerr := s.getObjectMeta(ctx, bucket, objKey)
 		if aerr != nil {
 			return nil, aerr
 		}
@@ -442,4 +443,189 @@ func (s *s3Store) putNotificationConfig(ctx context.Context, bucket string, cfg 
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil
+}
+
+// ---- Multipart upload state ------------------------------------------------
+
+const (
+	nsMultipart = "s3:multipart" // stores MultipartUpload by uploadID
+	nsParts     = "s3:parts"     // stores Part by "<uploadID>/<partNumber>"
+)
+
+// MultipartUpload tracks an initiated multipart upload before completion.
+type MultipartUpload struct {
+	UploadID    string            `json:"upload_id"`
+	Bucket      string            `json:"bucket"`
+	Key         string            `json:"key"`
+	ContentType string            `json:"content_type"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+	Initiated   time.Time         `json:"initiated"`
+}
+
+// Part holds the metadata for one uploaded part.
+// The body is stored on disk at partBodyPath(uploadID, partNumber).
+type Part struct {
+	PartNumber   int       `json:"part_number"`
+	ETag         string    `json:"etag"`
+	Size         int64     `json:"size"`
+	LastModified time.Time `json:"last_modified"`
+}
+
+// partStoreKey returns the state-store key for a specific part.
+func partStoreKey(uploadID string, partNumber int) string {
+	return fmt.Sprintf("%s/%d", uploadID, partNumber)
+}
+
+// partBodyPath returns the on-disk path for a part body.
+func (s *s3Store) partBodyPath(uploadID string, partNumber int) string {
+	return filepath.Join(s.bodyDir, "multipart", uploadID, fmt.Sprintf("%d", partNumber))
+}
+
+func (s *s3Store) createMultipartUpload(ctx context.Context, upload *MultipartUpload) *protocol.AWSError {
+	raw, err := json.Marshal(upload)
+	if err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if err := s.store.Set(ctx, nsMultipart, upload.UploadID, string(raw)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+func (s *s3Store) getMultipartUpload(ctx context.Context, uploadID string) (*MultipartUpload, *protocol.AWSError) {
+	raw, found, err := s.store.Get(ctx, nsMultipart, uploadID)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if !found {
+		return nil, errNoSuchUpload(uploadID)
+	}
+	var u MultipartUpload
+	if err := json.Unmarshal([]byte(raw), &u); err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return &u, nil
+}
+
+func (s *s3Store) deleteMultipartUpload(ctx context.Context, uploadID string) *protocol.AWSError {
+	if err := s.store.Delete(ctx, nsMultipart, uploadID); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+// listMultipartUploads returns all in-progress uploads for the given bucket.
+func (s *s3Store) listMultipartUploads(ctx context.Context, bucket string) ([]*MultipartUpload, *protocol.AWSError) {
+	keys, err := s.store.List(ctx, nsMultipart, "")
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	result := make([]*MultipartUpload, 0)
+	for _, k := range keys {
+		u, aerr := s.getMultipartUpload(ctx, k)
+		if aerr != nil {
+			return nil, aerr
+		}
+		if u.Bucket == bucket {
+			result = append(result, u)
+		}
+	}
+	return result, nil
+}
+
+// putPartStream streams the part body to disk and returns the ETag and size.
+func (s *s3Store) putPartStream(uploadID string, partNumber int, body io.Reader) (etag string, n int64, err error) {
+	p := s.partBodyPath(uploadID, partNumber)
+	if mkErr := os.MkdirAll(filepath.Dir(p), 0o755); mkErr != nil {
+		return "", 0, fmt.Errorf("s3: create part dir %s/%d: %w", uploadID, partNumber, mkErr)
+	}
+
+	f, fErr := os.Create(p)
+	if fErr != nil {
+		return "", 0, fmt.Errorf("s3: create part file %s/%d: %w", uploadID, partNumber, fErr)
+	}
+
+	h := md5.New()
+	w := io.MultiWriter(f, h)
+	n, err = io.Copy(w, body)
+	if cerr := f.Close(); cerr != nil && err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(p)
+		return "", 0, fmt.Errorf("s3: stream part %s/%d: %w", uploadID, partNumber, err)
+	}
+	return fmt.Sprintf(`"%x"`, h.Sum(nil)), n, nil
+}
+
+// savePart persists part metadata to the state store.
+func (s *s3Store) savePart(ctx context.Context, uploadID string, part *Part) *protocol.AWSError {
+	raw, err := json.Marshal(part)
+	if err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if err := s.store.Set(ctx, nsParts, partStoreKey(uploadID, part.PartNumber), string(raw)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+// listParts returns all parts for an upload, sorted by part number.
+func (s *s3Store) listParts(ctx context.Context, uploadID string) ([]*Part, *protocol.AWSError) {
+	keys, err := s.store.List(ctx, nsParts, uploadID+"/")
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	parts := make([]*Part, 0, len(keys))
+	for _, k := range keys {
+		raw, found, getErr := s.store.Get(ctx, nsParts, k)
+		if getErr != nil {
+			return nil, protocol.Wrap(protocol.ErrInternalError, getErr)
+		}
+		if !found {
+			continue
+		}
+		var p Part
+		if jsonErr := json.Unmarshal([]byte(raw), &p); jsonErr != nil {
+			return nil, protocol.Wrap(protocol.ErrInternalError, jsonErr)
+		}
+		parts = append(parts, &p)
+	}
+	// Sort by part number ascending.
+	sort.Slice(parts, func(i, j int) bool {
+		return parts[i].PartNumber < parts[j].PartNumber
+	})
+	return parts, nil
+}
+
+// deleteAllParts removes all part metadata and body files for an upload.
+func (s *s3Store) deleteAllParts(ctx context.Context, uploadID string) *protocol.AWSError {
+	keys, err := s.store.List(ctx, nsParts, uploadID+"/")
+	if err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	for _, k := range keys {
+		if delErr := s.store.Delete(ctx, nsParts, k); delErr != nil {
+			return protocol.Wrap(protocol.ErrInternalError, delErr)
+		}
+	}
+	// Remove all part body files — ignore OS-level errors since they are non-critical.
+	dir := filepath.Join(s.bodyDir, "multipart", uploadID)
+	os.RemoveAll(dir)
+	return nil
+}
+
+// openPartBody opens a part body file for reading. Caller must close.
+func (s *s3Store) openPartBody(uploadID string, partNumber int) (*os.File, error) {
+	return os.Open(s.partBodyPath(uploadID, partNumber))
+}
+
+// ---- Multipart-specific errors ---------------------------------------------
+
+func errNoSuchUpload(uploadID string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "NoSuchUpload",
+		Message:    fmt.Sprintf("The specified upload does not exist: %s", uploadID),
+		HTTPStatus: http.StatusNotFound,
+	}
 }

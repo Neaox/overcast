@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"sync"
+
+	"github.com/Neaox/overcast/internal/state"
 )
 
 // MockStore is a hand-written test double for state.Store.
@@ -120,6 +122,26 @@ func (m *MockStore) List(_ context.Context, namespace, prefix string) ([]string,
 }
 
 func (m *MockStore) Close() error { return nil }
+
+// Scan returns key-value pairs matching the prefix (implements state.Store).
+func (m *MockStore) Scan(_ context.Context, namespace, prefix string) ([]state.KV, error) {
+	nsPrefix := namespace + "\x00"
+	fullPrefix := nsPrefix + prefix
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var pairs []state.KV
+	for k, v := range m.data {
+		if strings.HasPrefix(k, fullPrefix) {
+			pairs = append(pairs, state.KV{Key: strings.TrimPrefix(k, nsPrefix), Value: v})
+		}
+	}
+	if pairs == nil {
+		pairs = []state.KV{}
+	}
+	return pairs, nil
+}
 
 // Reset clears all stored data and recorded calls.
 func (m *MockStore) Reset() {

@@ -10,6 +10,10 @@
   },
   "go.lintTool": "golangci-lint",
   "go.lintOnSave": "package",
+  "go.buildTags": "dev",
+  "gopls": {
+    "build.standaloneTags": ["ignore", "dev"]
+  },
 
   // ---- Test runner --------------------------------------------------------
   // Note: -race is intentionally omitted here.
@@ -95,9 +99,33 @@
     "**/*.db": true
   },
 
+  // ---- Tailwind CSS IntelliSense ------------------------------------------
+  // Only detect Tailwind classes inside className/class attributes and
+  // utility helpers (cn, clsx, cva, tw). Prevents false positives on JS
+  // identifiers like "table" being flagged as conflicting Tailwind utilities.
+  "tailwindCSS.experimental.classRegex": [
+    ["className\\s*=\\s*[\"'`]([^\"'`]*)[\"'`]"],
+    ["class\\s*=\\s*[\"'`]([^\"'`]*)[\"'`]"],
+    ["cn\\(([^)]*)\\)", "[\"'`]([^\"'`]*)[\"'`]"],
+    ["clsx\\(([^)]*)\\)", "[\"'`]([^\"'`]*)[\"'`]"],
+    ["cva\\(([^)]*)\\)", "[\"'`]([^\"'`]*)[\"'`]"]
+  ],
+
   // ---- Claude extension ---------------------------------------------------
   "claude.projectInstructions": "See AGENTS.md and CLAUDE.md at the project root.",
+
+  // ---- YAML schema overrides ----------------------------------------------
+  // The Red Hat YAML extension auto-detects .golangci.yml as golangci-lint v2
+  // config from SchemaStore, but this project uses golangci-lint v1 which has
+  // a different config format. Disable the auto schema for this file.
+  "yaml.schemas": {
+    "https://json.schemastore.org/golangci-lint": "!.golangci.yml"
+  },
+
   "chat.tools.terminal.autoApprove": {
-    "go": true
+    "go": true,
+    "npx tsc": true,
+    "npx eslint": true,
+    "strings": true
   }
 }

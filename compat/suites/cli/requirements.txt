@@ -1,0 +1,17 @@
+# AWS CLI version used by this suite.
+#
+# The devcontainer installs this automatically (see .devcontainer/Dockerfile).
+#
+# To install manually inside a running container:
+#
+#   curl -sSfL https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.24.21.zip \
+#     -o /tmp/awscli.zip \
+#     && unzip -q /tmp/awscli.zip -d /tmp \
+#     && sudo /tmp/aws/install \
+#     && rm -rf /tmp/awscli.zip /tmp/aws
+#
+# To upgrade: bump AWS_CLI_VERSION in .devcontainer/Dockerfile and update the
+# version number above, then rebuild the container.
+#
+# Current pinned version:
+awscli-version: 2.24.21

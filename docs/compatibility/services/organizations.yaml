@@ -1,0 +1,21 @@
+service: organizations
+status: not_started
+priority: p2
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]
+implementation: [internal/services/organizations]
+integration_tests: [tests/integration/organizations]
+capability_docs: docs/services/organizations.md
+operation_count_estimate: 1 tracked, inert
+current_support_level: Hardcoded DescribeOrganization stub only.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Keep minimal CDK-unblocking stub unless real Organizations workflows become a target.
+  intentionally_partial: []
+handoff:
+  start_with: [DescribeOrganization]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/organizations/... ./tests/integration/organizations/...]

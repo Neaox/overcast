@@ -182,70 +182,166 @@
   --sidebar-item-active-fg: var(--_dark-sidebar-item-active-fg);
 }
 
-/* ─── Base ────────────────────────────────────────────────────────────── */
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
+@layer base {
+  /* ─── Base ──────────────────────────────────────────────────────────── */
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
 
-html {
-  height: 100%;
-  font-size: 16px; /* base — override per breakpoint below */
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-/* Scale up on larger/higher-density displays so the UI doesn't feel tiny. */
-@media (min-width: 1920px) {
   html {
-    font-size: 17px;
+    height: 100%;
+    font-size: 16px; /* base — override per breakpoint below */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Scale up on larger/higher-density displays so the UI doesn't feel tiny. */
+  @media (min-width: 1920px) {
+    html {
+      font-size: 17px;
+    }
+  }
+  @media (min-width: 2560px) {
+    html {
+      font-size: 19px;
+    }
+  }
+  @media (min-width: 3200px) {
+    html {
+      font-size: 22px;
+    }
+  }
+
+  body {
+    height: 100%;
+    margin: 0;
+    background-color: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    line-height: 1.5;
+  }
+
+  #root {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ─── Scrollbar styling ─────────────────────────────────────────────── */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--fg-subtle);
+  }
+
+  /* ─── Focus ring ────────────────────────────────────────────────────── */
+  /* In @layer base so Tailwind utility classes (focus-visible:outline-none
+     etc.) in @layer utilities always take precedence. */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* ─── React Flow — crisp node rendering ────────────────────────────── */
+  /*
+   * React Flow positions nodes with CSS transforms at fractional zoom levels.
+   * Without GPU compositing, sub-pixel coordinates cause border anti-aliasing
+   * that makes node borders appear cut off or faded on one side.
+   * `will-change: transform` promotes each node to its own compositor layer,
+   * snapping it to integer pixels and eliminating the artefact.
+   */
+  .react-flow__node {
+    will-change: transform;
+  }
+
+  /* ─── JSON Editor (react-simple-code-editor + PrismJS json) ─────────── */
+  /*
+   * react-simple-code-editor overlays a <pre> on top of a <textarea>.
+   * The textarea is transparent; the <pre> renders the highlighted tokens.
+   * Both need the same font/size/padding so they stay in sync.
+   */
+  .json-editor-wrap .npm__react-simple-code-editor__textarea,
+  .json-editor-wrap pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.75rem;
+    line-height: 1.6;
+  }
+  /* Placeholder text shown when the editor is empty */
+  .json-editor-wrap .json-placeholder {
+    color: var(--fg-subtle);
+    pointer-events: none;
+    user-select: none;
+  }
+  /* Prism token colours — designed for both light and dark modes via CSS vars */
+  .token.punctuation {
+    color: var(--fg-muted);
+  }
+  .token.property {
+    color: var(--accent);
+  }
+  .token.string {
+    color: oklch(0.52 0.14 145);
+  } /* green-ish */
+  .token.number {
+    color: oklch(0.58 0.16 35);
+  } /* orange */
+  .token.boolean,
+  .token.null.keyword {
+    color: oklch(0.55 0.16 290);
+  } /* purple */
+
+  /* Dark overrides */
+  .dark .token.string {
+    color: oklch(0.72 0.14 145);
+  }
+  .dark .token.number {
+    color: oklch(0.75 0.14 55);
+  }
+  .dark .token.boolean,
+  .dark .token.null.keyword {
+    color: oklch(0.72 0.15 290);
   }
 }
-@media (min-width: 2560px) {
-  html {
-    font-size: 19px;
-  }
+
+/* ─── React Flow — controls (zoom/fit buttons) ──────────────────────────
+   These must live OUTSIDE @layer base. ReactFlow's own styles (imported via
+   "@xyflow/react/dist/style.css") are unlayered — in CSS, unlayered rules
+   always beat layered rules regardless of specificity. By keeping these
+   overrides unlayered too, normal specificity applies and our theme tokens
+   win.
+   ──────────────────────────────────────────────────────────────────────── */
+.react-flow__controls {
+  --xy-controls-box-shadow: 0 0 0 1px var(--border);
+  --xy-controls-button-background-color: var(--bg-elevated);
+  --xy-controls-button-background-color-hover: var(--bg-subtle);
+  --xy-controls-button-border-color: var(--border);
+  --xy-controls-button-color: var(--fg);
+  --xy-controls-button-color-hover: var(--fg);
+  border-radius: 0.375rem;
+  overflow: hidden;
 }
-@media (min-width: 3200px) {
-  html {
-    font-size: 22px;
-  }
+.react-flow__controls-button svg {
+  fill: var(--fg);
 }
 
-body {
-  height: 100%;
-  margin: 0;
-  background-color: var(--bg);
-  color: var(--fg);
-  font-family: var(--font-sans);
-  line-height: 1.5;
+/* ─── View Transitions — dashboard minimap ↔ full map morph ──────────── */
+::view-transition-group(system-map) {
+  animation-duration: 0.35s;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
-
-#root {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-/* ─── Scrollbar styling ───────────────────────────────────────────────── */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--fg-subtle);
-}
-
-/* ─── Focus ring ──────────────────────────────────────────────────────── */
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+::view-transition-old(system-map),
+::view-transition-new(system-map) {
+  /* Cross-fade during the morph to avoid jarring flashes */
+  mix-blend-mode: normal;
 }

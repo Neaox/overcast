@@ -10,7 +10,7 @@ package s3
 import (
 	"net/http"
 
-	"github.com/your-org/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/protocol"
 )
 
 // ---- Bucket GET stubs ------------------------------------------------------
@@ -23,20 +23,9 @@ func (h *Handler) GetBucketAcl(w http.ResponseWriter, r *http.Request) {
 
 // GetBucketCors handles GET /{bucket}?cors
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketCors.html
+// Implemented in handler_bucket.go.
 func (h *Handler) GetBucketCors(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
-// GetBucketPolicy handles GET /{bucket}?policy
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketPolicy.html
-func (h *Handler) GetBucketPolicy(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
-// GetBucketPolicyStatus handles GET /{bucket}?policyStatus
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketPolicyStatus.html
-func (h *Handler) GetBucketPolicyStatus(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
+	h.getBucketCors(w, r)
 }
 
 // GetBucketLifecycleConfiguration handles GET /{bucket}?lifecycle
@@ -46,22 +35,11 @@ func (h *Handler) GetBucketLifecycleConfiguration(w http.ResponseWriter, r *http
 	protocol.NotImplementedXML(w, r)
 }
 
-// GetBucketVersioning handles GET /{bucket}?versioning
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketVersioning.html
-func (h *Handler) GetBucketVersioning(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
-// GetBucketTagging handles GET /{bucket}?tagging
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketTagging.html
-func (h *Handler) GetBucketTagging(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
 // GetBucketWebsite handles GET /{bucket}?website
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketWebsite.html
+// Implemented in handler_bucket.go.
 func (h *Handler) GetBucketWebsite(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
+	h.getBucketWebsite(w, r)
 }
 
 // GetBucketLogging handles GET /{bucket}?logging
@@ -106,25 +84,12 @@ func (h *Handler) GetPublicAccessBlock(w http.ResponseWriter, r *http.Request) {
 	protocol.NotImplementedXML(w, r)
 }
 
-// ListMultipartUploads handles GET /{bucket}?uploads
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListMultipartUploads.html
-func (h *Handler) ListMultipartUploads(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
-// ListObjectVersions handles GET /{bucket}?versions
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectVersions.html
-func (h *Handler) ListObjectVersions(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
 // ListObjects handles GET /{bucket} (legacy v1 listing, no list-type param).
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjects.html
 //
-// TODO(priority:P3): return v1-format response with Marker instead of ContinuationToken.
+// Implemented in handler_bucket.go as ListObjectsV1.
 func (h *Handler) ListObjects(w http.ResponseWriter, r *http.Request) {
-	// Temporary: delegate to ListObjectsV2 — same data, different pagination params.
-	h.ListObjectsV2(w, r)
+	h.ListObjectsV1(w, r)
 }
 
 // ListBucketAnalyticsConfigurations handles GET /{bucket}?analytics
@@ -197,14 +162,9 @@ func (h *Handler) PutBucketAcl(w http.ResponseWriter, r *http.Request) {
 
 // PutBucketCors handles PUT /{bucket}?cors
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketCors.html
+// Implemented in handler_bucket.go.
 func (h *Handler) PutBucketCors(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
-// PutBucketPolicy handles PUT /{bucket}?policy
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketPolicy.html
-func (h *Handler) PutBucketPolicy(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
+	h.putBucketCors(w, r)
 }
 
 // PutBucketLifecycleConfiguration handles PUT /{bucket}?lifecycle
@@ -214,22 +174,11 @@ func (h *Handler) PutBucketLifecycleConfiguration(w http.ResponseWriter, r *http
 	protocol.NotImplementedXML(w, r)
 }
 
-// PutBucketVersioning handles PUT /{bucket}?versioning
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketVersioning.html
-func (h *Handler) PutBucketVersioning(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
-// PutBucketTagging handles PUT /{bucket}?tagging
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketTagging.html
-func (h *Handler) PutBucketTagging(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
 // PutBucketWebsite handles PUT /{bucket}?website
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketWebsite.html
+// Implemented in handler_bucket.go.
 func (h *Handler) PutBucketWebsite(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
+	h.putBucketWebsite(w, r)
 }
 
 // PutBucketLogging handles PUT /{bucket}?logging
@@ -331,21 +280,9 @@ func (h *Handler) DeleteBucketCors(w http.ResponseWriter, r *http.Request) {
 	protocol.NotImplementedXML(w, r)
 }
 
-// DeleteBucketPolicy handles DELETE /{bucket}?policy
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketPolicy.html
-func (h *Handler) DeleteBucketPolicy(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
 // DeleteBucketLifecycle handles DELETE /{bucket}?lifecycle
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketLifecycle.html
 func (h *Handler) DeleteBucketLifecycle(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
-// DeleteBucketTagging handles DELETE /{bucket}?tagging
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketTagging.html
-func (h *Handler) DeleteBucketTagging(w http.ResponseWriter, r *http.Request) {
 	protocol.NotImplementedXML(w, r)
 }
 
@@ -431,12 +368,6 @@ func (h *Handler) GetObjectAcl(w http.ResponseWriter, r *http.Request) {
 	protocol.NotImplementedXML(w, r)
 }
 
-// GetObjectTagging handles GET /{bucket}/{key}?tagging
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectTagging.html
-func (h *Handler) GetObjectTagging(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
 // GetObjectAttributes handles GET /{bucket}/{key}?attributes
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectAttributes.html
 func (h *Handler) GetObjectAttributes(w http.ResponseWriter, r *http.Request) {
@@ -461,23 +392,11 @@ func (h *Handler) GetObjectTorrent(w http.ResponseWriter, r *http.Request) {
 	protocol.NotImplementedXML(w, r)
 }
 
-// ListParts handles GET /{bucket}/{key}?uploadId=xxx
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html
-func (h *Handler) ListParts(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
 // ---- Object PUT stubs ------------------------------------------------------
 
 // PutObjectAcl handles PUT /{bucket}/{key}?acl
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectAcl.html
 func (h *Handler) PutObjectAcl(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
-// PutObjectTagging handles PUT /{bucket}/{key}?tagging
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectTagging.html
-func (h *Handler) PutObjectTagging(w http.ResponseWriter, r *http.Request) {
 	protocol.NotImplementedXML(w, r)
 }
 
@@ -505,12 +424,6 @@ func (h *Handler) UpdateObjectEncryption(w http.ResponseWriter, r *http.Request)
 	protocol.NotImplementedXML(w, r)
 }
 
-// UploadPart handles PUT /{bucket}/{key}?partNumber=N&uploadId=xxx
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPart.html
-func (h *Handler) UploadPart(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
 // UploadPartCopy handles PUT /{bucket}/{key}?partNumber=N with x-amz-copy-source header.
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html
 func (h *Handler) UploadPartCopy(w http.ResponseWriter, r *http.Request) {
@@ -519,31 +432,7 @@ func (h *Handler) UploadPartCopy(w http.ResponseWriter, r *http.Request) {
 
 // ---- Object DELETE stubs ---------------------------------------------------
 
-// DeleteObjectTagging handles DELETE /{bucket}/{key}?tagging
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjectTagging.html
-func (h *Handler) DeleteObjectTagging(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
-// AbortMultipartUpload handles DELETE /{bucket}/{key}?uploadId=xxx
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html
-func (h *Handler) AbortMultipartUpload(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
 // ---- Object POST stubs -----------------------------------------------------
-
-// CreateMultipartUpload handles POST /{bucket}/{key}?uploads
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateMultipartUpload.html
-func (h *Handler) CreateMultipartUpload(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
-// CompleteMultipartUpload handles POST /{bucket}/{key}?uploadId=xxx
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html
-func (h *Handler) CompleteMultipartUpload(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
 
 // RestoreObject handles POST /{bucket}/{key}?restore
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_RestoreObject.html

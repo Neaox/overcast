@@ -1,0 +1,21 @@
+service: stepfunctions
+status: not_started
+priority: p1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [aws_json_1_0, aws_json_1_1, rpcv2_cbor]
+implementation: [internal/services/stepfunctions]
+integration_tests: [tests/integration/stepfunctions]
+capability_docs: docs/services/stepfunctions.md
+operation_count_estimate: 5 supported
+current_support_level: State-machine CRUD supported; executions are inert/no-op but capabilities mark supported.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Change StartExecution/execution tracking to inert/partial or document why supported is acceptable.
+  intentionally_partial: []
+handoff:
+  start_with: [StartExecution, DescribeExecution, state machine CRUD]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/stepfunctions/... ./tests/integration/stepfunctions/...]

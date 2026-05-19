@@ -1,0 +1,69 @@
+service: lambda
+status: fixed
+priority: p0
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-19
+protocols: [rest_json, event_stream]
+implementation: [internal/services/lambda]
+integration_tests: [tests/integration/lambda]
+capability_docs: docs/services/lambda.md
+operation_count_estimate: 33 tracked; 32 supported, 1 unsupported
+current_support_level: Broad control plane plus Docker-backed invoke; InvokeAsync unsupported.
+operations:
+  CreateFunction:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/lambda/latest/api/API_CreateFunction.html
+    protocol: REST JSON; POST /2015-03-31/functions; application/json request and response
+    tests:
+      - go test -count=1 -run 'TestCreateFunction_' ./tests/integration/lambda/...
+      - go test -count=1 ./internal/services/lambda/...
+    scenarios:
+      default_zip_function:
+        status: reviewed
+        evidence: Existing success/default tests verify 201 response, AWS defaults Timeout=3, MemorySize=128, PackageType=Zip, and Architectures=[x86_64].
+      required_fields:
+        status: fixed
+        evidence: Added tests for missing Code, Runtime, and Handler on Zip package functions; handler now returns InvalidParameterValueException HTTP 400.
+      image_package:
+        status: fixed
+        evidence: Added test for PackageType=Image with Runtime; handler now rejects Runtime on image functions and requires Code.ImageUri.
+      enum_and_bounds_validation:
+        status: fixed
+        evidence: Added tests for invalid PackageType, Timeout > 900, MemorySize < 128, and invalid Architectures; handler now returns InvalidParameterValueException HTTP 400.
+      duplicate_function:
+        status: reviewed
+        evidence: Existing test verifies duplicate FunctionName returns ResourceConflictException HTTP 409.
+      deprecated_runtime:
+        status: reviewed
+        evidence: Existing test verifies deprecated runtime rejection.
+      publish_on_create:
+        status: tests_missing
+        gap: Publish=true should publish initial version 1; not reviewed in this pass.
+      advanced_configuration:
+        status: intentionally_partial
+        gap: Code signing, SnapStart, DeadLetterConfig, FileSystemConfigs, KMS, EphemeralStorage, TracingConfig, DurableConfig, TenancyConfig, and CapacityProviderConfig are not fully emulated.
+      lifecycle_state:
+        status: intentionally_partial
+        gap: Overcast can return Pending during Docker image prewarm and Active immediately otherwise; real Lambda provisioning state timing is not fully emulated.
+    findings:
+      fixed:
+        - Zip CreateFunction requests without Code, Runtime, or Handler were accepted; now rejected as AWS InvalidParameterValueException.
+        - Invalid PackageType, invalid Architectures, Timeout > 900, and MemorySize outside 128..32768 were accepted; now rejected.
+        - Image CreateFunction requests with Runtime were accepted; now rejected.
+      remaining_gaps:
+        - Review Publish=true version creation and additional optional configuration fields before marking CreateFunction reviewed.
+findings:
+  fixed: []
+  remaining_gaps:
+    - Finish CreateFunction Publish=true and advanced optional configuration review.
+    - Review runtime invocation fidelity, error shapes, layers, and event source mappings.
+    - Review Docker-unavailable fallback compatibility.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateFunction Publish=true, Invoke, event source mappings]
+  do_not_redo: [CreateFunction required fields, CreateFunction PackageType/Image Runtime validation, CreateFunction Timeout/MemorySize/Architectures validation]
+  commands:
+    - go test -count=1 -run 'TestCreateFunction_' ./tests/integration/lambda/...
+    - go test -count=1 ./internal/services/lambda/...
+    - go vet ./internal/services/lambda/... ./tests/integration/lambda/...

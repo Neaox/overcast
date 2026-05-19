@@ -1,0 +1,22 @@
+service: elbv2
+status: not_started
+priority: p1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [query]
+implementation: [internal/services/elbv2]
+integration_tests: [tests/integration/elbv2]
+capability_docs: docs/services/elb.md
+operation_count_estimate: 15 tracked; 12 supported, 3 unsupported
+current_support_level: Metadata-only ALB/NLB resources; no traffic proxying.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Check docs naming/path consistency between elb.md and service elbv2.
+    - Verify unsupported listener rule and attribute operations are intentionally tracked.
+  intentionally_partial: []
+handoff:
+  start_with: [CreateLoadBalancer, CreateTargetGroup, listeners]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/elbv2/... ./tests/integration/elbv2/...]

@@ -34,7 +34,6 @@
 
   "version": "0.2.0",
   "configurations": [
-
     // ---- Server debugging -------------------------------------------------
 
     {
@@ -51,13 +50,13 @@
       "type": "go",
       "request": "launch",
       "mode": "debug",
-      "program": "${workspaceFolder}/cmd/overcast",
+      "program": "${workspaceFolder}/cmd/overcastd",
       "env": {
         "OVERCAST_PORT": "4566",
         "OVERCAST_STATE": "memory",
         "OVERCAST_LOG_LEVEL": "debug",
         "OVERCAST_DEBUG": "true",
-        "OVERCAST_REGION": "us-east-1",
+        "OVERCAST_DEFAULT_REGION": "us-east-1",
         "OVERCAST_ACCOUNT_ID": "000000000000"
       },
       "console": "integratedTerminal",
@@ -75,7 +74,7 @@
       "type": "go",
       "request": "launch",
       "mode": "debug",
-      "program": "${workspaceFolder}/cmd/overcast",
+      "program": "${workspaceFolder}/cmd/overcastd",
       "env": {
         "OVERCAST_PORT": "4566",
         "OVERCAST_STATE": "sqlite",
@@ -164,7 +163,7 @@
       // Useful when you want to debug the server started by docker-compose.dev.yml.
       //
       // First start Delve manually in the container:
-      //   dlv debug ./cmd/overcast --headless --listen=:2345 --api-version=2 \
+      //   dlv debug ./cmd/overcastd --headless --listen=:2345 --api-version=2 \
       //     --accept-multiclient -- (env vars as normal)
       //
       // Then select this configuration and press F5.

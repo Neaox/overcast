@@ -8,7 +8,9 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 )
 
 // ---- Error types -----------------------------------------------------------
@@ -127,6 +129,15 @@ var (
 		Message:    "An internal error occurred.",
 		HTTPStatus: http.StatusInternalServerError,
 	}
+
+	// ErrServiceDisabled is returned when a request targets a service that is
+	// known to the emulator but not enabled in the current configuration.
+	// Callers should add the service name to OVERCAST_SERVICES to enable it.
+	ErrServiceDisabled = &AWSError{
+		Code:       "ServiceDisabled",
+		Message:    "This service is not enabled in this emulator. Add it to OVERCAST_SERVICES to enable it.",
+		HTTPStatus: http.StatusServiceUnavailable,
+	}
 )
 
 // ErrInvalidArgument returns a 400 error for malformed input.
@@ -184,14 +195,23 @@ func WriteXMLError(w http.ResponseWriter, r *http.Request, aerr *AWSError) {
 		RequestID: reqID,
 	})
 
+	// Drain the request body so the HTTP/1.1 connection can be reused by the
+	// SDK client. Without this, the client logs "failed to close HTTP response
+	// body, this may affect connection reuse".
+	if r.Body != nil {
+		io.Copy(io.Discard, r.Body) //nolint:errcheck
+		r.Body.Close()              //nolint:errcheck
+	}
+
+	full := append([]byte(xml.Header), body...)
 	w.Header().Set("Content-Type", "application/xml")
+	w.Header().Set("Content-Length", strconv.Itoa(len(full)))
 	w.Header().Set("x-amz-request-id", reqID)
 	if aerr.HTTPStatus == http.StatusNotImplemented {
 		w.Header().Set("x-emulator-unsupported", "true")
 	}
 	w.WriteHeader(aerr.HTTPStatus)
-	w.Write([]byte(xml.Header))
-	w.Write(body)
+	w.Write(full)
 }
 
 // ---- JSON error format (SQS, SNS, DynamoDB, Lambda) -----------------------
@@ -212,7 +232,15 @@ func WriteJSONError(w http.ResponseWriter, r *http.Request, aerr *AWSError) {
 		Message: aerr.Message,
 	})
 
+	// Drain the request body so the HTTP/1.1 connection can be reused by the
+	// SDK client.
+	if r.Body != nil {
+		io.Copy(io.Discard, r.Body) //nolint:errcheck
+		r.Body.Close()              //nolint:errcheck
+	}
+
 	w.Header().Set("Content-Type", "application/x-amz-json-1.0")
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	w.Header().Set("x-amzn-requestid", reqID)
 	if aerr.HTTPStatus == http.StatusNotImplemented {
 		w.Header().Set("x-emulator-unsupported", "true")
@@ -229,4 +257,50 @@ func NotImplementedXML(w http.ResponseWriter, r *http.Request) {
 // NotImplementedJSON is a convenience handler for unimplemented JSON endpoints.
 func NotImplementedJSON(w http.ResponseWriter, r *http.Request) {
 	WriteJSONError(w, r, ErrNotImplemented)
+}
+
+// ---- Query-protocol XML error format (SNS) ---------------------------------
+
+// queryXMLErrorResponse is the wire envelope used by AWS Query-protocol services (SNS).
+type queryXMLErrorResponse struct {
+	XMLName   xml.Name      `xml:"ErrorResponse"`
+	Error     queryXMLError `xml:"Error"`
+	RequestID string        `xml:"RequestId"`
+}
+
+type queryXMLError struct {
+	Type    string `xml:"Type"`
+	Code    string `xml:"Code"`
+	Message string `xml:"Message"`
+}
+
+// WriteQueryXMLError writes an AWS Query-protocol XML error response (SNS format).
+func WriteQueryXMLError(w http.ResponseWriter, r *http.Request, aerr *AWSError) {
+	reqID := RequestIDFromContext(r.Context())
+	body, _ := xml.Marshal(&queryXMLErrorResponse{
+		Error: queryXMLError{
+			Type:    "Sender",
+			Code:    aerr.Code,
+			Message: aerr.Message,
+		},
+		RequestID: reqID,
+	})
+	if r.Body != nil {
+		io.Copy(io.Discard, r.Body) //nolint:errcheck
+		r.Body.Close()              //nolint:errcheck
+	}
+	full := append([]byte(xml.Header), body...)
+	w.Header().Set("Content-Type", "text/xml")
+	w.Header().Set("Content-Length", strconv.Itoa(len(full)))
+	w.Header().Set("x-amzn-requestid", reqID)
+	if aerr.HTTPStatus == http.StatusNotImplemented {
+		w.Header().Set("x-emulator-unsupported", "true")
+	}
+	w.WriteHeader(aerr.HTTPStatus)
+	w.Write(full)
+}
+
+// NotImplementedQueryXML writes a 501 for unimplemented Query-protocol operations.
+func NotImplementedQueryXML(w http.ResponseWriter, r *http.Request) {
+	WriteQueryXMLError(w, r, ErrNotImplemented)
 }

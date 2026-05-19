@@ -8,37 +8,35 @@ import { useEffect } from "react"
 import { Outlet, useNavigate } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
-import { api } from "@/services/api"
-import { useEndpoint } from "@/hooks/use-endpoint"
+import { sqsQueueQueryOptions } from "@/features/sqs/data"
 import { useToast } from "@/components/ui/toast"
 import { Spinner } from "@/components/ui/primitives"
 
 export const Route = createFileRoute("/sqs/$queue")({
+  head: ({ params }) => ({ meta: [{ title: `${params.queue} — SQS — Overcast` }] }),
   component: QueueLayout,
 })
 
 function QueueLayout() {
   const { queue } = Route.useParams()
-  const { endpoint } = useEndpoint()
   const navigate = useNavigate()
   const { toast } = useToast()
 
   const { isLoading, isError, error } = useQuery({
-    queryKey: ["sqs", "queue-exists", endpoint.baseUrl, queue],
-    queryFn: () => api.sqs.getQueue(queue),
+    ...sqsQueueQueryOptions(queue),
     retry: false,
     staleTime: 30_000,
   })
 
   useEffect(() => {
     if (!isError) return
-    navigate({ to: "/sqs" })
+    void navigate({ to: "/sqs" })
     toast({
       title: `Queue "${queue}" not found`,
-      description: (error as Error)?.message,
+      description: error.message,
       variant: "danger",
     })
-  }, [isError]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isError]) // eslint-disable-line react-hooks/exhaustive-deps -- navigate/toast/queue/error are stable or only needed on error transition
 
   if (isLoading) {
     return (

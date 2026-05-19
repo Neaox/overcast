@@ -1,10 +1,10 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
-import { Loader2 } from "lucide-react"
+import { AlertTriangle, Loader2 } from "lucide-react"
 
 // ─── Spinner ──────────────────────────────────────────────────────────────
 function Spinner({ className }: { className?: string }) {
-  return <Loader2 className={cn("h-4 w-4 animate-spin text-fg-muted", className)} />
+  return <Loader2 className={cn("h-4 w-4 animate-spin", className)} />
 }
 
 // ─── Empty state ──────────────────────────────────────────────────────────
@@ -29,10 +29,80 @@ function EmptyState({ icon, title, description, action, className }: EmptyStateP
   )
 }
 
+// ─── Query List State ─────────────────────────────────────────────────────
+interface QueryListStateProps {
+  isLoading: boolean
+  isEmpty: boolean
+  error?: unknown
+  empty?: React.ReactNode
+  emptyTitle?: string
+  emptyDescription?: string
+  emptyIcon?: React.ReactNode
+  emptyAction?: React.ReactNode
+  emptyClassName?: string
+  loadingClassName?: string
+  errorTitle?: string
+  errorDescription?: string
+}
+
+function queryErrorMessage(error: unknown): string | undefined {
+  if (error instanceof Error) return error.message
+  if (typeof error === "string") return error
+  return undefined
+}
+
+function QueryListState({
+  isLoading,
+  isEmpty,
+  error,
+  empty,
+  emptyTitle = "No data",
+  emptyDescription,
+  emptyIcon,
+  emptyAction,
+  emptyClassName,
+  loadingClassName,
+  errorTitle = "Unable to load data",
+  errorDescription,
+}: QueryListStateProps) {
+  if (isLoading) {
+    return (
+      <div className={cn("flex justify-center py-16", loadingClassName)}>
+        <Spinner className="h-6 w-6" />
+      </div>
+    )
+  }
+
+  if (isEmpty && error) {
+    return (
+      <EmptyState
+        icon={<AlertTriangle className="h-10 w-10" />}
+        title={errorTitle}
+        description={errorDescription ?? queryErrorMessage(error) ?? "Please try again."}
+      />
+    )
+  }
+
+  if (isEmpty) {
+    if (empty) return <>{empty}</>
+    return (
+      <EmptyState
+        icon={emptyIcon}
+        title={emptyTitle}
+        description={emptyDescription}
+        action={emptyAction}
+        className={emptyClassName}
+      />
+    )
+  }
+
+  return null
+}
+
 // ─── PageHeader ───────────────────────────────────────────────────────────
 interface PageHeaderProps {
   title: string
-  description?: string
+  description?: React.ReactNode
   actions?: React.ReactNode
   breadcrumb?: React.ReactNode
   className?: string
@@ -68,7 +138,7 @@ function Breadcrumb({ items }: { items: BreadcrumbItem[] }) {
               {item.label}
             </button>
           ) : (
-            <span className={i === items.length - 1 ? "font-medium text-fg" : ""}>
+            <span className={cn(i === items.length - 1 && "font-medium text-fg")}>
               {item.label}
             </span>
           )}
@@ -119,4 +189,4 @@ function CodeBlock({ children, className }: { children: string; className?: stri
   )
 }
 
-export { Spinner, EmptyState, PageHeader, Breadcrumb, Separator, Code, CodeBlock }
+export { Spinner, EmptyState, QueryListState, PageHeader, Breadcrumb, Separator, Code, CodeBlock }

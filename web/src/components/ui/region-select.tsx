@@ -18,6 +18,7 @@ interface Region {
   name: string
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const AWS_REGIONS: Region[] = [
   { code: "af-south-1", name: "Cape Town" },
   { code: "ap-east-1", name: "Hong Kong" },
@@ -52,6 +53,7 @@ export const AWS_REGIONS: Region[] = [
   { code: "us-west-2", name: "Oregon" },
 ]
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const AWS_REGION_CODES = AWS_REGIONS.map((r) => r.code)
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────

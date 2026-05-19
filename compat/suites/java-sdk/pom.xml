@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>io.overcast.compat</groupId>
+  <artifactId>java-sdk-compat</artifactId>
+  <version>1.0-SNAPSHOT</version>
+  <packaging>jar</packaging>
+
+  <properties>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <aws.sdk.version>2.31.7</aws.sdk.version>
+    <jackson.version>2.17.2</jackson.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>software.amazon.awssdk</groupId>
+        <artifactId>bom</artifactId>
+        <version>${aws.sdk.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <!-- AWS SDK v2 service clients -->
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>s3</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>sqs</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>dynamodb</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>sns</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>lambda</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>sts</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>kms</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>secretsmanager</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>ssm</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>iam</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>kinesis</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>cloudwatchlogs</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>ses</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>eventbridge</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>cloudformation</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>ec2</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>ecs</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>cognitoidentityprovider</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>appsync</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>apigateway</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>apigatewayv2</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>cloudfront</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>rds</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>sfn</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>wafv2</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>shield</artifactId></dependency>
+    <!-- URL connection client (no Apache HTTP, keeps image small) -->
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>url-connection-client</artifactId></dependency>
+    <!-- Async HTTP client — required by LambdaAsyncClient (InvokeWithResponseStream) -->
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>netty-nio-client</artifactId></dependency>
+
+    <!-- Silence SLF4J "Failed to load class StaticLoggerBinder" warning -->
+    <!-- AWS SDK v2 pulls in slf4j-api transitively; adding a NOP binding suppresses the warning -->
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-nop</artifactId>
+      <version>1.7.36</version>
+      <scope>runtime</scope>
+    </dependency>
+
+    <!-- JSON serialisation for NDJSON output -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>${jackson.version}</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <!-- Shade plugin: produce a single executable fat JAR -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.6.0</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals><goal>shade</goal></goals>
+            <configuration>
+              <createDependencyReducedPom>false</createDependencyReducedPom>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>io.overcast.compat.Main</mainClass>
+                </transformer>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+              </transformers>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

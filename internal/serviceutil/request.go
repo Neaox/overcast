@@ -22,10 +22,11 @@ package serviceutil
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 
-	"github.com/your-org/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/protocol"
 )
 
 // DecodeJSON decodes the request body as JSON into dst.
@@ -41,11 +42,18 @@ import (
 //	}
 func DecodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		// Drain and close so the connection can be reused.
+		io.Copy(io.Discard, r.Body) //nolint:errcheck
+		r.Body.Close()              //nolint:errcheck
 		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument(
 			"The request body could not be parsed as JSON: "+err.Error(),
 		))
 		return false
 	}
+	// Drain any trailing bytes (e.g. whitespace after the JSON value) so the
+	// HTTP/1.1 connection can be reused by the SDK client.
+	io.Copy(io.Discard, r.Body) //nolint:errcheck
+	r.Body.Close()              //nolint:errcheck
 	return true
 }
 

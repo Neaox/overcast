@@ -1,0 +1,22 @@
+service: athena
+status: not_started
+priority: p2
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]
+implementation: [internal/services/athena]
+integration_tests: [tests/integration/athena]
+capability_docs: docs/services/athena.md
+operation_count_estimate: 8 supported
+current_support_level: Basic queries and workgroups; queries immediately succeed with empty results.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Review query execution and result response shapes.
+    - Document inert query engine behavior in compatibility tracking.
+  intentionally_partial: []
+handoff:
+  start_with: [StartQueryExecution, GetQueryExecution, GetQueryResults]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/athena/... ./tests/integration/athena/...]

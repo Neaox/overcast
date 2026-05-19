@@ -1,0 +1,22 @@
+service: kms
+status: not_started
+priority: p1
+reference_policy: aws_docs_only_unless_user_approves_real_aws
+last_updated: 2026-05-17
+protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]
+implementation: [internal/services/kms]
+integration_tests: [tests/integration/kms]
+capability_docs: docs/services/kms.md
+operation_count_estimate: 32 tracked, 32 supported
+current_support_level: Broad local-dev KMS coverage for keys, aliases, tags, policies, grants, and crypto.
+operations: {}
+findings:
+  fixed: []
+  remaining_gaps:
+    - Review crypto, key policy, and grant edge-case semantics.
+    - Align docs note for JSON 1.0 if intentional.
+  intentionally_partial: []
+handoff:
+  start_with: [Encrypt, Decrypt, CreateGrant, key policies]
+  do_not_redo: []
+  commands: [go test -count=1 ./internal/services/kms/... ./tests/integration/kms/...]

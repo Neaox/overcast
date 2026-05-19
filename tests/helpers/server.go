@@ -1,15 +1,19 @@
 package helpers
 
 import (
+	"context"
+	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 
-	"github.com/your-org/overcast/internal/clock"
-	"github.com/your-org/overcast/internal/config"
-	"github.com/your-org/overcast/internal/router"
-	"github.com/your-org/overcast/internal/state"
+	"github.com/Neaox/overcast/internal/clock"
+	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/inithooks"
+	"github.com/Neaox/overcast/internal/router"
+	"github.com/Neaox/overcast/internal/state"
 )
 
 // TestServer wraps httptest.Server with a pre-configured emulator instance.
@@ -32,9 +36,10 @@ type TestServer struct {
 // serverOptions holds all non-config options for NewTestServer so that Option
 // can carry both config mutations and server-level settings.
 type serverOptions struct {
-	cfg   *config.Config
-	mock  *clock.Mock
-	store state.Store // nil means use default MemoryStore
+	cfg        *config.Config
+	mock       *clock.Mock
+	store      state.Store       // nil means use default MemoryStore
+	initRunner *inithooks.Runner // nil means no init hooks
 }
 
 // NewTestServer creates a started test server with sensible defaults.
@@ -58,6 +63,10 @@ type serverOptions struct {
 //	srv.Clock.Add(35 * time.Second) // instant — no real sleep
 func NewTestServer(t *testing.T, opts ...Option) *TestServer {
 	t.Helper()
+
+	if t == nil {
+		panic("helpers.NewTestServer: t must not be nil — a *testing.T is required for cleanup registration")
+	}
 
 	so := &serverOptions{cfg: defaultTestConfig()}
 	logger := zap.NewNop() // silent in tests — keep output clean
@@ -83,8 +92,12 @@ func NewTestServer(t *testing.T, opts ...Option) *TestServer {
 		clk = clock.New()
 	}
 
-	handler := router.New(so.cfg, store, logger, clk)
+	handler, _, cleanup, waitReady := router.New(so.cfg, store, logger, clk, so.initRunner)
 	srv := httptest.NewServer(handler)
+
+	// Block until all services with background init (e.g. Lambda Docker
+	// probing) have completed, so tests can invoke immediately.
+	waitReady()
 
 	var ms *state.MemoryStore
 	if m, ok := store.(*state.MemoryStore); ok {
@@ -97,6 +110,13 @@ func NewTestServer(t *testing.T, opts ...Option) *TestServer {
 		Config: so.cfg,
 		Clock:  so.mock,
 	}
+	// t.Cleanup runs in LIFO order: close the server first, then drain
+	// any in-flight async work (e.g. SNS fan-out goroutines).
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cleanup(ctx)
+	})
 	t.Cleanup(srv.Close)
 	return ts
 }
@@ -172,25 +192,170 @@ func WithDataDir(dir string) Option {
 	}
 }
 
+// WithLambdaDocker enables Docker-backed Lambda execution on the test server.
+// By default, test servers skip the Docker probe entirely (stub runtime only)
+// to avoid 1000+ unnecessary Docker daemon round-trips across the test suite.
+// Use this option for tests that invoke real Lambda container runtimes.
+//
+// TODO(perf): For Approach B — share a single Docker client, RuntimeAPI server,
+// and InstancePool across all test servers in a package via a package-level
+// sync.Once. This would enable warm-container reuse across tests and further
+// reduce Docker daemon pressure. Wire shared runtime via a new
+// lambda.WithSharedRuntime(...) service option instead of each server probing
+// independently.
+func WithLambdaDocker() Option {
+	return func(so *serverOptions) {
+		so.cfg.LambdaDockerSocket = "/var/run/docker.sock"
+	}
+}
+
+// WithLambdaHotReload enables bind-mount-based Lambda hot reload.
+// Functions must still opt in via the overcast:hot-reload-path tag.
+func WithLambdaHotReload() Option {
+	return func(so *serverOptions) {
+		so.cfg.LambdaHotReload = true
+	}
+}
+
+// WithSMTPMock enables the built-in SMTP capture server on a random port.
+// Emails delivered to SNS email/email-json subscribers are captured and
+// accessible via GET /_overcast/inbox/messages on the test server.
+func WithSMTPMock() Option {
+	return func(so *serverOptions) {
+		so.cfg.SMTPMock = true
+		so.cfg.SMTPPort = 0 // random port
+	}
+}
+
+// WithInitRunner injects an init hook runner into the test server so the
+// /_overcast/init status endpoint reports its state.
+func WithInitRunner(r *inithooks.Runner) Option {
+	return func(so *serverOptions) {
+		so.initRunner = r
+	}
+}
+
+// WithServiceStates sets per-service storage backend overrides.
+func WithServiceStates(states map[string]config.StateBackend) Option {
+	return func(so *serverOptions) {
+		so.cfg.ServiceStates = states
+	}
+}
+
+// WithHostname sets the external hostname used in client-facing URLs.
+func WithHostname(hostname string) Option {
+	return func(so *serverOptions) {
+		so.cfg.Hostname = hostname
+	}
+}
+
+// WithEKSMode sets the EKS service mode used by the test server.
+func WithEKSMode(mode config.EKSMode) Option {
+	return func(so *serverOptions) {
+		so.cfg.EKSMode = mode
+	}
+}
+
+// WithEnforceIAM enables opt-in IAM authorization enforcement middleware.
+func WithEnforceIAM(enabled bool) Option {
+	return func(so *serverOptions) {
+		so.cfg.EnforceIAM = enabled
+	}
+}
+
+// WithEC2VPCStrategy sets the VPC network strategy used by the EC2 service.
+// Valid values: "shared" (default), "strict", "remapped". See
+// docs/plans/ec2-vpc-network-strategies.md for details.
+func WithEC2VPCStrategy(strategy string) Option {
+	return func(so *serverOptions) {
+		so.cfg.EC2VPCNetworkStrategy = strategy
+	}
+}
+
+// WithSigV4Validate enables or disables SigV4 signature validation for the
+// test server. When enabled, unsigned requests and requests with invalid
+// signatures are rejected with a 403. Default is false.
+func WithSigV4Validate(enabled bool) Option {
+	return func(so *serverOptions) {
+		so.cfg.SigV4Validate = enabled
+	}
+}
+
 // defaultTestConfig returns a config suited for test servers.
 func defaultTestConfig() *config.Config {
 	return &config.Config{
-		Host:      "127.0.0.1",
-		Port:      0, // httptest assigns the port
-		Region:    "us-east-1",
-		AccountID: "000000000000",
-		State:     config.StateBackendMemory,
-		LogLevel:  "error", // suppress info/debug logs in test output
+		Host:                "127.0.0.1",
+		Port:                0, // httptest assigns the port
+		Region:              "us-east-1",
+		AccountID:           "000000000000",
+		EKSMode:             config.EKSModeMock,
+		State:               config.StateBackendMemory,
+		ServiceStates:       make(map[string]config.StateBackend),
+		HybridFlushInterval: 5 * time.Second,
+		LogLevel:            "error", // suppress info/debug logs in test output
 		Services: map[string]bool{
-			"s3":       true,
-			"sqs":      true,
-			"dynamodb": true,
-			"sns":      true,
-			"lambda":   true,
+			"s3":              true,
+			"sqs":             true,
+			"dynamodb":        true,
+			"dynamodbstreams": true,
+			"sns":             true,
+			"ses":             true,
+			"lambda":          true,
+			"pipes":           true,
+			"logs":            true,
+			"secretsmanager":  true, "sts": true,
+			"ssm":            true,
+			"kms":            true,
+			"iam":            true,
+			"cloudformation": true,
+			"ec2":            true,
+			"rds":            true,
+			"ecs":            true,
+			"ecr":            true,
+			"eks":            true,
+			"cognito":        true,
+			"stepfunctions":  true,
+			"waf":            true,
+			"shield":         true,
+			"appsync":        true,
+			"apigateway":     true,
+			"cloudfront":     true,
+			"eventbridge":    true,
+			"kinesis":        true,
+			"appregistry":    true,
+			"cloudwatch":     true,
+			"acm":            true,
+			"opensearch":     true,
+			"appconfig":      true,
+			"appconfigdata":  true,
+			"bedrock":        true,
+			"glue":           true,
+			"firehose":       true,
+			"athena":         true,
+			"elasticache":    true,
+			"msk":            true,
+			"scheduler":      true,
+			"route53":        true,
+			"elbv2":          true,
 		},
-		LambdaNodeBin:   "node",
-		ShutdownTimeout: 0,
-		SigV4Validate:   false,
-		Debug:           false,
+		LambdaDockerSocket:   "", // empty = skip Docker probe; use WithLambdaDocker() for container tests
+		LambdaNetwork:        "overcast_lambda",
+		LambdaRuntimeAPIPort: 0, // OS-assigned port — avoids conflicts when test packages run in parallel
+		ShutdownTimeout:      0,
+		SigV4Validate:        false,
+		Debug:                false,
+		SMTPMock:             false, // disabled by default; use WithSMTPMock() to enable
+		SMTPPort:             0,     // random when mock is enabled
+		SMTPFrom:             "overcast@localhost",
+		SMTPInboxMax:         500,
 	}
+}
+
+// NewHTTPBackend starts a throwaway HTTP server with the given handler.
+// The server is closed automatically when the test ends.
+func NewHTTPBackend(t *testing.T, handler http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	return srv
 }

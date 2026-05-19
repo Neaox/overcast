@@ -1,10 +1,11 @@
-import { useState } from "react"
+import { useForm } from "@tanstack/react-form"
+import { z } from "zod"
 import { Server } from "lucide-react"
-import { useEndpoint } from "@/hooks/use-endpoint"
+import { endpointStore } from "@/services/endpoint-store"
 import { DEFAULT_ENDPOINT } from "@/services/discovery"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { FormField } from "@/components/ui/form"
+import { FormField, fieldError } from "@/components/ui/form"
 import { RegionSelect } from "@/components/ui/region-select"
 
 interface ConnectionDialogProps {
@@ -12,43 +13,48 @@ interface ConnectionDialogProps {
   onConnected: () => void
 }
 
+const connectionSchema = z.object({
+  baseUrl: z
+    .string()
+    .min(1, "URL is required")
+    .refine((v) => {
+      try {
+        new URL(v)
+        return true
+      } catch {
+        return false
+      }
+    }, "Enter a valid URL, e.g. http://localhost:4566"),
+  region: z.string(),
+  label: z.string(),
+})
+
 export function ConnectionDialog({ onConnected }: ConnectionDialogProps) {
-  const { setEndpoint } = useEndpoint()
-  const [baseUrl, setBaseUrl] = useState(DEFAULT_ENDPOINT.baseUrl)
-  const [region, setRegion] = useState(DEFAULT_ENDPOINT.region)
-  const [label, setLabel] = useState(DEFAULT_ENDPOINT.label ?? "")
-  const [error, setError] = useState<string>()
-  const [testing, setTesting] = useState(false)
-
-  async function handleConnect() {
-    setError(undefined)
-
-    let url: URL
-    try {
-      url = new URL(baseUrl)
-    } catch {
-      setError("Enter a valid URL, e.g. http://localhost:4566")
-      return
-    }
-
-    setTesting(true)
-    try {
+  const form = useForm({
+    validators: { onChange: connectionSchema },
+    defaultValues: {
+      baseUrl: DEFAULT_ENDPOINT.baseUrl,
+      region: DEFAULT_ENDPOINT.region,
+      label: DEFAULT_ENDPOINT.label ?? "",
+    },
+    onSubmit: async ({ value }) => {
       // Quick health-check — emulator exposes /_health
-      const res = await fetch(`${url.origin}/_health`, { signal: AbortSignal.timeout(3000) })
-      if (!res.ok) throw new Error(`Status ${res.status}`)
-    } catch {
-      // Don't block — emulator may not have a health endpoint configured yet
-    } finally {
-      setTesting(false)
-    }
+      const url = new URL(value.baseUrl)
+      try {
+        const res = await fetch(`${url.origin}/_health`, { signal: AbortSignal.timeout(3000) })
+        if (!res.ok) throw new Error(`Status ${res.status}`)
+      } catch {
+        // Don't block — emulator may not have a health endpoint configured yet
+      }
 
-    setEndpoint({
-      baseUrl: url.origin,
-      region: region.trim() || "us-east-1",
-      label: label.trim() || undefined,
-    })
-    onConnected()
-  }
+      endpointStore.set({
+        baseUrl: url.origin,
+        region: value.region.trim() || "us-east-1",
+        label: value.label.trim() || undefined,
+      })
+      onConnected()
+    },
+  })
 
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-bg p-4">
@@ -64,52 +70,78 @@ export function ConnectionDialog({ onConnected }: ConnectionDialogProps) {
           </div>
         </div>
 
-        <div className="flex flex-col gap-4">
-          <FormField
-            label="Endpoint URL"
-            htmlFor="baseUrl"
-            required
-            hint="The host and port your emulator is running on."
-            error={error}
-          >
-            <Input
-              id="baseUrl"
-              value={baseUrl}
-              onChange={(e) => {
-                setBaseUrl(e.target.value)
-                setError(undefined)
-              }}
-              placeholder="http://localhost:4566"
-              spellCheck={false}
-            />
-          </FormField>
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            void form.handleSubmit()
+          }}
+        >
+          <form.Field name="baseUrl" validators={{ onChange: connectionSchema.shape.baseUrl }}>
+            {(field) => (
+              <FormField
+                label="Endpoint URL"
+                htmlFor="baseUrl"
+                required
+                hint="The host and port your emulator is running on."
+                error={fieldError(field.state.meta.errors, field.state.meta.isTouched)}
+              >
+                <Input
+                  id="baseUrl"
+                  value={field.state.value}
+                  onChange={(e) => field.handleChange(e.target.value)}
+                  onBlur={field.handleBlur}
+                  placeholder="http://localhost:4566"
+                  spellCheck={false}
+                />
+              </FormField>
+            )}
+          </form.Field>
 
-          <FormField label="Default Region" htmlFor="region">
-            <RegionSelect id="region" value={region} onChange={setRegion} />
-          </FormField>
+          <form.Field name="region">
+            {(field) => (
+              <FormField label="Default Region" htmlFor="region">
+                <RegionSelect
+                  id="region"
+                  value={field.state.value}
+                  onChange={(v) => field.handleChange(v)}
+                />
+              </FormField>
+            )}
+          </form.Field>
 
-          <FormField
-            label="Label (optional)"
-            htmlFor="label"
-            hint="A friendly name shown in the header."
-          >
-            <Input
-              id="label"
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="Local (4566)"
-            />
-          </FormField>
-        </div>
+          <form.Field name="label">
+            {(field) => (
+              <FormField
+                label="Label (optional)"
+                htmlFor="label"
+                hint="A friendly name shown in the header."
+              >
+                <Input
+                  id="label"
+                  value={field.state.value}
+                  onChange={(e) => field.handleChange(e.target.value)}
+                  onBlur={field.handleBlur}
+                  placeholder="Local (4566)"
+                />
+              </FormField>
+            )}
+          </form.Field>
 
-        <div className="mt-6 flex flex-col gap-2">
-          <Button className="w-full" onClick={handleConnect} disabled={testing}>
-            {testing ? "Connecting…" : "Connect"}
-          </Button>
-          <p className="text-center text-xs text-fg-subtle">
-            Settings are stored in session storage only.
-          </p>
-        </div>
+          <div className="mt-2 flex flex-col gap-2">
+            <form.Subscribe selector={(s) => [s.canSubmit, s.isSubmitting]}>
+              {([canSubmit, isSubmitting]) => (
+                <Button type="submit" className="w-full" disabled={!canSubmit}>
+                  {isSubmitting ? "Connecting…" : "Connect"}
+                </Button>
+              )}
+            </form.Subscribe>
+            <p className="text-center text-xs text-fg-subtle">
+              Settings are stored in session storage only.
+            </p>
+          </div>
+        </form>
       </div>
     </div>
   )

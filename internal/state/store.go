@@ -1,5 +1,10 @@
-// Package state defines the Store interface and provides two implementations:
-// MemoryStore (default, in-process maps) and SQLiteStore (persistent).
+// Package state defines the Store interface and provides four implementations:
+//
+//   - MemoryStore  — in-process maps; lost on restart; fastest; best for tests & CI.
+//   - SQLiteStore  — synchronous SQLite writes (persistent mode).
+//   - WALStore     — memory reads + append-log durability with replay on startup.
+//   - HybridStore  — memory reads + async SQLite flush; default for local development.
+//   - NamespacedStore — dispatcher that routes operations to per-service stores.
 //
 // All service handlers receive a Store — they never know or care which
 // implementation is backing them. This is Go's equivalent of programming to
@@ -15,7 +20,38 @@
 //	}
 package state
 
-import "context"
+import (
+	"context"
+	"database/sql"
+)
+
+// KV is a key-value pair returned by Scan.
+type KV struct {
+	Key   string
+	Value string
+}
+
+// SQLiteDBProvider is implemented by stores backed by SQLite (SQLiteStore,
+// HybridStore). Services that need dedicated tables (e.g. DynamoDB items)
+// can type-assert a Store to this interface to get direct DB access.
+type SQLiteDBProvider interface {
+	DB() *sql.DB
+}
+
+// ReadyAwaiter is implemented by stores that have an asynchronous
+// initialisation phase (e.g. HybridStore, which opens SQLite in the
+// background). Callers that need to guarantee all persisted data is
+// visible before reading — such as startup reload routines — should
+// type-assert the Store to ReadyAwaiter and wait before scanning.
+//
+// Stores that are always immediately ready (MemoryStore, SQLiteStore)
+// do not need to implement this interface; callers must treat its absence
+// as "already ready".
+type ReadyAwaiter interface {
+	// WaitReady blocks until the store's background initialisation is
+	// complete or ctx is cancelled. Returns nil when the store is ready.
+	WaitReady(ctx context.Context) error
+}
 
 // Store is the single interface all service state flows through.
 // Implementations must be safe for concurrent use from multiple goroutines.
@@ -37,7 +73,19 @@ type Store interface {
 	// Returns an empty slice (not nil) when no keys match.
 	List(ctx context.Context, namespace, prefix string) (keys []string, err error)
 
+	// Scan returns all key-value pairs in namespace whose keys start with prefix,
+	// in a single atomic read. Prefer Scan over List+Get when you need both keys
+	// and values — it avoids N individual Get calls and holds the lock only once.
+	// Returns an empty slice (not nil) when no keys match.
+	Scan(ctx context.Context, namespace, prefix string) ([]KV, error)
+
 	// Close releases any resources held by the store (file handles, DB connections).
 	// Called once on graceful shutdown.
 	Close() error
+}
+
+// PrefixDeleter is an optional Store extension for deleting a key range without
+// first reading values. Callers should type-assert this for large purges.
+type PrefixDeleter interface {
+	DeletePrefix(ctx context.Context, namespace, prefix string) error
 }

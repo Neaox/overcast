@@ -1,0 +1,90 @@
+name: Build rust-sdk compat image
+
+# Builds the Rust SDK compat test harness into a Docker image and pushes it
+# to GHCR, tagged by a hash of the suite sources. run.sh in the rust-sdk
+# suite prefers pulling this image over building locally, which turns a
+# cold-checkout cargo build (~1-2 min) into a docker pull (~seconds).
+#
+# This is test-harness infrastructure, not runtime code — we only rebuild
+# when files that affect the produced binary change.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "compat/suites/rust-sdk/**"
+      - "compat/suites/registry.json"
+      - ".github/workflows/compat-rust-sdk-image.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "compat/suites/rust-sdk/**"
+      - "compat/suites/registry.json"
+      - ".github/workflows/compat-rust-sdk-image.yml"
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    name: Build and push rust-sdk image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Compute the same hash run.sh uses so local and CI tags line up.
+      - name: Compute image tag
+        id: tag
+        working-directory: compat/suites
+        run: |
+          SRC_HASH=$(find rust-sdk -type f \( \
+            -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' \
+            -o -name 'Dockerfile' -o -name 'run.sh' \) \
+            | sort | xargs md5sum 2>/dev/null | md5sum | cut -c1-12)
+          REGISTRY_HASH=$(md5sum registry.json | cut -c1-12)
+          TAG="${SRC_HASH}-${REGISTRY_HASH}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Computed tag: ${TAG}"
+
+      - name: Set lowercase image name
+        id: img
+        run: |
+          REPO_LC=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "image=ghcr.io/${REPO_LC}/rust-sdk-compat" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if image already exists
+        id: exists
+        if: github.event_name != 'pull_request'
+        run: |
+          if docker manifest inspect "${{ steps.img.outputs.image }}:${{ steps.tag.outputs.tag }}" > /dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Image already in GHCR — skipping build."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.exists.outputs.skip != 'true'
+
+      - name: Build and push
+        if: steps.exists.outputs.skip != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: compat/suites
+          file: compat/suites/rust-sdk/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ steps.img.outputs.image }}:${{ steps.tag.outputs.tag }}
+            ${{ steps.img.outputs.image }}:latest
+          cache-from: type=gha,scope=rust-sdk-compat
+          cache-to: type=gha,mode=max,scope=rust-sdk-compat

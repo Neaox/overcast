@@ -5,12 +5,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/your-org/overcast/internal/clock"
-	"github.com/your-org/overcast/internal/config"
-	"github.com/your-org/overcast/internal/events"
-	"github.com/your-org/overcast/internal/protocol"
-	"github.com/your-org/overcast/internal/serviceutil"
-	"github.com/your-org/overcast/internal/state"
+	"github.com/Neaox/overcast/internal/clock"
+	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/Neaox/overcast/internal/state"
 )
 
 // objectKey extracts the object key from a chi wildcard route.
@@ -78,7 +78,7 @@ func newHandler(cfg *config.Config, store state.Store, log *serviceutil.ServiceL
 
 // BucketGet dispatches GET /{bucket} by sub-resource query param.
 func (h *Handler) BucketGet(w http.ResponseWriter, r *http.Request) {
-	dispatchByQuery(w, r, h.bucketGetRoutes, h.ListObjectsV2)
+	dispatchByQuery(w, r, h.bucketGetRoutes, h.ListObjectsV1)
 }
 
 // BucketPut dispatches PUT /{bucket} by sub-resource query param.

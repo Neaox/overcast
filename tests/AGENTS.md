@@ -50,6 +50,7 @@ Test<Subject>_<scenario>
 ```
 
 Examples:
+
 - `TestCreateBucket_success`
 - `TestCreateBucket_nameTooShort`
 - `TestReceiveMessage_visibilityTimeout`
@@ -101,14 +102,14 @@ Run with: `make test-integration`
 
 ## Coverage requirements
 
-| Layer | Target coverage |
-|-------|----------------|
-| `internal/protocol/` | 100% — these are the AWS wire format contracts |
-| `internal/state/` | 100% — both MemoryStore and SQLiteStore, same test suite |
-| `internal/config/` | 100% — all env var parsing paths |
-| `internal/services/*/store.go` | 100% — all domain model operations |
-| `internal/services/*/handler.go` | ≥ 90% — all happy paths + key error paths |
-| `internal/middleware/` | ≥ 90% |
+| Layer                            | Target coverage                                          |
+| -------------------------------- | -------------------------------------------------------- |
+| `internal/protocol/`             | 100% — these are the AWS wire format contracts           |
+| `internal/state/`                | 100% — both MemoryStore and SQLiteStore, same test suite |
+| `internal/config/`               | 100% — all env var parsing paths                         |
+| `internal/services/*/store.go`   | 100% — all domain model operations                       |
+| `internal/services/*/handler.go` | ≥ 90% — all happy paths + key error paths                |
+| `internal/middleware/`           | ≥ 90%                                                    |
 
 Check coverage: `make test-coverage` → opens `coverage.html`
 
@@ -154,6 +155,7 @@ func doRequest(t *testing.T, ...) { ... }
 ## Mocks
 
 Use mocks to test components in isolation when the real dependency is:
+
 - An external service (not our emulated services — those we test for real)
 - Slow to set up
 - Non-deterministic
@@ -290,6 +292,7 @@ func TestMemoryStore_concurrentAccess(t *testing.T) {
 ## Test for error responses specifically
 
 Always verify:
+
 1. The HTTP status code
 2. The error code in the response body (not just the message — messages can change)
 3. The request ID header is present
@@ -320,7 +323,7 @@ import (
     "net/http"
     "testing"
 
-    "github.com/your-org/overcast/tests/helpers"
+    "github.com/Neaox/overcast/tests/helpers"
 )
 
 // ---- CreateThing -----------------------------------------------------------
