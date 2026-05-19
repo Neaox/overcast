@@ -55,6 +55,9 @@ services:
       - type: volume
         source: overcast-go-mod-cache
         target: /home/vscode/go/pkg/mod
+      - type: volume
+        source: overcast-gh-config
+        target: /home/vscode/.config/gh
 EOF
 
 case "$git_common_dir" in
@@ -74,5 +77,9 @@ cat >> .devcontainer/docker-compose.yaml <<EOF
 
 volumes:
   overcast-$safe_name-node-modules:
+    name: overcast-$safe_name-node-modules
   overcast-go-mod-cache:
+    name: overcast-go-mod-cache
+  overcast-gh-config:
+    name: overcast-gh-config
 EOF

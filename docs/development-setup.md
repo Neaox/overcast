@@ -104,6 +104,7 @@ Rules for humans coordinating agents:
 - Keep worktrees as siblings of the checkout, never nested inside the repo.
 - Use unique ports for long-running dev servers, for example `OVERCAST_PORT=4567 OVERCAST_STATE=memory make run`.
 - Prefer `OVERCAST_STATE=memory` in worktrees unless you deliberately need persistent state.
+- Run `gh auth login` once inside a rebuilt Dev Container if GitHub CLI is not authenticated; auth is stored in the shared `overcast-gh-config` Docker volume and survives rebuilds.
 - Remove worktrees only after the agent's work is committed, merged, or no longer needed.
 
 Useful commands:
