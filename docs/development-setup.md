@@ -14,6 +14,7 @@ fits your environment.
 | Mac or Linux, want simplest setup | **Option A: Dev Container**                       |
 | Mac or Linux, prefer native tools | **Option B: Native**                              |
 | No local Go, just Docker          | **Option C: Docker Compose**                      |
+| Running parallel AI agents        | **Dev Container + git worktrees**                 |
 | GitHub Codespaces                 | **Option A: Dev Container** (works automatically) |
 
 ---
@@ -79,6 +80,41 @@ aws --endpoint-url http://localhost:4566 s3 mb s3://test-bucket
 - `Ctrl+Shift+P → "Dev Containers: Reopen Folder Locally"` — go back to native mode
 - Test Explorer (beaker icon in sidebar) — run individual tests with a click
 - Breakpoints work normally — the Go debugger runs inside the container
+
+### Parallel agent workflow with git worktrees
+
+Use git worktrees when multiple AI agents need to work independently on the repo. Each agent should get its own worktree, branch, VS Code window, and Dev Container. This avoids code edits, terminals, build output, and forwarded ports colliding with another agent.
+
+The Dev Container is worktree-aware. Before VS Code creates the container, `.devcontainer/init-worktree.sh` generates a local `.devcontainer/docker-compose.yaml` that mounts the workspace and any shared Git metadata at the absolute paths Git expects. This prevents worktree containers from failing with `fatal: not a git repository`.
+
+Recommended human workflow:
+
+1. Open the main checkout in VS Code and reopen it in the Dev Container.
+2. Start the agent from inside that container.
+3. Ask the agent to use a git worktree for the task.
+4. Let the agent create a sibling worktree with a unique branch, such as `../worktree-s3-versioning` on `feat/s3-versioning`.
+5. Open that new worktree folder in a separate VS Code window.
+6. Run `Dev Containers: Reopen in Container` in the new window.
+7. Start a separate agent session in that worktree container.
+
+Rules for humans coordinating agents:
+
+- Use one worktree per agent or task.
+- Use unique branch names; Git does not allow the same branch checked out in two worktrees.
+- Keep worktrees as siblings of the checkout, never nested inside the repo.
+- Use unique ports for long-running dev servers, for example `OVERCAST_PORT=4567 OVERCAST_STATE=memory make run`.
+- Prefer `OVERCAST_STATE=memory` in worktrees unless you deliberately need persistent state.
+- Remove worktrees only after the agent's work is committed, merged, or no longer needed.
+
+Useful commands:
+
+```bash
+git worktree list
+git worktree add ../worktree-<name> -b <branch-name>
+git worktree remove ../worktree-<name>
+```
+
+The generated `.devcontainer/.env` and `.devcontainer/docker-compose.yaml` are local machine files and are intentionally ignored by Git.
 
 ---
 

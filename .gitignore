@@ -20,6 +20,8 @@ tmp/
 
 # persistent state (dev container data dir — survives rebuilds, not for VCS)
 .overcast/
+.devcontainer/.env
+.devcontainer/docker-compose.yaml
 
 # compat dashboard — last run results (persisted across server restarts, not for VCS)
 compat-results.json
