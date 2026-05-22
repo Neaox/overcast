@@ -5,6 +5,7 @@ package cognito_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -118,6 +119,62 @@ func TestCreateUserPool_success(t *testing.T) {
 	if result.UserPool.Arn == "" {
 		t.Error("expected UserPool.Arn to be set")
 	}
+}
+
+func TestListUserPools_malformedPersistedPool(t *testing.T) {
+	// Given: one valid user pool and one malformed persisted pool record.
+	srv := helpers.NewTestServer(t)
+	poolID := createPool(t, srv, "valid-pool")
+	if err := srv.Store.Set(context.Background(), "cognito:pools", "us-east-1/us-east-1_BADPOOL", "{"); err != nil {
+		t.Fatalf("seed malformed pool: %v", err)
+	}
+
+	// When: ListUserPools scans persisted pool metadata.
+	resp := cognitoCall(t, srv, "ListUserPools", map[string]any{"MaxResults": 10})
+	defer resp.Body.Close()
+
+	// Then: the malformed record is skipped and valid pools remain visible.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		UserPools []struct {
+			Id string `json:"Id"`
+		} `json:"UserPools"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	found := false
+	for _, pool := range result.UserPools {
+		if pool.Id == poolID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected valid pool %q, got %#v", poolID, result.UserPools)
+	}
+}
+
+func TestAdminCreateUser_malformedPersistedPool(t *testing.T) {
+	// Given: a user pool record exists but its persisted JSON is malformed.
+	srv := helpers.NewTestServer(t)
+	poolID := "us-east-1_BADPOOL"
+	if err := srv.Store.Set(context.Background(), "cognito:pools", "us-east-1/"+poolID, "{"); err != nil {
+		t.Fatalf("seed malformed pool: %v", err)
+	}
+
+	// When: an external client targets that pool.
+	resp := cognitoCall(t, srv, "AdminCreateUser", map[string]any{
+		"UserPoolId":    poolID,
+		"Username":      "bad-pool-user@example.test",
+		"MessageAction": "SUPPRESS",
+		"UserAttributes": []map[string]string{
+			{"Name": "email", "Value": "bad-pool-user@example.test"},
+		},
+	})
+	defer resp.Body.Close()
+
+	// Then: the corrupt emulator record is treated as unavailable, not as a
+	// service-wide InternalError.
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "ResourceNotFoundException")
 }
 
 func TestCreateUserPool_withEmailTemplates(t *testing.T) {

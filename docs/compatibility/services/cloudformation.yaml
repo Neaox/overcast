@@ -1,22 +1,46 @@
 service: cloudformation
-status: not_started
+status: implementation_mismatch
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-17
+last_updated: 2026-05-22
 protocols: [query]
 implementation: [internal/services/cloudformation]
 integration_tests: [tests/integration/cloudformation]
 capability_docs: docs/services/cloudformation.md
 operation_count_estimate: 47 API/intrinsic/resource rows; 19 supported, 28 unsupported; separate resource type matrix
 current_support_level: CDK stack lifecycle and provisioner support; many StackSet/type registry features unsupported.
-operations: {}
+operations:
+  CreateStack:
+    status: implementation_mismatch
+    aws_docs:
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-sqs-queue.html
+    tests:
+      - tests/integration/cloudformation/cloudformation_test.go
+    scenarios:
+      - name: sqs queue ref output resolves to queue url
+        status: fixed
+        tests:
+          - tests/integration/cloudformation/cloudformation_test.go
+        notes: AWS::SQS::Queue Ref returns the queue URL, while Fn::GetAtt Arn returns the queue ARN. The SQS resource handler now preserves that Ref override on create and update.
+      - name: sqs fifo generated queue name and attributes
+        status: fixed
+        tests:
+          - tests/integration/cloudformation/cloudformation_test.go
+        notes: AWS::SQS::Queue with FifoQueue true and no QueueName now generates a .fifo queue name and forwards FIFO attributes to SQS.
+      - name: resource ref overrides for non-name physical ids
+        status: implementation_mismatch
+        tests: []
+        notes: Audit found likely gaps for IAM Policy, IAM InstanceProfile, IAM ServiceLinkedRole, Events EventBus, and Events Rule. Each needs AWS-doc-backed Ref tests before changing behavior.
 findings:
-  fixed: []
+  fixed:
+    - AWS::SQS::Queue Ref now resolves to the queue URL instead of the ARN, so CDK queue.queueUrl outputs are externally usable by SQS clients.
+    - AWS::SQS::Queue FifoQueue now creates a FIFO-compatible generated physical name and FifoQueue=true queue attributes.
   remaining_gaps:
     - Audit resource-type tracking against provisioner registrations.
+    - Add CloudFormation Ref compatibility tests for resource handlers whose physical ID differs from documented Ref semantics.
     - Review update/delete semantics and unsupported-resource stubbing.
   intentionally_partial: []
 handoff:
-  start_with: [CreateStack, DeleteStack, resource handlers]
+  start_with: [CloudFormation Ref semantics for IAM and EventBridge resource handlers, CreateStack, DeleteStack, resource handlers]
   do_not_redo: []
   commands: [go test -count=1 ./internal/services/cloudformation/... ./tests/integration/cloudformation/...]

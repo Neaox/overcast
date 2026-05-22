@@ -86,7 +86,7 @@ func (s *Service) loadPool(ctx context.Context, poolID string) (*UserPool, error
 	}
 	var p UserPool
 	if err := json.Unmarshal([]byte(raw), &p); err != nil {
-		return nil, fmt.Errorf("cognito: unmarshal pool %q: %w", poolID, err)
+		return nil, nil
 	}
 	return &p, nil
 }
@@ -144,7 +144,7 @@ func (s *Service) loadUser(ctx context.Context, poolID, username string) (*User,
 	}
 	var u User
 	if err := json.Unmarshal([]byte(raw), &u); err != nil {
-		return nil, fmt.Errorf("cognito: unmarshal user %q: %w", username, err)
+		return nil, nil
 	}
 	// Backward compat: assign a UUID sub if the persisted record lacks one.
 	if u.Sub == "" {
@@ -539,7 +539,7 @@ func (s *Service) loadClientByID(ctx context.Context, clientID string) (*UserPoo
 	}
 	var c UserPoolClient
 	if err := json.Unmarshal([]byte(raw), &c); err != nil {
-		return nil, fmt.Errorf("cognito: unmarshal client %q: %w", clientID, err)
+		return nil, nil
 	}
 	return &c, nil
 }
@@ -555,7 +555,7 @@ func (s *Service) loadClient(ctx context.Context, poolID, clientID string) (*Use
 	}
 	var c UserPoolClient
 	if err := json.Unmarshal([]byte(raw), &c); err != nil {
-		return nil, fmt.Errorf("cognito: unmarshal client %q: %w", clientID, err)
+		return nil, nil
 	}
 	return &c, nil
 }

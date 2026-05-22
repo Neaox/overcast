@@ -2,7 +2,7 @@ service: cognito
 status: in_progress
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-18
+last_updated: 2026-05-22
 protocols:
   - aws_json_1_1
 implementation:
@@ -49,6 +49,11 @@ operations:
         tests:
           - tests/integration/cognito/cognito_aliases_test.go
         notes: Duplicate verified email aliases return AliasExistsException unless ForceAliasCreation migrates ownership.
+      - name: malformed persisted user pool record
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_test.go
+        notes: A corrupt emulator state record for the targeted pool returns ResourceNotFoundException instead of InternalError, and malformed unrelated pool/client/user records are isolated from list/scan operations.
     evidence:
       - AWS docs state Username is auto-generated when username attributes are email/phone-only sign-in identifiers.
       - AWS AdminCreateUser docs state ForceAliasCreation only applies to verified email/phone aliases and migrates the alias when true.
@@ -998,6 +1003,7 @@ findings:
     - UserAttributeUpdateSettings is stored and returned on user pools; UpdateUserAttributes and AdminUpdateUserAttributes now create pending email/phone changes when verification before update is required, VerifyUserAttribute applies pending values with *_verified=true, and GetUserAttributeVerificationCode resends pending attribute verification codes.
     - ListUsers now supports documented standard-attribute filters, AttributesToGet shaping/validation, and Limit/PaginationToken pagination.
     - ListGroups, AdminListGroupsForUser, and ListUsersInGroup now support Limit/NextToken pagination.
+    - Malformed persisted pool, client, or user records are isolated so they do not turn Cognito list/admin APIs into service-wide InternalError responses.
   remaining_gaps:
     - SRP challenge parameters and verifier response shape are emulated, but full cryptographic SRP proof validation is intentionally partial.
     - Device SRP challenge parameters and verifier response shape are emulated, but full cryptographic device SRP proof validation is intentionally partial.

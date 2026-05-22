@@ -1494,6 +1494,38 @@ func internalQuery(ctx context.Context, router http.Handler, region string, para
 
 type sqsQueueHandler struct{}
 
+func sqsQueueAttributesFromProps(props map[string]any) map[string]string {
+	attrs := make(map[string]string)
+	for _, name := range []string{
+		"VisibilityTimeout",
+		"MessageRetentionPeriod",
+		"DelaySeconds",
+		"MaximumMessageSize",
+		"ReceiveMessageWaitTimeSeconds",
+		"ContentBasedDeduplication",
+		"DeduplicationScope",
+		"FifoQueue",
+		"FifoThroughputLimit",
+	} {
+		if v, ok := props[name]; ok {
+			attrs[name] = fmt.Sprintf("%v", v)
+		}
+	}
+	if rp, ok := props["RedrivePolicy"]; ok {
+		if b, err := json.Marshal(rp); err == nil {
+			attrs["RedrivePolicy"] = string(b)
+		}
+	}
+	if raw, ok := props["Attributes"].(map[string]any); ok {
+		for k, v := range raw {
+			if s, ok := v.(string); ok {
+				attrs[k] = s
+			}
+		}
+	}
+	return attrs
+}
+
 func (h *sqsQueueHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	// Extract current queue name from ARN (last segment).
 	oldName := physicalID
@@ -1511,35 +1543,7 @@ func (h *sqsQueueHandler) Update(ctx context.Context, router http.Handler, cfg *
 		}
 	}
 
-	// Build the mutable attribute set in the same way Create does.
-	attrs := make(map[string]string)
-	if v, ok := props["VisibilityTimeout"]; ok {
-		attrs["VisibilityTimeout"] = fmt.Sprintf("%v", v)
-	}
-	if v, ok := props["MessageRetentionPeriod"]; ok {
-		attrs["MessageRetentionPeriod"] = fmt.Sprintf("%v", v)
-	}
-	if v, ok := props["DelaySeconds"]; ok {
-		attrs["DelaySeconds"] = fmt.Sprintf("%v", v)
-	}
-	if v, ok := props["MaximumMessageSize"]; ok {
-		attrs["MaximumMessageSize"] = fmt.Sprintf("%v", v)
-	}
-	if v, ok := props["ReceiveMessageWaitTimeSeconds"]; ok {
-		attrs["ReceiveMessageWaitTimeSeconds"] = fmt.Sprintf("%v", v)
-	}
-	if rp, ok := props["RedrivePolicy"]; ok {
-		if b, err := json.Marshal(rp); err == nil {
-			attrs["RedrivePolicy"] = string(b)
-		}
-	}
-	if raw, ok := props["Attributes"].(map[string]any); ok {
-		for k, v := range raw {
-			if s, ok := v.(string); ok {
-				attrs[k] = s
-			}
-		}
-	}
+	attrs := sqsQueueAttributesFromProps(props)
 
 	if len(attrs) > 0 {
 		queueURL := fmt.Sprintf("%s/%s/%s", cfg.ExternalBaseURL(), cfg.AccountID, oldName)
@@ -1550,50 +1554,23 @@ func (h *sqsQueueHandler) Update(ctx context.Context, router http.Handler, cfg *
 	}
 	arn := protocol.ARN(rCtx.Region, cfg.AccountID, "sqs", oldName)
 	queueURL := fmt.Sprintf("%s/%s/%s", cfg.ExternalBaseURL(), cfg.AccountID, oldName)
-	return arn, map[string]string{"QueueName": oldName, "Arn": arn, "QueueUrl": queueURL}, nil
+	return arn, map[string]string{"Ref": queueURL, "QueueName": oldName, "Arn": arn, "QueueUrl": queueURL}, nil
 }
 
 func (h *sqsQueueHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	queueName, _ := props["QueueName"].(string)
 	if queueName == "" {
 		queueName = fmt.Sprintf("%s-%s", rCtx.StackName, "Queue")
+		if asBool(props["FifoQueue"]) {
+			queueName += ".fifo"
+		}
 	}
 
 	body := map[string]any{
 		"QueueName": queueName,
 	}
 
-	// Map CFN-level properties to SQS Attributes.
-	attrs := make(map[string]string)
-	if v, ok := props["VisibilityTimeout"]; ok {
-		attrs["VisibilityTimeout"] = fmt.Sprintf("%v", v)
-	}
-	if v, ok := props["MessageRetentionPeriod"]; ok {
-		attrs["MessageRetentionPeriod"] = fmt.Sprintf("%v", v)
-	}
-	if v, ok := props["DelaySeconds"]; ok {
-		attrs["DelaySeconds"] = fmt.Sprintf("%v", v)
-	}
-	if v, ok := props["MaximumMessageSize"]; ok {
-		attrs["MaximumMessageSize"] = fmt.Sprintf("%v", v)
-	}
-	if v, ok := props["ReceiveMessageWaitTimeSeconds"]; ok {
-		attrs["ReceiveMessageWaitTimeSeconds"] = fmt.Sprintf("%v", v)
-	}
-	if rp, ok := props["RedrivePolicy"]; ok {
-		rpJSON, err := json.Marshal(rp)
-		if err == nil {
-			attrs["RedrivePolicy"] = string(rpJSON)
-		}
-	}
-	// Also forward raw Attributes if specified directly in the template.
-	if rawAttrs, ok := props["Attributes"].(map[string]any); ok {
-		for k, v := range rawAttrs {
-			if s, ok := v.(string); ok {
-				attrs[k] = s
-			}
-		}
-	}
+	attrs := sqsQueueAttributesFromProps(props)
 	if len(attrs) > 0 {
 		body["Attributes"] = attrs
 	}
@@ -1613,6 +1590,7 @@ func (h *sqsQueueHandler) Create(ctx context.Context, router http.Handler, cfg *
 		queueURL = resp.QueueUrl
 	}
 	cfnAttrs := map[string]string{
+		"Ref":       queueURL,
 		"QueueName": queueName,
 		"Arn":       arn,
 		"QueueUrl":  queueURL,

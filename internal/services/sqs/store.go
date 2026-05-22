@@ -91,7 +91,7 @@ func (s *sqsStore) getQueue(ctx context.Context, name string) (*Queue, *protocol
 	}
 	var q Queue
 	if err := json.Unmarshal([]byte(raw), &q); err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+		return nil, errQueueNotFound(name)
 	}
 	return &q, nil
 }
@@ -128,7 +128,7 @@ func (s *sqsStore) listQueues(ctx context.Context, prefix string) ([]*Queue, *pr
 	for _, p := range pairs {
 		var q Queue
 		if err := json.Unmarshal([]byte(p.Value), &q); err != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, err)
+			continue
 		}
 		queues = append(queues, &q)
 	}
@@ -248,7 +248,7 @@ func (s *sqsStore) listMessages(ctx context.Context, queueName string) ([]*Messa
 	for _, p := range pairs {
 		var msg Message
 		if err := json.Unmarshal([]byte(p.Value), &msg); err != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, err)
+			continue
 		}
 		msgs = append(msgs, &msg)
 	}

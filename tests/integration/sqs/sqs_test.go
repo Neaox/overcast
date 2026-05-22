@@ -8,6 +8,7 @@ package sqs_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -232,6 +233,48 @@ func TestReceiveMessage_emptyQueueJSONWire(t *testing.T) {
 	if _, ok := result["Messages"]; ok {
 		t.Fatalf("empty ReceiveMessage JSON response included Messages member: %#v", result)
 	}
+}
+
+func TestReceiveMessage_malformedPersistedMessage(t *testing.T) {
+	// Given: an empty queue plus one malformed persisted message record.
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "malformed-message-queue")
+	if err := srv.Store.Set(context.Background(), "sqs:messages", "us-east-1/malformed-message-queue/bad", "{"); err != nil {
+		t.Fatalf("seed malformed message: %v", err)
+	}
+
+	// When: ReceiveMessage scans the queue.
+	resp := sqsCall(t, srv, "ReceiveMessage", map[string]any{
+		"QueueUrl": queueURL,
+	})
+	defer resp.Body.Close()
+
+	// Then: the malformed persisted record is isolated and the queue remains usable.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result map[string]json.RawMessage
+	helpers.DecodeJSON(t, resp, &result)
+	if _, ok := result["Messages"]; ok {
+		t.Fatalf("expected empty ReceiveMessage response to omit Messages, got %#v", result)
+	}
+}
+
+func TestReceiveMessage_malformedPersistedQueue(t *testing.T) {
+	// Given: the targeted queue record exists but cannot be decoded.
+	srv := helpers.NewTestServer(t)
+	if err := srv.Store.Set(context.Background(), "sqs:queues", "us-east-1/bad-queue", "{"); err != nil {
+		t.Fatalf("seed malformed queue: %v", err)
+	}
+
+	// When: ReceiveMessage targets that queue URL.
+	resp := sqsCall(t, srv, "ReceiveMessage", map[string]any{
+		"QueueUrl": "http://localhost:4566/000000000000/bad-queue",
+	})
+	defer resp.Body.Close()
+
+	// Then: the corrupt emulator record is treated as unavailable, not as an
+	// InternalError that destabilizes SQS clients.
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "AWS.SimpleQueueService.NonExistentQueue")
 }
 
 func TestReceiveMessage_emptyQueueQueryWire(t *testing.T) {
@@ -667,6 +710,29 @@ func TestListQueues_returnsAll(t *testing.T) {
 	helpers.DecodeJSON(t, resp, &result)
 	if len(result.QueueUrls) != 3 {
 		t.Errorf("expected 3 queues, got %d", len(result.QueueUrls))
+	}
+}
+
+func TestListQueues_malformedPersistedQueue(t *testing.T) {
+	// Given: one valid queue and one malformed persisted queue record.
+	srv := helpers.NewTestServer(t)
+	goodURL := createQueue(t, srv, "good-queue")
+	if err := srv.Store.Set(context.Background(), "sqs:queues", "us-east-1/bad-queue", "{"); err != nil {
+		t.Fatalf("seed malformed queue: %v", err)
+	}
+
+	// When: ListQueues scans queue metadata.
+	resp := sqsCall(t, srv, "ListQueues", map[string]any{})
+	defer resp.Body.Close()
+
+	// Then: the malformed record is skipped and valid queues remain visible.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		QueueUrls []string `json:"QueueUrls"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if !containsStringInSlice(result.QueueUrls, goodURL) {
+		t.Fatalf("expected valid queue URL %q, got %#v", goodURL, result.QueueUrls)
 	}
 }
 
@@ -1998,6 +2064,15 @@ func sendMessage(t *testing.T, srv *helpers.TestServer, queueURL, body string) s
 
 func containsString(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsSubstring(s, sub))
+}
+
+func containsStringInSlice(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func containsSubstring(s, sub string) bool {
