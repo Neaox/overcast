@@ -4,7 +4,7 @@
  */
 import { useEffect, useMemo, useState } from "react"
 import * as Dialog from "@radix-ui/react-dialog"
-import { useInfiniteQuery } from "@tanstack/react-query"
+import { infiniteQueryOptions, useInfiniteQuery } from "@tanstack/react-query"
 import { X } from "lucide-react"
 import { LogViewer } from "@/components/logs/log-viewer"
 import { cn } from "@/lib/utils"
@@ -57,50 +57,29 @@ function fmtDuration(ms: number | undefined): string {
   return `${Math.round(s)}s`
 }
 
-export function LambdaInvocationsDrawer({
-  open,
-  onOpenChange,
-  invocations,
-  functionName,
-  instanceId,
-}: LambdaInvocationsDrawerProps) {
-  const [nowMs, setNowMs] = useState(() => Date.now())
-  const [selectedKey, setSelectedKey] = useState<string | null>(
-    invocations.length > 0 ? invocations[0].key : null,
-  )
-
-  useEffect(() => {
-    if (invocations.length === 0) {
-      if (selectedKey !== null) setSelectedKey(null)
-      return
-    }
-    if (!selectedKey || !invocations.some((inv) => inv.key === selectedKey)) {
-      setSelectedKey(invocations[0].key)
-    }
-  }, [invocations, selectedKey])
-
-  const selected = invocations.find((inv) => inv.key === selectedKey)
-  const selectedLogGroup = selected?.logGroup
-  const selectedLogStream = selected?.logStream
-  const selectedTriggerEvent = selected?.triggerEvent
-  const selectedStartMs = selected ? Date.parse(selected.acquiredAt) : NaN
-  const selectedEndMs = selected?.releasedAt ? Date.parse(selected.releasedAt) : undefined
-  const queryEndMs = selectedEndMs != null ? selectedEndMs + 1 : undefined
-  const selectedRunning = Boolean(selected && selectedEndMs == null)
-  const anyRunning = useMemo(() => invocations.some((inv) => !inv.releasedAt), [invocations])
-
-  useEffect(() => {
-    if (!open || !anyRunning) return
-    const id = setInterval(() => setNowMs(Date.now()), 1000)
-    return () => clearInterval(id)
-  }, [open, anyRunning])
-
-  const logsQuery = useInfiniteQuery({
+function lambdaInvocationLogsQueryOptions({
+  selectedLogGroup,
+  selectedLogStream,
+  selectedKey,
+  selectedStartMs,
+  queryEndMs,
+  enabled,
+  refetchInterval,
+}: {
+  selectedLogGroup: string | undefined
+  selectedLogStream: string | undefined
+  selectedKey: string | undefined
+  selectedStartMs: number
+  queryEndMs: number | undefined
+  enabled: boolean
+  refetchInterval: false | number
+}) {
+  return infiniteQueryOptions({
     queryKey: [
       "lambda-invocation-logs",
       selectedLogGroup,
       selectedLogStream,
-      selected?.key,
+      selectedKey,
       Number.isFinite(selectedStartMs) ? selectedStartMs : "invalid",
       queryEndMs ?? "running",
     ],
@@ -116,23 +95,65 @@ export function LambdaInvocationsDrawer({
       const token = lastPage.nextForwardToken
       return !token || token === lastPageParam ? undefined : token
     },
-    enabled: Boolean(
-      selected &&
-      selectedLogGroup &&
-      selectedLogStream &&
-      Number.isFinite(selectedStartMs) &&
-      (queryEndMs == null || Number.isFinite(queryEndMs)) &&
-      open,
-    ),
-    refetchInterval: selectedRunning && open ? 1000 : false,
+    enabled,
+    refetchInterval,
     refetchIntervalInBackground: false,
     staleTime: 30_000,
   })
+}
 
-  const logEvents = useMemo(() => {
-    const events = logsQuery.data?.pages.flatMap((page) => page.events) ?? []
-    if (!Number.isFinite(selectedStartMs)) return []
-    return events
+export function LambdaInvocationsDrawer({
+  open,
+  onOpenChange,
+  invocations,
+  functionName,
+  instanceId,
+}: LambdaInvocationsDrawerProps) {
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  const [selectedKey, setSelectedKey] = useState<string | null>(
+    invocations.length > 0 ? invocations[0].key : null,
+  )
+
+  const activeSelectedKey = invocations.some((inv) => inv.key === selectedKey)
+    ? selectedKey
+    : (invocations[0]?.key ?? null)
+  const selected = invocations.find((inv) => inv.key === activeSelectedKey)
+  const selectedLogGroup = selected?.logGroup
+  const selectedLogStream = selected?.logStream
+  const selectedTriggerEvent = selected?.triggerEvent
+  const selectedStartMs = selected ? Date.parse(selected.acquiredAt) : NaN
+  const selectedEndMs = selected?.releasedAt ? Date.parse(selected.releasedAt) : undefined
+  const queryEndMs = selectedEndMs != null ? selectedEndMs + 1 : undefined
+  const selectedRunning = Boolean(selected && selectedEndMs == null)
+  const anyRunning = useMemo(() => invocations.some((inv) => !inv.releasedAt), [invocations])
+
+  useEffect(() => {
+    if (!open || !anyRunning) return
+    const id = setInterval(() => setNowMs(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [open, anyRunning])
+
+  const logsQuery = useInfiniteQuery(
+    lambdaInvocationLogsQueryOptions({
+      selectedLogGroup,
+      selectedLogStream,
+      selectedKey: selected?.key,
+      selectedStartMs,
+      queryEndMs,
+      enabled: Boolean(
+        selected &&
+          selectedLogGroup &&
+          selectedLogStream &&
+          Number.isFinite(selectedStartMs) &&
+          (queryEndMs == null || Number.isFinite(queryEndMs)) &&
+          open,
+      ),
+      refetchInterval: selectedRunning && open ? 1000 : false,
+    }),
+  )
+
+  const logEvents = Number.isFinite(selectedStartMs)
+    ? (logsQuery.data?.pages.flatMap((page) => page.events) ?? [])
       .filter((event) => {
         const ts = event.timestamp
         if (ts == null) return false
@@ -141,22 +162,22 @@ export function LambdaInvocationsDrawer({
         return true
       })
       .sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0))
-  }, [logsQuery.data, selectedStartMs, selectedEndMs])
+    : []
 
-  const selectedDurationMs = useMemo(() => {
+  const selectedDurationMs = (() => {
     if (!Number.isFinite(selectedStartMs)) return undefined
     const end = selectedEndMs ?? nowMs
     if (!Number.isFinite(end) || end < selectedStartMs) return undefined
     return end - selectedStartMs
-  }, [selectedStartMs, selectedEndMs, nowMs])
+  })()
 
-  const selectedStatus = useMemo(() => {
+  const selectedStatus = (() => {
     if (!selected) return "running" as const
     if (!selected.releasedAt) return "running" as const
     if (selected.outcomeStatus === "failed") return "failed" as const
     if (selected.outcomeStatus === "succeeded") return "completed" as const
     return "unknown" as const
-  }, [selected])
+  })()
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -221,7 +242,7 @@ export function LambdaInvocationsDrawer({
                           className={cn(
                             "nodrag nopan pointer-events-auto w-full border-b border-border px-3 py-3 text-left transition-colors",
                             "hover:bg-accent/5 active:bg-accent/10",
-                            selectedKey === inv.key
+                            activeSelectedKey === inv.key
                               ? "border-accent/50 bg-accent/15"
                               : idx === 0
                                 ? "bg-bg-elevated"

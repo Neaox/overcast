@@ -44,7 +44,7 @@ function defaultSummary(event: StreamEvent): string {
   if (!p) return ""
 
   if (event.type === "service:Error") {
-    const service = String(p.service ?? event.source ?? "")
+    const service = String(p.service ?? event.source)
     const op = p.operation ? String(p.operation) + ": " : ""
     const msg = String(p.message ?? "")
     return `${service}: ${op}${msg}`

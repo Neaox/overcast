@@ -51,11 +51,12 @@ type ContainerRuntime struct {
 	overcastEndpoint string                             // http://host:port — AWS_ENDPOINT_URL for containers
 	pullOnce         sync.Map                           // image name → *sync.Once — ensures each image is pulled only once
 	logWriter        events.LogWriter                   // nil until InitLogWriter is called
-	bus              *events.Bus                        // nil until SetBus is called
+	bus              atomic.Pointer[events.Bus]         // nil until SetBus is called
 	exitNotify       *exitNotifier                      // routes Docker watcher die events to per-container channels
 	vpcResolver      atomic.Pointer[VPCNetworkResolver] // resolves subnet → VPC → Docker network
 	layerFetcher     LayerContentFetcher                // resolves a layer ARN to zip bytes for /opt injection
 	remoteFetcher    *RemoteLayerFetcher                // optional — fetches layers from real AWS
+	coldStartSem     chan struct{}                      // bounds concurrent container creation/INIT bursts
 
 	// initBurst tracks containers that are still in the INIT phase with burst
 	// CPU. Keyed by function ARN → {containerID, steadyStateCPUs}.
@@ -70,7 +71,7 @@ func (cr *ContainerRuntime) SetLogWriter(lw events.LogWriter) { cr.logWriter = l
 
 // SetBus wires the event bus so image pull progress events are published.
 // Safe to call at any time; picked up by the next ensureImage call.
-func (cr *ContainerRuntime) SetBus(b *events.Bus) { cr.bus = b }
+func (cr *ContainerRuntime) SetBus(b *events.Bus) { cr.bus.Store(b) }
 
 // SetVPCResolver wires the EC2 VPC resolver for connecting Lambda containers
 // to VPC Docker networks.
@@ -147,6 +148,11 @@ func NewContainerRuntime(
 	runtimeHost, _, _ := net.SplitHostPort(runtimeAPI.Addr())
 	overcastEndpoint := fmt.Sprintf("http://%s:%d", runtimeHost, cfg.Port)
 
+	limit := cfg.LambdaDockerMaxConcurrentStarts
+	if limit < 1 {
+		limit = 1
+	}
+
 	return &ContainerRuntime{
 		cfg:              cfg,
 		clk:              clk,
@@ -157,6 +163,22 @@ func NewContainerRuntime(
 		network:          cfg.LambdaNetwork,
 		overcastEndpoint: overcastEndpoint,
 		exitNotify:       newExitNotifier(),
+		coldStartSem:     make(chan struct{}, limit),
+	}
+}
+
+func (cr *ContainerRuntime) acquireColdStartSlot(ctx context.Context) (func(), error) {
+	if cr.coldStartSem == nil {
+		return func() {}, nil
+	}
+	select {
+	case cr.coldStartSem <- struct{}{}:
+		var once sync.Once
+		return func() {
+			once.Do(func() { <-cr.coldStartSem })
+		}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 
@@ -278,6 +300,13 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		progress("Image ready")
 	}
 
+	progress("Waiting for cold-start capacity")
+	releaseColdStart, err := cr.acquireColdStartSlot(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("wait for lambda cold-start slot: %w", err)
+	}
+	defer releaseColdStart()
+
 	hotReloadPath, err := hotReloadBindPath(fn, cr.cfg.LambdaHotReload)
 	if err != nil {
 		return nil, err
@@ -323,7 +352,6 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	req := &docker.CreateContainerRequest{
 		ContainerConfig: ccfg,
 		HostConfig: &docker.HostConfig{
-			AutoRemove:  true,
 			Binds:       bindMountTaskDir(hotReloadPath),
 			NetworkMode: cr.network,
 			Memory:      int64(fn.MemorySize) * 1024 * 1024,
@@ -337,8 +365,25 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		return nil, fmt.Errorf("create container: %w", decorateHotReloadMountError(err, hotReloadPath))
 	}
 
+	var containerIP string
+	var registeredIP string
+	if inspect, inspectErr := cr.docker.InspectContainer(ctx, id); inspectErr == nil {
+		containerIP = cr.extractContainerIP(inspect)
+		if containerIP != "" {
+			cr.runtimeAPI.RegisterContainer(containerIP, fn.ARN)
+			registeredIP = containerIP
+		}
+	} else {
+		cr.logger.Debug("inspect lambda container before start", zap.String("container", id[:12]), zap.Error(inspectErr))
+	}
+
 	// cleanup removes the container on any error after creation.
-	cleanup := func() { _ = cr.docker.RemoveContainerForce(id) }
+	cleanup := func() {
+		if registeredIP != "" {
+			cr.runtimeAPI.UnregisterContainer(registeredIP)
+		}
+		_ = cr.docker.RemoveContainerForce(id)
+	}
 
 	// Copy code into the container before starting it (zip deployments only).
 	if !isImage && hotReloadPath == "" {
@@ -374,15 +419,16 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	cr.registerInitBurst(fn.ARN, id, fn.MemorySize)
 
 	progress("Waiting for runtime to initialize")
-	containerIP, err := cr.awaitContainerIP(ctx, id)
-	if err != nil {
-		cr.clearInitBurst(fn.ARN)
-		cleanup()
-		return nil, err
+	if containerIP == "" {
+		containerIP, err = cr.awaitContainerIP(ctx, id)
+		if err != nil {
+			cr.clearInitBurst(fn.ARN)
+			cleanup()
+			return nil, err
+		}
+		cr.runtimeAPI.RegisterContainer(containerIP, fn.ARN)
+		registeredIP = containerIP
 	}
-
-	// Register IP → function ARN so Runtime API can route GET /next.
-	cr.runtimeAPI.RegisterContainer(containerIP, fn.ARN)
 
 	cr.logger.Info("lambda container started",
 		zap.String("function", fn.Name),
@@ -408,6 +454,11 @@ func (cr *ContainerRuntime) awaitContainerIP(ctx context.Context, containerID st
 		// Bail out immediately if the container already died (e.g. image
 		// entrypoint crashed on boot).
 		if !inspect.State.Running && inspect.State.Status != "created" {
+			logs, _ := cr.docker.ContainerLogs(ctx, containerID, "50")
+			if len(logs) > 0 {
+				return "", fmt.Errorf("container %s exited during startup (status=%s exit=%d): %s",
+					containerID[:12], inspect.State.Status, inspect.State.ExitCode, strings.TrimSpace(string(logs)))
+			}
 			return "", fmt.Errorf("container %s exited during startup (status=%s exit=%d)",
 				containerID[:12], inspect.State.Status, inspect.State.ExitCode)
 		}
@@ -474,6 +525,7 @@ func (cr *ContainerRuntime) newContainerInstance(id, containerIP string, fn *Fun
 		logDone:        make(chan struct{}),
 		healthy:        true,
 		keepContainers: cr.cfg.LambdaKeepContainers,
+		readyCh:        cr.runtimeAPI.ReadyChan(containerIP),
 	}
 
 	if cr.logWriter != nil {
@@ -574,7 +626,7 @@ func (cr *ContainerRuntime) ensureImage(ctx context.Context, image string) error
 	once.(*sync.Once).Do(func() {
 		cr.logger.Info("pulling Lambda image (first use)", zap.String("image", image))
 		// Capture bus and clock once; either may be nil in tests or before wiring.
-		bus := cr.bus
+		bus := cr.bus.Load()
 		clk := cr.clk
 		if bus != nil && clk != nil {
 			bus.Publish(context.Background(), events.Event{
@@ -696,10 +748,47 @@ type containerInstance struct {
 	tailBuf        []byte        // last ≤4096 bytes of stdout+stderr for X-Amz-Log-Result
 	logReadAt      atomic.Int64  // UnixNano of last Docker log read; 0 until first read
 	logInFlight    atomic.Int64  // lines parsed by scanner but not yet flushed to CWL
-	logHighWater   atomic.Int64  // UnixNano of the last Docker timestamp successfully processed; used as `since` on reconnect
+	logCursor      logCursor     // exact Docker timestamp cursor used for reconnect/reconcile deduplication
 	logDone        chan struct{} // closed when streamLogs goroutine exits
+	readyCh        <-chan struct{}
 	healthy        bool
 	keepContainers bool // when true, Close only stops the container instead of removing it
+}
+
+func (ci *containerInstance) AwaitReady(ctx context.Context) error {
+	if ci.readyCh == nil {
+		return nil
+	}
+	var exitCh <-chan string
+	var waitCancel context.CancelFunc
+	if ci.exitNotify != nil && ci.id != "" {
+		exitCh = ci.exitNotify.register(ci.id)
+		defer ci.exitNotify.unregister(ci.id)
+	} else if ci.docker != nil && ci.id != "" {
+		strCh := make(chan string, 1)
+		exitCh = strCh
+		var waitCtx context.Context
+		waitCtx, waitCancel = context.WithCancel(ctx)
+		defer waitCancel()
+		go func() {
+			exitCode, err := ci.docker.WaitContainer(waitCtx, ci.id)
+			if err == nil {
+				strCh <- fmt.Sprintf("%d", exitCode)
+			}
+		}()
+	}
+	select {
+	case <-ci.readyCh:
+		if waitCancel != nil {
+			waitCancel()
+		}
+		return nil
+	case exitCode := <-exitCh:
+		ci.healthy = false
+		return fmt.Errorf("lambda container exited during init (exit code %s)", exitCode)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // LogStreamName returns the AWS-style log stream assigned to this container.
@@ -925,6 +1014,9 @@ func (ci *containerInstance) waitForScannerIdle() {
 		case <-deadline.C:
 			return
 		case <-tick.C:
+			if ci.logInFlight.Load() > 0 {
+				continue
+			}
 			last := ci.logReadAt.Load()
 			if last == 0 {
 				// Function emitted nothing this invocation — nothing to wait for.
@@ -1035,9 +1127,44 @@ func (ci *containerInstance) writeLogLine(ctx context.Context, line string) {
 	if writeCtx.Err() != nil {
 		writeCtx = middleware.ContextWithRegion(context.Background(), regionFromFunctionARN(ci.functionARN))
 	}
-	_ = ci.logWriter.WriteLogEvents(writeCtx, ci.logGroupName, ci.logStream, []events.LogEntry{
+	ci.writeEventsWithRetry(writeCtx, []events.LogEntry{
 		{Timestamp: ci.clk.Now().UnixMilli(), Message: line},
 	})
+}
+
+func (ci *containerInstance) writeEventsWithRetry(ctx context.Context, entries []events.LogEntry) bool {
+	if ci.logWriter == nil || len(entries) == 0 {
+		return true
+	}
+	writeCtx := ctx
+	if writeCtx == nil || writeCtx.Err() != nil {
+		writeCtx = middleware.ContextWithRegion(context.Background(), regionFromFunctionARN(ci.functionARN))
+	}
+	delays := []time.Duration{10 * time.Millisecond, 50 * time.Millisecond, 250 * time.Millisecond}
+	var err error
+	for attempt := 0; attempt < len(delays); attempt++ {
+		if attempt > 0 {
+			_ = ci.logWriter.EnsureLogStream(writeCtx, ci.logGroupName, ci.logStream)
+		}
+		err = ci.logWriter.WriteLogEvents(writeCtx, ci.logGroupName, ci.logStream, entries)
+		if err == nil {
+			return true
+		}
+		if attempt == len(delays)-1 {
+			break
+		}
+		select {
+		case <-ci.clk.After(delays[attempt]):
+		case <-writeCtx.Done():
+			writeCtx = middleware.ContextWithRegion(context.Background(), regionFromFunctionARN(ci.functionARN))
+		}
+	}
+	ci.logger.Error("container logs: write events failed after retries",
+		zap.String("container", shortContainerID(ci.id)),
+		zap.Int("entries", len(entries)),
+		zap.Error(err),
+	)
+	return false
 }
 
 // billedDuration rounds elapsed time up to the nearest millisecond, matching
@@ -1123,6 +1250,109 @@ type logReadTracker struct {
 	clk    clock.Clock
 }
 
+const (
+	maxCloudWatchLogEventBytes = 262144 - 26
+	maxDockerTimestampBytes    = 64
+	maxDockerLogLineBytes      = maxCloudWatchLogEventBytes + maxDockerTimestampBytes
+)
+
+type logCursor struct {
+	mu      sync.Mutex
+	hwNanos int64
+	hwCount int
+}
+
+type logCursorAdmission struct {
+	cursor    *logCursor
+	replay    bool
+	equalSeen int
+}
+
+func (c *logCursor) Since() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.hwNanos == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, c.hwNanos-1)
+}
+
+func (c *logCursor) NewAdmission(replay bool) *logCursorAdmission {
+	return &logCursorAdmission{cursor: c, replay: replay}
+}
+
+func (a *logCursorAdmission) Admit(ts time.Time) bool {
+	if ts.IsZero() {
+		return true
+	}
+	nanos := ts.UnixNano()
+	a.cursor.mu.Lock()
+	defer a.cursor.mu.Unlock()
+	switch {
+	case nanos < a.cursor.hwNanos:
+		return false
+	case nanos > a.cursor.hwNanos:
+		a.cursor.hwNanos = nanos
+		a.cursor.hwCount = 1
+		a.equalSeen = 0
+		return true
+	default:
+		if a.replay {
+			a.equalSeen++
+			if a.equalSeen <= a.cursor.hwCount {
+				return false
+			}
+		}
+		a.cursor.hwCount++
+		return true
+	}
+}
+
+func readBoundedLogLine(r *bufio.Reader, maxBytes int) (string, error) {
+	var out []byte
+	truncated := false
+	for {
+		part, err := r.ReadSlice('\n')
+		if len(part) > 0 && !truncated {
+			remaining := maxBytes - len(out)
+			if remaining > 0 {
+				if len(part) > remaining {
+					out = append(out, part[:remaining]...)
+					truncated = true
+				} else {
+					out = append(out, part...)
+				}
+			} else {
+				truncated = true
+			}
+		}
+		if err == nil {
+			return strings.TrimRight(string(out), "\r\n"), nil
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		if err == io.EOF && len(out) > 0 {
+			return strings.TrimRight(string(out), "\r\n"), nil
+		}
+		return "", err
+	}
+}
+
+func truncateLogMessage(msg string) string {
+	if len(msg) <= maxCloudWatchLogEventBytes {
+		return msg
+	}
+	return msg[:maxCloudWatchLogEventBytes]
+}
+
+func shortContainerID(id string) string {
+	if len(id) <= 12 {
+		return id
+	}
+	return id[:12]
+}
+
 func (t *logReadTracker) Read(p []byte) (int, error) {
 	n, err := t.r.Read(p)
 	if n > 0 {
@@ -1138,16 +1368,13 @@ func (t *logReadTracker) Read(p []byte) (int, error) {
 //
 // Resilience: if the Docker log stream fails mid-flight (daemon hiccup, DinD
 // proxy timeout, etc.), the goroutine reconnects with timestamps=true and
-// since=<last-seen-timestamp>. Duplicates from overlapping reconnect windows
-// are deduplicated via the high-watermark timestamp. On graceful shutdown
-// (Close), a non-streaming reconciliation pass fetches any remaining bytes
-// from Docker's persisted log file.
+// since=<last-seen-timestamp minus 1ns>. Duplicates from overlapping reconnect
+// windows are deduplicated via an exact timestamp+count cursor. On graceful
+// shutdown (Close), a non-streaming reconciliation pass fetches any remaining
+// bytes from Docker's persisted log file.
 //
-// Line assembly uses bufio.Scanner on a dockerLogStripper so that log lines
-// that span multiple Docker frames are reassembled before being sent to
-// CloudWatch. This is essential for structured JSON logs (e.g. Lambda
-// Powertools Logger) which emit one JSON object per line; splitting mid-JSON
-// would produce invalid log events.
+// Line assembly uses a bounded reader on a dockerLogStripper so oversized log
+// lines are truncated instead of stalling the stream forever.
 //
 // The goroutine exits when logCtx is cancelled (i.e. when Close is called).
 func (ci *containerInstance) streamLogs() {
@@ -1184,9 +1411,7 @@ func (ci *containerInstance) streamLogs() {
 		}
 
 		// Update `since` from the high-watermark for the next reconnect.
-		if hw := ci.logHighWater.Load(); hw != 0 {
-			since = time.Unix(0, hw)
-		}
+		since = ci.logCursor.Since()
 
 		// Exponential backoff on reconnect to avoid hammering Docker.
 		ci.logger.Debug("container logs: reconnecting",
@@ -1221,8 +1446,8 @@ func (ci *containerInstance) streamOnce(ctx context.Context, since time.Time) {
 	}
 	defer stream.Close()
 
-	// flush writes the batch to CloudWatch and decrements logInFlight by the
-	// batch size regardless of write success.
+	// flush writes the batch durably to CloudWatch and decrements logInFlight
+	// only after the bounded retry loop completes.
 	flush := func(batch []events.LogEntry) {
 		if len(batch) == 0 {
 			return
@@ -1231,22 +1456,15 @@ func (ci *containerInstance) streamOnce(ctx context.Context, since time.Time) {
 		if writeCtx.Err() != nil {
 			writeCtx = middleware.ContextWithRegion(context.Background(), regionFromFunctionARN(ci.functionARN))
 		}
-		if writeErr := ci.logWriter.WriteLogEvents(writeCtx, ci.logGroupName, ci.logStream, batch); writeErr != nil {
-			if ctx.Err() == nil {
-				ci.logger.Warn("container logs: write events failed",
-					zap.String("container", ci.id[:12]),
-					zap.Error(writeErr),
-				)
-			}
-		}
+		ci.writeEventsWithRetry(writeCtx, batch)
 		ci.logInFlight.Add(-int64(len(batch)))
 	}
 
-	// Wrap the multiplexed stream so the Scanner sees a plain byte stream.
+	// Wrap the multiplexed stream so the line reader sees a plain byte stream.
 	stripped := &dockerLogStripper{r: stream}
 	tracked := &logReadTracker{r: stripped, readAt: &ci.logReadAt, clk: ci.clk}
-	scanner := bufio.NewScanner(tracked)
-	scanner.Buffer(make([]byte, 64*1024), 64*1024)
+	reader := bufio.NewReaderSize(tracked, 64*1024)
+	admission := ci.logCursor.NewAdmission(!since.IsZero())
 
 	type scanResult struct {
 		line string
@@ -1255,12 +1473,16 @@ func (ci *containerInstance) streamOnce(ctx context.Context, since time.Time) {
 	lines := make(chan scanResult, 64)
 	go func() {
 		defer close(lines)
-		for scanner.Scan() {
+		for {
+			line, err := readBoundedLogLine(reader, maxDockerLogLineBytes)
+			if err != nil {
+				if err != io.EOF {
+					lines <- scanResult{err: err}
+				}
+				return
+			}
 			ci.logInFlight.Add(1)
-			lines <- scanResult{line: scanner.Text()}
-		}
-		if err := scanner.Err(); err != nil {
-			lines <- scanResult{err: err}
+			lines <- scanResult{line: line}
 		}
 	}()
 
@@ -1274,7 +1496,6 @@ func (ci *containerInstance) streamOnce(ctx context.Context, since time.Time) {
 	flushTimer.Stop()
 	defer flushTimer.Stop()
 
-selectLoop:
 	for {
 		select {
 		case res, ok := <-lines:
@@ -1293,30 +1514,15 @@ selectLoop:
 				return
 			}
 			line := res.line
-			if line == "" {
+			ts, msg := parseDockerTimestamp(line)
+			if !admission.Admit(ts) {
 				ci.logInFlight.Add(-1)
 				continue
 			}
-
-			// Docker timestamps=true: each line is prefixed with an
-			// RFC3339Nano timestamp + space. Parse and strip it so the
-			// CWL message is clean, and update the high-watermark.
-			ts, msg := parseDockerTimestamp(line)
-			if !ts.IsZero() {
-				hwNanos := ts.UnixNano()
-				for {
-					cur := ci.logHighWater.Load()
-					if hwNanos <= cur {
-						// Duplicate (or older) — already delivered in a
-						// previous connection window. Discard.
-						ci.logInFlight.Add(-1)
-						continue selectLoop
-					}
-					if ci.logHighWater.CompareAndSwap(cur, hwNanos) {
-						break
-					}
-				}
-				line = msg
+			line = truncateLogMessage(msg)
+			if line == "" {
+				ci.logInFlight.Add(-1)
+				continue
 			}
 
 			// Append to rolling tail buffer (capped at 4096 bytes).
@@ -1331,7 +1537,7 @@ selectLoop:
 			ci.tailMu.Unlock()
 
 			batch = append(batch, events.LogEntry{
-				Timestamp: ci.clk.Now().UnixMilli(),
+				Timestamp: logEventTimestampMillis(ts, ci.clk.Now()),
 				Message:   line,
 			})
 			if len(batch) >= batchMax {
@@ -1347,7 +1553,10 @@ selectLoop:
 			batch = batch[:0]
 
 		case <-ctx.Done():
-			// Drain whatever the scanner has already buffered.
+			// Drain until the reader goroutine finishes or the bounded teardown cap
+			// fires. Cancelling ctx closes the Docker HTTP body; any bytes already
+			// buffered by the reader are still delivered before lines closes.
+			drainTimer := ci.clk.Timer(time.Second)
 		drainLoop:
 			for {
 				select {
@@ -1358,11 +1567,16 @@ selectLoop:
 					if res.err != nil {
 						break drainLoop
 					}
-					if res.line == "" {
+					ts, msg := parseDockerTimestamp(res.line)
+					if !admission.Admit(ts) {
 						ci.logInFlight.Add(-1)
 						continue
 					}
-					_, msg := parseDockerTimestamp(res.line)
+					msg = truncateLogMessage(msg)
+					if msg == "" {
+						ci.logInFlight.Add(-1)
+						continue
+					}
 					lineBytes := append([]byte(msg), '\n')
 					ci.tailMu.Lock()
 					ci.tailBuf = append(ci.tailBuf, lineBytes...)
@@ -1373,13 +1587,14 @@ selectLoop:
 					}
 					ci.tailMu.Unlock()
 					batch = append(batch, events.LogEntry{
-						Timestamp: ci.clk.Now().UnixMilli(),
+						Timestamp: logEventTimestampMillis(ts, ci.clk.Now()),
 						Message:   msg,
 					})
-				default:
+				case <-drainTimer.C:
 					break drainLoop
 				}
 			}
+			drainTimer.Stop()
 			flush(batch)
 			return
 		}
@@ -1404,16 +1619,19 @@ func parseDockerTimestamp(line string) (time.Time, string) {
 	return t, line[spaceIdx+1:]
 }
 
+func logEventTimestampMillis(ts time.Time, fallback time.Time) int64 {
+	if ts.IsZero() {
+		return fallback.UnixMilli()
+	}
+	return ts.UnixMilli()
+}
+
 // reconcileLogs fetches all container logs since the high-watermark via a
 // non-streaming request (Docker's persisted log file is complete once the
 // container has stopped) and writes any lines that the streaming follower
 // missed. This is the final safety net ensuring zero log loss.
 func (ci *containerInstance) reconcileLogs() {
-	hw := ci.logHighWater.Load()
-	var since time.Time
-	if hw != 0 {
-		since = time.Unix(0, hw)
-	}
+	since := ci.logCursor.Since()
 
 	dockerCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1429,26 +1647,31 @@ func (ci *containerInstance) reconcileLogs() {
 	defer body.Close()
 
 	stripped := &dockerLogStripper{r: body}
-	scanner := bufio.NewScanner(stripped)
-	scanner.Buffer(make([]byte, 64*1024), 64*1024)
+	reader := bufio.NewReaderSize(stripped, 64*1024)
+	admission := ci.logCursor.NewAdmission(!since.IsZero())
 
 	var batch []events.LogEntry
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			continue
+	for {
+		line, readErr := readBoundedLogLine(reader, maxDockerLogLineBytes)
+		if readErr != nil {
+			if readErr != io.EOF {
+				ci.logger.Debug("container logs: reconciliation read ended",
+					zap.String("container", shortContainerID(ci.id)),
+					zap.Error(readErr),
+				)
+			}
+			break
 		}
 		ts, msg := parseDockerTimestamp(line)
-		// Skip lines at or before the high watermark (already delivered).
-		if !ts.IsZero() && ts.UnixNano() <= hw {
+		if !admission.Admit(ts) {
 			continue
 		}
-		// Update high watermark.
-		if !ts.IsZero() {
-			ci.logHighWater.Store(ts.UnixNano())
+		msg = truncateLogMessage(msg)
+		if msg == "" {
+			continue
 		}
 		batch = append(batch, events.LogEntry{
-			Timestamp: ci.clk.Now().UnixMilli(),
+			Timestamp: logEventTimestampMillis(ts, ci.clk.Now()),
 			Message:   msg,
 		})
 	}
@@ -1459,7 +1682,7 @@ func (ci *containerInstance) reconcileLogs() {
 		if writeCtx.Err() != nil {
 			writeCtx = middleware.ContextWithRegion(context.Background(), regionFromFunctionARN(ci.functionARN))
 		}
-		_ = ci.logWriter.WriteLogEvents(writeCtx, ci.logGroupName, ci.logStream, batch)
+		ci.writeEventsWithRetry(writeCtx, batch)
 	}
 }
 

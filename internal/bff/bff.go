@@ -221,6 +221,7 @@ func doPost(ctx context.Context, u, contentType string, body io.Reader) (*http.R
 	return bffHTTPClient.Do(req)
 }
 
+//nolint:unused // Kept for BFF routes that proxy Query-protocol form posts.
 func doPostForm(ctx context.Context, u string, form url.Values) (*http.Response, error) {
 	return doPost(ctx, u, "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
 }

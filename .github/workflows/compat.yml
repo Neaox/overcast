@@ -34,11 +34,11 @@ jobs:
 
     steps:
       # ── Checkout ────────────────────────────────────────────────────────────
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.0
 
       # ── Go toolchain ────────────────────────────────────────────────────────
       # Cache key covers all go.sum files so sub-module deps are also cached.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: "1.24"
           cache: true
@@ -47,14 +47,16 @@ jobs:
             compat/suites/go-sdk/go.sum
 
       # ── Node.js toolchain ───────────────────────────────────────────────────
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6.4.0
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
-          cache-dependency-path: compat/suites/node-js-sdk/package-lock.json
+          cache-dependency-path: |
+            web/package-lock.json
+            compat/suites/node-js-sdk/package-lock.json
 
       # ── Python toolchain ───────────────────────────────────────────────────
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6.3.0
         with:
           python-version: "3.11"
           cache: pip
@@ -65,6 +67,12 @@ jobs:
       - name: Install Node.js deps (node-js-sdk)
         run: npm ci
         working-directory: compat/suites/node-js-sdk
+
+      # cmd/overcast embeds web/dist at compile time. Build the SPA before any
+      # Go command that imports the module root, including cmd/compat.
+      - name: Build web assets
+        run: npm ci && VITE_BUNDLED=true npm run build
+        working-directory: web
 
       # python-sdk: install boto3 / botocore
       - name: Install Python deps (python-sdk)
@@ -108,15 +116,15 @@ jobs:
           # Save structured results for the artifact upload step.
           OVERCAST_COMPAT_RESULTS_FILE: compat-results.json
         run: |
-          SUITE_FLAG=""
+          args=(
+            --endpoint http://localhost:4566
+            --format pretty
+            --results-file compat-results.json
+          )
           if [[ -n "${{ github.event.inputs.suite }}" ]]; then
-            SUITE_FLAG="--suite ${{ github.event.inputs.suite }}"
+            args+=(--suite "${{ github.event.inputs.suite }}")
           fi
-          go run ./cmd/compat \
-            --endpoint http://localhost:4566 \
-            --format pretty \
-            --results-file compat-results.json \
-            $SUITE_FLAG
+          go run ./cmd/compat "${args[@]}"
 
       # ── Stop Overcast ──────────────────────────────────────────────────────
       - name: Stop Overcast
@@ -130,11 +138,12 @@ jobs:
       # The JSON results file is uploaded on every run (pass or fail) so
       # engineers can download and inspect it even when compat tests fail.
       - name: Upload compat results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: compat-results-${{ github.sha }}
           path: compat-results.json
+          if-no-files-found: ignore
           retention-days: 90
 
       # ── Attach to release ──────────────────────────────────────────────────
@@ -142,7 +151,7 @@ jobs:
       # JSON to the release assets so it is available from the release page.
       - name: Attach results to release
         if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: compat-results.json
 

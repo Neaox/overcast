@@ -144,6 +144,17 @@ func (inv *ServiceInvoker) InvokeAsync(ctx context.Context, functionARN string, 
 		)
 		return nil
 	}
+	if err := awaitRuntimeReady(ctx, inv.cfg, inst); err != nil {
+		rt.Release(ctx, inst, false)
+		if inv.tracker != nil {
+			inv.tracker.Release(name, false, err.Error())
+		}
+		inv.logger.Error("lambda: invokeAsync: runtime init failed",
+			zap.String("function", name),
+			zap.Error(err),
+		)
+		return nil
+	}
 
 	if inv.tracker != nil {
 		inv.tracker.Ready(name)
@@ -257,6 +268,17 @@ func (inv *ServiceInvoker) Invoke(ctx context.Context, functionName string, payl
 			inv.tracker.Release(functionName, false, err.Error())
 		}
 		inv.logger.Error("lambda: invoke: acquire instance failed",
+			zap.String("function", functionName),
+			zap.Error(err),
+		)
+		return nil, err
+	}
+	if err := awaitRuntimeReady(ctx, inv.cfg, inst); err != nil {
+		rt.Release(ctx, inst, false)
+		if inv.tracker != nil {
+			inv.tracker.Release(functionName, false, err.Error())
+		}
+		inv.logger.Error("lambda: invoke: runtime init failed",
 			zap.String("function", functionName),
 			zap.Error(err),
 		)

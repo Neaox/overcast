@@ -1,8 +1,18 @@
 package middleware
 
 import (
+	"errors"
+	"io"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/Neaox/overcast/internal/clock"
+	"github.com/Neaox/overcast/internal/protocol"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestDetectService(t *testing.T) {
@@ -21,10 +31,13 @@ func TestDetectService(t *testing.T) {
 		// Well-known URL prefixes — REST-protocol services
 		{name: "lambda path", method: "GET", path: "/2015-03-31/functions", want: "lambda"},
 		{name: "pipes path", method: "GET", path: "/v1/pipes", want: "pipes"},
+		{name: "appsync apis", method: "GET", path: "/v1/apis", want: "appsync"},
+		{name: "appsync graphql", method: "POST", path: "/_appsync/api-id/graphql", want: "appsync"},
 		{name: "ses path", method: "GET", path: "/v2/email/identities", want: "ses"},
 		{name: "cloudfront path", method: "GET", path: "/2020-05-31/distribution", want: "cloudfront"},
 		{name: "apigateway restapis", method: "GET", path: "/restapis", want: "apigateway"},
 		{name: "apigateway v2", method: "GET", path: "/v2/apis", want: "apigateway"},
+		{name: "appsync events v2", method: "GET", path: "/v2/apis", header: map[string]string{"Authorization": "AWS4-HMAC-SHA256 Credential=AKID/20260623/us-east-1/appsync/aws4_request, SignedHeaders=host;x-amz-date, Signature=abc"}, want: "appsync"},
 
 		// Internal /_events and /_metrics
 		{name: "events", method: "GET", path: "/_events", want: "events"},
@@ -130,6 +143,7 @@ func TestInternalService(t *testing.T) {
 		{"/_ecs/tasks/arn/logs/main", "ecs"},
 		{"/_lambda/instances", "lambda"},
 		{"/_lambda/runtimes", "lambda"},
+		{"/_appsync/api-id/graphql", "appsync"},
 		{"/_cloudfront/EDIST/index.html", "cloudfront"},
 		{"/_overcast/secretsmanager/secrets", "secretsmanager"},
 		{"/_overcast/secretsmanager/secrets/id/value", "secretsmanager"},
@@ -149,5 +163,57 @@ func TestInternalService(t *testing.T) {
 				t.Errorf("internalService(%q) = %q, want %q", tt.path, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestLogger_awsInternalError(t *testing.T) {
+	// Given: a handler writes a wrapped AWS InternalError.
+	core, logs := observer.New(zapcore.DebugLevel)
+	logger := zap.New(core)
+	handler := Logger(logger, clock.New())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body in handler: %v", err)
+		}
+		if string(body) != `{"QueueUrl":"http://localhost:4566/000000000000/q"}` {
+			t.Fatalf("handler body = %q", string(body))
+		}
+		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, errors.New("state scan: database is locked")))
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/?trace=1", strings.NewReader(`{"QueueUrl":"http://localhost:4566/000000000000/q"}`))
+	req.Header.Set("X-Amz-Target", "AmazonSQS.ReceiveMessage")
+	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+	rec := httptest.NewRecorder()
+
+	// When: the request fails with a 500.
+	handler.ServeHTTP(rec, req)
+
+	// Then: the failure log includes the AWS error and its internal cause.
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	entries := logs.FilterMessage("request failed").All()
+	if len(entries) != 1 {
+		t.Fatalf("request failed log entries = %d, want 1", len(entries))
+	}
+	ctx := entries[0].ContextMap()
+	if got := ctx["aws_error_code"]; got != "InternalError" {
+		t.Fatalf("aws_error_code = %v, want InternalError", got)
+	}
+	if got := ctx["aws_error_cause"]; got != "state scan: database is locked" {
+		t.Fatalf("aws_error_cause = %v, want state scan: database is locked", got)
+	}
+	if got := ctx["request_uri"]; got != "/?trace=1" {
+		t.Fatalf("request_uri = %v, want /?trace=1", got)
+	}
+	if got := ctx["request_body"]; got != `{"QueueUrl":"http://localhost:4566/000000000000/q"}` {
+		t.Fatalf("request_body = %v", got)
+	}
+	headers, ok := ctx["request_headers"].(http.Header)
+	if !ok {
+		t.Fatalf("request_headers type = %T, want http.Header", ctx["request_headers"])
+	}
+	if got := headers.Get("X-Amz-Target"); got != "AmazonSQS.ReceiveMessage" {
+		t.Fatalf("X-Amz-Target header = %q", got)
 	}
 }

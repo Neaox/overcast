@@ -94,9 +94,8 @@ type DeviceConfiguration struct {
 	DeviceOnlyRememberedOnUserPrompt bool `json:"DeviceOnlyRememberedOnUserPrompt,omitempty"`
 }
 
-// PasswordPolicy enforces password strength requirements on self-service and
-// managed-login sign-up and password change flows.
-// AdminCreateUser / AdminSetUserPassword bypass this policy (matching AWS behaviour).
+// PasswordPolicy enforces password strength requirements on user password flows,
+// including AdminCreateUser temporary passwords.
 type PasswordPolicy struct {
 	// MinimumLength is the minimum password length. Default: 8.
 	MinimumLength int `json:"MinimumLength,omitempty"`
@@ -354,15 +353,16 @@ type userPoolWire struct {
 	DeviceConfiguration         *DeviceConfiguration             `json:"DeviceConfiguration,omitempty"`
 }
 
-type mfaConfigWire struct {
-	MfaConfiguration      string                     `json:"MfaConfiguration,omitempty"`
-	WebAuthnConfiguration *webAuthnConfigurationWire `json:"WebAuthnConfiguration,omitempty"`
-}
-
 type webAuthnConfigurationWire struct {
 	FactorConfiguration string `json:"FactorConfiguration,omitempty"`
 	RelyingPartyID      string `json:"RelyingPartyId,omitempty"`
 	UserVerification    string `json:"UserVerification,omitempty"`
+}
+
+//nolint:unused // Kept for AWS wire compatibility when serialising MFA config fragments.
+type mfaConfigWire struct {
+	MfaConfiguration      string                     `json:"MfaConfiguration,omitempty"`
+	WebAuthnConfiguration *webAuthnConfigurationWire `json:"WebAuthnConfiguration,omitempty"`
 }
 
 type userAttributeUpdateSettingsWire struct {

@@ -45,8 +45,8 @@ type setDesiredCapacityReq struct {
 }
 
 type terminateInstanceReq struct {
-	AutoScalingGroupName          string `json:"AutoScalingGroupName"`
-	InstanceId                    string `json:"InstanceId"`
+	AutoScalingGroupName           string `json:"AutoScalingGroupName"`
+	InstanceId                     string `json:"InstanceId"`
 	ShouldDecrementDesiredCapacity string `json:"ShouldDecrementDesiredCapacity"`
 }
 
@@ -142,8 +142,8 @@ type asgEmptyResp struct {
 }
 
 type describeASGsResp struct {
-	XMLName struct{}       `xml:"DescribeAutoScalingGroupsResponse"`
-	Xmlns   string         `xml:"xmlns,attr"`
+	XMLName struct{}        `xml:"DescribeAutoScalingGroupsResponse"`
+	Xmlns   string          `xml:"xmlns,attr"`
 	Result  asgGroupsResult `xml:"DescribeAutoScalingGroupsResult"`
 	Meta    asgResponseMeta `xml:"ResponseMetadata"`
 }
@@ -173,10 +173,10 @@ type asgXMLGroup struct {
 }
 
 type terminateInstanceResp struct {
-	XMLName struct{}                 `xml:"TerminateInstanceInAutoScalingGroupResponse"`
-	Xmlns   string                   `xml:"xmlns,attr"`
-	Result  terminateInstanceResult  `xml:"TerminateInstanceInAutoScalingGroupResult"`
-	Meta    asgResponseMeta          `xml:"ResponseMetadata"`
+	XMLName struct{}                `xml:"TerminateInstanceInAutoScalingGroupResponse"`
+	Xmlns   string                  `xml:"xmlns,attr"`
+	Result  terminateInstanceResult `xml:"TerminateInstanceInAutoScalingGroupResult"`
+	Meta    asgResponseMeta         `xml:"ResponseMetadata"`
 }
 
 type terminateInstanceResult struct {
@@ -192,10 +192,10 @@ type asgActivityXML struct {
 }
 
 type describeLaunchConfigsResp struct {
-	XMLName struct{}             `xml:"DescribeLaunchConfigurationsResponse"`
-	Xmlns   string               `xml:"xmlns,attr"`
-	Result  launchConfigsResult  `xml:"DescribeLaunchConfigurationsResult"`
-	Meta    asgResponseMeta      `xml:"ResponseMetadata"`
+	XMLName struct{}            `xml:"DescribeLaunchConfigurationsResponse"`
+	Xmlns   string              `xml:"xmlns,attr"`
+	Result  launchConfigsResult `xml:"DescribeLaunchConfigurationsResult"`
+	Meta    asgResponseMeta     `xml:"ResponseMetadata"`
 }
 
 type launchConfigsResult struct {
@@ -214,10 +214,10 @@ type asgXMLLaunchConfig struct {
 }
 
 type putScalingPolicyResp struct {
-	XMLName struct{}              `xml:"PutScalingPolicyResponse"`
-	Xmlns   string                `xml:"xmlns,attr"`
+	XMLName struct{}               `xml:"PutScalingPolicyResponse"`
+	Xmlns   string                 `xml:"xmlns,attr"`
 	Result  putScalingPolicyResult `xml:"PutScalingPolicyResult"`
-	Meta    asgResponseMeta       `xml:"ResponseMetadata"`
+	Meta    asgResponseMeta        `xml:"ResponseMetadata"`
 }
 
 type putScalingPolicyResult struct {
@@ -225,10 +225,10 @@ type putScalingPolicyResult struct {
 }
 
 type describePoliciesResp struct {
-	XMLName struct{}             `xml:"DescribePoliciesResponse"`
-	Xmlns   string               `xml:"xmlns,attr"`
-	Result  policiesResult       `xml:"DescribePoliciesResult"`
-	Meta    asgResponseMeta      `xml:"ResponseMetadata"`
+	XMLName struct{}        `xml:"DescribePoliciesResponse"`
+	Xmlns   string          `xml:"xmlns,attr"`
+	Result  policiesResult  `xml:"DescribePoliciesResult"`
+	Meta    asgResponseMeta `xml:"ResponseMetadata"`
 }
 
 type policiesResult struct {
@@ -246,10 +246,10 @@ type asgXMLPolicy struct {
 }
 
 type describeLifecycleHooksResp struct {
-	XMLName struct{}               `xml:"DescribeLifecycleHooksResponse"`
-	Xmlns   string                 `xml:"xmlns,attr"`
-	Result  lifecycleHooksResult   `xml:"DescribeLifecycleHooksResult"`
-	Meta    asgResponseMeta        `xml:"ResponseMetadata"`
+	XMLName struct{}             `xml:"DescribeLifecycleHooksResponse"`
+	Xmlns   string               `xml:"xmlns,attr"`
+	Result  lifecycleHooksResult `xml:"DescribeLifecycleHooksResult"`
+	Meta    asgResponseMeta      `xml:"ResponseMetadata"`
 }
 
 type lifecycleHooksResult struct {
@@ -265,10 +265,10 @@ type asgXMLHook struct {
 }
 
 type describeTagsResp struct {
-	XMLName struct{}          `xml:"DescribeTagsResponse"`
-	Xmlns   string            `xml:"xmlns,attr"`
-	Result  tagsResult        `xml:"DescribeTagsResult"`
-	Meta    asgResponseMeta   `xml:"ResponseMetadata"`
+	XMLName struct{}        `xml:"DescribeTagsResponse"`
+	Xmlns   string          `xml:"xmlns,attr"`
+	Result  tagsResult      `xml:"DescribeTagsResult"`
+	Meta    asgResponseMeta `xml:"ResponseMetadata"`
 }
 
 type tagsResult struct {
@@ -284,9 +284,9 @@ type asgXMLTag struct {
 }
 
 type describeInstancesResp struct {
-	XMLName struct{}       `xml:"DescribeAutoScalingInstancesResponse"`
-	Xmlns   string         `xml:"xmlns,attr"`
-	Result  struct{}       `xml:"DescribeAutoScalingInstancesResult"`
+	XMLName struct{}        `xml:"DescribeAutoScalingInstancesResponse"`
+	Xmlns   string          `xml:"xmlns,attr"`
+	Result  struct{}        `xml:"DescribeAutoScalingInstancesResult"`
 	Meta    asgResponseMeta `xml:"ResponseMetadata"`
 }
 
@@ -584,15 +584,7 @@ func (h *Handler) describePoliciesTyped(ctx context.Context, req *describePolici
 		if req.AutoScalingGroupName != "" && p.AutoScalingGroupName != req.AutoScalingGroupName {
 			continue
 		}
-		xmlPolicies = append(xmlPolicies, asgXMLPolicy{
-			PolicyARN:            p.PolicyARN,
-			PolicyName:           p.PolicyName,
-			AutoScalingGroupName: p.AutoScalingGroupName,
-			PolicyType:           p.PolicyType,
-			AdjustmentType:       p.AdjustmentType,
-			ScalingAdjustment:    p.ScalingAdjustment,
-			Cooldown:             p.Cooldown,
-		})
+		xmlPolicies = append(xmlPolicies, asgXMLPolicy(p))
 	}
 
 	return &describePoliciesResp{
@@ -673,13 +665,7 @@ func (h *Handler) describeLifecycleHooksTyped(ctx context.Context, req *describe
 		if len(filterSet) > 0 && !filterSet[hk.LifecycleHookName] {
 			continue
 		}
-		xmlHooks = append(xmlHooks, asgXMLHook{
-			LifecycleHookName:    hk.LifecycleHookName,
-			AutoScalingGroupName: hk.AutoScalingGroupName,
-			LifecycleTransition:  hk.LifecycleTransition,
-			DefaultResult:        hk.DefaultResult,
-			HeartbeatTimeout:     hk.HeartbeatTimeout,
-		})
+		xmlHooks = append(xmlHooks, asgXMLHook(hk))
 	}
 
 	return &describeLifecycleHooksResp{
@@ -752,13 +738,7 @@ func (h *Handler) describeTagsTyped(ctx context.Context, req *describeTagsReq) (
 		if resourceFilter != "" && t.ResourceId != resourceFilter {
 			continue
 		}
-		xmlTags = append(xmlTags, asgXMLTag{
-			ResourceId:        t.ResourceId,
-			ResourceType:      t.ResourceType,
-			Key:               t.Key,
-			Value:             t.Value,
-			PropagateAtLaunch: t.PropagateAtLaunch,
-		})
+		xmlTags = append(xmlTags, asgXMLTag(t))
 	}
 
 	return &describeTagsResp{

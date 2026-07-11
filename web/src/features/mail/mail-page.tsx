@@ -7,7 +7,7 @@
  *
  * Captures email (SMTP) and SMS deliveries from all services.
  */
-import { useState, useMemo, useEffect } from "react"
+import { useState, useMemo, useEffect, useCallback } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Search, Trash2, Inbox } from "lucide-react"
 import { useToast } from "@/components/ui/toast"
@@ -19,6 +19,7 @@ import {
 } from "@/features/mail/data"
 import { MessageList } from "@/features/mail/message-list"
 import { MessageDetail } from "@/features/mail/message-detail"
+import { useInboxReadState } from "@/features/mail/read-state"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { Button } from "@/components/ui/button"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
@@ -26,6 +27,7 @@ import { cn } from "@/lib/utils"
 import type { MessageKind } from "@/types"
 
 type KindFilter = "all" | MessageKind
+type ReadFilter = "all" | "unread"
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
@@ -33,6 +35,7 @@ export function InboxPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [search, setSearch] = useState("")
   const [kindFilter, setKindFilter] = useState<KindFilter>("all")
+  const [readFilter, setReadFilter] = useState<ReadFilter>("all")
 
   const {
     data: allMessages = [],
@@ -41,6 +44,7 @@ export function InboxPage() {
     error,
   } = useQuery(inboxMessagesQueryOptions())
   const { toast } = useToast()
+  const { unreadCount, isRead, markRead } = useInboxReadState(allMessages)
 
   useEffect(() => {
     if (!isError) return
@@ -76,6 +80,9 @@ export function InboxPage() {
     if (kindFilter !== "all") {
       filtered = filtered.filter((m) => (m.kind ?? "email") === kindFilter)
     }
+    if (readFilter === "unread") {
+      filtered = filtered.filter((m) => m.id === selectedId || !isRead(m.id))
+    }
     if (search.trim()) {
       const q = search.trim().toLowerCase()
       filtered = filtered.filter(
@@ -87,9 +94,17 @@ export function InboxPage() {
       )
     }
     return filtered
-  }, [allMessages, search, kindFilter])
+  }, [allMessages, search, kindFilter, readFilter, selectedId, isRead])
 
   const selectedMessage = messages.find((m) => m.id === selectedId) ?? null
+
+  const handleSelectMessage = useCallback(
+    (id: string) => {
+      markRead(id)
+      setSelectedId(id)
+    },
+    [markRead],
+  )
 
   // Keyboard shortcuts: j / ↓ → next message, k / ↑ → previous message,
   // Backspace / Delete → delete the selected message.
@@ -160,6 +175,23 @@ export function InboxPage() {
 
             {/* Kind filter pills */}
             <div className="flex flex-wrap items-center gap-1">
+              {(["all", "unread"] as const).map((filter) => (
+                <button
+                  key={filter}
+                  onClick={() => setReadFilter(filter)}
+                  className={cn(
+                    "rounded-full px-2.5 py-0.5 text-xs font-medium capitalize transition-colors",
+                    readFilter === filter
+                      ? "bg-accent text-fg-on-accent"
+                      : "bg-surface-muted hover:bg-surface-hover text-fg-muted hover:text-fg",
+                  )}
+                >
+                  {filter === "all"
+                    ? "All messages"
+                    : `Unread${unreadCount > 0 ? ` ${unreadCount}` : ""}`}
+                </button>
+              ))}
+              <span className="mx-1 h-4 w-px bg-border" aria-hidden="true" />
               {(["all", "email", "sms", "webhook", "push"] as const).map((k) => (
                 <button
                   key={k}
@@ -172,7 +204,7 @@ export function InboxPage() {
                   )}
                 >
                   {k === "all"
-                    ? "All"
+                    ? "All types"
                     : k === "email"
                       ? "Email"
                       : k === "sms"
@@ -193,7 +225,11 @@ export function InboxPage() {
                 <Spinner />
               </div>
             ) : (
-              <MessageList messages={messages} selectedId={selectedId} onSelect={setSelectedId} />
+              <MessageList
+                messages={messages}
+                selectedId={selectedId}
+                onSelect={handleSelectMessage}
+              />
             )}
           </div>
         </div>

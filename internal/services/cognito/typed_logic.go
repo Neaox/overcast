@@ -1358,7 +1358,7 @@ func (s *Service) handleNewPasswordChallengeTyped(ctx context.Context, client *U
 	if aerr := validatePassword(pool, newPw); aerr != nil {
 		return nil, aerr
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(newPw), bcrypt.DefaultCost)
+	hash, err := hashPassword(newPw)
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -1935,9 +1935,11 @@ func (s *Service) AdminCreateUserTyped(ctx context.Context, req *AdminCreateUser
 	}
 	tempPw := req.TemporaryPassword
 	if tempPw == "" {
-		tempPw = generateTempPassword()
+		tempPw = generateTempPassword(pool)
+	} else if aerr := validatePassword(pool, tempPw); aerr != nil {
+		return nil, aerr
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(tempPw), bcrypt.DefaultCost)
+	hash, err := hashPassword(tempPw)
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -2015,7 +2017,7 @@ func (s *Service) AdminSetUserPasswordTyped(ctx context.Context, req *AdminSetUs
 	if aerr != nil {
 		return nil, aerr
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hash, err := hashPassword(req.Password)
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -2287,7 +2289,7 @@ func (s *Service) SignUpTyped(ctx context.Context, req *SignUpReq) (*SignUpResp,
 	if existing != nil {
 		return nil, errUsernameExists(req.Username)
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hash, err := hashPassword(req.Password)
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -2671,6 +2673,7 @@ func mfaConfigResponse(pool *UserPool) *UserPoolMfaConfigResp {
 	return resp
 }
 
+//nolint:unused // Kept for auth-flow validation paths that gate PASSWORD factors.
 func passwordFirstFactorAllowed(pool *UserPool) bool {
 	if pool == nil || pool.Policies == nil || pool.Policies.SignInPolicy == nil || len(pool.Policies.SignInPolicy.AllowedFirstAuthFactors) == 0 {
 		return true
@@ -2763,7 +2766,7 @@ func (s *Service) ConfirmForgotPasswordTyped(ctx context.Context, req *ConfirmFo
 	if aerr := validatePassword(pool, req.Password); aerr != nil {
 		return nil, aerr
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hash, err := hashPassword(req.Password)
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -2802,7 +2805,7 @@ func (s *Service) ChangePasswordTyped(ctx context.Context, req *ChangePasswordRe
 	if aerr := validatePassword(pool, req.ProposedPassword); aerr != nil {
 		return nil, aerr
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.ProposedPassword), bcrypt.DefaultCost)
+	hash, err := hashPassword(req.ProposedPassword)
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}

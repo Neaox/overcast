@@ -28,4 +28,3 @@ func (s *Service) Operations() []op.Operation {
 func (s *Service) SupportedProtocols() []codec.Codec {
 	return []codec.Codec{codec.QueryXML}
 }
-

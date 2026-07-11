@@ -12,6 +12,10 @@ import (
 
 type rpcv2CBOR struct{}
 
+type errorRecorder interface {
+	RecordAWSError(*protocol.AWSError)
+}
+
 var RPCv2CBOR Codec = rpcv2CBOR{}
 
 const (
@@ -51,6 +55,9 @@ func (rpcv2CBOR) WriteResponse(w http.ResponseWriter, r *http.Request, status in
 }
 
 func (rpcv2CBOR) WriteError(w http.ResponseWriter, r *http.Request, aerr *protocol.AWSError) {
+	if rec, ok := w.(errorRecorder); ok {
+		rec.RecordAWSError(aerr)
+	}
 	body, err := cborlib.Marshal(map[string]string{
 		"__type":  aerr.Code,
 		"message": aerr.Message,

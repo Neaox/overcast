@@ -123,7 +123,7 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 
 	if err := h.docker.StartContainer(ctx, containerID); err != nil {
 		h.docker.RemoveContainerForce(containerID) //nolint:errcheck
-		h.store.releasePort(ctx, hostPort)               //nolint:errcheck
+		h.store.releasePort(ctx, hostPort)         //nolint:errcheck
 		return fmt.Errorf("start container: %w", err)
 	}
 
@@ -166,6 +166,8 @@ func (h *Handler) clusterEndpointAddr(ctx context.Context, containerID string, h
 
 // cleanupClusterContainer releases the port reservation for an MSK cluster.
 // Docker container stop/remove is handled by the GC.
+//
+//nolint:unused // Kept for explicit Docker cleanup call sites.
 func (h *Handler) cleanupClusterContainer(ctx context.Context, clusterARN string) {
 	if !h.dockerReady.Load() {
 		return

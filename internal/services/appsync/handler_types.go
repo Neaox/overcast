@@ -141,7 +141,7 @@ func (h *Handler) ListTypes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"types": stored})
+	writeListJSON(w, r, "types", stored)
 }
 
 // UpdateType handles POST /v1/apis/{apiId}/types/{typeName}.

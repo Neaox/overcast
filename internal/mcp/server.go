@@ -1308,6 +1308,14 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	ch := make(chan notificationEvent, 256)
+	s.subscribeSSE(ch)
+	defer s.unsubscribeSSE(ch)
+	extCh := make(chan []byte, 256)
+	if s.sseSource != nil {
+		s.sseSource.RegisterSSEClient(extCh)
+		defer s.sseSource.UnregisterSSEClient(extCh)
+	}
 	_, _ = fmt.Fprintf(w, ": connected\n\n")
 	flusher.Flush()
 	for _, ev := range replay {
@@ -1316,14 +1324,6 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(replay) > 0 {
 		flusher.Flush()
-	}
-	ch := make(chan notificationEvent, 256)
-	s.subscribeSSE(ch)
-	defer s.unsubscribeSSE(ch)
-	extCh := make(chan []byte, 256)
-	if s.sseSource != nil {
-		s.sseSource.RegisterSSEClient(extCh)
-		defer s.sseSource.UnregisterSSEClient(extCh)
 	}
 	for {
 		select {

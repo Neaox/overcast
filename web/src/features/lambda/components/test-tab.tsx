@@ -74,7 +74,7 @@ export function TestTab({ name }: { name: string }) {
     try {
       for await (const event of lambda.invokeStream(name, eventPayload)) {
         if (event.type === "progress") setProgressStep(event.step)
-        else if (event.type === "result") setResult(event.data)
+        else setResult(event.data)
       }
     } catch (err) {
       setInvokeError((err as Error).message)

@@ -127,7 +127,7 @@ function useCombobox<T>(
 
   // Close only when focus leaves the entire container (input + dropdown together).
   function handleContainerBlur(e: React.FocusEvent) {
-    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+    if (e.currentTarget.contains(e.relatedTarget)) return
     setOpen(false)
     setQuery("")
   }
@@ -221,7 +221,7 @@ function useMultiCombobox<T>(
   }
 
   function handleContainerBlur(e: React.FocusEvent) {
-    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+    if (e.currentTarget.contains(e.relatedTarget)) return
     setOpen(false)
     setQuery("")
   }

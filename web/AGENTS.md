@@ -152,6 +152,19 @@ Custom design tokens (colours, spacing) are defined in `web/src/styles/`. Use `t
 - Large route files (`web/src/routes/<service>/$name.tsx`) may contain sub-components defined in the same file if they are tightly coupled to that route. Extract to `features/<service>/components/` when they exceed ~200 lines or are needed elsewhere.
 - Prefer `cn()` from `@/lib/utils` for conditional class merging.
 
+## React effects
+
+Effects carry a high bar. Before adding `useEffect`, read and apply
+[You Might Not Need an Effect](https://react.dev/learn/you-might-not-need-an-effect).
+
+- Do not use effects to derive state from props, query data, or other state. Compute derived values during render instead.
+- Do not use effects to synchronize one piece of React state from another. Prefer a single source of truth, render-time derivation, or resetting state at the event boundary that caused the change.
+- It is valid to update state during render when guarded by an `if` condition that cannot recurse indefinitely. This is often better than an effect when adjusting state after props/data change.
+- Use effects for synchronization with external systems: DOM APIs, browser storage, subscriptions, timers, network connections, imperative third-party widgets, and cleanup of those systems.
+- Avoid synchronous `setState` inside effects. If an effect immediately sets state based only on render data, it probably belongs in render logic or an event handler.
+- Refs are not render data. Do not read or write `ref.current` during render to drive UI. Use state for values that affect rendered output.
+- Prefer event handlers for user-triggered work such as pausing, copying, scrolling, or form submission. Effects should not be a substitute for handling the event where it happens.
+
 ---
 
 ## TypeScript

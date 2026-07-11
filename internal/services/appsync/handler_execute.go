@@ -997,6 +997,9 @@ func (h *Handler) buildVTLContext(r *http.Request, api *GraphqlAPI, rctx *resolv
 	if prevResult != nil {
 		ctx["prev"] = map[string]any{"result": prevResult}
 	}
+	if rctx.Identity != nil {
+		ctx["identity"] = rctx.Identity
+	}
 
 	// Load environment variables if available.
 	ev, _ := h.store.GetEnvironmentVariables(r.Context(), api.ApiId)

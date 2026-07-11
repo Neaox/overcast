@@ -5,6 +5,8 @@ import { CATALOG_BY_ID } from "@/lib/unsupported-services"
 export const Route = createFileRoute("/$service")({
   loader: ({ params }) => {
     const entry = CATALOG_BY_ID[params.service]
+    // TanStack Router expects throwing the notFound sentinel here.
+    // eslint-disable-next-line @typescript-eslint/only-throw-error
     if (!entry) throw notFound()
     return entry
   },

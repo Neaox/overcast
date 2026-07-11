@@ -118,7 +118,6 @@ type Config struct {
 
 	// ProtocolDispatch enables the typed wire-protocol dispatcher and the
 
-
 	// ShutdownTimeout is how long the server waits for in-flight
 	// requests to complete before forcibly closing.
 	ShutdownTimeout time.Duration
@@ -140,6 +139,18 @@ type Config struct {
 	// Runtime API to containers. Each container connects back on this port.
 	// Defaults to 9001.
 	LambdaRuntimeAPIPort int
+
+	// LambdaDockerMaxConcurrentStarts bounds concurrent Docker-backed Lambda
+	// environment starts. This is local Docker backpressure, not an AWS-facing
+	// Lambda concurrency quota. Corresponds to env var
+	// LAMBDA_DOCKER_MAX_CONCURRENT_STARTS. Default 4.
+	LambdaDockerMaxConcurrentStarts int
+
+	// LambdaInitTimeout is the maximum time to wait for a Docker-backed Lambda
+	// runtime to finish INIT and poll the Runtime API for its first invocation.
+	// This is separate from the function invocation timeout. Corresponds to env
+	// var LAMBDA_INIT_TIMEOUT_SECONDS. Default 10s.
+	LambdaInitTimeout time.Duration
 
 	// LambdaKeepContainers controls whether Docker containers are removed when
 	// a Lambda instance expires (idle timeout) or the function is deleted.
@@ -402,6 +413,8 @@ var allServices = []string{"s3", "sqs", "sns", "ses", "dynamodb", "dynamodbstrea
 //	OVERCAST_DEBUG                     false
 //	OVERCAST_TLS_CERT                  ""
 //	OVERCAST_TLS_KEY                   ""
+//	LAMBDA_DOCKER_MAX_CONCURRENT_STARTS 4
+//	LAMBDA_INIT_TIMEOUT_SECONDS       10
 //	LAMBDA_KEEP_CONTAINERS             false (true = keep stopped containers after expiry/delete)
 //	LAMBDA_FETCH_REMOTE_LAYERS         false (true = download missing layers from real AWS)
 //	ECS_DOCKER_SOCKET                  <LAMBDA_DOCKER_SOCKET> (default: same as Lambda)
@@ -554,6 +567,14 @@ func Load() (*Config, error) {
 	cfg.LambdaDockerSocket = envOr("LAMBDA_DOCKER_SOCKET", defaultDockerSocket)
 	cfg.LambdaNetwork = envOr("LAMBDA_NETWORK", "overcast_lambda")
 	cfg.LambdaRuntimeAPIPort = envInt("LAMBDA_RUNTIME_API_PORT", 9001)
+	cfg.LambdaDockerMaxConcurrentStarts = envInt("LAMBDA_DOCKER_MAX_CONCURRENT_STARTS", 4)
+	if cfg.LambdaDockerMaxConcurrentStarts < 1 {
+		cfg.LambdaDockerMaxConcurrentStarts = 1
+	}
+	cfg.LambdaInitTimeout = time.Duration(envInt("LAMBDA_INIT_TIMEOUT_SECONDS", 10)) * time.Second
+	if cfg.LambdaInitTimeout <= 0 {
+		cfg.LambdaInitTimeout = 10 * time.Second
+	}
 	cfg.LambdaKeepContainers = envBool("LAMBDA_KEEP_CONTAINERS", false)
 	cfg.LambdaHotReload = envBool("OVERCAST_LAMBDA_HOT_RELOAD", false)
 	cfg.LambdaFetchRemoteLayers = envBool("LAMBDA_FETCH_REMOTE_LAYERS", false)

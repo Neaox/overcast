@@ -1020,7 +1020,11 @@ func TestPublish_noFilterPolicy_alwaysDelivers(t *testing.T) {
 	publishResp.Body.Close()
 
 	// Then: message is delivered
-	msgs := sqsPeekMessages(t, srv, qURL)
+	var msgs []map[string]any
+	helpers.Eventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		msgs = sqsPeekMessages(t, srv, qURL)
+		return len(msgs) == 1
+	}, "timed out waiting for SNS message to arrive in SQS")
 	if len(msgs) != 1 {
 		t.Errorf("expected 1 message, got %d", len(msgs))
 	}

@@ -188,10 +188,10 @@ type listVerifiedEmailAddressesResult struct {
 }
 
 type getIdentityVerificationAttributesResp struct {
-	XMLName struct{}                                 `xml:"GetIdentityVerificationAttributesResponse"`
-	Xmlns   string                                   `xml:"xmlns,attr"`
-	Result  getIdentityVerificationAttributesResult  `xml:"GetIdentityVerificationAttributesResult"`
-	Meta    sesRespMeta                              `xml:"ResponseMetadata"`
+	XMLName struct{}                                `xml:"GetIdentityVerificationAttributesResponse"`
+	Xmlns   string                                  `xml:"xmlns,attr"`
+	Result  getIdentityVerificationAttributesResult `xml:"GetIdentityVerificationAttributesResult"`
+	Meta    sesRespMeta                             `xml:"ResponseMetadata"`
 }
 
 type getIdentityVerificationAttributesResult struct {
@@ -318,10 +318,10 @@ type getSendStatisticsResult struct {
 }
 
 type setIdentityFeedbackForwardingEnabledResp struct {
-	XMLName struct{}                                  `xml:"SetIdentityFeedbackForwardingEnabledResponse"`
-	Xmlns   string                                    `xml:"xmlns,attr"`
+	XMLName struct{}                                   `xml:"SetIdentityFeedbackForwardingEnabledResponse"`
+	Xmlns   string                                     `xml:"xmlns,attr"`
 	Result  setIdentityFeedbackForwardingEnabledResult `xml:"SetIdentityFeedbackForwardingEnabledResult"`
-	Meta    sesRespMeta                               `xml:"ResponseMetadata"`
+	Meta    sesRespMeta                                `xml:"ResponseMetadata"`
 }
 
 type setIdentityFeedbackForwardingEnabledResult struct{}

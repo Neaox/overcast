@@ -20,6 +20,7 @@ vars:
   BUILD_DIR: ./bin
   VERSION:
     sh: cat VERSION
+  ACTIONLINT_VERSION: v1.7.7
 
 tasks:
   default:
@@ -117,9 +118,24 @@ tasks:
       - go test -bench=. -benchmem -count=3 ./...
 
   lint:
-    desc: Run golangci-lint
+    desc: Run all linters (Go/emulation, web UI, GitHub Actions)
+    deps: [lint-go, lint-web, lint-actions]
+
+  lint-go:
+    desc: Run golangci-lint for Go/emulation code
     cmds:
       - golangci-lint run ./...
+
+  lint-web:
+    desc: Run web UI linting
+    dir: web
+    cmds:
+      - npm run lint
+
+  lint-actions:
+    desc: Lint GitHub Actions workflows
+    cmds:
+      - go run github.com/rhysd/actionlint/cmd/actionlint@{{.ACTIONLINT_VERSION}} .github/workflows/*.yml
 
   fmt:
     desc: Format all Go source files

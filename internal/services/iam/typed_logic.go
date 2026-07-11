@@ -506,10 +506,10 @@ type listAttachedRolePoliciesResult struct {
 // --- Instance Profiles ---
 
 type createInstanceProfileResp struct {
-	XMLName struct{}                   `xml:"CreateInstanceProfileResponse"`
-	Xmlns   string                     `xml:"xmlns,attr"`
+	XMLName struct{}                    `xml:"CreateInstanceProfileResponse"`
+	Xmlns   string                      `xml:"xmlns,attr"`
 	Result  createInstanceProfileResult `xml:"CreateInstanceProfileResult"`
-	Meta    respMeta                   `xml:"ResponseMetadata"`
+	Meta    respMeta                    `xml:"ResponseMetadata"`
 }
 type createInstanceProfileResult struct {
 	InstanceProfile instanceProfileXML `xml:"InstanceProfile"`
@@ -522,10 +522,10 @@ type deleteInstanceProfileResp struct {
 }
 
 type getInstanceProfileResp struct {
-	XMLName struct{}                  `xml:"GetInstanceProfileResponse"`
-	Xmlns   string                    `xml:"xmlns,attr"`
-	Result  getInstanceProfileResult  `xml:"GetInstanceProfileResult"`
-	Meta    respMeta                  `xml:"ResponseMetadata"`
+	XMLName struct{}                 `xml:"GetInstanceProfileResponse"`
+	Xmlns   string                   `xml:"xmlns,attr"`
+	Result  getInstanceProfileResult `xml:"GetInstanceProfileResult"`
+	Meta    respMeta                 `xml:"ResponseMetadata"`
 }
 type getInstanceProfileResult struct {
 	InstanceProfile instanceProfileXML `xml:"InstanceProfile"`
@@ -566,10 +566,10 @@ type getPolicyResult struct {
 }
 
 type listPoliciesResp struct {
-	XMLName struct{}          `xml:"ListPoliciesResponse"`
-	Xmlns   string            `xml:"xmlns,attr"`
+	XMLName struct{}           `xml:"ListPoliciesResponse"`
+	Xmlns   string             `xml:"xmlns,attr"`
 	Result  listPoliciesResult `xml:"ListPoliciesResult"`
-	Meta    respMeta          `xml:"ResponseMetadata"`
+	Meta    respMeta           `xml:"ResponseMetadata"`
 }
 type listPoliciesResult struct {
 	Policies    listMembersXML[policyXML] `xml:"Policies"`
@@ -761,10 +761,10 @@ type untagRoleResp struct {
 }
 
 type listRoleTagsResp struct {
-	XMLName struct{}            `xml:"ListRoleTagsResponse"`
-	Xmlns   string              `xml:"xmlns,attr"`
-	Result  listRoleTagsResult  `xml:"ListRoleTagsResult"`
-	Meta    respMeta            `xml:"ResponseMetadata"`
+	XMLName struct{}           `xml:"ListRoleTagsResponse"`
+	Xmlns   string             `xml:"xmlns,attr"`
+	Result  listRoleTagsResult `xml:"ListRoleTagsResult"`
+	Meta    respMeta           `xml:"ResponseMetadata"`
 }
 type listRoleTagsResult struct {
 	Tags        listMembersXML[tagXML] `xml:"Tags"`
@@ -786,10 +786,10 @@ type untagUserResp struct {
 }
 
 type listUserTagsResp struct {
-	XMLName struct{}            `xml:"ListUserTagsResponse"`
-	Xmlns   string              `xml:"xmlns,attr"`
-	Result  listUserTagsResult  `xml:"ListUserTagsResult"`
-	Meta    respMeta            `xml:"ResponseMetadata"`
+	XMLName struct{}           `xml:"ListUserTagsResponse"`
+	Xmlns   string             `xml:"xmlns,attr"`
+	Result  listUserTagsResult `xml:"ListUserTagsResult"`
+	Meta    respMeta           `xml:"ResponseMetadata"`
 }
 type listUserTagsResult struct {
 	Tags        listMembersXML[tagXML] `xml:"Tags"`
@@ -832,10 +832,10 @@ type updateAssumeRolePolicyResp struct {
 // --- List Instance Profiles ---
 
 type listInstanceProfilesResp struct {
-	XMLName struct{}                    `xml:"ListInstanceProfilesResponse"`
-	Xmlns   string                      `xml:"xmlns,attr"`
-	Result  listInstanceProfilesResult  `xml:"ListInstanceProfilesResult"`
-	Meta    respMeta                    `xml:"ResponseMetadata"`
+	XMLName struct{}                   `xml:"ListInstanceProfilesResponse"`
+	Xmlns   string                     `xml:"xmlns,attr"`
+	Result  listInstanceProfilesResult `xml:"ListInstanceProfilesResult"`
+	Meta    respMeta                   `xml:"ResponseMetadata"`
 }
 type listInstanceProfilesResult struct {
 	InstanceProfiles listMembersXML[instanceProfileXML] `xml:"InstanceProfiles"`
@@ -864,10 +864,10 @@ type simulatePrincipalPolicyResult struct {
 // --- GetAccountAuthorizationDetails ---
 
 type getAccountAuthorizationDetailsResp struct {
-	XMLName struct{}                              `xml:"GetAccountAuthorizationDetailsResponse"`
-	Xmlns   string                                `xml:"xmlns,attr"`
-	Result  getAccountAuthorizationDetailsResult  `xml:"GetAccountAuthorizationDetailsResult"`
-	Meta    respMeta                              `xml:"ResponseMetadata"`
+	XMLName struct{}                             `xml:"GetAccountAuthorizationDetailsResponse"`
+	Xmlns   string                               `xml:"xmlns,attr"`
+	Result  getAccountAuthorizationDetailsResult `xml:"GetAccountAuthorizationDetailsResult"`
+	Meta    respMeta                             `xml:"ResponseMetadata"`
 }
 type getAccountAuthorizationDetailsResult struct {
 	UserDetailList  listMembersXML[userDetailXML]  `xml:"UserDetailList"`
@@ -1887,6 +1887,8 @@ func (h *Handler) getAccountAuthorizationDetailsTyped(ctx context.Context, _ *ge
 }
 
 // typedPublish emits an event on the bus if wired, using context instead of *http.Request.
+//
+//nolint:unused // Kept for typed IAM operations that publish events.
 func (h *Handler) typedPublish(ctx context.Context, t events.Type, payload any) {
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{

@@ -18,6 +18,7 @@ operations:
       - https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-attributes.html
     tests:
       - tests/integration/cognito/cognito_username_attributes_test.go
+      - tests/integration/cognito/cognito_test.go
     scenarios:
       - name: plain username pool
         status: reviewed
@@ -54,9 +55,20 @@ operations:
         tests:
           - tests/integration/cognito/cognito_test.go
         notes: A corrupt emulator state record for the targeted pool returns ResourceNotFoundException instead of InternalError, and malformed unrelated pool/client/user records are isolated from list/scan operations.
+      - name: generated temporary password with custom password policy
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_test.go
+        notes: When TemporaryPassword is omitted, the generated temporary password satisfies the pool PasswordPolicy, including MinimumLength greater than the old fixed generated length.
+      - name: invalid supplied temporary password
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_test.go
+        notes: Caller-supplied TemporaryPassword values that violate the pool PasswordPolicy return InvalidPasswordException.
     evidence:
       - AWS docs state Username is auto-generated when username attributes are email/phone-only sign-in identifiers.
       - AWS AdminCreateUser docs state ForceAliasCreation only applies to verified email/phone aliases and migrates the alias when true.
+      - AWS AdminCreateUser docs state TemporaryPassword must conform to the pool password policy and Cognito generates one when omitted.
     gaps:
       - Self-service ConfirmSignUp ForceAliasCreation alias migration not yet reviewed.
     next_action: Review ConfirmSignUp ForceAliasCreation and phone_number alias semantics.

@@ -342,41 +342,6 @@ func (s *SQLiteStore) Close() error {
 	return s.db.Close()
 }
 
-// nsRow is a row from the kv table with its namespace included.
-// Used by HybridStore to seed the in-memory layer on startup.
-type nsRow struct {
-	Namespace string
-	Key       string
-	Value     string
-}
-
-// loadAll returns every row in the kv table.
-// This is only called once at HybridStore startup and is not part of the Store
-// interface — it intentionally loads all data into memory in one pass.
-func (s *SQLiteStore) loadAll(ctx context.Context) ([]nsRow, error) {
-	if err := s.ensureReady(ctx); err != nil {
-		return nil, err
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT namespace, key, value FROM kv ORDER BY namespace, key`)
-	if err != nil {
-		return nil, fmt.Errorf("sqlite loadAll: %w", err)
-	}
-	defer rows.Close()
-
-	var result []nsRow
-	for rows.Next() {
-		var r nsRow
-		if err := rows.Scan(&r.Namespace, &r.Key, &r.Value); err != nil {
-			return nil, fmt.Errorf("sqlite loadAll scan: %w", err)
-		}
-		result = append(result, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("sqlite loadAll rows: %w", err)
-	}
-	return result, nil
-}
-
 // prefixUpperBound returns the exclusive upper bound for a prefix range query.
 // For example, "us-east-1/" → "us-east-10" (the byte after '/' is '0').
 // Returns "" if no upper bound exists (all bytes are 0xFF).

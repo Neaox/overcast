@@ -69,7 +69,7 @@ app.use("*", async (c, next) => {
         headers: raw.headers,
         body: raw.body,
         ...(raw.body ? ({ duplex: "half" } as object) : {}),
-      } as RequestInit),
+      }),
     )
   }
   return next()
@@ -123,7 +123,7 @@ export function apiErrorHandler(err: Error, c: Context) {
     return c.json({ error: awsErr.name ?? "AWSError", message: err.message }, status as never)
   }
   console.error(err)
-  return c.json({ error: "InternalError", message: err.message ?? "Unknown error" }, 500)
+  return c.json({ error: "InternalError", message: err.message }, 500)
 }
 
 app.onError(apiErrorHandler)

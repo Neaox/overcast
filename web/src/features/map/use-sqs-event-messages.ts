@@ -10,7 +10,7 @@
  * the user clicks a message to inspect it.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useQuery, queryOptions, useQueryClient } from "@tanstack/react-query"
 import { sqs } from "@/services/api"
 import { sqsKeys } from "@/features/sqs/data"
@@ -61,6 +61,18 @@ export function eventMessageToSQSMessage(em: EventMessage): SQSMessage {
   }
 }
 
+function sqsMapPeekQueryOptions(queueName: string) {
+  return queryOptions({
+    queryKey: [...sqsKeys.mapPeek(), queueName, "initial"],
+    queryFn: () => sqs.receiveMessages(queueName),
+    staleTime: Infinity, // never re-fetch automatically
+    gcTime: 5 * 60_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  })
+}
+
 /**
  * Hook that provides an event-driven message list for a single SQS queue.
  *
@@ -76,25 +88,17 @@ export function useSqsEventMessages(queueName: string): SQSMessage[] {
   const registry = useRef<Map<string, EventMessage>>(new Map())
   // Track which SSE events we've already processed
   const eventCursor = useRef(0)
-  // Trigger re-renders when the registry changes
-  const [, setVersion] = useState(0)
-  const bump = useCallback(() => setVersion((v) => v + 1), [])
+  const [messages, setMessages] = useState<SQSMessage[]>([])
+  const syncMessages = () => {
+    setMessages(Array.from(registry.current.values(), eventMessageToSQSMessage))
+  }
 
   // Track previous connection state for reconnect detection
   const prevConnected = useRef<boolean>(connected)
 
   // ONE initial fetch — populates the registry with current queue state.
-  const { data: initialMessages } = useQuery(
-    queryOptions({
-      queryKey: [...sqsKeys.mapPeek(), queueName, "initial"],
-      queryFn: () => sqs.receiveMessages(queueName),
-      staleTime: Infinity, // never re-fetch automatically
-      gcTime: 5 * 60_000,
-      refetchOnMount: false,
-      refetchOnWindowFocus: false,
-      refetchOnReconnect: false,
-    }),
-  )
+  const mapPeekQuery = useMemo(() => sqsMapPeekQueryOptions(queueName), [queueName])
+  const { data: initialMessages } = useQuery(mapPeekQuery)
 
   // Seed the registry from the initial fetch (only once per distinct snapshot).
   const seededRef = useRef(false)
@@ -112,8 +116,8 @@ export function useSqsEventMessages(queueName: string): SQSMessage[] {
         sentTimestamp: Number(m.attributes["SentTimestamp"] ?? now),
       })
     }
-    bump()
-  }, [initialMessages, bump])
+    syncMessages()
+  }, [initialMessages])
 
   // On SSE reconnect, refetch the snapshot to reconcile any missed events.
   useEffect(() => {
@@ -123,11 +127,11 @@ export function useSqsEventMessages(queueName: string): SQSMessage[] {
       registry.current.clear()
       eventCursor.current = 0
       void queryClient.invalidateQueries({
-        queryKey: [...sqsKeys.mapPeek(), queueName, "initial"],
+        queryKey: mapPeekQuery.queryKey,
       })
     }
     prevConnected.current = connected
-  }, [connected, queueName, queryClient])
+  }, [connected, mapPeekQuery.queryKey, queryClient])
 
   // Apply SSE events incrementally to the registry.
   useEffect(() => {
@@ -188,13 +192,8 @@ export function useSqsEventMessages(queueName: string): SQSMessage[] {
     }
     eventCursor.current = sqsEvents.length
 
-    if (changed) bump()
-  }, [sqsEvents, queueName, bump])
+    if (changed) syncMessages()
+  }, [sqsEvents, queueName])
 
-  // Convert registry to SQSMessage[] for the existing visual message system.
-  const messages: SQSMessage[] = []
-  for (const em of registry.current.values()) {
-    messages.push(eventMessageToSQSMessage(em))
-  }
   return messages
 }

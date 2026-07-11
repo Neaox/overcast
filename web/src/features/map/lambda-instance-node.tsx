@@ -252,21 +252,22 @@ export const LambdaInstanceNode = memo(function LambdaInstanceNode({ data }: Nod
       const t = new Date(ev.time).getTime()
       if (!Number.isFinite(t)) continue
 
-      if (
-        ev.type === EventType.lambda.InstanceAcquired ||
-        ev.type === EventType.lambda.InstanceReady ||
-        ev.type === EventType.lambda.InstanceInitializing
-      ) {
-        if (payload.status === "running") {
-          invokeStartMsRef.current = t
+      switch (ev.type) {
+        case EventType.lambda.InstanceAcquired:
+        case EventType.lambda.InstanceReady:
+        case EventType.lambda.InstanceInitializing:
+          if (payload.status === "running") {
+            invokeStartMsRef.current = t
+          }
+          break
+        case EventType.lambda.InstanceReleased: {
+          const start = invokeStartMsRef.current
+          if (start != null && t >= start) {
+            setLastDurationMs(t - start)
+          }
+          invokeStartMsRef.current = null
+          break
         }
-      } else if (ev.type === EventType.lambda.InstanceReleased) {
-        const start = invokeStartMsRef.current
-        if (start != null && t >= start) {
-          // eslint-disable-next-line react-hooks/set-state-in-effect
-          setLastDurationMs(t - start)
-        }
-        invokeStartMsRef.current = null
       }
     }
     eventCursorRef.current = lambdaEvents.length
@@ -293,6 +294,18 @@ export const LambdaInstanceNode = memo(function LambdaInstanceNode({ data }: Nod
 
   const hasLogs = Boolean(instance.logGroup && instance.logStream)
   const shortId = instance.instanceId ? instance.instanceId.slice(0, 8) : "????????"
+  const statusDotClass = {
+    running: "bg-emerald-400",
+    starting: "animate-pulse bg-amber-400",
+    initializing: "animate-pulse bg-sky-400",
+    idle: "bg-fg-muted/40",
+  }[instance.status]
+  const statusBadgeClass = {
+    running: "bg-emerald-500/20 text-emerald-400",
+    starting: "bg-amber-500/20 text-amber-400",
+    initializing: "bg-sky-500/20 text-sky-400",
+    idle: "bg-fg-muted/15 text-fg-muted",
+  }[instance.status]
 
   return (
     <div
@@ -306,13 +319,7 @@ export const LambdaInstanceNode = memo(function LambdaInstanceNode({ data }: Nod
       {/* Top row: status dot + short ID + buttons */}
       <div className="nodrag nopan pointer-events-auto flex items-center gap-1.5">
         <span
-          className={cn(
-            "h-2 w-2 shrink-0 rounded-full",
-            instance.status === "running" && "bg-emerald-400",
-            instance.status === "starting" && "animate-pulse bg-amber-400",
-            instance.status === "initializing" && "animate-pulse bg-sky-400",
-            instance.status === "idle" && "bg-fg-muted/40",
-          )}
+          className={cn("h-2 w-2 shrink-0 rounded-full", statusDotClass)}
           title={instance.status}
         />
         <span className="flex-1 truncate font-mono text-fg-subtle" title={instance.instanceId}>
@@ -321,10 +328,7 @@ export const LambdaInstanceNode = memo(function LambdaInstanceNode({ data }: Nod
         <span
           className={cn(
             "rounded px-1 py-0.5 text-[9px] font-semibold uppercase",
-            instance.status === "running" && "bg-emerald-500/20 text-emerald-400",
-            instance.status === "starting" && "bg-amber-500/20 text-amber-400",
-            instance.status === "initializing" && "bg-sky-500/20 text-sky-400",
-            instance.status === "idle" && "bg-fg-muted/15 text-fg-muted",
+            statusBadgeClass,
           )}
         >
           {instance.status}
@@ -410,14 +414,16 @@ function TriggerRow({
   now: number
 }) {
   const trigger = fmtTrigger(event)
-  const TriggerIcon = trigger.serviceKey ? SERVICES[trigger.serviceKey]?.icon : undefined
+  const TriggerIcon = trigger.serviceKey ? SERVICES[trigger.serviceKey].icon : undefined
+  const statusClass: Record<string, string | undefined> = {
+    starting: "font-medium text-amber-400",
+    initializing: "font-medium text-sky-400",
+    running: "text-emerald-400",
+  }
 
   return (
     <div
-      className={cn(
-        "nodrag nopan pointer-events-auto flex w-full items-center gap-1.5 rounded text-[9px] text-fg-muted/55",
-        "bg-transparent",
-      )}
+      className="nodrag nopan pointer-events-auto flex w-full items-center gap-1.5 rounded bg-transparent text-[9px] text-fg-muted/55"
     >
       <span className="flex min-w-0 flex-1 items-center gap-1">
         {TriggerIcon ? <TriggerIcon className="h-2.5 w-2.5 shrink-0" /> : <span>⚡</span>}
@@ -430,12 +436,7 @@ function TriggerRow({
         )}
       </span>
       <span
-        className={cn(
-          "ml-auto shrink-0 tabular-nums",
-          status === "starting" && "font-medium text-amber-400",
-          status === "initializing" && "font-medium text-sky-400",
-          status === "running" && "text-emerald-400",
-        )}
+        className={cn("ml-auto shrink-0 tabular-nums", statusClass[status])}
         title={`Last invoke ${fmtAgo(now - lastUsed)} (${durationLabel})`}
       >
         {durationLabel}

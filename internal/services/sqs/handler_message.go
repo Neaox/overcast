@@ -247,8 +247,10 @@ func (h *Handler) sendMessageTyped(ctx context.Context, in *sendMessageRequest) 
 }
 
 func (h *Handler) receiveMessageTyped(ctx context.Context, in *receiveMessageRequest) (*receiveMessageResponse, *protocol.AWSError) {
+	storeCtx := context.WithoutCancel(ctx)
+
 	queueName := queueNameFromURL(in.QueueUrl)
-	q, aerr := h.store.getQueue(ctx, queueName)
+	q, aerr := h.store.getQueue(storeCtx, queueName)
 	if aerr != nil {
 		return nil, aerr
 	}
@@ -269,7 +271,7 @@ func (h *Handler) receiveMessageTyped(ctx context.Context, in *receiveMessageReq
 		visibilityTimeout = *in.VisibilityTimeout
 	}
 
-	received, aerr := h.selectVisibleMessages(ctx, queueName, q, maxMessages, visibilityTimeout)
+	received, aerr := h.selectVisibleMessages(storeCtx, queueName, q, maxMessages, visibilityTimeout)
 	if aerr != nil {
 		if waitTimeSeconds > 0 && isLongPollContextDone(aerr) {
 			return &receiveMessageResponse{Messages: []receivedMessage{}}, nil
@@ -289,7 +291,7 @@ func (h *Handler) receiveMessageTyped(ctx context.Context, in *receiveMessageReq
 			case <-deadline:
 				break poll
 			case <-ticker.C:
-				received, aerr = h.selectVisibleMessages(ctx, queueName, q, maxMessages, visibilityTimeout)
+				received, aerr = h.selectVisibleMessages(storeCtx, queueName, q, maxMessages, visibilityTimeout)
 				if aerr != nil || len(received) > 0 {
 					break poll
 				}

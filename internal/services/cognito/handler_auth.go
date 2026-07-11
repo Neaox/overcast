@@ -115,7 +115,7 @@ func (s *Service) signUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hash, err := hashPassword(req.Password)
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
@@ -1322,7 +1322,7 @@ func (s *Service) handleNewPasswordChallenge(w http.ResponseWriter, r *http.Requ
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(newPw), bcrypt.DefaultCost)
+	hash, err := hashPassword(newPw)
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
@@ -1541,7 +1541,7 @@ func (s *Service) confirmForgotPassword(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hash, err := hashPassword(req.Password)
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
@@ -1606,7 +1606,7 @@ func (s *Service) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.ProposedPassword), bcrypt.DefaultCost)
+	hash, err := hashPassword(req.ProposedPassword)
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return

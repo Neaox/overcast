@@ -188,9 +188,14 @@ func (h *Handler) CreateApiKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Default expiry: 7 days from now.
+	now := h.clk.Now().Truncate(time.Hour)
+	// Default expiry: 7 days from now, rounded down to the nearest hour per AWS docs.
 	if req.Expires == 0 {
-		req.Expires = h.clk.Now().Add(7 * 24 * time.Hour).Unix()
+		req.Expires = now.Add(7 * 24 * time.Hour).Unix()
+	}
+	if req.Expires < now.Add(24*time.Hour).Unix() || req.Expires > now.Add(365*24*time.Hour).Unix() {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "ApiKeyValidityOutOfBoundsException", Message: "The API key expiration must be set to a value between 1 and 365 days from creation or update.", HTTPStatus: http.StatusBadRequest})
+		return
 	}
 
 	key := &ApiKey{
@@ -205,7 +210,7 @@ func (h *Handler) CreateApiKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, r, http.StatusCreated, map[string]any{"apiKey": key})
+	writeJSON(w, r, http.StatusOK, map[string]any{"apiKey": key})
 }
 
 // ListApiKeys handles GET /v1/apis/{apiId}/apikeys.
@@ -221,7 +226,7 @@ func (h *Handler) ListApiKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"apiKeys": keys})
+	writeListJSON(w, r, "apiKeys", keys)
 }
 
 // UpdateApiKey handles POST /v1/apis/{apiId}/apikeys/{keyId}.
@@ -254,6 +259,11 @@ func (h *Handler) UpdateApiKey(w http.ResponseWriter, r *http.Request) {
 		existing.Description = req.Description
 	}
 	if req.Expires != 0 {
+		now := h.clk.Now().Truncate(time.Hour)
+		if req.Expires < now.Add(24*time.Hour).Unix() || req.Expires > now.Add(365*24*time.Hour).Unix() {
+			protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "ApiKeyValidityOutOfBoundsException", Message: "The API key expiration must be set to a value between 1 and 365 days from creation or update.", HTTPStatus: http.StatusBadRequest})
+			return
+		}
 		existing.Expires = req.Expires
 		existing.Deletes = req.Expires + 60*24*3600
 	}

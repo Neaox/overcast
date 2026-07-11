@@ -62,11 +62,10 @@ type serverOptions struct {
 //	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 //	srv.Clock.Add(35 * time.Second) // instant — no real sleep
 func NewTestServer(t *testing.T, opts ...Option) *TestServer {
-	t.Helper()
-
 	if t == nil {
 		panic("helpers.NewTestServer: t must not be nil — a *testing.T is required for cleanup registration")
 	}
+	t.Helper()
 
 	so := &serverOptions{cfg: defaultTestConfig()}
 	logger := zap.NewNop() // silent in tests — keep output clean

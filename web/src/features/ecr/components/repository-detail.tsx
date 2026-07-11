@@ -1,4 +1,3 @@
-import { useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { AlertTriangle, Boxes, RefreshCw } from "lucide-react"
@@ -26,15 +25,13 @@ export function RepositoryDetail({ repositoryName }: { repositoryName: string })
     ecrRepositoryQueryOptions(repositoryName),
   )
 
-  const loginCommand = useMemo(() => {
-    if (!data?.login) return undefined
-    return `echo '${data.login.password}' | docker login ${data.login.proxyEndpoint} --username ${data.login.username} --password-stdin`
-  }, [data?.login])
+  const loginCommand = data?.login
+    ? `echo '${data.login.password}' | docker login ${data.login.proxyEndpoint} --username ${data.login.username} --password-stdin`
+    : undefined
 
-  const pushCommand = useMemo(() => {
-    if (!data?.uri) return undefined
-    return [`docker tag registry:2 ${data.uri}:latest`, `docker push ${data.uri}:latest`].join("\n")
-  }, [data?.uri])
+  const pushCommand = data?.uri
+    ? [`docker tag registry:2 ${data.uri}:latest`, `docker push ${data.uri}:latest`].join("\n")
+    : undefined
 
   if (isLoading) {
     return (

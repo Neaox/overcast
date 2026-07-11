@@ -500,18 +500,18 @@ func isCascadeError(msg string) bool {
 // ---------------------------------------------------------------------------
 
 type junitXML struct {
-	XMLName xml.Name       `xml:"testsuites"`
-	Suites  []junitSuite   `xml:"testsuite"`
+	XMLName xml.Name     `xml:"testsuites"`
+	Suites  []junitSuite `xml:"testsuite"`
 }
 
 type junitSuite struct {
-	Name     string        `xml:"name,attr"`
-	Tests    int           `xml:"tests,attr"`
-	Failures int           `xml:"failures,attr"`
-	Errors   int           `xml:"errors,attr"`
-	Skipped  int           `xml:"skipped,attr"`
-	Time     float64       `xml:"time,attr"`
-	Cases    []junitCase   `xml:"testcase"`
+	Name     string      `xml:"name,attr"`
+	Tests    int         `xml:"tests,attr"`
+	Failures int         `xml:"failures,attr"`
+	Errors   int         `xml:"errors,attr"`
+	Skipped  int         `xml:"skipped,attr"`
+	Time     float64     `xml:"time,attr"`
+	Cases    []junitCase `xml:"testcase"`
 }
 
 type junitCase struct {

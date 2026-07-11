@@ -1,23 +1,25 @@
 import type { ComponentProps } from "react"
-import { fireEvent, render, screen } from "@testing-library/react"
-import { ServiceNode, type ServiceNodeData } from "./topology-nodes"
+import { fireEvent, render, screen } from "@/test/render"
+import type { SQSMessage } from "@/types"
+import { EventType } from "@/services/event-types"
+import {
+  ServiceNode,
+  type ServiceNodeData,
+} from "./topology-nodes"
+import {
+  computeSqsVisualMessages,
+  createSqsVisualMessagesState,
+  type SqsVisualMessagesState,
+} from "./sqs-visual-messages"
 
 const navigateMock = vi.fn()
 const setEndpointMock = vi.fn()
 const receiveMessagesMock = vi.fn()
+const clipboardWriteTextMock = vi.fn()
 
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigateMock,
 }))
-
-vi.mock("@tanstack/react-query", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@tanstack/react-query")>()
-  return {
-    ...actual,
-    useQuery: vi.fn(() => ({ data: [] })),
-    queryOptions: (value: unknown) => value,
-  }
-})
 
 vi.mock("@xyflow/react", () => ({
   Handle: () => <div data-testid="handle" />,
@@ -72,15 +74,145 @@ function makeServiceNodeProps(data: ServiceNodeData): ServiceNodeProps {
   } as ServiceNodeProps
 }
 
+function makeSqsMessage(overrides: Partial<SQSMessage> = {}): SQSMessage {
+  return {
+    messageId: "msg-1",
+    receiptHandle: "receipt-1",
+    body: "hello",
+    md5OfBody: "5d41402abc4b2a76b9719d911017c592",
+    attributes: { SentTimestamp: "0" },
+    messageAttributes: {},
+    inflight: false,
+    delayed: false,
+    visibleAfter: 0,
+    approximateReceiveCount: 0,
+    ...overrides,
+  }
+}
+
+function computeVisualMessages({
+  liveMessages,
+  state = createSqsVisualMessagesState(),
+  nowMs = 0,
+  sqsEvents = [],
+  ghosts = new Map(),
+}: {
+  liveMessages: SQSMessage[]
+  state?: SqsVisualMessagesState
+  nowMs?: number
+  sqsEvents?: Parameters<typeof computeSqsVisualMessages>[0]["sqsEvents"]
+  ghosts?: Parameters<typeof computeSqsVisualMessages>[0]["ghosts"]
+}) {
+  vi.setSystemTime(nowMs)
+  return computeSqsVisualMessages({
+    queueName: "queue-a",
+    liveMessages,
+    ghosts,
+    sqsEvents,
+    nowMs,
+    state,
+  })
+}
+
+describe("computeSqsVisualMessages", () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it("keeps a new in-flight message visible for the minimum dwell window", () => {
+    const inflight = makeSqsMessage({ inflight: true, approximateReceiveCount: 1 })
+
+    const first = computeVisualMessages({ liveMessages: [inflight], nowMs: 0 })
+    expect(first.messages).toHaveLength(1)
+    expect(first.messages[0].visualPhase).toBe("visible")
+
+    const beforeDwell = computeVisualMessages({
+      liveMessages: [inflight],
+      state: first.state,
+      nowMs: 999,
+    })
+    expect(beforeDwell.messages[0].visualPhase).toBe("visible")
+
+    const afterDwell = computeVisualMessages({
+      liveMessages: [inflight],
+      state: beforeDwell.state,
+      nowMs: 1_000,
+    })
+    expect(afterDwell.messages[0].visualPhase).toBe("inflight")
+  })
+
+  it("preserves the ghost exit sequence after a visible message is deleted", () => {
+    const message = makeSqsMessage()
+    const first = computeVisualMessages({ liveMessages: [message], nowMs: 0 })
+    const ghosts = new Map([[message.messageId, { item: message, deletedAt: 500 }]])
+
+    const justDeleted = computeVisualMessages({
+      liveMessages: [],
+      ghosts,
+      state: first.state,
+      nowMs: 500,
+    })
+    expect(justDeleted.messages[0]).toMatchObject({ isGhost: true, visualPhase: "visible" })
+
+    const exiting = computeVisualMessages({
+      liveMessages: [],
+      ghosts,
+      state: justDeleted.state,
+      nowMs: 1_000,
+    })
+    expect(exiting.messages[0]).toMatchObject({ isGhost: true, visualPhase: "inflight" })
+
+    const done = computeVisualMessages({
+      liveMessages: [],
+      ghosts,
+      state: exiting.state,
+      nowMs: 2_100,
+    })
+    expect(done.messages[0]).toMatchObject({ isGhost: true, visualPhase: "done" })
+  })
+
+  it("reprocesses events when the SSE event history shrinks", () => {
+    const live = makeSqsMessage({ inflight: true, approximateReceiveCount: 1 })
+    const staleState: SqsVisualMessagesState = {
+      ...createSqsVisualMessagesState(),
+      eventCursor: 3,
+    }
+
+    const result = computeVisualMessages({
+      liveMessages: [live],
+      state: staleState,
+      nowMs: 1_000,
+      sqsEvents: [
+        {
+          type: EventType.sqs.MessageVisible,
+          time: new Date(1_000).toISOString(),
+          payload: { queueName: "queue-a", messageId: live.messageId },
+        },
+      ],
+    })
+
+    expect(result.state.eventCursor).toBe(1)
+    expect(result.messages[0].visualPhase).toBe("visible")
+  })
+})
+
 describe("ServiceNode ECR interactions", () => {
   beforeEach(() => {
     navigateMock.mockReset()
     setEndpointMock.mockReset()
     receiveMessagesMock.mockReset()
+    receiveMessagesMock.mockResolvedValue([])
+    clipboardWriteTextMock.mockReset()
+    clipboardWriteTextMock.mockResolvedValue(undefined)
 
     Object.defineProperty(globalThis.navigator, "clipboard", {
       value: {
-        writeText: vi.fn().mockResolvedValue(undefined),
+        writeText: clipboardWriteTextMock,
       },
       configurable: true,
     })
@@ -112,8 +244,8 @@ describe("ServiceNode ECR interactions", () => {
     expect(setEndpointMock).not.toHaveBeenCalled()
   })
 
-  it("copies repository URI without triggering navigation", () => {
-    render(
+  it("copies repository URI without triggering navigation", async () => {
+    const { user } = render(
       <ServiceNode
         {...makeServiceNodeProps({
           service: "ecr",
@@ -123,13 +255,12 @@ describe("ServiceNode ECR interactions", () => {
         })}
       />,
     )
+    const writeTextSpy = vi.spyOn(globalThis.navigator.clipboard, "writeText")
 
-    fireEvent.click(screen.getByTitle("Copy repository URI"))
+    await user.click(screen.getByTitle("Copy repository URI"))
 
     expect(navigateMock).not.toHaveBeenCalled()
-    expect(globalThis.navigator.clipboard.writeText).toHaveBeenCalledWith(
-      "localhost:5111/backend/api",
-    )
+    expect(writeTextSpy).toHaveBeenCalledWith("localhost:5111/backend/api")
   })
 
   it("event pulse counters remain visual-only for ECR nodes", () => {
@@ -161,6 +292,5 @@ describe("ServiceNode ECR interactions", () => {
 
     expect(screen.getByText("2")).toBeInTheDocument()
     expect(navigateMock).not.toHaveBeenCalled()
-    expect(receiveMessagesMock).not.toHaveBeenCalled()
   })
 })

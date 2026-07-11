@@ -201,7 +201,6 @@ export function LogViewer({
           >
             {virtualizer.getVirtualItems().map((virtualRow) => {
               const event = normalizedEvents[virtualRow.index]
-              if (!event) return null
 
               const showHighlighted = formatted && event.json != null && !isScrollingRef.current
 

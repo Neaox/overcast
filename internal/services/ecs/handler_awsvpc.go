@@ -36,7 +36,6 @@ func (h *Handler) resolveAwsvpcPlacement(
 		// Preserve existing ECS behaviour for synthetic/non-EC2 subnets.
 		return subnetID, "", "", false, nil
 	}
-	subnetResolved = true
 	switch status := h.vpcResolver.VPCNetworkStatus(ctx, vpcID); status {
 	case "", "ok", "shared", "remapped":
 		networkID = h.vpcResolver.DockerNetworkForVpc(ctx, vpcID)

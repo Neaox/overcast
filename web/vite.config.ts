@@ -2,6 +2,12 @@ import fs from "node:fs"
 import path from "node:path"
 import { defineConfig } from "vite"
 import type { PluginOption } from "vite"
+import type tailwindcssFactory from "@tailwindcss/vite"
+import type { devtools as devtoolsFactory } from "@tanstack/devtools-vite"
+import type tanstackRouterFactory from "@tanstack/router-plugin/vite"
+import type reactFactory from "@vitejs/plugin-react"
+import type { honoDevPlugin as honoDevPluginFactory } from "./api/src/vite-plugin"
+import type mkcertFactory from "vite-plugin-mkcert"
 
 export default defineConfig(async () => {
   const usePolling = needsPolling()
@@ -22,23 +28,22 @@ export default defineConfig(async () => {
 
   const results = await Promise.all(pluginLoaders)
   const { default: tanstackRouter } = results[0] as {
-    default: typeof import("@tanstack/router-plugin/vite").default
+    default: typeof tanstackRouterFactory
   }
   const { default: react } = results[1] as {
-    default: typeof import("@vitejs/plugin-react").default
+    default: typeof reactFactory
   }
-  const tailwindcss = (results[2] as { default: typeof import("@tailwindcss/vite").default })
-    .default
+  const tailwindcss = (results[2] as { default: typeof tailwindcssFactory }).default
   const { honoDevPlugin } = results[3] as {
-    honoDevPlugin: typeof import("./api/src/vite-plugin").honoDevPlugin
+    honoDevPlugin: typeof honoDevPluginFactory
   }
-  const mkcert = (results[4] as { default: typeof import("vite-plugin-mkcert").default }).default
+  const mkcert = (results[4] as { default: typeof mkcertFactory }).default
 
   const plugins: PluginOption[] = []
 
   if (enableDevtools) {
     const { devtools } = results[5] as {
-      devtools: typeof import("@tanstack/devtools-vite").devtools
+      devtools: typeof devtoolsFactory
     }
     plugins.push(devtools() as PluginOption)
   }

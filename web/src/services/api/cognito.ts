@@ -165,7 +165,7 @@ export const cognito = {
       domain: p.Domain ?? undefined,
       usernameAttributes:
         p.UsernameAttributes && p.UsernameAttributes.length > 0
-          ? (p.UsernameAttributes as string[])
+          ? (p.UsernameAttributes)
           : undefined,
       policies: p.Policies?.PasswordPolicy
         ? {

@@ -521,8 +521,8 @@ func writeXMLMap(buf *bytes.Buffer, data map[string]any, indent string) {
 	}
 }
 
-// writeXMLNameValueMap renders a JSON map as repeated XML elements:
-// <elemName><Name>k</Name><Value>v</Value></elemName>
+// writeXMLNameValueMap renders a JSON map as repeated XML elements like
+// <elemName><Name>k</Name><Value>v</Value></elemName>.
 func writeXMLNameValueMap(buf *bytes.Buffer, data map[string]any, elemName, indent string) {
 	keys := make([]string, 0, len(data))
 	for k := range data {
@@ -557,6 +557,6 @@ func singularize(s string) string {
 // xmlEscape escapes special XML characters.
 func xmlEscape(s string) string {
 	var buf bytes.Buffer
-	xml.EscapeText(&buf, []byte(s))
+	_ = xml.EscapeText(&buf, []byte(s))
 	return buf.String()
 }

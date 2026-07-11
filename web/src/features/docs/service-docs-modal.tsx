@@ -8,6 +8,7 @@ import { BookOpen, ExternalLink } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/primitives"
+import { cn } from "@/lib/utils"
 
 // ─── Service name → UI route map ─────────────────────────────────────────────
 // Matches the docs/services/{name}.md filenames to their app routes.
@@ -264,7 +265,7 @@ export function ServiceDocsModal({ service, label, open, onClose }: ServiceDocsM
                       const s = styles[type ?? ""] ?? { border: "border-accent/40", titleColor: "" }
                       return (
                         <div
-                          className={`mb-3 border-l-[3px] py-1 pl-3 pr-1 ${s.border}`}
+                          className={cn("mb-3 border-l-[3px] py-1 pl-3 pr-1", s.border)}
                           style={{ "--alert-title-color": s.titleColor } as React.CSSProperties}
                           {...props}
                         >

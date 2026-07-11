@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"unicode"
 
 	cborlib "github.com/fxamacker/cbor/v2"
 
@@ -36,6 +37,27 @@ func cognitoCall(t *testing.T, srv *helpers.TestServer, operation string, body m
 func createPool(t *testing.T, srv *helpers.TestServer, name string) string {
 	t.Helper()
 	resp := cognitoCall(t, srv, "CreateUserPool", map[string]any{"PoolName": name})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		UserPool struct {
+			Id string `json:"Id"`
+		} `json:"UserPool"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if result.UserPool.Id == "" {
+		t.Fatal("CreateUserPool returned empty Id")
+	}
+	return result.UserPool.Id
+}
+
+// createPoolWithPasswordPolicy creates a user pool with the supplied password policy.
+func createPoolWithPasswordPolicy(t *testing.T, srv *helpers.TestServer, name string, policy map[string]any) string {
+	t.Helper()
+	resp := cognitoCall(t, srv, "CreateUserPool", map[string]any{
+		"PoolName": name,
+		"Policies": map[string]any{"PasswordPolicy": policy},
+	})
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
 	var result struct {
@@ -536,6 +558,60 @@ func TestAdminCreateUser_success(t *testing.T) {
 	if result.User.UserStatus != "FORCE_CHANGE_PASSWORD" {
 		t.Errorf("expected FORCE_CHANGE_PASSWORD status, got %q", result.User.UserStatus)
 	}
+}
+
+func TestAdminCreateUser_customPasswordPolicy(t *testing.T) {
+	// Given: a user pool with a strict password policy
+	srv := helpers.NewTestServer(t)
+	poolID := createPoolWithPasswordPolicy(t, srv, "strict-passwords", map[string]any{
+		"MinimumLength":    30,
+		"RequireUppercase": true,
+		"RequireLowercase": true,
+		"RequireNumbers":   true,
+		"RequireSymbols":   true,
+	})
+
+	// When: AdminCreateUser omits TemporaryPassword
+	resp := cognitoCall(t, srv, "AdminCreateUser", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   "generated-temp",
+	})
+	defer resp.Body.Close()
+
+	// Then: the generated temporary password conforms to the pool password policy
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	tempPassword := storedCognitoPlaintextPassword(t, srv, poolID)
+	if len(tempPassword) < 30 {
+		t.Fatalf("expected generated temp password length >= 30, got %d (%q)", len(tempPassword), tempPassword)
+	}
+	assertPasswordCategories(t, tempPassword)
+}
+
+func TestAdminCreateUser_invalidTemporaryPassword(t *testing.T) {
+	// Given: a user pool with a strict password policy
+	srv := helpers.NewTestServer(t)
+	poolID := createPoolWithPasswordPolicy(t, srv, "strict-passwords", map[string]any{
+		"MinimumLength":    12,
+		"RequireUppercase": true,
+		"RequireLowercase": true,
+		"RequireNumbers":   true,
+		"RequireSymbols":   true,
+	})
+
+	// When: AdminCreateUser supplies a temporary password that violates the policy
+	resp := cognitoCall(t, srv, "AdminCreateUser", map[string]any{
+		"UserPoolId":             poolID,
+		"Username":               "bad-temp",
+		"TemporaryPassword":      "short",
+		"MessageAction":          "SUPPRESS",
+		"UserAttributes":         []map[string]string{{"Name": "email", "Value": "bad-temp@example.com"}},
+		"DesiredDeliveryMediums": []string{"EMAIL"},
+	})
+	defer resp.Body.Close()
+
+	// Then: Cognito rejects the invalid temporary password
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidPasswordException")
 }
 
 func TestAdminCreateUser_duplicate(t *testing.T) {
@@ -1264,6 +1340,47 @@ func cognitoCBORCall(t *testing.T, srv *helpers.TestServer, operation string, bo
 		t.Fatalf("do CBOR request %s: %v", operation, err)
 	}
 	return resp
+}
+
+func storedCognitoPlaintextPassword(t *testing.T, srv *helpers.TestServer, poolID string) string {
+	t.Helper()
+	entries, err := srv.Store.Scan(context.Background(), "cognito:users:"+poolID, "")
+	if err != nil {
+		t.Fatalf("scan cognito users: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 stored Cognito user, got %d", len(entries))
+	}
+	var user struct {
+		PlaintextPassword string `json:"PlaintextPassword"`
+	}
+	if err := json.Unmarshal([]byte(entries[0].Value), &user); err != nil {
+		t.Fatalf("unmarshal stored Cognito user: %v", err)
+	}
+	if user.PlaintextPassword == "" {
+		t.Fatal("stored Cognito user has empty PlaintextPassword")
+	}
+	return user.PlaintextPassword
+}
+
+func assertPasswordCategories(t *testing.T, password string) {
+	t.Helper()
+	var hasUpper, hasLower, hasDigit, hasSymbol bool
+	for _, ch := range password {
+		switch {
+		case unicode.IsUpper(ch):
+			hasUpper = true
+		case unicode.IsLower(ch):
+			hasLower = true
+		case unicode.IsDigit(ch):
+			hasDigit = true
+		default:
+			hasSymbol = true
+		}
+	}
+	if !hasUpper || !hasLower || !hasDigit || !hasSymbol {
+		t.Fatalf("expected password to contain uppercase, lowercase, digit, and symbol: %q", password)
+	}
 }
 
 func decodeCBOR(t *testing.T, resp *http.Response, v any) {

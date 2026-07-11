@@ -1124,10 +1124,10 @@ func TestCreateGrant_andListGrants(t *testing.T) {
 	helpers.AssertStatus(t, resp2, http.StatusOK)
 	var listOut struct {
 		Grants []struct {
-			GrantId          string `json:"GrantId"`
-			GranteePrincipal string `json:"GranteePrincipal"`
+			GrantId          string   `json:"GrantId"`
+			GranteePrincipal string   `json:"GranteePrincipal"`
 			Operations       []string `json:"Operations"`
-			Name             string `json:"Name"`
+			Name             string   `json:"Name"`
 		} `json:"Grants"`
 	}
 	decodeJSON(t, resp2, &listOut)

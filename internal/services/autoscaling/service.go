@@ -28,8 +28,6 @@
 package autoscaling
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -64,6 +62,8 @@ const (
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 // AutoScalingGroup represents an Auto Scaling group.
+//
+//nolint:revive // AWS names the resource AutoScalingGroup.
 type AutoScalingGroup struct {
 	AutoScalingGroupName    string    `json:"AutoScalingGroupName"`
 	AutoScalingGroupARN     string    `json:"AutoScalingGroupARN"`
@@ -194,34 +194,4 @@ func parseIndexedStrings(r *http.Request, prefix string) []string {
 		result = append(result, v)
 	}
 	return result
-}
-
-func writeXMLResponse(w http.ResponseWriter, r *http.Request, v interface{}) {
-	protocol.WriteXML(w, r, http.StatusOK, v)
-}
-
-func responseMetadata(r *http.Request) protocol.ResponseMetadata {
-	return protocol.QueryResponseMetadata(r)
-}
-
-// putJSON serialises v to JSON and stores it in the given namespace+key.
-func putJSON(ctx context.Context, st state.Store, ns, key string, v interface{}) error {
-	raw, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	return st.Set(ctx, ns, key, string(raw))
-}
-
-// getASG retrieves and deserialises an AutoScalingGroup by name.
-func getASG(ctx context.Context, st state.Store, name string) (*AutoScalingGroup, bool) {
-	raw, found, err := st.Get(ctx, nsGroups, name)
-	if err != nil || !found {
-		return nil, false
-	}
-	var asg AutoScalingGroup
-	if json.Unmarshal([]byte(raw), &asg) != nil {
-		return nil, false
-	}
-	return &asg, true
 }
