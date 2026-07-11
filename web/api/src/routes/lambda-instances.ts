@@ -53,11 +53,11 @@ lambdaInstancesRoutes.get("/instances", async (c) => {
       // Emulator may not have any functions yet; return empty list gracefully.
       return c.json<LambdaInstancesResponse>({ instances: [] })
     }
-    const data = (await res.json()) as { instances: Array<LambdaInstance & { id?: string }> }
+    const data = (await res.json()) as { instances?: Array<LambdaInstance & { id?: string }> }
     // The emulator uses "id"; the frontend contract uses "instanceId". Normalise here.
-    const instances = (data.instances ?? []).map((inst: LambdaInstance & { id?: string }) => ({
+    const instances = (data.instances ?? []).map((inst) => ({
       ...inst,
-      instanceId: inst.instanceId ?? inst.id ?? "",
+      instanceId: inst.instanceId || inst.id || "",
     }))
     return c.json<LambdaInstancesResponse>({ instances })
   } catch {

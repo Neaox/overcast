@@ -49,20 +49,20 @@ type r53RespMeta struct {
 }
 
 type r53CreateHostedZoneResp struct {
-	XMLName    struct{}          `xml:"CreateHostedZoneResponse"`
-	Xmlns      string            `xml:"xmlns,attr"`
-	HostedZone r53XMLHostedZone  `xml:"HostedZone"`
-	ChangeInfo r53XMLChangeInfo  `xml:"ChangeInfo"`
-	Location   string            `xml:"Location,omitempty"`
-	Meta       r53RespMeta       `xml:"ResponseMetadata"`
+	XMLName    struct{}         `xml:"CreateHostedZoneResponse"`
+	Xmlns      string           `xml:"xmlns,attr"`
+	HostedZone r53XMLHostedZone `xml:"HostedZone"`
+	ChangeInfo r53XMLChangeInfo `xml:"ChangeInfo"`
+	Location   string           `xml:"Location,omitempty"`
+	Meta       r53RespMeta      `xml:"ResponseMetadata"`
 }
 
 type r53XMLHostedZone struct {
-	Id              string             `xml:"Id"`
-	Name            string             `xml:"Name"`
-	CallerReference string             `xml:"CallerReference"`
-	Config          r53XMLZoneConfig   `xml:"Config"`
-	RecordSetCount  int                `xml:"ResourceRecordSetCount"`
+	Id              string           `xml:"Id"`
+	Name            string           `xml:"Name"`
+	CallerReference string           `xml:"CallerReference"`
+	Config          r53XMLZoneConfig `xml:"Config"`
+	RecordSetCount  int              `xml:"ResourceRecordSetCount"`
 }
 
 type r53XMLZoneConfig struct {
@@ -77,12 +77,12 @@ type r53XMLChangeInfo struct {
 }
 
 type r53ListHostedZonesResp struct {
-	XMLName     struct{}          `xml:"ListHostedZonesResponse"`
-	Xmlns       string            `xml:"xmlns,attr"`
+	XMLName     struct{}           `xml:"ListHostedZonesResponse"`
+	Xmlns       string             `xml:"xmlns,attr"`
 	HostedZones []r53XMLHostedZone `xml:"HostedZones>HostedZone"`
-	IsTruncated bool              `xml:"IsTruncated"`
-	MaxItems    string            `xml:"MaxItems"`
-	Meta        r53RespMeta       `xml:"ResponseMetadata"`
+	IsTruncated bool               `xml:"IsTruncated"`
+	MaxItems    string             `xml:"MaxItems"`
+	Meta        r53RespMeta        `xml:"ResponseMetadata"`
 }
 
 type r53GetHostedZoneResp struct {
@@ -100,20 +100,20 @@ type r53DeleteHostedZoneResp struct {
 }
 
 type r53ListResourceRecordSetsResp struct {
-	XMLName            struct{}              `xml:"ListResourceRecordSetsResponse"`
-	Xmlns              string                `xml:"xmlns,attr"`
-	ResourceRecordSets []r53XMLRRSet         `xml:"ResourceRecordSets>ResourceRecordSet"`
-	IsTruncated        bool                  `xml:"IsTruncated"`
-	MaxItems           string                `xml:"MaxItems"`
-	Meta               r53RespMeta           `xml:"ResponseMetadata"`
+	XMLName            struct{}      `xml:"ListResourceRecordSetsResponse"`
+	Xmlns              string        `xml:"xmlns,attr"`
+	ResourceRecordSets []r53XMLRRSet `xml:"ResourceRecordSets>ResourceRecordSet"`
+	IsTruncated        bool          `xml:"IsTruncated"`
+	MaxItems           string        `xml:"MaxItems"`
+	Meta               r53RespMeta   `xml:"ResponseMetadata"`
 }
 
 type r53XMLRRSet struct {
-	Name            string           `xml:"Name"`
-	Type            string           `xml:"Type"`
-	TTL             int64            `xml:"TTL"`
-	ResourceRecords []r53XMLRR       `xml:"ResourceRecords>ResourceRecord"`
-	AliasTarget     *r53XMLAlias     `xml:"AliasTarget"`
+	Name            string       `xml:"Name"`
+	Type            string       `xml:"Type"`
+	TTL             int64        `xml:"TTL"`
+	ResourceRecords []r53XMLRR   `xml:"ResourceRecords>ResourceRecord"`
+	AliasTarget     *r53XMLAlias `xml:"AliasTarget"`
 }
 
 type r53XMLRR struct {

@@ -39,7 +39,7 @@ function buildSourceEntries(): SourceEntry[] {
       continue
     }
     const svc = SERVICES[key as keyof typeof SERVICES]
-    entries.push({ id: key, label: svc?.label ?? key.charAt(0).toUpperCase() + key.slice(1) })
+    entries.push({ id: key, label: svc.label })
   }
   return entries
 }
@@ -85,6 +85,7 @@ export function EventsPage() {
   const [hideRequests, setHideRequests] = useState(false)
   const [showHeartbeats, setShowHeartbeats] = useState(false)
   const [paused, setPaused] = useState(false)
+  const [frozenEvents, setFrozenEvents] = useState<StreamEvent[]>([])
   const [textFilter, setTextFilter] = useState("")
   const [dateFrom, setDateFrom] = useState("")
   const [dateTo, setDateTo] = useState("")
@@ -126,14 +127,11 @@ export function EventsPage() {
     return filtered
   }, [rawEvents, selectedSources, hideRequests, textFilter, dateFrom, dateTo])
 
-  // Pause snapshot.
-  const frozenRef = useRef<StreamEvent[]>(events)
-  if (!paused) frozenRef.current = events
-  const displayedEvents = paused ? frozenRef.current : events
+  const displayedEvents = paused ? frozenEvents : events
 
   const clear = useCallback(() => {
     streamClear()
-    frozenRef.current = []
+    setFrozenEvents([])
     setPaused(false)
   }, [streamClear])
 
@@ -341,7 +339,10 @@ export function EventsPage() {
           variant={paused ? "secondary" : "ghost"}
           size="sm"
           className="h-8 gap-1 text-xs"
-          onClick={() => setPaused(v => !v)}
+          onClick={() => {
+            if (!paused) setFrozenEvents(events)
+            setPaused((v) => !v)
+          }}
         >
           {paused ? <Play className="h-3.5 w-3.5 text-green-400" /> : <Pause className="h-3.5 w-3.5" />}
           {paused ? "Resume" : "Pause"}

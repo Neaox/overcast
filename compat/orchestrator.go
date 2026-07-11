@@ -227,6 +227,8 @@ func (o *Orchestrator) watchdog() {
 			sp.mu.Lock()
 
 			switch sp.State {
+			case SuiteReady, SuiteError, SuiteStopped:
+				// Nothing to monitor for inactive suites.
 			case SuiteBuilding:
 				// Suite hasn't emitted 'ready' within buildTimeout — kill it.
 				if now.Sub(sp.LastEventAt) > buildTimeout {

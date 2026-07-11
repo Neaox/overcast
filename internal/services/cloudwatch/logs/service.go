@@ -98,9 +98,7 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 
 	target := r.Header.Get("X-Amz-Target")
 	const prefix = "Logs_20140328."
-	if strings.HasPrefix(target, prefix) {
-		target = target[len(prefix):]
-	}
+	target = strings.TrimPrefix(target, prefix)
 	if fn, ok := s.handler.ops[target]; ok {
 		fn(w, r)
 		return

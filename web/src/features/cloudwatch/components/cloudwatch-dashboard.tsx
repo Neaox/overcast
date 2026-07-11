@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { Link } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
 import type { Datapoint, Metric, Statistic } from "@aws-sdk/client-cloudwatch"
@@ -124,22 +124,10 @@ export function CloudwatchDashboard() {
   const metricsQuery = useQuery(cloudwatchMetricsQueryOptions())
   const alarmsQuery = useQuery(cloudwatchAlarmsQueryOptions())
 
-  const metrics = metricsQuery.data ?? []
-
-  useEffect(() => {
-    if (!metrics.length) {
-      setSelectedMetricId(undefined)
-      return
-    }
-
-    const hasSelectedMetric = metrics.some((metric) => metricIdentity(metric) === selectedMetricId)
-    if (!hasSelectedMetric) {
-      setSelectedMetricId(metricIdentity(metrics[0]))
-    }
-  }, [metrics, selectedMetricId])
+  const metrics = useMemo(() => metricsQuery.data ?? [], [metricsQuery.data])
 
   const selectedMetric = useMemo(
-    () => metrics.find((metric) => metricIdentity(metric) === selectedMetricId) ?? metrics[0],
+    () => metrics.find((metric) => metricIdentity(metric) === selectedMetricId) ?? metrics.at(0),
     [metrics, selectedMetricId],
   )
 
@@ -158,7 +146,7 @@ export function CloudwatchDashboard() {
   )
 
   const selectedAlarms = useMemo(
-    () => alarmsForMetric(selectedMetric ?? {}, alarmsQuery.data ?? []),
+    () => (selectedMetric ? alarmsForMetric(selectedMetric, alarmsQuery.data ?? []) : []),
     [alarmsQuery.data, selectedMetric],
   )
 
@@ -228,7 +216,7 @@ export function CloudwatchDashboard() {
             <div className="space-y-2">
               {metrics.map((metric) => {
                 const identity = metricIdentity(metric)
-                const isSelected = identity === metricIdentity(selectedMetric ?? metric)
+                const isSelected = selectedMetric ? identity === metricIdentity(selectedMetric) : false
                 return (
                   <button
                     key={identity}

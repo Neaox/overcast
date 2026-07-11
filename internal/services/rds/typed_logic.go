@@ -286,7 +286,9 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 		}
 		if got.DBInstanceStatus == "creating" {
 			got.DBInstanceStatus = "available"
-			h.store.putDBInstance(ctx, got)
+			if aerr := h.store.putDBInstance(ctx, got); aerr != nil {
+				h.log.Warn("RDS: persist available instance", zap.String("instance", instID), zap.String("error", aerr.Message))
+			}
 		}
 	})
 
@@ -462,7 +464,9 @@ func (h *Handler) stopDBInstanceTyped(ctx context.Context, req *stopDBInstanceRe
 		}
 		if got.DBInstanceStatus == "stopping" {
 			got.DBInstanceStatus = "stopped"
-			h.store.putDBInstance(ctx, got)
+			if aerr := h.store.putDBInstance(ctx, got); aerr != nil {
+				h.log.Warn("RDS: persist stopped instance", zap.String("instance", instID), zap.String("error", aerr.Message))
+			}
 		}
 	})
 
@@ -514,7 +518,9 @@ func (h *Handler) startDBInstanceTyped(ctx context.Context, req *startDBInstance
 			}
 			if got.DBInstanceStatus == "starting" {
 				got.DBInstanceStatus = "available"
-				h.store.putDBInstance(ctx, got)
+				if aerr := h.store.putDBInstance(ctx, got); aerr != nil {
+					h.log.Warn("RDS: persist started instance", zap.String("instance", instID2), zap.String("error", aerr.Message))
+				}
 			}
 		})
 	}
@@ -582,7 +588,9 @@ func (h *Handler) modifyDBInstanceTyped(ctx context.Context, req *modifyDBInstan
 			} else {
 				got.DBInstanceStatus = prevStatus
 			}
-			h.store.putDBInstance(ctx, got)
+			if aerr := h.store.putDBInstance(ctx, got); aerr != nil {
+				h.log.Warn("RDS: persist modified instance", zap.String("instance", instID), zap.String("error", aerr.Message))
+			}
 		}
 	})
 
@@ -913,7 +921,9 @@ func (h *Handler) createDBClusterTyped(ctx context.Context, req *createDBCluster
 		}
 		if got.Status == "creating" {
 			got.Status = "available"
-			h.store.putDBCluster(ctx, got)
+			if aerr := h.store.putDBCluster(ctx, got); aerr != nil {
+				h.log.Warn("RDS: persist available cluster", zap.String("cluster", clID), zap.String("error", aerr.Message))
+			}
 		}
 	})
 
@@ -1066,7 +1076,9 @@ func (h *Handler) startDBClusterTyped(ctx context.Context, req *startDBClusterRe
 		}
 		if got.Status == "starting" {
 			got.Status = "available"
-			h.store.putDBCluster(ctx, got)
+			if aerr := h.store.putDBCluster(ctx, got); aerr != nil {
+				h.log.Warn("RDS: persist started cluster", zap.String("cluster", clID), zap.String("error", aerr.Message))
+			}
 		}
 	})
 
@@ -1113,7 +1125,9 @@ func (h *Handler) stopDBClusterTyped(ctx context.Context, req *stopDBClusterReq)
 		}
 		if got.Status == "stopping" {
 			got.Status = "stopped"
-			h.store.putDBCluster(ctx, got)
+			if aerr := h.store.putDBCluster(ctx, got); aerr != nil {
+				h.log.Warn("RDS: persist stopped cluster", zap.String("cluster", clID), zap.String("error", aerr.Message))
+			}
 		}
 	})
 

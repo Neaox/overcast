@@ -161,7 +161,7 @@ func (h *Handler) ListSourceApiAssociations(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"sourceApiAssociationSummaries": assocs})
+	writeListJSON(w, r, "sourceApiAssociationSummaries", assocs)
 }
 
 // ─── DisassociateSourceGraphqlApi ────────────────────────────────────────────

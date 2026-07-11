@@ -1,25 +1,6 @@
-import { render, screen } from "@testing-library/react"
+import { renderWithData, screen } from "@/test/render"
+import { ecrRepositoriesQueryOptions } from "@/features/ecr/data"
 import { RepositoryList } from "./repository-list"
-
-vi.mock("@tanstack/react-query", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@tanstack/react-query")>()
-  return {
-    ...actual,
-    useQuery: vi.fn(() => ({
-      data: [
-        {
-          name: "backend/api",
-          uri: "localhost:5111/backend/api",
-          createdAt: Date.UTC(2026, 3, 22),
-        },
-      ],
-      isLoading: false,
-      isFetching: false,
-      refetch: vi.fn(),
-      error: null,
-    })),
-  }
-})
 
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => vi.fn(),
@@ -39,7 +20,18 @@ vi.mock("@/hooks/use-resource-mutation", () => ({
 
 describe("RepositoryList", () => {
   it("renders repositories and docs action", () => {
-    render(<RepositoryList />)
+    renderWithData(<RepositoryList />, [
+      [
+        ecrRepositoriesQueryOptions().queryKey,
+        [
+          {
+            name: "backend/api",
+            uri: "localhost:5111/backend/api",
+            createdAt: Date.UTC(2026, 3, 22),
+          },
+        ],
+      ],
+    ])
 
     expect(screen.getByRole("heading", { name: "ECR Repositories" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Docs" })).toBeInTheDocument()

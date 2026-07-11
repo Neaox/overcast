@@ -1297,7 +1297,7 @@ func (h *elastiCacheReplicationGroupHandler) Update(ctx context.Context, router 
 	if v, _ := props["NotificationTopicArn"].(string); v != "" {
 		params["NotificationTopicArn"] = v
 	}
-	if v, _ := props["SnapshotRetentionLimit"]; v != nil {
+	if v := props["SnapshotRetentionLimit"]; v != nil {
 		params["SnapshotRetentionLimit"] = fmt.Sprintf("%v", v)
 	}
 	if v, _ := props["SnapshotWindow"].(string); v != "" {

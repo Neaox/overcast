@@ -86,7 +86,6 @@ function QueryProvider({ children }: { children: React.ReactNode }) {
   // never shown.
   useEffect(() => {
     return endpointStore.subscribe((prev) => {
-      // eslint-disable-next-line @tanstack/query/prefer-query-options -- prev is a snapshot value, not a stable queryOptions reference
       void queryClient.resetQueries({ queryKey: [prev.baseUrl, prev.region] })
     })
   }, [queryClient])

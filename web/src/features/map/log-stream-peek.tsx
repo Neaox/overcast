@@ -11,7 +11,7 @@
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import * as Dialog from "@radix-ui/react-dialog"
-import { useInfiniteQuery } from "@tanstack/react-query"
+import { infiniteQueryOptions, useInfiniteQuery } from "@tanstack/react-query"
 import { X, FileText, Zap } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { logs } from "@/services/api"
@@ -42,6 +42,28 @@ interface LogEventsWrittenPayload {
   logGroupName: string
   logStreamName: string
   events: Array<{ timestamp: number; message: string }>
+}
+
+function logStreamPeekQueryOptions(target: LogStreamTarget | null, enabled: boolean) {
+  return infiniteQueryOptions({
+    queryKey: ["logs", target?.logGroup, target?.logStream],
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      logs.getEvents(target!.logGroup, target!.logStream, {
+        nextToken: pageParam,
+        limit: 200,
+        ...(pageParam == null ? { startFromHead: false } : {}),
+      }),
+    initialPageParam: undefined as string | undefined,
+    // Each page gives us a backward token to fetch the page before it.
+    getNextPageParam: (lastPage, _allPages, lastPageParam) => {
+      if (lastPage.events.length === 0) return undefined
+      const token = lastPage.nextBackwardToken
+      return !token || token === lastPageParam ? undefined : token
+    },
+    enabled,
+    // Disable stale refetching — SSE handles live tail updates.
+    staleTime: Infinity,
+  })
 }
 
 function fmtTimestamp(ms: number): string {
@@ -75,25 +97,12 @@ export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: Lo
 
   // Infinite query — first page fetches the latest events (startFromHead: false);
   // subsequent pages fetch older events via nextBackwardToken.
-  const logQuery = useInfiniteQuery({
-    queryKey: ["logs", target?.logGroup, target?.logStream],
-    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
-      logs.getEvents(target!.logGroup, target!.logStream, {
-        nextToken: pageParam,
-        limit: 200,
-        ...(pageParam == null ? { startFromHead: false } : {}),
-      }),
-    initialPageParam: undefined as string | undefined,
-    // Each page gives us a backward token to fetch the page before it.
-    getNextPageParam: (lastPage, _allPages, lastPageParam) => {
-      if (lastPage.events.length === 0) return undefined
-      const token = lastPage.nextBackwardToken
-      return !token || token === lastPageParam ? undefined : token
-    },
-    enabled: !!target && activeTab === "logs" && !!target.logGroup && !!target.logStream,
-    // Disable stale refetching — SSE handles live tail updates
-    staleTime: Infinity,
-  })
+  const logQuery = useInfiniteQuery(
+    logStreamPeekQueryOptions(
+      target,
+      !!target && activeTab === "logs" && !!target.logGroup && !!target.logStream,
+    ),
+  )
 
   // SSE subscription: append new log events for the active stream.
   const { events: sseEvents } = useEventStream({ source: "logs" })
@@ -326,7 +335,8 @@ function LogsPane({
     if (!initializedRef.current) {
       initializedRef.current = true
       prevLenRef.current = logEvents.length
-      scrollToBottom("instant")
+      el.scrollTo({ top: el.scrollHeight, behavior: "instant" })
+      pinnedRef.current = true
       return
     }
 
@@ -351,11 +361,13 @@ function LogsPane({
     }
 
     if (pinnedRef.current) {
-      scrollToBottom("auto")
+      el.scrollTo({ top: el.scrollHeight, behavior: "auto" })
+      pinnedRef.current = true
     } else {
-      setHasUnread(true)
+      const unreadTimer = window.setTimeout(() => setHasUnread(true), 0)
+      return () => window.clearTimeout(unreadTimer)
     }
-  }, [logEvents.length, loadingMore, scrollToBottom])
+  }, [logEvents.length, loadingMore])
 
   if (!hasStream) {
     return (

@@ -39,17 +39,17 @@ sqsRoutes.get("/queues/:name/messages", async (c) => {
   }
 
   const data = (await res.json()) as {
-    Messages: Array<{
+    Messages?: Array<{
       MessageId: string
       ReceiptHandle: string
       Body: string
       MD5OfBody: string
-      Attributes: Record<string, string>
-      MessageAttributes: Record<string, { DataType: string; StringValue?: string }>
+      Attributes?: Record<string, string>
+      MessageAttributes?: Record<string, { DataType?: string; StringValue?: string }>
       Inflight: boolean
-      Delayed: boolean
+      Delayed?: boolean
       VisibleAfter: number
-      ApproximateReceiveCount: number
+      ApproximateReceiveCount?: number
     }>
   }
 

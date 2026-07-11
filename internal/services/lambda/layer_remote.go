@@ -127,8 +127,8 @@ type parsedLayerARN struct {
 	FullARN   string
 }
 
-// parseLayerARN extracts region, account, layer name, and version from an ARN
-// like arn:aws:lambda:us-east-1:123456789012:layer:MyLayer:3
+// parseLayerARN extracts region, account, layer name, and version from an ARN.
+// like arn:aws:lambda:us-east-1:123456789012:layer:MyLayer:3.
 func parseLayerARN(arn string) (parsedLayerARN, error) {
 	// arn:aws:lambda:<region>:<account>:layer:<name>:<version>
 	parts := strings.Split(arn, ":")

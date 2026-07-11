@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
@@ -1183,12 +1184,40 @@ func invocationFailureReasonFromResult(result *InvokeResult) string {
 	return result.FunctionError
 }
 
+type runtimeReadyInstance interface {
+	AwaitReady(context.Context) error
+}
+
+func lambdaInitTimeout(cfg *config.Config) time.Duration {
+	if cfg != nil && cfg.LambdaInitTimeout > 0 {
+		return cfg.LambdaInitTimeout
+	}
+	return 10 * time.Second
+}
+
+func awaitRuntimeReady(ctx context.Context, cfg *config.Config, inst RuntimeInstance) error {
+	ready, ok := inst.(runtimeReadyInstance)
+	if !ok {
+		return nil
+	}
+	initCtx, cancel := context.WithTimeout(ctx, lambdaInitTimeout(cfg))
+	defer cancel()
+	if err := ready.AwaitReady(initCtx); err != nil {
+		return fmt.Errorf("lambda runtime did not initialize within %s: %w", lambdaInitTimeout(cfg), err)
+	}
+	return nil
+}
+
+func (h *Handler) awaitRuntimeReady(ctx context.Context, fn *Function, rt Runtime, inst RuntimeInstance) error {
+	return awaitRuntimeReady(ctx, h.cfg, inst)
+}
+
 // invokeSyncOnce performs a single acquire → invoke → release cycle.
 func (h *Handler) invokeSyncOnce(ctx context.Context, fn *Function, rt Runtime, payload []byte, name string) *InvokeResult {
-	acquireTimeout := 15 * time.Second
+	acquireTimeout := 30 * time.Second
 	// For very short function timeouts, keep acquire tighter.
 	if fn.Timeout > 0 && fn.Timeout <= 5 {
-		acquireTimeout = 10 * time.Second
+		acquireTimeout = 20 * time.Second
 	}
 	acquireCtx, acquireCancel := context.WithTimeout(ctx, acquireTimeout)
 	defer acquireCancel()
@@ -1196,6 +1225,16 @@ func (h *Handler) invokeSyncOnce(ctx context.Context, fn *Function, rt Runtime, 
 	inst, err := rt.Acquire(acquireCtx, fn)
 	if err != nil {
 		h.log.Error("invoke: acquire instance", zap.String("function", name), zap.Error(err))
+		return &InvokeResult{
+			StatusCode:    200,
+			Payload:       []byte(fmt.Sprintf(`{"errorMessage":%q,"errorType":"Runtime.InitError"}`, err.Error())),
+			FunctionError: "Unhandled",
+			acquireFailed: true,
+		}
+	}
+	if err := h.awaitRuntimeReady(ctx, fn, rt, inst); err != nil {
+		rt.Release(ctx, inst, false)
+		h.log.Error("invoke: runtime init", zap.String("function", name), zap.Error(err))
 		return &InvokeResult{
 			StatusCode:    200,
 			Payload:       []byte(fmt.Sprintf(`{"errorMessage":%q,"errorType":"Runtime.InitError"}`, err.Error())),
@@ -1275,8 +1314,7 @@ func (h *Handler) invokeAsync(fn *Function, rt Runtime, payload []byte) {
 		region = h.cfg.Region
 	}
 	bgCtx := middleware.ContextWithRegion(context.Background(), region)
-	ctx, cancel := context.WithTimeout(bgCtx, time.Duration(timeoutSec)*time.Second)
-	defer cancel()
+	ctx := bgCtx
 
 	if h.tracker != nil {
 		h.tracker.Acquire(fn.Name, payload)
@@ -1287,6 +1325,14 @@ func (h *Handler) invokeAsync(fn *Function, rt Runtime, payload []byte) {
 			h.tracker.Release(fn.Name, false, err.Error())
 		}
 		h.log.Error("invokeAsync: acquire instance", zap.String("function", fn.Name), zap.Error(err))
+		return
+	}
+	if err := h.awaitRuntimeReady(ctx, fn, rt, inst); err != nil {
+		rt.Release(ctx, inst, false)
+		if h.tracker != nil {
+			h.tracker.Release(fn.Name, false, err.Error())
+		}
+		h.log.Error("invokeAsync: runtime init", zap.String("function", fn.Name), zap.Error(err))
 		return
 	}
 
@@ -1300,8 +1346,10 @@ func (h *Handler) invokeAsync(fn *Function, rt Runtime, payload []byte) {
 		}
 	}
 
-	result, invokeErr := inst.Invoke(ctx, payload)
-	rt.Release(ctx, inst, invokeErr == nil)
+	invokeCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+	result, invokeErr := inst.Invoke(invokeCtx, payload)
+	rt.Release(invokeCtx, inst, invokeErr == nil)
 	if h.tracker != nil {
 		success := invokeErr == nil && result != nil && result.FunctionError == ""
 		reason := ""
@@ -1416,6 +1464,15 @@ func (h *Handler) InvokeFunctionSSE(w http.ResponseWriter, r *http.Request) {
 			h.tracker.Release(name, false, err.Error())
 		}
 		h.log.Error("invoke-sse: acquire instance", zap.String("function", name), zap.Error(err))
+		sendEvent("error", err.Error())
+		return
+	}
+	if err := h.awaitRuntimeReady(ctx, fn, rt, inst); err != nil {
+		rt.Release(ctx, inst, false)
+		if h.tracker != nil {
+			h.tracker.Release(name, false, err.Error())
+		}
+		h.log.Error("invoke-sse: runtime init", zap.String("function", name), zap.Error(err))
 		sendEvent("error", err.Error())
 		return
 	}

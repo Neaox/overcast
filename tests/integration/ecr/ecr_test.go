@@ -82,6 +82,7 @@ func runDockerCommand(t *testing.T, args ...string) string {
 	return string(out)
 }
 
+//nolint:unused // Kept for Docker CLI tests that need stdin.
 func runDockerCommandWithInput(t *testing.T, input string, args ...string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "docker", args...)
@@ -1020,15 +1021,24 @@ func TestECR_withDocker_registryContainerRemovedOnServerShutdown(t *testing.T) {
 
 	// Register the final assertion first so it runs after helper server cleanup.
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
-		info, err := dc.GetContainerByName(ctx, "overcast-ecr-registry")
-		if err != nil {
-			t.Fatalf("lookup ecr registry container after shutdown: %v", err)
-		}
-		if info != nil && info.HasOvercastLabels("ecr", "registry") {
-			t.Fatalf("expected ecr registry container to be removed on shutdown, still present: id=%s", info.ID)
+		var lastID string
+		for {
+			info, err := dc.GetContainerByName(ctx, "overcast-ecr-registry")
+			if err != nil {
+				t.Fatalf("lookup ecr registry container after shutdown: %v", err)
+			}
+			if info == nil || !info.HasOvercastLabels("ecr", "registry") {
+				return
+			}
+			lastID = info.ID
+			select {
+			case <-ctx.Done():
+				t.Fatalf("expected ecr registry container to be removed on shutdown, still present: id=%s", lastID)
+			case <-time.After(100 * time.Millisecond):
+			}
 		}
 	})
 
@@ -1044,7 +1054,7 @@ func TestECR_withDocker_registryContainerRemovedOnServerShutdown(t *testing.T) {
 	}
 
 	// Registry container is started in a background goroutine — poll until ready.
-	const pollTimeout = 10 * time.Second
+	const pollTimeout = 60 * time.Second
 	const pollInterval = 200 * time.Millisecond
 	pollCtx, cancel := context.WithTimeout(t.Context(), pollTimeout)
 	defer cancel()

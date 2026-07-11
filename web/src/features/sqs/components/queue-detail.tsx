@@ -449,12 +449,12 @@ export function QueueDetail({ queueName }: Props) {
                   : `${dlqSourceUrls.length} source queues`}
               </p>
             </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => queue && redriveMut.mutate(queue.arn)}
-              disabled={redriveMut.isPending || messages.length === 0}
-            >
+              <Button
+                size="sm"
+                variant="outline"
+              onClick={() => redriveMut.mutate(queue.arn)}
+                disabled={redriveMut.isPending || messages.length === 0}
+              >
               <Undo2 className="mr-1.5 h-3.5 w-3.5" />
               {redriveMut.isPending ? "Redriving…" : "Redrive Messages"}
             </Button>

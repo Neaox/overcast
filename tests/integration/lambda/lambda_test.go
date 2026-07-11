@@ -1644,6 +1644,16 @@ func skipIfNoDocker(t *testing.T) {
 	}
 }
 
+func skipIfContainerizedHotReloadBindMount(t *testing.T) {
+	t.Helper()
+	if os.Getenv("OVERCAST_TEST_LAMBDA_HOT_RELOAD") == "1" {
+		return
+	}
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		t.Skip("Lambda hot-reload bind mounts require host-visible source paths; set OVERCAST_TEST_LAMBDA_HOT_RELOAD=1 to force this test")
+	}
+}
+
 // makeZip creates a minimal zip archive containing a single file.
 func makeZip(t *testing.T, name, content string) []byte {
 	t.Helper()
@@ -1753,6 +1763,7 @@ exports.handler = async (event) => {
 
 func TestInvoke_nodeRuntime_hotReloadMountedSource(t *testing.T) {
 	skipIfNoDocker(t)
+	skipIfContainerizedHotReloadBindMount(t)
 
 	// Given a function that opts into hot-reload with source mounted from host.
 	sourceDir, err := os.MkdirTemp("/workspace", "hot-reload-")
@@ -1805,6 +1816,7 @@ exports.handler = async () => {
 
 func TestInvoke_nodeRuntime_hotReloadMountedSource_withLayer(t *testing.T) {
 	skipIfNoDocker(t)
+	skipIfContainerizedHotReloadBindMount(t)
 
 	// Given a hot-reload source directory that imports a dependency from a layer.
 	sourceDir, err := os.MkdirTemp("/workspace", "hot-reload-layered-")
@@ -1876,6 +1888,7 @@ exports.handler = async () => {
 
 func TestInvoke_pythonRuntime_hotReloadMountedSource_withLayer(t *testing.T) {
 	skipIfNoDocker(t)
+	skipIfContainerizedHotReloadBindMount(t)
 
 	// Given a hot-reload Python source directory that imports from a layer module.
 	sourceDir, err := os.MkdirTemp("/workspace", "hot-reload-python-layered-")
@@ -1947,6 +1960,7 @@ def handler(event, context):
 
 func TestInvoke_nodeRuntime_hotReloadMountedSource_withLayer_precedenceLastWins(t *testing.T) {
 	skipIfNoDocker(t)
+	skipIfContainerizedHotReloadBindMount(t)
 
 	// Given a hot-reload source directory importing a module provided by layers.
 	sourceDir, err := os.MkdirTemp("/workspace", "hot-reload-layered-precedence-")
@@ -2025,6 +2039,7 @@ exports.handler = async () => {
 
 func TestInvoke_pythonRuntime_hotReloadMountedSource_withLayer_precedenceLastWins(t *testing.T) {
 	skipIfNoDocker(t)
+	skipIfContainerizedHotReloadBindMount(t)
 
 	// Given a hot-reload Python source directory importing a module from layers.
 	sourceDir, err := os.MkdirTemp("/workspace", "hot-reload-python-layered-precedence-")
@@ -2653,6 +2668,7 @@ def handler(event, context):
 
 func TestInvoke_nodeRuntime_hotReload_deletedAttachedLayerVersionFailsInit(t *testing.T) {
 	skipIfNoDocker(t)
+	skipIfContainerizedHotReloadBindMount(t)
 
 	// Given a hot-reload Node function with a real attached layer version.
 	sourceDir, err := os.MkdirTemp("/workspace", "hot-reload-deleted-layer-")
@@ -2745,6 +2761,7 @@ exports.handler = async () => {
 
 func TestInvoke_pythonRuntime_hotReload_deletedAttachedLayerVersionFailsInit(t *testing.T) {
 	skipIfNoDocker(t)
+	skipIfContainerizedHotReloadBindMount(t)
 
 	// Given a hot-reload Python function with a real attached layer version.
 	sourceDir, err := os.MkdirTemp("/workspace", "hot-reload-python-deleted-layer-")
@@ -2836,6 +2853,7 @@ def handler(event, context):
 
 func TestInvoke_nodeRuntime_hotReload_deletedLayerRecoveryAfterClearingLayers(t *testing.T) {
 	skipIfNoDocker(t)
+	skipIfContainerizedHotReloadBindMount(t)
 
 	// Given a hot-reload Node function with an attached layer that later gets deleted.
 	sourceDir, err := os.MkdirTemp("/workspace", "hot-reload-deleted-layer-recovery-")
@@ -2955,6 +2973,7 @@ exports.handler = async () => {
 
 func TestInvoke_pythonRuntime_hotReload_deletedLayerRecoveryAfterClearingLayers(t *testing.T) {
 	skipIfNoDocker(t)
+	skipIfContainerizedHotReloadBindMount(t)
 
 	// Given a hot-reload Python function with an attached layer that later gets deleted.
 	sourceDir, err := os.MkdirTemp("/workspace", "hot-reload-python-deleted-layer-recovery-")
@@ -3168,6 +3187,7 @@ def handler(event, context):
 
 func TestInvoke_nodeRuntime_hotReload_missingLayerVersionFailsInit(t *testing.T) {
 	skipIfNoDocker(t)
+	skipIfContainerizedHotReloadBindMount(t)
 
 	// Given a hot-reload function whose configuration references a
 	// non-existent layer version ARN.
@@ -3235,6 +3255,7 @@ exports.handler = async () => {
 
 func TestInvoke_pythonRuntime_hotReload_missingLayerVersionFailsInit(t *testing.T) {
 	skipIfNoDocker(t)
+	skipIfContainerizedHotReloadBindMount(t)
 
 	// Given a hot-reload Python function whose configuration references a
 	// non-existent layer version ARN.

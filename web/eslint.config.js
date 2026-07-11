@@ -116,4 +116,12 @@ export default defineConfig([
       "react-refresh/only-export-components": "off",
     },
   },
+  // Test helpers intentionally export render utilities and wrapper components
+  // from one module so tests have a single import path.
+  {
+    files: ["src/test/**/*.tsx"],
+    rules: {
+      "react-refresh/only-export-components": "off",
+    },
+  },
 ])

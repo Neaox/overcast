@@ -6,7 +6,6 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/protocol"
@@ -121,9 +120,12 @@ func (s *Service) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 
 	tempPw := req.TemporaryPassword
 	if tempPw == "" {
-		tempPw = generateTempPassword()
+		tempPw = generateTempPassword(pool)
+	} else if aerr := validatePassword(pool, tempPw); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(tempPw), bcrypt.DefaultCost)
+	hash, err := hashPassword(tempPw)
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
@@ -256,7 +258,7 @@ func (s *Service) adminSetUserPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hash, err := hashPassword(req.Password)
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return

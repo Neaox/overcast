@@ -147,9 +147,10 @@ func (p *InstancePool) AcquireWithProgress(ctx context.Context, fn *Function, pr
 // Implements the Runtime interface — inst.FunctionName() is used as the pool key.
 func (p *InstancePool) Release(_ context.Context, inst RuntimeInstance, healthy bool) {
 	name := inst.FunctionName()
-	if !healthy || !inst.Healthy() {
+	instHealthy := inst.Healthy()
+	if !healthy || !instHealthy {
 		p.log.Info("lambda pool: discarding unhealthy instance", zap.String("function", name),
-			zap.Bool("healthy_arg", healthy), zap.Bool("inst_healthy", inst.Healthy()))
+			zap.Bool("healthy_arg", healthy), zap.Bool("inst_healthy", instHealthy))
 		if err := inst.Close(); err != nil {
 			p.log.Warn("lambda pool: close unhealthy instance failed",
 				zap.String("function", name),
@@ -159,12 +160,34 @@ func (p *InstancePool) Release(_ context.Context, inst RuntimeInstance, healthy 
 		return
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	if p.entries == nil {
+		p.mu.Unlock()
+		p.log.Info("lambda pool: closing instance released after stop", zap.String("function", name))
+		if err := inst.Close(); err != nil {
+			p.log.Warn("lambda pool: close after stop failed",
+				zap.String("function", name),
+				zap.Error(err),
+			)
+		}
+		return
+	}
+	if _, exists := p.entries[name]; exists {
+		p.mu.Unlock()
+		p.log.Info("lambda pool: closing duplicate warm instance", zap.String("function", name))
+		if err := inst.Close(); err != nil {
+			p.log.Warn("lambda pool: close duplicate instance failed",
+				zap.String("function", name),
+				zap.Error(err),
+			)
+		}
+		return
+	}
 	p.entries[name] = &poolEntry{
 		inst:     inst,
 		codeHash: inst.CodeHash(),
 		lastUsed: p.clk.Now(),
 	}
+	p.mu.Unlock()
 	p.log.Info("lambda pool: instance returned to pool", zap.String("function", name))
 }
 

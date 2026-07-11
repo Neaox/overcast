@@ -2706,7 +2706,9 @@ func TestRPCv2CBOR_TagUntagResource(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusOK)
 
 	var created struct {
-		Cluster struct{ ClusterArn string `json:"clusterArn"` } `json:"cluster"`
+		Cluster struct {
+			ClusterArn string `json:"clusterArn"`
+		} `json:"cluster"`
 	}
 	helpers.DecodeJSON(t, resp, &created)
 	arn := created.Cluster.ClusterArn
@@ -2766,4 +2768,3 @@ func decodeCBOR(t *testing.T, resp *http.Response, v any) {
 		t.Fatalf("decode CBOR response: %v", err)
 	}
 }
-

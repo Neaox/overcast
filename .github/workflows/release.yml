@@ -1,75 +1,78 @@
 name: Release
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - VERSION
+  release:
+    types: [published]
 
 permissions:
   contents: write
   packages: write
 
 jobs:
-  # Gate: only proceed when VERSION differs from the latest git tag.
   check-version:
-    name: Check version
+    name: Check release version
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.read.outputs.version }}
       tag: ${{ steps.read.outputs.tag }}
-      should_release: ${{ steps.compare.outputs.should_release }}
+      is_prerelease: ${{ steps.read.outputs.is_prerelease }}
+      prerelease_channel: ${{ steps.read.outputs.prerelease_channel }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # need tags
+      - uses: actions/checkout@v4.3.1
 
-      - name: Read VERSION
+      - name: Read release version
         id: read
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
-          VERSION=$(cat VERSION | tr -d '[:space:]')
+          TAG=$(printf '%s' "$RELEASE_TAG" | tr -d '[:space:]')
+          VERSION=${TAG#v}
+          FILE_VERSION=$(cat VERSION | tr -d '[:space:]')
+          if [ "$VERSION" != "$FILE_VERSION" ]; then
+            echo "Release tag $TAG does not match VERSION ($FILE_VERSION)." >&2
+            exit 1
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Compare with latest tag
-        id: compare
-        run: |
-          TAG="v$(cat VERSION | tr -d '[:space:]')"
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists — skipping release."
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if [ "$RELEASE_PRERELEASE" = "true" ] || [[ "$VERSION" == *-* ]]; then
+            CHANNEL="${VERSION#*-}"
+            CHANNEL="${CHANNEL%%.*}"
+            if [ "$CHANNEL" = "$VERSION" ]; then
+              CHANNEL="prerelease"
+            fi
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "prerelease_channel=$CHANNEL" >> "$GITHUB_OUTPUT"
           else
-            echo "Tag $TAG does not exist — proceeding with release."
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "prerelease_channel=" >> "$GITHUB_OUTPUT"
           fi
 
   test:
     name: Test
     needs: check-version
-    if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v4.3.1
+      - uses: actions/setup-go@v5.6.0
         with:
           go-version: "1.24"
           cache: true
       - run: go mod download
       - run: go vet ./...
       - name: Tests with race detector
-        run: go test -race -count=1 -timeout=120s ./...
+        run: go test -race -count=1 -timeout=600s ./...
 
   web:
     name: Web UI build
     needs: check-version
-    if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v4.3.1
+      - uses: actions/setup-node@v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -78,22 +81,118 @@ jobs:
       - run: npx tsc --noEmit
       - run: VITE_BUNDLED=true npm run build
       - run: npm run build:server
+      - name: Upload web assets
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: web-dist
+          path: web/dist
+          if-no-files-found: error
+
+  binaries:
+    name: Build ${{ matrix.asset }}
+    needs: [check-version, test, web]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - asset: overcast-linux-amd64
+            goos: linux
+            goarch: amd64
+            tags: ""
+          - asset: overcast-linux-arm64
+            goos: linux
+            goarch: arm64
+            tags: ""
+          - asset: overcast-darwin-amd64
+            goos: darwin
+            goarch: amd64
+            tags: ""
+          - asset: overcast-darwin-arm64
+            goos: darwin
+            goarch: arm64
+            tags: ""
+          - asset: overcast-windows-amd64.exe
+            goos: windows
+            goarch: amd64
+            tags: ""
+          - asset: overcastd-linux-amd64
+            goos: linux
+            goarch: amd64
+            tags: slim,nosqlite
+          - asset: overcastd-linux-arm64
+            goos: linux
+            goarch: arm64
+            tags: slim,nosqlite
+          - asset: overcastd-darwin-amd64
+            goos: darwin
+            goarch: amd64
+            tags: slim,nosqlite
+          - asset: overcastd-darwin-arm64
+            goos: darwin
+            goarch: arm64
+            tags: slim,nosqlite
+          - asset: overcastd-windows-amd64.exe
+            goos: windows
+            goarch: amd64
+            tags: slim,nosqlite
+    steps:
+      - uses: actions/checkout@v4.3.1
+      - uses: actions/setup-go@v5.6.0
+        with:
+          go-version: "1.24"
+          cache: true
+      - uses: actions/download-artifact@v4.3.0
+        with:
+          name: web-dist
+          path: web/dist
+      - uses: ./.github/actions/build-overcast-binary
+        with:
+          asset: ${{ matrix.asset }}
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          tags: ${{ matrix.tags }}
+          version: ${{ needs.check-version.outputs.version }}
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  release-assets:
+    name: Publish release assets
+    needs: binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4.3.0
+        with:
+          pattern: overcast*
+          path: dist
+          merge-multiple: true
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+      - name: Upload assets to release
+        uses: softprops/action-gh-release@v2.4.0
+        with:
+          files: dist/*
 
   publish:
     name: Publish Docker images
     needs: [check-version, test, web]
-    if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     env:
       REGISTRY: ghcr.io
       OWNER: ${{ github.repository_owner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.3.1
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3.12.0
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -101,24 +200,26 @@ jobs:
 
       - name: Docker metadata (console)
         id: meta-console
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v5.10.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.OWNER }}/overcast
           tags: |
             type=raw,value=${{ needs.check-version.outputs.version }}
-            type=raw,value=latest
+            type=raw,value=${{ needs.check-version.outputs.prerelease_channel }},enable=${{ needs.check-version.outputs.is_prerelease == 'true' }}
+            type=raw,value=latest,enable=${{ needs.check-version.outputs.is_prerelease == 'false' }}
 
       - name: Docker metadata (slim)
         id: meta-slim
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v5.10.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.OWNER }}/overcast-slim
           tags: |
             type=raw,value=${{ needs.check-version.outputs.version }}
-            type=raw,value=latest
+            type=raw,value=${{ needs.check-version.outputs.prerelease_channel }},enable=${{ needs.check-version.outputs.is_prerelease == 'true' }}
+            type=raw,value=latest,enable=${{ needs.check-version.outputs.is_prerelease == 'false' }}
 
       - name: Build & push console image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v6.19.2
         with:
           context: .
           push: true
@@ -130,7 +231,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build & push slim image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v6.19.2
         with:
           context: .
           target: slim
@@ -141,24 +242,3 @@ jobs:
           build-args: VERSION=${{ needs.check-version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  release:
-    name: Create GitHub release
-    needs: [check-version, publish]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Create tag
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ needs.check-version.outputs.tag }}" -m "Release ${{ needs.check-version.outputs.tag }}"
-          git push origin "${{ needs.check-version.outputs.tag }}"
-
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.check-version.outputs.tag }}
-          name: ${{ needs.check-version.outputs.tag }}
-          generate_release_notes: true

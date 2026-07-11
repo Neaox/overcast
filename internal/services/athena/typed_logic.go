@@ -44,7 +44,7 @@ type getQueryResultsResp struct {
 }
 
 type resultSetWire struct {
-	Rows              []any              `json:"Rows" cbor:"Rows"`
+	Rows              []any             `json:"Rows" cbor:"Rows"`
 	ResultSetMetadata resultSetMetaWire `json:"ResultSetMetadata" cbor:"ResultSetMetadata"`
 }
 

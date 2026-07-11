@@ -261,30 +261,30 @@ type typedAzXML struct {
 }
 
 type describeInstancesResp struct {
-	XMLName      struct{}             `xml:"DescribeInstancesResponse"`
-	Xmlns        string               `xml:"xmlns,attr"`
-	RequestID    string               `xml:"requestId"`
+	XMLName      struct{}              `xml:"DescribeInstancesResponse"`
+	Xmlns        string                `xml:"xmlns,attr"`
+	RequestID    string                `xml:"requestId"`
 	Reservations []typedReservationXML `xml:"reservationSet>item"`
 }
 
 type typedReservationXML struct {
-	ReservationID string           `xml:"reservationId"`
-	OwnerID       string           `xml:"ownerId"`
+	ReservationID string             `xml:"reservationId"`
+	OwnerID       string             `xml:"ownerId"`
 	Instances     []typedInstanceXML `xml:"instancesSet>item"`
 }
 
 type typedInstanceXML struct {
-	InstanceID    string              `xml:"instanceId"`
-	ImageID       string              `xml:"imageId"`
+	InstanceID    string                `xml:"instanceId"`
+	ImageID       string                `xml:"imageId"`
 	InstanceState typedInstanceStateXML `xml:"instanceState"`
-	InstanceType  string              `xml:"instanceType"`
-	LaunchTime    string              `xml:"launchTime"`
-	SubnetID      string              `xml:"subnetId,omitempty"`
-	VpcID         string              `xml:"vpcId,omitempty"`
-	PrivateIP     string              `xml:"privateIpAddress,omitempty"`
-	Placement     typedPlacementXML   `xml:"placement"`
-	GroupSet      []typedSGRefXML     `xml:"groupSet>item,omitempty"`
-	TagSet        []typedTagXML       `xml:"tagSet>item,omitempty"`
+	InstanceType  string                `xml:"instanceType"`
+	LaunchTime    string                `xml:"launchTime"`
+	SubnetID      string                `xml:"subnetId,omitempty"`
+	VpcID         string                `xml:"vpcId,omitempty"`
+	PrivateIP     string                `xml:"privateIpAddress,omitempty"`
+	Placement     typedPlacementXML     `xml:"placement"`
+	GroupSet      []typedSGRefXML       `xml:"groupSet>item,omitempty"`
+	TagSet        []typedTagXML         `xml:"tagSet>item,omitempty"`
 }
 
 type typedSGRefXML struct {
@@ -307,16 +307,16 @@ type typedTagXML struct {
 }
 
 type typedInstanceStateChangeXML struct {
-	InstanceID    string              `xml:"instanceId"`
+	InstanceID    string                `xml:"instanceId"`
 	PreviousState typedInstanceStateXML `xml:"previousState"`
 	CurrentState  typedInstanceStateXML `xml:"currentState"`
 }
 
 type describeInstanceTypesResp struct {
-	XMLName           struct{}                `xml:"DescribeInstanceTypesResponse"`
-	Xmlns             string                  `xml:"xmlns,attr"`
-	RequestID         string                  `xml:"requestId"`
-	InstanceTypeItems []typedInstanceTypeXML  `xml:"instanceTypeSet>item"`
+	XMLName           struct{}               `xml:"DescribeInstanceTypesResponse"`
+	Xmlns             string                 `xml:"xmlns,attr"`
+	RequestID         string                 `xml:"requestId"`
+	InstanceTypeItems []typedInstanceTypeXML `xml:"instanceTypeSet>item"`
 }
 
 type typedInstanceTypeXML struct {
@@ -342,20 +342,20 @@ type createVpcResp struct {
 }
 
 type typedVpcXML struct {
-	VpcID                   string             `xml:"vpcId"`
-	State                   string             `xml:"state"`
-	CidrBlock               string             `xml:"cidrBlock"`
-	DhcpOptionsID           string             `xml:"dhcpOptionsId"`
-	InstanceTenancy         string             `xml:"instanceTenancy"`
-	IsDefault               bool               `xml:"isDefault"`
+	VpcID                   string              `xml:"vpcId"`
+	State                   string              `xml:"state"`
+	CidrBlock               string              `xml:"cidrBlock"`
+	DhcpOptionsID           string              `xml:"dhcpOptionsId"`
+	InstanceTenancy         string              `xml:"instanceTenancy"`
+	IsDefault               bool                `xml:"isDefault"`
 	CidrBlockAssociationSet []typedCidrAssocXML `xml:"cidrBlockAssociationSet>item"`
 	TagSet                  []typedTagXML       `xml:"tagSet>item,omitempty"`
 }
 
 type typedCidrAssocXML struct {
-	AssociationID  string             `xml:"associationId"`
-	CidrBlock      string             `xml:"cidrBlock"`
-	CidrBlockState typedCidrStateXML  `xml:"cidrBlockState"`
+	AssociationID  string            `xml:"associationId"`
+	CidrBlock      string            `xml:"cidrBlock"`
+	CidrBlockState typedCidrStateXML `xml:"cidrBlockState"`
 }
 
 type typedCidrStateXML struct {
@@ -377,9 +377,9 @@ type deleteVpcResp struct {
 }
 
 type createSubnetResp struct {
-	XMLName   struct{}      `xml:"CreateSubnetResponse"`
-	Xmlns     string        `xml:"xmlns,attr"`
-	RequestID string        `xml:"requestId"`
+	XMLName   struct{}       `xml:"CreateSubnetResponse"`
+	Xmlns     string         `xml:"xmlns,attr"`
+	RequestID string         `xml:"requestId"`
 	Subnet    typedSubnetXML `xml:"subnet"`
 }
 
@@ -445,26 +445,26 @@ type revokeSGEgressResp struct {
 }
 
 type describeSGsResp struct {
-	XMLName   struct{}           `xml:"DescribeSecurityGroupsResponse"`
-	Xmlns     string             `xml:"xmlns,attr"`
-	RequestID string             `xml:"requestId"`
-	Groups    []typedSGXML       `xml:"securityGroupInfo>item"`
+	XMLName   struct{}     `xml:"DescribeSecurityGroupsResponse"`
+	Xmlns     string       `xml:"xmlns,attr"`
+	RequestID string       `xml:"requestId"`
+	Groups    []typedSGXML `xml:"securityGroupInfo>item"`
 }
 
 type typedSGXML struct {
-	OwnerID             string                `xml:"ownerId"`
-	GroupID             string                `xml:"groupId"`
-	GroupName           string                `xml:"groupName"`
-	GroupDescription    string                `xml:"groupDescription"`
-	VpcID               string                `xml:"vpcId"`
-	IpPermissions       []typedIpPermXML      `xml:"ipPermissions>item,omitempty"`
-	IpPermissionsEgress []typedIpPermXML      `xml:"ipPermissionsEgress>item,omitempty"`
+	OwnerID             string           `xml:"ownerId"`
+	GroupID             string           `xml:"groupId"`
+	GroupName           string           `xml:"groupName"`
+	GroupDescription    string           `xml:"groupDescription"`
+	VpcID               string           `xml:"vpcId"`
+	IpPermissions       []typedIpPermXML `xml:"ipPermissions>item,omitempty"`
+	IpPermissionsEgress []typedIpPermXML `xml:"ipPermissionsEgress>item,omitempty"`
 }
 
 type typedIpPermXML struct {
-	IpProtocol string           `xml:"ipProtocol"`
-	FromPort   int              `xml:"fromPort"`
-	ToPort     int              `xml:"toPort"`
+	IpProtocol string            `xml:"ipProtocol"`
+	FromPort   int               `xml:"fromPort"`
+	ToPort     int               `xml:"toPort"`
 	IpRanges   []typedIpRangeXML `xml:"ipRanges>item,omitempty"`
 }
 
@@ -490,23 +490,23 @@ type runInstancesResp struct {
 }
 
 type terminateInstancesResp struct {
-	XMLName   struct{}                    `xml:"TerminateInstancesResponse"`
-	Xmlns     string                      `xml:"xmlns,attr"`
-	RequestID string                      `xml:"requestId"`
+	XMLName   struct{}                      `xml:"TerminateInstancesResponse"`
+	Xmlns     string                        `xml:"xmlns,attr"`
+	RequestID string                        `xml:"requestId"`
 	Instances []typedInstanceStateChangeXML `xml:"instancesSet>item"`
 }
 
 type startInstancesResp struct {
-	XMLName   struct{}                    `xml:"StartInstancesResponse"`
-	Xmlns     string                      `xml:"xmlns,attr"`
-	RequestID string                      `xml:"requestId"`
+	XMLName   struct{}                      `xml:"StartInstancesResponse"`
+	Xmlns     string                        `xml:"xmlns,attr"`
+	RequestID string                        `xml:"requestId"`
 	Instances []typedInstanceStateChangeXML `xml:"instancesSet>item"`
 }
 
 type stopInstancesResp struct {
-	XMLName   struct{}                    `xml:"StopInstancesResponse"`
-	Xmlns     string                      `xml:"xmlns,attr"`
-	RequestID string                      `xml:"requestId"`
+	XMLName   struct{}                      `xml:"StopInstancesResponse"`
+	Xmlns     string                        `xml:"xmlns,attr"`
+	RequestID string                        `xml:"requestId"`
 	Instances []typedInstanceStateChangeXML `xml:"instancesSet>item"`
 }
 
@@ -541,10 +541,10 @@ type createKeyPairResp struct {
 }
 
 type describeKeyPairsResp struct {
-	XMLName   struct{}           `xml:"DescribeKeyPairsResponse"`
-	Xmlns     string             `xml:"xmlns,attr"`
-	RequestID string             `xml:"requestId"`
-	KeySet    []typedKeyPairXML  `xml:"keySet>item"`
+	XMLName   struct{}          `xml:"DescribeKeyPairsResponse"`
+	Xmlns     string            `xml:"xmlns,attr"`
+	RequestID string            `xml:"requestId"`
+	KeySet    []typedKeyPairXML `xml:"keySet>item"`
 }
 
 type typedKeyPairXML struct {
@@ -561,24 +561,24 @@ type deleteKeyPairResp struct {
 }
 
 type createRouteTableResp struct {
-	XMLName    struct{}          `xml:"CreateRouteTableResponse"`
-	Xmlns      string            `xml:"xmlns,attr"`
-	RequestID  string            `xml:"requestId"`
+	XMLName    struct{}           `xml:"CreateRouteTableResponse"`
+	Xmlns      string             `xml:"xmlns,attr"`
+	RequestID  string             `xml:"requestId"`
 	RouteTable typedRouteTableXML `xml:"routeTable"`
 }
 
 type describeRouteTablesResp struct {
-	XMLName       struct{}            `xml:"DescribeRouteTablesResponse"`
-	Xmlns         string              `xml:"xmlns,attr"`
-	RequestID     string              `xml:"requestId"`
+	XMLName       struct{}             `xml:"DescribeRouteTablesResponse"`
+	Xmlns         string               `xml:"xmlns,attr"`
+	RequestID     string               `xml:"requestId"`
 	RouteTableSet []typedRouteTableXML `xml:"routeTableSet>item"`
 }
 
 type typedRouteTableXML struct {
 	RouteTableID   string                          `xml:"routeTableId"`
 	VpcID          string                          `xml:"vpcId"`
-	RouteSet       []typedRouteXML                  `xml:"routeSet>item"`
-	AssociationSet []typedRouteTableAssociationXML  `xml:"associationSet>item,omitempty"`
+	RouteSet       []typedRouteXML                 `xml:"routeSet>item"`
+	AssociationSet []typedRouteTableAssociationXML `xml:"associationSet>item,omitempty"`
 }
 
 type typedRouteXML struct {
@@ -631,22 +631,22 @@ type disassociateRouteTableResp struct {
 }
 
 type createIGWResp struct {
-	XMLName         struct{}          `xml:"CreateInternetGatewayResponse"`
-	Xmlns           string            `xml:"xmlns,attr"`
-	RequestID       string            `xml:"requestId"`
-	InternetGateway typedIGWXML       `xml:"internetGateway"`
+	XMLName         struct{}    `xml:"CreateInternetGatewayResponse"`
+	Xmlns           string      `xml:"xmlns,attr"`
+	RequestID       string      `xml:"requestId"`
+	InternetGateway typedIGWXML `xml:"internetGateway"`
 }
 
 type describeIGWsResp struct {
-	XMLName            struct{}        `xml:"DescribeInternetGatewaysResponse"`
-	Xmlns              string          `xml:"xmlns,attr"`
-	RequestID          string          `xml:"requestId"`
-	InternetGatewaySet []typedIGWXML   `xml:"internetGatewaySet>item"`
+	XMLName            struct{}      `xml:"DescribeInternetGatewaysResponse"`
+	Xmlns              string        `xml:"xmlns,attr"`
+	RequestID          string        `xml:"requestId"`
+	InternetGatewaySet []typedIGWXML `xml:"internetGatewaySet>item"`
 }
 
 type typedIGWXML struct {
 	InternetGatewayID string                  `xml:"internetGatewayId"`
-	AttachmentSet     []typedIGWAttachmentXML  `xml:"attachmentSet>item,omitempty"`
+	AttachmentSet     []typedIGWAttachmentXML `xml:"attachmentSet>item,omitempty"`
 }
 
 type typedIGWAttachmentXML struct {
@@ -676,31 +676,31 @@ type detachIGWResp struct {
 }
 
 type createVPCPeeringResp struct {
-	XMLName              struct{}                `xml:"CreateVpcPeeringConnectionResponse"`
-	Xmlns                string                  `xml:"xmlns,attr"`
-	RequestID            string                  `xml:"requestId"`
-	VpcPeeringConnection typedVPCPeeringXML      `xml:"vpcPeeringConnection"`
+	XMLName              struct{}           `xml:"CreateVpcPeeringConnectionResponse"`
+	Xmlns                string             `xml:"xmlns,attr"`
+	RequestID            string             `xml:"requestId"`
+	VpcPeeringConnection typedVPCPeeringXML `xml:"vpcPeeringConnection"`
 }
 
 type acceptVPCPeeringResp struct {
-	XMLName              struct{}                `xml:"AcceptVpcPeeringConnectionResponse"`
-	Xmlns                string                  `xml:"xmlns,attr"`
-	RequestID            string                  `xml:"requestId"`
-	VpcPeeringConnection typedVPCPeeringXML      `xml:"vpcPeeringConnection"`
+	XMLName              struct{}           `xml:"AcceptVpcPeeringConnectionResponse"`
+	Xmlns                string             `xml:"xmlns,attr"`
+	RequestID            string             `xml:"requestId"`
+	VpcPeeringConnection typedVPCPeeringXML `xml:"vpcPeeringConnection"`
 }
 
 type describeVPCPeeringsResp struct {
-	XMLName                 struct{}              `xml:"DescribeVpcPeeringConnectionsResponse"`
-	Xmlns                   string                `xml:"xmlns,attr"`
-	RequestID               string                `xml:"requestId"`
-	VpcPeeringConnectionSet []typedVPCPeeringXML  `xml:"vpcPeeringConnectionSet>item"`
+	XMLName                 struct{}             `xml:"DescribeVpcPeeringConnectionsResponse"`
+	Xmlns                   string               `xml:"xmlns,attr"`
+	RequestID               string               `xml:"requestId"`
+	VpcPeeringConnectionSet []typedVPCPeeringXML `xml:"vpcPeeringConnectionSet>item"`
 }
 
 type typedVPCPeeringXML struct {
 	VpcPeeringConnectionID string                    `xml:"vpcPeeringConnectionId"`
-	RequesterVpcInfo       typedVPCPeeringVpcInfoXML  `xml:"requesterVpcInfo"`
-	AccepterVpcInfo        typedVPCPeeringVpcInfoXML  `xml:"accepterVpcInfo"`
-	Status                 typedVPCPeeringStatusXML   `xml:"status"`
+	RequesterVpcInfo       typedVPCPeeringVpcInfoXML `xml:"requesterVpcInfo"`
+	AccepterVpcInfo        typedVPCPeeringVpcInfoXML `xml:"accepterVpcInfo"`
+	Status                 typedVPCPeeringStatusXML  `xml:"status"`
 }
 
 type typedVPCPeeringVpcInfoXML struct {
@@ -737,9 +737,9 @@ type deleteTagsResp struct {
 }
 
 type describeTagsResp struct {
-	XMLName   struct{}        `xml:"DescribeTagsResponse"`
-	Xmlns     string          `xml:"xmlns,attr"`
-	RequestID string          `xml:"requestId"`
+	XMLName   struct{}          `xml:"DescribeTagsResponse"`
+	Xmlns     string            `xml:"xmlns,attr"`
+	RequestID string            `xml:"requestId"`
 	TagSet    []typedTagItemXML `xml:"tagSet>item"`
 }
 
@@ -767,9 +767,9 @@ type releaseAddressResp struct {
 }
 
 type describeAddressesResp struct {
-	XMLName    struct{}         `xml:"DescribeAddressesResponse"`
-	Xmlns      string           `xml:"xmlns,attr"`
-	RequestID  string           `xml:"requestId"`
+	XMLName    struct{}          `xml:"DescribeAddressesResponse"`
+	Xmlns      string            `xml:"xmlns,attr"`
+	RequestID  string            `xml:"requestId"`
 	AddressSet []typedAddressXML `xml:"addressesSet>item"`
 }
 
@@ -799,16 +799,16 @@ type disassociateAddressResp struct {
 }
 
 type createNatGatewayResp struct {
-	XMLName    struct{}          `xml:"CreateNatGatewayResponse"`
-	Xmlns      string            `xml:"xmlns,attr"`
-	RequestID  string            `xml:"requestId"`
+	XMLName    struct{}           `xml:"CreateNatGatewayResponse"`
+	Xmlns      string             `xml:"xmlns,attr"`
+	RequestID  string             `xml:"requestId"`
 	NatGateway typedNatGatewayXML `xml:"natGateway"`
 }
 
 type describeNatGatewaysResp struct {
-	XMLName     struct{}            `xml:"DescribeNatGatewaysResponse"`
-	Xmlns       string              `xml:"xmlns,attr"`
-	RequestID   string              `xml:"requestId"`
+	XMLName     struct{}             `xml:"DescribeNatGatewaysResponse"`
+	Xmlns       string               `xml:"xmlns,attr"`
+	RequestID   string               `xml:"requestId"`
 	NatGateways []typedNatGatewayXML `xml:"natGatewaySet>item"`
 }
 
@@ -819,7 +819,7 @@ type typedNatGatewayXML struct {
 	State        string                `xml:"state"`
 	CreateTime   string                `xml:"createTime"`
 	Addresses    []typedNatGWAddrXML   `xml:"natGatewayAddressSet>item"`
-	Tags         []typedResourceTagXML  `xml:"tagSet>item,omitempty"`
+	Tags         []typedResourceTagXML `xml:"tagSet>item,omitempty"`
 }
 
 type typedNatGWAddrXML struct {
@@ -856,12 +856,12 @@ type modifyVpcAttributeResp struct {
 }
 
 type describeVpcAttributeResp struct {
-	XMLName            struct{}          `xml:"DescribeVpcAttributeResponse"`
-	Xmlns              string            `xml:"xmlns,attr"`
-	RequestID          string            `xml:"requestId"`
-	VpcID              string            `xml:"vpcId"`
-	EnableDnsSupport   *typedAttrValXML  `xml:"enableDnsSupport,omitempty"`
-	EnableDnsHostnames *typedAttrValXML  `xml:"enableDnsHostnames,omitempty"`
+	XMLName            struct{}         `xml:"DescribeVpcAttributeResponse"`
+	Xmlns              string           `xml:"xmlns,attr"`
+	RequestID          string           `xml:"requestId"`
+	VpcID              string           `xml:"vpcId"`
+	EnableDnsSupport   *typedAttrValXML `xml:"enableDnsSupport,omitempty"`
+	EnableDnsHostnames *typedAttrValXML `xml:"enableDnsHostnames,omitempty"`
 }
 
 type typedAttrValXML struct {
@@ -869,20 +869,20 @@ type typedAttrValXML struct {
 }
 
 type describeDhcpOptionsResp struct {
-	XMLName        struct{}            `xml:"DescribeDhcpOptionsResponse"`
-	Xmlns          string              `xml:"xmlns,attr"`
-	RequestID      string              `xml:"requestId"`
+	XMLName        struct{}             `xml:"DescribeDhcpOptionsResponse"`
+	Xmlns          string               `xml:"xmlns,attr"`
+	RequestID      string               `xml:"requestId"`
 	DhcpOptionsSet []typedDhcpOptionXML `xml:"dhcpOptionsSet>item"`
 }
 
 type typedDhcpOptionXML struct {
 	DhcpOptionsID        string                      `xml:"dhcpOptionsId"`
-	DhcpConfigurationSet []typedDhcpConfigurationXML  `xml:"dhcpConfigurationSet>item"`
+	DhcpConfigurationSet []typedDhcpConfigurationXML `xml:"dhcpConfigurationSet>item"`
 }
 
 type typedDhcpConfigurationXML struct {
 	Key      string              `xml:"key"`
-	ValueSet []typedDhcpValueXML  `xml:"valueSet>item"`
+	ValueSet []typedDhcpValueXML `xml:"valueSet>item"`
 }
 
 type typedDhcpValueXML struct {
@@ -890,15 +890,15 @@ type typedDhcpValueXML struct {
 }
 
 type describeAccountAttributesResp struct {
-	XMLName             struct{}                 `xml:"DescribeAccountAttributesResponse"`
-	Xmlns               string                   `xml:"xmlns,attr"`
-	RequestID           string                   `xml:"requestId"`
-	AccountAttributeSet []typedAccountAttrXML     `xml:"accountAttributeSet>item"`
+	XMLName             struct{}              `xml:"DescribeAccountAttributesResponse"`
+	Xmlns               string                `xml:"xmlns,attr"`
+	RequestID           string                `xml:"requestId"`
+	AccountAttributeSet []typedAccountAttrXML `xml:"accountAttributeSet>item"`
 }
 
 type typedAccountAttrXML struct {
 	AttributeName     string                     `xml:"attributeName"`
-	AttributeValueSet []typedAccountAttrValueXML  `xml:"attributeValueSet>item"`
+	AttributeValueSet []typedAccountAttrValueXML `xml:"attributeValueSet>item"`
 }
 
 type typedAccountAttrValueXML struct {
@@ -906,9 +906,9 @@ type typedAccountAttrValueXML struct {
 }
 
 type createNetworkInterfaceResp struct {
-	XMLName          struct{}              `xml:"CreateNetworkInterfaceResponse"`
-	Xmlns            string                `xml:"xmlns,attr"`
-	RequestID        string                `xml:"requestId"`
+	XMLName          struct{}                 `xml:"CreateNetworkInterfaceResponse"`
+	Xmlns            string                   `xml:"xmlns,attr"`
+	RequestID        string                   `xml:"requestId"`
 	NetworkInterface typedNetworkInterfaceXML `xml:"networkInterface"`
 }
 
@@ -924,9 +924,9 @@ type typedNetworkInterfaceXML struct {
 }
 
 type describeNetworkInterfacesResp struct {
-	XMLName             struct{}                  `xml:"DescribeNetworkInterfacesResponse"`
-	Xmlns               string                    `xml:"xmlns,attr"`
-	RequestID           string                    `xml:"requestId"`
+	XMLName             struct{}                   `xml:"DescribeNetworkInterfacesResponse"`
+	Xmlns               string                     `xml:"xmlns,attr"`
+	RequestID           string                     `xml:"requestId"`
 	NetworkInterfaceSet []typedNetworkInterfaceXML `xml:"networkInterfaceSet>item"`
 }
 
@@ -945,9 +945,9 @@ type modifyInstanceAttributeResp struct {
 }
 
 type createVpcEndpointResp struct {
-	XMLName     struct{}           `xml:"CreateVpcEndpointResponse"`
-	Xmlns       string             `xml:"xmlns,attr"`
-	RequestID   string             `xml:"requestId"`
+	XMLName     struct{}            `xml:"CreateVpcEndpointResponse"`
+	Xmlns       string              `xml:"xmlns,attr"`
+	RequestID   string              `xml:"requestId"`
 	VpcEndpoint typedVpcEndpointXML `xml:"vpcEndpoint"`
 }
 
@@ -960,9 +960,9 @@ type typedVpcEndpointXML struct {
 }
 
 type describeVpcEndpointsResp struct {
-	XMLName      struct{}             `xml:"DescribeVpcEndpointsResponse"`
-	Xmlns        string               `xml:"xmlns,attr"`
-	RequestID    string               `xml:"requestId"`
+	XMLName      struct{}              `xml:"DescribeVpcEndpointsResponse"`
+	Xmlns        string                `xml:"xmlns,attr"`
+	RequestID    string                `xml:"requestId"`
 	VpcEndpoints []typedVpcEndpointXML `xml:"vpcEndpointSet>item"`
 }
 
@@ -1406,7 +1406,7 @@ func (h *Handler) runInstancesTyped(ctx context.Context, req *runInstancesReq) (
 			}
 			if got.State.Code == 0 {
 				got.State = InstanceState{Code: 16, Name: "running"}
-				h.store.putInstance(bgCtx, got)
+				_ = h.store.putInstance(bgCtx, got)
 			}
 		})
 		instances = append(instances, typedInstanceXML{
@@ -1454,18 +1454,7 @@ func (h *Handler) startInstancesTyped(ctx context.Context, _ *startInstancesReq)
 func (h *Handler) describeImagesTyped(ctx context.Context, _ *describeImagesReq) (*describeImagesResp, *protocol.AWSError) {
 	typedImages := make([]typedImageXML, 0, len(syntheticAMIs))
 	for _, ami := range syntheticAMIs {
-		typedImages = append(typedImages, typedImageXML{
-			ImageID:            ami.ImageID,
-			Name:               ami.Name,
-			Description:        ami.Description,
-			ImageState:         ami.ImageState,
-			ImageType:          ami.ImageType,
-			Architecture:       ami.Architecture,
-			RootDeviceType:     ami.RootDeviceType,
-			VirtualizationType: ami.VirtualizationType,
-			IsPublic:           ami.IsPublic,
-			OwnerID:            ami.OwnerID,
-		})
+		typedImages = append(typedImages, typedImageXML(ami))
 	}
 	return &describeImagesResp{
 		Xmlns:     ec2XMLNS,
@@ -1527,7 +1516,7 @@ func (h *Handler) deleteKeyPairTyped(ctx context.Context, req *deleteKeyPairReq)
 	if req.KeyName == "" {
 		return nil, ec2err("MissingParameter", "KeyName is required", http.StatusBadRequest)
 	}
-	h.store.deleteKeyPair(ctx, req.KeyName)
+	_ = h.store.deleteKeyPair(ctx, req.KeyName)
 	return &deleteKeyPairResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
@@ -1842,10 +1831,10 @@ func (h *Handler) createVPCPeeringTyped(ctx context.Context, req *createVPCPeeri
 	pcx := &VpcPeeringConnection{
 		VpcPeeringConnectionID: pcxID,
 		RequesterVpcInfo: VpcPeeringConnectionVpcInfo{
-			VpcID:     requesterVpc.VpcID, OwnerID: ownerID, CidrBlock: requesterVpc.CidrBlock, Region: region,
+			VpcID: requesterVpc.VpcID, OwnerID: ownerID, CidrBlock: requesterVpc.CidrBlock, Region: region,
 		},
 		AccepterVpcInfo: VpcPeeringConnectionVpcInfo{
-			VpcID:     accepterVpc.VpcID, OwnerID: ownerID, CidrBlock: accepterVpc.CidrBlock, Region: region,
+			VpcID: accepterVpc.VpcID, OwnerID: ownerID, CidrBlock: accepterVpc.CidrBlock, Region: region,
 		},
 		Status: VpcPeeringConnectionStatus{Code: "pending-acceptance", Message: fmt.Sprintf("Initiating Request to %s", ownerID)},
 	}

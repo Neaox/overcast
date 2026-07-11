@@ -26,6 +26,13 @@ import { useGhostTracker } from "@/hooks/use-ghost-tracker"
 import { useEventStream } from "@/hooks/use-event-stream"
 import { EventType } from "@/services/event-types"
 import { useSqsEventMessages } from "./use-sqs-event-messages"
+import {
+  computeSqsVisualMessages,
+  createSqsVisualMessagesState,
+  isInflight,
+  sqsVisualMessagesStateEqual,
+  type DisplayMessage,
+} from "./sqs-visual-messages"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useEndpoint } from "@/hooks/use-endpoint"
 import { endpointStore } from "@/services/endpoint-store"
@@ -287,41 +294,6 @@ const SqsStatsBar = memo(function SqsStatsBar({
 const GHOST_TTL = 60_000
 /** Ghost rows start fading this many ms before expiry. */
 const GHOST_FADE_START = 30_000
-/** Minimum visual dwell per transient map state (ms). */
-const VISUAL_STATE_TTL = 1_000
-
-/** A live message or a ghost (recently deleted) message shown with strikethrough. */
-interface DisplayMessage {
-  msg: SQSMessage
-  isGhost: boolean
-  deletedAt?: number
-  visualPhase: SqsMessagePhase | "done"
-}
-
-type SqsMessagePhase = "visible" | "inflight" | "delayed"
-
-interface SQSMessageEventPayload {
-  queueName: string
-  messageId: string
-  visibleAfter?: number
-}
-
-/**
- * Returns true if a message is currently invisible (in-flight or delayed).
- * Derived from visibleAfter so it self-updates each 1s tick.
- */
-function getSqsMessagePhase(msg: SQSMessage): SqsMessagePhase {
-  if (msg.delayed) return "delayed"
-  if (msg.inflight) return "inflight"
-  if (!msg.visibleAfter) return "visible"
-  if (Date.now() >= msg.visibleAfter) return "visible"
-  return msg.approximateReceiveCount === 0 ? "delayed" : "inflight"
-}
-
-function isInflight(msg: SQSMessage): boolean {
-  return getSqsMessagePhase(msg) !== "visible"
-}
-
 function useSqsVisualMessages(
   queueName: string,
   liveMessages: SQSMessage[],
@@ -331,133 +303,38 @@ function useSqsVisualMessages(
     payload: unknown
   }>,
 ) {
-  const [tick, setTick] = useState(0)
-  const ghostSource = useMemo(() => [...liveMessages], [liveMessages, tick])
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  const ghostSource = [...liveMessages]
   const ghosts = useGhostTracker({
     items: ghostSource,
     getKey: (m) => m.messageId,
     ttl: GHOST_TTL,
   })
-  const phaseMemory = useRef<Map<string, { phase: SqsMessagePhase; enteredAt: number }>>(new Map())
-  const ghostPhaseSeed = useRef<
-    Map<string, { deletedAt: number; prevPhase: SqsMessagePhase; prevEnteredAt: number }>
-  >(new Map())
-  const eventCursor = useRef(0)
+  const [visualState, setVisualState] = useState(createSqsVisualMessagesState)
+  const visualResult = useMemo(
+    () =>
+      computeSqsVisualMessages({
+        queueName,
+        liveMessages,
+        ghosts,
+        sqsEvents,
+        nowMs,
+        state: visualState,
+      }),
+    [queueName, liveMessages, ghosts, sqsEvents, nowMs, visualState],
+  )
 
-  const messages = useMemo<DisplayMessage[]>(() => {
-    const now = Date.now()
-    const currentIds = new Set(liveMessages.map((m) => m.messageId))
-    const nextPhaseMemory = new Map<string, { phase: SqsMessagePhase; enteredAt: number }>()
+  if (!sqsVisualMessagesStateEqual(visualState, visualResult.state)) {
+    setVisualState(visualResult.state)
+  }
 
-    // Apply new SQS events since the last render. These are the authoritative
-    // transition signals for fast actions that snapshots can miss.
-    if (sqsEvents.length < eventCursor.current) {
-      eventCursor.current = 0
-    }
-    for (let i = eventCursor.current; i < sqsEvents.length; i++) {
-      const ev = sqsEvents[i]
-      const payload = ev.payload as SQSMessageEventPayload | undefined
-      if (!payload || payload.queueName !== queueName || !payload.messageId) continue
-      const t = new Date(ev.time).getTime() || now
-      if (ev.type === EventType.sqs.MessageSent) {
-        phaseMemory.current.set(payload.messageId, { phase: "visible", enteredAt: t })
-      } else if (ev.type === EventType.sqs.MessageInflight) {
-        const phase: SqsMessagePhase =
-          payload.visibleAfter && payload.visibleAfter > t ? "inflight" : "inflight"
-        phaseMemory.current.set(payload.messageId, { phase, enteredAt: t })
-      } else if (ev.type === EventType.sqs.MessageVisible) {
-        phaseMemory.current.set(payload.messageId, { phase: "visible", enteredAt: t })
-      }
-    }
-    eventCursor.current = sqsEvents.length
-
-    for (const id of ghostPhaseSeed.current.keys()) {
-      if (currentIds.has(id) || !ghosts.has(id)) {
-        ghostPhaseSeed.current.delete(id)
-      }
-    }
-
-    const live: DisplayMessage[] = [...liveMessages]
-      .sort(
-        (a, b) =>
-          Number(a.attributes["SentTimestamp"] ?? 0) - Number(b.attributes["SentTimestamp"] ?? 0),
-      )
-      .map((msg) => {
-        const id = msg.messageId
-        const realPhase = getSqsMessagePhase(msg)
-        const prev = phaseMemory.current.get(id)
-
-        // New message: always start at visible for VISUAL_STATE_TTL so ultra-fast
-        // sends/receives are still observable on the map.
-        if (!prev) {
-          const phase: SqsMessagePhase = realPhase === "visible" ? "visible" : "visible"
-          nextPhaseMemory.set(id, { phase, enteredAt: now })
-          return { msg, isGhost: false, visualPhase: phase }
-        }
-
-        let phase = prev.phase
-        let enteredAt = prev.enteredAt
-
-        if (phase !== realPhase) {
-          const elapsed = now - enteredAt
-          // Promote to non-visible phases after dwell; avoid snapshot-only
-          // downgrade back to visible unless SSE says so (MessageVisible).
-          if (elapsed >= VISUAL_STATE_TTL && realPhase !== "visible") {
-            phase = realPhase
-            enteredAt = now
-          }
-        }
-
-        nextPhaseMemory.set(id, { phase, enteredAt })
-        return { msg, isGhost: false, visualPhase: phase }
-      })
-
-    const ghostList: DisplayMessage[] = [...ghosts.values()]
-      .filter((g) => !currentIds.has(g.item.messageId))
-      .sort(
-        (a, b) =>
-          Number(a.item.attributes["SentTimestamp"] ?? 0) -
-          Number(b.item.attributes["SentTimestamp"] ?? 0),
-      )
-      .map(({ item, deletedAt }) => {
-        const prev = phaseMemory.current.get(item.messageId)
-        const seed = ghostPhaseSeed.current.get(item.messageId)
-        if (!seed || seed.deletedAt !== deletedAt) {
-          ghostPhaseSeed.current.set(item.messageId, {
-            deletedAt,
-            prevPhase: prev?.phase ?? "visible",
-            prevEnteredAt: prev?.enteredAt ?? now,
-          })
-        }
-
-        const timeline = ghostPhaseSeed.current.get(item.messageId)!
-        const elapsedSinceDelete = now - timeline.deletedAt
-        const visibleLeft =
-          timeline.prevPhase === "visible"
-            ? Math.max(0, VISUAL_STATE_TTL - (timeline.deletedAt - timeline.prevEnteredAt))
-            : 0
-
-        let visualPhase: SqsMessagePhase | "done" = "done"
-        if (elapsedSinceDelete < visibleLeft) {
-          visualPhase = "visible"
-        } else if (elapsedSinceDelete < visibleLeft + VISUAL_STATE_TTL) {
-          visualPhase = timeline.prevPhase === "delayed" ? "delayed" : "inflight"
-        }
-
-        return { msg: item, isGhost: true, deletedAt, visualPhase }
-      })
-
-    phaseMemory.current = nextPhaseMemory
-
-    return [...live, ...ghostList]
-  }, [queueName, liveMessages, ghosts, sqsEvents])
+  const messages = visualResult.messages
 
   useEffect(() => {
-    const needsClock = messages.some((m) => m.visualPhase !== "visible" || m.isGhost)
-    if (!needsClock) return
-    const id = setInterval(() => setTick((t) => t + 1), 250)
+    if (!visualResult.needsClock) return
+    const id = setInterval(() => setNowMs(Date.now()), 250)
     return () => clearInterval(id)
-  }, [messages])
+  }, [visualResult.needsClock])
 
   const visibleCount = useMemo(
     () => messages.filter((m) => !m.isGhost && m.visualPhase === "visible").length,
@@ -735,16 +612,17 @@ function SqsMessageModal({
   open: boolean
   onClose: () => void
 }) {
+  const messageId = msg?.messageId
   // Fetch the full message (with body) on-demand when the modal opens.
   const { data: fullMsg, isLoading } = useQuery(
     queryOptions({
-      queryKey: ["sqs", "message-detail", queueName, msg?.messageId],
+      queryKey: ["sqs", "message-detail", queueName, messageId],
       queryFn: async () => {
-        if (!msg) return null
+        if (!messageId) return null
         const messages = await sqs.receiveMessages(queueName)
-        return messages.find((m) => m.messageId === msg.messageId) ?? null
+        return messages.find((m) => m.messageId === messageId) ?? null
       },
-      enabled: open && !!msg,
+      enabled: open && !!messageId,
       staleTime: 0,
       gcTime: 30_000,
     }),
@@ -943,6 +821,11 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
   const Icon =
     (SERVICES as Record<string, (typeof SERVICES)[keyof typeof SERVICES] | undefined>)[service]
       ?.icon ?? Box
+  const actionButtonClass = {
+    sqs: "hover:bg-emerald-400/15 hover:text-emerald-400",
+    sns: "hover:bg-orange-400/15 hover:text-orange-400",
+    lambda: "hover:bg-purple-400/15 hover:text-purple-400",
+  }[service]
 
   const {
     messages: visualMessages,
@@ -1082,9 +965,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
               }}
               className={cn(
                 "flex h-5 w-5 items-center justify-center rounded text-fg-muted transition-colors",
-                service === "sqs" && "hover:bg-emerald-400/15 hover:text-emerald-400",
-                service === "sns" && "hover:bg-orange-400/15 hover:text-orange-400",
-                service === "lambda" && "hover:bg-purple-400/15 hover:text-purple-400",
+                actionButtonClass,
               )}
               title={
                 service === "lambda"

@@ -90,7 +90,7 @@ func (h *Handler) ListApis(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"apis": apis})
+	writeListJSON(w, r, "apis", apis)
 }
 
 // ─── UpdateApi ───────────────────────────────────────────────────────────────
@@ -241,7 +241,7 @@ func (h *Handler) ListChannelNamespaces(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"channelNamespaces": namespaces})
+	writeListJSON(w, r, "channelNamespaces", namespaces)
 }
 
 // ─── UpdateChannelNamespace ──────────────────────────────────────────────────

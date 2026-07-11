@@ -61,7 +61,7 @@ export function honoDevPlugin(): Plugin {
 
           // Stream the request body through as a ReadableStream — no buffering.
           const hasBody = req.method !== "GET" && req.method !== "HEAD"
-          const body = hasBody ? (Readable.toWeb(req) as ReadableStream) : undefined
+          const body = hasBody ? (Readable.toWeb(req)) : undefined
 
           const webReq = new Request(url, {
             method: req.method ?? "GET",

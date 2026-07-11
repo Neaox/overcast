@@ -51,7 +51,7 @@ async function arFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const appregistry = {
   listApplications: async (): Promise<Application[]> => {
-    const res = await arFetch<{ applications: Application[] }>("/applications")
+    const res = await arFetch<{ applications?: Application[] }>("/applications")
     return res.applications ?? []
   },
 
@@ -78,7 +78,7 @@ export const appregistry = {
   },
 
   listAssociatedResources: async (identifier: string): Promise<AssociatedResource[]> => {
-    const res = await arFetch<{ resources: AssociatedResource[] }>(
+    const res = await arFetch<{ resources?: AssociatedResource[] }>(
       `/applications/${encodeURIComponent(identifier)}/resources`,
     )
     return res.resources ?? []

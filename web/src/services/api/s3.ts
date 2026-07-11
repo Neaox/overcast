@@ -17,7 +17,6 @@ import {
 } from "@aws-sdk/client-s3"
 import type {
   S3Bucket,
-  S3ObjectMetadata,
   ListObjectsResult,
   NotificationFilterRule,
   BucketNotificationConfig,
@@ -117,7 +116,7 @@ export const s3 = {
       lastModified: res.LastModified?.toISOString() ?? "",
       etag: (res.ETag ?? "").replace(/"/g, ""),
       metadata: res.Metadata ?? {},
-    } as S3ObjectMetadata
+    }
   },
 
   /** Returns a URL to stream the object via the BFF — for <a> download links. */

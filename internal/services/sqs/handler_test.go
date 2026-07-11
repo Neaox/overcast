@@ -40,6 +40,24 @@ func (s *cancelOnFirstMessageScanStore) Scan(ctx context.Context, namespace, pre
 	return s.Store.Scan(ctx, namespace, prefix)
 }
 
+type contextAwareStore struct {
+	state.Store
+}
+
+func (s *contextAwareStore) Get(ctx context.Context, namespace, key string) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
+	return s.Store.Get(ctx, namespace, key)
+}
+
+func (s *contextAwareStore) Scan(ctx context.Context, namespace, prefix string) ([]state.KV, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.Store.Scan(ctx, namespace, prefix)
+}
+
 func TestQueueNameFromURL(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -211,6 +229,44 @@ func TestReceiveMessageTyped_initialEmptyLongPollContextCanceled(t *testing.T) {
 	})
 
 	// Then: ReceiveMessage returns an empty response, not InternalError
+	if aerr != nil {
+		t.Fatalf("receiveMessageTyped returned error: %v", aerr)
+	}
+	if len(resp.Messages) != 0 {
+		t.Fatalf("received messages = %d, want 0", len(resp.Messages))
+	}
+}
+
+func TestReceiveMessageTyped_canceledRequestContext(t *testing.T) {
+	// Given: an empty queue and a state backend that observes request cancellation.
+	ctx := context.Background()
+	mem := state.NewMemoryStore()
+	store := &contextAwareStore{Store: mem}
+	h := newHandler(&config.Config{
+		Hostname:  "localhost.localstack.cloud",
+		Port:      4566,
+		Region:    "ap-southeast-2",
+		AccountID: "000000000000",
+	}, store, serviceutil.NewServiceLogger(zap.NewNop(), serviceName), clock.New())
+	queue := &Queue{
+		Name: "empty-queue",
+		URL:  "http://localhost.localstack.cloud:4566/000000000000/empty-queue",
+		Attributes: map[string]string{
+			"VisibilityTimeout": "30",
+		},
+	}
+	if aerr := h.store.putQueue(ctx, queue); aerr != nil {
+		t.Fatalf("putQueue: %v", aerr)
+	}
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+
+	// When: the typed ReceiveMessage path runs after the request context is canceled.
+	resp, aerr := h.receiveMessageTyped(canceledCtx, &receiveMessageRequest{
+		QueueUrl: queue.URL,
+	})
+
+	// Then: receive succeeds with an empty result instead of leaking InternalError.
 	if aerr != nil {
 		t.Fatalf("receiveMessageTyped returned error: %v", aerr)
 	}

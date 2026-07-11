@@ -82,6 +82,67 @@ func TestRuntimeAPI_OnFirstNextCalledOnce(t *testing.T) {
 	}
 }
 
+func TestRuntimeAPI_ReadyChanClosesOnFirstNext(t *testing.T) {
+	// Given: a RuntimeAPI server with a registered container.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	srv, err := NewRuntimeAPIServerFromListener(ln, addr, zap.NewNop(), clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { srv.Stop(context.Background()) })
+	srv.RegisterContainer("127.0.0.1", "arn:aws:lambda:us-east-1:000000000000:function:my-fn")
+	ready := srv.ReadyChan("127.0.0.1")
+	srv.SubmitInvocation(
+		"arn:aws:lambda:us-east-1:000000000000:function:my-fn",
+		[]byte(`{}`),
+		time.Now().Add(30*time.Second),
+	)
+
+	// When: the container polls GET /next for the first time.
+	resp, err := http.Get("http://" + addr + "/2018-06-01/runtime/invocation/next")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	// Then: the ready channel is closed.
+	select {
+	case <-ready:
+	case <-time.After(time.Second):
+		t.Fatal("ready channel was not closed after first /next")
+	}
+}
+
+func TestRuntimeAPI_ReadyChanResetsAfterUnregister(t *testing.T) {
+	// Given: a RuntimeAPI server and an initial registration.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	srv, err := NewRuntimeAPIServerFromListener(ln, addr, zap.NewNop(), clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { srv.Stop(context.Background()) })
+	srv.RegisterContainer("127.0.0.1", "arn:aws:lambda:us-east-1:000000000000:function:my-fn")
+	first := srv.ReadyChan("127.0.0.1")
+
+	// When: the container is unregistered and the same IP is registered again.
+	srv.UnregisterContainer("127.0.0.1")
+	srv.RegisterContainer("127.0.0.1", "arn:aws:lambda:us-east-1:000000000000:function:my-fn")
+	second := srv.ReadyChan("127.0.0.1")
+
+	// Then: readiness for the new registration uses a fresh channel.
+	if first == second {
+		t.Fatal("ReadyChan reused the old channel after unregister/register")
+	}
+}
+
 func TestRuntimeAPI_OnFirstNextResetsAfterUnregister(t *testing.T) {
 	// Given: a RuntimeAPI server with an OnFirstNext callback.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

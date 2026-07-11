@@ -642,7 +642,7 @@ func (h *Handler) startCacheContainer(ctx context.Context, c *CacheCluster) erro
 
 	if err := h.docker.StartContainer(ctx, containerID); err != nil {
 		h.docker.RemoveContainerForce(containerID) //nolint:errcheck
-		h.store.releasePort(ctx, hostPort)               //nolint:errcheck
+		h.store.releasePort(ctx, hostPort)         //nolint:errcheck
 		return fmt.Errorf("start container: %w", err)
 	}
 
@@ -697,6 +697,8 @@ func (h *Handler) setReplicationGroupEndpoint(ctx context.Context, rg *Replicati
 
 // cleanupCacheContainer releases the port reservation for a cache cluster.
 // Docker container stop/remove is handled by the GC.
+//
+//nolint:unused // Kept for explicit Docker cleanup call sites.
 func (h *Handler) cleanupCacheContainer(ctx context.Context, clusterID, containerID string, hostPort int) {
 	if hostPort > 0 {
 		if aerr := h.store.releasePort(ctx, hostPort); aerr != nil {
@@ -864,7 +866,7 @@ func (h *Handler) startReplicationGroupContainer(ctx context.Context, rg *Replic
 
 	if err := h.docker.StartContainer(ctx, containerID); err != nil {
 		h.docker.RemoveContainerForce(containerID) //nolint:errcheck
-		h.store.releasePort(ctx, hostPort)               //nolint:errcheck
+		h.store.releasePort(ctx, hostPort)         //nolint:errcheck
 		return fmt.Errorf("start container: %w", err)
 	}
 
@@ -876,6 +878,8 @@ func (h *Handler) startReplicationGroupContainer(ctx context.Context, rg *Replic
 
 // cleanupReplicationGroupContainer releases the port for a replication group container.
 // Docker container stop/remove is handled by the GC.
+//
+//nolint:unused // Kept for explicit Docker cleanup call sites.
 func (h *Handler) cleanupReplicationGroupContainer(ctx context.Context, rgID, containerID string, hostPort int) {
 	if hostPort > 0 {
 		if aerr := h.store.releasePort(ctx, hostPort); aerr != nil {

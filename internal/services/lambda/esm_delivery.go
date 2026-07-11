@@ -452,7 +452,13 @@ func (m *esmDeliveryManager) makeStreamHandler(ctx context.Context, esm *EventSo
 
 		// Dispatch the (potentially slow) invoke+retry loop off the bus
 		// worker pool so we don't starve other event deliveries.
+		m.mu.Lock()
+		if _, running := m.stop[esm.UUID]; !running {
+			m.mu.Unlock()
+			return
+		}
 		m.wg.Add(1)
+		m.mu.Unlock()
 		go func() {
 			defer m.wg.Done()
 			m.deliverStreamRecord(regionCtx, esm, payload, evt)

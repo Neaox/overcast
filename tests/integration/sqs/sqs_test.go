@@ -301,6 +301,79 @@ func TestReceiveMessage_emptyQueueQueryWire(t *testing.T) {
 	}
 }
 
+func TestReceiveMessage_emptyQueueQueryWireViaQueueURL(t *testing.T) {
+	// Given: an empty queue whose client-facing URL uses LocalStack's hostname.
+	srv := helpers.NewTestServer(t, helpers.WithHostname("localhost.localstack.cloud"))
+	queueURL := createQueue(t, srv, "empty-query-wire-qurl-queue")
+	u, err := url.Parse(queueURL)
+	if err != nil {
+		t.Fatalf("parse queue URL: %v", err)
+	}
+
+	// When: ReceiveMessage is sent form-encoded to the concrete queue URL path.
+	form := url.Values{
+		"Action":          {"ReceiveMessage"},
+		"QueueUrl":        {queueURL},
+		"WaitTimeSeconds": {"1"},
+	}
+	req, err := http.NewRequest(http.MethodPost, srv.URL+u.Path, strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the queue is found and an empty receive succeeds rather than 500ing.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var raw queryXMLResult
+	if err := xml.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		t.Fatalf("decode XML: %v", err)
+	}
+	body := string(raw.Inner)
+	if strings.Contains(body, "<Message>") {
+		t.Fatalf("empty ReceiveMessage Query response included Message element: %s", body)
+	}
+}
+
+func TestReceiveMessage_emptyQueueJSONWireViaQueueURL(t *testing.T) {
+	// Given: an empty queue whose client-facing URL uses LocalStack's hostname.
+	srv := helpers.NewTestServer(t, helpers.WithHostname("localhost.localstack.cloud"))
+	queueURL := createQueue(t, srv, "empty-json-wire-qurl-queue")
+	u, err := url.Parse(queueURL)
+	if err != nil {
+		t.Fatalf("parse queue URL: %v", err)
+	}
+	body, err := json.Marshal(map[string]any{"QueueUrl": queueURL, "WaitTimeSeconds": 1})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	// When: ReceiveMessage is sent as AWS JSON to the concrete queue URL path.
+	req, err := http.NewRequest(http.MethodPost, srv.URL+u.Path, bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+	req.Header.Set("X-Amz-Target", "AmazonSQS.ReceiveMessage")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the queue is found and an empty receive succeeds rather than 500ing.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result map[string]json.RawMessage
+	helpers.DecodeJSON(t, resp, &result)
+	if _, ok := result["Messages"]; ok {
+		t.Fatalf("empty ReceiveMessage JSON response included Messages member: %#v", result)
+	}
+}
+
 func TestReceiveMessage_maxNumberOfMessagesValidation(t *testing.T) {
 	// Given: a queue with messages available.
 	srv := helpers.NewTestServer(t)

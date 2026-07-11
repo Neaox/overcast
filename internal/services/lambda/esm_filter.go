@@ -258,8 +258,8 @@ func matchNumericEqual(n float64, eventVal any) bool {
 }
 
 // matchNumericOp evaluates a numeric comparison operator sequence.
-// Format: ["op", number, "op", number, …]
-// Example: [">", 10, "<=", 20]  (range: price > 10 AND price <= 20)
+// Format: ["op", number, "op", number, …].
+// Example: [">", 10, "<=", 20]  (range: price > 10 AND price <= 20).
 func matchNumericOp(raw, eventVal any) bool {
 	ops, ok := raw.([]any)
 	if !ok || len(ops) < 2 {

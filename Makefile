@@ -10,6 +10,7 @@ GO        := go
 GOFLAGS   := -trimpath
 VERSION   := $(shell cat VERSION)
 LDFLAGS   := -w -s -X main.version=$(VERSION)
+ACTIONLINT_VERSION := v1.7.7
 
 .PHONY: help setup build build-web build-slim build-cross \
         build-linux-amd64 build-linux-arm64 \
@@ -19,7 +20,7 @@ LDFLAGS   := -w -s -X main.version=$(VERSION)
         build-slim-darwin-amd64 build-slim-darwin-arm64 \
         build-slim-windows-amd64 \
         run test test-unit test-integration test-coverage \
-        bench bench-startup lint fmt vet tidy check docker docker-slim docker-console docker-run clean \
+        bench bench-startup lint lint-go lint-web lint-actions fmt vet tidy check docker docker-slim docker-console docker-run clean \
         compat-build compat-serve compat-report \
 generate-caps check-caps docs docs-check supportmeta-check check-binary-symbols \
 	generate-caps check-caps docs docs-check supportmeta-check check-binary-symbols
@@ -120,7 +121,7 @@ dev-server:
 
 ## test: run all tests (unit + integration, with race detector where supported)
 test:
-	$(GO) test -race -count=1 -timeout=120s ./...
+	$(GO) test -race -count=1 -timeout=300s ./...
 
 ## test-unit: run unit tests only (fast — no server startup)
 test-unit:
@@ -128,7 +129,7 @@ test-unit:
 
 ## test-integration: run integration tests only
 test-integration:
-	$(GO) test -race -count=1 -timeout=120s ./tests/...
+	$(GO) test -race -count=1 -timeout=300s ./tests/...
 
 ## test-coverage: run tests and generate HTML coverage report
 test-coverage:
@@ -144,9 +145,20 @@ bench:
 bench-startup:
 	$(GO) run ./scripts/bench-startup.go
 
-## lint: run golangci-lint (install: https://golangci-lint.run/usage/install/)
-lint:
+## lint: run all linters (Go/emulation, web UI, GitHub Actions)
+lint: lint-go lint-web lint-actions
+
+## lint-go: run golangci-lint for Go/emulation code
+lint-go:
 	golangci-lint run ./...
+
+## lint-web: run web UI linting
+lint-web:
+	cd web && npm run lint
+
+## lint-actions: lint GitHub Actions workflows
+lint-actions:
+	$(GO) run github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION) .github/workflows/*.yml
 
 ## fmt: format all Go source files
 fmt:

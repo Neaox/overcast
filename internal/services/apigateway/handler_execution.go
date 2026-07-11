@@ -793,6 +793,8 @@ func matchV2Route(routes []*RouteV2, method, path string) *RouteV2 {
 }
 
 // routeV2Matches checks if a v2 route key (e.g. "GET /users/{id}") matches the request.
+//
+//nolint:unused // Kept as a small predicate wrapper for route matching callers/tests.
 func routeV2Matches(routeKey, method, path string) bool {
 	return routeV2MatchScore(routeKey, method, path) > 0
 }

@@ -372,6 +372,7 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 
 	// Create Docker GC so Stop() can sweep orphaned Lambda containers.
 	s.gc = docker.NewGC(dc, s.log.ZapLogger(), false)
+	s.gc.StartRemoveLoop(context.Background())
 	// At startup, immediately clean up any orphaned containers from prior
 	// crashes that left containers stuck in "created" or "exited" state.
 	s.gc.Sweep("lambda")

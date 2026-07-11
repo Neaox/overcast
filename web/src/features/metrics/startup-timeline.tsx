@@ -130,7 +130,7 @@ function StartupBar({ phases, totalMs }: StartupBarProps) {
             key={g.label}
             content={`${g.label}: ${g.totalMs.toFixed(1)} ms (${pct.toFixed(0)}%)`}
           >
-            <div className={`${g.color} h-full shrink-0`} style={{ width: `${pct}%` }} />
+            <div className={cn(g.color, "h-full shrink-0")} style={{ width: `${pct}%` }} />
           </Tooltip>
         )
       })}
@@ -146,7 +146,7 @@ function Legend({ phases, totalMs }: StartupBarProps) {
     <div className="flex flex-wrap gap-x-4 gap-y-1">
       {groups.map((g) => (
         <div key={g.label} className="flex items-center gap-1.5">
-          <span className={`h-2.5 w-2.5 shrink-0 rounded-sm ${g.color}`} />
+          <span className={cn("h-2.5 w-2.5 shrink-0 rounded-sm", g.color)} />
           <span className="text-xs text-fg-muted">
             {g.label} <span className="text-fg tabular-nums">{g.totalMs.toFixed(1)} ms</span>
           </span>
@@ -356,6 +356,7 @@ function FlameGraph({ phases, totalMs }: FlameGraphProps) {
     startRange: [number, number]
     moved: boolean
   } | null>(null)
+  const [dragMoved, setDragMoved] = useState(false)
 
   const [viewStart, viewEnd] = viewRange
   const viewSpan = Math.max(0.001, viewEnd - viewStart)
@@ -459,6 +460,7 @@ function FlameGraph({ phases, totalMs }: FlameGraphProps) {
         startRange: [viewStart, viewEnd],
         moved: false,
       }
+      setDragMoved(false)
     },
     [viewStart, viewEnd],
   )
@@ -470,6 +472,7 @@ function FlameGraph({ phases, totalMs }: FlameGraphProps) {
       const dy = e.clientY - dragRef.current.startY
       if (!dragRef.current.moved && Math.sqrt(dx * dx + dy * dy) < 4) return
       dragRef.current.moved = true
+      setDragMoved(true)
       const rect = containerRef.current.getBoundingClientRect()
       const dMs = -(dx / rect.width) * viewSpan
       const [s] = dragRef.current.startRange
@@ -483,6 +486,7 @@ function FlameGraph({ phases, totalMs }: FlameGraphProps) {
 
   const onMouseUp = useCallback(() => {
     dragRef.current = null
+    setDragMoved(false)
   }, [])
 
   useEffect(() => {
@@ -576,7 +580,7 @@ function FlameGraph({ phases, totalMs }: FlameGraphProps) {
       <div
         ref={containerRef}
         className="bg-bg-card relative w-full overflow-hidden rounded border border-border/40 select-none"
-        style={{ height: containerH, cursor: dragRef.current?.moved ? "grabbing" : "crosshair" }}
+        style={{ height: containerH, cursor: dragMoved ? "grabbing" : "crosshair" }}
         onMouseDown={onMouseDown}
       >
         {/* Time axis */}
@@ -641,7 +645,7 @@ function FlameGraph({ phases, totalMs }: FlameGraphProps) {
                     }}
                   >
                     <div
-                      className={`group relative flex h-full cursor-zoom-in items-center overflow-hidden px-1 transition-opacity ${p.group.color} ${isClippedLeft ? "rounded-r-sm" : "rounded-sm"} opacity-70 hover:opacity-100`}
+                      className={cn("group relative flex h-full cursor-zoom-in items-center overflow-hidden px-1 transition-opacity", p.group.color, isClippedLeft ? "rounded-r-sm" : "rounded-sm", "opacity-70 hover:opacity-100")}
                     >
                       {widthPct > 3 && (
                         <span className="truncate text-[10px] leading-none font-medium text-white/90 select-none">

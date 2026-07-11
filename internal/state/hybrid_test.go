@@ -221,7 +221,7 @@ func TestHybridStore_RestoreLargeState(t *testing.T) {
 	defer s2.Close()
 
 	start := time.Now()
-	keys, err := s2.List(ctx, "svc:metadata", "queue/")
+	_, err = s2.List(ctx, "svc:metadata", "queue/")
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("List after restore: %v", err)
@@ -243,7 +243,7 @@ func TestHybridStore_RestoreLargeState(t *testing.T) {
 		}
 	}
 	waitForObservedLog(t, logs, "hybrid seed complete")
-	keys, err = s2.List(ctx, "svc:metadata", "queue/")
+	keys, err := s2.List(ctx, "svc:metadata", "queue/")
 	if err != nil {
 		t.Fatalf("List after sqlite ready: %v", err)
 	}
@@ -292,11 +292,6 @@ func TestHybridStore_RestoreSkipsStartupKVScan(t *testing.T) {
 	if len(keys) != 5000 {
 		t.Fatalf("bulk message rows = %d, want 5000", len(keys))
 	}
-}
-
-func seedHybridSQLite(t *testing.T, dir string, rows int, value string) {
-	t.Helper()
-	seedHybridSQLiteNamespace(t, dir, "sqs:messages", rows, value)
 }
 
 func seedHybridSQLiteNamespace(t *testing.T, dir string, namespace string, rows int, value string) {

@@ -304,6 +304,11 @@ func setFieldValue(rv reflect.Value, s string) error {
 			rv.Set(reflect.New(rv.Type().Elem()))
 		}
 		return setFieldValue(rv.Elem(), s)
+	case reflect.Invalid, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Uint, reflect.Uint8,
+		reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr, reflect.Float32,
+		reflect.Complex64, reflect.Complex128, reflect.Array, reflect.Chan, reflect.Func,
+		reflect.Interface, reflect.Map, reflect.Slice, reflect.Struct, reflect.UnsafePointer:
+		return fmt.Errorf("unsupported field type: %v", rv.Kind())
 	default:
 		return fmt.Errorf("unsupported field type: %v", rv.Kind())
 	}

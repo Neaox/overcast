@@ -40,7 +40,7 @@ const schema = z.object({
   name: z
     .string()
     .min(2, "Repository name is required")
-    .regex(/^[a-z0-9]+(?:[._\/-][a-z0-9]+)*$/, "Use lowercase repo path segments"),
+    .regex(/^[a-z0-9]+(?:[._/-][a-z0-9]+)*$/, "Use lowercase repo path segments"),
 })
 
 export function RepositoryList() {
@@ -224,7 +224,7 @@ function CreateRepositoryDialog({
   const form = useForm({
     defaultValues: { name: "" },
     validators: { onSubmit: schema },
-    onSubmit: async ({ value }) => onSubmit(value.name),
+    onSubmit: ({ value }) => onSubmit(value.name),
   })
 
   return (

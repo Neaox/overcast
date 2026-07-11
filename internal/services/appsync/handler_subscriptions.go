@@ -13,6 +13,7 @@ package appsync
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -23,6 +24,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/vektah/gqlparser/v2/ast"
 	"github.com/vektah/gqlparser/v2/parser"
+
+	"github.com/Neaox/overcast/internal/protocol"
 )
 
 // HandleWebSocket handles GET /_appsync/{apiId}/realtime — upgrades to WebSocket
@@ -34,6 +37,11 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	api, err := h.store.GetAPI(r.Context(), apiID)
 	if err != nil || api == nil {
 		http.Error(w, "API not found", http.StatusNotFound)
+		return
+	}
+	authReq := realtimeAuthRequest(r)
+	if _, aerr := h.authenticateRequest(authReq, api); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
@@ -102,11 +110,25 @@ func (h *Handler) handleConnectionInit(ctx context.Context, conn *websocket.Conn
 func (h *Handler) handleSubscriptionStart(ctx context.Context, conn *websocket.Conn, connID, apiID string, msg wsMessage) {
 	// Parse the payload to get query and variables.
 	var payload struct {
-		Query     string         `json:"query"`
-		Variables map[string]any `json:"variables"`
+		Query      string         `json:"query"`
+		Variables  map[string]any `json:"variables"`
+		Data       string         `json:"data"`
+		Extensions struct {
+			Authorization map[string]any `json:"authorization"`
+		} `json:"extensions"`
 	}
 	if len(msg.Payload) > 0 {
 		_ = json.Unmarshal(msg.Payload, &payload)
+	}
+	if payload.Data != "" {
+		var data struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.Unmarshal([]byte(payload.Data), &data); err == nil {
+			payload.Query = data.Query
+			payload.Variables = data.Variables
+		}
 	}
 
 	// Extract the subscription field name from the query.
@@ -124,6 +146,42 @@ func (h *Handler) handleSubscriptionStart(ctx context.Context, conn *websocket.C
 	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	_ = conn.Write(writeCtx, websocket.MessageText, data)
+}
+
+func realtimeAuthRequest(r *http.Request) *http.Request {
+	clone := r.Clone(r.Context())
+	clone.Header = r.Header.Clone()
+	if encoded := r.URL.Query().Get("header"); encoded != "" {
+		if decoded, err := base64.StdEncoding.DecodeString(encoded); err == nil {
+			applyRealtimeAuthHeader(clone.Header, decoded)
+		}
+	}
+	for _, protocolValue := range clone.Header.Values("Sec-WebSocket-Protocol") {
+		for _, part := range strings.Split(protocolValue, ",") {
+			part = strings.TrimSpace(part)
+			if !strings.HasPrefix(part, "header-") {
+				continue
+			}
+			encoded := strings.TrimPrefix(part, "header-")
+			if decoded, err := base64.RawURLEncoding.DecodeString(encoded); err == nil {
+				applyRealtimeAuthHeader(clone.Header, decoded)
+			}
+		}
+	}
+	return clone
+}
+
+func applyRealtimeAuthHeader(h http.Header, raw []byte) {
+	var values map[string]string
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return
+	}
+	for k, v := range values {
+		if strings.EqualFold(k, "host") {
+			continue
+		}
+		h.Set(k, v)
+	}
 }
 
 // handleSubscriptionStop processes a "stop" message to unregister a subscription.

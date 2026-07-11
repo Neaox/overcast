@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"bufio"
+	"bytes"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -60,12 +62,22 @@ func detectService(r *http.Request) string {
 		return "lambda"
 	case strings.HasPrefix(r.URL.Path, "/v1/pipes"):
 		return "pipes"
+	case strings.HasPrefix(r.URL.Path, "/v1/apis"),
+		strings.HasPrefix(r.URL.Path, "/v1/tags"),
+		strings.HasPrefix(r.URL.Path, "/v1/domainnames"),
+		strings.HasPrefix(r.URL.Path, "/v1/mergedApis"),
+		strings.HasPrefix(r.URL.Path, "/v1/sourceApis"):
+		return "appsync"
 	case strings.HasPrefix(r.URL.Path, "/v2/email/"):
 		return "ses"
 	case strings.HasPrefix(r.URL.Path, "/2020-05-31/"):
 		return "cloudfront"
+	case strings.HasPrefix(r.URL.Path, "/v2/apis"):
+		if svc := serviceFromAuthCredential(r); svc == "appsync" {
+			return "appsync"
+		}
+		return "apigateway"
 	case strings.HasPrefix(r.URL.Path, "/restapis"),
-		strings.HasPrefix(r.URL.Path, "/v2/apis"),
 		strings.HasPrefix(r.URL.Path, "/apikeys"),
 		strings.HasPrefix(r.URL.Path, "/usageplans"):
 		return "apigateway"
@@ -109,6 +121,8 @@ func internalService(path string) string {
 		return "ecs"
 	case strings.HasPrefix(path, "/_lambda"):
 		return "lambda"
+	case strings.HasPrefix(path, "/_appsync"):
+		return "appsync"
 	case strings.HasPrefix(path, "/_cloudfront"):
 		return "cloudfront"
 	case strings.HasPrefix(path, "/_overcast/cognito"):
@@ -260,12 +274,26 @@ func detectOperation(r *http.Request) string {
 // eventsHandler would fail and the request would panic with a 500.
 type responseWriter struct {
 	http.ResponseWriter
-	status int
+	status          int
+	awsErrorCode    string
+	awsErrorMessage string
+	awsErrorCause   error
 }
 
 func (rw *responseWriter) WriteHeader(status int) {
 	rw.status = status
 	rw.ResponseWriter.WriteHeader(status)
+}
+
+// RecordAWSError lets protocol writers attach AWS error details to the request
+// log without exposing internal causes in client-facing response bodies.
+func (rw *responseWriter) RecordAWSError(aerr *protocol.AWSError) {
+	if aerr == nil {
+		return
+	}
+	rw.awsErrorCode = aerr.Code
+	rw.awsErrorMessage = aerr.Message
+	rw.awsErrorCause = protocol.Cause(aerr)
 }
 
 // Flush forwards to the underlying ResponseWriter if it supports http.Flusher.
@@ -298,6 +326,14 @@ func Logger(logger *zap.Logger, clk clock.Clock) func(http.Handler) http.Handler
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := clk.Now()
+			requestHeaders := r.Header.Clone()
+			var requestBody []byte
+			var requestBodyReadErr error
+			if r.Body != nil {
+				requestBody, requestBodyReadErr = io.ReadAll(r.Body)
+				_ = r.Body.Close()
+				r.Body = io.NopCloser(bytes.NewReader(requestBody))
+			}
 			rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
 
 			next.ServeHTTP(rw, r)
@@ -323,6 +359,28 @@ func Logger(logger *zap.Logger, clk clock.Clock) func(http.Handler) http.Handler
 			}
 			if t := r.Header.Get("X-Amz-Target"); t != "" {
 				fields = append(fields, zap.String("target", t))
+			}
+			if rw.status >= 500 {
+				fields = append(fields,
+					zap.String("request_uri", r.RequestURI),
+					zap.String("request_proto", r.Proto),
+					zap.String("request_host", r.Host),
+					zap.Int64("request_content_length", r.ContentLength),
+					zap.Any("request_headers", requestHeaders),
+					zap.ByteString("request_body", requestBody),
+				)
+				if requestBodyReadErr != nil {
+					fields = append(fields, zap.Error(requestBodyReadErr))
+				}
+			}
+			if rw.awsErrorCode != "" {
+				fields = append(fields,
+					zap.String("aws_error_code", rw.awsErrorCode),
+					zap.String("aws_error_message", rw.awsErrorMessage),
+				)
+				if rw.awsErrorCause != nil {
+					fields = append(fields, zap.String("aws_error_cause", rw.awsErrorCause.Error()))
+				}
 			}
 
 			if rw.status >= 500 {
