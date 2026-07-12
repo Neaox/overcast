@@ -175,17 +175,34 @@ jobs:
           version: ci
 
   docker:
-    name: Docker build
+    name: Docker build (${{ matrix.image }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: console
+            tag: overcast:ci
+            target: ""
+          - image: slim
+            tag: overcast-slim:ci
+            target: slim
     steps:
       - uses: actions/checkout@v7.0.0
-      - name: Build console image
-        run: docker build -t overcast:ci .
-      - name: Build slim image
-        run: docker build --target slim -t overcast-slim:ci .
-      - name: Smoke test (slim)
+      - name: Build image
+        env:
+          TAG: ${{ matrix.tag }}
+          TARGET: ${{ matrix.target }}
         run: |
-          docker run -d --name oc-smoke -p 4566:4566 overcast-slim:ci
+          args=(-t "$TAG")
+          if [[ -n "$TARGET" ]]; then
+            args+=(--target "$TARGET")
+          fi
+          docker build "${args[@]}" .
+      - name: Smoke test (slim)
+        if: matrix.image == 'slim'
+        run: |
+          docker run -d --name oc-smoke -p 4566:4566 ${{ matrix.tag }}
           sleep 2
           curl -sf http://localhost:4566/_health
           docker rm -f oc-smoke

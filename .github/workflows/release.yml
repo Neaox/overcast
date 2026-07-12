@@ -253,8 +253,6 @@ jobs:
 
           body = f"""# Overcast {tag}
 
-          {notes}
-
           ## Docker Images
 
           Full image with the web management console:
@@ -279,6 +277,10 @@ jobs:
           Download a binary for your platform from the assets below and verify it with `SHA256SUMS`.
 
           {chr(10).join(asset_rows)}
+
+          ## Release Notes
+
+          {notes}
           """
           body = re.sub(r"^          ", "", body, flags=re.M).strip() + "\n"
           if release_url:
