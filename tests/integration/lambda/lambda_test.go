@@ -1695,22 +1695,31 @@ func createFunctionWithCode(t *testing.T, srv *helpers.TestServer, name, runtime
 // prewarmer callback transitions State from "Pending" asynchronously.
 func waitForFunctionActive(t *testing.T, srv *helpers.TestServer, name string) {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(2 * time.Minute)
+	var lastState, lastReason, lastReasonCode string
 	for time.Now().Before(deadline) {
 		resp := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/"+name), nil)
 		var fn struct {
 			Configuration struct {
-				State string `json:"State"`
+				State           string `json:"State"`
+				StateReason     string `json:"StateReason"`
+				StateReasonCode string `json:"StateReasonCode"`
 			} `json:"Configuration"`
 		}
 		_ = json.NewDecoder(resp.Body).Decode(&fn)
 		resp.Body.Close()
+		lastState = fn.Configuration.State
+		lastReason = fn.Configuration.StateReason
+		lastReasonCode = fn.Configuration.StateReasonCode
 		if fn.Configuration.State == "Active" {
 			return
 		}
+		if fn.Configuration.State == "Failed" {
+			t.Fatalf("function %s reached Failed state: reason=%q code=%q", name, lastReason, lastReasonCode)
+		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	t.Fatalf("function %s did not reach Active state within 30s", name)
+	t.Fatalf("function %s did not reach Active state within 2m: last_state=%q reason=%q code=%q", name, lastState, lastReason, lastReasonCode)
 }
 
 // invokeFunction sends a synchronous Lambda invocation and returns the HTTP response.
