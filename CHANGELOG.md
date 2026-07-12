@@ -62,6 +62,8 @@ need it than accidentally ship a breaking change as a patch.
 ### Fixed
 
 - **EC2** — `CreateSubnet` now preserves explicit `AvailabilityZone` values in create and describe responses for multi-AZ VPC lookup scenarios.
+- **Lambda** — fixed a data race while wiring VPC resolution during background Docker runtime initialization.
+- **Release** — release publishing now runs the same race+coverage test command as the coverage workflow and explicitly gates publishing jobs on successful test/build dependencies.
 
 ## [0.0.1-alpha.4] - 2026-07-13
 
