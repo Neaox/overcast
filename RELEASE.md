@@ -6,11 +6,29 @@ GitHub release workflow.
 Overcast is still pre-1.0. Treat every release as a local-development and CI
 tool release, not a production readiness claim.
 
+## Automation Overview
+
+The normal release path is a release-prep commit merged to `main`. When
+`.github/workflows/release.yml` sees `VERSION` change on `main`, it automatically
+builds, tests, creates or updates the matching GitHub release, uploads native
+binaries, and publishes Docker images.
+
+The same workflow can also run from:
+
+- a published GitHub release event
+- manual `workflow_dispatch`
+
+In every trigger path, the workflow reads `VERSION`, derives the tag as
+`v<VERSION>` unless a release event supplied a tag, and rejects mismatches between
+the tag and `VERSION`.
+
 ## Release Artifacts
 
-Publishing a GitHub release triggers `.github/workflows/release.yml`, which:
+The release workflow:
 
-- verifies the GitHub release tag matches `VERSION`
+- verifies the release tag matches `VERSION`
+- verifies `CHANGELOG.md` has a non-empty section for the release version
+- verifies `[Unreleased]` is empty before publishing
 - runs `go vet ./...`
 - runs `go test -race -count=1 -timeout=600s ./...`
 - runs `npx tsc --noEmit` for the web UI
@@ -23,7 +41,9 @@ Publishing a GitHub release triggers `.github/workflows/release.yml`, which:
 - publishes a channel tag:
   - prereleases: `:<channel>` such as `:alpha`
   - stable releases: `:latest`
-- replaces the GitHub release notes with generated notes from `CHANGELOG.md`
+- creates or updates the GitHub release
+- replaces the GitHub release notes with generated notes from the versioned
+  `CHANGELOG.md` section
 
 ## Version Format
 
@@ -52,7 +72,7 @@ For prereleases, the Docker channel tag is derived from the prerelease suffix.
 
 ## Preflight Checklist
 
-Before creating the GitHub release:
+Before merging the release-prep commit to `main`:
 
 1. Confirm `main` is green for the standard test workflow.
 2. Confirm the compatibility workflow completed and uploaded `compat-results.json`.
@@ -61,60 +81,74 @@ Before creating the GitHub release:
    go run ./cmd/compat --report --results-file compat-results.json
    go run ./cmd/compat --compare-baseline --results-file compat-results.json
    ```
-4. Confirm `CHANGELOG.md` has release-worthy notes under `[Unreleased]` or a
-   versioned section matching the release version.
+4. Move release-worthy notes from `[Unreleased]` into a versioned section that
+   exactly matches `VERSION`, for example `## [0.0.1-alpha.4] - YYYY-MM-DD`.
 5. Set `VERSION` to the exact release version without the leading `v`.
-6. Run local scoped checks for release metadata changes:
+6. Ensure `[Unreleased]` exists but has no entries. The workflow fails if
+   `[Unreleased]` contains release notes.
+7. Run local scoped checks for release metadata changes:
    ```sh
    go test -count=1 ./cmd/compat
    go vet ./cmd/compat ./compat
    ```
-7. Commit and merge the release-prep change to `main` before creating the
-   GitHub release.
+8. Commit and merge the release-prep change to `main`. The push to `main`
+   starts the automated release.
 
 ## Creating An Alpha Release
 
-For the first alpha release:
+For an alpha release:
 
 1. Update `VERSION`:
    ```text
-   0.0.1-alpha.0
+   0.0.1-alpha.4
    ```
 2. Move the relevant `CHANGELOG.md` notes out of `[Unreleased]` into:
    ```markdown
-   ## [0.0.1-alpha.0] - YYYY-MM-DD
+   ## [0.0.1-alpha.4] - YYYY-MM-DD
    ```
-3. Merge the release-prep PR to `main`.
-4. Create a new GitHub release from `main`:
-   - tag: `v0.0.1-alpha.0`
-   - target: `main`
-   - mark as prerelease
-   - notes can be brief; the workflow replaces them with generated notes
+3. Leave the `[Unreleased]` section present and empty.
+4. Merge the release-prep PR to `main`.
 5. Watch the `Release` workflow until all jobs pass.
-6. Verify the GitHub release contains native binaries and `SHA256SUMS`.
+6. Verify the GitHub release `v0.0.1-alpha.4` exists and contains native
+   binaries plus `SHA256SUMS`.
 7. Verify the Docker images exist:
    ```sh
-   docker pull ghcr.io/neaox/overcast:0.0.1-alpha.0
+   docker pull ghcr.io/neaox/overcast:0.0.1-alpha.4
    docker pull ghcr.io/neaox/overcast:alpha
-   docker pull ghcr.io/neaox/overcast-slim:0.0.1-alpha.0
+   docker pull ghcr.io/neaox/overcast-slim:0.0.1-alpha.4
    docker pull ghcr.io/neaox/overcast-slim:alpha
    ```
 8. Smoke test the slim image:
    ```sh
-   docker run --rm -d --name overcast-smoke -p 4566:4566 ghcr.io/neaox/overcast-slim:0.0.1-alpha.0
+   docker run --rm -d --name overcast-smoke -p 4566:4566 ghcr.io/neaox/overcast-slim:0.0.1-alpha.4
    curl -sf http://localhost:4566/_health
    docker stop overcast-smoke
    ```
+
+## Manual Release Trigger
+
+Manual GitHub release creation is optional. Use it only when the push-to-`main`
+automation did not run or a maintainer intentionally wants to republish the
+release from the existing commit.
+
+If creating a GitHub release manually:
+
+1. Use tag `v<VERSION>`, for example `v0.0.1-alpha.4`.
+2. Target the release-prep commit on `main`.
+3. Mark prerelease versions as prereleases.
+4. Keep notes brief; the workflow replaces them with generated notes from
+   `CHANGELOG.md` after assets and Docker images publish.
 
 ## If The Release Workflow Fails
 
 Do not reuse a published tag for a different commit.
 
-If the GitHub release was created but artifacts failed:
+If the workflow created a GitHub release but artifacts failed:
 
 1. Fix the issue on `main`.
 2. Create a new prerelease version, for example `0.0.1-alpha.1`.
-3. Create a new GitHub release tag, for example `v0.0.1-alpha.1`.
+3. Move the failed release notes forward, update `VERSION`, and merge to `main`
+   so the workflow creates the next tag/release, for example `v0.0.1-alpha.1`.
 4. Mark the failed release as superseded in its notes, or delete it if no
    artifacts were consumed.
 

@@ -4642,13 +4642,13 @@
           "operation": "DescribeChangeSet",
           "category": "Change sets",
           "status": "✅ Supported",
-          "notes": "Returns change set details and status"
+          "notes": "Returns change set details and status; accepts ARN-only lookup"
         },
         {
           "operation": "ExecuteChangeSet",
           "category": "Change sets",
           "status": "✅ Supported",
-          "notes": "Provisions resources via async provisioner"
+          "notes": "Provisions resources via async provisioner; accepts ARN-only lookup"
         },
         {
           "operation": "DeleteChangeSet",
@@ -4658,7 +4658,8 @@
         {
           "operation": "ListChangeSets",
           "category": "Change sets",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Lists active change sets for a stack"
         },
         {
           "operation": "DescribeStackResources",

@@ -20,10 +20,10 @@ func init() {
 		capabilities.Capability{Service: "cloudformation", Operation: "DescribeAccountLimits", Category: "Stacks", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
 		// Change sets
 		capabilities.Capability{Service: "cloudformation", Operation: "CreateChangeSet", Category: "Change sets", Status: capabilities.StatusSupported, Notes: "Creates a change set from a template"},
-		capabilities.Capability{Service: "cloudformation", Operation: "DescribeChangeSet", Category: "Change sets", Status: capabilities.StatusSupported, Notes: "Returns change set details and status"},
-		capabilities.Capability{Service: "cloudformation", Operation: "ExecuteChangeSet", Category: "Change sets", Status: capabilities.StatusSupported, Notes: "Provisions resources via async provisioner"},
+		capabilities.Capability{Service: "cloudformation", Operation: "DescribeChangeSet", Category: "Change sets", Status: capabilities.StatusSupported, Notes: "Returns change set details and status; accepts ARN-only lookup"},
+		capabilities.Capability{Service: "cloudformation", Operation: "ExecuteChangeSet", Category: "Change sets", Status: capabilities.StatusSupported, Notes: "Provisions resources via async provisioner; accepts ARN-only lookup"},
 		capabilities.Capability{Service: "cloudformation", Operation: "DeleteChangeSet", Category: "Change sets", Status: capabilities.StatusSupported},
-		capabilities.Capability{Service: "cloudformation", Operation: "ListChangeSets", Category: "Change sets", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "cloudformation", Operation: "ListChangeSets", Category: "Change sets", Status: capabilities.StatusSupported, Notes: "Lists active change sets for a stack"},
 		// Resources and events
 		capabilities.Capability{Service: "cloudformation", Operation: "DescribeStackResources", Category: "Resources and events", Status: capabilities.StatusSupported, Notes: "Lists resources for a stack"},
 		capabilities.Capability{Service: "cloudformation", Operation: "ListStackResources", Category: "Resources and events", Status: capabilities.StatusSupported, Notes: "Lists resources with status"},

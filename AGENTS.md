@@ -213,6 +213,7 @@ When you need to understand an unfamiliar part of the codebase (e.g. "how does t
 
 ## What agents must NOT do
 
+- **Never push directly to `main`.** Agents must not run `git push origin main`, push the current branch when it is `main`, create or move tags on `main`, or otherwise update protected release branches directly. Always work on a feature/release branch and use a pull request or explicit human-managed merge path. If a task appears to require a direct `main` push to trigger automation, stop and ask for human confirmation instead.
 - **Never leave the workspace in a broken state.** After every change, check the workspace problem list (compiler errors, type errors, lint errors) - via the `get_errors` tool, and fix any problems you introduced before considering the task done. You are not finished while problems you caused remain open.
   - **`go build ./...` is necessary but not sufficient.** It only catches compile errors. Also run `go vet ./...` to catch lint/static-analysis warnings (unused params, unused funcs, unnecessary nil checks, etc.) that appear in the VS Code Problems panel but don't fail compilation. Fix every warning you introduced.
   - **Sub-agents must do this too.** A sub-agent invoked by a parent agent is held to the same standard. Before returning a result, run `go build ./...` (for Go changes) and/or `npx tsc --noEmit` (for TypeScript changes) and fix every error you caused. If a linter or vet warning is introduced (e.g. `go vet ./...` reports a new issue), fix it. Do not offload verification to the parent — own it.

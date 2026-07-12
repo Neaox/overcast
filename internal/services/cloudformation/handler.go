@@ -461,7 +461,7 @@ func (h *Handler) DescribeChangeSet(w http.ResponseWriter, r *http.Request) {
 		writeCFNError(w, r, "ValidationError", "ChangeSetName is required", http.StatusBadRequest)
 		return
 	}
-	if stackName == "" {
+	if stackName == "" && !isARN(csName) {
 		writeCFNError(w, r, "ValidationError", "StackName is required", http.StatusBadRequest)
 		return
 	}
@@ -506,7 +506,7 @@ func (h *Handler) DescribeChangeSet(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ExecuteChangeSet(w http.ResponseWriter, r *http.Request) {
 	stackName := r.FormValue("StackName")
 	csName := r.FormValue("ChangeSetName")
-	if csName == "" || stackName == "" {
+	if csName == "" || (stackName == "" && !isARN(csName)) {
 		writeCFNError(w, r, "ValidationError", "StackName and ChangeSetName are required", http.StatusBadRequest)
 		return
 	}
@@ -526,10 +526,10 @@ func (h *Handler) ExecuteChangeSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stack, _ := h.store.getStack(ctx, stackName)
+	stack, _ := h.store.getStack(ctx, cs.StackName)
 	if stack == nil {
 		writeCFNError(w, r, "ValidationError",
-			fmt.Sprintf("Stack [%s] does not exist", stackName), http.StatusBadRequest)
+			fmt.Sprintf("Stack [%s] does not exist", cs.StackName), http.StatusBadRequest)
 		return
 	}
 

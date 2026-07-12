@@ -31,10 +31,41 @@ operations:
         status: implementation_mismatch
         tests: []
         notes: Audit found likely gaps for IAM Policy, IAM InstanceProfile, IAM ServiceLinkedRole, Events EventBus, and Events Rule. Each needs AWS-doc-backed Ref tests before changing behavior.
+  DescribeChangeSet:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DescribeChangeSet.html
+    scenarios:
+      - name: arn-only change set lookup
+        status: fixed
+        tests:
+          - tests/integration/cloudformation/cloudformation_test.go::TestDescribeChangeSet_changeSetArn
+        notes: ChangeSetName may be a full change set ARN; StackName is required only for short change set names.
+  ExecuteChangeSet:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ExecuteChangeSet.html
+    scenarios:
+      - name: arn-only change set lookup
+        status: fixed
+        tests:
+          - tests/integration/cloudformation/cloudformation_test.go::TestExecuteChangeSet_changeSetArn
+        notes: ChangeSetName may be a full change set ARN; StackName is required only for short change set names.
+  ListChangeSets:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ListChangeSets.html
+    scenarios:
+      - name: created change sets appear in stack summary list
+        status: fixed
+        tests:
+          - tests/integration/cloudformation/cloudformation_test.go::TestListChangeSets_createdChangeSet
+        notes: Created change sets are listed for their stack by name or stack ARN.
 findings:
   fixed:
     - AWS::SQS::Queue Ref now resolves to the queue URL instead of the ARN, so CDK queue.queueUrl outputs are externally usable by SQS clients.
     - AWS::SQS::Queue FifoQueue now creates a FIFO-compatible generated physical name and FifoQueue=true queue attributes.
+    - DescribeChangeSet and ExecuteChangeSet now accept full change set ARN lookup without StackName, and ListChangeSets returns created change sets for the stack.
   remaining_gaps:
     - Audit resource-type tracking against provisioner registrations.
     - Add CloudFormation Ref compatibility tests for resource handlers whose physical ID differs from documented Ref semantics.
@@ -42,5 +73,7 @@ findings:
   intentionally_partial: []
 handoff:
   start_with: [CloudFormation Ref semantics for IAM and EventBridge resource handlers, CreateStack, DeleteStack, resource handlers]
-  do_not_redo: []
+  do_not_redo:
+    - Change set ARN-only lookup for DescribeChangeSet and ExecuteChangeSet; covered by TestDescribeChangeSet_changeSetArn and TestExecuteChangeSet_changeSetArn.
+    - ListChangeSets returning created stack change sets; covered by TestListChangeSets_createdChangeSet.
   commands: [go test -count=1 ./internal/services/cloudformation/... ./tests/integration/cloudformation/...]

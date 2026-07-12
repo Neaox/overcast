@@ -123,6 +123,14 @@ func changeSetKey(stackName, csName string) string {
 	return stackName + "/" + csName
 }
 
+func isARN(value string) bool {
+	return strings.HasPrefix(value, "arn:")
+}
+
+func changeSetMatchesStack(cs *ChangeSet, stackNameOrID string) bool {
+	return stackNameOrID == "" || cs.StackName == stackNameOrID || cs.StackID == stackNameOrID
+}
+
 func (st *cfnStore) putChangeSet(ctx context.Context, cs *ChangeSet) error {
 	data, err := json.Marshal(cs)
 	if err != nil {
@@ -132,18 +140,60 @@ func (st *cfnStore) putChangeSet(ctx context.Context, cs *ChangeSet) error {
 }
 
 func (st *cfnStore) getChangeSet(ctx context.Context, stackName, csName string) (*ChangeSet, *protocol.AWSError) {
+	if isARN(csName) {
+		return st.getChangeSetByID(ctx, stackName, csName)
+	}
+
 	raw, found, err := st.s.Get(ctx, nsChangeSets, serviceutil.RegionKey(st.region(ctx), changeSetKey(stackName, csName)))
 	if err != nil {
 		return nil, protocol.ErrInternalError
 	}
-	if !found {
+	if found {
+		var cs ChangeSet
+		if err := json.Unmarshal([]byte(raw), &cs); err != nil {
+			return nil, protocol.ErrInternalError
+		}
+		return &cs, nil
+	}
+
+	if !isARN(stackName) {
 		return nil, nil
 	}
-	var cs ChangeSet
-	if err := json.Unmarshal([]byte(raw), &cs); err != nil {
+	return st.getChangeSetByName(ctx, stackName, csName)
+}
+
+func (st *cfnStore) getChangeSetByID(ctx context.Context, stackName, changeSetID string) (*ChangeSet, *protocol.AWSError) {
+	items, err := st.s.Scan(ctx, nsChangeSets, serviceutil.RegionKey(st.region(ctx), ""))
+	if err != nil {
 		return nil, protocol.ErrInternalError
 	}
-	return &cs, nil
+	for _, kv := range items {
+		var cs ChangeSet
+		if err := json.Unmarshal([]byte(kv.Value), &cs); err != nil {
+			continue
+		}
+		if cs.ChangeSetID == changeSetID && changeSetMatchesStack(&cs, stackName) {
+			return &cs, nil
+		}
+	}
+	return nil, nil
+}
+
+func (st *cfnStore) getChangeSetByName(ctx context.Context, stackNameOrID, changeSetName string) (*ChangeSet, *protocol.AWSError) {
+	items, err := st.s.Scan(ctx, nsChangeSets, serviceutil.RegionKey(st.region(ctx), ""))
+	if err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	for _, kv := range items {
+		var cs ChangeSet
+		if err := json.Unmarshal([]byte(kv.Value), &cs); err != nil {
+			continue
+		}
+		if cs.ChangeSetName == changeSetName && changeSetMatchesStack(&cs, stackNameOrID) {
+			return &cs, nil
+		}
+	}
+	return nil, nil
 }
 
 func (st *cfnStore) deleteChangeSet(ctx context.Context, stackName, csName string) error {
@@ -156,13 +206,12 @@ func (st *cfnStore) listChangeSetsForStack(ctx context.Context, stackName string
 		return nil, protocol.ErrInternalError
 	}
 	var result []*ChangeSet
-	prefix := stackName + "/"
 	for _, kv := range items {
-		if strings.HasPrefix(kv.Key, prefix) {
-			var cs ChangeSet
-			if err := json.Unmarshal([]byte(kv.Value), &cs); err != nil {
-				continue
-			}
+		var cs ChangeSet
+		if err := json.Unmarshal([]byte(kv.Value), &cs); err != nil {
+			continue
+		}
+		if changeSetMatchesStack(&cs, stackName) {
 			result = append(result, &cs)
 		}
 	}
