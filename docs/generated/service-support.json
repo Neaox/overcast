@@ -1640,67 +1640,78 @@
           "operation": "GetItem",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB data source resolver operation"
+          "notes": "DynamoDB data source resolver operation",
+          "doc_only": true
         },
         {
           "operation": "PutItem",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB data source resolver operation"
+          "notes": "DynamoDB data source resolver operation",
+          "doc_only": true
         },
         {
           "operation": "DeleteItem",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB data source resolver operation"
+          "notes": "DynamoDB data source resolver operation",
+          "doc_only": true
         },
         {
           "operation": "UpdateItem",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB data source resolver operation"
+          "notes": "DynamoDB data source resolver operation",
+          "doc_only": true
         },
         {
           "operation": "Query",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB data source resolver operation"
+          "notes": "DynamoDB data source resolver operation",
+          "doc_only": true
         },
         {
           "operation": "Scan",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB data source resolver operation"
+          "notes": "DynamoDB data source resolver operation",
+          "doc_only": true
         },
         {
           "operation": "BatchGetItem",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB data source resolver operation"
+          "notes": "DynamoDB data source resolver operation",
+          "doc_only": true
         },
         {
           "operation": "BatchWriteItem",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB data source resolver operation"
+          "notes": "DynamoDB data source resolver operation",
+          "doc_only": true
         },
         {
           "operation": "TransactGetItems",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB data source resolver operation"
+          "notes": "DynamoDB data source resolver operation",
+          "doc_only": true
         },
         {
           "operation": "TransactWriteItems",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB data source resolver operation"
+          "notes": "DynamoDB data source resolver operation",
+          "doc_only": true
         },
         {
           "operation": "ConditionCheck",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB transact-write condition check"
+          "notes": "DynamoDB transact-write condition check",
+          "doc_only": true
         }
       ]
     },

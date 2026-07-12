@@ -107,6 +107,15 @@ func main() {
 				fmt.Fprintf(os.Stderr, "capgen: %s: parse handlers: %v\n", svc, opsErr)
 				continue
 			}
+			restOps, restErr := parseRESTOperations(svcDir)
+			if restErr != nil {
+				fmt.Fprintf(os.Stderr, "capgen: %s: parse REST operations: %v\n", svc, restErr)
+				continue
+			}
+			if len(restOps) > 0 {
+				ops = mergeOperations(ops, restOps)
+				comprehensive = true
+			}
 			if len(ops) == 0 {
 				// No action-dispatch ops detected (likely a REST-routed service).
 				// Cross-check is not possible; skip silently.
@@ -444,6 +453,85 @@ func parseHandlerOps(svcDir string) ([]Operation, bool, error) {
 
 	sort.Slice(ops, func(i, j int) bool { return ops[i].Name < ops[j].Name })
 	return ops, hasMap, nil
+}
+
+func parseRESTOperations(svcDir string) ([]Operation, error) {
+	entries, err := os.ReadDir(svcDir)
+	if err != nil {
+		return nil, err
+	}
+	fset := token.NewFileSet()
+	seen := map[string]struct{}{}
+	var ops []Operation
+	for _, e := range entries {
+		if shouldSkipFile(e) {
+			continue
+		}
+		f, err := parseGoFile(fset, filepath.Join(svcDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		stringConsts := collectFileStringConsts(f)
+		ast.Inspect(f, func(n ast.Node) bool {
+			cl, ok := n.(*ast.CompositeLit)
+			if !ok || !isRESTOperationLit(cl) {
+				return true
+			}
+			op := restOperationName(cl, stringConsts)
+			if op == "" {
+				return true
+			}
+			if _, exists := seen[op]; exists {
+				return true
+			}
+			seen[op] = struct{}{}
+			ops = append(ops, Operation{Name: op})
+			return true
+		})
+	}
+	sort.Slice(ops, func(i, j int) bool { return ops[i].Name < ops[j].Name })
+	return ops, nil
+}
+
+func isRESTOperationLit(cl *ast.CompositeLit) bool {
+	if id, ok := cl.Type.(*ast.Ident); ok {
+		return id.Name == "restOperation"
+	}
+	return restOperationName(cl, nil) != ""
+}
+
+func restOperationName(cl *ast.CompositeLit, consts map[string]string) string {
+	for _, elt := range cl.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		key, ok := kv.Key.(*ast.Ident)
+		if !ok || key.Name != "Operation" {
+			continue
+		}
+		return stringExpr(kv.Value, consts)
+	}
+	return ""
+}
+
+func mergeOperations(a, b []Operation) []Operation {
+	seen := make(map[string]Operation, len(a)+len(b))
+	for _, op := range a {
+		seen[op.Name] = op
+	}
+	for _, op := range b {
+		if existing, ok := seen[op.Name]; ok && existing.IsStub {
+			continue
+		}
+		seen[op.Name] = op
+	}
+	out := make([]Operation, 0, len(seen))
+	for _, op := range seen {
+		out = append(out, op)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 func isOperationSwitch(sw *ast.SwitchStmt) bool {
