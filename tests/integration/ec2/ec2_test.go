@@ -44,6 +44,39 @@ func readBody(t *testing.T, resp *http.Response) []byte {
 	return b
 }
 
+type ec2QueryErrorResponse struct {
+	XMLName xml.Name `xml:"Response"`
+	Errors  []struct {
+		Code    string `xml:"Code"`
+		Message string `xml:"Message"`
+	} `xml:"Errors>Error"`
+	RequestID string `xml:"RequestID"`
+}
+
+func assertEC2QueryError(t *testing.T, resp *http.Response, status int, code string) ec2QueryErrorResponse {
+	t.Helper()
+	helpers.AssertStatus(t, resp, status)
+	helpers.AssertRequestID(t, resp)
+	body := readBody(t, resp)
+	var result ec2QueryErrorResponse
+	if err := xml.Unmarshal(body, &result); err != nil {
+		t.Fatalf("unmarshal EC2 error: %v\nbody: %s", err, body)
+	}
+	if result.XMLName.Local != "Response" {
+		t.Errorf("expected Response root, got %s", result.XMLName.Local)
+	}
+	if len(result.Errors) != 1 {
+		t.Fatalf("expected one error, got %d; body: %s", len(result.Errors), body)
+	}
+	if result.Errors[0].Code != code {
+		t.Errorf("expected %s code, got %q", code, result.Errors[0].Code)
+	}
+	if result.RequestID == "" {
+		t.Error("expected RequestID in error body")
+	}
+	return result
+}
+
 // ─── DescribeRegions ──────────────────────────────────────────────────────────
 
 func TestDescribeRegions_success(t *testing.T) {
@@ -94,6 +127,139 @@ func TestCreateVpc_success(t *testing.T) {
 	}
 	if result.Vpc.State != "available" {
 		t.Errorf("expected state=available, got %q", result.Vpc.State)
+	}
+}
+
+func TestCreateVpc_mainRouteTable(t *testing.T) {
+	// Given: EC2 service
+	srv := helpers.NewTestServer(t)
+
+	// When: CreateVpc is called
+	createResp := ec2Query(t, srv, "CreateVpc", url.Values{
+		"CidrBlock": []string{"10.0.0.0/16"},
+	})
+	defer createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+	var createResult struct {
+		Vpc struct {
+			VpcID string `xml:"vpcId"`
+			CIDR  string `xml:"cidrBlock"`
+		} `xml:"vpc"`
+	}
+	createBody := readBody(t, createResp)
+	if err := xml.Unmarshal(createBody, &createResult); err != nil {
+		t.Fatalf("unmarshal CreateVpcResponse: %v\nbody: %s", err, createBody)
+	}
+
+	// Then: DescribeRouteTables returns the VPC's main route table
+	describeResp := ec2Query(t, srv, "DescribeRouteTables", url.Values{
+		"Filter.1.Name":    []string{"vpc-id"},
+		"Filter.1.Value.1": []string{createResult.Vpc.VpcID},
+	})
+	defer describeResp.Body.Close()
+	helpers.AssertStatus(t, describeResp, http.StatusOK)
+	var describeResult struct {
+		RouteTables []struct {
+			RouteTableID string `xml:"routeTableId"`
+			VpcID        string `xml:"vpcId"`
+			Routes       []struct {
+				DestinationCidrBlock string `xml:"destinationCidrBlock"`
+				GatewayID            string `xml:"gatewayId"`
+				Origin               string `xml:"origin"`
+				State                string `xml:"state"`
+			} `xml:"routeSet>item"`
+			Associations []struct {
+				AssociationID string `xml:"routeTableAssociationId"`
+				RouteTableID  string `xml:"routeTableId"`
+				Main          bool   `xml:"main"`
+			} `xml:"associationSet>item"`
+		} `xml:"routeTableSet>item"`
+	}
+	describeBody := readBody(t, describeResp)
+	if err := xml.Unmarshal(describeBody, &describeResult); err != nil {
+		t.Fatalf("unmarshal DescribeRouteTablesResponse: %v\nbody: %s", err, describeBody)
+	}
+	if len(describeResult.RouteTables) != 1 {
+		t.Fatalf("expected one route table, got %d; body: %s", len(describeResult.RouteTables), describeBody)
+	}
+	rt := describeResult.RouteTables[0]
+	if rt.RouteTableID == "" || !strings.HasPrefix(rt.RouteTableID, "rtb-") {
+		t.Errorf("expected routeTableId starting with rtb-, got %q", rt.RouteTableID)
+	}
+	if rt.VpcID != createResult.Vpc.VpcID {
+		t.Errorf("expected vpcId %q, got %q", createResult.Vpc.VpcID, rt.VpcID)
+	}
+	if len(rt.Associations) != 1 || !rt.Associations[0].Main {
+		t.Fatalf("expected one main association, got %#v", rt.Associations)
+	}
+	if rt.Associations[0].RouteTableID != rt.RouteTableID {
+		t.Errorf("expected association routeTableId %q, got %q", rt.RouteTableID, rt.Associations[0].RouteTableID)
+	}
+	if len(rt.Routes) != 1 {
+		t.Fatalf("expected one local route, got %d", len(rt.Routes))
+	}
+	if rt.Routes[0].DestinationCidrBlock != createResult.Vpc.CIDR || rt.Routes[0].GatewayID != "local" || rt.Routes[0].State != "active" {
+		t.Errorf("unexpected local route: %#v", rt.Routes[0])
+	}
+}
+
+func TestEC2QueryError_unsupportedAction(t *testing.T) {
+	// Given: EC2 service
+	srv := helpers.NewTestServer(t)
+
+	// When: an unsupported EC2 action is called
+	resp := ec2Query(t, srv, "DescribeVpnGateways", url.Values{
+		"Filter.1.Name":    []string{"attachment.vpc-id"},
+		"Filter.1.Value.1": []string{"vpc-12345678"},
+	})
+	defer resp.Body.Close()
+
+	// Then: the 501 body uses EC2's SDK-compatible Query error envelope
+	helpers.AssertStatus(t, resp, http.StatusNotImplemented)
+	helpers.AssertRequestID(t, resp)
+	if got := resp.Header.Get("x-emulator-unsupported"); got != "true" {
+		t.Errorf("expected x-emulator-unsupported true, got %q", got)
+	}
+	assertEC2QueryError(t, resp, http.StatusNotImplemented, "NotImplemented")
+}
+
+func TestEC2QueryError_implementedActionErrors(t *testing.T) {
+	// Given: EC2 service
+	srv := helpers.NewTestServer(t)
+	cases := []struct {
+		name   string
+		action string
+		params url.Values
+		code   string
+	}{
+		{
+			name:   "missing required CreateVpc parameter",
+			action: "CreateVpc",
+			code:   "MissingParameter",
+		},
+		{
+			name:   "missing required CreateVpcEndpoint parameter",
+			action: "CreateVpcEndpoint",
+			params: url.Values{"ServiceName": []string{"com.amazonaws.us-east-1.s3"}},
+			code:   "MissingParameter",
+		},
+		{
+			name:   "missing route table resource",
+			action: "DeleteRouteTable",
+			params: url.Values{"RouteTableId": []string{"rtb-doesnotexist"}},
+			code:   "InvalidRouteTableID.NotFound",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// When: an implemented EC2 action returns an error
+			resp := ec2Query(t, srv, tc.action, tc.params)
+			defer resp.Body.Close()
+
+			// Then: the error uses EC2's documented Query error envelope
+			assertEC2QueryError(t, resp, http.StatusBadRequest, tc.code)
+		})
 	}
 }
 

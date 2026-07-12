@@ -286,6 +286,20 @@ type queryXMLError struct {
 	Message string `xml:"Message"`
 }
 
+// ec2QueryXMLErrorResponse is EC2's documented Query-protocol error envelope.
+// Verified against AWS docs (2026-07-12):
+// https://docs.aws.amazon.com/AWSEC2/latest/APIReference/errors-overview.html#api-error-response
+type ec2QueryXMLErrorResponse struct {
+	XMLName   xml.Name           `xml:"Response"`
+	Errors    []ec2QueryXMLError `xml:"Errors>Error"`
+	RequestID string             `xml:"RequestID"`
+}
+
+type ec2QueryXMLError struct {
+	Code    string `xml:"Code"`
+	Message string `xml:"Message"`
+}
+
 // WriteQueryXMLError writes an AWS Query-protocol XML error response (SNS format).
 func WriteQueryXMLError(w http.ResponseWriter, r *http.Request, aerr *AWSError) {
 	recordAWSError(w, aerr)
@@ -313,7 +327,38 @@ func WriteQueryXMLError(w http.ResponseWriter, r *http.Request, aerr *AWSError) 
 	w.Write(full)
 }
 
+// WriteEC2QueryXMLError writes an EC2 Query-protocol XML error response.
+func WriteEC2QueryXMLError(w http.ResponseWriter, r *http.Request, aerr *AWSError) {
+	recordAWSError(w, aerr)
+	reqID := RequestIDFromContext(r.Context())
+	body, _ := xml.Marshal(&ec2QueryXMLErrorResponse{
+		Errors: []ec2QueryXMLError{{
+			Code:    aerr.Code,
+			Message: aerr.Message,
+		}},
+		RequestID: reqID,
+	})
+	if r.Body != nil {
+		io.Copy(io.Discard, r.Body) //nolint:errcheck
+		r.Body.Close()              //nolint:errcheck
+	}
+	full := append([]byte(xml.Header), body...)
+	w.Header().Set("Content-Type", "text/xml")
+	w.Header().Set("Content-Length", strconv.Itoa(len(full)))
+	w.Header().Set("x-amzn-requestid", reqID)
+	if aerr.HTTPStatus == http.StatusNotImplemented {
+		w.Header().Set("x-emulator-unsupported", "true")
+	}
+	w.WriteHeader(aerr.HTTPStatus)
+	w.Write(full)
+}
+
 // NotImplementedQueryXML writes a 501 for unimplemented Query-protocol operations.
 func NotImplementedQueryXML(w http.ResponseWriter, r *http.Request) {
 	WriteQueryXMLError(w, r, ErrNotImplemented)
+}
+
+// NotImplementedEC2QueryXML writes a 501 for unimplemented EC2 Query operations.
+func NotImplementedEC2QueryXML(w http.ResponseWriter, r *http.Request) {
+	WriteEC2QueryXMLError(w, r, ErrNotImplemented)
 }

@@ -103,7 +103,7 @@ type xmlStateChangeItem struct {
 func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
 	imageID := r.FormValue("ImageId")
 	if imageID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "ImageId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -145,7 +145,7 @@ func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
 					ns = vpcNetworkStatusOK
 				}
 				if ns == vpcNetworkStatusConflict {
-					protocol.WriteXMLError(w, r, &protocol.AWSError{
+					protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 						Code:       "InvalidVpc.NetworkStatus",
 						Message:    fmt.Sprintf("VPC %s has network status %q: cannot launch instances", sub.VpcID, ns),
 						HTTPStatus: http.StatusBadRequest,
@@ -178,7 +178,7 @@ func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
 			VpcID:            vpcID,
 		}
 		if aerr := h.store.putInstance(r.Context(), inst); aerr != nil {
-			protocol.WriteXMLError(w, r, aerr)
+			protocol.WriteEC2QueryXMLError(w, r, aerr)
 			return
 		}
 
@@ -248,7 +248,7 @@ func (h *Handler) DescribeInstances(w http.ResponseWriter, r *http.Request) {
 
 	all, aerr := h.store.listInstances(r.Context())
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -307,7 +307,7 @@ func (h *Handler) DescribeInstances(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) TerminateInstances(w http.ResponseWriter, r *http.Request) {
 	ids := parseIndexedParam(r, "InstanceId")
 	if len(ids) == 0 {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "InstanceId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -319,14 +319,14 @@ func (h *Handler) TerminateInstances(w http.ResponseWriter, r *http.Request) {
 	for _, id := range ids {
 		inst, aerr := h.store.getInstance(r.Context(), id)
 		if aerr != nil {
-			protocol.WriteXMLError(w, r, aerr)
+			protocol.WriteEC2QueryXMLError(w, r, aerr)
 			return
 		}
 
 		prev := xmlInstanceState{Code: inst.State.Code, Name: inst.State.Name}
 		inst.State = InstanceState{Code: 32, Name: "shutting-down"}
 		if aerr := h.store.putInstance(r.Context(), inst); aerr != nil {
-			protocol.WriteXMLError(w, r, aerr)
+			protocol.WriteEC2QueryXMLError(w, r, aerr)
 			return
 		}
 
@@ -366,7 +366,7 @@ func (h *Handler) TerminateInstances(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) StopInstances(w http.ResponseWriter, r *http.Request) {
 	ids := parseIndexedParam(r, "InstanceId")
 	if len(ids) == 0 {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "InstanceId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -378,12 +378,12 @@ func (h *Handler) StopInstances(w http.ResponseWriter, r *http.Request) {
 	for _, id := range ids {
 		inst, aerr := h.store.getInstance(r.Context(), id)
 		if aerr != nil {
-			protocol.WriteXMLError(w, r, aerr)
+			protocol.WriteEC2QueryXMLError(w, r, aerr)
 			return
 		}
 
 		if inst.State.Code != 16 && inst.State.Code != 0 {
-			protocol.WriteXMLError(w, r, &protocol.AWSError{
+			protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 				Code:       "IncorrectInstanceState",
 				Message:    fmt.Sprintf("Instance %s is not in the 'running' state", id),
 				HTTPStatus: http.StatusBadRequest,
@@ -394,7 +394,7 @@ func (h *Handler) StopInstances(w http.ResponseWriter, r *http.Request) {
 		prev := xmlInstanceState{Code: inst.State.Code, Name: inst.State.Name}
 		inst.State = InstanceState{Code: 64, Name: "stopping"}
 		if aerr := h.store.putInstance(r.Context(), inst); aerr != nil {
-			protocol.WriteXMLError(w, r, aerr)
+			protocol.WriteEC2QueryXMLError(w, r, aerr)
 			return
 		}
 
@@ -435,7 +435,7 @@ func (h *Handler) StopInstances(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) StartInstances(w http.ResponseWriter, r *http.Request) {
 	ids := parseIndexedParam(r, "InstanceId")
 	if len(ids) == 0 {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "InstanceId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -447,12 +447,12 @@ func (h *Handler) StartInstances(w http.ResponseWriter, r *http.Request) {
 	for _, id := range ids {
 		inst, aerr := h.store.getInstance(r.Context(), id)
 		if aerr != nil {
-			protocol.WriteXMLError(w, r, aerr)
+			protocol.WriteEC2QueryXMLError(w, r, aerr)
 			return
 		}
 
 		if inst.State.Code != 80 {
-			protocol.WriteXMLError(w, r, &protocol.AWSError{
+			protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 				Code:       "IncorrectInstanceState",
 				Message:    fmt.Sprintf("Instance %s is not in the 'stopped' state", id),
 				HTTPStatus: http.StatusBadRequest,
@@ -463,7 +463,7 @@ func (h *Handler) StartInstances(w http.ResponseWriter, r *http.Request) {
 		prev := xmlInstanceState{Code: inst.State.Code, Name: inst.State.Name}
 		inst.State = InstanceState{Code: 0, Name: "pending"}
 		if aerr := h.store.putInstance(r.Context(), inst); aerr != nil {
-			protocol.WriteXMLError(w, r, aerr)
+			protocol.WriteEC2QueryXMLError(w, r, aerr)
 			return
 		}
 
@@ -586,7 +586,7 @@ type xmlModifyInstanceAttributeResponse struct {
 func (h *Handler) ModifyInstanceAttribute(w http.ResponseWriter, r *http.Request) {
 	instanceID := r.FormValue("InstanceId")
 	if instanceID == "" {
-		protocol.WriteQueryXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "The request must contain InstanceId.",
 			HTTPStatus: http.StatusBadRequest,
@@ -596,14 +596,14 @@ func (h *Handler) ModifyInstanceAttribute(w http.ResponseWriter, r *http.Request
 
 	inst, aerr := h.store.getInstance(r.Context(), instanceID)
 	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
 	if newType := r.FormValue("InstanceType.Value"); newType != "" {
 		inst.InstanceType = newType
 		if aerr := h.store.putInstance(r.Context(), inst); aerr != nil {
-			protocol.WriteQueryXMLError(w, r, aerr)
+			protocol.WriteEC2QueryXMLError(w, r, aerr)
 			return
 		}
 	}

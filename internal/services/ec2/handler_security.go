@@ -114,7 +114,7 @@ func parseIpPermissions(r *http.Request) []IpPermission {
 func (h *Handler) AuthorizeSecurityGroupIngress(w http.ResponseWriter, r *http.Request) {
 	groupID := r.FormValue("GroupId")
 	if groupID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "GroupId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -123,7 +123,7 @@ func (h *Handler) AuthorizeSecurityGroupIngress(w http.ResponseWriter, r *http.R
 	}
 	perms := parseIpPermissions(r)
 	if len(perms) == 0 {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "IpPermissions are required",
 			HTTPStatus: http.StatusBadRequest,
@@ -133,12 +133,12 @@ func (h *Handler) AuthorizeSecurityGroupIngress(w http.ResponseWriter, r *http.R
 
 	sg, aerr := h.store.getSecurityGroup(r.Context(), groupID)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 	sg.IpPermissions = append(sg.IpPermissions, perms...)
 	if aerr := h.store.putSecurityGroup(r.Context(), sg); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -155,7 +155,7 @@ func (h *Handler) AuthorizeSecurityGroupIngress(w http.ResponseWriter, r *http.R
 func (h *Handler) AuthorizeSecurityGroupEgress(w http.ResponseWriter, r *http.Request) {
 	groupID := r.FormValue("GroupId")
 	if groupID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "GroupId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -164,7 +164,7 @@ func (h *Handler) AuthorizeSecurityGroupEgress(w http.ResponseWriter, r *http.Re
 	}
 	perms := parseIpPermissions(r)
 	if len(perms) == 0 {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "IpPermissions are required",
 			HTTPStatus: http.StatusBadRequest,
@@ -174,12 +174,12 @@ func (h *Handler) AuthorizeSecurityGroupEgress(w http.ResponseWriter, r *http.Re
 
 	sg, aerr := h.store.getSecurityGroup(r.Context(), groupID)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 	sg.IpPermissionsEgress = append(sg.IpPermissionsEgress, perms...)
 	if aerr := h.store.putSecurityGroup(r.Context(), sg); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -196,7 +196,7 @@ func (h *Handler) AuthorizeSecurityGroupEgress(w http.ResponseWriter, r *http.Re
 func (h *Handler) RevokeSecurityGroupIngress(w http.ResponseWriter, r *http.Request) {
 	groupID := r.FormValue("GroupId")
 	if groupID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "GroupId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -205,7 +205,7 @@ func (h *Handler) RevokeSecurityGroupIngress(w http.ResponseWriter, r *http.Requ
 	}
 	perms := parseIpPermissions(r)
 	if len(perms) == 0 {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "IpPermissions are required",
 			HTTPStatus: http.StatusBadRequest,
@@ -215,13 +215,13 @@ func (h *Handler) RevokeSecurityGroupIngress(w http.ResponseWriter, r *http.Requ
 
 	sg, aerr := h.store.getSecurityGroup(r.Context(), groupID)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
 	for _, revoke := range perms {
 		if !removePermission(&sg.IpPermissions, revoke) {
-			protocol.WriteXMLError(w, r, &protocol.AWSError{
+			protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 				Code:       "InvalidPermission.NotFound",
 				Message:    "The specified rule does not exist in this security group",
 				HTTPStatus: http.StatusBadRequest,
@@ -231,7 +231,7 @@ func (h *Handler) RevokeSecurityGroupIngress(w http.ResponseWriter, r *http.Requ
 	}
 
 	if aerr := h.store.putSecurityGroup(r.Context(), sg); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -248,7 +248,7 @@ func (h *Handler) RevokeSecurityGroupIngress(w http.ResponseWriter, r *http.Requ
 func (h *Handler) RevokeSecurityGroupEgress(w http.ResponseWriter, r *http.Request) {
 	groupID := r.FormValue("GroupId")
 	if groupID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "GroupId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -257,7 +257,7 @@ func (h *Handler) RevokeSecurityGroupEgress(w http.ResponseWriter, r *http.Reque
 	}
 	perms := parseIpPermissions(r)
 	if len(perms) == 0 {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "IpPermissions are required",
 			HTTPStatus: http.StatusBadRequest,
@@ -267,13 +267,13 @@ func (h *Handler) RevokeSecurityGroupEgress(w http.ResponseWriter, r *http.Reque
 
 	sg, aerr := h.store.getSecurityGroup(r.Context(), groupID)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
 	for _, revoke := range perms {
 		if !removePermission(&sg.IpPermissionsEgress, revoke) {
-			protocol.WriteXMLError(w, r, &protocol.AWSError{
+			protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 				Code:       "InvalidPermission.NotFound",
 				Message:    "The specified rule does not exist in this security group",
 				HTTPStatus: http.StatusBadRequest,
@@ -283,7 +283,7 @@ func (h *Handler) RevokeSecurityGroupEgress(w http.ResponseWriter, r *http.Reque
 	}
 
 	if aerr := h.store.putSecurityGroup(r.Context(), sg); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -342,7 +342,7 @@ func (h *Handler) DescribeSecurityGroups(w http.ResponseWriter, r *http.Request)
 
 	all, aerr := h.store.listSecurityGroups(r.Context())
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -425,7 +425,7 @@ func (h *Handler) DescribeSubnets(w http.ResponseWriter, r *http.Request) {
 
 	all, aerr := h.store.listSubnets(r.Context())
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 

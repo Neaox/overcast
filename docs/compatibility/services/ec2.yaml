@@ -1,22 +1,46 @@
 service: ec2
-status: not_started
+status: in_progress
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-17
+last_updated: 2026-07-12
 protocols: [query]
 implementation: [internal/services/ec2]
 integration_tests: [tests/integration/ec2]
 capability_docs: docs/services/ec2.md
 operation_count_estimate: 64 API operations supported plus documented VPC network states
 current_support_level: Broad CDK/VPC metadata support with Docker-backed VPC network approximation and documented divergences.
-operations: {}
+operations:
+  CreateVpc:
+    status: fixed
+    scenarios:
+      main_route_table:
+        status: fixed
+        evidence:
+          - https://docs.aws.amazon.com/vpc/latest/userguide/VPC_Route_Tables.html
+          - tests/integration/ec2/ec2_test.go::TestCreateVpc_mainRouteTable
+        notes: CreateVpc now creates a VPC-scoped route table with a local route and Main=true association.
+  EC2QueryErrors:
+    status: fixed
+    scenarios:
+      unsupported_action_error_envelope:
+        status: fixed
+        evidence:
+          - https://docs.aws.amazon.com/AWSEC2/latest/APIReference/errors-overview.html#api-error-response
+          - internal/protocol/errors_test.go::TestWriteEC2QueryXMLError_structuredResponse
+          - tests/integration/ec2/ec2_test.go::TestEC2QueryError_unsupportedAction
+          - tests/integration/ec2/ec2_test.go::TestEC2QueryError_implementedActionErrors
+        notes: EC2 Query errors now return EC2's <Response><Errors><Error> envelope for SDK compatibility.
 findings:
-  fixed: []
+  fixed:
+    - CreateVpc creates the AWS-documented main route table for VPC lookups.
+    - EC2 Query errors use the EC2-specific error envelope expected by aws-sdk-js v3.
   remaining_gaps:
     - Focus VPC, subnet, security group, route table, and ENI behavior.
     - Review AWS Query XML shapes.
   intentionally_partial: []
 handoff:
   start_with: [CreateVpc, CreateSubnet, security groups, route tables]
-  do_not_redo: []
+  do_not_redo:
+    - Main route table creation for CreateVpc; covered by TestCreateVpc_mainRouteTable.
+    - EC2 Query error envelope; covered by TestEC2QueryError_unsupportedAction and TestEC2QueryError_implementedActionErrors.
   commands: [go test -count=1 ./internal/services/ec2/... ./tests/integration/ec2/...]

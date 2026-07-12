@@ -24,7 +24,7 @@ func (h *Handler) CreateTags(w http.ResponseWriter, r *http.Request) {
 	resourceIDs := collectFormValues(r, "ResourceId.")
 	tags := collectFormTags(r, "Tag.")
 	if len(resourceIDs) == 0 {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "ResourceId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -41,7 +41,7 @@ func (h *Handler) CreateTags(w http.ResponseWriter, r *http.Request) {
 			existing[k] = v
 		}
 		if aerr := h.store.putTags(r.Context(), rid, existing); aerr != nil {
-			protocol.WriteXMLError(w, r, aerr)
+			protocol.WriteEC2QueryXMLError(w, r, aerr)
 			return
 		}
 	}
@@ -76,7 +76,7 @@ func (h *Handler) DeleteTags(w http.ResponseWriter, r *http.Request) {
 			delete(existing, k)
 		}
 		if aerr := h.store.putTags(r.Context(), rid, existing); aerr != nil {
-			protocol.WriteXMLError(w, r, aerr)
+			protocol.WriteEC2QueryXMLError(w, r, aerr)
 			return
 		}
 	}

@@ -66,7 +66,7 @@ func dummyKeyMaterial() string {
 func (h *Handler) CreateKeyPair(w http.ResponseWriter, r *http.Request) {
 	keyName := r.FormValue("KeyName")
 	if keyName == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "KeyName is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -76,7 +76,7 @@ func (h *Handler) CreateKeyPair(w http.ResponseWriter, r *http.Request) {
 
 	// Check for duplicate.
 	if _, aerr := h.store.getKeyPair(r.Context(), keyName); aerr == nil {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "InvalidKeyPair.Duplicate",
 			Message:    fmt.Sprintf("The keypair '%s' already exists", keyName),
 			HTTPStatus: http.StatusBadRequest,
@@ -95,7 +95,7 @@ func (h *Handler) CreateKeyPair(w http.ResponseWriter, r *http.Request) {
 		KeyMaterial:    material,
 	}
 	if aerr := h.store.putKeyPair(r.Context(), kp); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -119,7 +119,7 @@ func (h *Handler) DescribeKeyPairs(w http.ResponseWriter, r *http.Request) {
 
 	all, aerr := h.store.listKeyPairs(r.Context())
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -146,7 +146,7 @@ func (h *Handler) DescribeKeyPairs(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) DeleteKeyPair(w http.ResponseWriter, r *http.Request) {
 	keyName := r.FormValue("KeyName")
 	if keyName == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "KeyName is required",
 			HTTPStatus: http.StatusBadRequest,
