@@ -118,6 +118,58 @@ func TestNotImplemented_setsUnsupportedHeader(t *testing.T) {
 	}
 }
 
+// TestWriteEC2QueryXMLError_structuredResponse verifies the EC2 Query error envelope.
+func TestWriteEC2QueryXMLError_structuredResponse(t *testing.T) {
+	// Given: a handler that writes an EC2 Query error
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
+			Code:       "InvalidInstanceID.NotFound",
+			Message:    "The instance ID 'i-1a2b3c4d' does not exist",
+			HTTPStatus: http.StatusBadRequest,
+		})
+	})
+
+	// When: we make a request
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("Action=DescribeInstances"))
+	req = req.WithContext(protocol.ContextWithRequestID(req.Context(), "ec2-request-id"))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	resp := w.Result()
+
+	// Then: the body matches EC2's documented <Response><Errors><Error> shape
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status: expected 400, got %d", resp.StatusCode)
+	}
+	if rid := resp.Header.Get("x-amzn-requestid"); rid != "ec2-request-id" {
+		t.Errorf("x-amzn-requestid: expected ec2-request-id, got %q", rid)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	var errResp struct {
+		XMLName xml.Name `xml:"Response"`
+		Errors  []struct {
+			Code    string `xml:"Code"`
+			Message string `xml:"Message"`
+		} `xml:"Errors>Error"`
+		RequestID string `xml:"RequestID"`
+	}
+	if err := xml.Unmarshal(body, &errResp); err != nil {
+		t.Fatalf("failed to parse EC2 XML error: %v\nbody: %s", err, body)
+	}
+	if errResp.XMLName.Local != "Response" {
+		t.Errorf("root: expected Response, got %q", errResp.XMLName.Local)
+	}
+	if len(errResp.Errors) != 1 {
+		t.Fatalf("expected one error, got %d; body: %s", len(errResp.Errors), body)
+	}
+	if errResp.Errors[0].Code != "InvalidInstanceID.NotFound" {
+		t.Errorf("Code: expected InvalidInstanceID.NotFound, got %q", errResp.Errors[0].Code)
+	}
+	if errResp.RequestID != "ec2-request-id" {
+		t.Errorf("RequestID: expected ec2-request-id, got %q", errResp.RequestID)
+	}
+}
+
 // TestRequestID_generatesUniqueIDs verifies NewRequestID produces unique values.
 func TestRequestID_generatesUniqueIDs(t *testing.T) {
 	// Given / When: we generate multiple request IDs

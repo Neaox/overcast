@@ -62,7 +62,7 @@ func (h *Handler) CreateInternetGateway(w http.ResponseWriter, r *http.Request) 
 	igwID := fmt.Sprintf("igw-%s", shortID())
 	igw := &InternetGateway{InternetGatewayID: igwID}
 	if aerr := h.store.putInternetGateway(r.Context(), igw); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -90,7 +90,7 @@ func (h *Handler) DescribeInternetGateways(w http.ResponseWriter, r *http.Reques
 
 	all, aerr := h.store.listInternetGateways(r.Context())
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -130,7 +130,7 @@ func (h *Handler) DescribeInternetGateways(w http.ResponseWriter, r *http.Reques
 func (h *Handler) DeleteInternetGateway(w http.ResponseWriter, r *http.Request) {
 	igwID := r.FormValue("InternetGatewayId")
 	if igwID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "InternetGatewayId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -140,12 +140,12 @@ func (h *Handler) DeleteInternetGateway(w http.ResponseWriter, r *http.Request) 
 
 	igw, aerr := h.store.getInternetGateway(r.Context(), igwID)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
 	if len(igw.Attachments) > 0 {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "DependencyViolation",
 			Message:    fmt.Sprintf("The internetGateway '%s' has dependencies and cannot be deleted", igwID),
 			HTTPStatus: http.StatusBadRequest,
@@ -154,7 +154,7 @@ func (h *Handler) DeleteInternetGateway(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if aerr := h.store.deleteInternetGateway(r.Context(), igwID); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -173,7 +173,7 @@ func (h *Handler) AttachInternetGateway(w http.ResponseWriter, r *http.Request) 
 	vpcID := r.FormValue("VpcId")
 
 	if igwID == "" || vpcID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "InternetGatewayId and VpcId are required",
 			HTTPStatus: http.StatusBadRequest,
@@ -183,13 +183,13 @@ func (h *Handler) AttachInternetGateway(w http.ResponseWriter, r *http.Request) 
 
 	igw, aerr := h.store.getInternetGateway(r.Context(), igwID)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
 	// Validate VPC exists.
 	if _, aerr := h.store.getVPC(r.Context(), vpcID); aerr != nil {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "InvalidVpcID.NotFound",
 			Message:    fmt.Sprintf("The vpc ID '%s' does not exist", vpcID),
 			HTTPStatus: http.StatusBadRequest,
@@ -200,7 +200,7 @@ func (h *Handler) AttachInternetGateway(w http.ResponseWriter, r *http.Request) 
 	// Check if already attached.
 	for _, att := range igw.Attachments {
 		if att.VpcID == vpcID {
-			protocol.WriteXMLError(w, r, &protocol.AWSError{
+			protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 				Code:       "Resource.AlreadyAssociated",
 				Message:    fmt.Sprintf("The internetGateway '%s' is already attached to vpc '%s'", igwID, vpcID),
 				HTTPStatus: http.StatusBadRequest,
@@ -215,7 +215,7 @@ func (h *Handler) AttachInternetGateway(w http.ResponseWriter, r *http.Request) 
 	})
 
 	if aerr := h.store.putInternetGateway(r.Context(), igw); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -237,7 +237,7 @@ func (h *Handler) DetachInternetGateway(w http.ResponseWriter, r *http.Request) 
 	vpcID := r.FormValue("VpcId")
 
 	if igwID == "" || vpcID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "InternetGatewayId and VpcId are required",
 			HTTPStatus: http.StatusBadRequest,
@@ -247,7 +247,7 @@ func (h *Handler) DetachInternetGateway(w http.ResponseWriter, r *http.Request) 
 
 	igw, aerr := h.store.getInternetGateway(r.Context(), igwID)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -261,7 +261,7 @@ func (h *Handler) DetachInternetGateway(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if !found {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "Gateway.NotAttached",
 			Message:    fmt.Sprintf("The internetGateway '%s' is not attached to vpc '%s'", igwID, vpcID),
 			HTTPStatus: http.StatusBadRequest,
@@ -270,7 +270,7 @@ func (h *Handler) DetachInternetGateway(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if aerr := h.store.putInternetGateway(r.Context(), igw); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 

@@ -34,7 +34,7 @@ func (h *Handler) AllocateAddress(w http.ResponseWriter, r *http.Request) {
 		Domain:       "vpc",
 	}
 	if aerr := h.store.putElasticIP(r.Context(), addr); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlAllocateAddressResponse{
@@ -59,7 +59,7 @@ type xmlReleaseAddressResponse struct {
 func (h *Handler) ReleaseAddress(w http.ResponseWriter, r *http.Request) {
 	allocID := r.FormValue("AllocationId")
 	if allocID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "AllocationId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -67,7 +67,7 @@ func (h *Handler) ReleaseAddress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if aerr := h.store.deleteElasticIP(r.Context(), allocID); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlReleaseAddressResponse{
@@ -100,7 +100,7 @@ type xmlAddress struct {
 func (h *Handler) DescribeAddresses(w http.ResponseWriter, r *http.Request) {
 	all, aerr := h.store.listElasticIPs(r.Context())
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -143,7 +143,7 @@ func (h *Handler) AssociateAddress(w http.ResponseWriter, r *http.Request) {
 	allocID := r.FormValue("AllocationId")
 	instID := r.FormValue("InstanceId")
 	if allocID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "AllocationId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -153,7 +153,7 @@ func (h *Handler) AssociateAddress(w http.ResponseWriter, r *http.Request) {
 
 	addr, aerr := h.store.getElasticIP(r.Context(), allocID)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -161,7 +161,7 @@ func (h *Handler) AssociateAddress(w http.ResponseWriter, r *http.Request) {
 	addr.AssociationID = assocID
 	addr.InstanceID = instID
 	if aerr := h.store.putElasticIP(r.Context(), addr); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -186,7 +186,7 @@ type xmlDisassociateAddressResponse struct {
 func (h *Handler) DisassociateAddress(w http.ResponseWriter, r *http.Request) {
 	assocID := r.FormValue("AssociationId")
 	if assocID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "AssociationId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -197,7 +197,7 @@ func (h *Handler) DisassociateAddress(w http.ResponseWriter, r *http.Request) {
 	// Find the EIP by association ID.
 	all, aerr := h.store.listElasticIPs(r.Context())
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 	for _, a := range all {
@@ -207,7 +207,7 @@ func (h *Handler) DisassociateAddress(w http.ResponseWriter, r *http.Request) {
 			a.NetworkInterfaceID = ""
 			a.PrivateIP = ""
 			if aerr := h.store.putElasticIP(r.Context(), a); aerr != nil {
-				protocol.WriteXMLError(w, r, aerr)
+				protocol.WriteEC2QueryXMLError(w, r, aerr)
 				return
 			}
 			break

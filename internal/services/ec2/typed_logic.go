@@ -1069,7 +1069,7 @@ func (h *Handler) createVpcTyped(ctx context.Context, req *createVpcReq) (*creat
 			return nil, aerr
 		}
 	}
-	if aerr := h.store.putVPC(ctx, vpc); aerr != nil {
+	if aerr := h.putVPCWithMainRouteTable(ctx, vpc); aerr != nil {
 		return nil, aerr
 	}
 	return &createVpcResp{
@@ -1126,6 +1126,9 @@ func (h *Handler) deleteVpcTyped(ctx context.Context, req *deleteVpcReq) (*delet
 	}
 	vpc, _ := h.store.getVPC(ctx, req.VpcID)
 	if aerr := h.store.deleteVPC(ctx, req.VpcID); aerr != nil {
+		return nil, aerr
+	}
+	if aerr := h.deleteRouteTablesForVPC(ctx, req.VpcID); aerr != nil {
 		return nil, aerr
 	}
 	if vpc != nil && h.vpcStrategy != nil {

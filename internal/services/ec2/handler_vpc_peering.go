@@ -65,7 +65,7 @@ func (h *Handler) CreateVpcPeeringConnection(w http.ResponseWriter, r *http.Requ
 	peerVpcID := r.FormValue("PeerVpcId")
 
 	if vpcID == "" || peerVpcID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "VpcId and PeerVpcId are required",
 			HTTPStatus: http.StatusBadRequest,
@@ -78,7 +78,7 @@ func (h *Handler) CreateVpcPeeringConnection(w http.ResponseWriter, r *http.Requ
 	// Validate requester VPC exists.
 	requesterVpc, aerr := h.store.getVPC(ctx, vpcID)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "InvalidVpcID.NotFound",
 			Message:    fmt.Sprintf("The vpc ID '%s' does not exist", vpcID),
 			HTTPStatus: http.StatusBadRequest,
@@ -89,7 +89,7 @@ func (h *Handler) CreateVpcPeeringConnection(w http.ResponseWriter, r *http.Requ
 	// Validate accepter VPC exists.
 	accepterVpc, aerr := h.store.getVPC(ctx, peerVpcID)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "InvalidVpcID.NotFound",
 			Message:    fmt.Sprintf("The vpc ID '%s' does not exist", peerVpcID),
 			HTTPStatus: http.StatusBadRequest,
@@ -122,7 +122,7 @@ func (h *Handler) CreateVpcPeeringConnection(w http.ResponseWriter, r *http.Requ
 	}
 
 	if aerr := h.store.putVpcPeeringConnection(ctx, pcx); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -139,7 +139,7 @@ func (h *Handler) CreateVpcPeeringConnection(w http.ResponseWriter, r *http.Requ
 func (h *Handler) AcceptVpcPeeringConnection(w http.ResponseWriter, r *http.Request) {
 	pcxID := r.FormValue("VpcPeeringConnectionId")
 	if pcxID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "VpcPeeringConnectionId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -150,12 +150,12 @@ func (h *Handler) AcceptVpcPeeringConnection(w http.ResponseWriter, r *http.Requ
 	ctx := r.Context()
 	pcx, aerr := h.store.getVpcPeeringConnection(ctx, pcxID)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
 	if pcx.Status.Code != "pending-acceptance" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "InvalidStateTransition",
 			Message:    fmt.Sprintf("The peering connection '%s' is in state '%s' and cannot be accepted", pcxID, pcx.Status.Code),
 			HTTPStatus: http.StatusBadRequest,
@@ -169,7 +169,7 @@ func (h *Handler) AcceptVpcPeeringConnection(w http.ResponseWriter, r *http.Requ
 	}
 
 	if aerr := h.store.putVpcPeeringConnection(ctx, pcx); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -197,7 +197,7 @@ func (h *Handler) DescribeVpcPeeringConnections(w http.ResponseWriter, r *http.R
 	ctx := r.Context()
 	all, aerr := h.store.listVpcPeeringConnections(ctx)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -231,7 +231,7 @@ func (h *Handler) DescribeVpcPeeringConnections(w http.ResponseWriter, r *http.R
 func (h *Handler) DeleteVpcPeeringConnection(w http.ResponseWriter, r *http.Request) {
 	pcxID := r.FormValue("VpcPeeringConnectionId")
 	if pcxID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "VpcPeeringConnectionId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -242,7 +242,7 @@ func (h *Handler) DeleteVpcPeeringConnection(w http.ResponseWriter, r *http.Requ
 	ctx := r.Context()
 	pcx, aerr := h.store.getVpcPeeringConnection(ctx, pcxID)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -251,7 +251,7 @@ func (h *Handler) DeleteVpcPeeringConnection(w http.ResponseWriter, r *http.Requ
 	case "active", "pending-acceptance":
 		// OK to delete.
 	default:
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "InvalidStateTransition",
 			Message:    fmt.Sprintf("The peering connection '%s' is in state '%s' and cannot be deleted", pcxID, pcx.Status.Code),
 			HTTPStatus: http.StatusBadRequest,
@@ -266,7 +266,7 @@ func (h *Handler) DeleteVpcPeeringConnection(w http.ResponseWriter, r *http.Requ
 	}
 
 	if aerr := h.store.putVpcPeeringConnection(ctx, pcx); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 

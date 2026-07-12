@@ -47,7 +47,7 @@ func (h *Handler) CreateNatGateway(w http.ResponseWriter, r *http.Request) {
 	subnetID := r.FormValue("SubnetId")
 	allocID := r.FormValue("AllocationId")
 	if subnetID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "SubnetId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -58,7 +58,7 @@ func (h *Handler) CreateNatGateway(w http.ResponseWriter, r *http.Request) {
 	// Validate subnet and resolve VPC.
 	sub, aerr := h.store.getSubnet(r.Context(), subnetID)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "InvalidSubnetID.NotFound",
 			Message:    fmt.Sprintf("The subnet ID '%s' does not exist", subnetID),
 			HTTPStatus: http.StatusBadRequest,
@@ -98,7 +98,7 @@ func (h *Handler) CreateNatGateway(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if aerr := h.store.putNatGateway(r.Context(), ngw); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -141,7 +141,7 @@ type xmlDescribeNatGatewaysResponse struct {
 func (h *Handler) DescribeNatGateways(w http.ResponseWriter, r *http.Request) {
 	all, aerr := h.store.listNatGateways(r.Context())
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -207,7 +207,7 @@ type xmlDeleteNatGatewayResponse struct {
 func (h *Handler) DeleteNatGateway(w http.ResponseWriter, r *http.Request) {
 	natID := r.FormValue("NatGatewayId")
 	if natID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "NatGatewayId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -218,7 +218,7 @@ func (h *Handler) DeleteNatGateway(w http.ResponseWriter, r *http.Request) {
 	// Mark as deleting, then remove.
 	ngw, aerr := h.store.getNatGateway(r.Context(), natID)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 	ngw.State = "deleted"

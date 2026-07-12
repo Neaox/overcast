@@ -1,6 +1,7 @@
 package ec2
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"net/http"
@@ -221,7 +222,7 @@ type xmlMemoryInfo struct {
 // DescribeInstanceTypes returns info for requested instance types.
 func (h *Handler) DescribeInstanceTypes(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInvalidArgument("invalid request form encoding"))
+		protocol.WriteEC2QueryXMLError(w, r, protocol.ErrInvalidArgument("invalid request form encoding"))
 		return
 	}
 	// Collect requested types from InstanceType.N query parameters.
@@ -307,11 +308,59 @@ func (h *Handler) publish(r *http.Request, t events.Type, payload any) {
 	}
 }
 
+func newMainRouteTable(vpcID, cidr string) *RouteTable {
+	rtID := fmt.Sprintf("rtb-%s", shortID())
+	return &RouteTable{
+		RouteTableID: rtID,
+		VpcID:        vpcID,
+		Routes: []Route{{
+			DestinationCidrBlock: cidr,
+			GatewayID:            "local",
+			Origin:               "CreateRouteTable",
+		}},
+		Associations: []RouteTableAssociation{{
+			AssociationID: fmt.Sprintf("rtbassoc-%s", shortID()),
+			RouteTableID:  rtID,
+			Main:          true,
+		}},
+	}
+}
+
+func (h *Handler) putVPCWithMainRouteTable(ctx context.Context, vpc *VPC) *protocol.AWSError {
+	if aerr := h.store.putVPC(ctx, vpc); aerr != nil {
+		return aerr
+	}
+	if aerr := h.store.putRouteTable(ctx, newMainRouteTable(vpc.VpcID, vpc.CidrBlock)); aerr != nil {
+		_ = h.store.deleteVPC(ctx, vpc.VpcID)
+		if h.vpcStrategy != nil {
+			h.vpcStrategy.OnDelete(ctx, vpc)
+		}
+		return aerr
+	}
+	return nil
+}
+
+func (h *Handler) deleteRouteTablesForVPC(ctx context.Context, vpcID string) *protocol.AWSError {
+	rts, aerr := h.store.listRouteTables(ctx)
+	if aerr != nil {
+		return aerr
+	}
+	for _, rt := range rts {
+		if rt.VpcID != vpcID {
+			continue
+		}
+		if aerr := h.store.deleteRouteTable(ctx, rt.RouteTableID); aerr != nil {
+			return aerr
+		}
+	}
+	return nil
+}
+
 // CreateVpc creates a new VPC.
 func (h *Handler) CreateVpc(w http.ResponseWriter, r *http.Request) {
 	cidr := r.FormValue("CidrBlock")
 	if cidr == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "CidrBlock is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -324,12 +373,12 @@ func (h *Handler) CreateVpc(w http.ResponseWriter, r *http.Request) {
 	// Strategy decides whether to create a new Docker network or share one
 	// from another VPC with the same CIDR. EnsureNetwork mutates vpc in place.
 	if aerr := h.vpcStrategy.EnsureNetwork(r.Context(), vpc); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
-	if aerr := h.store.putVPC(r.Context(), vpc); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+	if aerr := h.putVPCWithMainRouteTable(r.Context(), vpc); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 	h.publish(r, events.EC2VpcCreated, events.ResourcePayload{Name: vpcID})
@@ -367,7 +416,7 @@ type xmlDescribeVpcsResponse struct {
 func (h *Handler) DescribeVpcs(w http.ResponseWriter, r *http.Request) {
 	vpcs, aerr := h.store.listVPCs(r.Context())
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 	items := make([]xmlVpc, 0, len(vpcs))
@@ -407,7 +456,7 @@ type xmlDeleteVpcResponse struct {
 func (h *Handler) DeleteVpc(w http.ResponseWriter, r *http.Request) {
 	vpcID := r.FormValue("VpcId")
 	if vpcID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "VpcId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -418,7 +467,11 @@ func (h *Handler) DeleteVpc(w http.ResponseWriter, r *http.Request) {
 	vpc, _ := h.store.getVPC(r.Context(), vpcID)
 
 	if aerr := h.store.deleteVPC(r.Context(), vpcID); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+	if aerr := h.deleteRouteTablesForVPC(r.Context(), vpcID); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -461,7 +514,7 @@ func (h *Handler) CreateSubnet(w http.ResponseWriter, r *http.Request) {
 	vpcID := r.FormValue("VpcId")
 	cidr := r.FormValue("CidrBlock")
 	if vpcID == "" || cidr == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "VpcId and CidrBlock are required",
 			HTTPStatus: http.StatusBadRequest,
@@ -470,7 +523,7 @@ func (h *Handler) CreateSubnet(w http.ResponseWriter, r *http.Request) {
 	}
 	// Validate VPC exists.
 	if _, aerr := h.store.getVPC(r.Context(), vpcID); aerr != nil {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "InvalidVpcID.NotFound",
 			Message:    fmt.Sprintf("The vpc ID '%s' does not exist", vpcID),
 			HTTPStatus: http.StatusBadRequest,
@@ -481,7 +534,7 @@ func (h *Handler) CreateSubnet(w http.ResponseWriter, r *http.Request) {
 	az := h.cfg.Region + "a"
 	subnet := &Subnet{SubnetID: subnetID, VpcID: vpcID, CidrBlock: cidr, AvailabilityZone: az, State: "available"}
 	if aerr := h.store.putSubnet(r.Context(), subnet); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 	h.publish(r, events.EC2SubnetCreated, events.ResourcePayload{Name: subnetID})
@@ -514,7 +567,7 @@ type xmlDeleteSubnetResponse struct {
 func (h *Handler) DeleteSubnet(w http.ResponseWriter, r *http.Request) {
 	subnetID := r.FormValue("SubnetId")
 	if subnetID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "SubnetId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -522,7 +575,7 @@ func (h *Handler) DeleteSubnet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if aerr := h.store.deleteSubnet(r.Context(), subnetID); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 	h.publish(r, events.EC2SubnetDeleted, events.ResourcePayload{Name: subnetID})
@@ -549,7 +602,7 @@ func (h *Handler) CreateSecurityGroup(w http.ResponseWriter, r *http.Request) {
 	desc := r.FormValue("GroupDescription")
 	vpcID := r.FormValue("VpcId")
 	if name == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "GroupName is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -568,7 +621,7 @@ func (h *Handler) CreateSecurityGroup(w http.ResponseWriter, r *http.Request) {
 		}},
 	}
 	if aerr := h.store.putSecurityGroup(r.Context(), sg); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 	h.publish(r, events.EC2SecurityGroupCreated, events.ResourcePayload{Name: name})
@@ -593,7 +646,7 @@ type xmlDeleteSGResponse struct {
 func (h *Handler) DeleteSecurityGroup(w http.ResponseWriter, r *http.Request) {
 	groupID := r.FormValue("GroupId")
 	if groupID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "GroupId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -601,7 +654,7 @@ func (h *Handler) DeleteSecurityGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if aerr := h.store.deleteSecurityGroup(r.Context(), groupID); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 	h.publish(r, events.EC2SecurityGroupDeleted, events.ResourcePayload{Name: groupID})

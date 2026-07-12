@@ -79,7 +79,7 @@ type xmlDisassociateRouteTableResponse struct {
 func (h *Handler) CreateRouteTable(w http.ResponseWriter, r *http.Request) {
 	vpcID := r.FormValue("VpcId")
 	if vpcID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "VpcId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -89,7 +89,7 @@ func (h *Handler) CreateRouteTable(w http.ResponseWriter, r *http.Request) {
 
 	vpc, aerr := h.store.getVPC(r.Context(), vpcID)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "InvalidVpcID.NotFound",
 			Message:    fmt.Sprintf("The vpc ID '%s' does not exist", vpcID),
 			HTTPStatus: http.StatusBadRequest,
@@ -110,7 +110,7 @@ func (h *Handler) CreateRouteTable(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	if aerr := h.store.putRouteTable(r.Context(), rt); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -136,7 +136,7 @@ func (h *Handler) DescribeRouteTables(w http.ResponseWriter, r *http.Request) {
 
 	all, aerr := h.store.listRouteTables(r.Context())
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -167,7 +167,7 @@ func (h *Handler) DescribeRouteTables(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) DeleteRouteTable(w http.ResponseWriter, r *http.Request) {
 	rtID := r.FormValue("RouteTableId")
 	if rtID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "RouteTableId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -177,14 +177,14 @@ func (h *Handler) DeleteRouteTable(w http.ResponseWriter, r *http.Request) {
 
 	rt, aerr := h.store.getRouteTable(r.Context(), rtID)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
 	// Cannot delete a main route table.
 	for _, assoc := range rt.Associations {
 		if assoc.Main {
-			protocol.WriteXMLError(w, r, &protocol.AWSError{
+			protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 				Code:       "DependencyViolation",
 				Message:    "The routeTable cannot be deleted because it is the main route table",
 				HTTPStatus: http.StatusBadRequest,
@@ -194,7 +194,7 @@ func (h *Handler) DeleteRouteTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if aerr := h.store.deleteRouteTable(r.Context(), rtID); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -214,7 +214,7 @@ func (h *Handler) CreateRoute(w http.ResponseWriter, r *http.Request) {
 	gatewayID := r.FormValue("GatewayId")
 
 	if rtID == "" || destCidr == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "RouteTableId and DestinationCidrBlock are required",
 			HTTPStatus: http.StatusBadRequest,
@@ -224,7 +224,7 @@ func (h *Handler) CreateRoute(w http.ResponseWriter, r *http.Request) {
 
 	rt, aerr := h.store.getRouteTable(r.Context(), rtID)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -235,7 +235,7 @@ func (h *Handler) CreateRoute(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if aerr := h.store.putRouteTable(r.Context(), rt); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -261,7 +261,7 @@ func (h *Handler) DeleteRoute(w http.ResponseWriter, r *http.Request) {
 	destCidr := r.FormValue("DestinationCidrBlock")
 
 	if rtID == "" || destCidr == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "RouteTableId and DestinationCidrBlock are required",
 			HTTPStatus: http.StatusBadRequest,
@@ -271,7 +271,7 @@ func (h *Handler) DeleteRoute(w http.ResponseWriter, r *http.Request) {
 
 	rt, aerr := h.store.getRouteTable(r.Context(), rtID)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -286,7 +286,7 @@ func (h *Handler) DeleteRoute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !found {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "InvalidRoute.NotFound",
 			Message:    fmt.Sprintf("no route with destination-cidr-block %s in route table %s", destCidr, rtID),
 			HTTPStatus: http.StatusBadRequest,
@@ -296,7 +296,7 @@ func (h *Handler) DeleteRoute(w http.ResponseWriter, r *http.Request) {
 
 	rt.Routes = routes
 	if aerr := h.store.putRouteTable(r.Context(), rt); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -315,7 +315,7 @@ func (h *Handler) AssociateRouteTable(w http.ResponseWriter, r *http.Request) {
 	subnetID := r.FormValue("SubnetId")
 
 	if rtID == "" || subnetID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "RouteTableId and SubnetId are required",
 			HTTPStatus: http.StatusBadRequest,
@@ -325,7 +325,7 @@ func (h *Handler) AssociateRouteTable(w http.ResponseWriter, r *http.Request) {
 
 	rt, aerr := h.store.getRouteTable(r.Context(), rtID)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -338,7 +338,7 @@ func (h *Handler) AssociateRouteTable(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if aerr := h.store.putRouteTable(r.Context(), rt); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -355,7 +355,7 @@ func (h *Handler) AssociateRouteTable(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) DisassociateRouteTable(w http.ResponseWriter, r *http.Request) {
 	assocID := r.FormValue("AssociationId")
 	if assocID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "AssociationId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -366,7 +366,7 @@ func (h *Handler) DisassociateRouteTable(w http.ResponseWriter, r *http.Request)
 	// Find the route table containing this association.
 	all, aerr := h.store.listRouteTables(r.Context())
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -375,7 +375,7 @@ func (h *Handler) DisassociateRouteTable(w http.ResponseWriter, r *http.Request)
 		for i, assoc := range rt.Associations {
 			if assoc.AssociationID == assocID {
 				if assoc.Main {
-					protocol.WriteXMLError(w, r, &protocol.AWSError{
+					protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 						Code:       "InvalidParameterValue",
 						Message:    "Cannot disassociate the main route table association",
 						HTTPStatus: http.StatusBadRequest,
@@ -384,7 +384,7 @@ func (h *Handler) DisassociateRouteTable(w http.ResponseWriter, r *http.Request)
 				}
 				rt.Associations = append(rt.Associations[:i], rt.Associations[i+1:]...)
 				if aerr := h.store.putRouteTable(r.Context(), rt); aerr != nil {
-					protocol.WriteXMLError(w, r, aerr)
+					protocol.WriteEC2QueryXMLError(w, r, aerr)
 					return
 				}
 				found = true
@@ -397,7 +397,7 @@ func (h *Handler) DisassociateRouteTable(w http.ResponseWriter, r *http.Request)
 	}
 
 	if !found {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "InvalidAssociationID.NotFound",
 			Message:    fmt.Sprintf("The association ID '%s' does not exist", assocID),
 			HTTPStatus: http.StatusBadRequest,

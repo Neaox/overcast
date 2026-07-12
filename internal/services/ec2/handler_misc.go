@@ -25,7 +25,7 @@ type xmlModifySubnetAttributeResponse struct {
 func (h *Handler) ModifySubnetAttribute(w http.ResponseWriter, r *http.Request) {
 	subnetID := r.FormValue("SubnetId")
 	if subnetID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "SubnetId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -34,7 +34,7 @@ func (h *Handler) ModifySubnetAttribute(w http.ResponseWriter, r *http.Request) 
 	}
 	// Validate subnet exists.
 	if _, aerr := h.store.getSubnet(r.Context(), subnetID); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 	// Attributes are metadata-only — acknowledge the change.
@@ -58,7 +58,7 @@ type xmlModifyVpcAttributeResponse struct {
 func (h *Handler) ModifyVpcAttribute(w http.ResponseWriter, r *http.Request) {
 	vpcID := r.FormValue("VpcId")
 	if vpcID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "VpcId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -67,7 +67,7 @@ func (h *Handler) ModifyVpcAttribute(w http.ResponseWriter, r *http.Request) {
 	}
 	// Validate VPC exists.
 	if _, aerr := h.store.getVPC(r.Context(), vpcID); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 	// DNS attributes are metadata-only — acknowledge the change.
@@ -98,7 +98,7 @@ func (h *Handler) DescribeVpcAttribute(w http.ResponseWriter, r *http.Request) {
 	vpcID := r.FormValue("VpcId")
 	attr := r.FormValue("Attribute")
 	if vpcID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "VpcId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -106,7 +106,7 @@ func (h *Handler) DescribeVpcAttribute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, aerr := h.store.getVPC(r.Context(), vpcID); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -221,7 +221,7 @@ func (h *Handler) CreateNetworkInterface(w http.ResponseWriter, r *http.Request)
 	subnetID := r.FormValue("SubnetId")
 	desc := r.FormValue("Description")
 	if subnetID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "SubnetId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -231,7 +231,7 @@ func (h *Handler) CreateNetworkInterface(w http.ResponseWriter, r *http.Request)
 
 	sub, aerr := h.store.getSubnet(r.Context(), subnetID)
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 	if vpc, aerr := h.store.getVPC(r.Context(), sub.VpcID); aerr == nil {
@@ -240,7 +240,7 @@ func (h *Handler) CreateNetworkInterface(w http.ResponseWriter, r *http.Request)
 			ns = vpcNetworkStatusOK
 		}
 		if ns == vpcNetworkStatusConflict {
-			protocol.WriteXMLError(w, r, &protocol.AWSError{
+			protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 				Code:       "InvalidVpc.NetworkStatus",
 				Message:    fmt.Sprintf("VPC %s has network status %q: cannot create network interface", sub.VpcID, ns),
 				HTTPStatus: http.StatusBadRequest,
@@ -265,7 +265,7 @@ func (h *Handler) CreateNetworkInterface(w http.ResponseWriter, r *http.Request)
 		MacAddress:         mac,
 	}
 	if aerr := h.store.putNetworkInterface(r.Context(), eni); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -298,7 +298,7 @@ type xmlDescribeNetworkInterfacesResponse struct {
 func (h *Handler) DescribeNetworkInterfaces(w http.ResponseWriter, r *http.Request) {
 	all, aerr := h.store.listNetworkInterfaces(r.Context())
 	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -349,7 +349,7 @@ type xmlDeleteNetworkInterfaceResponse struct {
 func (h *Handler) DeleteNetworkInterface(w http.ResponseWriter, r *http.Request) {
 	eniID := r.FormValue("NetworkInterfaceId")
 	if eniID == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "NetworkInterfaceId is required",
 			HTTPStatus: http.StatusBadRequest,
@@ -357,7 +357,7 @@ func (h *Handler) DeleteNetworkInterface(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if aerr := h.store.deleteNetworkInterface(r.Context(), eniID); aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDeleteNetworkInterfaceResponse{

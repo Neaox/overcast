@@ -45,6 +45,14 @@ type Service struct {
 	log     *serviceutil.ServiceLogger
 }
 
+type ec2ErrorCodec struct {
+	codec.Codec
+}
+
+func (c ec2ErrorCodec) WriteError(w http.ResponseWriter, r *http.Request, aerr *protocol.AWSError) {
+	protocol.WriteEC2QueryXMLError(w, r, aerr)
+}
+
 // New returns a configured EC2 Service.
 func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Clock) *Service {
 	log := serviceutil.NewServiceLogger(logger, serviceName)
@@ -132,22 +140,22 @@ func (s *Service) Stop(ctx context.Context) {
 func (s *Service) DispatchQuery(w http.ResponseWriter, r *http.Request) {
 	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {
 		if !codec.Supports(s.SupportedProtocols(), c) {
-			c.WriteError(w, r, &protocol.AWSError{
+			protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 				Code: "UnsupportedProtocol", Message: "EC2 does not support wire protocol " + c.Name() + ".",
 				HTTPStatus: http.StatusUnsupportedMediaType,
 			})
 			return
 		}
 		if typed, ok := s.handler.typedOp[opName]; ok {
-			typed.Invoke(w, r, c)
+			typed.Invoke(w, r, ec2ErrorCodec{Codec: c})
 			return
 		}
-		c.WriteError(w, r, protocol.ErrNotImplemented)
+		protocol.WriteEC2QueryXMLError(w, r, protocol.ErrNotImplemented)
 		return
 	}
 
 	if err := r.ParseForm(); err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInvalidArgument("invalid request form encoding"))
+		protocol.WriteEC2QueryXMLError(w, r, protocol.ErrInvalidArgument("invalid request form encoding"))
 		return
 	}
 	action := r.FormValue("Action")
@@ -155,5 +163,5 @@ func (s *Service) DispatchQuery(w http.ResponseWriter, r *http.Request) {
 		handler(w, r)
 		return
 	}
-	protocol.NotImplementedQueryXML(w, r)
+	protocol.NotImplementedEC2QueryXML(w, r)
 }
