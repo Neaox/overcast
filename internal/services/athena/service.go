@@ -148,10 +148,10 @@ func (s *athenaStore) deleteWorkGroup(ctx context.Context, name string) error {
 
 // Service implements router.Service and router.TargetDispatcher for Athena.
 type Service struct {
-	log   *serviceutil.ServiceLogger
-	store *athenaStore
-	cfg   *config.Config
-	clk   clock.Clock
+	log     *serviceutil.ServiceLogger
+	store   *athenaStore
+	cfg     *config.Config
+	clk     clock.Clock
 	ops     map[string]http.HandlerFunc
 	typedOp map[string]op.Operation
 }

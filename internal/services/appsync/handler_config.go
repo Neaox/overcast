@@ -178,7 +178,7 @@ func (h *Handler) ListDomainNames(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"domainNameConfigs": domains})
+	writeListJSON(w, r, "domainNameConfigs", domains)
 }
 
 // UpdateDomainName handles POST /v1/domainnames/{domainName}.

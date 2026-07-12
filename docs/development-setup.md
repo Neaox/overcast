@@ -128,7 +128,7 @@ Go installed.
 
 ```bash
 # Mac (Homebrew)
-brew install go         # 1.23+
+brew install go         # 1.24+
 brew install golangci-lint
 brew install go-task    # optional — make works on Mac/Linux
 
@@ -192,7 +192,7 @@ use `task` instead.
 
 ### Prerequisites
 
-1. [Go 1.23+](https://go.dev/dl/)
+1. [Go 1.24+](https://go.dev/dl/)
 2. [Task](https://taskfile.dev/installation/) — `scoop install task` or `winget install Task.Task`
 3. [golangci-lint](https://golangci-lint.run/usage/install/) — `scoop install golangci-lint`
 4. [Git for Windows](https://git-scm.com/download/win) — with "Use Unix-style line endings" (LF)

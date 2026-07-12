@@ -952,7 +952,7 @@ func (s *Service) HandleSignUpSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Hash password.
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := hashPassword(password)
 	if err != nil {
 		s.renderSignUpError(w, pool, params, "Internal error.")
 		return
@@ -1185,7 +1185,7 @@ func (s *Service) HandleNewPasswordSubmit(w http.ResponseWriter, r *http.Request
 		s.renderNewPasswordError(w, pool, params, session, aerr.Message)
 		return
 	}
-	hash, hashErr := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	hash, hashErr := hashPassword(newPassword)
 	if hashErr != nil {
 		s.renderNewPasswordError(w, pool, params, session, "Internal error.")
 		return
@@ -1715,7 +1715,7 @@ func (s *Service) HandleResetPasswordSubmit(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	hash, err := hashPassword(newPassword)
 	if err != nil {
 		renderRPErr("Internal error. Please try again.")
 		return

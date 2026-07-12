@@ -137,13 +137,6 @@ type updateStackResp struct {
 	Meta    cfnResponseMeta `xml:"ResponseMetadata"`
 }
 
-type deleteStackResp struct {
-	XMLName struct{}        `xml:"DeleteStackResponse"`
-	Xmlns   string          `xml:"xmlns,attr"`
-	Result  struct{}        `xml:"DeleteStackResult"`
-	Meta    cfnResponseMeta `xml:"ResponseMetadata"`
-}
-
 type describeStacksResp struct {
 	XMLName struct{}             `xml:"DescribeStacksResponse"`
 	Xmlns   string               `xml:"xmlns,attr"`
@@ -177,20 +170,6 @@ type describeChangeSetResp struct {
 	Xmlns   string                  `xml:"xmlns,attr"`
 	Result  describeChangeSetResult `xml:"DescribeChangeSetResult"`
 	Meta    cfnResponseMeta         `xml:"ResponseMetadata"`
-}
-
-type executeChangeSetResp struct {
-	XMLName struct{}        `xml:"ExecuteChangeSetResponse"`
-	Xmlns   string          `xml:"xmlns,attr"`
-	Result  struct{}        `xml:"ExecuteChangeSetResult"`
-	Meta    cfnResponseMeta `xml:"ResponseMetadata"`
-}
-
-type deleteChangeSetResp struct {
-	XMLName struct{}        `xml:"DeleteChangeSetResponse"`
-	Xmlns   string          `xml:"xmlns,attr"`
-	Result  struct{}        `xml:"DeleteChangeSetResult"`
-	Meta    cfnResponseMeta `xml:"ResponseMetadata"`
 }
 
 type listChangeSetsResp struct {
@@ -925,7 +904,7 @@ func typedCollectTags(members []cfnTagMember) []Tag {
 	tags := make([]Tag, 0, len(members))
 	for _, m := range members {
 		if m.Key != "" {
-			tags = append(tags, Tag{Key: m.Key, Value: m.Value})
+			tags = append(tags, Tag(m))
 		}
 	}
 	return tags

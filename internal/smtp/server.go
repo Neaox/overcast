@@ -124,10 +124,7 @@ func (s *Server) Serve(ctx context.Context) {
 		s.wg.Add(1)
 		go func() {
 			defer func() {
-				if r := recover(); r != nil {
-					// A connection handler must never crash the
-					// server. Log and move on.
-				}
+				_ = recover() // A connection handler must never crash the server.
 			}()
 			defer s.wg.Done()
 			defer func() { <-s.sema }() // release concurrency slot

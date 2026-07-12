@@ -11,7 +11,8 @@ name: Compatibility Tests
 #   • Release creation  (pre-release gate — results are attached to the release)
 #   • Manual dispatch   (ad-hoc, e.g. to test a fix branch)
 #
-# Runtime: ~3-4 minutes on ubuntu-latest (no Docker builds needed).
+# Runtime: ~3-4 minutes when prebuilt compat suite images are available. The
+# rust-sdk image job no-ops unless its exact hash is missing or inputs changed.
 
 on:
   push:
@@ -28,17 +29,110 @@ on:
         default: ""
 
 jobs:
+  rust-sdk-image:
+    name: Prepare rust-sdk compat image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Compute image tag
+        id: tag
+        run: |
+          TAG=$(compat/suites/rust-sdk/image-tag.sh)
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Computed rust-sdk compat image tag: ${TAG}"
+
+      - name: Detect rust-sdk image input changes
+        id: changes
+        run: |
+          changed=false
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            changed_files=$(git diff --name-only HEAD^1 HEAD)
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            before="${{ github.event.before }}"
+            head="${{ github.sha }}"
+            if [[ "$before" == "0000000000000000000000000000000000000000" ]]; then
+              changed_files=$(git ls-tree -r --name-only "$head")
+            else
+              changed_files=$(git diff --name-only "$before" "$head")
+            fi
+          else
+            changed_files=""
+          fi
+
+          while IFS= read -r path; do
+            case "$path" in
+              compat/suites/rust-sdk/*|compat/suites/registry.json|.github/workflows/compat.yml)
+                changed=true
+                break
+                ;;
+            esac
+          done <<< "$changed_files"
+
+          echo "changed=${changed}" >> "$GITHUB_OUTPUT"
+          echo "Rust SDK image inputs changed: ${changed}"
+
+      - name: Set lowercase image name
+        id: img
+        run: |
+          REPO_LC=$(tr '[:upper:]' '[:lower:]' <<< "${{ github.repository }}")
+          echo "image=ghcr.io/${REPO_LC}/rust-sdk-compat" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if image already exists
+        id: exists
+        if: github.event_name != 'pull_request'
+        run: |
+          if docker manifest inspect "${{ steps.img.outputs.image }}:${{ steps.tag.outputs.tag }}" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Exact rust-sdk compat image already exists."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Exact rust-sdk compat image is missing."
+          fi
+
+      - uses: docker/setup-buildx-action@v4.2.0
+        if: steps.changes.outputs.changed == 'true' || (github.event_name != 'pull_request' && steps.exists.outputs.exists != 'true')
+
+      - name: Build and maybe push image
+        if: steps.changes.outputs.changed == 'true' || (github.event_name != 'pull_request' && steps.exists.outputs.exists != 'true')
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: compat/suites
+          file: compat/suites/rust-sdk/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ steps.img.outputs.image }}:${{ steps.tag.outputs.tag }}
+            ${{ steps.img.outputs.image }}:latest
+          cache-from: type=gha,scope=rust-sdk-compat
+          cache-to: type=gha,mode=max,scope=rust-sdk-compat
+
   compat:
     name: Compatibility Tests
+    needs: rust-sdk-image
+    if: always()
     runs-on: ubuntu-latest
 
     steps:
       # ── Checkout ────────────────────────────────────────────────────────────
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.0
 
       # ── Go toolchain ────────────────────────────────────────────────────────
       # Cache key covers all go.sum files so sub-module deps are also cached.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: "1.24"
           cache: true
@@ -47,14 +141,17 @@ jobs:
             compat/suites/go-sdk/go.sum
 
       # ── Node.js toolchain ───────────────────────────────────────────────────
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6.4.0
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
-          cache-dependency-path: compat/suites/node-js-sdk/package-lock.json
+          cache-dependency-path: |
+            web/package-lock.json
+            compat/suites/node-js-sdk/package-lock.json
+            compat/suites/cdk/package-lock.json
 
       # ── Python toolchain ───────────────────────────────────────────────────
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6.3.0
         with:
           python-version: "3.11"
           cache: pip
@@ -65,6 +162,20 @@ jobs:
       - name: Install Node.js deps (node-js-sdk)
         run: npm ci
         working-directory: compat/suites/node-js-sdk
+
+      - name: Install Node.js deps (cdk)
+        run: npm ci
+        working-directory: compat/suites/cdk
+
+      - name: Type check cdk suite
+        run: npm run typecheck
+        working-directory: compat/suites/cdk
+
+      # cmd/overcast embeds web/dist at compile time. Build the SPA before any
+      # Go command that imports the module root, including cmd/compat.
+      - name: Build web assets
+        run: npm ci && VITE_BUNDLED=true npm run build
+        working-directory: web
 
       # python-sdk: install boto3 / botocore
       - name: Install Python deps (python-sdk)
@@ -108,15 +219,15 @@ jobs:
           # Save structured results for the artifact upload step.
           OVERCAST_COMPAT_RESULTS_FILE: compat-results.json
         run: |
-          SUITE_FLAG=""
+          args=(
+            --endpoint http://localhost:4566
+            --format pretty
+            --results-file compat-results.json
+          )
           if [[ -n "${{ github.event.inputs.suite }}" ]]; then
-            SUITE_FLAG="--suite ${{ github.event.inputs.suite }}"
+            args+=(--suite "${{ github.event.inputs.suite }}")
           fi
-          go run ./cmd/compat \
-            --endpoint http://localhost:4566 \
-            --format pretty \
-            --results-file compat-results.json \
-            $SUITE_FLAG
+          go run ./cmd/compat "${args[@]}"
 
       # ── Stop Overcast ──────────────────────────────────────────────────────
       - name: Stop Overcast
@@ -130,11 +241,12 @@ jobs:
       # The JSON results file is uploaded on every run (pass or fail) so
       # engineers can download and inspect it even when compat tests fail.
       - name: Upload compat results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: compat-results-${{ github.sha }}
           path: compat-results.json
+          if-no-files-found: error
           retention-days: 90
 
       # ── Attach to release ──────────────────────────────────────────────────
@@ -142,7 +254,7 @@ jobs:
       # JSON to the release assets so it is available from the release page.
       - name: Attach results to release
         if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: compat-results.json
 
@@ -163,23 +275,25 @@ jobs:
 
           out = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout")
           with open(out, "a") as f:
-              suites = data.get("suites", [])
-              f.write("| Suite | Pass | Fail | NA | Total |\n")
-              f.write("| ----- | ---: | ---: | --: | ----: |\n")
-              total_pass = total_fail = total_na = total_all = 0
+              suites = data.get("Suites", [])
+              f.write("| Suite | Pass | Fail | Unimplemented | Skip | Total |\n")
+              f.write("| ----- | ---: | ---: | ------------: | ---: | ----: |\n")
+              total_pass = total_fail = total_unimplemented = total_skip = total_all = 0
               for s in suites:
-                  p = s.get("pass", 0)
-                  fa = s.get("fail", 0)
-                  na = s.get("na", 0)
-                  tot = p + fa + na
-                  f.write(f"| {s['name']} | {p} | {fa} | {na} | {tot} |\n")
-                  total_pass += p; total_fail += fa; total_na += na; total_all += tot
-              f.write(f"| **Total** | **{total_pass}** | **{total_fail}** | **{total_na}** | **{total_all}** |\n")
+                  p = s.get("Passed", 0)
+                  fa = s.get("Failed", 0)
+                  un = s.get("Unimplemented", 0)
+                  sk = s.get("Skipped", 0)
+                  tot = p + fa + un + sk
+                  f.write(f"| {s['Suite']} | {p} | {fa} | {un} | {sk} | {tot} |\n")
+                  total_pass += p; total_fail += fa; total_unimplemented += un; total_skip += sk; total_all += tot
+              f.write(f"| **Total** | **{total_pass}** | **{total_fail}** | **{total_unimplemented}** | **{total_skip}** | **{total_all}** |\n")
               f.write("\n")
-              endpoint = data.get("endpoint", "")
+              endpoint = data.get("Endpoint", "")
               if endpoint:
                   f.write(f"Endpoint: `{endpoint}`\n")
           EOF
           else
             echo "_compat-results.json not found — Overcast may have failed to start._" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi

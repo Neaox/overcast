@@ -148,7 +148,7 @@ function estimateRowHeight(msg: string, formatted: boolean): number {
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
   const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(text).then(() => {
+    void navigator.clipboard.writeText(text).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     })
@@ -388,7 +388,6 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
               {virtualizer.getVirtualItems().map((virtualRow) => {
                 const evt = events[virtualRow.index]
                 const meta = rowMeta[virtualRow.index]
-                if (!evt || !meta) return null
                 return (
                   <div
                     key={virtualRow.key}

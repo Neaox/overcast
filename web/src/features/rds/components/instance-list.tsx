@@ -56,7 +56,7 @@ export function InstanceList() {
     options: createInstanceMutationOptions(),
     invalidateKeys: [rdsKeys.instances()],
     successTitle: "DB instance created",
-    successDescription: (opts) => opts.DBInstanceIdentifier ?? "",
+    successDescription: (opts) => opts.DBInstanceIdentifier,
     onSuccess: () => setShowCreate(false),
   })
 

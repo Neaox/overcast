@@ -2,7 +2,7 @@ service: sqs
 status: in_progress
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-19
+last_updated: 2026-05-22
 protocols:
   - aws_json_1_0
   - query
@@ -64,6 +64,11 @@ operations:
         tests:
           - tests/integration/sqs/sqs_test.go
         notes: MaxNumberOfMessages rejects explicit values outside 1..10 for JSON and Query; WaitTimeSeconds rejects explicit values outside 0..20.
+      - name: malformed persisted queue or message record
+        status: fixed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: Malformed emulator state records are isolated; list/receive skips malformed scanned records, and a malformed targeted queue is treated as non-existent instead of returning InternalError.
     evidence:
       - AWS docs state WaitTimeSeconds long polling returns no message list when no messages are available, not an error.
       - AWS API Reference documents MaxNumberOfMessages valid values as 1 to 10 and default 1.
@@ -80,6 +85,7 @@ findings:
     - The documented behavior is an HTTP 200 response with no messages when no messages become available before the wait expires.
     - Empty JSON receives now omit the Messages member, and empty Query receives are covered by XML shape tests.
     - Explicit MaxNumberOfMessages outside 1..10 and WaitTimeSeconds outside 0..20 now return InvalidParameterValue instead of silently clamping or accepting the request.
+    - Malformed persisted queue/message records no longer make ListQueues or ReceiveMessage return InternalError for unrelated usable queues.
   remaining_gaps:
     - Review ReceiveRequestAttemptId behavior for FIFO queues.
     - Review VisibilityTimeout validation and in-flight semantics.

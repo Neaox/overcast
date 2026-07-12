@@ -26,21 +26,21 @@ function humanizeRule(rule: unknown): string {
   if (rule === null) return "null"
   if (typeof rule === "string") return rule === "" ? '""' : rule
   if (typeof rule === "number" || typeof rule === "boolean") return String(rule)
-  if (typeof rule === "object" && rule !== null) {
+  if (typeof rule === "object") {
     const obj = rule as Record<string, unknown>
-    if ("prefix" in obj) return `starts with "${obj.prefix}"`
-    if ("suffix" in obj) return `ends with "${obj.suffix}"`
-    if ("equals-ignore-case" in obj) return `≈ "${obj["equals-ignore-case"]}"`
+    if ("prefix" in obj) return `starts with "${String(obj.prefix)}"`
+    if ("suffix" in obj) return `ends with "${String(obj.suffix)}"`
+    if ("equals-ignore-case" in obj) return `≈ "${String(obj["equals-ignore-case"])}"`
     if ("exists" in obj) return obj.exists ? "exists" : "not exists"
     if ("anything-but" in obj) {
       const ab = obj["anything-but"]
       if (Array.isArray(ab)) return `≠ ${ab.map(String).join(" | ")}`
-      return `≠ "${ab}"`
+      return `≠ "${String(ab)}"`
     }
     if ("numeric" in obj) {
       const ops = obj.numeric as unknown[]
-      if (ops.length === 2) return `${ops[0]} ${ops[1]}`
-      if (ops.length >= 4) return `${ops[0]} ${ops[1]} and ${ops[2]} ${ops[3]}`
+      if (ops.length === 2) return `${String(ops[0])} ${String(ops[1])}`
+      if (ops.length >= 4) return `${String(ops[0])} ${String(ops[1])} and ${String(ops[2])} ${String(ops[3])}`
     }
   }
   return JSON.stringify(rule)

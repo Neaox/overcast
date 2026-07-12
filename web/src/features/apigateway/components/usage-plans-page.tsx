@@ -64,10 +64,10 @@ function PlanKeys({ planId, planName }: { planId: string; planName: string }) {
       <div className="mb-3 text-sm font-medium text-fg-muted">
         API Keys for <span className="font-semibold text-fg">{planName}</span>
       </div>
-      {isLoading || keys.length === 0 ? (
+      {keys.length === 0 ? (
         <QueryListState
           isLoading={isLoading}
-          isEmpty={keys.length === 0}
+          isEmpty
           error={error}
           loadingClassName="py-4"
           emptyTitle="No keys associated with this plan."
@@ -163,7 +163,7 @@ export function UsagePlansPage({
   // When filtering and exactly one plan matches, auto-expand it.
   if (apiIdFilter && !expandedPlanId && plans.length === 1) {
     // Defer to next render via state setter to avoid setState during render.
-    queueMicrotask(() => setExpandedPlanId(plans[0]!.id))
+    queueMicrotask(() => setExpandedPlanId(plans[0].id))
   }
 
   const createMut = useMutation({

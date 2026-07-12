@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { Link, useRouterState } from "@tanstack/react-router"
 import {
   ChevronLeft,
@@ -27,6 +28,8 @@ import {
 import { CSS } from "@dnd-kit/utilities"
 import { cn } from "@/lib/utils"
 import { useFavourites } from "@/hooks/use-favourites"
+import { inboxMessagesQueryOptions } from "@/features/mail/data"
+import { useInboxReadState } from "@/features/mail/read-state"
 import {
   ALL_SERVICES,
   DASHBOARD_ITEM,
@@ -220,10 +223,12 @@ function NavItemContent({
                 if (isGroup(child)) {
                   return (
                     <div key={child.group}>
-                      <p className={cn(
-                        "px-2 text-[10px] font-semibold uppercase tracking-wider text-sidebar-fg/40",
-                        i > 0 ? "mt-2 pb-0.5" : "pb-0.5",
-                      )}>
+                      <p
+                        className={cn(
+                          "px-2 text-[10px] font-semibold tracking-wider text-sidebar-fg/40 uppercase pb-0.5",
+                          i > 0 && "mt-2",
+                        )}
+                      >
                         {child.group}
                       </p>
                       {child.items.map(renderItem)}
@@ -269,6 +274,8 @@ export function Sidebar() {
   const { favourites, reorderFavourites } = useFavourites()
   const router = useRouterState()
   const pathname = router.location.pathname
+  const { data: inboxMessages = [] } = useQuery(inboxMessagesQueryOptions())
+  const { unreadCount } = useInboxReadState(inboxMessages)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
 
@@ -393,12 +400,13 @@ export function Sidebar() {
       <nav className="shrink-0 border-t border-sidebar-fg/10 py-2">
         {BOTTOM_ITEMS.map(({ to, label, icon: Icon, color }) => {
           const active = pathname.startsWith(to)
+          const badgeCount = to === "/inbox" ? unreadCount : 0
           return (
             <Link
               key={to}
               to={to}
               className={cn(
-                "mx-2 my-0.5 flex h-8 items-center gap-2.5 rounded-md px-2 text-sm font-medium transition-colors",
+                "relative mx-2 my-0.5 flex h-8 items-center gap-2.5 rounded-md px-2 text-sm font-medium transition-colors",
                 active
                   ? "bg-sidebar-item-active text-sidebar-item-active-fg"
                   : "text-sidebar-fg hover:bg-sidebar-item-hover hover:text-sidebar-fg-strong",
@@ -408,6 +416,20 @@ export function Sidebar() {
             >
               <Icon className={cn("h-4 w-4 shrink-0", active ? "text-fg-on-accent" : color)} />
               {!collapsed && <span>{label}</span>}
+              {badgeCount > 0 && (
+                <span
+                  className={cn(
+                    "ml-auto min-w-5 rounded-full px-1.5 py-0.5 text-center text-[10px] leading-none font-semibold tabular-nums",
+                    active
+                      ? "bg-sidebar-item-active-fg/20 text-sidebar-item-active-fg"
+                      : "bg-amber-400 text-black",
+                    collapsed && "absolute -top-1 -right-1 ml-0",
+                  )}
+                  aria-label={`${badgeCount} unread inbox message${badgeCount === 1 ? "" : "s"}`}
+                >
+                  {badgeCount > 99 ? "99+" : badgeCount}
+                </span>
+              )}
             </Link>
           )
         })}

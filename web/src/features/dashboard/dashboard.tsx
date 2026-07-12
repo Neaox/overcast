@@ -156,8 +156,8 @@ export function Dashboard() {
         <p className="mt-6 text-center text-xs text-fg-subtle">
           Emulator {data.version} &middot;{" "}
           {ALL_SERVICES.filter((s) => enabledSet.has(s.name)).length} of {ALL_SERVICES.length}{" "}
-          services enabled &middot; storage: {data.storage?.default ?? "memory"}
-          {data.storage?.serviceOverrides &&
+          services enabled &middot; storage: {data.storage.default}
+          {data.storage.serviceOverrides &&
             Object.keys(data.storage.serviceOverrides).length > 0 && (
               <Tooltip
                 content={

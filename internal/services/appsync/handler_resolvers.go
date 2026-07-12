@@ -53,8 +53,12 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if fn.Name == "" {
+	if !validAppSyncName(fn.Name) {
 		protocol.WriteJSONError(w, r, badRequestError("name is required"))
+		return
+	}
+	if !validAppSyncName(fn.DataSourceName) {
+		protocol.WriteJSONError(w, r, badRequestError("dataSourceName is required"))
 		return
 	}
 
@@ -72,7 +76,7 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, r, http.StatusCreated, map[string]any{"functionConfiguration": &fn})
+	writeJSON(w, r, http.StatusOK, map[string]any{"functionConfiguration": &fn})
 }
 
 // GetFunction handles GET /v1/apis/{apiId}/functions/{functionId}.
@@ -109,7 +113,7 @@ func (h *Handler) ListFunctions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"functions": fns})
+	writeListJSON(w, r, "functions", fns)
 }
 
 // UpdateFunction handles POST /v1/apis/{apiId}/functions/{functionId}.
@@ -183,8 +187,16 @@ func (h *Handler) CreateResolver(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if res.FieldName == "" {
+	if !validAppSyncName(typeName) {
+		protocol.WriteJSONError(w, r, badRequestError("typeName is invalid"))
+		return
+	}
+	if !validAppSyncName(res.FieldName) {
 		protocol.WriteJSONError(w, r, badRequestError("fieldName is required"))
+		return
+	}
+	if res.Kind != "" && !containsString([]string{"UNIT", "PIPELINE"}, res.Kind) {
+		protocol.WriteJSONError(w, r, badRequestError("kind is invalid"))
 		return
 	}
 
@@ -216,7 +228,7 @@ func (h *Handler) CreateResolver(w http.ResponseWriter, r *http.Request) {
 
 	h.publish(r, events.AppSyncResolverCreated, events.ResourcePayload{Name: res.FieldName, ARN: res.ResolverArn})
 
-	writeJSON(w, r, http.StatusCreated, map[string]any{"resolver": &res})
+	writeJSON(w, r, http.StatusOK, map[string]any{"resolver": &res})
 }
 
 // GetResolver handles GET /v1/apis/{apiId}/types/{typeName}/resolvers/{fieldName}.
@@ -256,7 +268,7 @@ func (h *Handler) ListResolvers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"resolvers": resolvers})
+	writeListJSON(w, r, "resolvers", resolvers)
 }
 
 // UpdateResolver handles POST /v1/apis/{apiId}/types/{typeName}/resolvers/{fieldName}.
@@ -345,7 +357,7 @@ func (h *Handler) ListResolversByFunction(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"resolvers": matching})
+	writeListJSON(w, r, "resolvers", matching)
 }
 
 // pipelineContainsFunction checks if a PipelineConfig's functions array contains

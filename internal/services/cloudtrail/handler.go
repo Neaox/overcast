@@ -32,15 +32,15 @@ func newHandler(cfg *config.Config, store state.Store, log *serviceutil.ServiceL
 
 func (h *Handler) initOps() {
 	h.ops = map[string]http.HandlerFunc{
-		"CreateTrail":     h.createTrail,
-		"DescribeTrails":  h.describeTrails,
-		"UpdateTrail":     h.updateTrail,
-		"DeleteTrail":     h.deleteTrail,
-		"ListTrails":      h.listTrails,
-		"GetTrailStatus":  h.getTrailStatus,
-		"StartLogging":    h.startLogging,
-		"StopLogging":     h.stopLogging,
-		"LookupEvents":    h.lookupEvents,
+		"CreateTrail":    h.createTrail,
+		"DescribeTrails": h.describeTrails,
+		"UpdateTrail":    h.updateTrail,
+		"DeleteTrail":    h.deleteTrail,
+		"ListTrails":     h.listTrails,
+		"GetTrailStatus": h.getTrailStatus,
+		"StartLogging":   h.startLogging,
+		"StopLogging":    h.stopLogging,
+		"LookupEvents":   h.lookupEvents,
 	}
 	h.typedOp = h.typedOps()
 }

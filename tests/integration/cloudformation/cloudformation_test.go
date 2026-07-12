@@ -43,6 +43,44 @@ func readBody(t *testing.T, resp *http.Response) []byte {
 	return b
 }
 
+func sqsJSONCall(t *testing.T, srv *helpers.TestServer, action string, body map[string]any) *http.Response {
+	t.Helper()
+	return awsJSONCall(t, srv, "AmazonSQS.", action, "application/x-amz-json-1.0", body)
+}
+
+func cognitoJSONCall(t *testing.T, srv *helpers.TestServer, action string, body map[string]any) *http.Response {
+	t.Helper()
+	return awsJSONCall(t, srv, "AWSCognitoIdentityProviderService.", action, "application/x-amz-json-1.1", body)
+}
+
+func awsJSONCall(t *testing.T, srv *helpers.TestServer, targetPrefix, action, contentType string, body map[string]any) *http.Response {
+	t.Helper()
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal %s body: %v", action, err)
+	}
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/", bytes.NewReader(b))
+	if err != nil {
+		t.Fatalf("build %s request: %v", action, err)
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("X-Amz-Target", targetPrefix+action)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s: %v", action, err)
+	}
+	return resp
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 const minimalTemplate = `{"AWSTemplateFormatVersion":"2010-09-09","Description":"compat test","Resources":{}}`
 
 // ─── CreateStack ──────────────────────────────────────────────────────────────
@@ -460,6 +498,210 @@ func TestCreateStack_GetAttResolution(t *testing.T) {
 	if !strings.Contains(body, "getatt-test-bucket.s3.amazonaws.com") {
 		t.Errorf("expected S3 domain name in output, got: %s", body)
 	}
+}
+
+const sqsQueueOutputTemplate = `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "EventQueue": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {}
+    }
+  },
+  "Outputs": {
+    "EventQueueUrl": {
+      "Value": { "Ref": "EventQueue" }
+    },
+    "EventQueueArn": {
+      "Value": { "Fn::GetAtt": ["EventQueue", "Arn"] }
+    }
+  }
+}`
+
+func TestCreateStack_SQSQueueRefOutputIsUsableQueueURL(t *testing.T) {
+	// Given: a CloudFormation stack with a generated-name SQS queue.
+	srv := helpers.NewTestServer(t, helpers.WithRegion("ap-southeast-2"), helpers.WithHostname("localhost.localstack.cloud"))
+	cr := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"sqs-output-stack"},
+		"TemplateBody": []string{sqsQueueOutputTemplate},
+	})
+	defer cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	waitForStackStatus(t, srv, "sqs-output-stack", "CREATE_COMPLETE")
+
+	// When: stack outputs and SQS APIs are queried from outside CloudFormation.
+	desc := cfnQuery(t, srv, "DescribeStacks", url.Values{
+		"StackName": []string{"sqs-output-stack"},
+	})
+	defer desc.Body.Close()
+	body := string(readBody(t, desc))
+	queueURL := srv.Config.ExternalBaseURL() + "/000000000000/sqs-output-stack-Queue"
+
+	list := sqsJSONCall(t, srv, "ListQueues", map[string]any{})
+	defer list.Body.Close()
+	receive := sqsJSONCall(t, srv, "ReceiveMessage", map[string]any{"QueueUrl": queueURL})
+	defer receive.Body.Close()
+
+	// Then: Ref resolves to the usable queue URL, GetAtt Arn remains an ARN, and
+	// the externally visible SQS APIs operate without internal errors.
+	if !strings.Contains(body, queueURL) {
+		t.Fatalf("expected SQS Ref output to contain queue URL %q, got: %s", queueURL, body)
+	}
+	if !strings.Contains(body, "arn:aws:sqs:ap-southeast-2:000000000000:sqs-output-stack-Queue") {
+		t.Fatalf("expected SQS Arn output, got: %s", body)
+	}
+	helpers.AssertStatus(t, list, http.StatusOK)
+	var queues struct {
+		QueueUrls []string `json:"QueueUrls"`
+	}
+	helpers.DecodeJSON(t, list, &queues)
+	if !contains(queues.QueueUrls, queueURL) {
+		t.Fatalf("expected ListQueues to include %q, got %#v", queueURL, queues.QueueUrls)
+	}
+	helpers.AssertStatus(t, receive, http.StatusOK)
+	var received map[string]json.RawMessage
+	helpers.DecodeJSON(t, receive, &received)
+	if _, ok := received["Messages"]; ok {
+		t.Fatalf("expected empty ReceiveMessage response to omit Messages, got %#v", received)
+	}
+}
+
+const sqsFIFOQueueTemplate = `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "EventQueue": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {"FifoQueue": true}
+    }
+  },
+  "Outputs": {
+    "EventQueueUrl": {"Value": {"Ref": "EventQueue"}},
+    "EventQueueArn": {"Value": {"Fn::GetAtt": ["EventQueue", "Arn"]}}
+  }
+}`
+
+func TestCreateStack_SQSFIFOQueueGeneratedName(t *testing.T) {
+	// Given: a CloudFormation stack with a generated-name FIFO SQS queue.
+	srv := helpers.NewTestServer(t, helpers.WithRegion("ap-southeast-2"), helpers.WithHostname("localhost.localstack.cloud"))
+	cr := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"sqs-fifo-stack"},
+		"TemplateBody": []string{sqsFIFOQueueTemplate},
+	})
+	defer cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	waitForStackStatus(t, srv, "sqs-fifo-stack", "CREATE_COMPLETE")
+	queueURL := srv.Config.ExternalBaseURL() + "/000000000000/sqs-fifo-stack-Queue.fifo"
+
+	// When: external SQS APIs inspect the created queue.
+	attrs := sqsJSONCall(t, srv, "GetQueueAttributes", map[string]any{
+		"QueueUrl":       queueURL,
+		"AttributeNames": []string{"All"},
+	})
+	defer attrs.Body.Close()
+	receive := sqsJSONCall(t, srv, "ReceiveMessage", map[string]any{
+		"QueueUrl":        queueURL,
+		"WaitTimeSeconds": 0,
+	})
+	defer receive.Body.Close()
+
+	// Then: the generated physical name is FIFO-compatible and the queue behaves
+	// like a FIFO queue from outside CloudFormation.
+	helpers.AssertStatus(t, attrs, http.StatusOK)
+	var result struct {
+		Attributes map[string]string `json:"Attributes"`
+	}
+	helpers.DecodeJSON(t, attrs, &result)
+	if result.Attributes["FifoQueue"] != "true" {
+		t.Fatalf("expected FifoQueue=true, got %#v", result.Attributes)
+	}
+	if !strings.Contains(result.Attributes["QueueArn"], ":sqs-fifo-stack-Queue.fifo") {
+		t.Fatalf("expected FIFO queue ARN, got %#v", result.Attributes)
+	}
+	helpers.AssertStatus(t, receive, http.StatusOK)
+}
+
+const cognitoUserPoolTemplate = `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "SmsRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{"Effect": "Allow", "Principal": {"Service": "cognito-idp.amazonaws.com"}, "Action": "sts:AssumeRole"}]
+        }
+      }
+    },
+    "UserPool": {
+      "Type": "AWS::Cognito::UserPool",
+      "Properties": {
+        "UserPoolName": "identity-user-pool",
+        "UsernameAttributes": ["email"],
+        "Schema": [{"Name": "email", "Required": true, "Mutable": true}],
+        "MfaConfiguration": "OPTIONAL",
+        "EnabledMfas": ["SMS_MFA", "SOFTWARE_TOKEN_MFA"],
+        "SmsConfiguration": {"SnsCallerArn": {"Fn::GetAtt": ["SmsRole", "Arn"]}}
+      }
+    },
+    "UserPoolClient": {
+      "Type": "AWS::Cognito::UserPoolClient",
+      "Properties": {
+        "UserPoolId": {"Ref": "UserPool"},
+        "ClientName": "identity-service-client"
+      }
+    }
+  },
+  "Outputs": {
+    "UserPoolId": {"Value": {"Ref": "UserPool"}},
+    "UserPoolClientId": {"Value": {"Ref": "UserPoolClient"}}
+  }
+}`
+
+func TestCreateStack_CognitoUserPoolApisAfterCDKLikeDeploy(t *testing.T) {
+	// Given: a CDK-like Cognito stack with username attributes and MFA settings.
+	srv := helpers.NewTestServer(t, helpers.WithRegion("ap-southeast-2"))
+	cr := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"identity-data-stack"},
+		"TemplateBody": []string{cognitoUserPoolTemplate},
+	})
+	defer cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	waitForStackStatus(t, srv, "identity-data-stack", "CREATE_COMPLETE")
+
+	// When: external Cognito APIs use the CloudFormation-created resources.
+	listPools := cognitoJSONCall(t, srv, "ListUserPools", map[string]any{"MaxResults": 10})
+	defer listPools.Body.Close()
+
+	// Then: ListUserPools exposes the deployed pool instead of returning InternalError.
+	helpers.AssertStatus(t, listPools, http.StatusOK)
+	var pools struct {
+		UserPools []struct {
+			Id string `json:"Id"`
+		} `json:"UserPools"`
+	}
+	helpers.DecodeJSON(t, listPools, &pools)
+	if len(pools.UserPools) != 1 || pools.UserPools[0].Id == "" {
+		t.Fatalf("expected one Cognito user pool, got %#v", pools.UserPools)
+	}
+	poolID := pools.UserPools[0].Id
+
+	describe := cognitoJSONCall(t, srv, "DescribeUserPool", map[string]any{"UserPoolId": poolID})
+	defer describe.Body.Close()
+	clients := cognitoJSONCall(t, srv, "ListUserPoolClients", map[string]any{"UserPoolId": poolID, "MaxResults": 10})
+	defer clients.Body.Close()
+	createUser := cognitoJSONCall(t, srv, "AdminCreateUser", map[string]any{
+		"UserPoolId":    poolID,
+		"Username":      "overcast-repro@example.test",
+		"MessageAction": "SUPPRESS",
+		"UserAttributes": []map[string]string{
+			{"Name": "email", "Value": "overcast-repro@example.test"},
+		},
+	})
+	defer createUser.Body.Close()
+
+	helpers.AssertStatus(t, describe, http.StatusOK)
+	helpers.AssertStatus(t, clients, http.StatusOK)
+	helpers.AssertStatus(t, createUser, http.StatusOK)
 }
 
 // ─── DeleteStack cleans up EC2 resources ────────────────────────────────────

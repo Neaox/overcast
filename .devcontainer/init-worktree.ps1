@@ -13,4 +13,4 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($wslPath)) {
 $wslPath = $wslPath.Trim()
 
 # Run the existing init script inside WSL bash.
-wsl bash -lc "cd '$wslPath' && bash .devcontainer/init-worktree.sh"
+& wsl --cd "$wslPath" bash .devcontainer/init-worktree.sh

@@ -1344,7 +1344,7 @@ func fmtPropInt(props map[string]any, key string) int64 {
 	case string:
 		if x != "" {
 			var i int64
-			fmt.Sscanf(x, "%d", &i)
+			_, _ = fmt.Sscanf(x, "%d", &i)
 			return i
 		}
 	}

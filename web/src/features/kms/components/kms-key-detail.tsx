@@ -152,7 +152,7 @@ export function KmsKeyDetail({ keyId }: Props) {
           <DetailRow label="Key manager" value={key.metadata?.KeyManager} />
           <DetailRow label="Created" value={formatDate(key.metadata?.CreationDate)} />
           {key.metadata?.DeletionDate && (
-            <DetailRow label="Scheduled deletion" value={formatDate(key.metadata?.DeletionDate)} />
+            <DetailRow label="Scheduled deletion" value={formatDate(key.metadata.DeletionDate)} />
           )}
         </CardContent>
       </Card>

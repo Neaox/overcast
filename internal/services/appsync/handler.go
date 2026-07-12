@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -118,6 +119,72 @@ func containsString(values []string, value string) bool {
 	return false
 }
 
+func validAppSyncName(name string) bool {
+	if name == "" || len(name) > 65536 {
+		return false
+	}
+	first := name[0]
+	if first != '_' && (first < 'A' || first > 'Z') && (first < 'a' || first > 'z') {
+		return false
+	}
+	for i := 1; i < len(name); i++ {
+		c := name[i]
+		if c != '_' && (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') && (c < '0' || c > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func paginateList[T any](r *http.Request, items []T, maxDefault int) ([]T, string, *protocol.AWSError) {
+	q := r.URL.Query()
+	start := 0
+	if token := q.Get("nextToken"); token != "" {
+		parsed, err := strconv.Atoi(token)
+		if err != nil || parsed < 0 || parsed > len(items) {
+			return nil, "", badRequestError("nextToken is invalid.")
+		}
+		start = parsed
+	}
+
+	max := maxDefault
+	if raw := q.Get("maxResults"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 || parsed > 25 {
+			return nil, "", badRequestError("maxResults must be between 0 and 25.")
+		}
+		max = parsed
+	}
+	if max < 0 || max > len(items) {
+		max = len(items)
+	}
+	if start > len(items) {
+		start = len(items)
+	}
+	end := start + max
+	if end > len(items) {
+		end = len(items)
+	}
+	next := ""
+	if end < len(items) {
+		next = strconv.Itoa(end)
+	}
+	return items[start:end], next, nil
+}
+
+func writeListJSON[T any](w http.ResponseWriter, r *http.Request, field string, items []T) {
+	page, next, aerr := paginateList(r, items, len(items))
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	body := map[string]any{field: page}
+	if next != "" {
+		body["nextToken"] = next
+	}
+	writeJSON(w, r, http.StatusOK, body)
+}
+
 // requireAPI loads an API by ID from the URL, writing 404 on miss.
 func (h *Handler) requireAPI(w http.ResponseWriter, r *http.Request) (*GraphqlAPI, bool) {
 	apiID := chi.URLParam(r, "apiId")
@@ -209,12 +276,12 @@ func (h *Handler) CreateGraphqlApi(w http.ResponseWriter, r *http.Request) {
 
 	// Generate synthetic URIs matching the real AWS format.
 	api.Uris = map[string]string{
-		"GRAPHQL":  fmt.Sprintf("https://%s.appsync-api.%s.amazonaws.com/graphql", apiID, h.cfg.Region),
-		"REALTIME": fmt.Sprintf("wss://%s.appsync-realtime-api.%s.amazonaws.com/graphql", apiID, h.cfg.Region),
+		"GRAPHQL":  fmt.Sprintf("https://%s.appsync-api.%s.amazonaws.com/graphql", apiID, h.region(r)),
+		"REALTIME": fmt.Sprintf("wss://%s.appsync-realtime-api.%s.amazonaws.com/graphql", apiID, h.region(r)),
 	}
 	api.Dns = map[string]string{
-		"GRAPHQL":  fmt.Sprintf("%s.appsync-api.%s.amazonaws.com", apiID, h.cfg.Region),
-		"REALTIME": fmt.Sprintf("%s.appsync-realtime-api.%s.amazonaws.com", apiID, h.cfg.Region),
+		"GRAPHQL":  fmt.Sprintf("%s.appsync-api.%s.amazonaws.com", apiID, h.region(r)),
+		"REALTIME": fmt.Sprintf("%s.appsync-realtime-api.%s.amazonaws.com", apiID, h.region(r)),
 	}
 
 	if err := h.store.PutAPI(r.Context(), &api); err != nil {
@@ -261,7 +328,30 @@ func (h *Handler) ListGraphqlApis(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"graphqlApis": apis})
+	apiType := r.URL.Query().Get("apiType")
+	if apiType != "" && !containsString([]string{"GRAPHQL", "MERGED"}, apiType) {
+		protocol.WriteJSONError(w, r, badRequestError("apiType is invalid."))
+		return
+	}
+	owner := r.URL.Query().Get("owner")
+	if owner != "" && !containsString([]string{"CURRENT_ACCOUNT", "OTHER_ACCOUNTS"}, owner) {
+		protocol.WriteJSONError(w, r, badRequestError("owner is invalid."))
+		return
+	}
+	filtered := make([]*GraphqlAPI, 0, len(apis))
+	for _, api := range apis {
+		if apiType != "" && api.ApiType != apiType {
+			continue
+		}
+		if owner == "CURRENT_ACCOUNT" && api.Owner != h.cfg.AccountID {
+			continue
+		}
+		if owner == "OTHER_ACCOUNTS" && api.Owner == h.cfg.AccountID {
+			continue
+		}
+		filtered = append(filtered, api)
+	}
+	writeListJSON(w, r, "graphqlApis", filtered)
 }
 
 // ─── UpdateGraphqlApi ────────────────────────────────────────────────────────

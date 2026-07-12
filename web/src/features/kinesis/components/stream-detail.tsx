@@ -116,7 +116,7 @@ export function StreamDetail({ streamName }: Props) {
     if (stream?.retentionHours !== undefined) {
       retentionForm.reset({ hours: stream.retentionHours })
     }
-  }, [stream?.retentionHours])
+  }, [retentionForm, stream?.retentionHours])
 
   const addTagForm = useForm({
     defaultValues: { key: "", value: "" },

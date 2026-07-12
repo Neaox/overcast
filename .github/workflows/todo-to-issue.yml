@@ -20,7 +20,7 @@ jobs:
   todo:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.0
       - uses: alstr/todo-to-issue-action@v5
         with:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}

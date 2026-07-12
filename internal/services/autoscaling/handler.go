@@ -575,15 +575,7 @@ func (h *Handler) DescribePolicies(w http.ResponseWriter, r *http.Request) {
 		if asgFilter != "" && p.AutoScalingGroupName != asgFilter {
 			continue
 		}
-		xmlPolicies = append(xmlPolicies, xmlPolicy{
-			PolicyARN:            p.PolicyARN,
-			PolicyName:           p.PolicyName,
-			AutoScalingGroupName: p.AutoScalingGroupName,
-			PolicyType:           p.PolicyType,
-			AdjustmentType:       p.AdjustmentType,
-			ScalingAdjustment:    p.ScalingAdjustment,
-			Cooldown:             p.Cooldown,
-		})
+		xmlPolicies = append(xmlPolicies, xmlPolicy(p))
 	}
 
 	type result struct {
@@ -706,13 +698,7 @@ func (h *Handler) DescribeLifecycleHooks(w http.ResponseWriter, r *http.Request)
 		if len(filterSet) > 0 && !filterSet[hk.LifecycleHookName] {
 			continue
 		}
-		xmlHooks = append(xmlHooks, xmlHook{
-			LifecycleHookName:    hk.LifecycleHookName,
-			AutoScalingGroupName: hk.AutoScalingGroupName,
-			LifecycleTransition:  hk.LifecycleTransition,
-			DefaultResult:        hk.DefaultResult,
-			HeartbeatTimeout:     hk.HeartbeatTimeout,
-		})
+		xmlHooks = append(xmlHooks, xmlHook(hk))
 	}
 
 	type result struct {
@@ -838,13 +824,7 @@ func (h *Handler) DescribeTags(w http.ResponseWriter, r *http.Request) {
 		if resourceFilter != "" && t.ResourceId != resourceFilter {
 			continue
 		}
-		xmlTags = append(xmlTags, xmlTag{
-			ResourceId:        t.ResourceId,
-			ResourceType:      t.ResourceType,
-			Key:               t.Key,
-			Value:             t.Value,
-			PropagateAtLaunch: t.PropagateAtLaunch,
-		})
+		xmlTags = append(xmlTags, xmlTag(t))
 	}
 
 	type result struct {

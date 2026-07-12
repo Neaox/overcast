@@ -236,6 +236,8 @@ func (r *Runner) Run(ctx context.Context) (*RunReport, error) {
 	sweepOrphans(ctx, r.cfg.Endpoint, r.logWriter)
 
 	var wg sync.WaitGroup
+	var errMu sync.Mutex
+	var suiteErrs []string
 	for i, s := range suites {
 		wg.Add(1)
 		go func(i int, s SuiteConfig) {
@@ -244,6 +246,9 @@ func (r *Runner) Run(ctx context.Context) (*RunReport, error) {
 			if err != nil {
 				// Log to stderr and emit a suite_error event so the UI can show it.
 				fmt.Fprintf(r.logWriter, "compat: suite %q failed to run: %v\n", s.Name, err)
+				errMu.Lock()
+				suiteErrs = append(suiteErrs, err.Error())
+				errMu.Unlock()
 				if r.cfg.OnEvent != nil {
 					data, _ := json.Marshal(struct {
 						Event string `json:"event"`
@@ -268,6 +273,9 @@ func (r *Runner) Run(ctx context.Context) (*RunReport, error) {
 	}
 
 	report.FinishedAt = time.Now()
+	if len(suiteErrs) > 0 {
+		return report, fmt.Errorf("compat: suite infrastructure failure(s): %s", strings.Join(suiteErrs, "; "))
+	}
 	return report, nil
 }
 

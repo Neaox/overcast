@@ -42,6 +42,10 @@ type Client struct {
 // a slot, keeping the daemon responsive.
 const maxConcurrentOps = 8
 
+// maxDockerConns keeps short Docker API calls responsive while Lambda log
+// followers hold long-lived connections open.
+const maxDockerConns = 64
+
 // NewClient creates a Docker client for the given endpoint.
 //
 // The endpoint can be:
@@ -53,9 +57,9 @@ const maxConcurrentOps = 8
 func NewClient(endpoint string, logger *zap.Logger) *Client {
 	dialFn, host := dialEndpoint(endpoint)
 	transport := &http.Transport{
-		MaxConnsPerHost:       8,
-		MaxIdleConns:          8,
-		MaxIdleConnsPerHost:   8,
+		MaxConnsPerHost:       maxDockerConns,
+		MaxIdleConns:          maxDockerConns,
+		MaxIdleConnsPerHost:   maxDockerConns,
 		IdleConnTimeout:       90 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
 	}
@@ -74,6 +78,9 @@ func NewClient(endpoint string, logger *zap.Logger) *Client {
 // before mutating Docker state (create/start/stop/remove).  The caller
 // MUST call releaseOp when done.  Uses the context for cancellation.
 func (d *Client) acquireOp(ctx context.Context) error {
+	if d.sem == nil {
+		return nil
+	}
 	select {
 	case d.sem <- struct{}{}:
 		return nil
@@ -83,6 +90,9 @@ func (d *Client) acquireOp(ctx context.Context) error {
 }
 
 func (d *Client) releaseOp() {
+	if d.sem == nil {
+		return
+	}
 	<-d.sem
 }
 
@@ -338,6 +348,11 @@ func (d *Client) Ping(ctx context.Context) error {
 
 // CreateContainer creates a container (does not start it).
 func (d *Client) CreateContainer(ctx context.Context, name string, req *CreateContainerRequest) (string, error) {
+	if err := d.acquireOp(ctx); err != nil {
+		return "", fmt.Errorf("create container: %w", err)
+	}
+	defer d.releaseOp()
+
 	path := "/v1.45/containers/create"
 	if name != "" {
 		path += "?name=" + url.QueryEscape(name)
@@ -351,6 +366,11 @@ func (d *Client) CreateContainer(ctx context.Context, name string, req *CreateCo
 
 // StartContainer starts a previously created container.
 func (d *Client) StartContainer(ctx context.Context, id string) error {
+	if err := d.acquireOp(ctx); err != nil {
+		return fmt.Errorf("start container %s: %w", id, err)
+	}
+	defer d.releaseOp()
+
 	resp, err := d.doRequest(ctx, http.MethodPost, "/v1.45/containers/"+id+"/start", nil)
 	if err != nil {
 		return fmt.Errorf("start container %s: %w", id, err)
@@ -364,6 +384,11 @@ func (d *Client) StartContainer(ctx context.Context, id string) error {
 
 // StopContainer stops a running container with a timeout.
 func (d *Client) StopContainer(ctx context.Context, id string, timeoutSec int) error {
+	if err := d.acquireOp(ctx); err != nil {
+		return fmt.Errorf("stop container %s: %w", id, err)
+	}
+	defer d.releaseOp()
+
 	path := fmt.Sprintf("/v1.45/containers/%s/stop?t=%d", id, timeoutSec)
 	resp, err := d.doRequest(ctx, http.MethodPost, path, nil)
 	if err != nil {
@@ -416,6 +441,11 @@ func (d *Client) CopyFileFromContainer(ctx context.Context, id, path string) ([]
 
 // RemoveContainer removes a container. force=true kills it first if running.
 func (d *Client) RemoveContainer(ctx context.Context, id string, force bool) error {
+	if err := d.acquireOp(ctx); err != nil {
+		return fmt.Errorf("remove container %s: %w", id, err)
+	}
+	defer d.releaseOp()
+
 	path := fmt.Sprintf("/v1.45/containers/%s?force=%t", id, force)
 	resp, err := d.doRequest(ctx, http.MethodDelete, path, nil)
 	if err != nil {
@@ -450,6 +480,11 @@ func (d *Client) InspectContainer(ctx context.Context, id string) (*ContainerIns
 // Only the non-zero fields in the request are applied; zero values are ignored
 // by the Docker daemon. Mirrors POST /containers/{id}/update.
 func (d *Client) UpdateContainerResources(ctx context.Context, id string, update *UpdateResourcesRequest) error {
+	if err := d.acquireOp(ctx); err != nil {
+		return fmt.Errorf("update container %s resources: %w", id, err)
+	}
+	defer d.releaseOp()
+
 	path := "/v1.45/containers/" + id + "/update"
 	if err := d.doJSON(ctx, http.MethodPost, path, update, nil); err != nil {
 		return fmt.Errorf("update container %s resources: %w", id, err)
@@ -671,6 +706,11 @@ func (d *Client) PullImage(ctx context.Context, image string) error {
 // only removes images that have no tag and are not referenced by a running
 // container, so it cannot break in-use resources.
 func (d *Client) PruneDanglingImages(ctx context.Context) error {
+	if err := d.acquireOp(ctx); err != nil {
+		return fmt.Errorf("prune images: %w", err)
+	}
+	defer d.releaseOp()
+
 	filterJSON, err := json.Marshal(map[string][]string{
 		"dangling": {"true"},
 	})
@@ -729,6 +769,11 @@ type CreateNetworkOptions struct {
 // labels, CIDR, and internal mode. Returns the network ID.
 // Ignores "already exists" errors.
 func (d *Client) CreateNetworkWithOptions(ctx context.Context, opts CreateNetworkOptions) (string, error) {
+	if err := d.acquireOp(ctx); err != nil {
+		return "", fmt.Errorf("create network %s: %w", opts.Name, err)
+	}
+	defer d.releaseOp()
+
 	req := createNetworkRequest{
 		Name:           opts.Name,
 		Driver:         "bridge",
@@ -772,6 +817,11 @@ func (d *Client) InspectNetwork(ctx context.Context, nameOrID string) (*NetworkI
 
 // ConnectNetwork attaches a container to a network.
 func (d *Client) ConnectNetwork(ctx context.Context, networkID, containerID string) error {
+	if err := d.acquireOp(ctx); err != nil {
+		return fmt.Errorf("connect network %s: %w", networkID, err)
+	}
+	defer d.releaseOp()
+
 	body := struct {
 		Container string `json:"Container"`
 	}{Container: containerID}
@@ -780,6 +830,11 @@ func (d *Client) ConnectNetwork(ctx context.Context, networkID, containerID stri
 
 // DisconnectNetwork detaches a container from a network.
 func (d *Client) DisconnectNetwork(ctx context.Context, networkID, containerID string) error {
+	if err := d.acquireOp(ctx); err != nil {
+		return fmt.Errorf("disconnect network %s: %w", networkID, err)
+	}
+	defer d.releaseOp()
+
 	body := struct {
 		Container string `json:"Container"`
 		Force     bool   `json:"Force"`
@@ -789,6 +844,11 @@ func (d *Client) DisconnectNetwork(ctx context.Context, networkID, containerID s
 
 // RemoveNetwork removes a Docker network by name or ID.
 func (d *Client) RemoveNetwork(ctx context.Context, nameOrID string) error {
+	if err := d.acquireOp(ctx); err != nil {
+		return fmt.Errorf("remove network %s: %w", nameOrID, err)
+	}
+	defer d.releaseOp()
+
 	resp, err := d.doRequest(ctx, http.MethodDelete, "/v1.45/networks/"+url.PathEscape(nameOrID), nil)
 	if err != nil {
 		return fmt.Errorf("remove network %s: %w", nameOrID, err)
@@ -823,6 +883,11 @@ func (d *Client) ListNetworks(ctx context.Context, service string) ([]NetworkSum
 // CopyToContainer copies a tar archive into a container at the given path.
 // This uses the Docker "Put Archive" API endpoint.
 func (d *Client) CopyToContainer(ctx context.Context, id, destPath string, tarData io.Reader) error {
+	if err := d.acquireOp(ctx); err != nil {
+		return fmt.Errorf("copy to container %s: %w", id, err)
+	}
+	defer d.releaseOp()
+
 	path := fmt.Sprintf("/v1.45/containers/%s/archive?path=%s", id, url.QueryEscape(destPath))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, d.host+path, tarData)
 	if err != nil {

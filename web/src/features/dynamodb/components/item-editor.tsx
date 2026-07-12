@@ -143,26 +143,26 @@ function rowsToJsonText(rows: AttrRow[], format: JsonFormat): string {
 function marshalledToRows(item: DynamoItem): AttrRow[] {
   return Object.entries(item).map(([name, attr]) => {
     const row = { ...makeRow(), name }
-    if (!attr) return { ...row, type: "S" as AttrType, value: "" }
-    if ("S" in attr) return { ...row, type: "S" as AttrType, value: String(attr.S) }
-    if ("N" in attr) return { ...row, type: "N" as AttrType, value: String(attr.N) }
-    if ("BOOL" in attr) return { ...row, type: "BOOL" as AttrType, value: String(attr.BOOL) }
-    if ("NULL" in attr) return { ...row, type: "NULL" as AttrType, value: "" }
+    if (!attr) return { ...row, type: "S", value: "" }
+    if ("S" in attr) return { ...row, type: "S", value: String(attr.S) }
+    if ("N" in attr) return { ...row, type: "N", value: String(attr.N) }
+    if ("BOOL" in attr) return { ...row, type: "BOOL", value: String(attr.BOOL) }
+    if ("NULL" in attr) return { ...row, type: "NULL", value: "" }
     if ("SS" in attr)
       return {
         ...row,
-        type: "SS" as AttrType,
+        type: "SS",
         value: attr.SS.join(", "),
       }
     if ("NS" in attr)
       return {
         ...row,
-        type: "NS" as AttrType,
+        type: "NS",
         value: attr.NS.join(", "),
       }
-    if ("L" in attr) return { ...row, type: "L" as AttrType, value: JSON.stringify(attr.L) }
-    if ("M" in attr) return { ...row, type: "M" as AttrType, value: JSON.stringify(attr.M) }
-    return { ...row, type: "S" as AttrType, value: JSON.stringify(attr) }
+    if ("L" in attr) return { ...row, type: "L", value: JSON.stringify(attr.L) }
+    if ("M" in attr) return { ...row, type: "M", value: JSON.stringify(attr.M) }
+    return { ...row, type: "S", value: JSON.stringify(attr) }
   })
 }
 

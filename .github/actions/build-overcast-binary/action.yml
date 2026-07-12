@@ -1,0 +1,45 @@
+name: Build Overcast binary
+description: Build one Overcast release binary for a target OS, architecture, and build-tag set.
+
+inputs:
+  asset:
+    description: Output asset file name.
+    required: true
+  goos:
+    description: Target GOOS.
+    required: true
+  goarch:
+    description: Target GOARCH.
+    required: true
+  version:
+    description: Version string embedded in the binary.
+    required: true
+  tags:
+    description: Optional comma-separated Go build tags.
+    required: false
+    default: ""
+  output-dir:
+    description: Directory for the built binary.
+    required: false
+    default: dist
+
+runs:
+  using: composite
+  steps:
+    - name: Build binary
+      shell: bash
+      env:
+        CGO_ENABLED: "0"
+        GOOS: ${{ inputs.goos }}
+        GOARCH: ${{ inputs.goarch }}
+        VERSION: ${{ inputs.version }}
+        TAGS: ${{ inputs.tags }}
+        ASSET: ${{ inputs.asset }}
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+      run: |
+        mkdir -p "$OUTPUT_DIR"
+        if [ -n "$TAGS" ]; then
+          go build -trimpath -tags "$TAGS" -ldflags="-w -s -X main.version=$VERSION" -o "$OUTPUT_DIR/$ASSET" ./cmd/overcast
+        else
+          go build -trimpath -ldflags="-w -s -X main.version=$VERSION" -o "$OUTPUT_DIR/$ASSET" ./cmd/overcast
+        fi

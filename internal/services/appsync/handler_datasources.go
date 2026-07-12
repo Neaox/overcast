@@ -41,8 +41,12 @@ func (h *Handler) CreateDataSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ds.Name == "" {
+	if !validAppSyncName(ds.Name) {
 		protocol.WriteJSONError(w, r, badRequestError("name is required"))
+		return
+	}
+	if !containsString([]string{"AWS_LAMBDA", "AMAZON_DYNAMODB", "AMAZON_ELASTICSEARCH", "NONE", "HTTP", "RELATIONAL_DATABASE", "AMAZON_OPENSEARCH_SERVICE", "AMAZON_EVENTBRIDGE", "AMAZON_BEDROCK_RUNTIME"}, ds.Type) {
+		protocol.WriteJSONError(w, r, badRequestError("type is invalid or missing"))
 		return
 	}
 
@@ -67,7 +71,7 @@ func (h *Handler) CreateDataSource(w http.ResponseWriter, r *http.Request) {
 
 	h.publish(r, events.AppSyncDataSourceCreated, events.ResourcePayload{Name: ds.Name, ARN: ds.DataSourceArn})
 
-	writeJSON(w, r, http.StatusCreated, map[string]any{"dataSource": &ds})
+	writeJSON(w, r, http.StatusOK, map[string]any{"dataSource": &ds})
 }
 
 // GetDataSource handles GET /v1/apis/{apiId}/datasources/{name}.
@@ -104,7 +108,7 @@ func (h *Handler) ListDataSources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"dataSources": sources})
+	writeListJSON(w, r, "dataSources", sources)
 }
 
 // UpdateDataSource handles PUT /v1/apis/{apiId}/datasources/{name}.

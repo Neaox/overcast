@@ -192,11 +192,11 @@ func verifyStreamESMExists(t *testing.T, srv *helpers.TestServer) (esmUUID, stre
 
 	var list struct {
 		EventSourceMappings []struct {
-			UUID                string `json:"UUID"`
-			State               string `json:"State"`
-			EventSourceArn      string `json:"EventSourceArn"`
-			FunctionArn         string `json:"FunctionArn"`
-			StartingPosition    string `json:"StartingPosition"`
+			UUID                 string `json:"UUID"`
+			State                string `json:"State"`
+			EventSourceArn       string `json:"EventSourceArn"`
+			FunctionArn          string `json:"FunctionArn"`
+			StartingPosition     string `json:"StartingPosition"`
 			LastProcessingResult string `json:"LastProcessingResult"`
 		} `json:"EventSourceMappings"`
 	}

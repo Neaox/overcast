@@ -3,11 +3,22 @@ package lambda
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
+	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
+
+	"github.com/Neaox/overcast/internal/clock"
+	"github.com/Neaox/overcast/internal/docker"
+	"github.com/Neaox/overcast/internal/events"
 )
 
 func makeDockerFrame(payload []byte) []byte {
@@ -195,9 +206,8 @@ func TestDockerLogStripper_eofMidHeader(t *testing.T) {
 	stripped := &dockerLogStripper{r: buf}
 	scanner := bufio.NewScanner(stripped)
 
-	var got []string
 	for scanner.Scan() {
-		got = append(got, scanner.Text())
+		// Drain scanner until it reports the expected malformed-frame error.
 	}
 	if scanner.Err() == nil {
 		t.Error("expected scanner error for incomplete header, got nil")
@@ -348,4 +358,218 @@ func TestDockerLogStripper_largePayload(t *testing.T) {
 	if msg != payload {
 		t.Errorf("message length = %d, want %d", len(msg), len(payload))
 	}
+}
+
+func TestLogCursor_equalTimestampReplay(t *testing.T) {
+	// Given: two log lines with the exact same Docker timestamp were accepted.
+	ts := time.Date(2026, 1, 2, 3, 4, 5, 123, time.UTC)
+	var cursor logCursor
+	live := cursor.NewAdmission(false)
+	first := live.Admit(ts)
+	second := live.Admit(ts)
+	if !first || !second {
+		t.Fatal("live equal-timestamp lines should both be accepted")
+	}
+
+	// When: Docker reconnect replays those same two lines plus a third with the
+	// same timestamp.
+	replay := cursor.NewAdmission(true)
+
+	// Then: only the already accepted equal-timestamp lines are skipped.
+	if replay.Admit(ts) {
+		t.Fatal("first replayed equal-timestamp line was accepted, want skipped")
+	}
+	if replay.Admit(ts) {
+		t.Fatal("second replayed equal-timestamp line was accepted, want skipped")
+	}
+	if !replay.Admit(ts) {
+		t.Fatal("third equal-timestamp line was skipped, want accepted")
+	}
+}
+
+func TestLogCursor_sinceReplaysEqualTimestamp(t *testing.T) {
+	// Given: a cursor has accepted a timestamped log line.
+	ts := time.Date(2026, 1, 2, 3, 4, 5, 123, time.UTC)
+	var cursor logCursor
+	if !cursor.NewAdmission(false).Admit(ts) {
+		t.Fatal("line was not accepted")
+	}
+
+	// When: the Docker since cursor is computed for reconnect/reconcile.
+	since := cursor.Since()
+
+	// Then: it asks Docker to replay from just before the high watermark so
+	// equal-timestamp lines can be disambiguated by count.
+	if want := ts.Add(-time.Nanosecond); !since.Equal(want) {
+		t.Fatalf("Since = %v, want %v", since, want)
+	}
+}
+
+func TestReadBoundedLogLine_truncatesAndContinues(t *testing.T) {
+	// Given: one oversized line followed by a normal line.
+	r := bufio.NewReaderSize(strings.NewReader(strings.Repeat("x", 20)+"\nnext\n"), 4)
+
+	// When: lines are read through the bounded reader.
+	first, err := readBoundedLogLine(r, 8)
+	if err != nil {
+		t.Fatalf("first read: %v", err)
+	}
+	second, err := readBoundedLogLine(r, 8)
+	if err != nil {
+		t.Fatalf("second read: %v", err)
+	}
+
+	// Then: the oversized line is truncated and the following line is intact.
+	if first != strings.Repeat("x", 8) {
+		t.Fatalf("first = %q, want 8 x's", first)
+	}
+	if second != "next" {
+		t.Fatalf("second = %q, want next", second)
+	}
+}
+
+type fakeLogWriter struct {
+	mu          sync.Mutex
+	failWrites  int
+	writes      [][]events.LogEntry
+	ensureCalls int
+}
+
+func (w *fakeLogWriter) EnsureLogGroup(context.Context, string) error { return nil }
+
+func (w *fakeLogWriter) EnsureLogStream(context.Context, string, string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.ensureCalls++
+	return nil
+}
+
+func (w *fakeLogWriter) WriteLogEvents(_ context.Context, _, _ string, entries []events.LogEntry) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.failWrites > 0 {
+		w.failWrites--
+		return errors.New("transient write failure")
+	}
+	clone := append([]events.LogEntry(nil), entries...)
+	w.writes = append(w.writes, clone)
+	return nil
+}
+
+func TestWriteEventsWithRetry_transientFailure(t *testing.T) {
+	// Given: a log writer that fails once, then succeeds.
+	writer := &fakeLogWriter{failWrites: 1}
+	ci := &containerInstance{
+		id:           "container123456",
+		functionARN:  "arn:aws:lambda:us-east-1:000000000000:function:fn",
+		logGroupName: "/aws/lambda/fn",
+		logStream:    "stream",
+		logWriter:    writer,
+		logger:       zap.NewNop(),
+		clk:          clock.New(),
+	}
+
+	// When: events are written durably.
+	ok := ci.writeEventsWithRetry(context.Background(), []events.LogEntry{{Timestamp: 1, Message: "hello"}})
+
+	// Then: the transient error is retried after ensuring the stream.
+	if !ok {
+		t.Fatal("writeEventsWithRetry returned false")
+	}
+	if len(writer.writes) != 1 {
+		t.Fatalf("writes = %d, want 1", len(writer.writes))
+	}
+	if writer.ensureCalls == 0 {
+		t.Fatal("EnsureLogStream was not called on retry")
+	}
+}
+
+func TestStreamOnce_equalTimestampLinesAndEmitTimestamps(t *testing.T) {
+	// Given: Docker returns three user log lines with identical timestamps.
+	emit := time.Date(2026, 1, 2, 3, 4, 5, 123456789, time.UTC)
+	var payload bytes.Buffer
+	for _, msg := range []string{"one", "two", "three"} {
+		payload.Write(makeDockerFrame([]byte(emit.Format(time.RFC3339Nano) + " " + msg + "\n")))
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || !strings.Contains(r.URL.Path, "/logs") {
+			http.Error(w, "unexpected request", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(payload.Bytes())
+	}))
+	defer server.Close()
+	writer := &fakeLogWriter{}
+	ci := newStreamOnceTestInstance(server, writer)
+
+	// When: streamOnce processes the Docker log response.
+	ci.streamOnce(context.Background(), time.Time{})
+
+	// Then: no equal-timestamp line is dropped and event timestamps use Docker's
+	// emit timestamp, not scan time.
+	got := writer.allMessages()
+	if strings.Join(got, ",") != "one,two,three" {
+		t.Fatalf("messages = %v, want [one two three]", got)
+	}
+	for _, batch := range writer.writes {
+		for _, entry := range batch {
+			if entry.Timestamp != emit.UnixMilli() {
+				t.Fatalf("entry timestamp = %d, want %d", entry.Timestamp, emit.UnixMilli())
+			}
+		}
+	}
+}
+
+func TestStreamOnce_emptyMessageDropped(t *testing.T) {
+	// Given: Docker returns an empty log message and then a non-empty one.
+	emit := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	var payload bytes.Buffer
+	payload.Write(makeDockerFrame([]byte(emit.Format(time.RFC3339Nano) + " \n")))
+	payload.Write(makeDockerFrame([]byte(emit.Add(time.Nanosecond).Format(time.RFC3339Nano) + " kept\n")))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(payload.Bytes())
+	}))
+	defer server.Close()
+	writer := &fakeLogWriter{}
+	ci := newStreamOnceTestInstance(server, writer)
+
+	// When: streamOnce processes the Docker log response.
+	ci.streamOnce(context.Background(), time.Time{})
+
+	// Then: the empty CloudWatch event is dropped but following logs are delivered.
+	got := writer.allMessages()
+	if len(got) != 1 || got[0] != "kept" {
+		t.Fatalf("messages = %v, want [kept]", got)
+	}
+}
+
+func newStreamOnceTestInstance(server *httptest.Server, writer *fakeLogWriter) *containerInstance {
+	dc := docker.NewClient("tcp://"+server.Listener.Addr().String(), zap.NewNop())
+	ctx, cancel := context.WithCancel(context.Background())
+	return &containerInstance{
+		id:           "container123456",
+		functionARN:  "arn:aws:lambda:us-east-1:000000000000:function:fn",
+		logGroupName: "/aws/lambda/fn",
+		logStream:    "stream",
+		docker:       dc,
+		logWriter:    writer,
+		logger:       zap.NewNop(),
+		clk:          clock.New(),
+		logCtx:       ctx,
+		logCancel:    cancel,
+	}
+}
+
+func (w *fakeLogWriter) allMessages() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var messages []string
+	for _, batch := range w.writes {
+		for _, entry := range batch {
+			messages = append(messages, entry.Message)
+		}
+	}
+	return messages
 }

@@ -678,19 +678,6 @@ func (h *Handler) DeleteDBInstance(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// cleanupDBContainer releases the port reservation for a DB instance that had
-// no Docker container (e.g. it was created before Docker was available).
-// Docker container stop/remove is handled by the GC — this function is only
-// for port cleanup. Kept as a separate function for clarity.
-func (h *Handler) cleanupDBContainer(ctx context.Context, instanceID, containerID string, hostPort int) {
-	if hostPort > 0 {
-		if aerr := h.store.releasePort(ctx, hostPort); aerr != nil {
-			h.log.Warn("RDS cleanup: release port",
-				zap.String("instance", instanceID), zap.Int("port", hostPort), zap.Error(aerr))
-		}
-	}
-}
-
 // ── DescribeDBEngineVersions ─────────────────────────────────────────────────
 
 type engineVersionEntry struct {
@@ -1082,4 +1069,19 @@ func (h *Handler) scheduleHealthCheck(instanceID string, host string, port int) 
 		}
 	}
 	h.scheduler.After(instanceID+":health", 1*time.Second, check)
+}
+
+// cleanupDBContainer releases the port reservation for a DB instance that had
+// no Docker container (e.g. it was created before Docker was available).
+// Docker container stop/remove is handled by the GC — this function is only
+// for port cleanup. Kept as a separate function for clarity.
+//
+//nolint:unused // Kept for explicit Docker cleanup call sites.
+func (h *Handler) cleanupDBContainer(ctx context.Context, instanceID, containerID string, hostPort int) {
+	if hostPort > 0 {
+		if aerr := h.store.releasePort(ctx, hostPort); aerr != nil {
+			h.log.Warn("RDS cleanup: release port",
+				zap.String("instance", instanceID), zap.Int("port", hostPort), zap.Error(aerr))
+		}
+	}
 }

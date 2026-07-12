@@ -298,6 +298,75 @@ func TestListGraphqlApis_success(t *testing.T) {
 	}
 }
 
+func TestListGraphqlApis_filtersAndPaginates(t *testing.T) {
+	// Given: standard and merged APIs exist
+	srv := helpers.NewTestServer(t)
+	for _, body := range []map[string]any{
+		{"name": "standard-1", "authenticationType": "API_KEY"},
+		{"name": "standard-2", "authenticationType": "API_KEY"},
+		{"name": "merged-1", "authenticationType": "AWS_IAM", "apiType": "MERGED"},
+	} {
+		r := appsyncPost(t, srv, "/v1/apis", body)
+		r.Body.Close()
+		helpers.AssertStatus(t, r, http.StatusOK)
+	}
+
+	// When: ListGraphqlApis is filtered by API type
+	filtered := appsyncGet(t, srv, "/v1/apis?apiType=MERGED")
+	defer filtered.Body.Close()
+
+	// Then: only merged APIs are returned
+	helpers.AssertStatus(t, filtered, http.StatusOK)
+	var filteredResult struct {
+		GraphqlAPIs []struct {
+			ApiType string `json:"apiType"`
+		} `json:"graphqlApis"`
+	}
+	helpers.DecodeJSON(t, filtered, &filteredResult)
+	if len(filteredResult.GraphqlAPIs) != 1 {
+		t.Fatalf("expected 1 merged API, got %d", len(filteredResult.GraphqlAPIs))
+	}
+	if filteredResult.GraphqlAPIs[0].ApiType != "MERGED" {
+		t.Errorf("expected apiType=MERGED, got %q", filteredResult.GraphqlAPIs[0].ApiType)
+	}
+
+	// When: ListGraphqlApis is limited to one result
+	page1 := appsyncGet(t, srv, "/v1/apis?maxResults=1")
+	defer page1.Body.Close()
+
+	// Then: a nextToken is returned and can be used for the next page
+	helpers.AssertStatus(t, page1, http.StatusOK)
+	var page1Result struct {
+		GraphqlAPIs []struct {
+			ApiId string `json:"apiId"`
+		} `json:"graphqlApis"`
+		NextToken string `json:"nextToken"`
+	}
+	helpers.DecodeJSON(t, page1, &page1Result)
+	if len(page1Result.GraphqlAPIs) != 1 {
+		t.Fatalf("expected 1 API on first page, got %d", len(page1Result.GraphqlAPIs))
+	}
+	if page1Result.NextToken == "" {
+		t.Fatal("expected nextToken for truncated result")
+	}
+
+	page2 := appsyncGet(t, srv, "/v1/apis?maxResults=1&nextToken="+page1Result.NextToken)
+	defer page2.Body.Close()
+	helpers.AssertStatus(t, page2, http.StatusOK)
+	var page2Result struct {
+		GraphqlAPIs []struct {
+			ApiId string `json:"apiId"`
+		} `json:"graphqlApis"`
+	}
+	helpers.DecodeJSON(t, page2, &page2Result)
+	if len(page2Result.GraphqlAPIs) != 1 {
+		t.Fatalf("expected 1 API on second page, got %d", len(page2Result.GraphqlAPIs))
+	}
+	if page2Result.GraphqlAPIs[0].ApiId == page1Result.GraphqlAPIs[0].ApiId {
+		t.Error("expected second page to advance past first API")
+	}
+}
+
 // ─── UpdateGraphqlApi ─────────────────────────────────────────────────────────
 
 func TestUpdateGraphqlApi_success(t *testing.T) {
@@ -377,14 +446,14 @@ func TestDeleteGraphqlApi_cascadesChildren(t *testing.T) {
 		"type": "NONE",
 	})
 	ds.Body.Close()
-	helpers.AssertStatus(t, ds, http.StatusCreated)
+	helpers.AssertStatus(t, ds, http.StatusOK)
 
 	res := appsyncPost(t, srv, "/v1/apis/"+apiID+"/types/Query/resolvers", map[string]any{
 		"fieldName":      "myField",
 		"dataSourceName": "MyDS",
 	})
 	res.Body.Close()
-	helpers.AssertStatus(t, res, http.StatusCreated)
+	helpers.AssertStatus(t, res, http.StatusOK)
 
 	// When: the API is deleted
 	del := appsyncDelete(t, srv, "/v1/apis/"+apiID)
@@ -561,8 +630,8 @@ func TestApiKey_createAndList(t *testing.T) {
 	})
 	defer resp.Body.Close()
 
-	// Then: 201 with da2- prefixed key ID
-	helpers.AssertStatus(t, resp, http.StatusCreated)
+	// Then: 200 with da2- prefixed key ID
+	helpers.AssertStatus(t, resp, http.StatusOK)
 	var result struct {
 		ApiKey struct {
 			Id          string `json:"id"`
@@ -668,7 +737,7 @@ func TestDataSource_crudLifecycle(t *testing.T) {
 		"serviceRoleArn": "arn:aws:iam::123456789012:role/AppSyncRole",
 	})
 	defer createResp.Body.Close()
-	helpers.AssertStatus(t, createResp, http.StatusCreated)
+	helpers.AssertStatus(t, createResp, http.StatusOK)
 	var created struct {
 		DataSource struct {
 			Name          string `json:"name"`
@@ -731,7 +800,7 @@ func TestDataSource_duplicateName(t *testing.T) {
 		"type": "NONE",
 	})
 	r1.Body.Close()
-	helpers.AssertStatus(t, r1, http.StatusCreated)
+	helpers.AssertStatus(t, r1, http.StatusOK)
 
 	r2 := appsyncPost(t, srv, "/v1/apis/"+apiID+"/datasources", map[string]any{
 		"name": "dup",
@@ -739,6 +808,39 @@ func TestDataSource_duplicateName(t *testing.T) {
 	})
 	defer r2.Body.Close()
 	helpers.AssertStatus(t, r2, http.StatusConflict)
+}
+
+func TestDataSource_missingType(t *testing.T) {
+	// Given: an existing API
+	srv := helpers.NewTestServer(t)
+	apiID, _ := createTestAPI(t, srv)
+
+	// When: CreateDataSource is called without the AWS-required type
+	resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/datasources", map[string]any{
+		"name": "missingType",
+	})
+	defer resp.Body.Close()
+
+	// Then: the request is rejected as malformed
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "BadRequestException")
+}
+
+func TestDataSource_invalidType(t *testing.T) {
+	// Given: an existing API
+	srv := helpers.NewTestServer(t)
+	apiID, _ := createTestAPI(t, srv)
+
+	// When: CreateDataSource is called with an invalid type enum
+	resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/datasources", map[string]any{
+		"name": "invalidType",
+		"type": "BOGUS",
+	})
+	defer resp.Body.Close()
+
+	// Then: the request is rejected as malformed
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "BadRequestException")
 }
 
 // ─── Functions ────────────────────────────────────────────────────────────────
@@ -755,7 +857,7 @@ func TestFunction_crudLifecycle(t *testing.T) {
 		"runtime":        map[string]any{"name": "APPSYNC_JS", "runtimeVersion": "1.0.0"},
 	})
 	defer createResp.Body.Close()
-	helpers.AssertStatus(t, createResp, http.StatusCreated)
+	helpers.AssertStatus(t, createResp, http.StatusOK)
 	var created struct {
 		FunctionConfiguration struct {
 			FunctionId  string `json:"functionId"`
@@ -810,6 +912,22 @@ func TestFunction_crudLifecycle(t *testing.T) {
 	helpers.AssertStatus(t, goneResp, http.StatusNotFound)
 }
 
+func TestFunction_missingDataSourceName(t *testing.T) {
+	// Given: an existing API
+	srv := helpers.NewTestServer(t)
+	apiID, _ := createTestAPI(t, srv)
+
+	// When: CreateFunction is called without the AWS-required dataSourceName
+	resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/functions", map[string]any{
+		"name": "missingDS",
+	})
+	defer resp.Body.Close()
+
+	// Then: the request is rejected as malformed
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "BadRequestException")
+}
+
 // ─── Resolvers ────────────────────────────────────────────────────────────────
 
 func TestResolver_crudLifecycle(t *testing.T) {
@@ -823,7 +941,7 @@ func TestResolver_crudLifecycle(t *testing.T) {
 		"kind":           "UNIT",
 	})
 	defer createResp.Body.Close()
-	helpers.AssertStatus(t, createResp, http.StatusCreated)
+	helpers.AssertStatus(t, createResp, http.StatusOK)
 	var created struct {
 		Resolver struct {
 			TypeName    string `json:"typeName"`
@@ -891,7 +1009,7 @@ func TestResolver_duplicateConflict(t *testing.T) {
 		"fieldName": "dup",
 	})
 	r1.Body.Close()
-	helpers.AssertStatus(t, r1, http.StatusCreated)
+	helpers.AssertStatus(t, r1, http.StatusOK)
 
 	r2 := appsyncPost(t, srv, "/v1/apis/"+apiID+"/types/Query/resolvers", map[string]any{
 		"fieldName": "dup",
@@ -4018,6 +4136,47 @@ func TestAuth_cognitoAcceptsBearer(t *testing.T) {
 	}
 	if result.Data.Hello != "world" {
 		t.Errorf("expected %q, got %q", "world", result.Data.Hello)
+	}
+}
+
+func TestAuth_cognitoIdentityAvailableInVTL(t *testing.T) {
+	// Given: a Cognito-authenticated API with a VTL resolver that reads $ctx.identity
+	srv := helpers.NewTestServer(t)
+	apiID, _ := createTestAPI(t, srv)
+	appsyncPost(t, srv, "/v1/apis/"+apiID, map[string]any{
+		"name":               "cognito-vtl-api",
+		"authenticationType": "AMAZON_COGNITO_USER_POOLS",
+		"userPoolConfig":     map[string]any{"userPoolId": "us-east-1_fake", "defaultAction": "ALLOW"},
+	}).Body.Close()
+	b64SDL := base64.StdEncoding.EncodeToString([]byte(`type Query { subject: String }`))
+	appsyncPost(t, srv, "/v1/apis/"+apiID+"/schemacreation", map[string]any{"definition": b64SDL}).Body.Close()
+	appsyncPost(t, srv, "/v1/apis/"+apiID+"/datasources", map[string]any{
+		"name": "NoneDS", "type": "NONE",
+	}).Body.Close()
+	appsyncPost(t, srv, "/v1/apis/"+apiID+"/types/Query/resolvers", map[string]any{
+		"fieldName":              "subject",
+		"dataSourceName":         "NoneDS",
+		"requestMappingTemplate": `{"version":"2018-05-29","payload":$util.toJson($ctx.identity.sub)}`,
+	}).Body.Close()
+
+	// When: the query is executed with a Bearer token
+	token := fakeJWT(t, map[string]any{"sub": "user-123", "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_fake"})
+	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+		map[string]any{"query": `{ subject }`},
+		map[string]string{"Authorization": "Bearer " + token},
+	)
+	defer resp.Body.Close()
+
+	// Then: VTL can read the identity claims from the resolver context
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		Data struct {
+			Subject string `json:"subject"`
+		} `json:"data"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if result.Data.Subject != "user-123" {
+		t.Errorf("expected subject from identity, got %q", result.Data.Subject)
 	}
 }
 

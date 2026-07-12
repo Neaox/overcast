@@ -58,6 +58,12 @@ func TestLoad_defaults(t *testing.T) {
 	if cfg.LambdaHotReload {
 		t.Error("LambdaHotReload: expected false by default")
 	}
+	if cfg.LambdaDockerMaxConcurrentStarts != 4 {
+		t.Errorf("LambdaDockerMaxConcurrentStarts: expected 4, got %d", cfg.LambdaDockerMaxConcurrentStarts)
+	}
+	if cfg.LambdaInitTimeout != 10*time.Second {
+		t.Errorf("LambdaInitTimeout: expected 10s, got %v", cfg.LambdaInitTimeout)
+	}
 	if cfg.Debug {
 		t.Error("Debug: expected false by default")
 	}
@@ -84,6 +90,40 @@ func TestLoad_defaults(t *testing.T) {
 	}
 	if cfg.EnforceIAM {
 		t.Error("EnforceIAM: expected false by default")
+	}
+}
+
+func TestLoad_lambdaDockerMaxConcurrentStarts(t *testing.T) {
+	// Given: LAMBDA_DOCKER_MAX_CONCURRENT_STARTS is set.
+	clearEnv(t)
+	t.Setenv("LAMBDA_DOCKER_MAX_CONCURRENT_STARTS", "7")
+
+	// When: we load config.
+	cfg, err := config.Load()
+
+	// Then: the Docker startup backpressure limit is parsed.
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LambdaDockerMaxConcurrentStarts != 7 {
+		t.Fatalf("LambdaDockerMaxConcurrentStarts = %d, want 7", cfg.LambdaDockerMaxConcurrentStarts)
+	}
+}
+
+func TestLoad_lambdaInitTimeoutSeconds(t *testing.T) {
+	// Given: LAMBDA_INIT_TIMEOUT_SECONDS is set.
+	clearEnv(t)
+	t.Setenv("LAMBDA_INIT_TIMEOUT_SECONDS", "17")
+
+	// When: we load config.
+	cfg, err := config.Load()
+
+	// Then: the Lambda init timeout is parsed as a duration.
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LambdaInitTimeout != 17*time.Second {
+		t.Fatalf("LambdaInitTimeout = %v, want 17s", cfg.LambdaInitTimeout)
 	}
 }
 

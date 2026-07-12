@@ -25,9 +25,16 @@
   // This same config works with GitHub Codespaces.
 
   "name": "Overcast Dev (${localWorkspaceFolderBasename})",
-  "initializeCommand": "sh .devcontainer/init-worktree.sh || powershell -NoProfile -ExecutionPolicy Bypass -File .devcontainer/init-worktree.ps1 -workspace \"${localWorkspaceFolder}\"",
+  // Prefer PowerShell on Windows so this runs through WSL instead of Git Bash.
+  // macOS/Linux hosts fall back to the POSIX script when powershell is absent.
+  "initializeCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File .devcontainer/init-worktree.ps1 -workspace \"${localWorkspaceFolder}\" || sh .devcontainer/init-worktree.sh",
   "dockerComposeFile": "docker-compose.yaml",
   "service": "devcontainer",
+  // Do not import host GUI/session variables such as WAYLAND_DISPLAY. On WSL,
+  // those make VS Code auto-mount the WSLg Wayland socket, which is optional
+  // for this repo and can fail when Docker Desktop's distro mount service is
+  // unavailable.
+  "userEnvProbe": "none",
 
   // ---- Security: required for step debugging ------------------------------
   //
@@ -104,7 +111,7 @@
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
 
-  "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/go ${containerWorkspaceFolder}/web/node_modules && go mod download && go install golang.org/x/tools/gopls@v0.17.1 && go install github.com/go-delve/delve/cmd/dlv@v1.24.2 && make build-mcp && mkcert -install && cd web && npm install && cd .. && pip3 install --break-system-packages --quiet -r compat/suites/python-sdk/requirements.txt && go run ./scripts/check-tools.go",
+  "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/go ${containerWorkspaceFolder}/web/node_modules && git config --global --add safe.directory ${containerWorkspaceFolder} && go mod download && go install golang.org/x/tools/gopls@v0.17.1 && go install github.com/go-delve/delve/cmd/dlv@v1.24.2 && make build-mcp && mkcert -install && cd web && npm install && cd .. && pip3 install --break-system-packages --quiet -r compat/suites/python-sdk/requirements.txt && go run ./scripts/check-tools.go",
 
   // Fix Docker socket group on every container start.
   // The docker-outside-of-docker feature proxies the host socket via socat,

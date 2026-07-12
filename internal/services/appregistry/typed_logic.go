@@ -360,6 +360,8 @@ func (h *Handler) listAssociatedAttributeGroupsTyped(ctx context.Context, req *l
 
 // decodeAttributes accepts either a JSON string or a JSON object for the
 // `attributes` field — the SDK may send either depending on client version.
+//
+//nolint:unused // Kept for typed AttributeGroup request decoding compatibility.
 func decodeAttributesTyped(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""

@@ -50,7 +50,7 @@ DOCKER_BUILDKIT=1 docker build -f compat/suites/rust-sdk/Dockerfile -t oc-rust-s
 1. **Reuse build cache**: Run builds without `--no-cache` for subsequent builds to benefit from caching
 2. **Pin Cargo.lock**: Commit `Cargo.lock` to repository for reproducible, cached builds
 3. **Avoid changing Cargo.toml**: Each change to `Cargo.toml` triggers fresh dependency resolution
-4. **Use smaller base images**: `rust:1.91-alpine` is already minimal
+4. **Use smaller base images**: `rust:1.94.1-slim-bookworm` keeps the toolchain pinned while staying small
 
 ## Cargo.lock
 

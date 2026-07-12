@@ -512,7 +512,6 @@ function ManagedLoginTestPanel({ poolId, onClose }: { poolId: string; onClose: (
   const { toast } = useToast()
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const iframeReady = useRef(false)
-  const initRef = useRef(false)
   const draftRef = useRef<ManagedLoginBranding>(EMPTY_BRANDING)
 
   const { data: clients = [], isLoading } = useQuery(cognitoClientsQueryOptions(poolId))
@@ -521,7 +520,11 @@ function ManagedLoginTestPanel({ poolId, onClose }: { poolId: string; onClose: (
 
   const current = branding ?? EMPTY_BRANDING
   const [draft, setDraft] = useState<ManagedLoginBranding>(EMPTY_BRANDING)
-  draftRef.current = draft
+  const [draftInitialized, setDraftInitialized] = useState(false)
+
+  useEffect(() => {
+    draftRef.current = draft
+  }, [draft])
 
   function postBranding(d: ManagedLoginBranding) {
     const iframe = iframeRef.current
@@ -530,18 +533,17 @@ function ManagedLoginTestPanel({ poolId, onClose }: { poolId: string; onClose: (
     }
   }
 
-  // Initialise draft from fetched branding once
-  useEffect(() => {
-    if (branding && !initRef.current) {
-      setDraft({ ...branding })
-      initRef.current = true
-    }
-  }, [branding])
+  // Initialise draft from fetched branding once. This is derived from query
+  // data, so a guarded render-time adjustment avoids a cascading effect render.
+  if (branding && !draftInitialized) {
+    setDraftInitialized(true)
+    setDraft({ ...branding })
+  }
 
   // Push live preview on every draft change
   useEffect(() => {
     postBranding(draft)
-  }, [draft]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [draft])
 
   // Listen for iframe "ready" signal (posted by the branding script partial)
   useEffect(() => {
@@ -553,7 +555,7 @@ function ManagedLoginTestPanel({ poolId, onClose }: { poolId: string; onClose: (
     }
     window.addEventListener("message", onMessage)
     return () => window.removeEventListener("message", onMessage)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
   const testClient = useMemo(
     (): (typeof clients)[0] | undefined =>

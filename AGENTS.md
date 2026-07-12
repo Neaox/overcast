@@ -83,6 +83,7 @@ All coding standards are in [CONTRIBUTING.md](./CONTRIBUTING.md). This section i
 ### Other rules not to forget
 
 - **State:** all through `state.Store`; JSON serialisation in `store.go` only. Update both implementations when changing the interface.
+- **Malformed persisted state must be isolated.** A single corrupt or stale record in `state.Store` must not make list/scan operations, unrelated resources, or the whole service return HTTP 500. When reading many records, skip malformed records and log/track the gap where practical; when reading one named resource, prefer a modeled AWS-style not-found/invalid-resource error if the record cannot be safely decoded. Only return `InternalError` for actual infrastructure failures (store unavailable, query failed, marshal failed), not for one bad persisted payload that can be isolated without breaking AWS-facing semantics.
 - **Clock:** `clock.Clock` only — never `time.Now()`. See [CONTRIBUTING § Clock](./CONTRIBUTING.md#time--clock-injection).
 - **Shared helpers:** use `serviceutil` — see [CONTRIBUTING § Utilities](./CONTRIBUTING.md#shared-utilities--use-serviceutil-never-duplicate).
 - **Routing fallthrough is S3.** Both the chi router and the logger's `detectService` treat S3 as the catch-all: any request that doesn't match a registered route or a known path prefix is dispatched to the S3 handler and labelled `service=s3` in logs. This is deliberate — S3 has no distinguishing header or path prefix. Consequences:

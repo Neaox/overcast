@@ -22,16 +22,16 @@ func S3VirtualHost(next http.Handler) http.Handler {
 	return S3VirtualHostFor("")(next)
 }
 
-// S3VirtualHostFor returns a middleware that recognises an additional hostname
-// base for S3 virtual-hosted-style requests. When hostname is non-empty,
-// requests whose Host header ends with ".<hostname>" are treated the same as
+// S3VirtualHostFor returns a middleware that recognises S3 virtual-hosted-style requests.
+//
+// When hostname is non-empty, requests whose Host header ends with ".<hostname>" are treated the same as
 // ".<localhost>" requests — the leading subdomain is the bucket name.
 //
-// Example: with hostname="localhost.localstack.cloud" a request to
+// Example with hostname="localhost.localstack.cloud":
 //
 //	Host: cdk-hnb659fds-assets-000000000000-ap-southeast-2.localhost.localstack.cloud:4566
 //
-// is rewritten to path /cdk-hnb659fds-assets-000000000000-ap-southeast-2/…
+// is rewritten to path /cdk-hnb659fds-assets-000000000000-ap-southeast-2/… .
 func S3VirtualHostFor(hostname string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

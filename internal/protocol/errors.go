@@ -53,6 +53,16 @@ type AWSError struct {
 	cause error
 }
 
+type errorRecorder interface {
+	RecordAWSError(*AWSError)
+}
+
+func recordAWSError(w http.ResponseWriter, aerr *AWSError) {
+	if rec, ok := w.(errorRecorder); ok {
+		rec.RecordAWSError(aerr)
+	}
+}
+
 // Error implements the error interface.
 // Returns the AWS error code and message; the cause is accessible via Unwrap.
 func (e *AWSError) Error() string {
@@ -187,6 +197,7 @@ type xmlErrorResponse struct {
 // The cause, if any, is NOT included in the response — it stays server-side
 // for logging. The x-emulator-unsupported header is set automatically for 501.
 func WriteXMLError(w http.ResponseWriter, r *http.Request, aerr *AWSError) {
+	recordAWSError(w, aerr)
 	reqID := RequestIDFromContext(r.Context())
 
 	body, _ := xml.Marshal(&xmlErrorResponse{
@@ -225,6 +236,7 @@ type jsonErrorResponse struct {
 // WriteJSONError writes an AWS JSON-protocol error response.
 // The cause, if any, is NOT included in the response body.
 func WriteJSONError(w http.ResponseWriter, r *http.Request, aerr *AWSError) {
+	recordAWSError(w, aerr)
 	reqID := RequestIDFromContext(r.Context())
 
 	body, _ := json.Marshal(&jsonErrorResponse{
@@ -276,6 +288,7 @@ type queryXMLError struct {
 
 // WriteQueryXMLError writes an AWS Query-protocol XML error response (SNS format).
 func WriteQueryXMLError(w http.ResponseWriter, r *http.Request, aerr *AWSError) {
+	recordAWSError(w, aerr)
 	reqID := RequestIDFromContext(r.Context())
 	body, _ := xml.Marshal(&queryXMLErrorResponse{
 		Error: queryXMLError{

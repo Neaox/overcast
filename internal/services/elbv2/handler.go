@@ -46,18 +46,18 @@ func newHandler(cfg *config.Config, store state.Store, log *serviceutil.ServiceL
 
 func (h *Handler) initOps() {
 	h.ops = map[string]http.HandlerFunc{
-		"CreateLoadBalancer":   h.CreateLoadBalancer,
+		"CreateLoadBalancer":    h.CreateLoadBalancer,
 		"DescribeLoadBalancers": h.DescribeLoadBalancers,
-		"DeleteLoadBalancer":   h.DeleteLoadBalancer,
-		"CreateTargetGroup":    h.CreateTargetGroup,
-		"DescribeTargetGroups": h.DescribeTargetGroups,
-		"DeleteTargetGroup":    h.DeleteTargetGroup,
-		"CreateListener":       h.CreateListener,
-		"DescribeListeners":    h.DescribeListeners,
-		"DeleteListener":       h.DeleteListener,
-		"RegisterTargets":      h.RegisterTargets,
-		"DeregisterTargets":    h.DeregisterTargets,
-		"DescribeTargetHealth": h.DescribeTargetHealth,
+		"DeleteLoadBalancer":    h.DeleteLoadBalancer,
+		"CreateTargetGroup":     h.CreateTargetGroup,
+		"DescribeTargetGroups":  h.DescribeTargetGroups,
+		"DeleteTargetGroup":     h.DeleteTargetGroup,
+		"CreateListener":        h.CreateListener,
+		"DescribeListeners":     h.DescribeListeners,
+		"DeleteListener":        h.DeleteListener,
+		"RegisterTargets":       h.RegisterTargets,
+		"DeregisterTargets":     h.DeregisterTargets,
+		"DescribeTargetHealth":  h.DescribeTargetHealth,
 	}
 	h.typedOp = h.typedOps()
 }

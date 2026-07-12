@@ -25,7 +25,10 @@ export function useOwningApplication(candidates: (string | undefined)[]): {
   const { data, isLoading } = useQuery(applicationReverseMapQueryOptions())
   if (!data) return { app: null, isLoading }
   for (const key of candidates) {
-    if (key && data[key]) return { app: data[key], isLoading }
+    if (!key) continue
+    if (Object.prototype.hasOwnProperty.call(data, key)) {
+      return { app: data[key], isLoading }
+    }
   }
   return { app: null, isLoading }
 }

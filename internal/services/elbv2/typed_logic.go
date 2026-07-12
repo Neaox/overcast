@@ -73,10 +73,10 @@ type elbv2Target struct {
 }
 
 type xmlTypedCreateLoadBalancerResponse struct {
-	XMLName          struct{}                              `xml:"CreateLoadBalancerResponse"`
-	Xmlns            string                                `xml:"xmlns,attr"`
-	Result           xmlTypedCreateLoadBalancerResult      `xml:"CreateLoadBalancerResult"`
-	ResponseMetadata protocol.ResponseMetadata             `xml:"ResponseMetadata"`
+	XMLName          struct{}                         `xml:"CreateLoadBalancerResponse"`
+	Xmlns            string                           `xml:"xmlns,attr"`
+	Result           xmlTypedCreateLoadBalancerResult `xml:"CreateLoadBalancerResult"`
+	ResponseMetadata protocol.ResponseMetadata        `xml:"ResponseMetadata"`
 }
 
 type xmlTypedCreateLoadBalancerResult struct {
@@ -88,10 +88,10 @@ type xmlTypedLBs struct {
 }
 
 type xmlTypedDescribeLoadBalancersResponse struct {
-	XMLName          struct{}                                `xml:"DescribeLoadBalancersResponse"`
-	Xmlns            string                                  `xml:"xmlns,attr"`
-	Result           xmlTypedDescribeLoadBalancersResult     `xml:"DescribeLoadBalancersResult"`
-	ResponseMetadata protocol.ResponseMetadata               `xml:"ResponseMetadata"`
+	XMLName          struct{}                            `xml:"DescribeLoadBalancersResponse"`
+	Xmlns            string                              `xml:"xmlns,attr"`
+	Result           xmlTypedDescribeLoadBalancersResult `xml:"DescribeLoadBalancersResult"`
+	ResponseMetadata protocol.ResponseMetadata           `xml:"ResponseMetadata"`
 }
 
 type xmlTypedDescribeLoadBalancersResult struct {
@@ -99,17 +99,17 @@ type xmlTypedDescribeLoadBalancersResult struct {
 }
 
 type xmlTypedDeleteLoadBalancerResponse struct {
-	XMLName          struct{}                        `xml:"DeleteLoadBalancerResponse"`
-	Xmlns            string                          `xml:"xmlns,attr"`
-	Result           struct{}                        `xml:"DeleteLoadBalancerResult"`
-	ResponseMetadata protocol.ResponseMetadata       `xml:"ResponseMetadata"`
+	XMLName          struct{}                  `xml:"DeleteLoadBalancerResponse"`
+	Xmlns            string                    `xml:"xmlns,attr"`
+	Result           struct{}                  `xml:"DeleteLoadBalancerResult"`
+	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
 }
 
 type xmlTypedCreateTargetGroupResponse struct {
-	XMLName          struct{}                              `xml:"CreateTargetGroupResponse"`
-	Xmlns            string                                `xml:"xmlns,attr"`
-	Result           xmlTypedCreateTargetGroupResult       `xml:"CreateTargetGroupResult"`
-	ResponseMetadata protocol.ResponseMetadata             `xml:"ResponseMetadata"`
+	XMLName          struct{}                        `xml:"CreateTargetGroupResponse"`
+	Xmlns            string                          `xml:"xmlns,attr"`
+	Result           xmlTypedCreateTargetGroupResult `xml:"CreateTargetGroupResult"`
+	ResponseMetadata protocol.ResponseMetadata       `xml:"ResponseMetadata"`
 }
 
 type xmlTypedCreateTargetGroupResult struct {
@@ -121,10 +121,10 @@ type xmlTypedTGs struct {
 }
 
 type xmlTypedDescribeTargetGroupsResponse struct {
-	XMLName          struct{}                                `xml:"DescribeTargetGroupsResponse"`
-	Xmlns            string                                  `xml:"xmlns,attr"`
-	Result           xmlTypedDescribeTargetGroupsResult      `xml:"DescribeTargetGroupsResult"`
-	ResponseMetadata protocol.ResponseMetadata               `xml:"ResponseMetadata"`
+	XMLName          struct{}                           `xml:"DescribeTargetGroupsResponse"`
+	Xmlns            string                             `xml:"xmlns,attr"`
+	Result           xmlTypedDescribeTargetGroupsResult `xml:"DescribeTargetGroupsResult"`
+	ResponseMetadata protocol.ResponseMetadata          `xml:"ResponseMetadata"`
 }
 
 type xmlTypedDescribeTargetGroupsResult struct {
@@ -132,17 +132,17 @@ type xmlTypedDescribeTargetGroupsResult struct {
 }
 
 type xmlTypedDeleteTargetGroupResponse struct {
-	XMLName          struct{}                        `xml:"DeleteTargetGroupResponse"`
-	Xmlns            string                          `xml:"xmlns,attr"`
-	Result           struct{}                        `xml:"DeleteTargetGroupResult"`
-	ResponseMetadata protocol.ResponseMetadata       `xml:"ResponseMetadata"`
+	XMLName          struct{}                  `xml:"DeleteTargetGroupResponse"`
+	Xmlns            string                    `xml:"xmlns,attr"`
+	Result           struct{}                  `xml:"DeleteTargetGroupResult"`
+	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
 }
 
 type xmlTypedCreateListenerResponse struct {
-	XMLName          struct{}                            `xml:"CreateListenerResponse"`
-	Xmlns            string                              `xml:"xmlns,attr"`
-	Result           xmlTypedCreateListenerResult        `xml:"CreateListenerResult"`
-	ResponseMetadata protocol.ResponseMetadata           `xml:"ResponseMetadata"`
+	XMLName          struct{}                     `xml:"CreateListenerResponse"`
+	Xmlns            string                       `xml:"xmlns,attr"`
+	Result           xmlTypedCreateListenerResult `xml:"CreateListenerResult"`
+	ResponseMetadata protocol.ResponseMetadata    `xml:"ResponseMetadata"`
 }
 
 type xmlTypedCreateListenerResult struct {
@@ -154,10 +154,10 @@ type xmlTypedListeners struct {
 }
 
 type xmlTypedDescribeListenersResponse struct {
-	XMLName          struct{}                              `xml:"DescribeListenersResponse"`
-	Xmlns            string                                `xml:"xmlns,attr"`
-	Result           xmlTypedDescribeListenersResult       `xml:"DescribeListenersResult"`
-	ResponseMetadata protocol.ResponseMetadata             `xml:"ResponseMetadata"`
+	XMLName          struct{}                        `xml:"DescribeListenersResponse"`
+	Xmlns            string                          `xml:"xmlns,attr"`
+	Result           xmlTypedDescribeListenersResult `xml:"DescribeListenersResult"`
+	ResponseMetadata protocol.ResponseMetadata       `xml:"ResponseMetadata"`
 }
 
 type xmlTypedDescribeListenersResult struct {
@@ -165,31 +165,31 @@ type xmlTypedDescribeListenersResult struct {
 }
 
 type xmlTypedDeleteListenerResponse struct {
-	XMLName          struct{}                      `xml:"DeleteListenerResponse"`
-	Xmlns            string                        `xml:"xmlns,attr"`
-	Result           struct{}                      `xml:"DeleteListenerResult"`
-	ResponseMetadata protocol.ResponseMetadata     `xml:"ResponseMetadata"`
+	XMLName          struct{}                  `xml:"DeleteListenerResponse"`
+	Xmlns            string                    `xml:"xmlns,attr"`
+	Result           struct{}                  `xml:"DeleteListenerResult"`
+	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
 }
 
 type xmlTypedRegisterTargetsResponse struct {
-	XMLName          struct{}                      `xml:"RegisterTargetsResponse"`
-	Xmlns            string                        `xml:"xmlns,attr"`
-	Result           struct{}                      `xml:"RegisterTargetsResult"`
-	ResponseMetadata protocol.ResponseMetadata     `xml:"ResponseMetadata"`
+	XMLName          struct{}                  `xml:"RegisterTargetsResponse"`
+	Xmlns            string                    `xml:"xmlns,attr"`
+	Result           struct{}                  `xml:"RegisterTargetsResult"`
+	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
 }
 
 type xmlTypedDeregisterTargetsResponse struct {
-	XMLName          struct{}                        `xml:"DeregisterTargetsResponse"`
-	Xmlns            string                          `xml:"xmlns,attr"`
-	Result           struct{}                        `xml:"DeregisterTargetsResult"`
-	ResponseMetadata protocol.ResponseMetadata       `xml:"ResponseMetadata"`
+	XMLName          struct{}                  `xml:"DeregisterTargetsResponse"`
+	Xmlns            string                    `xml:"xmlns,attr"`
+	Result           struct{}                  `xml:"DeregisterTargetsResult"`
+	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
 }
 
 type xmlTypedDescribeTargetHealthResponse struct {
-	XMLName          struct{}                                 `xml:"DescribeTargetHealthResponse"`
-	Xmlns            string                                   `xml:"xmlns,attr"`
-	Result           xmlTypedDescribeTargetHealthResult       `xml:"DescribeTargetHealthResult"`
-	ResponseMetadata protocol.ResponseMetadata                `xml:"ResponseMetadata"`
+	XMLName          struct{}                           `xml:"DescribeTargetHealthResponse"`
+	Xmlns            string                             `xml:"xmlns,attr"`
+	Result           xmlTypedDescribeTargetHealthResult `xml:"DescribeTargetHealthResult"`
+	ResponseMetadata protocol.ResponseMetadata          `xml:"ResponseMetadata"`
 }
 
 type xmlTypedDescribeTargetHealthResult struct {

@@ -18,15 +18,38 @@ import (
 // wsConnect upgrades an HTTP connection to a WebSocket at the realtime endpoint.
 func wsConnect(t *testing.T, srv *helpers.TestServer, apiID string) (*websocket.Conn, context.Context) {
 	t.Helper()
+	keyID := firstAPIKey(t, srv, apiID)
+	return wsConnectWithHeaders(t, srv, apiID, http.Header{"x-api-key": []string{keyID}})
+}
+
+func wsConnectWithHeaders(t *testing.T, srv *helpers.TestServer, apiID string, header http.Header) (*websocket.Conn, context.Context) {
+	t.Helper()
 	wsURL := strings.Replace(srv.URL, "http://", "ws://", 1) + "/_appsync/" + apiID + "/realtime"
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
-	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: header})
 	if err != nil {
 		t.Fatalf("WebSocket dial: %v", err)
 	}
 	t.Cleanup(func() { conn.Close(websocket.StatusNormalClosure, "") })
 	return conn, ctx
+}
+
+func firstAPIKey(t *testing.T, srv *helpers.TestServer, apiID string) string {
+	t.Helper()
+	resp := appsyncGet(t, srv, "/v1/apis/"+apiID+"/apikeys")
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		ApiKeys []struct {
+			Id string `json:"id"`
+		} `json:"apiKeys"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if len(result.ApiKeys) == 0 {
+		t.Fatal("expected at least one API key")
+	}
+	return result.ApiKeys[0].Id
 }
 
 // wsWrite sends a JSON message over the WebSocket.
@@ -82,6 +105,23 @@ func TestSubscription_connectAndAck(t *testing.T) {
 	}
 }
 
+func TestSubscription_connectMissingAPIKey(t *testing.T) {
+	// Given: an API_KEY-authenticated API exists
+	srv := helpers.NewTestServer(t)
+	apiID, _ := createTestAPI(t, srv)
+
+	// When: we connect without realtime authorization headers
+	wsURL := strings.Replace(srv.URL, "http://", "ws://", 1) + "/_appsync/" + apiID + "/realtime"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _, err := websocket.Dial(ctx, wsURL, nil)
+
+	// Then: the connection is rejected before the WebSocket upgrade
+	if err == nil {
+		t.Fatal("expected missing x-api-key to reject realtime connection")
+	}
+}
+
 func TestSubscription_subscribeAndReceive(t *testing.T) {
 	// Given: an API with a schema that has Query, Mutation, and Subscription types
 	srv := helpers.NewTestServer(t)
@@ -115,13 +155,22 @@ func TestSubscription_subscribeAndReceive(t *testing.T) {
 		t.Fatalf("expected connection_ack, got %q", ack["type"])
 	}
 
-	// Subscribe.
+	// Subscribe using AWS's realtime payload.data shape.
+	data, err := json.Marshal(map[string]any{
+		"query":     `subscription { onCreateTodo { id title } }`,
+		"variables": map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("marshal subscription data: %v", err)
+	}
 	wsWrite(t, ctx, conn, map[string]any{
 		"id":   "sub-1",
 		"type": "start",
 		"payload": map[string]any{
-			"query":     `subscription { onCreateTodo { id title } }`,
-			"variables": map[string]any{},
+			"data": string(data),
+			"extensions": map[string]any{
+				"authorization": map[string]any{"x-api-key": keyID},
+			},
 		},
 	})
 	startAck := wsRead(t, ctx, conn) // start_ack

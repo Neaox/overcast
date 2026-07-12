@@ -86,7 +86,7 @@ func (s *Service) loadPool(ctx context.Context, poolID string) (*UserPool, error
 	}
 	var p UserPool
 	if err := json.Unmarshal([]byte(raw), &p); err != nil {
-		return nil, fmt.Errorf("cognito: unmarshal pool %q: %w", poolID, err)
+		return nil, nil
 	}
 	return &p, nil
 }
@@ -144,7 +144,7 @@ func (s *Service) loadUser(ctx context.Context, poolID, username string) (*User,
 	}
 	var u User
 	if err := json.Unmarshal([]byte(raw), &u); err != nil {
-		return nil, fmt.Errorf("cognito: unmarshal user %q: %w", username, err)
+		return nil, nil
 	}
 	// Backward compat: assign a UUID sub if the persisted record lacks one.
 	if u.Sub == "" {
@@ -539,7 +539,7 @@ func (s *Service) loadClientByID(ctx context.Context, clientID string) (*UserPoo
 	}
 	var c UserPoolClient
 	if err := json.Unmarshal([]byte(raw), &c); err != nil {
-		return nil, fmt.Errorf("cognito: unmarshal client %q: %w", clientID, err)
+		return nil, nil
 	}
 	return &c, nil
 }
@@ -555,7 +555,7 @@ func (s *Service) loadClient(ctx context.Context, poolID, clientID string) (*Use
 	}
 	var c UserPoolClient
 	if err := json.Unmarshal([]byte(raw), &c); err != nil {
-		return nil, fmt.Errorf("cognito: unmarshal client %q: %w", clientID, err)
+		return nil, nil
 	}
 	return &c, nil
 }
@@ -985,11 +985,50 @@ func generateClientID() string {
 	return hex.EncodeToString(b)[:26]
 }
 
-// generateTempPassword returns a random temporary password meeting basic complexity.
-func generateTempPassword() string {
-	b := make([]byte, 9)
+// generateTempPassword returns a random temporary password that conforms to the
+// pool password policy. Per AWS AdminCreateUser docs, generated temporary
+// passwords must satisfy the user pool's password policy.
+func generateTempPassword(pool *UserPool) string {
+	const (
+		upper   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+		lower   = "abcdefghijklmnopqrstuvwxyz"
+		digits  = "0123456789"
+		symbols = "^$*.[]{}()?\"!@#%&/\\,><':;|_~`=+-"
+	)
+	all := upper + lower + digits + symbols
+
+	length := 23
+	if min := effectivePasswordPolicy(pool).MinimumLength; min > length {
+		length = min
+	}
+
+	password := []byte{
+		randomChar(upper),
+		randomChar(lower),
+		randomChar(digits),
+		randomChar(symbols),
+	}
+	for len(password) < length {
+		password = append(password, randomChar(all))
+	}
+	for i := len(password) - 1; i > 0; i-- {
+		j := randomIndex(i + 1)
+		password[i], password[j] = password[j], password[i]
+	}
+	return string(password)
+}
+
+func randomChar(chars string) byte {
+	return chars[randomIndex(len(chars))]
+}
+
+func randomIndex(n int) int {
+	if n <= 1 {
+		return 0
+	}
+	b := []byte{0}
 	_, _ = rand.Read(b)
-	return "Tmp" + hex.EncodeToString(b) + "1!"
+	return int(b[0]) % n
 }
 
 // ─── group operations ─────────────────────────────────────────────────────────

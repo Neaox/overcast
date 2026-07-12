@@ -13,11 +13,11 @@ type describeOrganizationResponse struct {
 }
 
 type organizationDetails struct {
-	Id                   string                   `json:"Id" cbor:"Id"`
-	Arn                  string                   `json:"Arn" cbor:"Arn"`
-	MasterAccountId      string                   `json:"MasterAccountId" cbor:"MasterAccountId"`
-	MasterUserEmail      string                   `json:"MasterUserEmail" cbor:"MasterUserEmail"`
-	FeatureSet           string                   `json:"FeatureSet" cbor:"FeatureSet"`
+	Id                   string                    `json:"Id" cbor:"Id"`
+	Arn                  string                    `json:"Arn" cbor:"Arn"`
+	MasterAccountId      string                    `json:"MasterAccountId" cbor:"MasterAccountId"`
+	MasterUserEmail      string                    `json:"MasterUserEmail" cbor:"MasterUserEmail"`
+	FeatureSet           string                    `json:"FeatureSet" cbor:"FeatureSet"`
 	AvailablePolicyTypes []availablePolicyTypeItem `json:"AvailablePolicyTypes" cbor:"AvailablePolicyTypes"`
 }
 

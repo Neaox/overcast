@@ -25,7 +25,7 @@ export function createSearchContributor<T>(config: ContributorConfig<T>): void {
   const contributor: SearchContributor = {
     id: config.id,
     async search(query: string, ctx: SearchContext): Promise<SearchResult[]> {
-      const cached = ctx.queryClient.getQueryData<T[]>(config.cacheKey(ctx.endpoint) as unknown[])
+      const cached = ctx.queryClient.getQueryData<T[]>(config.cacheKey(ctx.endpoint))
       const items = cached ?? (await config.fetchAll().catch(() => []))
       return items
         .filter((item) => matchesQuery(query, ...config.matchFields(item)))

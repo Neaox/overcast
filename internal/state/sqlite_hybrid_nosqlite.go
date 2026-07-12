@@ -7,6 +7,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // SQLiteStore is a stub that satisfies the Store interface for builds
@@ -36,6 +38,11 @@ type HybridStore struct {
 
 // NewHybridStore returns an error — SQLite support was excluded at build time.
 func NewHybridStore(_ string, _ time.Duration) (*HybridStore, error) {
+	return nil, fmt.Errorf("hybrid store: not compiled with SQLite support (build without -tags nosqlite)")
+}
+
+// NewHybridStoreWithLogger returns an error — SQLite support was excluded at build time.
+func NewHybridStoreWithLogger(_ string, _ time.Duration, _ *zap.Logger) (*HybridStore, error) {
 	return nil, fmt.Errorf("hybrid store: not compiled with SQLite support (build without -tags nosqlite)")
 }
 

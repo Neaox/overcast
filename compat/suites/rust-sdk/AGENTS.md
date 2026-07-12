@@ -36,7 +36,7 @@ Planned coverage (core services only, not full parity with `node-js-sdk`):
 | ---------- | ---------------------------------------------------- |
 | Language   | Rust (stable toolchain, edition 2021)                |
 | AWS client | `aws-sdk-*` crates (pinned exactly: `=1.x.y` in `Cargo.toml`) |
-| CI image   | `rust:1.91-slim-bookworm`                                      |
+| CI image   | `rust:1.94.1-slim-bookworm`                                    |
 
 > SDK upgrade policy: [compat/AGENTS.md § SDK version pinning](../../AGENTS.md#sdk-version-pinning--upgrade-strategy).
 

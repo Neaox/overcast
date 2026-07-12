@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unnecessary-condition -- defensive fallbacks for SDK types that may be incomplete at runtime */
 import { awsClients } from "../aws-clients"
 import {
   ListDistributionsCommand,

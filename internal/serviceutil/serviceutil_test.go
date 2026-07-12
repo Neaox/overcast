@@ -256,6 +256,125 @@ func TestBucketName_invalid(t *testing.T) {
 	}
 }
 
+// ---- ResourceName validation -----------------------------------------------
+
+func TestResourceName_valid(t *testing.T) {
+	// Given: a generic AWS-style identifier rule
+	rule := serviceutil.NameRule{
+		MinLength:      1,
+		MaxLength:      8,
+		Allowed:        serviceutil.AlphaNumericHyphenUnderscorePeriod,
+		ErrorCode:      "ValidationException",
+		LengthMessage:  "bad length",
+		AllowedMessage: "bad chars",
+	}
+
+	// When + Then: values matching the rule pass
+	if aerr := serviceutil.ResourceName("a-1_b.c", rule); aerr != nil {
+		t.Fatalf("expected name to be valid, got %v", aerr)
+	}
+}
+
+func TestResourceName_invalidLength(t *testing.T) {
+	// Given: a generic AWS-style identifier rule
+	rule := serviceutil.NameRule{
+		MinLength:     2,
+		MaxLength:     4,
+		ErrorCode:     "ValidationException",
+		LengthMessage: "bad length",
+	}
+
+	// When: the name is too short
+	aerr := serviceutil.ResourceName("a", rule)
+
+	// Then: the configured AWS error is returned
+	if aerr == nil {
+		t.Fatal("expected validation error")
+	}
+	if aerr.Code != "ValidationException" || aerr.Message != "bad length" || aerr.HTTPStatus != http.StatusBadRequest {
+		t.Fatalf("unexpected error: %#v", aerr)
+	}
+}
+
+func TestResourceName_invalidAllowedCharacters(t *testing.T) {
+	// Given: a generic AWS-style identifier rule
+	rule := serviceutil.NameRule{
+		MinLength:      1,
+		MaxLength:      8,
+		Allowed:        serviceutil.AlphaNumericHyphenUnderscorePeriod,
+		ErrorCode:      "ValidationException",
+		AllowedMessage: "bad chars",
+	}
+
+	// When: the name contains an unsupported rune
+	aerr := serviceutil.ResourceName("bad!", rule)
+
+	// Then: the configured AWS error is returned
+	if aerr == nil {
+		t.Fatal("expected validation error")
+	}
+	if aerr.Code != "ValidationException" || aerr.Message != "bad chars" || aerr.HTTPStatus != http.StatusBadRequest {
+		t.Fatalf("unexpected error: %#v", aerr)
+	}
+}
+
+func TestResourceName_invalidPattern(t *testing.T) {
+	// Given: a rule with the AppSync GraphQL identifier pattern
+	rule := serviceutil.NameRule{
+		MinLength:      1,
+		MaxLength:      8,
+		Pattern:        serviceutil.GraphQLIdentifierPattern,
+		ErrorCode:      "BadRequestException",
+		PatternMessage: "bad pattern",
+	}
+
+	// When: the name starts with a digit
+	aerr := serviceutil.ResourceName("1bad", rule)
+
+	// Then: the configured AWS error is returned
+	if aerr == nil {
+		t.Fatal("expected validation error")
+	}
+	if aerr.Code != "BadRequestException" || aerr.Message != "bad pattern" || aerr.HTTPStatus != http.StatusBadRequest {
+		t.Fatalf("unexpected error: %#v", aerr)
+	}
+}
+
+// ---- AppSync validation -----------------------------------------------------
+
+func TestAppSyncIdentifierName_valid(t *testing.T) {
+	valid := []string{"Todo", "_Private", "field123"}
+	for _, name := range valid {
+		if aerr := serviceutil.AppSyncIdentifierName(name, "name"); aerr != nil {
+			t.Errorf("AppSyncIdentifierName(%q): unexpected error: %v", name, aerr)
+		}
+	}
+}
+
+func TestAppSyncIdentifierName_invalid(t *testing.T) {
+	invalid := []string{"", "1Todo", "bad-name", "bad.name"}
+	for _, name := range invalid {
+		if aerr := serviceutil.AppSyncIdentifierName(name, "name"); aerr == nil {
+			t.Errorf("AppSyncIdentifierName(%q): expected error", name)
+		}
+	}
+}
+
+func TestAppSyncNamedHelpers(t *testing.T) {
+	if aerr := serviceutil.AppSyncDataSourceName("DataSource_1"); aerr != nil {
+		t.Fatalf("expected data source name to be valid: %v", aerr)
+	}
+	if aerr := serviceutil.AppSyncFunctionName("fn1"); aerr != nil {
+		t.Fatalf("expected function name to be valid: %v", aerr)
+	}
+	if aerr := serviceutil.AppSyncTypeName("Query"); aerr != nil {
+		t.Fatalf("expected type name to be valid: %v", aerr)
+	}
+	if aerr := serviceutil.AppSyncFieldName("listTodos"); aerr != nil {
+		t.Fatalf("expected field name to be valid: %v", aerr)
+	}
+}
+
 // ---- LazyInit --------------------------------------------------------------
 
 func TestLazyInit_runsOnce(t *testing.T) {

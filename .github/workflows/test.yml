@@ -6,21 +6,32 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  checks: write
+
 jobs:
   test:
     name: Test (Go ${{ matrix.go }})
+    needs: web
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        go: ["1.24", "1.23"]
+        go: ["1.24"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: ${{ matrix.go }}
           cache: true
+
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: web-dist
+          path: web/dist
 
       - name: Install dependencies
         run: go mod download
@@ -44,16 +55,29 @@ jobs:
 
   lint:
     name: Lint
+    needs: web
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: "1.24"
           cache: true
-      - uses: golangci/golangci-lint-action@v6
+      - uses: actions/download-artifact@v8.0.1
         with:
-          version: latest
+          name: web-dist
+          path: web/dist
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+      - name: Run Go lint
+        run: make lint-go
+
+  actionlint:
+    name: Actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: rhysd/actionlint@v1.7.7
 
   web:
     name: Web UI
@@ -62,8 +86,8 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-node@v6.4.0
         with:
           node-version: 22
           cache: npm
@@ -77,12 +101,84 @@ jobs:
         run: VITE_BUNDLED=true npm run build
       - name: Build BFF server
         run: npm run build:server
+      - name: Upload web assets
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: web-dist
+          path: web/dist
+          if-no-files-found: error
+
+  cross-build:
+    name: Cross-build ${{ matrix.asset }}
+    needs: web
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - asset: overcast-linux-amd64
+            goos: linux
+            goarch: amd64
+            tags: ""
+          - asset: overcast-linux-arm64
+            goos: linux
+            goarch: arm64
+            tags: ""
+          - asset: overcast-darwin-amd64
+            goos: darwin
+            goarch: amd64
+            tags: ""
+          - asset: overcast-darwin-arm64
+            goos: darwin
+            goarch: arm64
+            tags: ""
+          - asset: overcast-windows-amd64.exe
+            goos: windows
+            goarch: amd64
+            tags: ""
+          - asset: overcastd-linux-amd64
+            goos: linux
+            goarch: amd64
+            tags: slim,nosqlite
+          - asset: overcastd-linux-arm64
+            goos: linux
+            goarch: arm64
+            tags: slim,nosqlite
+          - asset: overcastd-darwin-amd64
+            goos: darwin
+            goarch: amd64
+            tags: slim,nosqlite
+          - asset: overcastd-darwin-arm64
+            goos: darwin
+            goarch: arm64
+            tags: slim,nosqlite
+          - asset: overcastd-windows-amd64.exe
+            goos: windows
+            goarch: amd64
+            tags: slim,nosqlite
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-go@v6.5.0
+        with:
+          go-version: "1.24"
+          cache: true
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: web-dist
+          path: web/dist
+      - uses: ./.github/actions/build-overcast-binary
+        with:
+          asset: ${{ matrix.asset }}
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          tags: ${{ matrix.tags }}
+          version: ci
 
   docker:
     name: Docker build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.0
       - name: Build console image
         run: docker build -t overcast:ci .
       - name: Build slim image

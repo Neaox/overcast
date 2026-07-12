@@ -45,8 +45,8 @@ function cdkEnv(
     OVERCAST_COMPAT_RUN_ID: ctx.runId,
     OVERCAST_ENDPOINT: ctx.endpoint,
     AWS_ENDPOINT_URL: ctx.endpoint,
-    AWS_ACCESS_KEY_ID: process.env["AWS_ACCESS_KEY_ID"] ?? "test",
-    AWS_SECRET_ACCESS_KEY: process.env["AWS_SECRET_ACCESS_KEY"] ?? "test",
+    AWS_ACCESS_KEY_ID: process.env["AWS_ACCESS_KEY_ID"] || "test",
+    AWS_SECRET_ACCESS_KEY: process.env["AWS_SECRET_ACCESS_KEY"] || "test",
     AWS_DEFAULT_REGION: ctx.region,
     AWS_REGION: ctx.region,
     ...extra,
@@ -62,6 +62,10 @@ async function runCdk(
     cwd: process.cwd(),
     env: cdkEnv(ctx, extraEnv),
   });
+}
+
+function cdkStackSelector(ctx: TestContext): string {
+  return `CompatStage-${ctx.runId}/Stack`;
 }
 
 function outputMap(outputs: Output[] | undefined): Record<string, string> {
@@ -274,7 +278,7 @@ async function verifyEventSourceMapping(ctx: TestContext): Promise<void> {
 }
 
 async function destroyStack(ctx: TestContext): Promise<void> {
-  await runCdk(ctx, ["destroy", ctx.stackName, "--force"]);
+  await runCdk(ctx, ["destroy", cdkStackSelector(ctx), "--force"]);
 }
 
 async function verifyDestroyed(ctx: TestContext): Promise<void> {
@@ -638,10 +642,10 @@ async function verifyNestedQueue(ctx: TestContext): Promise<void> {
 }
 
 async function updateLambdaTimeout(ctx: TestContext): Promise<void> {
-  await runCdk(ctx, ["synth", ctx.stackName], {
+  await runCdk(ctx, ["synth", cdkStackSelector(ctx)], {
     CDK_COMPAT_LAMBDA_TIMEOUT: "15",
   });
-  await runCdk(ctx, ["deploy", ctx.stackName, "--require-approval", "never"], {
+  await runCdk(ctx, ["deploy", cdkStackSelector(ctx), "--require-approval", "never"], {
     CDK_COMPAT_LAMBDA_TIMEOUT: "15",
   });
 }
@@ -678,7 +682,7 @@ export function makeLifecycleGroups(suite: string): TestGroup[] {
         {
           name: "Synth",
           depends: ["Bootstrap"],
-          fn: async (ctx) => runCdk(ctx, ["synth", ctx.stackName]),
+          fn: async (ctx) => runCdk(ctx, ["synth", cdkStackSelector(ctx)]),
         },
         {
           name: "Deploy",
@@ -686,7 +690,7 @@ export function makeLifecycleGroups(suite: string): TestGroup[] {
           fn: async (ctx) =>
             runCdk(ctx, [
               "deploy",
-              ctx.stackName,
+              cdkStackSelector(ctx),
               "--require-approval",
               "never",
             ]),

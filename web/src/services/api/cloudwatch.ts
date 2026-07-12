@@ -1,5 +1,5 @@
 import {
-  CloudWatchClient,
+  type CloudWatchClient,
   DescribeAlarmsCommand,
   GetMetricStatisticsCommand,
   ListMetricsCommand,

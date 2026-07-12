@@ -166,9 +166,10 @@ pattern, and `internal/router/procstart_*.go` for the process-start-time files.
 
 | Tool          | Version | Install                                                   |
 | ------------- | ------- | --------------------------------------------------------- |
-| Go            | 1.23+   | https://go.dev/dl/                                        |
+| Go            | 1.24+   | https://go.dev/dl/                                        |
 | Docker        | 24+     | https://docs.docker.com/get-docker/                       |
-| golangci-lint | latest  | `brew install golangci-lint` or https://golangci-lint.run |
+| golangci-lint | v1.64.8 | `brew install golangci-lint` or https://golangci-lint.run |
+| actionlint    | v1.7.7  | `make lint-actions` uses pinned `go run` automatically         |
 | Node.js       | 18+     | For web UI builds and Lambda work — https://nodejs.org    |
 
 ---
@@ -204,9 +205,13 @@ make test              # all tests + race detector — run before every commit
 make test-unit         # fast unit tests (internal/) — run while writing code
 make test-integration  # full integration suite
 make test-coverage     # HTML coverage report → coverage.html
-make lint              # golangci-lint
+make lint              # all linters: Go/emulation, web UI, GitHub Actions
+make lint-go           # Go/emulation lint (golangci-lint)
+make lint-web          # web UI lint (ESLint)
+make lint-actions      # GitHub Actions workflow lint (pinned actionlint)
 make fmt               # gofmt all files
 make vet               # go vet
+make check             # aggregate pre-PR checks
 make run               # build and run on :4566
 docker compose up      # run in Docker (rebuilds image)
 ```
@@ -548,7 +553,18 @@ We use [Semantic Versioning](https://semver.org/). Version bump rules:
 | New endpoint, new service, new feature                       | MINOR |
 | Bug fix, performance improvement, documentation              | PATCH |
 
-**Every PR that changes user-facing behaviour must update `CHANGELOG.md`.**
+**Every PR that changes shipped runtime behaviour must update `CHANGELOG.md`.**
+
+`CHANGELOG.md` is used as the basis for GitHub release notes. Keep it focused on
+changes users need to know about when they install or run Overcast: new services,
+new endpoints, AWS compatibility fixes, user-visible bug fixes, config/env var
+changes, Docker/binary packaging changes, performance changes with measured
+conditions, and documentation that materially changes user guidance.
+
+Do not add changelog entries for purely internal development changes unless they
+affect shipped artifacts or runtime behaviour. Examples that usually do not
+belong in release notes: CI-only refactors, test-only changes, local tooling,
+code cleanup, non-user-visible refactors, and workflow maintenance.
 
 Add your entry under `[Unreleased]`:
 

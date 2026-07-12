@@ -60,6 +60,7 @@ type RuntimeAPIServer struct {
 	waiting    map[string]chan *pendingInvocation // keyed by function ARN — one waiter per container
 	containers map[string]string                  // container ID → function ARN (registered on Acquire)
 	seenNext   map[string]bool                    // container IP → true after first GET /next
+	ready      map[string]chan struct{}           // container IP → closed after first GET /next
 	server     *http.Server
 	listener   net.Listener
 	logger     *zap.Logger
@@ -96,6 +97,7 @@ func NewRuntimeAPIServerFromListener(ln net.Listener, containerAddr string, logg
 		waiting:    make(map[string]chan *pendingInvocation),
 		containers: make(map[string]string),
 		seenNext:   make(map[string]bool),
+		ready:      make(map[string]chan struct{}),
 		logger:     logger,
 		addr:       containerAddr,
 		done:       make(chan struct{}),
@@ -129,11 +131,30 @@ func (s *RuntimeAPIServer) Addr() string { return s.addr }
 
 // RegisterContainer maps the container's IP address to a function ARN so that
 // incoming GET /next requests from that container can be routed to the correct
-// invocation queue. Call this after the container has started and its IP is known.
+// invocation queue. Call this as soon as Docker has assigned the container IP.
 func (s *RuntimeAPIServer) RegisterContainer(containerIP, functionARN string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.containers[containerIP] = functionARN
+	if _, ok := s.ready[containerIP]; !ok {
+		s.ready[containerIP] = make(chan struct{})
+	}
+}
+
+func (s *RuntimeAPIServer) ReadyChan(containerIP string) <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.seenNext[containerIP] {
+		ch := make(chan struct{})
+		close(ch)
+		return ch
+	}
+	ch, ok := s.ready[containerIP]
+	if !ok {
+		ch = make(chan struct{})
+		s.ready[containerIP] = ch
+	}
+	return ch
 }
 
 // UnregisterContainer removes the container IP from the registry.
@@ -142,6 +163,7 @@ func (s *RuntimeAPIServer) UnregisterContainer(containerIP string) {
 	defer s.mu.Unlock()
 	delete(s.containers, containerIP)
 	delete(s.seenNext, containerIP)
+	delete(s.ready, containerIP)
 }
 
 // lookupContainerWait resolves a container IP to its function ARN, blocking
@@ -259,6 +281,10 @@ func (s *RuntimeAPIServer) handleNext(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	if !s.seenNext[remoteIP] {
 		s.seenNext[remoteIP] = true
+		if ready, ok := s.ready[remoteIP]; ok {
+			close(ready)
+			delete(s.ready, remoteIP)
+		}
 		cb := s.OnFirstNext
 		s.mu.Unlock()
 		if cb != nil {
@@ -316,7 +342,7 @@ func (s *RuntimeAPIServer) writeNextResponse(w http.ResponseWriter, inv *pending
 
 // newXRayTraceID generates a syntactically-valid X-Ray trace header with
 // Sampled=0 so SDKs don't attempt to ship segments to a daemon that isn't
-// running. Format: Root=1-{8-hex-epoch}-{24-hex-random};Parent={16-hex};Sampled=0
+// running.
 func newXRayTraceID(now time.Time) string {
 	var buf [20]byte
 	_, _ = rand.Read(buf[:])

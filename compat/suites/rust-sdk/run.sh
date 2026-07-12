@@ -20,10 +20,7 @@ if [ -f "/.dockerenv" ]; then
   IN_CONTAINER=1
 fi
 
-SRC_HASH=$(find "$SCRIPT_DIR" -type f \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' -o -name 'Dockerfile' -o -name 'run.sh' \) \
-  | sort | xargs md5sum 2>/dev/null | md5sum | cut -c1-12)
-REGISTRY_HASH=$(md5sum "$CONTEXT_DIR/registry.json" | cut -c1-12)
-TAG="${SRC_HASH}-${REGISTRY_HASH}"
+TAG=$("$SCRIPT_DIR/image-tag.sh")
 VERSIONED_IMAGE="${IMAGE}:${TAG}"
 
 if ! docker image inspect "$VERSIONED_IMAGE" > /dev/null 2>&1; then

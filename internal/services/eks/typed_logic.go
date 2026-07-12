@@ -935,6 +935,7 @@ func (s *Service) describeAddonConfigurationTyped(ctx context.Context, req *desc
 
 // ─── Access Entries ───────────────────────────────────────────────────────────
 
+//nolint:unused // Kept for AWS-shaped access-entry response members.
 type accessEntryARNs struct {
 	PrincipalArn string `json:"principalArn" cbor:"principalArn"`
 }

@@ -29,7 +29,7 @@ var tools = []tool{
 		cmd:      "go",
 		args:     []string{"version"},
 		required: true,
-		hint:     "Install from https://go.dev/dl/ (1.23+ required)",
+		hint:     "Install from https://go.dev/dl/ (1.24+ required)",
 	},
 	{
 		name:     "Git",
@@ -43,7 +43,7 @@ var tools = []tool{
 		cmd:      "golangci-lint",
 		args:     []string{"version"},
 		required: false, // required for lint, not for build/test
-		hint:     "Mac/Linux: brew install golangci-lint | Windows: scoop install golangci-lint",
+		hint:     "Install golangci-lint v1.64.8 from https://golangci-lint.run/usage/install/",
 	},
 	{
 		name:     "Docker",
