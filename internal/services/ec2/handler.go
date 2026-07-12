@@ -115,6 +115,7 @@ func (h *Handler) buildOpsMap() {
 		"DescribeVpcAttribute":          h.DescribeVpcAttribute,
 		"DescribeDhcpOptions":           h.DescribeDhcpOptions,
 		"DescribeAccountAttributes":     h.DescribeAccountAttributes,
+		"DescribeVpnGateways":           h.DescribeVpnGateways,
 		"CreateNetworkInterface":        h.CreateNetworkInterface,
 		"DescribeNetworkInterfaces":     h.DescribeNetworkInterfaces,
 		"DeleteNetworkInterface":        h.DeleteNetworkInterface,

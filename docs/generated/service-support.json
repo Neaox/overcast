@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1229,
+  "total_ops": 1230,
   "services": [
     {
       "service": "s3",
@@ -2670,8 +2670,8 @@
     {
       "service": "ec2",
       "display_name": "EC2 / VPC",
-      "total_ops": 67,
-      "implemented_ops": 67,
+      "total_ops": 68,
+      "implemented_ops": 68,
       "operations": [
         {
           "operation": "AcceptVpcPeeringConnection",
@@ -2962,6 +2962,12 @@
           "category": "General",
           "status": "✅ Supported",
           "notes": "Filter by VpcEndpointId.N, vpc-id filter, service-name filter"
+        },
+        {
+          "operation": "DescribeVpnGateways",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Returns an empty vpnGatewaySet"
         },
         {
           "operation": "DescribeVpcPeeringConnections",

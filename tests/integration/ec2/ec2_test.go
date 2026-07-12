@@ -203,15 +203,54 @@ func TestCreateVpc_mainRouteTable(t *testing.T) {
 	}
 }
 
+func TestDescribeVpnGateways_noGateways(t *testing.T) {
+	// Given: EC2 service
+	srv := helpers.NewTestServer(t)
+
+	// When: VPN gateways are described for a VPC without an attached gateway
+	resp := ec2Query(t, srv, "DescribeVpnGateways", url.Values{
+		"Filter.1.Name":    []string{"attachment.vpc-id"},
+		"Filter.1.Value.1": []string{"vpc-12345678"},
+		"Filter.2.Name":    []string{"attachment.state"},
+		"Filter.2.Value.1": []string{"attached"},
+		"Filter.3.Name":    []string{"state"},
+		"Filter.3.Value.1": []string{"available"},
+	})
+	defer resp.Body.Close()
+
+	// Then: EC2 returns a well-formed empty Query response
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	helpers.AssertRequestID(t, resp)
+	type describeVpnGatewaysResponse struct {
+		XMLName    xml.Name   `xml:"DescribeVpnGatewaysResponse"`
+		RequestID  string     `xml:"requestId"`
+		GatewaySet []struct{} `xml:"vpnGatewaySet>item"`
+	}
+	body := readBody(t, resp)
+	var result describeVpnGatewaysResponse
+	if err := xml.Unmarshal(body, &result); err != nil {
+		t.Fatalf("unmarshal DescribeVpnGatewaysResponse: %v\nbody: %s", err, body)
+	}
+	if result.XMLName.Local != "DescribeVpnGatewaysResponse" {
+		t.Errorf("expected DescribeVpnGatewaysResponse root, got %s", result.XMLName.Local)
+	}
+	if result.RequestID == "" {
+		t.Error("expected requestId in response body")
+	}
+	if !strings.Contains(string(body), "<vpnGatewaySet>") && !strings.Contains(string(body), "<vpnGatewaySet/>") {
+		t.Fatalf("expected empty vpnGatewaySet element; body: %s", body)
+	}
+	if len(result.GatewaySet) != 0 {
+		t.Fatalf("expected no VPN gateways, got %d; body: %s", len(result.GatewaySet), body)
+	}
+}
+
 func TestEC2QueryError_unsupportedAction(t *testing.T) {
 	// Given: EC2 service
 	srv := helpers.NewTestServer(t)
 
 	// When: an unsupported EC2 action is called
-	resp := ec2Query(t, srv, "DescribeVpnGateways", url.Values{
-		"Filter.1.Name":    []string{"attachment.vpc-id"},
-		"Filter.1.Value.1": []string{"vpc-12345678"},
-	})
+	resp := ec2Query(t, srv, "DescribeCarrierGateways", nil)
 	defer resp.Body.Close()
 
 	// Then: the 501 body uses EC2's SDK-compatible Query error envelope

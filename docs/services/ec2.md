@@ -277,7 +277,7 @@ web UI surfacing is planned alongside the future strategies — see
 
 | Category           | ✅ Supported |
 | ------------------ | ------------ |
-| General            | 64           |
+| General            | 65           |
 | VPC network states | 3            |
 
 ---
@@ -337,6 +337,7 @@ web UI surfacing is planned alongside the future strategies — see
 | `DescribeTags`                  | ✅ Supported | Filter by resource-id, resource-type, key                                                                 | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeTags.html)                  |
 | `DescribeVpcAttribute`          | ✅ Supported | Returns enableDnsSupport or enableDnsHostnames                                                            | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVpcAttribute.html)          |
 | `DescribeVpcEndpoints`          | ✅ Supported | Filter by VpcEndpointId.N, vpc-id filter, service-name filter                                             | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVpcEndpoints.html)          |
+| `DescribeVpnGateways`           | ✅ Supported | Returns an empty vpnGatewaySet                                                                            | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVpnGateways.html)           |
 | `DescribeVpcPeeringConnections` | ✅ Supported | Filter by ID, status-code, requester/accepter VPC                                                         | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVpcPeeringConnections.html) |
 | `DescribeVpcs`                  | ✅ Supported | Lists all VPCs; filter by VpcId                                                                           | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVpcs.html)                  |
 | `DetachInternetGateway`         | ✅ Supported | Toggles VPC Docker network back to `--internal`                                                           | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DetachInternetGateway.html)         |

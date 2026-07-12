@@ -34,6 +34,7 @@ var ec2Ops = []string{
 	"CreateNatGateway", "DescribeNatGateways", "DeleteNatGateway",
 	"ModifySubnetAttribute", "ModifyVpcAttribute",
 	"DescribeVpcAttribute", "DescribeDhcpOptions", "DescribeAccountAttributes",
+	"DescribeVpnGateways",
 	"CreateNetworkInterface", "DescribeNetworkInterfaces", "DeleteNetworkInterface",
 	"ModifyInstanceAttribute",
 	"CreateVpcEndpoint", "DescribeVpcEndpoints", "DeleteVpcEndpoints",

@@ -2,7 +2,8 @@ package ec2
 
 // handler_misc.go — ModifySubnetAttribute, ModifyVpcAttribute,
 // DescribeDhcpOptions, DescribeAccountAttributes, DescribeVpcAttribute,
-// CreateNetworkInterface, DescribeNetworkInterfaces, DeleteNetworkInterface handlers.
+// DescribeVpnGateways, CreateNetworkInterface, DescribeNetworkInterfaces,
+// DeleteNetworkInterface handlers.
 
 import (
 	"encoding/xml"
@@ -193,6 +194,24 @@ func (h *Handler) DescribeAccountAttributes(w http.ResponseWriter, r *http.Reque
 			{AttributeName: "max-elastic-ips", AttributeValueSet: []xmlAccountAttrValue{{AttributeValue: "5"}}},
 			{AttributeName: "vpc-max-elastic-ips", AttributeValueSet: []xmlAccountAttrValue{{AttributeValue: "5"}}},
 		},
+	})
+}
+
+// ── DescribeVpnGateways ─────────────────────────────────────────────────────
+
+type xmlDescribeVpnGatewaysResponse struct {
+	XMLName       xml.Name `xml:"DescribeVpnGatewaysResponse"`
+	Xmlns         string   `xml:"xmlns,attr"`
+	RequestID     string   `xml:"requestId"`
+	VpnGatewaySet struct{} `xml:"vpnGatewaySet"`
+}
+
+// DescribeVpnGateways returns no virtual private gateways. Most local VPC/CDK
+// lookups only need a well-formed empty result to confirm none are attached.
+func (h *Handler) DescribeVpnGateways(w http.ResponseWriter, r *http.Request) {
+	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeVpnGatewaysResponse{
+		Xmlns:     ec2XMLNS,
+		RequestID: protocol.RequestIDFromContext(r.Context()),
 	})
 }
 

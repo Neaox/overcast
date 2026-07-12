@@ -18,6 +18,7 @@ import {
   DescribeAvailabilityZonesCommand,
   DescribeImagesCommand,
   DescribeVpcsCommand,
+  DescribeVpnGatewaysCommand,
   CreateVpcCommand,
   DeleteVpcCommand,
   CreateSubnetCommand,
@@ -248,6 +249,28 @@ export function makeEC2Groups(suite: string): TestGroup[] {
               resp.Vpcs,
               undefined,
               "DescribeVpcs: missing Vpcs",
+            );
+          },
+        },
+        {
+          name: "DescribeVpnGateways",
+          fn: async (ctx) => {
+            const { ec2 } = makeClients(ctx);
+            const vpcId = (ctx as Record<string, unknown>)["_vpcId"] as string;
+            assert.ok(vpcId, "DescribeVpnGateways: no VPC from CreateVpc");
+            const resp = await ec2.send(
+              new DescribeVpnGatewaysCommand({
+                Filters: [
+                  { Name: "attachment.vpc-id", Values: [vpcId] },
+                  { Name: "attachment.state", Values: ["attached"] },
+                  { Name: "state", Values: ["available"] },
+                ],
+              }),
+            );
+            assert.deepStrictEqual(
+              resp.VpnGateways ?? [],
+              [],
+              "DescribeVpnGateways: expected no VPN gateways",
             );
           },
         },

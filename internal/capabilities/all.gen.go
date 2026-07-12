@@ -593,6 +593,7 @@ var AllCapabilities = []Capability{
 	{Service: "ec2", Operation: "DescribeVpcEndpoints", Category: "General", Status: StatusSupported, Notes: "Filter by VpcEndpointId.N, vpc-id filter, service-name filter", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "ec2", Operation: "DescribeVpcPeeringConnections", Category: "General", Status: StatusSupported, Notes: "Filter by ID, status-code, requester/accepter VPC", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "ec2", Operation: "DescribeVpcs", Category: "General", Status: StatusSupported, Notes: "Lists all VPCs; filter by VpcId", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "ec2", Operation: "DescribeVpnGateways", Category: "General", Status: StatusSupported, Notes: "Returns an empty vpnGatewaySet", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "ec2", Operation: "DetachInternetGateway", Category: "General", Status: StatusSupported, Notes: "Toggles VPC Docker network back to `--internal`", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "ec2", Operation: "DisassociateAddress", Category: "General", Status: StatusSupported, Notes: "By AssociationId", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "ec2", Operation: "DisassociateRouteTable", Category: "General", Status: StatusSupported, Notes: "Cannot disassociate main association", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},

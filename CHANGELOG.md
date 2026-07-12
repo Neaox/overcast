@@ -59,6 +59,12 @@ need it than accidentally ship a breaking change as a patch.
        append new capabilities rather than splitting into sub-bullets.
 -->
 
+## [0.0.1-alpha.2] - 2026-07-12
+
+### Added
+
+- **EC2** — `DescribeVpnGateways` now returns a well-formed empty EC2 Query response, unblocking CDK `Vpc.fromLookup()` for VPCs without attached VPN gateways.
+
 ## [0.0.1-alpha.1] - 2026-07-12
 
 ### Changed

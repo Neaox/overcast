@@ -1440,6 +1440,10 @@
           "depends": ["CreateVpc"]
         },
         {
+          "name": "DescribeVpnGateways",
+          "depends": ["CreateVpc"]
+        },
+        {
           "name": "CreateSubnet",
           "depends": ["CreateVpc"]
         },

@@ -64,6 +64,7 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"DescribeVpcAttribute":          op.NewTyped[describeVpcAttributeReq, describeVpcAttributeResp]("DescribeVpcAttribute", h.describeVpcAttributeTyped),
 		"DescribeDhcpOptions":           op.NewTyped[describeDhcpOptionsReq, describeDhcpOptionsResp]("DescribeDhcpOptions", h.describeDhcpOptionsTyped),
 		"DescribeAccountAttributes":     op.NewTyped[describeAccountAttributesReq, describeAccountAttributesResp]("DescribeAccountAttributes", h.describeAccountAttributesTyped),
+		"DescribeVpnGateways":           op.NewTyped[describeVpnGatewaysReq, describeVpnGatewaysResp]("DescribeVpnGateways", h.describeVpnGatewaysTyped),
 		"CreateNetworkInterface":        op.NewTyped[createNetworkInterfaceReq, createNetworkInterfaceResp]("CreateNetworkInterface", h.createNetworkInterfaceTyped),
 		"DescribeNetworkInterfaces":     op.NewTyped[describeNetworkInterfacesReq, describeNetworkInterfacesResp]("DescribeNetworkInterfaces", h.describeNetworkInterfacesTyped),
 		"DeleteNetworkInterface":        op.NewTyped[deleteNetworkInterfaceReq, deleteNetworkInterfaceResp]("DeleteNetworkInterface", h.deleteNetworkInterfaceTyped),

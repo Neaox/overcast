@@ -14,6 +14,7 @@
 // AttachInternetGateway, DetachInternetGateway,
 // CreateVpcPeeringConnection, AcceptVpcPeeringConnection,
 // DescribeVpcPeeringConnections, DeleteVpcPeeringConnection.
+// DescribeVpnGateways returns an empty result for local CDK VPC lookups.
 // All other operations return HTTP 501 Not Implemented.
 package ec2
 

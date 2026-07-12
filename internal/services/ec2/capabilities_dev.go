@@ -55,6 +55,7 @@ func init() {
 		capabilities.Capability{Service: "ec2", Operation: "DescribeTags", Category: "General", Status: capabilities.StatusSupported, Notes: "Filter by resource-id, resource-type, key"},
 		capabilities.Capability{Service: "ec2", Operation: "DescribeVpcAttribute", Category: "General", Status: capabilities.StatusSupported, Notes: "Returns enableDnsSupport or enableDnsHostnames"},
 		capabilities.Capability{Service: "ec2", Operation: "DescribeVpcEndpoints", Category: "General", Status: capabilities.StatusSupported, Notes: "Filter by VpcEndpointId.N, vpc-id filter, service-name filter"},
+		capabilities.Capability{Service: "ec2", Operation: "DescribeVpnGateways", Category: "General", Status: capabilities.StatusSupported, Notes: "Returns an empty vpnGatewaySet"},
 		capabilities.Capability{Service: "ec2", Operation: "DescribeVpcPeeringConnections", Category: "General", Status: capabilities.StatusSupported, Notes: "Filter by ID, status-code, requester/accepter VPC"},
 		capabilities.Capability{Service: "ec2", Operation: "DescribeVpcs", Category: "General", Status: capabilities.StatusSupported, Notes: "Lists all VPCs; filter by VpcId"},
 		capabilities.Capability{Service: "ec2", Operation: "DetachInternetGateway", Category: "General", Status: capabilities.StatusSupported, Notes: "Toggles VPC Docker network back to `--internal`"},

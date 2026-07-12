@@ -208,6 +208,8 @@ type describeDhcpOptionsReq struct{}
 
 type describeAccountAttributesReq struct{}
 
+type describeVpnGatewaysReq struct{}
+
 type createNetworkInterfaceReq struct {
 	SubnetID    string `json:"SubnetId"`
 	Description string `json:"Description"`
@@ -903,6 +905,13 @@ type typedAccountAttrXML struct {
 
 type typedAccountAttrValueXML struct {
 	AttributeValue string `xml:"attributeValue"`
+}
+
+type describeVpnGatewaysResp struct {
+	XMLName       struct{} `xml:"DescribeVpnGatewaysResponse"`
+	Xmlns         string   `xml:"xmlns,attr"`
+	RequestID     string   `xml:"requestId"`
+	VpnGatewaySet struct{} `xml:"vpnGatewaySet"`
 }
 
 type createNetworkInterfaceResp struct {
@@ -2220,6 +2229,13 @@ func (h *Handler) describeAccountAttributesTyped(ctx context.Context, _ *describ
 			{AttributeName: "max-elastic-ips", AttributeValueSet: []typedAccountAttrValueXML{{AttributeValue: "5"}}},
 			{AttributeName: "vpc-max-elastic-ips", AttributeValueSet: []typedAccountAttrValueXML{{AttributeValue: "5"}}},
 		},
+	}, nil
+}
+
+func (h *Handler) describeVpnGatewaysTyped(ctx context.Context, _ *describeVpnGatewaysReq) (*describeVpnGatewaysResp, *protocol.AWSError) {
+	return &describeVpnGatewaysResp{
+		Xmlns:     ec2XMLNS,
+		RequestID: protocol.RequestIDFromContext(ctx),
 	}, nil
 }
 
