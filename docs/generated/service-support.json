@@ -2772,7 +2772,7 @@
           "operation": "CreateVpc",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "CidrBlock required; creates Docker bridge network (`--internal` unless IGW attached)"
+          "notes": "CidrBlock required; creates Docker bridge network (`--internal` unless IGW attached) and main route table"
         },
         {
           "operation": "CreateVpcEndpoint",

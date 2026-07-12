@@ -53,7 +53,7 @@ func (h *Handler) CreateVpcEndpoint(w http.ResponseWriter, r *http.Request) {
 	serviceName := r.FormValue("ServiceName")
 	epType := r.FormValue("VpcEndpointType")
 	if vpcID == "" || serviceName == "" {
-		protocol.WriteQueryXMLError(w, r, &protocol.AWSError{
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "VpcId and ServiceName are required.",
 			HTTPStatus: http.StatusBadRequest,
@@ -65,7 +65,7 @@ func (h *Handler) CreateVpcEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, aerr := h.store.getVPC(r.Context(), vpcID); aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -78,7 +78,7 @@ func (h *Handler) CreateVpcEndpoint(w http.ResponseWriter, r *http.Request) {
 		VpcEndpointType: epType,
 	}
 	if aerr := h.store.putVpcEndpoint(r.Context(), ep); aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -116,7 +116,7 @@ func (h *Handler) DescribeVpcEndpoints(w http.ResponseWriter, r *http.Request) {
 
 	all, aerr := h.store.listVpcEndpoints(r.Context())
 	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 

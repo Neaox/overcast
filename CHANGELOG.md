@@ -65,6 +65,10 @@ need it than accidentally ship a breaking change as a patch.
 
 - [docs] refreshed the generated service support index and alpha Docker image references for prerelease installation and verification.
 
+### Fixed
+
+- **EC2** — `CreateVpc` now creates the AWS-documented main route table, and EC2 Query errors return the EC2-specific error envelope expected by SDK clients such as aws-sdk-js v3.
+
 ## [0.0.1-alpha.0] - 2026-07-12
 
 ### Docker Images
