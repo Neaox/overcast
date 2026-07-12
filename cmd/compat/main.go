@@ -49,9 +49,71 @@ func main() {
 	resultsFile := flag.String("results-file", envOr("OVERCAST_COMPAT_RESULTS_FILE", "compat-results.json"), "Path to persist last run results (empty to disable)")
 	agentReportFile := flag.String("agent-report-file", envOr("OVERCAST_COMPAT_AGENT_REPORT", "compat-report.txt"), "Path to write the agent-friendly text report after each run (empty to disable)")
 	reportMode := flag.Bool("report", false, "Read an existing results file and print an agent-friendly summary (no tests are run)")
+	mergeResults := flag.String("merge-results", "", "Comma-separated result files or glob patterns to merge, then exit")
+	baselineFile := flag.String("baseline-file", "compat/baseline.json", "Compatibility baseline file")
+	compareBaseline := flag.Bool("compare-baseline", false, "Compare --results-file against --baseline-file, then exit")
+	updateBaseline := flag.Bool("update-baseline", false, "Update --baseline-file from --results-file with improvements only, then exit")
+	lintBaselineFrom := flag.String("lint-baseline-from", "", "Old compatibility baseline file for downgrade linting")
+	lintBaselineTo := flag.String("lint-baseline-to", "", "New compatibility baseline file for downgrade linting")
 	interactive := flag.Bool("interactive", false, "Start in interactive mode (long-lived suite processes)")
 	noUI := flag.Bool("no-ui", false, "Don't serve embedded UI (use with external Vite dev server)")
 	flag.Parse()
+
+	if *compareBaseline {
+		if err := compareBaselineFile(*baselineFile, *resultsFile); err != nil {
+			fmt.Fprintf(os.Stderr, "compat: baseline check failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *updateBaseline {
+		if err := updateBaselineFile(*baselineFile, *resultsFile); err != nil {
+			fmt.Fprintf(os.Stderr, "compat: update baseline: %v\n", err)
+			os.Exit(2)
+		}
+		return
+	}
+
+	if *lintBaselineFrom != "" || *lintBaselineTo != "" {
+		if *lintBaselineFrom == "" || *lintBaselineTo == "" {
+			fmt.Fprintln(os.Stderr, "compat: both --lint-baseline-from and --lint-baseline-to are required")
+			os.Exit(2)
+		}
+		if err := lintBaselineChangeFiles(*lintBaselineFrom, *lintBaselineTo); err != nil {
+			fmt.Fprintf(os.Stderr, "compat: baseline change lint failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *mergeResults != "" {
+		report, err := mergeRunReportFiles(splitCSV(*mergeResults))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "compat: merge results: %v\n", err)
+			os.Exit(2)
+		}
+		if *resultsFile != "" {
+			if err := writeRunReportFile(*resultsFile, report); err != nil {
+				fmt.Fprintf(os.Stderr, "compat: save merged results: %v\n", err)
+				os.Exit(2)
+			}
+		}
+		switch *format {
+		case "json":
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(report); err != nil {
+				fmt.Fprintf(os.Stderr, "compat: json encode: %v\n", err)
+				os.Exit(2)
+			}
+		case "agent":
+			printAgentReport(report)
+		default:
+			printPretty(report)
+		}
+		return
+	}
 
 	// --report: parse an existing file and summarise it for agents, then exit.
 	if *reportMode {
@@ -79,14 +141,7 @@ func main() {
 		addr = ":" + addr
 	}
 
-	var suites []string
-	if *suiteFlag != "" {
-		for _, s := range strings.Split(*suiteFlag, ",") {
-			if t := strings.TrimSpace(s); t != "" {
-				suites = append(suites, t)
-			}
-		}
-	}
+	suites := splitCSV(*suiteFlag)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -320,6 +375,92 @@ func writeRunReportFile(path string, report *compat.RunReport) error {
 		return fmt.Errorf("compat: write results: %w", err)
 	}
 	return nil
+}
+
+func splitCSV(value string) []string {
+	var out []string
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func mergeRunReportFiles(inputs []string) (*compat.RunReport, error) {
+	paths, err := expandResultInputs(inputs)
+	if err != nil {
+		return nil, err
+	}
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("no result files matched")
+	}
+
+	merged := &compat.RunReport{}
+	for _, path := range paths {
+		report, err := readRunReportFile(path)
+		if err != nil {
+			return nil, err
+		}
+		if merged.Endpoint == "" {
+			merged.Endpoint = report.Endpoint
+		}
+		if !report.StartedAt.IsZero() && (merged.StartedAt.IsZero() || report.StartedAt.Before(merged.StartedAt)) {
+			merged.StartedAt = report.StartedAt
+		}
+		if report.FinishedAt.After(merged.FinishedAt) {
+			merged.FinishedAt = report.FinishedAt
+		}
+		merged.Suites = append(merged.Suites, report.Suites...)
+	}
+	sort.SliceStable(merged.Suites, func(i, j int) bool {
+		return suiteOrder(merged.Suites[i].Suite) < suiteOrder(merged.Suites[j].Suite)
+	})
+	return merged, nil
+}
+
+func expandResultInputs(inputs []string) ([]string, error) {
+	seen := make(map[string]struct{})
+	var paths []string
+	for _, input := range inputs {
+		matches, err := filepath.Glob(input)
+		if err != nil {
+			return nil, fmt.Errorf("glob %q: %w", input, err)
+		}
+		if len(matches) == 0 {
+			matches = []string{input}
+		}
+		for _, match := range matches {
+			if _, ok := seen[match]; ok {
+				continue
+			}
+			seen[match] = struct{}{}
+			paths = append(paths, match)
+		}
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+func readRunReportFile(path string) (*compat.RunReport, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	var report compat.RunReport
+	if err := json.Unmarshal(b, &report); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return &report, nil
+}
+
+func suiteOrder(name string) int {
+	for i, suite := range []string{"node-js-sdk", "python-sdk", "go-sdk", "cli", "cdk", "java-sdk", "dotnet-sdk", "rust-sdk"} {
+		if name == suite {
+			return i
+		}
+	}
+	return 1000
 }
 
 func envOr(key, fallback string) string {

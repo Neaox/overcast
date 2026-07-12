@@ -1,18 +1,8 @@
 name: Compatibility Tests
 
-# Runs the full compat suite (SDK, CLI, IaC stubs) against a live Overcast
-# instance.  Suite failures are expected and recorded — they are a coverage
-# metric, not a hard gate.  Only infrastructure failures (Overcast failed to
-# start, subprocess crashed) make this job exit non-zero.
-#
-# Triggers:
-#   • Every push to main (post-merge signal — shows what broke vs last release)
-#   • Every PR to main  (pre-merge: catches regressions in implemented ops)
-#   • Release creation  (pre-release gate — results are attached to the release)
-#   • Manual dispatch   (ad-hoc, e.g. to test a fix branch)
-#
-# Runtime: ~3-4 minutes when prebuilt compat suite images are available. The
-# rust-sdk image job no-ops unless its exact hash is missing or inputs changed.
+# Runs compatibility suites against live, isolated Overcast instances. Suite
+# failures are expected and recorded as coverage data; infrastructure failures
+# still fail the affected suite job.
 
 on:
   push:
@@ -29,8 +19,47 @@ on:
         default: ""
 
 jobs:
+  prepare-matrix:
+    name: Prepare suite matrix
+    runs-on: ubuntu-latest
+    outputs:
+      suites: ${{ steps.suites.outputs.suites }}
+    steps:
+      - name: Resolve suites
+        id: suites
+        env:
+          SUITE_INPUT: ${{ github.event.inputs.suite }}
+        run: |
+          python3 <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, sys
+
+          all_suites = [
+              "node-js-sdk",
+              "python-sdk",
+              "go-sdk",
+              "cli",
+              "cdk",
+              "java-sdk",
+              "dotnet-sdk",
+              "rust-sdk",
+          ]
+          raw = os.environ.get("SUITE_INPUT", "")
+          if raw.strip():
+              requested = [s.strip() for s in raw.split(",") if s.strip()]
+              unknown = [s for s in requested if s not in all_suites]
+              if unknown:
+                  print(f"Unknown compat suite(s): {', '.join(unknown)}", file=sys.stderr)
+                  sys.exit(1)
+              suites = [s for s in all_suites if s in requested]
+          else:
+              suites = all_suites
+          print(f"suites={json.dumps(suites)}")
+          PY
+
   rust-sdk-image:
     name: Prepare rust-sdk compat image
+    needs: prepare-matrix
+    if: contains(needs.prepare-matrix.outputs.suites, '"rust-sdk"')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -120,19 +149,73 @@ jobs:
           cache-from: type=gha,scope=rust-sdk-compat
           cache-to: type=gha,mode=max,scope=rust-sdk-compat
 
-  compat:
-    name: Compatibility Tests
-    needs: rust-sdk-image
-    if: always()
+  build-binaries:
+    name: Build Overcast compat binaries
+    needs: prepare-matrix
     runs-on: ubuntu-latest
 
     steps:
-      # ── Checkout ────────────────────────────────────────────────────────────
       - uses: actions/checkout@v7.0.0
 
-      # ── Go toolchain ────────────────────────────────────────────────────────
-      # Cache key covers all go.sum files so sub-module deps are also cached.
       - uses: actions/setup-go@v6.5.0
+        with:
+          go-version: "1.24"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build web assets
+        run: npm ci && VITE_BUNDLED=true npm run build
+        working-directory: web
+
+      - name: Build binaries
+        run: |
+          mkdir -p bin
+          go build -o bin/overcast ./cmd/overcast
+          go build -o bin/compat ./cmd/compat
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: overcast-compat-binaries-${{ github.sha }}
+          path: |
+            bin/overcast
+            bin/compat
+          if-no-files-found: error
+          retention-days: 7
+
+  compat:
+    name: Compatibility Tests (${{ matrix.suite }})
+    needs:
+      - prepare-matrix
+      - build-binaries
+      - rust-sdk-image
+    if: always() && needs.prepare-matrix.result == 'success' && needs.build-binaries.result == 'success'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: ${{ fromJson(needs.prepare-matrix.outputs.suites) }}
+
+    steps:
+      - uses: actions/checkout@v7.0.0
+
+      - name: Download binaries
+        uses: actions/download-artifact@v7.0.0
+        with:
+          name: overcast-compat-binaries-${{ github.sha }}
+          path: bin
+
+      - name: Make binaries executable
+        run: chmod +x bin/overcast bin/compat
+
+      - uses: actions/setup-go@v6.5.0
+        if: contains(fromJson('["go-sdk", "cli"]'), matrix.suite)
         with:
           go-version: "1.24"
           cache: true
@@ -140,54 +223,41 @@ jobs:
             go.sum
             compat/suites/go-sdk/go.sum
 
-      # ── Node.js toolchain ───────────────────────────────────────────────────
       - uses: actions/setup-node@v6.4.0
+        if: contains(fromJson('["node-js-sdk", "cdk"]'), matrix.suite)
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: |
-            web/package-lock.json
             compat/suites/node-js-sdk/package-lock.json
             compat/suites/cdk/package-lock.json
 
-      # ── Python toolchain ───────────────────────────────────────────────────
       - uses: actions/setup-python@v6.3.0
+        if: matrix.suite == 'python-sdk'
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: compat/suites/python-sdk/requirements.txt
 
-      # ── Suite prerequisites ────────────────────────────────────────────────
-      # node-js-sdk: install npm deps (tsx, AWS SDK v3…)
       - name: Install Node.js deps (node-js-sdk)
+        if: matrix.suite == 'node-js-sdk'
         run: npm ci
         working-directory: compat/suites/node-js-sdk
 
       - name: Install Node.js deps (cdk)
+        if: matrix.suite == 'cdk'
         run: npm ci
         working-directory: compat/suites/cdk
 
       - name: Type check cdk suite
+        if: matrix.suite == 'cdk'
         run: npm run typecheck
         working-directory: compat/suites/cdk
 
-      # cmd/overcast embeds web/dist at compile time. Build the SPA before any
-      # Go command that imports the module root, including cmd/compat.
-      - name: Build web assets
-        run: npm ci && VITE_BUNDLED=true npm run build
-        working-directory: web
-
-      # python-sdk: install boto3 / botocore
       - name: Install Python deps (python-sdk)
+        if: matrix.suite == 'python-sdk'
         run: pip install --quiet -r requirements.txt
         working-directory: compat/suites/python-sdk
-
-      # AWS CLI v2 is pre-installed on ubuntu-latest — no install needed.
-      # go-sdk and cli suites use 'go run' — covered by setup-go above.
-
-      # ── Build and start Overcast ───────────────────────────────────────────
-      - name: Build Overcast
-        run: go build -o bin/overcast ./cmd/overcast
 
       - name: Start Overcast
         run: |
@@ -209,27 +279,18 @@ jobs:
           echo "Overcast did not become healthy within 30 s" >&2
           exit 1
 
-      # ── Run compat suites ──────────────────────────────────────────────────
-      - name: Run compat suites
+      - name: Run compat suite
         env:
           OVERCAST_ENDPOINT: http://localhost:4566
-          # Skip Lambda invocation tests — they require a nested Docker daemon
-          # which is unreliable in GHA without explicit DinD setup.
           OVERCAST_COMPAT_SKIP_DOCKER: "1"
-          # Save structured results for the artifact upload step.
-          OVERCAST_COMPAT_RESULTS_FILE: compat-results.json
+          OVERCAST_COMPAT_RESULTS_FILE: compat-results-${{ matrix.suite }}.json
         run: |
-          args=(
-            --endpoint http://localhost:4566
-            --format pretty
-            --results-file compat-results.json
-          )
-          if [[ -n "${{ github.event.inputs.suite }}" ]]; then
-            args+=(--suite "${{ github.event.inputs.suite }}")
-          fi
-          go run ./cmd/compat "${args[@]}"
+          ./bin/compat \
+            --endpoint http://localhost:4566 \
+            --format pretty \
+            --suite "${{ matrix.suite }}" \
+            --results-file "compat-results-${{ matrix.suite }}.json"
 
-      # ── Stop Overcast ──────────────────────────────────────────────────────
       - name: Stop Overcast
         if: always()
         run: |
@@ -237,10 +298,66 @@ jobs:
             kill "$OVERCAST_PID" 2>/dev/null || true
           fi
 
-      # ── Upload results artifact ────────────────────────────────────────────
-      # The JSON results file is uploaded on every run (pass or fail) so
-      # engineers can download and inspect it even when compat tests fail.
-      - name: Upload compat results
+      - name: Upload suite compat results
+        uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: compat-results-${{ matrix.suite }}-${{ github.sha }}
+          path: compat-results-${{ matrix.suite }}.json
+          if-no-files-found: error
+          retention-days: 90
+
+  aggregate:
+    name: Aggregate Compatibility Results
+    needs:
+      - prepare-matrix
+      - compat
+    if: always() && needs.prepare-matrix.result == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7.0.0
+
+      - uses: actions/setup-go@v6.5.0
+        with:
+          go-version: "1.24"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Download suite results
+        uses: actions/download-artifact@v7.0.0
+        with:
+          pattern: compat-results-*-${{ github.sha }}
+          path: compat-results
+          merge-multiple: true
+
+      - name: Merge suite results
+        run: |
+          go run ./cmd/compat \
+            --merge-results "compat-results/compat-results-*.json" \
+            --results-file compat-results.json \
+            --format pretty
+
+      - name: Compare compat baseline
+        run: |
+          go run ./cmd/compat \
+            --compare-baseline \
+            --baseline-file compat/baseline.json \
+            --results-file compat-results.json
+
+      - name: Lint compat baseline changes
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --depth=1 origin main
+          if git show origin/main:compat/baseline.json > compat-baseline-main.json 2>/dev/null; then
+            go run ./cmd/compat \
+              --lint-baseline-from compat-baseline-main.json \
+              --lint-baseline-to compat/baseline.json
+          else
+            echo "No baseline exists on origin/main yet; skipping downgrade lint."
+          fi
+
+      - name: Upload merged compat results
         uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
@@ -249,26 +366,20 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      # ── Attach to release ──────────────────────────────────────────────────
-      # When this workflow is triggered by a release event, attach the results
-      # JSON to the release assets so it is available from the release page.
       - name: Attach results to release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v3
         with:
           files: compat-results.json
 
-      # ── Job summary ───────────────────────────────────────────────────────
-      # Emit a concise Markdown table to the GHA step summary so engineers
-      # can read pass/fail/na counts without downloading the artifact.
       - name: Write job summary
         if: always()
         run: |
           echo "## Compatibility Test Results" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           if [[ -f compat-results.json ]]; then
-            python3 - <<'EOF'
-          import json, os, sys
+            python3 - <<'PY'
+          import json, os
 
           with open("compat-results.json") as f:
               data = json.load(f)
@@ -286,14 +397,17 @@ jobs:
                   sk = s.get("Skipped", 0)
                   tot = p + fa + un + sk
                   f.write(f"| {s['Suite']} | {p} | {fa} | {un} | {sk} | {tot} |\n")
-                  total_pass += p; total_fail += fa; total_unimplemented += un; total_skip += sk; total_all += tot
+                  total_pass += p
+                  total_fail += fa
+                  total_unimplemented += un
+                  total_skip += sk
+                  total_all += tot
               f.write(f"| **Total** | **{total_pass}** | **{total_fail}** | **{total_unimplemented}** | **{total_skip}** | **{total_all}** |\n")
-              f.write("\n")
               endpoint = data.get("Endpoint", "")
               if endpoint:
-                  f.write(f"Endpoint: `{endpoint}`\n")
-          EOF
+                  f.write(f"\nEndpoint: `{endpoint}`\n")
+          PY
           else
-            echo "_compat-results.json not found — Overcast may have failed to start._" >> "$GITHUB_STEP_SUMMARY"
+            echo "_compat-results.json not found — a suite may have failed before writing results._" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi

@@ -935,8 +935,13 @@ func TestPublish_filterPolicy_matchesDelivery(t *testing.T) {
 	})
 	publishResp.Body.Close()
 
-	// Then: message is delivered
-	msgs := sqsPeekMessages(t, srv, qURL)
+	// Then: message is delivered. SNS fan-out is asynchronous, so poll rather
+	// than peeking immediately on slower CI runners.
+	var msgs []map[string]any
+	helpers.Eventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		msgs = sqsPeekMessages(t, srv, qURL)
+		return len(msgs) == 1
+	}, "timed out waiting for matching filtered SNS message in SQS")
 	if len(msgs) != 1 {
 		t.Errorf("expected 1 delivered message, got %d", len(msgs))
 	}

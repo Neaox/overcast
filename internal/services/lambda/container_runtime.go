@@ -1140,6 +1140,7 @@ func (ci *containerInstance) writeEventsWithRetry(ctx context.Context, entries [
 	if writeCtx == nil || writeCtx.Err() != nil {
 		writeCtx = middleware.ContextWithRegion(context.Background(), regionFromFunctionARN(ci.functionARN))
 	}
+	_ = ci.logWriter.EnsureLogStream(writeCtx, ci.logGroupName, ci.logStream)
 	delays := []time.Duration{10 * time.Millisecond, 50 * time.Millisecond, 250 * time.Millisecond}
 	var err error
 	for attempt := 0; attempt < len(delays); attempt++ {
