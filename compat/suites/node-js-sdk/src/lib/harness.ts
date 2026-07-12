@@ -160,6 +160,12 @@ interface BatchCompleteEvent {
   duration_ms: number;
 }
 
+interface PongEvent {
+  event: "pong";
+  suite: string;
+  running_test: string;
+}
+
 /** Emit a NDJSON event to stdout. */
 export function emitEvent(
   event:
@@ -169,7 +175,8 @@ export function emitEvent(
     | RunEndEvent
     | BuildingEvent
     | ReadyEvent
-    | BatchCompleteEvent,
+    | BatchCompleteEvent
+    | PongEvent,
 ): void {
   process.stdout.write(JSON.stringify(event) + "\n");
 }

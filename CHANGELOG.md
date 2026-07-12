@@ -59,6 +59,12 @@ need it than accidentally ship a breaking change as a patch.
        append new capabilities rather than splitting into sub-bullets.
 -->
 
+## [0.0.1-alpha.2] - 2026-07-12
+
+### Added
+
+- **EC2** — virtual private gateways are metadata-backed (`CreateVpnGateway`, `AttachVpnGateway`, `DescribeVpnGateways`, `DetachVpnGateway`, `DeleteVpnGateway`), unblocking CDK `Vpc.fromLookup()` while also returning attached gateways when present.
+
 ## [0.0.1-alpha.1] - 2026-07-12
 
 ### Changed

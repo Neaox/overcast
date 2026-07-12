@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1229,
+  "total_ops": 1234,
   "services": [
     {
       "service": "s3",
@@ -2670,8 +2670,8 @@
     {
       "service": "ec2",
       "display_name": "EC2 / VPC",
-      "total_ops": 67,
-      "implemented_ops": 67,
+      "total_ops": 72,
+      "implemented_ops": 72,
       "operations": [
         {
           "operation": "AcceptVpcPeeringConnection",
@@ -2702,6 +2702,12 @@
           "category": "General",
           "status": "✅ Supported",
           "notes": "Toggles VPC Docker network from `--internal` to external (bridge)"
+        },
+        {
+          "operation": "AttachVpnGateway",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Metadata-only VPC attachment"
         },
         {
           "operation": "AuthorizeSecurityGroupEgress",
@@ -2781,6 +2787,12 @@
           "notes": "Metadata-only; Gateway and Interface types accepted; state always \"available\""
         },
         {
+          "operation": "CreateVpnGateway",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Metadata-only; type ipsec.1 with AmazonSideAsn"
+        },
+        {
           "operation": "CreateVpcPeeringConnection",
           "category": "General",
           "status": "✅ Supported",
@@ -2848,6 +2860,12 @@
           "category": "General",
           "status": "✅ Supported",
           "notes": "Accepts VpcEndpointId.N; silently skips unknown IDs"
+        },
+        {
+          "operation": "DeleteVpnGateway",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Requires gateway to be detached"
         },
         {
           "operation": "DeleteVpcPeeringConnection",
@@ -2964,6 +2982,12 @@
           "notes": "Filter by VpcEndpointId.N, vpc-id filter, service-name filter"
         },
         {
+          "operation": "DescribeVpnGateways",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Filter by vpn-gateway-id, state, type, attachment.vpc-id, attachment.state"
+        },
+        {
           "operation": "DescribeVpcPeeringConnections",
           "category": "General",
           "status": "✅ Supported",
@@ -2980,6 +3004,12 @@
           "category": "General",
           "status": "✅ Supported",
           "notes": "Toggles VPC Docker network back to `--internal`"
+        },
+        {
+          "operation": "DetachVpnGateway",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Metadata-only VPC detachment"
         },
         {
           "operation": "DisassociateAddress",

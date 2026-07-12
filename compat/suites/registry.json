@@ -1440,6 +1440,17 @@
           "depends": ["CreateVpc"]
         },
         {
+          "name": "CreateVpnGateway"
+        },
+        {
+          "name": "AttachVpnGateway",
+          "depends": ["CreateVpc", "CreateVpnGateway"]
+        },
+        {
+          "name": "DescribeVpnGateways",
+          "depends": ["AttachVpnGateway"]
+        },
+        {
           "name": "CreateSubnet",
           "depends": ["CreateVpc"]
         },
@@ -1460,6 +1471,14 @@
           "depends": ["CreateSecurityGroup"]
         },
         {
+          "name": "DetachVpnGateway",
+          "depends": ["DescribeVpnGateways"]
+        },
+        {
+          "name": "DeleteVpnGateway",
+          "depends": ["DetachVpnGateway"]
+        },
+        {
           "name": "DeleteSubnet",
           "depends": ["DescribeSubnets"]
         },
@@ -1467,6 +1486,7 @@
           "name": "DeleteVpc",
           "depends": [
             "DeleteSecurityGroup",
+            "DeleteVpnGateway",
             "DeleteSubnet",
             "AttachInternetGateway"
           ]

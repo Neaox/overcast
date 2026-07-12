@@ -18,6 +18,11 @@ import {
   DescribeAvailabilityZonesCommand,
   DescribeImagesCommand,
   DescribeVpcsCommand,
+  CreateVpnGatewayCommand,
+  AttachVpnGatewayCommand,
+  DescribeVpnGatewaysCommand,
+  DetachVpnGatewayCommand,
+  DeleteVpnGatewayCommand,
   CreateVpcCommand,
   DeleteVpcCommand,
   CreateSubnetCommand,
@@ -252,6 +257,87 @@ export function makeEC2Groups(suite: string): TestGroup[] {
           },
         },
         {
+          name: "CreateVpnGateway",
+          fn: async (ctx) => {
+            const { ec2 } = makeClients(ctx);
+            const resp = await ec2.send(
+              new CreateVpnGatewayCommand({
+                Type: "ipsec.1",
+                AmazonSideAsn: 65001,
+              }),
+            );
+            assert.ok(
+              resp.VpnGateway?.VpnGatewayId,
+              "CreateVpnGateway: missing VpnGatewayId",
+            );
+            assert.strictEqual(resp.VpnGateway.Type, "ipsec.1");
+            assert.strictEqual(resp.VpnGateway.AmazonSideAsn, 65001);
+            (ctx as Record<string, unknown>)["_vpnGatewayId"] =
+              resp.VpnGateway.VpnGatewayId;
+          },
+        },
+        {
+          name: "AttachVpnGateway",
+          fn: async (ctx) => {
+            const { ec2 } = makeClients(ctx);
+            const vpcId = (ctx as Record<string, unknown>)["_vpcId"] as string;
+            const vpnGatewayId = (ctx as Record<string, unknown>)[
+              "_vpnGatewayId"
+            ] as string;
+            assert.ok(vpcId, "AttachVpnGateway: no VPC from CreateVpc");
+            assert.ok(
+              vpnGatewayId,
+              "AttachVpnGateway: no gateway from CreateVpnGateway",
+            );
+            const resp = await ec2.send(
+              new AttachVpnGatewayCommand({
+                VpcId: vpcId,
+                VpnGatewayId: vpnGatewayId,
+              }),
+            );
+            assert.strictEqual(resp.VpcAttachment?.VpcId, vpcId);
+          },
+        },
+        {
+          name: "DescribeVpnGateways",
+          fn: async (ctx) => {
+            const { ec2 } = makeClients(ctx);
+            const vpcId = (ctx as Record<string, unknown>)["_vpcId"] as string;
+            const vpnGatewayId = (ctx as Record<string, unknown>)[
+              "_vpnGatewayId"
+            ] as string;
+            assert.ok(vpcId, "DescribeVpnGateways: no VPC from CreateVpc");
+            assert.ok(
+              vpnGatewayId,
+              "DescribeVpnGateways: no gateway from CreateVpnGateway",
+            );
+            const resp = await ec2.send(
+              new DescribeVpnGatewaysCommand({
+                Filters: [
+                  { Name: "attachment.vpc-id", Values: [vpcId] },
+                  { Name: "attachment.state", Values: ["attached"] },
+                  { Name: "state", Values: ["available"] },
+                ],
+              }),
+            );
+            assert.strictEqual(
+              resp.VpnGateways?.length,
+              1,
+              "DescribeVpnGateways: expected one VPN gateway",
+            );
+            assert.strictEqual(resp.VpnGateways[0].VpnGatewayId, vpnGatewayId);
+            assert.strictEqual(resp.VpnGateways[0].State, "available");
+            assert.strictEqual(
+              resp.VpnGateways[0].VpcAttachments?.[0]?.VpcId,
+              vpcId,
+            );
+            assert.strictEqual(
+              resp.VpnGateways[0].VpcAttachments?.[0]?.State,
+              "attached",
+            );
+          },
+        },
+        {
           name: "CreateSubnet",
           fn: async (ctx) => {
             const { ec2 } = makeClients(ctx);
@@ -348,6 +434,36 @@ export function makeEC2Groups(suite: string): TestGroup[] {
           },
         },
         {
+          name: "DetachVpnGateway",
+          fn: async (ctx) => {
+            const { ec2 } = makeClients(ctx);
+            const vpcId = (ctx as Record<string, unknown>)["_vpcId"] as string;
+            const vpnGatewayId = (ctx as Record<string, unknown>)[
+              "_vpnGatewayId"
+            ] as string;
+            if (!vpcId || !vpnGatewayId) return;
+            await ec2.send(
+              new DetachVpnGatewayCommand({
+                VpcId: vpcId,
+                VpnGatewayId: vpnGatewayId,
+              }),
+            );
+          },
+        },
+        {
+          name: "DeleteVpnGateway",
+          fn: async (ctx) => {
+            const { ec2 } = makeClients(ctx);
+            const vpnGatewayId = (ctx as Record<string, unknown>)[
+              "_vpnGatewayId"
+            ] as string;
+            if (!vpnGatewayId) return;
+            await ec2.send(
+              new DeleteVpnGatewayCommand({ VpnGatewayId: vpnGatewayId }),
+            );
+          },
+        },
+        {
           name: "DeleteSubnet",
           fn: async (ctx) => {
             const { ec2 } = makeClients(ctx);
@@ -396,6 +512,24 @@ export function makeEC2Groups(suite: string): TestGroup[] {
           try {
             await ec2.send(
               new DeleteInternetGatewayCommand({ InternetGatewayId: igwId }),
+            );
+          } catch {}
+        }
+        const vpnGatewayId = (ctx as Record<string, unknown>)[
+          "_vpnGatewayId"
+        ] as string;
+        if (vpnGatewayId && vpcId) {
+          try {
+            await ec2.send(
+              new DetachVpnGatewayCommand({
+                VpcId: vpcId,
+                VpnGatewayId: vpnGatewayId,
+              }),
+            );
+          } catch {}
+          try {
+            await ec2.send(
+              new DeleteVpnGatewayCommand({ VpnGatewayId: vpnGatewayId }),
             );
           } catch {}
         }

@@ -12,6 +12,8 @@
 // AssociateRouteTable, DisassociateRouteTable,
 // CreateInternetGateway, DescribeInternetGateways, DeleteInternetGateway,
 // AttachInternetGateway, DetachInternetGateway,
+// CreateVpnGateway, AttachVpnGateway, DescribeVpnGateways,
+// DetachVpnGateway, DeleteVpnGateway,
 // CreateVpcPeeringConnection, AcceptVpcPeeringConnection,
 // DescribeVpcPeeringConnections, DeleteVpcPeeringConnection.
 // All other operations return HTTP 501 Not Implemented.

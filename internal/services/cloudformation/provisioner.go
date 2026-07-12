@@ -1284,6 +1284,7 @@ var resourceHandlers = map[string]resourceHandler{
 	"AWS::EC2::Subnet":                      &ec2SubnetHandler{},
 	"AWS::EC2::SecurityGroup":               &ec2SecurityGroupHandler{},
 	"AWS::EC2::InternetGateway":             &ec2InternetGatewayHandler{},
+	"AWS::EC2::VPNGateway":                  &ec2VPNGatewayHandler{},
 	"AWS::EC2::VPCGatewayAttachment":        &ec2VPCGatewayAttachmentHandler{},
 	"AWS::EC2::RouteTable":                  &ec2RouteTableHandler{},
 	"AWS::EC2::Route":                       &ec2RouteHandler{},

@@ -1,2 +1,5 @@
 # Compat baseline downgrades require maintainer review.
 compat/baseline.json @Neaox
+
+# Releases are controlled by version bumps.
+VERSION @Neaox

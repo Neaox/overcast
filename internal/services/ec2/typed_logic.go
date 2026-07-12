@@ -208,6 +208,28 @@ type describeDhcpOptionsReq struct{}
 
 type describeAccountAttributesReq struct{}
 
+type createVpnGatewayReq struct {
+	Type             string `json:"Type"`
+	AmazonSideAsn    string `json:"AmazonSideAsn"`
+	AvailabilityZone string `json:"AvailabilityZone"`
+}
+
+type attachVpnGatewayReq struct {
+	VpnGatewayID string `json:"VpnGatewayId"`
+	VpcID        string `json:"VpcId"`
+}
+
+type describeVpnGatewaysReq struct{}
+
+type detachVpnGatewayReq struct {
+	VpnGatewayID string `json:"VpnGatewayId"`
+	VpcID        string `json:"VpcId"`
+}
+
+type deleteVpnGatewayReq struct {
+	VpnGatewayID string `json:"VpnGatewayId"`
+}
+
 type createNetworkInterfaceReq struct {
 	SubnetID    string `json:"SubnetId"`
 	Description string `json:"Description"`
@@ -903,6 +925,56 @@ type typedAccountAttrXML struct {
 
 type typedAccountAttrValueXML struct {
 	AttributeValue string `xml:"attributeValue"`
+}
+
+type createVpnGatewayResp struct {
+	XMLName    struct{}           `xml:"CreateVpnGatewayResponse"`
+	Xmlns      string             `xml:"xmlns,attr"`
+	RequestID  string             `xml:"requestId"`
+	VpnGateway typedVpnGatewayXML `xml:"vpnGateway"`
+}
+
+type attachVpnGatewayResp struct {
+	XMLName    struct{}                     `xml:"AttachVpnGatewayResponse"`
+	Xmlns      string                       `xml:"xmlns,attr"`
+	RequestID  string                       `xml:"requestId"`
+	Attachment typedVpnGatewayAttachmentXML `xml:"attachment"`
+}
+
+type describeVpnGatewaysResp struct {
+	XMLName       struct{}             `xml:"DescribeVpnGatewaysResponse"`
+	Xmlns         string               `xml:"xmlns,attr"`
+	RequestID     string               `xml:"requestId"`
+	VpnGatewaySet []typedVpnGatewayXML `xml:"vpnGatewaySet>item"`
+}
+
+type detachVpnGatewayResp struct {
+	XMLName   struct{} `xml:"DetachVpnGatewayResponse"`
+	Xmlns     string   `xml:"xmlns,attr"`
+	RequestID string   `xml:"requestId"`
+	Return    bool     `xml:"return"`
+}
+
+type deleteVpnGatewayResp struct {
+	XMLName   struct{} `xml:"DeleteVpnGatewayResponse"`
+	Xmlns     string   `xml:"xmlns,attr"`
+	RequestID string   `xml:"requestId"`
+	Return    bool     `xml:"return"`
+}
+
+type typedVpnGatewayXML struct {
+	VpnGatewayID     string                         `xml:"vpnGatewayId"`
+	State            string                         `xml:"state"`
+	Type             string                         `xml:"type"`
+	AvailabilityZone string                         `xml:"availabilityZone,omitempty"`
+	Attachments      []typedVpnGatewayAttachmentXML `xml:"attachments>item"`
+	AmazonSideAsn    int64                          `xml:"amazonSideAsn"`
+	Tags             []typedResourceTagXML          `xml:"tagSet>item,omitempty"`
+}
+
+type typedVpnGatewayAttachmentXML struct {
+	VpcID string `xml:"vpcId"`
+	State string `xml:"state"`
 }
 
 type createNetworkInterfaceResp struct {
@@ -2223,6 +2295,133 @@ func (h *Handler) describeAccountAttributesTyped(ctx context.Context, _ *describ
 	}, nil
 }
 
+func (h *Handler) createVpnGatewayTyped(ctx context.Context, req *createVpnGatewayReq) (*createVpnGatewayResp, *protocol.AWSError) {
+	if req.Type == "" {
+		return nil, ec2err("MissingParameter", "Type is required", http.StatusBadRequest)
+	}
+	if req.Type != "ipsec.1" {
+		return nil, ec2err("InvalidParameterValue", "Type must be ipsec.1", http.StatusBadRequest)
+	}
+	asn, aerr := parseAmazonSideAsn(req.AmazonSideAsn)
+	if aerr != nil {
+		return nil, aerr
+	}
+	vgw := &VpnGateway{
+		VpnGatewayID:     fmt.Sprintf("vgw-%s", shortID()),
+		State:            "available",
+		Type:             req.Type,
+		AmazonSideAsn:    asn,
+		AvailabilityZone: req.AvailabilityZone,
+	}
+	if aerr := h.store.putVpnGateway(ctx, vgw); aerr != nil {
+		return nil, aerr
+	}
+	return &createVpnGatewayResp{
+		Xmlns:      ec2XMLNS,
+		RequestID:  protocol.RequestIDFromContext(ctx),
+		VpnGateway: vpnGatewayToTypedXML(vgw),
+	}, nil
+}
+
+func (h *Handler) attachVpnGatewayTyped(ctx context.Context, req *attachVpnGatewayReq) (*attachVpnGatewayResp, *protocol.AWSError) {
+	if req.VpnGatewayID == "" || req.VpcID == "" {
+		return nil, ec2err("MissingParameter", "VpnGatewayId and VpcId are required", http.StatusBadRequest)
+	}
+	vgw, aerr := h.store.getVpnGateway(ctx, req.VpnGatewayID)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if _, aerr := h.store.getVPC(ctx, req.VpcID); aerr != nil {
+		return nil, ec2err("InvalidVpcID.NotFound", fmt.Sprintf("The vpc ID '%s' does not exist", req.VpcID), http.StatusBadRequest)
+	}
+	for _, att := range vgw.Attachments {
+		if att.VpcID == req.VpcID {
+			return nil, ec2err("Resource.AlreadyAssociated", fmt.Sprintf("The vpnGateway '%s' is already attached to vpc '%s'", req.VpnGatewayID, req.VpcID), http.StatusBadRequest)
+		}
+	}
+	if len(vgw.Attachments) > 0 {
+		return nil, ec2err("Resource.AlreadyAssociated", fmt.Sprintf("The vpnGateway '%s' is already attached", req.VpnGatewayID), http.StatusBadRequest)
+	}
+	vgw.Attachments = append(vgw.Attachments, VpnGatewayAttachment{VpcID: req.VpcID, State: "attached"})
+	if aerr := h.store.putVpnGateway(ctx, vgw); aerr != nil {
+		return nil, aerr
+	}
+	return &attachVpnGatewayResp{
+		Xmlns:     ec2XMLNS,
+		RequestID: protocol.RequestIDFromContext(ctx),
+		Attachment: typedVpnGatewayAttachmentXML{
+			VpcID: req.VpcID,
+			State: "attached",
+		},
+	}, nil
+}
+
+func (h *Handler) describeVpnGatewaysTyped(ctx context.Context, _ *describeVpnGatewaysReq) (*describeVpnGatewaysResp, *protocol.AWSError) {
+	all, aerr := h.store.listVpnGateways(ctx)
+	if aerr != nil {
+		return nil, aerr
+	}
+	items := make([]typedVpnGatewayXML, 0, len(all))
+	for _, vgw := range all {
+		items = append(items, vpnGatewayToTypedXML(vgw))
+	}
+	return &describeVpnGatewaysResp{
+		Xmlns:         ec2XMLNS,
+		RequestID:     protocol.RequestIDFromContext(ctx),
+		VpnGatewaySet: items,
+	}, nil
+}
+
+func (h *Handler) detachVpnGatewayTyped(ctx context.Context, req *detachVpnGatewayReq) (*detachVpnGatewayResp, *protocol.AWSError) {
+	if req.VpnGatewayID == "" || req.VpcID == "" {
+		return nil, ec2err("MissingParameter", "VpnGatewayId and VpcId are required", http.StatusBadRequest)
+	}
+	vgw, aerr := h.store.getVpnGateway(ctx, req.VpnGatewayID)
+	if aerr != nil {
+		return nil, aerr
+	}
+	found := false
+	for i, att := range vgw.Attachments {
+		if att.VpcID == req.VpcID {
+			vgw.Attachments = append(vgw.Attachments[:i], vgw.Attachments[i+1:]...)
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, ec2err("Gateway.NotAttached", fmt.Sprintf("The vpnGateway '%s' is not attached to vpc '%s'", req.VpnGatewayID, req.VpcID), http.StatusBadRequest)
+	}
+	if aerr := h.store.putVpnGateway(ctx, vgw); aerr != nil {
+		return nil, aerr
+	}
+	return &detachVpnGatewayResp{
+		Xmlns:     ec2XMLNS,
+		RequestID: protocol.RequestIDFromContext(ctx),
+		Return:    true,
+	}, nil
+}
+
+func (h *Handler) deleteVpnGatewayTyped(ctx context.Context, req *deleteVpnGatewayReq) (*deleteVpnGatewayResp, *protocol.AWSError) {
+	if req.VpnGatewayID == "" {
+		return nil, ec2err("MissingParameter", "VpnGatewayId is required", http.StatusBadRequest)
+	}
+	vgw, aerr := h.store.getVpnGateway(ctx, req.VpnGatewayID)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if len(vgw.Attachments) > 0 {
+		return nil, ec2err("DependencyViolation", fmt.Sprintf("The vpnGateway '%s' has dependencies and cannot be deleted", req.VpnGatewayID), http.StatusBadRequest)
+	}
+	if aerr := h.store.deleteVpnGateway(ctx, req.VpnGatewayID); aerr != nil {
+		return nil, aerr
+	}
+	return &deleteVpnGatewayResp{
+		Xmlns:     ec2XMLNS,
+		RequestID: protocol.RequestIDFromContext(ctx),
+		Return:    true,
+	}, nil
+}
+
 func (h *Handler) createNetworkInterfaceTyped(ctx context.Context, req *createNetworkInterfaceReq) (*createNetworkInterfaceResp, *protocol.AWSError) {
 	if req.SubnetID == "" {
 		return nil, ec2err("MissingParameter", "SubnetId is required", http.StatusBadRequest)
@@ -2426,6 +2625,26 @@ func igwToTypedXML(igw *InternetGateway) typedIGWXML {
 	return typedIGWXML{
 		InternetGatewayID: igw.InternetGatewayID,
 		AttachmentSet:     atts,
+	}
+}
+
+func vpnGatewayToTypedXML(vgw *VpnGateway) typedVpnGatewayXML {
+	attachments := make([]typedVpnGatewayAttachmentXML, 0, len(vgw.Attachments))
+	for _, att := range vgw.Attachments {
+		attachments = append(attachments, typedVpnGatewayAttachmentXML(att))
+	}
+	tags := make([]typedResourceTagXML, 0, len(vgw.Tags))
+	for _, tag := range vgw.Tags {
+		tags = append(tags, typedResourceTagXML(tag))
+	}
+	return typedVpnGatewayXML{
+		VpnGatewayID:     vgw.VpnGatewayID,
+		State:            vgw.State,
+		Type:             vgw.Type,
+		AvailabilityZone: vgw.AvailabilityZone,
+		Attachments:      attachments,
+		AmazonSideAsn:    vgw.AmazonSideAsn,
+		Tags:             tags,
 	}
 }
 

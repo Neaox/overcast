@@ -22,7 +22,7 @@
 | AppSync     | 82  | Full CRUD, GraphQL execution (NONE/HTTP/Lambda/DynamoDB), merged APIs, Events API, channel namespaces            |
 | CloudFront  | 89  | Distribution CRUD, invalidations, OAC/OAI, cache policies, CloudFront Functions, key groups, field-level encrypt |
 | Cognito     | 67  | User Pools + Clients, Users, Auth flows, TOTP MFA, Groups, RS256 JWT + JWKS endpoint                             |
-| EC2 / VPC   | 67  | Instances, VPCs, subnets, security groups, key pairs, route tables, IGWs, VPC peering                            |
+| EC2 / VPC   | 72  | Instances, VPCs, subnets, security groups, key pairs, route tables, IGWs, VPC peering                            |
 | SNS         | 24  | Topics, subscriptions (SQS/email), Publish/PublishBatch, FilterPolicy message filtering                          |
 
 ### Core operations — basic CRUD + common features
@@ -72,7 +72,7 @@
 | AppSync         | 82  |
 | CloudFront      | 89  |
 | Cognito         | 67  |
-| EC2 / VPC       | 67  |
+| EC2 / VPC       | 72  |
 | SNS             | 24  |
 | IAM             | 61  |
 | ECS             | 48  |

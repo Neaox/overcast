@@ -20,6 +20,7 @@ const (
 	nsKeyPairs              = "ec2:keypairs"
 	nsRouteTables           = "ec2:route-tables"
 	nsInternetGateways      = "ec2:internet-gateways"
+	nsVpnGateways           = "ec2:vpn-gateways"
 	nsVpcPeeringConnections = "ec2:vpc-peering-connections"
 	nsTags                  = "ec2:tags"
 	nsElasticIPs            = "ec2:elastic-ips"
@@ -593,6 +594,78 @@ func (s *ec2Store) deleteInternetGateway(ctx context.Context, id string) *protoc
 		return aerr
 	}
 	if err := s.store.Delete(ctx, nsInternetGateways, serviceutil.RegionKey(s.region(ctx), id)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+// ── VPN Gateways ─────────────────────────────────────────────────────────────
+
+// VpnGateway represents an EC2 virtual private gateway resource.
+type VpnGateway struct {
+	VpnGatewayID     string                 `json:"VpnGatewayId"`
+	State            string                 `json:"State"`
+	Type             string                 `json:"Type"`
+	AmazonSideAsn    int64                  `json:"AmazonSideAsn"`
+	AvailabilityZone string                 `json:"AvailabilityZone,omitempty"`
+	Attachments      []VpnGatewayAttachment `json:"Attachments,omitempty"`
+	Tags             []Tag                  `json:"Tags,omitempty"`
+}
+
+// VpnGatewayAttachment represents a virtual private gateway VPC attachment.
+type VpnGatewayAttachment struct {
+	VpcID string `json:"VpcId"`
+	State string `json:"State"`
+}
+
+func (s *ec2Store) putVpnGateway(ctx context.Context, vgw *VpnGateway) *protocol.AWSError {
+	raw, err := json.Marshal(vgw)
+	if err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if err := s.store.Set(ctx, nsVpnGateways, serviceutil.RegionKey(s.region(ctx), vgw.VpnGatewayID), string(raw)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+func (s *ec2Store) getVpnGateway(ctx context.Context, id string) (*VpnGateway, *protocol.AWSError) {
+	raw, ok, err := s.store.Get(ctx, nsVpnGateways, serviceutil.RegionKey(s.region(ctx), id))
+	if err != nil || !ok {
+		return nil, &protocol.AWSError{
+			Code:       "InvalidVpnGatewayID.NotFound",
+			Message:    fmt.Sprintf("The vpnGateway ID '%s' does not exist", id),
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	var vgw VpnGateway
+	if err := json.Unmarshal([]byte(raw), &vgw); err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return &vgw, nil
+}
+
+func (s *ec2Store) listVpnGateways(ctx context.Context) ([]*VpnGateway, *protocol.AWSError) {
+	pairs, err := s.store.Scan(ctx, nsVpnGateways, serviceutil.RegionKey(s.region(ctx), ""))
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	vgws := make([]*VpnGateway, 0, len(pairs))
+	for _, p := range pairs {
+		var vgw VpnGateway
+		if err := json.Unmarshal([]byte(p.Value), &vgw); err != nil {
+			continue
+		}
+		vgws = append(vgws, &vgw)
+	}
+	return vgws, nil
+}
+
+func (s *ec2Store) deleteVpnGateway(ctx context.Context, id string) *protocol.AWSError {
+	if _, aerr := s.getVpnGateway(ctx, id); aerr != nil {
+		return aerr
+	}
+	if err := s.store.Delete(ctx, nsVpnGateways, serviceutil.RegionKey(s.region(ctx), id)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil

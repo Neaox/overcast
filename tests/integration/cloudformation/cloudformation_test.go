@@ -6,6 +6,7 @@ package cloudformation_test
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"io"
 	"net/http"
 	"net/url"
@@ -30,6 +31,24 @@ func cfnQuery(t *testing.T, srv *helpers.TestServer, action string, params url.V
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("cfnQuery %s: %v", action, err)
+	}
+	return resp
+}
+
+// ec2Query sends an EC2 Query protocol request.
+func ec2Query(t *testing.T, srv *helpers.TestServer, action string, params url.Values) *http.Response {
+	t.Helper()
+	if params == nil {
+		params = url.Values{}
+	}
+	params.Set("Action", action)
+	params.Set("Version", "2016-11-15")
+	body := strings.NewReader(params.Encode())
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("ec2Query %s: %v", action, err)
 	}
 	return resp
 }
@@ -380,6 +399,95 @@ func TestCreateStack_VPCStack_provisionesRealResources(t *testing.T) {
 	// Verify the route table has a real rtb-xxxx ID
 	if !strings.Contains(body, "rtb-") {
 		t.Error("expected RouteTable physical ID to contain 'rtb-'")
+	}
+}
+
+const vpnGatewayStackTemplate = `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "MyVPC": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": { "CidrBlock": "10.20.0.0/16" }
+    },
+    "MyVPNGateway": {
+      "Type": "AWS::EC2::VPNGateway",
+      "Properties": {
+        "Type": "ipsec.1",
+        "AmazonSideAsn": 65001
+      }
+    },
+    "MyVPNGatewayAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "DependsOn": ["MyVPC", "MyVPNGateway"],
+      "Properties": {
+        "VpcId": { "Ref": "MyVPC" },
+        "VpnGatewayId": { "Ref": "MyVPNGateway" }
+      }
+    }
+  }
+}`
+
+func TestCreateStack_VPNGatewayAttachment(t *testing.T) {
+	// Given: a CloudFormation service
+	srv := helpers.NewTestServer(t)
+
+	// When: CreateStack provisions a VPN gateway and VPC attachment
+	cr := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"vpn-gateway-test-stack"},
+		"TemplateBody": []string{vpnGatewayStackTemplate},
+	})
+	defer cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	waitForStackStatus(t, srv, "vpn-gateway-test-stack", "CREATE_COMPLETE")
+
+	// Then: DescribeStackResources shows real physical IDs
+	resourcesResp := cfnQuery(t, srv, "DescribeStackResources", url.Values{
+		"StackName": []string{"vpn-gateway-test-stack"},
+	})
+	defer resourcesResp.Body.Close()
+	helpers.AssertStatus(t, resourcesResp, http.StatusOK)
+	resourcesBody := string(readBody(t, resourcesResp))
+	if !strings.Contains(resourcesBody, "vpc-") {
+		t.Error("expected VPC physical ID to contain 'vpc-'")
+	}
+	if !strings.Contains(resourcesBody, "vgw-") {
+		t.Error("expected VPNGateway physical ID to contain 'vgw-'")
+	}
+
+	// And: EC2 describes the attached gateway by CDK lookup filters
+	describeResp := ec2Query(t, srv, "DescribeVpnGateways", url.Values{
+		"Filter.1.Name":    []string{"attachment.state"},
+		"Filter.1.Value.1": []string{"attached"},
+		"Filter.2.Name":    []string{"state"},
+		"Filter.2.Value.1": []string{"available"},
+	})
+	defer describeResp.Body.Close()
+	helpers.AssertStatus(t, describeResp, http.StatusOK)
+	type describeVpnGatewaysResponse struct {
+		Gateways []struct {
+			VpnGatewayID  string `xml:"vpnGatewayId"`
+			State         string `xml:"state"`
+			Type          string `xml:"type"`
+			AmazonSideAsn int64  `xml:"amazonSideAsn"`
+			Attachments   []struct {
+				VpcID string `xml:"vpcId"`
+				State string `xml:"state"`
+			} `xml:"attachments>item"`
+		} `xml:"vpnGatewaySet>item"`
+	}
+	var described describeVpnGatewaysResponse
+	if err := xml.Unmarshal(readBody(t, describeResp), &described); err != nil {
+		t.Fatalf("unmarshal DescribeVpnGatewaysResponse: %v", err)
+	}
+	if len(described.Gateways) != 1 {
+		t.Fatalf("expected one VPN gateway, got %d", len(described.Gateways))
+	}
+	got := described.Gateways[0]
+	if !strings.HasPrefix(got.VpnGatewayID, "vgw-") || got.State != "available" || got.Type != "ipsec.1" || got.AmazonSideAsn != 65001 {
+		t.Fatalf("unexpected VPN gateway: %#v", got)
+	}
+	if len(got.Attachments) != 1 || !strings.HasPrefix(got.Attachments[0].VpcID, "vpc-") || got.Attachments[0].State != "attached" {
+		t.Fatalf("unexpected VPN gateway attachments: %#v", got.Attachments)
 	}
 }
 
