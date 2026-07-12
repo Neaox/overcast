@@ -57,7 +57,12 @@ need it than accidentally ship a breaking change as a patch.
        can be promoted to a versioned entry cleanly.
      - Keep bullets concise — one sentence per service is the target; use semicolons to
        append new capabilities rather than splitting into sub-bullets.
+     - The changelog only needs changes that affect shipped artifacts or release
+       notes: runtime behaviour, AWS compatibility, config/env vars, Docker or
+       binary packaging, release process, or user-facing docs.
 -->
+
+## [0.0.1-alpha.5] - 2026-07-13
 
 ### Fixed
 
@@ -188,7 +193,8 @@ need it than accidentally ship a breaking change as a patch.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.4...HEAD
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.5...HEAD
+[0.0.1-alpha.5]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.4...v0.0.1-alpha.5
 [0.0.1-alpha.4]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.2...v0.0.1-alpha.4
 [0.0.1-alpha.2]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.1...v0.0.1-alpha.2
 [0.0.1-alpha.1]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.0...v0.0.1-alpha.1

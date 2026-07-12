@@ -8,10 +8,11 @@ tool release, not a production readiness claim.
 
 ## Automation Overview
 
-The normal release path is a release-prep commit merged to `main`. When
-`.github/workflows/release.yml` sees `VERSION` change on `main`, it automatically
-builds, tests, creates or updates the matching GitHub release, uploads native
-binaries, and publishes Docker images.
+The normal release path is a release-prep pull request that updates `VERSION`
+and is merged to `main`. Never push release-prep changes directly to `main`.
+When `.github/workflows/release.yml` sees `VERSION` change on `main`, it
+automatically builds, tests, creates or updates the matching GitHub release,
+uploads native binaries, and publishes Docker images.
 
 The same workflow can also run from:
 
@@ -30,7 +31,7 @@ The release workflow:
 - verifies `CHANGELOG.md` has a non-empty section for the release version
 - verifies `[Unreleased]` is empty before publishing
 - runs `go vet ./...`
-- runs `go test -race -count=1 -timeout=600s ./...`
+- runs `go test -race -count=1 -coverprofile=coverage.out -timeout=600s ./...`
 - runs `npx tsc --noEmit` for the web UI
 - builds the web UI
 - uploads native binaries for Linux, macOS, and Windows
@@ -72,7 +73,7 @@ For prereleases, the Docker channel tag is derived from the prerelease suffix.
 
 ## Preflight Checklist
 
-Before merging the release-prep commit to `main`:
+Before merging the release-prep PR to `main`:
 
 1. Confirm `main` is green for the standard test workflow.
 2. Confirm the compatibility workflow completed and uploaded `compat-results.json`.
@@ -82,7 +83,7 @@ Before merging the release-prep commit to `main`:
    go run ./cmd/compat --compare-baseline --results-file compat-results.json
    ```
 4. Move release-worthy notes from `[Unreleased]` into a versioned section that
-   exactly matches `VERSION`, for example `## [0.0.1-alpha.4] - YYYY-MM-DD`.
+   exactly matches `VERSION`, for example `## [x.y.z-alpha.n] - YYYY-MM-DD`.
 5. Set `VERSION` to the exact release version without the leading `v`.
 6. Ensure `[Unreleased]` exists but has no entries. The workflow fails if
    `[Unreleased]` contains release notes.
@@ -91,8 +92,9 @@ Before merging the release-prep commit to `main`:
    go test -count=1 ./cmd/compat
    go vet ./cmd/compat ./compat
    ```
-8. Commit and merge the release-prep change to `main`. The push to `main`
-   starts the automated release.
+8. Open a PR containing the release-prep change and merge it through GitHub.
+   The merge commit on `main` starts the automated release. Do not push the
+   release-prep commit directly to `main`.
 
 ## Creating An Alpha Release
 
@@ -100,40 +102,41 @@ For an alpha release:
 
 1. Update `VERSION`:
    ```text
-   0.0.1-alpha.4
+   x.y.z-alpha.n
    ```
 2. Move the relevant `CHANGELOG.md` notes out of `[Unreleased]` into:
    ```markdown
-   ## [0.0.1-alpha.4] - YYYY-MM-DD
+   ## [x.y.z-alpha.n] - YYYY-MM-DD
    ```
 3. Leave the `[Unreleased]` section present and empty.
 4. Merge the release-prep PR to `main`.
 5. Watch the `Release` workflow until all jobs pass.
-6. Verify the GitHub release `v0.0.1-alpha.4` exists and contains native
+6. Verify the GitHub release `v<VERSION>` exists and contains native
    binaries plus `SHA256SUMS`.
 7. Verify the Docker images exist:
    ```sh
-   docker pull ghcr.io/neaox/overcast:0.0.1-alpha.4
+   docker pull ghcr.io/neaox/overcast:<version>
    docker pull ghcr.io/neaox/overcast:alpha
-   docker pull ghcr.io/neaox/overcast-slim:0.0.1-alpha.4
+   docker pull ghcr.io/neaox/overcast-slim:<version>
    docker pull ghcr.io/neaox/overcast-slim:alpha
    ```
 8. Smoke test the slim image:
    ```sh
-   docker run --rm -d --name overcast-smoke -p 4566:4566 ghcr.io/neaox/overcast-slim:0.0.1-alpha.4
+   docker run --rm -d --name overcast-smoke -p 4566:4566 ghcr.io/neaox/overcast-slim:<version>
    curl -sf http://localhost:4566/_health
    docker stop overcast-smoke
    ```
 
 ## Manual Release Trigger
 
-Manual GitHub release creation is optional. Use it only when the push-to-`main`
+Manual GitHub release creation is optional. Use it only when the PR-merge
 automation did not run or a maintainer intentionally wants to republish the
-release from the existing commit.
+release from the existing commit. Do not use a direct push to `main` as a manual
+release trigger.
 
 If creating a GitHub release manually:
 
-1. Use tag `v<VERSION>`, for example `v0.0.1-alpha.4`.
+1. Use tag `v<VERSION>`, for example `v0.0.1-alpha.0`.
 2. Target the release-prep commit on `main`.
 3. Mark prerelease versions as prereleases.
 4. Keep notes brief; the workflow replaces them with generated notes from
