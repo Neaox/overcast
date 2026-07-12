@@ -50,9 +50,42 @@ func main() {
 	agentReportFile := flag.String("agent-report-file", envOr("OVERCAST_COMPAT_AGENT_REPORT", "compat-report.txt"), "Path to write the agent-friendly text report after each run (empty to disable)")
 	reportMode := flag.Bool("report", false, "Read an existing results file and print an agent-friendly summary (no tests are run)")
 	mergeResults := flag.String("merge-results", "", "Comma-separated result files or glob patterns to merge, then exit")
+	baselineFile := flag.String("baseline-file", "compat/baseline.json", "Compatibility baseline file")
+	compareBaseline := flag.Bool("compare-baseline", false, "Compare --results-file against --baseline-file, then exit")
+	updateBaseline := flag.Bool("update-baseline", false, "Update --baseline-file from --results-file with improvements only, then exit")
+	lintBaselineFrom := flag.String("lint-baseline-from", "", "Old compatibility baseline file for downgrade linting")
+	lintBaselineTo := flag.String("lint-baseline-to", "", "New compatibility baseline file for downgrade linting")
 	interactive := flag.Bool("interactive", false, "Start in interactive mode (long-lived suite processes)")
 	noUI := flag.Bool("no-ui", false, "Don't serve embedded UI (use with external Vite dev server)")
 	flag.Parse()
+
+	if *compareBaseline {
+		if err := compareBaselineFile(*baselineFile, *resultsFile); err != nil {
+			fmt.Fprintf(os.Stderr, "compat: baseline check failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *updateBaseline {
+		if err := updateBaselineFile(*baselineFile, *resultsFile); err != nil {
+			fmt.Fprintf(os.Stderr, "compat: update baseline: %v\n", err)
+			os.Exit(2)
+		}
+		return
+	}
+
+	if *lintBaselineFrom != "" || *lintBaselineTo != "" {
+		if *lintBaselineFrom == "" || *lintBaselineTo == "" {
+			fmt.Fprintln(os.Stderr, "compat: both --lint-baseline-from and --lint-baseline-to are required")
+			os.Exit(2)
+		}
+		if err := lintBaselineChangeFiles(*lintBaselineFrom, *lintBaselineTo); err != nil {
+			fmt.Fprintf(os.Stderr, "compat: baseline change lint failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	if *mergeResults != "" {
 		report, err := mergeRunReportFiles(splitCSV(*mergeResults))

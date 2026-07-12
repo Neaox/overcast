@@ -209,7 +209,7 @@ jobs:
         uses: actions/download-artifact@v7.0.0
         with:
           name: overcast-compat-binaries-${{ github.sha }}
-          path: .
+          path: bin
 
       - name: Make binaries executable
         run: chmod +x bin/overcast bin/compat
@@ -337,6 +337,25 @@ jobs:
             --merge-results "compat-results/compat-results-*.json" \
             --results-file compat-results.json \
             --format pretty
+
+      - name: Compare compat baseline
+        run: |
+          go run ./cmd/compat \
+            --compare-baseline \
+            --baseline-file compat/baseline.json \
+            --results-file compat-results.json
+
+      - name: Lint compat baseline changes
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --depth=1 origin main
+          if git show origin/main:compat/baseline.json > compat-baseline-main.json 2>/dev/null; then
+            go run ./cmd/compat \
+              --lint-baseline-from compat-baseline-main.json \
+              --lint-baseline-to compat/baseline.json
+          else
+            echo "No baseline exists on origin/main yet; skipping downgrade lint."
+          fi
 
       - name: Upload merged compat results
         uses: actions/upload-artifact@v7.0.1

@@ -12,7 +12,7 @@
 
 COMPOSE = docker compose -f docker-compose.yml
 
-.PHONY: run json ci build clean dev ui
+.PHONY: run json ci build clean dev ui baseline-check baseline-update baseline-lint
 
 ## dev — build UI + binary, start Overcast if needed, open dashboard in browser
 dev:
@@ -46,3 +46,16 @@ clean:
 ## report — print an agent-friendly summary of the last compat run (reads compat-results.json)
 report:
 	go run ../cmd/compat --report
+
+## baseline-check — fail if compat-results.json regresses against compat/baseline.json
+baseline-check:
+	go run ../cmd/compat --compare-baseline --baseline-file baseline.json --results-file ../compat-results.json
+
+## baseline-update — update compat/baseline.json with improvements from compat-results.json
+baseline-update:
+	go run ../cmd/compat --update-baseline --baseline-file baseline.json --results-file ../compat-results.json
+
+## baseline-lint — reject baseline downgrades; set OLD_BASELINE to compare against a non-default file
+baseline-lint:
+	@if [ -z "$(OLD_BASELINE)" ]; then echo "OLD_BASELINE is required" >&2; exit 2; fi
+	go run ../cmd/compat --lint-baseline-from "$(OLD_BASELINE)" --lint-baseline-to baseline.json
