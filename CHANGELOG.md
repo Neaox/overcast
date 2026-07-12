@@ -59,6 +59,8 @@ need it than accidentally ship a breaking change as a patch.
        append new capabilities rather than splitting into sub-bullets.
 -->
 
+## [0.0.1-alpha.0] - 2026-07-12
+
 ### Added
 
 - **S3** — P1+P2 complete: bucket and object CRUD, `ListObjectsV2` with continuation-token pagination, multipart uploads (`CreateMultipartUpload`, `UploadPart`, `CompleteMultipartUpload`, `AbortMultipartUpload`, `ListParts`, `ListMultipartUploads`), `PutBucketNotificationConfiguration` with Lambda invocation on object events; object and bucket tagging (`PutObjectTagging`, `GetObjectTagging`, `DeleteObjectTagging`, `PutBucketTagging`, `GetBucketTagging`, `DeleteBucketTagging`); versioning status management (`GetBucketVersioning`, `PutBucketVersioning`); `ListObjectVersions` with prefix filtering and key-marker pagination (returns all objects as `VersionId=null` entries)
@@ -149,5 +151,5 @@ need it than accidentally ship a breaking change as a patch.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/Neaox/overcast/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.0...HEAD
+[0.0.1-alpha.0]: https://github.com/Neaox/overcast/releases/tag/v0.0.1-alpha.0
