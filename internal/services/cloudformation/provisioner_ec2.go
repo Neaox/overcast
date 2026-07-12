@@ -43,6 +43,13 @@ type ec2CreateIGWResponse struct {
 	} `xml:"internetGateway"`
 }
 
+type ec2CreateVPNGatewayResponse struct {
+	XMLName    xml.Name `xml:"CreateVpnGatewayResponse"`
+	VpnGateway struct {
+		VpnGatewayID string `xml:"vpnGatewayId"`
+	} `xml:"vpnGateway"`
+}
+
 type ec2CreateRouteTableResponse struct {
 	XMLName    xml.Name `xml:"CreateRouteTableResponse"`
 	RouteTable struct {
@@ -318,6 +325,49 @@ func (h *ec2InternetGatewayHandler) Delete(ctx context.Context, router http.Hand
 	return err
 }
 
+// ── AWS::EC2::VPNGateway ───────────────────────────────────────────────────
+
+type ec2VPNGatewayHandler struct{}
+
+func (h *ec2VPNGatewayHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	params := map[string]string{
+		"Action":  "CreateVpnGateway",
+		"Version": "2016-11-15",
+		"Type":    "ipsec.1",
+	}
+	if v, _ := props["Type"].(string); v != "" {
+		params["Type"] = v
+	}
+	if v, ok := props["AmazonSideAsn"]; ok {
+		params["AmazonSideAsn"] = fmt.Sprint(v)
+	}
+	if v, _ := props["AvailabilityZone"].(string); v != "" {
+		params["AvailabilityZone"] = v
+	}
+
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	if err != nil {
+		return "", nil, fmt.Errorf("CreateVpnGateway: %w", err)
+	}
+
+	var resp ec2CreateVPNGatewayResponse
+	if err := xml.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		return "", nil, fmt.Errorf("CreateVpnGateway: parse response: %w", err)
+	}
+	vgwID := resp.VpnGateway.VpnGatewayID
+	return vgwID, map[string]string{"VpnGatewayId": vgwID}, nil
+}
+
+func (h *ec2VPNGatewayHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
+	params := map[string]string{
+		"Action":       "DeleteVpnGateway",
+		"Version":      "2016-11-15",
+		"VpnGatewayId": physicalID,
+	}
+	_, err := internalQuery(ctx, router, rCtx.Region, params)
+	return err
+}
+
 // ── AWS::EC2::VPCGatewayAttachment ─────────────────────────────────────────
 
 type ec2VPCGatewayAttachmentHandler struct{}
@@ -325,6 +375,19 @@ type ec2VPCGatewayAttachmentHandler struct{}
 func (h *ec2VPCGatewayAttachmentHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	vpcID, _ := props["VpcId"].(string)
 	igwID, _ := props["InternetGatewayId"].(string)
+	vgwID, _ := props["VpnGatewayId"].(string)
+	if vgwID != "" {
+		params := map[string]string{
+			"Action":       "AttachVpnGateway",
+			"Version":      "2016-11-15",
+			"VpnGatewayId": vgwID,
+			"VpcId":        vpcID,
+		}
+		if _, err := internalQuery(ctx, router, rCtx.Region, params); err != nil {
+			return "", nil, fmt.Errorf("AttachVpnGateway: %w", err)
+		}
+		return vpcID + "|vpn|" + vgwID, nil, nil
+	}
 
 	params := map[string]string{
 		"Action":            "AttachInternetGateway",
@@ -338,19 +401,39 @@ func (h *ec2VPCGatewayAttachmentHandler) Create(ctx context.Context, router http
 	}
 
 	// Store both IDs so we can detach on delete.
-	physicalID := vpcID + "|" + igwID
+	physicalID := vpcID + "|igw|" + igwID
 	return physicalID, nil, nil
 }
 
 func (h *ec2VPCGatewayAttachmentHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	parts := strings.SplitN(physicalID, "|", 2)
-	if len(parts) != 2 {
+	parts := strings.SplitN(physicalID, "|", 3)
+	if len(parts) == 2 {
+		params := map[string]string{
+			"Action":            "DetachInternetGateway",
+			"Version":           "2016-11-15",
+			"InternetGatewayId": parts[1],
+			"VpcId":             parts[0],
+		}
+		_, err := internalQuery(ctx, router, rCtx.Region, params)
+		return err
+	}
+	if len(parts) != 3 {
 		return fmt.Errorf("VPCGatewayAttachment: invalid physical ID: %s", physicalID)
+	}
+	if parts[1] == "vpn" {
+		params := map[string]string{
+			"Action":       "DetachVpnGateway",
+			"Version":      "2016-11-15",
+			"VpnGatewayId": parts[2],
+			"VpcId":        parts[0],
+		}
+		_, err := internalQuery(ctx, router, rCtx.Region, params)
+		return err
 	}
 	params := map[string]string{
 		"Action":            "DetachInternetGateway",
 		"Version":           "2016-11-15",
-		"InternetGatewayId": parts[1],
+		"InternetGatewayId": parts[2],
 		"VpcId":             parts[0],
 	}
 	_, err := internalQuery(ctx, router, rCtx.Region, params)

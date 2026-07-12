@@ -245,6 +245,139 @@ func TestDescribeVpnGateways_noGateways(t *testing.T) {
 	}
 }
 
+func TestVpnGatewayLifecycle_success(t *testing.T) {
+	// Given: a VPC and a virtual private gateway exist
+	srv := helpers.NewTestServer(t)
+	vpcResp := ec2Query(t, srv, "CreateVpc", url.Values{
+		"CidrBlock": []string{"10.10.0.0/16"},
+	})
+	defer vpcResp.Body.Close()
+	helpers.AssertStatus(t, vpcResp, http.StatusOK)
+	type createVpcResponse struct {
+		VpcID string `xml:"vpc>vpcId"`
+	}
+	var createdVpc createVpcResponse
+	if err := xml.Unmarshal(readBody(t, vpcResp), &createdVpc); err != nil {
+		t.Fatalf("unmarshal CreateVpcResponse: %v", err)
+	}
+	if createdVpc.VpcID == "" {
+		t.Fatal("expected VPC ID")
+	}
+
+	createResp := ec2Query(t, srv, "CreateVpnGateway", url.Values{
+		"Type":          []string{"ipsec.1"},
+		"AmazonSideAsn": []string{"65001"},
+	})
+	defer createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+	type vpnGatewayItem struct {
+		VpnGatewayID  string `xml:"vpnGatewayId"`
+		State         string `xml:"state"`
+		Type          string `xml:"type"`
+		AmazonSideAsn int64  `xml:"amazonSideAsn"`
+		Attachments   []struct {
+			VpcID string `xml:"vpcId"`
+			State string `xml:"state"`
+		} `xml:"attachments>item"`
+	}
+	type createVpnGatewayResponse struct {
+		Gateway vpnGatewayItem `xml:"vpnGateway"`
+	}
+	var created createVpnGatewayResponse
+	if err := xml.Unmarshal(readBody(t, createResp), &created); err != nil {
+		t.Fatalf("unmarshal CreateVpnGatewayResponse: %v", err)
+	}
+	if !strings.HasPrefix(created.Gateway.VpnGatewayID, "vgw-") {
+		t.Fatalf("expected vgw- ID, got %q", created.Gateway.VpnGatewayID)
+	}
+	if created.Gateway.State != "available" || created.Gateway.Type != "ipsec.1" || created.Gateway.AmazonSideAsn != 65001 {
+		t.Fatalf("unexpected created gateway: %#v", created.Gateway)
+	}
+	if len(created.Gateway.Attachments) != 0 {
+		t.Fatalf("expected no initial attachments, got %#v", created.Gateway.Attachments)
+	}
+
+	// When: the gateway is attached and described using CDK-style filters
+	attachResp := ec2Query(t, srv, "AttachVpnGateway", url.Values{
+		"VpnGatewayId": []string{created.Gateway.VpnGatewayID},
+		"VpcId":        []string{createdVpc.VpcID},
+	})
+	defer attachResp.Body.Close()
+	helpers.AssertStatus(t, attachResp, http.StatusOK)
+	type attachVpnGatewayResponse struct {
+		Attachment struct {
+			VpcID string `xml:"vpcId"`
+			State string `xml:"state"`
+		} `xml:"attachment"`
+	}
+	var attached attachVpnGatewayResponse
+	if err := xml.Unmarshal(readBody(t, attachResp), &attached); err != nil {
+		t.Fatalf("unmarshal AttachVpnGatewayResponse: %v", err)
+	}
+	if attached.Attachment.VpcID != createdVpc.VpcID || attached.Attachment.State != "attached" {
+		t.Fatalf("unexpected attachment: %#v", attached.Attachment)
+	}
+
+	describeResp := ec2Query(t, srv, "DescribeVpnGateways", url.Values{
+		"Filter.1.Name":    []string{"attachment.vpc-id"},
+		"Filter.1.Value.1": []string{createdVpc.VpcID},
+		"Filter.2.Name":    []string{"attachment.state"},
+		"Filter.2.Value.1": []string{"attached"},
+		"Filter.3.Name":    []string{"state"},
+		"Filter.3.Value.1": []string{"available"},
+		"Filter.4.Name":    []string{"amazon-side-asn"},
+		"Filter.4.Value.1": []string{"65001"},
+	})
+	defer describeResp.Body.Close()
+
+	// Then: the attached gateway is returned with its attachment metadata
+	helpers.AssertStatus(t, describeResp, http.StatusOK)
+	type describeVpnGatewaysLifecycleResponse struct {
+		Gateways []vpnGatewayItem `xml:"vpnGatewaySet>item"`
+	}
+	var described describeVpnGatewaysLifecycleResponse
+	if err := xml.Unmarshal(readBody(t, describeResp), &described); err != nil {
+		t.Fatalf("unmarshal DescribeVpnGatewaysResponse: %v", err)
+	}
+	if len(described.Gateways) != 1 {
+		t.Fatalf("expected one gateway, got %d: %#v", len(described.Gateways), described.Gateways)
+	}
+	got := described.Gateways[0]
+	if got.VpnGatewayID != created.Gateway.VpnGatewayID || got.State != "available" || got.Type != "ipsec.1" || got.AmazonSideAsn != 65001 {
+		t.Fatalf("unexpected described gateway: %#v", got)
+	}
+	if len(got.Attachments) != 1 || got.Attachments[0].VpcID != createdVpc.VpcID || got.Attachments[0].State != "attached" {
+		t.Fatalf("unexpected described attachments: %#v", got.Attachments)
+	}
+
+	// And: after detaching and deleting, it is no longer described
+	detachResp := ec2Query(t, srv, "DetachVpnGateway", url.Values{
+		"VpnGatewayId": []string{created.Gateway.VpnGatewayID},
+		"VpcId":        []string{createdVpc.VpcID},
+	})
+	defer detachResp.Body.Close()
+	helpers.AssertStatus(t, detachResp, http.StatusOK)
+
+	deleteResp := ec2Query(t, srv, "DeleteVpnGateway", url.Values{
+		"VpnGatewayId": []string{created.Gateway.VpnGatewayID},
+	})
+	defer deleteResp.Body.Close()
+	helpers.AssertStatus(t, deleteResp, http.StatusOK)
+
+	describeDeletedResp := ec2Query(t, srv, "DescribeVpnGateways", url.Values{
+		"VpnGatewayId.1": []string{created.Gateway.VpnGatewayID},
+	})
+	defer describeDeletedResp.Body.Close()
+	helpers.AssertStatus(t, describeDeletedResp, http.StatusOK)
+	var describedDeleted describeVpnGatewaysLifecycleResponse
+	if err := xml.Unmarshal(readBody(t, describeDeletedResp), &describedDeleted); err != nil {
+		t.Fatalf("unmarshal DescribeVpnGatewaysResponse after delete: %v", err)
+	}
+	if len(describedDeleted.Gateways) != 0 {
+		t.Fatalf("expected deleted gateway to be absent, got %#v", describedDeleted.Gateways)
+	}
+}
+
 func TestEC2QueryError_unsupportedAction(t *testing.T) {
 	// Given: EC2 service
 	srv := helpers.NewTestServer(t)

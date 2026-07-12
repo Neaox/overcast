@@ -63,7 +63,7 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Added
 
-- **EC2** — `DescribeVpnGateways` now returns a well-formed empty EC2 Query response, unblocking CDK `Vpc.fromLookup()` for VPCs without attached VPN gateways.
+- **EC2** — virtual private gateways are metadata-backed (`CreateVpnGateway`, `AttachVpnGateway`, `DescribeVpnGateways`, `DetachVpnGateway`, `DeleteVpnGateway`), unblocking CDK `Vpc.fromLookup()` while also returning attached gateways when present.
 
 ## [0.0.1-alpha.1] - 2026-07-12
 

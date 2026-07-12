@@ -67,10 +67,11 @@ but several aspects differ materially from real AWS networking:
   network — all containers in the same VPC can reach each other, but there is no per-subnet
   isolation or inter-subnet routing. The CIDR blocks are recorded as metadata but do not
   partition Docker's address space.
-- **No NAT gateways, VPN gateways, or transit gateways.** NAT gateways are emulated as
-  metadata only (state and EIP association tracked, but no real NAT routing). Only internet
-  gateways affect the Docker network topology. Attaching an IGW toggles the Docker network
-  between `--internal` (isolated) and normal bridge mode (host-routable).
+- **No NAT gateway, VPN gateway, or transit gateway data plane.** NAT gateways and VPN
+  gateways are emulated as metadata only (state and associations tracked, but no real NAT
+  or VPN routing). Only internet gateways affect the Docker network topology. Attaching an
+  IGW toggles the Docker network between `--internal` (isolated) and normal bridge mode
+  (host-routable).
 - **Elastic IPs are metadata-only.** EIPs can be allocated, associated, and released, but
   the synthetic IPs assigned are not routable. Containers receive Docker-assigned IPs only.
 - **VPC peering is metadata-only.** The state machine (`pending-acceptance` → `active` →
@@ -277,7 +278,7 @@ web UI surfacing is planned alongside the future strategies — see
 
 | Category           | ✅ Supported |
 | ------------------ | ------------ |
-| General            | 65           |
+| General            | 69           |
 | VPC network states | 3            |
 
 ---
@@ -293,6 +294,7 @@ web UI surfacing is planned alongside the future strategies — see
 | `AssociateAddress`              | ✅ Supported | Associates EIP with instance; generates eipassoc- ID                                                      | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_AssociateAddress.html)              |
 | `AssociateRouteTable`           | ✅ Supported | Associates route table with subnet                                                                        | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_AssociateRouteTable.html)           |
 | `AttachInternetGateway`         | ✅ Supported | Toggles VPC Docker network from `--internal` to external (bridge)                                         | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_AttachInternetGateway.html)         |
+| `AttachVpnGateway`              | ✅ Supported | Metadata-only VPC attachment                                                                              | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_AttachVpnGateway.html)              |
 | `AuthorizeSecurityGroupEgress`  | ✅ Supported |                                                                                                           | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_AuthorizeSecurityGroupEgress.html)  |
 | `AuthorizeSecurityGroupIngress` | ✅ Supported | IpPermissions with protocol, ports, CIDR ranges                                                           | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_AuthorizeSecurityGroupIngress.html) |
 | `CreateInternetGateway`         | ✅ Supported | Generates igw-xxx ID                                                                                      | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateInternetGateway.html)         |
@@ -306,6 +308,7 @@ web UI surfacing is planned alongside the future strategies — see
 | `CreateTags`                    | ✅ Supported | Tag any resource by ID                                                                                    | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateTags.html)                    |
 | `CreateVpc`                     | ✅ Supported | CidrBlock required; creates Docker bridge network (`--internal` unless IGW attached) and main route table | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateVpc.html)                     |
 | `CreateVpcEndpoint`             | ✅ Supported | Metadata-only; Gateway and Interface types accepted; state always "available"                             | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateVpcEndpoint.html)             |
+| `CreateVpnGateway`              | ✅ Supported | Metadata-only; type ipsec.1 with AmazonSideAsn                                                            | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateVpnGateway.html)              |
 | `CreateVpcPeeringConnection`    | ✅ Supported | Both VPCs must exist; starts in `pending-acceptance` state                                                | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateVpcPeeringConnection.html)    |
 | `DeleteInternetGateway`         | ✅ Supported | Must be detached first                                                                                    | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DeleteInternetGateway.html)         |
 | `DeleteKeyPair`                 | ✅ Supported | Idempotent (no error if not found)                                                                        | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DeleteKeyPair.html)                 |
@@ -318,6 +321,7 @@ web UI surfacing is planned alongside the future strategies — see
 | `DeleteTags`                    | ✅ Supported | Remove tags by key from resources                                                                         | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DeleteTags.html)                    |
 | `DeleteVpc`                     | ✅ Supported | Removes Docker network; fails if subnets/IGW attached                                                     | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DeleteVpc.html)                     |
 | `DeleteVpcEndpoints`            | ✅ Supported | Accepts VpcEndpointId.N; silently skips unknown IDs                                                       | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DeleteVpcEndpoints.html)            |
+| `DeleteVpnGateway`              | ✅ Supported | Requires gateway to be detached                                                                           | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DeleteVpnGateway.html)              |
 | `DeleteVpcPeeringConnection`    | ✅ Supported | From `active` or `pending-acceptance`; transitions to `deleted`                                           | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DeleteVpcPeeringConnection.html)    |
 | `DescribeAccountAttributes`     | ✅ Supported | Hardcoded defaults (supported-platforms, max-instances…)                                                  | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeAccountAttributes.html)     |
 | `DescribeAddresses`             | ✅ Supported | Filter by AllocationId                                                                                    | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeAddresses.html)             |
@@ -337,10 +341,11 @@ web UI surfacing is planned alongside the future strategies — see
 | `DescribeTags`                  | ✅ Supported | Filter by resource-id, resource-type, key                                                                 | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeTags.html)                  |
 | `DescribeVpcAttribute`          | ✅ Supported | Returns enableDnsSupport or enableDnsHostnames                                                            | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVpcAttribute.html)          |
 | `DescribeVpcEndpoints`          | ✅ Supported | Filter by VpcEndpointId.N, vpc-id filter, service-name filter                                             | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVpcEndpoints.html)          |
-| `DescribeVpnGateways`           | ✅ Supported | Returns an empty vpnGatewaySet                                                                            | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVpnGateways.html)           |
+| `DescribeVpnGateways`           | ✅ Supported | Filter by vpn-gateway-id, state, type, attachment.vpc-id, attachment.state                                | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVpnGateways.html)           |
 | `DescribeVpcPeeringConnections` | ✅ Supported | Filter by ID, status-code, requester/accepter VPC                                                         | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVpcPeeringConnections.html) |
 | `DescribeVpcs`                  | ✅ Supported | Lists all VPCs; filter by VpcId                                                                           | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVpcs.html)                  |
 | `DetachInternetGateway`         | ✅ Supported | Toggles VPC Docker network back to `--internal`                                                           | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DetachInternetGateway.html)         |
+| `DetachVpnGateway`              | ✅ Supported | Metadata-only VPC detachment                                                                              | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DetachVpnGateway.html)              |
 | `DisassociateAddress`           | ✅ Supported | By AssociationId                                                                                          | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DisassociateAddress.html)           |
 | `DisassociateRouteTable`        | ✅ Supported | Cannot disassociate main association                                                                      | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DisassociateRouteTable.html)        |
 | `ModifyInstanceAttribute`       | ✅ Supported | InstanceType.Value persisted; all other attributes accepted                                               | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_ModifyInstanceAttribute.html)       |
