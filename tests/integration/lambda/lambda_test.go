@@ -3477,14 +3477,16 @@ exports.handler = async () => {
 		t.Fatalf("invoke returned %d, expected 200", resp.StatusCode)
 	}
 
-	// Poll CloudWatch Logs for up to 5 s — events are written by the async
+	// Poll CloudWatch Logs for up to 20 s — events are written by the async
 	// log batcher (5 ms flush) and the persistence layer is debounced (50 ms).
 	// The cache returns events as soon as appendEvents completes so this should
-	// be near-instantaneous, but we poll to handle CI scheduling jitter.
+	// be near-instantaneous, but Docker-backed Lambda is slow under CI + -race.
 	groupName := "/aws/lambda/cwl-fn"
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(20 * time.Second)
 	var matched bool
 	var lastEvents []map[string]any
+	var lastStatus int
+	var lastBody string
 	for time.Now().Before(deadline) {
 		// FilterLogEvents searches across all streams in the group; we don't
 		// know the auto-generated stream name up front.
@@ -3498,11 +3500,18 @@ exports.handler = async () => {
 		if err != nil {
 			t.Fatalf("FilterLogEvents: %v", err)
 		}
+		lastStatus = filterResp.StatusCode
+		bodyBytes, _ := io.ReadAll(filterResp.Body)
+		filterResp.Body.Close()
+		lastBody = string(bodyBytes)
+		if filterResp.StatusCode != http.StatusOK {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
 		var result struct {
 			Events []map[string]any `json:"events"`
 		}
-		_ = json.NewDecoder(filterResp.Body).Decode(&result)
-		filterResp.Body.Close()
+		_ = json.Unmarshal(bodyBytes, &result)
 		lastEvents = result.Events
 
 		// Check for the marker we logged + the synthetic START/REPORT lines.
@@ -3527,8 +3536,8 @@ exports.handler = async () => {
 	}
 
 	if !matched {
-		t.Fatalf("expected START / handler stdout (marker-xyz) / REPORT in CloudWatch Logs for group %q within 5 s; got %d events: %+v",
-			groupName, len(lastEvents), lastEvents)
+		t.Fatalf("expected START / handler stdout (marker-xyz) / REPORT in CloudWatch Logs for group %q within 20 s; last status=%d body=%s got %d events: %+v",
+			groupName, lastStatus, lastBody, len(lastEvents), lastEvents)
 	}
 }
 
