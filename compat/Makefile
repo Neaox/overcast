@@ -6,6 +6,7 @@
 # Usage:
 #   make -C compat          # same as: make -C compat run
 #   make -C compat run
+#   make -C compat run SUITE=node-js-sdk
 #   make -C compat json
 #   make -C compat ci
 
@@ -23,16 +24,16 @@ ui:
 
 ## run — pretty-printed results (default)
 run:
-	$(COMPOSE) run --rm compat
+	$(COMPOSE) run --rm -e OVERCAST_COMPAT_SUITE="$(SUITE)" compat
 
 ## json — NDJSON output to stdout (useful for CI artefacts / dashboards)
 json:
-	$(COMPOSE) run --rm -e OVERCAST_COMPAT_FORMAT=json compat
+	$(COMPOSE) run --rm -e OVERCAST_COMPAT_FORMAT=json -e OVERCAST_COMPAT_SUITE="$(SUITE)" compat
 
 ## ci — same as run but also rebuilds images first (for use in pipelines)
 ci:
 	$(COMPOSE) build --pull
-	$(COMPOSE) run --rm compat
+	$(COMPOSE) run --rm -e OVERCAST_COMPAT_SUITE="$(SUITE)" compat
 
 ## build — pre-build all images without running
 build:

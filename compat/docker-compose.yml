@@ -16,6 +16,7 @@
 #   OVERCAST_LOG_LEVEL=info         Overcast log verbosity (default: warn).
 #   OVERCAST_COMPAT_FORMAT=json     Go runner output format: pretty|json
 #                                   (default: pretty).
+#   OVERCAST_COMPAT_SUITE=go-sdk    Optional comma-separated suite filter.
 
 version: "3.9"
 
@@ -68,6 +69,7 @@ services:
       OVERCAST_ENDPOINT: http://overcast:4566
       OVERCAST_COMPAT_SKIP_DOCKER: ${OVERCAST_COMPAT_SKIP_DOCKER:-1}
       OVERCAST_COMPAT_FORMAT: ${OVERCAST_COMPAT_FORMAT:-pretty}
+      OVERCAST_COMPAT_SUITE: ${OVERCAST_COMPAT_SUITE:-}
       # Pass the pre-built node-js-sdk image name so the Go runner can exec it.
       OVERCAST_COMPAT_NODEJS_IMAGE: overcast-compat-node-js-sdk
     depends_on:
@@ -78,13 +80,20 @@ services:
     # python-sdk:  pip install boto3/botocore.
     # go-sdk, cli: 'go run' handles deps automatically.
     command: >
-      sh -c "
+      sh -c '
         npm ci --prefix compat/suites/node-js-sdk --silent &&
         pip install --quiet -r compat/suites/python-sdk/requirements.txt &&
-        go run ./cmd/compat \
-          --endpoint http://overcast:4566 \
-          --format ${OVERCAST_COMPAT_FORMAT:-pretty}
-      "
+        if [ -n "$$OVERCAST_COMPAT_SUITE" ]; then
+          go run ./cmd/compat \
+            --endpoint http://overcast:4566 \
+            --format ${OVERCAST_COMPAT_FORMAT:-pretty} \
+            --suite "$$OVERCAST_COMPAT_SUITE";
+        else
+          go run ./cmd/compat \
+            --endpoint http://overcast:4566 \
+            --format ${OVERCAST_COMPAT_FORMAT:-pretty};
+        fi
+      '
 
 volumes:
   go-mod-cache:
