@@ -37,10 +37,10 @@ locally without an internet connection, a cloud account, or a bill.
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Staging environments**         | API parity is not 100%. Differences are documented but exist.                                                                                                                     |
 | **Production traffic**           | Overcast is not hardened, not monitored, not replicated.                                                                                                                          |
-| **Self-hosted AWS replacement**  | This is not a platform you host for others. It has no security model, no IAM, and no durability guarantees. Running it as a persistent internal service is building on quicksand. |
-| **Security testing**             | Credentials are accepted but not validated in v1.                                                                                                                                 |
+| **Self-hosted AWS replacement**  | This is not a platform you host for others. IAM resources are emulated, but Overcast is not a security boundary and has no durability guarantees. Running it as a persistent internal service is building on quicksand. |
+| **Security testing**             | Credentials are accepted. SigV4 validation is optional, and IAM policies are not enforced as an authorization layer.                                                               |
 | **Performance / load testing**   | AWS throttling, quotas, and latency are not emulated.                                                                                                                             |
-| **IAM policy testing**           | IAM is out of scope. All operations are permitted.                                                                                                                                |
+| **IAM policy testing**           | IAM resource APIs exist for local development and IaC compatibility, but policy enforcement is out of scope. All operations are permitted.                                         |
 | **CloudFormation / CDK deploys** | CloudFormation emulation supports ~50 resource types. `cdk deploy` works for stacks using [supported types](./docs/cdk.md#supported-resource-types). Coverage is not exhaustive.  |
 
 ## Contents
@@ -414,13 +414,28 @@ overcast trust uninstall
 
 ## Supported services
 
-S3, SQS, DynamoDB, SNS, Lambda, CloudWatch Logs, SES, Secrets Manager,
-EventBridge, EventBridge Pipes, EC2/VPC, ECS, RDS, KMS, SSM, STS, Kinesis,
-IAM, CloudFormation, Step Functions, API Gateway, AppSync, Cognito, CloudFront,
-Shield, WAF, AppRegistry.
+Overcast currently registers **49 AWS services**. Coverage ranges from broad
+service emulation to minimal discovery/IaC stubs; check the per-service docs for
+exact endpoint support.
+
+| Tier | Services |
+| ---- | -------- |
+| Comprehensive / broad coverage | S3, SQS, DynamoDB, Lambda, API Gateway, AppSync, CloudFront, Cognito, EC2/VPC, SNS |
+| Core CRUD + common workflows | IAM, ECS, ECR, KMS, Kinesis Data Streams, EventBridge, EventBridge Scheduler, CloudFormation, RDS, ElastiCache, AppConfig, AppConfigData, Secrets Manager, SSM Parameter Store, CloudWatch Logs, SES, STS |
+| Minimal / targeted support | Step Functions, EventBridge Pipes, WAF v2, Shield, ACM, Athena, Bedrock Runtime, CloudWatch, DynamoDB Streams, Firehose, Glue Data Catalog, OpenSearch |
+| IaC/discovery-oriented service stubs | AppRegistry, Auto Scaling, Backup, CloudTrail, EKS, ELBv2, MSK, Organizations, Route 53, Transfer Family |
+
+Some services require Docker socket access for full runtime behavior:
+
+- Lambda, ECS, RDS, EC2/VPC, and ElastiCache can launch sibling containers.
+- Without Docker, their metadata/control-plane APIs still work where possible,
+  but runtime execution falls back to metadata-only or stub behavior.
+
+IAM is implemented for local development and CloudFormation/CDK compatibility,
+but IAM policies are not enforced as an authorization layer.
 
 See the [service emulation reference](./docs/services/) for per-endpoint
-coverage tables, or browse the summary in [docs/README.md](./docs/README.md#services).
+coverage tables, or browse the generated summary in [STATUS.md](./STATUS.md#service-coverage).
 
 ---
 

@@ -194,8 +194,8 @@ docs-check: check-caps
 	@git diff --exit-code internal/capabilities/all.gen.go \
 		|| (echo "ERROR: internal/capabilities/all.gen.go is stale. Run: make generate-caps" && exit 1)
 	$(GO) run -tags dev ./cmd/capgen --write-docs
-	@git diff --exit-code STATUS.md docs/services/ docs/generated/service-support.json \
-		|| (echo "ERROR: STATUS.md, docs/services/, or docs/generated/service-support.json are stale. Run: make docs" && exit 1)
+	@git diff --exit-code STATUS.md docs/README.md docs/services/ docs/generated/service-support.json \
+		|| (echo "ERROR: STATUS.md, docs/README.md, docs/services/, or docs/generated/service-support.json are stale. Run: make docs" && exit 1)
 
 ## supportmeta-check: alias for docs-check (manifest schema, registry parity, docs parity, generated artifacts)
 supportmeta-check: docs-check

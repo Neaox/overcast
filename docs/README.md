@@ -69,35 +69,61 @@ x-emulator-unsupported: true
 
 ## Services
 
-| Service           | Doc                                                 | Overall coverage  |
-| ----------------- | --------------------------------------------------- | ----------------- |
-| API Gateway       | [apigateway.md](./services/apigateway.md)           | See summary table |
-| AppRegistry       | [appregistry.md](./services/appregistry.md)         | See summary table |
-| AppSync           | [appsync.md](./services/appsync.md)                 | Config            |
-| CloudFormation    | [cloudformation.md](./services/cloudformation.md)   | See summary table |
-| CloudFront        | [cloudfront.md](./services/cloudfront.md)           | Stub              |
-| CloudWatch Logs   | [cloudwatch-logs.md](./services/cloudwatch-logs.md) | See summary table |
-| Cognito           | [cognito.md](./services/cognito.md)                 | Stub              |
-| DynamoDB          | [dynamodb.md](./services/dynamodb.md)               | See summary table |
-| EC2               | [ec2.md](./services/ec2.md)                         | See summary table |
-| ECS               | [ecs.md](./services/ecs.md)                         | See summary table |
-| EventBridge       | [eventbridge.md](./services/eventbridge.md)         | Inert             |
-| EventBridge Pipes | [pipes.md](./services/pipes.md)                     | See summary table |
-| IAM               | [iam.md](./services/iam.md)                         | Inert             |
-| Kinesis           | [kinesis.md](./services/kinesis.md)                 | See summary table |
-| KMS               | [kms.md](./services/kms.md)                         | See summary table |
-| Lambda            | [lambda.md](./services/lambda.md)                   | See summary table |
-| RDS               | [rds.md](./services/rds.md)                         | See summary table |
-| S3                | [s3.md](./services/s3.md)                           | See summary table |
-| Secrets Manager   | [secretsmanager.md](./services/secretsmanager.md)   | See summary table |
-| SES               | [ses.md](./services/ses.md)                         | See summary table |
-| Shield            | [shield.md](./services/shield.md)                   | Stub              |
-| SNS               | [sns.md](./services/sns.md)                         | See summary table |
-| SQS               | [sqs.md](./services/sqs.md)                         | See summary table |
-| SSM               | [ssm.md](./services/ssm.md)                         | See summary table |
-| Step Functions    | [stepfunctions.md](./services/stepfunctions.md)     | Inert             |
-| STS               | [sts.md](./services/sts.md)                         | See summary table |
-| WAF               | [waf.md](./services/waf.md)                         | Stub              |
+<!-- BEGIN overcast:service-index -->
+
+| Service          | Doc                                                 | Ops | Coverage tier                 |
+| ---------------- | --------------------------------------------------- | --- | ----------------------------- |
+| S3               | [s3.md](./services/s3.md)                           | 44  | Comprehensive / broad support |
+| SQS              | [sqs.md](./services/sqs.md)                         | 21  | Comprehensive / broad support |
+| DynamoDB         | [dynamodb.md](./services/dynamodb.md)               | 19  | Comprehensive / broad support |
+| Lambda           | [lambda.md](./services/lambda.md)                   | 33  | Comprehensive / broad support |
+| API Gateway      | [apigateway.md](./services/apigateway.md)           | 105 | Comprehensive / broad support |
+| AppSync          | [appsync.md](./services/appsync.md)                 | 82  | Comprehensive / broad support |
+| CloudFront       | [cloudfront.md](./services/cloudfront.md)           | 89  | Comprehensive / broad support |
+| Cognito          | [cognito.md](./services/cognito.md)                 | 67  | Comprehensive / broad support |
+| EC2 / VPC        | [ec2.md](./services/ec2.md)                         | 67  | Comprehensive / broad support |
+| SNS              | [sns.md](./services/sns.md)                         | 24  | Comprehensive / broad support |
+| IAM              | [iam.md](./services/iam.md)                         | 61  | Core CRUD + common workflows  |
+| ECS              | [ecs.md](./services/ecs.md)                         | 48  | Core CRUD + common workflows  |
+| ECR              | [ecr.md](./services/ecr.md)                         | 20  | Core CRUD + common workflows  |
+| KMS              | [kms.md](./services/kms.md)                         | 32  | Core CRUD + common workflows  |
+| Kinesis          | [kinesis.md](./services/kinesis.md)                 | 17  | Core CRUD + common workflows  |
+| EventBridge      | [eventbridge.md](./services/eventbridge.md)         | 28  | Core CRUD + common workflows  |
+| Scheduler        | [scheduler.md](./services/scheduler.md)             | 12  | Core CRUD + common workflows  |
+| CloudFormation   | [cloudformation.md](./services/cloudformation.md)   | 47  | Core CRUD + common workflows  |
+| RDS              | [rds.md](./services/rds.md)                         | 33  | Core CRUD + common workflows  |
+| ElastiCache      | [elasticache.md](./services/elasticache.md)         | 20  | Core CRUD + common workflows  |
+| AppConfig        | [appconfig.md](./services/appconfig.md)             | 12  | Core CRUD + common workflows  |
+| AppConfigData    | [appconfigdata.md](./services/appconfigdata.md)     | 3   | Core CRUD + common workflows  |
+| Secrets Manager  | [secretsmanager.md](./services/secretsmanager.md)   | 21  | Core CRUD + common workflows  |
+| SSM              | [ssm.md](./services/ssm.md)                         | 10  | Core CRUD + common workflows  |
+| CloudWatch Logs  | [cloudwatch-logs.md](./services/cloudwatch-logs.md) | 18  | Core CRUD + common workflows  |
+| SES              | [ses.md](./services/ses.md)                         | 42  | Core CRUD + common workflows  |
+| STS              | [sts.md](./services/sts.md)                         | 5   | Core CRUD + common workflows  |
+| Step Functions   | [stepfunctions.md](./services/stepfunctions.md)     | 5   | Minimal / targeted support    |
+| Pipes            | [pipes.md](./services/pipes.md)                     | 5   | Minimal / targeted support    |
+| WAF v2           | [waf.md](./services/waf.md)                         | 4   | Minimal / targeted support    |
+| Shield           | [shield.md](./services/shield.md)                   | 5   | Minimal / targeted support    |
+| ACM              | [acm.md](./services/acm.md)                         | 7   | Minimal / targeted support    |
+| Athena           | [athena.md](./services/athena.md)                   | 8   | Minimal / targeted support    |
+| Bedrock          | [bedrock.md](./services/bedrock.md)                 | 2   | Minimal / targeted support    |
+| CloudWatch       | [cloudwatch.md](./services/cloudwatch.md)           | 12  | Minimal / targeted support    |
+| DynamoDB Streams | [dynamodbstreams.md](./services/dynamodbstreams.md) | 4   | Minimal / targeted support    |
+| Firehose         | [firehose.md](./services/firehose.md)               | 6   | Minimal / targeted support    |
+| Glue             | [glue.md](./services/glue.md)                       | 8   | Minimal / targeted support    |
+| OpenSearch       | [opensearch.md](./services/opensearch.md)           | 8   | Minimal / targeted support    |
+| AppRegistry      | [appregistry.md](./services/appregistry.md)         | 21  | IaC/discovery-oriented stub   |
+| Auto Scaling     | [autoscaling.md](./services/autoscaling.md)         | 19  | IaC/discovery-oriented stub   |
+| Backup           | [backup.md](./services/backup.md)                   | 9   | IaC/discovery-oriented stub   |
+| CloudTrail       | [cloudtrail.md](./services/cloudtrail.md)           | 9   | IaC/discovery-oriented stub   |
+| EKS              | [eks.md](./services/eks.md)                         | 52  | IaC/discovery-oriented stub   |
+| ELBv2            | [elb.md](./services/elb.md)                         | 15  | IaC/discovery-oriented stub   |
+| MSK              | [msk.md](./services/msk.md)                         | 29  | IaC/discovery-oriented stub   |
+| Organizations    | [organizations.md](./services/organizations.md)     | 1   | IaC/discovery-oriented stub   |
+| Route 53         | [route53.md](./services/route53.md)                 | 10  | IaC/discovery-oriented stub   |
+| Transfer Family  | [transfer.md](./services/transfer.md)               | 10  | IaC/discovery-oriented stub   |
+
+<!-- END overcast:service-index -->
 
 ---
 
