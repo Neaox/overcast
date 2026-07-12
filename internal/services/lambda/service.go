@@ -300,7 +300,7 @@ func (s *Service) InitS3Sync(fetch S3FetchFunc) {
 // SetVPCResolver wires the EC2 VPC resolver so Lambda can look up subnet→VPC
 // mappings and connect containers to VPC Docker networks.
 func (s *Service) SetVPCResolver(r VPCNetworkResolver) {
-	s.handler.vpcResolver = r
+	s.handler.setVPCResolver(r)
 	// If the container runtime is already initialized, wire it there too.
 	s.mu.Lock()
 	cr := s.containerRuntime
@@ -446,8 +446,8 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 	}
 
 	// Wire the VPC resolver if SetVPCResolver was already called.
-	if s.handler.vpcResolver != nil {
-		containerRuntime.SetVPCResolver(s.handler.vpcResolver)
+	if r := s.handler.getVPCResolver(); r != nil {
+		containerRuntime.SetVPCResolver(r)
 	}
 
 	// Subscribe the exit notifier so per-invocation WaitContainer goroutines

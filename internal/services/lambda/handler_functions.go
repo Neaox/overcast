@@ -466,8 +466,8 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 			SecurityGroupIds: req.VpcConfig.SecurityGroupIds,
 		}
 		// Resolve VpcId from the first subnet, if a resolver is available.
-		if h.vpcResolver != nil && len(req.VpcConfig.SubnetIds) > 0 {
-			fn.VpcConfig.VpcId = h.vpcResolver.VpcIDForSubnet(ctx, req.VpcConfig.SubnetIds[0])
+		if resolver := h.getVPCResolver(); resolver != nil && len(req.VpcConfig.SubnetIds) > 0 {
+			fn.VpcConfig.VpcId = resolver.VpcIDForSubnet(ctx, req.VpcConfig.SubnetIds[0])
 		}
 	}
 	if req.ImageConfig != nil {
@@ -831,8 +831,8 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 			SubnetIds:        req.VpcConfig.SubnetIds,
 			SecurityGroupIds: req.VpcConfig.SecurityGroupIds,
 		}
-		if h.vpcResolver != nil && len(req.VpcConfig.SubnetIds) > 0 {
-			fn.VpcConfig.VpcId = h.vpcResolver.VpcIDForSubnet(ctx, req.VpcConfig.SubnetIds[0])
+		if resolver := h.getVPCResolver(); resolver != nil && len(req.VpcConfig.SubnetIds) > 0 {
+			fn.VpcConfig.VpcId = resolver.VpcIDForSubnet(ctx, req.VpcConfig.SubnetIds[0])
 		}
 	}
 	if req.ImageConfig != nil {

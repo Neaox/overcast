@@ -18,19 +18,20 @@ import (
 
 // Handler holds Lambda handler dependencies.
 type Handler struct {
-	cfg         *config.Config
-	log         *serviceutil.ServiceLogger
-	clk         clock.Clock
-	runtimes    *runtimeRegistry
-	ls          *lambdaStore
-	logWriter   events.LogWriter
-	bus         *events.Bus
-	tracker     *instanceTracker
-	rtCache     *runtimeCache
-	esm         *esmStore
-	esmDelivery *esmDeliveryManager
-	asyncWg     sync.WaitGroup // tracks in-flight async invocations
-	vpcResolver VPCNetworkResolver
+	cfg           *config.Config
+	log           *serviceutil.ServiceLogger
+	clk           clock.Clock
+	runtimes      *runtimeRegistry
+	ls            *lambdaStore
+	logWriter     events.LogWriter
+	bus           *events.Bus
+	tracker       *instanceTracker
+	rtCache       *runtimeCache
+	esm           *esmStore
+	esmDelivery   *esmDeliveryManager
+	asyncWg       sync.WaitGroup // tracks in-flight async invocations
+	vpcResolverMu sync.RWMutex
+	vpcResolver   VPCNetworkResolver
 	// prewarmer, when set, starts a background Docker image pull for fn so
 	// the first Invoke does not pay the cold-pull cost on the request path.
 	// Wired by Service.initDockerRuntime once ContainerRuntime is up; nil
@@ -44,6 +45,19 @@ type Handler struct {
 	// CodeZip populated — the s3SyncWatcher only fires on subsequent
 	// PutObject events. Wired by Service.InitS3Sync.
 	s3Fetch S3FetchFunc
+}
+
+func (h *Handler) setVPCResolver(r VPCNetworkResolver) {
+	h.vpcResolverMu.Lock()
+	h.vpcResolver = r
+	h.vpcResolverMu.Unlock()
+}
+
+func (h *Handler) getVPCResolver() VPCNetworkResolver {
+	h.vpcResolverMu.RLock()
+	r := h.vpcResolver
+	h.vpcResolverMu.RUnlock()
+	return r
 }
 
 // VPCNetworkResolver resolves VPC configuration for Lambda functions.
