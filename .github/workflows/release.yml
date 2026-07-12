@@ -259,15 +259,15 @@ jobs:
 
           Full image with the web management console:
 
-          - Version tag: `ghcr.io/{owner_lc}/overcast:{version}`
+          - Pull: `ghcr.io/{owner_lc}/overcast:{version}`
           {channel_line}
-          - Package: https://github.com/{repository}/pkgs/container/overcast
+          - Registry: [overcast package](https://github.com/{repository}/pkgs/container/overcast)
 
           Headless slim image for CI pipelines:
 
-          - Version tag: `ghcr.io/{owner_lc}/overcast-slim:{version}`
+          - Pull: `ghcr.io/{owner_lc}/overcast-slim:{version}`
           {slim_channel_line}
-          - Package: https://github.com/{repository}/pkgs/container/overcast-slim
+          - Registry: [overcast-slim package](https://github.com/{repository}/pkgs/container/overcast-slim)
 
           ```sh
           docker run --rm -p 4566:4566 -p 4567:4567 ghcr.io/{owner_lc}/overcast:{version}
@@ -297,8 +297,8 @@ jobs:
           path: release-metadata/release-body.md
           if-no-files-found: error
 
-  publish:
-    name: Publish Docker images
+  publish-console:
+    name: Publish console Docker image
     needs: [check-version, test, web]
     runs-on: ubuntu-latest
     env:
@@ -316,8 +316,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Docker metadata (console)
-        id: meta-console
+      - name: Docker metadata
+        id: meta
         uses: docker/metadata-action@v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.OWNER }}/overcast
@@ -326,8 +326,39 @@ jobs:
             type=raw,value=${{ needs.check-version.outputs.prerelease_channel }},enable=${{ needs.check-version.outputs.is_prerelease == 'true' }}
             type=raw,value=latest,enable=${{ needs.check-version.outputs.is_prerelease == 'false' }}
 
-      - name: Docker metadata (slim)
-        id: meta-slim
+      - name: Build & push image
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ needs.check-version.outputs.version }}
+          cache-from: type=gha,scope=overcast-console
+          cache-to: type=gha,mode=max,scope=overcast-console
+
+  publish-slim:
+    name: Publish slim Docker image
+    needs: [check-version, test, web]
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: ghcr.io
+      OWNER: ${{ github.repository_owner }}
+    steps:
+      - uses: actions/checkout@v7.0.0
+
+      - uses: docker/setup-buildx-action@v4.2.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
         uses: docker/metadata-action@v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.OWNER }}/overcast-slim
@@ -336,34 +367,22 @@ jobs:
             type=raw,value=${{ needs.check-version.outputs.prerelease_channel }},enable=${{ needs.check-version.outputs.is_prerelease == 'true' }}
             type=raw,value=latest,enable=${{ needs.check-version.outputs.is_prerelease == 'false' }}
 
-      - name: Build & push console image
-        uses: docker/build-push-action@v7.3.0
-        with:
-          context: .
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta-console.outputs.tags }}
-          labels: ${{ steps.meta-console.outputs.labels }}
-          build-args: VERSION=${{ needs.check-version.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build & push slim image
+      - name: Build & push image
         uses: docker/build-push-action@v7.3.0
         with:
           context: .
           target: slim
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta-slim.outputs.tags }}
-          labels: ${{ steps.meta-slim.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           build-args: VERSION=${{ needs.check-version.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=overcast-slim
+          cache-to: type=gha,mode=max,scope=overcast-slim
 
   finalize-release:
     name: Finalize GitHub release
-    needs: [check-version, release-assets, publish]
+    needs: [check-version, release-assets, publish-console, publish-slim]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8.0.1
