@@ -46,21 +46,25 @@ jobs:
             echo "Release tag $TAG does not match VERSION ($FILE_VERSION)." >&2
             exit 1
           fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "release_url=https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG" >> "$GITHUB_OUTPUT"
           if [ "$RELEASE_PRERELEASE" = "true" ] || [[ "$VERSION" == *-* ]]; then
             CHANNEL="${VERSION#*-}"
             CHANNEL="${CHANNEL%%.*}"
             if [ "$CHANNEL" = "$VERSION" ]; then
               CHANNEL="prerelease"
             fi
-            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
-            echo "prerelease_channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+            IS_PRERELEASE=true
+            PRERELEASE_CHANNEL=$CHANNEL
           else
-            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
-            echo "prerelease_channel=" >> "$GITHUB_OUTPUT"
+            IS_PRERELEASE=false
+            PRERELEASE_CHANNEL=
           fi
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "release_url=https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
+            echo "is_prerelease=$IS_PRERELEASE"
+            echo "prerelease_channel=$PRERELEASE_CHANNEL"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Validate changelog release section
         env:
