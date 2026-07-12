@@ -59,6 +59,16 @@ need it than accidentally ship a breaking change as a patch.
        append new capabilities rather than splitting into sub-bullets.
 -->
 
+## [0.0.1-alpha.4] - 2026-07-13
+
+### Fixed
+
+- **CloudFormation** — `DescribeChangeSet` and `ExecuteChangeSet` now accept ARN-only change set lookup, and `ListChangeSets` returns created change sets for the stack.
+
+### Changed
+
+- **Docs** — updated the release process to document the automated `VERSION`-driven release workflow.
+
 ## [0.0.1-alpha.2] - 2026-07-12
 
 ### Added
@@ -172,6 +182,8 @@ need it than accidentally ship a breaking change as a patch.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.1...HEAD
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.4...HEAD
+[0.0.1-alpha.4]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.2...v0.0.1-alpha.4
+[0.0.1-alpha.2]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.1...v0.0.1-alpha.2
 [0.0.1-alpha.1]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.0...v0.0.1-alpha.1
 [0.0.1-alpha.0]: https://github.com/Neaox/overcast/releases/tag/v0.0.1-alpha.0
