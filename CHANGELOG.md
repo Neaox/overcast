@@ -59,6 +59,12 @@ need it than accidentally ship a breaking change as a patch.
        append new capabilities rather than splitting into sub-bullets.
 -->
 
+## [0.0.1-alpha.1] - 2026-07-12
+
+### Changed
+
+- [docs] refreshed the generated service support index and alpha Docker image references for prerelease installation and verification.
+
 ## [0.0.1-alpha.0] - 2026-07-12
 
 ### Docker Images
@@ -156,5 +162,6 @@ need it than accidentally ship a breaking change as a patch.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.0...HEAD
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.1...HEAD
+[0.0.1-alpha.1]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.0...v0.0.1-alpha.1
 [0.0.1-alpha.0]: https://github.com/Neaox/overcast/releases/tag/v0.0.1-alpha.0
