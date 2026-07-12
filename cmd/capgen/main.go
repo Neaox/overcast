@@ -27,6 +27,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -106,6 +107,15 @@ func main() {
 				fmt.Fprintf(os.Stderr, "capgen: %s: parse handlers: %v\n", svc, opsErr)
 				continue
 			}
+			restOps, restErr := parseRESTOperations(svcDir)
+			if restErr != nil {
+				fmt.Fprintf(os.Stderr, "capgen: %s: parse REST operations: %v\n", svc, restErr)
+				continue
+			}
+			if len(restOps) > 0 {
+				ops = mergeOperations(ops, restOps)
+				comprehensive = true
+			}
 			if len(ops) == 0 {
 				// No action-dispatch ops detected (likely a REST-routed service).
 				// Cross-check is not possible; skip silently.
@@ -142,6 +152,16 @@ func main() {
 			fmt.Fprintf(os.Stderr, "capgen: STATUS.md: %v\n", err)
 		} else if changed {
 			fmt.Println("capgen: updated STATUS.md op counts")
+		}
+		if changed, err := updateDocsReadmeServiceIndex(root, allCaps); err != nil {
+			fmt.Fprintf(os.Stderr, "capgen: docs/README.md: %v\n", err)
+		} else if changed {
+			fmt.Println("capgen: updated docs/README.md service index")
+		}
+		if changed, err := updateRootReadmeServiceList(root, allCaps); err != nil {
+			fmt.Fprintf(os.Stderr, "capgen: README.md: %v\n", err)
+		} else if changed {
+			fmt.Println("capgen: updated README.md service list")
 		}
 		if err := generateServiceSupportJSON(root, allCaps); err != nil {
 			fmt.Fprintf(os.Stderr, "capgen: service-support.json: %v\n", err)
@@ -418,6 +438,9 @@ func parseHandlerOps(svcDir string) ([]Operation, bool, error) {
 			if !ok {
 				return true
 			}
+			if !isOperationSwitch(sw) {
+				return true
+			}
 			awsCases := collectAWSCasesFromSwitch(sw)
 			if len(awsCases) < 3 {
 				return true
@@ -435,6 +458,108 @@ func parseHandlerOps(svcDir string) ([]Operation, bool, error) {
 
 	sort.Slice(ops, func(i, j int) bool { return ops[i].Name < ops[j].Name })
 	return ops, hasMap, nil
+}
+
+func parseRESTOperations(svcDir string) ([]Operation, error) {
+	entries, err := os.ReadDir(svcDir)
+	if err != nil {
+		return nil, err
+	}
+	fset := token.NewFileSet()
+	seen := map[string]struct{}{}
+	var ops []Operation
+	for _, e := range entries {
+		if shouldSkipFile(e) {
+			continue
+		}
+		f, err := parseGoFile(fset, filepath.Join(svcDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		stringConsts := collectFileStringConsts(f)
+		ast.Inspect(f, func(n ast.Node) bool {
+			cl, ok := n.(*ast.CompositeLit)
+			if !ok || !isRESTOperationLit(cl) {
+				return true
+			}
+			op := restOperationName(cl, stringConsts)
+			if op == "" {
+				return true
+			}
+			if _, exists := seen[op]; exists {
+				return true
+			}
+			seen[op] = struct{}{}
+			ops = append(ops, Operation{Name: op})
+			return true
+		})
+	}
+	sort.Slice(ops, func(i, j int) bool { return ops[i].Name < ops[j].Name })
+	return ops, nil
+}
+
+func isRESTOperationLit(cl *ast.CompositeLit) bool {
+	if id, ok := cl.Type.(*ast.Ident); ok {
+		return id.Name == "restOperation"
+	}
+	return restOperationName(cl, nil) != ""
+}
+
+func restOperationName(cl *ast.CompositeLit, consts map[string]string) string {
+	for _, elt := range cl.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		key, ok := kv.Key.(*ast.Ident)
+		if !ok || key.Name != "Operation" {
+			continue
+		}
+		return stringExpr(kv.Value, consts)
+	}
+	return ""
+}
+
+func mergeOperations(a, b []Operation) []Operation {
+	seen := make(map[string]Operation, len(a)+len(b))
+	for _, op := range a {
+		seen[op.Name] = op
+	}
+	for _, op := range b {
+		if existing, ok := seen[op.Name]; ok && existing.IsStub {
+			continue
+		}
+		seen[op.Name] = op
+	}
+	out := make([]Operation, 0, len(seen))
+	for _, op := range seen {
+		out = append(out, op)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func isOperationSwitch(sw *ast.SwitchStmt) bool {
+	if sw.Tag == nil {
+		return false
+	}
+	name := strings.ToLower(exprName(sw.Tag))
+	return name == "action" || name == "operation" || name == "op" || strings.HasSuffix(name, "action") || strings.HasSuffix(name, "operation")
+}
+
+func exprName(expr ast.Expr) string {
+	switch v := expr.(type) {
+	case *ast.Ident:
+		return v.Name
+	case *ast.SelectorExpr:
+		return v.Sel.Name
+	case *ast.CallExpr:
+		return exprName(v.Fun)
+	case *ast.ParenExpr:
+		return exprName(v.X)
+	default:
+		return ""
+	}
 }
 
 func shouldSkipFile(e os.DirEntry) bool {
@@ -506,11 +631,20 @@ func collectAWSCasesFromSwitch(sw *ast.SwitchStmt) []string {
 			continue
 		}
 		val := strings.Trim(lit.Value, `"`)
-		if isAWSOperation(val) {
+		if isAWSOperation(val) && !isKnownNonOperationCase(val) {
 			cases = append(cases, val)
 		}
 	}
 	return cases
+}
+
+func isKnownNonOperationCase(s string) bool {
+	switch s {
+	case "GreaterThanThreshold", "GreaterThanOrEqualToThreshold", "LessThanThreshold", "LessThanOrEqualToThreshold":
+		return true
+	default:
+		return false
+	}
 }
 
 // isAWSOperation returns true if s looks like an AWS API operation name (PascalCase, 3-80 chars).
@@ -716,6 +850,9 @@ func checkService(service string, ops []Operation, caps []CapabilityDecl, compre
 	}
 	for _, cap := range caps {
 		if cap.DocOnly {
+			continue
+		}
+		if cap.Status == "StatusUnsupported" {
 			continue
 		}
 		if _, found := opByName[cap.Operation]; !found {
@@ -1131,6 +1268,7 @@ var statusDisplayNames = map[string]string{
 	"appregistry":     "AppRegistry",
 	"appsync":         "AppSync",
 	"athena":          "Athena",
+	"autoscaling":     "Auto Scaling",
 	"backup":          "Backup",
 	"bedrock":         "Bedrock",
 	"cloudformation":  "CloudFormation",
@@ -1144,7 +1282,9 @@ var statusDisplayNames = map[string]string{
 	"ec2":             "EC2 / VPC",
 	"ecr":             "ECR",
 	"ecs":             "ECS",
+	"eks":             "EKS",
 	"elasticache":     "ElastiCache",
+	"elbv2":           "ELBv2",
 	"eventbridge":     "EventBridge",
 	"firehose":        "Firehose",
 	"glue":            "Glue",
@@ -1154,8 +1294,10 @@ var statusDisplayNames = map[string]string{
 	"lambda":          "Lambda",
 	"msk":             "MSK",
 	"opensearch":      "OpenSearch",
+	"organizations":   "Organizations",
 	"pipes":           "Pipes",
 	"rds":             "RDS",
+	"route53":         "Route 53",
 	"s3":              "S3",
 	"scheduler":       "Scheduler",
 	"secretsmanager":  "Secrets Manager",
@@ -1175,9 +1317,74 @@ var statusDisplayNames = map[string]string{
 var statusTableOrder = []string{
 	"s3", "sqs", "dynamodb", "lambda", "apigateway", "appsync", "cloudfront",
 	"cognito", "ec2", "sns",
-	"iam", "ecs", "kms", "kinesis", "eventbridge", "cloudformation", "rds",
-	"elasticache", "secretsmanager", "ssm", "cloudwatch-logs", "ses", "sts",
-	"stepfunctions", "pipes", "backup", "transfer", "waf", "shield",
+	"iam", "ecs", "ecr", "kms", "kinesis", "eventbridge", "scheduler",
+	"cloudformation", "rds", "elasticache", "appconfig", "appconfigdata",
+	"secretsmanager", "ssm", "cloudwatch-logs", "ses", "sts",
+	"stepfunctions", "pipes", "waf", "shield", "acm", "athena", "bedrock",
+	"cloudwatch", "dynamodbstreams", "firehose", "glue", "opensearch",
+	"appregistry", "autoscaling", "backup", "cloudtrail", "eks", "elbv2", "msk",
+	"organizations", "route53", "transfer",
+}
+
+var serviceIndexTiers = map[string]string{
+	"s3":              "Comprehensive / broad support",
+	"sqs":             "Comprehensive / broad support",
+	"dynamodb":        "Comprehensive / broad support",
+	"lambda":          "Comprehensive / broad support",
+	"apigateway":      "Comprehensive / broad support",
+	"appsync":         "Comprehensive / broad support",
+	"cloudfront":      "Comprehensive / broad support",
+	"cognito":         "Comprehensive / broad support",
+	"ec2":             "Comprehensive / broad support",
+	"sns":             "Comprehensive / broad support",
+	"iam":             "Core CRUD + common workflows",
+	"ecs":             "Core CRUD + common workflows",
+	"ecr":             "Core CRUD + common workflows",
+	"kms":             "Core CRUD + common workflows",
+	"kinesis":         "Core CRUD + common workflows",
+	"eventbridge":     "Core CRUD + common workflows",
+	"scheduler":       "Core CRUD + common workflows",
+	"cloudformation":  "Core CRUD + common workflows",
+	"rds":             "Core CRUD + common workflows",
+	"elasticache":     "Core CRUD + common workflows",
+	"appconfig":       "Core CRUD + common workflows",
+	"appconfigdata":   "Core CRUD + common workflows",
+	"secretsmanager":  "Core CRUD + common workflows",
+	"ssm":             "Core CRUD + common workflows",
+	"cloudwatch-logs": "Core CRUD + common workflows",
+	"ses":             "Core CRUD + common workflows",
+	"sts":             "Core CRUD + common workflows",
+	"stepfunctions":   "Minimal / targeted support",
+	"pipes":           "Minimal / targeted support",
+	"waf":             "Minimal / targeted support",
+	"shield":          "Minimal / targeted support",
+	"acm":             "Minimal / targeted support",
+	"athena":          "Minimal / targeted support",
+	"bedrock":         "Minimal / targeted support",
+	"cloudwatch":      "Minimal / targeted support",
+	"dynamodbstreams": "Minimal / targeted support",
+	"firehose":        "Minimal / targeted support",
+	"glue":            "Minimal / targeted support",
+	"opensearch":      "Minimal / targeted support",
+	"appregistry":     "IaC/discovery-oriented stub",
+	"autoscaling":     "IaC/discovery-oriented stub",
+	"backup":          "IaC/discovery-oriented stub",
+	"cloudtrail":      "IaC/discovery-oriented stub",
+	"eks":             "IaC/discovery-oriented stub",
+	"elbv2":           "IaC/discovery-oriented stub",
+	"msk":             "IaC/discovery-oriented stub",
+	"organizations":   "IaC/discovery-oriented stub",
+	"route53":         "IaC/discovery-oriented stub",
+	"transfer":        "IaC/discovery-oriented stub",
+}
+
+var serviceDocFileNames = map[string]string{
+	"elbv2": "elb",
+}
+
+type serviceLink struct {
+	name string
+	link string
 }
 
 // updateStatusMd keeps STATUS.md op counts consistent with the capability
@@ -1252,6 +1459,8 @@ func updateStatusMd(root string, allCaps []CapabilityDecl) (bool, error) {
 
 	// Part 2: replace sentinel section with a flat generated table.
 	content := strings.Join(lines, "\n")
+	serviceCountLine := fmt.Sprintf("%d AWS services are registered. Coverage varies from comprehensive to stub.", len(opCounts))
+	content = regexpMustReplace(content, `(?m)^\d+ AWS services are registered\. Coverage varies from comprehensive to stub\.$`, serviceCountLine, &changed)
 	beginIdx := strings.Index(content, beginMarker)
 	endIdx := strings.Index(content, endMarker)
 	if beginIdx >= 0 && endIdx > beginIdx {
@@ -1306,6 +1515,155 @@ func orderedServices(opCounts map[string]int) []string {
 	sort.Strings(remainder)
 
 	return append(ordered, remainder...)
+}
+
+func regexpMustReplace(content, pattern, replacement string, changed *bool) string {
+	re := regexp.MustCompile(pattern)
+	next := re.ReplaceAllString(content, replacement)
+	if next != content {
+		*changed = true
+	}
+	return next
+}
+
+func updateDocsReadmeServiceIndex(root string, allCaps []CapabilityDecl) (bool, error) {
+	const beginMarker = "<!-- BEGIN overcast:service-index -->"
+	const endMarker = "<!-- END overcast:service-index -->"
+
+	opCounts := map[string]int{}
+	for _, c := range allCaps {
+		opCounts[c.Service]++
+	}
+
+	path := filepath.Join(root, "docs", "README.md")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	content := string(raw)
+	beginIdx := strings.Index(content, beginMarker)
+	endIdx := strings.Index(content, endMarker)
+	if beginIdx < 0 || endIdx <= beginIdx {
+		return false, fmt.Errorf("missing %s/%s markers", beginMarker, endMarker)
+	}
+
+	rows := make([][]string, 0, len(opCounts))
+	for _, svc := range orderedServices(opCounts) {
+		name := statusDisplayNames[svc]
+		if name == "" {
+			name = svc
+		}
+		docFile := serviceDocFile(svc)
+		tier := serviceIndexTiers[svc]
+		if tier == "" {
+			tier = "See service doc"
+		}
+		rows = append(rows, []string{
+			name,
+			fmt.Sprintf("[%s.md](./services/%s.md)", docFile, docFile),
+			fmt.Sprintf("%d", opCounts[svc]),
+			tier,
+		})
+	}
+
+	var buf strings.Builder
+	buf.WriteString(beginMarker + "\n\n")
+	buf.WriteString(formatTable([]string{"Service", "Doc", "Ops", "Coverage tier"}, rows))
+	buf.WriteString("\n" + endMarker)
+
+	replacement := buf.String()
+	oldSection := content[beginIdx : endIdx+len(endMarker)]
+	if replacement == oldSection {
+		return false, nil
+	}
+	content = content[:beginIdx] + replacement + content[endIdx+len(endMarker):]
+	return true, os.WriteFile(path, []byte(content), 0o644)
+}
+
+func updateRootReadmeServiceList(root string, allCaps []CapabilityDecl) (bool, error) {
+	const beginMarker = "<!-- BEGIN overcast:root-service-list -->"
+	const endMarker = "<!-- END overcast:root-service-list -->"
+
+	opCounts := map[string]int{}
+	for _, c := range allCaps {
+		opCounts[c.Service]++
+	}
+
+	path := filepath.Join(root, "README.md")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	content := string(raw)
+	beginIdx := strings.Index(content, beginMarker)
+	endIdx := strings.Index(content, endMarker)
+	if beginIdx < 0 || endIdx <= beginIdx {
+		return false, fmt.Errorf("missing %s/%s markers", beginMarker, endMarker)
+	}
+
+	links := make([]serviceLink, 0, len(opCounts))
+	for svc := range opCounts {
+		name := statusDisplayNames[svc]
+		if name == "" {
+			name = svc
+		}
+		docFile := serviceDocFile(svc)
+		links = append(links, serviceLink{
+			name: name,
+			link: fmt.Sprintf("[%s](./docs/services/%s.md)", name, docFile),
+		})
+	}
+	sort.Slice(links, func(i, j int) bool {
+		return strings.ToLower(links[i].name) < strings.ToLower(links[j].name)
+	})
+
+	var buf strings.Builder
+	buf.WriteString(beginMarker + "\n\n")
+	buf.WriteString(fmt.Sprintf("Overcast currently registers **%d AWS services**. Coverage ranges from broad\n", len(opCounts)))
+	buf.WriteString("service emulation to minimal discovery/IaC stubs; check the per-service docs for\n")
+	buf.WriteString("exact endpoint support.\n\n")
+	buf.WriteString(formatCommaSeparatedLinks(links))
+	buf.WriteString(".\n\n")
+	buf.WriteString("Some services require Docker socket access for full runtime behavior:\n\n")
+	buf.WriteString("- Lambda, ECS, RDS, EC2/VPC, and ElastiCache can launch sibling containers.\n")
+	buf.WriteString("- Without Docker, their metadata/control-plane APIs still work where possible,\n")
+	buf.WriteString("  but runtime execution falls back to metadata-only or stub behavior.\n\n")
+	buf.WriteString("IAM is implemented for local development and CloudFormation/CDK compatibility,\n")
+	buf.WriteString("but IAM policies are not enforced as an authorization layer.\n\n")
+	buf.WriteString("See the [service emulation reference](./docs/services/) for per-endpoint\n")
+	buf.WriteString("coverage tables, or browse the generated summary in [STATUS.md](./STATUS.md#service-coverage).\n\n")
+	buf.WriteString(endMarker)
+
+	replacement := buf.String()
+	oldSection := content[beginIdx : endIdx+len(endMarker)]
+	if replacement == oldSection {
+		return false, nil
+	}
+	content = content[:beginIdx] + replacement + content[endIdx+len(endMarker):]
+	return true, os.WriteFile(path, []byte(content), 0o644)
+}
+
+func formatCommaSeparatedLinks(links []serviceLink) string {
+	const perLine = 4
+	var buf strings.Builder
+	for i, link := range links {
+		if i > 0 {
+			if i%perLine == 0 {
+				buf.WriteString(",\n")
+			} else {
+				buf.WriteString(", ")
+			}
+		}
+		buf.WriteString(link.link)
+	}
+	return buf.String()
+}
+
+func serviceDocFile(service string) string {
+	if override := serviceDocFileNames[service]; override != "" {
+		return override
+	}
+	return service
 }
 
 // generateServiceSupportJSON writes docs/generated/service-support.json, a

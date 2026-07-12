@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1228,
+  "total_ops": 1229,
   "services": [
     {
       "service": "s3",
@@ -253,8 +253,8 @@
     {
       "service": "sqs",
       "display_name": "SQS",
-      "total_ops": 20,
-      "implemented_ops": 18,
+      "total_ops": 21,
+      "implemented_ops": 19,
       "operations": [
         {
           "operation": "CreateQueue",
@@ -369,6 +369,12 @@
           "category": "Dead-letter queues",
           "status": "✅ Supported",
           "notes": "Lists queues that target a given DLQ"
+        },
+        {
+          "operation": "StartMessageMoveTask",
+          "category": "Dead-letter queues",
+          "status": "✅ Supported",
+          "notes": "Redrives messages from a DLQ back to its source queue"
         }
       ]
     },
@@ -1634,67 +1640,78 @@
           "operation": "GetItem",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB data source resolver operation"
+          "notes": "DynamoDB data source resolver operation",
+          "doc_only": true
         },
         {
           "operation": "PutItem",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB data source resolver operation"
+          "notes": "DynamoDB data source resolver operation",
+          "doc_only": true
         },
         {
           "operation": "DeleteItem",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB data source resolver operation"
+          "notes": "DynamoDB data source resolver operation",
+          "doc_only": true
         },
         {
           "operation": "UpdateItem",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB data source resolver operation"
+          "notes": "DynamoDB data source resolver operation",
+          "doc_only": true
         },
         {
           "operation": "Query",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB data source resolver operation"
+          "notes": "DynamoDB data source resolver operation",
+          "doc_only": true
         },
         {
           "operation": "Scan",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB data source resolver operation"
+          "notes": "DynamoDB data source resolver operation",
+          "doc_only": true
         },
         {
           "operation": "BatchGetItem",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB data source resolver operation"
+          "notes": "DynamoDB data source resolver operation",
+          "doc_only": true
         },
         {
           "operation": "BatchWriteItem",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB data source resolver operation"
+          "notes": "DynamoDB data source resolver operation",
+          "doc_only": true
         },
         {
           "operation": "TransactGetItems",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB data source resolver operation"
+          "notes": "DynamoDB data source resolver operation",
+          "doc_only": true
         },
         {
           "operation": "TransactWriteItems",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB data source resolver operation"
+          "notes": "DynamoDB data source resolver operation",
+          "doc_only": true
         },
         {
           "operation": "ConditionCheck",
           "category": "DynamoDB Resolver Operations",
           "status": "✅ Supported",
-          "notes": "DynamoDB transact-write condition check"
+          "notes": "DynamoDB transact-write condition check",
+          "doc_only": true
         }
       ]
     },
@@ -3822,6 +3839,131 @@
       ]
     },
     {
+      "service": "ecr",
+      "display_name": "ECR",
+      "total_ops": 20,
+      "implemented_ops": 20,
+      "operations": [
+        {
+          "operation": "CreateRepository",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Returns ARN, URI, and createdAt"
+        },
+        {
+          "operation": "DescribeRepositories",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Lists all repos or filters by name"
+        },
+        {
+          "operation": "DeleteRepository",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Deletes the repository and all its image records"
+        },
+        {
+          "operation": "GetAuthorizationToken",
+          "category": "Auth",
+          "status": "✅ Supported",
+          "notes": "Returns `base64(\"AWS:\u003cpassword\u003e\")` and the registry proxy endpoint; token expiry is 12 hours"
+        },
+        {
+          "operation": "DescribeRegistry",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Returns registry metadata with empty replication rules"
+        },
+        {
+          "operation": "ListImages",
+          "category": "Images",
+          "status": "✅ Supported",
+          "notes": "Returns image IDs (tag + digest); reconciles local registry tags when Docker is available"
+        },
+        {
+          "operation": "DescribeImages",
+          "category": "Images",
+          "status": "✅ Supported",
+          "notes": "Returns image detail objects (digest, tags, media type); reconciles local registry manifests when Docker is available"
+        },
+        {
+          "operation": "PutImage",
+          "category": "Images",
+          "status": "✅ Supported",
+          "notes": "Stores an image manifest; generates a digest if none supplied"
+        },
+        {
+          "operation": "BatchGetImage",
+          "category": "Images",
+          "status": "✅ Supported",
+          "notes": "Fetches manifests by tag or digest"
+        },
+        {
+          "operation": "DescribeImageScanFindings",
+          "category": "Images",
+          "status": "✅ Supported",
+          "notes": "Returns empty/not-scanned findings; no scan engine is emulated"
+        },
+        {
+          "operation": "BatchDeleteImage",
+          "category": "Images",
+          "status": "✅ Supported",
+          "notes": "Deletes images by tag or digest"
+        },
+        {
+          "operation": "SetRepositoryPolicy",
+          "category": "Policy",
+          "status": "✅ Supported",
+          "notes": "Stores arbitrary IAM policy text"
+        },
+        {
+          "operation": "GetRepositoryPolicy",
+          "category": "Policy",
+          "status": "✅ Supported",
+          "notes": "Retrieves stored policy; returns 400 if none set"
+        },
+        {
+          "operation": "DeleteRepositoryPolicy",
+          "category": "Policy",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "PutLifecyclePolicy",
+          "category": "Policy",
+          "status": "✅ Supported",
+          "notes": "Stores lifecycle policy text for the repository"
+        },
+        {
+          "operation": "GetLifecyclePolicy",
+          "category": "Policy",
+          "status": "✅ Supported",
+          "notes": "Retrieves stored lifecycle policy; returns 400 if none set"
+        },
+        {
+          "operation": "DeleteLifecyclePolicy",
+          "category": "Policy",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "TagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Adds/merges tags onto a repository ARN"
+        },
+        {
+          "operation": "UntagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Removes tag keys from a repository ARN"
+        },
+        {
+          "operation": "ListTagsForResource",
+          "category": "Tags",
+          "status": "✅ Supported"
+        }
+      ]
+    },
+    {
       "service": "kms",
       "display_name": "KMS",
       "total_ops": 32,
@@ -4309,6 +4451,86 @@
       ]
     },
     {
+      "service": "scheduler",
+      "display_name": "Scheduler",
+      "total_ops": 12,
+      "implemented_ops": 12,
+      "operations": [
+        {
+          "operation": "CreateScheduleGroup",
+          "category": "Schedule Groups",
+          "status": "✅ Supported",
+          "notes": "Creates a named group"
+        },
+        {
+          "operation": "GetScheduleGroup",
+          "category": "Schedule Groups",
+          "status": "✅ Supported",
+          "notes": "Returns group metadata"
+        },
+        {
+          "operation": "ListScheduleGroups",
+          "category": "Schedule Groups",
+          "status": "✅ Supported",
+          "notes": "Lists groups in region"
+        },
+        {
+          "operation": "DeleteScheduleGroup",
+          "category": "Schedule Groups",
+          "status": "✅ Supported",
+          "notes": "Deletes group (except `default`)"
+        },
+        {
+          "operation": "CreateSchedule",
+          "category": "Schedules",
+          "status": "✅ Supported",
+          "notes": "Group-specific or default group path"
+        },
+        {
+          "operation": "GetSchedule",
+          "category": "Schedules",
+          "status": "✅ Supported",
+          "notes": "Returns full schedule definition"
+        },
+        {
+          "operation": "UpdateSchedule",
+          "category": "Schedules",
+          "status": "✅ Supported",
+          "notes": "Updates expression/target/state fields"
+        },
+        {
+          "operation": "DeleteSchedule",
+          "category": "Schedules",
+          "status": "✅ Supported",
+          "notes": "Deletes schedule"
+        },
+        {
+          "operation": "ListSchedules",
+          "category": "Schedules",
+          "status": "✅ Supported",
+          "notes": "Optional `ScheduleGroup` filter"
+        },
+        {
+          "operation": "TagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Merges tags on ARN"
+        },
+        {
+          "operation": "UntagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Removes keys from ARN"
+        },
+        {
+          "operation": "ListTagsForResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Returns tag map"
+        }
+      ]
+    },
+    {
       "service": "cloudformation",
       "display_name": "CloudFormation",
       "total_ops": 47,
@@ -4604,7 +4826,7 @@
       "service": "rds",
       "display_name": "RDS",
       "total_ops": 33,
-      "implemented_ops": 33,
+      "implemented_ops": 20,
       "operations": [
         {
           "operation": "CreateDBInstance",
@@ -4645,37 +4867,44 @@
         {
           "operation": "RebootDBInstance",
           "category": "DB instances",
-          "status": "✅ Supported"
+          "status": "❌ Unsupported",
+          "notes": "stub; returns 501"
         },
         {
           "operation": "CreateDBSnapshot",
           "category": "DB instances",
-          "status": "✅ Supported"
+          "status": "❌ Unsupported",
+          "notes": "stub; returns 501"
         },
         {
           "operation": "DeleteDBSnapshot",
           "category": "DB instances",
-          "status": "✅ Supported"
+          "status": "❌ Unsupported",
+          "notes": "stub; returns 501"
         },
         {
           "operation": "DescribeDBSnapshots",
           "category": "DB instances",
-          "status": "✅ Supported"
+          "status": "❌ Unsupported",
+          "notes": "stub; returns 501"
         },
         {
           "operation": "RestoreDBInstanceFromDBSnapshot",
           "category": "DB instances",
-          "status": "✅ Supported"
+          "status": "❌ Unsupported",
+          "notes": "stub; returns 501"
         },
         {
           "operation": "DescribeDBLogFiles",
           "category": "DB instances",
-          "status": "✅ Supported"
+          "status": "❌ Unsupported",
+          "notes": "stub; returns 501"
         },
         {
           "operation": "DownloadDBLogFilePortion",
           "category": "DB instances",
-          "status": "✅ Supported"
+          "status": "❌ Unsupported",
+          "notes": "stub; returns 501"
         },
         {
           "operation": "CreateDBCluster",
@@ -4716,17 +4945,20 @@
         {
           "operation": "CreateDBClusterSnapshot",
           "category": "Aurora clusters",
-          "status": "✅ Supported"
+          "status": "❌ Unsupported",
+          "notes": "stub; returns 501"
         },
         {
           "operation": "DeleteDBClusterSnapshot",
           "category": "Aurora clusters",
-          "status": "✅ Supported"
+          "status": "❌ Unsupported",
+          "notes": "stub; returns 501"
         },
         {
           "operation": "DescribeDBClusterSnapshots",
           "category": "Aurora clusters",
-          "status": "✅ Supported"
+          "status": "❌ Unsupported",
+          "notes": "stub; returns 501"
         },
         {
           "operation": "DescribeDBEngineVersions",
@@ -4777,17 +5009,20 @@
         {
           "operation": "AddTagsToResource",
           "category": "General",
-          "status": "✅ Supported"
+          "status": "❌ Unsupported",
+          "notes": "stub; returns 501"
         },
         {
           "operation": "ListTagsForResource",
           "category": "General",
-          "status": "✅ Supported"
+          "status": "❌ Unsupported",
+          "notes": "stub; returns 501"
         },
         {
           "operation": "RemoveTagsFromResource",
           "category": "General",
-          "status": "✅ Supported"
+          "status": "❌ Unsupported",
+          "notes": "stub; returns 501"
         }
       ]
     },
@@ -4914,6 +5149,116 @@
           "category": "General",
           "status": "✅ Supported",
           "notes": "Removes specific tag keys"
+        }
+      ]
+    },
+    {
+      "service": "appconfig",
+      "display_name": "AppConfig",
+      "total_ops": 12,
+      "implemented_ops": 12,
+      "operations": [
+        {
+          "operation": "CreateApplication",
+          "category": "Applications",
+          "status": "✅ Supported",
+          "notes": "Creates an application"
+        },
+        {
+          "operation": "GetApplication",
+          "category": "Applications",
+          "status": "✅ Supported",
+          "notes": "Returns application details"
+        },
+        {
+          "operation": "ListApplications",
+          "category": "Applications",
+          "status": "✅ Supported",
+          "notes": "Lists all applications"
+        },
+        {
+          "operation": "DeleteApplication",
+          "category": "Applications",
+          "status": "✅ Supported",
+          "notes": "Deletes an application"
+        },
+        {
+          "operation": "CreateEnvironment",
+          "category": "Environments",
+          "status": "✅ Supported",
+          "notes": "Creates an environment for an application"
+        },
+        {
+          "operation": "GetEnvironment",
+          "category": "Environments",
+          "status": "✅ Supported",
+          "notes": "Returns environment details"
+        },
+        {
+          "operation": "ListEnvironments",
+          "category": "Environments",
+          "status": "✅ Supported",
+          "notes": "Lists environments for an application"
+        },
+        {
+          "operation": "DeleteEnvironment",
+          "category": "Environments",
+          "status": "✅ Supported",
+          "notes": "Deletes an environment"
+        },
+        {
+          "operation": "CreateConfigurationProfile",
+          "category": "Configuration Profiles",
+          "status": "✅ Supported",
+          "notes": "Creates a configuration profile"
+        },
+        {
+          "operation": "GetConfigurationProfile",
+          "category": "Configuration Profiles",
+          "status": "✅ Supported",
+          "notes": "Returns configuration profile details"
+        },
+        {
+          "operation": "ListConfigurationProfiles",
+          "category": "Configuration Profiles",
+          "status": "✅ Supported",
+          "notes": "Lists configuration profiles"
+        },
+        {
+          "operation": "DeleteConfigurationProfile",
+          "category": "Configuration Profiles",
+          "status": "✅ Supported",
+          "notes": "Deletes a configuration profile"
+        }
+      ]
+    },
+    {
+      "service": "appconfigdata",
+      "display_name": "AppConfigData",
+      "total_ops": 3,
+      "implemented_ops": 3,
+      "operations": [
+        {
+          "operation": "StartConfigurationSession",
+          "category": "Sessions",
+          "status": "✅ Supported",
+          "notes": "Starts a polling session; returns `InitialConfigurationToken`",
+          "docs_url": "[docs](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/API_appconfigdata_StartConfigurationSession.html)"
+        },
+        {
+          "operation": "GetLatestConfiguration",
+          "category": "Sessions",
+          "status": "✅ Supported",
+          "notes": "Returns current config content; empty body when unchanged since last poll",
+          "docs_url": "[docs](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/API_appconfigdata_GetLatestConfiguration.html)"
+        },
+        {
+          "operation": "AppConfig-Configuration-Version",
+          "category": "Response headers",
+          "status": "✅ Supported",
+          "notes": "Integer version number (only when content is returned)",
+          "docs_url": "[docs](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/Welcome.html)",
+          "doc_only": true
         }
       ]
     },
@@ -5593,98 +5938,6 @@
       ]
     },
     {
-      "service": "backup",
-      "display_name": "Backup",
-      "total_ops": 9,
-      "implemented_ops": 9,
-      "operations": [
-        {
-          "operation": "CreateBackupVault",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "DeleteBackupVault",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "DescribeBackupVault",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "ListBackupVaults",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "CreateBackupPlan",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "DeleteBackupPlan",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "GetBackupPlan",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "ListBackupPlans",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "UpdateBackupPlan",
-          "status": "🧊 Inert"
-        }
-      ]
-    },
-    {
-      "service": "transfer",
-      "display_name": "Transfer Family",
-      "total_ops": 10,
-      "implemented_ops": 10,
-      "operations": [
-        {
-          "operation": "CreateServer",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "DescribeServer",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "ListServers",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "UpdateServer",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "DeleteServer",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "CreateUser",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "DescribeUser",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "ListUsers",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "UpdateUser",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "DeleteUser",
-          "status": "🧊 Inert"
-        }
-      ]
-    },
-    {
       "service": "waf",
       "display_name": "WAF v2",
       "total_ops": 4,
@@ -5803,112 +6056,344 @@
       ]
     },
     {
-      "service": "appconfig",
-      "display_name": "AppConfig",
-      "total_ops": 12,
-      "implemented_ops": 12,
+      "service": "athena",
+      "display_name": "Athena",
+      "total_ops": 8,
+      "implemented_ops": 8,
       "operations": [
         {
-          "operation": "CreateApplication",
-          "category": "Applications",
+          "operation": "StartQueryExecution",
+          "category": "Queries",
           "status": "✅ Supported",
-          "notes": "Creates an application"
+          "notes": "Starts a query; immediately succeeds"
         },
         {
-          "operation": "GetApplication",
-          "category": "Applications",
+          "operation": "GetQueryExecution",
+          "category": "Queries",
           "status": "✅ Supported",
-          "notes": "Returns application details"
+          "notes": "Returns query execution details"
         },
         {
-          "operation": "ListApplications",
-          "category": "Applications",
+          "operation": "GetQueryResults",
+          "category": "Queries",
           "status": "✅ Supported",
-          "notes": "Lists all applications"
+          "notes": "Returns query results (empty result set)"
         },
         {
-          "operation": "DeleteApplication",
-          "category": "Applications",
+          "operation": "ListQueryExecutions",
+          "category": "Queries",
           "status": "✅ Supported",
-          "notes": "Deletes an application"
+          "notes": "Lists all query execution IDs"
         },
         {
-          "operation": "CreateEnvironment",
-          "category": "Environments",
+          "operation": "CreateWorkGroup",
+          "category": "WorkGroups",
           "status": "✅ Supported",
-          "notes": "Creates an environment for an application"
+          "notes": "Creates a workgroup"
         },
         {
-          "operation": "GetEnvironment",
-          "category": "Environments",
+          "operation": "GetWorkGroup",
+          "category": "WorkGroups",
           "status": "✅ Supported",
-          "notes": "Returns environment details"
+          "notes": "Returns workgroup details"
         },
         {
-          "operation": "ListEnvironments",
-          "category": "Environments",
+          "operation": "ListWorkGroups",
+          "category": "WorkGroups",
           "status": "✅ Supported",
-          "notes": "Lists environments for an application"
+          "notes": "Lists all workgroups"
         },
         {
-          "operation": "DeleteEnvironment",
-          "category": "Environments",
+          "operation": "DeleteWorkGroup",
+          "category": "WorkGroups",
           "status": "✅ Supported",
-          "notes": "Deletes an environment"
-        },
-        {
-          "operation": "CreateConfigurationProfile",
-          "category": "Configuration Profiles",
-          "status": "✅ Supported",
-          "notes": "Creates a configuration profile"
-        },
-        {
-          "operation": "GetConfigurationProfile",
-          "category": "Configuration Profiles",
-          "status": "✅ Supported",
-          "notes": "Returns configuration profile details"
-        },
-        {
-          "operation": "ListConfigurationProfiles",
-          "category": "Configuration Profiles",
-          "status": "✅ Supported",
-          "notes": "Lists configuration profiles"
-        },
-        {
-          "operation": "DeleteConfigurationProfile",
-          "category": "Configuration Profiles",
-          "status": "✅ Supported",
-          "notes": "Deletes a configuration profile"
+          "notes": "Deletes a workgroup"
         }
       ]
     },
     {
-      "service": "appconfigdata",
-      "display_name": "AppConfigData",
-      "total_ops": 3,
-      "implemented_ops": 3,
+      "service": "bedrock",
+      "display_name": "Bedrock",
+      "total_ops": 2,
+      "implemented_ops": 2,
       "operations": [
         {
-          "operation": "StartConfigurationSession",
-          "category": "Sessions",
+          "operation": "InvokeModel",
+          "category": "Inference",
           "status": "✅ Supported",
-          "notes": "Starts a polling session; returns `InitialConfigurationToken`",
-          "docs_url": "[docs](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/API_appconfigdata_StartConfigurationSession.html)"
+          "notes": "POST /model/{modelId}/invoke — invokes model",
+          "docs_url": "[docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModel.html)"
         },
         {
-          "operation": "GetLatestConfiguration",
-          "category": "Sessions",
+          "operation": "Converse",
+          "category": "Inference",
           "status": "✅ Supported",
-          "notes": "Returns current config content; empty body when unchanged since last poll",
-          "docs_url": "[docs](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/API_appconfigdata_GetLatestConfiguration.html)"
+          "notes": "POST /model/{modelId}/converse — chat API",
+          "docs_url": "[docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html)"
+        }
+      ]
+    },
+    {
+      "service": "cloudwatch",
+      "display_name": "CloudWatch",
+      "total_ops": 12,
+      "implemented_ops": 12,
+      "operations": [
+        {
+          "operation": "DeleteAlarms",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Deletes one or more alarms by name"
         },
         {
-          "operation": "AppConfig-Configuration-Version",
-          "category": "Response headers",
+          "operation": "DescribeAlarms",
+          "category": "General",
           "status": "✅ Supported",
-          "notes": "Integer version number (only when content is returned)",
-          "docs_url": "[docs](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/Welcome.html)",
-          "doc_only": true
+          "notes": "Lists alarms, supports filtering"
+        },
+        {
+          "operation": "DescribeAlarmsForMetric",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Lists alarms for a specific metric"
+        },
+        {
+          "operation": "GetMetricData",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Returns query-based metric values over time ranges"
+        },
+        {
+          "operation": "GetMetricStatistics",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Returns aggregated datapoints by period"
+        },
+        {
+          "operation": "ListMetrics",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Lists available metrics"
+        },
+        {
+          "operation": "ListTagsForResource",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Lists tags for an alarm"
+        },
+        {
+          "operation": "PutMetricAlarm",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Creates or updates an alarm"
+        },
+        {
+          "operation": "PutMetricData",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Publishes metric data points"
+        },
+        {
+          "operation": "SetAlarmState",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Manually sets the state of an alarm"
+        },
+        {
+          "operation": "TagResource",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Adds or updates tags on an alarm"
+        },
+        {
+          "operation": "UntagResource",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Removes tags from an alarm"
+        }
+      ]
+    },
+    {
+      "service": "dynamodbstreams",
+      "display_name": "DynamoDB Streams",
+      "total_ops": 4,
+      "implemented_ops": 4,
+      "operations": [
+        {
+          "operation": "DescribeStream",
+          "category": "General",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "GetRecords",
+          "category": "General",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "GetShardIterator",
+          "category": "General",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "ListStreams",
+          "category": "General",
+          "status": "✅ Supported"
+        }
+      ]
+    },
+    {
+      "service": "firehose",
+      "display_name": "Firehose",
+      "total_ops": 6,
+      "implemented_ops": 6,
+      "operations": [
+        {
+          "operation": "CreateDeliveryStream",
+          "category": "Delivery Streams",
+          "status": "✅ Supported",
+          "notes": "Creates a delivery stream"
+        },
+        {
+          "operation": "DescribeDeliveryStream",
+          "category": "Delivery Streams",
+          "status": "✅ Supported",
+          "notes": "Returns delivery stream details"
+        },
+        {
+          "operation": "ListDeliveryStreams",
+          "category": "Delivery Streams",
+          "status": "✅ Supported",
+          "notes": "Lists all delivery streams"
+        },
+        {
+          "operation": "DeleteDeliveryStream",
+          "category": "Delivery Streams",
+          "status": "✅ Supported",
+          "notes": "Deletes a delivery stream"
+        },
+        {
+          "operation": "PutRecord",
+          "category": "Records",
+          "status": "✅ Supported",
+          "notes": "Writes a single record to the stream"
+        },
+        {
+          "operation": "PutRecordBatch",
+          "category": "Records",
+          "status": "✅ Supported",
+          "notes": "Writes multiple records to the stream"
+        }
+      ]
+    },
+    {
+      "service": "glue",
+      "display_name": "Glue",
+      "total_ops": 8,
+      "implemented_ops": 8,
+      "operations": [
+        {
+          "operation": "CreateDatabase",
+          "category": "Databases",
+          "status": "✅ Supported",
+          "notes": "Creates a database in the catalog"
+        },
+        {
+          "operation": "GetDatabase",
+          "category": "Databases",
+          "status": "✅ Supported",
+          "notes": "Returns database details"
+        },
+        {
+          "operation": "GetDatabases",
+          "category": "Databases",
+          "status": "✅ Supported",
+          "notes": "Lists all databases"
+        },
+        {
+          "operation": "DeleteDatabase",
+          "category": "Databases",
+          "status": "✅ Supported",
+          "notes": "Deletes a database"
+        },
+        {
+          "operation": "CreateTable",
+          "category": "Tables",
+          "status": "✅ Supported",
+          "notes": "Creates a table in a database"
+        },
+        {
+          "operation": "GetTable",
+          "category": "Tables",
+          "status": "✅ Supported",
+          "notes": "Returns table details"
+        },
+        {
+          "operation": "GetTables",
+          "category": "Tables",
+          "status": "✅ Supported",
+          "notes": "Lists tables in a database"
+        },
+        {
+          "operation": "DeleteTable",
+          "category": "Tables",
+          "status": "✅ Supported",
+          "notes": "Deletes a table"
+        }
+      ]
+    },
+    {
+      "service": "opensearch",
+      "display_name": "OpenSearch",
+      "total_ops": 8,
+      "implemented_ops": 8,
+      "operations": [
+        {
+          "operation": "CreateDomain",
+          "category": "Domains",
+          "status": "✅ Supported",
+          "notes": "POST /domain — creates a domain"
+        },
+        {
+          "operation": "DescribeDomain",
+          "category": "Domains",
+          "status": "✅ Supported",
+          "notes": "GET /domain/{name} — returns domain details"
+        },
+        {
+          "operation": "DescribeDomains",
+          "category": "Domains",
+          "status": "✅ Supported",
+          "notes": "POST /domain/describe — batch describe"
+        },
+        {
+          "operation": "ListDomainNames",
+          "category": "Domains",
+          "status": "✅ Supported",
+          "notes": "GET /domain — lists all domain names"
+        },
+        {
+          "operation": "DeleteDomain",
+          "category": "Domains",
+          "status": "✅ Supported",
+          "notes": "DELETE /domain/{name} — deletes a domain"
+        },
+        {
+          "operation": "AddTags",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "POST /tags — adds tags to a domain"
+        },
+        {
+          "operation": "ListTags",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "GET /tags — lists tags for a domain"
+        },
+        {
+          "operation": "RemoveTags",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "POST /tags-removal — removes tags"
         }
       ]
     },
@@ -6046,63 +6531,8 @@
       ]
     },
     {
-      "service": "athena",
-      "display_name": "Athena",
-      "total_ops": 8,
-      "implemented_ops": 8,
-      "operations": [
-        {
-          "operation": "StartQueryExecution",
-          "category": "Queries",
-          "status": "✅ Supported",
-          "notes": "Starts a query; immediately succeeds"
-        },
-        {
-          "operation": "GetQueryExecution",
-          "category": "Queries",
-          "status": "✅ Supported",
-          "notes": "Returns query execution details"
-        },
-        {
-          "operation": "GetQueryResults",
-          "category": "Queries",
-          "status": "✅ Supported",
-          "notes": "Returns query results (empty result set)"
-        },
-        {
-          "operation": "ListQueryExecutions",
-          "category": "Queries",
-          "status": "✅ Supported",
-          "notes": "Lists all query execution IDs"
-        },
-        {
-          "operation": "CreateWorkGroup",
-          "category": "WorkGroups",
-          "status": "✅ Supported",
-          "notes": "Creates a workgroup"
-        },
-        {
-          "operation": "GetWorkGroup",
-          "category": "WorkGroups",
-          "status": "✅ Supported",
-          "notes": "Returns workgroup details"
-        },
-        {
-          "operation": "ListWorkGroups",
-          "category": "WorkGroups",
-          "status": "✅ Supported",
-          "notes": "Lists all workgroups"
-        },
-        {
-          "operation": "DeleteWorkGroup",
-          "category": "WorkGroups",
-          "status": "✅ Supported",
-          "notes": "Deletes a workgroup"
-        }
-      ]
-    },
-    {
       "service": "autoscaling",
+      "display_name": "Auto Scaling",
       "total_ops": 19,
       "implemented_ops": 19,
       "operations": [
@@ -6185,24 +6615,46 @@
       ]
     },
     {
-      "service": "bedrock",
-      "display_name": "Bedrock",
-      "total_ops": 2,
-      "implemented_ops": 2,
+      "service": "backup",
+      "display_name": "Backup",
+      "total_ops": 9,
+      "implemented_ops": 9,
       "operations": [
         {
-          "operation": "InvokeModel",
-          "category": "Inference",
-          "status": "✅ Supported",
-          "notes": "POST /model/{modelId}/invoke — invokes model",
-          "docs_url": "[docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModel.html)"
+          "operation": "CreateBackupVault",
+          "status": "🧊 Inert"
         },
         {
-          "operation": "Converse",
-          "category": "Inference",
-          "status": "✅ Supported",
-          "notes": "POST /model/{modelId}/converse — chat API",
-          "docs_url": "[docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html)"
+          "operation": "DeleteBackupVault",
+          "status": "🧊 Inert"
+        },
+        {
+          "operation": "DescribeBackupVault",
+          "status": "🧊 Inert"
+        },
+        {
+          "operation": "ListBackupVaults",
+          "status": "🧊 Inert"
+        },
+        {
+          "operation": "CreateBackupPlan",
+          "status": "🧊 Inert"
+        },
+        {
+          "operation": "DeleteBackupPlan",
+          "status": "🧊 Inert"
+        },
+        {
+          "operation": "GetBackupPlan",
+          "status": "🧊 Inert"
+        },
+        {
+          "operation": "ListBackupPlans",
+          "status": "🧊 Inert"
+        },
+        {
+          "operation": "UpdateBackupPlan",
+          "status": "🧊 Inert"
         }
       ]
     },
@@ -6251,240 +6703,8 @@
       ]
     },
     {
-      "service": "cloudwatch",
-      "display_name": "CloudWatch",
-      "total_ops": 12,
-      "implemented_ops": 12,
-      "operations": [
-        {
-          "operation": "DeleteAlarms",
-          "category": "General",
-          "status": "✅ Supported",
-          "notes": "Deletes one or more alarms by name"
-        },
-        {
-          "operation": "DescribeAlarms",
-          "category": "General",
-          "status": "✅ Supported",
-          "notes": "Lists alarms, supports filtering"
-        },
-        {
-          "operation": "DescribeAlarmsForMetric",
-          "category": "General",
-          "status": "✅ Supported",
-          "notes": "Lists alarms for a specific metric"
-        },
-        {
-          "operation": "GetMetricData",
-          "category": "General",
-          "status": "✅ Supported",
-          "notes": "Returns query-based metric values over time ranges"
-        },
-        {
-          "operation": "GetMetricStatistics",
-          "category": "General",
-          "status": "✅ Supported",
-          "notes": "Returns aggregated datapoints by period"
-        },
-        {
-          "operation": "ListMetrics",
-          "category": "General",
-          "status": "✅ Supported",
-          "notes": "Lists available metrics"
-        },
-        {
-          "operation": "ListTagsForResource",
-          "category": "General",
-          "status": "✅ Supported",
-          "notes": "Lists tags for an alarm"
-        },
-        {
-          "operation": "PutMetricAlarm",
-          "category": "General",
-          "status": "✅ Supported",
-          "notes": "Creates or updates an alarm"
-        },
-        {
-          "operation": "PutMetricData",
-          "category": "General",
-          "status": "✅ Supported",
-          "notes": "Publishes metric data points"
-        },
-        {
-          "operation": "SetAlarmState",
-          "category": "General",
-          "status": "✅ Supported",
-          "notes": "Manually sets the state of an alarm"
-        },
-        {
-          "operation": "TagResource",
-          "category": "General",
-          "status": "✅ Supported",
-          "notes": "Adds or updates tags on an alarm"
-        },
-        {
-          "operation": "UntagResource",
-          "category": "General",
-          "status": "✅ Supported",
-          "notes": "Removes tags from an alarm"
-        }
-      ]
-    },
-    {
-      "service": "dynamodbstreams",
-      "display_name": "DynamoDB Streams",
-      "total_ops": 4,
-      "implemented_ops": 4,
-      "operations": [
-        {
-          "operation": "DescribeStream",
-          "category": "General",
-          "status": "✅ Supported"
-        },
-        {
-          "operation": "GetRecords",
-          "category": "General",
-          "status": "✅ Supported"
-        },
-        {
-          "operation": "GetShardIterator",
-          "category": "General",
-          "status": "✅ Supported"
-        },
-        {
-          "operation": "ListStreams",
-          "category": "General",
-          "status": "✅ Supported"
-        }
-      ]
-    },
-    {
-      "service": "ecr",
-      "display_name": "ECR",
-      "total_ops": 20,
-      "implemented_ops": 20,
-      "operations": [
-        {
-          "operation": "CreateRepository",
-          "category": "General",
-          "status": "✅ Supported",
-          "notes": "Returns ARN, URI, and createdAt"
-        },
-        {
-          "operation": "DescribeRepositories",
-          "category": "General",
-          "status": "✅ Supported",
-          "notes": "Lists all repos or filters by name"
-        },
-        {
-          "operation": "DeleteRepository",
-          "category": "General",
-          "status": "✅ Supported",
-          "notes": "Deletes the repository and all its image records"
-        },
-        {
-          "operation": "GetAuthorizationToken",
-          "category": "Auth",
-          "status": "✅ Supported",
-          "notes": "Returns `base64(\"AWS:\u003cpassword\u003e\")` and the registry proxy endpoint; token expiry is 12 hours"
-        },
-        {
-          "operation": "DescribeRegistry",
-          "category": "General",
-          "status": "✅ Supported",
-          "notes": "Returns registry metadata with empty replication rules"
-        },
-        {
-          "operation": "ListImages",
-          "category": "Images",
-          "status": "✅ Supported",
-          "notes": "Returns image IDs (tag + digest); reconciles local registry tags when Docker is available"
-        },
-        {
-          "operation": "DescribeImages",
-          "category": "Images",
-          "status": "✅ Supported",
-          "notes": "Returns image detail objects (digest, tags, media type); reconciles local registry manifests when Docker is available"
-        },
-        {
-          "operation": "PutImage",
-          "category": "Images",
-          "status": "✅ Supported",
-          "notes": "Stores an image manifest; generates a digest if none supplied"
-        },
-        {
-          "operation": "BatchGetImage",
-          "category": "Images",
-          "status": "✅ Supported",
-          "notes": "Fetches manifests by tag or digest"
-        },
-        {
-          "operation": "DescribeImageScanFindings",
-          "category": "Images",
-          "status": "✅ Supported",
-          "notes": "Returns empty/not-scanned findings; no scan engine is emulated"
-        },
-        {
-          "operation": "BatchDeleteImage",
-          "category": "Images",
-          "status": "✅ Supported",
-          "notes": "Deletes images by tag or digest"
-        },
-        {
-          "operation": "SetRepositoryPolicy",
-          "category": "Policy",
-          "status": "✅ Supported",
-          "notes": "Stores arbitrary IAM policy text"
-        },
-        {
-          "operation": "GetRepositoryPolicy",
-          "category": "Policy",
-          "status": "✅ Supported",
-          "notes": "Retrieves stored policy; returns 400 if none set"
-        },
-        {
-          "operation": "DeleteRepositoryPolicy",
-          "category": "Policy",
-          "status": "✅ Supported"
-        },
-        {
-          "operation": "PutLifecyclePolicy",
-          "category": "Policy",
-          "status": "✅ Supported",
-          "notes": "Stores lifecycle policy text for the repository"
-        },
-        {
-          "operation": "GetLifecyclePolicy",
-          "category": "Policy",
-          "status": "✅ Supported",
-          "notes": "Retrieves stored lifecycle policy; returns 400 if none set"
-        },
-        {
-          "operation": "DeleteLifecyclePolicy",
-          "category": "Policy",
-          "status": "✅ Supported"
-        },
-        {
-          "operation": "TagResource",
-          "category": "Tags",
-          "status": "✅ Supported",
-          "notes": "Adds/merges tags onto a repository ARN"
-        },
-        {
-          "operation": "UntagResource",
-          "category": "Tags",
-          "status": "✅ Supported",
-          "notes": "Removes tag keys from a repository ARN"
-        },
-        {
-          "operation": "ListTagsForResource",
-          "category": "Tags",
-          "status": "✅ Supported"
-        }
-      ]
-    },
-    {
       "service": "eks",
+      "display_name": "EKS",
       "total_ops": 52,
       "implemented_ops": 52,
       "operations": [
@@ -6798,6 +7018,7 @@
     },
     {
       "service": "elbv2",
+      "display_name": "ELBv2",
       "total_ops": 15,
       "implemented_ops": 12,
       "operations": [
@@ -6875,106 +7096,6 @@
           "operation": "ModifyLoadBalancerAttributes",
           "category": "Load Balancers",
           "status": "❌ Unsupported"
-        }
-      ]
-    },
-    {
-      "service": "firehose",
-      "display_name": "Firehose",
-      "total_ops": 6,
-      "implemented_ops": 6,
-      "operations": [
-        {
-          "operation": "CreateDeliveryStream",
-          "category": "Delivery Streams",
-          "status": "✅ Supported",
-          "notes": "Creates a delivery stream"
-        },
-        {
-          "operation": "DescribeDeliveryStream",
-          "category": "Delivery Streams",
-          "status": "✅ Supported",
-          "notes": "Returns delivery stream details"
-        },
-        {
-          "operation": "ListDeliveryStreams",
-          "category": "Delivery Streams",
-          "status": "✅ Supported",
-          "notes": "Lists all delivery streams"
-        },
-        {
-          "operation": "DeleteDeliveryStream",
-          "category": "Delivery Streams",
-          "status": "✅ Supported",
-          "notes": "Deletes a delivery stream"
-        },
-        {
-          "operation": "PutRecord",
-          "category": "Records",
-          "status": "✅ Supported",
-          "notes": "Writes a single record to the stream"
-        },
-        {
-          "operation": "PutRecordBatch",
-          "category": "Records",
-          "status": "✅ Supported",
-          "notes": "Writes multiple records to the stream"
-        }
-      ]
-    },
-    {
-      "service": "glue",
-      "display_name": "Glue",
-      "total_ops": 8,
-      "implemented_ops": 8,
-      "operations": [
-        {
-          "operation": "CreateDatabase",
-          "category": "Databases",
-          "status": "✅ Supported",
-          "notes": "Creates a database in the catalog"
-        },
-        {
-          "operation": "GetDatabase",
-          "category": "Databases",
-          "status": "✅ Supported",
-          "notes": "Returns database details"
-        },
-        {
-          "operation": "GetDatabases",
-          "category": "Databases",
-          "status": "✅ Supported",
-          "notes": "Lists all databases"
-        },
-        {
-          "operation": "DeleteDatabase",
-          "category": "Databases",
-          "status": "✅ Supported",
-          "notes": "Deletes a database"
-        },
-        {
-          "operation": "CreateTable",
-          "category": "Tables",
-          "status": "✅ Supported",
-          "notes": "Creates a table in a database"
-        },
-        {
-          "operation": "GetTable",
-          "category": "Tables",
-          "status": "✅ Supported",
-          "notes": "Returns table details"
-        },
-        {
-          "operation": "GetTables",
-          "category": "Tables",
-          "status": "✅ Supported",
-          "notes": "Lists tables in a database"
-        },
-        {
-          "operation": "DeleteTable",
-          "category": "Tables",
-          "status": "✅ Supported",
-          "notes": "Deletes a table"
         }
       ]
     },
@@ -7161,63 +7282,8 @@
       ]
     },
     {
-      "service": "opensearch",
-      "display_name": "OpenSearch",
-      "total_ops": 8,
-      "implemented_ops": 8,
-      "operations": [
-        {
-          "operation": "CreateDomain",
-          "category": "Domains",
-          "status": "✅ Supported",
-          "notes": "POST /domain — creates a domain"
-        },
-        {
-          "operation": "DescribeDomain",
-          "category": "Domains",
-          "status": "✅ Supported",
-          "notes": "GET /domain/{name} — returns domain details"
-        },
-        {
-          "operation": "DescribeDomains",
-          "category": "Domains",
-          "status": "✅ Supported",
-          "notes": "POST /domain/describe — batch describe"
-        },
-        {
-          "operation": "ListDomainNames",
-          "category": "Domains",
-          "status": "✅ Supported",
-          "notes": "GET /domain — lists all domain names"
-        },
-        {
-          "operation": "DeleteDomain",
-          "category": "Domains",
-          "status": "✅ Supported",
-          "notes": "DELETE /domain/{name} — deletes a domain"
-        },
-        {
-          "operation": "AddTags",
-          "category": "Tags",
-          "status": "✅ Supported",
-          "notes": "POST /tags — adds tags to a domain"
-        },
-        {
-          "operation": "ListTags",
-          "category": "Tags",
-          "status": "✅ Supported",
-          "notes": "GET /tags — lists tags for a domain"
-        },
-        {
-          "operation": "RemoveTags",
-          "category": "Tags",
-          "status": "✅ Supported",
-          "notes": "POST /tags-removal — removes tags"
-        }
-      ]
-    },
-    {
       "service": "organizations",
+      "display_name": "Organizations",
       "total_ops": 1,
       "implemented_ops": 1,
       "operations": [
@@ -7229,6 +7295,7 @@
     },
     {
       "service": "route53",
+      "display_name": "Route 53",
       "total_ops": 10,
       "implemented_ops": 7,
       "operations": [
@@ -7285,82 +7352,50 @@
       ]
     },
     {
-      "service": "scheduler",
-      "display_name": "Scheduler",
-      "total_ops": 12,
-      "implemented_ops": 12,
+      "service": "transfer",
+      "display_name": "Transfer Family",
+      "total_ops": 10,
+      "implemented_ops": 10,
       "operations": [
         {
-          "operation": "CreateScheduleGroup",
-          "category": "Schedule Groups",
-          "status": "✅ Supported",
-          "notes": "Creates a named group"
+          "operation": "CreateServer",
+          "status": "🧊 Inert"
         },
         {
-          "operation": "GetScheduleGroup",
-          "category": "Schedule Groups",
-          "status": "✅ Supported",
-          "notes": "Returns group metadata"
+          "operation": "DescribeServer",
+          "status": "🧊 Inert"
         },
         {
-          "operation": "ListScheduleGroups",
-          "category": "Schedule Groups",
-          "status": "✅ Supported",
-          "notes": "Lists groups in region"
+          "operation": "ListServers",
+          "status": "🧊 Inert"
         },
         {
-          "operation": "DeleteScheduleGroup",
-          "category": "Schedule Groups",
-          "status": "✅ Supported",
-          "notes": "Deletes group (except `default`)"
+          "operation": "UpdateServer",
+          "status": "🧊 Inert"
         },
         {
-          "operation": "CreateSchedule",
-          "category": "Schedules",
-          "status": "✅ Supported",
-          "notes": "Group-specific or default group path"
+          "operation": "DeleteServer",
+          "status": "🧊 Inert"
         },
         {
-          "operation": "GetSchedule",
-          "category": "Schedules",
-          "status": "✅ Supported",
-          "notes": "Returns full schedule definition"
+          "operation": "CreateUser",
+          "status": "🧊 Inert"
         },
         {
-          "operation": "UpdateSchedule",
-          "category": "Schedules",
-          "status": "✅ Supported",
-          "notes": "Updates expression/target/state fields"
+          "operation": "DescribeUser",
+          "status": "🧊 Inert"
         },
         {
-          "operation": "DeleteSchedule",
-          "category": "Schedules",
-          "status": "✅ Supported",
-          "notes": "Deletes schedule"
+          "operation": "ListUsers",
+          "status": "🧊 Inert"
         },
         {
-          "operation": "ListSchedules",
-          "category": "Schedules",
-          "status": "✅ Supported",
-          "notes": "Optional `ScheduleGroup` filter"
+          "operation": "UpdateUser",
+          "status": "🧊 Inert"
         },
         {
-          "operation": "TagResource",
-          "category": "Tags",
-          "status": "✅ Supported",
-          "notes": "Merges tags on ARN"
-        },
-        {
-          "operation": "UntagResource",
-          "category": "Tags",
-          "status": "✅ Supported",
-          "notes": "Removes keys from ARN"
-        },
-        {
-          "operation": "ListTagsForResource",
-          "category": "Tags",
-          "status": "✅ Supported",
-          "notes": "Returns tag map"
+          "operation": "DeleteUser",
+          "status": "🧊 Inert"
         }
       ]
     }

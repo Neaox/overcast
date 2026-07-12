@@ -31,7 +31,7 @@ For local use, `<account-id>` defaults to `000000000000`.
 | Queue management   | 10           |                |
 | Message operations | 7            |                |
 | Permissions        |              | 2              |
-| Dead-letter queues | 1            |                |
+| Dead-letter queues | 2            |                |
 
 ---
 
@@ -73,8 +73,9 @@ For local use, `<account-id>` defaults to `000000000000`.
 
 ### Dead-letter queues
 
-| Operation                    | Status       | Notes                                | AWS Docs                                                                                                          |
-| ---------------------------- | ------------ | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| `ListDeadLetterSourceQueues` | ✅ Supported | Lists queues that target a given DLQ | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListDeadLetterSourceQueues.html) |
+| Operation                    | Status       | Notes                                                 | AWS Docs                                                                                                          |
+| ---------------------------- | ------------ | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `ListDeadLetterSourceQueues` | ✅ Supported | Lists queues that target a given DLQ                  | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListDeadLetterSourceQueues.html) |
+| `StartMessageMoveTask`       | ✅ Supported | Redrives messages from a DLQ back to its source queue | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_StartMessageMoveTask.html)       |
 
 <!-- END overcast:capabilities -->

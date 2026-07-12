@@ -8,14 +8,14 @@
 
 ## Service coverage
 
-41 AWS services are registered. Coverage varies from comprehensive to stub.
+49 AWS services are registered. Coverage varies from comprehensive to stub.
 
 ### Comprehensive — core + advanced features
 
 | Service     | Ops | Highlights                                                                                                       |
 | ----------- | --- | ---------------------------------------------------------------------------------------------------------------- |
 | S3          | 44  | Bucket CRUD, object CRUD, list, copy, multipart, notifications                                                   |
-| SQS         | 20  | Queue + message CRUD, batches, purge, attributes, visibility, DLQ, FIFO, long polling                            |
+| SQS         | 21  | Queue + message CRUD, batches, purge, attributes, visibility, DLQ, FIFO, long polling                            |
 | DynamoDB    | 19  | Table/item CRUD, Scan, Query, Streams, TTL, batch ops, transactions                                              |
 | Lambda      | 33  | Function CRUD, Invoke (Docker), versions, aliases, layers, event source mappings                                 |
 | API Gateway | 105 | REST v1 + HTTP v2: full CRUD, stages, deployments, Lambda/MOCK/HTTP proxy execution, authorizers, API keys       |
@@ -65,7 +65,7 @@
 | Service         | Ops |
 | --------------- | --- |
 | S3              | 44  |
-| SQS             | 20  |
+| SQS             | 21  |
 | DynamoDB        | 19  |
 | Lambda          | 33  |
 | API Gateway     | 105 |
@@ -76,12 +76,16 @@
 | SNS             | 24  |
 | IAM             | 61  |
 | ECS             | 48  |
+| ECR             | 20  |
 | KMS             | 32  |
 | Kinesis         | 17  |
 | EventBridge     | 28  |
+| Scheduler       | 12  |
 | CloudFormation  | 47  |
 | RDS             | 33  |
 | ElastiCache     | 20  |
+| AppConfig       | 12  |
+| AppConfigData   | 3   |
 | Secrets Manager | 21  |
 | SSM             | 10  |
 | CloudWatch Logs | 18  |
@@ -89,30 +93,26 @@
 | STS             | 5   |
 | Step Functions  | 5   |
 | Pipes           | 5   |
-| Backup          | 9   |
-| Transfer Family | 10  |
 | WAF v2          | 4   |
 | Shield          | 5   |
 | ACM             | 7   |
-| AppConfig       | 12  |
-| AppConfigData   | 3   |
-| AppRegistry     | 21  |
 | Athena          | 8   |
-| autoscaling     | 19  |
 | Bedrock         | 2   |
-| CloudTrail      | 9   |
 | CloudWatch      | 12  |
 | DynamoDB Streams | 4   |
-| ECR             | 20  |
-| eks             | 52  |
-| elbv2           | 15  |
 | Firehose        | 6   |
 | Glue            | 8   |
-| MSK             | 29  |
 | OpenSearch      | 8   |
-| organizations   | 1   |
-| route53         | 10  |
-| Scheduler       | 12  |
+| AppRegistry     | 21  |
+| Auto Scaling    | 19  |
+| Backup          | 9   |
+| CloudTrail      | 9   |
+| EKS             | 52  |
+| ELBv2           | 15  |
+| MSK             | 29  |
+| Organizations   | 1   |
+| Route 53        | 10  |
+| Transfer Family | 10  |
 
 <!-- END overcast:status -->
 

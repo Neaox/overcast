@@ -37,10 +37,10 @@ locally without an internet connection, a cloud account, or a bill.
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Staging environments**         | API parity is not 100%. Differences are documented but exist.                                                                                                                     |
 | **Production traffic**           | Overcast is not hardened, not monitored, not replicated.                                                                                                                          |
-| **Self-hosted AWS replacement**  | This is not a platform you host for others. It has no security model, no IAM, and no durability guarantees. Running it as a persistent internal service is building on quicksand. |
-| **Security testing**             | Credentials are accepted but not validated in v1.                                                                                                                                 |
+| **Self-hosted AWS replacement**  | This is not a platform you host for others. IAM resources are emulated, but Overcast is not a security boundary and has no durability guarantees. Running it as a persistent internal service is building on quicksand. |
+| **Security testing**             | Credentials are accepted. SigV4 validation is optional, and IAM policies are not enforced as an authorization layer.                                                               |
 | **Performance / load testing**   | AWS throttling, quotas, and latency are not emulated.                                                                                                                             |
-| **IAM policy testing**           | IAM is out of scope. All operations are permitted.                                                                                                                                |
+| **IAM policy testing**           | IAM resource APIs exist for local development and IaC compatibility, but policy enforcement is out of scope. All operations are permitted.                                         |
 | **CloudFormation / CDK deploys** | CloudFormation emulation supports ~50 resource types. `cdk deploy` works for stacks using [supported types](./docs/cdk.md#supported-resource-types). Coverage is not exhaustive.  |
 
 ## Contents
@@ -414,13 +414,39 @@ overcast trust uninstall
 
 ## Supported services
 
-S3, SQS, DynamoDB, SNS, Lambda, CloudWatch Logs, SES, Secrets Manager,
-EventBridge, EventBridge Pipes, EC2/VPC, ECS, RDS, KMS, SSM, STS, Kinesis,
-IAM, CloudFormation, Step Functions, API Gateway, AppSync, Cognito, CloudFront,
-Shield, WAF, AppRegistry.
+<!-- BEGIN overcast:root-service-list -->
+
+Overcast currently registers **49 AWS services**. Coverage ranges from broad
+service emulation to minimal discovery/IaC stubs; check the per-service docs for
+exact endpoint support.
+
+[ACM](./docs/services/acm.md), [API Gateway](./docs/services/apigateway.md), [AppConfig](./docs/services/appconfig.md), [AppConfigData](./docs/services/appconfigdata.md),
+[AppRegistry](./docs/services/appregistry.md), [AppSync](./docs/services/appsync.md), [Athena](./docs/services/athena.md), [Auto Scaling](./docs/services/autoscaling.md),
+[Backup](./docs/services/backup.md), [Bedrock](./docs/services/bedrock.md), [CloudFormation](./docs/services/cloudformation.md), [CloudFront](./docs/services/cloudfront.md),
+[CloudTrail](./docs/services/cloudtrail.md), [CloudWatch](./docs/services/cloudwatch.md), [CloudWatch Logs](./docs/services/cloudwatch-logs.md), [Cognito](./docs/services/cognito.md),
+[DynamoDB](./docs/services/dynamodb.md), [DynamoDB Streams](./docs/services/dynamodbstreams.md), [EC2 / VPC](./docs/services/ec2.md), [ECR](./docs/services/ecr.md),
+[ECS](./docs/services/ecs.md), [EKS](./docs/services/eks.md), [ElastiCache](./docs/services/elasticache.md), [ELBv2](./docs/services/elb.md),
+[EventBridge](./docs/services/eventbridge.md), [Firehose](./docs/services/firehose.md), [Glue](./docs/services/glue.md), [IAM](./docs/services/iam.md),
+[Kinesis](./docs/services/kinesis.md), [KMS](./docs/services/kms.md), [Lambda](./docs/services/lambda.md), [MSK](./docs/services/msk.md),
+[OpenSearch](./docs/services/opensearch.md), [Organizations](./docs/services/organizations.md), [Pipes](./docs/services/pipes.md), [RDS](./docs/services/rds.md),
+[Route 53](./docs/services/route53.md), [S3](./docs/services/s3.md), [Scheduler](./docs/services/scheduler.md), [Secrets Manager](./docs/services/secretsmanager.md),
+[SES](./docs/services/ses.md), [Shield](./docs/services/shield.md), [SNS](./docs/services/sns.md), [SQS](./docs/services/sqs.md),
+[SSM](./docs/services/ssm.md), [Step Functions](./docs/services/stepfunctions.md), [STS](./docs/services/sts.md), [Transfer Family](./docs/services/transfer.md),
+[WAF v2](./docs/services/waf.md).
+
+Some services require Docker socket access for full runtime behavior:
+
+- Lambda, ECS, RDS, EC2/VPC, and ElastiCache can launch sibling containers.
+- Without Docker, their metadata/control-plane APIs still work where possible,
+  but runtime execution falls back to metadata-only or stub behavior.
+
+IAM is implemented for local development and CloudFormation/CDK compatibility,
+but IAM policies are not enforced as an authorization layer.
 
 See the [service emulation reference](./docs/services/) for per-endpoint
-coverage tables, or browse the summary in [docs/README.md](./docs/README.md#services).
+coverage tables, or browse the generated summary in [STATUS.md](./STATUS.md#service-coverage).
+
+<!-- END overcast:root-service-list -->
 
 ---
 

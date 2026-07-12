@@ -53,5 +53,7 @@ func init() {
 		// Dead-letter queues
 		capabilities.Capability{Service: "sqs", Operation: "ListDeadLetterSourceQueues", Category: "Dead-letter queues",
 			Status: capabilities.StatusSupported, Notes: "Lists queues that target a given DLQ"},
+		capabilities.Capability{Service: "sqs", Operation: "StartMessageMoveTask", Category: "Dead-letter queues",
+			Status: capabilities.StatusSupported, Notes: "Redrives messages from a DLQ back to its source queue"},
 	)
 }
