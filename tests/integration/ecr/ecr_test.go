@@ -82,6 +82,44 @@ func runDockerCommand(t *testing.T, args ...string) string {
 	return string(out)
 }
 
+func runDockerCommandEventually(t *testing.T, args ...string) string {
+	t.Helper()
+	var lastOut []byte
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		cmd := exec.CommandContext(t.Context(), "docker", args...)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			return string(out)
+		}
+		lastOut = out
+		lastErr = err
+		time.Sleep(time.Duration(attempt+1) * time.Second)
+	}
+	t.Fatalf("docker %s failed after retries: %v\n%s", strings.Join(args, " "), lastErr, lastOut)
+	return ""
+}
+
+func waitForManagedRegistry(t *testing.T, dc *docker.Client) *docker.ContainerInspect {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		info, err := dc.GetContainerByName(t.Context(), "overcast-ecr-registry")
+		if err != nil {
+			lastErr = err
+		} else if info != nil && info.HasOvercastLabels("ecr", "registry") {
+			return info
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if lastErr != nil {
+		t.Fatalf("inspect managed registry: %v", lastErr)
+	}
+	t.Fatalf("expected shared ECR registry container to be created")
+	return nil
+}
+
 //nolint:unused // Kept for Docker CLI tests that need stdin.
 func runDockerCommandWithInput(t *testing.T, input string, args ...string) string {
 	t.Helper()
@@ -819,16 +857,7 @@ func TestGetAuthorizationToken_withDocker_lazyStartsSharedRegistry(t *testing.T)
 		t.Fatalf("expected hostname-aware proxy endpoint, got %q", proxy)
 	}
 
-	after, err := dc.GetContainerByName(t.Context(), "overcast-ecr-registry")
-	if err != nil {
-		t.Fatalf("inspect after auth call: %v", err)
-	}
-	if after == nil {
-		t.Fatalf("expected shared ECR registry container to be created")
-	}
-	if !after.HasOvercastLabels("ecr", "registry") {
-		t.Fatalf("expected overcast-managed labels on registry container")
-	}
+	waitForManagedRegistry(t, dc)
 }
 
 func TestGetAuthorizationToken_withDocker_tokenAuthenticatesRegistry(t *testing.T) {
@@ -870,13 +899,7 @@ func TestGetAuthorizationToken_withDocker_tokenAuthenticatesRegistry(t *testing.
 		t.Fatalf("expected token username AWS, got %q", user)
 	}
 
-	registry, err := dc.GetContainerByName(t.Context(), "overcast-ecr-registry")
-	if err != nil {
-		t.Fatalf("inspect managed registry: %v", err)
-	}
-	if registry == nil {
-		t.Fatalf("expected managed registry container")
-	}
+	registry := waitForManagedRegistry(t, dc)
 
 	var htpasswdPath string
 	for _, bind := range registry.HostConfig.Binds {
@@ -1009,7 +1032,7 @@ func TestECR_withDocker_pushListGetAndPullRoundTrip(t *testing.T) {
 
 	// Remove the local tag and prove it can be pulled back from the shared registry.
 	runDockerCommand(t, "image", "rm", "-f", targetImage)
-	runDockerCommand(t, "pull", targetImage)
+	runDockerCommandEventually(t, "pull", targetImage)
 	if inspectOut := runDockerCommand(t, "image", "inspect", "--format", "{{json .RepoTags}} {{json .RepoDigests}}", targetImage); !strings.Contains(inspectOut, targetImage) {
 		t.Fatalf("expected pulled image to include target tag %q, got %q", targetImage, inspectOut)
 	}

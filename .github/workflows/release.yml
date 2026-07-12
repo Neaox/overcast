@@ -3,8 +3,6 @@ name: Release
 on:
   push:
     branches: [main]
-    paths:
-      - VERSION
   release:
     types: [published]
   workflow_dispatch:
@@ -23,8 +21,12 @@ jobs:
       is_prerelease: ${{ steps.read.outputs.is_prerelease }}
       prerelease_channel: ${{ steps.read.outputs.prerelease_channel }}
       release_url: ${{ steps.read.outputs.release_url }}
+      should_release: ${{ steps.decide.outputs.should_release }}
+      release_reason: ${{ steps.decide.outputs.release_reason }}
     steps:
       - uses: actions/checkout@v7.0.0
+        with:
+          fetch-depth: 0
 
       - name: Read release version
         id: read
@@ -66,7 +68,51 @@ jobs:
             echo "prerelease_channel=$PRERELEASE_CHANNEL"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Decide whether release is needed
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before || '' }}
+          TAG: ${{ steps.read.outputs.tag }}
+        run: |
+          SHOULD_RELEASE=false
+          RELEASE_REASON="release already exists for $TAG"
+
+          if [ "$EVENT_NAME" = "release" ]; then
+            SHOULD_RELEASE=true
+            RELEASE_REASON="release event"
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            SHOULD_RELEASE=true
+            RELEASE_REASON="manual dispatch"
+          else
+            VERSION_CHANGED=false
+            if [ -n "$BEFORE_SHA" ] && ! printf '%s' "$BEFORE_SHA" | grep -Eq '^0+$'; then
+              if git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA" -- VERSION | grep -q '^VERSION$'; then
+                VERSION_CHANGED=true
+              fi
+            fi
+
+            if [ "$VERSION_CHANGED" = "true" ]; then
+              SHOULD_RELEASE=true
+              RELEASE_REASON="VERSION changed"
+            elif ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              SHOULD_RELEASE=true
+              RELEASE_REASON="release $TAG is missing"
+            fi
+          fi
+
+          {
+            echo "should_release=$SHOULD_RELEASE"
+            echo "release_reason=$RELEASE_REASON"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$SHOULD_RELEASE" != "true" ]; then
+            echo "Skipping release: $RELEASE_REASON"
+          fi
+
       - name: Validate changelog release section
+        if: steps.decide.outputs.should_release == 'true'
         env:
           VERSION: ${{ steps.read.outputs.version }}
         run: |
@@ -117,6 +163,7 @@ jobs:
   test:
     name: Test
     needs: [check-version, web]
+    if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.0
@@ -136,6 +183,7 @@ jobs:
   web:
     name: Web UI build
     needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -161,6 +209,7 @@ jobs:
   binaries:
     name: Build ${{ matrix.asset }}
     needs: [check-version, test, web]
+    if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -233,6 +282,7 @@ jobs:
   release-assets:
     name: Publish release assets
     needs: [check-version, binaries]
+    if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.0
@@ -371,6 +421,7 @@ jobs:
   publish-console:
     name: Publish console Docker image
     needs: [check-version, test, web]
+    if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     env:
       REGISTRY: ghcr.io
@@ -412,6 +463,7 @@ jobs:
   publish-slim:
     name: Publish slim Docker image
     needs: [check-version, test, web]
+    if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     env:
       REGISTRY: ghcr.io
@@ -454,6 +506,7 @@ jobs:
   finalize-release:
     name: Finalize GitHub release
     needs: [check-version, release-assets, publish-console, publish-slim]
+    if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8.0.1
