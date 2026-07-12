@@ -2631,7 +2631,7 @@ func igwToTypedXML(igw *InternetGateway) typedIGWXML {
 func vpnGatewayToTypedXML(vgw *VpnGateway) typedVpnGatewayXML {
 	attachments := make([]typedVpnGatewayAttachmentXML, 0, len(vgw.Attachments))
 	for _, att := range vgw.Attachments {
-		attachments = append(attachments, typedVpnGatewayAttachmentXML{VpcID: att.VpcID, State: att.State})
+		attachments = append(attachments, typedVpnGatewayAttachmentXML(att))
 	}
 	tags := make([]typedResourceTagXML, 0, len(vgw.Tags))
 	for _, tag := range vgw.Tags {

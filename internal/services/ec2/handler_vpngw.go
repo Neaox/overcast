@@ -263,7 +263,7 @@ func parseAmazonSideAsn(raw string) (int64, *protocol.AWSError) {
 func vpnGatewayToXML(vgw *VpnGateway) xmlVpnGateway {
 	attachments := make([]xmlVpnGatewayAttachment, 0, len(vgw.Attachments))
 	for _, att := range vgw.Attachments {
-		attachments = append(attachments, xmlVpnGatewayAttachment{VpcID: att.VpcID, State: att.State})
+		attachments = append(attachments, xmlVpnGatewayAttachment(att))
 	}
 	tags := make([]xmlResourceTag, 0, len(vgw.Tags))
 	for _, tag := range vgw.Tags {
