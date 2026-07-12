@@ -487,6 +487,90 @@ func TestCreateSubnet_success(t *testing.T) {
 	}
 }
 
+func TestCreateSubnet_requestedAvailabilityZones(t *testing.T) {
+	// Given: a VPC
+	srv := helpers.NewTestServer(t)
+	cr := ec2Query(t, srv, "CreateVpc", url.Values{"CidrBlock": []string{"10.0.0.0/16"}})
+	defer cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	var vpc struct {
+		Vpc struct {
+			VpcID string `xml:"vpcId"`
+		} `xml:"vpc"`
+	}
+	vbody := readBody(t, cr)
+	if err := xml.Unmarshal(vbody, &vpc); err != nil {
+		t.Fatalf("unmarshal CreateVpcResponse: %v\nbody: %s", err, vbody)
+	}
+
+	// When: subnets are created in two explicit availability zones
+	firstResp := ec2Query(t, srv, "CreateSubnet", url.Values{
+		"VpcId":            []string{vpc.Vpc.VpcID},
+		"CidrBlock":        []string{"10.0.1.0/24"},
+		"AvailabilityZone": []string{"us-east-1a"},
+	})
+	defer firstResp.Body.Close()
+	secondResp := ec2Query(t, srv, "CreateSubnet", url.Values{
+		"VpcId":            []string{vpc.Vpc.VpcID},
+		"CidrBlock":        []string{"10.0.2.0/24"},
+		"AvailabilityZone": []string{"us-east-1b"},
+	})
+	defer secondResp.Body.Close()
+
+	// Then: each create response preserves the requested availability zone
+	helpers.AssertStatus(t, firstResp, http.StatusOK)
+	helpers.AssertStatus(t, secondResp, http.StatusOK)
+	type createSubnetResult struct {
+		Subnet struct {
+			SubnetID         string `xml:"subnetId"`
+			AvailabilityZone string `xml:"availabilityZone"`
+		} `xml:"subnet"`
+	}
+	var first, second createSubnetResult
+	firstBody := readBody(t, firstResp)
+	if err := xml.Unmarshal(firstBody, &first); err != nil {
+		t.Fatalf("unmarshal first CreateSubnetResponse: %v\nbody: %s", err, firstBody)
+	}
+	secondBody := readBody(t, secondResp)
+	if err := xml.Unmarshal(secondBody, &second); err != nil {
+		t.Fatalf("unmarshal second CreateSubnetResponse: %v\nbody: %s", err, secondBody)
+	}
+	if first.Subnet.AvailabilityZone != "us-east-1a" {
+		t.Errorf("expected first subnet AZ us-east-1a, got %q", first.Subnet.AvailabilityZone)
+	}
+	if second.Subnet.AvailabilityZone != "us-east-1b" {
+		t.Errorf("expected second subnet AZ us-east-1b, got %q", second.Subnet.AvailabilityZone)
+	}
+
+	// Then: DescribeSubnets returns the same requested availability zones
+	describeResp := ec2Query(t, srv, "DescribeSubnets", url.Values{
+		"SubnetId.1": []string{first.Subnet.SubnetID},
+		"SubnetId.2": []string{second.Subnet.SubnetID},
+	})
+	defer describeResp.Body.Close()
+	helpers.AssertStatus(t, describeResp, http.StatusOK)
+	var describeResult struct {
+		Subnets []struct {
+			SubnetID         string `xml:"subnetId"`
+			AvailabilityZone string `xml:"availabilityZone"`
+		} `xml:"subnetSet>item"`
+	}
+	describeBody := readBody(t, describeResp)
+	if err := xml.Unmarshal(describeBody, &describeResult); err != nil {
+		t.Fatalf("unmarshal DescribeSubnetsResponse: %v\nbody: %s", err, describeBody)
+	}
+	azBySubnetID := map[string]string{}
+	for _, subnet := range describeResult.Subnets {
+		azBySubnetID[subnet.SubnetID] = subnet.AvailabilityZone
+	}
+	if azBySubnetID[first.Subnet.SubnetID] != "us-east-1a" {
+		t.Errorf("expected described first subnet AZ us-east-1a, got %q", azBySubnetID[first.Subnet.SubnetID])
+	}
+	if azBySubnetID[second.Subnet.SubnetID] != "us-east-1b" {
+		t.Errorf("expected described second subnet AZ us-east-1b, got %q", azBySubnetID[second.Subnet.SubnetID])
+	}
+}
+
 // ─── CreateSecurityGroup ──────────────────────────────────────────────────────
 
 func TestCreateSecurityGroup_success(t *testing.T) {

@@ -557,7 +557,7 @@ var AllCapabilities = []Capability{
 	{Service: "ec2", Operation: "CreateRoute", Category: "General", Status: StatusSupported, Notes: "DestinationCidrBlock + GatewayId", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "ec2", Operation: "CreateRouteTable", Category: "General", Status: StatusSupported, Notes: "VPC must exist; auto-creates local route", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "ec2", Operation: "CreateSecurityGroup", Category: "General", Status: StatusSupported, Notes: "Default egress allow-all rule added on create", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
-	{Service: "ec2", Operation: "CreateSubnet", Category: "General", Status: StatusSupported, Notes: "VPC must exist; AZ defaults to region+\"a\"", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "ec2", Operation: "CreateSubnet", Category: "General", Status: StatusSupported, Notes: "VPC must exist; honors AvailabilityZone; defaults to region+\"a\"", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "ec2", Operation: "CreateTags", Category: "General", Status: StatusSupported, Notes: "Tag any resource by ID", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "ec2", Operation: "CreateVpc", Category: "General", Status: StatusSupported, Notes: "CidrBlock required; creates Docker bridge network (`--internal` unless IGW attached) and main route table", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "ec2", Operation: "CreateVpcEndpoint", Category: "General", Status: StatusSupported, Notes: "Metadata-only; Gateway and Interface types accepted; state always \"available\"", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},

@@ -19,6 +19,15 @@ operations:
           - https://docs.aws.amazon.com/vpc/latest/userguide/VPC_Route_Tables.html
           - tests/integration/ec2/ec2_test.go::TestCreateVpc_mainRouteTable
         notes: CreateVpc now creates a VPC-scoped route table with a local route and Main=true association.
+  CreateSubnet:
+    status: fixed
+    scenarios:
+      requested_availability_zone:
+        status: fixed
+        evidence:
+          - https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateSubnet.html
+          - tests/integration/ec2/ec2_test.go::TestCreateSubnet_requestedAvailabilityZones
+        notes: CreateSubnet now preserves explicit AvailabilityZone values in create and describe responses, while retaining the default region+a behavior when omitted.
   EC2QueryErrors:
     status: fixed
     scenarios:
@@ -33,6 +42,7 @@ operations:
 findings:
   fixed:
     - CreateVpc creates the AWS-documented main route table for VPC lookups.
+    - CreateSubnet preserves explicit AvailabilityZone values for multi-AZ VPC lookup scenarios.
     - EC2 Query errors use the EC2-specific error envelope expected by aws-sdk-js v3.
   remaining_gaps:
     - Focus VPC, subnet, security group, route table, and ENI behavior.
@@ -42,5 +52,6 @@ handoff:
   start_with: [CreateVpc, CreateSubnet, security groups, route tables]
   do_not_redo:
     - Main route table creation for CreateVpc; covered by TestCreateVpc_mainRouteTable.
+    - CreateSubnet explicit AvailabilityZone preservation; covered by TestCreateSubnet_requestedAvailabilityZones.
     - EC2 Query error envelope; covered by TestEC2QueryError_unsupportedAction and TestEC2QueryError_implementedActionErrors.
   commands: [go test -count=1 ./internal/services/ec2/... ./tests/integration/ec2/...]
