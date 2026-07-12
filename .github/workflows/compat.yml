@@ -11,7 +11,8 @@ name: Compatibility Tests
 #   • Release creation  (pre-release gate — results are attached to the release)
 #   • Manual dispatch   (ad-hoc, e.g. to test a fix branch)
 #
-# Runtime: ~3-4 minutes on ubuntu-latest (no Docker builds needed).
+# Runtime: ~3-4 minutes when prebuilt compat suite images are available. The
+# rust-sdk image job no-ops unless its exact hash is missing or inputs changed.
 
 on:
   push:
@@ -28,8 +29,101 @@ on:
         default: ""
 
 jobs:
+  rust-sdk-image:
+    name: Prepare rust-sdk compat image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Compute image tag
+        id: tag
+        run: |
+          TAG=$(compat/suites/rust-sdk/image-tag.sh)
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Computed rust-sdk compat image tag: ${TAG}"
+
+      - name: Detect rust-sdk image input changes
+        id: changes
+        run: |
+          changed=false
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            changed_files=$(git diff --name-only HEAD^1 HEAD)
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            before="${{ github.event.before }}"
+            head="${{ github.sha }}"
+            if [[ "$before" == "0000000000000000000000000000000000000000" ]]; then
+              changed_files=$(git ls-tree -r --name-only "$head")
+            else
+              changed_files=$(git diff --name-only "$before" "$head")
+            fi
+          else
+            changed_files=""
+          fi
+
+          while IFS= read -r path; do
+            case "$path" in
+              compat/suites/rust-sdk/*|compat/suites/registry.json|.github/workflows/compat.yml)
+                changed=true
+                break
+                ;;
+            esac
+          done <<< "$changed_files"
+
+          echo "changed=${changed}" >> "$GITHUB_OUTPUT"
+          echo "Rust SDK image inputs changed: ${changed}"
+
+      - name: Set lowercase image name
+        id: img
+        run: |
+          REPO_LC=$(tr '[:upper:]' '[:lower:]' <<< "${{ github.repository }}")
+          echo "image=ghcr.io/${REPO_LC}/rust-sdk-compat" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if image already exists
+        id: exists
+        if: github.event_name != 'pull_request'
+        run: |
+          if docker manifest inspect "${{ steps.img.outputs.image }}:${{ steps.tag.outputs.tag }}" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Exact rust-sdk compat image already exists."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Exact rust-sdk compat image is missing."
+          fi
+
+      - uses: docker/setup-buildx-action@v4.2.0
+        if: steps.changes.outputs.changed == 'true' || (github.event_name != 'pull_request' && steps.exists.outputs.exists != 'true')
+
+      - name: Build and maybe push image
+        if: steps.changes.outputs.changed == 'true' || (github.event_name != 'pull_request' && steps.exists.outputs.exists != 'true')
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: compat/suites
+          file: compat/suites/rust-sdk/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ steps.img.outputs.image }}:${{ steps.tag.outputs.tag }}
+            ${{ steps.img.outputs.image }}:latest
+          cache-from: type=gha,scope=rust-sdk-compat
+          cache-to: type=gha,mode=max,scope=rust-sdk-compat
+
   compat:
     name: Compatibility Tests
+    needs: rust-sdk-image
+    if: always()
     runs-on: ubuntu-latest
 
     steps:
@@ -54,6 +148,7 @@ jobs:
           cache-dependency-path: |
             web/package-lock.json
             compat/suites/node-js-sdk/package-lock.json
+            compat/suites/cdk/package-lock.json
 
       # ── Python toolchain ───────────────────────────────────────────────────
       - uses: actions/setup-python@v6.3.0
@@ -67,6 +162,14 @@ jobs:
       - name: Install Node.js deps (node-js-sdk)
         run: npm ci
         working-directory: compat/suites/node-js-sdk
+
+      - name: Install Node.js deps (cdk)
+        run: npm ci
+        working-directory: compat/suites/cdk
+
+      - name: Type check cdk suite
+        run: npm run typecheck
+        working-directory: compat/suites/cdk
 
       # cmd/overcast embeds web/dist at compile time. Build the SPA before any
       # Go command that imports the module root, including cmd/compat.
