@@ -414,16 +414,25 @@ overcast trust uninstall
 
 ## Supported services
 
+<!-- BEGIN overcast:root-service-list -->
+
 Overcast currently registers **49 AWS services**. Coverage ranges from broad
 service emulation to minimal discovery/IaC stubs; check the per-service docs for
 exact endpoint support.
 
-| Tier | Services |
-| ---- | -------- |
-| Comprehensive / broad coverage | S3, SQS, DynamoDB, Lambda, API Gateway, AppSync, CloudFront, Cognito, EC2/VPC, SNS |
-| Core CRUD + common workflows | IAM, ECS, ECR, KMS, Kinesis Data Streams, EventBridge, EventBridge Scheduler, CloudFormation, RDS, ElastiCache, AppConfig, AppConfigData, Secrets Manager, SSM Parameter Store, CloudWatch Logs, SES, STS |
-| Minimal / targeted support | Step Functions, EventBridge Pipes, WAF v2, Shield, ACM, Athena, Bedrock Runtime, CloudWatch, DynamoDB Streams, Firehose, Glue Data Catalog, OpenSearch |
-| IaC/discovery-oriented service stubs | AppRegistry, Auto Scaling, Backup, CloudTrail, EKS, ELBv2, MSK, Organizations, Route 53, Transfer Family |
+[ACM](./docs/services/acm.md), [API Gateway](./docs/services/apigateway.md), [AppConfig](./docs/services/appconfig.md), [AppConfigData](./docs/services/appconfigdata.md),
+[AppRegistry](./docs/services/appregistry.md), [AppSync](./docs/services/appsync.md), [Athena](./docs/services/athena.md), [Auto Scaling](./docs/services/autoscaling.md),
+[Backup](./docs/services/backup.md), [Bedrock](./docs/services/bedrock.md), [CloudFormation](./docs/services/cloudformation.md), [CloudFront](./docs/services/cloudfront.md),
+[CloudTrail](./docs/services/cloudtrail.md), [CloudWatch](./docs/services/cloudwatch.md), [CloudWatch Logs](./docs/services/cloudwatch-logs.md), [Cognito](./docs/services/cognito.md),
+[DynamoDB](./docs/services/dynamodb.md), [DynamoDB Streams](./docs/services/dynamodbstreams.md), [EC2 / VPC](./docs/services/ec2.md), [ECR](./docs/services/ecr.md),
+[ECS](./docs/services/ecs.md), [EKS](./docs/services/eks.md), [ElastiCache](./docs/services/elasticache.md), [ELBv2](./docs/services/elb.md),
+[EventBridge](./docs/services/eventbridge.md), [Firehose](./docs/services/firehose.md), [Glue](./docs/services/glue.md), [IAM](./docs/services/iam.md),
+[Kinesis](./docs/services/kinesis.md), [KMS](./docs/services/kms.md), [Lambda](./docs/services/lambda.md), [MSK](./docs/services/msk.md),
+[OpenSearch](./docs/services/opensearch.md), [Organizations](./docs/services/organizations.md), [Pipes](./docs/services/pipes.md), [RDS](./docs/services/rds.md),
+[Route 53](./docs/services/route53.md), [S3](./docs/services/s3.md), [Scheduler](./docs/services/scheduler.md), [Secrets Manager](./docs/services/secretsmanager.md),
+[SES](./docs/services/ses.md), [Shield](./docs/services/shield.md), [SNS](./docs/services/sns.md), [SQS](./docs/services/sqs.md),
+[SSM](./docs/services/ssm.md), [Step Functions](./docs/services/stepfunctions.md), [STS](./docs/services/sts.md), [Transfer Family](./docs/services/transfer.md),
+[WAF v2](./docs/services/waf.md).
 
 Some services require Docker socket access for full runtime behavior:
 
@@ -436,6 +445,8 @@ but IAM policies are not enforced as an authorization layer.
 
 See the [service emulation reference](./docs/services/) for per-endpoint
 coverage tables, or browse the generated summary in [STATUS.md](./STATUS.md#service-coverage).
+
+<!-- END overcast:root-service-list -->
 
 ---
 

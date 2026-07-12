@@ -158,6 +158,11 @@ func main() {
 		} else if changed {
 			fmt.Println("capgen: updated docs/README.md service index")
 		}
+		if changed, err := updateRootReadmeServiceList(root, allCaps); err != nil {
+			fmt.Fprintf(os.Stderr, "capgen: README.md: %v\n", err)
+		} else if changed {
+			fmt.Println("capgen: updated README.md service list")
+		}
 		if err := generateServiceSupportJSON(root, allCaps); err != nil {
 			fmt.Fprintf(os.Stderr, "capgen: service-support.json: %v\n", err)
 		} else {
@@ -1377,6 +1382,11 @@ var serviceDocFileNames = map[string]string{
 	"elbv2": "elb",
 }
 
+type serviceLink struct {
+	name string
+	link string
+}
+
 // updateStatusMd keeps STATUS.md op counts consistent with the capability
 // registry. It does two things:
 //
@@ -1543,10 +1553,7 @@ func updateDocsReadmeServiceIndex(root string, allCaps []CapabilityDecl) (bool, 
 		if name == "" {
 			name = svc
 		}
-		docFile := svc
-		if override := serviceDocFileNames[svc]; override != "" {
-			docFile = override
-		}
+		docFile := serviceDocFile(svc)
 		tier := serviceIndexTiers[svc]
 		if tier == "" {
 			tier = "See service doc"
@@ -1571,6 +1578,92 @@ func updateDocsReadmeServiceIndex(root string, allCaps []CapabilityDecl) (bool, 
 	}
 	content = content[:beginIdx] + replacement + content[endIdx+len(endMarker):]
 	return true, os.WriteFile(path, []byte(content), 0o644)
+}
+
+func updateRootReadmeServiceList(root string, allCaps []CapabilityDecl) (bool, error) {
+	const beginMarker = "<!-- BEGIN overcast:root-service-list -->"
+	const endMarker = "<!-- END overcast:root-service-list -->"
+
+	opCounts := map[string]int{}
+	for _, c := range allCaps {
+		opCounts[c.Service]++
+	}
+
+	path := filepath.Join(root, "README.md")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	content := string(raw)
+	beginIdx := strings.Index(content, beginMarker)
+	endIdx := strings.Index(content, endMarker)
+	if beginIdx < 0 || endIdx <= beginIdx {
+		return false, fmt.Errorf("missing %s/%s markers", beginMarker, endMarker)
+	}
+
+	links := make([]serviceLink, 0, len(opCounts))
+	for svc := range opCounts {
+		name := statusDisplayNames[svc]
+		if name == "" {
+			name = svc
+		}
+		docFile := serviceDocFile(svc)
+		links = append(links, serviceLink{
+			name: name,
+			link: fmt.Sprintf("[%s](./docs/services/%s.md)", name, docFile),
+		})
+	}
+	sort.Slice(links, func(i, j int) bool {
+		return strings.ToLower(links[i].name) < strings.ToLower(links[j].name)
+	})
+
+	var buf strings.Builder
+	buf.WriteString(beginMarker + "\n\n")
+	buf.WriteString(fmt.Sprintf("Overcast currently registers **%d AWS services**. Coverage ranges from broad\n", len(opCounts)))
+	buf.WriteString("service emulation to minimal discovery/IaC stubs; check the per-service docs for\n")
+	buf.WriteString("exact endpoint support.\n\n")
+	buf.WriteString(formatCommaSeparatedLinks(links))
+	buf.WriteString(".\n\n")
+	buf.WriteString("Some services require Docker socket access for full runtime behavior:\n\n")
+	buf.WriteString("- Lambda, ECS, RDS, EC2/VPC, and ElastiCache can launch sibling containers.\n")
+	buf.WriteString("- Without Docker, their metadata/control-plane APIs still work where possible,\n")
+	buf.WriteString("  but runtime execution falls back to metadata-only or stub behavior.\n\n")
+	buf.WriteString("IAM is implemented for local development and CloudFormation/CDK compatibility,\n")
+	buf.WriteString("but IAM policies are not enforced as an authorization layer.\n\n")
+	buf.WriteString("See the [service emulation reference](./docs/services/) for per-endpoint\n")
+	buf.WriteString("coverage tables, or browse the generated summary in [STATUS.md](./STATUS.md#service-coverage).\n\n")
+	buf.WriteString(endMarker)
+
+	replacement := buf.String()
+	oldSection := content[beginIdx : endIdx+len(endMarker)]
+	if replacement == oldSection {
+		return false, nil
+	}
+	content = content[:beginIdx] + replacement + content[endIdx+len(endMarker):]
+	return true, os.WriteFile(path, []byte(content), 0o644)
+}
+
+func formatCommaSeparatedLinks(links []serviceLink) string {
+	const perLine = 4
+	var buf strings.Builder
+	for i, link := range links {
+		if i > 0 {
+			if i%perLine == 0 {
+				buf.WriteString(",\n")
+			} else {
+				buf.WriteString(", ")
+			}
+		}
+		buf.WriteString(link.link)
+	}
+	return buf.String()
+}
+
+func serviceDocFile(service string) string {
+	if override := serviceDocFileNames[service]; override != "" {
+		return override
+	}
+	return service
 }
 
 // generateServiceSupportJSON writes docs/generated/service-support.json, a
