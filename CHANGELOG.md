@@ -110,7 +110,7 @@ need it than accidentally ship a breaking change as a patch.
 - **Documentation** — created endpoint support docs for IAM, CloudFormation, EventBridge, Step Functions, AppSync, and EventBridge Pipes; updated README and STATUS service tables with all 22 services
 - **Docker** — two published images: `ghcr.io/neaox/overcast` (full, with web management console on port 8080) and `ghcr.io/neaox/overcast-slim` (headless, for CI pipelines); multi-stage Dockerfile with `go-builder`, `web-builder`, `slim`, and default (console) targets; multi-platform builds (linux/amd64 + linux/arm64); `VERSION` file as single source of truth for version injection via ldflags; `/usr/local/bin/awslocal` wrapper — thin `aws` CLI shim that auto-sets `--endpoint-url` to the local Overcast instance (LocalStack-compatible); removed Node.js from slim image (~91 MB → ~36 MB) — Lambda functions run in their own Docker containers, so the host `node` binary was dead weight; Node.js is now only installed in the console image (for the BFF server)
 - **Release pipeline** — GitHub release publishing verifies the tag against `VERSION`, runs tests, attaches native Linux/macOS/Windows binaries with `SHA256SUMS`, publishes multi-platform Docker images to GHCR, and updates release notes from the changelog with Docker links and checksum details
-- **CI** — PR checks expanded: web UI lint/typecheck/build, Docker build smoke test, Go 1.23+1.24 matrix
+- **CI** — PR checks expanded: web UI lint/typecheck/build, Docker build smoke test, Go 1.24 checks, and release binary cross-builds
 
 ### Fixed
 

@@ -217,13 +217,15 @@ func main() {
 		os.Exit(2)
 	}
 
+	if *resultsFile != "" {
+		if err := writeRunReportFile(*resultsFile, report); err != nil {
+			fmt.Fprintf(os.Stderr, "compat: save results: %v\n", err)
+			os.Exit(2)
+		}
+	}
+
 	if srv != nil {
 		srv.FinishRun(report)
-		if *resultsFile != "" {
-			if err := srv.SaveResultsFile(*resultsFile); err != nil {
-				fmt.Fprintf(os.Stderr, "compat: warning: %v\n", err)
-			}
-		}
 		if *agentReportFile != "" {
 			if err := writeAgentReportFile(*agentReportFile, report); err != nil {
 				fmt.Fprintf(os.Stderr, "compat: warning: %v\n", err)
@@ -301,6 +303,23 @@ func printPretty(report *compat.RunReport) {
 
 	fmt.Printf("Overall: %d passed, %d failed, %d skipped\n",
 		totalPass, totalFail, totalSkip)
+}
+
+// writeRunReportFile writes the structured compatibility report atomically.
+func writeRunReportFile(path string, report *compat.RunReport) error {
+	b, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return fmt.Errorf("compat: marshal results: %w", err)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return fmt.Errorf("compat: write results: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp) //nolint:errcheck
+		return fmt.Errorf("compat: write results: %w", err)
+	}
+	return nil
 }
 
 func envOr(key, fallback string) string {

@@ -166,9 +166,9 @@ pattern, and `internal/router/procstart_*.go` for the process-start-time files.
 
 | Tool          | Version | Install                                                   |
 | ------------- | ------- | --------------------------------------------------------- |
-| Go            | 1.23+   | https://go.dev/dl/                                        |
+| Go            | 1.24+   | https://go.dev/dl/                                        |
 | Docker        | 24+     | https://docs.docker.com/get-docker/                       |
-| golangci-lint | latest  | `brew install golangci-lint` or https://golangci-lint.run |
+| golangci-lint | v1.64.8 | `brew install golangci-lint` or https://golangci-lint.run |
 | actionlint    | v1.7.7  | `make lint-actions` uses pinned `go run` automatically         |
 | Node.js       | 18+     | For web UI builds and Lambda work — https://nodejs.org    |
 

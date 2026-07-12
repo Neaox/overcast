@@ -143,7 +143,7 @@ jobs:
         with:
           name: compat-results-${{ github.sha }}
           path: compat-results.json
-          if-no-files-found: ignore
+          if-no-files-found: error
           retention-days: 90
 
       # ── Attach to release ──────────────────────────────────────────────────
@@ -172,23 +172,25 @@ jobs:
 
           out = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout")
           with open(out, "a") as f:
-              suites = data.get("suites", [])
-              f.write("| Suite | Pass | Fail | NA | Total |\n")
-              f.write("| ----- | ---: | ---: | --: | ----: |\n")
-              total_pass = total_fail = total_na = total_all = 0
+              suites = data.get("Suites", [])
+              f.write("| Suite | Pass | Fail | Unimplemented | Skip | Total |\n")
+              f.write("| ----- | ---: | ---: | ------------: | ---: | ----: |\n")
+              total_pass = total_fail = total_unimplemented = total_skip = total_all = 0
               for s in suites:
-                  p = s.get("pass", 0)
-                  fa = s.get("fail", 0)
-                  na = s.get("na", 0)
-                  tot = p + fa + na
-                  f.write(f"| {s['name']} | {p} | {fa} | {na} | {tot} |\n")
-                  total_pass += p; total_fail += fa; total_na += na; total_all += tot
-              f.write(f"| **Total** | **{total_pass}** | **{total_fail}** | **{total_na}** | **{total_all}** |\n")
+                  p = s.get("Passed", 0)
+                  fa = s.get("Failed", 0)
+                  un = s.get("Unimplemented", 0)
+                  sk = s.get("Skipped", 0)
+                  tot = p + fa + un + sk
+                  f.write(f"| {s['Suite']} | {p} | {fa} | {un} | {sk} | {tot} |\n")
+                  total_pass += p; total_fail += fa; total_unimplemented += un; total_skip += sk; total_all += tot
+              f.write(f"| **Total** | **{total_pass}** | **{total_fail}** | **{total_unimplemented}** | **{total_skip}** | **{total_all}** |\n")
               f.write("\n")
-              endpoint = data.get("endpoint", "")
+              endpoint = data.get("Endpoint", "")
               if endpoint:
                   f.write(f"Endpoint: `{endpoint}`\n")
           EOF
           else
             echo "_compat-results.json not found — Overcast may have failed to start._" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
