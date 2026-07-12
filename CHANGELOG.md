@@ -61,6 +61,11 @@ need it than accidentally ship a breaking change as a patch.
 
 ## [0.0.1-alpha.0] - 2026-07-12
 
+### Docker Images
+
+- Full image with web management console: [`ghcr.io/neaox/overcast:0.0.1-alpha.0`](https://github.com/Neaox/overcast/pkgs/container/overcast) and `ghcr.io/neaox/overcast:alpha`
+- Headless slim image for CI pipelines: [`ghcr.io/neaox/overcast-slim:0.0.1-alpha.0`](https://github.com/Neaox/overcast/pkgs/container/overcast-slim) and `ghcr.io/neaox/overcast-slim:alpha`
+
 ### Added
 
 - **S3** — P1+P2 complete: bucket and object CRUD, `ListObjectsV2` with continuation-token pagination, multipart uploads (`CreateMultipartUpload`, `UploadPart`, `CompleteMultipartUpload`, `AbortMultipartUpload`, `ListParts`, `ListMultipartUploads`), `PutBucketNotificationConfiguration` with Lambda invocation on object events; object and bucket tagging (`PutObjectTagging`, `GetObjectTagging`, `DeleteObjectTagging`, `PutBucketTagging`, `GetBucketTagging`, `DeleteBucketTagging`); versioning status management (`GetBucketVersioning`, `PutBucketVersioning`); `ListObjectVersions` with prefix filtering and key-marker pagination (returns all objects as `VersionId=null` entries)
