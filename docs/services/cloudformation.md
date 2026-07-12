@@ -165,13 +165,13 @@ with unsupported resources can still partially deploy.
 
 ### Change sets
 
-| Operation           | Status       | Notes                                      | AWS Docs                                                                                             |
-| ------------------- | ------------ | ------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| `CreateChangeSet`   | ✅ Supported | Creates a change set from a template       | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CreateChangeSet.html)   |
-| `DescribeChangeSet` | ✅ Supported | Returns change set details and status      | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DescribeChangeSet.html) |
-| `ExecuteChangeSet`  | ✅ Supported | Provisions resources via async provisioner | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ExecuteChangeSet.html)  |
-| `DeleteChangeSet`   | ✅ Supported |                                            | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DeleteChangeSet.html)   |
-| `ListChangeSets`    | ✅ Supported |                                            | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ListChangeSets.html)    |
+| Operation           | Status       | Notes                                                               | AWS Docs                                                                                             |
+| ------------------- | ------------ | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `CreateChangeSet`   | ✅ Supported | Creates a change set from a template                                | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CreateChangeSet.html)   |
+| `DescribeChangeSet` | ✅ Supported | Returns change set details and status; accepts ARN-only lookup      | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DescribeChangeSet.html) |
+| `ExecuteChangeSet`  | ✅ Supported | Provisions resources via async provisioner; accepts ARN-only lookup | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ExecuteChangeSet.html)  |
+| `DeleteChangeSet`   | ✅ Supported |                                                                     | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DeleteChangeSet.html)   |
+| `ListChangeSets`    | ✅ Supported | Lists active change sets for a stack                                | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ListChangeSets.html)    |
 
 ### Resources and events
 

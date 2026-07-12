@@ -519,7 +519,7 @@ func (h *Handler) describeChangeSetTyped(ctx context.Context, req *describeChang
 	if req.ChangeSetName == "" {
 		return nil, cfnerr("ValidationError", "ChangeSetName is required", http.StatusBadRequest)
 	}
-	if req.StackName == "" {
+	if req.StackName == "" && !isARN(req.ChangeSetName) {
 		return nil, cfnerr("ValidationError", "StackName is required", http.StatusBadRequest)
 	}
 
@@ -560,7 +560,7 @@ func (h *Handler) describeChangeSetTyped(ctx context.Context, req *describeChang
 }
 
 func (h *Handler) executeChangeSetTyped(ctx context.Context, req *executeChangeSetReq) (*struct{}, *protocol.AWSError) {
-	if req.ChangeSetName == "" || req.StackName == "" {
+	if req.ChangeSetName == "" || (req.StackName == "" && !isARN(req.ChangeSetName)) {
 		return nil, cfnerr("ValidationError", "StackName and ChangeSetName are required", http.StatusBadRequest)
 	}
 
@@ -576,10 +576,10 @@ func (h *Handler) executeChangeSetTyped(ctx context.Context, req *executeChangeS
 			http.StatusBadRequest)
 	}
 
-	stack, _ := h.store.getStack(ctx, req.StackName)
+	stack, _ := h.store.getStack(ctx, cs.StackName)
 	if stack == nil {
 		return nil, cfnerr("ValidationError",
-			fmt.Sprintf("Stack [%s] does not exist", req.StackName), http.StatusBadRequest)
+			fmt.Sprintf("Stack [%s] does not exist", cs.StackName), http.StatusBadRequest)
 	}
 
 	tmpl, err := parseTemplate(cs.TemplateBody)

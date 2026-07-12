@@ -100,6 +100,68 @@ func contains(values []string, want string) bool {
 	return false
 }
 
+type createdChangeSet struct {
+	StackName string
+	Name      string
+	ID        string
+	StackID   string
+}
+
+func createChangeSet(t *testing.T, srv *helpers.TestServer, stackName, changeSetName, changeSetType string) createdChangeSet {
+	t.Helper()
+	resp := cfnQuery(t, srv, "CreateChangeSet", url.Values{
+		"StackName":     []string{stackName},
+		"ChangeSetName": []string{changeSetName},
+		"ChangeSetType": []string{changeSetType},
+		"TemplateBody":  []string{minimalTemplate},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	body := readBody(t, resp)
+	var result struct {
+		ID      string `xml:"CreateChangeSetResult>Id"`
+		StackID string `xml:"CreateChangeSetResult>StackId"`
+	}
+	if err := xml.Unmarshal(body, &result); err != nil {
+		t.Fatalf("unmarshal CreateChangeSetResponse: %v\nbody: %s", err, body)
+	}
+	if result.ID == "" || result.StackID == "" {
+		t.Fatalf("expected change set and stack IDs, got %#v\nbody: %s", result, body)
+	}
+	return createdChangeSet{StackName: stackName, Name: changeSetName, ID: result.ID, StackID: result.StackID}
+}
+
+func assertDescribeChangeSet(t *testing.T, resp *http.Response, want createdChangeSet) {
+	t.Helper()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	body := readBody(t, resp)
+	var result struct {
+		ChangeSetName string `xml:"DescribeChangeSetResult>ChangeSetName"`
+		ChangeSetID   string `xml:"DescribeChangeSetResult>ChangeSetId"`
+		StackID       string `xml:"DescribeChangeSetResult>StackId"`
+		StackName     string `xml:"DescribeChangeSetResult>StackName"`
+		Status        string `xml:"DescribeChangeSetResult>Status"`
+	}
+	if err := xml.Unmarshal(body, &result); err != nil {
+		t.Fatalf("unmarshal DescribeChangeSetResponse: %v\nbody: %s", err, body)
+	}
+	if result.ChangeSetName != want.Name {
+		t.Errorf("expected ChangeSetName %q, got %q", want.Name, result.ChangeSetName)
+	}
+	if result.ChangeSetID != want.ID {
+		t.Errorf("expected ChangeSetId %q, got %q", want.ID, result.ChangeSetID)
+	}
+	if result.StackID != want.StackID {
+		t.Errorf("expected StackId %q, got %q", want.StackID, result.StackID)
+	}
+	if result.StackName != want.StackName {
+		t.Errorf("expected StackName %q, got %q", want.StackName, result.StackName)
+	}
+	if result.Status != "CREATE_COMPLETE" {
+		t.Errorf("expected Status CREATE_COMPLETE, got %q", result.Status)
+	}
+}
+
 const minimalTemplate = `{"AWSTemplateFormatVersion":"2010-09-09","Description":"compat test","Resources":{}}`
 
 // ─── CreateStack ──────────────────────────────────────────────────────────────
@@ -121,6 +183,92 @@ func TestCreateStack_success(t *testing.T) {
 	if !strings.Contains(string(b), "StackId") {
 		t.Errorf("expected StackId in response, got: %s", b)
 	}
+}
+
+func TestDescribeChangeSet_changeSetArn(t *testing.T) {
+	// Given: a CREATE change set exists
+	srv := helpers.NewTestServer(t)
+	created := createChangeSet(t, srv, "arn-describe-stack", "arn-describe-cs", "CREATE")
+
+	// When: DescribeChangeSet is called with the change set ARN and no StackName
+	arnOnlyResp := cfnQuery(t, srv, "DescribeChangeSet", url.Values{
+		"ChangeSetName": []string{created.ID},
+	})
+	defer arnOnlyResp.Body.Close()
+
+	// Then: the change set is returned
+	assertDescribeChangeSet(t, arnOnlyResp, created)
+
+	// When: DescribeChangeSet is called with the change set ARN and StackName
+	arnAndStackResp := cfnQuery(t, srv, "DescribeChangeSet", url.Values{
+		"StackName":     []string{created.StackName},
+		"ChangeSetName": []string{created.ID},
+	})
+	defer arnAndStackResp.Body.Close()
+
+	// Then: the same change set is returned
+	assertDescribeChangeSet(t, arnAndStackResp, created)
+}
+
+func TestExecuteChangeSet_changeSetArn(t *testing.T) {
+	// Given: a CREATE change set exists
+	srv := helpers.NewTestServer(t)
+	created := createChangeSet(t, srv, "arn-execute-stack", "arn-execute-cs", "CREATE")
+
+	// When: ExecuteChangeSet is called with the change set ARN and no StackName
+	resp := cfnQuery(t, srv, "ExecuteChangeSet", url.Values{
+		"ChangeSetName": []string{created.ID},
+	})
+	defer resp.Body.Close()
+
+	// Then: the change set executes successfully
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
+func TestListChangeSets_createdChangeSet(t *testing.T) {
+	// Given: a CREATE change set exists
+	srv := helpers.NewTestServer(t)
+	created := createChangeSet(t, srv, "list-cs-stack", "list-cs", "CREATE")
+
+	// When: ListChangeSets is called for the stack
+	resp := cfnQuery(t, srv, "ListChangeSets", url.Values{
+		"StackName": []string{created.StackName},
+	})
+	defer resp.Body.Close()
+
+	// Then: the created change set appears in the summaries
+	assertListChangeSetsIncludes(t, resp, created)
+
+	// When: ListChangeSets is called with the stack ARN
+	arnResp := cfnQuery(t, srv, "ListChangeSets", url.Values{
+		"StackName": []string{created.StackID},
+	})
+	defer arnResp.Body.Close()
+
+	// Then: the same change set appears in the summaries
+	assertListChangeSetsIncludes(t, arnResp, created)
+}
+
+func assertListChangeSetsIncludes(t *testing.T, resp *http.Response, want createdChangeSet) {
+	t.Helper()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	body := readBody(t, resp)
+	var result struct {
+		Summaries []struct {
+			ChangeSetName string `xml:"ChangeSetName"`
+			ChangeSetID   string `xml:"ChangeSetId"`
+			StackName     string `xml:"StackName"`
+		} `xml:"ListChangeSetsResult>Summaries>member"`
+	}
+	if err := xml.Unmarshal(body, &result); err != nil {
+		t.Fatalf("unmarshal ListChangeSetsResponse: %v\nbody: %s", err, body)
+	}
+	for _, summary := range result.Summaries {
+		if summary.ChangeSetID == want.ID && summary.ChangeSetName == want.Name && summary.StackName == want.StackName {
+			return
+		}
+	}
+	t.Fatalf("expected change set %s in summaries, got %#v\nbody: %s", want.ID, result.Summaries, body)
 }
 
 // ─── DescribeStacks ───────────────────────────────────────────────────────────
