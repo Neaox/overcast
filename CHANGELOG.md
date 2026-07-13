@@ -62,8 +62,12 @@ need it than accidentally ship a breaking change as a patch.
        binary packaging, release process, or user-facing docs.
 -->
 
+## [0.0.1-alpha.8] - 2026-07-14
+
 ### Fixed
 
+- **CloudFront / CloudFormation** — `AWS::CloudFront::Distribution` now accepts cache behaviors whose `TargetOriginId` references an origin group, matching the raw CloudFront API path for origin-failover distributions.
+- **Route53 / CloudFormation** — `AWS::Route53::RecordSet` now preserves alias targets when provisioning through CloudFormation instead of dropping them from the underlying Route53 request.
 - **Web UI** — S3 bucket lifecycle events in the Event Stream now show `s3://bucket-name` instead of `s3:///`.
 
 ## [0.0.1-alpha.7] - 2026-07-14

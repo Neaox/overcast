@@ -17,6 +17,11 @@ findings:
         aws_docs: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/high_availability_origin_failover.html
         tests: tests/integration/cloudfront/cloudfront_test.go::TestCreateDistribution_originGroupTarget
       fixed_in: 0.0.1-alpha.7
+    - scenario: AWS::CloudFront::Distribution preserves OriginGroups and CacheBehaviors when provisioning through CloudFormation.
+      evidence:
+        aws_docs: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/high_availability_origin_failover.html
+        tests: tests/integration/cloudformation/cloudformation_test.go::TestCreateStack_CloudFrontDistributionOriginGroupTarget
+      fixed_in: 0.0.1-alpha.8
   remaining_gaps:
     - Separate emulator-only ProxyRequest from AWS compatibility counts.
     - Review ETag and XML response fidelity.
