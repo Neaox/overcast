@@ -1,21 +1,24 @@
 service: sts
-status: not_started
+status: docs_reviewed
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-17
+last_updated: 2026-07-13
 protocols: [query]
 implementation: [internal/services/sts]
 integration_tests: [tests/integration/sts]
 capability_docs: docs/services/sts.md
-operation_count_estimate: 5 tracked in capabilities; older manual summary lists 11 total
-current_support_level: Fake identity and temporary credential operations supported; SAML/OIDC/federation misc unsupported operations documented manually but not tracked in capabilities_dev.go.
+operation_count_estimate: 11 real STS operations (5 supported, 6 unsupported)
+current_support_level: Fake identity and temporary credential operations supported; SAML/OIDC/federation misc operations now tracked as DocOnly unsupported capabilities and return NotImplemented.
 operations: {}
 findings:
-  fixed: []
-  remaining_gaps:
-    - Add unsupported STS operations to capabilities_dev.go so generated docs reflect manual compatibility matrix.
-  intentionally_partial: []
+  fixed:
+    - Added the 6 unsupported STS operations (AssumeRoleWithSAML, AssumeRoot, DecodeAuthorizationMessage, GetAccessKeyInfo, GetDelegatedAccessToken, GetWebIdentityToken) to capabilities_dev.go as DocOnly unsupported so generated docs reflect the compatibility matrix.
+    - Corrected the manual matrix in docs/services/sts.md which listed non-existent STS operations (GetServiceBearerToken, TagSession).
+    - Added TestUnsupportedOperations_notImplemented asserting unsupported actions return a NotImplemented Query XML error.
+  remaining_gaps: []
+  intentionally_partial:
+    - Supported credential operations return freshly generated fake credentials; no signing-key or SAML/OIDC token validation.
 handoff:
   start_with: [AssumeRole, GetCallerIdentity, credentials shape]
-  do_not_redo: []
-  commands: [go test -count=1 ./internal/services/sts/... ./tests/integration/sts/...]
+  do_not_redo: [unsupported-operation capability tracking]
+  commands: [go test -count=1 ./internal/services/sts/... ./tests/integration/sts/..., go test -tags dev -count=1 ./internal/services/sts/...]

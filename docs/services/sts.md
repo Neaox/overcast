@@ -9,8 +9,8 @@
 | Identity         | 1            | 0              |
 | Temp credentials | 4            | 0              |
 | SAML/OpenID      | 0            | 2              |
-| Federation       | 0            | 2              |
-| Misc             | 0            | 2              |
+| Federation       | 0            | 1              |
+| Misc             | 0            | 3              |
 | **Total**        | **5**        | **6**          |
 
 ## Endpoint details
@@ -22,12 +22,12 @@
 | AssumeRole                 | ✅     | Returns fake credentials + AssumedRoleUser | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html)                 |
 | AssumeRoleWithWebIdentity  | ✅     | Returns fake credentials                   | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRoleWithWebIdentity.html)  |
 | GetFederationToken         | ✅     | Returns fake credentials + FederatedUser   | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetFederationToken.html)         |
-| AssumeRoleWithSAML         | ❌     | Returns 501                                | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRoleWithSAML.html)         |
-| DecodeAuthorizationMessage | ❌     | Returns 501                                | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_DecodeAuthorizationMessage.html) |
-| GetAccessKeyInfo           | ❌     | Returns 501                                | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetAccessKeyInfo.html)           |
-| GetServiceBearerToken      | ❌     | Returns 501                                | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetServiceBearerToken.html)      |
-| AssumeRoot                 | ❌     | Returns 501                                | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRoot.html)                 |
-| TagSession                 | ❌     | Returns 501                                | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_TagSession.html)                 |
+| AssumeRoleWithSAML         | ❌     | Returns NotImplemented                     | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRoleWithSAML.html)         |
+| AssumeRoot                 | ❌     | Returns NotImplemented                     | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRoot.html)                 |
+| DecodeAuthorizationMessage | ❌     | Returns NotImplemented                     | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_DecodeAuthorizationMessage.html) |
+| GetAccessKeyInfo           | ❌     | Returns NotImplemented                     | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetAccessKeyInfo.html)           |
+| GetDelegatedAccessToken    | ❌     | Returns NotImplemented                     | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetDelegatedAccessToken.html)    |
+| GetWebIdentityToken        | ❌     | Returns NotImplemented                     | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetWebIdentityToken.html)        |
 
 ## SDK compatibility
 
@@ -49,9 +49,10 @@
 
 ## Summary
 
-| Category | ✅ Supported |
-| -------- | ------------ |
-| General  | 5            |
+| Category    | ✅ Supported | ❌ Unsupported |
+| ----------- | ------------ | -------------- |
+| General     | 5            |                |
+| Unsupported |              | 6              |
 
 ---
 
@@ -66,5 +67,16 @@
 | `GetCallerIdentity`         | ✅ Supported |       | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetCallerIdentity.html)         |
 | `GetFederationToken`        | ✅ Supported |       | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetFederationToken.html)        |
 | `GetSessionToken`           | ✅ Supported |       | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetSessionToken.html)           |
+
+### Unsupported
+
+| Operation                    | Status         | Notes                  | AWS Docs                                                                                        |
+| ---------------------------- | -------------- | ---------------------- | ----------------------------------------------------------------------------------------------- |
+| `AssumeRoleWithSAML`         | ❌ Unsupported | Returns NotImplemented | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRoleWithSAML.html)         |
+| `AssumeRoot`                 | ❌ Unsupported | Returns NotImplemented | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRoot.html)                 |
+| `DecodeAuthorizationMessage` | ❌ Unsupported | Returns NotImplemented | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_DecodeAuthorizationMessage.html) |
+| `GetAccessKeyInfo`           | ❌ Unsupported | Returns NotImplemented | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetAccessKeyInfo.html)           |
+| `GetDelegatedAccessToken`    | ❌ Unsupported | Returns NotImplemented | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetDelegatedAccessToken.html)    |
+| `GetWebIdentityToken`        | ❌ Unsupported | Returns NotImplemented | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetWebIdentityToken.html)        |
 
 <!-- END overcast:capabilities -->

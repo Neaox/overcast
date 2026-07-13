@@ -195,6 +195,141 @@ func TestReceiveMessage_success(t *testing.T) {
 	}
 }
 
+// AWS returns system Attributes only when the caller requests them via
+// AttributeNames (deprecated) or MessageSystemAttributeNames. With no request,
+// the Attributes member must be absent.
+func TestReceiveMessage_noAttributesRequested_omitsAttributes(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "attr-omit-queue")
+	sendMessage(t, srv, queueURL, "hello!")
+
+	resp := sqsCall(t, srv, "ReceiveMessage", map[string]any{
+		"QueueUrl":            queueURL,
+		"MaxNumberOfMessages": 1,
+	})
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		Messages []struct {
+			Attributes map[string]string `json:"Attributes"`
+		} `json:"Messages"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+
+	if len(result.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(result.Messages))
+	}
+	if len(result.Messages[0].Attributes) != 0 {
+		t.Errorf("expected no Attributes when none requested, got %v", result.Messages[0].Attributes)
+	}
+}
+
+// AWS returns system Attributes when AttributeNames=["All"] is requested.
+func TestReceiveMessage_allAttributesRequested_includesSystemAttributes(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "attr-all-queue")
+	sendMessage(t, srv, queueURL, "hello!")
+
+	resp := sqsCall(t, srv, "ReceiveMessage", map[string]any{
+		"QueueUrl":            queueURL,
+		"MaxNumberOfMessages": 1,
+		"AttributeNames":      []string{"All"},
+	})
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		Messages []struct {
+			Attributes map[string]string `json:"Attributes"`
+		} `json:"Messages"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+
+	if len(result.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(result.Messages))
+	}
+	if result.Messages[0].Attributes["ApproximateReceiveCount"] != "1" {
+		t.Errorf("expected ApproximateReceiveCount=1, got %q", result.Messages[0].Attributes["ApproximateReceiveCount"])
+	}
+	if result.Messages[0].Attributes["SenderId"] == "" {
+		t.Error("expected SenderId to be present when All requested")
+	}
+}
+
+// AWS returns only the specifically named system attributes.
+func TestReceiveMessage_specificAttributeRequested_returnsOnlyThatAttribute(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "attr-specific-queue")
+	sendMessage(t, srv, queueURL, "hello!")
+
+	resp := sqsCall(t, srv, "ReceiveMessage", map[string]any{
+		"QueueUrl":            queueURL,
+		"MaxNumberOfMessages": 1,
+		"AttributeNames":      []string{"ApproximateReceiveCount"},
+	})
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		Messages []struct {
+			Attributes map[string]string `json:"Attributes"`
+		} `json:"Messages"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+
+	if len(result.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(result.Messages))
+	}
+	attrs := result.Messages[0].Attributes
+	if attrs["ApproximateReceiveCount"] != "1" {
+		t.Errorf("expected ApproximateReceiveCount=1, got %q", attrs["ApproximateReceiveCount"])
+	}
+	if _, ok := attrs["SentTimestamp"]; ok {
+		t.Errorf("expected SentTimestamp to be absent when only ApproximateReceiveCount requested, got %v", attrs)
+	}
+}
+
+// AWS returns MessageAttributes only when the caller requests them via
+// MessageAttributeNames.
+func TestReceiveMessage_messageAttributesFilteredByRequest(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "msg-attr-queue")
+
+	// Send a message with a custom message attribute.
+	sendResp := sqsCall(t, srv, "SendMessage", map[string]any{
+		"QueueUrl":    queueURL,
+		"MessageBody": "hello!",
+		"MessageAttributes": map[string]any{
+			"trace": map[string]any{"DataType": "String", "StringValue": "abc-123"},
+		},
+	})
+	sendResp.Body.Close()
+	if sendResp.StatusCode != http.StatusOK {
+		t.Fatalf("SendMessage: status %d", sendResp.StatusCode)
+	}
+
+	// When no MessageAttributeNames requested → MessageAttributes omitted.
+	resp := sqsCall(t, srv, "ReceiveMessage", map[string]any{
+		"QueueUrl":            queueURL,
+		"MaxNumberOfMessages": 1,
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		Messages []struct {
+			MessageAttributes map[string]any `json:"MessageAttributes"`
+		} `json:"Messages"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if len(result.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(result.Messages))
+	}
+	if len(result.Messages[0].MessageAttributes) != 0 {
+		t.Errorf("expected no MessageAttributes when none requested, got %v", result.Messages[0].MessageAttributes)
+	}
+}
+
 func TestReceiveMessage_emptyQueue(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	queueURL := createQueue(t, srv, "empty-queue")
@@ -1350,7 +1485,8 @@ func TestPeekMessages_doesNotIncrementReceiveCount(t *testing.T) {
 
 	// First real ReceiveMessage should show receive count = 1, not 4.
 	recvResp := sqsCall(t, srv, "ReceiveMessage", map[string]any{
-		"QueueUrl": queueURL,
+		"QueueUrl":       queueURL,
+		"AttributeNames": []string{"ApproximateReceiveCount"},
 	})
 	defer recvResp.Body.Close()
 	var r struct {

@@ -122,6 +122,7 @@ var schemas = map[string][]field{
 		{form: "VisibilityTimeout", json: "VisibilityTimeout", kind: kOptInt},
 		{form: "WaitTimeSeconds", json: "WaitTimeSeconds", kind: kInt},
 		{form: "AttributeName", json: "AttributeNames", kind: kList},
+		{form: "MessageSystemAttributeName", json: "MessageSystemAttributeNames", kind: kList},
 		{form: "MessageAttributeName", json: "MessageAttributeNames", kind: kList},
 	},
 	"DeleteMessage": {

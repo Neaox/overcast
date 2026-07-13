@@ -42,10 +42,10 @@
 | AppConfig       | 12  | Apps, environments, profiles, hosted config versions (CRUD + version counter)                                                                                                                              |
 | AppConfigData   | 3   | StartConfigurationSession, GetLatestConfiguration; poll-based delivery with "unchanged" detection                                                                                                          |
 | Secrets Manager | 21  | Secret CRUD, versioning, tags, rotation config (11 of 21 operations)                                                                                                                                       |
-| SSM             | 10  | Parameter Store: put, get, get-by-path, history, tags                                                                                                                                                      |
+| SSM             | 18  | Parameter Store: put, get, get-by-path, history, tags                                                                                                                                                      |
 | CloudWatch Logs | 18  | Log groups, streams, events, FilterLogEvents, DeleteLogStream                                                                                                                                              |
 | SES             | 42  | v1 + v2: SendEmail, SendRawEmail, identities, mail capture                                                                                                                                                 |
-| STS             | 5   | GetCallerIdentity, AssumeRole, GetSessionToken, temp credentials                                                                                                                                           |
+| STS             | 11  | GetCallerIdentity, AssumeRole, GetSessionToken, temp credentials                                                                                                                                           |
 
 ### Minimal / Stub
 
@@ -87,10 +87,10 @@
 | AppConfig       | 12  |
 | AppConfigData   | 3   |
 | Secrets Manager | 21  |
-| SSM             | 10  |
+| SSM             | 18  |
 | CloudWatch Logs | 18  |
 | SES             | 42  |
-| STS             | 5   |
+| STS             | 11  |
 | Step Functions  | 5   |
 | Pipes           | 5   |
 | WAF v2          | 4   |

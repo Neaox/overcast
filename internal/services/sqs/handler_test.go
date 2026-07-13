@@ -143,9 +143,10 @@ func TestReceiveMessageTyped_persistedMessageWithoutAttributes(t *testing.T) {
 		t.Fatalf("seed message: %v", err)
 	}
 
-	// When: the message is received.
+	// When: the message is received with system attributes requested.
 	resp, aerr := h.receiveMessageTyped(ctx, &receiveMessageRequest{
-		QueueUrl: queue.URL,
+		QueueUrl:       queue.URL,
+		AttributeNames: []string{"All"},
 	})
 
 	// Then: receive succeeds and normalizes the message attributes.

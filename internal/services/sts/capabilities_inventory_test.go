@@ -25,8 +25,16 @@ func TestCapabilities_MatchDispatchInventory(t *testing.T) {
 
 	caps := capabilities.Default.ForService("sts")
 	capsSet := make(map[string]struct{}, len(caps))
+	// docOnly holds capabilities that document AWS operations Overcast does not
+	// dispatch (unsupported operations that fall through to the router's
+	// NotImplemented handler). They are metadata only and are exempt from the
+	// dispatch cross-check.
+	docOnly := make(map[string]struct{})
 	for _, c := range caps {
 		capsSet[c.Operation] = struct{}{}
+		if c.DocOnly {
+			docOnly[c.Operation] = struct{}{}
+		}
 	}
 
 	var inDispatchNotCaps []string
@@ -39,9 +47,13 @@ func TestCapabilities_MatchDispatchInventory(t *testing.T) {
 
 	var inCapsNotDispatch []string
 	for op := range capsSet {
-		if _, ok := dispatchSet[op]; !ok {
-			inCapsNotDispatch = append(inCapsNotDispatch, op)
+		if _, ok := dispatchSet[op]; ok {
+			continue
 		}
+		if _, ok := docOnly[op]; ok {
+			continue
+		}
+		inCapsNotDispatch = append(inCapsNotDispatch, op)
 	}
 	sort.Strings(inCapsNotDispatch)
 

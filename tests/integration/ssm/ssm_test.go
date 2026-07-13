@@ -715,3 +715,36 @@ func TestDeleteParameters_batch(t *testing.T) {
 		t.Errorf("expected 3 deleted, got %d", len(result.DeletedParameters))
 	}
 }
+
+// ─── Unsupported operations ───────────────────────────────────────────────────
+
+// TestUnsupportedOperations_notImplemented documents that SSM operations
+// Overcast does not emulate return 501 NotImplemented. These operations are
+// tracked as DocOnly unsupported capabilities.
+func TestUnsupportedOperations_notImplemented(t *testing.T) {
+	// Given: an SSM service
+	srv := helpers.NewTestServer(t)
+
+	unsupported := []string{
+		"LabelParameterVersion",
+		"UnlabelParameterVersion",
+		"RemoveTagsFromResource",
+		"GetServiceSetting",
+		"CreateDocument",
+		"SendCommand",
+		"StartAutomationExecution",
+		"RegisterDefaultPatchBaseline",
+	}
+
+	for _, action := range unsupported {
+		t.Run(action, func(t *testing.T) {
+			// When: calling an unsupported operation
+			resp := ssmCall(t, srv, action, map[string]any{})
+			defer resp.Body.Close()
+
+			// Then: a 501 NotImplemented JSON error is returned
+			helpers.AssertStatus(t, resp, http.StatusNotImplemented)
+			helpers.AssertJSONError(t, resp, "NotImplemented")
+		})
+	}
+}

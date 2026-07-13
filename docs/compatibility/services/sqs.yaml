@@ -2,7 +2,7 @@ service: sqs
 status: in_progress
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-22
+last_updated: 2026-07-13
 protocols:
   - aws_json_1_0
   - query
@@ -69,10 +69,17 @@ operations:
         tests:
           - tests/integration/sqs/sqs_test.go
         notes: Malformed emulator state records are isolated; list/receive skips malformed scanned records, and a malformed targeted queue is treated as non-existent instead of returning InternalError.
+      - name: attribute projection (AttributeNames/MessageSystemAttributeNames/MessageAttributeNames)
+        status: fixed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+          - internal/services/sqs/handler_test.go
+        notes: System Attributes are now returned only when requested via AttributeNames (deprecated) or MessageSystemAttributeNames; user MessageAttributes only when requested via MessageAttributeNames. "All"/".*" selectors and "prefix.*" message-attribute selectors are honored. Previously all attributes were returned unconditionally, diverging from AWS.
     evidence:
       - AWS docs state WaitTimeSeconds long polling returns no message list when no messages are available, not an error.
       - AWS API Reference documents MaxNumberOfMessages valid values as 1 to 10 and default 1.
       - AWS Developer Guide documents the maximum long polling wait time as 20 seconds and short polling when WaitTimeSeconds is 0.
+      - AWS API Reference ReceiveMessage returns system Attributes only when AttributeNames/MessageSystemAttributeNames are supplied and user MessageAttributes only when MessageAttributeNames are supplied; the sample response with AttributeNames=[All] includes SenderId/SentTimestamp/ApproximateReceiveCount/ApproximateFirstReceiveTimestamp.
     gaps:
       - ReceiveRequestAttemptId behavior for FIFO queues needs review.
       - VisibilityTimeout validation and in-flight semantics need review.
@@ -86,6 +93,7 @@ findings:
     - Empty JSON receives now omit the Messages member, and empty Query receives are covered by XML shape tests.
     - Explicit MaxNumberOfMessages outside 1..10 and WaitTimeSeconds outside 0..20 now return InvalidParameterValue instead of silently clamping or accepting the request.
     - Malformed persisted queue/message records no longer make ListQueues or ReceiveMessage return InternalError for unrelated usable queues.
+    - ReceiveMessage now projects system and message attributes based on the requested AttributeNames/MessageSystemAttributeNames/MessageAttributeNames instead of always returning every attribute.
   remaining_gaps:
     - Review ReceiveRequestAttemptId behavior for FIFO queues.
     - Review VisibilityTimeout validation and in-flight semantics.

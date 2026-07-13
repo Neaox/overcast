@@ -236,3 +236,43 @@ func TestAssumeRoleWithWebIdentity_success(t *testing.T) {
 		t.Errorf("expected ASIA prefix, got %q", result.Result.Credentials.AccessKeyId)
 	}
 }
+
+// ─── Unsupported operations ───────────────────────────────────────────────────
+
+// TestUnsupportedOperations_notImplemented documents that STS operations
+// Overcast does not emulate return a NotImplemented error in AWS Query XML
+// form. These operations are tracked as DocOnly unsupported capabilities.
+func TestUnsupportedOperations_notImplemented(t *testing.T) {
+	// Given: an STS service
+	srv := helpers.NewTestServer(t)
+
+	unsupported := []string{
+		"AssumeRoleWithSAML",
+		"AssumeRoot",
+		"DecodeAuthorizationMessage",
+		"GetAccessKeyInfo",
+		"GetDelegatedAccessToken",
+		"GetWebIdentityToken",
+	}
+
+	for _, action := range unsupported {
+		t.Run(action, func(t *testing.T) {
+			// When: calling an unsupported action
+			resp := stsCall(t, srv, action, nil)
+			defer resp.Body.Close()
+
+			// Then: a NotImplemented XML error is returned
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			var result struct {
+				XMLName xml.Name `xml:"ErrorResponse"`
+				Error   struct {
+					Code string `xml:"Code"`
+				} `xml:"Error"`
+			}
+			decodeXML(t, resp, &result)
+			if result.Error.Code != "NotImplemented" {
+				t.Errorf("expected NotImplemented, got %q", result.Error.Code)
+			}
+		})
+	}
+}

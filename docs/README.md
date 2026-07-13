@@ -96,10 +96,10 @@ x-emulator-unsupported: true
 | AppConfig        | [appconfig.md](./services/appconfig.md)             | 12  | Core CRUD + common workflows  |
 | AppConfigData    | [appconfigdata.md](./services/appconfigdata.md)     | 3   | Core CRUD + common workflows  |
 | Secrets Manager  | [secretsmanager.md](./services/secretsmanager.md)   | 21  | Core CRUD + common workflows  |
-| SSM              | [ssm.md](./services/ssm.md)                         | 10  | Core CRUD + common workflows  |
+| SSM              | [ssm.md](./services/ssm.md)                         | 18  | Core CRUD + common workflows  |
 | CloudWatch Logs  | [cloudwatch-logs.md](./services/cloudwatch-logs.md) | 18  | Core CRUD + common workflows  |
 | SES              | [ses.md](./services/ses.md)                         | 42  | Core CRUD + common workflows  |
-| STS              | [sts.md](./services/sts.md)                         | 5   | Core CRUD + common workflows  |
+| STS              | [sts.md](./services/sts.md)                         | 11  | Core CRUD + common workflows  |
 | Step Functions   | [stepfunctions.md](./services/stepfunctions.md)     | 5   | Minimal / targeted support    |
 | Pipes            | [pipes.md](./services/pipes.md)                     | 5   | Minimal / targeted support    |
 | WAF v2           | [waf.md](./services/waf.md)                         | 4   | Minimal / targeted support    |
