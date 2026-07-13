@@ -1611,6 +1611,7 @@ func TestScan_Limit_Pagination(t *testing.T) {
 	var page1 struct {
 		Items            []map[string]any `json:"Items"`
 		Count            int              `json:"Count"`
+		ScannedCount     int              `json:"ScannedCount"`
 		LastEvaluatedKey map[string]any   `json:"LastEvaluatedKey"`
 	}
 	helpers.DecodeJSON(t, resp, &page1)
@@ -1639,7 +1640,130 @@ func TestScan_Limit_Pagination(t *testing.T) {
 	if page2.Count != 2 {
 		t.Fatalf("expected 2 items in page2, got %d", page2.Count)
 	}
-	// Total items across page1+page2 should be 4 distinct IDs
+	// Then: ScannedCount reflects items evaluated (after Limit, 5 items available, but Limit=2 so only 2 evaluated)
+	if page1.ScannedCount != 2 {
+		t.Errorf("expected ScannedCount=2 (Limit=2 items evaluated), got %d", page1.ScannedCount)
+	}
+}
+
+func TestScan_scannedCountWithoutFilter(t *testing.T) {
+	// Given: 5 items in a table
+	srv := helpers.NewTestServer(t)
+	createTable(t, srv, "scan-sc-table")
+	for i := 1; i <= 5; i++ {
+		putItem(t, srv, "scan-sc-table", map[string]any{
+			"id": map[string]string{"S": fmt.Sprintf("item%d", i)},
+		})
+	}
+
+	// When: Scan with no Limit — all 5 items are evaluated
+	resp := ddbCall(t, srv, "Scan", map[string]any{
+		"TableName": "scan-sc-table",
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var result struct {
+		Count        int `json:"Count"`
+		ScannedCount int `json:"ScannedCount"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+
+	// Then: Count and ScannedCount both return 5 (no filtering, no limit)
+	if result.Count != 5 {
+		t.Errorf("expected Count=5, got %d", result.Count)
+	}
+	if result.ScannedCount != 5 {
+		t.Errorf("expected ScannedCount=5, got %d", result.ScannedCount)
+	}
+}
+
+func TestScan_scannedCountWithFilter(t *testing.T) {
+	// Given: 5 items; first 2 have flag="skip"
+	srv := helpers.NewTestServer(t)
+	createTable(t, srv, "scan-filter-sc")
+	for i := 1; i <= 5; i++ {
+		flag := "keep"
+		if i <= 2 {
+			flag = "skip"
+		}
+		putItem(t, srv, "scan-filter-sc", map[string]any{
+			"id":   map[string]any{"S": fmt.Sprintf("item%d", i)},
+			"flag": map[string]any{"S": flag},
+		})
+	}
+
+	// When: Scan with a filter expression
+	resp := ddbCall(t, srv, "Scan", map[string]any{
+		"TableName":        "scan-filter-sc",
+		"FilterExpression": "flag = :v",
+		"ExpressionAttributeValues": map[string]any{
+			":v": map[string]any{"S": "keep"},
+		},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var result struct {
+		Count        int `json:"Count"`
+		ScannedCount int `json:"ScannedCount"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+
+	// Then: Count reflects items AFTER filtering (3 keep items)
+	if result.Count != 3 {
+		t.Errorf("expected Count=3, got %d", result.Count)
+	}
+	// Then: ScannedCount reflects items EVALUATED before filter (all 5)
+	if result.ScannedCount != 5 {
+		t.Errorf("expected ScannedCount=5, got %d", result.ScannedCount)
+	}
+}
+
+func TestScan_scannedCountWithLimitAndFilter(t *testing.T) {
+	// Given: 5 items; only items 3-5 match the filter
+	srv := helpers.NewTestServer(t)
+	createTable(t, srv, "scan-limit-filter-sc")
+	for i := 1; i <= 5; i++ {
+		flag := "keep"
+		if i <= 2 {
+			flag = "skip"
+		}
+		putItem(t, srv, "scan-limit-filter-sc", map[string]any{
+			"id":   map[string]any{"S": fmt.Sprintf("item%d", i)},
+			"flag": map[string]any{"S": flag},
+		})
+	}
+
+	// When: Scan evaluates only the first 3 items and then applies the filter
+	resp := ddbCall(t, srv, "Scan", map[string]any{
+		"TableName":        "scan-limit-filter-sc",
+		"Limit":            3,
+		"FilterExpression": "flag = :v",
+		"ExpressionAttributeValues": map[string]any{
+			":v": map[string]any{"S": "keep"},
+		},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var result struct {
+		Count            int            `json:"Count"`
+		ScannedCount     int            `json:"ScannedCount"`
+		LastEvaluatedKey map[string]any `json:"LastEvaluatedKey"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+
+	// Then: ScannedCount reflects the 3 evaluated items, while Count reflects the 1 matching item
+	if result.Count != 1 {
+		t.Errorf("expected Count=1, got %d", result.Count)
+	}
+	if result.ScannedCount != 3 {
+		t.Errorf("expected ScannedCount=3, got %d", result.ScannedCount)
+	}
+	if result.LastEvaluatedKey == nil {
+		t.Error("expected LastEvaluatedKey when Limit stops scan before the table is exhausted")
+	}
 }
 
 func TestScan_ParallelScan(t *testing.T) {
