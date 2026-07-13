@@ -71,6 +71,31 @@ For prereleases, the Docker channel tag is derived from the prerelease suffix.
 `0.0.1-alpha.0` publishes `ghcr.io/neaox/overcast:alpha` and
 `ghcr.io/neaox/overcast-slim:alpha`.
 
+## Branch Safety
+
+Release prep must happen on a dedicated branch and be merged through a pull
+request. Do not commit release-prep changes while the current branch is `main`,
+even if you do not intend to push directly.
+
+Create or switch to the release branch before making release-prep edits. This is
+the first step of the workflow, not something to defer until commit time.
+
+Before editing `VERSION` or `CHANGELOG.md`, verify the branch:
+
+```sh
+git branch --show-current
+```
+
+If the command returns `main`, stop and create/switch to a release branch first:
+
+```sh
+git switch -c release/x.y.z-alpha.n
+```
+
+For agents: if you discover you are already on `main` during release prep, stop
+and ask before committing. The protected workflow is branch PR -> merge to
+`main` -> release automation, not local commits on `main`.
+
 ## Preflight Checklist
 
 Before merging the release-prep PR to `main`:
@@ -100,27 +125,32 @@ Before merging the release-prep PR to `main`:
 
 For an alpha release:
 
-1. Update `VERSION`:
+1. Create and work on a release branch, not `main`:
+   ```sh
+   git switch -c release/x.y.z-alpha.n
+   ```
+2. Update `VERSION`:
    ```text
    x.y.z-alpha.n
    ```
-2. Move the relevant `CHANGELOG.md` notes out of `[Unreleased]` into:
+3. Move the relevant `CHANGELOG.md` notes out of `[Unreleased]` into:
    ```markdown
    ## [x.y.z-alpha.n] - YYYY-MM-DD
    ```
-3. Leave the `[Unreleased]` section present and empty.
-4. Merge the release-prep PR to `main`.
-5. Watch the `Release` workflow until all jobs pass.
-6. Verify the GitHub release `v<VERSION>` exists and contains native
+4. Leave the `[Unreleased]` section present and empty.
+5. Commit the release-prep changes on the release branch and open a PR.
+6. Merge the release-prep PR to `main`.
+7. Watch the `Release` workflow until all jobs pass.
+8. Verify the GitHub release `v<VERSION>` exists and contains native
    binaries plus `SHA256SUMS`.
-7. Verify the Docker images exist:
+9. Verify the Docker images exist:
    ```sh
    docker pull ghcr.io/neaox/overcast:<version>
    docker pull ghcr.io/neaox/overcast:alpha
    docker pull ghcr.io/neaox/overcast-slim:<version>
    docker pull ghcr.io/neaox/overcast-slim:alpha
    ```
-8. Smoke test the slim image:
+10. Smoke test the slim image:
    ```sh
    docker run --rm -d --name overcast-smoke -p 4566:4566 ghcr.io/neaox/overcast-slim:<version>
    curl -sf http://localhost:4566/_health
