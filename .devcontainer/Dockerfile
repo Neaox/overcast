@@ -88,6 +88,7 @@ RUN groupadd --gid ${USER_GID} ${USERNAME} \
 # The actual modules are downloaded by postCreateCommand in devcontainer.json.
 RUN mkdir -p /go/pkg/mod \
              /home/${USERNAME}/.config/opencode \
+             /home/${USERNAME}/.config/gh \
              /home/${USERNAME}/.local/share/opencode \
   && chown -R ${USERNAME}:${USERNAME} /go /home/${USERNAME}/.config /home/${USERNAME}/.local
 

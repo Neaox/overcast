@@ -119,7 +119,7 @@
   // (e.g. after a Docker Desktop restart). In that case /var/run/docker.sock
   // reverts to root:root; this ensures the vscode user (docker group) can
   // always reach it without a full container rebuild.
-  "postStartCommand": "sudo chgrp docker /var/run/docker.sock 2>/dev/null || true",
+  "postStartCommand": "sudo chgrp docker /var/run/docker.sock 2>/dev/null || true; sudo chown -R vscode:vscode /home/vscode/.config/gh 2>/dev/null || true",
 
   // ---- VS Code customisation ----------------------------------------------
   "customizations": {
