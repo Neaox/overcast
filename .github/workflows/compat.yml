@@ -134,10 +134,10 @@ jobs:
           fi
 
       - uses: docker/setup-buildx-action@v4.2.0
-        if: github.event_name == 'pull_request' || steps.changes.outputs.changed == 'true' || steps.exists.outputs.exists != 'true'
+        if: steps.changes.outputs.changed == 'true' || (github.event_name != 'pull_request' && steps.exists.outputs.exists != 'true')
 
       - name: Build and maybe push image
-        if: github.event_name == 'pull_request' || steps.changes.outputs.changed == 'true' || steps.exists.outputs.exists != 'true'
+        if: steps.changes.outputs.changed == 'true' || (github.event_name != 'pull_request' && steps.exists.outputs.exists != 'true')
         uses: docker/build-push-action@v7.3.0
         with:
           context: compat/suites
@@ -284,6 +284,7 @@ jobs:
           OVERCAST_ENDPOINT: http://localhost:4566
           OVERCAST_COMPAT_SKIP_DOCKER: "1"
           OVERCAST_COMPAT_RESULTS_FILE: compat-results-${{ matrix.suite }}.json
+          OVERCAST_RUST_SKIP_PULL: "1"
         run: |
           ./bin/compat \
             --endpoint http://localhost:4566 \
