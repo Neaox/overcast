@@ -62,6 +62,10 @@ need it than accidentally ship a breaking change as a patch.
        binary packaging, release process, or user-facing docs.
 -->
 
+### Changed
+
+- **STS / SSM** — capability docs now list the unsupported operations for each service (STS SAML/OIDC/federation misc; SSM non-Parameter-Store operations), correcting stale manual matrices that referenced non-existent operations. No runtime behaviour change — these operations already returned `NotImplemented`.
+
 ## [0.0.1-alpha.5] - 2026-07-13
 
 ### Fixed

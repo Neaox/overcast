@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1234,
+  "total_ops": 1248,
   "services": [
     {
       "service": "s3",
@@ -5430,7 +5430,7 @@
     {
       "service": "ssm",
       "display_name": "SSM",
-      "total_ops": 10,
+      "total_ops": 18,
       "implemented_ops": 10,
       "operations": [
         {
@@ -5482,6 +5482,62 @@
           "operation": "PutParameter",
           "category": "General",
           "status": "✅ Supported"
+        },
+        {
+          "operation": "LabelParameterVersion",
+          "category": "Parameters",
+          "status": "❌ Unsupported",
+          "notes": "Returns 501",
+          "doc_only": true
+        },
+        {
+          "operation": "UnlabelParameterVersion",
+          "category": "Parameters",
+          "status": "❌ Unsupported",
+          "notes": "Returns 501",
+          "doc_only": true
+        },
+        {
+          "operation": "RemoveTagsFromResource",
+          "category": "Tags",
+          "status": "❌ Unsupported",
+          "notes": "Returns 501",
+          "doc_only": true
+        },
+        {
+          "operation": "GetServiceSetting",
+          "category": "Advanced/misc",
+          "status": "❌ Unsupported",
+          "notes": "Returns 501",
+          "doc_only": true
+        },
+        {
+          "operation": "CreateDocument",
+          "category": "Advanced/misc",
+          "status": "❌ Unsupported",
+          "notes": "Returns 501",
+          "doc_only": true
+        },
+        {
+          "operation": "SendCommand",
+          "category": "Advanced/misc",
+          "status": "❌ Unsupported",
+          "notes": "Returns 501",
+          "doc_only": true
+        },
+        {
+          "operation": "StartAutomationExecution",
+          "category": "Advanced/misc",
+          "status": "❌ Unsupported",
+          "notes": "Returns 501",
+          "doc_only": true
+        },
+        {
+          "operation": "RegisterDefaultPatchBaseline",
+          "category": "Advanced/misc",
+          "status": "❌ Unsupported",
+          "notes": "Returns 501",
+          "doc_only": true
         }
       ]
     },
@@ -5865,7 +5921,7 @@
     {
       "service": "sts",
       "display_name": "STS",
-      "total_ops": 5,
+      "total_ops": 11,
       "implemented_ops": 5,
       "operations": [
         {
@@ -5892,6 +5948,48 @@
           "operation": "GetSessionToken",
           "category": "General",
           "status": "✅ Supported"
+        },
+        {
+          "operation": "AssumeRoleWithSAML",
+          "category": "Unsupported",
+          "status": "❌ Unsupported",
+          "notes": "Returns NotImplemented",
+          "doc_only": true
+        },
+        {
+          "operation": "AssumeRoot",
+          "category": "Unsupported",
+          "status": "❌ Unsupported",
+          "notes": "Returns NotImplemented",
+          "doc_only": true
+        },
+        {
+          "operation": "DecodeAuthorizationMessage",
+          "category": "Unsupported",
+          "status": "❌ Unsupported",
+          "notes": "Returns NotImplemented",
+          "doc_only": true
+        },
+        {
+          "operation": "GetAccessKeyInfo",
+          "category": "Unsupported",
+          "status": "❌ Unsupported",
+          "notes": "Returns NotImplemented",
+          "doc_only": true
+        },
+        {
+          "operation": "GetDelegatedAccessToken",
+          "category": "Unsupported",
+          "status": "❌ Unsupported",
+          "notes": "Returns NotImplemented",
+          "doc_only": true
+        },
+        {
+          "operation": "GetWebIdentityToken",
+          "category": "Unsupported",
+          "status": "❌ Unsupported",
+          "notes": "Returns NotImplemented",
+          "doc_only": true
         }
       ]
     },

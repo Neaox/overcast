@@ -1,21 +1,25 @@
 service: ssm
-status: not_started
+status: docs_reviewed
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-17
+last_updated: 2026-07-13
 protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]
 implementation: [internal/services/ssm]
 integration_tests: [tests/integration/ssm]
 capability_docs: docs/services/ssm.md
-operation_count_estimate: 10 tracked in capabilities; older manual summary lists 18 total
-current_support_level: Parameter Store core operations supported; advanced/misc operations may be stale in docs.
+operation_count_estimate: 10 Parameter Store operations supported; 8 representative unsupported operations tracked
+current_support_level: Parameter Store core operations supported; representative unsupported operations now tracked as DocOnly unsupported capabilities and return 501 NotImplemented.
 operations: {}
 findings:
-  fixed: []
+  fixed:
+    - Added representative unsupported SSM operations (LabelParameterVersion, UnlabelParameterVersion, RemoveTagsFromResource, GetServiceSetting, CreateDocument, SendCommand, StartAutomationExecution, RegisterDefaultPatchBaseline) to capabilities_dev.go as DocOnly unsupported.
+    - Removed non-existent operations from the manual matrix in docs/services/ssm.md (PutParameters, GetParametersByPathRecursive).
+    - Added TestUnsupportedOperations_notImplemented asserting unsupported operations return 501 NotImplemented.
   remaining_gaps:
-    - Add unsupported SSM operations to capabilities_dev.go or remove stale manual summary.
-  intentionally_partial: []
+    - SSM has a very large operation surface (~150 operations); only Parameter Store plus representative unsupported operations are tracked. The full non-Parameter-Store surface remains unimplemented and untracked by design.
+  intentionally_partial:
+    - SecureString values are masked without WithDecryption and returned in plaintext with it; no real KMS encryption.
 handoff:
   start_with: [PutParameter, GetParametersByPath, parameter history]
-  do_not_redo: []
-  commands: [go test -count=1 ./internal/services/ssm/... ./tests/integration/ssm/...]
+  do_not_redo: [Parameter Store capability tracking, unsupported-operation representative tracking]
+  commands: [go test -count=1 ./internal/services/ssm/... ./tests/integration/ssm/..., go test -tags dev -count=1 ./internal/services/ssm/...]

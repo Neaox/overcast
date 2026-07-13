@@ -12,9 +12,9 @@ SSM Parameter Store accepts AWS JSON 1.1 requests at `POST /` with
 
 | Category      | ✅ Supported | ❌ Unsupported |
 | ------------- | ------------ | -------------- |
-| Parameters    | 8            | 0              |
-| Tags          | 2            | 0              |
-| Advanced/misc | 0            | 8              |
+| Parameters    | 8            | 2              |
+| Tags          | 2            | 1              |
+| Advanced/misc | 0            | 5              |
 | **Total**     | **10**       | **8**          |
 
 ## Endpoint details
@@ -32,13 +32,13 @@ SSM Parameter Store accepts AWS JSON 1.1 requests at `POST /` with
 | DeleteParameter              | ✅     | Single parameter deletion                                    | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_DeleteParameter.html)          |
 | DeleteParameters             | ✅     | Batch delete; invalid names returned in InvalidParameters    | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_DeleteParameters.html)         |
 | LabelParameterVersion        | ❌     | Returns 501                                                  | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_LabelParameterVersion.html)    |
+| UnlabelParameterVersion      | ❌     | Returns 501                                                  | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_UnlabelParameterVersion.html)  |
 | RemoveTagsFromResource       | ❌     | Returns 501                                                  | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_RemoveTagsFromResource.html)   |
-| GetParametersByPathRecursive | ➡️     | Via GetParametersByPath with Recursive=true                  |                                                                                                           |
-| PutParameters                | ❌     | Returns 501                                                  |                                                                                                           |
-| RegisterDefaultPatchBaseline | ❌     | Returns 501                                                  |                                                                                                           |
+| GetServiceSetting            | ❌     | Returns 501                                                  | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetServiceSetting.html)        |
 | SendCommand                  | ❌     | Returns 501                                                  | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_SendCommand.html)              |
 | StartAutomationExecution     | ❌     | Returns 501                                                  | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_StartAutomationExecution.html) |
 | CreateDocument               | ❌     | Returns 501                                                  | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_CreateDocument.html)           |
+| RegisterDefaultPatchBaseline | ❌     | Returns 501                                                  | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_RegisterDefaultPatchBaseline.html) |
 
 ## SDK compatibility
 
@@ -63,9 +63,12 @@ SSM Parameter Store accepts AWS JSON 1.1 requests at `POST /` with
 
 ## Summary
 
-| Category | ✅ Supported |
-| -------- | ------------ |
-| General  | 10           |
+| Category      | ✅ Supported | ❌ Unsupported |
+| ------------- | ------------ | -------------- |
+| General       | 10           |                |
+| Parameters    |              | 2              |
+| Tags          |              | 1              |
+| Advanced/misc |              | 5              |
 
 ---
 
@@ -85,5 +88,28 @@ SSM Parameter Store accepts AWS JSON 1.1 requests at `POST /` with
 | `GetParametersByPath` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParametersByPath.html) |
 | `ListTagsForResource` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_ListTagsForResource.html) |
 | `PutParameter`        | ✅ Supported |       | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_PutParameter.html)        |
+
+### Parameters
+
+| Operation                 | Status         | Notes       | AWS Docs                                                                                                 |
+| ------------------------- | -------------- | ----------- | -------------------------------------------------------------------------------------------------------- |
+| `LabelParameterVersion`   | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_LabelParameterVersion.html)   |
+| `UnlabelParameterVersion` | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_UnlabelParameterVersion.html) |
+
+### Tags
+
+| Operation                | Status         | Notes       | AWS Docs                                                                                                |
+| ------------------------ | -------------- | ----------- | ------------------------------------------------------------------------------------------------------- |
+| `RemoveTagsFromResource` | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_RemoveTagsFromResource.html) |
+
+### Advanced/misc
+
+| Operation                      | Status         | Notes       | AWS Docs                                                                                                      |
+| ------------------------------ | -------------- | ----------- | ------------------------------------------------------------------------------------------------------------- |
+| `GetServiceSetting`            | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetServiceSetting.html)            |
+| `CreateDocument`               | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_CreateDocument.html)               |
+| `SendCommand`                  | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_SendCommand.html)                  |
+| `StartAutomationExecution`     | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_StartAutomationExecution.html)     |
+| `RegisterDefaultPatchBaseline` | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_RegisterDefaultPatchBaseline.html) |
 
 <!-- END overcast:capabilities -->
