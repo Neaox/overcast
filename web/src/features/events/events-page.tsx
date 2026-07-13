@@ -46,8 +46,13 @@ function buildSourceEntries(): SourceEntry[] {
       continue
     }
 
-    const svc = SERVICES[key as keyof typeof SERVICES]
-    entries.push({ id: key, label: svc?.label ?? toTitleCase(key) })
+    if (key in SERVICES) {
+      const svc = SERVICES[key as keyof typeof SERVICES]
+      entries.push({ id: key, label: svc.label })
+      continue
+    }
+
+    entries.push({ id: key, label: toTitleCase(key) })
   }
   return entries
 }
