@@ -62,6 +62,10 @@ need it than accidentally ship a breaking change as a patch.
        binary packaging, release process, or user-facing docs.
 -->
 
+### Fixed
+
+- **Web UI** — the Event Stream page no longer crashes when SSE events include non-navigable sources such as service errors or inbox deliveries.
+
 ## [0.0.1-alpha.6] - 2026-07-14
 
 ### Changed
