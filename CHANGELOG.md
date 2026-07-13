@@ -66,6 +66,10 @@ need it than accidentally ship a breaking change as a patch.
 
 - **STS / SSM** — capability docs now list the unsupported operations for each service (STS SAML/OIDC/federation misc; SSM non-Parameter-Store operations), correcting stale manual matrices that referenced non-existent operations. No runtime behaviour change — these operations already returned `NotImplemented`.
 
+### Fixed
+
+- **SQS** — `ReceiveMessage` now returns system attributes only when requested via `AttributeNames`/`MessageSystemAttributeNames` and user message attributes only when requested via `MessageAttributeNames` (honouring `All`, `.*`, and `prefix.*` selectors), matching AWS. Previously all attributes were returned unconditionally.
+
 ## [0.0.1-alpha.5] - 2026-07-13
 
 ### Fixed

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -44,12 +45,13 @@ type sendMessageResponse struct {
 }
 
 type receiveMessageRequest struct {
-	QueueUrl              string   `json:"QueueUrl"`
-	MaxNumberOfMessages   *int     `json:"MaxNumberOfMessages,omitempty"`
-	VisibilityTimeout     *int     `json:"VisibilityTimeout,omitempty"`
-	WaitTimeSeconds       *int     `json:"WaitTimeSeconds,omitempty"`
-	AttributeNames        []string `json:"AttributeNames,omitempty"`
-	MessageAttributeNames []string `json:"MessageAttributeNames,omitempty"`
+	QueueUrl                    string   `json:"QueueUrl"`
+	MaxNumberOfMessages         *int     `json:"MaxNumberOfMessages,omitempty"`
+	VisibilityTimeout           *int     `json:"VisibilityTimeout,omitempty"`
+	WaitTimeSeconds             *int     `json:"WaitTimeSeconds,omitempty"`
+	AttributeNames              []string `json:"AttributeNames,omitempty"`
+	MessageSystemAttributeNames []string `json:"MessageSystemAttributeNames,omitempty"`
+	MessageAttributeNames       []string `json:"MessageAttributeNames,omitempty"`
 }
 
 type receiveMessageResponse struct {
@@ -271,7 +273,9 @@ func (h *Handler) receiveMessageTyped(ctx context.Context, in *receiveMessageReq
 		visibilityTimeout = *in.VisibilityTimeout
 	}
 
-	received, aerr := h.selectVisibleMessages(storeCtx, queueName, q, maxMessages, visibilityTimeout)
+	systemAttrNames := requestedSystemAttributeNames(in)
+
+	received, aerr := h.selectVisibleMessages(storeCtx, queueName, q, maxMessages, visibilityTimeout, systemAttrNames, in.MessageAttributeNames)
 	if aerr != nil {
 		if waitTimeSeconds > 0 && isLongPollContextDone(aerr) {
 			return &receiveMessageResponse{Messages: []receivedMessage{}}, nil
@@ -291,7 +295,7 @@ func (h *Handler) receiveMessageTyped(ctx context.Context, in *receiveMessageReq
 			case <-deadline:
 				break poll
 			case <-ticker.C:
-				received, aerr = h.selectVisibleMessages(storeCtx, queueName, q, maxMessages, visibilityTimeout)
+				received, aerr = h.selectVisibleMessages(storeCtx, queueName, q, maxMessages, visibilityTimeout, systemAttrNames, in.MessageAttributeNames)
 				if aerr != nil || len(received) > 0 {
 					break poll
 				}
@@ -344,6 +348,97 @@ func invalidSQSParameterValue(name string, value int, validRange string) *protoc
 		Message:    "Invalid value for parameter " + name + ": " + strconv.Itoa(value) + ". Valid values are " + validRange + ".",
 		HTTPStatus: http.StatusBadRequest,
 	}
+}
+
+// filterSystemAttributes returns the subset of a message's system attributes
+// that the caller requested. AWS returns system attributes only when the
+// request includes AttributeNames (deprecated) or MessageSystemAttributeNames;
+// "All" (or ".*") returns every attribute. When nothing is requested the
+// Attributes member is omitted entirely.
+func filterSystemAttributes(attrs map[string]string, requested []string) map[string]string {
+	if len(attrs) == 0 || len(requested) == 0 {
+		return nil
+	}
+	if containsAllSelector(requested) {
+		out := make(map[string]string, len(attrs))
+		for k, v := range attrs {
+			out[k] = v
+		}
+		return out
+	}
+	out := make(map[string]string)
+	for _, name := range requested {
+		if v, ok := attrs[name]; ok {
+			out[name] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// filterMessageAttributes returns the subset of a message's user-defined
+// message attributes that the caller requested via MessageAttributeNames.
+// "All" (or ".*") returns every attribute; a "prefix.*" selector matches by
+// prefix. When nothing is requested the MessageAttributes member is omitted.
+func filterMessageAttributes(attrs map[string]MessageAttribute, requested []string) map[string]MessageAttribute {
+	if len(attrs) == 0 || len(requested) == 0 {
+		return nil
+	}
+	if containsAllSelector(requested) {
+		out := make(map[string]MessageAttribute, len(attrs))
+		for k, v := range attrs {
+			out[k] = v
+		}
+		return out
+	}
+	out := make(map[string]MessageAttribute)
+	for _, sel := range requested {
+		if strings.HasSuffix(sel, ".*") {
+			prefix := strings.TrimSuffix(sel, "*")
+			for name, v := range attrs {
+				if strings.HasPrefix(name, prefix) {
+					out[name] = v
+				}
+			}
+			continue
+		}
+		if v, ok := attrs[sel]; ok {
+			out[sel] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// containsAllSelector reports whether the requested names include the AWS
+// "return everything" selectors "All" or ".*".
+func containsAllSelector(requested []string) bool {
+	for _, name := range requested {
+		if name == "All" || name == ".*" {
+			return true
+		}
+	}
+	return false
+}
+
+// requestedSystemAttributeNames merges the deprecated AttributeNames parameter
+// with the current MessageSystemAttributeNames parameter. AWS accepts both and
+// treats MessageSystemAttributeNames as the successor to AttributeNames.
+func requestedSystemAttributeNames(in *receiveMessageRequest) []string {
+	if len(in.AttributeNames) == 0 {
+		return in.MessageSystemAttributeNames
+	}
+	if len(in.MessageSystemAttributeNames) == 0 {
+		return in.AttributeNames
+	}
+	merged := make([]string, 0, len(in.AttributeNames)+len(in.MessageSystemAttributeNames))
+	merged = append(merged, in.AttributeNames...)
+	merged = append(merged, in.MessageSystemAttributeNames...)
+	return merged
 }
 
 func (h *Handler) deleteMessageTyped(ctx context.Context, in *deleteMessageRequest) (*struct{}, *protocol.AWSError) {
@@ -744,7 +839,9 @@ func (h *Handler) ReceiveMessage(w http.ResponseWriter, r *http.Request) {
 		visibilityTimeout = *req.VisibilityTimeout
 	}
 
-	received, aerr := h.selectVisibleMessages(storeCtx, queueName, q, maxMessages, visibilityTimeout)
+	systemAttrNames := requestedSystemAttributeNames(&req)
+
+	received, aerr := h.selectVisibleMessages(storeCtx, queueName, q, maxMessages, visibilityTimeout, systemAttrNames, req.MessageAttributeNames)
 	if aerr != nil {
 		if waitTimeSeconds > 0 && isLongPollContextDone(aerr) {
 			received = []receivedMessage{}
@@ -769,7 +866,7 @@ func (h *Handler) ReceiveMessage(w http.ResponseWriter, r *http.Request) {
 			case <-deadline:
 				break poll
 			case <-ticker.C:
-				received, aerr = h.selectVisibleMessages(storeCtx, queueName, q, maxMessages, visibilityTimeout)
+				received, aerr = h.selectVisibleMessages(storeCtx, queueName, q, maxMessages, visibilityTimeout, systemAttrNames, req.MessageAttributeNames)
 				if aerr != nil || len(received) > 0 {
 					break poll
 				}
@@ -796,7 +893,11 @@ func (h *Handler) ReceiveMessage(w http.ResponseWriter, r *http.Request) {
 // maxMessages visible ones, marking them in-flight. It handles FIFO ordering,
 // DLQ movement, and event publishing. It is called both for immediate receives
 // and from the long-polling loop in ReceiveMessage.
-func (h *Handler) selectVisibleMessages(ctx context.Context, queueName string, q *Queue, maxMessages, visibilityTimeout int) ([]receivedMessage, *protocol.AWSError) {
+//
+// systemAttrNames and messageAttrNames control which system attributes and
+// user-defined message attributes are included in the response, mirroring AWS
+// which returns them only when explicitly requested.
+func (h *Handler) selectVisibleMessages(ctx context.Context, queueName string, q *Queue, maxMessages, visibilityTimeout int, systemAttrNames, messageAttrNames []string) ([]receivedMessage, *protocol.AWSError) {
 	allMessages, aerr := h.store.listMessages(ctx, queueName)
 	if aerr != nil {
 		return nil, aerr
@@ -895,8 +996,8 @@ func (h *Handler) selectVisibleMessages(ctx context.Context, queueName string, q
 			ReceiptHandle:     newHandle,
 			MD5OfBody:         msg.MD5OfBody,
 			Body:              msg.Body,
-			Attributes:        msg.Attributes,
-			MessageAttributes: msg.MessageAttributes,
+			Attributes:        filterSystemAttributes(msg.Attributes, systemAttrNames),
+			MessageAttributes: filterMessageAttributes(msg.MessageAttributes, messageAttrNames),
 		})
 
 		// FIFO: mark this group as delivered so no more messages from it
