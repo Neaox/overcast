@@ -23,6 +23,7 @@ import { PageHeader } from "@/components/ui/primitives"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
+import { toTitleCase } from "@/lib/format"
 import { EventType } from "@/services/event-types"
 import { SERVICES } from "@/lib/service-registry"
 
@@ -30,16 +31,23 @@ import { SERVICES } from "@/lib/service-registry"
 
 type SourceEntry = { id: string; label: string }
 
+const SOURCE_LABELS: Record<string, string> = {
+  request: "Requests",
+  service: "Service errors",
+  inbox: "Inbox",
+}
+
 function buildSourceEntries(): SourceEntry[] {
   const entries: SourceEntry[] = []
   for (const key of Object.keys(EventType)) {
-    // "request" source gets a friendly label; other sources defer to the service registry.
-    if (key === "request") {
-      entries.push({ id: "request", label: "Requests" })
+    const explicitLabel = SOURCE_LABELS[key]
+    if (explicitLabel) {
+      entries.push({ id: key, label: explicitLabel })
       continue
     }
+
     const svc = SERVICES[key as keyof typeof SERVICES]
-    entries.push({ id: key, label: svc.label })
+    entries.push({ id: key, label: svc?.label ?? toTitleCase(key) })
   }
   return entries
 }

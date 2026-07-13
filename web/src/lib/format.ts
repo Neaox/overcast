@@ -27,3 +27,19 @@ export function formatStorageClass(sc: string): string {
     .toLowerCase()
     .replace(/\b\w/g, (c) => c.toUpperCase())
 }
+
+export function wordsFromIdentifier(value: string): string[] {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[\s._-]+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
+export function toTitleCase(value: string): string {
+  const words = wordsFromIdentifier(value)
+  if (words.length === 0) return value
+  return words
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ")
+}
