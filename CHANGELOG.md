@@ -62,6 +62,10 @@ need it than accidentally ship a breaking change as a patch.
        binary packaging, release process, or user-facing docs.
 -->
 
+### Fixed
+
+- **Web UI** — S3 bucket lifecycle events in the Event Stream now show `s3://bucket-name` instead of `s3:///`.
+
 ## [0.0.1-alpha.7] - 2026-07-14
 
 ### Fixed
