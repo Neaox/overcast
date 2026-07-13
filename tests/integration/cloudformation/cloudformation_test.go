@@ -53,6 +53,24 @@ func ec2Query(t *testing.T, srv *helpers.TestServer, action string, params url.V
 	return resp
 }
 
+// elasticacheQuery sends an ElastiCache Query protocol request.
+func elasticacheQuery(t *testing.T, srv *helpers.TestServer, action string, params url.Values) *http.Response {
+	t.Helper()
+	if params == nil {
+		params = url.Values{}
+	}
+	params.Set("Action", action)
+	params.Set("Version", "2015-02-02")
+	body := strings.NewReader(params.Encode())
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("elasticacheQuery %s: %v", action, err)
+	}
+	return resp
+}
+
 func readBody(t *testing.T, resp *http.Response) []byte {
 	t.Helper()
 	b, err := io.ReadAll(resp.Body)
@@ -705,6 +723,112 @@ func TestCreateStack_KMSKey(t *testing.T) {
 	helpers.AssertStatus(t, cr, http.StatusOK)
 
 	waitForStackStatus(t, srv, "kms-test-stack", "CREATE_COMPLETE")
+}
+
+const elastiCacheServerlessCacheTemplate = `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "RedisCache": {
+      "Type": "AWS::ElastiCache::ServerlessCache",
+      "Properties": {
+        "ServerlessCacheName": "cfn-serverless-redis",
+        "Engine": "redis",
+        "MajorEngineVersion": "7"
+      }
+    }
+  },
+  "Outputs": {
+    "CacheArn": { "Value": { "Fn::GetAtt": ["RedisCache", "ARN"] } },
+    "CacheEndpointAddress": { "Value": { "Fn::GetAtt": ["RedisCache", "Endpoint.Address"] } },
+    "CacheEndpointPort": { "Value": { "Fn::GetAtt": ["RedisCache", "Endpoint.Port"] } }
+  }
+}`
+
+func TestCreateStack_ElastiCacheServerlessCache(t *testing.T) {
+	// Given: a CloudFormation stack with a serverless ElastiCache resource
+	srv := helpers.NewTestServer(t, helpers.WithRegion("ap-southeast-2"))
+
+	// When: CreateStack provisions AWS::ElastiCache::ServerlessCache
+	cr := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"elasticache-serverless-test-stack"},
+		"TemplateBody": []string{elastiCacheServerlessCacheTemplate},
+	})
+	defer cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	waitForStackStatus(t, srv, "elasticache-serverless-test-stack", "CREATE_COMPLETE")
+
+	// Then: DescribeStacks resolves documented ServerlessCache attributes
+	resp := cfnQuery(t, srv, "DescribeStacks", url.Values{
+		"StackName": []string{"elasticache-serverless-test-stack"},
+	})
+	defer resp.Body.Close()
+	body := string(readBody(t, resp))
+	if !strings.Contains(body, "arn:aws:elasticache:ap-southeast-2:000000000000:serverlesscache:cfn-serverless-redis") {
+		t.Fatalf("expected serverless cache ARN output, got: %s", body)
+	}
+	if !strings.Contains(body, "cfn-serverless-redis.ap-southeast-2.serverless.localhost") {
+		t.Fatalf("expected serverless cache endpoint address output, got: %s", body)
+	}
+	if !strings.Contains(body, "6379") {
+		t.Fatalf("expected serverless cache endpoint port output, got: %s", body)
+	}
+}
+
+const elastiCacheServerlessCacheUpdatedTemplate = `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "RedisCache": {
+      "Type": "AWS::ElastiCache::ServerlessCache",
+      "Properties": {
+        "ServerlessCacheName": "cfn-update-serverless-redis",
+        "Engine": "redis",
+        "MajorEngineVersion": "7",
+        "Description": "updated description",
+        "DailySnapshotTime": "11:00",
+        "SnapshotRetentionLimit": 12,
+        "SecurityGroupIds": ["sg-updated"]
+      }
+    }
+  }
+}`
+
+func TestUpdateStack_ElastiCacheServerlessCache_inPlaceUpdate(t *testing.T) {
+	// Given: a CloudFormation stack with a serverless ElastiCache resource
+	srv := helpers.NewTestServer(t)
+	initialTemplate := strings.ReplaceAll(elastiCacheServerlessCacheTemplate, "cfn-serverless-redis", "cfn-update-serverless-redis")
+	cr := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"elasticache-serverless-update-stack"},
+		"TemplateBody": []string{initialTemplate},
+	})
+	defer cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	waitForStackStatus(t, srv, "elasticache-serverless-update-stack", "CREATE_COMPLETE")
+
+	// When: UpdateStack changes mutable ServerlessCache properties
+	ur := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName":    []string{"elasticache-serverless-update-stack"},
+		"TemplateBody": []string{elastiCacheServerlessCacheUpdatedTemplate},
+	})
+	defer ur.Body.Close()
+	helpers.AssertStatus(t, ur, http.StatusOK)
+	waitForStackStatus(t, srv, "elasticache-serverless-update-stack", "UPDATE_COMPLETE")
+
+	// Then: the underlying ElastiCache serverless cache reflects the update
+	dr := elasticacheQuery(t, srv, "DescribeServerlessCaches", url.Values{
+		"ServerlessCacheName": []string{"cfn-update-serverless-redis"},
+	})
+	defer dr.Body.Close()
+	helpers.AssertStatus(t, dr, http.StatusOK)
+	body := string(readBody(t, dr))
+	if !strings.Contains(body, "updated description") {
+		t.Fatalf("expected updated description, got: %s", body)
+	}
+	if !strings.Contains(body, "11:00") || !strings.Contains(body, "<SnapshotRetentionLimit>12</SnapshotRetentionLimit>") {
+		t.Fatalf("expected updated snapshot settings, got: %s", body)
+	}
+	if !strings.Contains(body, "sg-updated") {
+		t.Fatalf("expected updated security group, got: %s", body)
+	}
 }
 
 // ─── GetAtt attribute resolution ────────────────────────────────────────────

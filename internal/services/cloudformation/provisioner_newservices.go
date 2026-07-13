@@ -1207,6 +1207,157 @@ func (h *elastiCacheCacheClusterHandler) Delete(ctx context.Context, router http
 	return nil
 }
 
+// ── AWS::ElastiCache::ServerlessCache ────────────────────────────────────────
+
+type elastiCacheServerlessCacheHandler struct{}
+
+func (h *elastiCacheServerlessCacheHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	name, _ := props["ServerlessCacheName"].(string)
+	if name == "" {
+		name = fmt.Sprintf("%s-serverless-cache", rCtx.StackName)
+	}
+	params := map[string]string{
+		"Action":              "CreateServerlessCache",
+		"Version":             "2015-02-02",
+		"ServerlessCacheName": name,
+	}
+	addElastiCacheServerlessParams(params, props)
+	if tags, ok := props["Tags"].([]any); ok {
+		for i, item := range tags {
+			if tag, ok := item.(map[string]any); ok {
+				if key, _ := tag["Key"].(string); key != "" {
+					params[fmt.Sprintf("Tags.Tag.%d.Key", i+1)] = key
+					params[fmt.Sprintf("Tags.Tag.%d.Value", i+1)] = fmt.Sprintf("%v", tag["Value"])
+				}
+			}
+		}
+	}
+
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	if err != nil {
+		return "", nil, fmt.Errorf("CreateServerlessCache: %w", err)
+	}
+	body := rec.Body.String()
+	arn := extractXMLValue(body, "ARN")
+	if arn == "" {
+		arn = fmt.Sprintf("arn:aws:elasticache:%s:%s:serverlesscache:%s", rCtx.Region, rCtx.AccountID, name)
+	}
+	return name, map[string]string{
+		"ARN":                    arn,
+		"Arn":                    arn,
+		"Endpoint.Address":       extractXMLValue(body, "Address"),
+		"Endpoint.Port":          extractXMLValue(body, "Port"),
+		"ReaderEndpoint.Address": extractXMLValue(body, "Address"),
+		"ReaderEndpoint.Port":    extractXMLValue(body, "Port"),
+		"FullEngineVersion":      extractXMLValue(body, "FullEngineVersion"),
+		"Status":                 extractXMLValue(body, "Status"),
+		"CreateTime":             extractXMLValue(body, "CreateTime"),
+	}, nil
+}
+
+func (h *elastiCacheServerlessCacheHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
+	params := map[string]string{
+		"Action":              "DeleteServerlessCache",
+		"Version":             "2015-02-02",
+		"ServerlessCacheName": physicalID,
+	}
+	if v := fmtPropString(map[string]any{}, "FinalSnapshotName"); v != "" {
+		params["FinalSnapshotName"] = v
+	}
+	_, _ = internalQuery(ctx, router, rCtx.Region, params)
+	return nil
+}
+
+func (h *elastiCacheServerlessCacheHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	if newName, _ := props["ServerlessCacheName"].(string); newName != "" && newName != physicalID {
+		return "", nil, errReplacementRequired
+	}
+	if oldProps != nil {
+		for _, key := range []string{"KmsKeyId", "SubnetIds", "SnapshotArnsToRestore"} {
+			if fmt.Sprintf("%v", props[key]) != fmt.Sprintf("%v", oldProps[key]) && props[key] != nil {
+				return "", nil, errReplacementRequired
+			}
+		}
+	}
+	params := map[string]string{
+		"Action":              "ModifyServerlessCache",
+		"Version":             "2015-02-02",
+		"ServerlessCacheName": physicalID,
+	}
+	addElastiCacheServerlessParams(params, props)
+	delete(params, "KmsKeyId")
+	delete(params, "NetworkType")
+	for key := range params {
+		if strings.HasPrefix(key, "SubnetIds.") || strings.HasPrefix(key, "SnapshotArnsToRestore.") {
+			delete(params, key)
+		}
+	}
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	if err != nil {
+		return "", nil, fmt.Errorf("ModifyServerlessCache: %w", err)
+	}
+	body := rec.Body.String()
+	arn := extractXMLValue(body, "ARN")
+	if arn == "" {
+		arn = fmt.Sprintf("arn:aws:elasticache:%s:%s:serverlesscache:%s", rCtx.Region, rCtx.AccountID, physicalID)
+	}
+	return physicalID, map[string]string{
+		"ARN":                    arn,
+		"Arn":                    arn,
+		"Endpoint.Address":       extractXMLValue(body, "Address"),
+		"Endpoint.Port":          extractXMLValue(body, "Port"),
+		"ReaderEndpoint.Address": extractXMLValue(body, "Address"),
+		"ReaderEndpoint.Port":    extractXMLValue(body, "Port"),
+		"FullEngineVersion":      extractXMLValue(body, "FullEngineVersion"),
+		"Status":                 extractXMLValue(body, "Status"),
+		"CreateTime":             extractXMLValue(body, "CreateTime"),
+	}, nil
+}
+
+func addElastiCacheServerlessParams(params map[string]string, props map[string]any) {
+	for _, key := range []string{"Engine", "MajorEngineVersion", "Description", "DailySnapshotTime", "KmsKeyId", "NetworkType", "SnapshotRetentionLimit", "UserGroupId"} {
+		if v := fmtPropString(props, key); v != "" {
+			params[key] = v
+		}
+	}
+	if limits, ok := props["CacheUsageLimits"].(map[string]any); ok {
+		if data, ok := limits["DataStorage"].(map[string]any); ok {
+			if v := fmtPropString(data, "Maximum"); v != "" {
+				params["CacheUsageLimits.DataStorage.Maximum"] = v
+			}
+			if v := fmtPropString(data, "Unit"); v != "" {
+				params["CacheUsageLimits.DataStorage.Unit"] = v
+			}
+		}
+		if ecpu, ok := limits["ECPUPerSecond"].(map[string]any); ok {
+			if v := fmtPropString(ecpu, "Maximum"); v != "" {
+				params["CacheUsageLimits.ECPUPerSecond.Maximum"] = v
+			}
+		}
+	}
+	if subnets, ok := props["SubnetIds"].([]any); ok {
+		for i, subnet := range subnets {
+			if id, _ := subnet.(string); id != "" {
+				params[fmt.Sprintf("SubnetIds.SubnetId.%d", i+1)] = id
+			}
+		}
+	}
+	if groups, ok := props["SecurityGroupIds"].([]any); ok {
+		for i, group := range groups {
+			if id, _ := group.(string); id != "" {
+				params[fmt.Sprintf("SecurityGroupIds.SecurityGroupId.%d", i+1)] = id
+			}
+		}
+	}
+	if snapshots, ok := props["SnapshotArnsToRestore"].([]any); ok {
+		for i, snapshot := range snapshots {
+			if arn, _ := snapshot.(string); arn != "" {
+				params[fmt.Sprintf("SnapshotArnsToRestore.SnapshotArn.%d", i+1)] = arn
+			}
+		}
+	}
+}
+
 // ── AWS::ElastiCache::ReplicationGroup ────────────────────────────────────────
 
 type elastiCacheReplicationGroupHandler struct{}

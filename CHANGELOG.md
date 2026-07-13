@@ -62,12 +62,15 @@ need it than accidentally ship a breaking change as a patch.
        binary packaging, release process, or user-facing docs.
 -->
 
+## [0.0.1-alpha.6] - 2026-07-14
+
 ### Changed
 
 - **STS / SSM** — capability docs now list the unsupported operations for each service (STS SAML/OIDC/federation misc; SSM non-Parameter-Store operations), correcting stale manual matrices that referenced non-existent operations. No runtime behaviour change — these operations already returned `NotImplemented`.
 
 ### Fixed
 
+- **ElastiCache / CloudFormation** — added Docker-backed `CreateServerlessCache`/`DescribeServerlessCaches`/`ModifyServerlessCache`/`DeleteServerlessCache` support, serverless cache pagination/metadata fields, and `AWS::ElastiCache::ServerlessCache` provisioning/update support with `ARN` and `Endpoint.*` attributes for CDK `CfnServerlessCache` stacks.
 - **SQS** — `ReceiveMessage` now returns system attributes only when requested via `AttributeNames`/`MessageSystemAttributeNames` and user message attributes only when requested via `MessageAttributeNames` (honouring `All`, `.*`, and `prefix.*` selectors), matching AWS (previously all attributes were returned unconditionally); `VisibilityTimeout` on `ReceiveMessage`, `ChangeMessageVisibility`, and `ChangeMessageVisibilityBatch` now validates against AWS's 0–43200 range instead of silently accepting arbitrary values.
 
 ## [0.0.1-alpha.5] - 2026-07-13

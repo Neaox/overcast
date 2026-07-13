@@ -11,6 +11,7 @@ import (
 
 var ecOps = []string{
 	"CreateCacheCluster", "DescribeCacheClusters", "DeleteCacheCluster",
+	"CreateServerlessCache", "DescribeServerlessCaches", "DeleteServerlessCache", "ModifyServerlessCache",
 	"CreateReplicationGroup", "DescribeReplicationGroups", "DeleteReplicationGroup",
 	"CreateCacheSubnetGroup", "DescribeCacheSubnetGroups", "DeleteCacheSubnetGroup",
 	"CreateCacheParameterGroup", "DescribeCacheParameterGroups", "DeleteCacheParameterGroup",

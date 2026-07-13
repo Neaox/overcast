@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1248,
+  "total_ops": 1252,
   "services": [
     {
       "service": "s3",
@@ -5060,8 +5060,8 @@
     {
       "service": "elasticache",
       "display_name": "ElastiCache",
-      "total_ops": 20,
-      "implemented_ops": 20,
+      "total_ops": 24,
+      "implemented_ops": 24,
       "operations": [
         {
           "operation": "AddTagsToResource",
@@ -5094,6 +5094,12 @@
           "notes": "Docker-backed (single primary node); async creating→available via TCP health check"
         },
         {
+          "operation": "CreateServerlessCache",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Docker-backed (redis/valkey/memcached); async creating→available via TCP health check; CloudFormation ServerlessCache supported"
+        },
+        {
           "operation": "DeleteCacheCluster",
           "category": "General",
           "status": "✅ Supported",
@@ -5113,6 +5119,12 @@
         },
         {
           "operation": "DeleteReplicationGroup",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Sets status to \"deleting\"; stops and removes Docker container asynchronously"
+        },
+        {
+          "operation": "DeleteServerlessCache",
           "category": "General",
           "status": "✅ Supported",
           "notes": "Sets status to \"deleting\"; stops and removes Docker container asynchronously"
@@ -5153,6 +5165,12 @@
           "notes": "List all or filter by ReplicationGroupId"
         },
         {
+          "operation": "DescribeServerlessCaches",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "List all or filter by ServerlessCacheName"
+        },
+        {
           "operation": "ListTagsForResource",
           "category": "General",
           "status": "✅ Supported",
@@ -5169,6 +5187,12 @@
           "category": "General",
           "status": "✅ Supported",
           "notes": "Metadata-only; updates description, nodeType, failover, multiAZ; modifying→available"
+        },
+        {
+          "operation": "ModifyServerlessCache",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Metadata-only; updates description, engine/version, usage limits, security groups, snapshots, and user group; modifying→available"
         },
         {
           "operation": "RebootCacheCluster",

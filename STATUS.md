@@ -38,7 +38,7 @@
 | Scheduler       | 12  | Schedule groups, schedules, tags, clock-driven Lambda/SQS target firing                                                                                                                                    |
 | CloudFormation  | 47  | Stacks, change sets, async provisioner (~50 resource types), intrinsic functions, GetAtt                                                                                                                   |
 | RDS             | 33  | DB instances (Docker), start/stop, modify, subnet/parameter groups                                                                                                                                         |
-| ElastiCache     | 20  | Clusters (Docker Redis), replication groups, subnet groups, tagging                                                                                                                                        |
+| ElastiCache     | 24  | Clusters (Docker Redis), replication groups, subnet groups, tagging                                                                                                                                        |
 | AppConfig       | 12  | Apps, environments, profiles, hosted config versions (CRUD + version counter)                                                                                                                              |
 | AppConfigData   | 3   | StartConfigurationSession, GetLatestConfiguration; poll-based delivery with "unchanged" detection                                                                                                          |
 | Secrets Manager | 21  | Secret CRUD, versioning, tags, rotation config (11 of 21 operations)                                                                                                                                       |
@@ -83,7 +83,7 @@
 | Scheduler       | 12  |
 | CloudFormation  | 47  |
 | RDS             | 33  |
-| ElastiCache     | 20  |
+| ElastiCache     | 24  |
 | AppConfig       | 12  |
 | AppConfigData   | 3   |
 | Secrets Manager | 21  |

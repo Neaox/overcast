@@ -1333,6 +1333,7 @@ var resourceHandlers = map[string]resourceHandler{
 	"AWS::AppSync::Resolver":   &appsyncResolverHandler{},
 	// ElastiCache
 	"AWS::ElastiCache::CacheCluster":     &elastiCacheCacheClusterHandler{},
+	"AWS::ElastiCache::ServerlessCache":  &elastiCacheServerlessCacheHandler{},
 	"AWS::ElastiCache::ReplicationGroup": &elastiCacheReplicationGroupHandler{},
 	"AWS::ElastiCache::SubnetGroup":      &elastiCacheSubnetGroupHandler{},
 	"AWS::ElastiCache::ParameterGroup":   &stubResourceHandler{},

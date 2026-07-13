@@ -1,21 +1,90 @@
 service: elasticache
-status: not_started
+status: reviewed
 priority: p2
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-17
+last_updated: 2026-07-14
 protocols: [query]
 implementation: [internal/services/elasticache]
 integration_tests: [tests/integration/elasticache]
 capability_docs: docs/services/elasticache.md
-operation_count_estimate: 20 supported
-current_support_level: Cache clusters, replication groups, subnet/parameter groups, engine metadata, and tagging supported; replication is single-primary only.
-operations: {}
+operation_count_estimate: 24 supported
+current_support_level: Cache clusters, serverless caches, replication groups, subnet/parameter groups, engine metadata, and tagging supported; replication is single-primary only.
+operations:
+  CreateServerlessCache:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_CreateServerlessCache.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-elasticache-serverlesscache.html
+    scenarios:
+      - name: minimal redis serverless cache
+        status: tested
+        tests: [TestCreateServerlessCache_success]
+        evidence: Returns AWS Query XML CreateServerlessCacheResponse with ServerlessCache status creating, ARN, endpoint, engine, and version fields; starts Docker-backed cache when Docker is configured and metadata-only fallback otherwise.
+      - name: CloudFormation AWS::ElastiCache::ServerlessCache
+        status: tested
+        tests: [TestCreateStack_ElastiCacheServerlessCache]
+        evidence: CloudFormation creates the resource through CreateServerlessCache and resolves ARN and Endpoint.* GetAtt attributes.
+      - name: metadata fields
+        status: tested
+        tests: [TestCreateServerlessCache_metadataFields]
+        evidence: Serializes CacheUsageLimits, subnet IDs, security groups, snapshot restore ARNs, retention, daily snapshot time, network type, KMS key, and user group metadata.
+    gaps:
+      - Snapshot restore data contents are metadata-only; Overcast does not hydrate cache data from snapshots.
+  DescribeServerlessCaches:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeServerlessCaches.html
+    scenarios:
+      - name: filter by ServerlessCacheName
+        status: tested
+        tests: [TestDescribeServerlessCaches_byName]
+        evidence: Returns ServerlessCaches.member-style XML list with endpoint fields.
+      - name: MaxResults and NextToken pagination
+        status: tested
+        tests: [TestDescribeServerlessCaches_pagination]
+        evidence: Sorts by ServerlessCacheName for deterministic pages and returns NextToken when more records exist.
+    gaps: []
+  DeleteServerlessCache:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DeleteServerlessCache.html
+    scenarios:
+      - name: delete existing serverless cache
+        status: tested
+        tests: [TestDeleteServerlessCache_success]
+        evidence: Returns DeleteServerlessCacheResponse with ServerlessCache status deleting and schedules Docker/container cleanup when applicable.
+      - name: final snapshot name accepted
+        status: tested
+        tests: [TestDeleteServerlessCache_finalSnapshotName]
+        evidence: Accepts the documented optional FinalSnapshotName parameter on delete; Overcast does not emulate durable snapshot contents.
+    gaps: []
+  ModifyServerlessCache:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_ModifyServerlessCache.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-elasticache-serverlesscache.html
+    scenarios:
+      - name: mutable metadata update
+        status: tested
+        tests: [TestModifyServerlessCache_success]
+        evidence: Updates description, daily snapshot time, retention, security groups, and cache usage limits, returning status modifying before the async available transition.
+      - name: CloudFormation no-interruption update
+        status: tested
+        tests: [TestUpdateStack_ElastiCacheServerlessCache_inPlaceUpdate]
+        evidence: UpdateStack calls ModifyServerlessCache for mutable properties and preserves the physical ID.
+    gaps:
+      - Snapshot data contents and final snapshot resources are metadata-only; Overcast does not provide durable cache snapshots.
 findings:
-  fixed: []
+  fixed:
+    - Added Query API support for CreateServerlessCache, DescribeServerlessCaches, and DeleteServerlessCache.
+    - Added Query API support for ModifyServerlessCache.
+    - Added CloudFormation support for AWS::ElastiCache::ServerlessCache including ARN and Endpoint.* attributes.
+    - Added ServerlessCache pagination, CacheUsageLimits, snapshot restore metadata, and CloudFormation in-place updates.
   remaining_gaps:
     - Review CreateCacheCluster/CreateReplicationGroup validation, lifecycle states, and XML shapes.
+    - Serverless cache snapshots are metadata-only; no durable snapshot contents are emulated.
   intentionally_partial: []
 handoff:
-  start_with: [CreateCacheCluster, CreateReplicationGroup]
-  do_not_redo: []
-  commands: [go test -count=1 ./internal/services/elasticache/... ./tests/integration/elasticache/...]
+  start_with: [CreateCacheCluster, CreateReplicationGroup, DescribeServerlessCaches]
+  do_not_redo: [CreateServerlessCache minimal and metadata paths, DescribeServerlessCaches pagination, ModifyServerlessCache metadata path, DeleteServerlessCache final snapshot parameter, CloudFormation ServerlessCache create/GetAtt/update path]
+  commands: [go test -count=1 ./internal/services/elasticache/... ./tests/integration/elasticache/... ./tests/integration/cloudformation/...]

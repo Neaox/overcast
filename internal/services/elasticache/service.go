@@ -1,6 +1,8 @@
 // Package elasticache provides emulation of Amazon ElastiCache.
 //
 // Implemented: CreateCacheCluster, DescribeCacheClusters, DeleteCacheCluster,
+// CreateServerlessCache, DescribeServerlessCaches, DeleteServerlessCache,
+// ModifyServerlessCache,
 // ModifyCacheCluster, CreateReplicationGroup, DescribeReplicationGroups,
 // DeleteReplicationGroup, ModifyReplicationGroup,
 // CreateCacheSubnetGroup, DescribeCacheSubnetGroups, DeleteCacheSubnetGroup,
@@ -142,6 +144,14 @@ func (s *Service) DispatchQuery(w http.ResponseWriter, r *http.Request) {
 		s.handler.DescribeCacheClusters(w, r)
 	case "DeleteCacheCluster":
 		s.handler.DeleteCacheCluster(w, r)
+	case "CreateServerlessCache":
+		s.handler.CreateServerlessCache(w, r)
+	case "DescribeServerlessCaches":
+		s.handler.DescribeServerlessCaches(w, r)
+	case "DeleteServerlessCache":
+		s.handler.DeleteServerlessCache(w, r)
+	case "ModifyServerlessCache":
+		s.handler.ModifyServerlessCache(w, r)
 
 	// ── Replication groups ────────────────────────────────────────────────────
 	case "CreateReplicationGroup":

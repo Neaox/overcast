@@ -17,6 +17,7 @@ import (
 const (
 	nsClusters        = "elasticache:clusters"
 	nsReplication     = "elasticache:replication-groups"
+	nsServerless      = "elasticache:serverless-caches"
 	nsSubnetGroups    = "elasticache:subnet-groups"
 	nsParameterGroups = "elasticache:parameter-groups"
 	nsTags            = "elasticache:tags"
@@ -65,6 +66,45 @@ type ReplicationGroup struct {
 	// Docker fields — internal only, not returned in API responses.
 	DockerContainerID string `json:"DockerContainerID,omitempty"`
 	HostPort          int    `json:"HostPort,omitempty"`
+}
+
+// ServerlessCache represents a stored ElastiCache serverless cache.
+type ServerlessCache struct {
+	ServerlessCacheName   string           `json:"ServerlessCacheName"`
+	Description           string           `json:"Description"`
+	Status                string           `json:"Status"`
+	Engine                string           `json:"Engine"`
+	MajorEngineVersion    string           `json:"MajorEngineVersion"`
+	FullEngineVersion     string           `json:"FullEngineVersion"`
+	CacheUsageLimits      CacheUsageLimits `json:"CacheUsageLimits,omitempty"`
+	ARN                   string           `json:"ARN"`
+	CreateTime            string           `json:"CreateTime"`
+	Endpoint              *ClusterEndpoint `json:"Endpoint,omitempty"`
+	ReaderEndpoint        *ClusterEndpoint `json:"ReaderEndpoint,omitempty"`
+	SubnetIds             []string         `json:"SubnetIds,omitempty"`
+	SecurityGroupIds      []string         `json:"SecurityGroupIds,omitempty"`
+	SnapshotArnsToRestore []string         `json:"SnapshotArnsToRestore,omitempty"`
+	SnapshotRetention     int              `json:"SnapshotRetentionLimit"`
+	DailySnapshotTime     string           `json:"DailySnapshotTime,omitempty"`
+	NetworkType           string           `json:"NetworkType,omitempty"`
+	UserGroupId           string           `json:"UserGroupId,omitempty"`
+	KmsKeyId              string           `json:"KmsKeyId,omitempty"`
+	DockerContainerID     string           `json:"DockerContainerID,omitempty"`
+	HostPort              int              `json:"HostPort,omitempty"`
+}
+
+type CacheUsageLimits struct {
+	DataStorage   DataStorageLimit `json:"DataStorage,omitempty"`
+	ECPUPerSecond ECPULimit        `json:"ECPUPerSecond,omitempty"`
+}
+
+type DataStorageLimit struct {
+	Maximum int    `json:"Maximum,omitempty"`
+	Unit    string `json:"Unit,omitempty"`
+}
+
+type ECPULimit struct {
+	Maximum int `json:"Maximum,omitempty"`
 }
 
 // CacheParameterGroup represents a stored ElastiCache cache parameter group.
@@ -192,6 +232,54 @@ func (s *cacheStore) listReplicationGroups(ctx context.Context) ([]*ReplicationG
 		groups = append(groups, &rg)
 	}
 	return groups, nil
+}
+
+// ── ServerlessCache store ────────────────────────────────────────────────────
+
+func (s *cacheStore) putServerlessCache(ctx context.Context, c *ServerlessCache) *protocol.AWSError {
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if err := s.store.Set(ctx, nsServerless, serviceutil.RegionKey(s.region(ctx), c.ServerlessCacheName), string(raw)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+func (s *cacheStore) getServerlessCache(ctx context.Context, name string) (*ServerlessCache, *protocol.AWSError) {
+	raw, ok, err := s.store.Get(ctx, nsServerless, serviceutil.RegionKey(s.region(ctx), name))
+	if err != nil || !ok {
+		return nil, errServerlessCacheNotFound(name)
+	}
+	var c ServerlessCache
+	if err := json.Unmarshal([]byte(raw), &c); err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return &c, nil
+}
+
+func (s *cacheStore) deleteServerlessCache(ctx context.Context, name string) *protocol.AWSError {
+	if err := s.store.Delete(ctx, nsServerless, serviceutil.RegionKey(s.region(ctx), name)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+func (s *cacheStore) listServerlessCaches(ctx context.Context) ([]*ServerlessCache, *protocol.AWSError) {
+	pairs, err := s.store.Scan(ctx, nsServerless, serviceutil.RegionKey(s.region(ctx), ""))
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	caches := make([]*ServerlessCache, 0, len(pairs))
+	for _, p := range pairs {
+		var c ServerlessCache
+		if err := json.Unmarshal([]byte(p.Value), &c); err != nil {
+			continue
+		}
+		caches = append(caches, &c)
+	}
+	return caches, nil
 }
 
 // ── CacheSubnetGroup store ────────────────────────────────────────────────────
@@ -394,6 +482,22 @@ func errReplicationGroupAlreadyExists(id string) *protocol.AWSError {
 	return &protocol.AWSError{
 		Code:       "ReplicationGroupAlreadyExistsFault",
 		Message:    fmt.Sprintf("Replication group %s already exists.", id),
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+func errServerlessCacheNotFound(name string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "ServerlessCacheNotFoundFault",
+		Message:    fmt.Sprintf("Serverless cache %s not found.", name),
+		HTTPStatus: http.StatusNotFound,
+	}
+}
+
+func errServerlessCacheAlreadyExists(name string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "ServerlessCacheAlreadyExistsFault",
+		Message:    fmt.Sprintf("Serverless cache %s already exists.", name),
 		HTTPStatus: http.StatusBadRequest,
 	}
 }

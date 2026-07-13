@@ -13,7 +13,8 @@ import (
 // ── Docker container event handlers ──────────────────────────────────────────
 
 // handleContainerEvent processes DockerContainerDied and DockerContainerStopped.
-// Handles both cache clusters (plain resource ID) and replication groups ("rg:" prefix).
+// Handles cache clusters (plain resource ID), replication groups ("rg:" prefix),
+// and serverless caches ("serverless:" prefix).
 func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 	p, ok := e.Payload.(events.DockerContainerPayload)
 	if !ok || p.Service != serviceName {
@@ -33,6 +34,20 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 			h.store.putReplicationGroup(ctx, rg) //nolint:errcheck
 			h.log.Info("replication group container stopped",
 				zap.String("rg", rgID), zap.String("action", p.Action))
+		}
+		return
+	}
+	if name, isServerless := parseServerlessResourceID(p.ResourceID); isServerless {
+		cache, aerr := h.store.getServerlessCache(ctx, name)
+		if aerr != nil || cache == nil {
+			return
+		}
+		switch cache.Status {
+		case "available", "starting":
+			cache.Status = "stopped"
+			h.store.putServerlessCache(ctx, cache) //nolint:errcheck
+			h.log.Info("serverless cache container stopped",
+				zap.String("cache", name), zap.String("action", p.Action))
 		}
 		return
 	}
@@ -68,6 +83,17 @@ func (h *Handler) handleContainerStarted(_ context.Context, e events.Event) {
 		switch rg.Status {
 		case "stopped", "starting", "creating":
 			h.scheduleReplicationGroupHealthCheck(rgID, rg.ConfigurationEndpoint.Address, rg.ConfigurationEndpoint.Port)
+		}
+		return
+	}
+	if name, isServerless := parseServerlessResourceID(p.ResourceID); isServerless {
+		cache, aerr := h.store.getServerlessCache(ctx, name)
+		if aerr != nil || cache == nil || cache.Endpoint == nil {
+			return
+		}
+		switch cache.Status {
+		case "stopped", "starting", "creating":
+			h.scheduleServerlessHealthCheck(name, cache.Endpoint.Address, cache.Endpoint.Port)
 		}
 		return
 	}
@@ -136,36 +162,74 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 	rgs, aerr := h.store.listReplicationGroups(ctx)
 	if aerr != nil {
 		h.log.Warn("reconcile: failed to list replication groups", zap.Error(aerr))
+	} else {
+		for _, rg := range rgs {
+			if rg.DockerContainerID == "" {
+				continue
+			}
+			resourceLabel := "rg:" + rg.ReplicationGroupId
+			c := byResource[resourceLabel]
+			switch {
+			case c == nil:
+				if rg.Status == "available" || rg.Status == "starting" || rg.Status == "creating" {
+					rg.Status = "stopped"
+					h.store.putReplicationGroup(ctx, rg) //nolint:errcheck
+					h.log.Info("reconcile: RG container missing — marked stopped",
+						zap.String("rg", rg.ReplicationGroupId))
+				}
+			case c.State == "running":
+				h.setReplicationGroupEndpoint(ctx, rg)
+				h.store.putReplicationGroup(ctx, rg) //nolint:errcheck
+				if rg.Status == "creating" || rg.Status == "starting" || rg.Status == "stopped" || rg.Status == "available" {
+					h.scheduleReplicationGroupHealthCheck(rg.ReplicationGroupId, rg.ConfigurationEndpoint.Address, rg.ConfigurationEndpoint.Port)
+					h.log.Info("reconcile: RG container running — scheduling health check",
+						zap.String("rg", rg.ReplicationGroupId))
+				}
+			default:
+				if rg.Status == "available" || rg.Status == "starting" {
+					rg.Status = "stopped"
+					h.store.putReplicationGroup(ctx, rg) //nolint:errcheck
+					h.log.Info("reconcile: RG container not running — marked stopped",
+						zap.String("rg", rg.ReplicationGroupId),
+						zap.String("containerState", c.State))
+				}
+			}
+		}
+	}
+
+	serverless, aerr := h.store.listServerlessCaches(ctx)
+	if aerr != nil {
+		h.log.Warn("reconcile: failed to list serverless caches", zap.Error(aerr))
 		return
 	}
-	for _, rg := range rgs {
-		if rg.DockerContainerID == "" {
+	for _, cache := range serverless {
+		if cache.DockerContainerID == "" {
 			continue
 		}
-		resourceLabel := "rg:" + rg.ReplicationGroupId
+		resourceLabel := "serverless:" + cache.ServerlessCacheName
 		c := byResource[resourceLabel]
 		switch {
 		case c == nil:
-			if rg.Status == "available" || rg.Status == "starting" || rg.Status == "creating" {
-				rg.Status = "stopped"
-				h.store.putReplicationGroup(ctx, rg) //nolint:errcheck
-				h.log.Info("reconcile: RG container missing — marked stopped",
-					zap.String("rg", rg.ReplicationGroupId))
+			if cache.Status == "available" || cache.Status == "starting" || cache.Status == "creating" {
+				cache.Status = "stopped"
+				h.store.putServerlessCache(ctx, cache) //nolint:errcheck
+				h.log.Info("reconcile: serverless cache container missing — marked stopped",
+					zap.String("cache", cache.ServerlessCacheName))
 			}
 		case c.State == "running":
-			h.setReplicationGroupEndpoint(ctx, rg)
-			h.store.putReplicationGroup(ctx, rg) //nolint:errcheck
-			if rg.Status == "creating" || rg.Status == "starting" || rg.Status == "stopped" || rg.Status == "available" {
-				h.scheduleReplicationGroupHealthCheck(rg.ReplicationGroupId, rg.ConfigurationEndpoint.Address, rg.ConfigurationEndpoint.Port)
-				h.log.Info("reconcile: RG container running — scheduling health check",
-					zap.String("rg", rg.ReplicationGroupId))
+			h.setServerlessEndpoint(ctx, cache)
+			h.store.putServerlessCache(ctx, cache) //nolint:errcheck
+			if cache.Status == "creating" || cache.Status == "starting" || cache.Status == "stopped" || cache.Status == "available" {
+				h.scheduleServerlessHealthCheck(cache.ServerlessCacheName, cache.Endpoint.Address, cache.Endpoint.Port)
+				h.log.Info("reconcile: serverless cache container running — scheduling health check",
+					zap.String("cache", cache.ServerlessCacheName))
 			}
 		default:
-			if rg.Status == "available" || rg.Status == "starting" {
-				rg.Status = "stopped"
-				h.store.putReplicationGroup(ctx, rg) //nolint:errcheck
-				h.log.Info("reconcile: RG container not running — marked stopped",
-					zap.String("rg", rg.ReplicationGroupId),
+			if cache.Status == "available" || cache.Status == "starting" {
+				cache.Status = "stopped"
+				h.store.putServerlessCache(ctx, cache) //nolint:errcheck
+				h.log.Info("reconcile: serverless cache container not running — marked stopped",
+					zap.String("cache", cache.ServerlessCacheName),
 					zap.String("containerState", c.State))
 			}
 		}
@@ -176,6 +240,13 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 func parseRGResourceID(resourceID string) (string, bool) {
 	if strings.HasPrefix(resourceID, "rg:") {
 		return strings.TrimPrefix(resourceID, "rg:"), true
+	}
+	return "", false
+}
+
+func parseServerlessResourceID(resourceID string) (string, bool) {
+	if strings.HasPrefix(resourceID, "serverless:") {
+		return strings.TrimPrefix(resourceID, "serverless:"), true
 	}
 	return "", false
 }
