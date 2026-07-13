@@ -30,8 +30,9 @@ type deleteVpcReq struct {
 }
 
 type createSubnetReq struct {
-	VpcID     string `json:"VpcId"`
-	CidrBlock string `json:"CidrBlock"`
+	VpcID            string `json:"VpcId"`
+	CidrBlock        string `json:"CidrBlock"`
+	AvailabilityZone string `json:"AvailabilityZone"`
 }
 
 type deleteSubnetReq struct {
@@ -1221,7 +1222,10 @@ func (h *Handler) createSubnetTyped(ctx context.Context, req *createSubnetReq) (
 		return nil, ec2err("InvalidVpcID.NotFound", fmt.Sprintf("The vpc ID '%s' does not exist", req.VpcID), http.StatusBadRequest)
 	}
 	subnetID := fmt.Sprintf("subnet-%s", shortID())
-	az := h.cfg.Region + "a"
+	az := req.AvailabilityZone
+	if az == "" {
+		az = h.cfg.Region + "a"
+	}
 	subnet := &Subnet{SubnetID: subnetID, VpcID: req.VpcID, CidrBlock: req.CidrBlock, AvailabilityZone: az, State: "available"}
 	if aerr := h.store.putSubnet(ctx, subnet); aerr != nil {
 		return nil, aerr

@@ -21,7 +21,7 @@ func init() {
 		capabilities.Capability{Service: "ec2", Operation: "CreateRoute", Category: "General", Status: capabilities.StatusSupported, Notes: "DestinationCidrBlock + GatewayId"},
 		capabilities.Capability{Service: "ec2", Operation: "CreateRouteTable", Category: "General", Status: capabilities.StatusSupported, Notes: "VPC must exist; auto-creates local route"},
 		capabilities.Capability{Service: "ec2", Operation: "CreateSecurityGroup", Category: "General", Status: capabilities.StatusSupported, Notes: "Default egress allow-all rule added on create"},
-		capabilities.Capability{Service: "ec2", Operation: "CreateSubnet", Category: "General", Status: capabilities.StatusSupported, Notes: "VPC must exist; AZ defaults to region+\"a\""},
+		capabilities.Capability{Service: "ec2", Operation: "CreateSubnet", Category: "General", Status: capabilities.StatusSupported, Notes: "VPC must exist; honors AvailabilityZone; defaults to region+\"a\""},
 		capabilities.Capability{Service: "ec2", Operation: "CreateTags", Category: "General", Status: capabilities.StatusSupported, Notes: "Tag any resource by ID"},
 		capabilities.Capability{Service: "ec2", Operation: "CreateVpc", Category: "General", Status: capabilities.StatusSupported, Notes: "CidrBlock required; creates Docker bridge network (`--internal` unless IGW attached) and main route table"},
 		capabilities.Capability{Service: "ec2", Operation: "CreateVpcEndpoint", Category: "General", Status: capabilities.StatusSupported, Notes: "Metadata-only; Gateway and Interface types accepted; state always \"available\""},

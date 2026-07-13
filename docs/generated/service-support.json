@@ -2766,7 +2766,7 @@
           "operation": "CreateSubnet",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "VPC must exist; AZ defaults to region+\"a\""
+          "notes": "VPC must exist; honors AvailabilityZone; defaults to region+\"a\""
         },
         {
           "operation": "CreateTags",

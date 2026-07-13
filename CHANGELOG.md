@@ -59,6 +59,10 @@ need it than accidentally ship a breaking change as a patch.
        append new capabilities rather than splitting into sub-bullets.
 -->
 
+### Fixed
+
+- **EC2** — `CreateSubnet` now preserves explicit `AvailabilityZone` values in create and describe responses for multi-AZ VPC lookup scenarios.
+
 ## [0.0.1-alpha.4] - 2026-07-13
 
 ### Fixed

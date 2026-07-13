@@ -536,7 +536,10 @@ func (h *Handler) CreateSubnet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	subnetID := fmt.Sprintf("subnet-%s", shortID())
-	az := h.cfg.Region + "a"
+	az := r.FormValue("AvailabilityZone")
+	if az == "" {
+		az = h.cfg.Region + "a"
+	}
 	subnet := &Subnet{SubnetID: subnetID, VpcID: vpcID, CidrBlock: cidr, AvailabilityZone: az, State: "available"}
 	if aerr := h.store.putSubnet(r.Context(), subnet); aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
