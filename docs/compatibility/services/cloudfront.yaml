@@ -2,7 +2,7 @@ service: cloudfront
 status: not_started
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-17
+last_updated: 2026-07-14
 protocols: [rest_xml]
 implementation: [internal/services/cloudfront]
 integration_tests: [tests/integration/cloudfront]
@@ -11,7 +11,12 @@ operation_count_estimate: 89 tracked, all marked supported
 current_support_level: Broad metadata/control-plane support plus emulator-only proxy extension.
 operations: {}
 findings:
-  fixed: []
+  fixed:
+    - scenario: CreateDistribution accepts cache behavior TargetOriginId references to OriginGroups.Items[].Id for origin failover.
+      evidence:
+        aws_docs: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/high_availability_origin_failover.html
+        tests: tests/integration/cloudfront/cloudfront_test.go::TestCreateDistribution_originGroupTarget
+      fixed_in: 0.0.1-alpha.7
   remaining_gaps:
     - Separate emulator-only ProxyRequest from AWS compatibility counts.
     - Review ETag and XML response fidelity.
