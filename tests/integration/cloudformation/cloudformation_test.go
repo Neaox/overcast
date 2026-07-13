@@ -71,6 +71,39 @@ func elasticacheQuery(t *testing.T, srv *helpers.TestServer, action string, para
 	return resp
 }
 
+func cfnRoute53Request(t *testing.T, srv *helpers.TestServer, method, path, body string) *http.Response {
+	t.Helper()
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+	req, err := http.NewRequest(method, srv.URL+path, reader)
+	if err != nil {
+		t.Fatalf("Route53 request: %v", err)
+	}
+	if body != "" {
+		req.Header.Set("Content-Type", "application/xml")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Route53 %s %s: %v", method, path, err)
+	}
+	return resp
+}
+
+func extractBetween(s, start, end string) string {
+	i := strings.Index(s, start)
+	if i < 0 {
+		return ""
+	}
+	i += len(start)
+	j := strings.Index(s[i:], end)
+	if j < 0 {
+		return ""
+	}
+	return s[i : i+j]
+}
+
 func readBody(t *testing.T, resp *http.Response) []byte {
 	t.Helper()
 	b, err := io.ReadAll(resp.Body)
@@ -200,6 +233,139 @@ func TestCreateStack_success(t *testing.T) {
 	b := readBody(t, resp)
 	if !strings.Contains(string(b), "StackId") {
 		t.Errorf("expected StackId in response, got: %s", b)
+	}
+}
+
+func TestCreateStack_CloudFrontDistributionOriginGroupTarget(t *testing.T) {
+	// Given: a CloudFormation template whose CloudFront default behavior targets an origin group
+	srv := helpers.NewTestServer(t)
+	template := `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "MyDistribution": {
+      "Type": "AWS::CloudFront::Distribution",
+      "Properties": {
+        "DistributionConfig": {
+          "CallerReference": "cfn-origin-group-target",
+          "Comment": "origin group target repro",
+          "Enabled": true,
+          "Origins": [
+            {
+              "Id": "origin-primary",
+              "DomainName": "primary.example.com",
+              "S3OriginConfig": {"OriginAccessIdentity": ""},
+              "OriginAccessControlId": "oac-primary"
+            },
+            {
+              "Id": "origin-failover",
+              "DomainName": "failover.example.com",
+              "S3OriginConfig": {"OriginAccessIdentity": ""},
+              "OriginAccessControlId": "oac-failover"
+            }
+          ],
+          "OriginGroups": {
+            "Quantity": 1,
+            "Items": [
+              {
+                "Id": "origin-group-1",
+                "FailoverCriteria": {
+                  "StatusCodes": {"Quantity": 2, "Items": [500, 502]}
+                },
+                "Members": {
+                  "Quantity": 2,
+                  "Items": [
+                    {"OriginId": "origin-primary"},
+                    {"OriginId": "origin-failover"}
+                  ]
+                }
+              }
+            ]
+          },
+          "DefaultCacheBehavior": {
+            "TargetOriginId": "origin-group-1",
+            "ViewerProtocolPolicy": "redirect-to-https",
+            "ForwardedValues": {"QueryString": false, "Cookies": {"Forward": "none"}},
+            "MinTTL": 0,
+            "TrustedSigners": {"Enabled": false, "Quantity": 0}
+          },
+          "CacheBehaviors": [
+            {
+              "PathPattern": "sykes_holiday_cottages/*",
+              "TargetOriginId": "origin-failover",
+              "ViewerProtocolPolicy": "redirect-to-https",
+              "ForwardedValues": {"QueryString": false, "Cookies": {"Forward": "none"}},
+              "MinTTL": 0,
+              "TrustedSigners": {"Enabled": false, "Quantity": 0}
+            }
+          ]
+        }
+      }
+    }
+  }
+}`
+
+	// When: CreateStack provisions the distribution through the CFN resource handler
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"cfn-origin-group-stack"},
+		"TemplateBody": []string{template},
+	})
+	defer resp.Body.Close()
+
+	// Then: the same origin group target accepted by the raw CloudFront API also works through CFN
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, "cfn-origin-group-stack", "CREATE_COMPLETE")
+}
+
+func TestCreateStack_Route53RecordSetAliasTarget(t *testing.T) {
+	// Given: a CloudFormation template with a Route53 alias record set
+	srv := helpers.NewTestServer(t)
+	template := `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "Zone": {
+      "Type": "AWS::Route53::HostedZone",
+      "Properties": {"Name": "example.com."}
+    },
+    "Alias": {
+      "Type": "AWS::Route53::RecordSet",
+      "Properties": {
+        "HostedZoneId": {"Ref": "Zone"},
+        "Name": "www.example.com.",
+        "Type": "A",
+        "AliasTarget": {
+          "HostedZoneId": "Z2FDTNDATAQYW2",
+          "DNSName": "d111111abcdef8.cloudfront.net.",
+          "EvaluateTargetHealth": false
+        }
+      }
+    }
+  }
+}`
+
+	// When: CreateStack provisions the hosted zone and alias record
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"route53-alias-stack"},
+		"TemplateBody": []string{template},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, "route53-alias-stack", "CREATE_COMPLETE")
+
+	// Then: Route53 stores the alias target from the CFN properties
+	listResp := cfnRoute53Request(t, srv, http.MethodGet, "/2013-04-01/hostedzone", "")
+	defer listResp.Body.Close()
+	helpers.AssertStatus(t, listResp, http.StatusOK)
+	listBody := string(readBody(t, listResp))
+	zoneID := extractBetween(listBody, "<Id>/hostedzone/", "</Id>")
+	if zoneID == "" {
+		t.Fatalf("expected hosted zone id in response: %s", listBody)
+	}
+	recordResp := cfnRoute53Request(t, srv, http.MethodGet, "/2013-04-01/hostedzone/"+zoneID+"/rrset", "")
+	defer recordResp.Body.Close()
+	helpers.AssertStatus(t, recordResp, http.StatusOK)
+	recordBody := string(readBody(t, recordResp))
+	if !strings.Contains(recordBody, "<AliasTarget>") || !strings.Contains(recordBody, "<DNSName>d111111abcdef8.cloudfront.net.</DNSName>") {
+		t.Fatalf("expected alias target in record set response, got: %s", recordBody)
 	}
 }
 

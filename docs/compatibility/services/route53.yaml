@@ -2,7 +2,7 @@ service: route53
 status: not_started
 priority: p1
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-17
+last_updated: 2026-07-14
 protocols: [rest_xml, query]
 implementation: [internal/services/route53]
 integration_tests: [tests/integration/route53]
@@ -11,7 +11,12 @@ operation_count_estimate: 10 tracked; 7 supported, 3 unsupported
 current_support_level: Hosted zones, record sets, and change status supported; traffic policy, health check, and name listing unsupported.
 operations: {}
 findings:
-  fixed: []
+  fixed:
+    - scenario: AWS::Route53::RecordSet preserves AliasTarget when provisioning through CloudFormation.
+      evidence:
+        aws_docs: https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-route53-recordset.html
+        tests: tests/integration/cloudformation/cloudformation_test.go::TestCreateStack_Route53RecordSetAliasTarget
+      fixed_in: 0.0.1-alpha.8
   remaining_gaps:
     - Clarify QueryXML compatibility in docs or remove if accidental.
     - Review pagination and marker semantics.

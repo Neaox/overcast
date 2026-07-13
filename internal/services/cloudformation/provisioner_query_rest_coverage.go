@@ -440,20 +440,12 @@ func (h *route53HostedZoneHandler) Create(ctx context.Context, router http.Handl
 		name += "."
 	}
 
-	callerRef := fmt.Sprintf("%s-%d", rCtx.StackName, len(rCtx.Resources))
-
-	type createHostedZoneRequest struct {
-		XMLName         xml.Name `xml:"CreateHostedZoneRequest"`
-		Xmlns           string   `xml:"xmlns,attr"`
-		Name            string   `xml:"Name"`
-		CallerReference string   `xml:"CallerReference"`
+	req := copyStringAnyMap(props)
+	req["Name"] = name
+	if _, ok := req["CallerReference"].(string); !ok {
+		req["CallerReference"] = fmt.Sprintf("%s-%d", rCtx.StackName, len(rCtx.Resources))
 	}
-	req := createHostedZoneRequest{
-		Xmlns:           "https://route53.amazonaws.com/doc/2013-04-01/",
-		Name:            name,
-		CallerReference: callerRef,
-	}
-	xmlBytes, err := xml.Marshal(req)
+	xmlBytes, err := marshalCFNXML("CreateHostedZoneRequest", req, nil, route53ItemName, cfnXMLItemsWrapper)
 	if err != nil {
 		return "", nil, fmt.Errorf("Route53: marshal request: %w", err)
 	}
@@ -522,45 +514,9 @@ func (h *route53RecordSetHandler) Create(ctx context.Context, router http.Handle
 		}
 	}
 
-	type rrXML struct {
-		Value string `xml:"Value"`
-	}
-	type rrsXML struct {
-		Name            string  `xml:"Name"`
-		Type            string  `xml:"Type"`
-		TTL             int64   `xml:"TTL"`
-		ResourceRecords []rrXML `xml:"ResourceRecords>ResourceRecord"`
-	}
-	type changeXML struct {
-		Action            string `xml:"Action"`
-		ResourceRecordSet rrsXML `xml:"ResourceRecordSet"`
-	}
-	type batchXML struct {
-		XMLName xml.Name    `xml:"ChangeResourceRecordSetsRequest"`
-		Xmlns   string      `xml:"xmlns,attr"`
-		Changes []changeXML `xml:"ChangeBatch>Changes>Change"`
-	}
-
-	rrlist := make([]rrXML, len(resourceRecords))
-	for i, v := range resourceRecords {
-		rrlist[i] = rrXML{Value: v}
-	}
-
-	batch := batchXML{
-		Xmlns: "https://route53.amazonaws.com/doc/2013-04-01/",
-		Changes: []changeXML{
-			{
-				Action: "CREATE",
-				ResourceRecordSet: rrsXML{
-					Name:            recordName,
-					Type:            recordType,
-					TTL:             ttl,
-					ResourceRecords: rrlist,
-				},
-			},
-		},
-	}
-	xmlBytes, err := xml.Marshal(batch)
+	record := route53RecordSetRequestFromCFN(props, recordName, recordType, ttl, resourceRecords)
+	batch := map[string]any{"ChangeBatch": map[string]any{"Changes": []any{map[string]any{"Action": "CREATE", "ResourceRecordSet": record}}}}
+	xmlBytes, err := marshalCFNXML("ChangeResourceRecordSetsRequest", batch, nil, route53ItemName, route53ListWrapper)
 	if err != nil {
 		return "", nil, fmt.Errorf("Route53: marshal ChangeResourceRecordSets: %w", err)
 	}
@@ -628,6 +584,61 @@ func (h *route53RecordSetHandler) Delete(ctx context.Context, router http.Handle
 
 func (h *route53RecordSetHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	return "", nil, errReplacementRequired
+}
+
+func route53RecordSetRequestFromCFN(props map[string]any, recordName, recordType string, ttl int64, resourceRecords []string) map[string]any {
+	record := copyStringAnyMap(props)
+	delete(record, "HostedZoneId")
+	delete(record, "HostedZoneName")
+	record["Name"] = recordName
+	record["Type"] = recordType
+	if _, ok := record["AliasTarget"]; !ok {
+		record["TTL"] = ttl
+		if _, ok := record["ResourceRecords"]; !ok {
+			items := make([]any, 0, len(resourceRecords))
+			for _, value := range resourceRecords {
+				items = append(items, map[string]any{"Value": value})
+			}
+			record["ResourceRecords"] = items
+		} else if records, ok := record["ResourceRecords"].([]any); ok {
+			items := make([]any, 0, len(records))
+			for _, value := range records {
+				if s, ok := value.(string); ok {
+					items = append(items, map[string]any{"Value": s})
+				} else {
+					items = append(items, value)
+				}
+			}
+			record["ResourceRecords"] = items
+		}
+	}
+	return record
+}
+
+func route53ItemName(parent string) string {
+	switch parent {
+	case "Changes":
+		return "Change"
+	case "ResourceRecords":
+		return "ResourceRecord"
+	}
+	return "Item"
+}
+
+func route53ListWrapper(parent string) string {
+	switch parent {
+	case "Changes", "ResourceRecords":
+		return ""
+	}
+	return "Items"
+}
+
+func copyStringAnyMap(in map[string]any) map[string]any {
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }
 
 // ── AWS::EKS::Cluster ──────────────────────────────────────────────────────

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"encoding/xml"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -903,111 +902,21 @@ func (h *appsyncResolverHandler) Update(ctx context.Context, router http.Handler
 
 type cloudfrontDistributionHandler struct{}
 
-// Minimal XML types for constructing CloudFront DistributionConfig requests.
-type cfDistConfigXML struct {
-	XMLName              xml.Name             `xml:"DistributionConfig"`
-	CallerReference      string               `xml:"CallerReference"`
-	Comment              string               `xml:"Comment"`
-	Enabled              bool                 `xml:"Enabled"`
-	DefaultRootObject    string               `xml:"DefaultRootObject,omitempty"`
-	PriceClass           string               `xml:"PriceClass,omitempty"`
-	HttpVersion          string               `xml:"HttpVersion,omitempty"`
-	Origins              cfOriginsXML         `xml:"Origins"`
-	DefaultCacheBehavior cfCacheBehaviorXML   `xml:"DefaultCacheBehavior"`
-	CacheTagConfig       *cfCacheTagConfigXML `xml:"CacheTagConfig,omitempty"`
-}
-
-type cfCacheTagConfigXML struct {
-	HeaderName string `xml:"HeaderName"`
-}
-
-type cfOriginsXML struct {
-	Quantity int           `xml:"Quantity"`
-	Items    []cfOriginXML `xml:"Items>Origin"`
-}
-
-type cfOriginXML struct {
-	ID         string `xml:"Id"`
-	DomainName string `xml:"DomainName"`
-}
-
-type cfCacheBehaviorXML struct {
-	TargetOriginID       string `xml:"TargetOriginId"`
-	ViewerProtocolPolicy string `xml:"ViewerProtocolPolicy"`
-}
-
 func (h *cloudfrontDistributionHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	distConfig, _ := props["DistributionConfig"].(map[string]any)
 	if distConfig == nil {
 		distConfig = props // Some templates put config at the top level.
 	}
 
-	callerRef, _ := distConfig["CallerReference"].(string)
-	if callerRef == "" {
-		callerRef = fmt.Sprintf("%s-%d", rCtx.StackName, len(rCtx.Resources))
+	if _, ok := distConfig["CallerReference"].(string); !ok {
+		distConfig["CallerReference"] = fmt.Sprintf("%s-%d", rCtx.StackName, len(rCtx.Resources))
 	}
+	if _, ok := distConfig["Enabled"].(bool); !ok {
+		distConfig["Enabled"] = true
+	}
+	ensureCloudFrontDistributionDefaults(distConfig)
 
-	comment, _ := distConfig["Comment"].(string)
-	enabled := true
-	if v, ok := distConfig["Enabled"].(bool); ok {
-		enabled = v
-	}
-	defaultRoot, _ := distConfig["DefaultRootObject"].(string)
-	priceClass, _ := distConfig["PriceClass"].(string)
-	httpVersion, _ := distConfig["HttpVersion"].(string)
-
-	// Parse origins.
-	var origins []cfOriginXML
-	if originsList, ok := distConfig["Origins"].([]any); ok {
-		for _, o := range originsList {
-			om, _ := o.(map[string]any)
-			if om == nil {
-				continue
-			}
-			oid, _ := om["Id"].(string)
-			odn, _ := om["DomainName"].(string)
-			origins = append(origins, cfOriginXML{ID: oid, DomainName: odn})
-		}
-	}
-	if len(origins) == 0 {
-		origins = []cfOriginXML{{ID: "default", DomainName: "localhost"}}
-	}
-
-	// Parse default cache behavior.
-	dcb := cfCacheBehaviorXML{ViewerProtocolPolicy: "allow-all"}
-	if dcbMap, ok := distConfig["DefaultCacheBehavior"].(map[string]any); ok {
-		if v, _ := dcbMap["TargetOriginId"].(string); v != "" {
-			dcb.TargetOriginID = v
-		}
-		if v, _ := dcbMap["ViewerProtocolPolicy"].(string); v != "" {
-			dcb.ViewerProtocolPolicy = v
-		}
-	}
-	if dcb.TargetOriginID == "" && len(origins) > 0 {
-		dcb.TargetOriginID = origins[0].ID
-	}
-
-	// Parse CacheTagConfig for tag-based invalidation.
-	var cacheTagCfg *cfCacheTagConfigXML
-	if ctc, ok := distConfig["CacheTagConfig"].(map[string]any); ok {
-		if hn, _ := ctc["HeaderName"].(string); hn != "" {
-			cacheTagCfg = &cfCacheTagConfigXML{HeaderName: hn}
-		}
-	}
-
-	xmlCfg := &cfDistConfigXML{
-		CallerReference:      callerRef,
-		Comment:              comment,
-		Enabled:              enabled,
-		DefaultRootObject:    defaultRoot,
-		PriceClass:           priceClass,
-		HttpVersion:          httpVersion,
-		CacheTagConfig:       cacheTagCfg,
-		Origins:              cfOriginsXML{Quantity: len(origins), Items: origins},
-		DefaultCacheBehavior: dcb,
-	}
-
-	xmlData, err := xml.Marshal(xmlCfg)
+	xmlData, err := marshalCloudFrontDistributionConfigXML(distConfig)
 	if err != nil {
 		return "", nil, fmt.Errorf("CloudFront: marshal config: %w", err)
 	}
@@ -1026,6 +935,85 @@ func (h *cloudfrontDistributionHandler) Create(ctx context.Context, router http.
 		"Id":         id,
 	}
 	return id, attrs, nil
+}
+
+func ensureCloudFrontDistributionDefaults(distConfig map[string]any) {
+	origins := cloudFrontListItems(distConfig["Origins"])
+	if len(origins) == 0 {
+		distConfig["Origins"] = []any{map[string]any{"Id": "default", "DomainName": "localhost"}}
+		origins = cloudFrontListItems(distConfig["Origins"])
+	}
+	dcb, _ := distConfig["DefaultCacheBehavior"].(map[string]any)
+	if dcb == nil {
+		dcb = map[string]any{}
+		distConfig["DefaultCacheBehavior"] = dcb
+	}
+	if _, ok := dcb["ViewerProtocolPolicy"].(string); !ok {
+		dcb["ViewerProtocolPolicy"] = "allow-all"
+	}
+	if target, _ := dcb["TargetOriginId"].(string); target == "" && len(origins) > 0 {
+		if first, _ := origins[0].(map[string]any); first != nil {
+			dcb["TargetOriginId"], _ = first["Id"].(string)
+		}
+	}
+}
+
+func marshalCloudFrontDistributionConfigXML(distConfig map[string]any) ([]byte, error) {
+	return marshalCFNXML("DistributionConfig", distConfig, cloudFrontTopLevelList, cloudFrontItemName, cfnXMLItemsWrapper)
+}
+
+func cloudFrontTopLevelList(name string, value any) ([]any, bool) {
+	items, ok := value.([]any)
+	if !ok {
+		return nil, false
+	}
+	switch name {
+	case "Aliases", "CacheBehaviors", "CustomErrorResponses", "Origins", "OriginGroups":
+		return items, true
+	}
+	return nil, false
+}
+
+func cloudFrontListItems(value any) []any {
+	switch v := value.(type) {
+	case []any:
+		return v
+	case map[string]any:
+		if items, ok := v["Items"].([]any); ok {
+			return items
+		}
+	}
+	return nil
+}
+
+func cloudFrontItemName(parent string) string {
+	switch parent {
+	case "Aliases":
+		return "CNAME"
+	case "AllowedMethods", "CachedMethods":
+		return "Method"
+	case "CacheBehaviors":
+		return "CacheBehavior"
+	case "CustomErrorResponses":
+		return "CustomErrorResponse"
+	case "CustomHeaders":
+		return "OriginCustomHeader"
+	case "FunctionAssociations":
+		return "FunctionAssociation"
+	case "GeoRestriction":
+		return "Location"
+	case "LambdaFunctionAssociations":
+		return "LambdaFunctionAssociation"
+	case "OriginGroups":
+		return "OriginGroup"
+	case "Origins":
+		return "Origin"
+	case "Members":
+		return "OriginGroupMember"
+	case "StatusCodes":
+		return "StatusCode"
+	}
+	return "Item"
 }
 
 func (h *cloudfrontDistributionHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
