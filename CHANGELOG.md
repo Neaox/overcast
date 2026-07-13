@@ -68,7 +68,7 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
-- **SQS** — `ReceiveMessage` now returns system attributes only when requested via `AttributeNames`/`MessageSystemAttributeNames` and user message attributes only when requested via `MessageAttributeNames` (honouring `All`, `.*`, and `prefix.*` selectors), matching AWS. Previously all attributes were returned unconditionally.
+- **SQS** — `ReceiveMessage` now returns system attributes only when requested via `AttributeNames`/`MessageSystemAttributeNames` and user message attributes only when requested via `MessageAttributeNames` (honouring `All`, `.*`, and `prefix.*` selectors), matching AWS (previously all attributes were returned unconditionally); `VisibilityTimeout` on `ReceiveMessage`, `ChangeMessageVisibility`, and `ChangeMessageVisibilityBatch` now validates against AWS's 0–43200 range instead of silently accepting arbitrary values.
 
 ## [0.0.1-alpha.5] - 2026-07-13
 

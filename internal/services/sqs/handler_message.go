@@ -270,6 +270,9 @@ func (h *Handler) receiveMessageTyped(ctx context.Context, in *receiveMessageReq
 	if in.VisibilityTimeout == nil {
 		visibilityTimeout = serviceutil.ParseIntDefault(q.Attributes["VisibilityTimeout"], 30)
 	} else {
+		if aerr := validateVisibilityTimeout("VisibilityTimeout", *in.VisibilityTimeout); aerr != nil {
+			return nil, aerr
+		}
 		visibilityTimeout = *in.VisibilityTimeout
 	}
 
@@ -348,6 +351,13 @@ func invalidSQSParameterValue(name string, value int, validRange string) *protoc
 		Message:    "Invalid value for parameter " + name + ": " + strconv.Itoa(value) + ". Valid values are " + validRange + ".",
 		HTTPStatus: http.StatusBadRequest,
 	}
+}
+
+func validateVisibilityTimeout(name string, value int) *protocol.AWSError {
+	if value < 0 || value > 43200 {
+		return invalidSQSParameterValue(name, value, "0 to 43200")
+	}
+	return nil
 }
 
 // filterSystemAttributes returns the subset of a message's system attributes
@@ -577,6 +587,10 @@ func (h *Handler) deleteMessageBatchTyped(ctx context.Context, in *deleteMessage
 }
 
 func (h *Handler) changeMessageVisibilityTyped(ctx context.Context, in *changeMessageVisibilityRequest) (*struct{}, *protocol.AWSError) {
+	if aerr := validateVisibilityTimeout("VisibilityTimeout", in.VisibilityTimeout); aerr != nil {
+		return nil, aerr
+	}
+
 	_, messageID, err := decodeReceiptHandle(in.ReceiptHandle)
 	if err != nil {
 		return nil, &protocol.AWSError{
@@ -614,6 +628,16 @@ func (h *Handler) changeMessageVisibilityBatchTyped(ctx context.Context, in *cha
 	var failed []changeMessageVisibilityBatchFailedEntry
 
 	for _, entry := range in.Entries {
+		if aerr := validateVisibilityTimeout("VisibilityTimeout", entry.VisibilityTimeout); aerr != nil {
+			failed = append(failed, changeMessageVisibilityBatchFailedEntry{
+				Id:          entry.Id,
+				Code:        aerr.Code,
+				Message:     aerr.Message,
+				SenderFault: true,
+			})
+			continue
+		}
+
 		_, messageID, err := decodeReceiptHandle(entry.ReceiptHandle)
 		if err != nil {
 			failed = append(failed, changeMessageVisibilityBatchFailedEntry{
@@ -836,9 +860,12 @@ func (h *Handler) ReceiveMessage(w http.ResponseWriter, r *http.Request) {
 	if req.VisibilityTimeout == nil {
 		visibilityTimeout = serviceutil.ParseIntDefault(q.Attributes["VisibilityTimeout"], 30)
 	} else {
+		if aerr := validateVisibilityTimeout("VisibilityTimeout", *req.VisibilityTimeout); aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
 		visibilityTimeout = *req.VisibilityTimeout
 	}
-
 	systemAttrNames := requestedSystemAttributeNames(&req)
 
 	received, aerr := h.selectVisibleMessages(storeCtx, queueName, q, maxMessages, visibilityTimeout, systemAttrNames, req.MessageAttributeNames)
@@ -1194,6 +1221,16 @@ func (h *Handler) ChangeMessageVisibilityBatch(w http.ResponseWriter, r *http.Re
 	var failed []failedEntry
 
 	for _, entry := range req.Entries {
+		if aerr := validateVisibilityTimeout("VisibilityTimeout", entry.VisibilityTimeout); aerr != nil {
+			failed = append(failed, failedEntry{
+				Id:          entry.Id,
+				Code:        aerr.Code,
+				Message:     aerr.Message,
+				SenderFault: true,
+			})
+			continue
+		}
+
 		_, messageID, err := decodeReceiptHandle(entry.ReceiptHandle)
 		if err != nil {
 			failed = append(failed, failedEntry{

@@ -36,6 +36,11 @@ func (h *Handler) ChangeMessageVisibility(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if aerr := validateVisibilityTimeout("VisibilityTimeout", req.VisibilityTimeout); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
 	_, messageID, err := decodeReceiptHandle(req.ReceiptHandle)
 	if err != nil {
 		protocol.WriteJSONError(w, r, &protocol.AWSError{

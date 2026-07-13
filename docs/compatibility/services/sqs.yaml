@@ -82,7 +82,7 @@ operations:
       - AWS API Reference ReceiveMessage returns system Attributes only when AttributeNames/MessageSystemAttributeNames are supplied and user MessageAttributes only when MessageAttributeNames are supplied; the sample response with AttributeNames=[All] includes SenderId/SentTimestamp/ApproximateReceiveCount/ApproximateFirstReceiveTimestamp.
     gaps:
       - ReceiveRequestAttemptId behavior for FIFO queues needs review.
-      - VisibilityTimeout validation and in-flight semantics need review.
+      - VisibilityTimeout in-flight semantics (returned messages) need review.
       - Queue-level ReceiveMessageWaitTimeSeconds default interaction needs broader review.
     next_action: Review ReceiveMessage FIFO ReceiveRequestAttemptId behavior and queue-level wait defaults.
 findings:
@@ -94,6 +94,7 @@ findings:
     - Explicit MaxNumberOfMessages outside 1..10 and WaitTimeSeconds outside 0..20 now return InvalidParameterValue instead of silently clamping or accepting the request.
     - Malformed persisted queue/message records no longer make ListQueues or ReceiveMessage return InternalError for unrelated usable queues.
     - ReceiveMessage now projects system and message attributes based on the requested AttributeNames/MessageSystemAttributeNames/MessageAttributeNames instead of always returning every attribute.
+    - VisibilityTimeout on ReceiveMessage, ChangeMessageVisibility, and ChangeMessageVisibilityBatch is now validated against AWS's 0..43200 range instead of silently accepting arbitrary values.
   remaining_gaps:
     - Review ReceiveRequestAttemptId behavior for FIFO queues.
     - Review VisibilityTimeout validation and in-flight semantics.

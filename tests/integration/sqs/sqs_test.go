@@ -583,6 +583,34 @@ func TestReceiveMessage_waitTimeSecondsValidation(t *testing.T) {
 	}
 }
 
+func TestReceiveMessage_visibilityTimeoutValidation(t *testing.T) {
+	// Given: a queue with a message.
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "vt-val-queue")
+	sendMessage(t, srv, queueURL, "message")
+
+	// When + Then: VisibilityTimeout outside 0..43200 is rejected.
+	for _, value := range []int{-1, 43201} {
+		resp := sqsCall(t, srv, "ReceiveMessage", map[string]any{
+			"QueueUrl":          queueURL,
+			"VisibilityTimeout": value,
+		})
+		defer resp.Body.Close()
+		helpers.AssertStatus(t, resp, http.StatusBadRequest)
+		helpers.AssertJSONError(t, resp, "InvalidParameterValue")
+	}
+
+	// VT=0 and VT=43200 are valid boundary values.
+	for _, value := range []int{0, 43200} {
+		resp := sqsCall(t, srv, "ReceiveMessage", map[string]any{
+			"QueueUrl":          queueURL,
+			"VisibilityTimeout": value,
+		})
+		defer resp.Body.Close()
+		helpers.AssertStatus(t, resp, http.StatusOK)
+	}
+}
+
 func TestReceiveMessage_visibilityTimeout(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	queueURL := createQueue(t, srv, "vt-queue")
@@ -1364,6 +1392,46 @@ func TestChangeMessageVisibility_zeroMakesVisible(t *testing.T) {
 	helpers.DecodeJSON(t, checkResp, &check)
 	if len(check.Messages) != 1 {
 		t.Errorf("expected message visible after ChangeMessageVisibility(0), got %d", len(check.Messages))
+	}
+}
+
+func TestChangeMessageVisibility_validation(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "cmv-val-queue")
+	sendMessage(t, srv, queueURL, "message")
+
+	recvResp := sqsCall(t, srv, "ReceiveMessage", map[string]any{"QueueUrl": queueURL})
+	defer recvResp.Body.Close()
+	var r struct {
+		Messages []struct{ ReceiptHandle string } `json:"Messages"`
+	}
+	helpers.DecodeJSON(t, recvResp, &r)
+	if len(r.Messages) != 1 {
+		t.Fatal("expected 1 message")
+	}
+	handle := r.Messages[0].ReceiptHandle
+
+	// Valid boundary values: 0 and 43200.
+	for _, vt := range []int{0, 43200} {
+		resp := sqsCall(t, srv, "ChangeMessageVisibility", map[string]any{
+			"QueueUrl":          queueURL,
+			"ReceiptHandle":     handle,
+			"VisibilityTimeout": vt,
+		})
+		defer resp.Body.Close()
+		helpers.AssertStatus(t, resp, http.StatusOK)
+	}
+
+	// Out of range: -1 and 43201 are rejected.
+	for _, vt := range []int{-1, 43201} {
+		resp := sqsCall(t, srv, "ChangeMessageVisibility", map[string]any{
+			"QueueUrl":          queueURL,
+			"ReceiptHandle":     handle,
+			"VisibilityTimeout": vt,
+		})
+		defer resp.Body.Close()
+		helpers.AssertStatus(t, resp, http.StatusBadRequest)
+		helpers.AssertJSONError(t, resp, "InvalidParameterValue")
 	}
 }
 
