@@ -75,6 +75,63 @@ func disabledDistributionConfigXML(callerRef string) string {
 </DistributionConfig>`, callerRef)
 }
 
+// distributionConfigWithOriginGroupTargetXML returns a DistributionConfig whose
+// cache behavior targets an OriginGroup Id for CloudFront origin failover.
+func distributionConfigWithOriginGroupTargetXML(callerRef string) string {
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<DistributionConfig xmlns="http://cloudfront.amazonaws.com/doc/2020-05-31/">
+  <CallerReference>%s</CallerReference>
+  <Comment>origin group compat test distribution</Comment>
+  <Enabled>true</Enabled>
+  <Origins>
+    <Quantity>2</Quantity>
+    <Items>
+      <Origin>
+        <Id>origin-primary</Id>
+        <DomainName>primary.example.com</DomainName>
+        <S3OriginConfig><OriginAccessIdentity></OriginAccessIdentity></S3OriginConfig>
+      </Origin>
+      <Origin>
+        <Id>origin-failover</Id>
+        <DomainName>failover.example.com</DomainName>
+        <S3OriginConfig><OriginAccessIdentity></OriginAccessIdentity></S3OriginConfig>
+      </Origin>
+    </Items>
+  </Origins>
+  <OriginGroups>
+    <Quantity>1</Quantity>
+    <Items>
+      <OriginGroup>
+        <Id>origin-group-1</Id>
+        <FailoverCriteria>
+          <StatusCodes>
+            <Quantity>2</Quantity>
+            <Items><StatusCode>500</StatusCode><StatusCode>502</StatusCode></Items>
+          </StatusCodes>
+        </FailoverCriteria>
+        <Members>
+          <Quantity>2</Quantity>
+          <Items>
+            <OriginGroupMember><OriginId>origin-primary</OriginId></OriginGroupMember>
+            <OriginGroupMember><OriginId>origin-failover</OriginId></OriginGroupMember>
+          </Items>
+        </Members>
+      </OriginGroup>
+    </Items>
+  </OriginGroups>
+  <DefaultCacheBehavior>
+    <TargetOriginId>origin-group-1</TargetOriginId>
+    <ViewerProtocolPolicy>redirect-to-https</ViewerProtocolPolicy>
+    <ForwardedValues>
+      <QueryString>false</QueryString>
+      <Cookies><Forward>none</Forward></Cookies>
+    </ForwardedValues>
+    <MinTTL>0</MinTTL>
+    <TrustedSigners><Enabled>false</Enabled><Quantity>0</Quantity></TrustedSigners>
+  </DefaultCacheBehavior>
+</DistributionConfig>`, callerRef)
+}
+
 // parsedDist holds the common fields extracted from a Distribution XML response.
 type parsedDist struct {
 	XMLName    xml.Name `xml:"Distribution"`
@@ -281,6 +338,19 @@ func TestCreateDistribution_success(t *testing.T) {
 	if dist.DomainName == "" {
 		t.Error("expected DomainName to be set")
 	}
+}
+
+func TestCreateDistribution_originGroupTarget(t *testing.T) {
+	// Given: a distribution config with an origin group for failover
+	srv := helpers.NewTestServer(t)
+
+	// When: CreateDistribution targets the origin group from DefaultCacheBehavior
+	resp := cfCreate(t, srv, distributionConfigWithOriginGroupTargetXML("origin-group-target"))
+	defer resp.Body.Close()
+
+	// Then: CloudFront accepts the origin group as the cache behavior target
+	helpers.AssertStatus(t, resp, http.StatusCreated)
+	helpers.AssertRequestID(t, resp)
 }
 
 func TestCreateDistribution_callerReferenceIdempotent(t *testing.T) {

@@ -969,7 +969,8 @@ func validateAndNormalizeConfig(cfg *DistributionConfig) {
 
 // validateOriginRefs checks that Origins is non-empty and that every
 // TargetOriginId in DefaultCacheBehavior and CacheBehaviors references a
-// declared origin. Returns an AWSError on failure, nil on success.
+// declared origin or origin group. Per AWS CloudFront origin failover docs,
+// cache behaviors target an OriginGroup Id to enable failover.
 func validateOriginRefs(cfg *DistributionConfig) *protocol.AWSError {
 	if cfg.Origins.Quantity == 0 || len(cfg.Origins.Items) == 0 {
 		return &protocol.AWSError{
@@ -984,7 +985,17 @@ func validateOriginRefs(cfg *DistributionConfig) *protocol.AWSError {
 		originSet[o.ID] = struct{}{}
 	}
 
-	if _, ok := originSet[cfg.DefaultCacheBehavior.TargetOriginId]; !ok {
+	targetSet := make(map[string]struct{}, len(originSet))
+	for id := range originSet {
+		targetSet[id] = struct{}{}
+	}
+	if cfg.OriginGroups != nil {
+		for _, group := range cfg.OriginGroups.Items {
+			targetSet[group.ID] = struct{}{}
+		}
+	}
+
+	if _, ok := targetSet[cfg.DefaultCacheBehavior.TargetOriginId]; !ok {
 		return &protocol.AWSError{
 			Code:       "InvalidArgument",
 			Message:    "The specified TargetOriginId does not reference a valid origin",
@@ -994,7 +1005,7 @@ func validateOriginRefs(cfg *DistributionConfig) *protocol.AWSError {
 
 	if cfg.CacheBehaviors != nil {
 		for _, cb := range cfg.CacheBehaviors.Items {
-			if _, ok := originSet[cb.TargetOriginId]; !ok {
+			if _, ok := targetSet[cb.TargetOriginId]; !ok {
 				return &protocol.AWSError{
 					Code:       "InvalidArgument",
 					Message:    "The specified TargetOriginId does not reference a valid origin",
