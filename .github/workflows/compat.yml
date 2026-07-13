@@ -284,7 +284,6 @@ jobs:
           OVERCAST_ENDPOINT: http://localhost:4566
           OVERCAST_COMPAT_SKIP_DOCKER: "1"
           OVERCAST_COMPAT_RESULTS_FILE: compat-results-${{ matrix.suite }}.json
-          OVERCAST_RUST_SKIP_PULL: "1"
         run: |
           ./bin/compat \
             --endpoint http://localhost:4566 \

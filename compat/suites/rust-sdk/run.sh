@@ -24,7 +24,7 @@ TAG=$("$SCRIPT_DIR/image-tag.sh")
 VERSIONED_IMAGE="${IMAGE}:${TAG}"
 
 if ! docker image inspect "$VERSIONED_IMAGE" > /dev/null 2>&1; then
-  if [ "$OVERCAST_RUST_SKIP_PULL" != "1" ] && docker pull -q "${REMOTE_IMAGE}:${TAG}" > /dev/null 2>&1; then
+  if [ "$OVERCAST_RUST_SKIP_PULL" != "1" ] && (docker pull -q "${REMOTE_IMAGE}:${TAG}" > /dev/null 2>&1 || true) && docker image inspect "${REMOTE_IMAGE}:${TAG}" > /dev/null 2>&1; then
     docker tag "${REMOTE_IMAGE}:${TAG}" "$VERSIONED_IMAGE"
   else
     echo "[rust-sdk] building image (hash ${TAG})..." >&2
