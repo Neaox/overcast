@@ -62,6 +62,10 @@ need it than accidentally ship a breaking change as a patch.
        binary packaging, release process, or user-facing docs.
 -->
 
+### Fixed
+
+- **Web UI** — S3 bucket lifecycle events in the Event Stream now summarize bucket names across create/delete payload variants, and the system map now shows ElastiCache serverless caches and replication groups instead of only cache clusters.
+
 ## [0.0.1-alpha.8] - 2026-07-14
 
 ### Fixed

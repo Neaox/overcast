@@ -146,6 +146,62 @@ func TestBuildTopologyMatchesECRConsumersWithNormalizedImageRefs(t *testing.T) {
 	}
 }
 
+func TestBuildTopologyIncludesAllElastiCacheResourceTypes(t *testing.T) {
+	clusterPayload, _ := json.Marshal(map[string]any{
+		"CacheClusterId":     "session-cache",
+		"CacheClusterStatus": "available",
+		"Engine":             "redis",
+	})
+	serverlessPayload, _ := json.Marshal(map[string]any{
+		"ServerlessCacheName": "api-cache",
+		"Status":              "available",
+		"Engine":              "redis",
+	})
+	replicationPayload, _ := json.Marshal(map[string]any{
+		"ReplicationGroupId": "checkout-rg",
+		"Status":             "available",
+		"Engine":             "redis",
+	})
+
+	resp := buildTopology(&config.Config{Region: "us-east-1"}, map[string][]state.KV{
+		tNsCacheClusters:          {{Key: "us-east-1/session-cache", Value: string(clusterPayload)}},
+		tNsServerlessCaches:       {{Key: "us-west-2/api-cache", Value: string(serverlessPayload)}},
+		tNsCacheReplicationGroups: {{Key: "eu-west-1/checkout-rg", Value: string(replicationPayload)}},
+	}, "")
+
+	nodes := map[string]topologyNode{}
+	for _, node := range resp.Nodes {
+		nodes[node.ID] = node
+	}
+
+	for _, want := range []struct {
+		id     string
+		label  string
+		region string
+	}{
+		{id: "us-east-1::elasticache::session-cache", label: "session-cache", region: "us-east-1"},
+		{id: "us-west-2::elasticache::api-cache", label: "api-cache", region: "us-west-2"},
+		{id: "eu-west-1::elasticache::checkout-rg", label: "checkout-rg", region: "eu-west-1"},
+	} {
+		node, ok := nodes[want.id]
+		if !ok {
+			t.Fatalf("expected ElastiCache node %q, got nodes: %v", want.id, keys(nodes))
+		}
+		if node.Service != "elasticache" {
+			t.Errorf("node %q service: got %q, want elasticache", want.id, node.Service)
+		}
+		if node.Label != want.label {
+			t.Errorf("node %q label: got %q, want %q", want.id, node.Label, want.label)
+		}
+		if node.Region != want.region {
+			t.Errorf("node %q region: got %q, want %q", want.id, node.Region, want.region)
+		}
+		if node.Status != "available" {
+			t.Errorf("node %q status: got %q, want available", want.id, node.Status)
+		}
+	}
+}
+
 func TestCfnResourceNodeIDMapsNonDefaultTypes(t *testing.T) {
 	tests := []struct {
 		resType    string
@@ -159,6 +215,9 @@ func TestCfnResourceNodeIDMapsNonDefaultTypes(t *testing.T) {
 		{"AWS::Cognito::UserPool", "us-east-1_A1B2C3D4", "us-east-1::cognito::us-east-1_A1B2C3D4"},
 		{"AWS::AppSync::GraphQLApi", "abc123def456", "us-east-1::appsync::abc123def456"},
 		{"AWS::CloudFront::Distribution", "E1234567890ABC", "us-east-1::cloudfront::E1234567890ABC"},
+		{"AWS::ElastiCache::CacheCluster", "cache-1", "us-east-1::elasticache::cache-1"},
+		{"AWS::ElastiCache::ServerlessCache", "cache-2", "us-east-1::elasticache::cache-2"},
+		{"AWS::ElastiCache::ReplicationGroup", "rg-1", "us-east-1::elasticache::rg-1"},
 	}
 	for _, tt := range tests {
 		got := cfnResourceNodeID(tCFNResource{Type: tt.resType, PhysicalID: tt.physicalID}, "us-east-1")
