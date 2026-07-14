@@ -19,6 +19,7 @@ import type { LogEvent } from "@/types"
 import { EventType } from "@/services/event-types"
 import { useEventStream } from "@/hooks/use-event-stream"
 import { useScrollTrigger } from "@/hooks/use-scroll-trigger"
+import { TriggerEventViewer } from "./trigger-event-viewer"
 
 type Tab = "logs" | "trigger"
 
@@ -140,15 +141,6 @@ export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: Lo
     [historicalEvents, appendedEvents],
   )
 
-  let triggerJson = ""
-  if (target?.triggerEvent) {
-    try {
-      triggerJson = JSON.stringify(JSON.parse(target.triggerEvent), null, 2)
-    } catch {
-      triggerJson = target.triggerEvent
-    }
-  }
-
   return (
     <Dialog.Root
       open={visible}
@@ -223,7 +215,7 @@ export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: Lo
                     onLoadMore={() => logQuery.fetchNextPage()}
                   />
                 )}
-                {activeTab === "trigger" && <TriggerPane triggerJson={triggerJson} />}
+                {activeTab === "trigger" && <TriggerPane triggerEvent={target.triggerEvent} />}
               </div>
             </>
           )}
@@ -432,8 +424,8 @@ function LogsPane({
   )
 }
 
-function TriggerPane({ triggerJson }: { triggerJson: string }) {
-  if (!triggerJson) {
+function TriggerPane({ triggerEvent }: { triggerEvent: unknown }) {
+  if (!triggerEvent) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-fg-muted">
         No trigger event recorded.
@@ -441,8 +433,8 @@ function TriggerPane({ triggerJson }: { triggerJson: string }) {
     )
   }
   return (
-    <pre className="m-0 p-4 font-mono text-[11px] leading-relaxed wrap-break-word whitespace-pre-wrap text-fg">
-      {triggerJson}
-    </pre>
+    <div className="m-0 p-4 font-mono text-[11px] leading-relaxed text-fg">
+      <TriggerEventViewer event={triggerEvent} />
+    </div>
   )
 }

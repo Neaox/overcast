@@ -9,6 +9,7 @@ import { X } from "lucide-react"
 import { LogViewer } from "@/components/logs/log-viewer"
 import { cn } from "@/lib/utils"
 import { logs } from "@/services/api/logs"
+import { TriggerEventViewer } from "./trigger-event-viewer"
 
 export interface Invocation {
   /** Unique key for this invocation (timestampMs) */
@@ -337,35 +338,7 @@ export function LambdaInvocationsDrawer({
                     <div>
                       <div className="font-semibold text-fg-muted uppercase">Trigger Event</div>
                       <div className="mt-1 max-h-96 overflow-auto rounded bg-bg-elevated p-2 font-mono text-[9px] text-fg-muted">
-                        {(() => {
-                          try {
-                            let value = selectedTriggerEvent
-                            // Try to decode base64 if it looks encoded
-                            if (
-                              typeof value === "string" &&
-                              /^[A-Za-z0-9+/=]+$/.test(value) &&
-                              value.length > 20
-                            ) {
-                              try {
-                                value = atob(value)
-                              } catch {
-                                // Not base64, continue
-                              }
-                            }
-                            const obj = typeof value === "string" ? JSON.parse(value) : value
-                            return (
-                              <pre className="wrap-break-word whitespace-pre-wrap">
-                                {JSON.stringify(obj, null, 2)}
-                              </pre>
-                            )
-                          } catch {
-                            return (
-                              <pre className="wrap-break-word whitespace-pre-wrap">
-                                {String(selectedTriggerEvent)}
-                              </pre>
-                            )
-                          }
-                        })()}
+                        <TriggerEventViewer event={selectedTriggerEvent} />
                       </div>
                     </div>
                   )}
