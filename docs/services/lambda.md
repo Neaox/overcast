@@ -33,270 +33,6 @@ containers, communicate with the Lambda Runtime API, and return real response pa
 
 ---
 
-## Lambda Extensions
-
-Docker-backed zip functions start executable external extensions found directly
-under `/opt/extensions` in attached layers before the runtime entrypoint starts.
-Layer file modes are preserved, so extension binaries and scripts must be
-executable in the layer zip.
-
-Supported Runtime API extension paths:
-
-- `POST /2020-01-01/extension/register`
-- `GET /2020-01-01/extension/event/next`
-- `POST /2020-01-01/extension/init/error`
-- `POST /2020-01-01/extension/exit/error`
-- `PUT /2020-08-15/logs`
-
-`INVOKE` events are delivered only to extensions in the same container that
-accepted the invocation. `SHUTDOWN` events are sent when Overcast tears down a
-warm container.
-
-Logs API subscriptions support HTTP destinations for `platform`, `function`,
-and `extension` log types. Function stdout/stderr is delivered as `function`
-records; synthesized START/END/REPORT lines are delivered as `platform`
-records. Delivery is best-effort and does not yet implement the full Lambda
-buffering/retry contract.
-
-Overcast injects `AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_SSM`, and
-`AWS_ENDPOINT_URL_SECRETS_MANAGER` into Docker Lambda containers so SDK-backed
-functions and extensions can route AWS service calls back to the emulator.
-Verified with AWS Parameters and Secrets Lambda Extension 1.0.342
-(2026-07-14): SSM requests honor `AWS_ENDPOINT_URL_SSM` and Secrets Manager
-requests honor `AWS_ENDPOINT_URL_SECRETS_MANAGER`, allowing the real extension
-layer to fetch Overcast parameters and secrets.
-
----
-
-## Lambda Hot Reload Guide
-
-Hot reload mounts your local source directory into the Lambda runtime at
-`/var/task` so code edits are picked up on the next invoke, without uploading
-a new zip.
-
-This mode is intentionally opt-in and intended for local development.
-
-### When to use it
-
-- Fast inner-loop development for interpreted runtimes (Node.js, Python).
-- Debugging handler logic where packaging slows iteration.
-
-### When not to use it
-
-- Production-like packaging validation (use normal zip/image deploy path).
-- Functions that require Lambda layers in Overcast hot-reload mode.
-
-### Prerequisites
-
-1. Enable global feature flag:
-
-```bash
-export OVERCAST_LAMBDA_HOT_RELOAD=true
-```
-
-2. Docker-backed Lambda execution enabled in your environment.
-3. Function created with tag `overcast:hot-reload-path` pointing to an
-   absolute host path.
-
-### Create a hot-reload function (AWS CLI)
-
-```bash
-aws --endpoint-url http://localhost:4566 lambda create-function \
-   --function-name demo-hot \
-   --runtime nodejs20.x \
-   --handler index.handler \
-   --role arn:aws:iam::000000000000:role/lambda-role \
-   --zip-file fileb://minimal.zip \
-   --tags overcast:hot-reload-path=/absolute/path/to/lambda/source
-```
-
-Notes:
-
-- Path must be absolute.
-- Windows drive paths are normalized (for example,
-  `C:\Users\you\app` -> `/c/Users/you/app`).
-- Mount is read-only inside the container (`/var/task:ro`).
-
-### Invoke and iterate
-
-```bash
-aws --endpoint-url http://localhost:4566 lambda invoke \
-   --function-name demo-hot out.json
-```
-
-Edit local files in the configured source path and invoke again.
-
-### Behavior and caveats
-
-- Layers are supported in hot-reload mode. Attached layer archives are
-  expanded into `/opt` before the Lambda container starts.
-- If multiple attached layers provide the same file path, later layers in the
-  function's `Layers` list override earlier ones.
-- Parallel invocations of the same function share one mounted source tree.
-  This is convenient for dev, but less isolated than AWS production behavior.
-- Host files must be readable by the runtime user in the container.
-
-### Troubleshooting
-
-- Error mentions `mounts denied` or invalid bind mount:
-  Docker Desktop likely is not allowed to mount that path. Add the directory
-  to Docker Desktop File Sharing settings:
-  https://docs.docker.com/desktop/settings-and-maintenance/settings/#file-sharing
-- Runtime import/init errors in hot-reload mode:
-  verify the source directory contains the expected handler file at the root
-  of the mounted `/var/task`.
-- Runtime init error mentioning missing layer version:
-  verify same-account layer ARNs exist in the emulator, or for foreign-account
-  AWS-managed/third-party layers verify the zip exists in `LAMBDA_LAYER_CACHE_DIR`
-  using the `{LayerName}_{Version}.zip` filename convention.
-
----
-
-## CDK Integration: Hot Reload with `NodejsFunction`
-
-### How tag forwarding works
-
-When you add `Tags` to an `AWS::Lambda::Function` resource in a CloudFormation
-template (or a CDK construct), Overcast's CloudFormation provisioner forwards
-those tags to the Lambda CreateFunction call. This means you can set the
-`overcast:hot-reload-path` tag directly in your CDK stack and hot-reload will
-activate automatically on `cdk deploy`.
-
-CloudFormation represents tags as an array of `{Key, Value}` objects; the
-provisioner converts them to the `map[string]string` format that Lambda expects.
-
-### Quickest path: `cdk watch` (no tags needed)
-
-If you just want fast iteration without configuring hot-reload tags, use
-`cdk watch`. It calls `UpdateFunctionCode` on every file change, which
-invalidates the warm pool entry — no tag, no bind mount, no Docker file-sharing
-config required:
-
-```bash
-AWS_ENDPOINT_URL=http://localhost:2456 cdk watch
-```
-
-Each save triggers a redeploy of only the changed function assets. This works
-with every runtime and every bundler.
-
-> `cdk watch` is the zero-config option. Reach for hot-reload bind mounts only
-> when you need sub-second iteration and want to skip the redeploy cycle entirely.
-
----
-
-### Hot-reload bind mount: `nodejs24.x` (raw TypeScript — zero build step)
-
-Node.js 24 strips TypeScript types natively, so you can mount your `.ts` source
-directory directly with no bundler involved:
-
-```typescript
-import * as path from "path";
-import * as cdk from "aws-cdk-lib";
-import * as lambda from "aws-cdk-lib/aws-lambda";
-
-const fn = new lambda.Function(this, "MyFn", {
-  runtime: lambda.Runtime.NODEJS_24_X,
-  handler: "src/handler.handler",
-  code: lambda.Code.fromAsset(path.join(__dirname, "src")),
-});
-
-// Mount the raw TypeScript source — Node 24 runs .ts directly.
-cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
-```
-
-Save a `.ts` file → next invoke picks up changes immediately. No build step,
-no `dist/` directory to manage.
-
-> Overcast will emit a warning at container acquire time if `.ts` files are found
-> with no `.js` files on runtimes older than Node 24, guiding you to the correct
-> setup for your runtime.
-
----
-
-### Hot-reload bind mount: `nodejs22.x` and earlier (esbuild watch)
-
-On older runtimes, the Lambda runtime cannot import `.ts` files. You need to
-keep a compiled JS output directory up to date and mount that instead:
-
-```typescript
-// Set the tag to the esbuild output directory, not the source.
-cdk.Tags.of(fn).add(
-  "overcast:hot-reload-path",
-  path.resolve(__dirname, "dist"),
-);
-```
-
-Run esbuild in watch mode in a separate terminal so compiled JS is regenerated
-on every save:
-
-```bash
-# Terminal 1 — keep dist/ fresh
-npx esbuild src/handler.ts --bundle --platform=node --outdir=dist --watch
-
-# Terminal 2 — deploy once (tags are set by CDK)
-AWS_ENDPOINT_URL=http://localhost:2456 cdk deploy
-```
-
-Each esbuild rebuild is immediately picked up on the next invoke — no redeploy
-needed. For `NodejsFunction` (which runs esbuild at synth time), use
-`lambda.Function` + `Code.fromAsset` pointing at your own `dist/` instead.
-
----
-
-### Plain `Function` (Python / pre-built JS)
-
-For non-TypeScript handlers the source directory is the task directory — point
-the tag directly at your source tree:
-
-```typescript
-import * as lambda from "aws-cdk-lib/aws-lambda";
-
-const fn = new lambda.Function(this, "MyFn", {
-  runtime: lambda.Runtime.PYTHON_3_12,
-  handler: "index.handler",
-  code: lambda.Code.fromAsset(path.join(__dirname, "src")),
-});
-
-cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
-```
-
-Edit any `.py` file → next invoke uses the updated source immediately.
-
----
-
-### Enabling hot-reload mode
-
-Hot-reload is opt-in. Start Overcast with the flag enabled:
-
-```bash
-OVERCAST_LAMBDA_HOT_RELOAD=true overcast serve
-# or
-docker run -e OVERCAST_LAMBDA_HOT_RELOAD=true overcast
-```
-
-Then deploy once with `cdk deploy`. Subsequent code changes are reflected
-immediately on the next Lambda invoke without redeploying.
-
-### Limitations and caveats
-
-- `cdk watch` and `cdk deploy --hotswap` work without the hot-reload flag — they
-  call `UpdateFunctionCode` directly. Use bind-mount hot-reload only when you
-  want to skip the redeploy cycle entirely.
-- Lambda layers are supported with hot-reload mode. Attached layer archives are
-  expanded into `/opt` inside the Lambda container before startup (for example,
-  Node uses `nodejs/node_modules/*` and Python uses `python/*`).
-- The same `/opt` layer injection behavior is used for normal zip-based
-  invocation too (not just hot-reload mode).
-- If multiple attached layers contain the same file path, later layers in the
-  function's `Layers` list override earlier ones.
-- The CloudFormation provisioner converts CFN tag arrays to the Lambda tag map
-  format and applies stack-level tags to Lambda resources. Resource-level tags
-  take precedence on key conflicts.
-- Overcast logs a `WARN` at container acquire time if `.ts` files are found with
-  no `.js` files on Node 22 or earlier, pointing to the correct fix.
-
----
-
 ## Lambda Layers
 
 When a function specifies layer ARNs (e.g. from CDK or CloudFormation), Overcast
@@ -416,14 +152,218 @@ Lambda containers.
 Once fetched, layers are cached on disk (in `LAMBDA_LAYER_CACHE_DIR` or the
 default location) so subsequent invocations don't hit AWS again.
 
-### Extensions stripping
+Layers that contain `extensions/` entries are supported for Docker-backed zip
+functions. See [Lambda Extensions](#lambda-extensions) for lifecycle behavior,
+AWS-calling extension requirements, and troubleshooting guidance.
 
-Lambda extensions (files under `/opt/extensions/`) cannot function outside the
-real Lambda platform. Overcast automatically strips the `extensions/` directory
-from all layers before injecting them into `/opt`, regardless of whether the
-layer was pre-downloaded or remotely fetched.
+---
 
-### Environment variables reference
+## Lambda Extensions
+
+Docker-backed zip functions start executable external extensions found directly
+under `/opt/extensions` in attached layers before the runtime entrypoint starts.
+Layer file modes are preserved, so extension binaries and scripts must be
+executable in the layer zip.
+
+Supported Runtime API extension paths:
+
+- `POST /2020-01-01/extension/register`
+- `GET /2020-01-01/extension/event/next`
+- `POST /2020-01-01/extension/init/error`
+- `POST /2020-01-01/extension/exit/error`
+- `PUT /2020-08-15/logs`
+
+`INVOKE` events are delivered only to extensions in the same container that
+accepted the invocation. `SHUTDOWN` events are sent when Overcast tears down a
+warm container.
+
+Logs API subscriptions support HTTP destinations for `platform`, `function`,
+and `extension` log types. Function stdout/stderr is delivered as `function`
+records; synthesized START/END/REPORT lines are delivered as `platform`
+records. Delivery is best-effort and does not yet implement the full Lambda
+buffering/retry contract.
+
+### Extensions that call AWS
+
+Use a recent extension layer version that honors standard AWS SDK endpoint
+configuration. Overcast injects endpoint and region environment variables into
+the Lambda container so endpoint-aware extensions use the local emulator instead
+of real AWS:
+
+- `AWS_ENDPOINT_URL`
+- `AWS_ENDPOINT_URL_SSM`
+- `AWS_ENDPOINT_URL_SECRETS_MANAGER`
+- `AWS_REGION`
+- `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN`
+
+Reference extensions by the Lambda layer version in your IaC, because that is
+what CDK, CloudFormation, and Lambda ARNs expose. For example, the AWS
+Parameters and Secrets Lambda Extension for `ap-southeast-2` was verified with
+layer version `90`:
+
+```text
+arn:aws:lambda:ap-southeast-2:665172237481:layer:AWS-Parameters-and-Secrets-Lambda-Extension:90
+arn:aws:lambda:ap-southeast-2:665172237481:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:90
+```
+
+Choose the layer architecture that matches the Lambda function architecture, not
+the host machine architecture. For example, an `x86_64` Lambda function should
+use the x86_64 extension layer even when Docker is running on Apple Silicon.
+
+The extension binary's own version, when available from extension logs or the
+downloaded artifact, is useful for diagnostics but is usually not the version you
+configure. In testing, the old AWS Parameters and Secrets layer version `11`
+contained extension `1.0.143` and did not honor endpoint environment variables;
+current layer version `90` contained extension `1.0.342` and routed SSM and
+Secrets Manager requests to Overcast.
+
+### Extension troubleshooting
+
+If an extension still reaches real AWS or returns AWS credential errors:
+
+- Confirm the configured Lambda layer ARN version is recent for the region and
+  architecture you are using.
+- Confirm the layer architecture matches the Lambda function architecture.
+- Prefer checking the layer ARN version first; binary versions are secondary
+  evidence from logs or inspected artifacts.
+- Avoid blank user-defined endpoint or credential variables. Overcast provides
+  the endpoint and test credentials inside the Lambda container.
+
+---
+
+## Hot Reload
+
+Hot reload mounts your local source directory into the Lambda runtime at
+`/var/task` so code edits are picked up on the next invoke without uploading a
+new zip. This mode is opt-in and intended for local development.
+
+Use hot reload for fast inner-loop development with interpreted runtimes such as
+Node.js and Python. Use the normal zip or image deploy path when you need to
+validate production-like packaging.
+
+### Quickest CDK path: `cdk watch`
+
+If you just want fast iteration without configuring hot-reload tags, use
+`cdk watch`. It calls `UpdateFunctionCode` on every file change, which
+invalidates the warm pool entry. No tag, bind mount, or Docker file-sharing
+configuration is required:
+
+```bash
+AWS_ENDPOINT_URL=http://localhost:2456 cdk watch
+```
+
+Each save triggers a redeploy of only the changed function assets. This works
+with every runtime and every bundler.
+
+### Bind-mount hot reload
+
+Use bind-mount hot reload when you need sub-second iteration and want to skip the
+redeploy cycle entirely.
+
+Enable the global feature flag when starting Overcast:
+
+```bash
+OVERCAST_LAMBDA_HOT_RELOAD=true overcast serve
+# or
+docker run -e OVERCAST_LAMBDA_HOT_RELOAD=true overcast
+```
+
+Then create or update the function with the `overcast:hot-reload-path` tag set
+to an absolute host path:
+
+```bash
+aws --endpoint-url http://localhost:4566 lambda create-function \
+   --function-name demo-hot \
+   --runtime nodejs20.x \
+   --handler index.handler \
+   --role arn:aws:iam::000000000000:role/lambda-role \
+   --zip-file fileb://minimal.zip \
+   --tags overcast:hot-reload-path=/absolute/path/to/lambda/source
+```
+
+Invoke normally, edit files in the configured source path, and invoke again:
+
+```bash
+aws --endpoint-url http://localhost:4566 lambda invoke \
+   --function-name demo-hot out.json
+```
+
+Path behavior:
+
+- Path must be absolute.
+- Windows drive paths are normalized, for example `C:\Users\you\app` becomes
+  `/c/Users/you/app`.
+- Mount is read-only inside the container at `/var/task:ro`.
+- Host files must be readable by the runtime user in the container.
+
+### CDK hot-reload tags
+
+When you add tags to an `AWS::Lambda::Function` resource in a CloudFormation
+template or CDK construct, Overcast's CloudFormation provisioner forwards those
+tags to the Lambda `CreateFunction` call. Set `overcast:hot-reload-path`
+directly in your CDK stack and hot reload activates after `cdk deploy`.
+
+For Node.js 24, you can mount raw TypeScript because the runtime strips
+TypeScript types natively:
+
+```typescript
+import * as path from "path";
+import * as cdk from "aws-cdk-lib";
+import * as lambda from "aws-cdk-lib/aws-lambda";
+
+const fn = new lambda.Function(this, "MyFn", {
+  runtime: lambda.Runtime.NODEJS_24_X,
+  handler: "src/handler.handler",
+  code: lambda.Code.fromAsset(path.join(__dirname, "src")),
+});
+
+cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
+```
+
+For Node.js 22 and earlier, mount compiled JavaScript output instead of raw
+TypeScript:
+
+```typescript
+cdk.Tags.of(fn).add(
+  "overcast:hot-reload-path",
+  path.resolve(__dirname, "dist"),
+);
+```
+
+Keep `dist/` fresh with your bundler, then deploy once:
+
+```bash
+npx esbuild src/handler.ts --bundle --platform=node --outdir=dist --watch
+AWS_ENDPOINT_URL=http://localhost:2456 cdk deploy
+```
+
+For Python or pre-built JavaScript, point the tag directly at the source tree:
+
+```typescript
+cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
+```
+
+### Hot-reload behavior and troubleshooting
+
+- Attached layer archives are expanded into `/opt` before the Lambda container
+  starts, the same as normal zip-based invocation.
+- If multiple attached layers provide the same file path, later layers in the
+  function's `Layers` list override earlier ones.
+- Parallel invocations of the same function share one mounted source tree. This
+  is convenient for development, but less isolated than AWS production behavior.
+- If Docker reports `mounts denied` or an invalid bind mount, allow the directory
+  in Docker Desktop File Sharing settings.
+- If the runtime reports import or init errors, verify the source directory
+  contains the expected handler file at the root of mounted `/var/task`.
+- If init fails with a missing layer version, verify same-account layer ARNs
+  exist in Overcast or place foreign-account layer zips in
+  `LAMBDA_LAYER_CACHE_DIR` using `{LayerName}_{Version}.zip`.
+- Overcast logs a `WARN` at container acquire time if `.ts` files are found with
+  no `.js` files on Node.js 22 or earlier.
+
+---
+
+## Configuration Reference
 
 | Variable                              | Default          | Description                                             |
 | ------------------------------------- | ---------------- | ------------------------------------------------------- |
@@ -437,50 +377,6 @@ layer was pre-downloaded or remotely fetched.
 
 \* Resolves to `{OVERCAST_DATA_DIR}/layers`. In the standard Docker image
 `OVERCAST_DATA_DIR=/data`, so layers are read from `/data/layers`.
-
----
-
-## Web UI Guidance: Should Hot Reload Be Exposed?
-
-Yes. This feature should be exposed in the web UI, but as an explicit
-development workflow, not a default Lambda path.
-
-### Recommended UI model
-
-1. Add a "Development" section on the Lambda function create/edit surface.
-2. Add a toggle: `Enable hot reload (mount local source)`.
-3. Show an absolute-path input only when toggle is enabled.
-4. Validate path client-side (absolute-only) and show inline error text.
-5. Persist by writing the function tag:
-   `overcast:hot-reload-path=<path>`.
-
-### UX principles (clean and idiomatic)
-
-- Keep hot reload out of the primary deployment flow by default.
-- Use progressive disclosure:
-  basic users see standard code deploy fields first; advanced users can expand
-  Development settings.
-- If function has layers attached, keep the toggle enabled and note that layers
-  are mounted under `/opt`.
-- Include a short "How it works" helper text:
-  "Mounts this local path to /var/task for fast local iteration."
-- On mount-related failures, surface friendly guidance with a direct link to
-  Docker Desktop File Sharing docs.
-
-### Suggested interaction details
-
-- Toggle on with empty path: block save; show `Enter an absolute path`.
-- Relative path input: block save; show `Path must be absolute`.
-- Windows input accepted; display normalized path preview for transparency.
-- Show a small dev-mode badge on function details when hot reload is active.
-
-### API/implementation notes
-
-- Keep implementation tag-driven so behavior is consistent across CLI, SDK,
-  and UI.
-- Do not auto-enable globally from UI; respect
-  `OVERCAST_LAMBDA_HOT_RELOAD` server-side feature flag.
-- Prefer explicit validation errors over silent fallback to zip copy.
 
 <!-- BEGIN overcast:capabilities -->
 
