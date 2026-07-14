@@ -62,6 +62,12 @@ need it than accidentally ship a breaking change as a patch.
        binary packaging, release process, or user-facing docs.
 -->
 
+## [0.0.1-alpha.11] - 2026-07-14
+
+### Fixed
+
+- **ElastiCache / RDS / Lambda** — Docker-backed RDS and ElastiCache endpoints now register their advertised synthetic hostnames as Docker DNS aliases on the Lambda network, so Lambda execution containers can resolve cache/database endpoint hostnames returned by CloudFormation.
+
 ## [0.0.1-alpha.10] - 2026-07-14
 
 ### Fixed
