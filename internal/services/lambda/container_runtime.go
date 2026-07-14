@@ -255,8 +255,9 @@ func (cr *ContainerRuntime) PrewarmFunction(fn *Function, onReady func(err error
 		}
 		return
 	}
+	platform := dockerPlatformForLambdaArchitectures(fn.Architectures)
 	go func() {
-		pullErr := cr.ensureImage(context.Background(), image)
+		pullErr := cr.ensureImage(context.Background(), image, platform)
 		if onReady != nil {
 			onReady(pullErr)
 		}
@@ -289,13 +290,14 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	if err != nil {
 		return nil, err
 	}
+	platform := dockerPlatformForLambdaArchitectures(fn.Architectures)
 
 	// Ensure the image is pulled (lazy, once per image).
-	exists, _ := cr.docker.ImageExists(ctx, image)
+	exists, _ := cr.docker.ImageMatchesPlatform(ctx, image, platform)
 	if !exists {
 		progress("Pulling image " + image)
 	}
-	if err := cr.ensureImage(ctx, image); err != nil {
+	if err := cr.ensureImage(ctx, image, platform); err != nil {
 		return nil, fmt.Errorf("pull image: %w", err)
 	}
 	if !exists {
@@ -354,7 +356,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	// RIC issues its first GET /next (see ThrottleInitBurst).
 	req := &docker.CreateContainerRequest{
 		ContainerConfig: ccfg,
-		Platform:        dockerPlatformForLambdaArchitectures(fn.Architectures),
+		Platform:        platform,
 		HostConfig: &docker.HostConfig{
 			Binds:       bindMountTaskDir(hotReloadPath),
 			NetworkMode: cr.network,
@@ -635,7 +637,7 @@ func (cr *ContainerRuntime) SeedImages() {
 		go func() {
 			for image := range jobs {
 				start := cr.clk.Now()
-				err := cr.ensureImage(context.Background(), image)
+				err := cr.ensureImage(context.Background(), image, dockerPlatformForLambdaArchitectures(nil))
 				if err != nil {
 					cr.logger.Warn("seed pull failed",
 						zap.String("image", image),
@@ -656,18 +658,23 @@ func (cr *ContainerRuntime) SeedImages() {
 	close(jobs)
 }
 
-func (cr *ContainerRuntime) ensureImage(ctx context.Context, image string) error {
+func (cr *ContainerRuntime) ensureImage(ctx context.Context, image, platform string) error {
 	// Check if already pulled.
-	exists, err := cr.docker.ImageExists(ctx, image)
+	exists, err := cr.docker.ImageMatchesPlatform(ctx, image, platform)
 	if err == nil && exists {
 		return nil
 	}
 
-	// Use sync.Once per image to avoid concurrent pulls.
-	once, _ := cr.pullOnce.LoadOrStore(image, &sync.Once{})
+	// Use sync.Once per image+platform to avoid concurrent pulls while still
+	// allowing arm64 and x86_64 variants of the same Lambda tag to be requested.
+	pullKey := image
+	if platform != "" {
+		pullKey += "@" + platform
+	}
+	once, _ := cr.pullOnce.LoadOrStore(pullKey, &sync.Once{})
 	var pullErr error
 	once.(*sync.Once).Do(func() {
-		cr.logger.Info("pulling Lambda image (first use)", zap.String("image", image))
+		cr.logger.Info("pulling Lambda image (first use)", zap.String("image", image), zap.String("platform", platform))
 		// Capture bus and clock once; either may be nil in tests or before wiring.
 		bus := cr.bus.Load()
 		clk := cr.clk
@@ -683,10 +690,10 @@ func (cr *ContainerRuntime) ensureImage(ctx context.Context, image string) error
 		if clk != nil {
 			startTime = clk.Now()
 		}
-		pullErr = cr.docker.PullImage(ctx, image)
+		pullErr = cr.docker.PullImageForPlatform(ctx, image, platform)
 		if pullErr != nil {
 			// Reset so we retry on next call.
-			cr.pullOnce.Delete(image)
+			cr.pullOnce.Delete(pullKey)
 		}
 		if bus != nil && clk != nil {
 			var errStr string
@@ -720,56 +727,72 @@ func (cr *ContainerRuntime) buildEnv(fn *Function, logStream string) []string {
 	if region == "" {
 		region = cr.cfg.Region
 	}
-	env := []string{
-		"AWS_LAMBDA_FUNCTION_NAME=" + fn.Name,
-		"AWS_LAMBDA_FUNCTION_VERSION=$LATEST",
-		fmt.Sprintf("AWS_LAMBDA_FUNCTION_MEMORY_SIZE=%d", fn.MemorySize),
-		"AWS_LAMBDA_LOG_GROUP_NAME=" + fn.logGroupName(),
-		"AWS_LAMBDA_LOG_STREAM_NAME=" + logStream,
+	env := make(map[string]string, len(fn.Environment)+32)
+	for k, v := range fn.Environment {
+		env[k] = v
+	}
+
+	// Runtime-provided variables are applied after user variables. This matches
+	// Lambda's reserved-env behavior and guarantees extensions inherit the local
+	// endpoint and credential values even if a deployment template contains empty
+	// AWS_* placeholders.
+	runtimeEnv := map[string]string{
+		"AWS_LAMBDA_FUNCTION_NAME":        fn.Name,
+		"AWS_LAMBDA_FUNCTION_VERSION":     "$LATEST",
+		"AWS_LAMBDA_FUNCTION_MEMORY_SIZE": fmt.Sprint(fn.MemorySize),
+		"AWS_LAMBDA_LOG_GROUP_NAME":       fn.logGroupName(),
+		"AWS_LAMBDA_LOG_STREAM_NAME":      logStream,
 		// Real Lambda always sets this; Powertools and other observability
 		// libraries use it for cold-start classification.
-		"AWS_LAMBDA_INITIALIZATION_TYPE=on-demand",
-		"AWS_REGION=" + region,
-		"AWS_DEFAULT_REGION=" + region,
-		"AWS_ACCOUNT_ID=" + cr.cfg.AccountID,
-		"AWS_ACCESS_KEY_ID=overcast",
-		"AWS_SECRET_ACCESS_KEY=overcast",
+		"AWS_LAMBDA_INITIALIZATION_TYPE": "on-demand",
+		"AWS_REGION":                     region,
+		"AWS_DEFAULT_REGION":             region,
+		"AWS_ACCOUNT_ID":                 cr.cfg.AccountID,
+		"AWS_ACCESS_KEY_ID":              "overcast",
+		"AWS_SECRET_ACCESS_KEY":          "overcast",
 		// Real Lambda always sets a session token from execution-role
 		// assumption. Some SDK credential providers (notably the JS v3
 		// fromEnv chain) treat the absence of this variable as "not a
 		// Lambda environment" and fall through to other providers, so we
 		// always provide a placeholder.
-		"AWS_SESSION_TOKEN=overcast",
-		"AWS_LAMBDA_RUNTIME_API=" + cr.runtimeAPI.Addr(),
-		"LAMBDA_TASK_ROOT=/var/task",
-		fmt.Sprintf("AWS_LAMBDA_FUNCTION_TIMEOUT=%d", fn.Timeout),
-		"TZ=:/etc/localtime",
+		"AWS_SESSION_TOKEN":           "overcast",
+		"AWS_LAMBDA_RUNTIME_API":      cr.runtimeAPI.Addr(),
+		"LAMBDA_TASK_ROOT":            "/var/task",
+		"AWS_LAMBDA_FUNCTION_TIMEOUT": fmt.Sprint(fn.Timeout),
+		"TZ":                          ":/etc/localtime",
 		// Route all AWS SDK calls from the function back to the Overcast emulator.
 		// AWS SDKs v2+ honour AWS_ENDPOINT_URL for every service automatically.
-		"AWS_ENDPOINT_URL=" + cr.overcastEndpoint,
+		"AWS_ENDPOINT_URL": cr.overcastEndpoint,
 		// Per AWS SDK reference for service-specific endpoints:
 		// SSM and Secrets Manager use these variables, overriding the global endpoint.
 		// Verified with AWS Parameters and Secrets Lambda Extension 1.0.342
 		// (2026-07-14): SSM and Secrets Manager requests honor these vars.
-		"AWS_ENDPOINT_URL_SSM=" + cr.overcastEndpoint,
-		"AWS_ENDPOINT_URL_SECRETS_MANAGER=" + cr.overcastEndpoint,
+		"AWS_ENDPOINT_URL_SSM":             cr.overcastEndpoint,
+		"AWS_ENDPOINT_URL_SECRETS_MANAGER": cr.overcastEndpoint,
+	}
+	for k, v := range runtimeEnv {
+		env[k] = v
 	}
 	// _HANDLER and AWS_EXECUTION_ENV are set only for zip deployments where
 	// Runtime and Handler are specified. Image functions use the image's
 	// ENTRYPOINT and do not have a Runtime string.
 	if fn.Handler != "" {
-		env = append(env, "_HANDLER="+fn.Handler)
+		env["_HANDLER"] = fn.Handler
 	}
 	if fn.Runtime != "" && fn.Runtime != "image" {
-		env = append(env, "AWS_EXECUTION_ENV=AWS_Lambda_"+fn.Runtime)
+		env["AWS_EXECUTION_ENV"] = "AWS_Lambda_" + fn.Runtime
 	}
 
-	// User-defined env vars override above (merged last).
-	for k, v := range fn.Environment {
-		env = append(env, k+"="+v)
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
 	}
-
-	return env
+	slices.Sort(keys)
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, k+"="+env[k])
+	}
+	return out
 }
 
 // ─── containerInstance ─────────────────────────────────────────────────────

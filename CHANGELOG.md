@@ -62,6 +62,10 @@ need it than accidentally ship a breaking change as a patch.
        binary packaging, release process, or user-facing docs.
 -->
 
+### Fixed
+
+- **Lambda** — Docker-backed Lambda image pulls now use the same platform as container creation, so x86_64 external extension layers are not paired with host-native arm64 runtime images on Apple Silicon/ARM hosts.
+
 ## [0.0.1-alpha.13] - 2026-07-14
 
 ### Fixed

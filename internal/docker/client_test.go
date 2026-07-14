@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -148,6 +149,95 @@ func TestCreateContainer_boundsConcurrentDockerMutations(t *testing.T) {
 	// Then: Docker mutations are bounded by the explicit operation semaphore.
 	if got := atomic.LoadInt32(&highWater); got > maxConcurrentOps {
 		t.Fatalf("concurrent create requests = %d, want <= %d", got, maxConcurrentOps)
+	}
+}
+
+func TestCreateContainer_sendsPlatformQuery(t *testing.T) {
+	// Given: a fake Docker daemon that records the create-container query string.
+	var gotName string
+	var gotPlatform string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1.45/containers/create" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		gotName = r.URL.Query().Get("name")
+		gotPlatform = r.URL.Query().Get("platform")
+		_ = json.NewEncoder(w).Encode(CreateContainerResponse{ID: "container-id"})
+	}))
+	defer server.Close()
+	client := &Client{httpClient: server.Client(), host: server.URL, logger: zap.NewNop(), sem: make(chan struct{}, maxConcurrentOps)}
+
+	// When: a platform-specific container create request is sent.
+	_, err := client.CreateContainer(context.Background(), "lambda-demo", &CreateContainerRequest{
+		ContainerConfig: &ContainerConfig{Image: "public.ecr.aws/lambda/nodejs:22"},
+		Platform:        "linux/amd64",
+	})
+
+	// Then: Docker receives platform in the URL query where the Engine API expects it.
+	if err != nil {
+		t.Fatalf("CreateContainer: %v", err)
+	}
+	if gotName != "lambda-demo" {
+		t.Fatalf("name query = %q, want lambda-demo", gotName)
+	}
+	if gotPlatform != "linux/amd64" {
+		t.Fatalf("platform query = %q, want linux/amd64", gotPlatform)
+	}
+}
+
+func TestPullImageForPlatform_sendsPlatformQuery(t *testing.T) {
+	// Given: a fake Docker daemon that records image pull query parameters.
+	var gotImage string
+	var gotPlatform string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.45/images/create":
+			gotImage = r.URL.Query().Get("fromImage")
+			gotPlatform = r.URL.Query().Get("platform")
+			_, _ = w.Write([]byte(`{"status":"done"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.45/images/prune":
+			_, _ = w.Write([]byte(`{"ImagesDeleted":null,"SpaceReclaimed":0}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+	client := &Client{httpClient: server.Client(), host: server.URL, logger: zap.NewNop(), sem: make(chan struct{}, maxConcurrentOps)}
+
+	// When: an image is pulled for a specific platform.
+	err := client.PullImageForPlatform(context.Background(), "public.ecr.aws/lambda/nodejs:22", "linux/amd64")
+
+	// Then: Docker receives platform in the images/create URL query.
+	if err != nil {
+		t.Fatalf("PullImageForPlatform: %v", err)
+	}
+	if gotImage != "public.ecr.aws/lambda/nodejs:22" {
+		t.Fatalf("fromImage query = %q", gotImage)
+	}
+	if gotPlatform != "linux/amd64" {
+		t.Fatalf("platform query = %q, want linux/amd64", gotPlatform)
+	}
+}
+
+func TestImageMatchesPlatform(t *testing.T) {
+	// Given: a local image inspect response for linux/arm64.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, "/v1.45/images/") || !strings.HasSuffix(r.URL.Path, "/json") {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(ImageInspect{OS: "linux", Architecture: "arm64"})
+	}))
+	defer server.Close()
+	client := &Client{httpClient: server.Client(), host: server.URL, logger: zap.NewNop(), sem: make(chan struct{}, maxConcurrentOps)}
+
+	// When/Then: only the matching platform is reported as present.
+	match, err := client.ImageMatchesPlatform(context.Background(), "public.ecr.aws/lambda/nodejs:22", "linux/arm64")
+	if err != nil || !match {
+		t.Fatalf("ImageMatchesPlatform arm64 = %v, %v; want true, nil", match, err)
+	}
+	match, err = client.ImageMatchesPlatform(context.Background(), "public.ecr.aws/lambda/nodejs:22", "linux/amd64")
+	if err != nil || match {
+		t.Fatalf("ImageMatchesPlatform amd64 = %v, %v; want false, nil", match, err)
 	}
 }
 
