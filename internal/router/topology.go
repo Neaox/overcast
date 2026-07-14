@@ -105,7 +105,9 @@ const (
 	tNsDBInstances = "rds:instances"
 
 	// ElastiCache resource tracking.
-	tNsCacheClusters = "elasticache:clusters"
+	tNsCacheClusters          = "elasticache:clusters"
+	tNsCacheReplicationGroups = "elasticache:replication-groups"
+	tNsServerlessCaches       = "elasticache:serverless-caches"
 
 	// MSK resource tracking.
 	tNsMSKClusters = "msk:clusters"
@@ -283,6 +285,16 @@ type tCacheCluster struct {
 	Engine string `json:"Engine"`
 	Status string `json:"CacheClusterStatus"`
 }
+type tCacheReplicationGroup struct {
+	ID     string `json:"ReplicationGroupId"`
+	Engine string `json:"Engine"`
+	Status string `json:"Status"`
+}
+type tServerlessCache struct {
+	Name   string `json:"ServerlessCacheName"`
+	Engine string `json:"Engine"`
+	Status string `json:"Status"`
+}
 
 // MSK resources.
 type tMSKCluster struct {
@@ -407,7 +419,7 @@ func newTopologyHandler(cfg *config.Config, store state.Store) http.HandlerFunc 
 			tNsClusters, tNsECSTaskDefs, tNsECSTasks, tNsECSServices,
 			tNsECRRepos,
 			tNsDBInstances,
-			tNsCacheClusters,
+			tNsCacheClusters, tNsCacheReplicationGroups, tNsServerlessCaches,
 			tNsRestAPIs, tNsAPIResources, tNsAPIStages,
 			tNsV2APIs, tNsV2Routes, tNsV2Integ, tNsV2Stages,
 			tNsCFDistributions,
@@ -824,6 +836,46 @@ func buildTopology(cfg *config.Config, byNS map[string][]state.KV, regionFilter 
 			ID:      region + "::elasticache::" + c.ID,
 			Service: "elasticache",
 			Label:   c.ID,
+			Region:  region,
+			Status:  c.Status,
+		})
+	}
+	for _, kv := range byNS[tNsCacheReplicationGroups] {
+		var rg tCacheReplicationGroup
+		if json.Unmarshal([]byte(kv.Value), &rg) != nil {
+			continue
+		}
+		if rg.ID == "" {
+			continue
+		}
+		region := defaultRegion
+		if i := strings.IndexByte(kv.Key, '/'); i > 0 {
+			region = kv.Key[:i]
+		}
+		addNode(topologyNode{
+			ID:      region + "::elasticache::" + rg.ID,
+			Service: "elasticache",
+			Label:   rg.ID,
+			Region:  region,
+			Status:  rg.Status,
+		})
+	}
+	for _, kv := range byNS[tNsServerlessCaches] {
+		var c tServerlessCache
+		if json.Unmarshal([]byte(kv.Value), &c) != nil {
+			continue
+		}
+		if c.Name == "" {
+			continue
+		}
+		region := defaultRegion
+		if i := strings.IndexByte(kv.Key, '/'); i > 0 {
+			region = kv.Key[:i]
+		}
+		addNode(topologyNode{
+			ID:      region + "::elasticache::" + c.Name,
+			Service: "elasticache",
+			Label:   c.Name,
 			Region:  region,
 			Status:  c.Status,
 		})
@@ -1888,7 +1940,7 @@ func cfnResourceNodeID(res tCFNResource, defaultRegion string) string {
 		return ""
 	case res.Type == "AWS::RDS::DBInstance":
 		return defaultRegion + "::rds::" + res.PhysicalID
-	case res.Type == "AWS::ElastiCache::CacheCluster":
+	case res.Type == "AWS::ElastiCache::CacheCluster" || res.Type == "AWS::ElastiCache::ServerlessCache" || res.Type == "AWS::ElastiCache::ReplicationGroup":
 		return defaultRegion + "::elasticache::" + res.PhysicalID
 	case res.Type == "AWS::ApiGateway::RestApi" || res.Type == "AWS::ApiGatewayV2::Api":
 		return defaultRegion + "::apigateway::" + res.PhysicalID

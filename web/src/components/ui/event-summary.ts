@@ -21,9 +21,10 @@ export function defaultEventSummary(event: StreamEvent): string {
   }
 
   if (event.source === "s3") {
-    const bucket = String(p.Bucket ?? p.name ?? "")
-    const key = String(p.Key ?? "")
+    const bucket = String(p.Bucket ?? p.bucket ?? p.name ?? p.Name ?? "")
+    const key = String(p.Key ?? p.key ?? "")
     const size = p.Size != null ? ` (${formatBytes(Number(p.Size))})` : ""
+    if (!bucket) return JSON.stringify(p)
     return key ? `s3://${bucket}/${key}${size}` : `s3://${bucket}${size}`
   }
 
