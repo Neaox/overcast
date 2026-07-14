@@ -1,0 +1,38 @@
+[
+  {
+    "language": "Go",
+    "extensions": [".go"],
+    "markers": [
+      {"type": "line", "pattern": "//"},
+      {"type": "block", "pattern": {"start": "/\\*", "end": "\\*/"}}
+    ]
+  },
+  {
+    "language": "JavaScript",
+    "extensions": [".js", ".jsx", ".ts", ".tsx"],
+    "markers": [
+      {"type": "line", "pattern": "//"},
+      {"type": "block", "pattern": {"start": "/\\*", "end": "\\*/"}}
+    ]
+  },
+  {
+    "language": "Python",
+    "extensions": [".py"],
+    "markers": [{"type": "line", "pattern": "#"}]
+  },
+  {
+    "language": "Shell",
+    "extensions": [".sh", ".bash"],
+    "markers": [{"type": "line", "pattern": "#"}]
+  },
+  {
+    "language": "YAML",
+    "extensions": [".yml", ".yaml"],
+    "markers": [{"type": "line", "pattern": "#"}]
+  },
+  {
+    "language": "Markdown",
+    "extensions": [".md", ".mdx"],
+    "markers": [{"type": "block", "pattern": {"start": "<!--", "end": "-->"}}]
+  }
+]

@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     branches: [main]
+  pull_request:
+    paths:
+      - VERSION
+      - CHANGELOG.md
+      - .github/workflows/release.yml
+      - scripts/check-release-changelog.py
   release:
     types: [published]
   workflow_dispatch:
@@ -85,6 +91,8 @@ jobs:
           elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             SHOULD_RELEASE=true
             RELEASE_REASON="manual dispatch"
+          elif [ "$EVENT_NAME" = "pull_request" ]; then
+            RELEASE_REASON="pull request validation"
           else
             VERSION_CHANGED=false
             if [ -n "$BEFORE_SHA" ] && ! printf '%s' "$BEFORE_SHA" | grep -Eq '^0+$'; then
@@ -111,54 +119,25 @@ jobs:
             echo "Skipping release: $RELEASE_REASON"
           fi
 
+      - name: Check PR release files
+        id: pr-changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          VERSION_CHANGED=false
+          if git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- VERSION | grep -q '^VERSION$'; then
+            VERSION_CHANGED=true
+          fi
+          echo "version_changed=$VERSION_CHANGED" >> "$GITHUB_OUTPUT"
+
       - name: Validate changelog release section
-        if: steps.decide.outputs.should_release == 'true'
+        if: steps.decide.outputs.should_release == 'true' || steps.pr-changes.outputs.version_changed == 'true'
         env:
           VERSION: ${{ steps.read.outputs.version }}
         run: |
-          python3 - <<'EOF'
-          import os
-          import re
-          import sys
-          from pathlib import Path
-
-          version = os.environ["VERSION"]
-          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
-
-          def strip_comments(text: str) -> str:
-              return re.sub(r"<!--.*?-->", "", text, flags=re.S).strip()
-
-          def section(name: str) -> str | None:
-              pattern = re.compile(rf"^## \[{re.escape(name)}\].*?$", re.M)
-              match = pattern.search(changelog)
-              if not match:
-                  return None
-              rest = changelog[match.end():]
-              next_match = re.search(r"^## ", rest, flags=re.M)
-              body = rest[: next_match.start()] if next_match else rest
-              return strip_comments(body)
-
-          errors = []
-          release_notes = section(version)
-          if release_notes is None:
-              errors.append(f"CHANGELOG.md is missing a '## [{version}]' release section.")
-          elif not release_notes:
-              errors.append(f"CHANGELOG.md release section '## [{version}]' is empty.")
-
-          unreleased = section("Unreleased")
-          if unreleased is None:
-              errors.append("CHANGELOG.md is missing a '## [Unreleased]' section.")
-          elif unreleased:
-              errors.append(
-                  "CHANGELOG.md still has unreleased entries. Move them under "
-                  f"'## [{version}]' before releasing."
-              )
-
-          if errors:
-              for error in errors:
-                  print(f"::error::{error}")
-              sys.exit(1)
-          EOF
+          python3 scripts/check-release-changelog.py "$VERSION"
 
   test:
     name: Test

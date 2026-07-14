@@ -24,6 +24,8 @@ jobs:
       - uses: alstr/todo-to-issue-action@v5
         with:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NO_STANDARD: "true"
+          LANGUAGES: .github/todo-languages.json
           IDENTIFIERS: |
             [
               {"name": "TODO", "labels": ["auto-todo", "needs-info"]}

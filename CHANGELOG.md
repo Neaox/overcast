@@ -64,8 +64,6 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
-- Nothing yet.
-
 ## [0.0.1-alpha.14] - 2026-07-14
 
 ### Fixed
