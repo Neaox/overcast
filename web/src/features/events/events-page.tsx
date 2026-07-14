@@ -2,7 +2,7 @@
  * EventsPage — live event stream viewer at /events.
  *
  * Features: multi-source filtering, free-text search, date-range filtering,
- * hide requests toggle, heartbeat toggle, pause/resume. Source and text/date
+ * heartbeat toggle, pause/resume. Source and text/date
  * filters are all client-side — the SSE connection always receives everything.
  */
 import { useState, useCallback, useMemo, useRef, useEffect } from "react"
@@ -10,7 +10,6 @@ import {
   Activity,
   Check,
   ChevronDown,
-  EyeOff,
   Heart,
   Pause,
   Play,
@@ -58,6 +57,9 @@ function buildSourceEntries(): SourceEntry[] {
 }
 
 const ALL_SOURCES = buildSourceEntries()
+const DEFAULT_SELECTED_SOURCES = ALL_SOURCES
+  .filter((source) => source.id !== "request" && source.id !== "heartbeat")
+  .map((source) => source.id)
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -94,8 +96,7 @@ function topSources(events: readonly StreamEvent[], n: number): { id: string; la
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function EventsPage() {
-  const [selectedSources, setSelectedSources] = useState<string[]>([])
-  const [hideRequests, setHideRequests] = useState(false)
+  const [selectedSources, setSelectedSources] = useState<string[]>(() => DEFAULT_SELECTED_SOURCES)
   const [showHeartbeats, setShowHeartbeats] = useState(false)
   const [paused, setPaused] = useState(false)
   const [frozenEvents, setFrozenEvents] = useState<StreamEvent[]>([])
@@ -111,19 +112,14 @@ export function EventsPage() {
     includeHeartbeats: showHeartbeats,
   })
 
-  // Client-side filtering chain. Both source selection and hide-requests
-  // apply independently: sources pick what to include, hide-requests
-  // excludes source="request" on top of that.
+  // Client-side filtering chain. Sources pick what to include; request
+  // events are just another source and are unchecked by default.
   const events = useMemo(() => {
     let filtered = rawEvents
 
     if (selectedSources.length > 0) {
       const set = new Set(selectedSources)
       filtered = filtered.filter((e) => set.has(e.source))
-    }
-
-    if (hideRequests) {
-      filtered = filtered.filter((e) => e.source !== "request")
     }
 
     const lower = textFilter.toLowerCase().trim()
@@ -138,7 +134,7 @@ export function EventsPage() {
       if (!isNaN(to)) filtered = filtered.filter((e) => new Date(e.time).getTime() <= to)
     }
     return filtered
-  }, [rawEvents, selectedSources, hideRequests, textFilter, dateFrom, dateTo])
+  }, [rawEvents, selectedSources, textFilter, dateFrom, dateTo])
 
   const displayedEvents = paused ? frozenEvents : events
 
@@ -179,14 +175,15 @@ export function EventsPage() {
   }, [])
 
   const clearFilters = useCallback(() => {
-    setSelectedSources([])
-    setHideRequests(false)
+    setSelectedSources(DEFAULT_SELECTED_SOURCES)
     setTextFilter("")
     setDateFrom("")
     setDateTo("")
   }, [])
 
-  const hasFilter = selectedSources.length > 0 || hideRequests || textFilter !== "" || dateFrom !== "" || dateTo !== ""
+  const hasSourceFilter = selectedSources.length !== DEFAULT_SELECTED_SOURCES.length
+    || selectedSources.some(source => !DEFAULT_SELECTED_SOURCES.includes(source))
+  const hasFilter = hasSourceFilter || textFilter !== "" || dateFrom !== "" || dateTo !== ""
   const top5 = useMemo(() => topSources(rawEvents, 5), [rawEvents])
 
   // Filter sources in the dropdown by search text.
@@ -248,40 +245,23 @@ export function EventsPage() {
           <Button
             variant="ghost"
             size="sm"
-            className={cn("h-8 gap-1 text-xs", selectedSources.length > 0 && "bg-fg/5 font-medium")}
+            className={cn("h-8 gap-1 text-xs", hasSourceFilter && "bg-fg/5 font-medium")}
             onClick={() => setSourceMenuOpen(o => !o)}
           >
             {(() => {
-              if (selectedSources.length > 0 && hideRequests) {
-                return `${selectedSources.length} source${selectedSources.length !== 1 ? "s" : ""}, no requests`
-              }
               if (selectedSources.length > 0) {
                 return `${selectedSources.length} source${selectedSources.length !== 1 ? "s" : ""}`
               }
-              if (hideRequests) return "No requests"
-              return "All sources"
+              return "No sources"
             })()}
             <ChevronDown className="h-3 w-3" />
           </Button>
 
           {sourceMenuOpen && (
             <div className="absolute left-0 top-full z-50 mt-1 w-56 rounded-lg border border-border bg-bg-elevated shadow-lg">
-              {/* Quick toggle: hide requests — always independent of source selection */}
-              <button
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-t-lg px-3 py-2 text-xs hover:bg-fg/5",
-                  hideRequests && "bg-fg/5",
-                )}
-                onClick={() => setHideRequests(v => !v)}
-              >
-                <EyeOff className="h-3.5 w-3.5 text-fg-muted" />
-                <span className="flex-1 text-left">Hide requests</span>
-                {hideRequests && <Check className="h-3.5 w-3.5 text-accent" />}
-              </button>
-
               {selectedSources.length > 0 && (
                 <button
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-fg-muted hover:bg-fg/5"
+                  className="flex w-full items-center gap-2 rounded-t-lg px-3 py-1.5 text-xs text-fg-muted hover:bg-fg/5"
                   onClick={() => setSelectedSources([])}
                 >
                   Clear selection
@@ -309,6 +289,8 @@ export function EventsPage() {
                   filteredSources.map(s => (
                     <button
                       key={s.id}
+                      role="checkbox"
+                      aria-checked={selectedSources.includes(s.id)}
                       className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-fg/5"
                       onClick={() => toggleSource(s.id)}
                     >

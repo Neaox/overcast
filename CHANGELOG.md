@@ -62,6 +62,10 @@ need it than accidentally ship a breaking change as a patch.
        binary packaging, release process, or user-facing docs.
 -->
 
+### Fixed
+
+- **Web UI** — Event Stream source filters now start with visible sources checked while leaving requests and heartbeats off by default, and the separate "Hide requests" toggle was removed in favour of the Requests source checkbox.
+
 ## [0.0.1-alpha.11] - 2026-07-14
 
 ### Fixed
