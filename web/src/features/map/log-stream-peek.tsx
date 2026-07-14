@@ -113,7 +113,8 @@ export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: Lo
     const key = `${target.logGroup}::${target.logStream}`
     if (key !== sseTargetKey.current) {
       sseTargetKey.current = key
-      processedCount.current = 0
+      processedCount.current = sseEvents.length
+      return
     }
     const newEvents = sseEvents.slice(processedCount.current)
     processedCount.current = sseEvents.length

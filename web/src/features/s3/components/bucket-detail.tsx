@@ -33,15 +33,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import { PageHeader, Breadcrumb, Spinner, EmptyState, CodeBlock } from "@/components/ui/primitives"
+import { PageHeader, Breadcrumb, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { useToast } from "@/components/ui/toast"
 import { formatBytes, formatDate, formatStorageClass } from "@/lib/format"
 import { BucketTabs } from "./bucket-tabs"
 import { cn } from "@/lib/utils"
+import { ObjectPreviewDialog } from "./object-preview-dialog"
 
 export function BucketDetail() {
-  'use no memo'
+  "use no memo"
   const { bucket } = Route.useParams()
   const navigate = useNavigate()
   const qc = useQueryClient()
@@ -327,7 +328,11 @@ export function BucketDetail() {
                       key={vr.key}
                       data-index={vr.index}
                       ref={rowVirtualizer.measureElement}
-                      className={cn("cursor-pointer transition-colors hover:bg-bg-subtle", !isLastRow && "border-b border-border-muted", (item.type === "object" && selected === item.key) && "bg-accent-muted")}
+                      className={cn(
+                        "cursor-pointer transition-colors hover:bg-bg-subtle",
+                        !isLastRow && "border-b border-border-muted",
+                        item.type === "object" && selected === item.key && "bg-accent-muted",
+                      )}
                       onClick={() => {
                         if (item.type === "prefix") navigateInto(item.prefix)
                         else setSelected(selected === item.key ? undefined : item.key)
@@ -446,44 +451,13 @@ export function BucketDetail() {
         )}
       </div>
 
-      {/* Object metadata panel */}
-      <Dialog open={!!metaTarget} onOpenChange={(o) => !o && setMetaTarget(undefined)}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="truncate font-mono text-sm">{metaTarget}</DialogTitle>
-          </DialogHeader>
-          {metaLoading ? (
-            <div className="flex justify-center py-8">
-              <Spinner />
-            </div>
-          ) : meta ? (
-            <div className="flex flex-col gap-3">
-              <MetaRow label="Content-Type" value={meta.contentType} />
-              <MetaRow label="Size" value={formatBytes(meta.contentLength)} />
-              <MetaRow label="Last Modified" value={formatDate(meta.lastModified)} />
-              <MetaRow label="ETag" value={meta.etag} mono />
-              {Object.keys(meta.metadata).length > 0 && (
-                <div>
-                  <p className="mb-1.5 text-sm font-medium text-fg-muted">User metadata</p>
-                  <CodeBlock>{JSON.stringify(meta.metadata, null, 2)}</CodeBlock>
-                </div>
-              )}
-            </div>
-          ) : null}
-          <DialogFooter>
-            <Button variant="secondary" onClick={() => setMetaTarget(undefined)}>
-              Close
-            </Button>
-            {metaTarget && (
-              <Button asChild>
-                <a href={s3.getObjectDownloadUrl(bucket, metaTarget)} download>
-                  <Download className="h-4 w-4" /> Download
-                </a>
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ObjectPreviewDialog
+        bucket={bucket}
+        objectKey={metaTarget}
+        metadata={meta}
+        loading={metaLoading}
+        onClose={() => setMetaTarget(undefined)}
+      />
 
       {/* Delete confirmation */}
       <Dialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(undefined)}>
@@ -561,15 +535,6 @@ export function BucketDetail() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
-  )
-}
-
-function MetaRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex gap-3">
-      <span className="w-32 shrink-0 text-sm text-fg-muted">{label}</span>
-      <span className={cn("text-sm break-all text-fg", mono && "font-mono")}>{value}</span>
     </div>
   )
 }

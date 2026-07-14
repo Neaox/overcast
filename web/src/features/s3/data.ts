@@ -38,6 +38,8 @@ export const s3Keys = {
   objectList: (bucket: string, prefix: string) => [...s3Keys.objects(), bucket, prefix] as const,
   meta: () => [...s3Keys.all(), "meta"] as const,
   objectMeta: (bucket: string, key: string) => [...s3Keys.meta(), bucket, key] as const,
+  objectPreview: (bucket: string, key: string) =>
+    [...s3Keys.objectMeta(bucket, key), "preview"] as const,
   notification: () => [...s3Keys.all(), "notification"] as const,
   bucketNotification: (bucket: string) => [...s3Keys.notification(), bucket] as const,
 }
@@ -65,6 +67,13 @@ export function s3ObjectMetaQueryOptions(bucket: string, key: string) {
   return queryOptions({
     queryKey: s3Keys.objectMeta(bucket, key),
     queryFn: () => s3.getObjectMetadata(bucket, key),
+  })
+}
+
+export function s3ObjectPreviewQueryOptions(bucket: string, key: string) {
+  return queryOptions({
+    queryKey: s3Keys.objectPreview(bucket, key),
+    queryFn: () => s3.getObjectText(bucket, key),
   })
 }
 
