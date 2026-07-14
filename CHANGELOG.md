@@ -62,6 +62,10 @@ need it than accidentally ship a breaking change as a patch.
        binary packaging, release process, or user-facing docs.
 -->
 
+### Fixed
+
+- **API Gateway** — REST and HTTP API Lambda proxy events now encode empty request bodies as JSON `null` for payload format 1.0 instead of `""`, matching AWS event shapes for no-body requests.
+
 ## [0.0.1-alpha.9] - 2026-07-14
 
 ### Fixed

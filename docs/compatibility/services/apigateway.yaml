@@ -2,7 +2,7 @@ service: apigateway
 status: in_progress
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-19
+last_updated: 2026-07-14
 protocols: [rest_json]
 implementation: [internal/services/apigateway]
 integration_tests: [tests/integration/apigateway]
@@ -25,14 +25,15 @@ operations:
         status: fixed
         evidence:
           - internal/services/apigateway/handler_execution_test.go: TestExecuteRestLambdaProxy_absentRequestMapsAreNull
-        notes: Docs reviewed for resource, path, method, headers, multiValueHeaders, query strings, pathParameters, stageVariables, requestContext, body, and isBase64Encoded. Overcast now emits null for absent queryStringParameters, multiValueQueryStringParameters, pathParameters, and stageVariables instead of empty objects. Full scenario coverage is not complete.
+          - internal/services/apigateway/handler_execution_test.go: TestExecuteV2LambdaProxy_payloadFormatOneEmptyRequestBodyIsNull
+        notes: Docs reviewed for resource, path, method, headers, multiValueHeaders, query strings, pathParameters, stageVariables, requestContext, body, and isBase64Encoded. Overcast now emits null for absent queryStringParameters, multiValueQueryStringParameters, pathParameters, stageVariables, and no-body payload format 1.0 request bodies instead of empty objects/strings. Full scenario coverage is not complete.
       - name: Lambda proxy malformed output
         status: docs_reviewed
         notes: Docs state incompatible Lambda proxy output returns 502 Bad Gateway. Existing implementation returns 502 for unparseable structured proxy output; statusCode-required and invalid-base64 edge cases remain unreviewed.
 findings:
   fixed:
     - ExecuteRestAPI Lambda proxy responses no longer emit conflicting single-value header entries when the same header is returned via multiValueHeaders; multiValueHeaders now win as AWS documents.
-    - ExecuteRestAPI Lambda proxy request events now encode absent query string and path parameter maps as JSON null rather than empty objects.
+    - ExecuteRestAPI Lambda proxy request events now encode absent query string/path parameter maps and no-body payload format 1.0 request bodies as JSON null rather than empty objects or empty strings.
   remaining_gaps:
     - Finish ExecuteRestAPI Lambda proxy scenario coverage for duplicate query/header value ordering, binary/base64 request handling, malformed output validation, and Lambda function-error mapping.
     - Review Lambda, HTTP, MOCK integration execution fidelity.
@@ -43,6 +44,6 @@ handoff:
   start_with: [ExecuteRestAPI Lambda proxy request event edge cases, HTTP API route matching, authorizers]
   do_not_redo:
     - Lambda proxy response headers-vs-multiValueHeaders precedence for REST/HTTP shared writer.
-    - REST Lambda proxy absent query/path/stage variable maps are null.
+    - REST Lambda proxy absent query/path/stage variable maps are null, and REST/HTTP payload format 1.0 no-body request bodies are null.
   commands:
     - go test -count=1 ./internal/services/apigateway/... ./tests/integration/apigateway/...
