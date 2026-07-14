@@ -226,7 +226,7 @@ func (h *Handler) executeRestLambdaProxy(
 			RequestTime:      h.clk.Now().Format("02/Jan/2006:15:04:05 +0000"),
 			RequestTimeEpoch: h.clk.Now().UnixMilli(),
 		},
-		Body:            string(body),
+		Body:            proxyEventBody(body),
 		IsBase64Encoded: false,
 	}
 
@@ -451,7 +451,7 @@ func (h *Handler) executeV2LambdaProxy(
 				Time:      h.clk.Now().Format("02/Jan/2006:15:04:05 +0000"),
 				TimeEpoch: h.clk.Now().UnixMilli(),
 			},
-			Body:            string(body),
+			Body:            proxyEventBody(body),
 			IsBase64Encoded: false,
 		}
 		payload, err = json.Marshal(event)
@@ -488,7 +488,7 @@ func (h *Handler) executeV2LambdaProxy(
 				RequestTime:      h.clk.Now().Format("02/Jan/2006:15:04:05 +0000"),
 				RequestTimeEpoch: h.clk.Now().UnixMilli(),
 			},
-			Body:            string(body),
+			Body:            proxyEventBody(body),
 			IsBase64Encoded: false,
 		}
 		payload, err = json.Marshal(event)
@@ -541,6 +541,14 @@ func (h *Handler) executeV2LambdaProxy(
 	writeLambdaProxyResponse(w, &proxyResp)
 }
 
+func proxyEventBody(body []byte) *string {
+	if len(body) == 0 {
+		return nil
+	}
+	s := string(body)
+	return &s
+}
+
 // ---- Event types ----------------------------------------------------------
 
 // lambdaV1ProxyEvent is the API Gateway REST (v1) Lambda proxy request format.
@@ -555,7 +563,7 @@ type lambdaV1ProxyEvent struct {
 	PathParameters                  map[string]string   `json:"pathParameters"`
 	StageVariables                  map[string]string   `json:"stageVariables"`
 	RequestContext                  v1RequestContext    `json:"requestContext"`
-	Body                            string              `json:"body"`
+	Body                            *string             `json:"body"`
 	IsBase64Encoded                 bool                `json:"isBase64Encoded"`
 }
 
@@ -590,7 +598,7 @@ type lambdaV2ProxyEvent struct {
 	StageVariables        map[string]string `json:"stageVariables,omitempty"`
 	Cookies               []string          `json:"cookies,omitempty"`
 	RequestContext        v2RequestContext  `json:"requestContext"`
-	Body                  string            `json:"body,omitempty"`
+	Body                  *string           `json:"body,omitempty"`
 	IsBase64Encoded       bool              `json:"isBase64Encoded"`
 }
 
