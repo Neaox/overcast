@@ -811,10 +811,7 @@ func (h *Handler) addInstanceToCluster(ctx context.Context, clusterID, instanceI
 // is running inside a container) or to 127.0.0.1 with the host port binding
 // (when overcast is running natively).
 func (h *Handler) setContainerEndpoint(ctx context.Context, inst *DBInstance, ecfg engineEnv) {
-	network := h.cfg.RDSNetwork
-	if network == "" {
-		network = "overcast_rds"
-	}
+	network := h.network()
 
 	// When overcast itself runs inside Docker, route through the Docker network
 	// so clients inside the same container / network can reach the DB.
@@ -910,6 +907,7 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 
 		inst.DockerContainerID = existing.ID
 		inst.HostPort = hostPort
+		h.connectToLambdaNetwork(ctx, existing.ID, h.dbInstanceEndpointAliases(inst))
 		h.setContainerEndpoint(ctx, inst, ecfg)
 		return nil
 	}
@@ -931,10 +929,7 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 	}
 
 	// Create network (idempotent).
-	network := h.cfg.RDSNetwork
-	if network == "" {
-		network = "overcast_rds"
-	}
+	network := h.network()
 	if _, err := h.docker.CreateNetwork(ctx, network); err != nil {
 		h.log.Warn("RDS: failed to create network (may already exist)",
 			zap.String("network", network), zap.Error(err))
@@ -977,7 +972,7 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 		},
 		NetworkingConfig: &docker.NetworkingConfig{
 			EndpointsConfig: map[string]*docker.EndpointSettings{
-				network: {},
+				network: {Aliases: h.dbInstanceEndpointAliases(inst)},
 			},
 		},
 	}
@@ -1025,8 +1020,55 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 
 	inst.DockerContainerID = containerID
 	inst.HostPort = hostPort
+	h.connectToLambdaNetwork(ctx, containerID, h.dbInstanceEndpointAliases(inst))
 	h.setContainerEndpoint(ctx, inst, ecfg)
 	return nil
+}
+
+func (h *Handler) dbInstanceEndpointAliases(inst *DBInstance) []string {
+	if inst == nil {
+		return nil
+	}
+	var current string
+	if inst.Endpoint != nil {
+		current = inst.Endpoint.Address
+	}
+	var canonical string
+	if inst.DBInstanceIdentifier != "" {
+		canonical = fmt.Sprintf("%s.%s.rds.%s", inst.DBInstanceIdentifier, h.region(), h.externalHostname())
+	}
+	return docker.EndpointAliases(current, canonical)
+}
+
+func (h *Handler) region() string {
+	if h.cfg != nil && h.cfg.Region != "" {
+		return h.cfg.Region
+	}
+	return "us-east-1"
+}
+
+func (h *Handler) externalHostname() string {
+	if h.cfg != nil {
+		return h.cfg.ExternalHostname()
+	}
+	return "localhost"
+}
+
+func (h *Handler) connectToLambdaNetwork(ctx context.Context, containerID string, aliases []string) {
+	if h.cfg == nil || h.cfg.LambdaNetwork == "" || h.cfg.LambdaNetwork == h.network() || len(aliases) == 0 || !h.cfg.Services["lambda"] {
+		return
+	}
+	if err := h.docker.ConnectNetworkWithAliases(ctx, h.cfg.LambdaNetwork, containerID, aliases); err != nil {
+		h.log.Warn("RDS: failed to attach container to Lambda network for DNS aliases",
+			zap.String("network", h.cfg.LambdaNetwork), zap.String("container", containerID), zap.Error(err))
+	}
+}
+
+func (h *Handler) network() string {
+	if h.cfg != nil && h.cfg.RDSNetwork != "" {
+		return h.cfg.RDSNetwork
+	}
+	return "overcast_rds"
 }
 
 // scheduleHealthCheck polls TCP connectivity to the DB container and transitions
