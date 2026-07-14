@@ -62,6 +62,10 @@ need it than accidentally ship a breaking change as a patch.
        binary packaging, release process, or user-facing docs.
 -->
 
+### Fixed
+
+- **Lambda / Release** — Docker-backed Lambda containers now run the Docker image platform matching the function architecture so extension layer binaries match the runtime architecture on Apple Silicon/ARM hosts, and the hybrid store coverage test no longer fails on race/coverage instrumentation overhead.
+
 ## [0.0.1-alpha.12] - 2026-07-14
 
 ### Added

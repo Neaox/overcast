@@ -354,6 +354,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	// RIC issues its first GET /next (see ThrottleInitBurst).
 	req := &docker.CreateContainerRequest{
 		ContainerConfig: ccfg,
+		Platform:        dockerPlatformForLambdaArchitectures(fn.Architectures),
 		HostConfig: &docker.HostConfig{
 			Binds:       bindMountTaskDir(hotReloadPath),
 			NetworkMode: cr.network,
@@ -467,6 +468,20 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	)
 
 	return cr.newContainerInstance(id, containerIP, fn, logStream), nil
+}
+
+func dockerPlatformForLambdaArchitectures(architectures []string) string {
+	if len(architectures) == 0 {
+		return "linux/amd64"
+	}
+	switch architectures[0] {
+	case "arm64":
+		return "linux/arm64"
+	case "x86_64":
+		return "linux/amd64"
+	default:
+		return ""
+	}
 }
 
 // awaitContainerIP polls the Docker daemon for the container's IP address on

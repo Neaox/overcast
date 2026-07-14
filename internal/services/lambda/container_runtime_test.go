@@ -137,6 +137,28 @@ func TestContainerRuntimeBuildEnv_includesServiceSpecificEndpointURLs(t *testing
 	}
 }
 
+func TestDockerPlatformForLambdaArchitectures_defaultsToX8664(t *testing.T) {
+	// Given: AWS defaults Lambda functions to x86_64 when Architectures is omitted.
+	// When: the container platform is resolved.
+	got := dockerPlatformForLambdaArchitectures(nil)
+
+	// Then: Docker runs the matching amd64 Lambda runtime image even on arm64 hosts.
+	if got != "linux/amd64" {
+		t.Fatalf("platform = %q, want linux/amd64", got)
+	}
+}
+
+func TestDockerPlatformForLambdaArchitectures_arm64(t *testing.T) {
+	// Given: a function explicitly configured for arm64.
+	// When: the container platform is resolved.
+	got := dockerPlatformForLambdaArchitectures([]string{"arm64"})
+
+	// Then: Docker runs the matching arm64 Lambda runtime image.
+	if got != "linux/arm64" {
+		t.Fatalf("platform = %q, want linux/arm64", got)
+	}
+}
+
 func TestZipToTar_preservesExtensions(t *testing.T) {
 	// Given: a layer zip containing an external Lambda extension.
 	var zipBuf bytes.Buffer

@@ -187,6 +187,7 @@ type CreateContainerRequest struct {
 	*ContainerConfig
 	HostConfig       *HostConfig       `json:"HostConfig,omitempty"`
 	NetworkingConfig *NetworkingConfig `json:"NetworkingConfig,omitempty"`
+	Platform         string            `json:"platform,omitempty"`
 }
 
 // CreateContainerResponse is the response from container creation.
