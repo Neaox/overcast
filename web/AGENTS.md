@@ -170,7 +170,7 @@ Effects carry a high bar. Before adding `useEffect`, read and apply
 ## TypeScript
 
 - `strict: true` is enforced — no `any` unless unavoidable, document why.
-- Run `npx tsc --noEmit` from `web/` to type-check before committing.
+- Before committing or pushing web changes, run `npm run lint` and `npx tsc --noEmit` from `web/`.
 - Type exports for API responses live in `web/src/services/api.ts` as `export interface` / `export type`.
 
 ---
@@ -443,4 +443,4 @@ Prefer the `describe("ComponentName > scenario")` → `it("does X")` structure s
 - Never call `fetch` directly from components — go through `web/src/services/api.ts`.
 - Never use a plain `<input>` or `<Input>` for an AWS ARN field — use `<ResourceArnCombobox>`.
 - Never add dependencies to `web/package.json` without justification.
-- Never commit code that fails `cd web && npx tsc --noEmit`.
+- Never commit or push code that fails `cd web && npm run lint` or `cd web && npx tsc --noEmit`.
