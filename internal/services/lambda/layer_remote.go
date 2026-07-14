@@ -56,33 +56,24 @@ func NewRemoteLayerFetcher(cfg *config.Config, logger *zap.Logger, clk clock.Clo
 // FetchLayer downloads the layer zip for the given ARN. It checks the disk
 // cache first. Returns the raw zip bytes.
 func (f *RemoteLayerFetcher) FetchLayer(ctx context.Context, layerVersionARN string) ([]byte, error) {
-	// Determine cache directory: LAMBDA_LAYER_CACHE_DIR if set, else
-	// {DataDir}/layers (which is /data/layers in the standard Docker image).
-	cacheDir := f.cfg.LambdaLayerCacheDir
-	if cacheDir == "" {
-		cacheDir = filepath.Join(f.cfg.DataDir, "layers")
-	}
-
 	// Parse the ARN — needed for friendly filename and remote fetch.
 	parsed, err := parseLayerARN(layerVersionARN)
 	if err != nil {
 		return nil, err
 	}
 
-	cacheKey := sha256Hex(layerVersionARN)
-	cachePath := filepath.Join(cacheDir, cacheKey+".zip")
+	cachePath, friendlyPath := f.layerCachePaths(layerVersionARN, parsed)
 	if data, err := os.ReadFile(cachePath); err == nil {
 		f.logger.Debug("layer cache hit", zap.String("arn", layerVersionARN), zap.String("path", cachePath))
 		return data, nil
 	}
-	friendlyPath := filepath.Join(cacheDir, parsed.LayerName+"_"+parsed.Version+".zip")
 	if data, err := os.ReadFile(friendlyPath); err == nil {
 		f.logger.Debug("layer cache hit (friendly name)", zap.String("arn", layerVersionARN), zap.String("path", friendlyPath))
 		return data, nil
 	}
 
 	// If remote fetching is not configured (cache-only mode), stop here.
-	if !f.cfg.LambdaFetchRemoteLayers || f.cfg.LambdaRemoteAWSAccessKeyID == "" {
+	if !f.remoteFetchEnabled() {
 		return nil, fmt.Errorf("layer not found in cache: %s (hint: download the layer zip and place it at %s)",
 			layerVersionARN, friendlyPath)
 	}
@@ -116,6 +107,56 @@ func (f *RemoteLayerFetcher) FetchLayer(ctx context.Context, layerVersionARN str
 	}
 
 	return data, nil
+}
+
+// ResolveLayerSize verifies a layer can be resolved from the documented cache
+// paths or, when enabled, by remote fetch. It avoids reading cached zip bytes so
+// invoke-time metadata checks stay cheap for pre-populated AWS-managed layers.
+func (f *RemoteLayerFetcher) ResolveLayerSize(ctx context.Context, layerVersionARN string) (int64, error) {
+	parsed, err := parseLayerARN(layerVersionARN)
+	if err != nil {
+		return 0, err
+	}
+	cachePath, friendlyPath := f.layerCachePaths(layerVersionARN, parsed)
+	if size, ok := cachedFileSize(cachePath); ok {
+		f.logger.Debug("layer cache metadata hit", zap.String("arn", layerVersionARN), zap.String("path", cachePath))
+		return size, nil
+	}
+	if size, ok := cachedFileSize(friendlyPath); ok {
+		f.logger.Debug("layer cache metadata hit (friendly name)", zap.String("arn", layerVersionARN), zap.String("path", friendlyPath))
+		return size, nil
+	}
+	if !f.remoteFetchEnabled() {
+		return 0, fmt.Errorf("layer not found in cache: %s (hint: download the layer zip and place it at %s)",
+			layerVersionARN, friendlyPath)
+	}
+	data, err := f.FetchLayer(ctx, layerVersionARN)
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(data)), nil
+}
+
+func (f *RemoteLayerFetcher) layerCachePaths(layerVersionARN string, parsed parsedLayerARN) (string, string) {
+	cacheDir := f.cfg.LambdaLayerCacheDir
+	if cacheDir == "" {
+		cacheDir = filepath.Join(f.cfg.DataDir, "layers")
+	}
+	cachePath := filepath.Join(cacheDir, sha256Hex(layerVersionARN)+".zip")
+	friendlyPath := filepath.Join(cacheDir, parsed.LayerName+"_"+parsed.Version+".zip")
+	return cachePath, friendlyPath
+}
+
+func (f *RemoteLayerFetcher) remoteFetchEnabled() bool {
+	return f.cfg.LambdaFetchRemoteLayers && f.cfg.LambdaRemoteAWSAccessKeyID != ""
+}
+
+func cachedFileSize(path string) (int64, bool) {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return 0, false
+	}
+	return info.Size(), true
 }
 
 // parsedLayerARN holds the components extracted from a Lambda layer version ARN.

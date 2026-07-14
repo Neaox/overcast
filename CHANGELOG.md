@@ -65,6 +65,7 @@ need it than accidentally ship a breaking change as a patch.
 ### Fixed
 
 - **Web UI** — S3 bucket lifecycle events in the Event Stream now summarize bucket names across create/delete payload variants, and the system map now shows ElastiCache serverless caches and replication groups instead of only cache clusters.
+- **Lambda** — functions that reference foreign-account AWS-managed layer ARNs now pass invoke-time layer validation when the documented layer cache contains the layer zip, instead of failing before cached layer content can be resolved.
 
 ## [0.0.1-alpha.8] - 2026-07-14
 

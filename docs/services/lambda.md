@@ -107,9 +107,9 @@ Edit local files in the configured source path and invoke again.
   verify the source directory contains the expected handler file at the root
   of the mounted `/var/task`.
 - Runtime init error mentioning missing layer version:
-  verify each configured layer ARN exists in the emulator and points to a
-  published layer version (applies to both Node and Python runtimes, in both
-  zip and hot-reload invocation modes).
+  verify same-account layer ARNs exist in the emulator, or for foreign-account
+  AWS-managed/third-party layers verify the zip exists in `LAMBDA_LAYER_CACHE_DIR`
+  using the `{LayerName}_{Version}.zip` filename convention.
 
 ---
 
@@ -268,14 +268,16 @@ additional configuration.
 
 ### Default behavior (no config)
 
-If a layer ARN is not found locally, Overcast logs a warning and skips it:
+If a layer ARN is not found locally, and it is not a cache-backed external layer,
+`Invoke` returns a Lambda init-style error before starting the runtime:
 
 ```
-WARN  layer not available locally — skipping  arn=arn:aws:lambda:...
+{"errorMessage":"Failed to load Lambda layer arn:aws:lambda:...: layer version not found","errorType":"Runtime.InitError"}
 ```
 
-The function still starts but may fail at runtime if it imports modules from the
-missing layer. This matches LocalStack's default behavior.
+This catches missing layer metadata before a container cold start. Foreign-account
+AWS-managed or third-party layer ARNs can satisfy that check through the layer
+cache or remote-fetch path described below.
 
 ### Option 1: Pre-download layers (no AWS credentials needed at runtime)
 
@@ -342,6 +344,10 @@ appear at `/data/layers/` inside the container. As a bonus, persistent state
 
 On the next invocation, Overcast finds the layer in the cache and injects it
 into `/opt` — no AWS credentials required, no env var to set.
+
+For foreign-account layer ARNs, the same cache lookup also satisfies Overcast's
+invoke-time layer existence check. You do not need to publish a local replacement
+layer when the function references the real AWS-managed ARN.
 
 > **Tip:** To use a different path, set `LAMBDA_LAYER_CACHE_DIR` and mount the
 > directory there instead. This is mainly useful when running the native
