@@ -7,6 +7,16 @@ describe("EventsPage", () => {
     render(<EventsPage />)
 
     expect(screen.getByRole("heading", { name: "Event Stream" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: /all sources/i })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /sources/i })).toBeInTheDocument()
+  })
+
+  it("checks non-request sources by default", async () => {
+    const { user } = render(<EventsPage />)
+
+    await user.click(screen.getByRole("button", { name: /sources/i }))
+
+    expect(screen.queryByText("Hide requests")).not.toBeInTheDocument()
+    expect(screen.getByRole("checkbox", { name: "Requests" })).not.toBeChecked()
+    expect(screen.getByRole("checkbox", { name: "Service errors" })).toBeChecked()
   })
 })
