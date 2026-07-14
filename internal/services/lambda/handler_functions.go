@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1087,7 +1088,7 @@ func (h *Handler) checkLayerVersionsExist(ctx context.Context, fn *Function) str
 		if arn == "" {
 			continue
 		}
-		lv, aerr := h.ls.getLayerVersionByARN(ctx, arn)
+		lv, aerr := h.getLayerVersionByARNOrCachedExternal(ctx, arn)
 		if aerr != nil {
 			h.log.Error("invoke: check layer version", zap.String("arn", arn), zap.Error(aerr))
 			return arn
@@ -1097,6 +1098,54 @@ func (h *Handler) checkLayerVersionsExist(ctx context.Context, fn *Function) str
 		}
 	}
 	return ""
+}
+
+func (h *Handler) getLayerVersionByARNOrCachedExternal(ctx context.Context, arn string) (*LayerVersion, *protocol.AWSError) {
+	lv, aerr := h.ls.getLayerVersionByARN(ctx, arn)
+	if aerr != nil || lv != nil || !h.isForeignAccountLayerARN(arn) {
+		return lv, aerr
+	}
+	return h.cachedExternalLayerVersion(ctx, arn), nil
+}
+
+func (h *Handler) isForeignAccountLayerARN(arn string) bool {
+	parsed, err := parseLayerARN(arn)
+	if err != nil {
+		return false
+	}
+	accountID := "000000000000"
+	if h.cfg != nil && h.cfg.AccountID != "" {
+		accountID = h.cfg.AccountID
+	}
+	return parsed.Account != "" && parsed.Account != accountID
+}
+
+func (h *Handler) cachedExternalLayerVersion(ctx context.Context, arn string) *LayerVersion {
+	parsed, err := parseLayerARN(arn)
+	if err != nil {
+		return nil
+	}
+	logger := zap.NewNop()
+	if h.log != nil {
+		logger = h.log.ZapLogger()
+	}
+	fetcher := NewRemoteLayerFetcher(h.cfg, logger, h.clk)
+	codeSize, err := fetcher.ResolveLayerSize(ctx, arn)
+	if err != nil {
+		logger.Debug("foreign-account layer not available from cache or remote fetch", zap.String("arn", arn), zap.Error(err))
+		return nil
+	}
+	version, err := strconv.ParseInt(parsed.Version, 10, 64)
+	if err != nil {
+		return nil
+	}
+	return &LayerVersion{
+		LayerName:       parsed.LayerName,
+		LayerARN:        strings.TrimSuffix(arn, ":"+parsed.Version),
+		LayerVersionARN: arn,
+		Version:         version,
+		CodeSize:        codeSize,
+	}
 }
 
 // writeInvokeError writes an invoke-style error response to w.

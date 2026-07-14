@@ -2,7 +2,7 @@ service: lambda
 status: fixed
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-19
+last_updated: 2026-07-14
 protocols: [rest_json, event_stream]
 implementation: [internal/services/lambda]
 integration_tests: [tests/integration/lambda]
@@ -53,6 +53,21 @@ operations:
         - Image CreateFunction requests with Runtime were accepted; now rejected.
       remaining_gaps:
         - Review Publish=true version creation and additional optional configuration fields before marking CreateFunction reviewed.
+  Invoke:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/lambda/latest/dg/chapter-layers.html
+      - https://docs.aws.amazon.com/lambda/latest/dg/adding-layers.html
+    protocol: REST JSON; POST /2015-03-31/functions/{FunctionName}/invocations
+    tests:
+      - go test -count=1 -run TestInvokeLayerCheck_foreignAccountCachedLayer ./internal/services/lambda
+    scenarios:
+      foreign_account_cached_layer:
+        status: fixed
+        evidence: Invoke-time layer validation now accepts foreign-account AWS-managed/third-party layer ARNs when the documented layer cache contains the layer zip, allowing the container layer injector to resolve the same cached content.
+      missing_layer:
+        status: reviewed
+        evidence: Missing same-account layer metadata and uncached foreign-account layer ARNs still return a Lambda init-style layer version not found error before container startup.
 findings:
   fixed: []
   remaining_gaps:

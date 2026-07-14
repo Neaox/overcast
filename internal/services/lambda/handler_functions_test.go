@@ -1,12 +1,15 @@
 package lambda
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -90,6 +93,62 @@ func TestCreateFunction_prewarmerOnReadyRetryPutFunctionOnContention(t *testing.
 	}
 	if got.StateReason != "" {
 		t.Errorf("StateReason = %q, want empty", got.StateReason)
+	}
+}
+
+func TestInvokeLayerCheck_foreignAccountCachedLayer(t *testing.T) {
+	// Given: a function references a real AWS-managed layer ARN from a foreign
+	// account, and the documented friendly-name layer zip exists in the cache.
+	clk := clock.NewMock()
+	cacheDir := t.TempDir()
+	writeTestLayerZip(t, filepath.Join(cacheDir, "AWS-Parameters-and-Secrets-Lambda-Extension_11.zip"))
+	ls := newLambdaStore(state.NewMemoryStore(), "ap-southeast-2", clk)
+	h := &Handler{
+		cfg: &config.Config{
+			Region:              "ap-southeast-2",
+			AccountID:           "000000000000",
+			LambdaLayerCacheDir: cacheDir,
+		},
+		log: serviceutil.NewServiceLogger(zap.NewNop(), "lambda"),
+		clk: clk,
+		ls:  ls,
+	}
+	fn := &Function{
+		Name: "uses-managed-layer",
+		Layers: []LayerVersionLink{{
+			ARN: "arn:aws:lambda:ap-southeast-2:665172237481:layer:AWS-Parameters-and-Secrets-Lambda-Extension:11",
+		}},
+	}
+
+	// When: invoke-time layer existence validation runs before the container cold start.
+	missing := h.checkLayerVersionsExist(context.Background(), fn)
+
+	// Then: the cached foreign-account layer is accepted instead of failing before
+	// layer content resolution can use the documented cache.
+	if missing != "" {
+		t.Fatalf("checkLayerVersionsExist returned missing layer %q, want cached foreign-account layer accepted", missing)
+	}
+}
+
+func writeTestLayerZip(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir layer cache: %v", err)
+	}
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	f, err := zw.Create("nodejs/node_modules/example/index.js")
+	if err != nil {
+		t.Fatalf("create zip entry: %v", err)
+	}
+	if _, err := f.Write([]byte("module.exports = {}\n")); err != nil {
+		t.Fatalf("write zip entry: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close zip: %v", err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatalf("write layer zip: %v", err)
 	}
 }
 
