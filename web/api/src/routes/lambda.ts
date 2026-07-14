@@ -20,6 +20,26 @@ lambdaRoutes.get("/runtimes", async (c) => {
   return c.json(data, res.status as 200)
 })
 
+// ─── Layer metadata (emulator-only) ──────────────────────────────────────────
+
+lambdaRoutes.get("/layers/:layerName/versions/:version/metadata", async (c) => {
+  const baseUrl = emulatorUrl(c)
+  const layerName = c.req.param("layerName")
+  const version = c.req.param("version")
+  const res = await fetch(
+    `${baseUrl}/_lambda/layers/${encodeURIComponent(layerName)}/versions/${encodeURIComponent(version)}/metadata`,
+  )
+  const text = await res.text()
+  if (!text) {
+    return c.body(null, res.status as 200 | 400 | 404 | 500)
+  }
+  try {
+    return c.json(JSON.parse(text) as unknown, res.status as 200 | 400 | 404 | 500)
+  } catch {
+    return c.text(text, res.status as 200 | 400 | 404 | 500)
+  }
+})
+
 // ─── Get function source (emulator-only) ─────────────────────────────────────
 
 lambdaRoutes.get("/functions/:name/source", async (c) => {

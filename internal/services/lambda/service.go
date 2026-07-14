@@ -690,6 +690,8 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Get("/_lambda/instances", s.handler.ListInstances)
 	// Emulator-specific: runtime catalog for the web UI.
 	r.Get("/_lambda/runtimes", s.handler.ListRuntimes)
+	// Emulator-specific: layer zip metadata for the web UI.
+	r.Get("/_lambda/layers/{layerName}/versions/{versionNumber}/metadata", s.handler.GetLayerVersionMetadata)
 }
 
 // runtimeAPIContainerAddr determines the host:port that Lambda containers use

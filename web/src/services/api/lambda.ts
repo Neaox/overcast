@@ -38,6 +38,7 @@ import type {
   InvokeResult,
   SavedTestEvent,
   LambdaInstance,
+  LambdaLayerVersionMetadata,
 } from "@/types"
 
 export type InvokeEvent =
@@ -53,6 +54,11 @@ export const lambda = {
   // ── Emulator-only (BFF) ──────────────────────────────────────────────────
   listRuntimes: () =>
     apiFetch<{ runtimes: LambdaRuntimeInfo[] }>("/lambda/runtimes").then((r) => r.runtimes),
+
+  getLayerVersionMetadata: (layerName: string, version: number) =>
+    apiFetch<LambdaLayerVersionMetadata>(
+      `/lambda/layers/${encodeURIComponent(layerName)}/versions/${version}/metadata`,
+    ),
 
   getSource: (name: string, file?: string) => {
     const params = file ? `?file=${encodeURIComponent(file)}` : ""

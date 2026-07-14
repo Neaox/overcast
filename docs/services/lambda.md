@@ -26,6 +26,45 @@ containers, communicate with the Lambda Runtime API, and return real response pa
 - Async invocation (`InvocationType: Event`) is not yet implemented.
 - Cold-start latency simulation is not implemented.
 - Runtime-specific environment validation is minimal.
+- Lambda extensions support currently covers Docker-backed zip functions. Image
+  function extension startup is not yet wrapped.
+- Extension Logs API support is limited to HTTP destinations and best-effort
+  delivery. Telemetry API subscriptions are not yet implemented.
+
+---
+
+## Lambda Extensions
+
+Docker-backed zip functions start executable external extensions found directly
+under `/opt/extensions` in attached layers before the runtime entrypoint starts.
+Layer file modes are preserved, so extension binaries and scripts must be
+executable in the layer zip.
+
+Supported Runtime API extension paths:
+
+- `POST /2020-01-01/extension/register`
+- `GET /2020-01-01/extension/event/next`
+- `POST /2020-01-01/extension/init/error`
+- `POST /2020-01-01/extension/exit/error`
+- `PUT /2020-08-15/logs`
+
+`INVOKE` events are delivered only to extensions in the same container that
+accepted the invocation. `SHUTDOWN` events are sent when Overcast tears down a
+warm container.
+
+Logs API subscriptions support HTTP destinations for `platform`, `function`,
+and `extension` log types. Function stdout/stderr is delivered as `function`
+records; synthesized START/END/REPORT lines are delivered as `platform`
+records. Delivery is best-effort and does not yet implement the full Lambda
+buffering/retry contract.
+
+Overcast injects `AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_SSM`, and
+`AWS_ENDPOINT_URL_SECRETS_MANAGER` into Docker Lambda containers so SDK-backed
+functions and extensions can route AWS service calls back to the emulator.
+Verified with AWS Parameters and Secrets Lambda Extension 1.0.342
+(2026-07-14): SSM requests honor `AWS_ENDPOINT_URL_SSM` and Secrets Manager
+requests honor `AWS_ENDPOINT_URL_SECRETS_MANAGER`, allowing the real extension
+layer to fetch Overcast parameters and secrets.
 
 ---
 

@@ -81,6 +81,13 @@ type listLayersWireResponse struct {
 	NextMarker *string           `json:"NextMarker,omitempty"`
 }
 
+type layerVersionMetadataResponse struct {
+	LayerName             string   `json:"layerName"`
+	Version               int64    `json:"version"`
+	HasExternalExtensions bool     `json:"hasExternalExtensions"`
+	ExternalExtensions    []string `json:"externalExtensions"`
+}
+
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 func layerToWireResponse(lv *LayerVersion) layerVersionWireResponse {
@@ -196,6 +203,39 @@ func (h *Handler) GetLayerVersion(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(layerToWireResponse(lv))
+}
+
+// GetLayerVersionMetadata handles the emulator-only layer metadata endpoint used by the web UI.
+func (h *Handler) GetLayerVersionMetadata(w http.ResponseWriter, r *http.Request) {
+	layerName := chi.URLParam(r, "layerName")
+	versionStr := chi.URLParam(r, "versionNumber")
+	version, err := strconv.ParseInt(versionStr, 10, 64)
+	if err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument("invalid version number"))
+		return
+	}
+	lv, aerr := h.ls.getLayerVersion(r.Context(), layerName, version)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if lv == nil {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code:       "ResourceNotFoundException",
+			Message:    "Layer version not found: " + layerName + ":" + versionStr,
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+	extensions := discoverExternalExtensions(lv.Content)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(layerVersionMetadataResponse{
+		LayerName:             layerName,
+		Version:               version,
+		HasExternalExtensions: len(extensions) > 0,
+		ExternalExtensions:    extensions,
+	})
 }
 
 // ListLayerVersions handles GET /2015-03-31/layers/{layerName}/versions.

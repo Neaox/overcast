@@ -1,9 +1,17 @@
 package lambda
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
 	"context"
+	"io"
+	"io/fs"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/Neaox/overcast/internal/config"
 )
 
 func TestContainerRuntimeColdStartSlot_boundsConcurrency(t *testing.T) {
@@ -96,4 +104,177 @@ func TestContainerInstanceAwaitReady_ready(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AwaitReady: %v", err)
 	}
+}
+
+func TestContainerRuntimeBuildEnv_includesServiceSpecificEndpointURLs(t *testing.T) {
+	// Given: a Docker Lambda runtime with an Overcast endpoint reachable from containers.
+	runtime := &ContainerRuntime{
+		cfg:              &config.Config{Region: "us-east-1", AccountID: "000000000000"},
+		overcastEndpoint: "http://172.18.0.1:4566",
+		runtimeAPI:       &RuntimeAPIServer{addr: "172.18.0.1:9001"},
+	}
+	fn := &Function{
+		Name:       "demo",
+		ARN:        "arn:aws:lambda:us-east-1:000000000000:function:demo",
+		Runtime:    "nodejs22.x",
+		Handler:    "index.handler",
+		MemorySize: 128,
+		Timeout:    3,
+	}
+
+	// When: Lambda environment variables are built.
+	env := envMap(runtime.buildEnv(fn, "stream"))
+
+	// Then: both the global SDK endpoint and Parameters/Secrets backend endpoints target Overcast.
+	if env["AWS_ENDPOINT_URL"] != runtime.overcastEndpoint {
+		t.Fatalf("AWS_ENDPOINT_URL = %q", env["AWS_ENDPOINT_URL"])
+	}
+	if env["AWS_ENDPOINT_URL_SSM"] != runtime.overcastEndpoint {
+		t.Fatalf("AWS_ENDPOINT_URL_SSM = %q", env["AWS_ENDPOINT_URL_SSM"])
+	}
+	if env["AWS_ENDPOINT_URL_SECRETS_MANAGER"] != runtime.overcastEndpoint {
+		t.Fatalf("AWS_ENDPOINT_URL_SECRETS_MANAGER = %q", env["AWS_ENDPOINT_URL_SECRETS_MANAGER"])
+	}
+}
+
+func TestZipToTar_preservesExtensions(t *testing.T) {
+	// Given: a layer zip containing an external Lambda extension.
+	var zipBuf bytes.Buffer
+	zw := zip.NewWriter(&zipBuf)
+	fh := &zip.FileHeader{Name: "extensions/parameters-secrets-extension", Method: zip.Deflate}
+	fh.SetMode(0o755)
+	w, err := zw.CreateHeader(fh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("#!/bin/sh\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: the zip is converted to a Docker tar archive for /opt injection.
+	tarData, err := zipToTar(zipBuf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Then: the extension executable is still present.
+	mode, ok := tarEntryMode(t, tarData, "extensions/parameters-secrets-extension")
+	if !ok {
+		t.Fatal("extension entry was stripped from layer tar")
+	}
+	if mode&0o111 == 0 {
+		t.Fatalf("extension mode = %#o, want executable bit", mode)
+	}
+}
+
+func TestDiscoverExternalExtensions_executableRootFiles(t *testing.T) {
+	// Given: a layer zip with one executable external extension and nearby non-extension files.
+	zipData := testLayerZip(t, map[string]struct {
+		mode int
+		body string
+	}{
+		"extensions/parameters-secrets-extension":       {mode: 0o755, body: "#!/bin/sh\n"},
+		"extensions/not-executable":                     {mode: 0o644, body: "#!/bin/sh\n"},
+		"extensions/nested/ignored":                     {mode: 0o755, body: "#!/bin/sh\n"},
+		"python/lib/python3.12/site-packages/helper.py": {mode: 0o644, body: ""},
+	})
+
+	// When: the layer is scanned for external extensions.
+	extensions := discoverExternalExtensions(zipData)
+
+	// Then: only executable files directly under /opt/extensions are expected to register.
+	if len(extensions) != 1 || extensions[0] != "parameters-secrets-extension" {
+		t.Fatalf("extensions = %#v", extensions)
+	}
+}
+
+func TestLambdaBootstrapScript_startsExtensionsBeforeRuntime(t *testing.T) {
+	// When: the Lambda bootstrap script is rendered.
+	script := lambdaBootstrapScript()
+
+	// Then: it starts executable files under /opt/extensions before execing the runtime entrypoint.
+	if !bytes.Contains(script, []byte("/opt/extensions")) {
+		t.Fatal("bootstrap does not inspect /opt/extensions")
+	}
+	if !bytes.Contains(script, []byte("$ext")) || !bytes.Contains(script, []byte("&")) {
+		t.Fatal("bootstrap does not start extension executables in the background")
+	}
+	if !bytes.Contains(script, []byte("exec /lambda-entrypoint.sh")) {
+		t.Fatal("bootstrap does not hand off to the AWS Lambda entrypoint")
+	}
+}
+
+func TestLambdaBootstrapScript_prefixesExtensionLogs(t *testing.T) {
+	// When: the Lambda bootstrap script is rendered.
+	script := lambdaBootstrapScript()
+
+	// Then: extension stdout/stderr is marked so Logs API subscribers can receive extension records.
+	if !bytes.Contains(script, []byte("[overcast-extension:%s]")) {
+		t.Fatal("bootstrap does not prefix extension logs")
+	}
+}
+
+func TestClassifyRuntimeLogLine_extensionPrefix(t *testing.T) {
+	// When: a Docker log line came from the bootstrap extension wrapper.
+	typ, record := classifyRuntimeLogLine("[overcast-extension:bootstrap] extension ready")
+
+	// Then: it is delivered to Logs API extension subscribers without the wrapper prefix.
+	if typ != "extension" || record != "extension ready" {
+		t.Fatalf("type=%q record=%q", typ, record)
+	}
+}
+
+func tarEntryMode(t *testing.T, tarData []byte, name string) (int64, bool) {
+	t.Helper()
+	tr := tar.NewReader(bytes.NewReader(tarData))
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			return 0, false
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h.Name == name {
+			return h.Mode, true
+		}
+	}
+}
+
+func testLayerZip(t *testing.T, files map[string]struct {
+	mode int
+	body string
+}) []byte {
+	t.Helper()
+	var zipBuf bytes.Buffer
+	zw := zip.NewWriter(&zipBuf)
+	for name, file := range files {
+		fh := &zip.FileHeader{Name: name, Method: zip.Deflate}
+		fh.SetMode(fs.FileMode(file.mode))
+		w, err := zw.CreateHeader(fh)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(file.body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return zipBuf.Bytes()
+}
+
+func envMap(env []string) map[string]string {
+	out := make(map[string]string, len(env))
+	for _, item := range env {
+		key, value, ok := strings.Cut(item, "=")
+		if ok {
+			out[key] = value
+		}
+	}
+	return out
 }
