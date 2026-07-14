@@ -62,6 +62,12 @@ need it than accidentally ship a breaking change as a patch.
        binary packaging, release process, or user-facing docs.
 -->
 
+## [0.0.1-alpha.12] - 2026-07-14
+
+### Added
+
+- **Lambda** — Docker-backed zip functions now start external extensions from attached layers, expose the Lambda Extensions API lifecycle paths, deliver best-effort Logs API HTTP batches, and route AWS SDK-backed extension calls to Overcast by default.
+
 ### Fixed
 
 - **Web UI** — Event Stream source filters now start with visible sources checked while leaving requests and heartbeats off by default, and the separate "Hide requests" toggle was removed in favour of the Requests source checkbox; System Map Lambda trigger event tabs now decode base64 payloads and pretty-print JSON instead of showing encoded strings.

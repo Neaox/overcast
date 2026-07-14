@@ -36,6 +36,8 @@ export const lambdaKeys = {
   aliases: (name: string) => [...lambdaKeys.all(), "aliases", name] as const,
   layers: () => [...lambdaKeys.all(), "layers"] as const,
   layerVersions: (layerName: string) => [...lambdaKeys.layers(), layerName, "versions"] as const,
+  layerVersionMetadata: (layerName: string, version: number) =>
+    [...lambdaKeys.layerVersions(layerName), version, "metadata"] as const,
   esms: (functionName: string) => [...lambdaKeys.all(), "esms", functionName] as const,
 }
 
@@ -203,6 +205,15 @@ export function layerVersionsQueryOptions(layerName: string) {
     queryKey: lambdaKeys.layerVersions(layerName),
     queryFn: () => lambda.listLayerVersions(layerName),
     enabled: !!layerName,
+  })
+}
+
+export function layerVersionMetadataQueryOptions(layerName: string, version: number) {
+  return queryOptions({
+    queryKey: lambdaKeys.layerVersionMetadata(layerName, version),
+    queryFn: () => lambda.getLayerVersionMetadata(layerName, version),
+    enabled: !!layerName && version > 0,
+    staleTime: Infinity,
   })
 }
 

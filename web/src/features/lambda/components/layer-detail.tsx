@@ -9,6 +9,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Trash2, Plus } from "lucide-react"
 import {
   layerVersionsQueryOptions,
+  layerVersionMetadataQueryOptions,
   lambdaFunctionsQueryOptions,
   publishLayerVersionMutationOptions,
   deleteLayerVersionMutationOptions,
@@ -129,6 +130,7 @@ export function LayerDetail() {
                 <TableHead>ARN</TableHead>
                 <TableHead>Description</TableHead>
                 <TableHead>Compatible runtimes</TableHead>
+                <TableHead>Extensions</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead className="w-16" />
               </TableRow>
@@ -137,6 +139,7 @@ export function LayerDetail() {
               {versions.map((v) => (
                 <VersionRow
                   key={v.Version}
+                  layerName={layerName}
                   version={v}
                   onDelete={() => setDeleteTarget(v.Version ?? 0)}
                 />
@@ -212,7 +215,20 @@ export function LayerDetail() {
 
 // ─── Version row ──────────────────────────────────────────────────────────────
 
-function VersionRow({ version: v, onDelete }: { version: LayerVersion; onDelete: () => void }) {
+function VersionRow({
+  layerName,
+  version: v,
+  onDelete,
+}: {
+  layerName: string
+  version: LayerVersion
+  onDelete: () => void
+}) {
+  const versionNumber = v.Version ?? 0
+  const { data: metadata, isLoading: metadataLoading, isError: metadataError } = useQuery(
+    layerVersionMetadataQueryOptions(layerName, versionNumber),
+  )
+
   return (
     <TableRow>
       <TableCell>
@@ -231,6 +247,24 @@ function VersionRow({ version: v, onDelete }: { version: LayerVersion; onDelete:
           </div>
         ) : (
           "—"
+        )}
+      </TableCell>
+      <TableCell>
+        {metadataLoading ? (
+          <span className="text-sm text-fg-muted">Checking…</span>
+        ) : metadataError ? (
+          <Badge variant="warning">Metadata unavailable</Badge>
+        ) : metadata?.hasExternalExtensions ? (
+          <div className="flex flex-wrap gap-1">
+            <Badge variant="accent">Lambda extension</Badge>
+            {metadata.externalExtensions.map((name) => (
+              <Badge key={name} variant="outline" className="font-mono">
+                {name}
+              </Badge>
+            ))}
+          </div>
+        ) : (
+          <span className="text-sm text-fg-muted">—</span>
         )}
       </TableCell>
       <TableCell className="text-sm text-fg-muted">

@@ -21,9 +21,11 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -340,6 +342,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	// For zip functions, CMD is the handler. For image functions, the image's
 	// built-in ENTRYPOINT+CMD are used unless ImageConfig provides overrides.
 	if !isImage && fn.Handler != "" {
+		ccfg.Entrypoint = []string{"/bin/sh", "/var/overcast/bootstrap"}
 		ccfg.Cmd = []string{fn.Handler}
 	} else if isImage && fn.ImageConfig != nil {
 		ccfg.Entrypoint = fn.ImageConfig.EntryPoint
@@ -367,10 +370,15 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 
 	var containerIP string
 	var registeredIP string
+	var expectedExtensions []string
 	if inspect, inspectErr := cr.docker.InspectContainer(ctx, id); inspectErr == nil {
 		containerIP = cr.extractContainerIP(inspect)
 		if containerIP != "" {
-			cr.runtimeAPI.RegisterContainer(containerIP, fn.ARN)
+			cr.runtimeAPI.RegisterContainerConfig(containerIP, runtimeContainerConfig{
+				FunctionARN:  fn.ARN,
+				FunctionName: fn.Name,
+				Handler:      fn.Handler,
+			})
 			registeredIP = containerIP
 		}
 	} else {
@@ -398,9 +406,24 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	if len(fn.Layers) > 0 {
 		progress("Injecting layer content")
 	}
-	if err := cr.copyLayersToContainer(ctx, id, fn); err != nil {
+	expectedExtensions, err = cr.copyLayersToContainer(ctx, id, fn)
+	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("copy layers to container: %w", err)
+	}
+	if containerIP != "" {
+		cr.runtimeAPI.RegisterContainerConfig(containerIP, runtimeContainerConfig{
+			FunctionARN:        fn.ARN,
+			FunctionName:       fn.Name,
+			Handler:            fn.Handler,
+			ExpectedExtensions: expectedExtensions,
+		})
+	}
+	if !isImage {
+		if err := cr.copyLambdaBootstrapToContainer(ctx, id); err != nil {
+			cleanup()
+			return nil, fmt.Errorf("copy lambda bootstrap to container: %w", err)
+		}
 	}
 
 	progress("Starting container")
@@ -426,7 +449,12 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 			cleanup()
 			return nil, err
 		}
-		cr.runtimeAPI.RegisterContainer(containerIP, fn.ARN)
+		cr.runtimeAPI.RegisterContainerConfig(containerIP, runtimeContainerConfig{
+			FunctionARN:        fn.ARN,
+			FunctionName:       fn.Name,
+			Handler:            fn.Handler,
+			ExpectedExtensions: expectedExtensions,
+		})
 		registeredIP = containerIP
 	}
 
@@ -704,6 +732,12 @@ func (cr *ContainerRuntime) buildEnv(fn *Function, logStream string) []string {
 		// Route all AWS SDK calls from the function back to the Overcast emulator.
 		// AWS SDKs v2+ honour AWS_ENDPOINT_URL for every service automatically.
 		"AWS_ENDPOINT_URL=" + cr.overcastEndpoint,
+		// Per AWS SDK reference for service-specific endpoints:
+		// SSM and Secrets Manager use these variables, overriding the global endpoint.
+		// Verified with AWS Parameters and Secrets Lambda Extension 1.0.342
+		// (2026-07-14): SSM and Secrets Manager requests honor these vars.
+		"AWS_ENDPOINT_URL_SSM=" + cr.overcastEndpoint,
+		"AWS_ENDPOINT_URL_SECRETS_MANAGER=" + cr.overcastEndpoint,
 	}
 	// _HANDLER and AWS_EXECUTION_ENV are set only for zip deployments where
 	// Runtime and Handler are specified. Image functions use the image's
@@ -820,6 +854,10 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte) (*InvokeR
 	ci.tailMu.Lock()
 	ci.tailBuf = ci.tailBuf[:0]
 	ci.tailMu.Unlock()
+	if reason, ok := ci.runtimeAPI.ContainerError(ci.containerIP); ok {
+		ci.healthy = false
+		return extensionInvokeError(reason), nil
+	}
 
 	start := ci.clk.Now()
 	reqID, resultCh := ci.runtimeAPI.SubmitInvocation(ci.functionARN, event, deadline)
@@ -907,6 +945,10 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte) (*InvokeR
 	}
 
 	elapsed := ci.clk.Now().Sub(start)
+	if reason, ok := ci.runtimeAPI.ContainerError(ci.containerIP); ok {
+		ci.healthy = false
+		return extensionInvokeError(reason), nil
+	}
 
 	// Build the result before reading the tail so the function has had the
 	// maximum opportunity to flush its stdout/stderr.
@@ -966,6 +1008,14 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte) (*InvokeR
 	}
 
 	return result, nil
+}
+
+func extensionInvokeError(reason string) *InvokeResult {
+	payload, _ := json.Marshal(map[string]string{
+		"errorMessage": reason,
+		"errorType":    "Runtime.ExtensionError",
+	})
+	return &InvokeResult{StatusCode: 200, Payload: payload, FunctionError: "Unhandled"}
 }
 
 // currentMemoryMB queries Docker for the container's current memory usage (RSS)
@@ -1105,6 +1155,9 @@ func (ci *containerInstance) waitForLogDrain(ctx context.Context) {
 // per call (cache lock + slice append + per-stream metadata update). Three
 // calls per invocation (START, END, REPORT) is negligible.
 func (ci *containerInstance) writeLogLine(ctx context.Context, line string) {
+	if ci.containerIP != "" {
+		ci.runtimeAPI.PublishExtensionLog(ci.containerIP, "platform", line)
+	}
 	// Append to the rolling tail buffer so these lines appear in the
 	// X-Amz-Log-Result (test tab) alongside the function's own stdout.
 	lineBytes := append([]byte(line), '\n')
@@ -1188,6 +1241,14 @@ func (ci *containerInstance) Close() error {
 	ci.logger.Debug("stopping lambda container", zap.String("container", ci.id[:12]))
 	if ci.logWriter != nil {
 		ci.waitForLogDrain(context.Background())
+	}
+	if ci.containerIP != "" {
+		if queued := ci.runtimeAPI.EnqueueExtensionShutdown(ci.containerIP, "SPINDOWN", ci.clk.Now().Add(2*time.Second)); queued > 0 {
+			select {
+			case <-ci.clk.After(100 * time.Millisecond):
+			case <-ci.logCtx.Done():
+			}
+		}
 	}
 	ci.logCancel()
 	<-ci.logDone
@@ -1525,6 +1586,10 @@ func (ci *containerInstance) streamOnce(ctx context.Context, since time.Time) {
 				ci.logInFlight.Add(-1)
 				continue
 			}
+			logType, logRecord := classifyRuntimeLogLine(line)
+			if ci.containerIP != "" {
+				ci.runtimeAPI.PublishExtensionLog(ci.containerIP, logType, logRecord)
+			}
 
 			// Append to rolling tail buffer (capped at 4096 bytes).
 			lineBytes := append([]byte(line), '\n')
@@ -1577,6 +1642,10 @@ func (ci *containerInstance) streamOnce(ctx context.Context, since time.Time) {
 					if msg == "" {
 						ci.logInFlight.Add(-1)
 						continue
+					}
+					logType, logRecord := classifyRuntimeLogLine(msg)
+					if ci.containerIP != "" {
+						ci.runtimeAPI.PublishExtensionLog(ci.containerIP, logType, logRecord)
 					}
 					lineBytes := append([]byte(msg), '\n')
 					ci.tailMu.Lock()
@@ -1799,13 +1868,14 @@ func sanitizeName(name string) string {
 
 // copyLayersToContainer expands each attached layer zip and copies it into
 // /opt, matching Lambda's layer filesystem semantics.
-func (cr *ContainerRuntime) copyLayersToContainer(ctx context.Context, containerID string, fn *Function) error {
+func (cr *ContainerRuntime) copyLayersToContainer(ctx context.Context, containerID string, fn *Function) ([]string, error) {
 	if len(fn.Layers) == 0 {
-		return nil
+		return nil, nil
 	}
 	if cr.layerFetcher == nil {
-		return fmt.Errorf("layer content fetcher is not configured")
+		return nil, fmt.Errorf("layer content fetcher is not configured")
 	}
+	extensionSet := make(map[string]bool)
 	for _, layer := range fn.Layers {
 		arn := strings.TrimSpace(layer.ARN)
 		if arn == "" {
@@ -1828,15 +1898,107 @@ func (cr *ContainerRuntime) copyLayersToContainer(ctx context.Context, container
 				continue
 			}
 		}
-		layerTar, err := zipToTarFiltered(zipData, skipExtensions)
+		layerTar, err := zipToTar(zipData)
 		if err != nil {
-			return fmt.Errorf("build tar for layer %s: %w", arn, err)
+			return nil, fmt.Errorf("build tar for layer %s: %w", arn, err)
 		}
 		if err := cr.docker.CopyToContainer(ctx, containerID, "/opt", bytes.NewReader(layerTar)); err != nil {
-			return fmt.Errorf("copy layer %s to /opt: %w", arn, err)
+			return nil, fmt.Errorf("copy layer %s to /opt: %w", arn, err)
+		}
+		for _, name := range discoverExternalExtensions(zipData) {
+			extensionSet[name] = true
 		}
 	}
-	return nil
+	if len(extensionSet) == 0 {
+		return nil, nil
+	}
+	extensions := make([]string, 0, len(extensionSet))
+	for name := range extensionSet {
+		extensions = append(extensions, name)
+	}
+	slices.Sort(extensions)
+	return extensions, nil
+}
+
+func discoverExternalExtensions(zipData []byte) []string {
+	zr, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
+	if err != nil {
+		return nil
+	}
+	extensions := make([]string, 0)
+	for _, f := range zr.File {
+		name := strings.TrimPrefix(f.Name, "./")
+		if strings.Count(name, "/") != 1 || !strings.HasPrefix(name, "extensions/") || strings.HasSuffix(name, "/") {
+			continue
+		}
+		if f.FileInfo().Mode().Perm()&0o111 == 0 {
+			continue
+		}
+		extensions = append(extensions, strings.TrimPrefix(name, "extensions/"))
+	}
+	slices.Sort(extensions)
+	return extensions
+}
+
+func (cr *ContainerRuntime) copyLambdaBootstrapToContainer(ctx context.Context, containerID string) error {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	script := lambdaBootstrapScript()
+	if err := tw.WriteHeader(&tar.Header{
+		Name:     "var/overcast/",
+		Mode:     0o755,
+		Typeflag: tar.TypeDir,
+	}); err != nil {
+		return err
+	}
+	if err := tw.WriteHeader(&tar.Header{
+		Name: "var/overcast/bootstrap",
+		Size: int64(len(script)),
+		Mode: 0o755,
+	}); err != nil {
+		return err
+	}
+	if _, err := tw.Write(script); err != nil {
+		return err
+	}
+	if err := tw.Close(); err != nil {
+		return err
+	}
+	return cr.docker.CopyToContainer(ctx, containerID, "/", bytes.NewReader(buf.Bytes()))
+}
+
+func lambdaBootstrapScript() []byte {
+	return []byte(`#!/bin/sh
+set -eu
+
+if [ -d /opt/extensions ]; then
+  for ext in /opt/extensions/*; do
+    if [ -f "$ext" ] && [ -x "$ext" ]; then
+      name="$(basename "$ext")"
+      ("$ext" 2>&1 | while IFS= read -r line; do printf '[overcast-extension:%s] %s\n' "$name" "$line"; done) &
+    fi
+  done
+fi
+
+exec /lambda-entrypoint.sh "$@"
+`)
+}
+
+func classifyRuntimeLogLine(line string) (string, string) {
+	const prefix = "[overcast-extension:"
+	if !strings.HasPrefix(line, prefix) {
+		return "function", line
+	}
+	end := strings.Index(line, "] ")
+	if end < len(prefix) {
+		return "function", line
+	}
+	name := line[len(prefix):end]
+	record := strings.TrimPrefix(line[end+2:], " ")
+	if name == "" || record == "" {
+		return "function", line
+	}
+	return "extension", record
 }
 
 // zipToTar converts a zip archive (raw bytes) into a tar archive suitable for
@@ -1845,14 +2007,6 @@ func (cr *ContainerRuntime) copyLayersToContainer(ctx context.Context, container
 // runs on the host and cannot see the devcontainer's filesystem).
 func zipToTar(zipData []byte) ([]byte, error) {
 	return zipToTarFiltered(zipData, nil)
-}
-
-// skipExtensions is a tar entry filter that strips the extensions/ directory.
-// Lambda extensions are separate processes that hook into the Lambda lifecycle.
-// They cannot function outside the full Lambda platform, so we strip them to
-// prevent them from running (and hanging) inside the emulated container.
-func skipExtensions(name string) bool {
-	return strings.HasPrefix(name, "extensions/") || name == "extensions"
 }
 
 // zipToTarFiltered converts a zip archive to a tar archive, optionally
@@ -1871,10 +2025,14 @@ func zipToTarFiltered(zipData []byte, skip func(string) bool) ([]byte, error) {
 			continue
 		}
 
+		mode := int64(f.FileInfo().Mode().Perm())
+		if mode == 0 {
+			mode = 0o644
+		}
 		header := &tar.Header{
 			Name:    f.Name,
 			Size:    int64(f.UncompressedSize64),
-			Mode:    0o644,
+			Mode:    mode,
 			ModTime: f.Modified,
 		}
 

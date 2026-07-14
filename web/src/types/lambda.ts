@@ -74,3 +74,10 @@ export interface LambdaInstance {
   memoryUsedMB: number
   cpuPercent: number
 }
+
+export interface LambdaLayerVersionMetadata {
+  layerName: string
+  version: number
+  hasExternalExtensions: boolean
+  externalExtensions: string[]
+}

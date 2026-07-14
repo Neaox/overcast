@@ -1357,6 +1357,39 @@ func TestGetLayerVersion_notFound(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusNotFound)
 }
 
+func TestGetLayerVersionMetadata_detectsExternalExtensions(t *testing.T) {
+	// Given: a published layer with an executable external extension file.
+	srv := helpers.NewTestServer(t)
+	zipBytes := makeZipWithMode(t, "extensions/bootstrap", "#!/bin/sh\n", 0o755)
+	resp := doJSON(t, http.MethodPost, layerURL(srv, "/layers/extension-layer/versions"), publishLayerVersionReq{
+		Content: layerContent{ZipFile: zipBytes},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusCreated)
+
+	// When: emulator layer metadata is requested.
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/_lambda/layers/extension-layer/versions/1/metadata", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metaResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer metaResp.Body.Close()
+
+	// Then: the extension executable is surfaced for developer tooling.
+	helpers.AssertStatus(t, metaResp, http.StatusOK)
+	var meta struct {
+		HasExternalExtensions bool     `json:"hasExternalExtensions"`
+		ExternalExtensions    []string `json:"externalExtensions"`
+	}
+	decodeJSON(t, metaResp, &meta)
+	if !meta.HasExternalExtensions || len(meta.ExternalExtensions) != 1 || meta.ExternalExtensions[0] != "bootstrap" {
+		t.Fatalf("metadata = %+v", meta)
+	}
+}
+
 // ─── ListLayerVersions ────────────────────────────────────────────────────────
 
 func TestListLayerVersions_empty(t *testing.T) {
@@ -1662,6 +1695,25 @@ func makeZip(t *testing.T, name, content string) []byte {
 	f, err := w.Create(name)
 	if err != nil {
 		t.Fatalf("zip.Create: %v", err)
+	}
+	if _, err := io.WriteString(f, content); err != nil {
+		t.Fatalf("zip.Write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("zip.Close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func makeZipWithMode(t *testing.T, name, content string, mode os.FileMode) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	fh := &zip.FileHeader{Name: name, Method: zip.Deflate}
+	fh.SetMode(mode)
+	f, err := w.CreateHeader(fh)
+	if err != nil {
+		t.Fatalf("zip.CreateHeader: %v", err)
 	}
 	if _, err := io.WriteString(f, content); err != nil {
 		t.Fatalf("zip.Write: %v", err)

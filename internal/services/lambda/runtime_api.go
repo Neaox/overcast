@@ -16,6 +16,7 @@ package lambda
 // invocation is keyed by its request ID.
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -24,6 +25,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +46,57 @@ type pendingInvocation struct {
 	ResultCh    chan invokeResponse
 }
 
+type runtimeContainerConfig struct {
+	FunctionARN        string
+	FunctionName       string
+	Handler            string
+	ExpectedExtensions []string
+}
+
+type extensionRegistrationRequest struct {
+	Events []string `json:"events"`
+}
+
+type extensionState struct {
+	ID          string
+	Name        string
+	ContainerIP string
+	FunctionARN string
+	Events      map[string]bool
+	Queue       []extensionEvent
+	Waiter      chan extensionEvent
+	Logs        *extensionLogsSubscription
+}
+
+type extensionLogsSubscription struct {
+	Types map[string]bool
+	URI   string
+}
+
+type extensionLogsSubscribeRequest struct {
+	Types       []string `json:"types"`
+	Destination struct {
+		Protocol string `json:"protocol"`
+		URI      string `json:"URI"`
+	} `json:"destination"`
+}
+
+type extensionEvent struct {
+	ID   string
+	Body []byte
+}
+
+type extensionLogDelivery struct {
+	URI  string
+	Body []byte
+}
+
+const (
+	maxExtensionEventQueue = 100
+	logsDeliveryWorkers    = 4
+	logsDeliveryQueueSize  = 1024
+)
+
 // invokeResponse is sent back from the container via the Runtime API.
 type invokeResponse struct {
 	Payload       []byte
@@ -54,19 +107,24 @@ type invokeResponse struct {
 
 // RuntimeAPIServer serves the Lambda Runtime API to containers.
 type RuntimeAPIServer struct {
-	mu         sync.Mutex
-	pending    map[string]*pendingInvocation      // keyed by request ID
-	funcQueues map[string][]*pendingInvocation    // keyed by function ARN — FIFO
-	waiting    map[string]chan *pendingInvocation // keyed by function ARN — one waiter per container
-	containers map[string]string                  // container ID → function ARN (registered on Acquire)
-	seenNext   map[string]bool                    // container IP → true after first GET /next
-	ready      map[string]chan struct{}           // container IP → closed after first GET /next
-	server     *http.Server
-	listener   net.Listener
-	logger     *zap.Logger
-	addr       string        // host:port as seen by containers
-	done       chan struct{} // closed on Stop to unblock long-polling handlers
-	clk        clock.Clock
+	mu               sync.Mutex
+	pending          map[string]*pendingInvocation      // keyed by request ID
+	funcQueues       map[string][]*pendingInvocation    // keyed by function ARN — FIFO
+	waiting          map[string]chan *pendingInvocation // keyed by function ARN — one waiter per container
+	containers       map[string]string                  // container ID → function ARN (registered on Acquire)
+	containerConfigs map[string]runtimeContainerConfig
+	containerExts    map[string]map[string]bool
+	containerErrors  map[string]string
+	extensions       map[string]*extensionState
+	seenNext         map[string]bool          // container IP → true after first GET /next
+	ready            map[string]chan struct{} // container IP → closed after first GET /next
+	server           *http.Server
+	listener         net.Listener
+	logger           *zap.Logger
+	addr             string        // host:port as seen by containers
+	done             chan struct{} // closed on Stop to unblock long-polling handlers
+	clk              clock.Clock
+	logsDeliveries   chan extensionLogDelivery
 
 	// OnFirstNext is called (in a goroutine) the first time a container's RIC
 	// issues GET /next.  The argument is the function ARN.  Setting this lets
@@ -92,16 +150,24 @@ func NewRuntimeAPIServer(listenAddr string, containerAddr string, logger *zap.Lo
 // port 0) and then derive containerAddr from the actual port.
 func NewRuntimeAPIServerFromListener(ln net.Listener, containerAddr string, logger *zap.Logger, clk clock.Clock) (*RuntimeAPIServer, error) {
 	s := &RuntimeAPIServer{
-		pending:    make(map[string]*pendingInvocation),
-		funcQueues: make(map[string][]*pendingInvocation),
-		waiting:    make(map[string]chan *pendingInvocation),
-		containers: make(map[string]string),
-		seenNext:   make(map[string]bool),
-		ready:      make(map[string]chan struct{}),
-		logger:     logger,
-		addr:       containerAddr,
-		done:       make(chan struct{}),
-		clk:        clk,
+		pending:          make(map[string]*pendingInvocation),
+		funcQueues:       make(map[string][]*pendingInvocation),
+		waiting:          make(map[string]chan *pendingInvocation),
+		containers:       make(map[string]string),
+		containerConfigs: make(map[string]runtimeContainerConfig),
+		containerExts:    make(map[string]map[string]bool),
+		containerErrors:  make(map[string]string),
+		extensions:       make(map[string]*extensionState),
+		seenNext:         make(map[string]bool),
+		ready:            make(map[string]chan struct{}),
+		logger:           logger,
+		addr:             containerAddr,
+		done:             make(chan struct{}),
+		clk:              clk,
+		logsDeliveries:   make(chan extensionLogDelivery, logsDeliveryQueueSize),
+	}
+	for i := 0; i < logsDeliveryWorkers; i++ {
+		go s.logsDeliveryWorker()
 	}
 
 	mux := http.NewServeMux()
@@ -109,6 +175,11 @@ func NewRuntimeAPIServerFromListener(ln net.Listener, containerAddr string, logg
 	mux.HandleFunc("/2018-06-01/runtime/invocation/next", s.handleNext)
 	mux.HandleFunc("/2018-06-01/runtime/invocation/", s.handleInvocationAction)
 	mux.HandleFunc("/2018-06-01/runtime/init/error", s.handleInitError)
+	mux.HandleFunc("/2020-01-01/extension/register", s.handleExtensionRegister)
+	mux.HandleFunc("/2020-01-01/extension/event/next", s.handleExtensionNext)
+	mux.HandleFunc("/2020-01-01/extension/init/error", s.handleExtensionError)
+	mux.HandleFunc("/2020-01-01/extension/exit/error", s.handleExtensionError)
+	mux.HandleFunc("/2020-08-15/logs", s.handleExtensionLogsSubscribe)
 
 	s.server = &http.Server{Handler: mux}
 	s.listener = ln
@@ -133,18 +204,27 @@ func (s *RuntimeAPIServer) Addr() string { return s.addr }
 // incoming GET /next requests from that container can be routed to the correct
 // invocation queue. Call this as soon as Docker has assigned the container IP.
 func (s *RuntimeAPIServer) RegisterContainer(containerIP, functionARN string) {
+	s.RegisterContainerConfig(containerIP, runtimeContainerConfig{FunctionARN: functionARN, FunctionName: functionNameFromARN(functionARN)})
+}
+
+func (s *RuntimeAPIServer) RegisterContainerConfig(containerIP string, cfg runtimeContainerConfig) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.containers[containerIP] = functionARN
+	s.containers[containerIP] = cfg.FunctionARN
+	s.containerConfigs[containerIP] = cfg
+	if _, ok := s.containerExts[containerIP]; !ok {
+		s.containerExts[containerIP] = make(map[string]bool, len(cfg.ExpectedExtensions))
+	}
 	if _, ok := s.ready[containerIP]; !ok {
 		s.ready[containerIP] = make(chan struct{})
 	}
+	s.maybeMarkReadyLocked(containerIP)
 }
 
 func (s *RuntimeAPIServer) ReadyChan(containerIP string) <-chan struct{} {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.seenNext[containerIP] {
+	if s.isReadyLocked(containerIP) {
 		ch := make(chan struct{})
 		close(ch)
 		return ch
@@ -162,8 +242,37 @@ func (s *RuntimeAPIServer) UnregisterContainer(containerIP string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.containers, containerIP)
+	delete(s.containerConfigs, containerIP)
+	delete(s.containerExts, containerIP)
+	delete(s.containerErrors, containerIP)
 	delete(s.seenNext, containerIP)
 	delete(s.ready, containerIP)
+	for id, ext := range s.extensions {
+		if ext.ContainerIP == containerIP {
+			delete(s.extensions, id)
+		}
+	}
+}
+
+func (s *RuntimeAPIServer) ContainerError(containerIP string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	reason, ok := s.containerErrors[containerIP]
+	return reason, ok
+}
+
+func (s *RuntimeAPIServer) lookupContainerConfigWait(ctx context.Context, ip string, maxWait time.Duration) (runtimeContainerConfig, bool) {
+	functionARN, ok := s.lookupContainerWait(ctx, ip, maxWait)
+	if !ok {
+		return runtimeContainerConfig{}, false
+	}
+	s.mu.Lock()
+	cfg, ok := s.containerConfigs[ip]
+	s.mu.Unlock()
+	if ok {
+		return cfg, true
+	}
+	return runtimeContainerConfig{FunctionARN: functionARN, FunctionName: functionNameFromARN(functionARN)}, true
 }
 
 // lookupContainerWait resolves a container IP to its function ARN, blocking
@@ -252,6 +361,339 @@ func (s *RuntimeAPIServer) SubmitInvocation(functionARN string, event []byte, de
 	return reqID, ch
 }
 
+func (s *RuntimeAPIServer) enqueueExtensionInvokeLocked(containerIP string, inv *pendingInvocation) {
+	for _, ext := range s.extensions {
+		if ext.ContainerIP != containerIP || ext.FunctionARN != inv.FunctionARN || !ext.Events["INVOKE"] {
+			continue
+		}
+		body, _ := json.Marshal(map[string]any{
+			"eventType":          "INVOKE",
+			"deadlineMs":         inv.Deadline.UnixMilli(),
+			"requestId":          inv.RequestID,
+			"invokedFunctionArn": inv.FunctionARN,
+			"tracing": map[string]string{
+				"type":  "X-Amzn-Trace-Id",
+				"value": inv.TraceID,
+			},
+		})
+		s.enqueueExtensionEventLocked(ext, extensionEvent{ID: uuid.New().String(), Body: body})
+	}
+}
+
+func (s *RuntimeAPIServer) EnqueueExtensionShutdown(containerIP, reason string, deadline time.Time) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	queued := 0
+	for _, ext := range s.extensions {
+		if ext.ContainerIP != containerIP || !ext.Events["SHUTDOWN"] {
+			continue
+		}
+		body, _ := json.Marshal(map[string]any{
+			"eventType":      "SHUTDOWN",
+			"shutdownReason": reason,
+			"deadlineMs":     deadline.UnixMilli(),
+		})
+		s.enqueueExtensionEventLocked(ext, extensionEvent{ID: uuid.New().String(), Body: body})
+		queued++
+	}
+	return queued
+}
+
+func (s *RuntimeAPIServer) enqueueExtensionEventLocked(ext *extensionState, event extensionEvent) {
+	if ext.Waiter != nil {
+		select {
+		case ext.Waiter <- event:
+			ext.Waiter = nil
+		default:
+			ext.Queue = append(ext.Queue, event)
+		}
+		return
+	}
+	if len(ext.Queue) >= maxExtensionEventQueue {
+		copy(ext.Queue, ext.Queue[1:])
+		ext.Queue[len(ext.Queue)-1] = event
+		return
+	}
+	ext.Queue = append(ext.Queue, event)
+}
+
+func (s *RuntimeAPIServer) handleExtensionRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	name := r.Header.Get("Lambda-Extension-Name")
+	if strings.TrimSpace(name) == "" {
+		http.Error(w, "missing Lambda-Extension-Name", http.StatusForbidden)
+		return
+	}
+	var in extensionRegistrationRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&in); err != nil {
+		http.Error(w, "invalid register request", http.StatusBadRequest)
+		return
+	}
+	events := make(map[string]bool, len(in.Events))
+	for _, event := range in.Events {
+		switch event {
+		case "INVOKE", "SHUTDOWN":
+			events[event] = true
+		default:
+			http.Error(w, "invalid event", http.StatusBadRequest)
+			return
+		}
+	}
+	remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
+	cfg, known := s.lookupContainerConfigWait(r.Context(), remoteIP, 15*time.Second)
+	if !known {
+		http.Error(w, "unknown container", http.StatusForbidden)
+		return
+	}
+	id := uuid.New().String()
+	s.mu.Lock()
+	s.extensions[id] = &extensionState{ID: id, Name: name, ContainerIP: remoteIP, FunctionARN: cfg.FunctionARN, Events: events}
+	if _, ok := s.containerExts[remoteIP]; !ok {
+		s.containerExts[remoteIP] = make(map[string]bool)
+	}
+	s.containerExts[remoteIP][name] = true
+	s.maybeMarkReadyLocked(remoteIP)
+	s.mu.Unlock()
+
+	w.Header().Set("Lambda-Extension-Identifier", id)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"functionName":    cfg.FunctionName,
+		"functionVersion": "$LATEST",
+		"handler":         cfg.Handler,
+	})
+}
+
+func (s *RuntimeAPIServer) handleExtensionNext(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := r.Header.Get("Lambda-Extension-Identifier")
+	if id == "" {
+		http.Error(w, "missing Lambda-Extension-Identifier", http.StatusForbidden)
+		return
+	}
+	s.mu.Lock()
+	ext, ok := s.extensions[id]
+	if !ok {
+		s.mu.Unlock()
+		http.Error(w, "invalid Lambda-Extension-Identifier", http.StatusForbidden)
+		return
+	}
+	if len(ext.Queue) > 0 {
+		event := ext.Queue[0]
+		ext.Queue = ext.Queue[1:]
+		s.mu.Unlock()
+		s.writeExtensionEvent(w, event)
+		return
+	}
+	waiter := make(chan extensionEvent, 1)
+	ext.Waiter = waiter
+	s.mu.Unlock()
+
+	select {
+	case event := <-waiter:
+		s.writeExtensionEvent(w, event)
+	case <-r.Context().Done():
+		s.mu.Lock()
+		if ext.Waiter == waiter {
+			ext.Waiter = nil
+		}
+		s.mu.Unlock()
+	case <-s.done:
+		s.mu.Lock()
+		if ext.Waiter == waiter {
+			ext.Waiter = nil
+		}
+		s.mu.Unlock()
+	}
+}
+
+func (s *RuntimeAPIServer) handleExtensionError(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := r.Header.Get("Lambda-Extension-Identifier")
+	if id == "" {
+		http.Error(w, "missing Lambda-Extension-Identifier", http.StatusForbidden)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 256*1024))
+	if err != nil {
+		http.Error(w, "read body failed", http.StatusInternalServerError)
+		return
+	}
+	s.mu.Lock()
+	ext, ok := s.extensions[id]
+	if ok {
+		s.containerErrors[ext.ContainerIP] = r.Header.Get("Lambda-Extension-Function-Error-Type")
+		if s.containerErrors[ext.ContainerIP] == "" {
+			s.containerErrors[ext.ContainerIP] = "Extension.Error"
+		}
+	}
+	if ok && strings.HasSuffix(r.URL.Path, "/exit/error") {
+		delete(s.extensions, id)
+		if registered := s.containerExts[ext.ContainerIP]; registered != nil {
+			delete(registered, ext.Name)
+		}
+	}
+	s.mu.Unlock()
+	if !ok {
+		http.Error(w, "invalid Lambda-Extension-Identifier", http.StatusForbidden)
+		return
+	}
+	s.logger.Debug("runtime api: extension reported error",
+		zap.String("extension", ext.Name),
+		zap.String("path", r.URL.Path),
+		zap.String("error_type", r.Header.Get("Lambda-Extension-Function-Error-Type")),
+		zap.Int("body_bytes", len(body)))
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (s *RuntimeAPIServer) handleExtensionLogsSubscribe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := r.Header.Get("Lambda-Extension-Identifier")
+	if id == "" {
+		http.Error(w, "missing Lambda-Extension-Identifier", http.StatusForbidden)
+		return
+	}
+	var in extensionLogsSubscribeRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&in); err != nil {
+		http.Error(w, "invalid logs subscribe request", http.StatusBadRequest)
+		return
+	}
+	if !strings.EqualFold(in.Destination.Protocol, "HTTP") || strings.TrimSpace(in.Destination.URI) == "" {
+		http.Error(w, "invalid logs destination", http.StatusBadRequest)
+		return
+	}
+	if _, err := url.ParseRequestURI(in.Destination.URI); err != nil {
+		http.Error(w, "invalid logs destination URI", http.StatusBadRequest)
+		return
+	}
+	types := make(map[string]bool, len(in.Types))
+	for _, typ := range in.Types {
+		switch typ {
+		case "platform", "function", "extension":
+			types[typ] = true
+		default:
+			http.Error(w, "invalid log type", http.StatusBadRequest)
+			return
+		}
+	}
+	if len(types) == 0 {
+		http.Error(w, "missing log types", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	ext, ok := s.extensions[id]
+	if ok {
+		deliveryURI := normalizeExtensionLogURI(in.Destination.URI, ext.ContainerIP)
+		ext.Logs = &extensionLogsSubscription{Types: types, URI: deliveryURI}
+	}
+	s.mu.Unlock()
+	if !ok {
+		http.Error(w, "invalid Lambda-Extension-Identifier", http.StatusForbidden)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func normalizeExtensionLogURI(rawURI, containerIP string) string {
+	parsed, err := url.Parse(rawURI)
+	if err != nil {
+		return rawURI
+	}
+	host := parsed.Hostname()
+	if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+		return rawURI
+	}
+	port := parsed.Port()
+	if port == "" || containerIP == "" {
+		return rawURI
+	}
+	parsed.Host = net.JoinHostPort(containerIP, port)
+	return parsed.String()
+}
+
+func (s *RuntimeAPIServer) PublishExtensionLog(containerIP, typ, record string) {
+	if record == "" {
+		return
+	}
+	s.mu.Lock()
+	subs := make([]string, 0)
+	for _, ext := range s.extensions {
+		if ext.ContainerIP != containerIP || ext.Logs == nil || !ext.Logs.Types[typ] {
+			continue
+		}
+		subs = append(subs, ext.Logs.URI)
+	}
+	s.mu.Unlock()
+	if len(subs) == 0 {
+		return
+	}
+	body, err := json.Marshal([]map[string]any{{
+		"time":   s.clk.Now().UTC().Format(time.RFC3339Nano),
+		"type":   typ,
+		"record": record,
+	}})
+	if err != nil {
+		return
+	}
+	for _, uri := range subs {
+		select {
+		case s.logsDeliveries <- extensionLogDelivery{URI: uri, Body: body}:
+		default:
+			s.logger.Debug("runtime api: dropping extension log delivery because queue is full", zap.String("uri", uri))
+		}
+	}
+}
+
+func (s *RuntimeAPIServer) logsDeliveryWorker() {
+	client := &http.Client{Timeout: time.Second}
+	for {
+		select {
+		case delivery := <-s.logsDeliveries:
+			s.deliverExtensionLog(client, delivery)
+		case <-s.done:
+			return
+		}
+	}
+}
+
+func (s *RuntimeAPIServer) deliverExtensionLog(client *http.Client, delivery extensionLogDelivery) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, delivery.URI, bytes.NewReader(delivery.Body))
+	if err != nil {
+		s.logger.Debug("runtime api: build logs delivery request", zap.String("uri", delivery.URI), zap.Error(err))
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		s.logger.Debug("runtime api: deliver logs", zap.String("uri", delivery.URI), zap.Error(err))
+		return
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+}
+
+func (s *RuntimeAPIServer) writeExtensionEvent(w http.ResponseWriter, event extensionEvent) {
+	w.Header().Set("Lambda-Extension-Event-Identifier", event.ID)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(event.Body)
+}
+
 // handleNext serves GET /2018-06-01/runtime/invocation/next.
 // This is a long-poll: the container blocks here until an invocation arrives.
 func (s *RuntimeAPIServer) handleNext(w http.ResponseWriter, r *http.Request) {
@@ -281,16 +723,7 @@ func (s *RuntimeAPIServer) handleNext(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	if !s.seenNext[remoteIP] {
 		s.seenNext[remoteIP] = true
-		if ready, ok := s.ready[remoteIP]; ok {
-			close(ready)
-			delete(s.ready, remoteIP)
-		}
-		cb := s.OnFirstNext
-		s.mu.Unlock()
-		if cb != nil {
-			go cb(functionARN)
-		}
-		s.mu.Lock()
+		s.maybeMarkReadyLocked(remoteIP)
 	}
 
 	// Check the function's invocation queue first.
@@ -299,6 +732,7 @@ func (s *RuntimeAPIServer) handleNext(w http.ResponseWriter, r *http.Request) {
 		s.funcQueues[functionARN] = queue[1:]
 		// Do NOT delete from s.pending here — handleInvocationAction needs it
 		// to route the container's response POST back to the caller's ResultCh.
+		s.enqueueExtensionInvokeLocked(remoteIP, inv)
 		s.mu.Unlock()
 		s.writeNextResponse(w, inv)
 		return
@@ -312,6 +746,9 @@ func (s *RuntimeAPIServer) handleNext(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	select {
 	case inv := <-waiterCh:
+		s.mu.Lock()
+		s.enqueueExtensionInvokeLocked(remoteIP, inv)
+		s.mu.Unlock()
 		s.writeNextResponse(w, inv)
 	case <-ctx.Done():
 		s.mu.Lock()
@@ -322,6 +759,39 @@ func (s *RuntimeAPIServer) handleNext(w http.ResponseWriter, r *http.Request) {
 		delete(s.waiting, functionARN)
 		s.mu.Unlock()
 	}
+}
+
+func (s *RuntimeAPIServer) maybeMarkReadyLocked(containerIP string) {
+	if !s.isReadyLocked(containerIP) {
+		return
+	}
+	ready, ok := s.ready[containerIP]
+	if !ok {
+		return
+	}
+	cfg := s.containerConfigs[containerIP]
+	close(ready)
+	delete(s.ready, containerIP)
+	if cb := s.OnFirstNext; cb != nil {
+		go cb(cfg.FunctionARN)
+	}
+}
+
+func (s *RuntimeAPIServer) isReadyLocked(containerIP string) bool {
+	if !s.seenNext[containerIP] {
+		return false
+	}
+	cfg, ok := s.containerConfigs[containerIP]
+	if !ok {
+		return false
+	}
+	registered := s.containerExts[containerIP]
+	for _, name := range cfg.ExpectedExtensions {
+		if !registered[name] {
+			return false
+		}
+	}
+	return true
 }
 
 // writeNextResponse sends the invocation event to the container with
