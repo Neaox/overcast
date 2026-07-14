@@ -518,7 +518,7 @@ func (s *Service) seedPersistedFunctionImages(cr *ContainerRuntime) {
 				zap.Error(err))
 			continue
 		}
-		pullErr := cr.ensureImage(ctx, image)
+		pullErr := cr.ensureImage(ctx, image, dockerPlatformForLambdaArchitectures(fn.Architectures))
 		if pullErr != nil {
 			s.log.Warn("seed pull failed for persisted function",
 				zap.String("function", fn.Name),

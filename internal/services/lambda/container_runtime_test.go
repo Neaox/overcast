@@ -5,13 +5,18 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/docker"
+	"go.uber.org/zap"
 )
 
 func TestContainerRuntimeColdStartSlot_boundsConcurrency(t *testing.T) {
@@ -137,6 +142,48 @@ func TestContainerRuntimeBuildEnv_includesServiceSpecificEndpointURLs(t *testing
 	}
 }
 
+func TestContainerRuntimeBuildEnv_runtimeEndpointsOverrideBlankUserEnv(t *testing.T) {
+	// Given: a function template includes empty AWS endpoint placeholders.
+	runtime := &ContainerRuntime{
+		cfg:              &config.Config{Region: "us-east-1", AccountID: "000000000000"},
+		overcastEndpoint: "http://172.18.0.1:4566",
+		runtimeAPI:       &RuntimeAPIServer{addr: "172.18.0.1:9001"},
+	}
+	fn := &Function{
+		Name:       "demo",
+		ARN:        "arn:aws:lambda:us-east-1:000000000000:function:demo",
+		Runtime:    "nodejs22.x",
+		Handler:    "index.handler",
+		MemorySize: 128,
+		Timeout:    3,
+		Environment: map[string]string{
+			"AWS_ENDPOINT_URL":                 "",
+			"AWS_ENDPOINT_URL_SSM":             "",
+			"AWS_ENDPOINT_URL_SECRETS_MANAGER": "",
+			"AWS_ACCESS_KEY_ID":                "",
+			"AWS_SECRET_ACCESS_KEY":            "",
+			"AWS_SESSION_TOKEN":                "",
+		},
+	}
+
+	// When: Lambda environment variables are built for the container.
+	env := envMap(runtime.buildEnv(fn, "stream"))
+
+	// Then: runtime-provided endpoint and credential values win so extensions inherit usable values.
+	if env["AWS_ENDPOINT_URL"] != runtime.overcastEndpoint {
+		t.Fatalf("AWS_ENDPOINT_URL = %q", env["AWS_ENDPOINT_URL"])
+	}
+	if env["AWS_ENDPOINT_URL_SSM"] != runtime.overcastEndpoint {
+		t.Fatalf("AWS_ENDPOINT_URL_SSM = %q", env["AWS_ENDPOINT_URL_SSM"])
+	}
+	if env["AWS_ENDPOINT_URL_SECRETS_MANAGER"] != runtime.overcastEndpoint {
+		t.Fatalf("AWS_ENDPOINT_URL_SECRETS_MANAGER = %q", env["AWS_ENDPOINT_URL_SECRETS_MANAGER"])
+	}
+	if env["AWS_ACCESS_KEY_ID"] != "overcast" || env["AWS_SECRET_ACCESS_KEY"] != "overcast" || env["AWS_SESSION_TOKEN"] != "overcast" {
+		t.Fatalf("credentials not overridden: access=%q secret=%q token=%q", env["AWS_ACCESS_KEY_ID"], env["AWS_SECRET_ACCESS_KEY"], env["AWS_SESSION_TOKEN"])
+	}
+}
+
 func TestDockerPlatformForLambdaArchitectures_defaultsToX8664(t *testing.T) {
 	// Given: AWS defaults Lambda functions to x86_64 when Architectures is omitted.
 	// When: the container platform is resolved.
@@ -156,6 +203,37 @@ func TestDockerPlatformForLambdaArchitectures_arm64(t *testing.T) {
 	// Then: Docker runs the matching arm64 Lambda runtime image.
 	if got != "linux/arm64" {
 		t.Fatalf("platform = %q, want linux/arm64", got)
+	}
+}
+
+func TestContainerRuntimeEnsureImage_pullsRequestedPlatformWhenCachedTagDiffers(t *testing.T) {
+	// Given: Docker has the image tag cached for arm64, but Lambda needs amd64.
+	var pulledPlatform string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1.45/images/"):
+			_ = json.NewEncoder(w).Encode(docker.ImageInspect{OS: "linux", Architecture: "arm64"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.45/images/create":
+			pulledPlatform = r.URL.Query().Get("platform")
+			_, _ = w.Write([]byte(`{"status":"done"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.45/images/prune":
+			_, _ = w.Write([]byte(`{"ImagesDeleted":null,"SpaceReclaimed":0}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+	runtime := &ContainerRuntime{docker: docker.NewClient("tcp://"+server.Listener.Addr().String(), zap.NewNop()), logger: zap.NewNop()}
+
+	// When: Lambda ensures the amd64 variant.
+	err := runtime.ensureImage(context.Background(), "public.ecr.aws/lambda/nodejs:22", "linux/amd64")
+
+	// Then: it does not trust the wrong-architecture cached tag and pulls amd64.
+	if err != nil {
+		t.Fatalf("ensureImage: %v", err)
+	}
+	if pulledPlatform != "linux/amd64" {
+		t.Fatalf("pulled platform = %q, want linux/amd64", pulledPlatform)
 	}
 }
 

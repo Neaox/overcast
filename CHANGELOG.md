@@ -62,6 +62,16 @@ need it than accidentally ship a breaking change as a patch.
        binary packaging, release process, or user-facing docs.
 -->
 
+### Fixed
+
+- Nothing yet.
+
+## [0.0.1-alpha.14] - 2026-07-14
+
+### Fixed
+
+- **Lambda** — Docker-backed Lambda image pulls now use the same platform as container creation, so x86_64 external extension layers are not paired with host-native arm64 runtime images on Apple Silicon/ARM hosts; Lambda runtime endpoint and credential environment variables now override blank function placeholders so endpoint-aware AWS-calling extensions route SDK requests to Overcast; Lambda docs now describe using recent AWS-calling extension layer versions, matching function architecture, and troubleshooting old extension layers.
+
 ## [0.0.1-alpha.13] - 2026-07-14
 
 ### Fixed

@@ -187,13 +187,19 @@ type CreateContainerRequest struct {
 	*ContainerConfig
 	HostConfig       *HostConfig       `json:"HostConfig,omitempty"`
 	NetworkingConfig *NetworkingConfig `json:"NetworkingConfig,omitempty"`
-	Platform         string            `json:"platform,omitempty"`
+	Platform         string            `json:"-"`
 }
 
 // CreateContainerResponse is the response from container creation.
 type CreateContainerResponse struct {
 	ID       string   `json:"Id"`
 	Warnings []string `json:"Warnings,omitempty"`
+}
+
+// ImageInspect holds the platform metadata returned by Docker image inspect.
+type ImageInspect struct {
+	Architecture string `json:"Architecture"`
+	OS           string `json:"Os"`
 }
 
 // ContainerInspect holds container state and networking details.
@@ -375,8 +381,15 @@ func (d *Client) CreateContainer(ctx context.Context, name string, req *CreateCo
 	defer d.releaseOp()
 
 	path := "/v1.45/containers/create"
+	query := url.Values{}
 	if name != "" {
-		path += "?name=" + url.QueryEscape(name)
+		query.Set("name", name)
+	}
+	if req != nil && req.Platform != "" {
+		query.Set("platform", req.Platform)
+	}
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
 	}
 	var resp CreateContainerResponse
 	if err := d.doJSON(ctx, http.MethodPost, path, req, &resp); err != nil {
@@ -683,7 +696,19 @@ func (d *Client) ContainerMemoryUsage(ctx context.Context, id string) (usageByte
 
 // PullImage pulls an image. This blocks until the pull is complete.
 func (d *Client) PullImage(ctx context.Context, image string) error {
-	path := "/v1.45/images/create?fromImage=" + url.QueryEscape(image)
+	return d.PullImageForPlatform(ctx, image, "")
+}
+
+// PullImageForPlatform pulls an image for a specific Docker platform such as
+// linux/amd64. Docker Engine expects platform in the images/create query string,
+// not in a JSON body.
+func (d *Client) PullImageForPlatform(ctx context.Context, image, platform string) error {
+	query := url.Values{}
+	query.Set("fromImage", image)
+	if platform != "" {
+		query.Set("platform", platform)
+	}
+	path := "/v1.45/images/create?" + query.Encode()
 	resp, err := d.doRequest(ctx, http.MethodPost, path, nil)
 	if err != nil {
 		return fmt.Errorf("pull image %s: %w", image, err)
@@ -759,6 +784,35 @@ func (d *Client) ImageExists(ctx context.Context, image string) (bool, error) {
 	}
 	resp.Body.Close()
 	return resp.StatusCode == http.StatusOK, nil
+}
+
+// ImageMatchesPlatform reports whether the local image tag exists and matches
+// the requested Docker platform. Empty platform preserves ImageExists behavior.
+func (d *Client) ImageMatchesPlatform(ctx context.Context, image, platform string) (bool, error) {
+	if platform == "" {
+		return d.ImageExists(ctx, image)
+	}
+	resp, err := d.doRequest(ctx, http.MethodGet, "/v1.45/images/"+url.PathEscape(image)+"/json", nil)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return false, fmt.Errorf("inspect image %s: status %d: %s", image, resp.StatusCode, string(body))
+	}
+	var inspect ImageInspect
+	if err := json.NewDecoder(resp.Body).Decode(&inspect); err != nil {
+		return false, fmt.Errorf("inspect image %s: decode: %w", image, err)
+	}
+	osName, arch, ok := strings.Cut(platform, "/")
+	if !ok {
+		return false, nil
+	}
+	return inspect.OS == osName && inspect.Architecture == arch, nil
 }
 
 // ─── Network operations ────────────────────────────────────────────────────
