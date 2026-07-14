@@ -24,6 +24,10 @@ operations:
         status: tested
         tests: [TestCreateStack_ElastiCacheServerlessCache]
         evidence: CloudFormation creates the resource through CreateServerlessCache and resolves ARN and Endpoint.* GetAtt attributes.
+      - name: Lambda container DNS for serverless endpoint
+        status: fixed
+        tests: [TestEndpointAliases_serverlessCache, TestEndpointAliases_preserveCanonicalNameWhenEndpointIsIP]
+        evidence: Docker-backed serverless cache containers now register the advertised Endpoint.Address hostname as a Docker DNS alias on the Lambda network so Lambda execution containers can resolve CloudFormation-returned endpoint hostnames.
       - name: metadata fields
         status: tested
         tests: [TestCreateServerlessCache_metadataFields]
@@ -80,11 +84,12 @@ findings:
     - Added Query API support for ModifyServerlessCache.
     - Added CloudFormation support for AWS::ElastiCache::ServerlessCache including ARN and Endpoint.* attributes.
     - Added ServerlessCache pagination, CacheUsageLimits, snapshot restore metadata, and CloudFormation in-place updates.
+    - Docker-backed ElastiCache cache cluster, replication group, and serverless cache endpoint hostnames are registered as Docker DNS aliases on the Lambda network.
   remaining_gaps:
     - Review CreateCacheCluster/CreateReplicationGroup validation, lifecycle states, and XML shapes.
     - Serverless cache snapshots are metadata-only; no durable snapshot contents are emulated.
   intentionally_partial: []
 handoff:
   start_with: [CreateCacheCluster, CreateReplicationGroup, DescribeServerlessCaches]
-  do_not_redo: [CreateServerlessCache minimal and metadata paths, DescribeServerlessCaches pagination, ModifyServerlessCache metadata path, DeleteServerlessCache final snapshot parameter, CloudFormation ServerlessCache create/GetAtt/update path]
+  do_not_redo: [CreateServerlessCache minimal and metadata paths, DescribeServerlessCaches pagination, ModifyServerlessCache metadata path, DeleteServerlessCache final snapshot parameter, CloudFormation ServerlessCache create/GetAtt/update path, Lambda container DNS for Docker-backed ElastiCache endpoint hostnames]
   commands: [go test -count=1 ./internal/services/elasticache/... ./tests/integration/elasticache/... ./tests/integration/cloudformation/...]

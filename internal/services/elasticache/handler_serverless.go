@@ -409,6 +409,7 @@ func (h *Handler) startServerlessCacheContainer(ctx context.Context, c *Serverle
 		}
 		c.DockerContainerID = existing.ID
 		c.HostPort = hostPort
+		h.connectToLambdaNetwork(ctx, existing.ID, h.serverlessEndpointAliases(c))
 		h.setServerlessEndpoint(ctx, c)
 		return nil
 	}
@@ -437,7 +438,7 @@ func (h *Handler) startServerlessCacheContainer(ctx context.Context, c *Serverle
 				containerPort: {{HostIP: "0.0.0.0", HostPort: strconv.Itoa(hostPort)}},
 			},
 		},
-		NetworkingConfig: &docker.NetworkingConfig{EndpointsConfig: map[string]*docker.EndpointSettings{network: {}}},
+		NetworkingConfig: &docker.NetworkingConfig{EndpointsConfig: map[string]*docker.EndpointSettings{network: {Aliases: h.serverlessEndpointAliases(c)}}},
 	}
 	containerID, err := h.docker.CreateContainer(ctx, containerName, req)
 	if err != nil {
@@ -455,8 +456,27 @@ func (h *Handler) startServerlessCacheContainer(ctx context.Context, c *Serverle
 	}
 	c.DockerContainerID = containerID
 	c.HostPort = hostPort
+	h.connectToLambdaNetwork(ctx, containerID, h.serverlessEndpointAliases(c))
 	h.setServerlessEndpoint(ctx, c)
 	return nil
+}
+
+func (h *Handler) serverlessEndpointAliases(c *ServerlessCache) []string {
+	if c == nil {
+		return nil
+	}
+	var endpointAddress, readerAddress string
+	if c.Endpoint != nil {
+		endpointAddress = c.Endpoint.Address
+	}
+	if c.ReaderEndpoint != nil {
+		readerAddress = c.ReaderEndpoint.Address
+	}
+	var canonical string
+	if c.ServerlessCacheName != "" {
+		canonical = fmt.Sprintf("%s.%s.serverless.%s", c.ServerlessCacheName, h.region(), h.externalHostname())
+	}
+	return docker.EndpointAliases(endpointAddress, readerAddress, canonical)
 }
 
 func (h *Handler) setServerlessEndpoint(ctx context.Context, c *ServerlessCache) {

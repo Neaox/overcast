@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -159,7 +160,26 @@ type NetworkingConfig struct {
 
 // EndpointSettings describes a container's attachment to a Docker network.
 type EndpointSettings struct {
-	// Empty struct is enough to attach to a network.
+	// Empty settings are enough to attach to a network. Aliases are advertised by
+	// Docker's embedded DNS to containers on the same user-defined network.
+	Aliases []string `json:"Aliases,omitempty"`
+}
+
+// EndpointAliases returns unique, non-IP hostnames suitable for Docker DNS aliases.
+func EndpointAliases(addresses ...string) []string {
+	out := make([]string, 0, len(addresses))
+	seen := make(map[string]struct{}, len(addresses))
+	for _, address := range addresses {
+		if address == "" || net.ParseIP(address) != nil || address == "127.0.0.1" || address == "localhost" {
+			continue
+		}
+		if _, ok := seen[address]; ok {
+			continue
+		}
+		seen[address] = struct{}{}
+		out = append(out, address)
+	}
+	return out
 }
 
 // CreateContainerRequest combines all container creation parameters.
@@ -817,14 +837,23 @@ func (d *Client) InspectNetwork(ctx context.Context, nameOrID string) (*NetworkI
 
 // ConnectNetwork attaches a container to a network.
 func (d *Client) ConnectNetwork(ctx context.Context, networkID, containerID string) error {
+	return d.ConnectNetworkWithAliases(ctx, networkID, containerID, nil)
+}
+
+// ConnectNetworkWithAliases attaches a container to a network with optional DNS aliases.
+func (d *Client) ConnectNetworkWithAliases(ctx context.Context, networkID, containerID string, aliases []string) error {
 	if err := d.acquireOp(ctx); err != nil {
 		return fmt.Errorf("connect network %s: %w", networkID, err)
 	}
 	defer d.releaseOp()
 
 	body := struct {
-		Container string `json:"Container"`
+		Container      string            `json:"Container"`
+		EndpointConfig *EndpointSettings `json:"EndpointConfig,omitempty"`
 	}{Container: containerID}
+	if len(aliases) > 0 {
+		body.EndpointConfig = &EndpointSettings{Aliases: aliases}
+	}
 	return d.doJSON(ctx, http.MethodPost, "/v1.45/networks/"+networkID+"/connect", &body, nil)
 }
 

@@ -586,6 +586,7 @@ func (h *Handler) startCacheContainer(ctx context.Context, c *CacheCluster) erro
 		}
 		c.DockerContainerID = existing.ID
 		c.HostPort = hostPort
+		h.connectToLambdaNetwork(ctx, existing.ID, h.clusterEndpointAliases(c))
 		h.setContainerEndpoint(ctx, c)
 		return nil
 	}
@@ -623,7 +624,7 @@ func (h *Handler) startCacheContainer(ctx context.Context, c *CacheCluster) erro
 		},
 		NetworkingConfig: &docker.NetworkingConfig{
 			EndpointsConfig: map[string]*docker.EndpointSettings{
-				network: {},
+				network: {Aliases: h.clusterEndpointAliases(c)},
 			},
 		},
 	}
@@ -648,6 +649,7 @@ func (h *Handler) startCacheContainer(ctx context.Context, c *CacheCluster) erro
 
 	c.DockerContainerID = containerID
 	c.HostPort = hostPort
+	h.connectToLambdaNetwork(ctx, containerID, h.clusterEndpointAliases(c))
 	h.setContainerEndpoint(ctx, c)
 	return nil
 }
@@ -815,6 +817,7 @@ func (h *Handler) startReplicationGroupContainer(ctx context.Context, rg *Replic
 		}
 		rg.DockerContainerID = existing.ID
 		rg.HostPort = hostPort
+		h.connectToLambdaNetwork(ctx, existing.ID, h.replicationGroupEndpointAliases(rg))
 		h.setReplicationGroupEndpoint(ctx, rg)
 		return nil
 	}
@@ -849,7 +852,7 @@ func (h *Handler) startReplicationGroupContainer(ctx context.Context, rg *Replic
 		},
 		NetworkingConfig: &docker.NetworkingConfig{
 			EndpointsConfig: map[string]*docker.EndpointSettings{
-				network: {},
+				network: {Aliases: h.replicationGroupEndpointAliases(rg)},
 			},
 		},
 	}
@@ -872,8 +875,63 @@ func (h *Handler) startReplicationGroupContainer(ctx context.Context, rg *Replic
 
 	rg.DockerContainerID = containerID
 	rg.HostPort = hostPort
+	h.connectToLambdaNetwork(ctx, containerID, h.replicationGroupEndpointAliases(rg))
 	h.setReplicationGroupEndpoint(ctx, rg)
 	return nil
+}
+
+func (h *Handler) clusterEndpointAliases(c *CacheCluster) []string {
+	if c == nil {
+		return nil
+	}
+	var current string
+	if c.ConfigurationEndpoint != nil {
+		current = c.ConfigurationEndpoint.Address
+	}
+	var canonical string
+	if c.CacheClusterId != "" {
+		canonical = fmt.Sprintf("%s.%s.cfg.%s", c.CacheClusterId, h.region(), h.externalHostname())
+	}
+	return docker.EndpointAliases(current, canonical)
+}
+
+func (h *Handler) replicationGroupEndpointAliases(rg *ReplicationGroup) []string {
+	if rg == nil {
+		return nil
+	}
+	var current string
+	if rg.ConfigurationEndpoint != nil {
+		current = rg.ConfigurationEndpoint.Address
+	}
+	var canonical string
+	if rg.ReplicationGroupId != "" {
+		canonical = fmt.Sprintf("%s.%s.ng.cfg.%s", rg.ReplicationGroupId, h.region(), h.externalHostname())
+	}
+	return docker.EndpointAliases(current, canonical)
+}
+
+func (h *Handler) region() string {
+	if h.cfg != nil && h.cfg.Region != "" {
+		return h.cfg.Region
+	}
+	return "us-east-1"
+}
+
+func (h *Handler) externalHostname() string {
+	if h.cfg != nil {
+		return h.cfg.ExternalHostname()
+	}
+	return "localhost"
+}
+
+func (h *Handler) connectToLambdaNetwork(ctx context.Context, containerID string, aliases []string) {
+	if h.cfg == nil || h.cfg.LambdaNetwork == "" || h.cfg.LambdaNetwork == h.network() || len(aliases) == 0 || !h.cfg.Services["lambda"] {
+		return
+	}
+	if err := h.docker.ConnectNetworkWithAliases(ctx, h.cfg.LambdaNetwork, containerID, aliases); err != nil {
+		h.log.Warn("ElastiCache: failed to attach container to Lambda network for DNS aliases",
+			zap.String("network", h.cfg.LambdaNetwork), zap.String("container", containerID), zap.Error(err))
+	}
 }
 
 // cleanupReplicationGroupContainer releases the port for a replication group container.

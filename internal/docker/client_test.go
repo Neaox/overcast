@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -38,6 +39,60 @@ func TestNewClient_BarePathIsUnix(t *testing.T) {
 	c := NewClient("/tmp/custom.sock", zap.NewNop())
 	if c.host != "http://docker" {
 		t.Errorf("expected host http://docker for bare path, got %s", c.host)
+	}
+}
+
+func TestEndpointAliases_filtersNonDNSAddresses(t *testing.T) {
+	// Given: endpoint addresses containing DNS names, duplicate names, and direct IP/localhost addresses.
+	addresses := []string{
+		"cache.ap-southeast-2.serverless.localhost",
+		"127.0.0.1",
+		"localhost",
+		"10.0.0.5",
+		"cache.ap-southeast-2.serverless.localhost",
+		"reader.ap-southeast-2.serverless.localhost",
+	}
+
+	// When: Docker aliases are built.
+	got := EndpointAliases(addresses...)
+
+	// Then: only unique DNS hostnames remain, preserving first-seen order.
+	want := []string{"cache.ap-southeast-2.serverless.localhost", "reader.ap-southeast-2.serverless.localhost"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("EndpointAliases() = %#v, want %#v", got, want)
+	}
+}
+
+func TestConnectNetworkWithAliases_sendsEndpointConfig(t *testing.T) {
+	// Given: a fake Docker daemon that captures network connect payloads.
+	var got struct {
+		Container      string            `json:"Container"`
+		EndpointConfig *EndpointSettings `json:"EndpointConfig"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1.45/networks/lambda-net/connect" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode connect payload: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	client := &Client{httpClient: server.Client(), host: server.URL, logger: zap.NewNop(), sem: make(chan struct{}, maxConcurrentOps)}
+
+	// When: a container is connected with DNS aliases.
+	err := client.ConnectNetworkWithAliases(context.Background(), "lambda-net", "container-1", []string{"cache.localhost"})
+
+	// Then: Docker receives EndpointConfig aliases.
+	if err != nil {
+		t.Fatalf("ConnectNetworkWithAliases: %v", err)
+	}
+	if got.Container != "container-1" {
+		t.Fatalf("Container = %q, want container-1", got.Container)
+	}
+	if got.EndpointConfig == nil || !slices.Equal(got.EndpointConfig.Aliases, []string{"cache.localhost"}) {
+		t.Fatalf("EndpointConfig = %#v, want aliases", got.EndpointConfig)
 	}
 }
 
