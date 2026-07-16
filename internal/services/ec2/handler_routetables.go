@@ -34,6 +34,7 @@ type xmlRouteTable struct {
 type xmlRoute struct {
 	DestinationCidrBlock string `xml:"destinationCidrBlock"`
 	GatewayID            string `xml:"gatewayId,omitempty"`
+	NatGatewayID         string `xml:"natGatewayId,omitempty"`
 	Origin               string `xml:"origin"`
 	State                string `xml:"state"`
 }
@@ -212,6 +213,7 @@ func (h *Handler) CreateRoute(w http.ResponseWriter, r *http.Request) {
 	rtID := r.FormValue("RouteTableId")
 	destCidr := r.FormValue("DestinationCidrBlock")
 	gatewayID := r.FormValue("GatewayId")
+	natGatewayID := r.FormValue("NatGatewayId")
 
 	if rtID == "" || destCidr == "" {
 		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
@@ -231,6 +233,7 @@ func (h *Handler) CreateRoute(w http.ResponseWriter, r *http.Request) {
 	rt.Routes = append(rt.Routes, Route{
 		DestinationCidrBlock: destCidr,
 		GatewayID:            gatewayID,
+		NatGatewayID:         natGatewayID,
 		Origin:               "CreateRoute",
 	})
 
@@ -420,6 +423,7 @@ func routeTableToXML(rt *RouteTable) xmlRouteTable {
 		routes = append(routes, xmlRoute{
 			DestinationCidrBlock: r.DestinationCidrBlock,
 			GatewayID:            r.GatewayID,
+			NatGatewayID:         r.NatGatewayID,
 			Origin:               r.Origin,
 			State:                "active",
 		})

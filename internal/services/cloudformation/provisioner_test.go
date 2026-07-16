@@ -1,6 +1,10 @@
 package cloudformation
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -230,5 +234,74 @@ func assertBefore(t *testing.T, order []string, a, b string) {
 	}
 	if posA >= posB {
 		t.Fatalf("expected %q (pos %d) before %q (pos %d) in %v", a, posA, b, posB, order)
+	}
+}
+
+func TestEventsRuleHandler_CustomBusTargetUpdateAndDelete(t *testing.T) {
+	// Given: a CloudFormation EventBridge rule handler with a custom bus ARN
+	handler := &eventsRuleHandler{}
+	physicalID := "arn:aws:events:us-east-1:000000000000:rule/custom-bus/custom-rule"
+	var calls []struct {
+		target string
+		body   map[string]any
+	}
+	router := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		target := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), "AWSEvents.")
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode %s body: %v", target, err)
+		}
+		calls = append(calls, struct {
+			target string
+			body   map[string]any
+		}{target: target, body: body})
+		w.Header().Set("Content-Type", "application/x-amz-json-1.1")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	})
+	rCtx := &resolveContext{Region: "us-east-1", AccountID: "000000000000"}
+
+	// When: CloudFormation updates targets and then deletes the rule
+	_, _, err := handler.Update(context.Background(), router, nil, physicalID, map[string]any{
+		"Targets": []any{map[string]any{"Id": "new-target", "Arn": "arn:aws:sqs:us-east-1:000000000000:new"}},
+	}, map[string]any{
+		"Targets": []any{map[string]any{"Id": "old-target", "Arn": "arn:aws:sqs:us-east-1:000000000000:old"}},
+	}, rCtx)
+	if err != nil {
+		t.Fatalf("Update returned error: %v", err)
+	}
+	if err := handler.Delete(context.Background(), router, nil, physicalID, rCtx); err != nil {
+		t.Fatalf("Delete returned error: %v", err)
+	}
+
+	// Then: EventBridge mutations address the custom bus parsed from the rule ARN
+	wantBusByTarget := map[string]string{
+		"PutRule":       "custom-bus",
+		"RemoveTargets": "custom-bus",
+		"PutTargets":    "custom-bus",
+		"DeleteRule":    "custom-bus",
+	}
+	seen := map[string]bool{}
+	for _, call := range calls {
+		wantBus, ok := wantBusByTarget[call.target]
+		if !ok {
+			continue
+		}
+		seen[call.target] = true
+		if got, _ := call.body["EventBusName"].(string); got != wantBus {
+			t.Fatalf("%s EventBusName = %q, want %q; body=%#v", call.target, got, wantBus, call.body)
+		}
+		nameKey := "Rule"
+		if call.target == "PutRule" || call.target == "DeleteRule" {
+			nameKey = "Name"
+		}
+		if got, _ := call.body[nameKey].(string); got != "custom-rule" {
+			t.Fatalf("%s %s = %q, want custom-rule; body=%#v", call.target, nameKey, got, call.body)
+		}
+	}
+	for target := range wantBusByTarget {
+		if !seen[target] {
+			t.Fatalf("expected %s call, got %#v", target, calls)
+		}
 	}
 }

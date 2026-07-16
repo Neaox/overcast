@@ -627,6 +627,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// EventBridge: wire bus for bus/rule lifecycle events.
 	if cfg.Services["eventbridge"] {
 		ebSvc.InitBus(bus)
+		ebSvc.InitRouter(r)
 	}
 	// Step Functions: wire bus for state machine/execution lifecycle events.
 	if cfg.Services["stepfunctions"] {

@@ -2,7 +2,7 @@ service: ec2
 status: in_progress
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-07-12
+last_updated: 2026-07-16
 protocols: [query]
 implementation: [internal/services/ec2]
 integration_tests: [tests/integration/ec2]
@@ -39,11 +39,22 @@ operations:
           - tests/integration/ec2/ec2_test.go::TestEC2QueryError_unsupportedAction
           - tests/integration/ec2/ec2_test.go::TestEC2QueryError_implementedActionErrors
         notes: EC2 Query errors now return EC2's <Response><Errors><Error> envelope for SDK compatibility.
+  VpcLookupPrivateSubnets:
+    status: fixed
+    scenarios:
+      cloudformation_private_subnet_group_metadata:
+        status: fixed
+        evidence:
+          - https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ec2-subnet.html
+          - https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_Route.html
+          - tests/integration/cloudformation/cloudformation_test.go::TestCreateStack_VPCPrivateSubnetLookupMetadata
+        notes: CloudFormation-created EC2 resources now preserve tags, DescribeSubnets returns subnet tagSet, and NAT gateway default routes are exposed in DescribeRouteTables so CDK VPC lookups can classify private subnet groups.
 findings:
   fixed:
     - CreateVpc creates the AWS-documented main route table for VPC lookups.
     - CreateSubnet preserves explicit AvailabilityZone values for multi-AZ VPC lookup scenarios.
     - EC2 Query errors use the EC2-specific error envelope expected by aws-sdk-js v3.
+    - CloudFormation-created private subnet group metadata is visible to CDK VPC lookup paths through subnet tags and NAT gateway route entries.
   remaining_gaps:
     - Focus VPC, subnet, security group, route table, and ENI behavior.
     - Review AWS Query XML shapes.
@@ -54,4 +65,5 @@ handoff:
     - Main route table creation for CreateVpc; covered by TestCreateVpc_mainRouteTable.
     - CreateSubnet explicit AvailabilityZone preservation; covered by TestCreateSubnet_requestedAvailabilityZones.
     - EC2 Query error envelope; covered by TestEC2QueryError_unsupportedAction and TestEC2QueryError_implementedActionErrors.
+    - CloudFormation private subnet lookup metadata; covered by TestCreateStack_VPCPrivateSubnetLookupMetadata.
   commands: [go test -count=1 ./internal/services/ec2/... ./tests/integration/ec2/...]

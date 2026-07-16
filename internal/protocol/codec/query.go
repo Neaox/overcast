@@ -139,6 +139,18 @@ func decodeStruct(values url.Values, rv reflect.Value, prefix string) *protocol.
 			continue
 		}
 
+		// Check for flattened EC2 Query lists: Foo.N or Foo.N.Bar.
+		if len(parts) >= 2 {
+			idx, err := strconv.Atoi(parts[1])
+			if err == nil {
+				base := parts[0]
+				idx--
+				remainingKey := strings.Join(parts[2:], ".")
+				listMembers[base] = append(listMembers[base], listMember{idx: idx, values: url.Values{remainingKey: vals}})
+				continue
+			}
+		}
+
 		// Check for map entry: Attributes.entry.N.key=K and Attributes.entry.N.value=V
 		if len(parts) >= 3 && strings.HasPrefix(parts[1], "entry") {
 			base := parts[0]

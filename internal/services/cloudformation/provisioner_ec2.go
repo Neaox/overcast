@@ -5,10 +5,47 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/Neaox/overcast/internal/config"
 )
+
+func applyEC2Tags(ctx context.Context, router http.Handler, region, resourceID string, tags any) error {
+	items, ok := tags.([]any)
+	if !ok || len(items) == 0 || resourceID == "" {
+		return nil
+	}
+	params := map[string]string{
+		"Action":       "CreateTags",
+		"Version":      "2016-11-15",
+		"ResourceId.1": resourceID,
+	}
+	idx := 1
+	for _, item := range items {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		key, _ := m["Key"].(string)
+		if key == "" {
+			continue
+		}
+		value := ""
+		if raw, ok := m["Value"]; ok && raw != nil {
+			value = fmt.Sprint(raw)
+		}
+		prefix := "Tag." + strconv.Itoa(idx) + "."
+		params[prefix+"Key"] = key
+		params[prefix+"Value"] = value
+		idx++
+	}
+	if idx == 1 {
+		return nil
+	}
+	_, err := internalQuery(ctx, router, region, params)
+	return err
+}
 
 // ── XML response types for EC2 ─────────────────────────────────────────────
 
@@ -108,6 +145,9 @@ func (h *ec2VPCHandler) Create(ctx context.Context, router http.Handler, cfg *co
 	if err := xml.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		return "", nil, fmt.Errorf("CreateVpc: parse response: %w", err)
 	}
+	if err := applyEC2Tags(ctx, router, rCtx.Region, resp.Vpc.VpcID, props["Tags"]); err != nil {
+		return "", nil, fmt.Errorf("CreateVpc tags: %w", err)
+	}
 
 	attrs := map[string]string{
 		"VpcId":     resp.Vpc.VpcID,
@@ -153,6 +193,9 @@ func (h *ec2SubnetHandler) Create(ctx context.Context, router http.Handler, cfg 
 	var resp ec2CreateSubnetResponse
 	if err := xml.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		return "", nil, fmt.Errorf("CreateSubnet: parse response: %w", err)
+	}
+	if err := applyEC2Tags(ctx, router, rCtx.Region, resp.Subnet.SubnetID, props["Tags"]); err != nil {
+		return "", nil, fmt.Errorf("CreateSubnet tags: %w", err)
 	}
 
 	attrs := map[string]string{
@@ -209,6 +252,9 @@ func (h *ec2SecurityGroupHandler) Create(ctx context.Context, router http.Handle
 	}
 
 	groupID := resp.GroupID
+	if err := applyEC2Tags(ctx, router, rCtx.Region, groupID, props["Tags"]); err != nil {
+		return "", nil, fmt.Errorf("CreateSecurityGroup tags: %w", err)
+	}
 
 	// Add inline ingress rules if specified.
 	if rules, ok := props["SecurityGroupIngress"].([]any); ok {
@@ -309,6 +355,9 @@ func (h *ec2InternetGatewayHandler) Create(ctx context.Context, router http.Hand
 	}
 
 	igwID := resp.InternetGateway.InternetGatewayID
+	if err := applyEC2Tags(ctx, router, rCtx.Region, igwID, props["Tags"]); err != nil {
+		return "", nil, fmt.Errorf("CreateInternetGateway tags: %w", err)
+	}
 	attrs := map[string]string{
 		"InternetGatewayId": igwID,
 	}
@@ -464,6 +513,9 @@ func (h *ec2RouteTableHandler) Create(ctx context.Context, router http.Handler, 
 	}
 
 	rtID := resp.RouteTable.RouteTableID
+	if err := applyEC2Tags(ctx, router, rCtx.Region, rtID, props["Tags"]); err != nil {
+		return "", nil, fmt.Errorf("CreateRouteTable tags: %w", err)
+	}
 	attrs := map[string]string{
 		"RouteTableId": rtID,
 	}
@@ -629,6 +681,9 @@ func (h *ec2NatGatewayHandler) Create(ctx context.Context, router http.Handler, 
 	}
 
 	natID := resp.NatGateway.NatGatewayID
+	if err := applyEC2Tags(ctx, router, rCtx.Region, natID, props["Tags"]); err != nil {
+		return "", nil, fmt.Errorf("CreateNatGateway tags: %w", err)
+	}
 	attrs := map[string]string{
 		"NatGatewayId": natID,
 	}

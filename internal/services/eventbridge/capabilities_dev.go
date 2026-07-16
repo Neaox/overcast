@@ -19,11 +19,11 @@ func init() {
 		capabilities.Capability{Service: "eventbridge", Operation: "DisableRule", Category: "Rules", Status: capabilities.StatusSupported, Notes: "Sets rule state to DISABLED"},
 		capabilities.Capability{Service: "eventbridge", Operation: "DeleteRule", Category: "Rules", Status: capabilities.StatusSupported},
 		// Targets
-		capabilities.Capability{Service: "eventbridge", Operation: "PutTargets", Category: "Targets", Status: capabilities.StatusSupported, Notes: "Adds targets to a rule"},
-		capabilities.Capability{Service: "eventbridge", Operation: "ListTargetsByRule", Category: "Targets", Status: capabilities.StatusSupported, Notes: "Lists targets for a rule"},
+		capabilities.Capability{Service: "eventbridge", Operation: "PutTargets", Category: "Targets", Status: capabilities.StatusSupported, Notes: "Adds targets; supports SQS delivery and scheduled ECS task targets"},
+		capabilities.Capability{Service: "eventbridge", Operation: "ListTargetsByRule", Category: "Targets", Status: capabilities.StatusSupported, Notes: "Lists targets including ECS target parameters"},
 		capabilities.Capability{Service: "eventbridge", Operation: "RemoveTargets", Category: "Targets", Status: capabilities.StatusSupported, Notes: "Removes targets from a rule"},
 		// Events
-		capabilities.Capability{Service: "eventbridge", Operation: "PutEvents", Category: "Events", Status: capabilities.StatusSupported, Notes: "Accepts events; returns event IDs (no routing)"},
+		capabilities.Capability{Service: "eventbridge", Operation: "PutEvents", Category: "Events", Status: capabilities.StatusSupported, Notes: "Accepts events and delivers matching rules to SQS targets"},
 		// Tags
 		capabilities.Capability{Service: "eventbridge", Operation: "TagResource", Category: "Tags", Status: capabilities.StatusSupported, Notes: "Tag buses and rules"},
 		capabilities.Capability{Service: "eventbridge", Operation: "ListTagsForResource", Category: "Tags", Status: capabilities.StatusSupported, Notes: "List tags for a resource"},

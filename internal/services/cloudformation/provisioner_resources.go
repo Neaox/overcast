@@ -478,6 +478,9 @@ func (h *eventsRuleHandler) Create(ctx context.Context, router http.Handler, cfg
 	if v, _ := props["Description"].(string); v != "" {
 		body["Description"] = v
 	}
+	if v, _ := props["RoleArn"].(string); v != "" {
+		body["RoleArn"] = v
+	}
 	if v, _ := props["EventPattern"].(map[string]any); v != nil {
 		j, _ := json.Marshal(v)
 		body["EventPattern"] = string(j)
@@ -503,16 +506,50 @@ func (h *eventsRuleHandler) Create(ctx context.Context, router http.Handler, cfg
 	attrs := map[string]string{
 		"Arn": resp.RuleArn,
 	}
+	ruleName, _ := body["Name"].(string)
+	if ruleName == "" {
+		ruleName = eventRuleNameFromArn(resp.RuleArn)
+	}
+	if targets, _ := props["Targets"].([]any); len(targets) > 0 {
+		addBody := map[string]any{"Rule": ruleName, "Targets": targets}
+		if eventBusName, _ := body["EventBusName"].(string); eventBusName != "" {
+			addBody["EventBusName"] = eventBusName
+		}
+		if _, err := internalJSON(ctx, router, rCtx.Region, "AWSEvents.PutTargets", addBody); err != nil {
+			return "", nil, fmt.Errorf("PutTargets: %w", err)
+		}
+	}
 	return resp.RuleArn, attrs, nil
+}
+
+func eventRuleNameFromArn(arn string) string {
+	if idx := strings.LastIndex(arn, "/"); idx >= 0 {
+		return arn[idx+1:]
+	}
+	return arn
+}
+
+func eventRuleIdentityFromArn(arn string) (string, string) {
+	const marker = ":rule/"
+	idx := strings.Index(arn, marker)
+	if idx < 0 {
+		return "", eventRuleNameFromArn(arn)
+	}
+	resource := arn[idx+len(marker):]
+	parts := strings.Split(resource, "/")
+	if len(parts) >= 2 {
+		return parts[0], parts[1]
+	}
+	return "", resource
 }
 
 func (h *eventsRuleHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	// Extract name from ARN: arn:aws:events:region:acct:rule/[bus/]name
-	name := physicalID
-	if idx := strings.LastIndex(physicalID, "/"); idx >= 0 {
-		name = physicalID[idx+1:]
-	}
+	eventBusName, name := eventRuleIdentityFromArn(physicalID)
 	body := map[string]any{"Name": name}
+	if eventBusName != "" {
+		body["EventBusName"] = eventBusName
+	}
 	_, err := internalJSON(ctx, router, rCtx.Region, "AWSEvents.DeleteRule", body)
 	return err
 }
@@ -533,12 +570,18 @@ func (h *eventsRuleHandler) Update(ctx context.Context, router http.Handler, _ *
 		}
 	}
 
+	eventBusName, ruleName := eventRuleIdentityFromArn(physicalID)
 	body := make(map[string]any)
 	if v, _ := props["Name"].(string); v != "" {
 		body["Name"] = v
+	} else if ruleName != "" {
+		body["Name"] = ruleName
 	}
 	if v, _ := props["EventBusName"].(string); v != "" {
 		body["EventBusName"] = v
+		eventBusName = v
+	} else if eventBusName != "" {
+		body["EventBusName"] = eventBusName
 	}
 	if v, _ := props["State"].(string); v != "" {
 		body["State"] = v
@@ -561,11 +604,6 @@ func (h *eventsRuleHandler) Update(ctx context.Context, router http.Handler, _ *
 
 	if _, err := internalJSON(ctx, router, rCtx.Region, "AWSEvents.PutRule", body); err != nil {
 		return "", nil, fmt.Errorf("PutRule: %w", err)
-	}
-
-	ruleName := physicalID
-	if idx := strings.LastIndex(physicalID, "/"); idx >= 0 {
-		ruleName = physicalID[idx+1:]
 	}
 
 	// Diff targets: remove old, add new.
@@ -600,6 +638,9 @@ func (h *eventsRuleHandler) Update(ctx context.Context, router http.Handler, _ *
 	}
 	if len(toRemoveIDs) > 0 {
 		rmBody := map[string]any{"Rule": ruleName, "Ids": toRemoveIDs}
+		if eventBusName != "" {
+			rmBody["EventBusName"] = eventBusName
+		}
 		if _, err := internalJSON(ctx, router, rCtx.Region, "AWSEvents.RemoveTargets", rmBody); err != nil {
 			return "", nil, fmt.Errorf("RemoveTargets: %w", err)
 		}
@@ -608,13 +649,16 @@ func (h *eventsRuleHandler) Update(ctx context.Context, router http.Handler, _ *
 	var toAdd []any
 	for _, t := range newTargets {
 		if m, ok := t.(map[string]any); ok {
-			if id, _ := m["Id"].(string); id != "" && !oldIDs[id] {
+			if id, _ := m["Id"].(string); id != "" {
 				toAdd = append(toAdd, t)
 			}
 		}
 	}
 	if len(toAdd) > 0 {
 		addBody := map[string]any{"Rule": ruleName, "Targets": toAdd}
+		if eventBusName != "" {
+			addBody["EventBusName"] = eventBusName
+		}
 		if _, err := internalJSON(ctx, router, rCtx.Region, "AWSEvents.PutTargets", addBody); err != nil {
 			return "", nil, fmt.Errorf("PutTargets: %w", err)
 		}

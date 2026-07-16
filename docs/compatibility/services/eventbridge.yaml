@@ -1,22 +1,57 @@
 service: eventbridge
-status: not_started
+status: fixed
 priority: p1
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-17
+last_updated: 2026-07-16
 protocols: [aws_json_1_1, rpcv2_cbor]
 implementation: [internal/services/eventbridge]
 integration_tests: [tests/integration/eventbridge]
 capability_docs: docs/services/eventbridge.md
 operation_count_estimate: 28 tracked; 16 supported, 12 unsupported
-current_support_level: Management-plane/CDK-compatible but inert event routing; PutEvents accepted without target invocation.
-operations: {}
+current_support_level: Management-plane/CDK-compatible with partial routing; PutEvents exact-match rules can deliver to SQS targets, and scheduled rules can invoke ECS/Fargate RunTask targets.
+operations:
+  PutTargets:
+    status: fixed
+    scenarios:
+      ecs_fargate_target_round_trip:
+        status: fixed
+        evidence:
+          - https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_Target.html
+          - tests/integration/eventbridge/eventbridge_test.go::TestPutTargets_ecsFargateTargetRoundTrip
+        notes: PutTargets/ListTargetsByRule preserve RoleArn, Input, and EcsParameters used by CDK scheduled Fargate task targets.
+  PutEvents:
+    status: fixed
+    scenarios:
+      matching_rule_sqs_target_delivery:
+        status: fixed
+        evidence:
+          - https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEvents.html
+          - https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns.html
+          - tests/integration/eventbridge/eventbridge_test.go::TestPutEvents_matchingRuleDeliversToSQSTarget
+        notes: Exact-match event patterns are evaluated and matching events are delivered to SQS targets with an EventBridge event envelope.
+  scheduled_rules:
+    status: fixed
+    scenarios:
+      ecs_fargate_run_task:
+        status: fixed
+        evidence:
+          - https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_EcsParameters.html
+          - tests/integration/eventbridge/eventbridge_test.go::TestScheduledRule_ecsFargateTargetRunsTask
+        notes: Rate and basic cron expressions are evaluated by an in-process scheduler; ECS/Fargate targets invoke ECS RunTask through the emulator router.
 findings:
-  fixed: []
+  fixed:
+    - PutTargets/ListTargetsByRule preserve ECS/Fargate target metadata needed by CDK scheduled task management.
+    - PutEvents exact-match rule delivery to SQS targets is covered.
+    - Scheduled ECS/Fargate RunTask target invocation is covered.
   remaining_gaps:
-    - Decide whether inert routing is acceptable for compatibility goals.
-    - Review target, rule, and tag protocol fidelity.
-  intentionally_partial: []
+    - Review advanced EventBridge pattern operators, input transformers, retry/DLQ behavior, and additional target types.
+    - Review target validation, rule validation, and tag protocol fidelity.
+  intentionally_partial:
+    - Target delivery is limited to SQS and ECS/Fargate RunTask paths; other targets may be skipped.
 handoff:
-  start_with: [PutEvents, PutRule, PutTargets]
-  do_not_redo: []
+  start_with: [advanced event patterns, input transformers, target validation]
+  do_not_redo:
+    - ECS/Fargate target metadata round-trip for PutTargets/ListTargetsByRule; covered by TestPutTargets_ecsFargateTargetRoundTrip.
+    - SQS target delivery for matching PutEvents; covered by TestPutEvents_matchingRuleDeliversToSQSTarget.
+    - Scheduled ECS/Fargate RunTask invocation; covered by TestScheduledRule_ecsFargateTargetRunsTask.
   commands: [go test -count=1 ./internal/services/eventbridge/... ./tests/integration/eventbridge/...]

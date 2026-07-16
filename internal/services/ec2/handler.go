@@ -504,14 +504,15 @@ type xmlCreateSubnetResponse struct {
 }
 
 type xmlSubnet struct {
-	SubnetID                string `xml:"subnetId"`
-	State                   string `xml:"state"`
-	VpcID                   string `xml:"vpcId"`
-	CidrBlock               string `xml:"cidrBlock"`
-	AvailabilityZone        string `xml:"availabilityZone"`
-	AvailableIPAddressCount int    `xml:"availableIpAddressCount"`
-	DefaultForAz            bool   `xml:"defaultForAz"`
-	MapPublicIPOnLaunch     bool   `xml:"mapPublicIpOnLaunch"`
+	SubnetID                string        `xml:"subnetId"`
+	State                   string        `xml:"state"`
+	VpcID                   string        `xml:"vpcId"`
+	CidrBlock               string        `xml:"cidrBlock"`
+	AvailabilityZone        string        `xml:"availabilityZone"`
+	AvailableIPAddressCount int           `xml:"availableIpAddressCount"`
+	DefaultForAz            bool          `xml:"defaultForAz"`
+	MapPublicIPOnLaunch     bool          `xml:"mapPublicIpOnLaunch"`
+	TagSet                  []typedTagXML `xml:"tagSet>item,omitempty"`
 }
 
 // CreateSubnet creates a new subnet in a VPC.

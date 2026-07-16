@@ -2748,7 +2748,7 @@
           "operation": "CreateRoute",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "DestinationCidrBlock + GatewayId"
+          "notes": "DestinationCidrBlock + GatewayId or NatGatewayId"
         },
         {
           "operation": "CreateRouteTable",
@@ -2949,7 +2949,7 @@
           "operation": "DescribeRouteTables",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by route-table-id, vpc-id"
+          "notes": "Filter by route-table-id, vpc-id; includes NAT gateway routes"
         },
         {
           "operation": "DescribeSecurityGroups",
@@ -2961,7 +2961,7 @@
           "operation": "DescribeSubnets",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by subnet-id, vpc-id, availability-zone"
+          "notes": "Filter by subnet-id, vpc-id, availability-zone; includes tagSet for CDK subnet groups"
         },
         {
           "operation": "DescribeTags",
@@ -4362,13 +4362,13 @@
           "operation": "PutTargets",
           "category": "Targets",
           "status": "✅ Supported",
-          "notes": "Adds targets to a rule"
+          "notes": "Adds targets; supports SQS delivery and scheduled ECS task targets"
         },
         {
           "operation": "ListTargetsByRule",
           "category": "Targets",
           "status": "✅ Supported",
-          "notes": "Lists targets for a rule"
+          "notes": "Lists targets including ECS target parameters"
         },
         {
           "operation": "RemoveTargets",
@@ -4380,7 +4380,7 @@
           "operation": "PutEvents",
           "category": "Events",
           "status": "✅ Supported",
-          "notes": "Accepts events; returns event IDs (no routing)"
+          "notes": "Accepts events and delivers matching rules to SQS targets"
         },
         {
           "operation": "TagResource",

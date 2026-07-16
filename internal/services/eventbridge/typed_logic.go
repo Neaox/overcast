@@ -68,6 +68,7 @@ type putRuleRequest struct {
 	EventBusName string `json:"EventBusName" cbor:"EventBusName"`
 	State        string `json:"State" cbor:"State"`
 	Description  string `json:"Description" cbor:"Description"`
+	RoleARN      string `json:"RoleArn" cbor:"RoleArn"`
 	EventPattern string `json:"EventPattern" cbor:"EventPattern"`
 	ScheduleExpr string `json:"ScheduleExpression" cbor:"ScheduleExpression"`
 }
@@ -220,6 +221,11 @@ func (s *Service) putRuleTyped(ctx context.Context, req *putRuleRequest) (*putRu
 	if req.State == "" {
 		req.State = "ENABLED"
 	}
+	if req.ScheduleExpr != "" {
+		if _, err := nextRuleFire(req.ScheduleExpr, s.clk.Now(), s.clk.Now()); err != nil {
+			return nil, scheduleValidationError(err)
+		}
+	}
 	arn := protocol.ARN(s.cfg.Region, s.cfg.AccountID, "events", "rule/"+req.EventBusName+"/"+req.Name)
 	rule := ebRule{
 		Name:         req.Name,
@@ -227,6 +233,7 @@ func (s *Service) putRuleTyped(ctx context.Context, req *putRuleRequest) (*putRu
 		EventBusName: req.EventBusName,
 		State:        req.State,
 		Description:  req.Description,
+		RoleARN:      req.RoleARN,
 		EventPattern: req.EventPattern,
 		ScheduleExpr: req.ScheduleExpr,
 	}
@@ -234,6 +241,11 @@ func (s *Service) putRuleTyped(ctx context.Context, req *putRuleRequest) (*putRu
 	b, _ := json.Marshal(rule)
 	if err := s.store.Set(ctx, nsRules, key, string(b)); err != nil {
 		return nil, protocol.ErrInternalError
+	}
+	if req.ScheduleExpr != "" {
+		now := s.clk.Now()
+		s.setLastFire(ctx, key, now)
+		s.setNextFire(ctx, key, req.ScheduleExpr, now, now)
 	}
 	s.publishCtx(ctx, events.EventBridgeRuleCreated, events.ResourcePayload{Name: req.Name})
 	return &putRuleResponse{RuleArn: arn}, nil
@@ -363,16 +375,20 @@ func (s *Service) deleteRuleTyped(ctx context.Context, req *deleteRuleRequest) (
 		req.EventBusName = "default"
 	}
 	key := serviceutil.RegionKey(s.region(ctx), req.EventBusName+"/"+req.Name)
-	s.store.Delete(ctx, nsRules, key)   //nolint:errcheck
-	s.store.Delete(ctx, nsTargets, key) //nolint:errcheck
+	s.store.Delete(ctx, nsRules, key)    //nolint:errcheck
+	s.store.Delete(ctx, nsTargets, key)  //nolint:errcheck
+	s.store.Delete(ctx, nsLastFire, key) //nolint:errcheck
+	s.store.Delete(ctx, nsNextFire, key) //nolint:errcheck
 	s.publishCtx(ctx, events.EventBridgeRuleDeleted, events.ResourcePayload{Name: req.Name})
 	return &struct{}{}, nil
 }
 
-func (s *Service) putEventsTyped(_ context.Context, req *putEventsRequest) (*putEventsResponse, *protocol.AWSError) {
+func (s *Service) putEventsTyped(ctx context.Context, req *putEventsRequest) (*putEventsResponse, *protocol.AWSError) {
 	results := make([]putEventsEntryResponse, 0, len(req.Entries))
-	for range req.Entries {
-		results = append(results, putEventsEntryResponse{EventId: uuid.New().String()})
+	for _, entry := range req.Entries {
+		eventID := uuid.New().String()
+		results = append(results, putEventsEntryResponse{EventId: eventID})
+		s.deliverEvent(ctx, eventID, entry)
 	}
 	return &putEventsResponse{FailedEntryCount: 0, Entries: results}, nil
 }

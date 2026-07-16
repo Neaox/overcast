@@ -734,6 +734,140 @@ func TestCreateStack_VPCStack_provisionesRealResources(t *testing.T) {
 	}
 }
 
+func TestCreateStack_VPCPrivateSubnetLookupMetadata(t *testing.T) {
+	// Given: a CDK-like VPC with public and private subnet groups
+	srv := helpers.NewTestServer(t)
+	template := `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "Vpc": { "Type": "AWS::EC2::VPC", "Properties": { "CidrBlock": "10.42.0.0/16" } },
+    "PublicSubnet": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "Vpc" },
+        "CidrBlock": "10.42.0.0/24",
+        "AvailabilityZone": "us-east-1a",
+        "Tags": [
+          { "Key": "Name", "Value": "cdk-vpc/PublicSubnet1" },
+          { "Key": "aws-cdk:subnet-name", "Value": "Public" },
+          { "Key": "aws-cdk:subnet-type", "Value": "Public" }
+        ]
+      }
+    },
+    "PrivateSubnet": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "Vpc" },
+        "CidrBlock": "10.42.1.0/24",
+        "AvailabilityZone": "us-east-1a",
+        "Tags": [
+          { "Key": "Name", "Value": "cdk-vpc/PrivateSubnet1" },
+          { "Key": "aws-cdk:subnet-name", "Value": "Private" },
+          { "Key": "aws-cdk:subnet-type", "Value": "Private" }
+        ]
+      }
+    },
+    "PrivateRouteTable": { "Type": "AWS::EC2::RouteTable", "Properties": { "VpcId": { "Ref": "Vpc" } } },
+    "PrivateSubnetRouteTableAssociation": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": { "SubnetId": { "Ref": "PrivateSubnet" }, "RouteTableId": { "Ref": "PrivateRouteTable" } }
+    },
+    "NatGateway": { "Type": "AWS::EC2::NatGateway", "Properties": { "SubnetId": { "Ref": "PublicSubnet" } } },
+    "PrivateDefaultRoute": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "RouteTableId": { "Ref": "PrivateRouteTable" },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "NatGatewayId": { "Ref": "NatGateway" }
+      }
+    }
+  }
+}`
+
+	// When: CloudFormation creates the VPC resources
+	cr := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"private-subnet-lookup-stack"},
+		"TemplateBody": []string{template},
+	})
+	defer cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	waitForStackStatus(t, srv, "private-subnet-lookup-stack", "CREATE_COMPLETE")
+
+	// Then: DescribeSubnets exposes CDK subnet group tags used by Vpc.fromLookup
+	resp := ec2Query(t, srv, "DescribeSubnets", nil)
+	body := string(readBody(t, resp))
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	for _, want := range []string{"aws-cdk:subnet-name", "Private", "aws-cdk:subnet-type"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("DescribeSubnets response missing %q: %s", want, body)
+		}
+	}
+
+	// And: DescribeRouteTables exposes NAT gateway routes for private subnet classification
+	resp = ec2Query(t, srv, "DescribeRouteTables", nil)
+	body = string(readBody(t, resp))
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	if !strings.Contains(body, "<destinationCidrBlock>0.0.0.0/0</destinationCidrBlock>") || !strings.Contains(body, "<natGatewayId>nat-") {
+		t.Fatalf("DescribeRouteTables response missing private NAT route: %s", body)
+	}
+}
+
+func TestCreateStack_EC2SubnetTagsVisible(t *testing.T) {
+	// Given: a CloudFormation stack with a tagged EC2 subnet
+	srv := helpers.NewTestServer(t)
+	template := `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "Vpc": { "Type": "AWS::EC2::VPC", "Properties": { "CidrBlock": "10.52.0.0/16" } },
+    "Subnet": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "Vpc" },
+        "CidrBlock": "10.52.1.0/24",
+        "AvailabilityZone": "us-east-1a",
+        "Tags": [
+          { "Key": "Name", "Value": "tagged-subnet" },
+          { "Key": "Environment", "Value": "integration" }
+        ]
+      }
+    }
+  }
+}`
+
+	// When: CloudFormation creates the stack
+	cr := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"ec2-subnet-tags-stack"},
+		"TemplateBody": []string{template},
+	})
+	defer cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	waitForStackStatus(t, srv, "ec2-subnet-tags-stack", "CREATE_COMPLETE")
+
+	// Then: DescribeSubnets exposes the tags applied through EC2 CreateTags
+	resp := ec2Query(t, srv, "DescribeSubnets", nil)
+	body := string(readBody(t, resp))
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	for _, want := range []string{"<key>Name</key>", "<value>tagged-subnet</value>", "<key>Environment</key>", "<value>integration</value>"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("DescribeSubnets response missing %q: %s", want, body)
+		}
+	}
+
+	// And: DescribeTags returns the same stored subnet tags
+	resp = ec2Query(t, srv, "DescribeTags", nil)
+	body = string(readBody(t, resp))
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	for _, want := range []string{"<resourceType>subnet</resourceType>", "<key>Environment</key>", "<value>integration</value>"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("DescribeTags response missing %q: %s", want, body)
+		}
+	}
+}
+
 const vpnGatewayStackTemplate = `{
   "AWSTemplateFormatVersion": "2010-09-09",
   "Resources": {
@@ -855,6 +989,94 @@ func TestCreateStack_ECSCluster(t *testing.T) {
 	body := string(readBody(t, resp))
 	if !strings.Contains(body, "arn:aws:ecs:") {
 		t.Error("expected ECS cluster ARN in resources")
+	}
+}
+
+func TestCreateStack_ScheduledFargateRuleTargets(t *testing.T) {
+	// Given: a CDK-like scheduled Fargate task template
+	srv := helpers.NewTestServer(t)
+	template := `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "Cluster": {
+      "Type": "AWS::ECS::Cluster",
+      "Properties": { "ClusterName": "scheduled-fargate-cluster" }
+    },
+    "TaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": "scheduled-fargate-task",
+        "Cpu": "256",
+        "Memory": "512",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": ["FARGATE"],
+        "ContainerDefinitions": [{ "Name": "app", "Image": "public.ecr.aws/nginx/nginx:latest" }]
+      }
+    },
+    "ScheduledRule": {
+      "Type": "AWS::Events::Rule",
+      "Properties": {
+        "Name": "scheduled-fargate-rule",
+        "ScheduleExpression": "rate(5 minutes)",
+        "State": "ENABLED",
+        "Targets": [{
+          "Id": "EcsTarget",
+          "Arn": { "Fn::GetAtt": ["Cluster", "Arn"] },
+          "RoleArn": "arn:aws:iam::000000000000:role/events-run-task",
+          "EcsParameters": {
+            "TaskDefinitionArn": { "Ref": "TaskDefinition" },
+            "LaunchType": "FARGATE",
+            "PlatformVersion": "LATEST",
+            "TaskCount": 1,
+            "NetworkConfiguration": {
+              "AwsVpcConfiguration": {
+                "Subnets": ["subnet-private-a", "subnet-private-b"],
+                "SecurityGroups": ["sg-app"],
+                "AssignPublicIp": "DISABLED"
+              }
+            }
+          }
+        }]
+      }
+    }
+  }
+}`
+
+	// When: CloudFormation creates the stack
+	cr := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"scheduled-fargate-stack"},
+		"TemplateBody": []string{template},
+	})
+	defer cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	waitForStackStatus(t, srv, "scheduled-fargate-stack", "CREATE_COMPLETE")
+
+	// Then: the EventBridge rule target is created with its ECS parameters
+	resp := awsJSONCall(t, srv, "AWSEvents.", "ListTargetsByRule", "application/x-amz-json-1.1", map[string]any{
+		"Rule": "scheduled-fargate-rule",
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var out struct {
+		Targets []map[string]any `json:"Targets"`
+	}
+	helpers.DecodeJSON(t, resp, &out)
+	if len(out.Targets) != 1 {
+		t.Fatalf("expected 1 EventBridge target, got %d", len(out.Targets))
+	}
+	target := out.Targets[0]
+	if target["RoleArn"] != "arn:aws:iam::000000000000:role/events-run-task" {
+		t.Fatalf("RoleArn = %#v", target["RoleArn"])
+	}
+	ecsParams, ok := target["EcsParameters"].(map[string]any)
+	if !ok {
+		t.Fatalf("EcsParameters missing or wrong type: %#v", target["EcsParameters"])
+	}
+	if ecsParams["LaunchType"] != "FARGATE" {
+		t.Fatalf("LaunchType = %#v, want FARGATE", ecsParams["LaunchType"])
+	}
+	if taskDef, _ := ecsParams["TaskDefinitionArn"].(string); !strings.Contains(taskDef, ":task-definition/scheduled-fargate-task:") {
+		t.Fatalf("TaskDefinitionArn = %#v", ecsParams["TaskDefinitionArn"])
 	}
 }
 
