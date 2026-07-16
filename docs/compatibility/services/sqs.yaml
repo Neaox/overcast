@@ -41,7 +41,7 @@ operations:
         status: reviewed
         tests:
           - tests/integration/sqs/sqs_test.go
-        notes: Subsequent receive returns zero messages.
+        notes: Subsequent receive returns zero messages while the visibility timeout is active; queue default VisibilityTimeout, explicit ReceiveMessage VisibilityTimeout, and VisibilityTimeout=0 immediate re-visibility are covered.
       - name: FIFO queue with message groups
         status: fixed
         tests:
@@ -97,9 +97,9 @@ operations:
       - AWS Developer Guide documents short polling when ReceiveMessage sets WaitTimeSeconds=0 or omits WaitTimeSeconds while the queue attribute is 0, and long polling when the effective wait is greater than 0.
       - AWS API Reference ReceiveMessage documents ReceiveRequestAttemptId for FIFO queues: retries with the same token during visibility timeout return the same messages and receipt handles for five minutes, provided messages have not been deleted or had visibility changed.
       - AWS API Reference CreateQueue documents RedrivePolicy maxReceiveCount as the threshold that must be exceeded before SQS moves a message to the dead-letter queue.
+      - AWS API Reference and Developer Guide document that ReceiveMessage VisibilityTimeout applies to returned messages, omitted values use the queue default, and VisibilityTimeout=0 immediately terminates invisibility.
     gaps:
       - ReceiveRequestAttemptId behavior after delete/change-visibility needs broader review.
-      - VisibilityTimeout in-flight semantics (returned messages) need review.
     next_action: Review ReceiveMessage FIFO ReceiveRequestAttemptId behavior and same-group retry semantics.
 findings:
   fixed:
@@ -113,12 +113,12 @@ findings:
     - FIFO ReceiveMessage retries with the same ReceiveRequestAttemptId now return the same in-flight message IDs and receipt handles and reset visibility timeout.
     - ReceiveRequestAttemptId now rejects tokens longer than 128 characters or containing spaces/control characters.
     - ReceiveMessage now moves messages to a DLQ only when ApproximateReceiveCount exceeds RedrivePolicy.maxReceiveCount instead of moving on the max-count receive.
+    - ReceiveMessage visibility timeout in-flight behavior is covered for queue defaults, explicit overrides, expiry, and VisibilityTimeout=0 immediate re-visibility.
     - VisibilityTimeout on ReceiveMessage, ChangeMessageVisibility, and ChangeMessageVisibilityBatch is now validated against AWS's 0..43200 range instead of silently accepting arbitrary values.
     - Omitted ReceiveMessage.WaitTimeSeconds uses the queue-level ReceiveMessageWaitTimeSeconds default for JSON and Query requests, while explicit WaitTimeSeconds=0 keeps short-poll behavior.
     - CreateQueue and SetQueueAttributes now reject invalid ReceiveMessageWaitTimeSeconds queue attributes outside AWS's 0..20 range or malformed integers.
   remaining_gaps:
     - Review ReceiveRequestAttemptId modified-message edge cases after DeleteMessage or ChangeMessageVisibility.
-    - Review VisibilityTimeout validation and in-flight semantics.
   intentionally_partial: []
 verification:
   commands:
