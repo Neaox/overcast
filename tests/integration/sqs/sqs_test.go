@@ -2660,9 +2660,9 @@ func TestDLQ_crossRegionRedrivePolicy(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusBadRequest)
 }
 
-// TestDLQ_messageMovedAfterMaxReceives verifies that after a message is
-// received ≥ maxReceiveCount times without being deleted, it is moved to the
-// DLQ and no longer visible in the source queue.
+// TestDLQ_messageMovedAfterMaxReceives verifies that after a message's receive
+// count exceeds maxReceiveCount without being deleted, it is moved to the DLQ
+// and no longer visible in the source queue.
 func TestDLQ_messageMovedAfterMaxReceives(t *testing.T) {
 	// Given: a DLQ, a source queue with maxReceiveCount=3, and one message.
 	srv := helpers.NewTestServer(t)
@@ -2685,7 +2685,7 @@ func TestDLQ_messageMovedAfterMaxReceives(t *testing.T) {
 
 	sendMessage(t, srv, srcURL, "hello dlq")
 
-	// When: the message is received 3 times (= maxReceiveCount) without deleting.
+	// When: the message is received more than maxReceiveCount times without deleting.
 	receiveAll := func() []map[string]any {
 		r := sqsCall(t, srv, "ReceiveMessage", map[string]any{
 			"QueueUrl":            srcURL,
@@ -2700,24 +2700,74 @@ func TestDLQ_messageMovedAfterMaxReceives(t *testing.T) {
 		return result.Messages
 	}
 
-	// Receives 1 and 2 should return the message.
-	for i := 1; i <= 2; i++ {
+	// Receives 1 through 3 should return the message.
+	for i := 1; i <= 3; i++ {
 		msgs := receiveAll()
 		if len(msgs) == 0 {
 			t.Fatalf("receive %d: expected message, got none", i)
 		}
 	}
 
-	// Receive 3 triggers the move — the source queue returns nothing.
+	// Receive 4 triggers the move — the source queue returns nothing.
 	msgs := receiveAll()
 	if len(msgs) != 0 {
-		t.Fatalf("receive 3 (last): expected source queue empty after DLQ move, got %d messages", len(msgs))
+		t.Fatalf("receive 4 (last): expected source queue empty after DLQ move, got %d messages", len(msgs))
 	}
 
 	// Then: the message must appear in the DLQ.
 	dlqMsgs := receiveAll2(t, srv, dlqURL)
 	if len(dlqMsgs) == 0 {
 		t.Fatal("expected message in DLQ, got none")
+	}
+}
+
+func TestDLQ_messageMovedAfterReceiveCountExceedsMaxReceiveCount(t *testing.T) {
+	// Given: a source queue with maxReceiveCount=2 and a zero visibility timeout.
+	srv := helpers.NewTestServer(t)
+	dlqURL := createQueue(t, srv, "dlq-threshold")
+	dlqARN := getQueueARN(t, srv, dlqURL)
+	srcURL := createQueueWithAttrs(t, srv, "source-threshold", map[string]string{
+		"VisibilityTimeout": "0",
+		"RedrivePolicy":     `{"deadLetterTargetArn":"` + dlqARN + `","maxReceiveCount":2}`,
+	})
+	sendMessage(t, srv, srcURL, "threshold body")
+
+	receiveAll := func(queueURL string) []map[string]any {
+		t.Helper()
+		r := sqsCall(t, srv, "ReceiveMessage", map[string]any{
+			"QueueUrl":            queueURL,
+			"MaxNumberOfMessages": 10,
+			"VisibilityTimeout":   0,
+		})
+		defer r.Body.Close()
+		var result struct {
+			Messages []map[string]any `json:"Messages"`
+		}
+		helpers.DecodeJSON(t, r, &result)
+		return result.Messages
+	}
+
+	// When: the message is received up to maxReceiveCount times.
+	first := receiveAll(srcURL)
+	second := receiveAll(srcURL)
+
+	// Then: it is still returned on those receives; it has not exceeded the limit yet.
+	if len(first) != 1 {
+		t.Fatalf("receive 1: expected message, got %d", len(first))
+	}
+	if len(second) != 1 {
+		t.Fatalf("receive 2: expected message before count exceeds maxReceiveCount, got %d", len(second))
+	}
+
+	// When: the next receive would exceed maxReceiveCount.
+	third := receiveAll(srcURL)
+
+	// Then: the source queue returns no message and the message appears in the DLQ.
+	if len(third) != 0 {
+		t.Fatalf("receive 3: expected source queue empty after DLQ move, got %d messages", len(third))
+	}
+	if dlqMsgs := receiveAll(dlqURL); len(dlqMsgs) != 1 {
+		t.Fatalf("expected 1 message in DLQ after receive count exceeded maxReceiveCount, got %d", len(dlqMsgs))
 	}
 }
 
@@ -2761,7 +2811,7 @@ func TestDLQ_messageMovedAfterMaxReceives_stringMaxReceiveCount(t *testing.T) {
 		return result.Messages
 	}
 
-	for i := 1; i <= 2; i++ {
+	for i := 1; i <= 3; i++ {
 		msgs := receiveAll()
 		if len(msgs) == 0 {
 			t.Fatalf("receive %d: expected message, got none", i)
@@ -2770,7 +2820,7 @@ func TestDLQ_messageMovedAfterMaxReceives_stringMaxReceiveCount(t *testing.T) {
 
 	msgs := receiveAll()
 	if len(msgs) != 0 {
-		t.Fatalf("receive 3: expected source queue empty after DLQ move, got %d messages", len(msgs))
+		t.Fatalf("receive 4: expected source queue empty after DLQ move, got %d messages", len(msgs))
 	}
 
 	dlqMsgs := receiveAll2(t, srv, dlqURL)
@@ -2802,7 +2852,7 @@ func TestDLQ_dlqMessageHasDeadLetterAttribute(t *testing.T) {
 	srcARN := getQueueARN(t, srv, srcURL)
 	sendMessage(t, srv, srcURL, "move me")
 
-	// Receive twice (maxReceiveCount=2); second receive triggers the move.
+	// Receive three times (maxReceiveCount=2); third receive triggers the move.
 	receiveOnce := func(qURL string) []map[string]any {
 		r := sqsCall(t, srv, "ReceiveMessage", map[string]any{
 			"QueueUrl":            qURL,
@@ -2819,7 +2869,8 @@ func TestDLQ_dlqMessageHasDeadLetterAttribute(t *testing.T) {
 	}
 
 	receiveOnce(srcURL) // count = 1
-	receiveOnce(srcURL) // count = 2 → triggers move, returns []
+	receiveOnce(srcURL) // count = 2
+	receiveOnce(srcURL) // count = 3 -> triggers move, returns []
 
 	// Message should be in DLQ with the attribute set.
 	dlqMsgs := receiveOnce(dlqURL)
@@ -2892,7 +2943,7 @@ func TestStartMessageMoveTask_redrivesMessagesBackToSource(t *testing.T) {
 	sendMessage(t, srv, srcURL, "msg-2")
 
 	// Receive enough times to move both messages to DLQ (maxReceiveCount=2:
-	// each message is returned on receive 1, moved on receive 2).
+	// each message is returned on receives 1 and 2, moved on receive 3).
 	for i := 0; i < 10; i++ {
 		sqsCall(t, srv, "ReceiveMessage", map[string]any{
 			"QueueUrl":          srcURL,
