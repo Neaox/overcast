@@ -121,6 +121,7 @@ var schemas = map[string][]field{
 		{form: "MaxNumberOfMessages", json: "MaxNumberOfMessages", kind: kInt},
 		{form: "VisibilityTimeout", json: "VisibilityTimeout", kind: kOptInt},
 		{form: "WaitTimeSeconds", json: "WaitTimeSeconds", kind: kInt},
+		{form: "ReceiveRequestAttemptId", json: "ReceiveRequestAttemptId", kind: kString},
 		{form: "AttributeName", json: "AttributeNames", kind: kList},
 		{form: "MessageSystemAttributeName", json: "MessageSystemAttributeNames", kind: kList},
 		{form: "MessageAttributeName", json: "MessageAttributeNames", kind: kList},
