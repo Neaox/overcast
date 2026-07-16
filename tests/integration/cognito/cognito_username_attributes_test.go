@@ -308,6 +308,45 @@ func TestAdminGetUser_emailPool_usernameAttribute(t *testing.T) {
 	}
 }
 
+func TestAdminUpdateUserAttributes_emailPool_usernameAttribute(t *testing.T) {
+	// Given: a pool with email sign-in and an admin-created user.
+	srv := helpers.NewTestServer(t)
+	poolID := createPoolWithUsernameAttributes(t, srv, "email-update-attr-pool", []string{"email"})
+	resp := cognitoCall(t, srv, "AdminCreateUser", map[string]any{
+		"UserPoolId":    poolID,
+		"Username":      "kate@example.com",
+		"MessageAction": "SUPPRESS",
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// When: AdminUpdateUserAttributes is called with the email address as Username.
+	resp = cognitoCall(t, srv, "AdminUpdateUserAttributes", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   "kate@example.com",
+		"UserAttributes": []map[string]string{
+			{"Name": "custom:role", "Value": "admin"},
+		},
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: the resolved generated-username user has the updated attribute.
+	resp = cognitoCall(t, srv, "AdminGetUser", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   "kate@example.com",
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		UserAttributes []map[string]string `json:"UserAttributes"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if !hasAttr(result.UserAttributes, "custom:role", "admin") {
+		t.Fatalf("expected custom:role=admin, got %v", result.UserAttributes)
+	}
+}
+
 func TestAdminSetUserPassword_emailPool_usernameAttribute(t *testing.T) {
 	// Given: a pool with email sign-in and an admin-created user
 	srv := helpers.NewTestServer(t)

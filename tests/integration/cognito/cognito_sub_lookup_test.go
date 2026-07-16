@@ -88,6 +88,39 @@ func TestAdminSetUserPassword_plainPool_subUsername(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusOK)
 }
 
+func TestAdminUpdateUserAttributes_plainPool_subUsername(t *testing.T) {
+	// Given: a plain username pool user with a sub attribute.
+	srv := helpers.NewTestServer(t)
+	poolID := createPool(t, srv, "p")
+	sub := createUserAndReturnSub(t, srv, poolID, "carol")
+
+	// When: AdminUpdateUserAttributes is called with sub as Username.
+	resp := cognitoCall(t, srv, "AdminUpdateUserAttributes", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   sub,
+		"UserAttributes": []map[string]string{
+			{"Name": "custom:role", "Value": "admin"},
+		},
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: the stored user has the updated attribute.
+	resp = cognitoCall(t, srv, "AdminGetUser", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   "carol",
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		UserAttributes []map[string]string `json:"UserAttributes"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if !hasAttr(result.UserAttributes, "custom:role", "admin") {
+		t.Fatalf("expected custom:role=admin, got %v", result.UserAttributes)
+	}
+}
+
 func TestAdminDeleteUser_plainPool_subUsername(t *testing.T) {
 	// Given: a plain username pool user with a sub attribute
 	srv := helpers.NewTestServer(t)
