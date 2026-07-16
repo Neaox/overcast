@@ -240,6 +240,40 @@ func TestSignUp_emailPool_generatesUUIDUsername(t *testing.T) {
 	}
 }
 
+func TestAdminConfirmSignUp_emailPool_usernameAttribute(t *testing.T) {
+	// Given: a pool using email as the sign-in identifier and an unconfirmed sign-up.
+	srv := helpers.NewTestServer(t)
+	poolID := createPoolWithUsernameAttributes(t, srv, "email-confirm-pool", []string{"email"})
+	clientID := createClient(t, srv, poolID, "email-confirm-client")
+	resp := cognitoCall(t, srv, "SignUp", map[string]any{
+		"ClientId": clientID,
+		"Username": "ivan@example.com",
+		"Password": "Password1!",
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// When: AdminConfirmSignUp is called with the email address as Username.
+	resp = cognitoCall(t, srv, "AdminConfirmSignUp", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   "ivan@example.com",
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: the confirmed user can authenticate with that email sign-in identifier.
+	resp = cognitoCall(t, srv, "InitiateAuth", map[string]any{
+		"ClientId": clientID,
+		"AuthFlow": "USER_PASSWORD_AUTH",
+		"AuthParameters": map[string]string{
+			"USERNAME": "ivan@example.com",
+			"PASSWORD": "Password1!",
+		},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
 func TestAdminGetUser_emailPool_usernameAttribute(t *testing.T) {
 	// Given: a pool with email sign-in and an admin-created user
 	srv := helpers.NewTestServer(t)

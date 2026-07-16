@@ -118,6 +118,30 @@ operations:
       - AWS AdminSetUserPassword docs state Username can be the sub of a local user when not using an alias value.
     gaps: []
     next_action: Include in broader admin-user operation sweep.
+  AdminConfirmSignUp:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminConfirmSignUp.html
+      - https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-attributes.html
+    tests:
+      - tests/integration/cognito/cognito_username_attributes_test.go
+      - tests/integration/cognito/cognito_sub_lookup_test.go
+    scenarios:
+      - name: username-attribute pool with email as Username
+        status: reviewed
+        tests:
+          - tests/integration/cognito/cognito_username_attributes_test.go
+        notes: Email resolves to the generated UUID user before admin confirmation.
+      - name: plain username pool with sub as Username
+        status: reviewed
+        tests:
+          - tests/integration/cognito/cognito_sub_lookup_test.go
+        notes: Local user's sub resolves to the stored username before admin confirmation.
+    evidence:
+      - AWS AdminConfirmSignUp docs state Username can be an alias attribute, or the sub of a local user when username is not an alias attribute.
+    gaps:
+      - ClientMetadata/Lambda trigger behavior is intentionally not emulated.
+    next_action: Include in broader admin-user operation sweep.
   AdminUpdateUserAttributes:
     status: fixed
     aws_docs:
