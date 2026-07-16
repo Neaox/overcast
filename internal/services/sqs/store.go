@@ -20,6 +20,7 @@ const (
 	nsMessages = "sqs:messages"
 	nsDedup    = "sqs:dedup" // FIFO deduplication; key = queueName/dedupId, value = expiry timestamp
 	nsPurge    = "sqs:purge" // key = queueName, value = purge-in-progress deadline Unix millis
+	nsAttempts = "sqs:receive-attempts"
 )
 
 // Queue represents a stored SQS queue.
@@ -47,6 +48,16 @@ type Message struct {
 	MessageGroupId         string `json:"message_group_id,omitempty"`
 	MessageDeduplicationId string `json:"message_deduplication_id,omitempty"`
 	SequenceNumber         string `json:"sequence_number,omitempty"`
+}
+
+type receiveAttempt struct {
+	ExpiresAtUnixMilli int64                   `json:"expires_at_unix_milli"`
+	Messages           []receiveAttemptMessage `json:"messages"`
+}
+
+type receiveAttemptMessage struct {
+	MessageID     string `json:"message_id"`
+	ReceiptHandle string `json:"receipt_handle"`
 }
 
 // MessageAttribute is a typed SQS message attribute.
@@ -154,6 +165,38 @@ func (s *sqsStore) putMessage(ctx context.Context, queueName string, msg *Messag
 	}
 	key := serviceutil.RegionKey(s.region(ctx), messageKey(queueName, msg.MessageID))
 	if err := s.store.Set(ctx, nsMessages, key, string(raw)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+func (s *sqsStore) getReceiveAttempt(ctx context.Context, queueName, attemptID string) (*receiveAttempt, *protocol.AWSError) {
+	key := serviceutil.RegionKey(s.region(ctx), queueName+"/"+attemptID)
+	raw, found, err := s.store.Get(ctx, nsAttempts, key)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if !found {
+		return nil, nil
+	}
+	var attempt receiveAttempt
+	if err := json.Unmarshal([]byte(raw), &attempt); err != nil {
+		return nil, nil
+	}
+	if s.clk.Now().UnixMilli() >= attempt.ExpiresAtUnixMilli {
+		_ = s.store.Delete(ctx, nsAttempts, key)
+		return nil, nil
+	}
+	return &attempt, nil
+}
+
+func (s *sqsStore) putReceiveAttempt(ctx context.Context, queueName, attemptID string, attempt *receiveAttempt) *protocol.AWSError {
+	data, err := json.Marshal(attempt)
+	if err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	key := serviceutil.RegionKey(s.region(ctx), queueName+"/"+attemptID)
+	if err := s.store.Set(ctx, nsAttempts, key, string(data)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil

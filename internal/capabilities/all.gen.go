@@ -1205,7 +1205,7 @@ var AllCapabilities = []Capability{
 	{Service: "sqs", Operation: "ListQueueTags", Category: "Queue management", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "sqs", Operation: "ListQueues", Category: "Queue management", Status: StatusSupported, Notes: "Optional QueueNamePrefix filter", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "sqs", Operation: "PurgeQueue", Category: "Queue management", Status: StatusSupported, Notes: "Deletes all messages immediately", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
-	{Service: "sqs", Operation: "ReceiveMessage", Category: "Message operations", Status: StatusSupported, Notes: "MaxNumberOfMessages, VisibilityTimeout, WaitTimeSeconds (long polling)", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "sqs", Operation: "ReceiveMessage", Category: "Message operations", Status: StatusSupported, Notes: "MaxNumberOfMessages, VisibilityTimeout, WaitTimeSeconds, FIFO ReceiveRequestAttemptId", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "sqs", Operation: "RemovePermission", Category: "Permissions", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "sqs", Operation: "SendMessage", Category: "Message operations", Status: StatusSupported, Notes: "DelaySeconds, MessageAttributes supported", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "sqs", Operation: "SendMessageBatch", Category: "Message operations", Status: StatusSupported, Notes: "Up to 10 messages per batch", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},

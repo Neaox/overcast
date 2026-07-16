@@ -64,6 +64,8 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
+- **SQS** — FIFO `ReceiveMessage` retries with the same `ReceiveRequestAttemptId` now return the same in-flight messages and receipt handles instead of returning an empty response.
+
 ## [0.0.1-alpha.14] - 2026-07-14
 
 ### Fixed
