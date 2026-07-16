@@ -55,6 +55,34 @@ func TestCreateQueue_missingName(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusBadRequest)
 }
 
+func TestCreateQueue_receiveMessageWaitTimeSecondsValidation(t *testing.T) {
+	// Given: requests with invalid queue-level long-poll defaults.
+	srv := helpers.NewTestServer(t)
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{name: "negative", value: "-1"},
+		{name: "above maximum", value: "21"},
+		{name: "not an integer", value: "soon"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// When: CreateQueue includes the invalid ReceiveMessageWaitTimeSeconds attribute.
+			resp := sqsCall(t, srv, "CreateQueue", map[string]any{
+				"QueueName":  "invalid-wait-" + strings.ReplaceAll(tc.name, " ", "-"),
+				"Attributes": map[string]string{"ReceiveMessageWaitTimeSeconds": tc.value},
+			})
+			defer resp.Body.Close()
+
+			// Then: SQS rejects the invalid attribute value.
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, "InvalidAttributeValue")
+		})
+	}
+}
+
 func TestCreateQueue_idempotent(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	url1 := createQueue(t, srv, "idempotent-queue")
@@ -891,6 +919,37 @@ func TestSetQueueAttributes_queueNotFound(t *testing.T) {
 
 	helpers.AssertStatus(t, resp, http.StatusBadRequest)
 	helpers.AssertJSONError(t, resp, "AWS.SimpleQueueService.NonExistentQueue")
+}
+
+func TestSetQueueAttributes_receiveMessageWaitTimeSecondsValidation(t *testing.T) {
+	// Given: a queue exists.
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "set-wait-validation-queue")
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{name: "negative", value: "-1"},
+		{name: "above maximum", value: "21"},
+		{name: "not an integer", value: "soon"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// When: SetQueueAttributes sets an invalid queue-level long-poll default.
+			resp := sqsCall(t, srv, "SetQueueAttributes", map[string]any{
+				"QueueUrl": queueURL,
+				"Attributes": map[string]string{
+					"ReceiveMessageWaitTimeSeconds": tc.value,
+				},
+			})
+			defer resp.Body.Close()
+
+			// Then: SQS rejects the invalid attribute value.
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, "InvalidAttributeValue")
+		})
+	}
 }
 
 // ---- DeleteQueue -----------------------------------------------------------
@@ -2241,6 +2300,41 @@ func TestReceiveMessage_longPoll_returnsEmptyOnTimeout(t *testing.T) {
 	// Should have waited at least 900ms
 	if elapsed < 900*time.Millisecond {
 		t.Errorf("long poll returned too quickly: %v (expected >= 900ms)", elapsed)
+	}
+}
+
+func TestReceiveMessage_usesQueueDefaultReceiveMessageWaitTimeSeconds(t *testing.T) {
+	// Given: an empty queue with ReceiveMessageWaitTimeSeconds=1.
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueueWithAttrs(t, srv, "lp-default-queue", map[string]string{
+		"ReceiveMessageWaitTimeSeconds": "1",
+	})
+
+	// When: ReceiveMessage omits WaitTimeSeconds.
+	start := time.Now()
+	resp := sqsCall(t, srv, "ReceiveMessage", map[string]any{"QueueUrl": queueURL})
+	defer resp.Body.Close()
+	elapsed := time.Since(start)
+
+	// Then: the queue-level wait default makes it long poll before returning empty.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	if elapsed < 900*time.Millisecond {
+		t.Errorf("queue-default long poll returned too quickly: %v (expected >= 900ms)", elapsed)
+	}
+
+	// When: ReceiveMessage explicitly sets WaitTimeSeconds=0.
+	start = time.Now()
+	shortResp := sqsCall(t, srv, "ReceiveMessage", map[string]any{
+		"QueueUrl":        queueURL,
+		"WaitTimeSeconds": 0,
+	})
+	defer shortResp.Body.Close()
+	elapsed = time.Since(start)
+
+	// Then: the explicit request value overrides the queue default and short polls.
+	helpers.AssertStatus(t, shortResp, http.StatusOK)
+	if elapsed > 200*time.Millisecond {
+		t.Errorf("explicit short poll took too long: %v (expected < 200ms)", elapsed)
 	}
 }
 

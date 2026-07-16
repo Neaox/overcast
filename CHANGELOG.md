@@ -64,6 +64,7 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
+- **SQS** — `CreateQueue` and `SetQueueAttributes` now reject invalid `ReceiveMessageWaitTimeSeconds` queue defaults instead of persisting values outside AWS's `0..20` range or malformed integers.
 ## [0.0.1-alpha.14] - 2026-07-14
 
 ### Fixed

@@ -34,7 +34,7 @@ func init() {
 		capabilities.Capability{Service: "sqs", Operation: "SendMessageBatch", Category: "Message operations",
 			Status: capabilities.StatusSupported, Notes: "Up to 10 messages per batch"},
 		capabilities.Capability{Service: "sqs", Operation: "ReceiveMessage", Category: "Message operations",
-			Status: capabilities.StatusSupported, Notes: "MaxNumberOfMessages, VisibilityTimeout, WaitTimeSeconds (long polling)"},
+			Status: capabilities.StatusSupported, Notes: "MaxNumberOfMessages, VisibilityTimeout, WaitTimeSeconds and queue default long polling"},
 		capabilities.Capability{Service: "sqs", Operation: "DeleteMessage", Category: "Message operations",
 			Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "sqs", Operation: "DeleteMessageBatch", Category: "Message operations",
