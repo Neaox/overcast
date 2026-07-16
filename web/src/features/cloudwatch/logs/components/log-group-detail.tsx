@@ -3,7 +3,7 @@ import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { ArrowLeft, Plus, Trash2, RefreshCw, FileText, Search, X } from "lucide-react"
+import { ArrowLeft, Plus, Trash2, RefreshCw, FileText, Search, X, ListFilter } from "lucide-react"
 import {
   logsGroupsQueryOptions,
   logsStreamsQueryOptions,
@@ -42,6 +42,7 @@ import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { useToast } from "@/components/ui/toast"
 import { cn } from "@/lib/utils"
+import { LogEventsViewer } from "./log-events-viewer"
 
 function formatTimestamp(ts: number): string {
   if (!ts) return "—"
@@ -64,6 +65,7 @@ export function LogGroupDetail({ groupName }: Props) {
   const [filterInput, setFilterInput] = useState("")
   const [activeFilter, setActiveFilter] = useState("")
   const [timeRange, setTimeRange] = useState<TimeRange>({})
+  const [showAllLogs, setShowAllLogs] = useState(false)
 
   // ─── Data ────────────────────────────────────────────────────────────────
   const { data: allGroups = [] } = useQuery(logsGroupsQueryOptions())
@@ -157,6 +159,10 @@ export function LogGroupDetail({ groupName }: Props) {
             <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching}>
               <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
             </Button>
+            <Button size="sm" variant="secondary" onClick={() => setShowAllLogs((v) => !v)}>
+              <ListFilter className="mr-1 h-4 w-4" />
+              {showAllLogs ? "Hide Logs" : "View All Logs"}
+            </Button>
             <Button size="sm" onClick={() => setShowCreateStream(true)}>
               <Plus className="mr-1 h-4 w-4" />
               Create Stream
@@ -196,6 +202,12 @@ export function LogGroupDetail({ groupName }: Props) {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {showAllLogs && (
+        <div className="min-h-[560px] rounded-lg border border-border bg-bg p-3">
+          <LogEventsViewer groupName={groupName} />
+        </div>
       )}
 
       {/* Cross-stream search toolbar */}
