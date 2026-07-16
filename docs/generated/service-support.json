@@ -327,7 +327,7 @@
           "operation": "ReceiveMessage",
           "category": "Message operations",
           "status": "✅ Supported",
-          "notes": "MaxNumberOfMessages, VisibilityTimeout, WaitTimeSeconds and queue default long polling"
+          "notes": "MaxNumberOfMessages, VisibilityTimeout, WaitTimeSeconds, queue default long polling, FIFO ReceiveRequestAttemptId"
         },
         {
           "operation": "DeleteMessage",

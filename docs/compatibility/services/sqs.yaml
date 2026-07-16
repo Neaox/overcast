@@ -42,9 +42,10 @@ operations:
           - tests/integration/sqs/sqs_test.go
         notes: Subsequent receive returns zero messages.
       - name: FIFO queue with message groups
-        status: not_started
-        tests: []
-        notes: Must review ordering, blocked groups, and receive attempt IDs.
+        status: fixed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: FIFO receive respects per-group blocking, validates ReceiveRequestAttemptId length/characters, and retries with the same ReceiveRequestAttemptId return the same in-flight message IDs and receipt handles while resetting visibility.
       - name: queue with DLQ redrive policy
         status: not_started
         tests: []
@@ -92,8 +93,9 @@ operations:
       - AWS API Reference ReceiveMessage returns system Attributes only when AttributeNames/MessageSystemAttributeNames are supplied and user MessageAttributes only when MessageAttributeNames are supplied; the sample response with AttributeNames=[All] includes SenderId/SentTimestamp/ApproximateReceiveCount/ApproximateFirstReceiveTimestamp.
       - AWS API Reference CreateQueue documents ReceiveMessageWaitTimeSeconds as the queue-level ReceiveMessage wait default with valid values 0..20 and default 0.
       - AWS Developer Guide documents short polling when ReceiveMessage sets WaitTimeSeconds=0 or omits WaitTimeSeconds while the queue attribute is 0, and long polling when the effective wait is greater than 0.
+      - AWS API Reference ReceiveMessage documents ReceiveRequestAttemptId for FIFO queues: retries with the same token during visibility timeout return the same messages and receipt handles for five minutes, provided messages have not been deleted or had visibility changed.
     gaps:
-      - ReceiveRequestAttemptId behavior for FIFO queues needs review.
+      - ReceiveRequestAttemptId behavior after delete/change-visibility needs broader review.
       - VisibilityTimeout in-flight semantics (returned messages) need review.
     next_action: Review ReceiveMessage FIFO ReceiveRequestAttemptId behavior and same-group retry semantics.
 findings:
@@ -105,11 +107,13 @@ findings:
     - Explicit MaxNumberOfMessages outside 1..10 and WaitTimeSeconds outside 0..20 now return InvalidParameterValue instead of silently clamping or accepting the request.
     - Malformed persisted queue/message records no longer make ListQueues or ReceiveMessage return InternalError for unrelated usable queues.
     - ReceiveMessage now projects system and message attributes based on the requested AttributeNames/MessageSystemAttributeNames/MessageAttributeNames instead of always returning every attribute.
+    - FIFO ReceiveMessage retries with the same ReceiveRequestAttemptId now return the same in-flight message IDs and receipt handles and reset visibility timeout.
+    - ReceiveRequestAttemptId now rejects tokens longer than 128 characters or containing spaces/control characters.
     - VisibilityTimeout on ReceiveMessage, ChangeMessageVisibility, and ChangeMessageVisibilityBatch is now validated against AWS's 0..43200 range instead of silently accepting arbitrary values.
     - Omitted ReceiveMessage.WaitTimeSeconds uses the queue-level ReceiveMessageWaitTimeSeconds default, while explicit WaitTimeSeconds=0 keeps short-poll behavior.
     - CreateQueue and SetQueueAttributes now reject invalid ReceiveMessageWaitTimeSeconds queue attributes outside AWS's 0..20 range or malformed integers.
   remaining_gaps:
-    - Review ReceiveRequestAttemptId behavior for FIFO queues.
+    - Review ReceiveRequestAttemptId modified-message edge cases after DeleteMessage or ChangeMessageVisibility.
     - Review VisibilityTimeout validation and in-flight semantics.
   intentionally_partial: []
 verification:

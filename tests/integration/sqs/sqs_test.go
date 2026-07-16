@@ -1895,6 +1895,96 @@ func TestReceiveMessage_fifo_messageGroupBlocking(t *testing.T) {
 	}
 }
 
+func TestReceiveMessage_fifo_receiveRequestAttemptIdRetry(t *testing.T) {
+	// Given: a FIFO queue with one visible message.
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "attempt-retry.fifo")
+	resp := sqsCall(t, srv, "SendMessage", map[string]any{
+		"QueueUrl":               queueURL,
+		"MessageBody":            "retry-body",
+		"MessageGroupId":         "group-a",
+		"MessageDeduplicationId": "attempt-retry-1",
+	})
+	resp.Body.Close()
+
+	receive := func(body map[string]any) []map[string]any {
+		t.Helper()
+		resp := sqsCall(t, srv, "ReceiveMessage", body)
+		defer resp.Body.Close()
+		helpers.AssertStatus(t, resp, http.StatusOK)
+		var result struct {
+			Messages []map[string]any `json:"Messages"`
+		}
+		helpers.DecodeJSON(t, resp, &result)
+		return result.Messages
+	}
+
+	// When: the first receive uses a ReceiveRequestAttemptId.
+	first := receive(map[string]any{
+		"QueueUrl":                queueURL,
+		"ReceiveRequestAttemptId": "attempt-1",
+		"VisibilityTimeout":       60,
+	})
+
+	// Then: it returns the message.
+	if len(first) != 1 {
+		t.Fatalf("expected first receive to return 1 message, got %d", len(first))
+	}
+
+	// When: the same receive is retried with the same attempt ID while the message is invisible.
+	second := receive(map[string]any{
+		"QueueUrl":                queueURL,
+		"ReceiveRequestAttemptId": "attempt-1",
+		"VisibilityTimeout":       60,
+	})
+
+	// Then: AWS returns the same message and receipt handle for idempotent retry.
+	if len(second) != 1 {
+		t.Fatalf("expected retry receive to return 1 message, got %d", len(second))
+	}
+	if second[0]["MessageId"] != first[0]["MessageId"] {
+		t.Errorf("expected same MessageId on retry, got %v then %v", first[0]["MessageId"], second[0]["MessageId"])
+	}
+	if second[0]["ReceiptHandle"] != first[0]["ReceiptHandle"] {
+		t.Errorf("expected same ReceiptHandle on retry, got %v then %v", first[0]["ReceiptHandle"], second[0]["ReceiptHandle"])
+	}
+
+	// And: a different receive without the attempt ID still sees the message as in-flight.
+	third := receive(map[string]any{"QueueUrl": queueURL})
+	if len(third) != 0 {
+		t.Fatalf("expected receive without attempt ID to return no messages, got %d", len(third))
+	}
+}
+
+func TestReceiveMessage_fifo_receiveRequestAttemptIdValidation(t *testing.T) {
+	// Given: a FIFO queue exists.
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "attempt-validation.fifo")
+	cases := []struct {
+		name      string
+		attemptID string
+	}{
+		{name: "too long", attemptID: strings.Repeat("a", 129)},
+		{name: "space", attemptID: "bad token"},
+		{name: "control character", attemptID: "bad\ntoken"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// When: ReceiveMessage includes an invalid ReceiveRequestAttemptId.
+			resp := sqsCall(t, srv, "ReceiveMessage", map[string]any{
+				"QueueUrl":                queueURL,
+				"ReceiveRequestAttemptId": tc.attemptID,
+			})
+			defer resp.Body.Close()
+
+			// Then: SQS rejects the invalid request parameter.
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, "InvalidParameterValue")
+		})
+	}
+}
+
 func TestSendMessage_fifo_sequenceNumber(t *testing.T) {
 	// Given: a FIFO queue
 	srv := helpers.NewTestServer(t)

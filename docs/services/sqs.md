@@ -54,15 +54,15 @@ For local use, `<account-id>` defaults to `000000000000`.
 
 ### Message operations
 
-| Operation                      | Status       | Notes                                                                                  | AWS Docs                                                                                                            |
-| ------------------------------ | ------------ | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `SendMessage`                  | ✅ Supported | DelaySeconds, MessageAttributes supported                                              | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessage.html)                  |
-| `SendMessageBatch`             | ✅ Supported | Up to 10 messages per batch                                                            | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessageBatch.html)             |
-| `ReceiveMessage`               | ✅ Supported | MaxNumberOfMessages, VisibilityTimeout, WaitTimeSeconds and queue default long polling | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ReceiveMessage.html)               |
-| `DeleteMessage`                | ✅ Supported |                                                                                        | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteMessage.html)                |
-| `DeleteMessageBatch`           | ✅ Supported | Up to 10 messages per batch                                                            | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteMessageBatch.html)           |
-| `ChangeMessageVisibility`      | ✅ Supported | Sets new visibility timeout on an in-flight message                                    | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ChangeMessageVisibility.html)      |
-| `ChangeMessageVisibilityBatch` | ✅ Supported | Batch visibility timeout changes; per-entry success/failure response                   | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ChangeMessageVisibilityBatch.html) |
+| Operation                      | Status       | Notes                                                                                                             | AWS Docs                                                                                                            |
+| ------------------------------ | ------------ | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `SendMessage`                  | ✅ Supported | DelaySeconds, MessageAttributes supported                                                                         | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessage.html)                  |
+| `SendMessageBatch`             | ✅ Supported | Up to 10 messages per batch                                                                                       | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessageBatch.html)             |
+| `ReceiveMessage`               | ✅ Supported | MaxNumberOfMessages, VisibilityTimeout, WaitTimeSeconds, queue default long polling, FIFO ReceiveRequestAttemptId | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ReceiveMessage.html)               |
+| `DeleteMessage`                | ✅ Supported |                                                                                                                   | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteMessage.html)                |
+| `DeleteMessageBatch`           | ✅ Supported | Up to 10 messages per batch                                                                                       | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteMessageBatch.html)           |
+| `ChangeMessageVisibility`      | ✅ Supported | Sets new visibility timeout on an in-flight message                                                               | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ChangeMessageVisibility.html)      |
+| `ChangeMessageVisibilityBatch` | ✅ Supported | Batch visibility timeout changes; per-entry success/failure response                                              | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ChangeMessageVisibilityBatch.html) |
 
 ### Permissions
 

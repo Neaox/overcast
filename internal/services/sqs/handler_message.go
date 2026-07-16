@@ -49,6 +49,7 @@ type receiveMessageRequest struct {
 	MaxNumberOfMessages         *int     `json:"MaxNumberOfMessages,omitempty"`
 	VisibilityTimeout           *int     `json:"VisibilityTimeout,omitempty"`
 	WaitTimeSeconds             *int     `json:"WaitTimeSeconds,omitempty"`
+	ReceiveRequestAttemptId     string   `json:"ReceiveRequestAttemptId,omitempty"`
 	AttributeNames              []string `json:"AttributeNames,omitempty"`
 	MessageSystemAttributeNames []string `json:"MessageSystemAttributeNames,omitempty"`
 	MessageAttributeNames       []string `json:"MessageAttributeNames,omitempty"`
@@ -265,6 +266,9 @@ func (h *Handler) receiveMessageTyped(ctx context.Context, in *receiveMessageReq
 	if aerr != nil {
 		return nil, aerr
 	}
+	if aerr := validateReceiveRequestAttemptID(in.ReceiveRequestAttemptId); aerr != nil {
+		return nil, aerr
+	}
 
 	var visibilityTimeout int
 	if in.VisibilityTimeout == nil {
@@ -277,6 +281,16 @@ func (h *Handler) receiveMessageTyped(ctx context.Context, in *receiveMessageReq
 	}
 
 	systemAttrNames := requestedSystemAttributeNames(in)
+	fifo := isFifoQueue(q)
+	if fifo && in.ReceiveRequestAttemptId != "" {
+		received, aerr := h.replayReceiveAttempt(storeCtx, queueName, in.ReceiveRequestAttemptId, visibilityTimeout, systemAttrNames, in.MessageAttributeNames)
+		if aerr != nil {
+			return nil, aerr
+		}
+		if received != nil {
+			return &receiveMessageResponse{Messages: received}, nil
+		}
+	}
 
 	received, aerr := h.selectVisibleMessages(storeCtx, queueName, q, maxMessages, visibilityTimeout, systemAttrNames, in.MessageAttributeNames)
 	if aerr != nil {
@@ -315,6 +329,11 @@ func (h *Handler) receiveMessageTyped(ctx context.Context, in *receiveMessageReq
 
 	if received == nil {
 		received = []receivedMessage{}
+	}
+	if fifo && in.ReceiveRequestAttemptId != "" && len(received) > 0 {
+		if aerr := h.store.putReceiveAttempt(storeCtx, queueName, in.ReceiveRequestAttemptId, newReceiveAttempt(h.clk.Now(), received)); aerr != nil {
+			return nil, aerr
+		}
 	}
 
 	return &receiveMessageResponse{Messages: received}, nil
@@ -850,6 +869,10 @@ func (h *Handler) ReceiveMessage(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
+	if aerr := validateReceiveRequestAttemptID(req.ReceiveRequestAttemptId); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 
 	// Determine visibility timeout:
 	//   - nil (not sent by caller)   → use queue's VisibilityTimeout attribute
@@ -867,6 +890,18 @@ func (h *Handler) ReceiveMessage(w http.ResponseWriter, r *http.Request) {
 		visibilityTimeout = *req.VisibilityTimeout
 	}
 	systemAttrNames := requestedSystemAttributeNames(&req)
+	fifo := isFifoQueue(q)
+	if fifo && req.ReceiveRequestAttemptId != "" {
+		received, aerr := h.replayReceiveAttempt(storeCtx, queueName, req.ReceiveRequestAttemptId, visibilityTimeout, systemAttrNames, req.MessageAttributeNames)
+		if aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
+		if received != nil {
+			protocol.WriteJSON(w, r, http.StatusOK, &receiveMessageResponse{Messages: received})
+			return
+		}
+	}
 
 	received, aerr := h.selectVisibleMessages(storeCtx, queueName, q, maxMessages, visibilityTimeout, systemAttrNames, req.MessageAttributeNames)
 	if aerr != nil {
@@ -911,6 +946,12 @@ func (h *Handler) ReceiveMessage(w http.ResponseWriter, r *http.Request) {
 
 	if received == nil {
 		received = []receivedMessage{} // always return array, never null
+	}
+	if fifo && req.ReceiveRequestAttemptId != "" && len(received) > 0 {
+		if aerr := h.store.putReceiveAttempt(storeCtx, queueName, req.ReceiveRequestAttemptId, newReceiveAttempt(h.clk.Now(), received)); aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
 	}
 
 	protocol.WriteJSON(w, r, http.StatusOK, &receiveMessageResponse{Messages: received})
@@ -1018,14 +1059,7 @@ func (h *Handler) selectVisibleMessages(ctx context.Context, queueName string, q
 			})
 		}
 
-		received = append(received, receivedMessage{
-			MessageId:         msg.MessageID,
-			ReceiptHandle:     newHandle,
-			MD5OfBody:         msg.MD5OfBody,
-			Body:              msg.Body,
-			Attributes:        filterSystemAttributes(msg.Attributes, systemAttrNames),
-			MessageAttributes: filterMessageAttributes(msg.MessageAttributes, messageAttrNames),
-		})
+		received = append(received, receivedMessageFromStored(msg, systemAttrNames, messageAttrNames))
 
 		// FIFO: mark this group as delivered so no more messages from it
 		// are returned in this receive call.
@@ -1035,6 +1069,75 @@ func (h *Handler) selectVisibleMessages(ctx context.Context, queueName string, q
 	}
 
 	return received, nil
+}
+
+func newReceiveAttempt(now time.Time, received []receivedMessage) *receiveAttempt {
+	attempt := &receiveAttempt{
+		ExpiresAtUnixMilli: now.Add(5 * time.Minute).UnixMilli(),
+		Messages:           make([]receiveAttemptMessage, 0, len(received)),
+	}
+	for _, msg := range received {
+		attempt.Messages = append(attempt.Messages, receiveAttemptMessage{
+			MessageID:     msg.MessageId,
+			ReceiptHandle: msg.ReceiptHandle,
+		})
+	}
+	return attempt
+}
+
+func validateReceiveRequestAttemptID(attemptID string) *protocol.AWSError {
+	if attemptID == "" {
+		return nil
+	}
+	if len(attemptID) > 128 {
+		return invalidReceiveRequestAttemptID()
+	}
+	for _, r := range attemptID {
+		if r < '!' || r > '~' {
+			return invalidReceiveRequestAttemptID()
+		}
+	}
+	return nil
+}
+
+func invalidReceiveRequestAttemptID() *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "InvalidParameterValue",
+		Message:    "Invalid value for parameter ReceiveRequestAttemptId. Must be 1 to 128 printable ASCII characters without spaces.",
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+func (h *Handler) replayReceiveAttempt(ctx context.Context, queueName, attemptID string, visibilityTimeout int, systemAttrNames, messageAttrNames []string) ([]receivedMessage, *protocol.AWSError) {
+	attempt, aerr := h.store.getReceiveAttempt(ctx, queueName, attemptID)
+	if aerr != nil || attempt == nil {
+		return nil, aerr
+	}
+
+	received := make([]receivedMessage, 0, len(attempt.Messages))
+	for _, attempted := range attempt.Messages {
+		msg, aerr := h.store.getMessage(ctx, queueName, attempted.MessageID)
+		if aerr != nil || msg.ReceiptHandle != attempted.ReceiptHandle {
+			return []receivedMessage{}, nil
+		}
+		msg.VisibleAfter = h.clk.Now().Add(time.Duration(visibilityTimeout) * time.Second)
+		if aerr := h.store.putMessage(ctx, queueName, msg); aerr != nil {
+			return nil, aerr
+		}
+		received = append(received, receivedMessageFromStored(msg, systemAttrNames, messageAttrNames))
+	}
+	return received, nil
+}
+
+func receivedMessageFromStored(msg *Message, systemAttrNames, messageAttrNames []string) receivedMessage {
+	return receivedMessage{
+		MessageId:         msg.MessageID,
+		ReceiptHandle:     msg.ReceiptHandle,
+		MD5OfBody:         msg.MD5OfBody,
+		Body:              msg.Body,
+		Attributes:        filterSystemAttributes(msg.Attributes, systemAttrNames),
+		MessageAttributes: filterMessageAttributes(msg.MessageAttributes, messageAttrNames),
+	}
 }
 
 func (h *Handler) DeleteMessage(w http.ResponseWriter, r *http.Request) {
