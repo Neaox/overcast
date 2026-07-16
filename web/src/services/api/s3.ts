@@ -126,6 +126,18 @@ export const s3 = {
     return `${API_BASE}/s3/buckets/${encodeURIComponent(bucket)}/objects/${encodeURIComponent(key)}/download?${params}`
   },
 
+  getObjectText: async (
+    bucket: string,
+    key: string,
+    limitBytes = 1024 * 1024,
+  ): Promise<{ text: string; truncated: boolean }> => {
+    const res = await fetch(s3.getObjectDownloadUrl(bucket, key), {
+      headers: { Range: `bytes=0-${limitBytes - 1}` },
+    })
+    if (!res.ok) throw new Error(`Preview failed: HTTP ${res.status}`)
+    return { text: await res.text(), truncated: res.status === 206 }
+  },
+
   deleteObject: async (bucket: string, key: string) => {
     await awsClients.s3().send(new DeleteObjectCommand({ Bucket: bucket, Key: key }))
     return { ok: true }

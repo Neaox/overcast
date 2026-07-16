@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef, useCallback } from "react"
+import { useMemo, useState, useRef } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { useScrollTrigger } from "@/hooks/use-scroll-trigger"
 import { cn } from "@/lib/utils"
@@ -89,8 +89,6 @@ export function LogViewer({
   const [mode, setMode] = useState<"table" | "plain">(defaultMode)
   const [formatted, setFormatted] = useState(false)
   const parentRef = useRef<HTMLDivElement>(null)
-  const isScrollingRef = useRef(false)
-  const scrollTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   const canLoadMore = Boolean(hasMore && onLoadMore)
   const sentinelRef = useScrollTrigger({
@@ -125,14 +123,6 @@ export function LogViewer({
     estimateSize: () => 32,
     overscan: 15,
   })
-
-  const handleScroll = useCallback(() => {
-    isScrollingRef.current = true
-    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current)
-    scrollTimerRef.current = setTimeout(() => {
-      isScrollingRef.current = false
-    }, 150)
-  }, [])
 
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col", className)}>
@@ -174,11 +164,7 @@ export function LogViewer({
         </div>
       )}
 
-      <div
-        ref={parentRef}
-        className="min-h-0 flex-1 overflow-auto rounded bg-bg-elevated p-2"
-        onScroll={handleScroll}
-      >
+      <div ref={parentRef} className="min-h-0 flex-1 overflow-auto rounded bg-bg-elevated p-2">
         {loading && normalizedEvents.length === 0 && (
           <div className="py-4 text-center text-[10px] text-fg-muted">Loading logs...</div>
         )}
@@ -202,7 +188,7 @@ export function LogViewer({
             {virtualizer.getVirtualItems().map((virtualRow) => {
               const event = normalizedEvents[virtualRow.index]
 
-              const showHighlighted = formatted && event.json != null && !isScrollingRef.current
+              const showHighlighted = formatted && event.json != null
 
               return (
                 <div

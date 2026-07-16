@@ -1,8 +1,19 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { useNavigate } from "@tanstack/react-router"
+import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { ArrowLeft, RefreshCw, FileText, Search, X, Copy, Check, ArrowDown } from "lucide-react"
+import {
+  ArrowDown,
+  ArrowDownUp,
+  ArrowLeft,
+  Check,
+  Copy,
+  FileText,
+  RefreshCw,
+  Search,
+  X,
+  Zap,
+} from "lucide-react"
 import { logsFilterQueryOptions } from "@/features/cloudwatch/logs/data"
 import {
   TimeRangeFilter,
@@ -11,8 +22,17 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { useEventStream } from "@/hooks/use-event-stream"
+import { EventType } from "@/services/event-types"
 import { cn } from "@/lib/utils"
 import Prism from "@/lib/prism"
+import type { FilteredLogEvent } from "@/types/logs"
+
+interface LogEventsWrittenPayload {
+  logGroupName: string
+  logStreamName: string
+  events: Array<{ timestamp: number; message: string }>
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -117,10 +137,12 @@ function tryParseJSON(msg: string): object | null {
   }
 }
 
-/** Format and syntax-highlight a JSON object using Prism. Returns HTML string. */
-function formatJSON(obj: object): string {
-  const formatted = JSON.stringify(obj, null, 2)
-  return Prism.highlight(formatted, Prism.languages.json, "json")
+function stringifyJSON(obj: object, pretty: boolean): string {
+  return JSON.stringify(obj, null, pretty ? 2 : 0)
+}
+
+function highlightJSON(text: string): string {
+  return Prism.highlight(text, Prism.languages.json, "json")
 }
 
 // ── Row height estimation ──────────────────────────────────────────────────
@@ -129,18 +151,28 @@ function formatJSON(obj: object): string {
 function estimateRowHeight(msg: string, formatted: boolean): number {
   const baseHeight = 36 // padding + timestamp line
   if (formatted && (msg.trim().startsWith("{") || msg.trim().startsWith("["))) {
-    // Formatted JSON: count lines in formatted output
-    try {
-      const obj = JSON.parse(msg.trim())
-      const lines = JSON.stringify(obj, null, 2).split("\n").length
-      return baseHeight + lines * 18 // ~18px per line in monospace
-    } catch {
-      // Fall through
-    }
+    return baseHeight + Math.ceil(msg.length / 48) * 18
   }
   // Plain: wrap estimation based on ~120 chars per line at typical widths
   const lines = Math.max(1, Math.ceil(msg.length / 120))
   return baseHeight + (lines - 1) * 18
+}
+
+function sortEvents(events: FilteredLogEvent[], asc: boolean): FilteredLogEvent[] {
+  return [...events].sort((a, b) => {
+    const timeDelta = (a.timestamp ?? 0) - (b.timestamp ?? 0)
+    if (timeDelta !== 0) return asc ? timeDelta : -timeDelta
+    const ingestDelta = (a.ingestionTime ?? 0) - (b.ingestionTime ?? 0)
+    if (ingestDelta !== 0) return asc ? ingestDelta : -ingestDelta
+    return (a.logStreamName ?? "").localeCompare(b.logStreamName ?? "") * (asc ? 1 : -1)
+  })
+}
+
+function messageMatchesFilter(message: string, filterPattern: string): boolean {
+  const terms = parseFilterTerms(filterPattern).map((term) => term.toLowerCase())
+  if (terms.length === 0) return true
+  const haystack = message.toLowerCase()
+  return terms.every((term) => haystack.includes(term))
 }
 
 // ── Copy button ────────────────────────────────────────────────────────────
@@ -169,7 +201,7 @@ function CopyButton({ text }: { text: string }) {
 
 interface Props {
   groupName: string
-  streamName: string
+  streamName?: string
 }
 
 export function LogEventsViewer({ groupName, streamName }: Props) {
@@ -177,34 +209,90 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
   const [filterInput, setFilterInput] = useState("")
   const [activeFilter, setActiveFilter] = useState("")
   const [timeRange, setTimeRange] = useState<TimeRange>({})
+  const [displayMode, setDisplayMode] = useState<"table" | "plain">("table")
   const [formatted, setFormatted] = useState(false)
+  const [syntaxHighlight, setSyntaxHighlight] = useState(true)
   const [wrapLines, setWrapLines] = useState(true)
+  const [tailMode, setTailMode] = useState(false)
+  const [sortAsc, setSortAsc] = useState(true)
+  const [tailEvents, setTailEvents] = useState<FilteredLogEvent[]>([])
 
   const parentRef = useRef<HTMLDivElement>(null)
-  const isScrollingRef = useRef(false)
-  const scrollTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const processedEventCount = useRef(0)
 
-  const { data, isLoading, isFetching, refetch } = useQuery(
-    logsFilterQueryOptions(groupName, {
+  const { data, dataUpdatedAt, isLoading, isFetching, refetch } = useQuery({
+    ...logsFilterQueryOptions(groupName, {
       filterPattern: activeFilter || undefined,
       startTime: timeRange.startTime,
       endTime: timeRange.endTime,
-      logStreamNames: [streamName],
+      ...(streamName ? { logStreamNames: [streamName] } : {}),
     }),
+  })
+
+  const { events: streamEvents } = useEventStream({ source: "logs" })
+
+  useEffect(() => {
+    setTailEvents([])
+  }, [groupName, streamName, activeFilter, timeRange.startTime, timeRange.endTime])
+
+  useEffect(() => {
+    setTailEvents([])
+  }, [dataUpdatedAt])
+
+  useEffect(() => {
+    if (!tailMode) {
+      processedEventCount.current = streamEvents.length
+      return
+    }
+    const newEvents = streamEvents.slice(processedEventCount.current)
+    processedEventCount.current = streamEvents.length
+    if (newEvents.length === 0) return
+
+    const incoming: FilteredLogEvent[] = []
+    for (const streamEvent of newEvents) {
+      if (streamEvent.type !== EventType.logs.LogEventsWritten) continue
+      const payload = streamEvent.payload as LogEventsWrittenPayload
+      if (payload.logGroupName !== groupName) continue
+      if (streamName && payload.logStreamName !== streamName) continue
+      for (const event of payload.events) {
+        if (timeRange.startTime != null && event.timestamp < timeRange.startTime) continue
+        if (timeRange.endTime != null && event.timestamp > timeRange.endTime) continue
+        if (!messageMatchesFilter(event.message, activeFilter)) continue
+        incoming.push({
+          timestamp: event.timestamp,
+          ingestionTime: event.timestamp,
+          logStreamName: payload.logStreamName,
+          message: event.message,
+        })
+      }
+    }
+    if (incoming.length > 0) {
+      setTailEvents((prev) => [...prev, ...incoming])
+    }
+  }, [
+    activeFilter,
+    groupName,
+    streamEvents,
+    streamName,
+    tailMode,
+    timeRange.endTime,
+    timeRange.startTime,
+  ])
+
+  const events = useMemo(
+    () => sortEvents([...(data?.events ?? []), ...tailEvents], sortAsc),
+    [data, sortAsc, tailEvents],
   )
 
-  const events = useMemo(() => data?.events ?? [], [data])
-
-  // Pre-compute row metadata (level detection, JSON parse) once per data change
+  // Pre-compute cheap row metadata once per data change. JSON parsing/highlighting stays row-local.
   const rowMeta = useMemo(
     () =>
       events.map((evt) => {
         const msg = evt.message ?? ""
         const level = detectLogLevel(msg)
-        const json = formatted ? tryParseJSON(msg) : null
-        return { msg, level, json }
+        return { msg, level }
       }),
-    [events, formatted],
+    [events],
   )
 
   const virtualizer = useVirtualizer({
@@ -214,29 +302,21 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
     overscan: 15,
   })
 
-  // Track scrolling state — defer formatting while scrolling
-  const handleScroll = useCallback(() => {
-    isScrollingRef.current = true
-    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current)
-    scrollTimerRef.current = setTimeout(() => {
-      isScrollingRef.current = false
-    }, 150)
-  }, [])
-
   // Scroll-to-bottom
   const [showScrollBottom, setShowScrollBottom] = useState(false)
   const handleScrollCheck = useCallback(() => {
-    handleScroll()
     const el = parentRef.current
     if (!el) return
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-    setShowScrollBottom(!atBottom && events.length > 20)
-  }, [handleScroll, events.length])
+    const nearLatest = sortAsc
+      ? el.scrollHeight - el.scrollTop - el.clientHeight < 80
+      : el.scrollTop < 80
+    setShowScrollBottom(!nearLatest && events.length > 20)
+  }, [events.length, sortAsc])
 
   const scrollToBottom = useCallback(() => {
-    virtualizer.scrollToIndex(events.length - 1, { align: "end" })
+    virtualizer.scrollToIndex(sortAsc ? events.length - 1 : 0, { align: sortAsc ? "end" : "start" })
     setShowScrollBottom(false)
-  }, [virtualizer, events.length])
+  }, [virtualizer, events.length, sortAsc])
 
   const handleSearch = () => setActiveFilter(filterInput)
   const handleClear = () => {
@@ -257,11 +337,32 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
     return () => document.removeEventListener("keydown", handler)
   }, [])
 
+  const title = streamName ?? groupName
+  const description = streamName ? (
+    <>
+      Log group:{" "}
+      <Link
+        to="/cloudwatch/logs/$groupName"
+        params={{ groupName }}
+        className="font-mono text-accent hover:underline"
+      >
+        {groupName}
+      </Link>
+    </>
+  ) : (
+    "All streams in this log group"
+  )
+  const virtualItems = virtualizer.getVirtualItems()
+  const scrollOffset = virtualizer.scrollOffset ?? 0
+  const viewportHeight = parentRef.current?.clientHeight ?? 0
+  const highlightStart = Math.max(0, scrollOffset - viewportHeight)
+  const highlightEnd = scrollOffset + viewportHeight * 2
+
   return (
     <div className="flex h-full w-full flex-col gap-3">
       <PageHeader
-        title={streamName}
-        description={`Log group: ${groupName}`}
+        title={title}
+        description={description}
         actions={
           <div className="flex items-center gap-2">
             <Button
@@ -275,7 +376,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
               }
             >
               <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
-              Back to Streams
+              {streamName ? "Back to Streams" : "Back to Group"}
             </Button>
             <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching}>
               <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
@@ -324,7 +425,25 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
         </div>
 
         {/* View toggles */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Button
+            type="button"
+            size="sm"
+            variant={displayMode === "table" ? "default" : "ghost"}
+            onClick={() => setDisplayMode("table")}
+            className="h-7 px-2 text-[10px] uppercase"
+          >
+            Table
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={displayMode === "plain" ? "default" : "ghost"}
+            onClick={() => setDisplayMode("plain")}
+            className="h-7 px-2 text-[10px] uppercase"
+          >
+            Plaintext
+          </Button>
           <label className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 text-[10px] font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10">
             <input
               type="checkbox"
@@ -337,12 +456,42 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
           <label className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 text-[10px] font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10">
             <input
               type="checkbox"
+              checked={syntaxHighlight}
+              onChange={(e) => setSyntaxHighlight(e.target.checked)}
+              className="h-3 w-3 accent-accent"
+            />
+            Syntax
+          </label>
+          <label className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 text-[10px] font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10">
+            <input
+              type="checkbox"
               checked={wrapLines}
               onChange={(e) => setWrapLines(e.target.checked)}
               className="h-3 w-3 accent-accent"
             />
             Wrap
           </label>
+          <Button
+            type="button"
+            size="sm"
+            variant={tailMode ? "default" : "ghost"}
+            onClick={() => setTailMode((v) => !v)}
+            className="h-7 px-2 text-[10px] uppercase"
+            title="Live tail refreshes the current filtered view"
+          >
+            <Zap className="mr-1 h-3 w-3" />
+            Tail
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => setSortAsc((v) => !v)}
+            className="h-7 px-2 text-[10px] uppercase"
+          >
+            <ArrowDownUp className="mr-1 h-3 w-3" />
+            {sortAsc ? "Oldest" : "Newest"}
+          </Button>
           <span className="ml-1 text-[10px] text-fg-muted tabular-nums">
             {events.length.toLocaleString()} event{events.length !== 1 ? "s" : ""}
           </span>
@@ -364,12 +513,14 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
         />
       ) : (
         <div className="relative min-h-0 flex-1">
-          {/* Sticky column headers */}
-          <div className="flex border-b border-border bg-bg-elevated px-1 py-1.5 text-[10px] font-medium text-fg-muted">
-            <div className="w-10 shrink-0 px-1 text-center">#</div>
-            <div className="w-20 shrink-0 px-1">Time</div>
-            <div className="min-w-0 flex-1 px-1">Message</div>
-          </div>
+          {displayMode === "table" && (
+            <div className="flex border-b border-border bg-bg-elevated px-1 py-1.5 text-[10px] font-medium text-fg-muted">
+              <div className="w-10 shrink-0 px-1 text-center">#</div>
+              <div className="w-20 shrink-0 px-1">Time</div>
+              {!streamName && <div className="w-44 shrink-0 px-1">Stream</div>}
+              <div className="min-w-0 flex-1 px-1">Message</div>
+            </div>
+          )}
 
           {/* Virtualized rows */}
           <div
@@ -385,9 +536,13 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
                 position: "relative",
               }}
             >
-              {virtualizer.getVirtualItems().map((virtualRow) => {
+              {virtualItems.map((virtualRow) => {
                 const evt = events[virtualRow.index]
                 const meta = rowMeta[virtualRow.index]
+                const enableSyntax =
+                  syntaxHighlight &&
+                  virtualRow.end >= highlightStart &&
+                  virtualRow.start <= highlightEnd
                 return (
                   <div
                     key={virtualRow.key}
@@ -401,26 +556,44 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
                       transform: `translateY(${virtualRow.start}px)`,
                     }}
                   >
-                    {/* Line number */}
-                    <div className="flex w-10 shrink-0 items-start justify-center pt-1.5 text-[9px] text-fg-muted/40 tabular-nums select-none">
-                      {virtualRow.index + 1}
-                    </div>
-                    {/* Timestamp */}
-                    <div className="flex w-20 shrink-0 items-start px-1 pt-1.5 font-mono text-[10px] text-fg-muted tabular-nums">
-                      {formatTimestampCompact(evt.timestamp ?? undefined)}
-                    </div>
-                    {/* Message */}
-                    <div className="min-w-0 flex-1 px-1 py-1.5">
-                      <LogMessage
-                        message={meta.msg}
-                        json={meta.json}
-                        formatted={formatted}
-                        wrapLines={wrapLines}
-                        isScrolling={isScrollingRef}
-                        filterPattern={activeFilter}
-                        level={meta.level}
-                      />
-                    </div>
+                    {displayMode === "table" ? (
+                      <>
+                        <div className="flex w-10 shrink-0 items-start justify-center pt-1.5 text-[9px] text-fg-muted/40 tabular-nums select-none">
+                          {virtualRow.index + 1}
+                        </div>
+                        <div className="flex w-20 shrink-0 items-start px-1 pt-1.5 font-mono text-[10px] text-fg-muted tabular-nums">
+                          {formatTimestampCompact(evt.timestamp ?? undefined)}
+                        </div>
+                        {!streamName && (
+                          <div className="flex w-44 shrink-0 items-start px-1 pt-1.5 font-mono text-[10px] text-fg-muted">
+                            {evt.logStreamName}
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1 px-1 py-1.5">
+                          <LogMessage
+                            message={meta.msg}
+                            formatted={formatted}
+                            syntaxHighlight={enableSyntax}
+                            wrapLines={wrapLines}
+                            filterPattern={activeFilter}
+                            level={meta.level}
+                          />
+                        </div>
+                      </>
+                    ) : (
+                      <div className="min-w-0 flex-1 px-2 py-1.5">
+                        <LogMessage
+                          prefix={`${formatTimestampCompact(evt.timestamp ?? undefined)}${evt.logStreamName ? ` ${evt.logStreamName}` : ""}`}
+                          message={meta.msg}
+                          formatted={formatted}
+                          syntaxHighlight={enableSyntax}
+                          wrapLines={wrapLines}
+                          filterPattern={activeFilter}
+                          level={meta.level}
+                          hideLevel
+                        />
+                      </div>
+                    )}
                     {/* Actions */}
                     <div className="flex w-8 shrink-0 items-start justify-center pt-1.5">
                       <CopyButton text={meta.msg} />
@@ -451,29 +624,37 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
 // ── Log message cell ───────────────────────────────────────────────────────
 
 function LogMessage({
+  prefix,
   message,
-  json,
   formatted,
+  syntaxHighlight,
   wrapLines,
-  isScrolling,
   filterPattern,
   level,
+  hideLevel = false,
 }: {
+  prefix?: string
   message: string
-  json: object | null
   formatted: boolean
+  syntaxHighlight: boolean
   wrapLines: boolean
-  isScrolling: React.RefObject<boolean>
   filterPattern: string
   level: "error" | "warn" | "info" | "debug" | null
+  hideLevel?: boolean
 }) {
-  // When formatted + JSON and not scrolling, show syntax-highlighted output
-  const showFormatted = formatted && json != null && !isScrolling.current
+  const jsonText = useMemo(() => {
+    if (!formatted && !syntaxHighlight) return null
+    const json = tryParseJSON(message)
+    if (!json) return null
+    return stringifyJSON(json, formatted)
+  }, [formatted, message, syntaxHighlight])
+  const displayText = formatted && jsonText ? jsonText : `${prefix ? `${prefix} ` : ""}${message}`
+  const showSyntax = syntaxHighlight && jsonText
 
-  if (showFormatted) {
+  if (showSyntax) {
     return (
       <div className="flex items-start gap-1.5">
-        {level && (
+        {level && !hideLevel && (
           <span
             className={cn(
               "mt-0.5 shrink-0 rounded px-1 py-0.5 text-[8px] font-bold uppercase",
@@ -483,12 +664,17 @@ function LogMessage({
             {level}
           </span>
         )}
+        {prefix && !formatted && (
+          <span className="shrink-0 pt-0.5 font-mono text-[11px] leading-relaxed text-fg-muted tabular-nums">
+            {prefix}
+          </span>
+        )}
         <pre
           className={cn(
             "font-mono text-[11px] leading-relaxed",
             wrapLines ? "wrap-break-word whitespace-pre-wrap" : "whitespace-pre",
           )}
-          dangerouslySetInnerHTML={{ __html: formatJSON(json) }}
+          dangerouslySetInnerHTML={{ __html: highlightJSON(jsonText) }}
         />
       </div>
     )
@@ -497,7 +683,7 @@ function LogMessage({
   // Plain message — with optional filter highlighting
   return (
     <div className="flex items-start gap-1.5">
-      {level && formatted && (
+      {level && formatted && !hideLevel && (
         <span
           className={cn(
             "mt-0.5 shrink-0 rounded px-1 py-0.5 text-[8px] font-bold uppercase",
@@ -513,7 +699,7 @@ function LogMessage({
           wrapLines ? "wrap-break-word whitespace-pre-wrap" : "whitespace-pre",
         )}
       >
-        {highlightMatches(message, filterPattern)}
+        {highlightMatches(displayText, filterPattern)}
       </pre>
     </div>
   )

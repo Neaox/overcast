@@ -11,10 +11,12 @@ import { AWSClientFactory } from "../client/aws.js"
 export const s3Routes = new Hono()
 
 /** Resolve endpoint + return an S3 client from request headers. */
-function s3(c: { req: { header: (k: string) => string | undefined } }) {
+function s3(c: {
+  req: { header: (k: string) => string | undefined; query: (k: string) => string | undefined }
+}) {
   const endpoint = resolveEndpoint({
-    [ENDPOINT_HEADER]: c.req.header(ENDPOINT_HEADER),
-    [REGION_HEADER]: c.req.header(REGION_HEADER),
+    [ENDPOINT_HEADER]: c.req.header(ENDPOINT_HEADER) ?? c.req.query(ENDPOINT_HEADER),
+    [REGION_HEADER]: c.req.header(REGION_HEADER) ?? c.req.query(REGION_HEADER),
   })
   return { s3: AWSClientFactory.makeS3(endpoint), endpoint }
 }
@@ -31,7 +33,8 @@ s3Routes.get("/buckets/:bucket/objects/:key{.+}/download", async (c) => {
   const bucket = c.req.param("bucket")
   const key = decodeURIComponent(c.req.param("key"))
 
-  const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }))
+  const range = c.req.header("range") ?? undefined
+  const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key, Range: range }))
 
   if (!res.Body) return c.json({ error: "Empty body returned from S3" }, 500)
 
@@ -44,10 +47,12 @@ s3Routes.get("/buckets/:bucket/objects/:key{.+}/download", async (c) => {
     "Content-Disposition": `attachment; filename="${key.split("/").pop()}"`,
   })
   if (res.ContentLength) headers.set("Content-Length", String(res.ContentLength))
+  if (res.ContentRange) headers.set("Content-Range", res.ContentRange)
+  if (res.AcceptRanges) headers.set("Accept-Ranges", res.AcceptRanges)
   if (res.ETag) headers.set("ETag", res.ETag)
   if (res.LastModified) headers.set("Last-Modified", res.LastModified.toUTCString())
 
-  return new Response(stream, { status: 200, headers })
+  return new Response(stream, { status: res.ContentRange ? 206 : 200, headers })
 })
 
 /**
