@@ -102,6 +102,10 @@ func (h *Handler) createQueueTyped(ctx context.Context, in *createQueueRequest) 
 		}
 	}
 
+	if aerr := validateQueueAttributes(attrs); aerr != nil {
+		return nil, aerr
+	}
+
 	if aerr := h.validateRedrivePolicyContext(ctx, attrs); aerr != nil {
 		return nil, aerr
 	}
@@ -180,13 +184,22 @@ func (h *Handler) setQueueAttributesTyped(ctx context.Context, in *setQueueAttri
 		return nil, aerr
 	}
 
+	attrs := make(map[string]string, len(q.Attributes)+len(in.Attributes))
+	for k, v := range q.Attributes {
+		attrs[k] = v
+	}
 	for k, v := range in.Attributes {
-		q.Attributes[k] = v
+		attrs[k] = v
 	}
 
-	if aerr := h.validateRedrivePolicyContext(ctx, q.Attributes); aerr != nil {
+	if aerr := validateQueueAttributes(attrs); aerr != nil {
 		return nil, aerr
 	}
+
+	if aerr := h.validateRedrivePolicyContext(ctx, attrs); aerr != nil {
+		return nil, aerr
+	}
+	q.Attributes = attrs
 
 	if aerr := h.store.putQueue(ctx, q); aerr != nil {
 		return nil, aerr
@@ -310,6 +323,11 @@ func (h *Handler) CreateQueue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if aerr := validateQueueAttributes(attrs); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
 	// Validate RedrivePolicy if provided.
 	if aerr := h.validateRedrivePolicy(r, attrs); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -412,15 +430,25 @@ func (h *Handler) SetQueueAttributes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	attrs := make(map[string]string, len(q.Attributes)+len(req.Attributes))
+	for k, v := range q.Attributes {
+		attrs[k] = v
+	}
 	for k, v := range req.Attributes {
-		q.Attributes[k] = v
+		attrs[k] = v
 	}
 
-	// Validate RedrivePolicy if updated.
-	if aerr := h.validateRedrivePolicy(r, q.Attributes); aerr != nil {
+	if aerr := validateQueueAttributes(attrs); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
+
+	// Validate RedrivePolicy if updated.
+	if aerr := h.validateRedrivePolicy(r, attrs); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	q.Attributes = attrs
 
 	if aerr := h.store.putQueue(r.Context(), q); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -656,4 +684,27 @@ func defaultQueueAttributes() map[string]string {
 		"DelaySeconds":                  "0",
 		"ReceiveMessageWaitTimeSeconds": "0",
 	}
+}
+
+func validateQueueAttributes(attrs map[string]string) *protocol.AWSError {
+	if err := validateQueueIntegerAttribute(attrs, "ReceiveMessageWaitTimeSeconds", 0, 20); err != nil {
+		return err
+	}
+	return validateQueueIntegerAttribute(attrs, "VisibilityTimeout", 0, 43200)
+}
+
+func validateQueueIntegerAttribute(attrs map[string]string, name string, minValue, maxValue int) *protocol.AWSError {
+	value, ok := attrs[name]
+	if !ok {
+		return nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < minValue || parsed > maxValue {
+		return &protocol.AWSError{
+			Code:       "InvalidAttributeValue",
+			Message:    "Invalid value for the parameter " + name + ".",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	return nil
 }

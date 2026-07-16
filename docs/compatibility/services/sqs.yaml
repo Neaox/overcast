@@ -2,7 +2,7 @@ service: sqs
 status: in_progress
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-07-13
+last_updated: 2026-07-16
 protocols:
   - aws_json_1_0
   - query
@@ -64,6 +64,16 @@ operations:
         tests:
           - tests/integration/sqs/sqs_test.go
         notes: MaxNumberOfMessages rejects explicit values outside 1..10 for JSON and Query; WaitTimeSeconds rejects explicit values outside 0..20.
+      - name: queue-level ReceiveMessageWaitTimeSeconds default
+        status: reviewed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: Omitted ReceiveMessage.WaitTimeSeconds inherits the queue's ReceiveMessageWaitTimeSeconds attribute; explicit WaitTimeSeconds=0 overrides the queue default and short polls.
+      - name: invalid queue-level ReceiveMessageWaitTimeSeconds
+        status: fixed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: CreateQueue and SetQueueAttributes reject malformed values and integers outside AWS's documented 0..20 range instead of storing invalid queue defaults.
       - name: malformed persisted queue or message record
         status: fixed
         tests:
@@ -80,11 +90,12 @@ operations:
       - AWS API Reference documents MaxNumberOfMessages valid values as 1 to 10 and default 1.
       - AWS Developer Guide documents the maximum long polling wait time as 20 seconds and short polling when WaitTimeSeconds is 0.
       - AWS API Reference ReceiveMessage returns system Attributes only when AttributeNames/MessageSystemAttributeNames are supplied and user MessageAttributes only when MessageAttributeNames are supplied; the sample response with AttributeNames=[All] includes SenderId/SentTimestamp/ApproximateReceiveCount/ApproximateFirstReceiveTimestamp.
+      - AWS API Reference CreateQueue documents ReceiveMessageWaitTimeSeconds as the queue-level ReceiveMessage wait default with valid values 0..20 and default 0.
+      - AWS Developer Guide documents short polling when ReceiveMessage sets WaitTimeSeconds=0 or omits WaitTimeSeconds while the queue attribute is 0, and long polling when the effective wait is greater than 0.
     gaps:
       - ReceiveRequestAttemptId behavior for FIFO queues needs review.
       - VisibilityTimeout in-flight semantics (returned messages) need review.
-      - Queue-level ReceiveMessageWaitTimeSeconds default interaction needs broader review.
-    next_action: Review ReceiveMessage FIFO ReceiveRequestAttemptId behavior and queue-level wait defaults.
+    next_action: Review ReceiveMessage FIFO ReceiveRequestAttemptId behavior and same-group retry semantics.
 findings:
   fixed:
     - Empty long-poll receives no longer surface transient InternalError when the backing state layer observes context cancellation during the poll loop.
@@ -95,10 +106,11 @@ findings:
     - Malformed persisted queue/message records no longer make ListQueues or ReceiveMessage return InternalError for unrelated usable queues.
     - ReceiveMessage now projects system and message attributes based on the requested AttributeNames/MessageSystemAttributeNames/MessageAttributeNames instead of always returning every attribute.
     - VisibilityTimeout on ReceiveMessage, ChangeMessageVisibility, and ChangeMessageVisibilityBatch is now validated against AWS's 0..43200 range instead of silently accepting arbitrary values.
+    - Omitted ReceiveMessage.WaitTimeSeconds uses the queue-level ReceiveMessageWaitTimeSeconds default, while explicit WaitTimeSeconds=0 keeps short-poll behavior.
+    - CreateQueue and SetQueueAttributes now reject invalid ReceiveMessageWaitTimeSeconds queue attributes outside AWS's 0..20 range or malformed integers.
   remaining_gaps:
     - Review ReceiveRequestAttemptId behavior for FIFO queues.
     - Review VisibilityTimeout validation and in-flight semantics.
-    - Review queue-level ReceiveMessageWaitTimeSeconds default interaction.
   intentionally_partial: []
 verification:
   commands:
@@ -109,7 +121,7 @@ verification:
 handoff:
   start_with:
     - ReceiveMessage FIFO ReceiveRequestAttemptId behavior and same-group retry semantics.
-    - Queue-level ReceiveMessageWaitTimeSeconds default interaction because ReceiveMessage depends on queue-level attributes.
+    - VisibilityTimeout in-flight semantics and DLQ maxReceiveCount transitions.
   do_not_redo:
     - Context-cancellation long-poll fix unless the regression fails.
   commands:
