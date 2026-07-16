@@ -266,6 +266,9 @@ func (h *Handler) receiveMessageTyped(ctx context.Context, in *receiveMessageReq
 	if aerr != nil {
 		return nil, aerr
 	}
+	if aerr := validateReceiveRequestAttemptID(in.ReceiveRequestAttemptId); aerr != nil {
+		return nil, aerr
+	}
 
 	var visibilityTimeout int
 	if in.VisibilityTimeout == nil {
@@ -866,6 +869,10 @@ func (h *Handler) ReceiveMessage(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
+	if aerr := validateReceiveRequestAttemptID(req.ReceiveRequestAttemptId); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 
 	// Determine visibility timeout:
 	//   - nil (not sent by caller)   → use queue's VisibilityTimeout attribute
@@ -1076,6 +1083,29 @@ func newReceiveAttempt(now time.Time, received []receivedMessage) *receiveAttemp
 		})
 	}
 	return attempt
+}
+
+func validateReceiveRequestAttemptID(attemptID string) *protocol.AWSError {
+	if attemptID == "" {
+		return nil
+	}
+	if len(attemptID) > 128 {
+		return invalidReceiveRequestAttemptID()
+	}
+	for _, r := range attemptID {
+		if r < '!' || r > '~' {
+			return invalidReceiveRequestAttemptID()
+		}
+	}
+	return nil
+}
+
+func invalidReceiveRequestAttemptID() *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "InvalidParameterValue",
+		Message:    "Invalid value for parameter ReceiveRequestAttemptId. Must be 1 to 128 printable ASCII characters without spaces.",
+		HTTPStatus: http.StatusBadRequest,
+	}
 }
 
 func (h *Handler) replayReceiveAttempt(ctx context.Context, queueName, attemptID string, visibilityTimeout int, systemAttrNames, messageAttrNames []string) ([]receivedMessage, *protocol.AWSError) {

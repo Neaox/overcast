@@ -1897,6 +1897,35 @@ func TestReceiveMessage_fifo_receiveRequestAttemptIdRetry(t *testing.T) {
 	}
 }
 
+func TestReceiveMessage_fifo_receiveRequestAttemptIdValidation(t *testing.T) {
+	// Given: a FIFO queue exists.
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "attempt-validation.fifo")
+	cases := []struct {
+		name      string
+		attemptID string
+	}{
+		{name: "too long", attemptID: strings.Repeat("a", 129)},
+		{name: "space", attemptID: "bad token"},
+		{name: "control character", attemptID: "bad\ntoken"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// When: ReceiveMessage includes an invalid ReceiveRequestAttemptId.
+			resp := sqsCall(t, srv, "ReceiveMessage", map[string]any{
+				"QueueUrl":                queueURL,
+				"ReceiveRequestAttemptId": tc.attemptID,
+			})
+			defer resp.Body.Close()
+
+			// Then: SQS rejects the invalid request parameter.
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, "InvalidParameterValue")
+		})
+	}
+}
+
 func TestSendMessage_fifo_sequenceNumber(t *testing.T) {
 	// Given: a FIFO queue
 	srv := helpers.NewTestServer(t)
