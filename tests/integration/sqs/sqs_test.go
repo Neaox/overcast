@@ -2428,6 +2428,45 @@ func TestReceiveMessage_usesQueueDefaultReceiveMessageWaitTimeSeconds(t *testing
 	}
 }
 
+func TestReceiveMessage_queryWireUsesQueueDefaultReceiveMessageWaitTimeSeconds(t *testing.T) {
+	// Given: an empty queue with ReceiveMessageWaitTimeSeconds=1.
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueueWithAttrs(t, srv, "lp-query-default-queue", map[string]string{
+		"ReceiveMessageWaitTimeSeconds": "1",
+	})
+
+	// When: Query ReceiveMessage omits WaitTimeSeconds.
+	start := time.Now()
+	resp := sqsQueryCall(t, srv, url.Values{
+		"Action":   {"ReceiveMessage"},
+		"QueueUrl": {queueURL},
+	})
+	defer resp.Body.Close()
+	elapsed := time.Since(start)
+
+	// Then: the queue-level wait default makes it long poll before returning empty.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	if elapsed < 900*time.Millisecond {
+		t.Errorf("query queue-default long poll returned too quickly: %v (expected >= 900ms)", elapsed)
+	}
+
+	// When: Query ReceiveMessage explicitly sets WaitTimeSeconds=0.
+	start = time.Now()
+	shortResp := sqsQueryCall(t, srv, url.Values{
+		"Action":          {"ReceiveMessage"},
+		"QueueUrl":        {queueURL},
+		"WaitTimeSeconds": {"0"},
+	})
+	defer shortResp.Body.Close()
+	elapsed = time.Since(start)
+
+	// Then: the explicit request value overrides the queue default and short polls.
+	helpers.AssertStatus(t, shortResp, http.StatusOK)
+	if elapsed > 200*time.Millisecond {
+		t.Errorf("query explicit short poll took too long: %v (expected < 200ms)", elapsed)
+	}
+}
+
 func TestReceiveMessage_noWait_returnsImmediately(t *testing.T) {
 	// Given an empty queue
 	srv := helpers.NewTestServer(t)
