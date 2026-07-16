@@ -551,6 +551,46 @@ func TestAdminDisableEnableUser_emailPool_usernameAttribute(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusOK)
 }
 
+func TestAdminDeleteUserAttributes_emailPool_usernameAttribute(t *testing.T) {
+	// Given: a pool with email sign-in and an admin-created user with a custom attribute.
+	srv := helpers.NewTestServer(t)
+	poolID := createPoolWithUsernameAttributes(t, srv, "email-delete-attr-pool", []string{"email"})
+	resp := cognitoCall(t, srv, "AdminCreateUser", map[string]any{
+		"UserPoolId":    poolID,
+		"Username":      "jane@example.com",
+		"MessageAction": "SUPPRESS",
+		"UserAttributes": []map[string]string{
+			{"Name": "custom:color", "Value": "blue"},
+		},
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// When: AdminDeleteUserAttributes is called with the email address as Username.
+	resp = cognitoCall(t, srv, "AdminDeleteUserAttributes", map[string]any{
+		"UserPoolId":         poolID,
+		"Username":           "jane@example.com",
+		"UserAttributeNames": []string{"custom:color"},
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: the resolved generated-username user no longer has the attribute.
+	resp = cognitoCall(t, srv, "AdminGetUser", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   "jane@example.com",
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		UserAttributes []map[string]string `json:"UserAttributes"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if hasAttr(result.UserAttributes, "custom:color", "blue") {
+		t.Fatalf("expected custom:color to be deleted, got %v", result.UserAttributes)
+	}
+}
+
 // ─── AdminCreateUser with phone UsernameAttributes ────────────────────────────
 
 func TestAdminCreateUser_phonePool_generatesUUIDUsername(t *testing.T) {

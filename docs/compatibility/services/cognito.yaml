@@ -170,6 +170,35 @@ operations:
       - AWS AdminUpdateUserAttributes docs state required-verification updates don't immediately change the stored attribute unless email_verified/phone_number_verified=true is included.
     gaps: []
     next_action: Include in broader admin-user operation validation sweep.
+  AdminDeleteUserAttributes:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminDeleteUserAttributes.html
+      - https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-attributes.html
+    tests:
+      - tests/integration/cognito/cognito_username_attributes_test.go
+      - tests/integration/cognito/cognito_sub_lookup_test.go
+      - tests/integration/cognito/cognito_attributes_test.go
+    scenarios:
+      - name: username-attribute pool with email as Username
+        status: reviewed
+        tests:
+          - tests/integration/cognito/cognito_username_attributes_test.go
+        notes: Email resolves to the generated UUID user before deleting requested attributes.
+      - name: plain username pool with sub as Username
+        status: reviewed
+        tests:
+          - tests/integration/cognito/cognito_sub_lookup_test.go
+        notes: Local user's sub resolves to the stored username before deleting requested attributes.
+      - name: plain username pool with stored username
+        status: reviewed
+        tests:
+          - tests/integration/cognito/cognito_attributes_test.go
+        notes: Removes requested attributes and returns UserNotFoundException for missing users.
+    evidence:
+      - AWS AdminDeleteUserAttributes docs state Username can be an alias attribute, or the sub of a local user when username is not an alias attribute.
+    gaps: []
+    next_action: Include in broader admin-user operation validation sweep.
   UpdateUserAttributes:
     status: fixed
     aws_docs:
