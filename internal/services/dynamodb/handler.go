@@ -213,6 +213,9 @@ func (h *Handler) createTableTyped(ctx context.Context, req *createTableRequest)
 	if req.TableName == "" {
 		return nil, protocol.ErrMissingParameter("TableName")
 	}
+	if aerr := serviceutil.TableName(req.TableName); aerr != nil {
+		return nil, aerr
+	}
 
 	exists, aerr := h.store.tableExists(ctx, req.TableName)
 	if aerr != nil {

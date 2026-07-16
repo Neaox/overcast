@@ -103,6 +103,7 @@ operations:
     next_action: Review ReceiveMessage FIFO ReceiveRequestAttemptId behavior and same-group retry semantics.
 findings:
   fixed:
+    - CreateQueue now rejects queue names outside the documented 1..80 character alphanumeric, hyphen, underscore, and period rules with InvalidParameterValue.
     - Empty long-poll receives no longer surface transient InternalError when the backing state layer observes context cancellation during the poll loop.
     - Initial empty long-poll scans and HTTP requests with already-canceled contexts no longer convert cancellation into SQS InternalError.
     - The documented behavior is an HTTP 200 response with no messages when no messages become available before the wait expires.

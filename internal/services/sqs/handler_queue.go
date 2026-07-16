@@ -74,6 +74,9 @@ func (h *Handler) createQueueTyped(ctx context.Context, in *createQueueRequest) 
 	if in.QueueName == "" {
 		return nil, protocol.ErrMissingParameter("QueueName")
 	}
+	if aerr := serviceutil.QueueName(in.QueueName); aerr != nil {
+		return nil, aerr
+	}
 
 	isFifo := strings.HasSuffix(in.QueueName, ".fifo") || in.Attributes["FifoQueue"] == "true"
 	if in.Attributes["FifoQueue"] == "true" && !strings.HasSuffix(in.QueueName, ".fifo") {

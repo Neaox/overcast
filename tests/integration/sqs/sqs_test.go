@@ -83,6 +83,31 @@ func TestCreateQueue_receiveMessageWaitTimeSecondsValidation(t *testing.T) {
 	}
 }
 
+func TestCreateQueue_invalidName(t *testing.T) {
+	// Given: invalid SQS queue names from the documented name constraints.
+	cases := []struct {
+		name      string
+		queueName string
+	}{
+		{name: "invalid character", queueName: "bad!queue"},
+		{name: "too long", queueName: strings.Repeat("a", 81)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := helpers.NewTestServer(t)
+
+			// When: CreateQueue is called with an invalid QueueName.
+			resp := sqsCall(t, srv, "CreateQueue", map[string]any{"QueueName": tc.queueName})
+			defer resp.Body.Close()
+
+			// Then: SQS rejects the request with an AWS-modeled validation error.
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, "InvalidParameterValue")
+		})
+	}
+}
+
 func TestCreateQueue_idempotent(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	url1 := createQueue(t, srv, "idempotent-queue")
