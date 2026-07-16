@@ -110,3 +110,60 @@ func TestAdminDeleteUser_plainPool_subUsername(t *testing.T) {
 	defer resp.Body.Close()
 	helpers.AssertJSONError(t, resp, "UserNotFoundException")
 }
+
+func TestAdminDisableEnableUser_plainPool_subUsername(t *testing.T) {
+	// Given: a plain username pool user with a sub attribute and a password.
+	srv := helpers.NewTestServer(t)
+	poolID := createPool(t, srv, "p")
+	clientID := createClient(t, srv, poolID, "app")
+	sub := createUserAndReturnSub(t, srv, poolID, "dave")
+	resp := cognitoCall(t, srv, "AdminSetUserPassword", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   "dave",
+		"Password":   "DavePass1!",
+		"Permanent":  true,
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// When: AdminDisableUser is called with sub as Username.
+	resp = cognitoCall(t, srv, "AdminDisableUser", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   sub,
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: the stored user is disabled.
+	resp = cognitoCall(t, srv, "InitiateAuth", map[string]any{
+		"ClientId": clientID,
+		"AuthFlow": "USER_PASSWORD_AUTH",
+		"AuthParameters": map[string]string{
+			"USERNAME": "dave",
+			"PASSWORD": "DavePass1!",
+		},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "NotAuthorizedException")
+
+	// When: AdminEnableUser is called with sub as Username.
+	resp = cognitoCall(t, srv, "AdminEnableUser", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   sub,
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: the stored user is enabled again.
+	resp = cognitoCall(t, srv, "InitiateAuth", map[string]any{
+		"ClientId": clientID,
+		"AuthFlow": "USER_PASSWORD_AUTH",
+		"AuthParameters": map[string]string{
+			"USERNAME": "dave",
+			"PASSWORD": "DavePass1!",
+		},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}

@@ -454,6 +454,69 @@ func TestAdminDeleteUser_emailPool_usernameAttribute(t *testing.T) {
 	helpers.AssertJSONError(t, resp, "UserNotFoundException")
 }
 
+func TestAdminDisableEnableUser_emailPool_usernameAttribute(t *testing.T) {
+	// Given: a pool with email sign-in and a confirmed user with a password.
+	srv := helpers.NewTestServer(t)
+	poolID := createPoolWithUsernameAttributes(t, srv, "email-disable-pool", []string{"email"})
+	clientID := createClient(t, srv, poolID, "email-disable-client")
+	resp := cognitoCall(t, srv, "AdminCreateUser", map[string]any{
+		"UserPoolId":    poolID,
+		"Username":      "heidi@example.com",
+		"MessageAction": "SUPPRESS",
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp = cognitoCall(t, srv, "AdminSetUserPassword", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   "heidi@example.com",
+		"Password":   "Password1!",
+		"Permanent":  true,
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// When: AdminDisableUser is called with the email address as Username.
+	resp = cognitoCall(t, srv, "AdminDisableUser", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   "heidi@example.com",
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: password auth with that email is rejected because the resolved user is disabled.
+	resp = cognitoCall(t, srv, "InitiateAuth", map[string]any{
+		"ClientId": clientID,
+		"AuthFlow": "USER_PASSWORD_AUTH",
+		"AuthParameters": map[string]string{
+			"USERNAME": "heidi@example.com",
+			"PASSWORD": "Password1!",
+		},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "NotAuthorizedException")
+
+	// When: AdminEnableUser is called with the email address as Username.
+	resp = cognitoCall(t, srv, "AdminEnableUser", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   "heidi@example.com",
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: the same user can authenticate again.
+	resp = cognitoCall(t, srv, "InitiateAuth", map[string]any{
+		"ClientId": clientID,
+		"AuthFlow": "USER_PASSWORD_AUTH",
+		"AuthParameters": map[string]string{
+			"USERNAME": "heidi@example.com",
+			"PASSWORD": "Password1!",
+		},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
 // ─── AdminCreateUser with phone UsernameAttributes ────────────────────────────
 
 func TestAdminCreateUser_phonePool_generatesUUIDUsername(t *testing.T) {
