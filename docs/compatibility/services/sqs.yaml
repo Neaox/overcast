@@ -69,7 +69,7 @@ operations:
         status: reviewed
         tests:
           - tests/integration/sqs/sqs_test.go
-        notes: Omitted ReceiveMessage.WaitTimeSeconds inherits the queue's ReceiveMessageWaitTimeSeconds attribute; explicit WaitTimeSeconds=0 overrides the queue default and short polls.
+        notes: JSON and Query ReceiveMessage requests that omit WaitTimeSeconds inherit the queue's ReceiveMessageWaitTimeSeconds attribute; explicit WaitTimeSeconds=0 overrides the queue default and short polls.
       - name: invalid queue-level ReceiveMessageWaitTimeSeconds
         status: fixed
         tests:
@@ -110,7 +110,7 @@ findings:
     - FIFO ReceiveMessage retries with the same ReceiveRequestAttemptId now return the same in-flight message IDs and receipt handles and reset visibility timeout.
     - ReceiveRequestAttemptId now rejects tokens longer than 128 characters or containing spaces/control characters.
     - VisibilityTimeout on ReceiveMessage, ChangeMessageVisibility, and ChangeMessageVisibilityBatch is now validated against AWS's 0..43200 range instead of silently accepting arbitrary values.
-    - Omitted ReceiveMessage.WaitTimeSeconds uses the queue-level ReceiveMessageWaitTimeSeconds default, while explicit WaitTimeSeconds=0 keeps short-poll behavior.
+    - Omitted ReceiveMessage.WaitTimeSeconds uses the queue-level ReceiveMessageWaitTimeSeconds default for JSON and Query requests, while explicit WaitTimeSeconds=0 keeps short-poll behavior.
     - CreateQueue and SetQueueAttributes now reject invalid ReceiveMessageWaitTimeSeconds queue attributes outside AWS's 0..20 range or malformed integers.
   remaining_gaps:
     - Review ReceiveRequestAttemptId modified-message edge cases after DeleteMessage or ChangeMessageVisibility.
