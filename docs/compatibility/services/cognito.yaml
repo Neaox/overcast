@@ -646,14 +646,73 @@ operations:
       - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminListGroupsForUser.html
     tests:
       - tests/integration/cognito/cognito_jwt_mfa_groups_test.go
+      - tests/integration/cognito/cognito_sub_lookup_test.go
+      - tests/integration/cognito/cognito_username_attributes_test.go
     scenarios:
       - name: Limit and NextToken
         status: fixed
         tests:
           - tests/integration/cognito/cognito_jwt_mfa_groups_test.go
         notes: Pages user group memberships with deterministic ordering and NextToken.
+      - name: username-attribute pool with email as Username
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_username_attributes_test.go
+        notes: Email resolves to generated UUID user when listing group memberships.
+      - name: plain username pool with sub as Username
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_sub_lookup_test.go
+        notes: Local user's sub resolves to the stored username when listing group memberships.
     evidence:
       - AWS AdminListGroupsForUser docs define Limit and NextToken pagination.
+      - AWS AdminListGroupsForUser docs state Username can be any alias attribute, or the sub of a local user when not using an alias value.
+    gaps: []
+    next_action: Include in broader group operation sweep.
+  AdminAddUserToGroup:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminAddUserToGroup.html
+    tests:
+      - tests/integration/cognito/cognito_jwt_mfa_groups_test.go
+      - tests/integration/cognito/cognito_sub_lookup_test.go
+      - tests/integration/cognito/cognito_username_attributes_test.go
+    scenarios:
+      - name: username-attribute pool with email as Username
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_username_attributes_test.go
+        notes: Email resolves to generated UUID user when adding group membership.
+      - name: plain username pool with sub as Username
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_sub_lookup_test.go
+        notes: Local user's sub resolves to the stored username when adding group membership.
+    evidence:
+      - AWS AdminAddUserToGroup docs state Username can be any alias attribute, or the sub of a local user when not using an alias value.
+    gaps: []
+    next_action: Include in broader group operation sweep.
+  AdminRemoveUserFromGroup:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminRemoveUserFromGroup.html
+    tests:
+      - tests/integration/cognito/cognito_jwt_mfa_groups_test.go
+      - tests/integration/cognito/cognito_sub_lookup_test.go
+      - tests/integration/cognito/cognito_username_attributes_test.go
+    scenarios:
+      - name: username-attribute pool with email as Username
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_username_attributes_test.go
+        notes: Email resolves to generated UUID user when removing group membership.
+      - name: plain username pool with sub as Username
+        status: fixed
+        tests:
+          - tests/integration/cognito/cognito_sub_lookup_test.go
+        notes: Local user's sub resolves to the stored username when removing group membership.
+    evidence:
+      - AWS AdminRemoveUserFromGroup docs state Username can be any alias attribute, or the sub of a local user when not using an alias value.
     gaps: []
     next_action: Include in broader group operation sweep.
   ListUsersInGroup:
