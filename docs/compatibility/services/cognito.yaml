@@ -2,7 +2,7 @@ service: cognito
 status: in_progress
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-22
+last_updated: 2026-07-16
 protocols:
   - aws_json_1_1
 implementation:
@@ -411,6 +411,52 @@ operations:
     evidence:
       - Deletion resolves email/phone sign-in identifiers to the internal UUID username before removing stored user state.
       - AWS AdminDeleteUser docs state Username can be the sub of a local user when not using an alias value.
+    gaps: []
+    next_action: Include in broader admin-user operation sweep.
+  AdminDisableUser:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminDisableUser.html
+      - https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-attributes.html
+    tests:
+      - tests/integration/cognito/cognito_username_attributes_test.go
+      - tests/integration/cognito/cognito_sub_lookup_test.go
+    scenarios:
+      - name: username-attribute pool with email as Username
+        status: reviewed
+        tests:
+          - tests/integration/cognito/cognito_username_attributes_test.go
+        notes: Email resolves to the generated UUID user before disabling sign-in.
+      - name: plain username pool with sub as Username
+        status: reviewed
+        tests:
+          - tests/integration/cognito/cognito_sub_lookup_test.go
+        notes: Local user's sub resolves to the stored username before disabling sign-in.
+    evidence:
+      - AWS AdminDisableUser docs state Username can be an alias attribute, or the sub of a local user when username is not an alias attribute.
+    gaps: []
+    next_action: Include in broader admin-user operation sweep.
+  AdminEnableUser:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminEnableUser.html
+      - https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-attributes.html
+    tests:
+      - tests/integration/cognito/cognito_username_attributes_test.go
+      - tests/integration/cognito/cognito_sub_lookup_test.go
+    scenarios:
+      - name: username-attribute pool with email as Username
+        status: reviewed
+        tests:
+          - tests/integration/cognito/cognito_username_attributes_test.go
+        notes: Email resolves to the generated UUID user before enabling sign-in.
+      - name: plain username pool with sub as Username
+        status: reviewed
+        tests:
+          - tests/integration/cognito/cognito_sub_lookup_test.go
+        notes: Local user's sub resolves to the stored username before enabling sign-in.
+    evidence:
+      - AWS AdminEnableUser docs state Username can be an alias attribute, or the sub of a local user when username is not an alias attribute.
     gaps: []
     next_action: Include in broader admin-user operation sweep.
   SignUp:
