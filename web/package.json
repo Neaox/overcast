@@ -8,6 +8,7 @@
     "docs:index": "cd .. && go run ./scripts/docs-index.go --write-index --write-go-index",
     "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "build": "npm run docs:index && npm run typecheck && vite build",
+    "build:bundled": "npm run typecheck && vite build",
     "build:server": "npx esbuild api/src/server.ts --bundle --platform=node --format=esm --minify --outfile=dist-server/server.mjs",
     "test": "vitest run",
     "test:watch": "vitest",

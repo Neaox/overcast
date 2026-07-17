@@ -8,7 +8,16 @@
 !embed_slim.go
 !cmd/
 !internal/
+!docs/
+!docs/*.md
+!docs/cdk/
+!docs/cdk/**
+!docs/compatibility/
+!docs/compatibility/**
+!docs/perf-baselines/
+!docs/perf-baselines/**
 !docs/services/
+!docs/services/**
 
 # ---- Web builder (stage 2) --------------------------------------------------
 !web/

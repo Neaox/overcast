@@ -31,9 +31,11 @@ WORKDIR /web
 COPY web/package.json web/package-lock.json* ./
 RUN npm ci --ignore-scripts
 
-# Copy web source and build.
+# Copy web source and build. The generated docs indexes are checked in; this
+# Node-only stage intentionally does not regenerate them because Go is not
+# installed here.
 COPY web/ .
-RUN VITE_BUNDLED=true npm run build
+RUN VITE_BUNDLED=true npm run build:bundled
 
 # ---- Stage 2: Go build (conditional — NOSQLITE arg controls slim vs full) --
 FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS go-builder
@@ -49,7 +51,7 @@ RUN go mod download
 COPY embed.go embed_slim.go ./
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
-COPY docs/services/ ./docs/services/
+COPY docs/ ./docs/
 
 # Overlay the built SPA so //go:embed all:web/dist can pick it up.
 COPY --from=web-builder /web/dist /src/web/dist
