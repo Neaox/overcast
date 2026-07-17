@@ -41,8 +41,8 @@ func (h *Handler) CreateDataSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !validAppSyncName(ds.Name) {
-		protocol.WriteJSONError(w, r, badRequestError("name is required"))
+	if aerr := serviceutil.AppSyncIdentifierName(ds.Name, "name"); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	if !containsString([]string{"AWS_LAMBDA", "AMAZON_DYNAMODB", "AMAZON_ELASTICSEARCH", "NONE", "HTTP", "RELATIONAL_DATABASE", "AMAZON_OPENSEARCH_SERVICE", "AMAZON_EVENTBRIDGE", "AMAZON_BEDROCK_RUNTIME"}, ds.Type) {

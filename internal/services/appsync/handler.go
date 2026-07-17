@@ -119,23 +119,6 @@ func containsString(values []string, value string) bool {
 	return false
 }
 
-func validAppSyncName(name string) bool {
-	if name == "" || len(name) > 65536 {
-		return false
-	}
-	first := name[0]
-	if first != '_' && (first < 'A' || first > 'Z') && (first < 'a' || first > 'z') {
-		return false
-	}
-	for i := 1; i < len(name); i++ {
-		c := name[i]
-		if c != '_' && (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') && (c < '0' || c > '9') {
-			return false
-		}
-	}
-	return true
-}
-
 func paginateList[T any](r *http.Request, items []T, maxDefault int) ([]T, string, *protocol.AWSError) {
 	q := r.URL.Query()
 	start := 0
