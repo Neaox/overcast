@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,6 +69,37 @@ func TestCreateTable_duplicate(t *testing.T) {
 
 	helpers.AssertStatus(t, resp, http.StatusBadRequest)
 	helpers.AssertJSONError(t, resp, "ResourceInUseException")
+}
+
+func TestCreateTable_invalidName(t *testing.T) {
+	// Given: invalid DynamoDB table names from the documented name constraints.
+	cases := []struct {
+		name      string
+		tableName string
+	}{
+		{name: "too short", tableName: "ab"},
+		{name: "too long", tableName: strings.Repeat("a", 256)},
+		{name: "invalid character", tableName: "bad!table"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := helpers.NewTestServer(t)
+
+			// When: CreateTable is called with an invalid TableName.
+			resp := ddbCall(t, srv, "CreateTable", map[string]any{
+				"TableName":            tc.tableName,
+				"AttributeDefinitions": []map[string]any{{"AttributeName": "id", "AttributeType": "S"}},
+				"KeySchema":            []map[string]any{{"AttributeName": "id", "KeyType": "HASH"}},
+				"BillingMode":          "PAY_PER_REQUEST",
+			})
+			defer resp.Body.Close()
+
+			// Then: DynamoDB rejects the request with an AWS-modeled validation error.
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, "ValidationException")
+		})
+	}
 }
 
 // ---- DescribeTable ---------------------------------------------------------
