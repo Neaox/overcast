@@ -671,6 +671,43 @@ func TestReceiveMessage_visibilityTimeout(t *testing.T) {
 	}
 }
 
+func TestReceiveMessage_visibilityTimeoutZeroMakesMessageVisible(t *testing.T) {
+	// Given: a queue with one message.
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "vt-zero-queue")
+	sendMessage(t, srv, queueURL, "visible-again")
+
+	receive := func() []map[string]any {
+		t.Helper()
+		resp := sqsCall(t, srv, "ReceiveMessage", map[string]any{
+			"QueueUrl":          queueURL,
+			"VisibilityTimeout": 0,
+		})
+		defer resp.Body.Close()
+		helpers.AssertStatus(t, resp, http.StatusOK)
+		var result struct {
+			Messages []map[string]any `json:"Messages"`
+		}
+		helpers.DecodeJSON(t, resp, &result)
+		return result.Messages
+	}
+
+	// When: ReceiveMessage returns the message with VisibilityTimeout=0 twice.
+	first := receive()
+	second := receive()
+
+	// Then: the first receive does not hide the message from the second receive.
+	if len(first) != 1 {
+		t.Fatalf("first receive: expected 1 message, got %d", len(first))
+	}
+	if len(second) != 1 {
+		t.Fatalf("second receive: expected same message to be immediately visible, got %d", len(second))
+	}
+	if second[0]["MessageId"] != first[0]["MessageId"] {
+		t.Errorf("expected same MessageId after VisibilityTimeout=0, got %v then %v", first[0]["MessageId"], second[0]["MessageId"])
+	}
+}
+
 // ---- DeleteMessage ---------------------------------------------------------
 
 func TestDeleteMessage_success(t *testing.T) {
