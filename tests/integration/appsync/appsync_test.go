@@ -843,6 +843,36 @@ func TestDataSource_invalidType(t *testing.T) {
 	helpers.AssertJSONError(t, resp, "BadRequestException")
 }
 
+func TestDataSource_invalidName(t *testing.T) {
+	// Given: invalid AppSync identifier names.
+	cases := []struct {
+		name           string
+		dataSourceName string
+	}{
+		{name: "starts with digit", dataSourceName: "1source"},
+		{name: "invalid character", dataSourceName: "bad-source"},
+		{name: "too long", dataSourceName: strings.Repeat("a", 65537)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := helpers.NewTestServer(t)
+			apiID, _ := createTestAPI(t, srv)
+
+			// When: CreateDataSource is called with an invalid name.
+			resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/datasources", map[string]any{
+				"name": tc.dataSourceName,
+				"type": "NONE",
+			})
+			defer resp.Body.Close()
+
+			// Then: AppSync rejects the request with a modeled validation error.
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, "BadRequestException")
+		})
+	}
+}
+
 // ─── Functions ────────────────────────────────────────────────────────────────
 
 func TestFunction_crudLifecycle(t *testing.T) {
@@ -926,6 +956,36 @@ func TestFunction_missingDataSourceName(t *testing.T) {
 	// Then: the request is rejected as malformed
 	helpers.AssertStatus(t, resp, http.StatusBadRequest)
 	helpers.AssertJSONError(t, resp, "BadRequestException")
+}
+
+func TestFunction_invalidIdentifierNames(t *testing.T) {
+	// Given: invalid AppSync function and data source identifier names.
+	cases := []struct {
+		name           string
+		functionName   string
+		dataSourceName string
+	}{
+		{name: "function name starts with digit", functionName: "1fn", dataSourceName: "myDS"},
+		{name: "data source name has invalid character", functionName: "myFn", dataSourceName: "bad-source"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := helpers.NewTestServer(t)
+			apiID, _ := createTestAPI(t, srv)
+
+			// When: CreateFunction is called with an invalid identifier.
+			resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/functions", map[string]any{
+				"name":           tc.functionName,
+				"dataSourceName": tc.dataSourceName,
+			})
+			defer resp.Body.Close()
+
+			// Then: AppSync rejects the request with a modeled validation error.
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, "BadRequestException")
+		})
+	}
 }
 
 // ─── Resolvers ────────────────────────────────────────────────────────────────
@@ -1016,6 +1076,35 @@ func TestResolver_duplicateConflict(t *testing.T) {
 	})
 	defer r2.Body.Close()
 	helpers.AssertStatus(t, r2, http.StatusConflict)
+}
+
+func TestResolver_invalidIdentifierNames(t *testing.T) {
+	// Given: invalid AppSync resolver identifier names.
+	cases := []struct {
+		name      string
+		typeName  string
+		fieldName string
+	}{
+		{name: "type starts with digit", typeName: "1Query", fieldName: "getUser"},
+		{name: "field has invalid character", typeName: "Query", fieldName: "bad-field"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := helpers.NewTestServer(t)
+			apiID, _ := createTestAPI(t, srv)
+
+			// When: CreateResolver is called with an invalid type or field identifier.
+			resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/types/"+tc.typeName+"/resolvers", map[string]any{
+				"fieldName": tc.fieldName,
+			})
+			defer resp.Body.Close()
+
+			// Then: AppSync rejects the request with a modeled validation error.
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, "BadRequestException")
+		})
+	}
 }
 
 // ─── Tags ─────────────────────────────────────────────────────────────────────

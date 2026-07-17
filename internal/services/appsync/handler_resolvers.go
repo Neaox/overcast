@@ -53,12 +53,12 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !validAppSyncName(fn.Name) {
-		protocol.WriteJSONError(w, r, badRequestError("name is required"))
+	if aerr := serviceutil.AppSyncFunctionName(fn.Name); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if !validAppSyncName(fn.DataSourceName) {
-		protocol.WriteJSONError(w, r, badRequestError("dataSourceName is required"))
+	if aerr := serviceutil.AppSyncDataSourceName(fn.DataSourceName); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
@@ -187,12 +187,12 @@ func (h *Handler) CreateResolver(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !validAppSyncName(typeName) {
-		protocol.WriteJSONError(w, r, badRequestError("typeName is invalid"))
+	if aerr := serviceutil.AppSyncTypeName(typeName); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if !validAppSyncName(res.FieldName) {
-		protocol.WriteJSONError(w, r, badRequestError("fieldName is required"))
+	if aerr := serviceutil.AppSyncFieldName(res.FieldName); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	if res.Kind != "" && !containsString([]string{"UNIT", "PIPELINE"}, res.Kind) {
