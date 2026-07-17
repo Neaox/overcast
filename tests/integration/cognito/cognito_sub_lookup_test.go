@@ -168,6 +168,46 @@ func TestAdminDisableEnableUser_plainPool_subUsername(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusOK)
 }
 
+func TestAdminDeleteUserAttributes_plainPool_subUsername(t *testing.T) {
+	// Given: a plain username pool user with a sub attribute and a custom attribute.
+	srv := helpers.NewTestServer(t)
+	poolID := createPool(t, srv, "p")
+	sub := createUserAndReturnSub(t, srv, poolID, "dave")
+	resp := cognitoCall(t, srv, "AdminUpdateUserAttributes", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   "dave",
+		"UserAttributes": []map[string]string{
+			{"Name": "custom:color", "Value": "green"},
+		},
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// When: AdminDeleteUserAttributes is called with sub as Username.
+	resp = cognitoCall(t, srv, "AdminDeleteUserAttributes", map[string]any{
+		"UserPoolId":         poolID,
+		"Username":           sub,
+		"UserAttributeNames": []string{"custom:color"},
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: the stored user no longer has the attribute.
+	resp = cognitoCall(t, srv, "AdminGetUser", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   "dave",
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		UserAttributes []map[string]string `json:"UserAttributes"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if hasAttr(result.UserAttributes, "custom:color", "green") {
+		t.Fatalf("expected custom:color to be deleted, got %v", result.UserAttributes)
+	}
+}
+
 func TestAdminConfirmSignUp_plainPool_subUsername(t *testing.T) {
 	// Given: a plain username pool user signed up with a sub attribute.
 	srv := helpers.NewTestServer(t)
