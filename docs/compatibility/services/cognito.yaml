@@ -149,6 +149,8 @@ operations:
     tests:
       - tests/integration/cognito/cognito_aliases_test.go
       - tests/integration/cognito/cognito_attributes_test.go
+      - tests/integration/cognito/cognito_username_attributes_test.go
+      - tests/integration/cognito/cognito_sub_lookup_test.go
     scenarios:
       - name: duplicate verified email alias
         status: fixed
@@ -160,6 +162,16 @@ operations:
         tests:
           - tests/integration/cognito/cognito_aliases_test.go
         notes: Updating phone_number and phone_number_verified=true rejects an alias already verified on another user.
+      - name: username-attribute pool with email as Username
+        status: reviewed
+        tests:
+          - tests/integration/cognito/cognito_username_attributes_test.go
+        notes: Email resolves to the generated UUID user before updating attributes.
+      - name: plain username pool with sub as Username
+        status: reviewed
+        tests:
+          - tests/integration/cognito/cognito_sub_lookup_test.go
+        notes: Local user's sub resolves to the stored username before updating attributes.
       - name: verification-before-update delayed update
         status: fixed
         tests:
@@ -168,6 +180,7 @@ operations:
     evidence:
       - AWS AdminUpdateUserAttributes docs list AliasExistsException and state email_verified/phone_number_verified=true permits immediate sign-in.
       - AWS AdminUpdateUserAttributes docs state required-verification updates don't immediately change the stored attribute unless email_verified/phone_number_verified=true is included.
+      - AWS AdminUpdateUserAttributes docs state Username can be an alias attribute, or the sub of a local user when username is not an alias attribute.
     gaps: []
     next_action: Include in broader admin-user operation validation sweep.
   AdminDeleteUserAttributes:
