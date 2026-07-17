@@ -278,3 +278,57 @@ func TestAdminConfirmSignUp_plainPool_subUsername(t *testing.T) {
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
 }
+
+func TestAdminGroupMembership_plainPool_subUsername(t *testing.T) {
+	// Given: a plain username pool user with a sub attribute and a group.
+	srv := helpers.NewTestServer(t)
+	poolID := createPool(t, srv, "p")
+	sub := createUserAndReturnSub(t, srv, poolID, "dave")
+	resp := cognitoCall(t, srv, "CreateGroup", map[string]any{"UserPoolId": poolID, "GroupName": "staff"})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// When: AdminAddUserToGroup is called with sub as Username.
+	resp = cognitoCall(t, srv, "AdminAddUserToGroup", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   sub,
+		"GroupName":  "staff",
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: AdminListGroupsForUser resolves the same sub Username and returns the group.
+	resp = cognitoCall(t, srv, "AdminListGroupsForUser", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   sub,
+	})
+	var result struct {
+		Groups []struct{ GroupName string } `json:"Groups"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	resp.Body.Close()
+	if len(result.Groups) != 1 || result.Groups[0].GroupName != "staff" {
+		t.Fatalf("expected staff group for sub Username, got %#v", result.Groups)
+	}
+
+	// When: AdminRemoveUserFromGroup is called with sub as Username.
+	resp = cognitoCall(t, srv, "AdminRemoveUserFromGroup", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   sub,
+		"GroupName":  "staff",
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: the resolved user has no group memberships.
+	resp = cognitoCall(t, srv, "AdminListGroupsForUser", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   sub,
+	})
+	defer resp.Body.Close()
+	result.Groups = nil
+	helpers.DecodeJSON(t, resp, &result)
+	if len(result.Groups) != 0 {
+		t.Fatalf("expected no groups after removal, got %#v", result.Groups)
+	}
+}

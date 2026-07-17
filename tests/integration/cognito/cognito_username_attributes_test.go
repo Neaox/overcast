@@ -630,6 +630,66 @@ func TestAdminDeleteUserAttributes_emailPool_usernameAttribute(t *testing.T) {
 	}
 }
 
+func TestAdminGroupMembership_emailPool_usernameAttribute(t *testing.T) {
+	// Given: a pool with email sign-in, a user, and a group.
+	srv := helpers.NewTestServer(t)
+	poolID := createPoolWithUsernameAttributes(t, srv, "email-group-pool", []string{"email"})
+	resp := cognitoCall(t, srv, "AdminCreateUser", map[string]any{
+		"UserPoolId":    poolID,
+		"Username":      "laura@example.com",
+		"MessageAction": "SUPPRESS",
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp = cognitoCall(t, srv, "CreateGroup", map[string]any{"UserPoolId": poolID, "GroupName": "staff"})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// When: AdminAddUserToGroup is called with the email address as Username.
+	resp = cognitoCall(t, srv, "AdminAddUserToGroup", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   "laura@example.com",
+		"GroupName":  "staff",
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: AdminListGroupsForUser resolves the same email Username and returns the group.
+	resp = cognitoCall(t, srv, "AdminListGroupsForUser", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   "laura@example.com",
+	})
+	var result struct {
+		Groups []struct{ GroupName string } `json:"Groups"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	resp.Body.Close()
+	if len(result.Groups) != 1 || result.Groups[0].GroupName != "staff" {
+		t.Fatalf("expected staff group for email Username, got %#v", result.Groups)
+	}
+
+	// When: AdminRemoveUserFromGroup is called with the email address as Username.
+	resp = cognitoCall(t, srv, "AdminRemoveUserFromGroup", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   "laura@example.com",
+		"GroupName":  "staff",
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: the resolved user has no group memberships.
+	resp = cognitoCall(t, srv, "AdminListGroupsForUser", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   "laura@example.com",
+	})
+	defer resp.Body.Close()
+	result.Groups = nil
+	helpers.DecodeJSON(t, resp, &result)
+	if len(result.Groups) != 0 {
+		t.Fatalf("expected no groups after removal, got %#v", result.Groups)
+	}
+}
+
 // ─── AdminCreateUser with phone UsernameAttributes ────────────────────────────
 
 func TestAdminCreateUser_phonePool_generatesUUIDUsername(t *testing.T) {
