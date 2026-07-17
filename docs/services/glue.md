@@ -1,3 +1,16 @@
+---
+title: "Glue — AWS Glue Data Catalog"
+description: "AWS Glue Data Catalog uses the application/x-amz-json-1.1 protocol. Operations are identified by the X-Amz-Target header with the prefix AWSGlue.."
+section: "Service Reference"
+tags:
+  - aws
+  - catalog
+  - data
+  - docs
+  - glue
+  - services
+---
+
 # Glue — AWS Glue Data Catalog
 
 > AWS docs: https://docs.aws.amazon.com/glue/latest/webapi/

@@ -1,3 +1,15 @@
+---
+title: "DynamoDB Streams"
+description: "DynamoDB Streams accepts the AWS JSON 1.0 API over the shared root endpoint with X-Amz-Target: DynamoDBStreams_20120810.\u003cOperation\u003e. It also accepts Smithy RPC v2 CBOR at..."
+section: "Service Reference"
+tags:
+  - docs
+  - dynamodb
+  - dynamodbstreams
+  - services
+  - streams
+---
+
 # DynamoDB Streams
 
 > AWS docs: https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Operations_Amazon_DynamoDB_Streams.html

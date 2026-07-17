@@ -54,6 +54,7 @@ tasks:
 
   build-web:
     desc: Build the web UI (run before build if assets are stale)
+    deps: [docs-index]
     dir: web
     env:
       VITE_BUNDLED: "true"
@@ -109,6 +110,40 @@ tasks:
         platforms: [windows]
       - cmd: xdg-open coverage.html
         platforms: [linux]
+
+  # ---- Docs -----------------------------------------------------------------
+
+  generate-caps:
+    desc: Generate service capability metadata
+    cmds:
+      - go run -tags dev ./cmd/capgen --generate
+
+  check-caps:
+    desc: Verify capabilities declarations match handlers
+    cmds:
+      - go run -tags dev ./cmd/capgen --check
+
+  docs-index:
+    desc: Generate the web docs search/navigation manifest
+    cmds:
+      - go run ./scripts/docs-index.go --write-index --write-go-index
+
+  docs:
+    desc: Regenerate service docs and docs search index
+    deps: [generate-caps]
+    cmds:
+      - go run -tags dev ./cmd/capgen --write-docs
+      - go run ./scripts/docs-index.go --write-index --write-go-index
+
+  docs-check:
+    desc: Verify generated docs artifacts are up to date
+    deps: [check-caps]
+    cmds:
+      - go run -tags dev ./cmd/capgen --generate
+      - git diff --exit-code internal/capabilities/all.gen.go
+      - go run -tags dev ./cmd/capgen --write-docs
+      - go run ./scripts/docs-index.go --check
+      - git diff --exit-code README.md STATUS.md docs/README.md docs/services/ docs/generated/service-support.json web/src/generated/docs-index.ts internal/docssearch/index_gen.go
 
   # ---- Quality --------------------------------------------------------------
 

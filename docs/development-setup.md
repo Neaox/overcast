@@ -1,3 +1,13 @@
+---
+title: "Development setup"
+description: "This guide covers getting Overcast building, testing, and running on Mac, Linux, and Windows. There are three approaches — pick the one that fits your environment."
+section: "Getting Started"
+tags:
+  - development
+  - docs
+  - setup
+---
+
 # Development setup
 
 This guide covers getting Overcast building, testing, and running on

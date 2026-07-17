@@ -1,3 +1,16 @@
+---
+title: "API Gateway — Amazon API Gateway"
+description: "API Gateway (REST v1 and HTTP v2) uses a REST API with path-based routing. REST API v1 is mounted at /restapis, HTTP API v2 at /v2/apis."
+section: "Service Reference"
+tags:
+  - amazon
+  - api
+  - apigateway
+  - docs
+  - gateway
+  - services
+---
+
 # API Gateway — Amazon API Gateway
 
 > AWS docs: https://docs.aws.amazon.com/apigateway/latest/api/Welcome.html

@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Neaox/overcast/internal/docssearch"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -58,8 +59,8 @@ type UIConfig struct {
 // and serves the embedded SPA for everything else.
 //
 // staticFS must be rooted at the dist directory (files accessible as "index.html",
-// "assets/...", etc.). docsFS must be rooted at the docs/services directory
-// (files accessible as "s3.md", "sqs.md", etc.).
+// "assets/...", etc.). docsFS must be rooted at the published docs directory
+// (files accessible as "services/s3.md", "cdk/local-vpc.md", etc.).
 //
 // cfg is injected into every served index.html so the SPA can reach the API
 // without user configuration. Pass a zero value from dev/test callers that
@@ -108,6 +109,8 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	r.Get("/api/sqs/queues/{name}/messages", handleSQSPeek)
 
 	// ── Docs ──────────────────────────────────────────────────────────────
+	r.Get("/api/docs/search", handleDocsSearch)
+	r.Get("/api/docs/page", handleDocsPage(docsFS))
 	r.Get("/api/docs/{service}", handleDocs(docsFS))
 
 	// ── SPA fallback ──────────────────────────────────────────────────────
@@ -1035,6 +1038,50 @@ func handleRDSLogs(w http.ResponseWriter, r *http.Request) {
 
 var safeServiceName = regexp.MustCompile(`^[a-z0-9_-]+$`)
 
+func handleDocsSearch(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	limit := 10
+	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err == nil && parsed > 0 && parsed <= 50 {
+			limit = parsed
+		}
+	}
+	results := docssearch.Search(query, limit)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"query":   query,
+		"results": results,
+	})
+}
+
+func handleDocsPage(docsFS fs.FS) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimSpace(r.URL.Query().Get("path"))
+		if !safeDocsPath(path) {
+			writeJSONError(w, http.StatusNotFound, "NotFound")
+			return
+		}
+		content, err := fs.ReadFile(docsFS, path)
+		if err != nil {
+			writeJSONError(w, http.StatusNotFound, "NotFound")
+			return
+		}
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Write(content)
+	}
+}
+
+func safeDocsPath(path string) bool {
+	if path == "" || strings.Contains(path, "..") || strings.HasPrefix(path, "/") || strings.HasPrefix(path, "\\") {
+		return false
+	}
+	if path == "plans" || strings.HasPrefix(path, "plans/") {
+		return false
+	}
+	return strings.HasSuffix(path, ".md")
+}
+
 func handleDocs(docsFS fs.FS) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		service := chi.URLParam(r, "service")
@@ -1042,7 +1089,7 @@ func handleDocs(docsFS fs.FS) http.HandlerFunc {
 			writeJSONError(w, http.StatusNotFound, "NotFound")
 			return
 		}
-		content, err := fs.ReadFile(docsFS, service+".md")
+		content, err := fs.ReadFile(docsFS, "services/"+service+".md")
 		if err != nil {
 			writeJSONError(w, http.StatusNotFound, "NotFound")
 			return

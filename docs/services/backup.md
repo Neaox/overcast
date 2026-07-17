@@ -1,3 +1,14 @@
+---
+title: "Backup — AWS Backup"
+description: "Metadata-only AWS Backup implementation."
+section: "Service Reference"
+tags:
+  - aws
+  - backup
+  - docs
+  - services
+---
+
 # Backup — AWS Backup
 
 > AWS docs: https://docs.aws.amazon.com/aws-backup/latest/devguide/API_Reference.html

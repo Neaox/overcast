@@ -1,3 +1,15 @@
+---
+title: "AppRegistry — Service Catalog AppRegistry"
+description: "Service Catalog AppRegistry groups related AWS resources into named applications. Overcast implements the REST-JSON path-based API under /applications — all operations return..."
+section: "Service Reference"
+tags:
+  - appregistry
+  - catalog
+  - docs
+  - service
+  - services
+---
+
 # AppRegistry — Service Catalog AppRegistry
 
 > AWS docs: https://docs.aws.amazon.com/servicecatalog/latest/dg/applications.html

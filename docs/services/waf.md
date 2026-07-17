@@ -1,3 +1,14 @@
+---
+title: "WAF — AWS WAF v2"
+description: "AWS WAF v2 (Web Application Firewall) uses the application/x-amz-json-1.1 protocol. Operations are identified by the X-Amz-Target header with the prefix AWSWAF_20190729.."
+section: "Service Reference"
+tags:
+  - aws
+  - docs
+  - services
+  - waf
+---
+
 # WAF — AWS WAF v2
 
 > AWS docs: https://docs.aws.amazon.com/waf/latest/APIReference/Welcome.html

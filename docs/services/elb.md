@@ -1,3 +1,19 @@
+---
+title: "ELBv2 — Elastic Load Balancing v2 (ALB/NLB)"
+description: "ELBv2 is served as an AWS Query API (Action=..., Version=2015-12-01). This implementation is metadata-only and does not proxy real traffic."
+section: "Service Reference"
+tags:
+  - alb
+  - balancing
+  - docs
+  - elastic
+  - elb
+  - elbv2
+  - load
+  - nlb
+  - services
+---
+
 # ELBv2 — Elastic Load Balancing v2 (ALB/NLB)
 
 > AWS docs: https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/Welcome.html

@@ -1,3 +1,16 @@
+---
+title: "MSK — Managed Streaming for Kafka"
+description: "MSK uses the REST JSON protocol. All endpoints are under /v1/."
+section: "Service Reference"
+tags:
+  - docs
+  - kafka
+  - managed
+  - msk
+  - services
+  - streaming
+---
+
 # MSK — Managed Streaming for Kafka
 
 > AWS docs: https://docs.aws.amazon.com/msk/latest/developerguide/what-is-msk.html

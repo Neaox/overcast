@@ -1,3 +1,13 @@
+---
+title: "DynamoDB"
+description: "DynamoDB accepts AWS JSON 1.0 and Smithy RPC v2 CBOR. JSON operations are identified by the X-Amz-Target header (e.g. DynamoDB_20120810.PutItem); CBOR operations use..."
+section: "Service Reference"
+tags:
+  - docs
+  - dynamodb
+  - services
+---
+
 # DynamoDB
 
 > AWS docs: https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/Welcome.html

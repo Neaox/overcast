@@ -45,7 +45,11 @@ export function useSearch(): SearchState {
 
       const controller = abortRef.current
       try {
-        const results = await runSearch(trimmed, { queryClient, endpoint })
+        const results = await runSearch(trimmed, {
+          queryClient,
+          endpoint,
+          signal: controller.signal,
+        })
         // Guard against a slower earlier search resolving after a newer one.
         if (abortRef.current === controller) {
           setGrouped(results)

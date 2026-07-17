@@ -1,3 +1,15 @@
+---
+title: "Scheduler — Amazon EventBridge Scheduler"
+description: "EventBridge Scheduler is served as a REST-JSON API under /_scheduler/*. This implementation focuses on schedule groups, schedules, tagging, and clock-driven target dispatch for..."
+section: "Service Reference"
+tags:
+  - amazon
+  - docs
+  - eventbridge
+  - scheduler
+  - services
+---
+
 # Scheduler — Amazon EventBridge Scheduler
 
 > AWS docs: https://docs.aws.amazon.com/scheduler/latest/APIReference/Welcome.html

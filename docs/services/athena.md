@@ -1,3 +1,14 @@
+---
+title: "Athena — Amazon Athena"
+description: "Amazon Athena uses the application/x-amz-json-1.1 protocol. Operations are identified by the X-Amz-Target header with the prefix AmazonAthena.."
+section: "Service Reference"
+tags:
+  - amazon
+  - athena
+  - docs
+  - services
+---
+
 # Athena — Amazon Athena
 
 > AWS docs: https://docs.aws.amazon.com/athena/latest/APIReference/

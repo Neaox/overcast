@@ -1,3 +1,16 @@
+---
+title: "SES — Simple Email Service"
+description: "SES supports both the v1 Query protocol (form-encoded POST with Action field, XML responses) and the v2 REST-JSON protocol (path-based routing, JSON request/response bodies)."
+section: "Service Reference"
+tags:
+  - docs
+  - email
+  - service
+  - services
+  - ses
+  - simple
+---
+
 # SES — Simple Email Service
 
 > AWS docs: https://docs.aws.amazon.com/ses/latest/APIReference/Welcome.html

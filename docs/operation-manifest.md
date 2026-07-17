@@ -1,3 +1,14 @@
+---
+title: "Overcast Operation Manifest"
+description: "Total: 795 operations across 42 services"
+section: "Getting Started"
+tags:
+  - docs
+  - manifest
+  - operation
+  - overcast
+---
+
 # Overcast Operation Manifest
 
 ## acm — 7 ops, protocols: JSON10, JSON11, RPCv2CBOR

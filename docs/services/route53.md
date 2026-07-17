@@ -1,3 +1,15 @@
+---
+title: "Route 53 — Amazon Route 53"
+description: "Route 53 is served as a REST-XML API under the /2013-04-01/ path. This implementation focuses on hosted zones, record sets, and change status."
+section: "Service Reference"
+tags:
+  - amazon
+  - docs
+  - route
+  - route53
+  - services
+---
+
 # Route 53 — Amazon Route 53
 
 > AWS docs: https://docs.aws.amazon.com/Route53/latest/APIReference/Welcome.html

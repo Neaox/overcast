@@ -1,3 +1,16 @@
+---
+title: "Kinesis — Amazon Kinesis Data Streams"
+description: "Kinesis Data Streams accepts the AWS JSON 1.1 protocol on the shared POST / endpoint with X-Amz-Target: Kinesis_20131202.\u003cOperationName\u003e. It also accepts Smithy RPC v2 CBOR at..."
+section: "Service Reference"
+tags:
+  - amazon
+  - data
+  - docs
+  - kinesis
+  - services
+  - streams
+---
+
 # Kinesis — Amazon Kinesis Data Streams
 
 > AWS docs: https://docs.aws.amazon.com/kinesis/latest/APIReference/Welcome.html

@@ -1,3 +1,17 @@
+---
+title: "Secrets Manager — endpoint support"
+description: "Generated for Overcast. See also: AWS Secrets Manager API Reference"
+section: "Service Reference"
+tags:
+  - docs
+  - endpoint
+  - manager
+  - secrets
+  - secretsmanager
+  - services
+  - support
+---
+
 # Secrets Manager — endpoint support
 
 > Generated for Overcast. See also: [AWS Secrets Manager API Reference](https://docs.aws.amazon.com/secretsmanager/latest/apireference/Welcome.html)

@@ -22,8 +22,8 @@ ACTIONLINT_VERSION := v1.7.7
         run test test-unit test-integration test-coverage \
         bench bench-startup lint lint-go lint-web lint-actions fmt vet tidy check docker docker-slim docker-console docker-run clean \
         compat-build compat-serve compat-report \
-generate-caps check-caps docs docs-check supportmeta-check check-binary-symbols \
-	generate-caps check-caps docs docs-check supportmeta-check check-binary-symbols
+generate-caps check-caps docs docs-index docs-check supportmeta-check check-binary-symbols \
+	generate-caps check-caps docs docs-index docs-check supportmeta-check check-binary-symbols
 
 ## help: print this help message
 help:
@@ -49,7 +49,7 @@ build-mcp:
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/overcast-mcp ./cmd/overcast-mcp
 
 ## build-web: build the web UI (run before build if assets are stale)
-build-web:
+build-web: docs-index
 	cd web && VITE_BUNDLED=true npm run build
 
 ## build-slim: compile the slim binary (no web UI, no SQLite) for the current platform
@@ -184,9 +184,14 @@ generate-caps:
 check-caps:
 	$(GO) run -tags dev ./cmd/capgen --check
 
+## docs-index: generate the web docs search/navigation manifest
+docs-index:
+	$(GO) run ./scripts/docs-index.go --write-index --write-go-index
+
 ## docs: regenerate sentinel-bracketed capability tables in docs/services/*.md
 docs: generate-caps
 	$(GO) run -tags dev ./cmd/capgen --write-docs
+	$(GO) run ./scripts/docs-index.go --write-index --write-go-index
 
 ## docs-check: verify docs capability tables, all.gen.go, STATUS.md, and service docs are up to date (CI gate)
 docs-check: check-caps
@@ -194,8 +199,13 @@ docs-check: check-caps
 	@git diff --exit-code internal/capabilities/all.gen.go \
 		|| (echo "ERROR: internal/capabilities/all.gen.go is stale. Run: make generate-caps" && exit 1)
 	$(GO) run -tags dev ./cmd/capgen --write-docs
+	$(GO) run ./scripts/docs-index.go --check
 	@git diff --exit-code README.md STATUS.md docs/README.md docs/services/ docs/generated/service-support.json \
 		|| (echo "ERROR: README.md, STATUS.md, docs/README.md, docs/services/, or docs/generated/service-support.json are stale. Run: make docs" && exit 1)
+	@git diff --exit-code web/src/generated/docs-index.ts \
+		|| (echo "ERROR: web/src/generated/docs-index.ts is stale. Run: make docs-index" && exit 1)
+	@git diff --exit-code internal/docssearch/index_gen.go \
+		|| (echo "ERROR: internal/docssearch/index_gen.go is stale. Run: make docs-index" && exit 1)
 
 ## supportmeta-check: alias for docs-check (manifest schema, registry parity, docs parity, generated artifacts)
 supportmeta-check: docs-check

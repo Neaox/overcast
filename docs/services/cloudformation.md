@@ -1,3 +1,15 @@
+---
+title: "CloudFormation — endpoint support"
+description: "CloudFormation uses the AWS Query protocol (POST / with form-encoded body). Overcast implements stack lifecycle, change sets, and resource provisioning with an async provisioner..."
+section: "Service Reference"
+tags:
+  - cloudformation
+  - docs
+  - endpoint
+  - services
+  - support
+---
+
 # CloudFormation — endpoint support
 
 > AWS docs: [CloudFormation API Reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/Welcome.html)

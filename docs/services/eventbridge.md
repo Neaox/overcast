@@ -1,3 +1,15 @@
+---
+title: "EventBridge — endpoint support"
+description: "EventBridge accepts AWS JSON 1.1 via X-Amz-Target: AWSEvents.\u003coperation\u003e. It also accepts Smithy RPC v2 CBOR at /service/EventBridge/operation/\u003coperation\u003e with Smithy-Protocol..."
+section: "Service Reference"
+tags:
+  - docs
+  - endpoint
+  - eventbridge
+  - services
+  - support
+---
+
 # EventBridge — endpoint support
 
 > AWS docs: [EventBridge API Reference](https://docs.aws.amazon.com/eventbridge/latest/APIReference/Welcome.html)

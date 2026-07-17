@@ -1,3 +1,14 @@
+---
+title: "AppConfig — AWS AppConfig"
+description: "AWS AppConfig uses the REST JSON protocol. Routes are served under the /_appconfig/ path prefix."
+section: "Service Reference"
+tags:
+  - appconfig
+  - aws
+  - docs
+  - services
+---
+
 # AppConfig — AWS AppConfig
 
 > AWS docs: https://docs.aws.amazon.com/appconfig/2019-10-09/APIReference/

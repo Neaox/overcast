@@ -1,3 +1,16 @@
+---
+title: "SQS — Simple Queue Service"
+description: "SQS supports AWS JSON 1.0, AWS Query, and Smithy RPC v2 CBOR. JSON and Query requests share the root endpoint; the action is identified by the Action query parameter or the..."
+section: "Service Reference"
+tags:
+  - docs
+  - queue
+  - service
+  - services
+  - simple
+  - sqs
+---
+
 # SQS — Simple Queue Service
 
 > AWS docs: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/Welcome.html

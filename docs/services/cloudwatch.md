@@ -1,3 +1,14 @@
+---
+title: "CloudWatch — Amazon CloudWatch"
+description: "Amazon CloudWatch (monitoring and alarms) uses the Query protocol — form-encoded POST requests with Action and Version=2010-08-01 parameters."
+section: "Service Reference"
+tags:
+  - amazon
+  - cloudwatch
+  - docs
+  - services
+---
+
 # CloudWatch — Amazon CloudWatch
 
 > AWS docs: https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/

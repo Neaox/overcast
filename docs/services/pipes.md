@@ -1,3 +1,16 @@
+---
+title: "EventBridge Pipes — endpoint support"
+description: "Notes"
+section: "Service Reference"
+tags:
+  - docs
+  - endpoint
+  - eventbridge
+  - pipes
+  - services
+  - support
+---
+
 # EventBridge Pipes — endpoint support
 
 > AWS docs: [EventBridge Pipes API Reference](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/Welcome.html)

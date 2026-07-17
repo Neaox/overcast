@@ -1,7 +1,7 @@
 //go:build !slim
 
 // Package overcast exposes embedded web assets for use by the overcast binary.
-// This file lives at the module root so it can reach both web/dist and docs/services
+// This file lives at the module root so it can reach both web/dist and docs
 // via straight descendant paths (//go:embed cannot use ../ to climb the tree).
 package overcast
 
@@ -13,7 +13,8 @@ import "embed"
 //go:embed all:web/dist
 var WebDistFS embed.FS
 
-// DocsServicesFS contains docs/services/*.md — served by the BFF at GET /api/docs/:service.
+// DocsServicesFS contains published docs served by the BFF docs endpoints.
+// Developer-only planning notes under docs/plans are intentionally excluded.
 //
-//go:embed docs/services
+//go:embed docs/*.md docs/cdk docs/compatibility docs/perf-baselines docs/services
 var DocsServicesFS embed.FS

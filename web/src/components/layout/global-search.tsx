@@ -226,7 +226,8 @@ function ResultRow({
   onPointerMove: () => void
 }) {
   const service = ALL_SERVICES.find((s) => s.key === result.serviceKey)
-  const Icon = service?.icon ?? LayoutDashboard
+  const isDocsResult = result.serviceKey === "/docs"
+  const Icon = service?.icon ?? (isDocsResult ? BookOpen : LayoutDashboard)
 
   return (
     <a
@@ -251,7 +252,12 @@ function ResultRow({
         isSelected ? "bg-accent-muted" : "hover:bg-bg-subtle",
       )}
     >
-      <Icon className={cn("h-4 w-4 shrink-0", service?.color ?? "text-fg-muted")} />
+      <Icon
+        className={cn(
+          "h-4 w-4 shrink-0",
+          service?.color ?? (isDocsResult ? "text-accent" : "text-fg-muted"),
+        )}
+      />
       <Tooltip
         content={
           <div className="space-y-1">
@@ -386,13 +392,19 @@ function SearchResults({
 
       {sections.map(({ serviceKey, items, startIndex }) => {
         const service = ALL_SERVICES.find((s) => s.key === serviceKey)
-        const Icon = service?.icon ?? LayoutDashboard
+        const isDocsSection = serviceKey === "/docs"
+        const Icon = service?.icon ?? (isDocsSection ? BookOpen : LayoutDashboard)
         return (
           <div key={serviceKey} className="px-2 pb-3">
             {/* Group header */}
             <div className="mb-1 flex items-center gap-1.5 px-1 py-1 text-xs font-medium text-fg-subtle">
-              <Icon className={cn("h-3.5 w-3.5", service?.color ?? "text-fg-muted")} />
-              {service?.label ?? serviceKey}
+              <Icon
+                className={cn(
+                  "h-3.5 w-3.5",
+                  service?.color ?? (isDocsSection ? "text-accent" : "text-fg-muted"),
+                )}
+              />
+              {service?.label ?? (isDocsSection ? "Documentation" : serviceKey)}
               <span className="ml-auto rounded-full bg-bg-muted px-1.5 text-fg-subtle">
                 {items.length}
               </span>

@@ -1,3 +1,14 @@
+---
+title: "Organizations — AWS Organizations"
+description: "This is a stub implementation suitable for unblocking CDK bootstrap calls and similar operations that require a minimal Organizations API response."
+section: "Service Reference"
+tags:
+  - aws
+  - docs
+  - organizations
+  - services
+---
+
 # Organizations — AWS Organizations
 
 > AWS docs: https://docs.aws.amazon.com/organizations/latest/APIReference/Welcome.html

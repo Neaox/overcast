@@ -1,3 +1,14 @@
+---
+title: "Shield — AWS Shield"
+description: "AWS Shield (DDoS protection) uses the application/x-amz-json-1.1 protocol. Operations are identified by the X-Amz-Target header with the prefix AWSShield_20160616.."
+section: "Service Reference"
+tags:
+  - aws
+  - docs
+  - services
+  - shield
+---
+
 # Shield — AWS Shield
 
 > AWS docs: https://docs.aws.amazon.com/waf/latest/DDOSAPIReference/Welcome.html

@@ -45,6 +45,8 @@ export interface SearchContext {
   queryClient: QueryClient
   /** Currently configured emulator endpoint — needed for cache key lookups. */
   endpoint: EmulatorEndpoint
+  /** Aborts stale searches while the user continues typing. */
+  signal?: AbortSignal
 }
 
 export interface SearchContributor {

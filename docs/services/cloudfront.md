@@ -1,3 +1,14 @@
+---
+title: "CloudFront — Amazon CloudFront"
+description: "CloudFront uses a REST API with XML request/response bodies. All endpoints use the /2020-05-31 path prefix."
+section: "Service Reference"
+tags:
+  - amazon
+  - cloudfront
+  - docs
+  - services
+---
+
 # CloudFront — Amazon CloudFront
 
 > AWS docs: https://docs.aws.amazon.com/cloudfront/latest/APIReference/Welcome.html

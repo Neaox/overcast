@@ -1,3 +1,16 @@
+---
+title: "IAM — Identity and Access Management"
+description: "IAM uses the AWS Query protocol (POST / with form-encoded body). Actions are dispatched by the Action parameter. Overcast emulates IAM resource management (users, roles, groups,..."
+section: "Service Reference"
+tags:
+  - access
+  - docs
+  - iam
+  - identity
+  - management
+  - services
+---
+
 # IAM — Identity and Access Management
 
 > AWS docs: [IAM API Reference](https://docs.aws.amazon.com/IAM/latest/APIReference/Welcome.html)

@@ -1,3 +1,14 @@
+---
+title: "Performance baselines"
+description: "Frozen go test -bench snapshots committed at the start of each phase of the Smithy wire-protocol plan. Subsequent PRs compare against these via benchstat."
+section: "Performance"
+tags:
+  - baselines
+  - docs
+  - perf
+  - performance
+---
+
 # Performance baselines
 
 Frozen `go test -bench` snapshots committed at the start of each phase

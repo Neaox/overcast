@@ -1,3 +1,14 @@
+---
+title: "Wire Protocols"
+description: "Describes the Smithy-aligned wire protocols Overcast supports, how they are detected, and how they are added to a service."
+section: "Getting Started"
+tags:
+  - docs
+  - protocols
+  - smithy
+  - wire
+---
+
 # Wire Protocols
 
 > Describes the Smithy-aligned wire protocols Overcast supports, how they are

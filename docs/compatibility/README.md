@@ -1,3 +1,14 @@
+---
+title: "AWS Compatibility Review"
+description: "This directory tracks Overcast service fidelity against AWS documentation. It exists so compatibility reviews can resume across sessions and agents without relying on conversation..."
+section: "Compatibility"
+tags:
+  - aws
+  - compatibility
+  - docs
+  - review
+---
+
 # AWS Compatibility Review
 
 This directory tracks Overcast service fidelity against AWS documentation. It exists so compatibility reviews can resume across sessions and agents without relying on conversation history.

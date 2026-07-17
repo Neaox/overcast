@@ -1,3 +1,17 @@
+---
+title: "AppConfigData — AWS AppConfig Data Plane"
+description: "AWS AppConfigData is the **runtime data plane** for AppConfig. Applications use it to retrieve the latest deployed configuration content via a poll-based session model. Routes are..."
+section: "Service Reference"
+tags:
+  - appconfig
+  - appconfigdata
+  - aws
+  - data
+  - docs
+  - plane
+  - services
+---
+
 # AppConfigData — AWS AppConfig Data Plane
 
 > AWS docs: https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/

@@ -1,3 +1,15 @@
+---
+title: "Transfer Family — AWS Transfer Family"
+description: "Metadata-only AWS Transfer Family implementation."
+section: "Service Reference"
+tags:
+  - aws
+  - docs
+  - family
+  - services
+  - transfer
+---
+
 # Transfer Family — AWS Transfer Family
 
 > AWS docs: https://docs.aws.amazon.com/transfer/latest/userguide/API_Reference.html

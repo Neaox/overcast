@@ -1,3 +1,15 @@
+---
+title: "OpenSearch — Amazon OpenSearch Service"
+description: "Amazon OpenSearch Service uses the REST JSON protocol. Routes are served under the /_opensearch/ path prefix."
+section: "Service Reference"
+tags:
+  - amazon
+  - docs
+  - opensearch
+  - service
+  - services
+---
+
 # OpenSearch — Amazon OpenSearch Service
 
 > AWS docs: https://docs.aws.amazon.com/opensearch-service/latest/APIReference/

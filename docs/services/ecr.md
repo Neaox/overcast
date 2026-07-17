@@ -1,3 +1,16 @@
+---
+title: "ECR — Elastic Container Registry"
+description: "Overcast emulates the ECR control-plane API (AmazonEC2ContainerRegistry_V20150921.*). All operations use AWS JSON 1.1 over HTTPS, dispatched via X-Amz-Target. RPC v2 CBOR is also..."
+section: "Service Reference"
+tags:
+  - container
+  - docs
+  - ecr
+  - elastic
+  - registry
+  - services
+---
+
 # ECR — Elastic Container Registry
 
 Overcast emulates the ECR control-plane API (`AmazonEC2ContainerRegistry_V20150921.*`).

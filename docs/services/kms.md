@@ -1,3 +1,16 @@
+---
+title: "KMS — Key Management Service"
+description: "KMS accepts AWS JSON 1.1 requests at POST / with X-Amz-Target: TrentService.\u003cOperationName\u003e and Smithy RPC v2 CBOR requests at /service/kms/operation/\u003cOperationName\u003e with..."
+section: "Service Reference"
+tags:
+  - docs
+  - key
+  - kms
+  - management
+  - service
+  - services
+---
+
 # KMS — Key Management Service
 
 > AWS docs: https://docs.aws.amazon.com/kms/latest/APIReference/Welcome.html
