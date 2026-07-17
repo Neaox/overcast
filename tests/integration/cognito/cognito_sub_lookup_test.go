@@ -167,3 +167,41 @@ func TestAdminDisableEnableUser_plainPool_subUsername(t *testing.T) {
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
 }
+
+func TestAdminConfirmSignUp_plainPool_subUsername(t *testing.T) {
+	// Given: a plain username pool user signed up with a sub attribute.
+	srv := helpers.NewTestServer(t)
+	poolID := createPool(t, srv, "p")
+	clientID := createClient(t, srv, poolID, "app")
+	resp := cognitoCall(t, srv, "SignUp", map[string]any{
+		"ClientId": clientID,
+		"Username": "dave",
+		"Password": "DavePass1!",
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var signUp struct {
+		UserSub string `json:"UserSub"`
+	}
+	helpers.DecodeJSON(t, resp, &signUp)
+	resp.Body.Close()
+
+	// When: AdminConfirmSignUp is called with sub as Username.
+	resp = cognitoCall(t, srv, "AdminConfirmSignUp", map[string]any{
+		"UserPoolId": poolID,
+		"Username":   signUp.UserSub,
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: the stored user is confirmed and can authenticate.
+	resp = cognitoCall(t, srv, "InitiateAuth", map[string]any{
+		"ClientId": clientID,
+		"AuthFlow": "USER_PASSWORD_AUTH",
+		"AuthParameters": map[string]string{
+			"USERNAME": "dave",
+			"PASSWORD": "DavePass1!",
+		},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
