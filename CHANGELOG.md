@@ -62,6 +62,8 @@ need it than accidentally ship a breaking change as a patch.
        binary packaging, release process, or user-facing docs.
 -->
 
+## [0.0.1-alpha.15] - 2026-07-17
+
 ### Fixed
 
 - **SQS** — FIFO `ReceiveMessage` retries with the same `ReceiveRequestAttemptId` now return the same in-flight messages and receipt handles instead of returning an empty response, invalid attempt IDs are rejected with `InvalidParameterValue`, `CreateQueue`/`SetQueueAttributes` reject invalid `ReceiveMessageWaitTimeSeconds` queue defaults instead of persisting malformed or out-of-range values, and redrive policies now move messages to a DLQ only after the receive count exceeds `maxReceiveCount`.
