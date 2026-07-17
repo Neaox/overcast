@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -35,22 +37,52 @@ const (
 	nsRules      = "eb:rules"
 	nsTags       = "eb:tags"
 	nsTargets    = "eb:targets"
+	nsLastFire   = "eb:last-fire"
+	nsNextFire   = "eb:next-fire"
+	engineTick   = time.Second
 )
 
 // Service implements router.Service and router.TargetDispatcher for EventBridge.
 type Service struct {
 	cfg     *config.Config
 	store   state.Store
+	clk     clock.Clock
 	log     *serviceutil.ServiceLogger
 	bus     *events.Bus
+	router  http.Handler
 	typedOp map[string]op.Operation
+
+	startOnce sync.Once
+	stopOnce  sync.Once
+	stopCh    chan struct{}
+	wg        sync.WaitGroup
 }
 
 // New returns a configured EventBridge Service.
-func New(cfg *config.Config, store state.Store, logger *zap.Logger, _ clock.Clock) *Service {
-	s := &Service{cfg: cfg, store: store, log: serviceutil.NewServiceLogger(logger, serviceName)}
+func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Clock) *Service {
+	s := &Service{cfg: cfg, store: store, clk: clk, log: serviceutil.NewServiceLogger(logger, serviceName), stopCh: make(chan struct{})}
 	s.typedOp = s.typedOps()
 	return s
+}
+
+// InitRouter wires the root router for same-process target delivery.
+func (s *Service) InitRouter(router http.Handler) {
+	s.router = router
+	s.startEngine()
+}
+
+// Stop terminates the scheduled-rule engine.
+func (s *Service) Stop(ctx context.Context) {
+	s.stopOnce.Do(func() { close(s.stopCh) })
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
 }
 
 // InitBus wires the event bus for event bus/rule lifecycle events.
@@ -160,13 +192,20 @@ type ebRule struct {
 	EventBusName string `json:"EventBusName" cbor:"EventBusName"`
 	State        string `json:"State" cbor:"State"`
 	Description  string `json:"Description" cbor:"Description"`
+	RoleARN      string `json:"RoleArn,omitempty" cbor:"RoleArn,omitempty"`
 	EventPattern string `json:"EventPattern" cbor:"EventPattern"`
 	ScheduleExpr string `json:"ScheduleExpression" cbor:"ScheduleExpression"`
 }
 
 type ebTarget struct {
-	ID  string `json:"Id" cbor:"Id"`
-	ARN string `json:"Arn" cbor:"Arn"`
+	ID          string         `json:"Id" cbor:"Id"`
+	ARN         string         `json:"Arn" cbor:"Arn"`
+	RoleARN     string         `json:"RoleArn,omitempty" cbor:"RoleArn,omitempty"`
+	Input       string         `json:"Input,omitempty" cbor:"Input,omitempty"`
+	InputPath   string         `json:"InputPath,omitempty" cbor:"InputPath,omitempty"`
+	ECSParams   map[string]any `json:"EcsParameters,omitempty" cbor:"EcsParameters,omitempty"`
+	RetryPolicy map[string]any `json:"RetryPolicy,omitempty" cbor:"RetryPolicy,omitempty"`
+	DLQConfig   map[string]any `json:"DeadLetterConfig,omitempty" cbor:"DeadLetterConfig,omitempty"`
 }
 
 func (s *Service) createEventBus(w http.ResponseWriter, r *http.Request) {
@@ -290,6 +329,7 @@ func (s *Service) putRule(w http.ResponseWriter, r *http.Request) {
 		EventBusName string `json:"EventBusName"`
 		State        string `json:"State"`
 		Description  string `json:"Description"`
+		RoleARN      string `json:"RoleArn"`
 		EventPattern string `json:"EventPattern"`
 		ScheduleExpr string `json:"ScheduleExpression"`
 	}
@@ -302,6 +342,12 @@ func (s *Service) putRule(w http.ResponseWriter, r *http.Request) {
 	if req.State == "" {
 		req.State = "ENABLED"
 	}
+	if req.ScheduleExpr != "" {
+		if _, err := nextRuleFire(req.ScheduleExpr, s.clk.Now(), s.clk.Now()); err != nil {
+			protocol.WriteJSONError(w, r, scheduleValidationError(err))
+			return
+		}
+	}
 	arn := protocol.ARN(s.region(r.Context()), s.cfg.AccountID, "events", "rule/"+req.EventBusName+"/"+req.Name)
 	rule := ebRule{
 		Name:         req.Name,
@@ -309,6 +355,7 @@ func (s *Service) putRule(w http.ResponseWriter, r *http.Request) {
 		EventBusName: req.EventBusName,
 		State:        req.State,
 		Description:  req.Description,
+		RoleARN:      req.RoleARN,
 		EventPattern: req.EventPattern,
 		ScheduleExpr: req.ScheduleExpr,
 	}
@@ -317,6 +364,11 @@ func (s *Service) putRule(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.Set(r.Context(), nsRules, key, string(b)); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
+	}
+	if req.ScheduleExpr != "" {
+		now := s.clk.Now()
+		s.setLastFire(r.Context(), key, now)
+		s.setNextFire(r.Context(), key, req.ScheduleExpr, now, now)
 	}
 	s.publish(r, events.EventBridgeRuleCreated, events.ResourcePayload{Name: req.Name})
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"RuleArn": arn})
@@ -508,8 +560,10 @@ func (s *Service) deleteRule(w http.ResponseWriter, r *http.Request) {
 		req.EventBusName = "default"
 	}
 	key := serviceutil.RegionKey(s.region(r.Context()), req.EventBusName+"/"+req.Name)
-	s.store.Delete(r.Context(), nsRules, key)   //nolint:errcheck
-	s.store.Delete(r.Context(), nsTargets, key) //nolint:errcheck
+	s.store.Delete(r.Context(), nsRules, key)    //nolint:errcheck
+	s.store.Delete(r.Context(), nsTargets, key)  //nolint:errcheck
+	s.store.Delete(r.Context(), nsLastFire, key) //nolint:errcheck
+	s.store.Delete(r.Context(), nsNextFire, key) //nolint:errcheck
 	s.publish(r, events.EventBridgeRuleDeleted, events.ResourcePayload{Name: req.Name})
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
 }
@@ -522,10 +576,10 @@ func (s *Service) putEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	results := make([]map[string]any, 0, len(req.Entries))
-	for range req.Entries {
-		results = append(results, map[string]any{
-			"EventId": uuid.New().String(),
-		})
+	for _, entry := range req.Entries {
+		eventID := uuid.New().String()
+		results = append(results, map[string]any{"EventId": eventID})
+		s.deliverEvent(r.Context(), eventID, entry)
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"FailedEntryCount": 0,

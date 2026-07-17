@@ -460,6 +460,7 @@ func (s *ec2Store) deleteKeyPair(ctx context.Context, name string) *protocol.AWS
 type Route struct {
 	DestinationCidrBlock string `json:"DestinationCidrBlock"`
 	GatewayID            string `json:"GatewayId,omitempty"`
+	NatGatewayID         string `json:"NatGatewayId,omitempty"`
 	Origin               string `json:"Origin"` // CreateRouteTable | CreateRoute
 }
 

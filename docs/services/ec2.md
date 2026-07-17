@@ -81,6 +81,10 @@ but several aspects differ materially from real AWS networking:
   responses, but they do not affect Docker packet routing. The `CreateRoute`,
   `AssociateRouteTable`, and `DisassociateRouteTable` operations are recorded but have no
   effect on traffic.
+- **CDK subnet lookup metadata.** CloudFormation-created VPC resources preserve EC2 tags,
+  `DescribeSubnets` returns subnet `tagSet`, and `DescribeRouteTables` returns NAT gateway
+  routes so CDK can classify private subnet groups during VPC lookups. This metadata does
+  not imply NAT data-plane routing.
 
 ### Security groups
 
@@ -301,7 +305,7 @@ web UI surfacing is planned alongside the future strategies — see
 | `CreateKeyPair`                 | ✅ Supported | Generates dummy fingerprint and key material                                                              | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateKeyPair.html)                 |
 | `CreateNatGateway`              | ✅ Supported | Requires subnet and EIP; supports TagSpecification                                                        | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateNatGateway.html)              |
 | `CreateNetworkInterface`        | ✅ Supported | Requires subnet; assigns synthetic private IP                                                             | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateNetworkInterface.html)        |
-| `CreateRoute`                   | ✅ Supported | DestinationCidrBlock + GatewayId                                                                          | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateRoute.html)                   |
+| `CreateRoute`                   | ✅ Supported | DestinationCidrBlock + GatewayId or NatGatewayId                                                          | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateRoute.html)                   |
 | `CreateRouteTable`              | ✅ Supported | VPC must exist; auto-creates local route                                                                  | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateRouteTable.html)              |
 | `CreateSecurityGroup`           | ✅ Supported | Default egress allow-all rule added on create                                                             | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateSecurityGroup.html)           |
 | `CreateSubnet`                  | ✅ Supported | VPC must exist; honors AvailabilityZone; defaults to region+"a"                                           | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateSubnet.html)                  |
@@ -335,9 +339,9 @@ web UI surfacing is planned alongside the future strategies — see
 | `DescribeNatGateways`           | ✅ Supported | Filter by nat-gateway-id, vpc-id, subnet-id, state                                                        | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeNatGateways.html)           |
 | `DescribeNetworkInterfaces`     | ✅ Supported | Filter by network-interface-id, subnet-id                                                                 | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeNetworkInterfaces.html)     |
 | `DescribeRegions`               | ✅ Supported | Hardcoded list of 8 regions                                                                               | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeRegions.html)               |
-| `DescribeRouteTables`           | ✅ Supported | Filter by route-table-id, vpc-id                                                                          | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeRouteTables.html)           |
+| `DescribeRouteTables`           | ✅ Supported | Filter by route-table-id, vpc-id; includes NAT gateway routes                                             | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeRouteTables.html)           |
 | `DescribeSecurityGroups`        | ✅ Supported | Filter by group-id, group-name, vpc-id                                                                    | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeSecurityGroups.html)        |
-| `DescribeSubnets`               | ✅ Supported | Filter by subnet-id, vpc-id, availability-zone                                                            | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeSubnets.html)               |
+| `DescribeSubnets`               | ✅ Supported | Filter by subnet-id, vpc-id, availability-zone; includes tagSet for CDK subnet groups                     | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeSubnets.html)               |
 | `DescribeTags`                  | ✅ Supported | Filter by resource-id, resource-type, key                                                                 | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeTags.html)                  |
 | `DescribeVpcAttribute`          | ✅ Supported | Returns enableDnsSupport or enableDnsHostnames                                                            | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVpcAttribute.html)          |
 | `DescribeVpcEndpoints`          | ✅ Supported | Filter by VpcEndpointId.N, vpc-id filter, service-name filter                                             | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVpcEndpoints.html)          |

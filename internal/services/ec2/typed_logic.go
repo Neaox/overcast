@@ -109,6 +109,7 @@ type createRouteReq struct {
 	RouteTableID         string `json:"RouteTableId"`
 	DestinationCidrBlock string `json:"DestinationCidrBlock"`
 	GatewayID            string `json:"GatewayId"`
+	NatGatewayID         string `json:"NatGatewayId"`
 }
 
 type deleteRouteReq struct {
@@ -158,7 +159,15 @@ type deleteVPCPeeringReq struct {
 	VpcPeeringConnectionID string `json:"VpcPeeringConnectionId"`
 }
 
-type createTagsReq struct{}
+type createTagsReq struct {
+	ResourceIDs []string        `json:"ResourceId"`
+	Tags        []ec2TagRequest `json:"Tag"`
+}
+
+type ec2TagRequest struct {
+	Key   string `json:"Key"`
+	Value string `json:"Value"`
+}
 
 type deleteTagsReq struct{}
 
@@ -414,14 +423,15 @@ type deleteSubnetResp struct {
 }
 
 type typedSubnetXML struct {
-	SubnetID                string `xml:"subnetId"`
-	State                   string `xml:"state"`
-	VpcID                   string `xml:"vpcId"`
-	CidrBlock               string `xml:"cidrBlock"`
-	AvailabilityZone        string `xml:"availabilityZone"`
-	AvailableIPAddressCount int    `xml:"availableIpAddressCount"`
-	DefaultForAz            bool   `xml:"defaultForAz"`
-	MapPublicIPOnLaunch     bool   `xml:"mapPublicIpOnLaunch"`
+	SubnetID                string        `xml:"subnetId"`
+	State                   string        `xml:"state"`
+	VpcID                   string        `xml:"vpcId"`
+	CidrBlock               string        `xml:"cidrBlock"`
+	AvailabilityZone        string        `xml:"availabilityZone"`
+	AvailableIPAddressCount int           `xml:"availableIpAddressCount"`
+	DefaultForAz            bool          `xml:"defaultForAz"`
+	MapPublicIPOnLaunch     bool          `xml:"mapPublicIpOnLaunch"`
+	TagSet                  []typedTagXML `xml:"tagSet>item,omitempty"`
 }
 
 type createSGResp struct {
@@ -607,6 +617,7 @@ type typedRouteTableXML struct {
 type typedRouteXML struct {
 	DestinationCidrBlock string `xml:"destinationCidrBlock"`
 	GatewayID            string `xml:"gatewayId,omitempty"`
+	NatGatewayID         string `xml:"natGatewayId,omitempty"`
 	Origin               string `xml:"origin"`
 	State                string `xml:"state"`
 }
@@ -1401,6 +1412,7 @@ func (h *Handler) describeSubnetsTyped(ctx context.Context, _ *describeSubnetsRe
 	}
 	items := make([]typedSubnetXML, 0, len(all))
 	for _, sub := range all {
+		tags, _ := h.store.getTags(ctx, sub.SubnetID)
 		items = append(items, typedSubnetXML{
 			SubnetID:                sub.SubnetID,
 			State:                   sub.State,
@@ -1410,6 +1422,7 @@ func (h *Handler) describeSubnetsTyped(ctx context.Context, _ *describeSubnetsRe
 			AvailableIPAddressCount: 251,
 			DefaultForAz:            false,
 			MapPublicIPOnLaunch:     false,
+			TagSet:                  typedTags(tags),
 		})
 	}
 	return &describeSubnetsResp{
@@ -1681,6 +1694,7 @@ func (h *Handler) createRouteTyped(ctx context.Context, req *createRouteReq) (*c
 	rt.Routes = append(rt.Routes, Route{
 		DestinationCidrBlock: req.DestinationCidrBlock,
 		GatewayID:            req.GatewayID,
+		NatGatewayID:         req.NatGatewayID,
 		Origin:               "CreateRoute",
 	})
 	if aerr := h.store.putRouteTable(ctx, rt); aerr != nil {
@@ -1989,7 +2003,28 @@ func (h *Handler) deleteVPCPeeringTyped(ctx context.Context, req *deleteVPCPeeri
 	}, nil
 }
 
-func (h *Handler) createTagsTyped(ctx context.Context, _ *createTagsReq) (*createTagsResp, *protocol.AWSError) {
+func (h *Handler) createTagsTyped(ctx context.Context, req *createTagsReq) (*createTagsResp, *protocol.AWSError) {
+	if len(req.ResourceIDs) == 0 {
+		return nil, ec2err("MissingParameter", "ResourceId is required", http.StatusBadRequest)
+	}
+	tags := make(map[string]string, len(req.Tags))
+	for _, tag := range req.Tags {
+		if tag.Key != "" {
+			tags[tag.Key] = tag.Value
+		}
+	}
+	for _, rid := range req.ResourceIDs {
+		existing, _ := h.store.getTags(ctx, rid)
+		if existing == nil {
+			existing = make(map[string]string, len(tags))
+		}
+		for k, v := range tags {
+			existing[k] = v
+		}
+		if aerr := h.store.putTags(ctx, rid, existing); aerr != nil {
+			return nil, aerr
+		}
+	}
 	return &createTagsResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
@@ -2605,6 +2640,7 @@ func routeTableToTypedXML(rt *RouteTable) typedRouteTableXML {
 		routes = append(routes, typedRouteXML{
 			DestinationCidrBlock: r.DestinationCidrBlock,
 			GatewayID:            r.GatewayID,
+			NatGatewayID:         r.NatGatewayID,
 			Origin:               r.Origin,
 			State:                "active",
 		})
@@ -2619,6 +2655,17 @@ func routeTableToTypedXML(rt *RouteTable) typedRouteTableXML {
 		RouteSet:       routes,
 		AssociationSet: assocs,
 	}
+}
+
+func typedTags(tags map[string]string) []typedTagXML {
+	if len(tags) == 0 {
+		return nil
+	}
+	out := make([]typedTagXML, 0, len(tags))
+	for k, v := range tags {
+		out = append(out, typedTagXML{Key: k, Value: v})
+	}
+	return out
 }
 
 func igwToTypedXML(igw *InternetGateway) typedIGWXML {

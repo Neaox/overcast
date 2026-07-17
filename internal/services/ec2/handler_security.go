@@ -444,6 +444,7 @@ func (h *Handler) DescribeSubnets(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		tags, _ := h.store.getTags(r.Context(), sub.SubnetID)
 		items = append(items, xmlSubnet{
 			SubnetID:                sub.SubnetID,
 			State:                   sub.State,
@@ -453,6 +454,7 @@ func (h *Handler) DescribeSubnets(w http.ResponseWriter, r *http.Request) {
 			AvailableIPAddressCount: 251,
 			DefaultForAz:            false,
 			MapPublicIPOnLaunch:     false,
+			TagSet:                  typedTags(tags),
 		})
 	}
 

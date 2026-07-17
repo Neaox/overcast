@@ -5,22 +5,27 @@
 EventBridge accepts AWS JSON 1.1 via `X-Amz-Target: AWSEvents.<operation>`.
 It also accepts Smithy RPC v2 CBOR at `/service/EventBridge/operation/<operation>`
 with `Smithy-Protocol: rpc-v2-cbor` and `Content-Type: application/cbor`.
-Overcast implements event buses, rules, targets, tagging, and event ingestion.
+Overcast implements event buses, rules, targets, tagging, event ingestion, and
+partial same-process target delivery.
 
 > [!WARNING]
-> **Emulation tier: Inert** — resources are created and stored, but events are
-> **not matched against rules** and targets are **never invoked**. `PutEvents` accepts
-> requests but no downstream processing occurs.
+> **Emulation tier: Partial** — EventBridge matches common event patterns and invokes
+> SQS targets for `PutEvents`; scheduled rules can invoke ECS/Fargate `RunTask` targets.
+> Other target types and advanced pattern operators are still incomplete.
 
 ---
 
 ## Notes
 
-- **No event routing.** `PutEvents` accepts and stores events but does not evaluate rules or
-  deliver to targets. Events are acknowledged with generated event IDs.
+- **Partial event routing.** `PutEvents` evaluates exact-match rule patterns and delivers
+  matching events to SQS targets. Unsupported target types are skipped and logged.
+- **Scheduled ECS targets.** Rate and basic AWS cron expressions are evaluated by an
+  in-process clock-driven engine. ECS/Fargate targets call ECS `RunTask` with the
+  configured target parameters.
 - **Synthetic default bus.** `DescribeEventBus` returns a synthetic "default" bus even if one
   has not been explicitly created.
-- **CDK compatible.** Sufficient for CDK deployments that create buses, rules, and targets.
+- **CDK compatible management plane.** Sufficient for CDK deployments that create buses,
+  rules, and targets, including scheduled ECS/Fargate task target metadata.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -63,17 +68,17 @@ Overcast implements event buses, rules, targets, tagging, and event ingestion.
 
 ### Targets
 
-| Operation           | Status       | Notes                       | AWS Docs                                                                                       |
-| ------------------- | ------------ | --------------------------- | ---------------------------------------------------------------------------------------------- |
-| `PutTargets`        | ✅ Supported | Adds targets to a rule      | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutTargets.html)        |
-| `ListTargetsByRule` | ✅ Supported | Lists targets for a rule    | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_ListTargetsByRule.html) |
-| `RemoveTargets`     | ✅ Supported | Removes targets from a rule | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_RemoveTargets.html)     |
+| Operation           | Status       | Notes                                                              | AWS Docs                                                                                       |
+| ------------------- | ------------ | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `PutTargets`        | ✅ Supported | Adds targets; supports SQS delivery and scheduled ECS task targets | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutTargets.html)        |
+| `ListTargetsByRule` | ✅ Supported | Lists targets including ECS target parameters                      | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_ListTargetsByRule.html) |
+| `RemoveTargets`     | ✅ Supported | Removes targets from a rule                                        | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_RemoveTargets.html)     |
 
 ### Events
 
-| Operation   | Status       | Notes                                          | AWS Docs                                                                               |
-| ----------- | ------------ | ---------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `PutEvents` | ✅ Supported | Accepts events; returns event IDs (no routing) | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEvents.html) |
+| Operation   | Status       | Notes                                                     | AWS Docs                                                                               |
+| ----------- | ------------ | --------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `PutEvents` | ✅ Supported | Accepts events and delivers matching rules to SQS targets | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEvents.html) |
 
 ### Tags
 
