@@ -64,7 +64,7 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
-- **SQS** — FIFO `ReceiveMessage` retries with the same `ReceiveRequestAttemptId` now return the same in-flight messages and receipt handles instead of returning an empty response, invalid attempt IDs are rejected with `InvalidParameterValue`, and `CreateQueue`/`SetQueueAttributes` reject invalid `ReceiveMessageWaitTimeSeconds` queue defaults instead of persisting malformed or out-of-range values.
+- **SQS** — FIFO `ReceiveMessage` retries with the same `ReceiveRequestAttemptId` now return the same in-flight messages and receipt handles instead of returning an empty response, invalid attempt IDs are rejected with `InvalidParameterValue`, `CreateQueue`/`SetQueueAttributes` reject invalid `ReceiveMessageWaitTimeSeconds` queue defaults instead of persisting malformed or out-of-range values, and redrive policies now move messages to a DLQ only after the receive count exceeds `maxReceiveCount`.
 - **Web UI** — CloudWatch Logs viewers now keep formatted log rows stable while scrolling, support separate compact syntax highlighting and pretty-printing, add group-wide interleaved log views with plaintext/table toggles and live tailing, and avoid duplicated system map peek log lines; S3 object inspection now previews common images and text-like objects with JSON/XML/HTML formatting and syntax highlighting.
 ## [0.0.1-alpha.14] - 2026-07-14
 

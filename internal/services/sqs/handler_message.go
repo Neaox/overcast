@@ -1031,9 +1031,9 @@ func (h *Handler) selectVisibleMessages(ctx context.Context, queueName string, q
 			msg.Attributes["ApproximateFirstReceiveTimestamp"] = strconv.FormatInt(h.clk.Now().UnixMilli(), 10)
 		}
 
-		// DLQ check: if the queue has a redrive policy and this message has been
-		// received too many times, move it to the dead letter queue unconditionally.
-		if rp != nil && msg.ApproximateReceiveCount >= rp.MaxReceiveCount {
+		// DLQ check: AWS moves a message after its receive count exceeds
+		// maxReceiveCount, so the maxReceiveCount-th receive is still delivered.
+		if rp != nil && msg.ApproximateReceiveCount > rp.MaxReceiveCount {
 			if aerr := h.moveToDLQ(ctx, queueName, q, rp, msg); aerr != nil {
 				return nil, aerr
 			}
