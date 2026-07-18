@@ -65,6 +65,7 @@ need it than accidentally ship a breaking change as a patch.
 ### Fixed
 
 - **Startup metrics** — `startup_duration_ms` now measures Go-side startup work from the earliest Overcast Go timestamp to readiness, while new `pre_init_ms` and an environment timeline phase separately report OS loader, antivirus, container init, entrypoint, and exec time.
+- **CloudFormation** — stack create/update/delete now wait briefly for fast provisioning before returning so SDK waiters can observe terminal status immediately, and executed change sets now advance to `EXECUTE_COMPLETE`/`EXECUTE_FAILED` instead of remaining `EXECUTE_IN_PROGRESS`.
 
 ## [0.0.1-alpha.15] - 2026-07-17
 

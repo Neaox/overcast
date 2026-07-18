@@ -91,6 +91,26 @@ func TestLoad_defaults(t *testing.T) {
 	if cfg.EnforceIAM {
 		t.Error("EnforceIAM: expected false by default")
 	}
+	if cfg.CFNSyncWait != time.Second {
+		t.Errorf("CFNSyncWait: expected 1s, got %v", cfg.CFNSyncWait)
+	}
+}
+
+func TestLoad_cfnSyncWaitMS(t *testing.T) {
+	// Given: OVERCAST_CFN_SYNC_WAIT_MS is set.
+	clearEnv(t)
+	t.Setenv("OVERCAST_CFN_SYNC_WAIT_MS", "250")
+
+	// When: we load config.
+	cfg, err := config.Load()
+
+	// Then: the CloudFormation sync wait budget is parsed as milliseconds.
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CFNSyncWait != 250*time.Millisecond {
+		t.Fatalf("CFNSyncWait = %v, want 250ms", cfg.CFNSyncWait)
+	}
 }
 
 func TestLoad_lambdaDockerMaxConcurrentStarts(t *testing.T) {

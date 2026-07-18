@@ -44,6 +44,8 @@ type provisioner struct {
 	ctx    context.Context
 }
 
+type stackCompletionFunc func(ctx context.Context, stack *Stack)
+
 func newProvisioner(cfg *config.Config, store *cfnStore, clk clock.Clock, log *serviceutil.ServiceLogger) *provisioner {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &provisioner{
@@ -98,15 +100,66 @@ func (p *provisioner) regionCtx(region string) context.Context {
 
 // ── Create stack (async) ───────────────────────────────────────────────────
 
-// createStack provisions all resources in a template asynchronously.
-// The stack is returned in CREATE_IN_PROGRESS; the caller should write the
-// response before the goroutine completes.
-func (p *provisioner) createStack(stack *Stack, tmpl *Template) {
+// createStack provisions all resources in a template asynchronously, but waits
+// briefly for fast stacks so SDK waiters can observe the terminal status on
+// their immediate first DescribeStacks call.
+func (p *provisioner) createStack(stack *Stack, tmpl *Template, onComplete stackCompletionFunc) {
+	done := make(chan struct{})
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
+		defer close(done)
 		p.provisionStackResources(stack, tmpl)
+		if onComplete != nil {
+			onComplete(p.regionCtx(stack.Region), stack)
+		}
 	}()
+	p.awaitBriefly(done)
+}
+
+func (p *provisioner) awaitBriefly(done <-chan struct{}) {
+	if p == nil || p.cfg == nil || p.cfg.CFNSyncWait <= 0 {
+		return
+	}
+	budget := p.cfg.CFNSyncWait
+	if budget <= 0 {
+		return
+	}
+	select {
+	case <-done:
+	case <-p.clk.After(budget):
+	}
+}
+
+func changeSetExecutionStatus(stackStatus string) string {
+	switch stackStatus {
+	case StatusCreateComplete, StatusUpdateComplete:
+		return ExecStatusExecuteComplete
+	case StatusCreateFailed, StatusUpdateFailed, StatusRollbackComplete, StatusRollbackFailed,
+		StatusUpdateRollbackComplete, StatusUpdateRollbackFailed:
+		return ExecStatusExecuteFailed
+	default:
+		return ExecStatusExecuteInProgress
+	}
+}
+
+func (p *provisioner) completeChangeSet(cs *ChangeSet) stackCompletionFunc {
+	if cs == nil {
+		return nil
+	}
+	return func(ctx context.Context, stack *Stack) {
+		status := changeSetExecutionStatus(stack.Status)
+		if status == ExecStatusExecuteInProgress {
+			return
+		}
+		cs.ExecutionStatus = status
+		if err := p.store.putChangeSet(ctx, cs); err != nil {
+			p.log.Warn("cfn: failed to persist changeset execution status",
+				zap.String("changeSet", cs.ChangeSetName),
+				zap.String("status", status),
+				zap.Error(err))
+		}
+	}
 }
 
 // provisionStackResources is the synchronous core of stack provisioning.
@@ -212,12 +265,18 @@ func (p *provisioner) provisionStackResources(stack *Stack, tmpl *Template) {
 
 // ── Update stack (async) ───────────────────────────────────────────────────
 
-func (p *provisioner) updateStack(stack *Stack, tmpl *Template) {
+func (p *provisioner) updateStack(stack *Stack, tmpl *Template, onComplete stackCompletionFunc) {
+	done := make(chan struct{})
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
+		defer close(done)
 		p.updateStackResources(stack, tmpl)
+		if onComplete != nil {
+			onComplete(p.regionCtx(stack.Region), stack)
+		}
 	}()
+	p.awaitBriefly(done)
 }
 
 func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
@@ -399,11 +458,14 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 // ── Delete stack (async) ───────────────────────────────────────────────────
 
 func (p *provisioner) deleteStack(stack *Stack) {
+	done := make(chan struct{})
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
+		defer close(done)
 		p.deleteStackResources(stack)
 	}()
+	p.awaitBriefly(done)
 }
 
 // deleteStackResources is the synchronous core of stack deletion.

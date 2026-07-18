@@ -6,6 +6,12 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
+
+	benclock "github.com/benbjohnson/clock"
+
+	"github.com/Neaox/overcast/internal/clock"
+	"github.com/Neaox/overcast/internal/config"
 )
 
 // TestTopoSortImplicitDeps verifies that Ref, Fn::GetAtt, and Fn::Sub inside
@@ -234,6 +240,122 @@ func assertBefore(t *testing.T, order []string, a, b string) {
 	}
 	if posA >= posB {
 		t.Fatalf("expected %q (pos %d) before %q (pos %d) in %v", a, posA, b, posB, order)
+	}
+}
+
+func TestProvisionerAwaitBriefly_done(t *testing.T) {
+	// Given: a provisioner with a one-second synchronous wait budget
+	clk := clock.NewMock()
+	p := &provisioner{cfg: &config.Config{CFNSyncWait: time.Second}, clk: clk}
+	done := make(chan struct{})
+	close(done)
+
+	// When: provisioning is already complete
+	returned := make(chan struct{})
+	go func() {
+		p.awaitBriefly(done)
+		close(returned)
+	}()
+
+	// Then: the wait returns without advancing the clock to the budget
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("awaitBriefly did not return after done closed")
+	}
+}
+
+func TestProvisionerAwaitBriefly_budget(t *testing.T) {
+	// Given: a provisioner with a one-second synchronous wait budget and pending work
+	clk := newControlledClock()
+	p := &provisioner{cfg: &config.Config{CFNSyncWait: time.Second}, clk: clk}
+	done := make(chan struct{})
+	returned := make(chan struct{})
+
+	// When: the wait starts and the budget elapses before provisioning completes
+	go func() {
+		p.awaitBriefly(done)
+		close(returned)
+	}()
+	if got := <-clk.afterCalled; got != time.Second {
+		t.Fatalf("After called with %v, want 1s", got)
+	}
+	clk.after <- time.Unix(1, 0)
+
+	// Then: the wait returns even though provisioning continues in the background
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("awaitBriefly did not return when budget elapsed")
+	}
+	select {
+	case <-done:
+		t.Fatal("test setup closed done unexpectedly")
+	default:
+	}
+}
+
+type controlledClock struct {
+	after       chan time.Time
+	afterCalled chan time.Duration
+}
+
+func newControlledClock() *controlledClock {
+	return &controlledClock{
+		after:       make(chan time.Time, 1),
+		afterCalled: make(chan time.Duration, 1),
+	}
+}
+
+func (c *controlledClock) After(d time.Duration) <-chan time.Time {
+	c.afterCalled <- d
+	return c.after
+}
+
+func (c *controlledClock) AfterFunc(time.Duration, func()) *benclock.Timer {
+	panic("AfterFunc not implemented")
+}
+
+func (c *controlledClock) Now() time.Time { return time.Unix(0, 0) }
+
+func (c *controlledClock) Since(t time.Time) time.Duration { return c.Now().Sub(t) }
+
+func (c *controlledClock) Until(t time.Time) time.Duration { return t.Sub(c.Now()) }
+
+func (c *controlledClock) Sleep(time.Duration) { panic("Sleep not implemented") }
+
+func (c *controlledClock) Tick(time.Duration) <-chan time.Time { panic("Tick not implemented") }
+
+func (c *controlledClock) Ticker(time.Duration) *benclock.Ticker { panic("Ticker not implemented") }
+
+func (c *controlledClock) Timer(time.Duration) *benclock.Timer { panic("Timer not implemented") }
+
+func (c *controlledClock) WithDeadline(parent context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
+	return context.WithDeadline(parent, deadline)
+}
+
+func (c *controlledClock) WithTimeout(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, timeout)
+}
+
+func TestProvisionerAwaitBriefly_disabled(t *testing.T) {
+	// Given: a provisioner with synchronous waiting disabled
+	clk := clock.NewMock()
+	p := &provisioner{cfg: &config.Config{CFNSyncWait: 0}, clk: clk}
+	done := make(chan struct{})
+	returned := make(chan struct{})
+
+	// When: provisioning has not completed
+	go func() {
+		p.awaitBriefly(done)
+		close(returned)
+	}()
+
+	// Then: the wait returns immediately without waiting for done
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("awaitBriefly did not return when disabled")
 	}
 }
 
