@@ -1,3 +1,14 @@
+---
+title: "Performance and memory guide"
+description: "Overcast aims to be fast and lean: sub-50ms startup, under 15 MiB at idle, and low per-request overhead. CI pipelines should not wait for the emulator."
+section: "Getting Started"
+tags:
+  - docs
+  - guide
+  - memory
+  - performance
+---
+
 # Performance and memory guide
 
 Overcast aims to be fast and lean: sub-50ms startup, under 15 MiB at idle,
@@ -44,6 +55,25 @@ endpoint (package-init `startTime` → end of `router.New()`). Numbers
 are best-of-5 cold runs (fresh `tmp` dir each iteration); warm-cache
 runs are 1–2 ms faster across the board and not reported.
 
+### Data dir placement — avoid host bind mounts on Docker Desktop
+
+SQLite (all persistent backends) fsyncs on every commit. When `/data`
+is a **bind mount from a Windows or macOS host path**, each fsync
+crosses Docker Desktop's file-sharing layer and costs orders of
+magnitude more than a native filesystem write. Measured 2026-07-19
+(Docker Desktop on Windows 11 / WSL2, hybrid backend, `/data` bound to
+an NTFS path): background flushes of **3–8 entries took 0.6–1.0 s**
+(`hybrid flush slow` warnings in the log; threshold 500 ms). The hybrid
+backend's flush is asynchronous — it steals the dirty map first, so
+requests are not blocked — but shutdown's final synchronous flush, lazy
+namespace loads, and the `persistent`/`wal` backends' commit path all
+pay this tax directly.
+
+If you see `hybrid flush slow` in the logs, move the data dir off the
+bind mount: use a **named Docker volume** for `/data` (data lives in the
+Docker Desktop VM's native filesystem) and, if you need the state on the
+host, export it explicitly instead of bind-mounting it.
+
 ---
 
 ## Documenting performance claims
@@ -69,12 +99,32 @@ For each claim, document at minimum:
 ### Current measurement methodology
 
 **Startup time (`startup_duration_ms`):**
-`var startTime = time.Now()` in `internal/router/debug.go` (package-level
-init) → `readyTime = time.Now()` at the end of `router.New()` in
-`internal/router/router.go`. This measures the wall-clock time to construct
-all services and wire all routes. It **excludes** background work that is
-deferred past `readyTime`: SQLite schema migration (runs in a goroutine on
-all SQLite-backed stores — `persistent`, `wal`, and `hybrid`; first
+`var startTime = processStartTime()` in `internal/router/debug.go` →
+`readyTime = time.Now()` at the end of `router.New()` in
+`internal/router/router.go`. The anchor is the **OS-reported process
+creation time** (`GetProcessTimes` on Windows, `/proc` on Linux, `sysctl`
+on macOS), so the reported number **includes time overcast's code never
+ran**: the OS loader, antivirus scanning of the binary, and — in Docker,
+where the entrypoints `exec` overcast as PID 1 — the container runtime's
+namespace/cgroup/mount setup and the shell entrypoint itself.
+
+Measured 2026-07-19 (Docker Desktop on Windows 11 / WSL2, `overcast:dev`
+Alpine image, Go 1.24, hybrid backend, 15 services; per-package init via
+`GODEBUG=inittrace=1`, fork-vs-PID-1 isolation via probe containers): the
+Go-side portion is ~45 ms of package init (largest single `init()`:
+0.5 ms) plus `router.New()`, while the pre-Go portion adds **0.5–1.2 s**
+for a bare `docker run` and **~2.5 s** for a compose container with two
+networks and two bind mounts. Natively the pre-Go portion is the loader
+plus AV; both are environment cost, not overcast code. The split/fix is
+planned in [docs/plans/startup-metrics-honesty.md](plans/startup-metrics-honesty.md).
+Until it lands, treat `startup_duration_ms` from `/_metrics` as
+"process spawn → ready", not "overcast code time"; the per-backend table
+above was measured with the older package-init anchor and reflects
+Go-side work only.
+
+The metric **excludes** background work that is deferred past
+`readyTime`: SQLite schema migration (runs in a goroutine on all
+SQLite-backed stores — `persistent`, `wal`, and `hybrid`; first
 DB-touching request blocks until it finishes), DynamoDB SQLite DDL (lazy,
 runs on first use), SMTP mock server bind (goroutine), HybridStore
 SQLite→memory seeding (goroutine), ECS built-in capacity-provider seeding
@@ -285,13 +335,65 @@ Anything in the foreground budget that is unexpectedly large points to
 one of the hard-rule violations above. Background phases (suffixed
 `(background)`) do not block readiness — they're informational.
 
+**Caveat — the first phase lies in Docker.** The phase labeled
+`Go runtime + package init` is measured from the OS process creation
+time, and the Docker entrypoints `exec` overcast as PID 1 — so in a
+container this phase absorbs the container runtime's setup (namespaces,
+cgroups, bind mounts) and the shell entrypoint, which dominate it.
+Measured 2026-07-19 (`overcast:dev` under Docker Desktop / WSL2): actual
+Go package init is ~45 ms total (`GODEBUG=inittrace=1`; fork→`runServe`
+of the same binary inside the container: 10 ms), while this phase
+reported 0.57–2.52 s depending on container setup and cache warmth. On
+native binaries the phase instead includes the OS loader and antivirus
+scanning of the exe. If this phase is large, look at the environment,
+not at Go code. Fix planned in
+[docs/plans/startup-metrics-honesty.md](plans/startup-metrics-honesty.md).
+
 A common smell: the foreground total is small but a service's first
 real request is slow because its `sync.Once` `init()` is doing the work
 the constructor used to do. That's correct — the cost moved off the
 critical path. If first-request latency matters for that service, warm
 it from a goroutine instead.
 
-## Memory leaks in Go — what to watch for
+## Client-perceived latency — where "overcast feels slow" actually goes
+
+Fast request handling does not guarantee a fast-*feeling* workflow.
+When a tool like the CDK drives overcast, most of the wall-clock time
+the user experiences is spent in the client, not the emulator. Before
+optimising a service, establish which side owns the time — the request
+log (`OVERCAST_LOG_LEVEL=verbose`) with `docker logs --timestamps` shows
+every request's duration and, by omission, every gap where the emulator
+was idle.
+
+Worked example, measured 2026-07-19 (Docker Desktop on Windows 11 /
+WSL2, `overcast:dev`, hybrid backend, 15 services; a CDK v2
+bootstrap-and-deploy of four application stacks that took ~45 s
+wall-clock while every overcast response completed in <200 ms):
+
+| Segment                      | Wall time | Owner    | Notes                                                                 |
+| ---------------------------- | --------- | -------- | --------------------------------------------------------------------- |
+| CDK CLI (Node.js) startup    | ~5 s      | client   | before the first request reaches overcast                             |
+| Toolkit stack check/deploy   | ~5.4 s    | client   | dominated by CDK poll intervals; responses <200 ms                    |
+| `cdk synth`                  | ~8.4 s    | client   | zero requests hit the emulator during this gap                        |
+| 4 × app stack deploy         | ~21 s     | client   | ~5.1 s per stack = one SDK waiter `minDelay`; see below               |
+| Emulator processing (total)  | <2 s      | overcast | sum of all request durations across the entire window                 |
+
+**The SDK-waiter tax.** Stack provisioning is asynchronous: `CreateStack`
+/ `ExecuteChangeSet` return `*_IN_PROGRESS` and a goroutine provisions
+the resources — typically in milliseconds (probe: a 3-resource stack
+reached `CREATE_COMPLETE` **184 ms** after `CreateStack`, measured by
+polling `DescribeStacks` every 100 ms with `curl`). But the AWS SDK
+waiter checks immediately — sees `IN_PROGRESS` because provisioning
+started microseconds earlier — then sleeps its 5 s `minDelay` before
+looking again. Every fast stack therefore costs one full waiter cycle
+regardless of emulator speed. The planned fix (a bounded synchronous
+wait so the waiter's first check already sees the terminal status) is
+[docs/plans/cfn-sync-fastpath.md](plans/cfn-sync-fastpath.md).
+
+**What the emulator cannot fix:** CDK CLI startup, `cdk synth`, and any
+other client-side work show up as request-log silence. Report those
+upstream or restructure the workflow (e.g. `cdk deploy --concurrency`);
+no overcast change will touch them.
 
 Go has a garbage collector, so the classic C-style "forgot to free" leaks don't
 apply. But Go has its own leak patterns that are subtle and accumulate silently
