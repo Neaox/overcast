@@ -35,7 +35,7 @@ const GROUP_DEFS: Array<{
   match: (name: string) => boolean
 }> = [
   {
-    label: "Runtime init",
+    label: "Go init",
     color: "bg-slate-500",
     textColor: "text-slate-300",
     match: (n) => n === "Go runtime + package init",
@@ -77,6 +77,10 @@ const GROUP_DEFS: Array<{
 ]
 
 const FALLBACK_GROUP = { label: "Other", color: "bg-fg-muted", textColor: "text-fg-muted" }
+
+function goPhases(phases: StartupPhase[]): StartupPhase[] {
+  return phases.filter((p) => !p.environment)
+}
 
 function groupPhases(phases: StartupPhase[]): PhaseGroup[] {
   const groups: Map<string, PhaseGroup> = new Map()
@@ -169,11 +173,9 @@ function Legend({ phases, totalMs }: StartupBarProps) {
  */
 const PHASE_DESCRIPTIONS: Record<string, string> = {
   "Go runtime + package init":
-    "Time from OS exec() to the first instruction of main(). Covers Go runtime " +
-    "bootstrap (memory allocator, goroutine scheduler, GC) and every package-level " +
-    "init() function across all transitive imports. The dominant cost on this binary " +
-    "is modernc.org/libc — ~2,700 machine-generated init instructions that populate " +
-    "internal lookup tables for the pure-Go SQLite driver.",
+    "Approximate Go-side runtime bootstrap and package init time, anchored to the " +
+    "earliest timestamp Overcast can capture from Go code. OS loader, antivirus, " +
+    "container init, entrypoint, and exec time are reported separately as pre-Go environment time.",
   "config: parse":
     "Parse environment variables and build the typed Config struct. Validates " +
     "all settings and applies defaults.",
@@ -777,6 +779,7 @@ function PhaseTable({ phases }: { phases: StartupPhase[] }) {
 
 interface StartupCardProps {
   totalMs: number
+  preInitMs?: number
   phases?: StartupPhase[]
 }
 
@@ -784,8 +787,10 @@ interface StartupCardProps {
  * StartupCard — replaces the plain StatPill for startup time.
  * Shows total ms + a compact phase bar. Clicking opens the full timeline dialog.
  */
-export function StartupCard({ totalMs, phases }: StartupCardProps) {
-  const hasPhases = phases && phases.length > 0
+export function StartupCard({ totalMs, preInitMs, phases }: StartupCardProps) {
+  const hasPhases = Boolean(phases?.length)
+  const visiblePhases = phases ? goPhases(phases) : []
+  const environmentMs = phases?.find((p) => p.environment)?.duration_ms ?? preInitMs
 
   const pill = (
     <div
@@ -800,9 +805,14 @@ export function StartupCard({ totalMs, phases }: StartupCardProps) {
       <span className="font-mono text-sm font-medium text-fg tabular-nums">
         {totalMs.toFixed(0)} ms
       </span>
+      {environmentMs !== undefined && environmentMs > 0 && (
+        <span className="text-[10px] text-fg-muted tabular-nums">
+          + {environmentMs.toFixed(0)} ms pre-Go
+        </span>
+      )}
       {hasPhases && (
         <div className="mt-1 w-32">
-          <StartupBar phases={phases} totalMs={totalMs} />
+          <StartupBar phases={visiblePhases} totalMs={totalMs} />
         </div>
       )}
     </div>
@@ -818,6 +828,11 @@ export function StartupCard({ totalMs, phases }: StartupCardProps) {
         <span className="font-mono text-sm font-medium text-fg tabular-nums">
           {totalMs.toFixed(0)} ms
         </span>
+        {environmentMs !== undefined && environmentMs > 0 && (
+          <span className="text-[10px] text-fg-muted tabular-nums">
+            + {environmentMs.toFixed(0)} ms pre-Go
+          </span>
+        )}
       </div>
     )
   }
@@ -827,21 +842,29 @@ export function StartupCard({ totalMs, phases }: StartupCardProps) {
       <DialogTrigger asChild>{pill}</DialogTrigger>
       <DialogContent className="max-w-3xl" aria-describedby="startup-timeline-desc">
         <DialogHeader>
-          <DialogTitle>Startup Timeline — {totalMs.toFixed(0)} ms</DialogTitle>
+          <DialogTitle>Startup Timeline — {totalMs.toFixed(0)} ms Go-side</DialogTitle>
         </DialogHeader>
         {/* Fixed section — never scrolls away */}
         <div className="shrink-0 space-y-4 pb-2">
           <p id="startup-timeline-desc" className="text-xs text-fg-muted">
-            Time from OS process start to the server accepting requests, broken down by phase. Hover
-            any bar for details · Ctrl+scroll to zoom · drag to pan · click or drag the minimap to
-            seek.
+            Time from Go startup to the server accepting requests, broken down by phase. Pre-Go
+            environment time is shown separately so OS loader, antivirus, container init, entrypoint,
+            and exec costs do not inflate the Go startup total. Hover any bar for details ·
+            Ctrl+scroll to zoom · drag to pan · click or drag the minimap to seek.
           </p>
 
+          {environmentMs !== undefined && (
+            <div className="rounded border border-border/50 bg-bg-card/60 px-3 py-2 text-xs text-fg-muted">
+              <span className="font-medium text-fg">Pre-Go environment:</span>{" "}
+              <span className="font-mono tabular-nums">{environmentMs.toFixed(1)} ms</span>
+            </div>
+          )}
+
           {/* Legend */}
-          <Legend phases={phases} totalMs={totalMs} />
+          <Legend phases={visiblePhases} totalMs={totalMs} />
 
           {/* Interactive flamegraph — fixed height, owns zoom/pan */}
-          <FlameGraph phases={phases} totalMs={totalMs} />
+          <FlameGraph phases={visiblePhases} totalMs={totalMs} />
         </div>
 
         {/* Only the data table scrolls */}
