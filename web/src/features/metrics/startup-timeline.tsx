@@ -873,7 +873,7 @@ export function StartupCard({ totalMs, preInitMs, phases }: StartupCardProps) {
             <p className="text-[10px] font-medium tracking-wider text-fg-muted uppercase">
               Phase data
             </p>
-            <PhaseTable phases={phases} />
+            <PhaseTable phases={visiblePhases} />
           </div>
         </DialogBody>
       </DialogContent>
