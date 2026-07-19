@@ -116,6 +116,12 @@ type Config struct {
 	// Default false.
 	EnforceIAM bool
 
+	// CFNSyncWait is the bounded time CloudFormation waits for fast stack
+	// create/update/delete provisioning to reach a terminal state before returning.
+	// A zero value disables the wait and restores fully asynchronous behaviour.
+	// Corresponds to env var OVERCAST_CFN_SYNC_WAIT_MS. Default 1000ms.
+	CFNSyncWait time.Duration
+
 	// ProtocolDispatch enables the typed wire-protocol dispatcher and the
 
 	// ShutdownTimeout is how long the server waits for in-flight
@@ -406,6 +412,7 @@ var allServices = []string{"s3", "sqs", "sns", "ses", "dynamodb", "dynamodbstrea
 //	OVERCAST_EKS_MODE                  mock    (mock | live)
 //	OVERCAST_SIGV4_VALIDATE            false
 //	OVERCAST_ENFORCE_IAM              false
+//	OVERCAST_CFN_SYNC_WAIT_MS          1000
 //	OVERCAST_LOG_LEVEL                 info
 //	OVERCAST_SHUTDOWN_TIMEOUT          5s
 //	OVERCAST_LAMBDA_NODE_BIN           node
@@ -552,6 +559,12 @@ func Load() (*Config, error) {
 
 	// Optional IAM enforcement middleware (default off).
 	cfg.EnforceIAM = envBool("OVERCAST_ENFORCE_IAM", false)
+
+	// CloudFormation synchronous fast-path wait budget.
+	cfg.CFNSyncWait = time.Duration(envInt("OVERCAST_CFN_SYNC_WAIT_MS", 1000)) * time.Millisecond
+	if cfg.CFNSyncWait < 0 {
+		cfg.CFNSyncWait = 0
+	}
 
 	// Logging
 	cfg.LogLevel = strings.ToLower(envOr("OVERCAST_LOG_LEVEL", "info"))

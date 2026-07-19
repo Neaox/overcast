@@ -291,6 +291,7 @@ func defaultTestConfig() *config.Config {
 		State:               config.StateBackendMemory,
 		ServiceStates:       make(map[string]config.StateBackend),
 		HybridFlushInterval: 5 * time.Second,
+		CFNSyncWait:         time.Second,
 		LogLevel:            "error", // suppress info/debug logs in test output
 		Services: map[string]bool{
 			"s3":              true,

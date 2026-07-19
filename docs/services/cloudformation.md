@@ -3,8 +3,9 @@
 > AWS docs: [CloudFormation API Reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/Welcome.html)
 
 CloudFormation uses the AWS Query protocol (`POST /` with form-encoded body). Overcast
-implements stack lifecycle, change sets, and resource provisioning with an async provisioner
-that dispatches internal HTTP requests through the emulator to create/delete resources.
+implements stack lifecycle, change sets, and resource provisioning with a bounded async
+provisioner that dispatches internal HTTP requests through the emulator to create/delete
+resources.
 
 ---
 
@@ -103,7 +104,7 @@ with unsupported resources can still partially deploy.
 ## Notes
 
 - **JSON and YAML templates.** Both JSON templates and YAML templates (including short-form tags like `!Ref`, `!Sub`, `!GetAtt`) are supported.
-- **Async provisioner.** Stack create/update/delete happens asynchronously in background goroutines. Resources are created via internal HTTP requests through the emulator's router, enabling CloudFormation to orchestrate any implemented service.
+- **Bounded async provisioner.** Stack create/update/delete happens in background goroutines, but handlers wait briefly for fast stacks so SDK waiters can observe terminal status on their first `DescribeStacks` call. `OVERCAST_CFN_SYNC_WAIT_MS` controls the budget in milliseconds (default `1000`; `0` restores fully asynchronous returns). Resources are created via internal HTTP requests through the emulator's router, enabling CloudFormation to orchestrate any implemented service.
 - **DependsOn.** Resource dependency ordering is supported via topological sort.
 - **Status state machine.** Stacks follow the full AWS status lifecycle: `CREATE_IN_PROGRESS` → `CREATE_COMPLETE` / `CREATE_FAILED`, etc.
 - **Fn::GetAtt.** Returns real attribute values from service responses (e.g. `!GetAtt MyVpc.CidrBlock` returns `10.0.0.0/16`). Falls back to the physical resource ID when a specific attribute is not captured.
@@ -111,6 +112,7 @@ with unsupported resources can still partially deploy.
 - **Custom resources.** `Custom::*` and `AWS::CloudFormation::CustomResource` types invoke the Lambda function specified by `ServiceToken`. The handler sends a CloudFormation custom resource request to the Lambda and parses the response (`PhysicalResourceId`, `Data`). When Docker is unavailable (Lambda cannot execute), the handler degrades gracefully to a stub physical ID so the stack can still deploy.
 - **Nested stacks.** `AWS::CloudFormation::Stack` is supported. The provisioner fetches the child template from the `TemplateURL` (typically an S3 object), creates a child stack, and provisions its resources synchronously within the parent's goroutine. Child stack outputs are exposed via `Fn::GetAtt` as `Outputs.<key>`. Deletion of nested stacks cascades — deleting the parent deletes all child resources.
 - **Scheduled ECS/Fargate tasks.** `AWS::Events::Rule` provisions `Targets` through EventBridge on create/update, including ECS target parameters used by CDK scheduled Fargate tasks. EventBridge evaluates scheduled rules and invokes ECS/Fargate `RunTask` targets through the emulator router.
+- **Change sets.** `ExecuteChangeSet` now advances `ExecutionStatus` to `EXECUTE_COMPLETE` or `EXECUTE_FAILED` when the triggered stack provisioning reaches a terminal status, so clients polling `DescribeChangeSet` do not remain stuck in `EXECUTE_IN_PROGRESS`.
 - **Stack updates and drift.** `UpdateStack` (and `ExecuteChangeSet`) detect property drift per-resource via a sha256 hash of the resolved property map stored alongside each `StackResource`. Resources whose hash is unchanged are skipped. When a resource's properties change, the provisioner picks one of three strategies, in order:
   1. **In-place update** — when the resource handler implements an `Update` method, mutable properties are applied via the service's mutation API. Implemented for:
      - `AWS::Lambda::Function` — `UpdateFunctionCode` + `UpdateFunctionConfiguration`

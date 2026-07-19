@@ -279,7 +279,7 @@ func (h *Handler) createStackTyped(ctx context.Context, req *createStackReq) (*c
 		return nil, cfnerr("InternalFailure", "failed to persist stack", http.StatusInternalServerError)
 	}
 
-	h.prov.createStack(stack, tmpl)
+	h.prov.createStack(stack, tmpl, nil)
 
 	return &createStackResp{
 		Xmlns:  cfnXMLNS,
@@ -335,7 +335,7 @@ func (h *Handler) updateStackTyped(ctx context.Context, req *updateStackReq) (*u
 		return nil, cfnerr("InternalFailure", "failed to persist stack", http.StatusInternalServerError)
 	}
 
-	h.prov.updateStack(stack, tmpl)
+	h.prov.updateStack(stack, tmpl, nil)
 
 	return &updateStackResp{
 		Xmlns:  cfnXMLNS,
@@ -602,14 +602,14 @@ func (h *Handler) executeChangeSetTyped(ctx context.Context, req *executeChangeS
 		stack.Status = StatusCreateInProgress
 		stack.StatusReason = "User Initiated"
 		_ = h.store.putStack(ctx, stack)
-		h.prov.createStack(stack, tmpl)
+		h.prov.createStack(stack, tmpl, h.prov.completeChangeSet(cs))
 	} else {
 		stack.Status = StatusUpdateInProgress
 		stack.StatusReason = "User Initiated"
 		now := h.clk.Now()
 		stack.UpdatedAt = &now
 		_ = h.store.putStack(ctx, stack)
-		h.prov.updateStack(stack, tmpl)
+		h.prov.updateStack(stack, tmpl, h.prov.completeChangeSet(cs))
 	}
 
 	return &struct{}{}, nil

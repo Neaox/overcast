@@ -196,8 +196,7 @@ func (h *Handler) CreateStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Start async provisioning.
-	h.prov.createStack(stack, tmpl)
+	h.prov.createStack(stack, tmpl, nil)
 
 	writeCFNResponse(w, r, "CreateStackResponse", "CreateStackResult", stackIdResult{StackId: stackID})
 }
@@ -251,7 +250,7 @@ func (h *Handler) UpdateStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.prov.updateStack(stack, tmpl)
+	h.prov.updateStack(stack, tmpl, nil)
 
 	writeCFNResponse(w, r, "UpdateStackResponse", "UpdateStackResult", stackIdResult{StackId: stack.StackID})
 }
@@ -555,14 +554,14 @@ func (h *Handler) ExecuteChangeSet(w http.ResponseWriter, r *http.Request) {
 		stack.Status = StatusCreateInProgress
 		stack.StatusReason = "User Initiated"
 		_ = h.store.putStack(ctx, stack)
-		h.prov.createStack(stack, tmpl)
+		h.prov.createStack(stack, tmpl, h.prov.completeChangeSet(cs))
 	} else {
 		stack.Status = StatusUpdateInProgress
 		stack.StatusReason = "User Initiated"
 		now := h.clk.Now()
 		stack.UpdatedAt = &now
 		_ = h.store.putStack(ctx, stack)
-		h.prov.updateStack(stack, tmpl)
+		h.prov.updateStack(stack, tmpl, h.prov.completeChangeSet(cs))
 	}
 
 	writeCFNResponse(w, r, "ExecuteChangeSetResponse", "ExecuteChangeSetResult", nil)

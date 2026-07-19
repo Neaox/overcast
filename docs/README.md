@@ -180,6 +180,7 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_LOG_LEVEL`             | `info`                 | `debug`, `info`, `warn`, `error`                                                     |
 | `OVERCAST_DEBUG`                 | `false`                | Enable `/_debug/*` endpoints                                                         |
 | `OVERCAST_SIGV4_VALIDATE`        | `false`                | SigV4 verification _(not yet implemented)_                                           |
+| `OVERCAST_CFN_SYNC_WAIT_MS`      | `1000`                 | Milliseconds CloudFormation waits for fast stack provisioning before returning (`0` disables) |
 | `OVERCAST_TLS_CERT`              | —                      | Path to TLS certificate (enables HTTPS)                                              |
 | `OVERCAST_TLS_KEY`               | —                      | Path to TLS private key                                                              |
 | `OVERCAST_SHUTDOWN_TIMEOUT`      | `5s`                   | Graceful shutdown wait                                                               |
