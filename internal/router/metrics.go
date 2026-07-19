@@ -16,6 +16,7 @@ type metricsSnapshot struct {
 	UptimeSecs        float64        `json:"uptime_secs"`
 	StartTime         string         `json:"start_time"`
 	StartupDurationMs float64        `json:"startup_duration_ms"`
+	PreInitMs         float64        `json:"pre_init_ms"`
 	StartupPhases     []StartupPhase `json:"startup_phases,omitempty"`
 	// memory (bytes)
 	HeapAllocBytes uint64 `json:"heap_alloc_bytes"`
@@ -52,7 +53,14 @@ func collectMetrics() metricsSnapshot {
 
 	var startupMs float64
 	if !readyTime.IsZero() {
-		startupMs = float64(readyTime.Sub(startTime).Milliseconds())
+		startupMs = float64(readyTime.Sub(goStartTime).Milliseconds())
+		if startupMs < 0 {
+			startupMs = 0
+		}
+	}
+	preInitMs := float64(goStartTime.Sub(startTime).Milliseconds())
+	if preInitMs < 0 {
+		preInitMs = 0
 	}
 
 	return metricsSnapshot{
@@ -61,6 +69,7 @@ func collectMetrics() metricsSnapshot {
 		UptimeSecs:        time.Since(startTime).Seconds(),
 		StartTime:         startTime.UTC().Format(time.RFC3339),
 		StartupDurationMs: startupMs,
+		PreInitMs:         preInitMs,
 		StartupPhases:     GetStartupPhases(),
 		HeapAllocBytes:    ms.HeapAlloc,
 		HeapSysBytes:      ms.HeapSys,

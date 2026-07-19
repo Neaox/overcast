@@ -62,6 +62,10 @@ need it than accidentally ship a breaking change as a patch.
        binary packaging, release process, or user-facing docs.
 -->
 
+### Fixed
+
+- **Startup metrics** — `startup_duration_ms` now measures Go-side startup work from the earliest Overcast Go timestamp to readiness, while new `pre_init_ms` and an environment timeline phase separately report OS loader, antivirus, container init, entrypoint, and exec time.
+
 ## [0.0.1-alpha.15] - 2026-07-17
 
 ### Fixed

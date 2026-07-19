@@ -99,28 +99,26 @@ For each claim, document at minimum:
 ### Current measurement methodology
 
 **Startup time (`startup_duration_ms`):**
-`var startTime = processStartTime()` in `internal/router/debug.go` →
-`readyTime = time.Now()` at the end of `router.New()` in
-`internal/router/router.go`. The anchor is the **OS-reported process
-creation time** (`GetProcessTimes` on Windows, `/proc` on Linux, `sysctl`
-on macOS), so the reported number **includes time overcast's code never
-ran**: the OS loader, antivirus scanning of the binary, and — in Docker,
-where the entrypoints `exec` overcast as PID 1 — the container runtime's
-namespace/cgroup/mount setup and the shell entrypoint itself.
+`goStartTime` from `internal/boottime` → `readyTime = time.Now()` at the
+end of `router.New()` in `internal/router/router.go`. This is the Go-side
+startup budget: runtime/package init after the earliest best-effort Go
+timestamp plus config, store construction, service construction, routing,
+and cross-service wiring. `/_metrics` also reports `pre_init_ms`, measured
+from the OS-reported process creation time (`GetProcessTimes` on Windows,
+`/proc` on Linux, `sysctl` on macOS) to `goStartTime`.
 
 Measured 2026-07-19 (Docker Desktop on Windows 11 / WSL2, `overcast:dev`
 Alpine image, Go 1.24, hybrid backend, 15 services; per-package init via
 `GODEBUG=inittrace=1`, fork-vs-PID-1 isolation via probe containers): the
 Go-side portion is ~45 ms of package init (largest single `init()`:
-0.5 ms) plus `router.New()`, while the pre-Go portion adds **0.5–1.2 s**
-for a bare `docker run` and **~2.5 s** for a compose container with two
-networks and two bind mounts. Natively the pre-Go portion is the loader
-plus AV; both are environment cost, not overcast code. The split/fix is
-planned in [docs/plans/startup-metrics-honesty.md](plans/startup-metrics-honesty.md).
-Until it lands, treat `startup_duration_ms` from `/_metrics` as
-"process spawn → ready", not "overcast code time"; the per-backend table
-above was measured with the older package-init anchor and reflects
-Go-side work only.
+0.5 ms) plus `router.New()`, while `pre_init_ms` adds **0.5–1.2 s** for a
+bare `docker run` and **~2.5 s** for a compose container with two networks
+and two bind mounts. Natively `pre_init_ms` is the loader plus AV; both are
+environment cost, not overcast code. The startup timeline reports that
+segment as an environment phase (`environment: true`) labeled either
+`container init + entrypoint + exec (pre-Go)` for Linux PID 1 containers or
+`OS process spawn: loader / AV / exec (pre-Go)` otherwise. The per-backend
+table above reflects Go-side work.
 
 The metric **excludes** background work that is deferred past
 `readyTime`: SQLite schema migration (runs in a goroutine on all

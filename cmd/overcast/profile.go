@@ -9,20 +9,28 @@ import (
 )
 
 // phaseTimer records startup phases from before router.New is called.
-// It is anchored to the OS process start time via router.ProcessStartTime(),
-// so the (=...) totals in its stderr output are comparable to the router
-// profiler's totals — both reference the same process-start origin.
+// It is anchored to the earliest best-effort Go timestamp via router.GoStartTime(),
+// so the (=...) totals in its stderr output represent Go-side startup work.
 // All phases are always recorded into the router package's phase log
 // regardless of OVERCAST_PROFILE_STARTUP, so the startup timeline is always
 // available via /_metrics.
 type phaseTimer struct {
 	enabled bool
-	start   time.Time // = OS process start time
+	start   time.Time // = earliest best-effort Go start time
 	prev    time.Time
 }
 
 func newPhaseTimer(enabled bool) *phaseTimer {
-	start := router.ProcessStartTime()
+	if enabled {
+		preInit := router.GoStartTime().Sub(router.ProcessStartTime())
+		if preInit < 0 {
+			preInit = 0
+		}
+		preInitMs := float64(preInit.Microseconds()) / 1000
+		fmt.Fprintf(os.Stderr, "startup-profile\t%-40s\t+%6.2fms\t(=%6.2fms)\n",
+			router.EnvironmentPhaseLabel(), preInitMs, preInitMs)
+	}
+	start := router.GoStartTime()
 	return &phaseTimer{enabled: enabled, start: start, prev: start}
 }
 

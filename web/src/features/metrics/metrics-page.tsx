@@ -128,7 +128,11 @@ export function MetricsPage() {
       {/* ── Static info pills ─────────────────────────────────────────── */}
       {latest && (
         <div className="flex flex-wrap gap-2">
-          <StartupCard totalMs={latest.startup_duration_ms} phases={latest.startup_phases} />
+          <StartupCard
+            totalMs={latest.startup_duration_ms}
+            preInitMs={latest.pre_init_ms}
+            phases={latest.startup_phases}
+          />
           <StatPill label="Uptime" value={latest.uptime} />
           <StatPill label="Go Version" value={latest.go_version} />
           <StatPill label="CPUs" value={String(latest.num_cpu)} />

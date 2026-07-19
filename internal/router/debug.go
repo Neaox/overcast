@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/Neaox/overcast/internal/boottime"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/state"
 )
@@ -74,7 +75,10 @@ type debugHealthResponse struct {
 	Debug         bool              `json:"debug"`
 }
 
-var startTime = processStartTime()
+var (
+	startTime   = processStartTime()
+	goStartTime = boottime.GoStart
+)
 
 func debugHealth(cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

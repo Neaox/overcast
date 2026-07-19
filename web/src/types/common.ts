@@ -11,6 +11,7 @@ export interface StartupPhase {
   name: string
   start_ms: number
   duration_ms: number
+  environment?: boolean
 }
 
 /** Snapshot returned by GET /_metrics (Go runtime stats). */
@@ -20,6 +21,7 @@ export interface MetricsSnapshot {
   uptime_secs: number
   start_time: string
   startup_duration_ms: number
+  pre_init_ms: number
   startup_phases?: StartupPhase[]
   // memory (bytes)
   heap_alloc_bytes: number

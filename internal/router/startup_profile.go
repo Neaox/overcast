@@ -3,17 +3,19 @@ package router
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"sync"
 	"time"
 )
 
 // StartupPhase records a single timed phase during server initialization.
 // Exposed via /_metrics to power the startup timeline visualisation in the web UI.
-// StartMs is milliseconds since the OS process started (same reference as startup_duration_ms).
+// StartMs is milliseconds since Go startup. Environment phases use the process-start anchor.
 type StartupPhase struct {
-	Name       string  `json:"name"`
-	StartMs    float64 `json:"start_ms"`    // ms since OS process start
-	DurationMs float64 `json:"duration_ms"` // ms this phase took
+	Name        string  `json:"name"`
+	StartMs     float64 `json:"start_ms"`    // ms since Go startup, except environment phase
+	DurationMs  float64 `json:"duration_ms"` // ms this phase took
+	Environment bool    `json:"environment,omitempty"`
 }
 
 // externalPhases accumulates phases recorded before router.New is called —
@@ -38,7 +40,7 @@ var sealedPhases []StartupPhase
 func RecordExternalPhase(name string, start, end time.Time) {
 	phase := StartupPhase{
 		Name:       name,
-		StartMs:    float64(start.Sub(startTime).Microseconds()) / 1000,
+		StartMs:    float64(start.Sub(goStartTime).Microseconds()) / 1000,
 		DurationMs: float64(end.Sub(start).Microseconds()) / 1000,
 	}
 	externalMu.Lock()
@@ -52,10 +54,21 @@ func GetStartupPhases() []StartupPhase {
 	return sealedPhases // written once; read-only thereafter, no lock needed
 }
 
-// ProcessStartTime returns the OS process start time that anchors all phase
-// measurements. Exported so cmd/overcast can anchor its phase timer to the
-// same reference point as the router profiler, producing honest totals.
+// ProcessStartTime returns the OS process start time used for uptime and pre-init metrics.
 func ProcessStartTime() time.Time { return startTime }
+
+// GoStartTime returns the earliest best-effort timestamp captured by Overcast Go code.
+func GoStartTime() time.Time { return goStartTime }
+
+func environmentPhaseLabel(goos string, pid int) string {
+	if goos == "linux" && pid == 1 {
+		return "container init + entrypoint + exec (pre-Go)"
+	}
+	return "OS process spawn: loader / AV / exec (pre-Go)"
+}
+
+// EnvironmentPhaseLabel returns the label for the current process's pre-Go phase.
+func EnvironmentPhaseLabel() string { return environmentPhaseLabel(runtime.GOOS, os.Getpid()) }
 
 // startupProfiler emits per-phase timings to stderr when
 // OVERCAST_PROFILE_STARTUP=1 is set, and always records phases for the UI.
@@ -69,7 +82,7 @@ func ProcessStartTime() time.Time { return startTime }
 // phases adds no synchronisation overhead to startup.
 type startupProfiler struct {
 	enabled bool
-	start   time.Time      // = startTime (process start) for the (=...) total column
+	start   time.Time      // = goStartTime for the (=...) total column
 	prev    time.Time      // tracks last mark time
 	phases  []StartupPhase // router-internal phases, merged by finalize()
 }
@@ -79,15 +92,15 @@ var startupProfileEnabled = os.Getenv("OVERCAST_PROFILE_STARTUP") == "1"
 // newStartupProfiler creates a profiler for use inside router.New.
 // prev is set to time.Now() (not startTime) so each phase's duration reflects
 // work done inside router.New, not the entire time from process start.
-// The (=...) total column in stderr output still uses startTime as its origin,
-// giving an honest process-relative total consistent with phaseTimer output.
+// The (=...) total column in stderr output uses goStartTime as its origin,
+// giving an honest Go-side total consistent with phaseTimer output.
 //
 // phases is pre-sized to 150 to cover all expected marks (~90+ service marks)
 // without any allocation during the body of router.New.
 func newStartupProfiler() *startupProfiler {
 	return &startupProfiler{
 		enabled: startupProfileEnabled,
-		start:   startTime,
+		start:   goStartTime,
 		prev:    time.Now(),                   // anchor to when router.New was called
 		phases:  make([]StartupPhase, 0, 150), // pre-sized: eliminates all slice growth
 	}
@@ -107,7 +120,7 @@ func (p *startupProfiler) mark(phase string) {
 
 	p.phases = append(p.phases, StartupPhase{
 		Name:       phase,
-		StartMs:    float64(prev.Sub(startTime).Microseconds()) / 1000,
+		StartMs:    float64(prev.Sub(goStartTime).Microseconds()) / 1000,
 		DurationMs: float64(now.Sub(prev).Microseconds()) / 1000,
 	})
 
@@ -132,7 +145,17 @@ func (p *startupProfiler) finalize() {
 
 	// p.phases is accessed without a lock — safe because finalize is called
 	// from the same single goroutine as all mark() calls.
-	all := make([]StartupPhase, 0, len(ext)+len(p.phases))
+	env := StartupPhase{
+		Name:        EnvironmentPhaseLabel(),
+		StartMs:     0,
+		DurationMs:  float64(goStartTime.Sub(startTime).Microseconds()) / 1000,
+		Environment: true,
+	}
+	if env.DurationMs < 0 {
+		env.DurationMs = 0
+	}
+	all := make([]StartupPhase, 0, 1+len(ext)+len(p.phases))
+	all = append(all, env)
 	all = append(all, ext...)
 	all = append(all, p.phases...)
 	sealedPhases = all // write once, then read-only
