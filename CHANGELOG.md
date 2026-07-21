@@ -67,7 +67,7 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
-- **Web UI** — S3 object previews now indent XML/RSS closing tags correctly and use file extensions for syntax highlighting when the stored content type is generic.
+- **Web UI** — S3 object previews now indent XML/RSS closing tags correctly and use file extensions for syntax highlighting when the stored content type is generic, and DynamoDB table detail controls no longer require `crypto.randomUUID` on insecure local origins.
 
 ## [0.0.1-alpha.16] - 2026-07-21
 
