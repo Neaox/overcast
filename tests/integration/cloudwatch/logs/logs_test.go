@@ -53,35 +53,35 @@ func TestStartLiveTail_streamsMatchingEvents(t *testing.T) {
 		{Timestamp: 1002, Message: "ERROR accepted too"},
 	})
 
-	// Then: Live Tail emits a sessionUpdate containing only matching events
-	update := readEventStreamMessage(t, resp.Body)
-	if update.Headers[":event-type"] != "sessionUpdate" {
-		t.Fatalf("second event type = %q, want sessionUpdate", update.Headers[":event-type"])
+	// Then: Live Tail emits sessionUpdates containing only matching events. The
+	// one-second tick can split sequential writes across updates on slower CI.
+	results := make([]liveTailTestResult, 0, 2)
+	for attempts := 0; attempts < 3 && len(results) < 2; attempts++ {
+		payload := readLiveTailUpdate(t, resp.Body)
+		if payload.SessionMetadata.Sampled {
+			t.Fatal("expected sampled=false")
+		}
+		results = append(results, payload.SessionResults...)
 	}
-	var payload struct {
-		SessionMetadata struct {
-			Sampled bool `json:"sampled"`
-		} `json:"sessionMetadata"`
-		SessionResults []struct {
-			LogGroupIdentifier string `json:"logGroupIdentifier"`
-			LogStreamName      string `json:"logStreamName"`
-			Message            string `json:"message"`
-			Timestamp          int64  `json:"timestamp"`
-			IngestionTime      int64  `json:"ingestionTime"`
-		} `json:"sessionResults"`
+	if len(results) != 2 {
+		t.Fatalf("expected 2 matching events, got %d: %+v", len(results), results)
 	}
-	if err := json.Unmarshal(update.Payload, &payload); err != nil {
-		t.Fatalf("decode sessionUpdate payload: %v", err)
+
+	seen := make(map[string]liveTailTestResult, len(results))
+	for _, result := range results {
+		if result.LogGroupIdentifier != groupARN {
+			t.Fatalf("logGroupIdentifier = %q, want %q", result.LogGroupIdentifier, groupARN)
+		}
+		if result.IngestionTime == 0 {
+			t.Fatalf("expected ingestionTime for event: %+v", result)
+		}
+		seen[result.LogStreamName+"\x00"+result.Message] = result
 	}
-	if payload.SessionMetadata.Sampled {
-		t.Fatal("expected sampled=false")
+	if got, ok := seen["app/one\x00ERROR accepted"]; !ok || got.Timestamp != 1001 {
+		t.Fatalf("missing app/one ERROR event, got: %+v", results)
 	}
-	if len(payload.SessionResults) != 2 {
-		t.Fatalf("expected first update to contain 2 matching events, got %d: %s", len(payload.SessionResults), update.Payload)
-	}
-	got := payload.SessionResults[0]
-	if got.LogGroupIdentifier != groupARN || got.LogStreamName != "app/one" || got.Message != "ERROR accepted" || got.Timestamp != 1001 || got.IngestionTime == 0 {
-		t.Fatalf("unexpected live-tail event: %+v", got)
+	if got, ok := seen["app/two\x00ERROR accepted too"]; !ok || got.Timestamp != 1002 {
+		t.Fatalf("missing app/two ERROR event, got: %+v", results)
 	}
 }
 
@@ -1583,6 +1583,34 @@ func putLogEvents(t *testing.T, srv *helpers.TestServer, groupName, streamName s
 type eventStreamMessage struct {
 	Headers map[string]string
 	Payload []byte
+}
+
+type liveTailTestResult struct {
+	LogGroupIdentifier string `json:"logGroupIdentifier"`
+	LogStreamName      string `json:"logStreamName"`
+	Message            string `json:"message"`
+	Timestamp          int64  `json:"timestamp"`
+	IngestionTime      int64  `json:"ingestionTime"`
+}
+
+type liveTailTestUpdate struct {
+	SessionMetadata struct {
+		Sampled bool `json:"sampled"`
+	} `json:"sessionMetadata"`
+	SessionResults []liveTailTestResult `json:"sessionResults"`
+}
+
+func readLiveTailUpdate(t *testing.T, r io.Reader) liveTailTestUpdate {
+	t.Helper()
+	update := readEventStreamMessage(t, r)
+	if update.Headers[":event-type"] != "sessionUpdate" {
+		t.Fatalf("event type = %q, want sessionUpdate", update.Headers[":event-type"])
+	}
+	var payload liveTailTestUpdate
+	if err := json.Unmarshal(update.Payload, &payload); err != nil {
+		t.Fatalf("decode sessionUpdate payload: %v", err)
+	}
+	return payload
 }
 
 func readEventStreamMessage(t *testing.T, r io.Reader) eventStreamMessage {
