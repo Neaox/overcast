@@ -43,7 +43,7 @@
 | AppConfigData   | 3   | StartConfigurationSession, GetLatestConfiguration; poll-based delivery with "unchanged" detection                                                                                                          |
 | Secrets Manager | 21  | Secret CRUD, versioning, tags, rotation config (11 of 21 operations)                                                                                                                                       |
 | SSM             | 18  | Parameter Store: put, get, get-by-path, history, tags                                                                                                                                                      |
-| CloudWatch Logs | 18  | Log groups, streams, events, FilterLogEvents, DeleteLogStream                                                                                                                                              |
+| CloudWatch Logs | 19  | Log groups, streams, events, FilterLogEvents, DeleteLogStream                                                                                                                                              |
 | SES             | 42  | v1 + v2: SendEmail, SendRawEmail, identities, mail capture                                                                                                                                                 |
 | STS             | 11  | GetCallerIdentity, AssumeRole, GetSessionToken, temp credentials                                                                                                                                           |
 
@@ -88,7 +88,7 @@
 | AppConfigData   | 3   |
 | Secrets Manager | 21  |
 | SSM             | 18  |
-| CloudWatch Logs | 18  |
+| CloudWatch Logs | 19  |
 | SES             | 42  |
 | STS             | 11  |
 | Step Functions  | 5   |

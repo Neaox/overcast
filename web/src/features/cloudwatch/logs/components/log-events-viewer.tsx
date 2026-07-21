@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback, useEffect } from "react"
+import { useState, useMemo, useRef, useCallback, useEffect, useLayoutEffect } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
@@ -22,17 +22,10 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
-import { useEventStream } from "@/hooks/use-event-stream"
-import { EventType } from "@/services/event-types"
 import { cn } from "@/lib/utils"
 import Prism from "@/lib/prism"
 import type { FilteredLogEvent } from "@/types/logs"
-
-interface LogEventsWrittenPayload {
-  logGroupName: string
-  logStreamName: string
-  events: Array<{ timestamp: number; message: string }>
-}
+import { parseLogFilterTerms, tailLogEvents } from "@/features/cloudwatch/logs/tail"
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -46,38 +39,10 @@ function formatTimestampCompact(ts?: number): string {
   return `${hh}:${mm}:${ss}.${ms}`
 }
 
-/** Parse a filter pattern into individual search terms. */
-function parseFilterTerms(pattern: string): string[] {
-  const terms: string[] = []
-  let remaining = pattern.trim()
-  while (remaining) {
-    if (remaining[0] === '"') {
-      const end = remaining.indexOf('"', 1)
-      if (end >= 0) {
-        terms.push(remaining.substring(1, end))
-        remaining = remaining.substring(end + 1).trim()
-      } else {
-        terms.push(remaining.substring(1))
-        remaining = ""
-      }
-    } else {
-      const idx = remaining.search(/[\s\t]/)
-      if (idx >= 0) {
-        terms.push(remaining.substring(0, idx))
-        remaining = remaining.substring(idx).trim()
-      } else {
-        terms.push(remaining)
-        remaining = ""
-      }
-    }
-  }
-  return terms
-}
-
 /** Highlight matching filter terms in a message string. */
 function highlightMatches(message: string, filterPattern: string): React.ReactNode {
   if (!filterPattern) return message
-  const terms = parseFilterTerms(filterPattern)
+  const terms = parseLogFilterTerms(filterPattern)
   if (terms.length === 0) return message
   const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
   const regex = new RegExp(`(${escaped.join("|")})`, "gi")
@@ -168,13 +133,6 @@ function sortEvents(events: FilteredLogEvent[], asc: boolean): FilteredLogEvent[
   })
 }
 
-function messageMatchesFilter(message: string, filterPattern: string): boolean {
-  const terms = parseFilterTerms(filterPattern).map((term) => term.toLowerCase())
-  if (terms.length === 0) return true
-  const haystack = message.toLowerCase()
-  return terms.every((term) => haystack.includes(term))
-}
-
 // ── Copy button ────────────────────────────────────────────────────────────
 
 function CopyButton({ text }: { text: string }) {
@@ -218,7 +176,8 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
   const [tailEvents, setTailEvents] = useState<FilteredLogEvent[]>([])
 
   const parentRef = useRef<HTMLDivElement>(null)
-  const processedEventCount = useRef(0)
+  const pinnedToLatestRef = useRef(true)
+  const previousEventCountRef = useRef(0)
 
   const { data, dataUpdatedAt, isLoading, isFetching, refetch } = useQuery({
     ...logsFilterQueryOptions(groupName, {
@@ -229,8 +188,6 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
     }),
   })
 
-  const { events: streamEvents } = useEventStream({ source: "logs" })
-
   useEffect(() => {
     setTailEvents([])
   }, [groupName, streamName, activeFilter, timeRange.startTime, timeRange.endTime])
@@ -240,44 +197,22 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
   }, [dataUpdatedAt])
 
   useEffect(() => {
-    if (!tailMode) {
-      processedEventCount.current = streamEvents.length
-      return
-    }
-    const newEvents = streamEvents.slice(processedEventCount.current)
-    processedEventCount.current = streamEvents.length
-    if (newEvents.length === 0) return
+    if (!tailMode) return
 
-    const incoming: FilteredLogEvent[] = []
-    for (const streamEvent of newEvents) {
-      if (streamEvent.type !== EventType.logs.LogEventsWritten) continue
-      const payload = streamEvent.payload as LogEventsWrittenPayload
-      if (payload.logGroupName !== groupName) continue
-      if (streamName && payload.logStreamName !== streamName) continue
-      for (const event of payload.events) {
-        if (timeRange.startTime != null && event.timestamp < timeRange.startTime) continue
-        if (timeRange.endTime != null && event.timestamp > timeRange.endTime) continue
-        if (!messageMatchesFilter(event.message, activeFilter)) continue
-        incoming.push({
-          timestamp: event.timestamp,
-          ingestionTime: event.timestamp,
-          logStreamName: payload.logStreamName,
-          message: event.message,
-        })
+    const controller = new AbortController()
+    void (async () => {
+      for await (const event of tailLogEvents({
+        groupIdentifier: groupName,
+        streamName,
+        filterPattern: activeFilter,
+        signal: controller.signal,
+      })) {
+        setTailEvents((prev) => [...prev, event])
       }
-    }
-    if (incoming.length > 0) {
-      setTailEvents((prev) => [...prev, ...incoming])
-    }
-  }, [
-    activeFilter,
-    groupName,
-    streamEvents,
-    streamName,
-    tailMode,
-    timeRange.endTime,
-    timeRange.startTime,
-  ])
+    })()
+
+    return () => controller.abort()
+  }, [activeFilter, groupName, streamName, tailMode])
 
   const events = useMemo(
     () => sortEvents([...(data?.events ?? []), ...tailEvents], sortAsc),
@@ -310,13 +245,26 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
     const nearLatest = sortAsc
       ? el.scrollHeight - el.scrollTop - el.clientHeight < 80
       : el.scrollTop < 80
+    pinnedToLatestRef.current = nearLatest
     setShowScrollBottom(!nearLatest && events.length > 20)
   }, [events.length, sortAsc])
 
   const scrollToBottom = useCallback(() => {
     virtualizer.scrollToIndex(sortAsc ? events.length - 1 : 0, { align: sortAsc ? "end" : "start" })
+    pinnedToLatestRef.current = true
     setShowScrollBottom(false)
   }, [virtualizer, events.length, sortAsc])
+
+  useLayoutEffect(() => {
+    if (events.length <= previousEventCountRef.current) {
+      previousEventCountRef.current = events.length
+      return
+    }
+
+    previousEventCountRef.current = events.length
+    if (!tailMode || !pinnedToLatestRef.current) return
+    virtualizer.scrollToIndex(sortAsc ? events.length - 1 : 0, { align: sortAsc ? "end" : "start" })
+  }, [events.length, sortAsc, tailMode, virtualizer])
 
   const handleSearch = () => setActiveFilter(filterInput)
   const handleClear = () => {

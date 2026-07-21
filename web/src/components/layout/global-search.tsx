@@ -23,6 +23,7 @@ import {
 } from "@/lib/nav-services"
 import { matchesQuery, type SearchResult } from "@/lib/search"
 import { CATALOG, type CatalogEntry } from "@/lib/unsupported-services"
+import { Tooltip } from "@/components/ui/tooltip"
 
 // ─── Star toggle variants ──────────────────────────────────────────────────
 
@@ -228,26 +229,51 @@ function ResultRow({
   const Icon = service?.icon ?? LayoutDashboard
 
   return (
-    <button
+    <a
+      href={result.href}
       onPointerMove={onPointerMove}
-      onClick={() => onSelect(result)}
+      onClick={(e) => {
+        if (
+          e.defaultPrevented ||
+          e.button !== 0 ||
+          e.metaKey ||
+          e.ctrlKey ||
+          e.shiftKey ||
+          e.altKey
+        ) {
+          return
+        }
+        e.preventDefault()
+        onSelect(result)
+      }}
       className={cn(
         "flex w-full items-center gap-3 rounded-md px-3 py-2 text-left transition-colors",
         isSelected ? "bg-accent-muted" : "hover:bg-bg-subtle",
       )}
     >
       <Icon className={cn("h-4 w-4 shrink-0", service?.color ?? "text-fg-muted")} />
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-fg">{result.label}</div>
-        {result.sublabel && (
-          <div className="truncate text-xs text-fg-subtle">{result.sublabel}</div>
-        )}
-      </div>
+      <Tooltip
+        content={
+          <div className="space-y-1">
+            <div className="font-medium break-all">{result.label}</div>
+            {result.sublabel && (
+              <div className="font-mono break-all text-fg-muted">{result.sublabel}</div>
+            )}
+          </div>
+        }
+      >
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium text-fg">{result.label}</div>
+          {result.sublabel && (
+            <div className="truncate text-xs text-fg-subtle">{result.sublabel}</div>
+          )}
+        </div>
+      </Tooltip>
       <span className="shrink-0 rounded bg-bg-muted px-1.5 py-0.5 text-xs text-fg-subtle">
         {result.type}
       </span>
       {isSelected && <ChevronRight className="h-3.5 w-3.5 shrink-0 text-accent" />}
-    </button>
+    </a>
   )
 }
 

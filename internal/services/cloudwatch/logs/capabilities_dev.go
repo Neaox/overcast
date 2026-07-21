@@ -18,6 +18,7 @@ func init() {
 		capabilities.Capability{Service: "cloudwatch-logs", Operation: "PutLogEvents", Category: "Log events", Status: capabilities.StatusSupported, Notes: "Accepts batch of events; sets ingestion time"},
 		capabilities.Capability{Service: "cloudwatch-logs", Operation: "GetLogEvents", Category: "Log events", Status: capabilities.StatusSupported, Notes: "startTime/endTime filtering; startFromHead"},
 		capabilities.Capability{Service: "cloudwatch-logs", Operation: "FilterLogEvents", Category: "Log events", Status: capabilities.StatusSupported, Notes: "Text patterns (AND, quoted, ?OR), JSON patterns (`{ $.field op value }` with `&&`/`||`, EXISTS, IS NULL), space-delimited patterns (`[col, col = val, ...]` with `*` glob, `%regex%`, numeric ops, `&&`/`||`, ellipsis); time range, stream name/prefix"},
+		capabilities.Capability{Service: "cloudwatch-logs", Operation: "StartLiveTail", Category: "Log events", Status: capabilities.StatusSupported, Notes: "AWS event-stream response with sessionStart/sessionUpdate; supports group identifiers, stream names/prefixes, and filter patterns"},
 		// Insights
 		capabilities.Capability{Service: "cloudwatch-logs", Operation: "StartQuery", Category: "Insights", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
 		capabilities.Capability{Service: "cloudwatch-logs", Operation: "GetQueryResults", Category: "Insights", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},

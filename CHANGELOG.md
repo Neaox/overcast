@@ -65,6 +65,7 @@ need it than accidentally ship a breaking change as a patch.
 ### Fixed
 
 - **Startup metrics** — `startup_duration_ms` now measures Go-side startup work from the earliest Overcast Go timestamp to readiness, while new `pre_init_ms` and an environment timeline phase separately report OS loader, antivirus, container init, entrypoint, and exec time.
+- **CloudWatch Logs** — `StartLiveTail` now streams AWS event-stream `sessionStart`/`sessionUpdate` frames with filter pattern and stream name/prefix support, and the web console uses the SDK-backed Live Tail path for log tailing.
 - **CloudFormation** — stack create/update/delete now wait briefly for fast provisioning before returning so SDK waiters can observe terminal status immediately, and executed change sets now advance to `EXECUTE_COMPLETE`/`EXECUTE_FAILED` instead of remaining `EXECUTE_IN_PROGRESS`.
 - **Lambda** — skipped Lambda layers now emit a warning in the function logs when layer content is unavailable locally and remote AWS fetching is not configured or fails.
 

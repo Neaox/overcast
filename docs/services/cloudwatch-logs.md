@@ -20,7 +20,7 @@ Log group names are typically in the form `/aws/lambda/<function-name>` or
 | ----------- | ------------ | -------------- |
 | Log groups  | 3            |                |
 | Log streams | 3            |                |
-| Log events  | 3            |                |
+| Log events  | 4            |                |
 | Insights    |              | 3              |
 | Retention   | 2            | 1              |
 | Tagging     | 3            |                |
@@ -52,6 +52,7 @@ Log group names are typically in the form `/aws/lambda/<function-name>` or
 | `PutLogEvents`    | ✅ Supported | Accepts batch of events; sets ingestion time                                                                                                                                                                                                                | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_PutLogEvents.html)    |
 | `GetLogEvents`    | ✅ Supported | startTime/endTime filtering; startFromHead                                                                                                                                                                                                                  | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_GetLogEvents.html)    |
 | `FilterLogEvents` | ✅ Supported | Text patterns (AND, quoted, ?OR), JSON patterns (`{ $.field op value }` with `&&`/`\|\|`, EXISTS, IS NULL), space-delimited patterns (`[col, col = val, ...]` with `*` glob, `%regex%`, numeric ops, `&&`/`\|\|`, ellipsis); time range, stream name/prefix | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_FilterLogEvents.html) |
+| `StartLiveTail`   | ✅ Supported | AWS event-stream response with sessionStart/sessionUpdate; supports group identifiers, stream names/prefixes, and filter patterns                                                                                                                           | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_StartLiveTail.html)   |
 
 ### Insights
 

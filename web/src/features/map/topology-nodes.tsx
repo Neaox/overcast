@@ -39,11 +39,29 @@ import { endpointStore } from "@/services/endpoint-store"
 import { SERVICE_THEME, hexToSweep } from "./map-theme"
 import "./map-animations.css"
 import type { FileRoutesByTo } from "@/routeTree.gen"
+import { Tooltip } from "@/components/ui/tooltip"
 
 interface NodeRoute {
   to: keyof FileRoutesByTo
   params?: Record<string, string>
   search?: Record<string, string>
+}
+
+function routeHref(route: NodeRoute, search?: Record<string, string | undefined>): string {
+  let href = route.to as string
+  for (const [key, value] of Object.entries(route.params ?? {})) {
+    href = href.replace(`$${key}`, encodeURIComponent(value))
+  }
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries({ ...(route.search ?? {}), ...(search ?? {}) })) {
+    if (value) params.set(key, value)
+  }
+  const query = params.toString()
+  return query ? `${href}?${query}` : href
+}
+
+function openRouteInNewTab(route: NodeRoute, search?: Record<string, string | undefined>) {
+  window.open(routeHref(route, search), "_blank", "noopener,noreferrer")
 }
 
 /**
@@ -808,6 +826,15 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
     }
     void navigate({ to: route.to, params: route.params, search: route.search })
   }, [navigate, route, nodeRegion, endpoint])
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (!route || e.button !== 1) return
+      e.preventDefault()
+      e.stopPropagation()
+      openRouteInNewTab(route, { region: nodeRegion ?? endpoint.region })
+    },
+    [route, nodeRegion, endpoint.region],
+  )
 
   const { hasTarget, hasSource } = data as ServiceNodeData
 
@@ -843,6 +870,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
       role={route ? "button" : undefined}
       tabIndex={route ? 0 : undefined}
       onClick={handleClick}
+      onMouseDown={handleMouseDown}
       onKeyDown={
         route
           ? (e) => {
@@ -906,7 +934,9 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
         </div>
 
         <div className="min-w-0 flex-1">
-          <p className="truncate text-base leading-tight font-semibold">{label}</p>
+          <Tooltip content={<span className="break-all">{label}</span>}>
+            <p className="truncate text-base leading-tight font-semibold">{label}</p>
+          </Tooltip>
           {service === "sqs" ? (
             <SqsStatsBar visible={visibleCount} inFlight={inFlightCount} />
           ) : service === "rds" && status ? (
@@ -1134,6 +1164,7 @@ function areLambdaGroupPropsEqual(prev: NodeProps, next: NodeProps): boolean {
 
 export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps) {
   const { label, eventCount } = data as LambdaGroupNodeData
+  const navigate = useNavigate()
   const [testOpen, setTestOpen] = useState(false)
   const [showInvocations, setShowInvocations] = useState(false)
   const [invocations, setInvocations] = useState<Invocation[]>([])
@@ -1141,6 +1172,22 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
   const eventCursorRef = useRef(0)
   const activeByInstanceRef = useRef<Map<string, string[]>>(new Map())
   const invocationsRef = useRef<Map<string, Invocation>>(new Map())
+  const route = useMemo<NodeRoute>(
+    () => ({ to: "/lambda/$name", params: { name: label } }),
+    [label],
+  )
+  const handleOpenFunction = useCallback(() => {
+    void navigate({ to: route.to, params: route.params })
+  }, [navigate, route])
+  const handleFunctionMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.button !== 1) return
+      e.preventDefault()
+      e.stopPropagation()
+      openRouteInNewTab(route)
+    },
+    [route],
+  )
 
   useEffect(() => {
     if (lambdaEvents.length < eventCursorRef.current) eventCursorRef.current = 0
@@ -1225,7 +1272,17 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
           <Zap className="h-5 w-5 text-purple-400" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-base leading-tight font-semibold">{label}</p>
+          <Tooltip content={<span className="break-all">{label}</span>}>
+            <button
+              type="button"
+              onClick={handleOpenFunction}
+              onMouseDown={handleFunctionMouseDown}
+              className="block max-w-full truncate text-left text-base leading-tight font-semibold hover:text-purple-300 hover:underline"
+              title={`Open ${label}`}
+            >
+              {label}
+            </button>
+          </Tooltip>
           <p className="text-sm leading-tight text-fg-subtle capitalize">lambda</p>
         </div>
         <div className="flex shrink-0 items-center gap-1">

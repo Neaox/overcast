@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1252,
+  "total_ops": 1253,
   "services": [
     {
       "service": "s3",
@@ -5568,8 +5568,8 @@
     {
       "service": "cloudwatch-logs",
       "display_name": "CloudWatch Logs",
-      "total_ops": 18,
-      "implemented_ops": 14,
+      "total_ops": 19,
+      "implemented_ops": 15,
       "operations": [
         {
           "operation": "CreateLogGroup",
@@ -5624,6 +5624,12 @@
           "category": "Log events",
           "status": "✅ Supported",
           "notes": "Text patterns (AND, quoted, ?OR), JSON patterns (`{ $.field op value }` with `\u0026\u0026`/`||`, EXISTS, IS NULL), space-delimited patterns (`[col, col = val, ...]` with `*` glob, `%regex%`, numeric ops, `\u0026\u0026`/`||`, ellipsis); time range, stream name/prefix"
+        },
+        {
+          "operation": "StartLiveTail",
+          "category": "Log events",
+          "status": "✅ Supported",
+          "notes": "AWS event-stream response with sessionStart/sessionUpdate; supports group identifiers, stream names/prefixes, and filter patterns"
         },
         {
           "operation": "StartQuery",

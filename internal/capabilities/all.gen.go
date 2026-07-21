@@ -449,6 +449,7 @@ var AllCapabilities = []Capability{
 	{Service: "cloudwatch-logs", Operation: "PutMetricFilter", Category: "Insights", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "cloudwatch-logs", Operation: "PutRetentionPolicy", Category: "Retention", Status: StatusSupported, Notes: "Sets retentionInDays on log group", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "cloudwatch-logs", Operation: "PutSubscriptionFilter", Category: "Retention", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "cloudwatch-logs", Operation: "StartLiveTail", Category: "Log events", Status: StatusSupported, Notes: "AWS event-stream response with sessionStart/sessionUpdate; supports group identifiers, stream names/prefixes, and filter patterns", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "cloudwatch-logs", Operation: "StartQuery", Category: "Insights", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "cloudwatch-logs", Operation: "TagLogGroup", Category: "Tagging", Status: StatusSupported, Notes: "Adds tags to a log group", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "cloudwatch-logs", Operation: "UntagLogGroup", Category: "Tagging", Status: StatusSupported, Notes: "Removes tags from a log group", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},

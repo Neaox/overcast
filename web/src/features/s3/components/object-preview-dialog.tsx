@@ -35,13 +35,15 @@ interface ObjectPreviewDialogProps {
 }
 
 function isImagePreviewable(contentType: string): boolean {
-  return /^image\/(png|jpe?g|gif|webp|svg\+xml|bmp|avif)$/i.test(contentType)
+  const mediaType = normalizedContentType(contentType)
+  return /^image\/(png|jpe?g|gif|webp|svg\+xml|bmp|avif)$/i.test(mediaType)
 }
 
 function isTextPreviewable(contentType: string, key: string): boolean {
-  if (contentType.startsWith("text/")) return true
+  const mediaType = normalizedContentType(contentType)
+  if (mediaType.startsWith("text/")) return true
   if (
-    /^(application\/(json|xml|javascript|x-ndjson|xhtml\+xml)|.+\+(json|xml))$/i.test(contentType)
+    /^(application\/(json|xml|javascript|x-ndjson|xhtml\+xml)|.+\+(json|xml))$/i.test(mediaType)
   ) {
     return true
   }
@@ -50,15 +52,26 @@ function isTextPreviewable(contentType: string, key: string): boolean {
   )
 }
 
-function previewLanguage(contentType: string, key: string): "json" | "markup" | null {
-  if (/(^application\/(json|x-ndjson)$|\+json$)/i.test(contentType) || /\.json$/i.test(key)) {
+type PreviewLanguage = "json" | "markup" | "css" | "javascript"
+
+function normalizedContentType(contentType: string): string {
+  return contentType.split(";", 1)[0].trim().toLowerCase()
+}
+
+function previewLanguage(contentType: string, key: string): PreviewLanguage | null {
+  const mediaType = normalizedContentType(contentType)
+  if (/(^application\/(json|x-ndjson)$|\+json$)/i.test(mediaType) || /\.json$/i.test(key)) {
     return "json"
   }
-  if (
-    /(^text\/(html|xml)$|xml$|\+xml$)/i.test(contentType) ||
-    /\.(xml|xhtml|html|htm)$/i.test(key)
-  ) {
+  if (/(^text\/(html|xml)$|xml$|\+xml$)/i.test(mediaType) || /\.(xml|xhtml|html|htm)$/i.test(key)) {
     return "markup"
+  }
+  if (/^text\/css$/i.test(mediaType) || /\.css$/i.test(key)) return "css"
+  if (
+    /^(application|text)\/javascript$/i.test(mediaType) ||
+    /\.(mjs|cjs|js|jsx|ts|tsx)$/i.test(key)
+  ) {
+    return "javascript"
   }
   return null
 }
@@ -74,10 +87,21 @@ function formatMarkup(text: string): string {
     .filter(Boolean)
   return lines
     .map((line) => {
-      if (/^<\//.test(line)) depth = Math.max(0, depth - 1)
+      const isClosing = /^<\//.test(line)
+      const isDeclaration = /^<\?/.test(line)
+      const isComment = /^<!--/.test(line)
+      const isDoctype = /^<!DOCTYPE\b/i.test(line)
+      const isSelfClosing = /\/>$/.test(line)
+      const isOpening = /^<[^!?/][^>]*>$/.test(line)
+
+      if (isClosing) depth = Math.max(0, depth - 1)
       const rendered = `${"  ".repeat(depth)}${line}`
       if (
-        /^<[^!?/][^>]*[^/]?>$/.test(line) &&
+        isOpening &&
+        !isSelfClosing &&
+        !isDeclaration &&
+        !isComment &&
+        !isDoctype &&
         !/^<(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)\b/i.test(line)
       ) {
         depth += 1
@@ -104,6 +128,9 @@ function formatPreviewText(
   if (language === "markup") {
     const formatted = formatMarkup(text)
     return { text: formatted, html: Prism.highlight(formatted, Prism.languages.markup, "markup") }
+  }
+  if (language) {
+    return { text, html: Prism.highlight(text, Prism.languages[language], language) }
   }
   return { text }
 }
@@ -138,7 +165,9 @@ export function ObjectPreviewDialog({
     <Dialog open={!!objectKey} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[90vh] max-w-4xl overflow-hidden">
         <DialogHeader>
-          <DialogTitle className="truncate font-mono text-sm">{objectKey}</DialogTitle>
+          <DialogTitle className="truncate font-mono text-sm" title={objectKey}>
+            {objectKey}
+          </DialogTitle>
         </DialogHeader>
         {loading ? (
           <div className="flex justify-center py-8">

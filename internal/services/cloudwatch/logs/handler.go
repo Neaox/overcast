@@ -50,6 +50,7 @@ func (h *Handler) initOps() {
 		"DescribeLogStreams": h.DescribeLogStreams,
 		"PutLogEvents":       h.PutLogEvents,
 		"GetLogEvents":       h.GetLogEvents,
+		"StartLiveTail":      h.StartLiveTail,
 		// P2 — stubs (handler_stubs.go)
 		"DeleteLogGroup":  h.DeleteLogGroup,
 		"DeleteLogStream": h.DeleteLogStream,
