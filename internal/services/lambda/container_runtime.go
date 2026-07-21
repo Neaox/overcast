@@ -409,7 +409,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	if len(fn.Layers) > 0 {
 		progress("Injecting layer content")
 	}
-	expectedExtensions, err = cr.copyLayersToContainer(ctx, id, fn)
+	expectedExtensions, skippedLayerLogLines, err := cr.copyLayersToContainer(ctx, id, fn)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("copy layers to container: %w", err)
@@ -469,7 +469,11 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		zap.String("log_stream", logStream),
 	)
 
-	return cr.newContainerInstance(id, containerIP, fn, logStream), nil
+	ci := cr.newContainerInstance(id, containerIP, fn, logStream)
+	for _, line := range skippedLayerLogLines {
+		ci.writeLogLine(ctx, line)
+	}
+	return ci, nil
 }
 
 func dockerPlatformForLambdaArchitectures(architectures []string) string {
@@ -1906,14 +1910,15 @@ func sanitizeName(name string) string {
 
 // copyLayersToContainer expands each attached layer zip and copies it into
 // /opt, matching Lambda's layer filesystem semantics.
-func (cr *ContainerRuntime) copyLayersToContainer(ctx context.Context, containerID string, fn *Function) ([]string, error) {
+func (cr *ContainerRuntime) copyLayersToContainer(ctx context.Context, containerID string, fn *Function) ([]string, []string, error) {
 	if len(fn.Layers) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if cr.layerFetcher == nil {
-		return nil, fmt.Errorf("layer content fetcher is not configured")
+		return nil, nil, fmt.Errorf("layer content fetcher is not configured")
 	}
 	extensionSet := make(map[string]bool)
+	skippedLayerLogLines := make([]string, 0)
 	for _, layer := range fn.Layers {
 		arn := strings.TrimSpace(layer.ARN)
 		if arn == "" {
@@ -1927,35 +1932,50 @@ func (cr *ContainerRuntime) copyLayersToContainer(ctx context.Context, container
 				if remoteErr != nil {
 					cr.logger.Warn("layer not available locally or remotely — skipping",
 						zap.String("arn", arn), zap.Error(err), zap.NamedError("remote_error", remoteErr))
+					skippedLayerLogLines = append(skippedLayerLogLines, skippedLayerWarningLogLine(arn, remoteErr))
 					continue
 				}
 				zipData = remoteData
 			} else {
 				cr.logger.Warn("layer not available locally — skipping",
 					zap.String("arn", arn), zap.Error(err))
+				skippedLayerLogLines = append(skippedLayerLogLines, skippedLayerWarningLogLine(arn, err))
 				continue
 			}
 		}
 		layerTar, err := zipToTar(zipData)
 		if err != nil {
-			return nil, fmt.Errorf("build tar for layer %s: %w", arn, err)
+			return nil, nil, fmt.Errorf("build tar for layer %s: %w", arn, err)
 		}
 		if err := cr.docker.CopyToContainer(ctx, containerID, "/opt", bytes.NewReader(layerTar)); err != nil {
-			return nil, fmt.Errorf("copy layer %s to /opt: %w", arn, err)
+			return nil, nil, fmt.Errorf("copy layer %s to /opt: %w", arn, err)
 		}
 		for _, name := range discoverExternalExtensions(zipData) {
 			extensionSet[name] = true
 		}
 	}
 	if len(extensionSet) == 0 {
-		return nil, nil
+		return nil, skippedLayerLogLines, nil
 	}
 	extensions := make([]string, 0, len(extensionSet))
 	for name := range extensionSet {
 		extensions = append(extensions, name)
 	}
 	slices.Sort(extensions)
-	return extensions, nil
+	return extensions, skippedLayerLogLines, nil
+}
+
+func skippedLayerWarningLogLine(layerVersionARN string, cause error) string {
+	name := layerVersionARN
+	version := ""
+	if parsed, err := parseLayerARN(layerVersionARN); err == nil {
+		name = parsed.LayerName
+		version = parsed.Version
+	}
+	if version != "" {
+		return fmt.Sprintf("[Overcast Lambda] WARNING: Lambda layer %s:%s (%s) was not loaded because it is not available locally and remote AWS layer fetching is not configured or failed: %v", name, version, layerVersionARN, cause)
+	}
+	return fmt.Sprintf("[Overcast Lambda] WARNING: Lambda layer %s was not loaded because it is not available locally and remote AWS layer fetching is not configured or failed: %v", layerVersionARN, cause)
 }
 
 func discoverExternalExtensions(zipData []byte) []string {
