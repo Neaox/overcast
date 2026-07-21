@@ -138,36 +138,9 @@ For a shorter overview, start with the [service reference index](./services/READ
 
 <!-- END overcast:service-index -->
 
----
-
-## Adding a new service
-
-1. Create `docs/services/<service>.md` using the template below.
-2. Add the service to the table above.
-3. Create `internal/services/<service>/` and register it in the router.
-4. Add integration tests under `tests/integration/<service>/`.
-
-### Service doc template
-
-```markdown
-# <Service Name>
-
-> AWS docs: https://docs.aws.amazon.com/...
-
-## Summary
-
-| Category | Supported | Partial | WIP | Unsupported |
-| -------- | --------- | ------- | --- | ----------- |
-| ...      | N         | N       | N   | N           |
-
-## Endpoints
-
-### <Category name>
-
-| Operation | Status      | Notes | AWS Docs    |
-| --------- | ----------- | ----- | ----------- |
-| ...       | ✅/⚠️/🚧/❌ |       | [link](...) |
-```
+Want to add support for a new AWS service? See
+[CONTRIBUTING.md § How to add a service](https://github.com/Neaox/overcast/blob/main/CONTRIBUTING.md#how-to-add-a-service)
+in the repository.
 
 ---
 

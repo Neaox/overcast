@@ -11,6 +11,7 @@
 package bff
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"encoding/xml"
@@ -1068,8 +1069,60 @@ func handleDocsPage(docsFS fs.FS) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-		w.Write(content)
+		w.Write(stripFrontmatter(content))
 	}
+}
+
+var frontmatterDelim = []byte("---")
+
+// stripFrontmatter removes a leading YAML frontmatter block (delimited by
+// "---" lines) from doc content, as added by scripts/docs-index.go. Docs
+// served without frontmatter (e.g. service reference pages) are returned
+// unchanged. Malformed frontmatter (no closing delimiter) is also returned
+// unchanged rather than guessed at, so a bad doc never renders truncated or
+// mangled content.
+//
+// Line endings are handled a line at a time via IndexByte rather than a
+// literal "\n---\n" search, so the result doesn't depend on the file's LF
+// vs CRLF convention (checkout/editor dependent) and the function never
+// allocates beyond the trailing slice it returns.
+func stripFrontmatter(content []byte) []byte {
+	first, rest, ok := cutLine(content)
+	if !ok || !bytes.Equal(bytes.TrimRight(first, "\r"), frontmatterDelim) {
+		return content
+	}
+	for {
+		line, next, ok := cutLine(rest)
+		if !ok {
+			// No closing "---" found — leave content untouched.
+			return content
+		}
+		if bytes.Equal(bytes.TrimRight(line, "\r"), frontmatterDelim) {
+			return trimLeadingBlankLine(next)
+		}
+		rest = next
+	}
+}
+
+// trimLeadingBlankLine removes a single leading newline (LF or CRLF) — the
+// blank-line separator conventionally left between a frontmatter block and
+// the doc body — so callers don't see a stray blank line at the top.
+func trimLeadingBlankLine(b []byte) []byte {
+	if bytes.HasPrefix(b, []byte("\r\n")) {
+		return b[2:]
+	}
+	return bytes.TrimPrefix(b, []byte("\n"))
+}
+
+// cutLine splits b at the first '\n', returning the line (without the
+// newline) and the remainder. ok is false if b contains no '\n', meaning
+// there is no complete line left to consume.
+func cutLine(b []byte) (line, rest []byte, ok bool) {
+	idx := bytes.IndexByte(b, '\n')
+	if idx == -1 {
+		return nil, nil, false
+	}
+	return b[:idx], b[idx+1:], true
 }
 
 func safeDocsPath(path string) bool {

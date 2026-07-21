@@ -64,7 +64,7 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Added
 
-- **Docs / Web UI** — the bundled docs now include a browsable documentation route with server-backed search, generated metadata, and CDK local VPC guidance while excluding developer-only planning notes from the shipped docs index.
+- **Docs / Web UI** — the bundled docs now include a browsable documentation route (with a sidebar entry alongside Map/Events/Metrics/Inbox) with server-backed search, generated metadata, full markdown typography for headers/tables/scrollable code blocks, no more raw YAML frontmatter leaking into rendered pages, and CDK local VPC guidance, while excluding developer-only planning notes and contributor-only content (e.g. "how to add a service") from the shipped docs index.
 
 ### Fixed
 

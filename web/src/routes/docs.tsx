@@ -97,7 +97,7 @@ function DocsPage() {
           )}
           {isError && <p className="py-12 text-center text-sm text-fg-muted">Doc not found.</p>}
           {data && (
-            <div className="prose prose-sm prose-invert max-w-none">
+            <div className="prose prose-sm max-w-none">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm, remarkGithubAlerts, remarkRemoveComments]}
                 components={{
