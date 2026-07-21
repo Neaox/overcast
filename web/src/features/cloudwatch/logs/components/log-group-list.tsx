@@ -212,14 +212,19 @@ export function LogGroupList() {
                       />
                     </label>
                   </TableCell>
-                  <TableCell className="font-medium">{g.logGroupName}</TableCell>
+                  <TableCell className="font-medium" title={g.logGroupName}>
+                    {g.logGroupName}
+                  </TableCell>
                   <TableCell className="text-fg-muted">
                     {formatTimestamp(g.creationTime ?? 0)}
                   </TableCell>
                   <TableCell className="text-fg-muted">
                     {g.retentionInDays ? `${g.retentionInDays} days` : "Never expire"}
                   </TableCell>
-                  <TableCell className="max-w-xs truncate font-mono text-xs text-fg-muted">
+                  <TableCell
+                    className="max-w-xs truncate font-mono text-xs text-fg-muted"
+                    title={g.arn}
+                  >
                     {g.arn}
                   </TableCell>
                   <TableCell>

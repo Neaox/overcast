@@ -8,7 +8,9 @@ package logs_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
+	"io"
 	"net/http"
 	"testing"
 
@@ -16,6 +18,72 @@ import (
 
 	"github.com/Neaox/overcast/tests/helpers"
 )
+
+func TestStartLiveTail_streamsMatchingEvents(t *testing.T) {
+	// Given: a log group with two streams exists
+	srv := helpers.NewTestServer(t)
+	groupName := "/aws/lambda/live-tail"
+	groupARN := "arn:aws:logs:us-east-1:000000000000:log-group:" + groupName
+	createLogGroup(t, srv, groupName)
+	createLogStream(t, srv, groupName, "app/one")
+	createLogStream(t, srv, groupName, "app/two")
+
+	// When: StartLiveTail is opened with a stream prefix and filter pattern
+	resp := logsCall(t, srv, "StartLiveTail", map[string]any{
+		"logGroupIdentifiers":   []string{groupARN},
+		"logStreamNamePrefixes": []string{"app/"},
+		"logEventFilterPattern": "ERROR",
+	})
+	defer resp.Body.Close()
+
+	// Then: the response is an AWS event-stream session
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	helpers.AssertHeader(t, resp, "Content-Type", "application/vnd.amazon.eventstream")
+	start := readEventStreamMessage(t, resp.Body)
+	if start.Headers[":event-type"] != "sessionStart" {
+		t.Fatalf("first event type = %q, want sessionStart", start.Headers[":event-type"])
+	}
+
+	// When: matching and non-matching log events are written
+	putLogEvents(t, srv, groupName, "app/one", []logEvent{
+		{Timestamp: 1000, Message: "INFO ignored"},
+		{Timestamp: 1001, Message: "ERROR accepted"},
+	})
+	putLogEvents(t, srv, groupName, "app/two", []logEvent{
+		{Timestamp: 1002, Message: "ERROR accepted too"},
+	})
+
+	// Then: Live Tail emits sessionUpdates containing only matching events. The
+	// one-second tick can split sequential writes across updates on slower CI.
+	results := make([]liveTailTestResult, 0, 2)
+	for attempts := 0; attempts < 3 && len(results) < 2; attempts++ {
+		payload := readLiveTailUpdate(t, resp.Body)
+		if payload.SessionMetadata.Sampled {
+			t.Fatal("expected sampled=false")
+		}
+		results = append(results, payload.SessionResults...)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 matching events, got %d: %+v", len(results), results)
+	}
+
+	seen := make(map[string]liveTailTestResult, len(results))
+	for _, result := range results {
+		if result.LogGroupIdentifier != groupARN {
+			t.Fatalf("logGroupIdentifier = %q, want %q", result.LogGroupIdentifier, groupARN)
+		}
+		if result.IngestionTime == 0 {
+			t.Fatalf("expected ingestionTime for event: %+v", result)
+		}
+		seen[result.LogStreamName+"\x00"+result.Message] = result
+	}
+	if got, ok := seen["app/one\x00ERROR accepted"]; !ok || got.Timestamp != 1001 {
+		t.Fatalf("missing app/one ERROR event, got: %+v", results)
+	}
+	if got, ok := seen["app/two\x00ERROR accepted too"]; !ok || got.Timestamp != 1002 {
+		t.Fatalf("missing app/two ERROR event, got: %+v", results)
+	}
+}
 
 // ---- CreateLogGroup --------------------------------------------------------
 
@@ -1510,6 +1578,81 @@ func putLogEvents(t *testing.T, srv *helpers.TestServer, groupName, streamName s
 	})
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
+type eventStreamMessage struct {
+	Headers map[string]string
+	Payload []byte
+}
+
+type liveTailTestResult struct {
+	LogGroupIdentifier string `json:"logGroupIdentifier"`
+	LogStreamName      string `json:"logStreamName"`
+	Message            string `json:"message"`
+	Timestamp          int64  `json:"timestamp"`
+	IngestionTime      int64  `json:"ingestionTime"`
+}
+
+type liveTailTestUpdate struct {
+	SessionMetadata struct {
+		Sampled bool `json:"sampled"`
+	} `json:"sessionMetadata"`
+	SessionResults []liveTailTestResult `json:"sessionResults"`
+}
+
+func readLiveTailUpdate(t *testing.T, r io.Reader) liveTailTestUpdate {
+	t.Helper()
+	update := readEventStreamMessage(t, r)
+	if update.Headers[":event-type"] != "sessionUpdate" {
+		t.Fatalf("event type = %q, want sessionUpdate", update.Headers[":event-type"])
+	}
+	var payload liveTailTestUpdate
+	if err := json.Unmarshal(update.Payload, &payload); err != nil {
+		t.Fatalf("decode sessionUpdate payload: %v", err)
+	}
+	return payload
+}
+
+func readEventStreamMessage(t *testing.T, r io.Reader) eventStreamMessage {
+	t.Helper()
+	prelude := make([]byte, 12)
+	if _, err := io.ReadFull(r, prelude); err != nil {
+		t.Fatalf("read event-stream prelude: %v", err)
+	}
+	totalLen := int(binary.BigEndian.Uint32(prelude[0:4]))
+	headersLen := int(binary.BigEndian.Uint32(prelude[4:8]))
+	if totalLen < 16 || headersLen > totalLen-16 {
+		t.Fatalf("invalid event-stream lengths: total=%d headers=%d", totalLen, headersLen)
+	}
+	rest := make([]byte, totalLen-12)
+	if _, err := io.ReadFull(r, rest); err != nil {
+		t.Fatalf("read event-stream message: %v", err)
+	}
+	headersBuf := rest[:headersLen]
+	payload := rest[headersLen : len(rest)-4]
+	headers := make(map[string]string)
+	for len(headersBuf) > 0 {
+		nameLen := int(headersBuf[0])
+		headersBuf = headersBuf[1:]
+		if len(headersBuf) < nameLen+3 {
+			t.Fatalf("invalid event-stream header")
+		}
+		name := string(headersBuf[:nameLen])
+		headersBuf = headersBuf[nameLen:]
+		valueType := headersBuf[0]
+		headersBuf = headersBuf[1:]
+		if valueType != 7 {
+			t.Fatalf("unsupported event-stream header type %d for %s", valueType, name)
+		}
+		valueLen := int(binary.BigEndian.Uint16(headersBuf[:2]))
+		headersBuf = headersBuf[2:]
+		if len(headersBuf) < valueLen {
+			t.Fatalf("invalid event-stream header value")
+		}
+		headers[name] = string(headersBuf[:valueLen])
+		headersBuf = headersBuf[valueLen:]
+	}
+	return eventStreamMessage{Headers: headers, Payload: payload}
 }
 
 // ---- PutRetentionPolicy ----------------------------------------------------

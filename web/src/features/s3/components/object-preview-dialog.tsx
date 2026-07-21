@@ -13,8 +13,8 @@ import {
 } from "@/components/ui/dialog"
 import { Spinner, CodeBlock } from "@/components/ui/primitives"
 import { formatBytes, formatDate } from "@/lib/format"
-import Prism from "@/lib/prism"
 import { cn } from "@/lib/utils"
+import { formatPreviewText, isImagePreviewable, isTextPreviewable } from "./object-preview-format"
 
 const TEXT_PREVIEW_LIMIT = 1024 * 1024
 
@@ -32,80 +32,6 @@ interface ObjectPreviewDialogProps {
   metadata: ObjectMetadata | undefined
   loading: boolean
   onClose: () => void
-}
-
-function isImagePreviewable(contentType: string): boolean {
-  return /^image\/(png|jpe?g|gif|webp|svg\+xml|bmp|avif)$/i.test(contentType)
-}
-
-function isTextPreviewable(contentType: string, key: string): boolean {
-  if (contentType.startsWith("text/")) return true
-  if (
-    /^(application\/(json|xml|javascript|x-ndjson|xhtml\+xml)|.+\+(json|xml))$/i.test(contentType)
-  ) {
-    return true
-  }
-  return /\.(json|jsonl|ndjson|txt|log|md|csv|xml|xhtml|html|htm|css|js|ts|tsx|jsx|yaml|yml|toml|ini|env)$/i.test(
-    key,
-  )
-}
-
-function previewLanguage(contentType: string, key: string): "json" | "markup" | null {
-  if (/(^application\/(json|x-ndjson)$|\+json$)/i.test(contentType) || /\.json$/i.test(key)) {
-    return "json"
-  }
-  if (
-    /(^text\/(html|xml)$|xml$|\+xml$)/i.test(contentType) ||
-    /\.(xml|xhtml|html|htm)$/i.test(key)
-  ) {
-    return "markup"
-  }
-  return null
-}
-
-function formatMarkup(text: string): string {
-  const compact = text.trim()
-  if (!compact) return text
-  let depth = 0
-  const lines = compact
-    .replace(/>\s+</g, "><")
-    .split(/(?=<)|(?<=>)/g)
-    .map((part) => part.trim())
-    .filter(Boolean)
-  return lines
-    .map((line) => {
-      if (/^<\//.test(line)) depth = Math.max(0, depth - 1)
-      const rendered = `${"  ".repeat(depth)}${line}`
-      if (
-        /^<[^!?/][^>]*[^/]?>$/.test(line) &&
-        !/^<(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)\b/i.test(line)
-      ) {
-        depth += 1
-      }
-      return rendered
-    })
-    .join("\n")
-}
-
-function formatPreviewText(
-  text: string,
-  contentType: string,
-  key: string,
-): { text: string; html?: string } {
-  const language = previewLanguage(contentType, key)
-  if (language === "json") {
-    try {
-      const formatted = JSON.stringify(JSON.parse(text), null, 2)
-      return { text: formatted, html: Prism.highlight(formatted, Prism.languages.json, "json") }
-    } catch {
-      return { text }
-    }
-  }
-  if (language === "markup") {
-    const formatted = formatMarkup(text)
-    return { text: formatted, html: Prism.highlight(formatted, Prism.languages.markup, "markup") }
-  }
-  return { text }
 }
 
 export function ObjectPreviewDialog({
@@ -138,7 +64,9 @@ export function ObjectPreviewDialog({
     <Dialog open={!!objectKey} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[90vh] max-w-4xl overflow-hidden">
         <DialogHeader>
-          <DialogTitle className="truncate font-mono text-sm">{objectKey}</DialogTitle>
+          <DialogTitle className="truncate font-mono text-sm" title={objectKey}>
+            {objectKey}
+          </DialogTitle>
         </DialogHeader>
         {loading ? (
           <div className="flex justify-center py-8">

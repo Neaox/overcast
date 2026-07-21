@@ -16,9 +16,8 @@ import { X, FileText, Zap } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { logs } from "@/services/api"
 import type { LogEvent } from "@/types"
-import { EventType } from "@/services/event-types"
-import { useEventStream } from "@/hooks/use-event-stream"
 import { useScrollTrigger } from "@/hooks/use-scroll-trigger"
+import { tailLogEvents } from "@/features/cloudwatch/logs/tail"
 import { TriggerEventViewer } from "./trigger-event-viewer"
 
 type Tab = "logs" | "trigger"
@@ -37,12 +36,6 @@ export interface LogStreamTarget {
   logStream: string
   /** Optional JSON trigger event (Lambda only). */
   triggerEvent?: string
-}
-
-interface LogEventsWrittenPayload {
-  logGroupName: string
-  logStreamName: string
-  events: Array<{ timestamp: number; message: string }>
 }
 
 function logStreamPeekQueryOptions(target: LogStreamTarget | null, enabled: boolean) {
@@ -85,7 +78,6 @@ export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: Lo
   const visible = target !== null
   const [activeTab, setActiveTab] = useState<Tab>("logs")
   const [appendedEvents, setAppendedEvents] = useState<LogEvent[]>([])
-  const processedCount = useRef(0)
 
   // Reset appended events and active tab when the target stream changes.
   const prevTargetKey = useRef<string | null>(null)
@@ -105,31 +97,31 @@ export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: Lo
     ),
   )
 
-  // SSE subscription: append new log events for the active stream.
-  const { events: sseEvents } = useEventStream({ source: "logs" })
-  const sseTargetKey = useRef<string | null>(null)
+  // Append new log events for the active stream. The generator unsubscribes
+  // from the shared event stream when the target changes or the panel closes.
   useEffect(() => {
     if (!target || !target.logGroup || !target.logStream || activeTab !== "logs") return
-    const key = `${target.logGroup}::${target.logStream}`
-    if (key !== sseTargetKey.current) {
-      sseTargetKey.current = key
-      processedCount.current = sseEvents.length
-      return
-    }
-    const newEvents = sseEvents.slice(processedCount.current)
-    processedCount.current = sseEvents.length
-    for (const se of newEvents) {
-      if (se.type !== EventType.logs.LogEventsWritten) continue
-      const p = se.payload as LogEventsWrittenPayload
-      if (p.logGroupName !== target.logGroup || p.logStreamName !== target.logStream) continue
-      const incoming: LogEvent[] = p.events.map((e) => ({
-        timestamp: e.timestamp,
-        message: e.message,
-        ingestionTime: e.timestamp,
-      }))
-      setAppendedEvents((prev) => [...prev, ...incoming])
-    }
-  }, [sseEvents, target, activeTab])
+
+    const controller = new AbortController()
+    void (async () => {
+      for await (const event of tailLogEvents({
+        groupIdentifier: target.logGroup,
+        streamName: target.logStream,
+        signal: controller.signal,
+      })) {
+        setAppendedEvents((prev) => [
+          ...prev,
+          {
+            timestamp: event.timestamp,
+            message: event.message,
+            ingestionTime: event.ingestionTime,
+          },
+        ])
+      }
+    })()
+
+    return () => controller.abort()
+  }, [target, activeTab])
 
   // All historical events: pages are in reverse order (newest first page),
   // so reverse them to get chronological order, then append live events.

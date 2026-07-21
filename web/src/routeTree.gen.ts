@@ -83,6 +83,7 @@ import { Route as LambdaLayersLayerNameRouteImport } from './routes/lambda/layer
 import { Route as Ec2VpcVpcIdRouteImport } from './routes/ec2/vpc.$vpcId'
 import { Route as CloudwatchLogsStreamRouteImport } from './routes/cloudwatch/logs/stream'
 import { Route as CloudwatchLogsGroupRouteImport } from './routes/cloudwatch/logs/group'
+import { Route as CloudwatchLogsEventsRouteImport } from './routes/cloudwatch/logs/events'
 import { Route as ApigatewayRestApiIdRouteImport } from './routes/apigateway/rest.$apiId'
 import { Route as ApigatewayHttpApiIdRouteImport } from './routes/apigateway/http.$apiId'
 import { Route as CloudwatchLogsGroupNameIndexRouteImport } from './routes/cloudwatch/logs/$groupName/index'
@@ -465,6 +466,11 @@ const CloudwatchLogsGroupRoute = CloudwatchLogsGroupRouteImport.update({
   path: '/cloudwatch/logs/group',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CloudwatchLogsEventsRoute = CloudwatchLogsEventsRouteImport.update({
+  id: '/cloudwatch/logs/events',
+  path: '/cloudwatch/logs/events',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApigatewayRestApiIdRoute = ApigatewayRestApiIdRouteImport.update({
   id: '/apigateway/rest/$apiId',
   path: '/apigateway/rest/$apiId',
@@ -558,6 +564,7 @@ export interface FileRoutesByFullPath {
   '/sts/': typeof StsIndexRoute
   '/apigateway/http/$apiId': typeof ApigatewayHttpApiIdRoute
   '/apigateway/rest/$apiId': typeof ApigatewayRestApiIdRoute
+  '/cloudwatch/logs/events': typeof CloudwatchLogsEventsRoute
   '/cloudwatch/logs/group': typeof CloudwatchLogsGroupRoute
   '/cloudwatch/logs/stream': typeof CloudwatchLogsStreamRoute
   '/ec2/vpc/$vpcId': typeof Ec2VpcVpcIdRoute
@@ -635,6 +642,7 @@ export interface FileRoutesByTo {
   '/sts': typeof StsIndexRoute
   '/apigateway/http/$apiId': typeof ApigatewayHttpApiIdRoute
   '/apigateway/rest/$apiId': typeof ApigatewayRestApiIdRoute
+  '/cloudwatch/logs/events': typeof CloudwatchLogsEventsRoute
   '/cloudwatch/logs/group': typeof CloudwatchLogsGroupRoute
   '/cloudwatch/logs/stream': typeof CloudwatchLogsStreamRoute
   '/ec2/vpc/$vpcId': typeof Ec2VpcVpcIdRoute
@@ -717,6 +725,7 @@ export interface FileRoutesById {
   '/sts/': typeof StsIndexRoute
   '/apigateway/http/$apiId': typeof ApigatewayHttpApiIdRoute
   '/apigateway/rest/$apiId': typeof ApigatewayRestApiIdRoute
+  '/cloudwatch/logs/events': typeof CloudwatchLogsEventsRoute
   '/cloudwatch/logs/group': typeof CloudwatchLogsGroupRoute
   '/cloudwatch/logs/stream': typeof CloudwatchLogsStreamRoute
   '/ec2/vpc/$vpcId': typeof Ec2VpcVpcIdRoute
@@ -800,6 +809,7 @@ export interface FileRouteTypes {
     | '/sts/'
     | '/apigateway/http/$apiId'
     | '/apigateway/rest/$apiId'
+    | '/cloudwatch/logs/events'
     | '/cloudwatch/logs/group'
     | '/cloudwatch/logs/stream'
     | '/ec2/vpc/$vpcId'
@@ -877,6 +887,7 @@ export interface FileRouteTypes {
     | '/sts'
     | '/apigateway/http/$apiId'
     | '/apigateway/rest/$apiId'
+    | '/cloudwatch/logs/events'
     | '/cloudwatch/logs/group'
     | '/cloudwatch/logs/stream'
     | '/ec2/vpc/$vpcId'
@@ -958,6 +969,7 @@ export interface FileRouteTypes {
     | '/sts/'
     | '/apigateway/http/$apiId'
     | '/apigateway/rest/$apiId'
+    | '/cloudwatch/logs/events'
     | '/cloudwatch/logs/group'
     | '/cloudwatch/logs/stream'
     | '/ec2/vpc/$vpcId'
@@ -1040,6 +1052,7 @@ export interface RootRouteChildren {
   StsIndexRoute: typeof StsIndexRoute
   ApigatewayHttpApiIdRoute: typeof ApigatewayHttpApiIdRoute
   ApigatewayRestApiIdRoute: typeof ApigatewayRestApiIdRoute
+  CloudwatchLogsEventsRoute: typeof CloudwatchLogsEventsRoute
   CloudwatchLogsGroupRoute: typeof CloudwatchLogsGroupRoute
   CloudwatchLogsStreamRoute: typeof CloudwatchLogsStreamRoute
   Ec2VpcVpcIdRoute: typeof Ec2VpcVpcIdRoute
@@ -1570,6 +1583,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CloudwatchLogsGroupRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/cloudwatch/logs/events': {
+      id: '/cloudwatch/logs/events'
+      path: '/cloudwatch/logs/events'
+      fullPath: '/cloudwatch/logs/events'
+      preLoaderRoute: typeof CloudwatchLogsEventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/apigateway/rest/$apiId': {
       id: '/apigateway/rest/$apiId'
       path: '/apigateway/rest/$apiId'
@@ -1740,6 +1760,7 @@ const rootRouteChildren: RootRouteChildren = {
   StsIndexRoute: StsIndexRoute,
   ApigatewayHttpApiIdRoute: ApigatewayHttpApiIdRoute,
   ApigatewayRestApiIdRoute: ApigatewayRestApiIdRoute,
+  CloudwatchLogsEventsRoute: CloudwatchLogsEventsRoute,
   CloudwatchLogsGroupRoute: CloudwatchLogsGroupRoute,
   CloudwatchLogsStreamRoute: CloudwatchLogsStreamRoute,
   Ec2VpcVpcIdRoute: Ec2VpcVpcIdRoute,

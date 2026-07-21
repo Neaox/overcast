@@ -14,6 +14,6 @@ createSearchContributor<SecretSummary>({
     service: "Secrets Manager",
     serviceKey: "/secretsmanager",
     type: "Secret",
-    href: "/secretsmanager",
+    href: `/secretsmanager/${encodeURIComponent(s.Name ?? "")}`,
   }),
 })

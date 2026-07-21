@@ -78,6 +78,7 @@ import {
 } from "@tanstack/react-router"
 import { render as rtlRender, type RenderOptions, type RenderResult } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { TooltipProvider } from "@/components/ui/tooltip"
 
 // Re-export everything from RTL so tests only need one import.
 export * from "@testing-library/react"
@@ -114,7 +115,7 @@ interface WrapperProps {
 function AllProviders({ children, queryClient }: WrapperProps) {
   return (
     <QueryClientProvider client={queryClient ?? createTestQueryClient()}>
-      {children}
+      <TooltipProvider>{children}</TooltipProvider>
     </QueryClientProvider>
   )
 }

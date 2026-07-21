@@ -56,6 +56,7 @@ function baseConfig() {
     region: ep.region,
     credentials: EMULATOR_CREDENTIALS,
     tls: false,
+    disableHostPrefix: true,
   } as const
 }
 

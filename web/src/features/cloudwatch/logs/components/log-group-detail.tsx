@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react"
+import { Link } from "@tanstack/react-router"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
@@ -42,7 +43,6 @@ import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { useToast } from "@/components/ui/toast"
 import { cn } from "@/lib/utils"
-import { LogEventsViewer } from "./log-events-viewer"
 
 function formatTimestamp(ts: number): string {
   if (!ts) return "—"
@@ -65,7 +65,6 @@ export function LogGroupDetail({ groupName }: Props) {
   const [filterInput, setFilterInput] = useState("")
   const [activeFilter, setActiveFilter] = useState("")
   const [timeRange, setTimeRange] = useState<TimeRange>({})
-  const [showAllLogs, setShowAllLogs] = useState(false)
 
   // ─── Data ────────────────────────────────────────────────────────────────
   const { data: allGroups = [] } = useQuery(logsGroupsQueryOptions())
@@ -77,6 +76,17 @@ export function LogGroupDetail({ groupName }: Props) {
     isFetching,
     refetch,
   } = useQuery(logsStreamsQueryOptions(groupName))
+
+  const sortedStreams = useMemo(
+    () =>
+      [...streams].sort((a, b) => {
+        const aWritten = a.lastIngestionTime ?? a.lastEventTimestamp ?? 0
+        const bWritten = b.lastIngestionTime ?? b.lastEventTimestamp ?? 0
+        if (aWritten !== bWritten) return bWritten - aWritten
+        return (a.logStreamName ?? "").localeCompare(b.logStreamName ?? "")
+      }),
+    [streams],
+  )
 
   // Cross-stream search query — only runs when user has an active filter.
   const {
@@ -159,9 +169,11 @@ export function LogGroupDetail({ groupName }: Props) {
             <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching}>
               <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
             </Button>
-            <Button size="sm" variant="secondary" onClick={() => setShowAllLogs((v) => !v)}>
-              <ListFilter className="mr-1 h-4 w-4" />
-              {showAllLogs ? "Hide Logs" : "View All Logs"}
+            <Button size="sm" variant="secondary" asChild>
+              <Link to="/cloudwatch/logs/events" search={{ groupName }}>
+                <ListFilter className="mr-1 h-4 w-4" />
+                View All Logs
+              </Link>
             </Button>
             <Button size="sm" onClick={() => setShowCreateStream(true)}>
               <Plus className="mr-1 h-4 w-4" />
@@ -202,12 +214,6 @@ export function LogGroupDetail({ groupName }: Props) {
             </div>
           </CardContent>
         </Card>
-      )}
-
-      {showAllLogs && (
-        <div className="min-h-[560px] rounded-lg border border-border bg-bg p-3">
-          <LogEventsViewer groupName={groupName} />
-        </div>
       )}
 
       {/* Cross-stream search toolbar */}
@@ -294,7 +300,9 @@ export function LogGroupDetail({ groupName }: Props) {
                     <TableCell className="font-mono text-xs whitespace-nowrap text-fg-muted">
                       {formatTimestamp(evt.timestamp ?? 0)}
                     </TableCell>
-                    <TableCell className="text-xs text-fg-muted">{evt.logStreamName}</TableCell>
+                    <TableCell className="text-xs text-fg-muted" title={evt.logStreamName}>
+                      {evt.logStreamName}
+                    </TableCell>
                     <TableCell>
                       <pre className="max-w-2xl font-mono text-xs break-all whitespace-pre-wrap">
                         {evt.message}
@@ -348,15 +356,17 @@ export function LogGroupDetail({ groupName }: Props) {
                   <input
                     type="checkbox"
                     className="accent-primary h-4 w-4 rounded"
-                    checked={streams.length > 0 && selectedStreams.size === streams.length}
+                    checked={
+                      sortedStreams.length > 0 && selectedStreams.size === sortedStreams.length
+                    }
                     ref={(el) => {
                       if (el)
                         el.indeterminate =
-                          selectedStreams.size > 0 && selectedStreams.size < streams.length
+                          selectedStreams.size > 0 && selectedStreams.size < sortedStreams.length
                     }}
                     onChange={(e) => {
                       if (e.target.checked) {
-                        setSelectedStreams(new Set(streams.map((s) => s.logStreamName ?? "")))
+                        setSelectedStreams(new Set(sortedStreams.map((s) => s.logStreamName ?? "")))
                       } else {
                         setSelectedStreams(new Set())
                       }
@@ -371,7 +381,7 @@ export function LogGroupDetail({ groupName }: Props) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {streams.map((s) => (
+              {sortedStreams.map((s) => (
                 <TableRow
                   key={s.logStreamName}
                   className="cursor-pointer"
@@ -403,7 +413,9 @@ export function LogGroupDetail({ groupName }: Props) {
                       />
                     </label>
                   </TableCell>
-                  <TableCell className="font-medium">{s.logStreamName}</TableCell>
+                  <TableCell className="font-medium" title={s.logStreamName}>
+                    {s.logStreamName}
+                  </TableCell>
                   <TableCell className="text-fg-muted">
                     {formatTimestamp(s.creationTime ?? 0)}
                   </TableCell>

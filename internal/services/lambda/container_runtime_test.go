@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/docker"
 	"go.uber.org/zap"
@@ -288,6 +289,46 @@ func TestDiscoverExternalExtensions_executableRootFiles(t *testing.T) {
 	// Then: only executable files directly under /opt/extensions are expected to register.
 	if len(extensions) != 1 || extensions[0] != "parameters-secrets-extension" {
 		t.Fatalf("extensions = %#v", extensions)
+	}
+}
+
+func TestContainerRuntimeCopyLayersToContainer_missingRemoteLayerReturnsLambdaLogWarning(t *testing.T) {
+	// Given: a function references an AWS-managed layer that is not published locally,
+	// and remote layer fetching has no AWS credentials configured.
+	runtime := &ContainerRuntime{
+		cfg:    &config.Config{DataDir: t.TempDir(), LambdaFetchRemoteLayers: true},
+		clk:    clock.NewMock(),
+		logger: zap.NewNop(),
+	}
+	runtime.SetLayerContentFetcher(func(context.Context, string) ([]byte, error) {
+		return nil, fs.ErrNotExist
+	})
+	runtime.SetRemoteLayerFetcher(NewRemoteLayerFetcher(runtime.cfg, zap.NewNop(), runtime.clk))
+	fn := &Function{Layers: []LayerVersionLink{{ARN: "arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:11"}}}
+
+	// When: layers are injected before container start.
+	extensions, logLines, err := runtime.copyLayersToContainer(context.Background(), "container-id", fn)
+
+	// Then: the missing layer is skipped and a warning line is available for the Lambda logs.
+	if err != nil {
+		t.Fatalf("copyLayersToContainer: %v", err)
+	}
+	if len(extensions) != 0 {
+		t.Fatalf("extensions = %#v, want none", extensions)
+	}
+	if len(logLines) != 1 {
+		t.Fatalf("log lines = %#v, want one warning", logLines)
+	}
+	logLine := logLines[0]
+	for _, want := range []string{
+		"[Overcast Lambda] WARNING",
+		"AWS-Parameters-and-Secrets-Lambda-Extension:11",
+		"was not loaded because it is not available locally",
+		"remote AWS layer fetching is not configured or failed",
+	} {
+		if !strings.Contains(logLine, want) {
+			t.Fatalf("log line %q does not contain %q", logLine, want)
+		}
 	}
 }
 
