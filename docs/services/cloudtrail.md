@@ -1,3 +1,14 @@
+---
+title: "CloudTrail — AWS CloudTrail"
+description: "Metadata-only CloudTrail implementation for local development and CDK/Terraform compatibility."
+section: "Service Reference"
+tags:
+  - aws
+  - cloudtrail
+  - docs
+  - services
+---
+
 # CloudTrail — AWS CloudTrail
 
 > AWS docs: https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/Welcome.html

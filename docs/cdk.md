@@ -1,8 +1,23 @@
+---
+title: "Using AWS CDK with Overcast"
+description: "Overcast supports cdk deploy and cdk destroy for stacks that use supported resource types. This page explains how to configure CDK to target Overcast and what to expect."
+section: "Getting Started"
+tags:
+  - aws
+  - cdk
+  - docs
+  - overcast
+---
+
 # Using AWS CDK with Overcast
 
 Overcast supports `cdk deploy` and `cdk destroy` for stacks that use
 [supported resource types](#supported-resource-types). This page explains how to
 configure CDK to target Overcast and what to expect.
+
+For local VPC workflows, see [Local VPCs for CDK](./cdk/local-vpc.md). That page
+covers CDK context cache churn, `Vpc.fromLookup` vs `Vpc.fromVpcAttributes`, and
+the VPC provider pattern for keeping local-specific logic out of stacks.
 
 ---
 

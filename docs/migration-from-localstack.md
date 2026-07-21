@@ -1,3 +1,15 @@
+---
+title: "Migrating from LocalStack"
+description: "overcast is designed as a drop-in replacement for LocalStack Community Edition. In most cases, changing AWS_ENDPOINT_URL is the only change needed."
+section: "Getting Started"
+tags:
+  - docs
+  - from
+  - localstack
+  - migrating
+  - migration
+---
+
 # Migrating from LocalStack
 
 overcast is designed as a drop-in replacement for LocalStack Community Edition.

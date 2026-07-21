@@ -1,3 +1,16 @@
+---
+title: "Auto Scaling — AWS Auto Scaling"
+description: "Metadata-only implementation of Auto Scaling. All state is stored in-memory and responses use realistic field values, but no actual instance management or scaling is performed."
+section: "Service Reference"
+tags:
+  - auto
+  - autoscaling
+  - aws
+  - docs
+  - scaling
+  - services
+---
+
 # Auto Scaling — AWS Auto Scaling
 
 > AWS docs: https://docs.aws.amazon.com/autoscaling/ec2/APIReference/Welcome.html

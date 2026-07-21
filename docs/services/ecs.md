@@ -1,3 +1,16 @@
+---
+title: "ECS — Elastic Container Service"
+description: "ECS uses AWS JSON 1.1 over HTTPS. All operations share a single endpoint URL; the action is identified by the X-Amz-Target header with prefix AmazonEC2ContainerServiceV20141113..."
+section: "Service Reference"
+tags:
+  - container
+  - docs
+  - ecs
+  - elastic
+  - service
+  - services
+---
+
 # ECS — Elastic Container Service
 
 > AWS docs: https://docs.aws.amazon.com/AmazonECS/latest/APIReference/Welcome.html

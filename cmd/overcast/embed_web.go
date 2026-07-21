@@ -15,7 +15,7 @@ func newUIHandler(apiPort int, region string) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	docsFS, err := fs.Sub(overcast.DocsServicesFS, "docs/services")
+	docsFS, err := fs.Sub(overcast.DocsServicesFS, "docs")
 	if err != nil {
 		return nil, err
 	}

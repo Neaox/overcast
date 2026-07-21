@@ -1,3 +1,17 @@
+---
+title: "Step Functions — endpoint support"
+description: "Step Functions accepts AWS JSON 1.0 via X-Amz-Target: AWSStepFunctions.\u003coperation\u003e. It also accepts Smithy RPC v2 CBOR at /service/StepFunctions/operation/\u003coperation\u003e with..."
+section: "Service Reference"
+tags:
+  - docs
+  - endpoint
+  - functions
+  - services
+  - step
+  - stepfunctions
+  - support
+---
+
 # Step Functions — endpoint support
 
 > AWS docs: [Step Functions API Reference](https://docs.aws.amazon.com/step-functions/latest/apireference/Welcome.html)

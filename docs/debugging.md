@@ -1,3 +1,13 @@
+---
+title: "Step debugging"
+description: "Overcast supports full step debugging via Delve, Go's debugger. You can set breakpoints, step through handler code, inspect variables, watch expressions, and navigate the call..."
+section: "Getting Started"
+tags:
+  - debugging
+  - docs
+  - step
+---
+
 # Step debugging
 
 Overcast supports full step debugging via [Delve](https://github.com/go-delve/delve),

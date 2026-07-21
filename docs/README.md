@@ -1,3 +1,12 @@
+---
+title: "Documentation"
+description: "This directory contains the full Overcast documentation. For a quick overview, see the root README."
+section: "Getting Started"
+tags:
+  - docs
+  - documentation
+---
+
 # Documentation
 
 This directory contains the full Overcast documentation. For a quick overview,
@@ -9,11 +18,13 @@ see the [root README](../README.md).
 
 - [Using AWS SDKs and CLI](./sdk-cli.md) — configure the AWS CLI (`--endpoint-url`), Node.js, Python, Go, Java, .NET, Rust, Terraform
 - [Using AWS CDK](./cdk.md) — `cdk bootstrap`, `cdk deploy`, supported resource types, troubleshooting
+- [CDK guides](./cdk/) — focused CDK workflow guides
+- [Local VPCs for CDK](./cdk/local-vpc.md) — stable local VPC bootstrap, CDK context cache behavior, VPC provider pattern
 - [Migrating from LocalStack](./migration-from-localstack.md) — drop-in replacement guide
 
 ### Reference
 
-- [Service emulation reference](./services/) — per-service endpoint coverage tables
+- [Service emulation reference](./services/README.md) — per-service endpoint coverage tables
 - [Configuration reference](#configuration-reference) — all environment variables
 - [Persistence](#persistence) — storage backends
 - [HTTPS / TLS](#https--tls) — self-signed certs for local HTTPS
@@ -68,6 +79,8 @@ x-emulator-unsupported: true
 ---
 
 ## Services
+
+For a shorter overview, start with the [service reference index](./services/README.md).
 
 <!-- BEGIN overcast:service-index -->
 
@@ -125,36 +138,9 @@ x-emulator-unsupported: true
 
 <!-- END overcast:service-index -->
 
----
-
-## Adding a new service
-
-1. Create `docs/services/<service>.md` using the template below.
-2. Add the service to the table above.
-3. Create `internal/services/<service>/` and register it in the router.
-4. Add integration tests under `tests/integration/<service>/`.
-
-### Service doc template
-
-```markdown
-# <Service Name>
-
-> AWS docs: https://docs.aws.amazon.com/...
-
-## Summary
-
-| Category | Supported | Partial | WIP | Unsupported |
-| -------- | --------- | ------- | --- | ----------- |
-| ...      | N         | N       | N   | N           |
-
-## Endpoints
-
-### <Category name>
-
-| Operation | Status      | Notes | AWS Docs    |
-| --------- | ----------- | ----- | ----------- |
-| ...       | ✅/⚠️/🚧/❌ |       | [link](...) |
-```
+Want to add support for a new AWS service? See
+[CONTRIBUTING.md § How to add a service](https://github.com/Neaox/overcast/blob/main/CONTRIBUTING.md#how-to-add-a-service)
+in the repository.
 
 ---
 

@@ -1,3 +1,17 @@
+---
+title: "EKS — Amazon Elastic Kubernetes Service"
+description: "EKS supports two modes:"
+section: "Service Reference"
+tags:
+  - amazon
+  - docs
+  - eks
+  - elastic
+  - kubernetes
+  - service
+  - services
+---
+
 # EKS — Amazon Elastic Kubernetes Service
 
 EKS supports two modes:

@@ -1,3 +1,15 @@
+---
+title: "Bedrock — Amazon Bedrock Runtime"
+description: "Amazon Bedrock Runtime uses the REST JSON protocol. Routes are served under the /_bedrock/ path prefix."
+section: "Service Reference"
+tags:
+  - amazon
+  - bedrock
+  - docs
+  - runtime
+  - services
+---
+
 # Bedrock — Amazon Bedrock Runtime
 
 > AWS docs: https://docs.aws.amazon.com/bedrock/latest/APIReference/

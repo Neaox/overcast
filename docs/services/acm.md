@@ -1,3 +1,16 @@
+---
+title: "ACM — AWS Certificate Manager"
+description: "AWS Certificate Manager uses the application/x-amz-json-1.1 protocol. Operations are identified by the X-Amz-Target header with the prefix CertificateManager.."
+section: "Service Reference"
+tags:
+  - acm
+  - aws
+  - certificate
+  - docs
+  - manager
+  - services
+---
+
 # ACM — AWS Certificate Manager
 
 > AWS docs: https://docs.aws.amazon.com/acm/latest/APIReference/

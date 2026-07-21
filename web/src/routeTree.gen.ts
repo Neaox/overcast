@@ -17,6 +17,7 @@ import { Route as MailRouteImport } from './routes/mail'
 import { Route as InboxRouteImport } from './routes/inbox'
 import { Route as IamRouteImport } from './routes/iam'
 import { Route as EventsRouteImport } from './routes/events'
+import { Route as DocsRouteImport } from './routes/docs'
 import { Route as ServiceRouteImport } from './routes/$service'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as StsIndexRouteImport } from './routes/sts/index'
@@ -128,6 +129,11 @@ const IamRoute = IamRouteImport.update({
 const EventsRoute = EventsRouteImport.update({
   id: '/events',
   path: '/events',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DocsRoute = DocsRouteImport.update({
+  id: '/docs',
+  path: '/docs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ServiceRoute = ServiceRouteImport.update({
@@ -502,6 +508,7 @@ const CloudwatchLogsGroupNameStreamNameRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$service': typeof ServiceRoute
+  '/docs': typeof DocsRoute
   '/events': typeof EventsRoute
   '/iam': typeof IamRoute
   '/inbox': typeof InboxRoute
@@ -584,6 +591,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$service': typeof ServiceRoute
+  '/docs': typeof DocsRoute
   '/events': typeof EventsRoute
   '/iam': typeof IamRoute
   '/inbox': typeof InboxRoute
@@ -663,6 +671,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/$service': typeof ServiceRoute
+  '/docs': typeof DocsRoute
   '/events': typeof EventsRoute
   '/iam': typeof IamRoute
   '/inbox': typeof InboxRoute
@@ -747,6 +756,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/$service'
+    | '/docs'
     | '/events'
     | '/iam'
     | '/inbox'
@@ -829,6 +839,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/$service'
+    | '/docs'
     | '/events'
     | '/iam'
     | '/inbox'
@@ -907,6 +918,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/$service'
+    | '/docs'
     | '/events'
     | '/iam'
     | '/inbox'
@@ -990,6 +1002,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ServiceRoute: typeof ServiceRoute
+  DocsRoute: typeof DocsRoute
   EventsRoute: typeof EventsRoute
   IamRoute: typeof IamRoute
   InboxRoute: typeof InboxRoute
@@ -1119,6 +1132,13 @@ declare module '@tanstack/react-router' {
       path: '/events'
       fullPath: '/events'
       preLoaderRoute: typeof EventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/docs': {
+      id: '/docs'
+      path: '/docs'
+      fullPath: '/docs'
+      preLoaderRoute: typeof DocsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/$service': {
@@ -1697,6 +1717,7 @@ const SqsQueueRouteWithChildren = SqsQueueRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ServiceRoute: ServiceRoute,
+  DocsRoute: DocsRoute,
   EventsRoute: EventsRoute,
   IamRoute: IamRoute,
   InboxRoute: InboxRoute,

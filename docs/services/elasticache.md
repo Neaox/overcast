@@ -1,3 +1,16 @@
+---
+title: "ElastiCache — Managed In-Memory Cache"
+description: "ElastiCache uses the AWS Query protocol (form-encoded POST, XML responses). Operations are identified by the Action parameter with API version 2015-02-02."
+section: "Service Reference"
+tags:
+  - cache
+  - docs
+  - elasticache
+  - managed
+  - memory
+  - services
+---
+
 # ElastiCache — Managed In-Memory Cache
 
 > AWS docs: https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/Welcome.html

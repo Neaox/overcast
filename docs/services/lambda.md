@@ -1,3 +1,13 @@
+---
+title: "Lambda"
+description: "Lambda emulation has two distinct concerns:"
+section: "Service Reference"
+tags:
+  - docs
+  - lambda
+  - services
+---
+
 # Lambda
 
 > AWS docs: https://docs.aws.amazon.com/lambda/latest/api/welcome.html

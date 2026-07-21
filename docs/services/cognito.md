@@ -1,3 +1,16 @@
+---
+title: "Cognito — Amazon Cognito User Pools"
+description: "Cognito User Pools (Identity Provider) uses the application/x-amz-json-1.1 protocol. Operations are identified by the X-Amz-Target header with the prefix..."
+section: "Service Reference"
+tags:
+  - amazon
+  - cognito
+  - docs
+  - pools
+  - services
+  - user
+---
+
 # Cognito — Amazon Cognito User Pools
 
 > AWS docs: https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/Welcome.html

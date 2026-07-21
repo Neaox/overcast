@@ -8,7 +8,15 @@
  * To add a new service: edit service-registry.ts only.
  */
 
-import { LayoutDashboard, Network, BarChart2, Inbox, Activity, type LucideIcon } from "lucide-react"
+import {
+  LayoutDashboard,
+  Network,
+  BarChart2,
+  Inbox,
+  Activity,
+  BookOpen,
+  type LucideIcon,
+} from "lucide-react"
 import {
   SERVICES,
   type ServiceEntry,
@@ -74,4 +82,5 @@ export const BOTTOM_ITEMS = [
   { key: "/events", to: "/events", label: "Events", icon: Activity, color: "text-teal-400" },
   { key: "/metrics", to: "/metrics", label: "Metrics", icon: BarChart2, color: "text-sky-400" },
   { key: "/inbox", to: "/inbox", label: "Inbox", icon: Inbox, color: "text-amber-400" },
+  { key: "/docs", to: "/docs", label: "Docs", icon: BookOpen, color: "text-violet-400" },
 ]

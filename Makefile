@@ -22,8 +22,8 @@ ACTIONLINT_VERSION := v1.7.7
         run test test-unit test-integration test-coverage \
         bench bench-startup lint lint-go lint-web lint-actions fmt vet tidy check docker docker-slim docker-console docker-run clean \
         compat-build compat-serve compat-report \
-generate-caps check-caps docs docs-check supportmeta-check check-binary-symbols \
-	generate-caps check-caps docs docs-check supportmeta-check check-binary-symbols
+generate-caps check-caps docs docs-index docs-check supportmeta-check check-binary-symbols \
+	generate-caps check-caps docs docs-index docs-check supportmeta-check check-binary-symbols
 
 ## help: print this help message
 help:
@@ -39,7 +39,7 @@ setup:
 	$(GO) run ./scripts/check-tools.go
 
 ## build: compile the overcast binary for the current platform (includes embedded web UI)
-build:
+build: docs-index
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) ./cmd/overcast
 
@@ -49,7 +49,7 @@ build-mcp:
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/overcast-mcp ./cmd/overcast-mcp
 
 ## build-web: build the web UI (run before build if assets are stale)
-build-web:
+build-web: docs-index
 	cd web && VITE_BUNDLED=true npm run build
 
 ## build-slim: compile the slim binary (no web UI, no SQLite) for the current platform
@@ -58,7 +58,7 @@ build-slim:
 	$(GO) build $(GOFLAGS) -tags slim,nosqlite -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/overcastd ./cmd/overcast
 
 ## build-cross: compile release binaries for all supported platforms
-build-cross: build-linux-amd64 build-linux-arm64 build-darwin-amd64 build-darwin-arm64 build-windows-amd64 \
+build-cross: docs-index build-linux-amd64 build-linux-arm64 build-darwin-amd64 build-darwin-arm64 build-windows-amd64 \
              build-slim-linux-amd64 build-slim-linux-arm64 build-slim-darwin-amd64 build-slim-darwin-arm64 build-slim-windows-amd64
 
 ## build-linux-amd64: compile overcast for Linux x86-64
@@ -112,19 +112,19 @@ build-slim-windows-amd64:
 	GOOS=windows GOARCH=amd64 $(GO) build $(GOFLAGS) -tags slim,nosqlite -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/overcastd-windows-amd64.exe ./cmd/overcast
 
 ## run: build and run with dev defaults (uses cross-platform Go script)
-run:
+run: docs-index
 	OVERCAST_SERVICES= $(GO) run ./scripts/run.go
 
 ## dev-server: watch Go sources and hot-reload the server (requires air)
-dev-server:
+dev-server: docs-index
 	air
 
 ## test: run all tests (unit + integration, with race detector where supported)
-test:
+test: docs-index
 	$(GO) test -race -count=1 -timeout=300s ./...
 
 ## test-unit: run unit tests only (fast — no server startup)
-test-unit:
+test-unit: docs-index
 	$(GO) test -race -count=1 -timeout=60s ./internal/...
 
 ## test-integration: run integration tests only
@@ -132,13 +132,13 @@ test-integration:
 	$(GO) test -race -count=1 -timeout=300s ./tests/...
 
 ## test-coverage: run tests and generate HTML coverage report
-test-coverage:
+test-coverage: docs-index
 	$(GO) test -race -count=1 -coverprofile=coverage.out ./...
 	$(GO) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report written to coverage.html"
 
 ## bench: run benchmarks with memory allocation reporting
-bench:
+bench: docs-index
 	$(GO) test -bench=. -benchmem -count=3 ./...
 
 ## bench-startup: measure cold-start time across all storage backends (pre-release gate)
@@ -184,16 +184,22 @@ generate-caps:
 check-caps:
 	$(GO) run -tags dev ./cmd/capgen --check
 
+## docs-index: generate the web docs search/navigation manifest
+docs-index:
+	$(GO) run ./scripts/docs-index.go --write-index --write-go-index
+
 ## docs: regenerate sentinel-bracketed capability tables in docs/services/*.md
 docs: generate-caps
 	$(GO) run -tags dev ./cmd/capgen --write-docs
+	$(GO) run ./scripts/docs-index.go --write-index --write-go-index
 
-## docs-check: verify docs capability tables, all.gen.go, STATUS.md, and service docs are up to date (CI gate)
+## docs-check: verify docs capability tables, all.gen.go, and STATUS.md are up to date, and every doc has frontmatter (CI gate)
 docs-check: check-caps
 	$(GO) run -tags dev ./cmd/capgen --generate
 	@git diff --exit-code internal/capabilities/all.gen.go \
 		|| (echo "ERROR: internal/capabilities/all.gen.go is stale. Run: make generate-caps" && exit 1)
 	$(GO) run -tags dev ./cmd/capgen --write-docs
+	$(GO) run ./scripts/docs-index.go --check
 	@git diff --exit-code README.md STATUS.md docs/README.md docs/services/ docs/generated/service-support.json \
 		|| (echo "ERROR: README.md, STATUS.md, docs/README.md, docs/services/, or docs/generated/service-support.json are stale. Run: make docs" && exit 1)
 

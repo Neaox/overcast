@@ -649,7 +649,27 @@ Add your entry under `[Unreleased]`:
    ```
 6. Write P1 tests in `tests/integration/<n>/<n>_test.go`
 7. Add CloudFormation resource handlers for every resource type the service creates — register them in `resourceHandlers` in `internal/services/cloudformation/provisioner.go`. If the service creates resources that AWS has CloudFormation types for (which is nearly always the case), you must add the entries. At minimum, use `&stubResourceHandler{}` for resource types you can't fully implement yet — this lets CDK stacks succeed while the implementation is incomplete. See [CloudFormation integration](#cloudformation-integration) for the full rules, dispatch helpers, and verification checklist.
-8. Create `docs/services/<n>.md` using the template in `docs/README.md`. Add the sentinel markers (`<!-- BEGIN overcast:capabilities -->` / `<!-- END overcast:capabilities -->`) and run `make docs` to populate the capabilities table automatically. Everything between those markers is overwritten on every run — never edit it by hand. Any prose that belongs in the doc (behaviour notes, caveats, example snippets) must live **outside** the markers.
+8. Create `docs/services/<n>.md` using the template below. Add the sentinel markers (`<!-- BEGIN overcast:capabilities -->` / `<!-- END overcast:capabilities -->`) and run `make docs` to populate the capabilities table automatically. Everything between those markers is overwritten on every run — never edit it by hand. Any prose that belongs in the doc (behaviour notes, caveats, example snippets) must live **outside** the markers.
+
+   ```markdown
+   # <Service Name>
+
+   > AWS docs: https://docs.aws.amazon.com/...
+
+   ## Summary
+
+   | Category | Supported | Partial | WIP | Unsupported |
+   | -------- | --------- | ------- | --- | ----------- |
+   | ...      | N         | N       | N   | N           |
+
+   ## Endpoints
+
+   ### <Category name>
+
+   | Operation | Status      | Notes | AWS Docs    |
+   | --------- | ----------- | ----- | ----------- |
+   | ...       | ✅/⚠️/🚧/❌ |       | [link](...) |
+   ```
 9. Add service to README.md table and `CHANGELOG.md`
 10. Create `compat/suites/node-js-sdk/src/groups/<n>.ts` with compat tests covering all P1 operations and register the group in `compat/suites/node-js-sdk/src/index.ts`; add the service to the CLI suite if applicable (`compat/suites/cli/`)
 11. **Web UI** — consider whether developers using Overcast would find it useful to see or administer this service's resources from the management console (most CRUD-style services qualify; internal plumbing like STS usually does not). If yes:

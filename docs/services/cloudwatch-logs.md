@@ -1,3 +1,14 @@
+---
+title: "CloudWatch Logs"
+description: "CloudWatch Logs accepts the AWS JSON 1.1 API over the shared root endpoint with X-Amz-Target: Logs_20140328.\u003cOperationName\u003e. It also accepts Smithy RPC v2 CBOR at..."
+section: "Service Reference"
+tags:
+  - cloudwatch
+  - docs
+  - logs
+  - services
+---
+
 # CloudWatch Logs
 
 > AWS docs: https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/Welcome.html

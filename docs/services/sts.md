@@ -1,3 +1,15 @@
+---
+title: "STS — endpoint support"
+description: "Generated for Overcast. See also: AWS STS API Reference"
+section: "Service Reference"
+tags:
+  - docs
+  - endpoint
+  - services
+  - sts
+  - support
+---
+
 # STS — endpoint support
 
 > Generated for Overcast. See also: [AWS STS API Reference](https://docs.aws.amazon.com/STS/latest/APIReference/welcome.html)

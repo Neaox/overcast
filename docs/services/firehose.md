@@ -1,3 +1,15 @@
+---
+title: "Firehose — Amazon Data Firehose"
+description: "Amazon Data Firehose uses the application/x-amz-json-1.1 protocol. Operations are identified by the X-Amz-Target header with the prefix Firehose_20150804.."
+section: "Service Reference"
+tags:
+  - amazon
+  - data
+  - docs
+  - firehose
+  - services
+---
+
 # Firehose — Amazon Data Firehose
 
 > AWS docs: https://docs.aws.amazon.com/firehose/latest/APIReference/

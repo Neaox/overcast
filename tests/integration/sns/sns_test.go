@@ -512,6 +512,7 @@ func TestPublishBatch_deliversAllMessagesToSQS(t *testing.T) {
 	})
 
 	// Then: both messages arrive in the queue (delivery is async, so poll).
+	seen := map[string]bool{}
 	helpers.Eventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
 		recvResp := sqsCall(t, srv, "ReceiveMessage", map[string]any{
 			"QueueUrl":            queueURL,
@@ -522,7 +523,15 @@ func TestPublishBatch_deliversAllMessagesToSQS(t *testing.T) {
 			Messages []struct{ Body string } `json:"Messages"`
 		}
 		helpers.DecodeJSON(t, recvResp, &recv)
-		return len(recv.Messages) == 2
+		for _, msg := range recv.Messages {
+			var envelope struct {
+				Message string `json:"Message"`
+			}
+			if err := decodeJSONString(msg.Body, &envelope); err == nil {
+				seen[envelope.Message] = true
+			}
+		}
+		return seen["msg-a"] && seen["msg-b"]
 	}, "timed out waiting for 2 batch messages in SQS queue")
 }
 

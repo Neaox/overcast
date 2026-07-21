@@ -62,6 +62,10 @@ need it than accidentally ship a breaking change as a patch.
        binary packaging, release process, or user-facing docs.
 -->
 
+### Added
+
+- **Docs / Web UI** — the bundled docs now include a browsable documentation route (with a sidebar entry alongside Map/Events/Metrics/Inbox) with server-backed search, generated metadata, full markdown typography for headers/tables/scrollable code blocks, no more raw YAML frontmatter leaking into rendered pages, and CDK local VPC guidance, while excluding developer-only planning notes and contributor-only content (e.g. "how to add a service") from the shipped docs index.
+
 ### Fixed
 
 - **Startup metrics** — `startup_duration_ms` now measures Go-side startup work from the earliest Overcast Go timestamp to readiness, while new `pre_init_ms` and an environment timeline phase separately report OS loader, antivirus, container init, entrypoint, and exec time.

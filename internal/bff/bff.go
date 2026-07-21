@@ -11,6 +11,7 @@
 package bff
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"encoding/xml"
@@ -25,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Neaox/overcast/internal/docssearch"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -58,8 +60,8 @@ type UIConfig struct {
 // and serves the embedded SPA for everything else.
 //
 // staticFS must be rooted at the dist directory (files accessible as "index.html",
-// "assets/...", etc.). docsFS must be rooted at the docs/services directory
-// (files accessible as "s3.md", "sqs.md", etc.).
+// "assets/...", etc.). docsFS must be rooted at the published docs directory
+// (files accessible as "services/s3.md", "cdk/local-vpc.md", etc.).
 //
 // cfg is injected into every served index.html so the SPA can reach the API
 // without user configuration. Pass a zero value from dev/test callers that
@@ -108,6 +110,8 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	r.Get("/api/sqs/queues/{name}/messages", handleSQSPeek)
 
 	// ── Docs ──────────────────────────────────────────────────────────────
+	r.Get("/api/docs/search", handleDocsSearch)
+	r.Get("/api/docs/page", handleDocsPage(docsFS))
 	r.Get("/api/docs/{service}", handleDocs(docsFS))
 
 	// ── SPA fallback ──────────────────────────────────────────────────────
@@ -1035,6 +1039,102 @@ func handleRDSLogs(w http.ResponseWriter, r *http.Request) {
 
 var safeServiceName = regexp.MustCompile(`^[a-z0-9_-]+$`)
 
+func handleDocsSearch(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	limit := 10
+	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err == nil && parsed > 0 && parsed <= 50 {
+			limit = parsed
+		}
+	}
+	results := docssearch.Search(query, limit)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"query":   query,
+		"results": results,
+	})
+}
+
+func handleDocsPage(docsFS fs.FS) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimSpace(r.URL.Query().Get("path"))
+		if !safeDocsPath(path) {
+			writeJSONError(w, http.StatusNotFound, "NotFound")
+			return
+		}
+		content, err := fs.ReadFile(docsFS, path)
+		if err != nil {
+			writeJSONError(w, http.StatusNotFound, "NotFound")
+			return
+		}
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Write(stripFrontmatter(content))
+	}
+}
+
+var frontmatterDelim = []byte("---")
+
+// stripFrontmatter removes a leading YAML frontmatter block (delimited by
+// "---" lines) from doc content, as added by scripts/docs-index.go. Docs
+// served without frontmatter (e.g. service reference pages) are returned
+// unchanged. Malformed frontmatter (no closing delimiter) is also returned
+// unchanged rather than guessed at, so a bad doc never renders truncated or
+// mangled content.
+//
+// Line endings are handled a line at a time via IndexByte rather than a
+// literal "\n---\n" search, so the result doesn't depend on the file's LF
+// vs CRLF convention (checkout/editor dependent) and the function never
+// allocates beyond the trailing slice it returns.
+func stripFrontmatter(content []byte) []byte {
+	first, rest, ok := cutLine(content)
+	if !ok || !bytes.Equal(bytes.TrimRight(first, "\r"), frontmatterDelim) {
+		return content
+	}
+	for {
+		line, next, ok := cutLine(rest)
+		if !ok {
+			// No closing "---" found — leave content untouched.
+			return content
+		}
+		if bytes.Equal(bytes.TrimRight(line, "\r"), frontmatterDelim) {
+			return trimLeadingBlankLine(next)
+		}
+		rest = next
+	}
+}
+
+// trimLeadingBlankLine removes a single leading newline (LF or CRLF) — the
+// blank-line separator conventionally left between a frontmatter block and
+// the doc body — so callers don't see a stray blank line at the top.
+func trimLeadingBlankLine(b []byte) []byte {
+	if bytes.HasPrefix(b, []byte("\r\n")) {
+		return b[2:]
+	}
+	return bytes.TrimPrefix(b, []byte("\n"))
+}
+
+// cutLine splits b at the first '\n', returning the line (without the
+// newline) and the remainder. ok is false if b contains no '\n', meaning
+// there is no complete line left to consume.
+func cutLine(b []byte) (line, rest []byte, ok bool) {
+	idx := bytes.IndexByte(b, '\n')
+	if idx == -1 {
+		return nil, nil, false
+	}
+	return b[:idx], b[idx+1:], true
+}
+
+func safeDocsPath(path string) bool {
+	if path == "" || strings.Contains(path, "..") || strings.HasPrefix(path, "/") || strings.HasPrefix(path, "\\") {
+		return false
+	}
+	if path == "plans" || strings.HasPrefix(path, "plans/") {
+		return false
+	}
+	return strings.HasSuffix(path, ".md")
+}
+
 func handleDocs(docsFS fs.FS) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		service := chi.URLParam(r, "service")
@@ -1042,7 +1142,7 @@ func handleDocs(docsFS fs.FS) http.HandlerFunc {
 			writeJSONError(w, http.StatusNotFound, "NotFound")
 			return
 		}
-		content, err := fs.ReadFile(docsFS, service+".md")
+		content, err := fs.ReadFile(docsFS, "services/"+service+".md")
 		if err != nil {
 			writeJSONError(w, http.StatusNotFound, "NotFound")
 			return

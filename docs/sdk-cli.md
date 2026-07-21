@@ -1,3 +1,16 @@
+---
+title: "Using AWS SDKs and CLI with Overcast"
+description: "Overcast is a drop-in local AWS endpoint. Point any AWS SDK or the AWS CLI at http://localhost:4566 and use it exactly as you would against real AWS."
+section: "Getting Started"
+tags:
+  - aws
+  - cli
+  - docs
+  - overcast
+  - sdk
+  - sdks
+---
+
 # Using AWS SDKs and CLI with Overcast
 
 Overcast is a drop-in local AWS endpoint. Point any AWS SDK or the AWS CLI at

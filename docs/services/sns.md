@@ -1,3 +1,16 @@
+---
+title: "SNS — Simple Notification Service"
+description: "SNS uses a query-string or JSON API. Topics are identified by ARN: arn:aws:sns:us-east-1:000000000000:\u003ctopic-name\u003e"
+section: "Service Reference"
+tags:
+  - docs
+  - notification
+  - service
+  - services
+  - simple
+  - sns
+---
+
 # SNS — Simple Notification Service
 
 > AWS docs: https://docs.aws.amazon.com/sns/latest/api/welcome.html

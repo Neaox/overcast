@@ -1,3 +1,16 @@
+---
+title: "EC2 — Elastic Compute Cloud"
+description: "EC2 uses the AWS Query protocol (form-encoded POST, XML responses). Operations are identified by the Action parameter with API version 2016-11-15."
+section: "Service Reference"
+tags:
+  - cloud
+  - compute
+  - docs
+  - ec2
+  - elastic
+  - services
+---
+
 # EC2 — Elastic Compute Cloud
 
 > AWS docs: https://docs.aws.amazon.com/AWSEC2/latest/APIReference/Welcome.html

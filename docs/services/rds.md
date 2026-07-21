@@ -1,3 +1,16 @@
+---
+title: "RDS — Relational Database Service"
+description: "RDS uses the AWS Query protocol (form-encoded POST, XML responses). Operations are identified by the Action parameter with API version 2014-10-31."
+section: "Service Reference"
+tags:
+  - database
+  - docs
+  - rds
+  - relational
+  - service
+  - services
+---
+
 # RDS — Relational Database Service
 
 > AWS docs: https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/Welcome.html

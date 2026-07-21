@@ -1,3 +1,15 @@
+---
+title: "AppSync — endpoint support"
+description: "AppSync uses REST-JSON under the /v1/apis and /v2/apis path prefixes. Overcast implements GraphQL API management, schema upload, API key CRUD, data source CRUD, function CRUD,..."
+section: "Service Reference"
+tags:
+  - appsync
+  - docs
+  - endpoint
+  - services
+  - support
+---
+
 # AppSync — endpoint support
 
 > AWS docs: [AppSync API Reference](https://docs.aws.amazon.com/appsync/latest/APIReference/Welcome.html)

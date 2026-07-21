@@ -1,3 +1,17 @@
+---
+title: "SSM Parameter Store — endpoint support"
+description: "Generated for Overcast. See also: AWS SSM Parameter Store API Reference"
+section: "Service Reference"
+tags:
+  - docs
+  - endpoint
+  - parameter
+  - services
+  - ssm
+  - store
+  - support
+---
+
 # SSM Parameter Store — endpoint support
 
 > Generated for Overcast. See also: [AWS SSM Parameter Store API Reference](https://docs.aws.amazon.com/systems-manager/latest/APIReference/Welcome.html)
