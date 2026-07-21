@@ -60,7 +60,14 @@ need it than accidentally ship a breaking change as a patch.
      - The changelog only needs changes that affect shipped artifacts or release
        notes: runtime behaviour, AWS compatibility, config/env vars, Docker or
        binary packaging, release process, or user-facing docs.
+     - Release section dates use UTC in YYYY-MM-DD format.
 -->
+
+### Added
+
+### Fixed
+
+## [0.0.1-alpha.16] - 2026-07-21
 
 ### Added
 
