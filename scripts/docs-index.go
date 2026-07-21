@@ -481,6 +481,7 @@ func markdownText(raw string) string {
 }
 
 func normalizeSearchText(s string) string {
+	s = splitIdentifierWords(s)
 	s = strings.ToLower(s)
 	var b strings.Builder
 	lastSpace := true
@@ -496,6 +497,23 @@ func normalizeSearchText(s string) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func splitIdentifierWords(s string) string {
+	var b strings.Builder
+	var prev rune
+	for i, r := range s {
+		if i > 0 && isIdentifierBoundary(prev, r) {
+			b.WriteByte(' ')
+		}
+		b.WriteRune(r)
+		prev = r
+	}
+	return b.String()
+}
+
+func isIdentifierBoundary(prev, curr rune) bool {
+	return (unicode.IsLower(prev) && unicode.IsUpper(curr)) || (unicode.IsLetter(prev) && unicode.IsDigit(curr)) || (unicode.IsDigit(prev) && unicode.IsLetter(curr))
 }
 
 func renderIndex(entries []docEntry) ([]byte, error) {

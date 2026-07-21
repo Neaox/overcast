@@ -30,3 +30,18 @@ func TestSearch_ignoresStopwords(t *testing.T) {
 		t.Fatalf("expected no results, got %d", len(results))
 	}
 }
+
+func TestSearch_camelCaseOperationWords(t *testing.T) {
+	// Given: the generated docs index includes operation names.
+
+	// When: we search for words from a CamelCase operation.
+	results := Search("live tail", 5)
+
+	// Then: the CloudWatch Logs StartLiveTail documentation is discoverable.
+	if len(results) == 0 {
+		t.Fatal("expected search results")
+	}
+	if results[0].Href != "services/cloudwatch-logs.md" {
+		t.Fatalf("expected CloudWatch Logs first, got %q", results[0].Href)
+	}
+}
