@@ -39,7 +39,7 @@ setup:
 	$(GO) run ./scripts/check-tools.go
 
 ## build: compile the overcast binary for the current platform (includes embedded web UI)
-build:
+build: docs-index
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) ./cmd/overcast
 
@@ -58,7 +58,7 @@ build-slim:
 	$(GO) build $(GOFLAGS) -tags slim,nosqlite -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/overcastd ./cmd/overcast
 
 ## build-cross: compile release binaries for all supported platforms
-build-cross: build-linux-amd64 build-linux-arm64 build-darwin-amd64 build-darwin-arm64 build-windows-amd64 \
+build-cross: docs-index build-linux-amd64 build-linux-arm64 build-darwin-amd64 build-darwin-arm64 build-windows-amd64 \
              build-slim-linux-amd64 build-slim-linux-arm64 build-slim-darwin-amd64 build-slim-darwin-arm64 build-slim-windows-amd64
 
 ## build-linux-amd64: compile overcast for Linux x86-64
@@ -112,19 +112,19 @@ build-slim-windows-amd64:
 	GOOS=windows GOARCH=amd64 $(GO) build $(GOFLAGS) -tags slim,nosqlite -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/overcastd-windows-amd64.exe ./cmd/overcast
 
 ## run: build and run with dev defaults (uses cross-platform Go script)
-run:
+run: docs-index
 	OVERCAST_SERVICES= $(GO) run ./scripts/run.go
 
 ## dev-server: watch Go sources and hot-reload the server (requires air)
-dev-server:
+dev-server: docs-index
 	air
 
 ## test: run all tests (unit + integration, with race detector where supported)
-test:
+test: docs-index
 	$(GO) test -race -count=1 -timeout=300s ./...
 
 ## test-unit: run unit tests only (fast — no server startup)
-test-unit:
+test-unit: docs-index
 	$(GO) test -race -count=1 -timeout=60s ./internal/...
 
 ## test-integration: run integration tests only
@@ -132,13 +132,13 @@ test-integration:
 	$(GO) test -race -count=1 -timeout=300s ./tests/...
 
 ## test-coverage: run tests and generate HTML coverage report
-test-coverage:
+test-coverage: docs-index
 	$(GO) test -race -count=1 -coverprofile=coverage.out ./...
 	$(GO) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report written to coverage.html"
 
 ## bench: run benchmarks with memory allocation reporting
-bench:
+bench: docs-index
 	$(GO) test -bench=. -benchmem -count=3 ./...
 
 ## bench-startup: measure cold-start time across all storage backends (pre-release gate)
@@ -193,7 +193,7 @@ docs: generate-caps
 	$(GO) run -tags dev ./cmd/capgen --write-docs
 	$(GO) run ./scripts/docs-index.go --write-index --write-go-index
 
-## docs-check: verify docs capability tables, all.gen.go, STATUS.md, and service docs are up to date (CI gate)
+## docs-check: verify docs capability tables, all.gen.go, and STATUS.md are up to date, and every doc has frontmatter (CI gate)
 docs-check: check-caps
 	$(GO) run -tags dev ./cmd/capgen --generate
 	@git diff --exit-code internal/capabilities/all.gen.go \
@@ -202,10 +202,6 @@ docs-check: check-caps
 	$(GO) run ./scripts/docs-index.go --check
 	@git diff --exit-code README.md STATUS.md docs/README.md docs/services/ docs/generated/service-support.json \
 		|| (echo "ERROR: README.md, STATUS.md, docs/README.md, docs/services/, or docs/generated/service-support.json are stale. Run: make docs" && exit 1)
-	@git diff --exit-code web/src/generated/docs-index.ts \
-		|| (echo "ERROR: web/src/generated/docs-index.ts is stale. Run: make docs-index" && exit 1)
-	@git diff --exit-code internal/docssearch/index_gen.go \
-		|| (echo "ERROR: internal/docssearch/index_gen.go is stale. Run: make docs-index" && exit 1)
 
 ## supportmeta-check: alias for docs-check (manifest schema, registry parity, docs parity, generated artifacts)
 supportmeta-check: docs-check

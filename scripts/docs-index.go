@@ -10,11 +10,9 @@
 package main
 
 import (
-	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"go/format"
@@ -33,9 +31,15 @@ import (
 )
 
 const (
-	docsRoot       = "docs"
-	indexOutput    = "web/src/generated/docs-index.ts"
-	goIndexOutput  = "internal/docssearch/index_gen.go"
+	docsRoot = "docs"
+	// indexOutput and goIndexOutput are build artifacts, not checked into git
+	// (see .gitignore) — every consumer regenerates them from docs/ rather
+	// than trusting a possibly-stale copy. Naming/location follows the
+	// TanStack Router convention used elsewhere in this repo
+	// (web/src/routeTree.gen.ts, internal/capabilities/all.gen.go): a flat
+	// "*.gen.*" file next to its consumers, no "generated/" subfolder.
+	indexOutput    = "web/src/docs-index.gen.ts"
+	goIndexOutput  = "internal/docssearch/index.gen.go"
 	frontmatterSep = "---"
 )
 
@@ -103,42 +107,28 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	entries := make([]docEntry, 0, len(docs))
-	for _, doc := range docs {
-		entries = append(entries, doc.Entry)
-	}
 
-	generated, err := renderIndex(entries)
-	if err != nil {
-		fatal(err)
-	}
-	goGenerated, err := renderGoIndex(docs)
-	if err != nil {
-		fatal(err)
-	}
-
+	// --check only validates doc content (frontmatter completeness) — it
+	// predates indexOutput/goIndexOutput becoming gitignored build artifacts
+	// with nothing committed left to compare against, so there's no longer
+	// an "is the generated index stale" question to answer here. Every real
+	// consumer (go build, vite dev, docker build) regenerates unconditionally.
 	if *check {
 		if frontmatterChanges > 0 {
 			fatal(fmt.Errorf("%d docs are missing frontmatter; run go run ./scripts/docs-index.go --write-frontmatter --write-index", frontmatterChanges))
-		}
-		existing, err := os.ReadFile(indexOutput)
-		if err != nil {
-			fatal(err)
-		}
-		if !bytes.Equal(existing, generated) {
-			fatal(errors.New("docs index is stale; run go run ./scripts/docs-index.go --write-index"))
-		}
-		goExisting, err := os.ReadFile(goIndexOutput)
-		if err != nil {
-			fatal(err)
-		}
-		if !bytes.Equal(goExisting, goGenerated) {
-			fatal(errors.New("Go docs search index is stale; run go run ./scripts/docs-index.go --write-go-index"))
 		}
 		return
 	}
 
 	if *writeIndex {
+		entries := make([]docEntry, 0, len(docs))
+		for _, doc := range docs {
+			entries = append(entries, doc.Entry)
+		}
+		generated, err := renderIndex(entries)
+		if err != nil {
+			fatal(err)
+		}
 		if err := os.MkdirAll(filepath.Dir(indexOutput), 0o755); err != nil {
 			fatal(err)
 		}
@@ -147,6 +137,10 @@ func main() {
 		}
 	}
 	if *writeGoIndex {
+		goGenerated, err := renderGoIndex(docs)
+		if err != nil {
+			fatal(err)
+		}
 		if err := os.MkdirAll(filepath.Dir(goIndexOutput), 0o755); err != nil {
 			fatal(err)
 		}

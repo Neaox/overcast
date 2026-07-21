@@ -10,7 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(__dirname, "../../../../")
 const DOCS_ROOT = path.join(REPO_ROOT, "docs")
 const DOCS_SERVICES_DIR = path.join(DOCS_ROOT, "services")
-const DOCS_INDEX_PATH = path.join(REPO_ROOT, "web", "src", "generated", "docs-index.ts")
+const DOCS_INDEX_PATH = path.join(REPO_ROOT, "web", "src", "docs-index.gen.ts")
 
 interface DocsIndexEntry {
   href: string

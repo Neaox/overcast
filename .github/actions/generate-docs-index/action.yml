@@ -1,0 +1,14 @@
+name: Generate docs index
+description: >
+  Regenerate the gitignored docs search/nav index
+  (web/src/docs-index.gen.ts, internal/docssearch/index.gen.go) from docs/.
+  Required before any Go build/vet/test/lint step that touches
+  internal/docssearch or internal/bff — those files are build artifacts, not
+  checked into git, so a fresh checkout doesn't have them. Requires Go to
+  already be set up (actions/setup-go) in the calling job.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: go run ./scripts/docs-index.go --write-index --write-go-index

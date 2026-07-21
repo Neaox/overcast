@@ -28,6 +28,13 @@ compat-results.json
 # compat agent-friendly text report (regenerated after every run, not for VCS)
 compat-report.txt
 
+# docs nav/search index — regenerated from docs/ by scripts/docs-index.go
+# (run `make docs-index` / `task docs-index`, or `go generate ./internal/docssearch`).
+# Never checked in so a stale copy can't linger in git; go build/test, vite
+# dev, and the Docker build all regenerate it themselves. See Dockerfile.
+/web/src/docs-index.gen.ts
+/internal/docssearch/index.gen.go
+
 # log files
 *.log
 logs.txt

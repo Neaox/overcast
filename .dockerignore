@@ -1,7 +1,11 @@
 # Ignore everything, then allowlist only what the build needs.
 *
 
-# ---- Go builder (stage 1) ---------------------------------------------------
+# ---- Docs index generation (stage 1) ---------------------------------------
+!scripts/
+!scripts/docs-index.go
+
+# ---- Go builder (stage 3) ---------------------------------------------------
 !go.mod
 !go.sum
 !embed.go

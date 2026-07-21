@@ -7,7 +7,7 @@ import remarkRemoveComments from "remark-remove-comments"
 import { BookOpen, ExternalLink } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/primitives"
-import { DOCS_INDEX } from "@/generated/docs-index"
+import { DOCS_INDEX } from "@/docs-index.gen"
 import { cn } from "@/lib/utils"
 
 interface DocsSearchParams {

@@ -39,6 +39,7 @@ tasks:
 
   build:
     desc: Compile the binary for the current platform (includes embedded web UI)
+    deps: [docs-index]
     cmds:
       - cmd: mkdir -p {{.BUILD_DIR}}
         platforms: [darwin, linux]
@@ -74,11 +75,13 @@ tasks:
 
   run:
     desc: Build and run with dev defaults (cross-platform Go script)
+    deps: [docs-index]
     cmds:
       - go run ./scripts/run.go
 
   dev-server:
     desc: Watch Go sources and hot-reload the server (requires air)
+    deps: [docs-index]
     cmds:
       - air
 
@@ -86,11 +89,13 @@ tasks:
 
   test:
     desc: Run all tests (race detector enabled where supported)
+    deps: [docs-index]
     cmds:
       - go test -race -count=1 -timeout=120s ./...
 
   test-unit:
     desc: Run unit tests only (fast — no server startup)
+    deps: [docs-index]
     cmds:
       - go test -race -count=1 -timeout=60s ./internal/...
 
@@ -101,6 +106,7 @@ tasks:
 
   test-coverage:
     desc: Run tests and open HTML coverage report
+    deps: [docs-index]
     cmds:
       - go test -race -count=1 -coverprofile=coverage.out ./...
       - go tool cover -html=coverage.out -o coverage.html
@@ -124,7 +130,13 @@ tasks:
       - go run -tags dev ./cmd/capgen --check
 
   docs-index:
-    desc: Generate the web docs search/navigation manifest
+    desc: Generate the web docs search/navigation manifest (gitignored build artifacts — see .gitignore)
+    sources:
+      - docs/**/*.md
+      - scripts/docs-index.go
+    generates:
+      - web/src/docs-index.gen.ts
+      - internal/docssearch/index.gen.go
     cmds:
       - go run ./scripts/docs-index.go --write-index --write-go-index
 
@@ -136,19 +148,20 @@ tasks:
       - go run ./scripts/docs-index.go --write-index --write-go-index
 
   docs-check:
-    desc: Verify generated docs artifacts are up to date
+    desc: Verify generated docs artifacts are up to date and every doc has frontmatter
     deps: [check-caps]
     cmds:
       - go run -tags dev ./cmd/capgen --generate
       - git diff --exit-code internal/capabilities/all.gen.go
       - go run -tags dev ./cmd/capgen --write-docs
       - go run ./scripts/docs-index.go --check
-      - git diff --exit-code README.md STATUS.md docs/README.md docs/services/ docs/generated/service-support.json web/src/generated/docs-index.ts internal/docssearch/index_gen.go
+      - git diff --exit-code README.md STATUS.md docs/README.md docs/services/ docs/generated/service-support.json
 
   # ---- Quality --------------------------------------------------------------
 
   bench:
     desc: Run benchmarks with memory allocation reporting
+    deps: [docs-index]
     cmds:
       - go test -bench=. -benchmem -count=3 ./...
 

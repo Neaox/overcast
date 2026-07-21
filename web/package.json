@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "predev": "npm run docs:index",
     "dev": "vite",
     "docs:index": "cd .. && go run ./scripts/docs-index.go --write-index --write-go-index",
     "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit",
