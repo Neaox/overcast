@@ -27,6 +27,8 @@ func md5Hex(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+const maxMessageBodyBytes = 1_048_576 // 1 MiB
+
 // ---- Request / response types ----------------------------------------------
 
 type sendMessageRequest struct {
@@ -158,6 +160,20 @@ func (h *Handler) sendMessageTyped(ctx context.Context, in *sendMessageRequest) 
 	if in.MessageBody == "" {
 		return nil, protocol.ErrMissingParameter("MessageBody")
 	}
+	if len(in.MessageBody) > maxMessageBodyBytes {
+		return nil, &protocol.AWSError{
+			Code:       "InvalidParameterValue",
+			Message:    "Value for parameter MessageBody is invalid. Reason: Message body must be no larger than 1048576 bytes.",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	if in.DelaySeconds < 0 || in.DelaySeconds > 900 {
+		return nil, &protocol.AWSError{
+			Code:       "InvalidParameterValue",
+			Message:    "Value for parameter DelaySeconds is invalid. Reason: DelaySeconds must be between 0 and 900, inclusive.",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
 
 	queueName := queueNameFromURL(in.QueueUrl)
 	q, aerr := h.store.getQueue(ctx, queueName)
@@ -168,6 +184,13 @@ func (h *Handler) sendMessageTyped(ctx context.Context, in *sendMessageRequest) 
 	fifo := isFifoQueue(q)
 	if fifo && in.MessageGroupId == "" {
 		return nil, protocol.ErrMissingParameter("MessageGroupId")
+	}
+	if fifo && in.DelaySeconds > 0 {
+		return nil, &protocol.AWSError{
+			Code:       "InvalidParameterValue",
+			Message:    "Value for parameter DelaySeconds is invalid. Reason: DelaySeconds cannot be set on FIFO queues.",
+			HTTPStatus: http.StatusBadRequest,
+		}
 	}
 
 	var dedupID string
@@ -732,6 +755,22 @@ func (h *Handler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.RequireString(w, r, req.MessageBody, "MessageBody") {
 		return
 	}
+	if len(req.MessageBody) > maxMessageBodyBytes {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code:       "InvalidParameterValue",
+			Message:    "Value for parameter MessageBody is invalid. Reason: Message body must be no larger than 1048576 bytes.",
+			HTTPStatus: http.StatusBadRequest,
+		})
+		return
+	}
+	if req.DelaySeconds < 0 || req.DelaySeconds > 900 {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code:       "InvalidParameterValue",
+			Message:    "Value for parameter DelaySeconds is invalid. Reason: DelaySeconds must be between 0 and 900, inclusive.",
+			HTTPStatus: http.StatusBadRequest,
+		})
+		return
+	}
 
 	queueName := queueNameFromURL(req.QueueUrl)
 	q, aerr := h.store.getQueue(r.Context(), queueName)
@@ -747,6 +786,14 @@ func (h *Handler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "The request must contain the parameter MessageGroupId.",
+			HTTPStatus: http.StatusBadRequest,
+		})
+		return
+	}
+	if fifo && req.DelaySeconds > 0 {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code:       "InvalidParameterValue",
+			Message:    "Value for parameter DelaySeconds is invalid. Reason: DelaySeconds cannot be set on FIFO queues.",
 			HTTPStatus: http.StatusBadRequest,
 		})
 		return

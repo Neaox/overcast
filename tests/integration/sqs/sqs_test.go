@@ -284,6 +284,73 @@ func TestSendMessage_queueNotFound(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusBadRequest)
 }
 
+func TestSendMessage_invalidDelaySeconds(t *testing.T) {
+	// Given: a standard queue
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "delay-validation")
+
+	cases := []struct {
+		name         string
+		delaySeconds int
+	}{
+		{name: "negative", delaySeconds: -1},
+		{name: "above maximum", delaySeconds: 901},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// When: SendMessage includes an invalid DelaySeconds value
+			resp := sqsCall(t, srv, "SendMessage", map[string]any{
+				"QueueUrl":     queueURL,
+				"MessageBody":  "test",
+				"DelaySeconds": tc.delaySeconds,
+			})
+			defer resp.Body.Close()
+
+			// Then: the request is rejected
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, "InvalidParameterValue")
+		})
+	}
+}
+
+func TestSendMessage_delaySecondsOnFifo(t *testing.T) {
+	// Given: a FIFO queue
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "fifo-delay.fifo")
+
+	// When: SendMessage includes DelaySeconds on a FIFO queue
+	resp := sqsCall(t, srv, "SendMessage", map[string]any{
+		"QueueUrl":       queueURL,
+		"MessageBody":    "test",
+		"MessageGroupId": "g1",
+		"DelaySeconds":   5,
+	})
+	defer resp.Body.Close()
+
+	// Then: the request is rejected (DelaySeconds not allowed on FIFO)
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidParameterValue")
+}
+
+func TestSendMessage_bodyTooLarge(t *testing.T) {
+	// Given: a standard queue
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "body-size-test")
+
+	// When: SendMessage includes a body larger than 1 MiB
+	largeBody := strings.Repeat("x", 1_048_577) // 1 MiB + 1 byte
+	resp := sqsCall(t, srv, "SendMessage", map[string]any{
+		"QueueUrl":    queueURL,
+		"MessageBody": largeBody,
+	})
+	defer resp.Body.Close()
+
+	// Then: the request is rejected
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidParameterValue")
+}
+
 // ---- ReceiveMessage --------------------------------------------------------
 
 func TestReceiveMessage_success(t *testing.T) {

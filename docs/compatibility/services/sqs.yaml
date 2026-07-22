@@ -172,6 +172,7 @@ findings:
     - ChangeMessageVisibility and ChangeMessageVisibilityBatch now increment a VisibilityVersion tracking field so ReceiveRequestAttemptId replay detects modified messages and returns empty, matching AWS docs behaviour that retries only succeed when no message has been modified.
     - CreateQueue now rejects FIFO-only attributes (DeduplicationScope, FifoThroughputLimit, ContentBasedDeduplication) on standard queues with InvalidAttributeValue.
     - CreateQueue now returns QueueNameExists error when creating a queue with the same name but different attribute values, matching AWS behavior.
+    - SendMessage now validates DelaySeconds range (0-900), rejects DelaySeconds on FIFO queues, and enforces the 1 MiB message body size limit.
   remaining_gaps: []
   intentionally_partial: []
 verification:
