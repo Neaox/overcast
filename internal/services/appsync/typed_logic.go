@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -71,8 +70,8 @@ func (h *Handler) createGraphqlApiTyped(ctx context.Context, req *createGraphqlA
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	if api.AuthenticationType == "API_KEY" {
-		now := h.clk.Now()
-		key := &ApiKey{Id: generateAPIKeyID(), Expires: now.Add(7 * 24 * time.Hour).Unix(), Deletes: now.Add(67 * 24 * time.Hour).Unix()}
+		expires, _ := normalizeAPIKeyExpires(h.clk.Now(), 0)
+		key := &ApiKey{Id: generateAPIKeyID(), Expires: expires, Deletes: apiKeyDeletes(expires)}
 		_ = h.store.PutApiKey(ctx, apiID, key)
 	}
 	return &createGraphqlApiResponse{GraphqlApi: api}, nil
@@ -465,6 +464,7 @@ func (h *Handler) getIntrospectionSchemaTyped(ctx context.Context, req *getIntro
 type createApiKeyRequest struct {
 	ApiId       string `json:"apiId" cbor:"apiId"`
 	Description string `json:"description" cbor:"description"`
+	Expires     int64  `json:"expires" cbor:"expires"`
 }
 
 type createApiKeyResponse struct {
@@ -475,8 +475,11 @@ func (h *Handler) createApiKeyTyped(ctx context.Context, req *createApiKeyReques
 	if _, ok := h.validateAPICtx(ctx, req.ApiId); !ok {
 		return nil, notFoundErr("GraphQL API " + req.ApiId + " not found.")
 	}
-	now := h.clk.Now()
-	key := &ApiKey{Id: generateAPIKeyID(), Description: req.Description, Expires: now.Add(7 * 24 * time.Hour).Unix(), Deletes: now.Add(67 * 24 * time.Hour).Unix()}
+	expires, validationErr := normalizeAPIKeyExpires(h.clk.Now(), req.Expires)
+	if validationErr != nil {
+		return nil, validationErr
+	}
+	key := &ApiKey{Id: generateAPIKeyID(), Description: req.Description, Expires: expires, Deletes: apiKeyDeletes(expires)}
 	if err := h.store.PutApiKey(ctx, req.ApiId, key); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -503,6 +506,7 @@ type updateApiKeyRequest struct {
 	ApiId       string `json:"apiId" cbor:"apiId"`
 	KeyId       string `json:"keyId" cbor:"keyId"`
 	Description string `json:"description" cbor:"description"`
+	Expires     int64  `json:"expires" cbor:"expires"`
 }
 
 type updateApiKeyResponse struct {
@@ -518,6 +522,14 @@ func (h *Handler) updateApiKeyTyped(ctx context.Context, req *updateApiKeyReques
 		return nil, notFoundErr("API key " + req.KeyId + " not found.")
 	}
 	key.Description = req.Description
+	if req.Expires != 0 {
+		expires, validationErr := normalizeAPIKeyExpires(h.clk.Now(), req.Expires)
+		if validationErr != nil {
+			return nil, validationErr
+		}
+		key.Expires = expires
+		key.Deletes = apiKeyDeletes(expires)
+	}
 	if err := h.store.PutApiKey(ctx, req.ApiId, key); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
