@@ -47,6 +47,7 @@ type HybridStore struct {
 	pendingFile *os.File
 
 	mu            sync.Mutex
+	flushMu       sync.Mutex
 	dirty         map[string]dirtyEntry // "namespace\x00key" → entry (same format as storeKey)
 	flushing      map[string]dirtyEntry // entries currently being written to SQLite
 	flushInterval time.Duration
@@ -145,9 +146,10 @@ func (s *HybridStore) seedFromSQLite() {
 		return
 	}
 	s.sqlite = sq
-	// Hybrid streams a long-running seed query while foreground reads may fall
-	// back to SQLite. Allow one seed reader plus one foreground connection.
-	s.sqlite.db.SetMaxOpenConns(2)
+	// Keep hybrid SQLite access queued through one connection. SQLite allows one
+	// writer at a time; a wider pool turns concurrent flushes and service-specific
+	// table writes into SQLITE_BUSY under CDK-heavy deploys.
+	s.sqlite.db.SetMaxOpenConns(1)
 	s.logDebug("hybrid sqlite opened", zap.Duration("elapsed", time.Since(openStart)))
 
 	if err := s.sqlite.ensureReady(context.Background()); err != nil {
@@ -538,6 +540,9 @@ func (s *HybridStore) run(ctx context.Context) {
 // no-op; dirty entries remain in memory and in the pending log for the next
 // flush attempt or restart replay.
 func (s *HybridStore) flush(ctx context.Context) error {
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
+
 	var err error
 	for attempt := 0; attempt <= hybridSQLiteWriteRetryMax; attempt++ {
 		err = s.flushOnce(ctx)
@@ -545,7 +550,7 @@ func (s *HybridStore) flush(ctx context.Context) error {
 			return err
 		}
 		select {
-		case <-time.After(time.Duration(attempt+1) * hybridSQLiteWriteRetryDelay):
+		case <-time.After(time.Duration(attempt+1) * hybridSQLiteRetryDelay):
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -669,14 +674,14 @@ func (s *HybridStore) sqliteGet(ctx context.Context, namespace, key string) (str
 
 	retryCtx, cancel := context.WithTimeout(context.Background(), hybridSQLiteReadRetryTimeout)
 	defer cancel()
-	value, found, retryErr := s.sqlite.Get(retryCtx, namespace, key)
+	retryValue, retryFound, retryErr := s.retrySQLiteGet(retryCtx, namespace, key)
 	s.logHybridSQLiteRetry("get", retryErr, zap.String("namespace", namespace), zap.String("key", key), zap.Error(err))
 	if retryErr != nil {
 		s.markPersistentError(retryErr)
 	} else {
 		s.markPersistentSuccess()
 	}
-	return value, found, retryErr
+	return retryValue, retryFound, retryErr
 }
 
 func (s *HybridStore) sqliteList(ctx context.Context, namespace, prefix string) ([]string, error) {
@@ -690,14 +695,14 @@ func (s *HybridStore) sqliteList(ctx context.Context, namespace, prefix string) 
 
 	retryCtx, cancel := context.WithTimeout(context.Background(), hybridSQLiteReadRetryTimeout)
 	defer cancel()
-	keys, retryErr := s.sqlite.List(retryCtx, namespace, prefix)
+	retryKeys, retryErr := s.retrySQLiteList(retryCtx, namespace, prefix)
 	s.logHybridSQLiteRetry("list", retryErr, zap.String("namespace", namespace), zap.String("prefix", prefix), zap.Error(err))
 	if retryErr != nil {
 		s.markPersistentError(retryErr)
 	} else {
 		s.markPersistentSuccess()
 	}
-	return keys, retryErr
+	return retryKeys, retryErr
 }
 
 func (s *HybridStore) sqliteScan(ctx context.Context, namespace, prefix string) ([]KV, error) {
@@ -711,14 +716,72 @@ func (s *HybridStore) sqliteScan(ctx context.Context, namespace, prefix string) 
 
 	retryCtx, cancel := context.WithTimeout(context.Background(), hybridSQLiteReadRetryTimeout)
 	defer cancel()
-	pairs, retryErr := s.sqlite.Scan(retryCtx, namespace, prefix)
+	retryPairs, retryErr := s.retrySQLiteScan(retryCtx, namespace, prefix)
 	s.logHybridSQLiteRetry("scan", retryErr, zap.String("namespace", namespace), zap.String("prefix", prefix), zap.Error(err))
 	if retryErr != nil {
 		s.markPersistentError(retryErr)
 	} else {
 		s.markPersistentSuccess()
 	}
-	return pairs, retryErr
+	return retryPairs, retryErr
+}
+
+func (s *HybridStore) retrySQLiteGet(ctx context.Context, namespace, key string) (string, bool, error) {
+	var lastErr error
+	for {
+		value, found, err := s.sqlite.Get(ctx, namespace, key)
+		if !shouldRetryHybridSQLiteRead(err) {
+			return value, found, err
+		}
+		lastErr = err
+		if err := sleepHybridSQLiteRetry(ctx); err != nil {
+			return "", false, fallbackRetryErr(lastErr, err)
+		}
+	}
+}
+
+func (s *HybridStore) retrySQLiteList(ctx context.Context, namespace, prefix string) ([]string, error) {
+	var lastErr error
+	for {
+		keys, err := s.sqlite.List(ctx, namespace, prefix)
+		if !shouldRetryHybridSQLiteRead(err) {
+			return keys, err
+		}
+		lastErr = err
+		if err := sleepHybridSQLiteRetry(ctx); err != nil {
+			return nil, fallbackRetryErr(lastErr, err)
+		}
+	}
+}
+
+func (s *HybridStore) retrySQLiteScan(ctx context.Context, namespace, prefix string) ([]KV, error) {
+	var lastErr error
+	for {
+		pairs, err := s.sqlite.Scan(ctx, namespace, prefix)
+		if !shouldRetryHybridSQLiteRead(err) {
+			return pairs, err
+		}
+		lastErr = err
+		if err := sleepHybridSQLiteRetry(ctx); err != nil {
+			return nil, fallbackRetryErr(lastErr, err)
+		}
+	}
+}
+
+func sleepHybridSQLiteRetry(ctx context.Context) error {
+	select {
+	case <-time.After(hybridSQLiteRetryDelay):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func fallbackRetryErr(lastErr, ctxErr error) error {
+	if lastErr != nil {
+		return lastErr
+	}
+	return ctxErr
 }
 
 func shouldRetryHybridSQLiteRead(err error) bool {
@@ -992,7 +1055,7 @@ var hybridLazyNamespaceList = []string{"*"}
 const (
 	hybridSQLiteReadRetryTimeout = 2 * time.Second
 	hybridSQLiteWriteRetryMax    = 3
-	hybridSQLiteWriteRetryDelay  = 25 * time.Millisecond
+	hybridSQLiteRetryDelay       = 25 * time.Millisecond
 	hybridPendingWALFileName     = "overcast.hybrid.pending.wal"
 )
 

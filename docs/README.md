@@ -244,7 +244,7 @@ storage. Each overridden service gets its own SQLite file under
 
 The active storage configuration is visible in two places:
 
-- **`GET /_health`** — the `storage` object shows the default backend and any per-service overrides.
+- **`GET /_health`** — the `storage` object shows the default backend, per-service overrides, and persistent backend health including pending hybrid writes when available.
 - **Dashboard footer** — the web management console displays the storage mode with a tooltip listing overrides.
 
 ---
@@ -310,7 +310,7 @@ Set `OVERCAST_DEBUG=true` to enable the `/_debug` namespace:
 | `/_events`                  | GET    | SSE stream of internal events (always enabled)        |
 | `/_metrics`                 | GET    | Go runtime memory/GC/goroutine stats (always enabled) |
 | `/_topology`                | GET    | Full cross-region resource graph (always enabled)     |
-| `/_debug/health`            | GET    | Detailed: uptime, services, state backend             |
+| `/_debug/health`            | GET    | Detailed: uptime, services, state backend and health  |
 | `/_debug/config`            | GET    | Effective configuration (secrets redacted)            |
 | `/_debug/state`             | GET    | Full state dump across all namespaces                 |
 | `/_debug/state/{namespace}` | GET    | State for one namespace, e.g. `s3:buckets`            |

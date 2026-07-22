@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -214,6 +215,54 @@ func TestHybridStore_PersistentHealthTracksPendingAndFlush(t *testing.T) {
 	}
 	if !after.Healthy || after.PendingWrites != 0 || after.LastSuccessAt.IsZero() {
 		t.Fatalf("health after flush = %#v, want healthy with no pending writes and success timestamp", after)
+	}
+}
+
+func TestHybridStore_ConcurrentFlushesSerializeSQLiteWrites(t *testing.T) {
+	// Given: a hybrid store with SQLite ready and many concurrent callers forcing
+	// synchronous persistence, as CloudFormation terminal-state updates do.
+	s := newHybridStore(t)
+	ctx := context.Background()
+	if err := s.WaitReady(ctx); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+
+	const workers = 32
+	var wg sync.WaitGroup
+	errCh := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			key := fmt.Sprintf("key-%02d", i)
+			if err := s.Set(ctx, "svc", key, "value"); err != nil {
+				errCh <- fmt.Errorf("set %s: %w", key, err)
+				return
+			}
+			if err := s.Flush(ctx); err != nil {
+				errCh <- fmt.Errorf("flush %s: %w", key, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errCh)
+
+	// Then: overlapping flush attempts are serialized and every acknowledged
+	// write remains readable and persistable.
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Flush(ctx); err != nil {
+		t.Fatalf("final Flush: %v", err)
+	}
+	for i := 0; i < workers; i++ {
+		key := fmt.Sprintf("key-%02d", i)
+		got, found, err := s.Get(ctx, "svc", key)
+		if err != nil || !found || got != "value" {
+			t.Fatalf("Get %s: err=%v found=%v got=%q", key, err, found, got)
+		}
 	}
 }
 
