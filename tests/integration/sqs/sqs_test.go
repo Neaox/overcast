@@ -2550,6 +2550,70 @@ func TestCreateQueue_withTags(t *testing.T) {
 	}
 }
 
+func TestCreateQueue_fifoOnlyAttributes_rejectedOnStandardQueue(t *testing.T) {
+	// Given: a fresh server
+	srv := helpers.NewTestServer(t)
+	cases := []struct {
+		name      string
+		attribute string
+		value     string
+	}{
+		{name: "DeduplicationScope", attribute: "DeduplicationScope", value: "queue"},
+		{name: "FifoThroughputLimit", attribute: "FifoThroughputLimit", value: "perQueue"},
+		{name: "ContentBasedDeduplication", attribute: "ContentBasedDeduplication", value: "true"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// When: a standard queue is created with a FIFO-only attribute
+			resp := sqsCall(t, srv, "CreateQueue", map[string]any{
+				"QueueName": "std-with-fifo-attr-" + strings.ReplaceAll(tc.name, " ", "-"),
+				"Attributes": map[string]string{
+					tc.attribute: tc.value,
+				},
+			})
+			defer resp.Body.Close()
+
+			// Then: SQS rejects the attribute as invalid for a standard queue.
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, "InvalidAttributeValue")
+		})
+	}
+}
+
+func TestCreateQueue_idempotent_differentAttributesReturnsError(t *testing.T) {
+	// Given: a queue exists with VisibilityTimeout=30 (default)
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "idempotent-attrs")
+
+	// When: CreateQueue is called with the same name but different attributes
+	resp := sqsCall(t, srv, "CreateQueue", map[string]any{
+		"QueueName": "idempotent-attrs",
+		"Attributes": map[string]string{
+			"VisibilityTimeout": "60",
+		},
+	})
+	defer resp.Body.Close()
+
+	// Then: AWS returns QueueNameExists error because attributes differ.
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "QueueNameExists")
+
+	// But when called with matching attributes, it returns the existing URL.
+	resp2 := sqsCall(t, srv, "CreateQueue", map[string]any{
+		"QueueName": "idempotent-attrs",
+	})
+	defer resp2.Body.Close()
+	helpers.AssertStatus(t, resp2, http.StatusOK)
+	var result struct {
+		QueueUrl string `json:"QueueUrl"`
+	}
+	helpers.DecodeJSON(t, resp2, &result)
+	if result.QueueUrl != queueURL {
+		t.Errorf("expected existing queue URL %q, got %q", queueURL, result.QueueUrl)
+	}
+}
+
 // ---- ChangeMessageVisibilityBatch -----------------------------------------
 
 func TestChangeMessageVisibilityBatch_basic(t *testing.T) {

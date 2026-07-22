@@ -104,7 +104,54 @@ operations:
       - AWS API Reference CreateQueue documents RedrivePolicy maxReceiveCount as the threshold that must be exceeded before SQS moves a message to the dead-letter queue.
       - AWS API Reference and Developer Guide document that ReceiveMessage VisibilityTimeout applies to returned messages, omitted values use the queue default, and VisibilityTimeout=0 immediately terminates invisibility.
     gaps: []
-    next_action: Review other SQS operations (CreateQueue, SendMessage, DeleteMessage, etc.) for remaining fidelity gaps.
+    next_action: Review ReceiveMessage ReceiveRequestAttemptId same-group retry semantics.
+  CreateQueue:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_CreateQueue.html
+    tests:
+      - tests/integration/sqs/sqs_test.go
+    scenarios:
+      - name: create standard queue
+        status: reviewed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: Standard queue with defaults.
+      - name: create FIFO queue
+        status: reviewed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: .fifo suffix, FifoQueue=true enforced, ContentBasedDeduplication defaults to false.
+      - name: invalid name
+        status: reviewed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: Queue name length/characters validated; FIFO suffix rules enforced.
+      - name: invalid attributes
+        status: reviewed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: Out-of-range and unknown attributes rejected.
+      - name: idempotent create same attributes
+        status: reviewed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: Returns existing queue URL when attributes match.
+      - name: idempotent create different attributes
+        status: fixed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: Now returns QueueNameExists error when creating a queue with the same name but different attribute values, matching AWS behavior.
+      - name: FIFO-only attributes on standard queues
+        status: fixed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: Now rejects DeduplicationScope, FifoThroughputLimit, ContentBasedDeduplication on standard queues with InvalidAttributeValue.
+    evidence:
+      - AWS API Reference documents QueueNameExists error for same name + different attributes.
+      - AWS API Reference documents DeduplicationScope, FifoThroughputLimit, ContentBasedDeduplication as FIFO-only attributes.
+    gaps: []
+    next_action: Review Tags, RedrivePolicy, and encryption attributes for fidelity.
 findings:
   fixed:
     - CreateQueue now rejects queue names outside the documented 1..80 character alphanumeric, hyphen, underscore, and period rules with InvalidParameterValue.
@@ -123,6 +170,8 @@ findings:
     - Omitted ReceiveMessage.WaitTimeSeconds uses the queue-level ReceiveMessageWaitTimeSeconds default for JSON and Query requests, while explicit WaitTimeSeconds=0 keeps short-poll behavior.
     - CreateQueue and SetQueueAttributes now reject invalid ReceiveMessageWaitTimeSeconds queue attributes outside AWS's 0..20 range or malformed integers.
     - ChangeMessageVisibility and ChangeMessageVisibilityBatch now increment a VisibilityVersion tracking field so ReceiveRequestAttemptId replay detects modified messages and returns empty, matching AWS docs behaviour that retries only succeed when no message has been modified.
+    - CreateQueue now rejects FIFO-only attributes (DeduplicationScope, FifoThroughputLimit, ContentBasedDeduplication) on standard queues with InvalidAttributeValue.
+    - CreateQueue now returns QueueNameExists error when creating a queue with the same name but different attribute values, matching AWS behavior.
   remaining_gaps: []
   intentionally_partial: []
 verification:
@@ -133,9 +182,12 @@ verification:
     - go vet ./...
   handoff:
   start_with:
-    - Review other SQS operations (CreateQueue, SendMessage, DeleteMessage, GetQueueAttributes, etc.) for fidelity gaps not yet covered in this review file.
+    - Review SendMessage, DeleteMessage, and GetQueueAttributes for fidelity gaps.
+    - Review CreateQueue Tags, RedrivePolicy, and encryption attribute handling.
   do_not_redo:
     - Context-cancellation long-poll fix unless the regression fails.
     - ReceiveRequestAttemptId deleted/visibility-modified edge cases (now covered).
+    - FIFO-only attributes on standard queues (now covered).
+    - Idempotent create with different attributes (now covered).
   commands:
     - go test -count=1 ./internal/services/sqs/... ./tests/integration/sqs/...
