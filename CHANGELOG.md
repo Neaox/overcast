@@ -71,6 +71,13 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
+## [0.0.1-alpha.20] - 2026-07-22
+
+### Fixed
+
+- **AppSync/CloudFormation** — `StartSchemaCreation` now accepts AppSync built-in auth and subscription directives in GraphQL SDL, fixing CDK `AWS::AppSync::GraphQLSchema` rollbacks on directives such as `@aws_api_key`.
+- **CloudWatch Logs** — `StartLiveTail` now subscribes before emitting `sessionStart`, fixing a race where events written immediately after the session opened could be missed.
+
 ## [0.0.1-alpha.19] - 2026-07-22
 
 ### Fixed
@@ -318,7 +325,8 @@ need it than accidentally ship a breaking change as a patch.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.19...HEAD
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.20...HEAD
+[0.0.1-alpha.20]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.19...v0.0.1-alpha.20
 [0.0.1-alpha.19]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.18...v0.0.1-alpha.19
 [0.0.1-alpha.18]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.17...v0.0.1-alpha.18
 [0.0.1-alpha.17]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.16...v0.0.1-alpha.17

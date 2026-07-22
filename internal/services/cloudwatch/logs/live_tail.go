@@ -95,6 +95,9 @@ func (h *Handler) StartLiveTail(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher, _ := w.(http.Flusher)
 
+	session := newLiveTailSession(r.Context(), h.bus, req, groups, matcher, h.clk.Now)
+	defer session.Close()
+
 	sessionID := "overcast-" + h.clk.Now().Format("20060102150405.000000000")
 	h.writeLiveTailEvent(w, flusher, "sessionStart", liveTailSessionStart{
 		RequestID:             protocol.RequestIDFromContext(r.Context()),
@@ -105,8 +108,6 @@ func (h *Handler) StartLiveTail(w http.ResponseWriter, r *http.Request) {
 		LogEventFilterPattern: req.LogEventFilterPattern,
 	})
 
-	session := newLiveTailSession(r.Context(), h.bus, req, groups, matcher, h.clk.Now)
-	defer session.Close()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 

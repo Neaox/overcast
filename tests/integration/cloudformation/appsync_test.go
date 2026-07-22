@@ -261,6 +261,28 @@ func TestCreateStack_AppSyncGraphQLApiTags(t *testing.T) {
 	}
 }
 
+func TestCreateStack_AppSyncGraphQLSchemaWithAwsDirectives(t *testing.T) {
+	// Given: a CDK-like AppSync stack template whose schema uses AppSync auth directives
+	srv := helpers.NewTestServer(t)
+	stackName := "appsync-schema-directives"
+	template := strings.Replace(appsyncMinimalTemplate,
+		`"Definition": "type Query { hello: String }"`,
+		`"Definition": "type Query @aws_api_key { hello: String @aws_iam }"`,
+		1,
+	)
+
+	// When: CloudFormation creates the stack
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{stackName},
+		"TemplateBody": []string{template},
+	})
+	defer resp.Body.Close()
+
+	// Then: the stack completes instead of rolling back during StartSchemaCreation
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+}
+
 func TestCreateStack_AppSyncS3BackedSchemaAndResolverTemplates(t *testing.T) {
 	// Given: AppSync schema and resolver templates uploaded to local S3
 	srv := helpers.NewTestServer(t)
