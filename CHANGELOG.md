@@ -71,6 +71,12 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
+## [0.0.1-alpha.20] - 2026-07-22
+
+### Fixed
+
+- **AppSync/CloudFormation** — `StartSchemaCreation` now accepts AppSync built-in auth and subscription directives in GraphQL SDL, fixing CDK `AWS::AppSync::GraphQLSchema` rollbacks on directives such as `@aws_api_key`.
+
 ## [0.0.1-alpha.19] - 2026-07-22
 
 ### Fixed

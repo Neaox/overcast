@@ -603,6 +603,62 @@ func TestSchema_uploadAndStatus(t *testing.T) {
 	}
 }
 
+func TestSchema_appSyncDirectives(t *testing.T) {
+	// Given: an existing API and AppSync schemas that use built-in AWS directives
+	cases := []struct {
+		name string
+		sdl  string
+	}{
+		{
+			name: "additional auth directives",
+			sdl: `schema {
+	query: Query
+	mutation: Mutation
+	subscription: Subscription
+}
+
+type Query @aws_api_key @aws_iam @aws_oidc @aws_cognito_user_pools @aws_lambda {
+	hello: String @aws_api_key @aws_iam @aws_oidc @aws_cognito_user_pools @aws_lambda
+}
+
+type Mutation {
+	publish(message: String!): Message
+}
+
+type Subscription {
+	onPublish: Message @aws_subscribe(mutations: ["publish"])
+}
+
+type Message {
+	message: String!
+}`,
+		},
+		{
+			name: "cognito auth directive",
+			sdl: `type Query {
+	admin: String @aws_auth(cognito_groups: ["Admins"])
+}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := helpers.NewTestServer(t)
+			apiID, _ := createTestAPI(t, srv)
+
+			// When: StartSchemaCreation is called
+			resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/schemacreation", map[string]any{
+				"definition": base64.StdEncoding.EncodeToString([]byte(tc.sdl)),
+			})
+			defer resp.Body.Close()
+
+			// Then: AppSync accepts its built-in schema directives
+			helpers.AssertStatus(t, resp, http.StatusOK)
+			helpers.AssertRequestID(t, resp)
+		})
+	}
+}
+
 func TestSchema_getIntrospection(t *testing.T) {
 	// Given: an API with a schema
 	srv := helpers.NewTestServer(t)

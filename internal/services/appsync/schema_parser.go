@@ -13,6 +13,20 @@ import (
 	"github.com/vektah/gqlparser/v2/ast"
 )
 
+const appSyncDirectiveDefinitions = `
+directive @aws_api_key on FIELD_DEFINITION | OBJECT
+directive @aws_iam on FIELD_DEFINITION | OBJECT
+directive @aws_oidc on FIELD_DEFINITION | OBJECT
+directive @aws_cognito_user_pools(cognito_groups: [String]) on FIELD_DEFINITION | OBJECT
+directive @aws_lambda on FIELD_DEFINITION | OBJECT
+directive @aws_auth(cognito_groups: [String]) on FIELD_DEFINITION
+directive @aws_subscribe(mutations: [String]) on FIELD_DEFINITION
+`
+
+// TODO(priority:P2): confirm real AWS StartSchemaCreation behavior for AppSync directive semantics, especially config-aware @aws_auth compatibility with additional authorization modes.
+
+var appSyncDirectives = appSyncDirectiveSource()
+
 // schemaParser implements SchemaParser using gqlparser/v2.
 type schemaParser struct {
 	// cache holds parsed schemas keyed by apiId.
@@ -33,7 +47,7 @@ func (p *schemaParser) Parse(sdl []byte) (*ParsedSchema, error) {
 		Input: string(sdl),
 	}
 
-	schema, gqlErr := gqlparser.LoadSchema(src)
+	schema, gqlErr := gqlparser.LoadSchema(appSyncDirectives, src)
 	if gqlErr != nil {
 		return nil, fmt.Errorf("schema validation failed: %w", gqlErr)
 	}
@@ -68,12 +82,13 @@ func (p *schemaParser) Parse(sdl []byte) (*ParsedSchema, error) {
 
 // Merge combines multiple SDL sources into a single merged schema.
 func (p *schemaParser) Merge(schemas [][]byte) (*ParsedSchema, error) {
-	sources := make([]*ast.Source, len(schemas))
+	sources := make([]*ast.Source, 0, len(schemas)+1)
+	sources = append(sources, appSyncDirectives)
 	for i, sdl := range schemas {
-		sources[i] = &ast.Source{
+		sources = append(sources, &ast.Source{
 			Name:  fmt.Sprintf("source_%d.graphql", i),
 			Input: string(sdl),
-		}
+		})
 	}
 
 	schema, gqlErr := gqlparser.LoadSchema(sources...)
@@ -106,6 +121,13 @@ func (p *schemaParser) Merge(schemas [][]byte) (*ParsedSchema, error) {
 	}
 
 	return parsed, nil
+}
+
+func appSyncDirectiveSource() *ast.Source {
+	return &ast.Source{
+		Name:  "appsync-directives.graphql",
+		Input: appSyncDirectiveDefinitions,
+	}
 }
 
 // Get returns a cached ParsedSchema for the given API, or nil.
