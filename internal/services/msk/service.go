@@ -377,10 +377,20 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Get("/v1/configurations/*", s.handler.describeConfiguration)
 	r.Delete("/v1/configurations/*", s.handler.deleteConfiguration)
 
-	// Tag routes with ARN-in-path
-	r.Get("/v1/tags/*", s.handler.listTagsForResource)
-	r.Post("/v1/tags/*", s.handler.tagResource)
-	r.Delete("/v1/tags/*", s.handler.untagResource)
+	// NOTE: /v1/tags routes are NOT registered here — see TagsRouter.
+}
+
+// TagsRouter returns a chi.Router for the MSK tagging routes that live under
+// /v1/tags. This is mounted by the main router alongside other taggable
+// services' tag routers and dispatched by the resourceArn's service segment,
+// since /v1/tags/{resourceArn} is shared across services (e.g. AppSync) that
+// each own tagging for their own ARNs.
+func (s *Service) TagsRouter() chi.Router {
+	r := chi.NewRouter()
+	r.Get("/*", s.handler.listTagsForResource)
+	r.Post("/*", s.handler.tagResource)
+	r.Delete("/*", s.handler.untagResource)
+	return r
 }
 
 // InitBus wires the event bus for MSK lifecycle events.

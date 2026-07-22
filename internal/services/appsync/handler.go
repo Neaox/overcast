@@ -368,7 +368,6 @@ func (h *Handler) DeleteGraphqlApi(w http.ResponseWriter, r *http.Request) {
 // TagResource handles POST /v1/tags/{resourceArn}.
 func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 	arn := chi.URLParam(r, "*")
-	arn = "arn:aws:appsync:" + arn
 	api, err := h.apiForARN(r, arn)
 	if err != nil {
 		protocol.WriteJSONError(w, r, err)
@@ -408,7 +407,6 @@ func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 // UntagResource handles DELETE /v1/tags/{resourceArn}.
 func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
 	arn := chi.URLParam(r, "*")
-	arn = "arn:aws:appsync:" + arn
 	api, err := h.apiForARN(r, arn)
 	if err != nil {
 		protocol.WriteJSONError(w, r, err)
@@ -431,7 +429,6 @@ func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
 // ListTagsForResource handles GET /v1/tags/{resourceArn}.
 func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 	arn := chi.URLParam(r, "*")
-	arn = "arn:aws:appsync:" + arn
 	api, err := h.apiForARN(r, arn)
 	if err != nil {
 		protocol.WriteJSONError(w, r, err)

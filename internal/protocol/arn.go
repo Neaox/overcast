@@ -1,6 +1,9 @@
 package protocol
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ARN builds an AWS ARN string.
 // Format: arn:aws:<service>:<region>:<accountID>:<resource>
@@ -18,6 +21,23 @@ func ARN(region, accountID, service, resource string) string {
 		return fmt.Sprintf("arn:aws:s3:::%s", resource)
 	}
 	return fmt.Sprintf("arn:aws:%s:%s:%s:%s", service, region, accountID, resource)
+}
+
+// ServiceFromARN extracts the service name (e.g. "appsync", "kafka") from an
+// ARN's third colon-delimited segment ("arn:partition:service:..."). Returns
+// "" if arn is not a well-formed ARN string.
+//
+// This is the authoritative way to identify which service owns a resource
+// when a path is shared between services (e.g. /v1/tags/{resourceArn}) —
+// the ARN is self-describing, unlike the request's SigV4 credential scope,
+// which callers may not always set to match (hand-built requests, or
+// resource-group-style tagging tools that sign generically).
+func ServiceFromARN(arn string) string {
+	parts := strings.SplitN(arn, ":", 4)
+	if len(parts) < 3 || parts[0] != "arn" {
+		return ""
+	}
+	return parts[2]
 }
 
 // QueueARN builds an SQS queue ARN from its components.

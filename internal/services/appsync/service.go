@@ -78,14 +78,11 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 }
 
 // RegisterRoutes satisfies router.Service.
-// AppSync uses REST paths under /v1/apis (and /v1/tags, /v1/domainnames, etc.).
+// AppSync uses REST paths under /v1/apis (and /v1/domainnames, etc.).
+//
+// NOTE: /v1/tags routes are NOT registered here — see TagsRouter.
 func (s *Service) RegisterRoutes(r chi.Router) {
 	h := s.handler
-
-	// ── Tags ─────────────────────────────────────────────────────────────
-	r.Post("/v1/tags/arn:aws:appsync:*", h.TagResource)
-	r.Delete("/v1/tags/arn:aws:appsync:*", h.UntagResource)
-	r.Get("/v1/tags/arn:aws:appsync:*", h.ListTagsForResource)
 
 	// ── Domain names (stubs) ─────────────────────────────────────────────
 	r.Route("/v1/domainnames", func(r chi.Router) {
@@ -199,7 +196,9 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	// NOTE: Events API (v2) routes are NOT registered here because they
 	// share the /v2/apis path with API Gateway v2. Instead they are
 	// exposed via EventsAPIRouter() and wired by the main router using
-	// SigV4 service-name dispatch.
+	// SigV4 service-name dispatch. Tag routes are similarly excluded — see
+	// TagsRouter — because /v1/tags is shared with other taggable services
+	// (e.g. MSK).
 
 	// ── GraphQL execution endpoint ───────────────────────────────────────
 	// GraphQL clients POST queries here. In real AWS, this lives at
@@ -233,5 +232,19 @@ func (s *Service) EventsAPIRouter() chi.Router {
 		r.Post("/channelNamespaces/{name}", h.UpdateChannelNamespace)
 		r.Delete("/channelNamespaces/{name}", h.DeleteChannelNamespace)
 	})
+	return r
+}
+
+// TagsRouter returns a chi.Router for the AppSync tagging routes that live
+// under /v1/tags. This is mounted by the main router alongside other
+// taggable services' tag routers and dispatched by the resourceArn's
+// service segment, since /v1/tags/{resourceArn} is shared across services
+// (e.g. MSK) that each own tagging for their own ARNs.
+func (s *Service) TagsRouter() chi.Router {
+	h := s.handler
+	r := chi.NewRouter()
+	r.Post("/*", h.TagResource)
+	r.Delete("/*", h.UntagResource)
+	r.Get("/*", h.ListTagsForResource)
 	return r
 }
