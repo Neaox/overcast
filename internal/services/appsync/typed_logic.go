@@ -15,14 +15,18 @@ import (
 // ─── GraphQL APIs ─────────────────────────────────────────────────────────────
 
 type createGraphqlApiRequest struct {
-	Name                      string `json:"name" cbor:"name"`
-	AuthenticationType        string `json:"authenticationType" cbor:"authenticationType"`
-	ApiType                   string `json:"apiType" cbor:"apiType"`
-	Visibility                string `json:"visibility" cbor:"visibility"`
-	IntrospectionConfig       string `json:"introspectionConfig" cbor:"introspectionConfig"`
-	MergedApiExecutionRoleArn string `json:"mergedApiExecutionRoleArn" cbor:"mergedApiExecutionRoleArn"`
-	QueryDepthLimit           int    `json:"queryDepthLimit" cbor:"queryDepthLimit"`
-	ResolverCountLimit        int    `json:"resolverCountLimit" cbor:"resolverCountLimit"`
+	Name                      string            `json:"name" cbor:"name"`
+	AuthenticationType        string            `json:"authenticationType" cbor:"authenticationType"`
+	ApiType                   string            `json:"apiType" cbor:"apiType"`
+	Visibility                string            `json:"visibility" cbor:"visibility"`
+	IntrospectionConfig       string            `json:"introspectionConfig" cbor:"introspectionConfig"`
+	MergedApiExecutionRoleArn string            `json:"mergedApiExecutionRoleArn" cbor:"mergedApiExecutionRoleArn"`
+	QueryDepthLimit           int               `json:"queryDepthLimit" cbor:"queryDepthLimit"`
+	ResolverCountLimit        int               `json:"resolverCountLimit" cbor:"resolverCountLimit"`
+	OwnerContact              string            `json:"ownerContact" cbor:"ownerContact"`
+	WafWebAclArn              string            `json:"wafWebAclArn" cbor:"wafWebAclArn"`
+	XrayEnabled               bool              `json:"xrayEnabled" cbor:"xrayEnabled"`
+	Tags                      map[string]string `json:"tags" cbor:"tags"`
 }
 
 type createGraphqlApiResponse struct {
@@ -33,12 +37,18 @@ func (h *Handler) createGraphqlApiTyped(ctx context.Context, req *createGraphqlA
 	apiID := uuid.NewString()
 	api := &GraphqlAPI{
 		ApiId: apiID, Name: req.Name, AuthenticationType: req.AuthenticationType,
-		ApiType: req.ApiType, Visibility: req.Visibility,
+		ApiType: req.ApiType, Visibility: req.Visibility, Tags: req.Tags,
+		OwnerContact:              req.OwnerContact,
+		WafWebAclArn:              req.WafWebAclArn,
+		XrayEnabled:               req.XrayEnabled,
 		IntrospectionConfig:       req.IntrospectionConfig,
 		MergedApiExecutionRoleArn: req.MergedApiExecutionRoleArn,
 		QueryDepthLimit:           req.QueryDepthLimit, ResolverCountLimit: req.ResolverCountLimit,
 		ARN:   protocol.ARN(h.regionCtx(ctx), h.cfg.AccountID, "appsync", "apis/"+apiID),
 		Owner: h.cfg.AccountID,
+	}
+	if err := validateGraphqlAPIInput(api, true); err != nil {
+		return nil, err
 	}
 	if api.ApiType == "" {
 		api.ApiType = "GRAPHQL"
@@ -119,6 +129,9 @@ func (h *Handler) updateGraphqlApiTyped(ctx context.Context, req *updateGraphqlA
 		return nil, notFoundErr("GraphQL API " + req.ApiId + " not found.")
 	}
 	update := req.Api
+	if err := validateGraphqlAPIInput(&update, false); err != nil {
+		return nil, err
+	}
 	update.ApiId = existing.ApiId
 	update.ARN = existing.ARN
 	update.Owner = existing.Owner
@@ -168,6 +181,12 @@ func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest)
 	}
 	if api == nil {
 		return nil, notFoundErr("Resource not found: " + req.ResourceArn)
+	}
+	if len(req.Tags) == 0 {
+		return nil, badRequestError("tags is required.")
+	}
+	if err := validateTagMap(req.Tags); err != nil {
+		return nil, err
 	}
 	if api.Tags == nil {
 		api.Tags = make(map[string]string, len(req.Tags))

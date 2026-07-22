@@ -83,11 +83,9 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	h := s.handler
 
 	// ── Tags ─────────────────────────────────────────────────────────────
-	r.Route("/v1/tags", func(r chi.Router) {
-		r.Post("/*", h.TagResource)
-		r.Delete("/*", h.UntagResource)
-		r.Get("/*", h.ListTagsForResource)
-	})
+	r.Post("/v1/tags/arn:aws:appsync:*", h.TagResource)
+	r.Delete("/v1/tags/arn:aws:appsync:*", h.UntagResource)
+	r.Get("/v1/tags/arn:aws:appsync:*", h.ListTagsForResource)
 
 	// ── Domain names (stubs) ─────────────────────────────────────────────
 	r.Route("/v1/domainnames", func(r chi.Router) {

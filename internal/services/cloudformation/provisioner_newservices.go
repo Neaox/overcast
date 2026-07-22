@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/Neaox/overcast/internal/config"
@@ -687,6 +688,103 @@ type appsyncResolverResponse struct {
 	} `json:"resolver"`
 }
 
+type appsyncDomainNameResponse struct {
+	DomainNameConfig struct {
+		DomainName        string `json:"domainName"`
+		AppsyncDomainName string `json:"appsyncDomainName"`
+		HostedZoneID      string `json:"hostedZoneId"`
+	} `json:"domainNameConfig"`
+}
+
+type appsyncApiAssociationResponse struct {
+	ApiAssociation struct {
+		DomainName        string `json:"domainName"`
+		ApiID             string `json:"apiId"`
+		AssociationStatus string `json:"associationStatus"`
+	} `json:"apiAssociation"`
+}
+
+type appsyncApiCacheResponse struct {
+	ApiCache struct {
+		ApiID              string `json:"apiId"`
+		Type               string `json:"type"`
+		ApiCachingBehavior string `json:"apiCachingBehavior"`
+		Status             string `json:"status"`
+	} `json:"apiCache"`
+}
+
+type appsyncSourceApiAssociationResponse struct {
+	SourceApiAssociation struct {
+		AssociationID                    string `json:"associationId"`
+		AssociationArn                   string `json:"associationArn"`
+		SourceApiID                      string `json:"sourceApiId"`
+		SourceApiArn                     string `json:"sourceApiArn"`
+		MergedApiID                      string `json:"mergedApiId"`
+		MergedApiArn                     string `json:"mergedApiArn"`
+		SourceApiAssociationStatus       string `json:"sourceApiAssociationStatus"`
+		SourceApiAssociationStatusDetail string `json:"sourceApiAssociationStatusDetail"`
+		LastSuccessfulMergeDate          int64  `json:"lastSuccessfulMergeDate"`
+	} `json:"sourceApiAssociation"`
+}
+
+type appsyncEventsApiResponse struct {
+	API struct {
+		ApiID  string            `json:"apiId"`
+		ApiArn string            `json:"apiArn"`
+		Name   string            `json:"name"`
+		Dns    map[string]string `json:"dns"`
+	} `json:"api"`
+}
+
+type appsyncChannelNamespaceResponse struct {
+	ChannelNamespace struct {
+		ApiID               string `json:"apiId"`
+		Name                string `json:"name"`
+		ChannelNamespaceArn string `json:"channelNamespaceArn"`
+	} `json:"channelNamespace"`
+}
+
+func appsyncEventsRESTJSON(ctx context.Context, router http.Handler, region, method, path, opName string, body map[string]any, out any) error {
+	var data []byte
+	if body != nil {
+		var err error
+		data, err = json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("%s: marshal request: %w", opName, err)
+		}
+	}
+	rec, err := internalAppSyncEventsRequest(ctx, router, region, method, path, "application/json", data)
+	if err != nil {
+		return fmt.Errorf("%s: %w", opName, err)
+	}
+	if out != nil {
+		if err := json.Unmarshal(rec.Body.Bytes(), out); err != nil {
+			return fmt.Errorf("%s: parse response: %w", opName, err)
+		}
+	}
+	return nil
+}
+
+func internalAppSyncEventsRequest(ctx context.Context, router http.Handler, region, method, path, contentType string, body []byte) (*httptest.ResponseRecorder, error) {
+	req, err := http.NewRequestWithContext(ctx, method, path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	if region != "" {
+		req.Header.Set("X-Overcast-Region", region)
+	}
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=overcast/20250101/"+region+"/appsync/aws4_request, SignedHeaders=host, Signature=overcast")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code >= 400 {
+		return rec, fmt.Errorf("HTTP %d: %s", rec.Code, rec.Body.String())
+	}
+	return rec, nil
+}
+
 func appsyncRESTJSON(ctx context.Context, router http.Handler, region, method, path, opName string, body map[string]any, out any) error {
 	var data []byte
 	if body != nil {
@@ -740,8 +838,43 @@ func appsyncGraphQLApiBody(props map[string]any) map[string]any {
 	copyAnyProp(body, props, "OpenIDConnectConfig", "openIDConnectConfig")
 	copyAnyProp(body, props, "LambdaAuthorizerConfig", "lambdaAuthorizerConfig")
 	copyAnyProp(body, props, "EnhancedMetricsConfig", "enhancedMetricsConfig")
-	copyAnyProp(body, props, "Tags", "tags")
+	if tags := cfnTagListToMap(props["Tags"]); len(tags) > 0 {
+		body["tags"] = tags
+	}
 	return body
+}
+
+func cfnTagListToMap(raw any) map[string]string {
+	if raw == nil {
+		return nil
+	}
+	out := map[string]string{}
+	add := func(key string, value any) {
+		if key == "" {
+			return
+		}
+		out[key] = fmt.Sprintf("%v", value)
+	}
+	switch tags := raw.(type) {
+	case []any:
+		for _, item := range tags {
+			switch tag := item.(type) {
+			case map[string]any:
+				key, _ := tag["Key"].(string)
+				add(key, tag["Value"])
+			case Tag:
+				add(tag.Key, tag.Value)
+			}
+		}
+	case []Tag:
+		for _, tag := range tags {
+			add(tag.Key, tag.Value)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func copyStringProp(dst map[string]any, props map[string]any, cfnName, jsonName string) {
@@ -756,16 +889,23 @@ func copyAnyProp(dst map[string]any, props map[string]any, cfnName, jsonName str
 	}
 }
 
+func copyConvertedCFProp(dst map[string]any, props map[string]any, cfnName, jsonName string) {
+	if v, ok := props[cfnName]; ok {
+		dst[jsonName] = convertCFKeysToAPI(v)
+	}
+}
+
 func appsyncGraphQLApiAttrs(resp appsyncGraphQLApiResponse) map[string]string {
 	api := resp.GraphqlApi
 	return map[string]string{
-		"Ref":         api.Arn,
-		"ApiId":       api.ApiID,
-		"Arn":         api.Arn,
-		"GraphQLUrl":  api.Uris["GRAPHQL"],
-		"RealtimeUrl": api.Uris["REALTIME"],
-		"GraphQLDns":  api.Dns["GRAPHQL"],
-		"RealtimeDns": api.Dns["REALTIME"],
+		"Ref":                api.Arn,
+		"ApiId":              api.ApiID,
+		"Arn":                api.Arn,
+		"GraphQLEndpointArn": api.Arn,
+		"GraphQLUrl":         api.Uris["GRAPHQL"],
+		"RealtimeUrl":        api.Uris["REALTIME"],
+		"GraphQLDns":         api.Dns["GRAPHQL"],
+		"RealtimeDns":        api.Dns["REALTIME"],
 	}
 }
 
@@ -807,26 +947,167 @@ func appsyncDataSourceAttrs(resp appsyncDataSourceResponse) map[string]string {
 	return map[string]string{"Ref": ds.DataSourceArn, "DataSourceArn": ds.DataSourceArn, "Name": ds.Name}
 }
 
-func appsyncResolverBody(props map[string]any) map[string]any {
+func appsyncResolverBody(ctx context.Context, router http.Handler, region string, props map[string]any) (map[string]any, error) {
 	body := map[string]any{}
 	copyStringProp(body, props, "FieldName", "fieldName")
 	copyStringProp(body, props, "DataSourceName", "dataSourceName")
 	copyStringProp(body, props, "Kind", "kind")
-	copyStringProp(body, props, "RequestMappingTemplate", "requestMappingTemplate")
-	copyStringProp(body, props, "ResponseMappingTemplate", "responseMappingTemplate")
-	copyStringProp(body, props, "Code", "code")
+	if err := copyStringOrS3Prop(ctx, router, region, body, props, "RequestMappingTemplate", "RequestMappingTemplateS3Location", "requestMappingTemplate"); err != nil {
+		return nil, fmt.Errorf("Resolver RequestMappingTemplateS3Location: %w", err)
+	}
+	if err := copyStringOrS3Prop(ctx, router, region, body, props, "ResponseMappingTemplate", "ResponseMappingTemplateS3Location", "responseMappingTemplate"); err != nil {
+		return nil, fmt.Errorf("Resolver ResponseMappingTemplateS3Location: %w", err)
+	}
+	if err := copyStringOrS3Prop(ctx, router, region, body, props, "Code", "CodeS3Location", "code"); err != nil {
+		return nil, fmt.Errorf("Resolver CodeS3Location: %w", err)
+	}
 	copyAnyProp(body, props, "PipelineConfig", "pipelineConfig")
 	copyAnyProp(body, props, "Runtime", "runtime")
 	copyAnyProp(body, props, "MaxBatchSize", "maxBatchSize")
 	copyAnyProp(body, props, "SyncConfig", "syncConfig")
 	copyAnyProp(body, props, "CachingConfig", "cachingConfig")
 	copyAnyProp(body, props, "MetricsConfig", "metricsConfig")
-	return body
+	return body, nil
 }
 
 func appsyncResolverAttrs(resp appsyncResolverResponse) map[string]string {
 	res := resp.Resolver
 	return map[string]string{"Ref": res.ResolverArn, "ResolverArn": res.ResolverArn, "FieldName": res.FieldName, "TypeName": res.TypeName}
+}
+
+// ── AWS::AppSync::Api (Events API) ─────────────────────────────────────────
+
+type appsyncEventsApiHandler struct{}
+
+func (h *appsyncEventsApiHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	var resp appsyncEventsApiResponse
+	if err := appsyncEventsRESTJSON(ctx, router, rCtx.Region, http.MethodPost, "/v2/apis", "CreateApi", appsyncEventsApiBody(props), &resp); err != nil {
+		return "", nil, err
+	}
+	apiID := resp.API.ApiID
+	return apiID, appsyncEventsApiAttrs(resp), nil
+}
+
+func (h *appsyncEventsApiHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
+	_, err := internalAppSyncEventsRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v2/apis/"+url.PathEscape(physicalID), "", nil)
+	return err
+}
+
+func (h *appsyncEventsApiHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	var resp appsyncEventsApiResponse
+	path := "/v2/apis/" + url.PathEscape(physicalID)
+	if err := appsyncEventsRESTJSON(ctx, router, rCtx.Region, http.MethodPost, path, "UpdateApi", appsyncEventsApiBody(props), &resp); err != nil {
+		return "", nil, err
+	}
+	return physicalID, appsyncEventsApiAttrs(resp), nil
+}
+
+func appsyncEventsApiBody(props map[string]any) map[string]any {
+	body := map[string]any{}
+	copyStringProp(body, props, "Name", "name")
+	copyStringProp(body, props, "OwnerContact", "ownerContact")
+	copyStringProp(body, props, "WafWebAclArn", "wafWebAclArn")
+	copyConvertedCFProp(body, props, "EventConfig", "eventConfig")
+	copyAnyProp(body, props, "XrayEnabled", "xrayEnabled")
+	if tags := cfnTagListToMap(props["Tags"]); len(tags) > 0 {
+		body["tags"] = tags
+	}
+	return body
+}
+
+func appsyncEventsApiAttrs(resp appsyncEventsApiResponse) map[string]string {
+	api := resp.API
+	attrs := map[string]string{
+		"Ref":    api.ApiArn,
+		"ApiId":  api.ApiID,
+		"ApiArn": api.ApiArn,
+		"Name":   api.Name,
+	}
+	if api.Dns != nil {
+		attrs["Dns.Http"] = api.Dns["HTTP"]
+		attrs["Dns.Realtime"] = api.Dns["REALTIME"]
+	}
+	return attrs
+}
+
+// ── AWS::AppSync::ChannelNamespace ─────────────────────────────────────────
+
+type appsyncChannelNamespaceHandler struct{}
+
+func (h *appsyncChannelNamespaceHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	apiID, _ := props["ApiId"].(string)
+	name, _ := props["Name"].(string)
+	if apiID == "" || name == "" {
+		return "", nil, fmt.Errorf("ChannelNamespace: ApiId and Name are required")
+	}
+	path := fmt.Sprintf("/v2/apis/%s/channelNamespaces", url.PathEscape(apiID))
+	var resp appsyncChannelNamespaceResponse
+	body, err := appsyncChannelNamespaceBody(ctx, router, rCtx.Region, props)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := appsyncEventsRESTJSON(ctx, router, rCtx.Region, http.MethodPost, path, "CreateChannelNamespace", body, &resp); err != nil {
+		return "", nil, err
+	}
+	return apiID + "/" + name, appsyncChannelNamespaceAttrs(resp), nil
+}
+
+func (h *appsyncChannelNamespaceHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
+	parts, err := appsyncSplitPhysicalID("ChannelNamespace", physicalID, 2)
+	if err != nil {
+		return nil
+	}
+	path := fmt.Sprintf("/v2/apis/%s/channelNamespaces/%s", url.PathEscape(parts[0]), url.PathEscape(parts[1]))
+	_, err = internalAppSyncEventsRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return err
+}
+
+func (h *appsyncChannelNamespaceHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	parts, err := appsyncSplitPhysicalID("ChannelNamespace", physicalID, 2)
+	if err != nil {
+		return "", nil, err
+	}
+	if apiID, _ := props["ApiId"].(string); apiID != "" && apiID != parts[0] {
+		return "", nil, errReplacementRequired
+	}
+	if name, _ := props["Name"].(string); name != "" && name != parts[1] {
+		return "", nil, errReplacementRequired
+	}
+	path := fmt.Sprintf("/v2/apis/%s/channelNamespaces/%s", url.PathEscape(parts[0]), url.PathEscape(parts[1]))
+	var resp appsyncChannelNamespaceResponse
+	body, err := appsyncChannelNamespaceBody(ctx, router, rCtx.Region, props)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := appsyncEventsRESTJSON(ctx, router, rCtx.Region, http.MethodPost, path, "UpdateChannelNamespace", body, &resp); err != nil {
+		return "", nil, err
+	}
+	return physicalID, appsyncChannelNamespaceAttrs(resp), nil
+}
+
+func appsyncChannelNamespaceBody(ctx context.Context, router http.Handler, region string, props map[string]any) (map[string]any, error) {
+	body := map[string]any{}
+	copyStringProp(body, props, "Name", "name")
+	if err := copyStringOrS3Prop(ctx, router, region, body, props, "CodeHandlers", "CodeS3Location", "codeHandlers"); err != nil {
+		return nil, fmt.Errorf("ChannelNamespace CodeS3Location: %w", err)
+	}
+	copyConvertedCFProp(body, props, "HandlerConfigs", "handlerConfigs")
+	copyConvertedCFProp(body, props, "PublishAuthModes", "publishAuthModes")
+	copyConvertedCFProp(body, props, "SubscribeAuthModes", "subscribeAuthModes")
+	if tags := cfnTagListToMap(props["Tags"]); len(tags) > 0 {
+		body["tags"] = tags
+	}
+	return body, nil
+}
+
+func appsyncChannelNamespaceAttrs(resp appsyncChannelNamespaceResponse) map[string]string {
+	ns := resp.ChannelNamespace
+	return map[string]string{
+		"Ref":                 ns.ChannelNamespaceArn,
+		"ApiId":               ns.ApiID,
+		"Name":                ns.Name,
+		"ChannelNamespaceArn": ns.ChannelNamespaceArn,
+	}
 }
 
 func (h *appsyncGraphQLApiHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -836,6 +1117,9 @@ func (h *appsyncGraphQLApiHandler) Create(ctx context.Context, router http.Handl
 	}
 
 	apiID := resp.GraphqlApi.ApiID
+	if err := appsyncPutEnvironmentVariables(ctx, router, rCtx.Region, apiID, props); err != nil {
+		return "", nil, err
+	}
 	return apiID, appsyncGraphQLApiAttrs(resp), nil
 }
 
@@ -858,7 +1142,27 @@ func (h *appsyncGraphQLApiHandler) Update(ctx context.Context, router http.Handl
 	if err := appsyncRESTJSON(ctx, router, rCtx.Region, http.MethodPost, path, "UpdateGraphqlApi", appsyncGraphQLApiBody(props), &resp); err != nil {
 		return "", nil, err
 	}
+	if err := appsyncPutEnvironmentVariables(ctx, router, rCtx.Region, physicalID, props); err != nil {
+		return "", nil, err
+	}
 	return physicalID, appsyncGraphQLApiAttrs(resp), nil
+}
+
+func appsyncPutEnvironmentVariables(ctx context.Context, router http.Handler, region, apiID string, props map[string]any) error {
+	raw, ok := props["EnvironmentVariables"]
+	if !ok {
+		return nil
+	}
+	vars, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	converted := make(map[string]string, len(vars))
+	for key, value := range vars {
+		converted[key] = fmt.Sprintf("%v", value)
+	}
+	path := fmt.Sprintf("/v1/apis/%s/environmentVariables", url.PathEscape(apiID))
+	return appsyncRESTJSON(ctx, router, region, http.MethodPut, path, "PutGraphqlApiEnvironmentVariables", map[string]any{"environmentVariables": converted}, nil)
 }
 
 // ── AWS::AppSync::GraphQLSchema ────────────────────────────────────────────
@@ -870,6 +1174,15 @@ func (h *appsyncGraphQLSchemaHandler) Create(ctx context.Context, router http.Ha
 	definition, _ := props["Definition"].(string)
 	if apiID == "" {
 		return "", nil, fmt.Errorf("GraphQLSchema: ApiId is required")
+	}
+	if definition == "" {
+		if location, _ := props["DefinitionS3Location"].(string); location != "" {
+			fetched, err := appsyncFetchS3BackedProperty(ctx, router, rCtx.Region, location)
+			if err != nil {
+				return "", nil, fmt.Errorf("GraphQLSchema DefinitionS3Location: %w", err)
+			}
+			definition = fetched
+		}
 	}
 	if definition == "" {
 		return "", nil, fmt.Errorf("GraphQLSchema: Definition is required")
@@ -967,7 +1280,10 @@ func (h *appsyncFunctionConfigurationHandler) Create(ctx context.Context, router
 	if apiID == "" {
 		return "", nil, fmt.Errorf("FunctionConfiguration: ApiId is required")
 	}
-	body := appsyncFunctionBody(props)
+	body, err := appsyncFunctionBody(ctx, router, rCtx.Region, props)
+	if err != nil {
+		return "", nil, err
+	}
 	path := fmt.Sprintf("/v1/apis/%s/functions", url.PathEscape(apiID))
 	var resp appsyncFunctionResponse
 	if err := appsyncRESTJSON(ctx, router, rCtx.Region, http.MethodPost, path, "CreateFunction", body, &resp); err != nil {
@@ -995,7 +1311,10 @@ func (h *appsyncFunctionConfigurationHandler) Update(ctx context.Context, router
 	if apiID, _ := props["ApiId"].(string); apiID != "" && apiID != parts[0] {
 		return "", nil, errReplacementRequired
 	}
-	body := appsyncFunctionBody(props)
+	body, err := appsyncFunctionBody(ctx, router, rCtx.Region, props)
+	if err != nil {
+		return "", nil, err
+	}
 	path := fmt.Sprintf("/v1/apis/%s/functions/%s", url.PathEscape(parts[0]), url.PathEscape(parts[1]))
 	var resp appsyncFunctionResponse
 	if err := appsyncRESTJSON(ctx, router, rCtx.Region, http.MethodPost, path, "UpdateFunction", body, &resp); err != nil {
@@ -1004,7 +1323,7 @@ func (h *appsyncFunctionConfigurationHandler) Update(ctx context.Context, router
 	return physicalID, appsyncFunctionAttrs(resp), nil
 }
 
-func appsyncFunctionBody(props map[string]any) map[string]any {
+func appsyncFunctionBody(ctx context.Context, router http.Handler, region string, props map[string]any) (map[string]any, error) {
 	body := map[string]any{}
 	if v, _ := props["Name"].(string); v != "" {
 		body["name"] = v
@@ -1018,17 +1337,17 @@ func appsyncFunctionBody(props map[string]any) map[string]any {
 	if v, _ := props["FunctionVersion"].(string); v != "" {
 		body["functionVersion"] = v
 	}
-	if v, _ := props["RequestMappingTemplate"].(string); v != "" {
-		body["requestMappingTemplate"] = v
+	if err := copyStringOrS3Prop(ctx, router, region, body, props, "RequestMappingTemplate", "RequestMappingTemplateS3Location", "requestMappingTemplate"); err != nil {
+		return nil, fmt.Errorf("FunctionConfiguration RequestMappingTemplateS3Location: %w", err)
 	}
-	if v, _ := props["ResponseMappingTemplate"].(string); v != "" {
-		body["responseMappingTemplate"] = v
+	if err := copyStringOrS3Prop(ctx, router, region, body, props, "ResponseMappingTemplate", "ResponseMappingTemplateS3Location", "responseMappingTemplate"); err != nil {
+		return nil, fmt.Errorf("FunctionConfiguration ResponseMappingTemplateS3Location: %w", err)
 	}
 	if v, ok := props["MaxBatchSize"]; ok {
 		body["maxBatchSize"] = v
 	}
-	if v, _ := props["Code"].(string); v != "" {
-		body["code"] = v
+	if err := copyStringOrS3Prop(ctx, router, region, body, props, "Code", "CodeS3Location", "code"); err != nil {
+		return nil, fmt.Errorf("FunctionConfiguration CodeS3Location: %w", err)
 	}
 	if v, ok := props["Runtime"]; ok {
 		body["runtime"] = v
@@ -1036,7 +1355,43 @@ func appsyncFunctionBody(props map[string]any) map[string]any {
 	if v, ok := props["SyncConfig"]; ok {
 		body["syncConfig"] = v
 	}
-	return body
+	return body, nil
+}
+
+func copyStringOrS3Prop(ctx context.Context, router http.Handler, region string, dst map[string]any, props map[string]any, inlineName, s3Name, jsonName string) error {
+	if v, _ := props[inlineName].(string); v != "" {
+		dst[jsonName] = v
+		return nil
+	}
+	location, _ := props[s3Name].(string)
+	if location == "" {
+		return nil
+	}
+	fetched, err := appsyncFetchS3BackedProperty(ctx, router, region, location)
+	if err != nil {
+		return err
+	}
+	dst[jsonName] = fetched
+	return nil
+}
+
+func appsyncFetchS3BackedProperty(ctx context.Context, router http.Handler, region, location string) (string, error) {
+	u, err := url.Parse(location)
+	if err != nil {
+		return "", fmt.Errorf("parse location %q: %w", location, err)
+	}
+	path := u.Path
+	if u.Scheme == "s3" {
+		path = "/" + u.Host + u.Path
+	}
+	if path == "" || path == "/" {
+		return "", fmt.Errorf("invalid S3 location %q", location)
+	}
+	rec, err := internalRequest(ctx, router, region, http.MethodGet, path, "", nil)
+	if err != nil {
+		return "", err
+	}
+	return rec.Body.String(), nil
 }
 
 // ── AWS::AppSync::DataSource ──────────────────────────────────────────────
@@ -1097,9 +1452,13 @@ func (h *appsyncResolverHandler) Create(ctx context.Context, router http.Handler
 	if apiID == "" || typeName == "" || fieldName == "" {
 		return "", nil, fmt.Errorf("Resolver: ApiId, TypeName, and FieldName are required")
 	}
+	body, err := appsyncResolverBody(ctx, router, rCtx.Region, props)
+	if err != nil {
+		return "", nil, err
+	}
 	path := fmt.Sprintf("/v1/apis/%s/types/%s/resolvers", url.PathEscape(apiID), url.PathEscape(typeName))
 	var resp appsyncResolverResponse
-	if err := appsyncRESTJSON(ctx, router, rCtx.Region, http.MethodPost, path, "CreateResolver", appsyncResolverBody(props), &resp); err != nil {
+	if err := appsyncRESTJSON(ctx, router, rCtx.Region, http.MethodPost, path, "CreateResolver", body, &resp); err != nil {
 		return "", nil, err
 	}
 	return apiID + "/" + typeName + "/" + fieldName, appsyncResolverAttrs(resp), nil
@@ -1129,12 +1488,211 @@ func (h *appsyncResolverHandler) Update(ctx context.Context, router http.Handler
 	if fieldName, _ := props["FieldName"].(string); fieldName != "" && fieldName != parts[2] {
 		return "", nil, errReplacementRequired
 	}
+	body, err := appsyncResolverBody(ctx, router, rCtx.Region, props)
+	if err != nil {
+		return "", nil, err
+	}
 	path := fmt.Sprintf("/v1/apis/%s/types/%s/resolvers/%s", url.PathEscape(parts[0]), url.PathEscape(parts[1]), url.PathEscape(parts[2]))
 	var resp appsyncResolverResponse
-	if err := appsyncRESTJSON(ctx, router, rCtx.Region, http.MethodPost, path, "UpdateResolver", appsyncResolverBody(props), &resp); err != nil {
+	if err := appsyncRESTJSON(ctx, router, rCtx.Region, http.MethodPost, path, "UpdateResolver", body, &resp); err != nil {
 		return "", nil, err
 	}
 	return physicalID, appsyncResolverAttrs(resp), nil
+}
+
+// ── AWS::AppSync::DomainName ───────────────────────────────────────────────
+
+type appsyncDomainNameHandler struct{}
+
+func (h *appsyncDomainNameHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	domainName, _ := props["DomainName"].(string)
+	if domainName == "" {
+		return "", nil, fmt.Errorf("DomainName: DomainName is required")
+	}
+	body := map[string]any{}
+	copyStringProp(body, props, "DomainName", "domainName")
+	copyStringProp(body, props, "CertificateArn", "certificateArn")
+	copyStringProp(body, props, "Description", "description")
+	var resp appsyncDomainNameResponse
+	if err := appsyncRESTJSON(ctx, router, rCtx.Region, http.MethodPost, "/v1/domainnames", "CreateDomainName", body, &resp); err != nil {
+		return "", nil, err
+	}
+	attrs := appsyncDomainNameAttrs(cfg, rCtx.Region, resp)
+	return domainName, attrs, nil
+}
+
+func (h *appsyncDomainNameHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
+	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v1/domainnames/"+url.PathEscape(physicalID), "", nil)
+	return err
+}
+
+func (h *appsyncDomainNameHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	if domainName, _ := props["DomainName"].(string); domainName != "" && domainName != physicalID {
+		return "", nil, errReplacementRequired
+	}
+	body := map[string]any{}
+	copyStringProp(body, props, "Description", "description")
+	var resp appsyncDomainNameResponse
+	path := "/v1/domainnames/" + url.PathEscape(physicalID)
+	if err := appsyncRESTJSON(ctx, router, rCtx.Region, http.MethodPost, path, "UpdateDomainName", body, &resp); err != nil {
+		return "", nil, err
+	}
+	return physicalID, appsyncDomainNameAttrs(cfg, rCtx.Region, resp), nil
+}
+
+func appsyncDomainNameAttrs(cfg *config.Config, region string, resp appsyncDomainNameResponse) map[string]string {
+	dn := resp.DomainNameConfig
+	arn := protocol.ARN(region, cfg.AccountID, "appsync", "domainnames/"+dn.DomainName)
+	return map[string]string{
+		"Ref":               dn.DomainName,
+		"DomainName":        dn.DomainName,
+		"DomainNameArn":     arn,
+		"AppSyncDomainName": dn.AppsyncDomainName,
+		"AppsyncDomainName": dn.AppsyncDomainName,
+		"HostedZoneId":      dn.HostedZoneID,
+	}
+}
+
+// ── AWS::AppSync::DomainNameApiAssociation ─────────────────────────────────
+
+type appsyncDomainNameApiAssociationHandler struct{}
+
+func (h *appsyncDomainNameApiAssociationHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	domainName, _ := props["DomainName"].(string)
+	apiID, _ := props["ApiId"].(string)
+	if domainName == "" || apiID == "" {
+		return "", nil, fmt.Errorf("DomainNameApiAssociation: DomainName and ApiId are required")
+	}
+	path := fmt.Sprintf("/v1/domainnames/%s/apiassociation", url.PathEscape(domainName))
+	var resp appsyncApiAssociationResponse
+	if err := appsyncRESTJSON(ctx, router, rCtx.Region, http.MethodPost, path, "AssociateApi", map[string]any{"apiId": apiID}, &resp); err != nil {
+		return "", nil, err
+	}
+	physicalID := domainName + "/" + apiID
+	return physicalID, map[string]string{"Ref": physicalID, "DomainName": resp.ApiAssociation.DomainName, "ApiId": resp.ApiAssociation.ApiID, "AssociationStatus": resp.ApiAssociation.AssociationStatus}, nil
+}
+
+func (h *appsyncDomainNameApiAssociationHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
+	parts, err := appsyncSplitPhysicalID("DomainNameApiAssociation", physicalID, 2)
+	if err != nil {
+		return nil
+	}
+	path := fmt.Sprintf("/v1/domainnames/%s/apiassociation", url.PathEscape(parts[0]))
+	_, err = internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return err
+}
+
+func (h *appsyncDomainNameApiAssociationHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	parts, err := appsyncSplitPhysicalID("DomainNameApiAssociation", physicalID, 2)
+	if err != nil {
+		return "", nil, err
+	}
+	if domainName, _ := props["DomainName"].(string); domainName != "" && domainName != parts[0] {
+		return "", nil, errReplacementRequired
+	}
+	return h.Create(ctx, router, cfg, props, rCtx)
+}
+
+// ── AWS::AppSync::ApiCache ─────────────────────────────────────────────────
+
+type appsyncApiCacheHandler struct{}
+
+func (h *appsyncApiCacheHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	apiID, _ := props["ApiId"].(string)
+	if apiID == "" {
+		return "", nil, fmt.Errorf("ApiCache: ApiId is required")
+	}
+	path := fmt.Sprintf("/v1/apis/%s/ApiCaches", url.PathEscape(apiID))
+	var resp appsyncApiCacheResponse
+	if err := appsyncRESTJSON(ctx, router, rCtx.Region, http.MethodPost, path, "CreateApiCache", appsyncApiCacheBody(props), &resp); err != nil {
+		return "", nil, err
+	}
+	return apiID, appsyncApiCacheAttrs(resp), nil
+}
+
+func (h *appsyncApiCacheHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
+	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v1/apis/"+url.PathEscape(physicalID)+"/ApiCaches", "", nil)
+	return err
+}
+
+func (h *appsyncApiCacheHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	if apiID, _ := props["ApiId"].(string); apiID != "" && apiID != physicalID {
+		return "", nil, errReplacementRequired
+	}
+	path := fmt.Sprintf("/v1/apis/%s/ApiCaches/update", url.PathEscape(physicalID))
+	var resp appsyncApiCacheResponse
+	if err := appsyncRESTJSON(ctx, router, rCtx.Region, http.MethodPost, path, "UpdateApiCache", appsyncApiCacheBody(props), &resp); err != nil {
+		return "", nil, err
+	}
+	return physicalID, appsyncApiCacheAttrs(resp), nil
+}
+
+func appsyncApiCacheBody(props map[string]any) map[string]any {
+	body := map[string]any{}
+	copyStringProp(body, props, "Type", "type")
+	copyStringProp(body, props, "ApiCachingBehavior", "apiCachingBehavior")
+	copyStringProp(body, props, "HealthMetricsConfig", "healthMetricsConfig")
+	copyAnyProp(body, props, "Ttl", "ttl")
+	copyAnyProp(body, props, "TransitEncryptionEnabled", "transitEncryptionEnabled")
+	copyAnyProp(body, props, "AtRestEncryptionEnabled", "atRestEncryptionEnabled")
+	return body
+}
+
+func appsyncApiCacheAttrs(resp appsyncApiCacheResponse) map[string]string {
+	cache := resp.ApiCache
+	return map[string]string{"Ref": cache.ApiID, "ApiId": cache.ApiID, "Status": cache.Status, "Type": cache.Type, "ApiCachingBehavior": cache.ApiCachingBehavior}
+}
+
+// ── AWS::AppSync::SourceApiAssociation ─────────────────────────────────────
+
+type appsyncSourceApiAssociationHandler struct{}
+
+func (h *appsyncSourceApiAssociationHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	mergedAPI, _ := props["MergedApiIdentifier"].(string)
+	sourceAPI, _ := props["SourceApiIdentifier"].(string)
+	if mergedAPI == "" || sourceAPI == "" {
+		return "", nil, fmt.Errorf("SourceApiAssociation: MergedApiIdentifier and SourceApiIdentifier are required")
+	}
+	body := map[string]any{"sourceApiIdentifier": sourceAPI}
+	copyStringProp(body, props, "Description", "description")
+	copyAnyProp(body, props, "SourceApiAssociationConfig", "sourceApiAssociationConfig")
+	path := fmt.Sprintf("/v1/mergedApis/%s/sourceApiAssociations", url.PathEscape(mergedAPI))
+	var resp appsyncSourceApiAssociationResponse
+	if err := appsyncRESTJSON(ctx, router, rCtx.Region, http.MethodPost, path, "AssociateSourceGraphqlApi", body, &resp); err != nil {
+		return "", nil, err
+	}
+	assoc := resp.SourceApiAssociation
+	return mergedAPI + "/" + assoc.AssociationID, appsyncSourceApiAssociationAttrs(resp), nil
+}
+
+func (h *appsyncSourceApiAssociationHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
+	parts, err := appsyncSplitPhysicalID("SourceApiAssociation", physicalID, 2)
+	if err != nil {
+		return nil
+	}
+	path := fmt.Sprintf("/v1/mergedApis/%s/sourceApiAssociations/%s", url.PathEscape(parts[0]), url.PathEscape(parts[1]))
+	_, err = internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return err
+}
+
+func (h *appsyncSourceApiAssociationHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	return "", nil, errReplacementRequired
+}
+
+func appsyncSourceApiAssociationAttrs(resp appsyncSourceApiAssociationResponse) map[string]string {
+	assoc := resp.SourceApiAssociation
+	return map[string]string{
+		"Ref":                              assoc.AssociationArn,
+		"AssociationArn":                   assoc.AssociationArn,
+		"AssociationId":                    assoc.AssociationID,
+		"SourceApiId":                      assoc.SourceApiID,
+		"SourceApiArn":                     assoc.SourceApiArn,
+		"MergedApiId":                      assoc.MergedApiID,
+		"MergedApiArn":                     assoc.MergedApiArn,
+		"SourceApiAssociationStatus":       assoc.SourceApiAssociationStatus,
+		"SourceApiAssociationStatusDetail": assoc.SourceApiAssociationStatusDetail,
+		"LastSuccessfulMergeDate":          strconv.FormatInt(assoc.LastSuccessfulMergeDate, 10),
+	}
 }
 
 // ── AWS::CloudFront::Distribution ─────────────────────────────────────────
