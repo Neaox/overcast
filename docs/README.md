@@ -174,6 +174,7 @@ All configuration is via environment variables. No config file required.
 | `LAMBDA_NETWORK`                 | `overcast_lambda`      | Docker network for Lambda containers                                                 |
 | `LAMBDA_RUNTIME_API_PORT`        | `9001`                 | Port Overcast exposes the Lambda Runtime API on                                      |
 | `LAMBDA_DOCKER_MAX_CONCURRENT_STARTS` | `4`                    | Max concurrent Docker-backed Lambda container starts                                 |
+| `LAMBDA_SEED_RUNTIME_IMAGES`     | `false`                | Pre-pull every managed Lambda runtime image at startup                               |
 | `LAMBDA_INIT_TIMEOUT_SECONDS`    | `10`                   | Max seconds to wait for a Lambda runtime to finish INIT                              |
 | `LAMBDA_KEEP_CONTAINERS`         | `false`                | Keep stopped Lambda containers after expiry/delete (useful for debugging)            |
 | `ECS_DOCKER_SOCKET`              | _(Lambda socket)_      | Docker endpoint for ECS — Unix path or `tcp://host:port`                             |

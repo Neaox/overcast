@@ -815,7 +815,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		}
 	}
 
-	r.Get("/_health", newHealthHandler(cfg, enabledServiceNames, enabledTiers, enabledGoalTiers))
+	r.Get("/_health", newHealthHandler(cfg, store, enabledServiceNames, enabledTiers, enabledGoalTiers))
 
 	// GET /_topology — full cross-region resource graph for the system map.
 	r.Get("/_topology", newTopologyHandler(cfg, store))

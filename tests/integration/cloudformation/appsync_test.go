@@ -559,6 +559,71 @@ func TestCreateStack_AppSyncEventsApiAndChannelNamespace(t *testing.T) {
 	helpers.AssertStatus(t, getResp, http.StatusNotFound)
 }
 
+func TestCreateStack_AppSyncResolverWithOnlyResponseMappingTemplate(t *testing.T) {
+	// Given: a CDK-like AppSync resolver that omits RequestMappingTemplate.
+	srv := helpers.NewTestServer(t)
+	stackName := "appsync-response-template-only"
+	template := `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "GraphqlApi": {
+      "Type": "AWS::AppSync::GraphQLApi",
+      "Properties": {
+        "Name": "cfn-appsync-response-only-api",
+        "AuthenticationType": "API_KEY"
+      }
+    },
+    "Schema": {
+      "Type": "AWS::AppSync::GraphQLSchema",
+      "Properties": {
+        "ApiId": {"Fn::GetAtt": ["GraphqlApi", "ApiId"]},
+        "Definition": "type Topic { id: ID! } type Mutation { createTopic: Topic } type Query { health: String }"
+      }
+    },
+    "TopicDataSource": {
+      "Type": "AWS::AppSync::DataSource",
+      "Properties": {
+        "ApiId": {"Fn::GetAtt": ["GraphqlApi", "ApiId"]},
+        "Name": "appsync_datasource_l_ue1_digital_guides_topic",
+        "Type": "NONE"
+      }
+    },
+    "CreateTopicResolver": {
+      "Type": "AWS::AppSync::Resolver",
+      "DependsOn": ["Schema", "TopicDataSource"],
+      "Properties": {
+        "ApiId": {"Fn::GetAtt": ["GraphqlApi", "ApiId"]},
+        "TypeName": "Mutation",
+        "FieldName": "createTopic",
+        "DataSourceName": "appsync_datasource_l_ue1_digital_guides_topic",
+        "Kind": "UNIT",
+        "ResponseMappingTemplate": "#if (!$util.isNull($ctx.result.error))\n  $util.error($ctx.result.error.message, $ctx.result.error.type, $ctx.result.data, $ctx.result.errorInfo)\n#end\n\n$utils.toJson($ctx.result)"
+      }
+    }
+  },
+  "Outputs": {
+    "ApiId": {"Value": {"Fn::GetAtt": ["GraphqlApi", "ApiId"]}},
+    "ResolverArn": {"Value": {"Fn::GetAtt": ["CreateTopicResolver", "ResolverArn"]}}
+  }
+}`
+
+	// When: CloudFormation creates the stack.
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{stackName},
+		"TemplateBody": []string{template},
+	})
+	defer resp.Body.Close()
+
+	// Then: the resolver is provisioned without an internal AppSync error.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+	outputs := describeStackOutputs(t, srv, stackName)
+	if outputs["ResolverArn"] == "" {
+		t.Fatalf("expected resolver ARN output; outputs=%#v", outputs)
+	}
+	appsyncAssertOK(t, appsyncGet(t, srv, "/v1/apis/"+outputs["ApiId"]+"/types/Mutation/resolvers/createTopic"))
+}
+
 func TestCreateStack_AppSyncPipelineResolver(t *testing.T) {
 	// Given: a CDK-like AppSync pipeline resolver stack template
 	srv := helpers.NewTestServer(t)

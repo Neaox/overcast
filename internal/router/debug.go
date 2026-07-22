@@ -34,7 +34,7 @@ type debugEC2Provider interface {
 // A web UI for these endpoints is planned. For now they return JSON.
 func debugHandlers(cfg *config.Config, store state.Store, ec2 debugEC2Provider) func(chi.Router) {
 	return func(r chi.Router) {
-		r.Get("/health", debugHealth(cfg))
+		r.Get("/health", debugHealth(cfg, store))
 		r.Get("/config", debugConfig(cfg))
 		r.Get("/state", debugState(store))
 		r.Get("/state/{namespace}", debugStateNamespace(store))
@@ -72,6 +72,7 @@ type debugHealthResponse struct {
 	Services      map[string]bool   `json:"services"`
 	State         string            `json:"state"`
 	ServiceStates map[string]string `json:"serviceStates,omitempty"`
+	Persistent    *persistentHealth `json:"persistent,omitempty"`
 	Debug         bool              `json:"debug"`
 }
 
@@ -80,20 +81,26 @@ var (
 	goStartTime = boottime.GoStart
 )
 
-func debugHealth(cfg *config.Config) http.HandlerFunc {
+func debugHealth(cfg *config.Config, store state.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		svcStates := make(map[string]string, len(cfg.ServiceStates))
 		for svc, mode := range cfg.ServiceStates {
 			svcStates[svc] = string(mode)
 		}
+		persistent := persistentHealthSnapshot(store)
+		status := "ok"
+		if persistent != nil && !persistent.Healthy {
+			status = "degraded"
+		}
 		resp := &debugHealthResponse{
-			Status:        "ok",
+			Status:        status,
 			Timestamp:     time.Now().UTC().Format(time.RFC3339),
 			Uptime:        time.Since(startTime).Round(time.Second).String(),
 			GoVersion:     runtime.Version(),
 			Services:      cfg.Services,
 			State:         string(cfg.State),
 			ServiceStates: svcStates,
+			Persistent:    persistent,
 			Debug:         cfg.Debug,
 		}
 		writeDebugJSON(w, http.StatusOK, resp)

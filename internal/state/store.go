@@ -23,6 +23,7 @@ package state
 import (
 	"context"
 	"database/sql"
+	"time"
 )
 
 // KV is a key-value pair returned by Scan.
@@ -88,4 +89,49 @@ type Store interface {
 // first reading values. Callers should type-assert this for large purges.
 type PrefixDeleter interface {
 	DeletePrefix(ctx context.Context, namespace, prefix string) error
+}
+
+// Flushable is an optional Store extension for backends that buffer writes.
+// Flush blocks until all writes accepted before the call are persisted or an
+// error proves the persistent backend is currently unavailable.
+type Flushable interface {
+	Flush(ctx context.Context) error
+}
+
+// PersistentHealthReporter is an optional Store extension for exposing live
+// persistent-backend health without forcing all Store implementations to carry
+// storage-specific fields.
+type PersistentHealthReporter interface {
+	PersistentHealth() PersistentHealth
+}
+
+// PersistentHealth is a small, JSON-friendly snapshot of persistent backend
+// status. LastError is intentionally text: callers should not branch on it.
+type PersistentHealth struct {
+	Mode          string    `json:"mode"`
+	Healthy       bool      `json:"healthy"`
+	PendingWrites int       `json:"pendingWrites"`
+	LastError     string    `json:"lastError,omitempty"`
+	LastErrorAt   time.Time `json:"lastErrorAt,omitempty"`
+	LastSuccessAt time.Time `json:"lastSuccessAt,omitempty"`
+}
+
+// Flush persists buffered writes when the store supports it. Stores without a
+// buffered durability layer are already current, so this is a no-op.
+func Flush(ctx context.Context, s Store) error {
+	flusher, ok := s.(Flushable)
+	if !ok {
+		return nil
+	}
+	return flusher.Flush(ctx)
+}
+
+// PersistentHealthSnapshot returns persistent backend health when the store has
+// one. The boolean is false for memory-only or otherwise non-reporting stores.
+func PersistentHealthSnapshot(s Store) (PersistentHealth, bool) {
+	reporter, ok := s.(PersistentHealthReporter)
+	if !ok {
+		return PersistentHealth{}, false
+	}
+	return reporter.PersistentHealth(), true
 }

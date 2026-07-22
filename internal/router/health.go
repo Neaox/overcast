@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/state"
 )
 
 // healthResponse is the JSON body returned by GET /_health.
@@ -23,6 +24,16 @@ type healthResponse struct {
 type healthStorage struct {
 	Default          string            `json:"default"`
 	ServiceOverrides map[string]string `json:"serviceOverrides,omitempty"`
+	Persistent       *persistentHealth `json:"persistent,omitempty"`
+}
+
+type persistentHealth struct {
+	Mode          string `json:"mode"`
+	Healthy       bool   `json:"healthy"`
+	PendingWrites int    `json:"pendingWrites"`
+	LastError     string `json:"lastError,omitempty"`
+	LastErrorAt   string `json:"lastErrorAt,omitempty"`
+	LastSuccessAt string `json:"lastSuccessAt,omitempty"`
 }
 
 // newHealthHandler returns a handler for GET /_health.
@@ -31,7 +42,7 @@ type healthStorage struct {
 // enabledServices is the list of service names that are currently enabled.
 // enabledTiers maps each enabled service name to its emulation tier.
 // enabledGoalTiers maps each enabled service name to its goal emulation tier.
-func newHealthHandler(cfg *config.Config, enabledServices []string, enabledTiers map[string]string, enabledGoalTiers map[string]string) http.HandlerFunc {
+func newHealthHandler(cfg *config.Config, store state.Store, enabledServices []string, enabledTiers map[string]string, enabledGoalTiers map[string]string) http.HandlerFunc {
 	// Build the storage section once — it's static for the process lifetime.
 	storage := healthStorage{Default: string(cfg.State)}
 	if len(cfg.ServiceStates) > 0 {
@@ -42,14 +53,20 @@ func newHealthHandler(cfg *config.Config, enabledServices []string, enabledTiers
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
+		currentStorage := storage
+		currentStorage.Persistent = persistentHealthSnapshot(store)
+		status := "ok"
+		if currentStorage.Persistent != nil && !currentStorage.Persistent.Healthy {
+			status = "degraded"
+		}
 		resp := &healthResponse{
-			Status:           "ok",
+			Status:           status,
 			Timestamp:        time.Now().UTC().Format(time.RFC3339),
 			Version:          cfg.Version,
 			Services:         enabledServices,
 			ServiceTiers:     enabledTiers,
 			ServiceGoalTiers: enabledGoalTiers,
-			Storage:          storage,
+			Storage:          currentStorage,
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -80,4 +97,24 @@ func newInfoHandler(cfg *config.Config) http.HandlerFunc {
 			Debug:     cfg.Debug,
 		})
 	}
+}
+
+func persistentHealthSnapshot(store state.Store) *persistentHealth {
+	health, ok := state.PersistentHealthSnapshot(store)
+	if !ok {
+		return nil
+	}
+	snapshot := &persistentHealth{
+		Mode:          health.Mode,
+		Healthy:       health.Healthy,
+		PendingWrites: health.PendingWrites,
+		LastError:     health.LastError,
+	}
+	if !health.LastErrorAt.IsZero() {
+		snapshot.LastErrorAt = health.LastErrorAt.UTC().Format(time.RFC3339)
+	}
+	if !health.LastSuccessAt.IsZero() {
+		snapshot.LastSuccessAt = health.LastSuccessAt.UTC().Format(time.RFC3339)
+	}
+	return snapshot
 }

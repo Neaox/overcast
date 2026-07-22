@@ -71,6 +71,9 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
+- **State** — hybrid SQLite-backed reads now retry canceled, busy, and locked SQLite operations with bounded backoff, expose persistent backend health and pending-write counts, persist accepted writes to a pending log before async flush, and force CloudFormation terminal stack state through synchronous persistence.
+- **Lambda** — startup no longer pre-pulls every managed runtime image by default; set `LAMBDA_SEED_RUNTIME_IMAGES=true` to opt back into broad startup seeding while per-function prewarming and lazy first-use pulls remain enabled.
+
 ## [0.0.1-alpha.22] - 2026-07-22
 
 ### Added

@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -257,6 +258,10 @@ func (p *provisioner) provisionStackResources(stack *Stack, tmpl *Template) {
 	stack.Status = StatusCreateComplete
 	stack.StatusReason = ""
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusCreateComplete, "")
+	if err := p.flushCriticalState(ctx); err != nil {
+		p.failStack(ctx, stack, StatusCreateFailed, fmt.Sprintf("persistent state flush failed: %v", err))
+		return
+	}
 	p.publishStackEvent(ctx, events.CFNStackCreated, stack)
 	p.log.Debug("cfn: stack provisioned",
 		zap.String("stack", stack.StackName),
@@ -454,6 +459,10 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 	stack.Status = StatusUpdateComplete
 	stack.StatusReason = ""
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusUpdateComplete, "")
+	if err := p.flushCriticalState(ctx); err != nil {
+		p.failStack(ctx, stack, StatusUpdateFailed, fmt.Sprintf("persistent state flush failed: %v", err))
+		return
+	}
 	p.publishStackEvent(ctx, events.CFNStackUpdated, stack)
 }
 
@@ -523,6 +532,10 @@ func (p *provisioner) deleteStackResources(stack *Stack) {
 	stack.StatusReason = ""
 	stack.Resources = nil
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusDeleteComplete, "")
+	if err := p.flushCriticalState(ctx); err != nil {
+		p.failStack(ctx, stack, StatusDeleteFailed, fmt.Sprintf("persistent state flush failed: %v", err))
+		return
+	}
 	p.publishStackEvent(ctx, events.CFNStackDeleted, stack)
 }
 
@@ -792,7 +805,16 @@ func (p *provisioner) failStack(ctx context.Context, stack *Stack, status, reaso
 	stack.Status = status
 	stack.StatusReason = reason
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", status, reason)
+	if err := p.flushCriticalState(ctx); err != nil {
+		p.log.Warn("cfn: failed to flush terminal stack state", zap.String("stack", stack.StackName), zap.Error(err))
+	}
 	p.publishStackEvent(ctx, events.CFNStackFailed, stack)
+}
+
+func (p *provisioner) flushCriticalState(ctx context.Context) error {
+	flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	return p.store.flush(flushCtx)
 }
 
 // rollbackCreate is the default failure handler for CreateStack.
@@ -850,6 +872,9 @@ func (p *provisioner) rollbackCreate(ctx context.Context, stack *Stack, rCtx *re
 		stack.StatusReason = ""
 	}
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", stack.Status, stack.StatusReason)
+	if err := p.flushCriticalState(ctx); err != nil {
+		p.log.Warn("cfn: failed to flush rollback state", zap.String("stack", stack.StackName), zap.Error(err))
+	}
 	p.publishStackEvent(ctx, events.CFNStackFailed, stack)
 }
 
@@ -929,6 +954,9 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 		stack.StatusReason = ""
 	}
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", stack.Status, stack.StatusReason)
+	if err := p.flushCriticalState(ctx); err != nil {
+		p.log.Warn("cfn: failed to flush update rollback state", zap.String("stack", stack.StackName), zap.Error(err))
+	}
 	p.publishStackEvent(ctx, events.CFNStackFailed, stack)
 }
 

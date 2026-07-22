@@ -118,6 +118,105 @@ func TestHybridStore_Scan(t *testing.T) {
 	}
 }
 
+func TestHybridStore_LazyReadCanceledContextRetriesWithBackgroundContext(t *testing.T) {
+	// Given: a hybrid store with both persisted-only rows and pending in-memory writes.
+	dir := t.TempDir()
+	seedHybridSQLiteNamespace(t, dir, "svc", 1, "persisted")
+	s, err := state.NewHybridStore(dir, 10*time.Second)
+	if err != nil {
+		t.Fatalf("NewHybridStore: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	ctx := context.Background()
+	if err := s.Set(ctx, "svc", "queue/pending", "pending"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if err := s.WaitReady(ctx); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// When: lazy reads are called with a canceled request context.
+	value, found, getErr := s.Get(canceled, "svc", "queue/00000000")
+	keys, listErr := s.List(canceled, "svc", "queue/")
+	pairs, scanErr := s.Scan(canceled, "svc", "queue/")
+
+	// Then: transient request cancellation does not hide persisted-only rows or
+	// lose pending writes from the overlay.
+	if getErr != nil || !found || value != "persisted" {
+		t.Fatalf("Get persisted with canceled context: err=%v found=%v value=%q", getErr, found, value)
+	}
+	if listErr != nil {
+		t.Fatalf("List with canceled context: %v", listErr)
+	}
+	if len(keys) != 2 || keys[0] != "queue/00000000" || keys[1] != "queue/pending" {
+		t.Fatalf("List keys = %#v, want persisted and pending rows", keys)
+	}
+	if scanErr != nil {
+		t.Fatalf("Scan with canceled context: %v", scanErr)
+	}
+	if len(pairs) != 2 || pairs[0].Key != "queue/00000000" || pairs[0].Value != "persisted" || pairs[1].Key != "queue/pending" || pairs[1].Value != "pending" {
+		t.Fatalf("Scan pairs = %#v, want persisted and pending rows", pairs)
+	}
+}
+
+func TestHybridStore_ReplaysPendingWritesAfterUncleanExit(t *testing.T) {
+	// Given: a hybrid store that has accepted writes but has not reached its
+	// periodic SQLite flush interval.
+	dir := t.TempDir()
+	ctx := context.Background()
+	s1, err := state.NewHybridStore(dir, time.Hour)
+	if err != nil {
+		t.Fatalf("NewHybridStore (1): %v", err)
+	}
+	t.Cleanup(func() { s1.Close() })
+	if err := s1.Set(ctx, "svc", "key", "value"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if err := s1.WaitReady(ctx); err != nil {
+		t.Fatalf("WaitReady (1): %v", err)
+	}
+
+	// When: a new store starts against the same directory before the first store
+	// has a chance to flush to SQLite, simulating process death before flush.
+	s2, err := state.NewHybridStore(dir, time.Hour)
+	if err != nil {
+		t.Fatalf("NewHybridStore (2): %v", err)
+	}
+	defer s2.Close()
+
+	// Then: the pending log replays the acknowledged write.
+	got, found, err := s2.Get(ctx, "svc", "key")
+	if err != nil || !found || got != "value" {
+		t.Fatalf("Get replayed pending write: err=%v found=%v got=%q", err, found, got)
+	}
+}
+
+func TestHybridStore_PersistentHealthTracksPendingAndFlush(t *testing.T) {
+	// Given: a hybrid store with an accepted but unflushed write.
+	s := newHybridStore(t)
+	ctx := context.Background()
+	if err := s.Set(ctx, "svc", "key", "value"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	// When: health is read before and after an explicit flush.
+	before := s.PersistentHealth()
+	if err := s.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	after := s.PersistentHealth()
+
+	// Then: the backend exposes pending write pressure and successful persistence.
+	if !before.Healthy || before.PendingWrites != 1 {
+		t.Fatalf("health before flush = %#v, want healthy with one pending write", before)
+	}
+	if !after.Healthy || after.PendingWrites != 0 || after.LastSuccessAt.IsZero() {
+		t.Fatalf("health after flush = %#v, want healthy with no pending writes and success timestamp", after)
+	}
+}
+
 // TestHybridStore_Persistence verifies that data written before Close is
 // available in a new HybridStore opened against the same directory.
 func TestHybridStore_Persistence(t *testing.T) {

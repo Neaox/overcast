@@ -152,6 +152,13 @@ type Config struct {
 	// LAMBDA_DOCKER_MAX_CONCURRENT_STARTS. Default 4.
 	LambdaDockerMaxConcurrentStarts int
 
+	// LambdaSeedRuntimeImages controls whether Overcast pre-pulls every known
+	// managed Lambda runtime image when the Docker runtime starts. Disabled by
+	// default to avoid Docker Desktop/containerd pressure during frequent restarts;
+	// runtime images are still pulled lazily on first use.
+	// Corresponds to env var LAMBDA_SEED_RUNTIME_IMAGES. Default false.
+	LambdaSeedRuntimeImages bool
+
 	// LambdaInitTimeout is the maximum time to wait for a Docker-backed Lambda
 	// runtime to finish INIT and poll the Runtime API for its first invocation.
 	// This is separate from the function invocation timeout. Corresponds to env
@@ -584,6 +591,7 @@ func Load() (*Config, error) {
 	if cfg.LambdaDockerMaxConcurrentStarts < 1 {
 		cfg.LambdaDockerMaxConcurrentStarts = 1
 	}
+	cfg.LambdaSeedRuntimeImages = envBool("LAMBDA_SEED_RUNTIME_IMAGES", false)
 	cfg.LambdaInitTimeout = time.Duration(envInt("LAMBDA_INIT_TIMEOUT_SECONDS", 10)) * time.Second
 	if cfg.LambdaInitTimeout <= 0 {
 		cfg.LambdaInitTimeout = 10 * time.Second

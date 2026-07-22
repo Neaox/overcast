@@ -28,6 +28,10 @@ func newCFNStore(s state.Store, defaultRegion string) *cfnStore {
 	return &cfnStore{s: s, defaultRegion: defaultRegion}
 }
 
+func (st *cfnStore) flush(ctx context.Context) error {
+	return state.Flush(ctx, st.s)
+}
+
 // region extracts the per-request region from context, falling back to the default.
 func (st *cfnStore) region(ctx context.Context) string {
 	return middleware.RegionFromContext(ctx, st.defaultRegion)
