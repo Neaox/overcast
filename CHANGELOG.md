@@ -73,9 +73,14 @@ need it than accidentally ship a breaking change as a patch.
 
 ## [0.0.1-alpha.22] - 2026-07-22
 
+### Added
+
+- **Agent tooling** — repo-local OpenCode skill registration now discovers the Overcast agent skills without manual setup.
+
 ### Fixed
 
 - **AppSync/CloudFormation** — `CreateApiKey` now accepts CDK-style `Expires` values 365 days from creation without rolling back `AWS::AppSync::ApiKey` resources.
+- **Web UI** — the sidebar now defaults to collapsed on narrow viewports, keeps separate narrow/wide collapse preferences across refreshes, and shows immediate tooltips for collapsed icon navigation.
 
 ## [0.0.1-alpha.21] - 2026-07-22
 
