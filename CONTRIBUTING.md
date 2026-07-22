@@ -461,6 +461,35 @@ dispatch helpers exist:
 | `internalJSON`    | JSON target    | ECS, EventBridge, KMS, Step Functions |
 | `internalRequest` | REST path/JSON | API Gateway, Lambda, S3               |
 
+### Thin orchestration layer
+
+CloudFormation handlers should be as thin as reasonably possible. Their job is to translate
+resolved CloudFormation properties into the underlying AWS service API, capture the
+CloudFormation-visible outputs (`Ref`, `Fn::GetAtt`, physical IDs), and apply documented
+CloudFormation lifecycle semantics such as replacement-vs-update and deletion ordering.
+
+Do not duplicate behavior already owned by the target service. Validation, defaulting,
+state writes, generated IDs, events, lifecycle transitions, execution behavior, and modeled
+service errors should come from the service handler whenever possible. A CloudFormation
+resource handler should call through the emulator router using `internalQuery`,
+`internalJSON`, or `internalRequest` rather than writing directly to the service store or
+reimplementing service logic.
+
+CloudFormation handlers may add CloudFormation-specific validation or translate underlying
+service errors only when that makes observable behavior closer to real AWS CloudFormation.
+Examples include rejecting an invalid resource property before dispatch because AWS
+CloudFormation does, mapping a service error into the failure shape/status CloudFormation
+would expose during stack events, or enforcing CloudFormation replacement rules that differ
+from the service's update API. Do not add stricter validation or friendlier errors merely for
+local convenience; every extra check should be justified by AWS CloudFormation docs,
+CDK-emitted templates, existing compatibility tests, or documented real-AWS evidence.
+
+Be DRY about transport and response plumbing, not about AWS semantics. Shared helpers are
+appropriate for request dispatch, property-copy boilerplate, physical-ID splitting, and
+small response attribute builders. Keep resource-specific property mappings, `Ref`/`GetAtt`
+semantics, replacement rules, and intentional emulation gaps explicit near the handler so
+they remain easy to review against AWS CloudFormation docs.
+
 ### Rules
 
 1. **Every resource-creating endpoint must have a CloudFormation handler.** When you add a
@@ -475,10 +504,19 @@ dispatch helpers exist:
 3. **Return `GetAtt` attributes.** If the resource type supports `Fn::GetAtt`, return the
    relevant attributes from `Create` so that cross-resource references resolve correctly.
 4. **Implement `Delete`.** Stack deletion must clean up all provisioned resources.
-5. **Stub what you can't implement yet.** If a resource type is recognised by CDK but not
+5. **Call the underlying service.** Real handlers must dispatch through the emulated service
+   API instead of directly mutating stores or duplicating service validation/defaulting.
+   Direct store access is only acceptable when there is no service API to represent the AWS
+   behavior, and the limitation must be documented and tested.
+6. **Keep CloudFormation semantics explicit.** `Ref`, `Fn::GetAtt`, physical IDs, update
+   replacement rules, CloudFormation-only validation/error translation, and no-op deletes
+   are CloudFormation behavior. Implement them in the resource handler only when needed to
+   match AWS-observable behavior, and verify them against AWS docs, CDK-emitted templates,
+   compatibility tests, or real-AWS evidence.
+7. **Stub what you can't implement yet.** If a resource type is recognised by CDK but not
    yet fully supported, use `&stubResourceHandler{}` — this returns a synthetic physical ID
    so the stack can still complete. Never silently ignore an unknown resource type.
-6. **Handler files live in the cloudformation package.** Group handlers by service:
+8. **Handler files live in the cloudformation package.** Group handlers by service:
    `provisioner_ec2.go`, `provisioner_apigw.go`, `provisioner_ecs.go`,
    `provisioner_resources.go` (for smaller services).
 
@@ -490,9 +528,16 @@ When you add a new service or a resource-creating endpoint, verify that:
    CloudFormation resource type (e.g. `"AWS::SQS::Queue"`)
 2. The handler's `Create` method dispatches an internal HTTP call through the emulator's
    router — it should exercise the real service implementation, not short-circuit
-3. `Delete` is implemented and removes the resource from the store
-4. The physical ID format matches what AWS returns (check the real AWS documentation)
-5. If the service uses a new dispatch protocol not covered by the three existing helpers
+3. The handler does not duplicate validation, defaulting, ID generation, persistence, or
+   execution behavior that belongs to the service package, except for CloudFormation-specific
+   validation/error translation required to match AWS-observable behavior
+4. `Delete` is implemented and removes the resource through the service API, or the no-op
+   behavior is documented because AWS exposes no delete API and parent-resource cascade owns
+   cleanup
+5. The physical ID format matches what AWS returns (check the real AWS documentation)
+6. `Ref` and `Fn::GetAtt` behavior is tested with CDK-like templates when CDK relies on
+   those values for child-resource wiring
+7. If the service uses a new dispatch protocol not covered by the three existing helpers
    (`internalQuery`, `internalJSON`, `internalRequest`), add the new helper to
    `provisioner.go`
 

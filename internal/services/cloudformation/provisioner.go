@@ -1391,9 +1391,12 @@ var resourceHandlers = map[string]resourceHandler{
 	"AWS::Cognito::UserPool":       &cognitoUserPoolHandler{},
 	"AWS::Cognito::UserPoolClient": &cognitoUserPoolClientHandler{},
 	// AppSync
-	"AWS::AppSync::GraphQLApi": &appsyncGraphQLApiHandler{},
-	"AWS::AppSync::DataSource": &appsyncDataSourceHandler{},
-	"AWS::AppSync::Resolver":   &appsyncResolverHandler{},
+	"AWS::AppSync::GraphQLApi":            &appsyncGraphQLApiHandler{},
+	"AWS::AppSync::GraphQLSchema":         &appsyncGraphQLSchemaHandler{},
+	"AWS::AppSync::ApiKey":                &appsyncApiKeyHandler{},
+	"AWS::AppSync::DataSource":            &appsyncDataSourceHandler{},
+	"AWS::AppSync::Resolver":              &appsyncResolverHandler{},
+	"AWS::AppSync::FunctionConfiguration": &appsyncFunctionConfigurationHandler{},
 	// ElastiCache
 	"AWS::ElastiCache::CacheCluster":     &elastiCacheCacheClusterHandler{},
 	"AWS::ElastiCache::ServerlessCache":  &elastiCacheServerlessCacheHandler{},

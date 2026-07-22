@@ -101,6 +101,12 @@ generate a placeholder ID without side effects.
 | `AWS::ApiGatewayV2::Stage`                 | Provisioned | `apiId/stageName`         | —                                               |
 | `AWS::ApiGatewayV2::Integration`           | Provisioned | `apiId/integrationId`     | IntegrationId                                   |
 | `AWS::ApiGatewayV2::Route`                 | Provisioned | `apiId/routeId`           | RouteId                                         |
+| `AWS::AppSync::GraphQLApi`                 | Provisioned | API ID                    | ApiId, Arn, GraphQLUrl, RealtimeUrl, GraphQLDns, RealtimeDns |
+| `AWS::AppSync::GraphQLSchema`              | Provisioned | `apiId/schema`            | Id                                              |
+| `AWS::AppSync::ApiKey`                     | Provisioned | `apiId/keyId`             | Arn, ApiKey, ApiKeyId                           |
+| `AWS::AppSync::DataSource`                 | Provisioned | `apiId/name`              | DataSourceArn, Name                             |
+| `AWS::AppSync::Resolver`                   | Provisioned | `apiId/typeName/fieldName` | ResolverArn, FieldName, TypeName               |
+| `AWS::AppSync::FunctionConfiguration`      | Provisioned | `apiId/functionId`        | FunctionArn, FunctionId, Name, DataSourceName   |
 | `AWS::CDK::Metadata`                       | Stub        | —                         | —                                               |
 | `Custom::*`                                | Provisioned | Lambda response or stub   | Lambda response Data or —                       |
 | `AWS::CloudFormation::CustomResource`      | Provisioned | Lambda response or stub   | Lambda response Data or —                       |
@@ -124,6 +130,7 @@ with unsupported resources can still partially deploy.
 - **Custom resources.** `Custom::*` and `AWS::CloudFormation::CustomResource` types invoke the Lambda function specified by `ServiceToken`. The handler sends a CloudFormation custom resource request to the Lambda and parses the response (`PhysicalResourceId`, `Data`). When Docker is unavailable (Lambda cannot execute), the handler degrades gracefully to a stub physical ID so the stack can still deploy.
 - **Nested stacks.** `AWS::CloudFormation::Stack` is supported. The provisioner fetches the child template from the `TemplateURL` (typically an S3 object), creates a child stack, and provisions its resources synchronously within the parent's goroutine. Child stack outputs are exposed via `Fn::GetAtt` as `Outputs.<key>`. Deletion of nested stacks cascades — deleting the parent deletes all child resources.
 - **Scheduled ECS/Fargate tasks.** `AWS::Events::Rule` provisions `Targets` through EventBridge on create/update, including ECS target parameters used by CDK scheduled Fargate tasks. EventBridge evaluates scheduled rules and invokes ECS/Fargate `RunTask` targets through the emulator router.
+- **AppSync stacks.** `AWS::AppSync::GraphQLApi`, `GraphQLSchema`, `ApiKey`, `DataSource`, `Resolver`, and `FunctionConfiguration` create real AppSync emulator state through the normal AppSync REST routes. CDK-style `Fn::GetAtt` wiring for API IDs, API keys, data source names, resolver ARNs, and function IDs is supported, and deployed APIs execute locally at `POST /_appsync/{apiId}/graphql`. `GraphQLSchema` delete is a no-op because AppSync has no schema-delete API; deleting the parent API cascades child state cleanup.
 - **Change sets.** `ExecuteChangeSet` now advances `ExecutionStatus` to `EXECUTE_COMPLETE` or `EXECUTE_FAILED` when the triggered stack provisioning reaches a terminal status, so clients polling `DescribeChangeSet` do not remain stuck in `EXECUTE_IN_PROGRESS`.
 - **Stack updates and drift.** `UpdateStack` (and `ExecuteChangeSet`) detect property drift per-resource via a sha256 hash of the resolved property map stored alongside each `StackResource`. Resources whose hash is unchanged are skipped. When a resource's properties change, the provisioner picks one of three strategies, in order:
   1. **In-place update** — when the resource handler implements an `Update` method, mutable properties are applied via the service's mutation API. Implemented for:
@@ -135,6 +142,12 @@ with unsupported resources can still partially deploy.
      - `AWS::SSM::Parameter` — `PutParameter` with `Overwrite=true`
      - `AWS::Logs::LogGroup` — `PutRetentionPolicy` / `DeleteRetentionPolicy`
      - `AWS::IAM::Role` — `UpdateAssumeRolePolicy` + `UpdateRole` (Description)
+     - `AWS::AppSync::GraphQLApi` — `UpdateGraphqlApi` for mutable API config
+     - `AWS::AppSync::GraphQLSchema` — `StartSchemaCreation` for schema definition changes
+     - `AWS::AppSync::ApiKey` — `UpdateApiKey` for description/expiration changes
+     - `AWS::AppSync::DataSource` — `UpdateDataSource` for mutable data source config
+     - `AWS::AppSync::Resolver` — `UpdateResolver` for templates, runtime, pipeline, caching, and metrics config
+     - `AWS::AppSync::FunctionConfiguration` — `UpdateFunction` for mutable function config
      - `AWS::S3::Bucket` — accepts mutable sub-resource properties (Tags, CORS, Versioning, Policy, etc.) without rebuilding the bucket. Wiring of those sub-resource PUT calls from CFN is incremental; for now the data is preserved and the user can apply the change directly via the S3 API if needed.
   2. **Replacement (delete + create)** — when an Update method signals replacement (immutable property changed) or no `Update` method is registered for the resource type. Immutable identity properties trigger this path:
      - `BucketName` (S3), `TableName` / `KeySchema` (DynamoDB), `QueueName` / `FifoQueue` (SQS), `TopicName` (SNS), `Name` (SSM Parameter, SecretsManager Secret), `LogGroupName` (Logs), `RoleName` (IAM Role), `FunctionName` (Lambda).

@@ -65,6 +65,7 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Added
 
+- **CloudFormation / AppSync** — AppSync CDK-style stacks now provision real GraphQL APIs, schemas, API keys, data sources, resolvers, and pipeline functions through CloudFormation, including AWS-shaped `Ref`/`Fn::GetAtt` outputs and local GraphQL execution via `/_appsync/{apiId}/graphql`.
 - **Web UI** — added a read-only Raw State Debugger with shipped Go BFF and dev BFF support, service/namespace/resource deep links, search/filtering, copy actions, refresh controls, and contextual raw-state links from S3, SQS, SNS, and DynamoDB resource pages.
 
 ### Fixed

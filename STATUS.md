@@ -19,7 +19,7 @@
 | DynamoDB    | 19  | Table/item CRUD, Scan, Query, Streams, TTL, batch ops, transactions                                              |
 | Lambda      | 33  | Function CRUD, Invoke (Docker), versions, aliases, layers, event source mappings                                 |
 | API Gateway | 105 | REST v1 + HTTP v2: full CRUD, stages, deployments, Lambda/MOCK/HTTP proxy execution, authorizers, API keys       |
-| AppSync     | 82  | Full CRUD, GraphQL execution (NONE/HTTP/Lambda/DynamoDB), merged APIs, Events API, channel namespaces            |
+| AppSync     | 82  | Full CRUD, GraphQL execution (NONE/HTTP/Lambda/DynamoDB), CloudFormation/CDK provisioning, merged APIs, Events API, channel namespaces |
 | CloudFront  | 89  | Distribution CRUD, invalidations, OAC/OAI, cache policies, CloudFront Functions, key groups, field-level encrypt |
 | Cognito     | 67  | User Pools + Clients, Users, Auth flows, TOTP MFA, Groups, RS256 JWT + JWKS endpoint                             |
 | EC2 / VPC   | 72  | Instances, VPCs, subnets, security groups, key pairs, route tables, IGWs, VPC peering                            |
@@ -36,7 +36,7 @@
 | Kinesis         | 17  | Streams, records, shards, tags, retention                                                                                                                                                                  |
 | EventBridge     | 28  | Event buses, rules, targets, PutEvents, tags                                                                                                                                                               |
 | Scheduler       | 12  | Schedule groups, schedules, tags, clock-driven Lambda/SQS target firing                                                                                                                                    |
-| CloudFormation  | 47  | Stacks, change sets, async provisioner (~50 resource types), intrinsic functions, GetAtt                                                                                                                   |
+| CloudFormation  | 47  | Stacks, change sets, async provisioner (~55 resource types including AppSync), intrinsic functions, GetAtt                                                                                                  |
 | RDS             | 33  | DB instances (Docker), start/stop, modify, subnet/parameter groups                                                                                                                                         |
 | ElastiCache     | 24  | Clusters (Docker Redis), replication groups, subnet groups, tagging                                                                                                                                        |
 | AppConfig       | 12  | Apps, environments, profiles, hosted config versions (CRUD + version counter)                                                                                                                              |
