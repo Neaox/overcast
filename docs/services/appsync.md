@@ -28,7 +28,8 @@ runtime (including `util.transform`, `util.http`, extended `util.str`,
 DynamoDB batch and transact operations (BatchGetItem, BatchWriteItem,
 TransactGetItems, TransactWriteItems), real-time WebSocket subscriptions
 with mutation fan-out, merged API management (source API associations with
-automatic schema merging), and Events API (v2) with channel namespace CRUD.
+automatic schema merging), CloudFormation/CDK provisioning for common GraphQL
+API stacks, and Events API (v2) with channel namespace CRUD.
 
 > **Emulation tier: Config + Execution** — GraphQL APIs and all sub-resources
 > are stored and managed via the AWS SDK. Schema uploads are validated (SDL parsed,
@@ -108,6 +109,7 @@ automatic schema merging), and Events API (v2) with channel namespace CRUD.
   fan out to matching subscriptions (convention: mutation `createFoo` → subscription
   `onCreateFoo`). Connection lifecycle managed by in-memory subscription manager.
 - **Config-level emulation.** All resources are stored for CDK/IaC compatibility.
+- **CloudFormation/CDK provisioning.** CloudFormation provisions real AppSync state for `AWS::AppSync::GraphQLApi`, `GraphQLSchema`, `ApiKey`, `DataSource`, `Resolver`, and `FunctionConfiguration`. CDK-style references such as `Fn::GetAtt GraphqlApi.ApiId`, `Fn::GetAtt ApiKey.ApiKey`, and `Fn::GetAtt Function.FunctionId` are supported, and stack-created APIs execute through `POST /_appsync/{apiId}/graphql`.
 - **Cascade delete.** Deleting a GraphQL API removes all child resources (schema, keys,
   data sources, functions, resolvers). Deleting an Event API removes all its channel
   namespaces. Deleting a domain name removes its API association.
