@@ -76,6 +76,7 @@ need it than accidentally ship a breaking change as a patch.
 ### Fixed
 
 - **AppSync/CloudFormation** — `StartSchemaCreation` now accepts AppSync built-in auth and subscription directives in GraphQL SDL, fixing CDK `AWS::AppSync::GraphQLSchema` rollbacks on directives such as `@aws_api_key`.
+- **CloudWatch Logs** — `StartLiveTail` now subscribes before emitting `sessionStart`, fixing a race where events written immediately after the session opened could be missed.
 
 ## [0.0.1-alpha.19] - 2026-07-22
 
