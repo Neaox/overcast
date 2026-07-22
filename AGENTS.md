@@ -16,6 +16,20 @@
 > For test conventions, see [tests/AGENTS.md](./tests/AGENTS.md).
 > For current implementation status and what to build next, see [STATUS.md](./STATUS.md).
 
+## Repo-local skills
+
+This repo includes opencode skills under `.agents/skills`. The project `opencode.json`
+registers that directory explicitly so agents can discover them without prompting.
+
+- `aws-compatibility-review`: Use for AWS fidelity audits, compatibility tests, wire-format drift, and service behaviour parity.
+- `bug-fix`: Use for diagnosing and fixing bugs with reproducing tests and full verification.
+- `code-review`: Use for PR/code reviews, AWS parity checks, regression risk, performance, leaks, DRY/SOLID, and maintainability.
+- `commit`: Use for clean commit creation, staging review, and commit-message hygiene.
+- `git-worktrees`: Use for parallel multi-agent work that needs isolated worktrees.
+- `github-issue-lifecycle`: Use for creating, triaging, updating, linking, and closing GitHub issues.
+- `new-feature`: Use for adding AWS endpoints, services, CloudFormation resources, or other product features.
+- `pull-request`: Use for preparing PRs, PR descriptions, commit hygiene, and CHANGELOG decisions.
+
 ---
 
 ## What belongs here vs elsewhere
