@@ -283,6 +283,28 @@ func TestCreateStack_AppSyncGraphQLSchemaWithAwsDirectives(t *testing.T) {
 	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
 }
 
+func TestCreateStack_AppSyncGraphQLSchemaWithAwsScalars(t *testing.T) {
+	// Given: a CDK-like AppSync stack template whose schema uses AppSync scalar types
+	srv := helpers.NewTestServer(t)
+	stackName := "appsync-schema-scalars"
+	template := strings.Replace(appsyncMinimalTemplate,
+		`"Definition": "type Query { hello: String }"`,
+		`"Definition": "type Query { createdAt: AWSDateTime }"`,
+		1,
+	)
+
+	// When: CloudFormation creates the stack
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{stackName},
+		"TemplateBody": []string{template},
+	})
+	defer resp.Body.Close()
+
+	// Then: the stack completes instead of rolling back during StartSchemaCreation
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+}
+
 func TestCreateStack_AppSyncS3BackedSchemaAndResolverTemplates(t *testing.T) {
 	// Given: AppSync schema and resolver templates uploaded to local S3
 	srv := helpers.NewTestServer(t)

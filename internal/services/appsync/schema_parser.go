@@ -7,13 +7,24 @@ package appsync
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/vektah/gqlparser/v2"
 	"github.com/vektah/gqlparser/v2/ast"
 )
 
-const appSyncDirectiveDefinitions = `
+const appSyncSchemaDefinitions = `
+scalar AWSDate
+scalar AWSTime
+scalar AWSDateTime
+scalar AWSTimestamp
+scalar AWSEmail
+scalar AWSJSON
+scalar AWSPhone
+scalar AWSURL
+scalar AWSIPAddress
+
 directive @aws_api_key on FIELD_DEFINITION | OBJECT
 directive @aws_iam on FIELD_DEFINITION | OBJECT
 directive @aws_oidc on FIELD_DEFINITION | OBJECT
@@ -25,7 +36,7 @@ directive @aws_subscribe(mutations: [String]) on FIELD_DEFINITION
 
 // TODO(priority:P2): confirm real AWS StartSchemaCreation behavior for AppSync directive semantics, especially config-aware @aws_auth compatibility with additional authorization modes.
 
-var appSyncDirectives = appSyncDirectiveSource()
+var appSyncSchemaPrelude = appSyncSchemaPreludeSource()
 
 // schemaParser implements SchemaParser using gqlparser/v2.
 type schemaParser struct {
@@ -47,7 +58,7 @@ func (p *schemaParser) Parse(sdl []byte) (*ParsedSchema, error) {
 		Input: string(sdl),
 	}
 
-	schema, gqlErr := gqlparser.LoadSchema(appSyncDirectives, src)
+	schema, gqlErr := gqlparser.LoadSchema(appSyncSchemaPrelude, src)
 	if gqlErr != nil {
 		return nil, fmt.Errorf("schema validation failed: %w", gqlErr)
 	}
@@ -56,34 +67,17 @@ func (p *schemaParser) Parse(sdl []byte) (*ParsedSchema, error) {
 	if schema.Query == nil {
 		return nil, fmt.Errorf("schema must define a Query type")
 	}
-
-	parsed := &ParsedSchema{
-		Raw:    sdl,
-		Opaque: schema,
+	if err := validateAppSyncSchemaDefinitions(schema); err != nil {
+		return nil, err
 	}
 
-	// Extract type names.
-	for name := range schema.Types {
-		parsed.TypeNames = append(parsed.TypeNames, name)
-	}
-
-	if schema.Query != nil {
-		parsed.QueryType = schema.Query.Name
-	}
-	if schema.Mutation != nil {
-		parsed.MutationType = schema.Mutation.Name
-	}
-	if schema.Subscription != nil {
-		parsed.SubscriptionType = schema.Subscription.Name
-	}
-
-	return parsed, nil
+	return parsedSchemaFromAST(sdl, schema), nil
 }
 
 // Merge combines multiple SDL sources into a single merged schema.
 func (p *schemaParser) Merge(schemas [][]byte) (*ParsedSchema, error) {
 	sources := make([]*ast.Source, 0, len(schemas)+1)
-	sources = append(sources, appSyncDirectives)
+	sources = append(sources, appSyncSchemaPrelude)
 	for i, sdl := range schemas {
 		sources = append(sources, &ast.Source{
 			Name:  fmt.Sprintf("source_%d.graphql", i),
@@ -95,17 +89,62 @@ func (p *schemaParser) Merge(schemas [][]byte) (*ParsedSchema, error) {
 	if gqlErr != nil {
 		return nil, fmt.Errorf("schema merge failed: %w", gqlErr)
 	}
+	if err := validateAppSyncSchemaDefinitions(schema); err != nil {
+		return nil, err
+	}
 
 	// Reconstruct merged SDL by concatenating sources.
-	var merged []byte
+	mergedLen := len(schemas)
+	for _, sdl := range schemas {
+		mergedLen += len(sdl)
+	}
+	merged := make([]byte, 0, mergedLen)
 	for _, sdl := range schemas {
 		merged = append(merged, sdl...)
 		merged = append(merged, '\n')
 	}
 
+	return parsedSchemaFromAST(merged, schema), nil
+}
+
+func appSyncSchemaPreludeSource() *ast.Source {
+	return &ast.Source{
+		Name:  "appsync-prelude.graphql",
+		Input: appSyncSchemaDefinitions,
+	}
+}
+
+func validateAppSyncSchemaDefinitions(schema *ast.Schema) error {
+	for name, def := range schema.Types {
+		if def.Kind == ast.Scalar {
+			if !isAppSyncBuiltInScalar(name) {
+				return fmt.Errorf("custom scalar %s is not supported", name)
+			}
+			continue
+		}
+		if def.Kind == ast.Object && strings.HasPrefix(name, "AWS") {
+			return fmt.Errorf("custom type %s cannot use the reserved AWS prefix", name)
+		}
+	}
+	return nil
+}
+
+func isAppSyncBuiltInScalar(name string) bool {
+	switch name {
+	case "ID", "String", "Int", "Float", "Boolean",
+		"AWSDate", "AWSTime", "AWSDateTime", "AWSTimestamp", "AWSEmail",
+		"AWSJSON", "AWSPhone", "AWSURL", "AWSIPAddress":
+		return true
+	default:
+		return false
+	}
+}
+
+func parsedSchemaFromAST(raw []byte, schema *ast.Schema) *ParsedSchema {
 	parsed := &ParsedSchema{
-		Raw:    merged,
-		Opaque: schema,
+		Raw:       raw,
+		Opaque:    schema,
+		TypeNames: make([]string, 0, len(schema.Types)),
 	}
 	for name := range schema.Types {
 		parsed.TypeNames = append(parsed.TypeNames, name)
@@ -119,15 +158,7 @@ func (p *schemaParser) Merge(schemas [][]byte) (*ParsedSchema, error) {
 	if schema.Subscription != nil {
 		parsed.SubscriptionType = schema.Subscription.Name
 	}
-
-	return parsed, nil
-}
-
-func appSyncDirectiveSource() *ast.Source {
-	return &ast.Source{
-		Name:  "appsync-directives.graphql",
-		Input: appSyncDirectiveDefinitions,
-	}
+	return parsed
 }
 
 // Get returns a cached ParsedSchema for the given API, or nil.

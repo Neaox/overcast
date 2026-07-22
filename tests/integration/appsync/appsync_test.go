@@ -659,6 +659,98 @@ type Message {
 	}
 }
 
+func TestSchema_appSyncScalars(t *testing.T) {
+	// Given: an existing API and an AppSync schema that uses all built-in AWS scalar types
+	srv := helpers.NewTestServer(t)
+	apiID, _ := createTestAPI(t, srv)
+	sdl := `type Query {
+	getObject(id: ID!): Object
+}
+
+type Mutation {
+	putObject(
+		email: AWSEmail,
+		json: AWSJSON,
+		date: AWSDate,
+		time: AWSTime,
+		datetime: AWSDateTime,
+		timestamp: AWSTimestamp,
+		url: AWSURL,
+		phone: AWSPhone,
+		ip: AWSIPAddress
+	): Object
+}
+
+type Object {
+	id: ID!
+	email: AWSEmail
+	json: AWSJSON
+	date: AWSDate
+	time: AWSTime
+	datetime: AWSDateTime
+	timestamp: AWSTimestamp
+	url: AWSURL
+	phone: AWSPhone
+	ip: AWSIPAddress
+}`
+
+	// When: StartSchemaCreation is called
+	resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/schemacreation", map[string]any{
+		"definition": base64.StdEncoding.EncodeToString([]byte(sdl)),
+	})
+	defer resp.Body.Close()
+
+	// Then: AppSync accepts its built-in scalar types
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	helpers.AssertRequestID(t, resp)
+}
+
+func TestSchema_customScalar(t *testing.T) {
+	// Given: an existing API and a schema with a user-defined custom scalar
+	srv := helpers.NewTestServer(t)
+	apiID, _ := createTestAPI(t, srv)
+	sdl := `scalar CustomDate
+
+type Query {
+	createdAt: CustomDate
+}`
+
+	// When: StartSchemaCreation is called
+	resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/schemacreation", map[string]any{
+		"definition": base64.StdEncoding.EncodeToString([]byte(sdl)),
+	})
+	defer resp.Body.Close()
+
+	// Then: AppSync rejects user-defined custom scalars
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "BadRequestException")
+	helpers.AssertRequestID(t, resp)
+}
+
+func TestSchema_customTypeWithAWSPrefix(t *testing.T) {
+	// Given: an existing API and a schema with a custom type using the reserved AWS prefix
+	srv := helpers.NewTestServer(t)
+	apiID, _ := createTestAPI(t, srv)
+	sdl := `type Query {
+	item: AWSWidget
+}
+
+type AWSWidget {
+	id: ID!
+}`
+
+	// When: StartSchemaCreation is called
+	resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/schemacreation", map[string]any{
+		"definition": base64.StdEncoding.EncodeToString([]byte(sdl)),
+	})
+	defer resp.Body.Close()
+
+	// Then: AppSync rejects custom types using the reserved AWS prefix
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "BadRequestException")
+	helpers.AssertRequestID(t, resp)
+}
+
 func TestSchema_getIntrospection(t *testing.T) {
 	// Given: an API with a schema
 	srv := helpers.NewTestServer(t)

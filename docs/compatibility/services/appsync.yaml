@@ -106,12 +106,29 @@ operations:
         status: fixed
         evidence: TestCreateStack_AppSyncGraphQLSchemaWithAwsDirectives
         notes: CloudFormation schema creation now accepts AppSync auth/subscription directives instead of rolling back during StartSchemaCreation.
+      - scenario: GraphQLSchema with AppSync built-in scalar types
+        status: fixed
+        evidence: TestCreateStack_AppSyncGraphQLSchemaWithAwsScalars
+        notes: CloudFormation schema creation now accepts AppSync AWS scalar types such as AWSDateTime instead of rolling back during StartSchemaCreation.
   StartSchemaCreation:
     status: fixed
     aws_docs:
+      - https://docs.aws.amazon.com/appsync/latest/devguide/scalars.html
       - https://docs.aws.amazon.com/appsync/latest/devguide/security-authz.html#using-additional-authorization-modes
       - https://docs.aws.amazon.com/appsync/latest/devguide/aws-appsync-real-time-data.html#graphql-schema-subscription-directives
     scenario_matrix:
+      - scenario: Schema SDL uses AppSync built-in scalar types
+        status: fixed
+        evidence: TestSchema_appSyncScalars
+        notes: Parser preloads definitions for AWSDate, AWSTime, AWSDateTime, AWSTimestamp, AWSEmail, AWSJSON, AWSPhone, AWSURL, and AWSIPAddress before validating SDL.
+      - scenario: Schema SDL declares user-defined custom scalar
+        status: fixed
+        evidence: TestSchema_customScalar
+        notes: AWS AppSync docs allow only default GraphQL scalars and AWS service-defined scalars; user-defined custom scalars are rejected.
+      - scenario: Schema SDL declares custom object type with AWS prefix
+        status: fixed
+        evidence: TestSchema_customTypeWithAWSPrefix
+        notes: AWS AppSync docs reserve the AWS prefix for service-defined schema types.
       - scenario: Schema SDL uses AppSync built-in auth and subscription directives
         status: fixed
         evidence: TestSchema_appSyncDirectives
@@ -152,6 +169,8 @@ findings:
       - CloudFormation now provisions AppSync Events APIs and channel namespaces through the real Events API routes instead of stubbing them.
       - Typed CreateGraphqlApi now carries ownerContact into shared validation; covered by TestCreateGraphqlApi_jsonProtocolOwnerContactTooLong.
       - StartSchemaCreation now accepts AppSync built-in auth and subscription directives in uploaded SDL; covered by TestSchema_appSyncDirectives and TestCreateStack_AppSyncGraphQLSchemaWithAwsDirectives.
+      - StartSchemaCreation now accepts AppSync built-in scalar types in uploaded SDL; covered by TestSchema_appSyncScalars and TestCreateStack_AppSyncGraphQLSchemaWithAwsScalars.
+      - StartSchemaCreation now rejects user-defined custom scalars and custom object types with the reserved AWS prefix; covered by TestSchema_customScalar and TestSchema_customTypeWithAWSPrefix.
   remaining_gaps:
     - Continue typed protocol validation tests beyond the UpdateGraphqlApi missing-name, TagResource invalid-key, and CreateGraphqlApi ownerContact boundary cases.
     - Audit support claims category by category.
@@ -161,5 +180,5 @@ findings:
 handoff:
   issue: https://github.com/Neaox/overcast/issues/8
   start_with: [remaining typed protocol validation, AppSync data-source CloudFormation end-to-end coverage]
-  do_not_redo: [CreateGraphqlApi success status, required name/authenticationType, authenticationType enum, apiType enum, CloudFormation GraphQLApi tag-array conversion, GraphQLApi EnvironmentVariables, GraphQLEndpointArn, resolver/function S3-backed schema/template/code locations, DomainName, DomainNameApiAssociation, ApiCache, SourceApiAssociation, AWS::AppSync::Api, AWS::AppSync::ChannelNamespace, AppSync tag route conflict, TagResource regex validation, UpdateGraphqlApi required-field/enum validation, CreateGraphqlApi typed ownerContact validation, StartSchemaCreation AppSync built-in directives]
+  do_not_redo: [CreateGraphqlApi success status, required name/authenticationType, authenticationType enum, apiType enum, CloudFormation GraphQLApi tag-array conversion, GraphQLApi EnvironmentVariables, GraphQLEndpointArn, resolver/function S3-backed schema/template/code locations, DomainName, DomainNameApiAssociation, ApiCache, SourceApiAssociation, AWS::AppSync::Api, AWS::AppSync::ChannelNamespace, AppSync tag route conflict, TagResource regex validation, UpdateGraphqlApi required-field/enum validation, CreateGraphqlApi typed ownerContact validation, StartSchemaCreation AppSync built-in directives, StartSchemaCreation AppSync built-in scalar types, StartSchemaCreation custom scalar and AWS-prefix object validation]
   commands: [go test -count=1 ./internal/services/appsync/... ./internal/services/cloudformation/... ./tests/integration/appsync/... ./tests/integration/cloudformation/...]
