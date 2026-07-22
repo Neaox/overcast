@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -1059,7 +1060,7 @@ func resolveConditionValue(v any, params map[string]string) string {
 			return name
 		}
 	}
-	return fmt.Sprintf("%v", v)
+	return cfnScalarString(v)
 }
 
 // ── Topology sort ──────────────────────────────────────────────────────────
@@ -1562,6 +1563,21 @@ func internalQuery(ctx context.Context, router http.Handler, region string, para
 
 type sqsQueueHandler struct{}
 
+func cfnScalarString(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	case float32:
+		return strconv.FormatFloat(float64(t), 'f', -1, 32)
+	case json.Number:
+		return t.String()
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
 func sqsQueueAttributesFromProps(props map[string]any) map[string]string {
 	attrs := make(map[string]string)
 	for _, name := range []string{
@@ -1574,9 +1590,12 @@ func sqsQueueAttributesFromProps(props map[string]any) map[string]string {
 		"DeduplicationScope",
 		"FifoQueue",
 		"FifoThroughputLimit",
+		"KmsDataKeyReusePeriodSeconds",
+		"KmsMasterKeyId",
+		"SqsManagedSseEnabled",
 	} {
 		if v, ok := props[name]; ok {
-			attrs[name] = fmt.Sprintf("%v", v)
+			attrs[name] = cfnScalarString(v)
 		}
 	}
 	if rp, ok := props["RedrivePolicy"]; ok {
@@ -2594,7 +2613,7 @@ func (h *nestedStackHandler) Create(ctx context.Context, router http.Handler, cf
 		for k, v := range paramMap {
 			childParams = append(childParams, Parameter{
 				Key:   k,
-				Value: fmt.Sprintf("%v", v),
+				Value: cfnScalarString(v),
 			})
 		}
 		// Sort for deterministic ordering.
@@ -2695,7 +2714,7 @@ func (h *nestedStackHandler) Update(ctx context.Context, router http.Handler, cf
 	childStack.Parameters = nil
 	if paramMap, ok := props["Parameters"].(map[string]any); ok {
 		for k, v := range paramMap {
-			childStack.Parameters = append(childStack.Parameters, Parameter{Key: k, Value: fmt.Sprintf("%v", v)})
+			childStack.Parameters = append(childStack.Parameters, Parameter{Key: k, Value: cfnScalarString(v)})
 		}
 		sort.Slice(childStack.Parameters, func(i, j int) bool {
 			return childStack.Parameters[i].Key < childStack.Parameters[j].Key
