@@ -1388,6 +1388,53 @@ func TestCreateStack_SQSFIFOQueueGeneratedName(t *testing.T) {
 	helpers.AssertStatus(t, receive, http.StatusOK)
 }
 
+func TestCreateStack_SQSQueueNumericAttributes(t *testing.T) {
+	// Given: a CloudFormation stack with numeric SQS attributes decoded from JSON
+	srv := helpers.NewTestServer(t, helpers.WithRegion("ap-southeast-2"), helpers.WithHostname("localhost.localstack.cloud"))
+	template := `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "EventQueue": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": "event-queue.fifo",
+        "FifoQueue": true,
+        "KmsMasterKeyId": "alias/aws/sqs",
+        "MessageRetentionPeriod": 1209600
+      }
+    }
+  }
+}`
+
+	// When: the stack creates the queue through CloudFormation
+	cr := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"sqs-numeric-attrs-stack"},
+		"TemplateBody": []string{template},
+	})
+	defer cr.Body.Close()
+
+	// Then: SQS accepts decimal integer attributes and preserves the queue settings
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	waitForStackStatus(t, srv, "sqs-numeric-attrs-stack", "CREATE_COMPLETE")
+	queueURL := srv.Config.ExternalBaseURL() + "/000000000000/event-queue.fifo"
+	attrs := sqsJSONCall(t, srv, "GetQueueAttributes", map[string]any{
+		"QueueUrl":       queueURL,
+		"AttributeNames": []string{"All"},
+	})
+	defer attrs.Body.Close()
+	helpers.AssertStatus(t, attrs, http.StatusOK)
+	var result struct {
+		Attributes map[string]string `json:"Attributes"`
+	}
+	helpers.DecodeJSON(t, attrs, &result)
+	if result.Attributes["MessageRetentionPeriod"] != "1209600" {
+		t.Fatalf("expected MessageRetentionPeriod=1209600, got %#v", result.Attributes)
+	}
+	if result.Attributes["KmsMasterKeyId"] != "alias/aws/sqs" {
+		t.Fatalf("expected KmsMasterKeyId=alias/aws/sqs, got %#v", result.Attributes)
+	}
+}
+
 const cognitoUserPoolTemplate = `{
   "AWSTemplateFormatVersion": "2010-09-09",
   "Resources": {

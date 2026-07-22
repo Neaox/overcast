@@ -67,7 +67,7 @@ func (h *rdsDBInstanceHandler) Create(ctx context.Context, router http.Handler, 
 		params["DBParameterGroupName"] = v
 	}
 	if v, ok := props["MultiAZ"]; ok {
-		params["MultiAZ"] = fmt.Sprintf("%v", v)
+		params["MultiAZ"] = cfnScalarString(v)
 	}
 	// VPCSecurityGroups
 	if sgs, ok := props["VPCSecurityGroups"].([]any); ok {
@@ -281,7 +281,7 @@ func (h *rdsDBClusterHandler) Update(ctx context.Context, router http.Handler, _
 		}
 	}
 	if v, ok := props["DeletionProtection"]; ok {
-		params["DeletionProtection"] = fmt.Sprintf("%v", v)
+		params["DeletionProtection"] = cfnScalarString(v)
 	}
 
 	if _, err := internalQuery(ctx, router, rCtx.Region, params); err != nil {
@@ -1604,10 +1604,10 @@ func (h *elastiCacheReplicationGroupHandler) Create(ctx context.Context, router 
 		params["CacheNodeType"] = v
 	}
 	if v := props["AutomaticFailoverEnabled"]; v != nil {
-		params["AutomaticFailoverEnabled"] = fmt.Sprintf("%v", v)
+		params["AutomaticFailoverEnabled"] = cfnScalarString(v)
 	}
 	if v := props["MultiAZEnabled"]; v != nil {
-		params["MultiAZEnabled"] = fmt.Sprintf("%v", v)
+		params["MultiAZEnabled"] = cfnScalarString(v)
 	}
 
 	rec, err := internalQuery(ctx, router, rCtx.Region, params)
@@ -1667,16 +1667,16 @@ func (h *elastiCacheReplicationGroupHandler) Update(ctx context.Context, router 
 		params["CacheNodeType"] = v
 	}
 	if v := props["AutomaticFailoverEnabled"]; v != nil {
-		params["AutomaticFailoverEnabled"] = fmt.Sprintf("%v", v)
+		params["AutomaticFailoverEnabled"] = cfnScalarString(v)
 	}
 	if v := props["MultiAZEnabled"]; v != nil {
-		params["MultiAZEnabled"] = fmt.Sprintf("%v", v)
+		params["MultiAZEnabled"] = cfnScalarString(v)
 	}
 	if v, _ := props["NotificationTopicArn"].(string); v != "" {
 		params["NotificationTopicArn"] = v
 	}
 	if v := props["SnapshotRetentionLimit"]; v != nil {
-		params["SnapshotRetentionLimit"] = fmt.Sprintf("%v", v)
+		params["SnapshotRetentionLimit"] = cfnScalarString(v)
 	}
 	if v, _ := props["SnapshotWindow"].(string); v != "" {
 		params["SnapshotWindow"] = v
@@ -1760,14 +1760,7 @@ func fmtPropString(props map[string]any, key string) string {
 	switch t := v.(type) {
 	case string:
 		return t
-	case float64:
-		if t == float64(int(t)) {
-			return fmt.Sprintf("%d", int(t))
-		}
-		return fmt.Sprintf("%g", t)
-	case int:
-		return fmt.Sprintf("%d", t)
 	default:
-		return fmt.Sprintf("%v", v)
+		return cfnScalarString(v)
 	}
 }

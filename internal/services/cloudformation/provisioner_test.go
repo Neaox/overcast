@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -240,6 +241,34 @@ func assertBefore(t *testing.T, order []string, a, b string) {
 	}
 	if posA >= posB {
 		t.Fatalf("expected %q (pos %d) before %q (pos %d) in %v", a, posA, b, posB, order)
+	}
+}
+
+func TestSQSQueueAttributesFromProps_numericValues(t *testing.T) {
+	// Given: CloudFormation-decoded SQS queue properties with numeric values
+	props := map[string]any{
+		"MessageRetentionPeriod":        float64(1209600),
+		"VisibilityTimeout":             float64(30),
+		"ReceiveMessageWaitTimeSeconds": float64(20),
+		"KmsDataKeyReusePeriodSeconds":  float64(300),
+		"KmsMasterKeyId":                "alias/aws/sqs",
+		"FifoQueue":                     true,
+	}
+
+	// When: the properties are translated to SQS queue attributes
+	attrs := sqsQueueAttributesFromProps(props)
+
+	// Then: numeric attributes are encoded as base-10 integers accepted by SQS
+	want := map[string]string{
+		"MessageRetentionPeriod":        "1209600",
+		"VisibilityTimeout":             "30",
+		"ReceiveMessageWaitTimeSeconds": "20",
+		"KmsDataKeyReusePeriodSeconds":  "300",
+		"KmsMasterKeyId":                "alias/aws/sqs",
+		"FifoQueue":                     "true",
+	}
+	if !reflect.DeepEqual(attrs, want) {
+		t.Fatalf("expected attrs %#v, got %#v", want, attrs)
 	}
 }
 

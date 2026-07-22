@@ -57,6 +57,10 @@ need it than accidentally ship a breaking change as a patch.
        can be promoted to a versioned entry cleanly.
      - Keep bullets concise — one sentence per service is the target; use semicolons to
        append new capabilities rather than splitting into sub-bullets.
+     - For bug fixes, describe the full affected scope discovered during investigation,
+       not only the original symptom or repro case. If one root cause affected multiple
+       services, resource types, commands, or user-visible paths, mention those impacts
+       in the release note while keeping the entry concise.
      - The changelog only needs changes that affect shipped artifacts or release
        notes: runtime behaviour, AWS compatibility, config/env vars, Docker or
        binary packaging, release process, or user-facing docs.
@@ -66,6 +70,12 @@ need it than accidentally ship a breaking change as a patch.
 ### Added
 
 ### Fixed
+
+## [0.0.1-alpha.18] - 2026-07-22
+
+### Fixed
+
+- **CloudFormation** — scalar properties forwarded to service APIs now preserve decimal numeric formatting instead of scientific notation across SQS queues, nested stack parameters, RDS flags, and ElastiCache replication group updates; `AWS::SQS::Queue` also forwards KMS/SSE properties so CDK-created FIFO queues with `MessageRetentionPeriod: 1209600` and `KmsMasterKeyId` deploy successfully.
 
 ## [0.0.1-alpha.17] - 2026-07-22
 
@@ -300,7 +310,20 @@ need it than accidentally ship a breaking change as a patch.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.5...HEAD
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.18...HEAD
+[0.0.1-alpha.18]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.17...v0.0.1-alpha.18
+[0.0.1-alpha.17]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.16...v0.0.1-alpha.17
+[0.0.1-alpha.16]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.15...v0.0.1-alpha.16
+[0.0.1-alpha.15]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.14...v0.0.1-alpha.15
+[0.0.1-alpha.14]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.13...v0.0.1-alpha.14
+[0.0.1-alpha.13]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.12...v0.0.1-alpha.13
+[0.0.1-alpha.12]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.11...v0.0.1-alpha.12
+[0.0.1-alpha.11]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.10...v0.0.1-alpha.11
+[0.0.1-alpha.10]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.9...v0.0.1-alpha.10
+[0.0.1-alpha.9]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.8...v0.0.1-alpha.9
+[0.0.1-alpha.8]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.7...v0.0.1-alpha.8
+[0.0.1-alpha.7]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.6...v0.0.1-alpha.7
+[0.0.1-alpha.6]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.5...v0.0.1-alpha.6
 [0.0.1-alpha.5]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.4...v0.0.1-alpha.5
 [0.0.1-alpha.4]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.2...v0.0.1-alpha.4
 [0.0.1-alpha.2]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.1...v0.0.1-alpha.2
