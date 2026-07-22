@@ -71,6 +71,10 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
+## [0.0.1-alpha.19] - 2026-07-22
+
+### Fixed
+
 - **AppSync/CloudFormation** — `AWS::AppSync::GraphQLApi` now accepts CDK/CloudFormation tag arrays, provisions environment variables, exposes `GraphQLEndpointArn`, supports S3-backed schema/resolver/function/channel namespace assets, provisions domain names, domain associations, API caches, source API associations, Events APIs, and channel namespaces, routes AppSync tag APIs without colliding with MSK, and validates `CreateGraphqlApi`/`UpdateGraphqlApi` consistently across REST and typed protocol paths.
 - **Web UI** — debug sidebar navigation and raw-state links now stay hidden unless `OVERCAST_DEBUG` is enabled for the connected emulator.
 
