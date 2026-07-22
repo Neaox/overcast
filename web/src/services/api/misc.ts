@@ -24,3 +24,12 @@ export const inbox = {
   delete: (id: string) =>
     apiFetch<void>(`/inbox/messages/${encodeURIComponent(id)}`, { method: "DELETE" }),
 }
+
+export type DebugStateSummary = Record<string, string[]>
+export type DebugNamespaceValues = Record<string, string>
+
+export const debugState = {
+  list: () => apiFetch<DebugStateSummary>("/debug/state"),
+  namespace: (namespace: string) =>
+    apiFetch<DebugNamespaceValues>(`/debug/state/${encodeURIComponent(namespace)}`),
+}

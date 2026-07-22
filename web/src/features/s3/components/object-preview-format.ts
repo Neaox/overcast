@@ -2,6 +2,25 @@ import Prism from "@/lib/prism"
 
 type PreviewLanguage = "json" | "markup" | "css" | "javascript"
 
+const genericMediaTypes = new Set(["", "application/octet-stream", "binary/octet-stream"])
+
+const voidMarkupTags = new Set([
+  "area",
+  "base",
+  "br",
+  "col",
+  "embed",
+  "hr",
+  "img",
+  "input",
+  "link",
+  "meta",
+  "param",
+  "source",
+  "track",
+  "wbr",
+])
+
 export function isImagePreviewable(contentType: string): boolean {
   const mediaType = normalizedContentType(contentType)
   return /^image\/(png|jpe?g|gif|webp|svg\+xml|bmp|avif)$/i.test(mediaType)
@@ -24,57 +43,101 @@ function normalizedContentType(contentType: string): string {
   return contentType.split(";", 1)[0].trim().toLowerCase()
 }
 
-function previewLanguage(contentType: string, key: string): PreviewLanguage | null {
-  const mediaType = normalizedContentType(contentType)
-  if (/(^application\/(json|x-ndjson)$|\+json$)/i.test(mediaType) || /\.json$/i.test(key)) {
+function languageFromContentType(mediaType: string): PreviewLanguage | null {
+  if (genericMediaTypes.has(mediaType)) return null
+  if (/(^application\/(json|x-ndjson)$|\+json$)/i.test(mediaType)) {
     return "json"
   }
-  if (/(^text\/(html|xml)$|xml$|\+xml$)/i.test(mediaType) || /\.(xml|xhtml|html|htm)$/i.test(key)) {
+  if (/(^(application|text)\/(xml|xhtml\+xml|html)$|\+xml$)/i.test(mediaType)) {
     return "markup"
   }
-  if (/^text\/css$/i.test(mediaType) || /\.css$/i.test(key)) return "css"
-  if (
-    /^(application|text)\/javascript$/i.test(mediaType) ||
-    /\.(mjs|cjs|js|jsx|ts|tsx)$/i.test(key)
-  ) {
+  if (/^text\/css$/i.test(mediaType)) return "css"
+  if (/^(application|text)\/javascript$/i.test(mediaType)) {
     return "javascript"
   }
   return null
 }
 
-function formatMarkup(text: string): string {
+function languageFromKey(key: string): PreviewLanguage | null {
+  if (/\.(json|jsonl|ndjson)$/i.test(key)) return "json"
+  if (/\.(xml|xhtml|html|htm)$/i.test(key)) return "markup"
+  if (/\.css$/i.test(key)) return "css"
+  if (/\.(mjs|cjs|js|jsx|ts|tsx)$/i.test(key)) return "javascript"
+  return null
+}
+
+function previewLanguage(contentType: string, key: string): PreviewLanguage | null {
+  const mediaType = normalizedContentType(contentType)
+  return languageFromContentType(mediaType) ?? languageFromKey(key)
+}
+
+function isHtmlMarkup(contentType: string, key: string): boolean {
+  const mediaType = normalizedContentType(contentType)
+  return /^(text|application)\/html$/i.test(mediaType) || /\.html?$/i.test(key)
+}
+
+function findMarkupTagEnd(text: string, start: number): number {
+  let quote: string | null = null
+  for (let i = start + 1; i < text.length; i += 1) {
+    const char = text[i]
+    if (quote) {
+      if (char === quote) quote = null
+      continue
+    }
+    if (char === '"' || char === "'") {
+      quote = char
+      continue
+    }
+    if (char === ">") return i
+  }
+  return -1
+}
+
+function markupTagName(tag: string): string {
+  const match = /^<\/?\s*([A-Za-z][\w:.-]*)/.exec(tag)
+  return match?.[1]?.toLowerCase() ?? ""
+}
+
+function isSelfClosingMarkupTag(tag: string, useHtmlVoidTags: boolean): boolean {
+  return /\/\s*>$/.test(tag) || (useHtmlVoidTags && voidMarkupTags.has(markupTagName(tag)))
+}
+
+function formatMarkup(text: string, useHtmlVoidTags: boolean): string {
   const compact = text.trim()
   if (!compact) return text
   let depth = 0
-  const lines = compact
-    .replace(/>\s+</g, "><")
-    .split(/(?=<)|(?<=>)/g)
-    .map((part) => part.trim())
-    .filter(Boolean)
-  return lines
-    .map((line) => {
-      const isClosing = /^<\//.test(line)
-      const isDeclaration = /^<\?/.test(line)
-      const isComment = /^<!--/.test(line)
-      const isDoctype = /^<!DOCTYPE\b/i.test(line)
-      const isSelfClosing = /\/>$/.test(line)
-      const isOpening = /^<[^!?/][^>]*>$/.test(line)
+  const lines: string[] = []
 
-      if (isClosing) depth = Math.max(0, depth - 1)
-      const rendered = `${"  ".repeat(depth)}${line}`
-      if (
-        isOpening &&
-        !isSelfClosing &&
-        !isDeclaration &&
-        !isComment &&
-        !isDoctype &&
-        !/^<(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)\b/i.test(line)
-      ) {
-        depth += 1
-      }
-      return rendered
-    })
-    .join("\n")
+  const pushLine = (line: string, lineDepth = depth) => {
+    const trimmed = line.trim()
+    if (trimmed) lines.push(`${"  ".repeat(lineDepth)}${trimmed}`)
+  }
+
+  for (let i = 0; i < compact.length; ) {
+    if (compact[i] !== "<") {
+      const nextTag = compact.indexOf("<", i)
+      const end = nextTag === -1 ? compact.length : nextTag
+      for (const line of compact.slice(i, end).split(/\r?\n/)) pushLine(line)
+      i = end
+      continue
+    }
+
+    const tagEnd = findMarkupTagEnd(compact, i)
+    if (tagEnd === -1) {
+      pushLine(compact.slice(i))
+      break
+    }
+
+    const tag = compact.slice(i, tagEnd + 1)
+    const isClosing = /^<\//.test(tag)
+    const isOpening = /^<[^!?/]/.test(tag)
+    if (isClosing) depth = Math.max(0, depth - 1)
+    pushLine(tag)
+    if (isOpening && !isSelfClosingMarkupTag(tag, useHtmlVoidTags)) depth += 1
+    i = tagEnd + 1
+  }
+
+  return lines.join("\n")
 }
 
 export function formatPreviewText(
@@ -92,7 +155,7 @@ export function formatPreviewText(
     }
   }
   if (language === "markup") {
-    const formatted = formatMarkup(text)
+    const formatted = formatMarkup(text, isHtmlMarkup(contentType, key))
     return { text: formatted, html: Prism.highlight(formatted, Prism.languages.markup, "markup") }
   }
   if (language) {

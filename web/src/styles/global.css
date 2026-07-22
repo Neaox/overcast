@@ -333,26 +333,89 @@
   .token.property {
     color: var(--accent);
   }
+  .token.tag,
+  .token.doctype,
+  .token.doctype-tag,
+  .token.selector {
+    color: oklch(0.5 0.16 255);
+  } /* blue */
+  .token.attr-name,
+  .token.name,
+  .token.parameter {
+    color: oklch(0.48 0.14 285);
+  } /* violet */
   .token.string {
     color: oklch(0.52 0.14 145);
   } /* green-ish */
+  .token.attr-value,
+  .token.template-string,
+  .token.interpolation {
+    color: oklch(0.52 0.14 145);
+  }
   .token.number {
     color: oklch(0.58 0.16 35);
   } /* orange */
+  .token.keyword,
+  .token.operator {
+    color: oklch(0.55 0.16 290);
+  }
+  .token.function {
+    color: oklch(0.55 0.15 210);
+  }
   .token.boolean,
   .token.null.keyword {
     color: oklch(0.55 0.16 290);
   } /* purple */
 
   /* Dark overrides */
+  .dark .token.tag,
+  .dark .token.doctype,
+  .dark .token.doctype-tag,
+  .dark .token.selector,
+  [data-theme="dark"] .token.tag,
+  [data-theme="dark"] .token.doctype,
+  [data-theme="dark"] .token.doctype-tag,
+  [data-theme="dark"] .token.selector {
+    color: oklch(0.76 0.13 255);
+  }
+  .dark .token.attr-name,
+  .dark .token.name,
+  .dark .token.parameter,
+  [data-theme="dark"] .token.attr-name,
+  [data-theme="dark"] .token.name,
+  [data-theme="dark"] .token.parameter {
+    color: oklch(0.78 0.13 285);
+  }
   .dark .token.string {
     color: oklch(0.72 0.14 145);
   }
-  .dark .token.number {
+  .dark .token.attr-value,
+  .dark .token.template-string,
+  .dark .token.interpolation,
+  [data-theme="dark"] .token.string,
+  [data-theme="dark"] .token.attr-value,
+  [data-theme="dark"] .token.template-string,
+  [data-theme="dark"] .token.interpolation {
+    color: oklch(0.72 0.14 145);
+  }
+  .dark .token.number,
+  [data-theme="dark"] .token.number {
     color: oklch(0.75 0.14 55);
   }
+  .dark .token.keyword,
+  .dark .token.operator,
+  [data-theme="dark"] .token.keyword,
+  [data-theme="dark"] .token.operator {
+    color: oklch(0.72 0.15 290);
+  }
+  .dark .token.function,
+  [data-theme="dark"] .token.function {
+    color: oklch(0.75 0.13 210);
+  }
   .dark .token.boolean,
-  .dark .token.null.keyword {
+  .dark .token.null.keyword,
+  [data-theme="dark"] .token.boolean,
+  [data-theme="dark"] .token.null.keyword {
     color: oklch(0.72 0.15 290);
   }
 }

@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog"
 import { Spinner } from "@/components/ui/primitives"
 import type { DynamoItem, DynamoAttrValue } from "@/types"
+import { createId } from "@/lib/id"
 import { cn } from "@/lib/utils"
 
 type AttrType = "S" | "N" | "BOOL" | "NULL" | "SS" | "NS" | "L" | "M"
@@ -26,7 +27,7 @@ interface AttrRow {
 }
 
 function makeRow(): AttrRow {
-  return { id: crypto.randomUUID(), name: "", type: "S", value: "" }
+  return { id: createId(), name: "", type: "S", value: "" }
 }
 
 function buildAttrValue(type: AttrType, value: string): DynamoAttrValue {

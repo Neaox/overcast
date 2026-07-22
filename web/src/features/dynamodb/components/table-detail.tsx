@@ -46,6 +46,7 @@ import {
 } from "@/components/ui/table"
 import { PageHeader, Spinner, EmptyState, Breadcrumb, CodeBlock } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
+import { RawStateLink } from "@/features/debug/raw-state-link"
 import { useToast } from "@/components/ui/toast"
 import { ItemEditorDialog } from "./item-editor"
 import { FilterBuilder, matchesFilters, type FilterCondition } from "./filter-builder"
@@ -462,6 +463,7 @@ export function TableDetail({ tableName }: Props) {
               <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
               Refresh
             </Button>
+            <RawStateLink namespace="dynamodb:tables" stateKey={tableName} />
           </>
         }
       />

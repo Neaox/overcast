@@ -36,6 +36,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { EmptyState, PageHeader, QueryListState, Spinner } from "@/components/ui/primitives"
 import { Badge } from "@/components/ui/badge"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
+import { RawStateLink } from "@/features/debug/raw-state-link"
 import { cn } from "@/lib/utils"
 
 export function QueueList() {
@@ -110,6 +111,7 @@ export function QueueList() {
               onOpen={openDocs}
               onClose={closeDocs}
             />
+            <RawStateLink service="sqs" />
             <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
               <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
               Refresh

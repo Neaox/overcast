@@ -40,6 +40,7 @@ import { Badge } from "@/components/ui/badge"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { EventConsole } from "@/components/ui/event-console"
+import { RawStateLink } from "@/features/debug/raw-state-link"
 import { useToast } from "@/components/ui/toast"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { PublishMessageDialog } from "@/features/sns/components/publish-dialog"
@@ -152,6 +153,7 @@ export function TopicDetail({ topicName }: Props) {
             >
               <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
             </Button>
+            <RawStateLink namespace="sns:topics" stateKey={topicName} />
             <Button size="sm" variant="secondary" onClick={() => setShowSubscribe(true)}>
               <Link className="mr-1 h-4 w-4" />
               Subscribe

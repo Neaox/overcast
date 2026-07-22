@@ -184,6 +184,10 @@ app.route(
   "/api/docs",
   lazyRoute(async () => (await import("./routes/docs.js")).docsRoutes),
 )
+app.route(
+  "/api/debug",
+  lazyRoute(async () => (await import("./routes/debug.js")).debugRoutes),
+)
 // future: additional services
 
 export { app }

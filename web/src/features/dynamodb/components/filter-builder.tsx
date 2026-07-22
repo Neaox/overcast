@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Plus, Trash2, Play } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { createId } from "@/lib/id"
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -43,7 +44,7 @@ interface Props {
 }
 
 function emptyCondition(): FilterCondition {
-  return { id: crypto.randomUUID(), attribute: "", comparator: "=", value: "", valueType: "S" }
+  return { id: createId(), attribute: "", comparator: "=", value: "", valueType: "S" }
 }
 
 export function FilterBuilder({

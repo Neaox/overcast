@@ -16,6 +16,7 @@ import {
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
+import { RawStateLink } from "@/features/debug/raw-state-link"
 import { CreateTopicDialog } from "./create-topic-dialog"
 import { cn } from "@/lib/utils"
 import { ArnText } from "@/components/ui/arn-link"
@@ -53,6 +54,7 @@ export function TopicList() {
               onOpen={openDocs}
               onClose={closeDocs}
             />
+            <RawStateLink service="sns" />
             <Button
               variant="ghost"
               size="sm"

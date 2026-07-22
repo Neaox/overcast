@@ -18,6 +18,7 @@ import { Route as InboxRouteImport } from './routes/inbox'
 import { Route as IamRouteImport } from './routes/iam'
 import { Route as EventsRouteImport } from './routes/events'
 import { Route as DocsRouteImport } from './routes/docs'
+import { Route as DebugRouteImport } from './routes/debug'
 import { Route as ServiceRouteImport } from './routes/$service'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as StsIndexRouteImport } from './routes/sts/index'
@@ -134,6 +135,11 @@ const EventsRoute = EventsRouteImport.update({
 const DocsRoute = DocsRouteImport.update({
   id: '/docs',
   path: '/docs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DebugRoute = DebugRouteImport.update({
+  id: '/debug',
+  path: '/debug',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ServiceRoute = ServiceRouteImport.update({
@@ -508,6 +514,7 @@ const CloudwatchLogsGroupNameStreamNameRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$service': typeof ServiceRoute
+  '/debug': typeof DebugRoute
   '/docs': typeof DocsRoute
   '/events': typeof EventsRoute
   '/iam': typeof IamRoute
@@ -591,6 +598,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$service': typeof ServiceRoute
+  '/debug': typeof DebugRoute
   '/docs': typeof DocsRoute
   '/events': typeof EventsRoute
   '/iam': typeof IamRoute
@@ -671,6 +679,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/$service': typeof ServiceRoute
+  '/debug': typeof DebugRoute
   '/docs': typeof DocsRoute
   '/events': typeof EventsRoute
   '/iam': typeof IamRoute
@@ -756,6 +765,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/$service'
+    | '/debug'
     | '/docs'
     | '/events'
     | '/iam'
@@ -839,6 +849,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/$service'
+    | '/debug'
     | '/docs'
     | '/events'
     | '/iam'
@@ -918,6 +929,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/$service'
+    | '/debug'
     | '/docs'
     | '/events'
     | '/iam'
@@ -1002,6 +1014,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ServiceRoute: typeof ServiceRoute
+  DebugRoute: typeof DebugRoute
   DocsRoute: typeof DocsRoute
   EventsRoute: typeof EventsRoute
   IamRoute: typeof IamRoute
@@ -1139,6 +1152,13 @@ declare module '@tanstack/react-router' {
       path: '/docs'
       fullPath: '/docs'
       preLoaderRoute: typeof DocsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/debug': {
+      id: '/debug'
+      path: '/debug'
+      fullPath: '/debug'
+      preLoaderRoute: typeof DebugRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/$service': {
@@ -1717,6 +1737,7 @@ const SqsQueueRouteWithChildren = SqsQueueRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ServiceRoute: ServiceRoute,
+  DebugRoute: DebugRoute,
   DocsRoute: DocsRoute,
   EventsRoute: EventsRoute,
   IamRoute: IamRoute,

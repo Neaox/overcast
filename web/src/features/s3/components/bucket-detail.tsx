@@ -36,6 +36,7 @@ import { Badge } from "@/components/ui/badge"
 import { PageHeader, Breadcrumb, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { useToast } from "@/components/ui/toast"
+import { RawStateLink } from "@/features/debug/raw-state-link"
 import { formatBytes, formatDate, formatStorageClass } from "@/lib/format"
 import { BucketTabs } from "./bucket-tabs"
 import { cn } from "@/lib/utils"
@@ -243,6 +244,7 @@ export function BucketDetail() {
             >
               <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
             </Button>
+            <RawStateLink namespace="s3:buckets" stateKey={bucket} />
             <Button variant="secondary" size="md" onClick={() => navigate({ to: "/s3" })}>
               <ArrowLeft className="h-4 w-4" /> Buckets
             </Button>

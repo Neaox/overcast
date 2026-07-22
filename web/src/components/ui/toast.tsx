@@ -2,6 +2,7 @@ import * as React from "react"
 import * as ToastPrimitive from "@radix-ui/react-toast"
 import { X } from "lucide-react"
 import { cva } from "class-variance-authority"
+import { createId } from "@/lib/id"
 import { cn } from "@/lib/utils"
 
 const ToastProvider = ToastPrimitive.Provider
@@ -96,11 +97,7 @@ export function ToastContextProvider({ children }: { children: React.ReactNode }
   const [toasts, setToasts] = React.useState<ToastItem[]>([])
 
   const toast = React.useCallback((item: Omit<ToastItem, "id">) => {
-    const id =
-      typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2)}`
-    setToasts((prev) => [...prev, { ...item, id }])
+    setToasts((prev) => [...prev, { ...item, id: createId() }])
   }, [])
 
   return (

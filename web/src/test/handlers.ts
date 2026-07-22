@@ -48,6 +48,10 @@ export const cloudwatchHandlers = [
 
 export const inboxHandlers = [http.get("/api/inbox/messages", () => HttpResponse.json([]))]
 
+// ─── Debug ────────────────────────────────────────────────────────────────
+
+export const debugHandlers = [http.get("/api/debug/state", () => HttpResponse.json({}))]
+
 // ─── Default handler set (all services, empty state) ─────────────────────
 
 export const handlers = [
@@ -57,4 +61,5 @@ export const handlers = [
   ...ecrHandlers,
   ...cloudwatchHandlers,
   ...inboxHandlers,
+  ...debugHandlers,
 ]
