@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -789,6 +790,31 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		}
 	}
 
+	// ---- /v1/tags service dispatch -----------------------------------------
+	// AppSync and MSK both expose TagResource/UntagResource/ListTagsForResource
+	// at /v1/tags/{resourceArn}. Unlike /v2/apis above, the path here carries
+	// the resourceArn itself, which is self-describing — its
+	// "arn:{partition}:{service}:..." shape names the owning service
+	// directly — so we dispatch on that instead of the SigV4 credential
+	// scope. This also means a malformed or foreign-service ARN gets a
+	// clean 404 rather than being silently serviced by whichever service's
+	// route happens to match, matching how real AWS would never route such
+	// a request to either service in the first place.
+	{
+		tagRouters := map[string]http.Handler{}
+		if cfg.Services["appsync"] {
+			tagRouters["appsync"] = appsyncSvc.TagsRouter()
+		}
+		if cfg.Services["msk"] {
+			tagRouters["kafka"] = mskSvc.TagsRouter()
+		}
+		if len(tagRouters) > 0 {
+			r.Route("/v1/tags", func(sub chi.Router) {
+				sub.HandleFunc("/*", tagsDispatch(tagRouters))
+			})
+		}
+	}
+
 	r.Get("/_health", newHealthHandler(cfg, enabledServiceNames, enabledTiers, enabledGoalTiers))
 
 	// GET /_topology — full cross-region resource graph for the system map.
@@ -1062,6 +1088,26 @@ func v2APIsDispatch(apigwRouter, appsyncRouter http.Handler) http.HandlerFunc {
 			return
 		}
 		// Neither service enabled — 404.
+		http.NotFound(w, r)
+	}
+}
+
+// tagsDispatch returns a handler that dispatches /v1/tags/{resourceArn}
+// requests to whichever service's tag router owns the resourceArn, as
+// identified by protocol.ServiceFromARN. A resourceArn that doesn't parse,
+// or whose service isn't one of the given routers, gets a 404 — no service
+// silently claims a request it doesn't recognize.
+func tagsDispatch(routers map[string]http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		resourceArn := chi.URLParam(r, "*")
+		// AWS SDKs URL-encode the ARN in the path (e.g. ":" as "%3A").
+		if decoded, err := url.PathUnescape(resourceArn); err == nil {
+			resourceArn = decoded
+		}
+		if router, ok := routers[protocol.ServiceFromARN(resourceArn)]; ok {
+			router.ServeHTTP(w, r)
+			return
+		}
 		http.NotFound(w, r)
 	}
 }

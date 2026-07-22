@@ -68,6 +68,7 @@ func (h *Handler) ChangeMessageVisibility(w http.ResponseWriter, r *http.Request
 
 	// VisibilityTimeout of 0 makes the message immediately visible again.
 	msg.VisibleAfter = h.clk.Now().Add(time.Duration(req.VisibilityTimeout) * time.Second)
+	msg.VisibilityVersion++
 	if aerr := h.store.putMessage(r.Context(), queueName, msg); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return

@@ -54,6 +54,8 @@ type UIConfig struct {
 	APIPort int
 	// Region is the default AWS region the emulator advertises.
 	Region string
+	// Debug indicates whether OVERCAST_DEBUG is enabled for the emulator.
+	Debug bool
 }
 
 // NewHandler returns an http.Handler that mounts all BFF routes under /api/
@@ -359,9 +361,10 @@ func buildBootstrapScript(r *http.Request, cfg UIConfig) string {
 	if region == "" {
 		region = "us-east-1"
 	}
-	payload, _ := json.Marshal(map[string]string{
+	payload, _ := json.Marshal(map[string]any{
 		"apiBaseUrl": apiBaseURL,
 		"region":     region,
+		"debug":      cfg.Debug,
 	})
 	return `<script>window.__OVERCAST__=` + string(payload) + `;</script>`
 }

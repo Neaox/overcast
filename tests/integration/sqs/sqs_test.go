@@ -284,6 +284,73 @@ func TestSendMessage_queueNotFound(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusBadRequest)
 }
 
+func TestSendMessage_invalidDelaySeconds(t *testing.T) {
+	// Given: a standard queue
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "delay-validation")
+
+	cases := []struct {
+		name         string
+		delaySeconds int
+	}{
+		{name: "negative", delaySeconds: -1},
+		{name: "above maximum", delaySeconds: 901},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// When: SendMessage includes an invalid DelaySeconds value
+			resp := sqsCall(t, srv, "SendMessage", map[string]any{
+				"QueueUrl":     queueURL,
+				"MessageBody":  "test",
+				"DelaySeconds": tc.delaySeconds,
+			})
+			defer resp.Body.Close()
+
+			// Then: the request is rejected
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, "InvalidParameterValue")
+		})
+	}
+}
+
+func TestSendMessage_delaySecondsOnFifo(t *testing.T) {
+	// Given: a FIFO queue
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "fifo-delay.fifo")
+
+	// When: SendMessage includes DelaySeconds on a FIFO queue
+	resp := sqsCall(t, srv, "SendMessage", map[string]any{
+		"QueueUrl":       queueURL,
+		"MessageBody":    "test",
+		"MessageGroupId": "g1",
+		"DelaySeconds":   5,
+	})
+	defer resp.Body.Close()
+
+	// Then: the request is rejected (DelaySeconds not allowed on FIFO)
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidParameterValue")
+}
+
+func TestSendMessage_bodyTooLarge(t *testing.T) {
+	// Given: a standard queue
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "body-size-test")
+
+	// When: SendMessage includes a body larger than 1 MiB
+	largeBody := strings.Repeat("x", 1_048_577) // 1 MiB + 1 byte
+	resp := sqsCall(t, srv, "SendMessage", map[string]any{
+		"QueueUrl":    queueURL,
+		"MessageBody": largeBody,
+	})
+	defer resp.Body.Close()
+
+	// Then: the request is rejected
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidParameterValue")
+}
+
 // ---- ReceiveMessage --------------------------------------------------------
 
 func TestReceiveMessage_success(t *testing.T) {
@@ -2158,6 +2225,172 @@ func TestReceiveMessage_fifo_receiveRequestAttemptIdValidation(t *testing.T) {
 	}
 }
 
+func TestReceiveMessage_fifo_receiveRequestAttemptId_invalidatedByVisibilityChange(t *testing.T) {
+	// Given: a FIFO queue with one visible message.
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "attempt-inval-vis.fifo")
+	resp := sqsCall(t, srv, "SendMessage", map[string]any{
+		"QueueUrl":               queueURL,
+		"MessageBody":            "inval-vis-body",
+		"MessageGroupId":         "group-a",
+		"MessageDeduplicationId": "inval-vis-1",
+	})
+	resp.Body.Close()
+
+	receive := func(body map[string]any) []map[string]any {
+		t.Helper()
+		resp := sqsCall(t, srv, "ReceiveMessage", body)
+		defer resp.Body.Close()
+		helpers.AssertStatus(t, resp, http.StatusOK)
+		var result struct {
+			Messages []map[string]any `json:"Messages"`
+		}
+		helpers.DecodeJSON(t, resp, &result)
+		return result.Messages
+	}
+
+	// When: the first receive uses a ReceiveRequestAttemptId.
+	first := receive(map[string]any{
+		"QueueUrl":                queueURL,
+		"ReceiveRequestAttemptId": "attempt-vis-1",
+		"VisibilityTimeout":       60,
+	})
+	if len(first) != 1 {
+		t.Fatalf("expected first receive to return 1 message, got %d", len(first))
+	}
+
+	// When: ChangeMessageVisibility is called on the message.
+	resp2 := sqsCall(t, srv, "ChangeMessageVisibility", map[string]any{
+		"QueueUrl":          queueURL,
+		"ReceiptHandle":     first[0]["ReceiptHandle"],
+		"VisibilityTimeout": 0,
+	})
+	defer resp2.Body.Close()
+	helpers.AssertStatus(t, resp2, http.StatusOK)
+
+	// Then: a retry with the same ReceiveRequestAttemptId returns no messages
+	// because the message's visibility was modified.
+	second := receive(map[string]any{
+		"QueueUrl":                queueURL,
+		"ReceiveRequestAttemptId": "attempt-vis-1",
+	})
+	if len(second) != 0 {
+		t.Fatalf("expected replay after visibility change to return 0 messages, got %d", len(second))
+	}
+}
+
+func TestReceiveMessage_fifo_receiveRequestAttemptId_invalidatedByDeleteMessage(t *testing.T) {
+	// Given: a FIFO queue with one visible message.
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "attempt-inval-del.fifo")
+	resp := sqsCall(t, srv, "SendMessage", map[string]any{
+		"QueueUrl":               queueURL,
+		"MessageBody":            "inval-del-body",
+		"MessageGroupId":         "group-a",
+		"MessageDeduplicationId": "inval-del-1",
+	})
+	resp.Body.Close()
+
+	receive := func(body map[string]any) []map[string]any {
+		t.Helper()
+		resp := sqsCall(t, srv, "ReceiveMessage", body)
+		defer resp.Body.Close()
+		helpers.AssertStatus(t, resp, http.StatusOK)
+		var result struct {
+			Messages []map[string]any `json:"Messages"`
+		}
+		helpers.DecodeJSON(t, resp, &result)
+		return result.Messages
+	}
+
+	// When: the first receive uses a ReceiveRequestAttemptId.
+	first := receive(map[string]any{
+		"QueueUrl":                queueURL,
+		"ReceiveRequestAttemptId": "attempt-del-1",
+		"VisibilityTimeout":       60,
+	})
+	if len(first) != 1 {
+		t.Fatalf("expected first receive to return 1 message, got %d", len(first))
+	}
+
+	// When: the message is deleted.
+	resp2 := sqsCall(t, srv, "DeleteMessage", map[string]any{
+		"QueueUrl":      queueURL,
+		"ReceiptHandle": first[0]["ReceiptHandle"],
+	})
+	defer resp2.Body.Close()
+	helpers.AssertStatus(t, resp2, http.StatusOK)
+
+	// Then: a retry with the same ReceiveRequestAttemptId returns no messages
+	// because the message was deleted.
+	second := receive(map[string]any{
+		"QueueUrl":                queueURL,
+		"ReceiveRequestAttemptId": "attempt-del-1",
+	})
+	if len(second) != 0 {
+		t.Fatalf("expected replay after delete to return 0 messages, got %d", len(second))
+	}
+}
+
+func TestReceiveMessage_fifo_receiveRequestAttemptId_invalidatedByBatchVisibilityChange(t *testing.T) {
+	// Given: a FIFO queue with one visible message.
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "attempt-inval-batch.fifo")
+	resp := sqsCall(t, srv, "SendMessage", map[string]any{
+		"QueueUrl":               queueURL,
+		"MessageBody":            "inval-batch-body",
+		"MessageGroupId":         "group-a",
+		"MessageDeduplicationId": "inval-batch-1",
+	})
+	resp.Body.Close()
+
+	receive := func(body map[string]any) []map[string]any {
+		t.Helper()
+		resp := sqsCall(t, srv, "ReceiveMessage", body)
+		defer resp.Body.Close()
+		helpers.AssertStatus(t, resp, http.StatusOK)
+		var result struct {
+			Messages []map[string]any `json:"Messages"`
+		}
+		helpers.DecodeJSON(t, resp, &result)
+		return result.Messages
+	}
+
+	// When: the first receive uses a ReceiveRequestAttemptId.
+	first := receive(map[string]any{
+		"QueueUrl":                queueURL,
+		"ReceiveRequestAttemptId": "attempt-batch-1",
+		"VisibilityTimeout":       60,
+	})
+	if len(first) != 1 {
+		t.Fatalf("expected first receive to return 1 message, got %d", len(first))
+	}
+
+	// When: ChangeMessageVisibilityBatch is called on the message.
+	resp2 := sqsCall(t, srv, "ChangeMessageVisibilityBatch", map[string]any{
+		"QueueUrl": queueURL,
+		"Entries": []map[string]any{
+			{
+				"Id":                "1",
+				"ReceiptHandle":     first[0]["ReceiptHandle"],
+				"VisibilityTimeout": 0,
+			},
+		},
+	})
+	defer resp2.Body.Close()
+	helpers.AssertStatus(t, resp2, http.StatusOK)
+
+	// Then: a retry with the same ReceiveRequestAttemptId returns no messages
+	// because the message's visibility was modified via batch.
+	second := receive(map[string]any{
+		"QueueUrl":                queueURL,
+		"ReceiveRequestAttemptId": "attempt-batch-1",
+	})
+	if len(second) != 0 {
+		t.Fatalf("expected replay after batch visibility change to return 0 messages, got %d", len(second))
+	}
+}
+
 func TestSendMessage_fifo_sequenceNumber(t *testing.T) {
 	// Given: a FIFO queue
 	srv := helpers.NewTestServer(t)
@@ -2381,6 +2614,70 @@ func TestCreateQueue_withTags(t *testing.T) {
 	helpers.DecodeJSON(t, listResp, &result)
 	if result.Tags["created"] != "yes" {
 		t.Errorf("expected tag created=yes, got %q", result.Tags["created"])
+	}
+}
+
+func TestCreateQueue_fifoOnlyAttributes_rejectedOnStandardQueue(t *testing.T) {
+	// Given: a fresh server
+	srv := helpers.NewTestServer(t)
+	cases := []struct {
+		name      string
+		attribute string
+		value     string
+	}{
+		{name: "DeduplicationScope", attribute: "DeduplicationScope", value: "queue"},
+		{name: "FifoThroughputLimit", attribute: "FifoThroughputLimit", value: "perQueue"},
+		{name: "ContentBasedDeduplication", attribute: "ContentBasedDeduplication", value: "true"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// When: a standard queue is created with a FIFO-only attribute
+			resp := sqsCall(t, srv, "CreateQueue", map[string]any{
+				"QueueName": "std-with-fifo-attr-" + strings.ReplaceAll(tc.name, " ", "-"),
+				"Attributes": map[string]string{
+					tc.attribute: tc.value,
+				},
+			})
+			defer resp.Body.Close()
+
+			// Then: SQS rejects the attribute as invalid for a standard queue.
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, "InvalidAttributeValue")
+		})
+	}
+}
+
+func TestCreateQueue_idempotent_differentAttributesReturnsError(t *testing.T) {
+	// Given: a queue exists with VisibilityTimeout=30 (default)
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "idempotent-attrs")
+
+	// When: CreateQueue is called with the same name but different attributes
+	resp := sqsCall(t, srv, "CreateQueue", map[string]any{
+		"QueueName": "idempotent-attrs",
+		"Attributes": map[string]string{
+			"VisibilityTimeout": "60",
+		},
+	})
+	defer resp.Body.Close()
+
+	// Then: AWS returns QueueNameExists error because attributes differ.
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "QueueNameExists")
+
+	// But when called with matching attributes, it returns the existing URL.
+	resp2 := sqsCall(t, srv, "CreateQueue", map[string]any{
+		"QueueName": "idempotent-attrs",
+	})
+	defer resp2.Body.Close()
+	helpers.AssertStatus(t, resp2, http.StatusOK)
+	var result struct {
+		QueueUrl string `json:"QueueUrl"`
+	}
+	helpers.DecodeJSON(t, resp2, &result)
+	if result.QueueUrl != queueURL {
+		t.Errorf("expected existing queue URL %q, got %q", queueURL, result.QueueUrl)
 	}
 }
 

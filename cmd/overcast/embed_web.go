@@ -10,7 +10,7 @@ import (
 	"github.com/Neaox/overcast/internal/bff"
 )
 
-func newUIHandler(apiPort int, region string) (http.Handler, error) {
+func newUIHandler(apiPort int, region string, debug bool) (http.Handler, error) {
 	staticFS, err := fs.Sub(overcast.WebDistFS, "web/dist")
 	if err != nil {
 		return nil, err
@@ -19,5 +19,5 @@ func newUIHandler(apiPort int, region string) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	return bff.NewHandler(staticFS, docsFS, bff.UIConfig{APIPort: apiPort, Region: region}), nil
+	return bff.NewHandler(staticFS, docsFS, bff.UIConfig{APIPort: apiPort, Region: region, Debug: debug}), nil
 }

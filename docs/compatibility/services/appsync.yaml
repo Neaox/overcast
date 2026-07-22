@@ -2,7 +2,7 @@ service: appsync
 status: fixed
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-19
+last_updated: 2026-07-22
 protocols: [rest_json, graphql_execution, websocket_realtime, aws_json_1_0, aws_json_1_1, rpcv2_cbor]
 implementation: [internal/services/appsync]
 integration_tests: [tests/integration/appsync]
@@ -46,9 +46,13 @@ operations:
       - scenario: Tag regex validation
         status: intentionally_partial
         evidence: "Handler now validates count, key/value lengths, and aws: prefix; exact AWS key/value regexes remain unimplemented."
+      - scenario: CloudFormation GraphQLApi Tags array translated to AppSync tag map
+        status: fixed
+        evidence: TestCreateStack_AppSyncGraphQLApiTags; TestAppSyncGraphQLApiBody_cloudFormationTags; AWS CloudFormation GraphQLApi docs list Tags as an array of Tag objects while CreateGraphqlApi docs list tags as a string map.
+        notes: Fixed CloudFormation/CDK deployments that previously failed with Go JSON decoder text when Tags was forwarded as an array.
       - scenario: Visibility, introspection, queryDepthLimit, resolverCountLimit, ownerContact boundaries
         status: fixed
-        evidence: Handler validation added; focused boundary tests still need expansion before marking reviewed.
+        evidence: Handler validation added; TestCreateGraphqlApi_jsonProtocolOwnerContactTooLong covers typed/AWS JSON ownerContact length validation.
     findings:
       fixed:
         - CreateGraphqlApi now returns HTTP 200 per AWS docs instead of 201.
@@ -56,15 +60,91 @@ operations:
       remaining_gaps:
         - Add focused tests for visibility, introspectionConfig, queryDepthLimit, resolverCountLimit, ownerContact, tag boundaries, and nested auth config scenarios.
         - Review default API key auto-creation against AWS SDK behavior; current implementation auto-creates one for API_KEY APIs but this was not re-verified in this operation review.
+  CloudFormationAppSyncResources:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-appsync-graphqlapi.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-appsync-graphqlschema.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-appsync-apikey.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-appsync-datasource.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-appsync-resolver.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-appsync-functionconfiguration.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-appsync-domainname.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-appsync-domainnameapiassociation.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-appsync-apicache.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-appsync-sourceapiassociation.html
+    scenario_matrix:
+      - scenario: CDK-style GraphQLApi Tags array
+        status: fixed
+        evidence: TestCreateStack_AppSyncGraphQLApiTags; TestAppSyncGraphQLApiBody_cloudFormationTags
+        notes: CloudFormation now converts Tags [{Key,Value}] to the AppSync CreateGraphqlApi tags map.
+      - scenario: Core CDK GraphQL API with inline schema, NONE data source, UNIT resolver, and API key
+        status: fixed
+        evidence: TestCreateStack_AppSyncUsableGraphQLApi
+      - scenario: Pipeline resolver with FunctionConfiguration
+        status: fixed
+        evidence: TestCreateStack_AppSyncPipelineResolver
+      - scenario: GraphQLSchema DefinitionS3Location
+        status: fixed
+        evidence: TestCreateStack_AppSyncS3BackedSchemaAndResolverTemplates
+      - scenario: Resolver and FunctionConfiguration S3-backed code/template locations
+        status: fixed
+        evidence: TestCreateStack_AppSyncS3BackedSchemaAndResolverTemplates; TestCreateStack_AppSyncPipelineFunctionS3BackedTemplates
+      - scenario: GraphQLApi EnvironmentVariables
+        status: fixed
+        evidence: TestCreateStack_AppSyncGraphQLApiTags verifies EnvironmentVariables are provisioned through the AppSync environment variable API.
+      - scenario: GraphQLApi GraphQLEndpointArn GetAtt
+        status: fixed
+        evidence: TestCreateStack_AppSyncGraphQLApiTags verifies GraphQLEndpointArn output is available.
+      - scenario: DomainName, DomainNameApiAssociation, ApiCache, and SourceApiAssociation
+        status: fixed
+        evidence: TestCreateStack_AppSyncDomainCacheAndSourceAssociation provisions real AppSync domain, association, cache, and source association state and verifies outputs.
+      - scenario: Events API CloudFormation resources
+        status: fixed
+        evidence: TestCreateStack_AppSyncEventsApiAndChannelNamespace provisions AWS::AppSync::Api and AWS::AppSync::ChannelNamespace through the real AppSync Events handlers, verifies Fn::GetAtt outputs, verifies ChannelNamespace CodeS3Location asset loading, and verifies stack deletion cleanup.
+  TagResource:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/appsync/latest/APIReference/API_TagResource.html
+    scenario_matrix:
+      - scenario: Happy-path tag/list/untag lifecycle
+        status: fixed
+        evidence: TestTags_crudLifecycle
+      - scenario: Encoded ARN path from SDK
+        status: fixed
+        evidence: TestTags_encodedARNPath
+      - scenario: Tag count, key/value length, aws: prefix, and regex validation
+        status: fixed
+        evidence: TestTagResource_emptyTagKey; TestTagResource_invalidTagPatterns; TestTagResource_jsonProtocolInvalidTagPattern
+  UpdateGraphqlApi:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/appsync/latest/APIReference/API_UpdateGraphqlApi.html
+    scenario_matrix:
+      - scenario: Valid update preserves server-generated fields
+        status: fixed
+        evidence: TestUpdateGraphqlApi_success
+      - scenario: Invalid authenticationType enum
+        status: fixed
+        evidence: TestUpdateGraphqlApi_invalidAuthenticationType
+      - scenario: Missing required name through AWS JSON protocol
+        status: fixed
+        evidence: TestUpdateGraphqlApi_jsonProtocolMissingName
 findings:
-  fixed:
-    - CreateGraphqlApi HTTP status and top-level request validation now better match AWS docs.
+    fixed:
+      - CreateGraphqlApi HTTP status and top-level request validation now better match AWS docs.
+      - CloudFormation AWS::AppSync::GraphQLApi now translates CDK/CloudFormation Tags arrays to AppSync CreateGraphqlApi tag maps before dispatching.
+      - Typed CreateGraphqlApi now includes the tags request field so SDK protocol variants do not drop create-time tags; covered by TestCreateGraphqlApi_jsonProtocolTags.
+      - CloudFormation now provisions AppSync Events APIs and channel namespaces through the real Events API routes instead of stubbing them.
+      - Typed CreateGraphqlApi now carries ownerContact into shared validation; covered by TestCreateGraphqlApi_jsonProtocolOwnerContactTooLong.
   remaining_gaps:
+    - Continue typed protocol validation tests beyond the UpdateGraphqlApi missing-name, TagResource invalid-key, and CreateGraphqlApi ownerContact boundary cases.
     - Audit support claims category by category.
     - Downgrade or annotate config-only and inert behavior where AWS compatibility is limited.
     - Continue CreateGraphqlApi boundary/nested-config coverage before marking reviewed.
   intentionally_partial: []
 handoff:
-  start_with: [CreateGraphqlApi remaining boundaries, GraphQL execution, auth modes, resolver/data-source behavior]
-  do_not_redo: [CreateGraphqlApi success status, required name/authenticationType, authenticationType enum, apiType enum]
-  commands: [go test -count=1 ./internal/services/appsync/... ./tests/integration/appsync/...]
+  issue: https://github.com/Neaox/overcast/issues/8
+  start_with: [remaining typed protocol validation, AppSync data-source CloudFormation end-to-end coverage]
+  do_not_redo: [CreateGraphqlApi success status, required name/authenticationType, authenticationType enum, apiType enum, CloudFormation GraphQLApi tag-array conversion, GraphQLApi EnvironmentVariables, GraphQLEndpointArn, resolver/function S3-backed schema/template/code locations, DomainName, DomainNameApiAssociation, ApiCache, SourceApiAssociation, AWS::AppSync::Api, AWS::AppSync::ChannelNamespace, AppSync tag route conflict, TagResource regex validation, UpdateGraphqlApi required-field/enum validation, CreateGraphqlApi typed ownerContact validation]
+  commands: [go test -count=1 ./internal/services/appsync/... ./internal/services/cloudformation/... ./tests/integration/appsync/... ./tests/integration/cloudformation/...]

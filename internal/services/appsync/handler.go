@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +33,11 @@ import (
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/protocol/op"
 	"github.com/Neaox/overcast/internal/serviceutil"
+)
+
+var (
+	tagKeyPattern   = regexp.MustCompile(`^[ a-zA-Z+\-=._:/]+$`)
+	tagValuePattern = regexp.MustCompile(`^[\s\w+\-=.:/@]*$`)
 )
 
 // Handler holds AppSync handler dependencies.
@@ -191,55 +197,9 @@ func (h *Handler) CreateGraphqlApi(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.DecodeJSON(w, r, &api) {
 		return
 	}
-	if api.Name == "" {
-		protocol.WriteJSONError(w, r, badRequestError("name is required."))
+	if err := validateGraphqlAPIInput(&api, true); err != nil {
+		protocol.WriteJSONError(w, r, err)
 		return
-	}
-	if !containsString([]string{"API_KEY", "AWS_IAM", "AMAZON_COGNITO_USER_POOLS", "OPENID_CONNECT", "AWS_LAMBDA"}, api.AuthenticationType) {
-		protocol.WriteJSONError(w, r, badRequestError("authenticationType is invalid or missing."))
-		return
-	}
-	if api.ApiType != "" && !containsString([]string{"GRAPHQL", "MERGED"}, api.ApiType) {
-		protocol.WriteJSONError(w, r, badRequestError("apiType is invalid."))
-		return
-	}
-	if api.Visibility != "" && !containsString([]string{"GLOBAL", "PRIVATE"}, api.Visibility) {
-		protocol.WriteJSONError(w, r, badRequestError("visibility is invalid."))
-		return
-	}
-	if api.IntrospectionConfig != "" && !containsString([]string{"ENABLED", "DISABLED"}, api.IntrospectionConfig) {
-		protocol.WriteJSONError(w, r, badRequestError("introspectionConfig is invalid."))
-		return
-	}
-	if api.QueryDepthLimit < 0 || api.QueryDepthLimit > 75 {
-		protocol.WriteJSONError(w, r, badRequestError("queryDepthLimit must be between 0 and 75."))
-		return
-	}
-	if api.ResolverCountLimit < 0 || api.ResolverCountLimit > 10000 {
-		protocol.WriteJSONError(w, r, badRequestError("resolverCountLimit must be between 0 and 10000."))
-		return
-	}
-	if len(api.OwnerContact) > 256 {
-		protocol.WriteJSONError(w, r, badRequestError("ownerContact must be 256 characters or fewer."))
-		return
-	}
-	if len(api.Tags) > 50 {
-		protocol.WriteJSONError(w, r, badRequestError("tags cannot exceed 50 entries."))
-		return
-	}
-	for key, value := range api.Tags {
-		if len(key) < 1 || len(key) > 128 {
-			protocol.WriteJSONError(w, r, badRequestError("tag keys must be between 1 and 128 characters."))
-			return
-		}
-		if strings.HasPrefix(key, "aws:") {
-			protocol.WriteJSONError(w, r, badRequestError("tag keys must not start with aws:."))
-			return
-		}
-		if len(value) > 256 {
-			protocol.WriteJSONError(w, r, badRequestError("tag values must be 256 characters or fewer."))
-			return
-		}
 	}
 
 	apiID := uuid.NewString()
@@ -350,6 +310,10 @@ func (h *Handler) UpdateGraphqlApi(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.DecodeJSON(w, r, &update) {
 		return
 	}
+	if err := validateGraphqlAPIInput(&update, false); err != nil {
+		protocol.WriteJSONError(w, r, err)
+		return
+	}
 
 	// Preserve server-generated fields.
 	update.ApiId = existing.ApiId
@@ -416,6 +380,14 @@ func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
+	if len(req.Tags) == 0 {
+		protocol.WriteJSONError(w, r, badRequestError("tags is required."))
+		return
+	}
+	if err := validateTagMap(req.Tags); err != nil {
+		protocol.WriteJSONError(w, r, err)
+		return
+	}
 
 	if api.Tags == nil {
 		api.Tags = make(map[string]string, len(req.Tags))
@@ -469,6 +441,61 @@ func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, r, http.StatusOK, map[string]any{"tags": tags})
+}
+
+func validateGraphqlAPIInput(api *GraphqlAPI, allowTags bool) *protocol.AWSError {
+	if api.Name == "" {
+		return badRequestError("name is required.")
+	}
+	if !containsString([]string{"API_KEY", "AWS_IAM", "AMAZON_COGNITO_USER_POOLS", "OPENID_CONNECT", "AWS_LAMBDA"}, api.AuthenticationType) {
+		return badRequestError("authenticationType is invalid or missing.")
+	}
+	if api.ApiType != "" && !containsString([]string{"GRAPHQL", "MERGED"}, api.ApiType) {
+		return badRequestError("apiType is invalid.")
+	}
+	if api.Visibility != "" && !containsString([]string{"GLOBAL", "PRIVATE"}, api.Visibility) {
+		return badRequestError("visibility is invalid.")
+	}
+	if api.IntrospectionConfig != "" && !containsString([]string{"ENABLED", "DISABLED"}, api.IntrospectionConfig) {
+		return badRequestError("introspectionConfig is invalid.")
+	}
+	if api.QueryDepthLimit < 0 || api.QueryDepthLimit > 75 {
+		return badRequestError("queryDepthLimit must be between 0 and 75.")
+	}
+	if api.ResolverCountLimit < 0 || api.ResolverCountLimit > 10000 {
+		return badRequestError("resolverCountLimit must be between 0 and 10000.")
+	}
+	if len(api.OwnerContact) > 256 {
+		return badRequestError("ownerContact must be 256 characters or fewer.")
+	}
+	if allowTags {
+		return validateTagMap(api.Tags)
+	}
+	return nil
+}
+
+func validateTagMap(tags map[string]string) *protocol.AWSError {
+	if len(tags) > 50 {
+		return badRequestError("tags cannot exceed 50 entries.")
+	}
+	for key, value := range tags {
+		if len(key) < 1 || len(key) > 128 {
+			return badRequestError("tag keys must be between 1 and 128 characters.")
+		}
+		if strings.HasPrefix(key, "aws:") {
+			return badRequestError("tag keys must not start with aws:.")
+		}
+		if !tagKeyPattern.MatchString(key) {
+			return badRequestError("tag keys contain invalid characters.")
+		}
+		if len(value) > 256 {
+			return badRequestError("tag values must be 256 characters or fewer.")
+		}
+		if !tagValuePattern.MatchString(value) {
+			return badRequestError("tag values contain invalid characters.")
+		}
+	}
+	return nil
 }
 
 // apiForARN extracts the API ID from a resource ARN and loads the API.

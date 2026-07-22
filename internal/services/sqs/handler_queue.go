@@ -90,6 +90,11 @@ func (h *Handler) createQueueTyped(ctx context.Context, in *createQueueRequest) 
 
 	existing, _ := h.store.getQueue(ctx, in.QueueName)
 	if existing != nil {
+		for k, v := range in.Attributes {
+			if existing.Attributes[k] != v {
+				return nil, errQueueNameExists(k)
+			}
+		}
 		return &createQueueResponse{QueueUrl: existing.URL}, nil
 	}
 
@@ -313,7 +318,12 @@ func (h *Handler) CreateQueue(w http.ResponseWriter, r *http.Request) {
 	// Check for existing queue.
 	existing, _ := h.store.getQueue(r.Context(), req.QueueName)
 	if existing != nil {
-		// AWS returns the existing queue URL (idempotent if attributes match).
+		for k, v := range req.Attributes {
+			if existing.Attributes[k] != v {
+				protocol.WriteJSONError(w, r, errQueueNameExists(k))
+				return
+			}
+		}
 		protocol.WriteJSON(w, r, http.StatusOK, &createQueueResponse{QueueUrl: existing.URL})
 		return
 	}
@@ -744,6 +754,18 @@ func validateQueueAttributes(attrs map[string]string) *protocol.AWSError {
 	if attrs["SqsManagedSseEnabled"] == "true" && attrs["KmsMasterKeyId"] != "" {
 		return errInvalidQueueAttributeValue("SqsManagedSseEnabled")
 	}
+	// Reject FIFO-only attributes on standard queues.
+	if attrs["FifoQueue"] != "true" {
+		if _, ok := attrs["ContentBasedDeduplication"]; ok {
+			return errInvalidQueueAttributeValue("ContentBasedDeduplication")
+		}
+		if _, ok := attrs["DeduplicationScope"]; ok {
+			return errInvalidQueueAttributeValue("DeduplicationScope")
+		}
+		if _, ok := attrs["FifoThroughputLimit"]; ok {
+			return errInvalidQueueAttributeValue("FifoThroughputLimit")
+		}
+	}
 	if err := validateQueuePolicyAttribute(attrs, "Policy"); err != nil {
 		return err
 	}
@@ -874,6 +896,14 @@ func errInvalidQueueAttributeValue(name string) *protocol.AWSError {
 	return &protocol.AWSError{
 		Code:       "InvalidAttributeValue",
 		Message:    "Invalid value for the parameter " + name + ".",
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+func errQueueNameExists(attribute string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "QueueNameExists",
+		Message:    "A queue already exists with the same name and a different value for attribute " + attribute + ".",
 		HTTPStatus: http.StatusBadRequest,
 	}
 }

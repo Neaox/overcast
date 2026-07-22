@@ -46,6 +46,15 @@ export interface ServiceDefinition {
   favouritable?: boolean
 }
 
+export interface BottomNavItem {
+  key: string
+  to: string
+  label: string
+  icon: LucideIcon
+  color: string
+  debugOnly?: boolean
+}
+
 export const ALL_SERVICES: ServiceDefinition[] = Object.values(
   SERVICES as Record<string, ServiceEntry>,
 )
@@ -78,11 +87,11 @@ export const DASHBOARD_ITEM = {
 }
 
 /** Tool items — always pinned at the bottom of the sidebar. */
-export const BOTTOM_ITEMS = [
+export const BOTTOM_ITEMS: BottomNavItem[] = [
   { key: "/map", to: "/map", label: "Map", icon: Network, color: "text-emerald-400" },
   { key: "/events", to: "/events", label: "Events", icon: Activity, color: "text-teal-400" },
   { key: "/metrics", to: "/metrics", label: "Metrics", icon: BarChart2, color: "text-sky-400" },
-  { key: "/debug", to: "/debug", label: "Debug", icon: Bug, color: "text-rose-400" },
+  { key: "/debug", to: "/debug", label: "Debug", icon: Bug, color: "text-rose-400", debugOnly: true },
   { key: "/inbox", to: "/inbox", label: "Inbox", icon: Inbox, color: "text-amber-400" },
   { key: "/docs", to: "/docs", label: "Docs", icon: BookOpen, color: "text-violet-400" },
 ]

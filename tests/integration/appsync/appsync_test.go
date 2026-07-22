@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -29,6 +30,25 @@ func appsyncPost(t *testing.T, srv *helpers.TestServer, path string, body map[st
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("appsyncPost %s: %v", path, err)
+	}
+	return resp
+}
+
+func appsyncJSONCall(t *testing.T, srv *helpers.TestServer, operation string, body map[string]any) *http.Response {
+	t.Helper()
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/", bytes.NewReader(b))
+	if err != nil {
+		t.Fatalf("appsyncJSONCall request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	req.Header.Set("X-Amz-Target", "AppSync."+operation)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("appsyncJSONCall %s: %v", operation, err)
 	}
 	return resp
 }
@@ -163,6 +183,51 @@ func TestCreateGraphqlApi_success(t *testing.T) {
 	if api.Tags["env"] != "test" {
 		t.Errorf("expected tags.env=test, got %q", api.Tags["env"])
 	}
+}
+
+func TestCreateGraphqlApi_jsonProtocolTags(t *testing.T) {
+	// Given: an empty store
+	srv := helpers.NewTestServer(t)
+
+	// When: CreateGraphqlApi is called through the AWS JSON protocol with tags
+	resp := appsyncJSONCall(t, srv, "CreateGraphqlApi", map[string]any{
+		"name":               "json-protocol-tags",
+		"authenticationType": "API_KEY",
+		"tags":               map[string]string{"env": "test", "team": "guides"},
+	})
+	defer resp.Body.Close()
+
+	// Then: tags are preserved in the AWS-shaped response
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		GraphqlAPI struct {
+			Tags map[string]string `json:"tags"`
+		} `json:"graphqlApi"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if result.GraphqlAPI.Tags["env"] != "test" {
+		t.Fatalf("expected env tag test, got %#v", result.GraphqlAPI.Tags)
+	}
+	if result.GraphqlAPI.Tags["team"] != "guides" {
+		t.Fatalf("expected team tag guides, got %#v", result.GraphqlAPI.Tags)
+	}
+}
+
+func TestCreateGraphqlApi_jsonProtocolOwnerContactTooLong(t *testing.T) {
+	// Given: an empty store
+	srv := helpers.NewTestServer(t)
+
+	// When: CreateGraphqlApi is called through AWS JSON with ownerContact beyond AWS's limit
+	resp := appsyncJSONCall(t, srv, "CreateGraphqlApi", map[string]any{
+		"name":               "json-owner-contact-too-long",
+		"authenticationType": "API_KEY",
+		"ownerContact":       strings.Repeat("a", 257),
+	})
+	defer resp.Body.Close()
+
+	// Then: AppSync rejects the invalid ownerContact
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "BadRequestException")
 }
 
 func TestCreateGraphqlApi_missingName(t *testing.T) {
@@ -414,6 +479,40 @@ func TestUpdateGraphqlApi_notFound(t *testing.T) {
 	})
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusNotFound)
+}
+
+func TestUpdateGraphqlApi_invalidAuthenticationType(t *testing.T) {
+	// Given: an existing API
+	srv := helpers.NewTestServer(t)
+	apiID, _ := createTestAPI(t, srv)
+
+	// When: UpdateGraphqlApi is called with an invalid authentication type
+	resp := appsyncPost(t, srv, "/v1/apis/"+apiID, map[string]any{
+		"name":               "bad-update",
+		"authenticationType": "NONE",
+	})
+	defer resp.Body.Close()
+
+	// Then: AppSync rejects the invalid enum
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "BadRequestException")
+}
+
+func TestUpdateGraphqlApi_jsonProtocolMissingName(t *testing.T) {
+	// Given: an existing API
+	srv := helpers.NewTestServer(t)
+	apiID, _ := createTestAPI(t, srv)
+
+	// When: UpdateGraphqlApi is called through AWS JSON without the required name
+	resp := appsyncJSONCall(t, srv, "UpdateGraphqlApi", map[string]any{
+		"apiId":              apiID,
+		"authenticationType": "API_KEY",
+	})
+	defer resp.Body.Close()
+
+	// Then: AppSync rejects the malformed request
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "BadRequestException")
 }
 
 // ─── DeleteGraphqlApi ─────────────────────────────────────────────────────────
@@ -1154,6 +1253,91 @@ func TestTags_crudLifecycle(t *testing.T) {
 	if listed2.Tags["team"] != "backend" {
 		t.Errorf("expected team tag preserved, got %q", listed2.Tags["team"])
 	}
+}
+
+func TestTags_encodedARNPath(t *testing.T) {
+	// Given: an existing tagged API
+	srv := helpers.NewTestServer(t)
+	_, arn := createTestAPI(t, srv)
+	encodedARN := url.PathEscape(arn)
+	tagResp := appsyncPost(t, srv, "/v1/tags/"+encodedARN, map[string]any{
+		"tags": map[string]string{"stage": "dev"},
+	})
+	defer tagResp.Body.Close()
+	helpers.AssertStatus(t, tagResp, http.StatusOK)
+
+	// When: ListTagsForResource is called with the encoded ARN path used by AWS SDKs
+	listResp := appsyncGet(t, srv, "/v1/tags/"+encodedARN)
+	defer listResp.Body.Close()
+
+	// Then: the API tags are returned
+	helpers.AssertStatus(t, listResp, http.StatusOK)
+	var listed struct {
+		Tags map[string]string `json:"tags"`
+	}
+	helpers.DecodeJSON(t, listResp, &listed)
+	if listed.Tags["stage"] != "dev" {
+		t.Fatalf("expected stage tag dev, got %#v", listed.Tags)
+	}
+}
+
+func TestTagResource_emptyTagKey(t *testing.T) {
+	// Given: an existing API
+	srv := helpers.NewTestServer(t)
+	_, arn := createTestAPI(t, srv)
+
+	// When: TagResource is called with an empty tag key
+	resp := appsyncPost(t, srv, "/v1/tags/"+arn, map[string]any{
+		"tags": map[string]string{"": "x"},
+	})
+	defer resp.Body.Close()
+
+	// Then: AppSync rejects the invalid tags with a modeled BadRequestException
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "BadRequestException")
+}
+
+func TestTagResource_invalidTagPatterns(t *testing.T) {
+	// Given: an existing API
+	srv := helpers.NewTestServer(t)
+	_, arn := createTestAPI(t, srv)
+
+	cases := []struct {
+		name string
+		tags map[string]string
+	}{
+		{name: "reserved prefix", tags: map[string]string{"aws:reserved": "x"}},
+		{name: "invalid key character", tags: map[string]string{"bad@key": "x"}},
+		{name: "invalid value character", tags: map[string]string{"good-key": "bad#value"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// When: TagResource is called with tags outside AWS's documented tag patterns
+			resp := appsyncPost(t, srv, "/v1/tags/"+arn, map[string]any{"tags": tc.tags})
+			defer resp.Body.Close()
+
+			// Then: AppSync rejects the invalid tags with a modeled BadRequestException
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, "BadRequestException")
+		})
+	}
+}
+
+func TestTagResource_jsonProtocolInvalidTagPattern(t *testing.T) {
+	// Given: an existing API
+	srv := helpers.NewTestServer(t)
+	_, arn := createTestAPI(t, srv)
+
+	// When: TagResource is called through AWS JSON with an invalid tag key pattern
+	resp := appsyncJSONCall(t, srv, "TagResource", map[string]any{
+		"resourceArn": arn,
+		"tags":        map[string]string{"bad@key": "x"},
+	})
+	defer resp.Body.Close()
+
+	// Then: AppSync rejects the invalid tag with a modeled BadRequestException
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "BadRequestException")
 }
 
 // ─── Environment Variables ────────────────────────────────────────────────────

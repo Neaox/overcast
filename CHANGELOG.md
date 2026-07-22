@@ -71,6 +71,14 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
+## [0.0.1-alpha.19] - 2026-07-22
+
+### Fixed
+
+- **AppSync/CloudFormation** — `AWS::AppSync::GraphQLApi` now accepts CDK/CloudFormation tag arrays, provisions environment variables, exposes `GraphQLEndpointArn`, supports S3-backed schema/resolver/function/channel namespace assets, provisions domain names, domain associations, API caches, source API associations, Events APIs, and channel namespaces, routes AppSync tag APIs without colliding with MSK, and validates `CreateGraphqlApi`/`UpdateGraphqlApi` consistently across REST and typed protocol paths.
+- **SQS** — `ReceiveMessage` replay with `ReceiveRequestAttemptId` is invalidated after deletes or visibility changes, `CreateQueue` rejects FIFO-only attributes on standard queues and returns `QueueNameExists` on idempotent conflicts, and `SendMessage` validates delay, FIFO delay, and body size constraints.
+- **Web UI** — debug sidebar navigation and raw-state links now stay hidden unless `OVERCAST_DEBUG` is enabled for the connected emulator.
+
 ## [0.0.1-alpha.18] - 2026-07-22
 
 ### Fixed
@@ -107,7 +115,7 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
-- **SQS** — FIFO `ReceiveMessage` retries with the same `ReceiveRequestAttemptId` now return the same in-flight messages and receipt handles instead of returning an empty response, invalid attempt IDs are rejected with `InvalidParameterValue`, `CreateQueue`/`SetQueueAttributes` reject invalid `ReceiveMessageWaitTimeSeconds` queue defaults instead of persisting malformed or out-of-range values, and redrive policies now move messages to a DLQ only after the receive count exceeds `maxReceiveCount`.
+- **SQS** — FIFO `ReceiveMessage` retries with the same `ReceiveRequestAttemptId` now return the same in-flight messages and receipt handles instead of returning an empty response, invalid attempt IDs are rejected with `InvalidParameterValue`, `CreateQueue`/`SetQueueAttributes` reject invalid `ReceiveMessageWaitTimeSeconds` queue defaults instead of persisting malformed or out-of-range values, redrive policies now move messages to a DLQ only after the receive count exceeds `maxReceiveCount`, and `ReceiveRequestAttemptId` replay is now correctly invalidated when messages are deleted or have their visibility changed via `ChangeMessageVisibility`/`ChangeMessageVisibilityBatch`; `CreateQueue` now rejects FIFO-only attributes on standard queues and returns `QueueNameExists` on idempotent conflicts; `SendMessage` now validates `DelaySeconds` range (0-900), rejects `DelaySeconds` on FIFO queues, and enforces the 1 MiB message body size limit.
 - **SQS / DynamoDB** — `CreateQueue` and `CreateTable` now reject invalid resource names with AWS-modeled validation errors instead of creating resources with unsupported names.
 - **Web UI** — CloudWatch Logs viewers now keep formatted log rows stable while scrolling, support separate compact syntax highlighting and pretty-printing, add group-wide interleaved log views with plaintext/table toggles and live tailing, and avoid duplicated system map peek log lines; S3 object inspection now previews common images and text-like objects with JSON/XML/HTML formatting and syntax highlighting.
 - **CloudFormation / EventBridge / EC2** — CDK scheduled Fargate task stacks now preserve EventBridge ECS target metadata on `AWS::Events::Rule` create/update, EventBridge can deliver matching events to SQS targets and scheduled ECS/Fargate targets to `RunTask`, and CloudFormation-created VPCs expose subnet tags plus NAT gateway route metadata so CDK can classify private subnet groups during VPC lookups.
@@ -310,7 +318,8 @@ need it than accidentally ship a breaking change as a patch.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.18...HEAD
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.19...HEAD
+[0.0.1-alpha.19]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.18...v0.0.1-alpha.19
 [0.0.1-alpha.18]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.17...v0.0.1-alpha.18
 [0.0.1-alpha.17]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.16...v0.0.1-alpha.17
 [0.0.1-alpha.16]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.15...v0.0.1-alpha.16

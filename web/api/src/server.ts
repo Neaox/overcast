@@ -22,8 +22,9 @@ const apiPort = process.env.OVERCAST_PORT || "4566"
 const endpointUrl =
   process.env.EMULATOR_ENDPOINT || `http://localhost:${apiPort}`
 const region = process.env.OVERCAST_DEFAULT_REGION || "us-east-1"
+const debug = process.env.OVERCAST_DEBUG === "true" || process.env.OVERCAST_DEBUG === "1"
 
-const bootstrapScript = `<script>window.__OVERCAST__=${JSON.stringify({ apiBaseUrl: endpointUrl, region })};</script>`
+const bootstrapScript = `<script>window.__OVERCAST__=${JSON.stringify({ apiBaseUrl: endpointUrl, region, debug })};</script>`
 const headClose = /<\/head>/i
 
 let cachedIndexHtml: string | null = null

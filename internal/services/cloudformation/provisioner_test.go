@@ -221,6 +221,33 @@ func TestTopoSortImplicitDeps(t *testing.T) {
 	})
 }
 
+func TestAppSyncGraphQLApiBody_cloudFormationTags(t *testing.T) {
+	// Given: GraphQL API properties with CloudFormation-style tag entries
+	props := map[string]any{
+		"Name":               "tagged-api",
+		"AuthenticationType": "API_KEY",
+		"Tags": []any{
+			map[string]any{"Key": "env", "Value": "test"},
+			map[string]any{"Key": "team", "Value": "guides"},
+		},
+	}
+
+	// When: the CloudFormation adapter builds the AppSync REST JSON body
+	body := appsyncGraphQLApiBody(props)
+
+	// Then: the tag list is translated to AppSync's tag map wire shape
+	tags, ok := body["tags"].(map[string]string)
+	if !ok {
+		t.Fatalf("expected tags map, got %#v", body["tags"])
+	}
+	if tags["env"] != "test" {
+		t.Fatalf("expected env tag test, got %#v", tags)
+	}
+	if tags["team"] != "guides" {
+		t.Fatalf("expected team tag guides, got %#v", tags)
+	}
+}
+
 // assertBefore asserts that `a` appears before `b` in the ordering slice.
 func assertBefore(t *testing.T, order []string, a, b string) {
 	t.Helper()

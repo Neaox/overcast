@@ -22,13 +22,20 @@ export interface EmulatorEndpoint {
 }
 
 // When the UI is bundled into the native binary, overcast injects a
-// <script>window.__OVERCAST__ = { apiBaseUrl, region }</script> tag into
+// <script>window.__OVERCAST__ = { apiBaseUrl, region, debug }</script> tag into
 // index.html before serving it, so the SPA knows exactly where to reach the
 // API — no client-side guessing, no connection dialog.
 declare global {
   interface Window {
-    __OVERCAST__?: { apiBaseUrl?: string; region?: string }
+    __OVERCAST__?: { apiBaseUrl?: string; region?: string; debug?: boolean }
   }
+}
+
+export interface ServerInfo {
+  region?: string
+  account_id?: string
+  version?: string
+  debug?: boolean
 }
 
 function resolveBundledDefault(): EmulatorEndpoint {
@@ -124,11 +131,19 @@ export function hasPersistedRegion(): boolean {
  * Returns null on any network or parse error.
  */
 export async function fetchServerRegion(baseUrl: string): Promise<string | null> {
+  const data = await fetchServerInfo(baseUrl)
+  return data?.region ?? null
+}
+
+/**
+ * Fetches always-available server metadata from GET /_/info.
+ * Returns null on any network or parse error.
+ */
+export async function fetchServerInfo(baseUrl: string): Promise<ServerInfo | null> {
   try {
     const res = await fetch(`${baseUrl}/_/info`)
     if (!res.ok) return null
-    const data = (await res.json()) as { region?: string }
-    return data.region ?? null
+    return (await res.json()) as ServerInfo
   } catch {
     return null
   }
