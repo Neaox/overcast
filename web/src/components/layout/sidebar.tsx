@@ -28,6 +28,7 @@ import {
 import { CSS } from "@dnd-kit/utilities"
 import { cn } from "@/lib/utils"
 import { useFavourites } from "@/hooks/use-favourites"
+import { useDebugEnabled } from "@/hooks/use-server-info"
 import { inboxMessagesQueryOptions } from "@/features/mail/data"
 import { useInboxReadState } from "@/features/mail/read-state"
 import {
@@ -276,6 +277,8 @@ export function Sidebar() {
   const pathname = router.location.pathname
   const { data: inboxMessages = [] } = useQuery(inboxMessagesQueryOptions())
   const { unreadCount } = useInboxReadState(inboxMessages)
+  const debugEnabled = useDebugEnabled()
+  const bottomItems = BOTTOM_ITEMS.filter((item) => !item.debugOnly || debugEnabled)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
 
@@ -398,7 +401,7 @@ export function Sidebar() {
 
       {/* Bottom nav (non-service pages) */}
       <nav className="shrink-0 border-t border-sidebar-fg/10 py-2">
-        {BOTTOM_ITEMS.map(({ to, label, icon: Icon, color }) => {
+        {bottomItems.map(({ to, label, icon: Icon, color }) => {
           const active = pathname.startsWith(to)
           const badgeCount = to === "/inbox" ? unreadCount : 0
           return (

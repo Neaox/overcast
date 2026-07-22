@@ -22,6 +22,9 @@ export const healthHandlers = [
       services: ["s3", "sqs", "dynamodb", "lambda", "sns"],
     }),
   ),
+  http.get("http://localhost:4566/_/info", () =>
+    HttpResponse.json({ region: "us-east-1", account_id: "000000000000", version: "test", debug: false }),
+  ),
 ]
 
 // ─── S3 ───────────────────────────────────────────────────────────────────

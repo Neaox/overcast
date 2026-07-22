@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router"
 import { Bug } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { useDebugEnabled } from "@/hooks/use-server-info"
 
 export function RawStateLink({
   service,
@@ -13,6 +14,10 @@ export function RawStateLink({
   stateKey?: string
   label?: string
 }) {
+  const debugEnabled = useDebugEnabled()
+
+  if (!debugEnabled) return null
+
   return (
     <Button size="sm" variant="ghost" asChild>
       <Link to="/debug" search={{ service, namespace, key: stateKey }}>

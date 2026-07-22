@@ -71,6 +71,8 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
+- **Web UI** — debug sidebar navigation and raw-state links now stay hidden unless `OVERCAST_DEBUG` is enabled for the connected emulator.
+
 ## [0.0.1-alpha.18] - 2026-07-22
 
 ### Fixed

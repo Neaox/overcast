@@ -192,7 +192,7 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	}
 	var uiLn net.Listener
 	if uiPort != 0 {
-		uiHandler, err := newUIHandler(cfg.Port, cfg.Region)
+		uiHandler, err := newUIHandler(cfg.Port, cfg.Region, cfg.Debug)
 		if err != nil {
 			logger.Warn("web UI unavailable", zap.Error(err))
 		} else {

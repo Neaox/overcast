@@ -65,6 +65,7 @@ type infoResponse struct {
 	Region    string `json:"region"`
 	AccountID string `json:"account_id"`
 	Version   string `json:"version"`
+	Debug     bool   `json:"debug"`
 }
 
 // newInfoHandler returns a handler for GET /_/info.
@@ -76,6 +77,7 @@ func newInfoHandler(cfg *config.Config) http.HandlerFunc {
 			Region:    cfg.Region,
 			AccountID: cfg.AccountID,
 			Version:   cfg.Version,
+			Debug:     cfg.Debug,
 		})
 	}
 }
