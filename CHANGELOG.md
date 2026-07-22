@@ -318,7 +318,8 @@ need it than accidentally ship a breaking change as a patch.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.18...HEAD
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.19...HEAD
+[0.0.1-alpha.19]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.18...v0.0.1-alpha.19
 [0.0.1-alpha.18]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.17...v0.0.1-alpha.18
 [0.0.1-alpha.17]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.16...v0.0.1-alpha.17
 [0.0.1-alpha.16]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.15...v0.0.1-alpha.16
