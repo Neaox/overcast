@@ -88,6 +88,11 @@ operations:
           - tests/integration/sqs/sqs_test.go
           - internal/services/sqs/handler_test.go
         notes: System Attributes are now returned only when requested via AttributeNames (deprecated) or MessageSystemAttributeNames; user MessageAttributes only when requested via MessageAttributeNames. "All"/".*" selectors and "prefix.*" message-attribute selectors are honored. Previously all attributes were returned unconditionally, diverging from AWS.
+      - name: ReceiveRequestAttemptId invalidated by visibility change
+        status: fixed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: ChangeMessageVisibility and ChangeMessageVisibilityBatch now increment a VisibilityVersion on the message, which is snapshotted into the receive attempt. On replay, if the message's version no longer matches the stored attempt version (meaning visibility was modified), the replay returns no messages — matching AWS docs which state retry only works "if none of the messages have been modified (deleted or had their visibility changes)". DeleteMessage was already covered by the existing receipt-handle check.
     evidence:
       - AWS docs state WaitTimeSeconds long polling returns no message list when no messages are available, not an error.
       - AWS API Reference documents MaxNumberOfMessages valid values as 1 to 10 and default 1.
@@ -98,9 +103,8 @@ operations:
       - AWS API Reference ReceiveMessage documents ReceiveRequestAttemptId for FIFO queues: retries with the same token during visibility timeout return the same messages and receipt handles for five minutes, provided messages have not been deleted or had visibility changed.
       - AWS API Reference CreateQueue documents RedrivePolicy maxReceiveCount as the threshold that must be exceeded before SQS moves a message to the dead-letter queue.
       - AWS API Reference and Developer Guide document that ReceiveMessage VisibilityTimeout applies to returned messages, omitted values use the queue default, and VisibilityTimeout=0 immediately terminates invisibility.
-    gaps:
-      - ReceiveRequestAttemptId behavior after delete/change-visibility needs broader review.
-    next_action: Review ReceiveMessage FIFO ReceiveRequestAttemptId behavior and same-group retry semantics.
+    gaps: []
+    next_action: Review other SQS operations (CreateQueue, SendMessage, DeleteMessage, etc.) for remaining fidelity gaps.
 findings:
   fixed:
     - CreateQueue now rejects queue names outside the documented 1..80 character alphanumeric, hyphen, underscore, and period rules with InvalidParameterValue.
@@ -118,8 +122,8 @@ findings:
     - VisibilityTimeout on ReceiveMessage, ChangeMessageVisibility, and ChangeMessageVisibilityBatch is now validated against AWS's 0..43200 range instead of silently accepting arbitrary values.
     - Omitted ReceiveMessage.WaitTimeSeconds uses the queue-level ReceiveMessageWaitTimeSeconds default for JSON and Query requests, while explicit WaitTimeSeconds=0 keeps short-poll behavior.
     - CreateQueue and SetQueueAttributes now reject invalid ReceiveMessageWaitTimeSeconds queue attributes outside AWS's 0..20 range or malformed integers.
-  remaining_gaps:
-    - Review ReceiveRequestAttemptId modified-message edge cases after DeleteMessage or ChangeMessageVisibility.
+    - ChangeMessageVisibility and ChangeMessageVisibilityBatch now increment a VisibilityVersion tracking field so ReceiveRequestAttemptId replay detects modified messages and returns empty, matching AWS docs behaviour that retries only succeed when no message has been modified.
+  remaining_gaps: []
   intentionally_partial: []
 verification:
   commands:
@@ -127,11 +131,11 @@ verification:
     - go vet ./internal/services/sqs/... ./tests/integration/sqs/...
     - go build ./...
     - go vet ./...
-handoff:
+  handoff:
   start_with:
-    - ReceiveMessage FIFO ReceiveRequestAttemptId behavior and same-group retry semantics.
-    - VisibilityTimeout in-flight semantics and DLQ maxReceiveCount transitions.
+    - Review other SQS operations (CreateQueue, SendMessage, DeleteMessage, GetQueueAttributes, etc.) for fidelity gaps not yet covered in this review file.
   do_not_redo:
     - Context-cancellation long-poll fix unless the regression fails.
+    - ReceiveRequestAttemptId deleted/visibility-modified edge cases (now covered).
   commands:
     - go test -count=1 ./internal/services/sqs/... ./tests/integration/sqs/...

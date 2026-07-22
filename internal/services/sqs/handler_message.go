@@ -66,6 +66,7 @@ type receivedMessage struct {
 	Body              string                      `json:"Body"`
 	Attributes        map[string]string           `json:"Attributes,omitempty"`
 	MessageAttributes map[string]MessageAttribute `json:"MessageAttributes,omitempty"`
+	visibilityVersion int
 }
 
 type deleteMessageRequest struct {
@@ -633,6 +634,7 @@ func (h *Handler) changeMessageVisibilityTyped(ctx context.Context, in *changeMe
 	}
 
 	msg.VisibleAfter = h.clk.Now().Add(time.Duration(in.VisibilityTimeout) * time.Second)
+	msg.VisibilityVersion++
 	if aerr := h.store.putMessage(ctx, queueName, msg); aerr != nil {
 		return nil, aerr
 	}
@@ -690,6 +692,7 @@ func (h *Handler) changeMessageVisibilityBatchTyped(ctx context.Context, in *cha
 		}
 
 		msg.VisibleAfter = h.clk.Now().Add(time.Duration(entry.VisibilityTimeout) * time.Second)
+		msg.VisibilityVersion++
 		if aerr := h.store.putMessage(ctx, queueName, msg); aerr != nil {
 			failed = append(failed, changeMessageVisibilityBatchFailedEntry{
 				Id:          entry.Id,
@@ -1078,8 +1081,9 @@ func newReceiveAttempt(now time.Time, received []receivedMessage) *receiveAttemp
 	}
 	for _, msg := range received {
 		attempt.Messages = append(attempt.Messages, receiveAttemptMessage{
-			MessageID:     msg.MessageId,
-			ReceiptHandle: msg.ReceiptHandle,
+			MessageID:         msg.MessageId,
+			ReceiptHandle:     msg.ReceiptHandle,
+			VisibilityVersion: msg.visibilityVersion,
 		})
 	}
 	return attempt
@@ -1117,7 +1121,7 @@ func (h *Handler) replayReceiveAttempt(ctx context.Context, queueName, attemptID
 	received := make([]receivedMessage, 0, len(attempt.Messages))
 	for _, attempted := range attempt.Messages {
 		msg, aerr := h.store.getMessage(ctx, queueName, attempted.MessageID)
-		if aerr != nil || msg.ReceiptHandle != attempted.ReceiptHandle {
+		if aerr != nil || msg.ReceiptHandle != attempted.ReceiptHandle || msg.VisibilityVersion != attempted.VisibilityVersion {
 			return []receivedMessage{}, nil
 		}
 		msg.VisibleAfter = h.clk.Now().Add(time.Duration(visibilityTimeout) * time.Second)
@@ -1137,6 +1141,7 @@ func receivedMessageFromStored(msg *Message, systemAttrNames, messageAttrNames [
 		Body:              msg.Body,
 		Attributes:        filterSystemAttributes(msg.Attributes, systemAttrNames),
 		MessageAttributes: filterMessageAttributes(msg.MessageAttributes, messageAttrNames),
+		visibilityVersion: msg.VisibilityVersion,
 	}
 }
 
@@ -1367,6 +1372,7 @@ func (h *Handler) ChangeMessageVisibilityBatch(w http.ResponseWriter, r *http.Re
 		}
 
 		msg.VisibleAfter = h.clk.Now().Add(time.Duration(entry.VisibilityTimeout) * time.Second)
+		msg.VisibilityVersion++
 		if aerr := h.store.putMessage(r.Context(), queueName, msg); aerr != nil {
 			failed = append(failed, failedEntry{
 				Id:          entry.Id,

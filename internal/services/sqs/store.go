@@ -48,6 +48,9 @@ type Message struct {
 	MessageGroupId         string `json:"message_group_id,omitempty"`
 	MessageDeduplicationId string `json:"message_deduplication_id,omitempty"`
 	SequenceNumber         string `json:"sequence_number,omitempty"`
+	// VisibilityVersion is incremented on each ChangeMessageVisibility call
+	// so ReceiveRequestAttemptId replay can detect modified messages.
+	VisibilityVersion int `json:"visibility_version,omitempty"`
 }
 
 type receiveAttempt struct {
@@ -56,8 +59,9 @@ type receiveAttempt struct {
 }
 
 type receiveAttemptMessage struct {
-	MessageID     string `json:"message_id"`
-	ReceiptHandle string `json:"receipt_handle"`
+	MessageID         string `json:"message_id"`
+	ReceiptHandle     string `json:"receipt_handle"`
+	VisibilityVersion int    `json:"visibility_version,omitempty"`
 }
 
 // MessageAttribute is a typed SQS message attribute.

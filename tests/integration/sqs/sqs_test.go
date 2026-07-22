@@ -2158,6 +2158,172 @@ func TestReceiveMessage_fifo_receiveRequestAttemptIdValidation(t *testing.T) {
 	}
 }
 
+func TestReceiveMessage_fifo_receiveRequestAttemptId_invalidatedByVisibilityChange(t *testing.T) {
+	// Given: a FIFO queue with one visible message.
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "attempt-inval-vis.fifo")
+	resp := sqsCall(t, srv, "SendMessage", map[string]any{
+		"QueueUrl":               queueURL,
+		"MessageBody":            "inval-vis-body",
+		"MessageGroupId":         "group-a",
+		"MessageDeduplicationId": "inval-vis-1",
+	})
+	resp.Body.Close()
+
+	receive := func(body map[string]any) []map[string]any {
+		t.Helper()
+		resp := sqsCall(t, srv, "ReceiveMessage", body)
+		defer resp.Body.Close()
+		helpers.AssertStatus(t, resp, http.StatusOK)
+		var result struct {
+			Messages []map[string]any `json:"Messages"`
+		}
+		helpers.DecodeJSON(t, resp, &result)
+		return result.Messages
+	}
+
+	// When: the first receive uses a ReceiveRequestAttemptId.
+	first := receive(map[string]any{
+		"QueueUrl":                queueURL,
+		"ReceiveRequestAttemptId": "attempt-vis-1",
+		"VisibilityTimeout":       60,
+	})
+	if len(first) != 1 {
+		t.Fatalf("expected first receive to return 1 message, got %d", len(first))
+	}
+
+	// When: ChangeMessageVisibility is called on the message.
+	resp2 := sqsCall(t, srv, "ChangeMessageVisibility", map[string]any{
+		"QueueUrl":          queueURL,
+		"ReceiptHandle":     first[0]["ReceiptHandle"],
+		"VisibilityTimeout": 0,
+	})
+	defer resp2.Body.Close()
+	helpers.AssertStatus(t, resp2, http.StatusOK)
+
+	// Then: a retry with the same ReceiveRequestAttemptId returns no messages
+	// because the message's visibility was modified.
+	second := receive(map[string]any{
+		"QueueUrl":                queueURL,
+		"ReceiveRequestAttemptId": "attempt-vis-1",
+	})
+	if len(second) != 0 {
+		t.Fatalf("expected replay after visibility change to return 0 messages, got %d", len(second))
+	}
+}
+
+func TestReceiveMessage_fifo_receiveRequestAttemptId_invalidatedByDeleteMessage(t *testing.T) {
+	// Given: a FIFO queue with one visible message.
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "attempt-inval-del.fifo")
+	resp := sqsCall(t, srv, "SendMessage", map[string]any{
+		"QueueUrl":               queueURL,
+		"MessageBody":            "inval-del-body",
+		"MessageGroupId":         "group-a",
+		"MessageDeduplicationId": "inval-del-1",
+	})
+	resp.Body.Close()
+
+	receive := func(body map[string]any) []map[string]any {
+		t.Helper()
+		resp := sqsCall(t, srv, "ReceiveMessage", body)
+		defer resp.Body.Close()
+		helpers.AssertStatus(t, resp, http.StatusOK)
+		var result struct {
+			Messages []map[string]any `json:"Messages"`
+		}
+		helpers.DecodeJSON(t, resp, &result)
+		return result.Messages
+	}
+
+	// When: the first receive uses a ReceiveRequestAttemptId.
+	first := receive(map[string]any{
+		"QueueUrl":                queueURL,
+		"ReceiveRequestAttemptId": "attempt-del-1",
+		"VisibilityTimeout":       60,
+	})
+	if len(first) != 1 {
+		t.Fatalf("expected first receive to return 1 message, got %d", len(first))
+	}
+
+	// When: the message is deleted.
+	resp2 := sqsCall(t, srv, "DeleteMessage", map[string]any{
+		"QueueUrl":      queueURL,
+		"ReceiptHandle": first[0]["ReceiptHandle"],
+	})
+	defer resp2.Body.Close()
+	helpers.AssertStatus(t, resp2, http.StatusOK)
+
+	// Then: a retry with the same ReceiveRequestAttemptId returns no messages
+	// because the message was deleted.
+	second := receive(map[string]any{
+		"QueueUrl":                queueURL,
+		"ReceiveRequestAttemptId": "attempt-del-1",
+	})
+	if len(second) != 0 {
+		t.Fatalf("expected replay after delete to return 0 messages, got %d", len(second))
+	}
+}
+
+func TestReceiveMessage_fifo_receiveRequestAttemptId_invalidatedByBatchVisibilityChange(t *testing.T) {
+	// Given: a FIFO queue with one visible message.
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "attempt-inval-batch.fifo")
+	resp := sqsCall(t, srv, "SendMessage", map[string]any{
+		"QueueUrl":               queueURL,
+		"MessageBody":            "inval-batch-body",
+		"MessageGroupId":         "group-a",
+		"MessageDeduplicationId": "inval-batch-1",
+	})
+	resp.Body.Close()
+
+	receive := func(body map[string]any) []map[string]any {
+		t.Helper()
+		resp := sqsCall(t, srv, "ReceiveMessage", body)
+		defer resp.Body.Close()
+		helpers.AssertStatus(t, resp, http.StatusOK)
+		var result struct {
+			Messages []map[string]any `json:"Messages"`
+		}
+		helpers.DecodeJSON(t, resp, &result)
+		return result.Messages
+	}
+
+	// When: the first receive uses a ReceiveRequestAttemptId.
+	first := receive(map[string]any{
+		"QueueUrl":                queueURL,
+		"ReceiveRequestAttemptId": "attempt-batch-1",
+		"VisibilityTimeout":       60,
+	})
+	if len(first) != 1 {
+		t.Fatalf("expected first receive to return 1 message, got %d", len(first))
+	}
+
+	// When: ChangeMessageVisibilityBatch is called on the message.
+	resp2 := sqsCall(t, srv, "ChangeMessageVisibilityBatch", map[string]any{
+		"QueueUrl": queueURL,
+		"Entries": []map[string]any{
+			{
+				"Id":                "1",
+				"ReceiptHandle":     first[0]["ReceiptHandle"],
+				"VisibilityTimeout": 0,
+			},
+		},
+	})
+	defer resp2.Body.Close()
+	helpers.AssertStatus(t, resp2, http.StatusOK)
+
+	// Then: a retry with the same ReceiveRequestAttemptId returns no messages
+	// because the message's visibility was modified via batch.
+	second := receive(map[string]any{
+		"QueueUrl":                queueURL,
+		"ReceiveRequestAttemptId": "attempt-batch-1",
+	})
+	if len(second) != 0 {
+		t.Fatalf("expected replay after batch visibility change to return 0 messages, got %d", len(second))
+	}
+}
+
 func TestSendMessage_fifo_sequenceNumber(t *testing.T) {
 	// Given: a FIFO queue
 	srv := helpers.NewTestServer(t)
