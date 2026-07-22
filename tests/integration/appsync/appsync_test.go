@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Neaox/overcast/tests/helpers"
 )
@@ -911,6 +912,24 @@ func TestApiKey_createAndList(t *testing.T) {
 	if len(listResult.ApiKeys) != 2 {
 		t.Errorf("expected 2 API keys (1 auto-created + 1 explicit), got %d", len(listResult.ApiKeys))
 	}
+}
+
+func TestApiKey_createWithCdkStyleUpperBoundExpires(t *testing.T) {
+	// Given: an existing API and a non-hour-aligned creation time like CDK deployments use
+	srv := helpers.NewTestServer(t)
+	apiID, _ := createTestAPI(t, srv)
+	expires := time.Now().UTC().Add(365 * 24 * time.Hour).Unix()
+
+	// When: CreateApiKey is called with an absolute epoch expiry 365 days from creation
+	resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/apikeys", map[string]any{
+		"description": "cdk-style key",
+		"expires":     expires,
+	})
+	defer resp.Body.Close()
+
+	// Then: AppSync accepts the documented maximum even when the current time is not hour-aligned
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	helpers.AssertRequestID(t, resp)
 }
 
 func TestApiKey_updateAndDelete(t *testing.T) {

@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: "Review code for quality, performance, best practices, and maintainability in the Overcast codebase. Use when: reviewing a PR, auditing a file, checking for code smells, finding performance issues, detecting goroutine leaks, memory leaks, identifying spaghetti code (mixed abstraction levels, action-at-a-distance, boolean traps, implicit ordering, tangled control flow), identifying overly complex functions or oversized modules, ensuring DRY idiomatic best-practice Go and TypeScript."
+description: "Review code for AWS parity, correctness, quality, performance, best practices, and maintainability in the Overcast codebase. Use when: reviewing a PR, auditing a file, checking for code smells, finding performance issues, detecting goroutine leaks, memory leaks, identifying AWS wire-format or observable-behavior drift, identifying spaghetti code (mixed abstraction levels, action-at-a-distance, boolean traps, implicit ordering, tangled control flow), identifying overly complex functions or oversized modules, ensuring DRY idiomatic best-practice Go and TypeScript."
 argument-hint: "File path, directory, or description of what to review"
 ---
 
@@ -8,15 +8,21 @@ argument-hint: "File path, directory, or description of what to review"
 
 Perform a thorough code review against the project's standards. Flag violations, suggest fixes, and explain why each issue matters.
 
+**AWS parity is mandatory for observable behaviour.** Overcast is useful only when SDKs, CLIs, IaC tools, and user code can rely on it behaving like real AWS. Treat every observable API detail as the compatibility contract: request parsing, routing, auth/signature expectations, validation order, error code, HTTP status, headers, response shape, field casing, default values, pagination tokens, timestamps, ordering, state transitions, side effects, idempotency, eventual/async behavior, and CloudFormation-visible attributes. If real AWS behaviour is knowable, require parity. If it is uncertain, require evidence from AWS docs, SDK models, or real AWS compatibility tests instead of guesses. If faithful implementation is not feasible, require an honest documented `501`/unsupported response rather than a divergent successful response.
+
 **General principle:** beyond the specific checks below, always follow accepted best practice — the widely understood, proven ways to write correct, secure, performant, and maintainable software. The checklists codify the most important rules for this codebase, but they are not exhaustive. If something violates a well-established best practice that isn't listed here, flag it anyway.
 
 **Developer experience is paramount.** Our audience is developers — every API response, error message, CLI output, and UI interaction should be intuitive, predictable, and helpful. Consider the user at all times: clear error messages that explain what went wrong and how to fix it, consistent behaviour that matches what developers expect from real AWS, sensible defaults that work out of the box, and a web UI that is discoverable without reading documentation. If something is confusing or requires guesswork, it's a bug.
 
 **Don't nitpick.** Focus on substance — correctness, performance, safety, maintainability, and convention adherence. Don't flag trivial style preferences, cosmetic formatting choices, or minor naming alternatives that don't improve clarity. If there truly is a better way, guide towards it — but don't get lost in minutiae. A review full of nitpicks is demoralising and buries the findings that actually matter.
 
-**Be careful** Use git commands wisely, do not lose any uncommitted changes. Always double check the command before executing it.
+**Clean code is non-negotiable.** Code must be idiomatic, DRY, SOLID where those principles improve clarity, easy to read, well-factored around single responsibilities, race-safe, resource-safe, and performant by default. Prefer the smallest correct design, but flag cleverness, hidden coupling, accidental duplication, leaky abstractions, uncontrolled allocation growth, goroutine/resource leaks, and work done in the wrong layer.
 
-**Be efficent** make good use of sub-agents to parallelize work and speed up the review process. For example, you can use one agent to run the tests and lint rules, another to read and understand the code, another agent to apply the checklist, and a third agent to format the output.
+**Bug-fix reviews must check blast radius.** When reviewing a bug fix, identify the underlying class of bug and search for sibling handlers, services, stores, CloudFormation paths, tests, and frontend callers that may share the same failure mode. Do not approve a fix that only patches the reported case while leaving equivalent observable regressions elsewhere, unless the remaining scope is explicitly documented as follow-up work.
+
+**Be careful.** Use git commands wisely, do not lose any uncommitted changes. Always double check the command before executing it.
+
+**Be efficient.** Make good use of sub-agents to parallelize read-only review work and speed up the review process. For example, use one agent to inspect tests and verification, another to understand related service patterns, and another to compare AWS compatibility evidence. Do not delegate unsafe git operations or edits during review unless the user explicitly asked for fixes.
 
 Keep in what is laid out in [CONTRIBUTING.md](../../../CONTRIBUTING.md) and the general principles above.
 
@@ -36,9 +42,11 @@ Keep in what is laid out in [CONTRIBUTING.md](../../../CONTRIBUTING.md) and the 
    - If it breaks an established convention, is there a good reason? Is the new approach demonstrably better?
    - If it introduces a new pattern, should existing code be updated for consistency, or does the old pattern still serve its purpose? If updating existing code is warranted but out of scope for this change, recommend a TODO — don't let the inconsistency become invisible.
    - Could this change confuse the next person who works in this area?
-3. **Read the code** — load each file. For large files, read in sections.
-4. **Apply each checklist category** below against every file in scope.
-5. **Report findings** — group by severity (Critical / Warning / Suggestion), include file path and line numbers, quote the offending code, and provide a concrete fix.
+3. **Verify AWS contract evidence** — for AWS-facing changes, compare against real AWS behaviour wherever possible. Use AWS docs, Smithy/API models, SDK behavior, existing compatibility tests, or real AWS probes. Flag unsupported assumptions, missing evidence, and any custom endpoint/field/status/header on the AWS API surface.
+4. **Check regression risk** — identify nearby code paths and sibling services that could be affected by the same change or bug pattern. For bug fixes, search for analogous code and require coverage for the broader failure mode, not only the reported reproduction.
+5. **Read the code** — load each file. For large files, read in sections.
+6. **Apply each checklist category** below against every file in scope.
+7. **Report findings** — group by severity (Critical / Warning / Suggestion), include file path and line numbers, quote the offending code, and provide a concrete fix.
 
 ## Review Checklist
 
@@ -149,12 +157,28 @@ Spaghetti code lacks clear structure: control flow jumps around unpredictably, c
 
 #### AWS Fidelity
 
-- [ ] Error codes and HTTP status codes match what real AWS returns — not what seems reasonable
-- [ ] Response field names, casing, and nesting match the real AWS API wire format
-- [ ] Validation rejects the same inputs AWS rejects, with the same error responses
-- [ ] State transitions follow AWS sequencing — intermediate states exist and are observable
-- [ ] When unsure how AWS behaves, test against real AWS — don't guess
-- [ ] A `501` is always preferable to a `200` that silently diverges from real AWS
+- [ ] Every observable behaviour matches real AWS wherever possible — not just the specific happy path under review
+- [ ] Request routing, protocol parsing, action names, content types, target headers, query parameters, URI labels, and payload decoding match the AWS protocol for that service
+- [ ] Error codes, messages, HTTP status codes, response formats, and validation order match what real AWS returns — not what seems reasonable
+- [ ] Response field names, casing, nesting, empty/default values, omitted fields, timestamps, ARNs, IDs, and pagination tokens match the real AWS API wire format
+- [ ] Headers, metadata, request IDs, checksums, ETags, and modeled response traits are present or absent according to AWS behaviour
+- [ ] Validation rejects the same inputs AWS rejects, accepts the same inputs AWS accepts, and does not introduce stricter emulator-only constraints on AWS APIs
+- [ ] State transitions, idempotency, side effects, ordering guarantees, eventual consistency, retries, and async behavior follow AWS sequencing — intermediate states exist and are observable when AWS exposes them
+- [ ] CloudFormation-visible `Ref`, `GetAtt`, physical IDs, replacement semantics, delete behavior, and resource attributes match AWS for supported resource types
+- [ ] AWS SDKs and CLI can use the endpoint unmodified — no non-AWS request requirements or custom response fields on AWS API surfaces
+- [ ] When unsure how AWS behaves, require evidence from AWS docs, SDK/service models, existing compatibility tests, or real AWS probes — don't guess
+- [ ] Known unavoidable divergences are documented in service docs and code comments where helpful
+- [ ] A `501`/unsupported response is always preferable to a `200` that silently diverges from real AWS
+
+#### Regression & Bug-Fix Blast Radius
+
+- [ ] The change cannot regress existing supported AWS behaviour, SDK compatibility, CLI flows, CloudFormation provisioning, or web UI assumptions
+- [ ] Bug fixes include a reproducing test that fails before the fix and protects the observable AWS/user behaviour after the fix
+- [ ] The reviewer identified the bug class, not just the failing case, and searched for equivalent patterns in sibling handlers/services/stores/tests
+- [ ] Shared helpers or common validators were updated when multiple call sites need the same fix; copy-pasted one-off patches are flagged
+- [ ] New tests cover representative sibling cases, edge cases, and negative cases where regression risk is plausible
+- [ ] Existing tests were not weakened, skipped, or rewritten to match incorrect behaviour
+- [ ] Documentation and generated capability tables were updated when behaviour or support status changed
 
 #### Edge Cases & Defensive Coding
 

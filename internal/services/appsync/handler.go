@@ -21,7 +21,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -234,11 +233,11 @@ func (h *Handler) CreateGraphqlApi(w http.ResponseWriter, r *http.Request) {
 
 	// Real AWS auto-creates a default API key when auth type is API_KEY.
 	if api.AuthenticationType == "API_KEY" {
-		now := h.clk.Now()
+		expires, _ := normalizeAPIKeyExpires(h.clk.Now(), 0)
 		key := &ApiKey{
 			Id:      generateAPIKeyID(),
-			Expires: now.Add(7 * 24 * time.Hour).Unix(),
-			Deletes: now.Add(67 * 24 * time.Hour).Unix(),
+			Expires: expires,
+			Deletes: apiKeyDeletes(expires),
 		}
 		if err := h.store.PutApiKey(r.Context(), apiID, key); err != nil {
 			protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))

@@ -31,6 +31,8 @@ import { useFavourites } from "@/hooks/use-favourites"
 import { useDebugEnabled } from "@/hooks/use-server-info"
 import { inboxMessagesQueryOptions } from "@/features/mail/data"
 import { useInboxReadState } from "@/features/mail/read-state"
+import { Tooltip } from "@/components/ui/tooltip"
+import { useSidebarCollapse } from "./use-sidebar-collapse"
 import {
   ALL_SERVICES,
   DASHBOARD_ITEM,
@@ -50,6 +52,14 @@ function isGroup(c: SubNavChild): c is SubNavGroup {
 
 function flatChildren(children: SubNavChild[]): { to: string; label: string }[] {
   return children.flatMap((c) => (isGroup(c) ? c.items : [c]))
+}
+
+function SidebarTooltip({ children, label }: { children: React.ReactNode; label: string }) {
+  return (
+    <Tooltip content={label} side="right" delayDuration={100}>
+      {children}
+    </Tooltip>
+  )
 }
 
 interface NavItem {
@@ -141,15 +151,19 @@ function NavItemContent({
     if (children && children.length > 0) {
       const firstChild = flatChildren(children)[0]
       return (
-        <Link to={firstChild.to} className={cls} title={label}>
-          <Icon className={iconCls} />
-        </Link>
+        <SidebarTooltip label={label}>
+          <Link to={firstChild.to} className={cls} aria-label={label}>
+            <Icon className={iconCls} />
+          </Link>
+        </SidebarTooltip>
       )
     }
     return (
-      <Link to={to} className={cls} title={label}>
-        <Icon className={iconCls} />
-      </Link>
+      <SidebarTooltip label={label}>
+        <Link to={to} className={cls} aria-label={label}>
+          <Icon className={iconCls} />
+        </Link>
+      </SidebarTooltip>
     )
   }
 
@@ -226,7 +240,7 @@ function NavItemContent({
                     <div key={child.group}>
                       <p
                         className={cn(
-                          "px-2 text-[10px] font-semibold tracking-wider text-sidebar-fg/40 uppercase pb-0.5",
+                          "px-2 pb-0.5 text-[10px] font-semibold tracking-wider text-sidebar-fg/40 uppercase",
                           i > 0 && "mt-2",
                         )}
                       >
@@ -269,7 +283,7 @@ function NavItemContent({
 }
 
 export function Sidebar() {
-  const [collapsed, setCollapsed] = useState(false)
+  const { collapsed, toggleCollapsed } = useSidebarCollapse()
   const [expanded, setExpanded] = useState<Record<string, boolean | undefined>>({})
   const [activeId, setActiveId] = useState<string | null>(null)
   const { favourites, reorderFavourites } = useFavourites()
@@ -315,6 +329,27 @@ export function Sidebar() {
       : ALL_SERVICES.filter(
           (svc) => pathname.startsWith(svc.to) && !favourites.includes(svc.key),
         ).sort((a, b) => b.to.length - a.to.length)[0]
+  const collapseToggleLabel = collapsed ? "Expand sidebar" : "Collapse sidebar"
+  const collapseToggleButton = (
+    <button
+      onClick={toggleCollapsed}
+      className={cn(
+        "flex h-9 items-center justify-center border-t border-sidebar-fg/10",
+        "text-sidebar-fg transition-colors hover:bg-sidebar-item-hover hover:text-sidebar-fg-strong",
+        "gap-1.5 text-sm",
+      )}
+      aria-label={collapsed ? collapseToggleLabel : undefined}
+    >
+      {collapsed ? (
+        <ChevronRight className="h-3.5 w-3.5" />
+      ) : (
+        <>
+          <ChevronLeft className="h-3.5 w-3.5" />
+          <span>Collapse</span>
+        </>
+      )}
+    </button>
+  )
 
   return (
     <aside
@@ -404,7 +439,7 @@ export function Sidebar() {
         {bottomItems.map(({ to, label, icon: Icon, color }) => {
           const active = pathname.startsWith(to)
           const badgeCount = to === "/inbox" ? unreadCount : 0
-          return (
+          const link = (
             <Link
               key={to}
               to={to}
@@ -415,7 +450,7 @@ export function Sidebar() {
                   : "text-sidebar-fg hover:bg-sidebar-item-hover hover:text-sidebar-fg-strong",
                 collapsed && "mx-1 justify-center px-0",
               )}
-              title={collapsed ? label : undefined}
+              aria-label={collapsed ? label : undefined}
             >
               <Icon className={cn("h-4 w-4 shrink-0", active ? "text-fg-on-accent" : color)} />
               {!collapsed && <span>{label}</span>}
@@ -435,28 +470,22 @@ export function Sidebar() {
               )}
             </Link>
           )
+          return collapsed ? (
+            <SidebarTooltip key={to} label={label}>
+              {link}
+            </SidebarTooltip>
+          ) : (
+            link
+          )
         })}
       </nav>
 
       {/* Collapse toggle */}
-      <button
-        onClick={() => setCollapsed((v) => !v)}
-        className={cn(
-          "flex h-9 items-center justify-center border-t border-sidebar-fg/10",
-          "text-sidebar-fg transition-colors hover:bg-sidebar-item-hover hover:text-sidebar-fg-strong",
-          "gap-1.5 text-sm",
-        )}
-        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-      >
-        {collapsed ? (
-          <ChevronRight className="h-3.5 w-3.5" />
-        ) : (
-          <>
-            <ChevronLeft className="h-3.5 w-3.5" />
-            <span>Collapse</span>
-          </>
-        )}
-      </button>
+      {collapsed ? (
+        <SidebarTooltip label={collapseToggleLabel}>{collapseToggleButton}</SidebarTooltip>
+      ) : (
+        collapseToggleButton
+      )}
     </aside>
   )
 }

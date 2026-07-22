@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Neaox/overcast/tests/helpers"
 )
@@ -259,6 +261,29 @@ func TestCreateStack_AppSyncGraphQLApiTags(t *testing.T) {
 	if envResult.EnvironmentVariables["GUIDE"] != "digital" {
 		t.Fatalf("expected GUIDE env var digital, got %#v", envResult.EnvironmentVariables)
 	}
+}
+
+func TestCreateStack_AppSyncApiKeyWithCdkStyleUpperBoundExpires(t *testing.T) {
+	// Given: a CDK-like AppSync stack with an absolute API key expiry 365 days from synthesis
+	srv := helpers.NewTestServer(t)
+	expires := time.Now().UTC().Add(365 * 24 * time.Hour).Unix()
+	stackName := "appsync-apikey-cdk-expires"
+	template := strings.Replace(appsyncMinimalTemplate,
+		`"Description": "cfn explicit key"`,
+		fmt.Sprintf(`"Description": "cfn explicit key", "Expires": %d`, expires),
+		1,
+	)
+
+	// When: CloudFormation creates the stack
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{stackName},
+		"TemplateBody": []string{template},
+	})
+	defer resp.Body.Close()
+
+	// Then: the stack completes instead of rolling back during CreateApiKey
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
 }
 
 func TestCreateStack_AppSyncGraphQLSchemaWithAwsDirectives(t *testing.T) {

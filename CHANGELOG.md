@@ -71,6 +71,17 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
+## [0.0.1-alpha.22] - 2026-07-22
+
+### Added
+
+- **Agent tooling** — repo-local OpenCode skill registration now discovers the Overcast agent skills without manual setup.
+
+### Fixed
+
+- **AppSync/CloudFormation** — `CreateApiKey` now accepts CDK-style `Expires` values 365 days from creation without rolling back `AWS::AppSync::ApiKey` resources.
+- **Web UI** — the sidebar now defaults to collapsed on narrow viewports, keeps separate narrow/wide collapse preferences across refreshes, and shows immediate tooltips for collapsed icon navigation.
+
 ## [0.0.1-alpha.21] - 2026-07-22
 
 ### Fixed
@@ -331,7 +342,8 @@ need it than accidentally ship a breaking change as a patch.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.21...HEAD
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.22...HEAD
+[0.0.1-alpha.22]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.21...v0.0.1-alpha.22
 [0.0.1-alpha.21]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.20...v0.0.1-alpha.21
 [0.0.1-alpha.20]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.19...v0.0.1-alpha.20
 [0.0.1-alpha.19]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.18...v0.0.1-alpha.19

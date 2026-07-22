@@ -188,21 +188,17 @@ func (h *Handler) CreateApiKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := h.clk.Now().Truncate(time.Hour)
-	// Default expiry: 7 days from now, rounded down to the nearest hour per AWS docs.
-	if req.Expires == 0 {
-		req.Expires = now.Add(7 * 24 * time.Hour).Unix()
-	}
-	if req.Expires < now.Add(24*time.Hour).Unix() || req.Expires > now.Add(365*24*time.Hour).Unix() {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "ApiKeyValidityOutOfBoundsException", Message: "The API key expiration must be set to a value between 1 and 365 days from creation or update.", HTTPStatus: http.StatusBadRequest})
+	expires, validationErr := normalizeAPIKeyExpires(h.clk.Now(), req.Expires)
+	if validationErr != nil {
+		protocol.WriteJSONError(w, r, validationErr)
 		return
 	}
 
 	key := &ApiKey{
 		Id:          generateAPIKeyID(),
 		Description: req.Description,
-		Expires:     req.Expires,
-		Deletes:     req.Expires + 60*24*3600, // 60 days after expiry
+		Expires:     expires,
+		Deletes:     apiKeyDeletes(expires),
 	}
 
 	if err := h.store.PutApiKey(r.Context(), apiID, key); err != nil {
@@ -259,13 +255,13 @@ func (h *Handler) UpdateApiKey(w http.ResponseWriter, r *http.Request) {
 		existing.Description = req.Description
 	}
 	if req.Expires != 0 {
-		now := h.clk.Now().Truncate(time.Hour)
-		if req.Expires < now.Add(24*time.Hour).Unix() || req.Expires > now.Add(365*24*time.Hour).Unix() {
-			protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "ApiKeyValidityOutOfBoundsException", Message: "The API key expiration must be set to a value between 1 and 365 days from creation or update.", HTTPStatus: http.StatusBadRequest})
+		expires, validationErr := normalizeAPIKeyExpires(h.clk.Now(), req.Expires)
+		if validationErr != nil {
+			protocol.WriteJSONError(w, r, validationErr)
 			return
 		}
-		existing.Expires = req.Expires
-		existing.Deletes = req.Expires + 60*24*3600
+		existing.Expires = expires
+		existing.Deletes = apiKeyDeletes(expires)
 	}
 
 	if storeErr := h.store.PutApiKey(r.Context(), apiID, existing); storeErr != nil {
@@ -274,6 +270,26 @@ func (h *Handler) UpdateApiKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, r, http.StatusOK, map[string]any{"apiKey": existing})
+}
+
+func normalizeAPIKeyExpires(now time.Time, expires int64) (int64, *protocol.AWSError) {
+	if expires == 0 {
+		return now.Add(7 * 24 * time.Hour).Truncate(time.Hour).Unix(), nil
+	}
+	minExpires := now.Add(24 * time.Hour).Truncate(time.Hour).Unix()
+	maxExpires := now.Add(365 * 24 * time.Hour).Unix()
+	if expires < minExpires || expires > maxExpires {
+		return 0, apiKeyValidityOutOfBoundsError()
+	}
+	return expires, nil
+}
+
+func apiKeyDeletes(expires int64) int64 {
+	return expires + 60*24*3600
+}
+
+func apiKeyValidityOutOfBoundsError() *protocol.AWSError {
+	return &protocol.AWSError{Code: "ApiKeyValidityOutOfBoundsException", Message: "The API key expiration must be set to a value between 1 and 365 days from creation or update.", HTTPStatus: http.StatusBadRequest}
 }
 
 // DeleteApiKey handles DELETE /v1/apis/{apiId}/apikeys/{keyId}.
