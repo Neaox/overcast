@@ -36,6 +36,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { EmptyState, PageHeader, QueryListState } from "@/components/ui/primitives"
 import { formatDate } from "@/lib/format"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
+import { RawStateLink } from "@/features/debug/raw-state-link"
 import { cn } from "@/lib/utils"
 
 export function BucketList() {
@@ -85,6 +86,7 @@ export function BucketList() {
               onOpen={openDocs}
               onClose={closeDocs}
             />
+            <RawStateLink service="s3" />
             <Button
               variant="ghost"
               size="icon"

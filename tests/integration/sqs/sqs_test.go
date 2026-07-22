@@ -83,6 +83,76 @@ func TestCreateQueue_receiveMessageWaitTimeSecondsValidation(t *testing.T) {
 	}
 }
 
+func TestCreateQueue_invalidQueueAttributes(t *testing.T) {
+	// Given: queue attributes outside the ranges and enums documented by AWS.
+	cases := []struct {
+		name      string
+		attribute string
+		value     string
+		errorCode string
+		queueName string
+	}{
+		{name: "unknown attribute", attribute: "BogusAttribute", value: "1", errorCode: "InvalidAttributeName"},
+		{name: "delay below minimum", attribute: "DelaySeconds", value: "-1", errorCode: "InvalidAttributeValue"},
+		{name: "delay above maximum", attribute: "DelaySeconds", value: "901", errorCode: "InvalidAttributeValue"},
+		{name: "maximum message size below minimum", attribute: "MaximumMessageSize", value: "1023", errorCode: "InvalidAttributeValue"},
+		{name: "maximum message size above maximum", attribute: "MaximumMessageSize", value: "1048577", errorCode: "InvalidAttributeValue"},
+		{name: "message retention below minimum", attribute: "MessageRetentionPeriod", value: "0", errorCode: "InvalidAttributeValue"},
+		{name: "message retention above maximum", attribute: "MessageRetentionPeriod", value: "1209601", errorCode: "InvalidAttributeValue"},
+		{name: "kms data key reuse below minimum", attribute: "KmsDataKeyReusePeriodSeconds", value: "59", errorCode: "InvalidAttributeValue"},
+		{name: "kms data key reuse above maximum", attribute: "KmsDataKeyReusePeriodSeconds", value: "86401", errorCode: "InvalidAttributeValue"},
+		{name: "fifo queue not boolean", attribute: "FifoQueue", value: "yes", errorCode: "InvalidAttributeValue"},
+		{name: "content based deduplication not boolean", attribute: "ContentBasedDeduplication", value: "yes", errorCode: "InvalidAttributeValue", queueName: "content-dedup-invalid.fifo"},
+		{name: "sqs managed sse not boolean", attribute: "SqsManagedSseEnabled", value: "yes", errorCode: "InvalidAttributeValue"},
+		{name: "deduplication scope invalid", attribute: "DeduplicationScope", value: "message", errorCode: "InvalidAttributeValue", queueName: "dedup-scope-invalid.fifo"},
+		{name: "fifo throughput limit invalid", attribute: "FifoThroughputLimit", value: "perGroup", errorCode: "InvalidAttributeValue", queueName: "throughput-limit-invalid.fifo"},
+		{name: "policy not json", attribute: "Policy", value: "not-json", errorCode: "InvalidAttributeValue"},
+		{name: "redrive allow policy not json", attribute: "RedriveAllowPolicy", value: "not-json", errorCode: "InvalidAttributeValue"},
+		{name: "redrive allow policy invalid permission", attribute: "RedriveAllowPolicy", value: `{"redrivePermission":"maybe"}`, errorCode: "InvalidAttributeValue"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given: a fresh SQS server and an invalid CreateQueue attribute.
+			srv := helpers.NewTestServer(t)
+			queueName := tc.queueName
+			if queueName == "" {
+				queueName = "invalid-attr-" + strings.ReplaceAll(tc.name, " ", "-")
+			}
+
+			// When: CreateQueue includes the invalid attribute.
+			resp := sqsCall(t, srv, "CreateQueue", map[string]any{
+				"QueueName":  queueName,
+				"Attributes": map[string]string{tc.attribute: tc.value},
+			})
+			defer resp.Body.Close()
+
+			// Then: SQS rejects the invalid request attribute.
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, tc.errorCode)
+		})
+	}
+}
+
+func TestCreateQueue_incompatibleEncryptionAttributes(t *testing.T) {
+	// Given: a request enables both SQS-managed SSE and an explicit KMS key.
+	srv := helpers.NewTestServer(t)
+
+	// When: CreateQueue includes mutually exclusive server-side encryption attributes.
+	resp := sqsCall(t, srv, "CreateQueue", map[string]any{
+		"QueueName": "invalid-encryption-queue",
+		"Attributes": map[string]string{
+			"SqsManagedSseEnabled": "true",
+			"KmsMasterKeyId":       "alias/aws/sqs",
+		},
+	})
+	defer resp.Body.Close()
+
+	// Then: SQS rejects the incompatible queue attributes.
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidAttributeValue")
+}
+
 func TestCreateQueue_invalidName(t *testing.T) {
 	// Given: invalid SQS queue names from the documented name constraints.
 	cases := []struct {
@@ -1010,6 +1080,47 @@ func TestSetQueueAttributes_receiveMessageWaitTimeSecondsValidation(t *testing.T
 			// Then: SQS rejects the invalid attribute value.
 			helpers.AssertStatus(t, resp, http.StatusBadRequest)
 			helpers.AssertJSONError(t, resp, "InvalidAttributeValue")
+		})
+	}
+}
+
+func TestSetQueueAttributes_invalidQueueAttributes(t *testing.T) {
+	// Given: a queue exists.
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "set-attr-validation-queue.fifo")
+	cases := []struct {
+		name      string
+		attribute string
+		value     string
+		errorCode string
+	}{
+		{name: "unknown attribute", attribute: "BogusAttribute", value: "1", errorCode: "InvalidAttributeName"},
+		{name: "delay above maximum", attribute: "DelaySeconds", value: "901", errorCode: "InvalidAttributeValue"},
+		{name: "maximum message size below minimum", attribute: "MaximumMessageSize", value: "1023", errorCode: "InvalidAttributeValue"},
+		{name: "message retention below minimum", attribute: "MessageRetentionPeriod", value: "0", errorCode: "InvalidAttributeValue"},
+		{name: "kms data key reuse above maximum", attribute: "KmsDataKeyReusePeriodSeconds", value: "86401", errorCode: "InvalidAttributeValue"},
+		{name: "content based deduplication not boolean", attribute: "ContentBasedDeduplication", value: "yes", errorCode: "InvalidAttributeValue"},
+		{name: "sqs managed sse not boolean", attribute: "SqsManagedSseEnabled", value: "yes", errorCode: "InvalidAttributeValue"},
+		{name: "deduplication scope invalid", attribute: "DeduplicationScope", value: "message", errorCode: "InvalidAttributeValue"},
+		{name: "fifo throughput limit invalid", attribute: "FifoThroughputLimit", value: "perGroup", errorCode: "InvalidAttributeValue"},
+		{name: "policy not json", attribute: "Policy", value: "not-json", errorCode: "InvalidAttributeValue"},
+		{name: "redrive allow policy invalid permission", attribute: "RedriveAllowPolicy", value: `{"redrivePermission":"maybe"}`, errorCode: "InvalidAttributeValue"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// When: SetQueueAttributes includes an invalid request attribute.
+			resp := sqsCall(t, srv, "SetQueueAttributes", map[string]any{
+				"QueueUrl": queueURL,
+				"Attributes": map[string]string{
+					tc.attribute: tc.value,
+				},
+			})
+			defer resp.Body.Close()
+
+			// Then: SQS rejects the invalid request attribute.
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, tc.errorCode)
 		})
 	}
 }

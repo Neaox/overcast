@@ -6,6 +6,7 @@ package sqs
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -105,6 +106,9 @@ func (h *Handler) createQueueTyped(ctx context.Context, in *createQueueRequest) 
 		}
 	}
 
+	if aerr := validateCreateQueueAttributes(in.Attributes); aerr != nil {
+		return nil, aerr
+	}
 	if aerr := validateQueueAttributes(attrs); aerr != nil {
 		return nil, aerr
 	}
@@ -195,6 +199,9 @@ func (h *Handler) setQueueAttributesTyped(ctx context.Context, in *setQueueAttri
 		attrs[k] = v
 	}
 
+	if aerr := validateSetQueueAttributes(in.Attributes); aerr != nil {
+		return nil, aerr
+	}
 	if aerr := validateQueueAttributes(attrs); aerr != nil {
 		return nil, aerr
 	}
@@ -326,6 +333,10 @@ func (h *Handler) CreateQueue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if aerr := validateCreateQueueAttributes(req.Attributes); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 	if aerr := validateQueueAttributes(attrs); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
@@ -441,6 +452,10 @@ func (h *Handler) SetQueueAttributes(w http.ResponseWriter, r *http.Request) {
 		attrs[k] = v
 	}
 
+	if aerr := validateSetQueueAttributes(req.Attributes); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 	if aerr := validateQueueAttributes(attrs); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
@@ -690,10 +705,94 @@ func defaultQueueAttributes() map[string]string {
 }
 
 func validateQueueAttributes(attrs map[string]string) *protocol.AWSError {
+	if err := validateQueueIntegerAttribute(attrs, "DelaySeconds", 0, 900); err != nil {
+		return err
+	}
+	if err := validateQueueIntegerAttribute(attrs, "MaximumMessageSize", 1024, 1048576); err != nil {
+		return err
+	}
+	if err := validateQueueIntegerAttribute(attrs, "MessageRetentionPeriod", 60, 1209600); err != nil {
+		return err
+	}
+	if err := validateQueueIntegerAttribute(attrs, "KmsDataKeyReusePeriodSeconds", 60, 86400); err != nil {
+		return err
+	}
 	if err := validateQueueIntegerAttribute(attrs, "ReceiveMessageWaitTimeSeconds", 0, 20); err != nil {
 		return err
 	}
-	return validateQueueIntegerAttribute(attrs, "VisibilityTimeout", 0, 43200)
+	if err := validateQueueIntegerAttribute(attrs, "VisibilityTimeout", 0, 43200); err != nil {
+		return err
+	}
+	if err := validateQueueBoolAttribute(attrs, "FifoQueue"); err != nil {
+		return err
+	}
+	if err := validateQueueBoolAttribute(attrs, "ContentBasedDeduplication"); err != nil {
+		return err
+	}
+	if err := validateQueueBoolAttribute(attrs, "SqsManagedSseEnabled"); err != nil {
+		return err
+	}
+	if err := validateQueueEnumAttribute(attrs, "DeduplicationScope", "messageGroup", "queue"); err != nil {
+		return err
+	}
+	if err := validateQueueEnumAttribute(attrs, "FifoThroughputLimit", "perQueue", "perMessageGroupId"); err != nil {
+		return err
+	}
+	if attrs["FifoThroughputLimit"] == "perMessageGroupId" && attrs["DeduplicationScope"] != "messageGroup" {
+		return errInvalidQueueAttributeValue("FifoThroughputLimit")
+	}
+	if attrs["SqsManagedSseEnabled"] == "true" && attrs["KmsMasterKeyId"] != "" {
+		return errInvalidQueueAttributeValue("SqsManagedSseEnabled")
+	}
+	if err := validateQueuePolicyAttribute(attrs, "Policy"); err != nil {
+		return err
+	}
+	return validateRedriveAllowPolicyAttribute(attrs)
+}
+
+func validateCreateQueueAttributes(attrs map[string]string) *protocol.AWSError {
+	return validateRequestedQueueAttributes(attrs, queueAttributeCreate)
+}
+
+func validateSetQueueAttributes(attrs map[string]string) *protocol.AWSError {
+	return validateRequestedQueueAttributes(attrs, queueAttributeSet)
+}
+
+type queueAttributeValidationContext int
+
+const (
+	queueAttributeCreate queueAttributeValidationContext = iota
+	queueAttributeSet
+)
+
+func validateRequestedQueueAttributes(attrs map[string]string, validationContext queueAttributeValidationContext) *protocol.AWSError {
+	for name := range attrs {
+		if _, ok := settableQueueAttributes[name]; !ok {
+			return &protocol.AWSError{Code: "InvalidAttributeName", Message: "Unknown Attribute " + name + ".", HTTPStatus: http.StatusBadRequest}
+		}
+		if validationContext == queueAttributeSet && name == "FifoQueue" {
+			return &protocol.AWSError{Code: "InvalidAttributeName", Message: "Unknown Attribute " + name + ".", HTTPStatus: http.StatusBadRequest}
+		}
+	}
+	return nil
+}
+
+var settableQueueAttributes = map[string]struct{}{
+	"ContentBasedDeduplication":     {},
+	"DeduplicationScope":            {},
+	"DelaySeconds":                  {},
+	"FifoQueue":                     {},
+	"FifoThroughputLimit":           {},
+	"KmsDataKeyReusePeriodSeconds":  {},
+	"KmsMasterKeyId":                {},
+	"MaximumMessageSize":            {},
+	"MessageRetentionPeriod":        {},
+	"Policy":                        {},
+	"ReceiveMessageWaitTimeSeconds": {},
+	"RedriveAllowPolicy":            {},
+	"RedrivePolicy":                 {},
+	"SqsManagedSseEnabled":          {},
+	"VisibilityTimeout":             {},
 }
 
 func validateQueueIntegerAttribute(attrs map[string]string, name string, minValue, maxValue int) *protocol.AWSError {
@@ -703,11 +802,78 @@ func validateQueueIntegerAttribute(attrs map[string]string, name string, minValu
 	}
 	parsed, err := strconv.Atoi(value)
 	if err != nil || parsed < minValue || parsed > maxValue {
-		return &protocol.AWSError{
-			Code:       "InvalidAttributeValue",
-			Message:    "Invalid value for the parameter " + name + ".",
-			HTTPStatus: http.StatusBadRequest,
-		}
+		return errInvalidQueueAttributeValue(name)
 	}
 	return nil
+}
+
+func validateQueueBoolAttribute(attrs map[string]string, name string) *protocol.AWSError {
+	value, ok := attrs[name]
+	if !ok {
+		return nil
+	}
+	if value != "true" && value != "false" {
+		return errInvalidQueueAttributeValue(name)
+	}
+	return nil
+}
+
+func validateQueueEnumAttribute(attrs map[string]string, name string, allowed ...string) *protocol.AWSError {
+	value, ok := attrs[name]
+	if !ok {
+		return nil
+	}
+	for _, allowedValue := range allowed {
+		if value == allowedValue {
+			return nil
+		}
+	}
+	return errInvalidQueueAttributeValue(name)
+}
+
+func validateQueuePolicyAttribute(attrs map[string]string, name string) *protocol.AWSError {
+	value, ok := attrs[name]
+	if !ok || strings.TrimSpace(value) == "" {
+		return nil
+	}
+	var policy map[string]any
+	if err := json.Unmarshal([]byte(value), &policy); err != nil {
+		return errInvalidQueueAttributeValue(name)
+	}
+	return nil
+}
+
+func validateRedriveAllowPolicyAttribute(attrs map[string]string) *protocol.AWSError {
+	value, ok := attrs["RedriveAllowPolicy"]
+	if !ok || strings.TrimSpace(value) == "" {
+		return nil
+	}
+	var policy struct {
+		RedrivePermission string   `json:"redrivePermission"`
+		SourceQueueARNs   []string `json:"sourceQueueArns"`
+	}
+	if err := json.Unmarshal([]byte(value), &policy); err != nil {
+		return errInvalidQueueAttributeValue("RedriveAllowPolicy")
+	}
+	switch policy.RedrivePermission {
+	case "", "allowAll", "denyAll":
+		if len(policy.SourceQueueARNs) > 0 {
+			return errInvalidQueueAttributeValue("RedriveAllowPolicy")
+		}
+	case "byQueue":
+		if len(policy.SourceQueueARNs) > 10 {
+			return errInvalidQueueAttributeValue("RedriveAllowPolicy")
+		}
+	default:
+		return errInvalidQueueAttributeValue("RedriveAllowPolicy")
+	}
+	return nil
+}
+
+func errInvalidQueueAttributeValue(name string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "InvalidAttributeValue",
+		Message:    "Invalid value for the parameter " + name + ".",
+		HTTPStatus: http.StatusBadRequest,
+	}
 }

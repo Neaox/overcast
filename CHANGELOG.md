@@ -65,8 +65,11 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Added
 
+- **Web UI** — added a read-only Raw State Debugger with service/namespace/resource deep links, search/filtering, copy actions, refresh controls, and contextual raw-state links from S3, SQS, SNS, and DynamoDB resource pages.
+
 ### Fixed
 
+- **SQS** — `CreateQueue` and `SetQueueAttributes` now reject invalid queue attributes, including out-of-range `MessageRetentionPeriod`, `DelaySeconds`, `MaximumMessageSize`, `KmsDataKeyReusePeriodSeconds`, invalid boolean/enum values, malformed policy JSON, incompatible SSE settings, and unknown attribute names instead of persisting invalid queue state.
 - **Web UI** — S3 object previews now indent XML/RSS closing tags correctly and use file extensions for syntax highlighting when the stored content type is generic, and DynamoDB table detail controls no longer require `crypto.randomUUID` on insecure local origins.
 
 ## [0.0.1-alpha.16] - 2026-07-21

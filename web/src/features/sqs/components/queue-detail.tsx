@@ -63,6 +63,7 @@ import { PageHeader, Spinner, EmptyState, CodeBlock } from "@/components/ui/prim
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { ResourceArnCombobox } from "@/components/ui/resource-arn-combobox"
 import { ArnLink, ArnText } from "@/components/ui/arn-link"
+import { RawStateLink } from "@/features/debug/raw-state-link"
 import { useToast } from "@/components/ui/toast"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Input } from "@/components/ui/input"
@@ -361,6 +362,7 @@ export function QueueDetail({ queueName }: Props) {
               />
               Refresh
             </Button>
+            <RawStateLink namespace="sqs:queues" stateKey={queueName} />
             <Button size="sm" variant="ghost" onClick={() => setShowSend(true)}>
               <Send className="mr-1.5 h-3.5 w-3.5" />
               Send Message
@@ -449,12 +451,12 @@ export function QueueDetail({ queueName }: Props) {
                   : `${dlqSourceUrls.length} source queues`}
               </p>
             </div>
-              <Button
-                size="sm"
-                variant="outline"
+            <Button
+              size="sm"
+              variant="outline"
               onClick={() => redriveMut.mutate(queue.arn)}
-                disabled={redriveMut.isPending || messages.length === 0}
-              >
+              disabled={redriveMut.isPending || messages.length === 0}
+            >
               <Undo2 className="mr-1.5 h-3.5 w-3.5" />
               {redriveMut.isPending ? "Redriving…" : "Redrive Messages"}
             </Button>

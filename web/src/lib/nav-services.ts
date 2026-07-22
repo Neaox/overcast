@@ -14,6 +14,7 @@ import {
   BarChart2,
   Inbox,
   Activity,
+  Bug,
   BookOpen,
   type LucideIcon,
 } from "lucide-react"
@@ -81,6 +82,7 @@ export const BOTTOM_ITEMS = [
   { key: "/map", to: "/map", label: "Map", icon: Network, color: "text-emerald-400" },
   { key: "/events", to: "/events", label: "Events", icon: Activity, color: "text-teal-400" },
   { key: "/metrics", to: "/metrics", label: "Metrics", icon: BarChart2, color: "text-sky-400" },
+  { key: "/debug", to: "/debug", label: "Debug", icon: Bug, color: "text-rose-400" },
   { key: "/inbox", to: "/inbox", label: "Inbox", icon: Inbox, color: "text-amber-400" },
   { key: "/docs", to: "/docs", label: "Docs", icon: BookOpen, color: "text-violet-400" },
 ]

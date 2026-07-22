@@ -21,6 +21,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { EmptyState, PageHeader, QueryListState } from "@/components/ui/primitives"
 import { Badge } from "@/components/ui/badge"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
+import { RawStateLink } from "@/features/debug/raw-state-link"
 import { CreateTableDialog } from "./create-table-dialog"
 import { cn } from "@/lib/utils"
 
@@ -62,6 +63,7 @@ export function TableList() {
               onOpen={openDocs}
               onClose={closeDocs}
             />
+            <RawStateLink service="dynamodb" />
             <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
               <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
               Refresh
