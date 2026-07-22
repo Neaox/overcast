@@ -78,6 +78,8 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	r.Get("/api/health", proxyJSONHandler("/_health"))
 	r.Get("/api/metrics", proxyJSONHandler("/_metrics"))
 	r.Get("/api/topology", handleTopology)
+	r.Get("/api/debug/state", handleDebugState)
+	r.Get("/api/debug/state/*", handleDebugNamespace)
 	r.Get("/api/lambda/runtimes", proxyJSONHandler("/_lambda/runtimes"))
 	r.Get("/api/lambda/instances", handleLambdaInstances)
 	r.Get("/api/lambda/functions/{name}/source", handleLambdaSourceGet)
@@ -247,6 +249,52 @@ func proxyJSONHandler(path string) http.HandlerFunc {
 			return
 		}
 	}
+}
+
+func handleDebugState(w http.ResponseWriter, r *http.Request) {
+	proxyDebugState(w, r, "/_debug/state")
+}
+
+func handleDebugNamespace(w http.ResponseWriter, r *http.Request) {
+	namespace := strings.TrimPrefix(r.URL.EscapedPath(), "/api/debug/state/")
+	proxyDebugState(w, r, "/_debug/state/"+namespace)
+}
+
+func proxyDebugState(w http.ResponseWriter, r *http.Request, path string) {
+	ep := resolveEndpoint(r)
+	resp, err := doGet(r.Context(), ep+path)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, "debug state fetch failed")
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		writeDebugDisabledError(w)
+		return
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		writeJSONError(w, http.StatusBadGateway, "debug state fetch failed")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	if !copyResponseBody(w, resp.Body) {
+		return
+	}
+}
+
+func writeDebugDisabledError(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	json.NewEncoder(w).Encode(struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}{
+		Error:   "DebugDisabled",
+		Message: "OVERCAST_DEBUG must be enabled to inspect raw state.",
+	})
 }
 
 // spaHandlerFunc serves static files from staticFS; unmatched paths fall back
