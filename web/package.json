@@ -67,6 +67,7 @@
     "@radix-ui/react-tabs": "^1.1.13",
     "@radix-ui/react-toast": "^1.2.15",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@tailwindcss/typography": "^0.5.20",
     "@tailwindcss/vite": "^4.2.2",
     "@tanstack/react-devtools": "^0.10.1",
     "@tanstack/react-form": "^1.28.5",
@@ -97,7 +98,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
-    "@tailwindcss/typography": "^0.5.20",
     "@tanstack/devtools-vite": "^0.6.0",
     "@tanstack/eslint-plugin-query": "^5.97.0",
     "@tanstack/react-devtools": "^0.10.0",

@@ -5,19 +5,20 @@
  * pulses when events flow through the node.
  */
 
-import { memo, useEffect, useRef, useState, useMemo, useCallback } from "react"
+import { memo, useEffect, useRef, useState, useMemo, useCallback, type ReactNode } from "react"
+import * as RadixDialog from "@radix-ui/react-dialog"
 import { Handle, Position, type NodeProps, useNodeId } from "@xyflow/react"
 import { useNavigate } from "@tanstack/react-router"
 import { useQuery, queryOptions } from "@tanstack/react-query"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { Box, Zap, Send, Play, Clock, Copy } from "lucide-react"
+import { Box, Zap, Send, Play, Clock, Copy, Filter, Search, X } from "lucide-react"
 import { SendMessageDialog } from "@/features/sqs/components/send-message"
 import { PublishMessageDialog } from "@/features/sns/components/publish-dialog"
 import { LambdaInvokeDialog } from "@/features/lambda/components/lambda-invoke-dialog"
 import { LambdaInvocationsDrawer, type Invocation } from "./lambda-invocations-drawer"
 import type { LogStreamTarget } from "./log-stream-peek"
 import { logsStreamsQueryOptions } from "@/features/cloudwatch/logs/data"
-import type { LogStream } from "@/types"
+import type { LogStream, StreamEvent } from "@/types"
 import { cn } from "@/lib/utils"
 import { SERVICES } from "@/lib/service-registry"
 import { sqs } from "@/services/api"
@@ -40,6 +41,7 @@ import { SERVICE_THEME, hexToSweep } from "./map-theme"
 import "./map-animations.css"
 import type { FileRoutesByTo } from "@/routeTree.gen"
 import { Tooltip } from "@/components/ui/tooltip"
+import { TriggerEventViewer } from "./trigger-event-viewer"
 
 interface NodeRoute {
   to: keyof FileRoutesByTo
@@ -160,6 +162,12 @@ export interface ServiceNodeData extends Record<string, unknown> {
   resolverCount?: number
   /** ECR only — full push-ready repository URI for copy-to-clipboard action. */
   repositoryUri?: string
+  /** ESM filter node only. */
+  esmId?: string
+  functionName?: string
+  eventSource?: string
+  sourceType?: string
+  filterPatterns?: string[]
   hasTarget?: boolean
   hasSource?: boolean
 }
@@ -771,8 +779,361 @@ function areServiceNodePropsEqual(prev: NodeProps, next: NodeProps): boolean {
     pd.dataSourceCount === nd.dataSourceCount &&
     pd.resolverCount === nd.resolverCount &&
     pd.repositoryUri === nd.repositoryUri &&
+    pd.esmId === nd.esmId &&
+    pd.functionName === nd.functionName &&
+    pd.eventSource === nd.eventSource &&
+    pd.sourceType === nd.sourceType &&
+    JSON.stringify(pd.filterPatterns ?? []) === JSON.stringify(nd.filterPatterns ?? []) &&
     pd.hasTarget === nd.hasTarget &&
     pd.hasSource === nd.hasSource
+  )
+}
+
+type ESMDecisionEvent = StreamEvent & {
+  payload?: {
+    esmId?: string
+    matched?: boolean
+    eventName?: string
+    record?: unknown
+    filterPatterns?: string[]
+  }
+}
+
+type ESMFilterMode = "all" | "matched" | "filtered"
+
+function recordSearchText(event: ESMDecisionEvent): string {
+  return JSON.stringify(event.payload?.record ?? event.payload ?? {}, null, 2)
+}
+
+function isRecordObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function stringifyRecordSection(value: unknown): string {
+  return JSON.stringify(value ?? {}, null, 2)
+}
+
+function prettyFilterPatternArray(patterns: string[]): string {
+  const parsed = patterns.map((pattern) => {
+    try {
+      return JSON.parse(pattern) as unknown
+    } catch {
+      return pattern
+    }
+  })
+  return JSON.stringify(parsed, null, 2)
+}
+
+function HighlightedText({ text, query }: { text: string; query: string }) {
+  const q = query.trim()
+  if (!q) return <>{text}</>
+
+  const lower = text.toLowerCase()
+  const needle = q.toLowerCase()
+  const parts: ReactNode[] = []
+  let idx = 0
+  let match = lower.indexOf(needle, idx)
+  while (match >= 0) {
+    if (match > idx) parts.push(text.slice(idx, match))
+    parts.push(
+      <mark key={`${match}:${needle}`} className="rounded bg-amber-300/30 px-0.5 text-amber-100">
+        {text.slice(match, match + q.length)}
+      </mark>,
+    )
+    idx = match + q.length
+    match = lower.indexOf(needle, idx)
+  }
+  if (idx < text.length) parts.push(text.slice(idx))
+  return <>{parts}</>
+}
+
+function ESMRecordDetails({ event, query }: { event: ESMDecisionEvent; query: string }) {
+  const record = event.payload?.record
+  const q = query.trim()
+  if (!isRecordObject(record)) {
+    return <TriggerEventViewer event={record ?? event.payload} />
+  }
+
+  if (q) {
+    return (
+      <pre className="max-h-80 overflow-auto rounded border border-border bg-bg p-3 text-xs leading-relaxed whitespace-pre-wrap text-fg">
+        <HighlightedText text={recordSearchText(event)} query={q} />
+      </pre>
+    )
+  }
+
+  const dynamodb = isRecordObject(record.dynamodb) ? record.dynamodb : undefined
+  const sections = [
+    ["Keys", dynamodb?.Keys],
+    ["New image", dynamodb?.NewImage],
+    ["Old image", dynamodb?.OldImage],
+  ].filter((section): section is [string, unknown] => section[1] !== undefined)
+
+  if (sections.length === 0) {
+    return <TriggerEventViewer event={record} />
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2 text-xs text-fg-muted @md:grid-cols-4">
+        {typeof record.eventID === "string" && (
+          <div className="rounded bg-bg px-2 py-1">
+            <span className="block text-[10px] font-semibold text-fg-subtle uppercase">Event ID</span>
+            <span className="break-all text-fg">{record.eventID}</span>
+          </div>
+        )}
+        {typeof record.eventVersion === "string" && (
+          <div className="rounded bg-bg px-2 py-1">
+            <span className="block text-[10px] font-semibold text-fg-subtle uppercase">Version</span>
+            <span className="text-fg">{record.eventVersion}</span>
+          </div>
+        )}
+        {typeof record.awsRegion === "string" && (
+          <div className="rounded bg-bg px-2 py-1">
+            <span className="block text-[10px] font-semibold text-fg-subtle uppercase">Region</span>
+            <span className="text-fg">{record.awsRegion}</span>
+          </div>
+        )}
+        {typeof dynamodb?.SequenceNumber === "string" && (
+          <div className="rounded bg-bg px-2 py-1">
+            <span className="block text-[10px] font-semibold text-fg-subtle uppercase">Sequence</span>
+            <span className="break-all text-fg">{dynamodb.SequenceNumber}</span>
+          </div>
+        )}
+      </div>
+      <div className="grid gap-3 @lg:grid-cols-2">
+        {sections.map(([label, value]) => (
+          <div key={label} className="min-w-0 rounded border border-border bg-bg">
+            <div className="border-b border-border px-3 py-2 text-[10px] font-bold tracking-wide text-fg-muted uppercase">
+              {label}
+            </div>
+            <pre className="max-h-56 overflow-auto p-3 text-xs leading-relaxed whitespace-pre-wrap text-fg">
+              {stringifyRecordSection(value)}
+            </pre>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ESMFilterPanel({
+  esmId,
+  patterns,
+}: {
+  esmId: string
+  patterns: string[]
+}) {
+  const [open, setOpen] = useState(false)
+  const [mode, setMode] = useState<ESMFilterMode>("all")
+  const [query, setQuery] = useState("")
+  const { events } = useEventStream({ source: "lambda" })
+  const decisions = useMemo(
+    () =>
+      events
+        .filter(
+          (e): e is ESMDecisionEvent =>
+            (e.type === EventType.lambda.ESMRecordFiltered ||
+              e.type === EventType.lambda.ESMRecordMatched) &&
+            (e.payload as { esmId?: string } | undefined)?.esmId === esmId,
+        )
+        .map((event, index) => ({ event, receipt: index + 1 })),
+    [events, esmId],
+  )
+  const visibleDecisions = useMemo(
+    () =>
+      decisions.filter(({ event }) => {
+        const didMatch = event.payload?.matched === true
+        if (mode === "matched" && !didMatch) return false
+        if (mode === "filtered" && didMatch) return false
+
+        const q = query.trim().toLowerCase()
+        if (!q) return true
+        return `${event.payload?.eventName ?? ""}\n${recordSearchText(event)}`.toLowerCase().includes(q)
+      }),
+    [decisions, mode, query],
+  )
+  const matched = decisions.filter(({ event }) => event.payload?.matched === true).length
+  const filtered = decisions.filter(({ event }) => event.payload?.matched === false).length
+  const total = matched + filtered
+  const filterPatternText = patterns.length > 0 ? prettyFilterPatternArray(patterns) : "[]"
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          setOpen(true)
+        }}
+        className="group flex h-full w-full items-center justify-center rounded-full border border-amber-300/35 bg-amber-400/15 text-amber-200 shadow-lg shadow-amber-950/20 transition-all hover:scale-105 hover:border-amber-200/70 hover:bg-amber-300/25 hover:text-amber-100"
+        title="Peek DynamoDB stream filter decisions"
+      >
+        <Filter className="h-7 w-7 transition-transform group-hover:rotate-12" />
+        {total > 0 && (
+          <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-300 px-1 text-[10px] font-black text-black tabular-nums shadow">
+            {total > 99 ? "99+" : total}
+          </span>
+        )}
+      </button>
+
+      <RadixDialog.Root open={open} onOpenChange={setOpen}>
+        <RadixDialog.Portal>
+          <RadixDialog.Overlay className="fixed inset-0 z-60 bg-black/20 backdrop-blur-[1px]" />
+          <RadixDialog.Content
+            aria-describedby={undefined}
+            onClick={(e) => e.stopPropagation()}
+            className={cn(
+              "fixed inset-y-0 right-0 z-70 flex w-[min(760px,100vw)] flex-col border-l border-border bg-bg-elevated shadow-2xl",
+              "transition-transform duration-300 data-[state=closed]:translate-x-full data-[state=open]:translate-x-0",
+            )}
+          >
+            <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border bg-gradient-to-br from-amber-400/12 via-bg-elevated to-bg-elevated px-5 py-4">
+              <div className="min-w-0">
+                <RadixDialog.Title className="flex items-center gap-2 text-base font-semibold text-fg">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-400/15 text-amber-200">
+                    <Filter className="h-4 w-4" />
+                  </span>
+                  Event Source Mapping Filter
+                </RadixDialog.Title>
+                <p className="mt-1 text-xs text-fg-muted">
+                  DynamoDB stream records evaluated by this Lambda trigger, in receipt order.
+                </p>
+              </div>
+              <RadixDialog.Close asChild>
+                <button
+                  type="button"
+                  className="rounded p-1.5 text-fg-muted transition-colors hover:bg-fg-muted/15 hover:text-fg"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </RadixDialog.Close>
+            </div>
+
+            <div className="grid shrink-0 grid-cols-3 gap-2 border-b border-border px-5 py-3">
+              <div className="rounded-lg border border-border bg-bg px-3 py-2">
+                <div className="text-[10px] font-bold tracking-wide text-fg-subtle uppercase">Received</div>
+                <div className="text-xl font-semibold tabular-nums text-fg">{total}</div>
+              </div>
+              <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/8 px-3 py-2">
+                <div className="text-[10px] font-bold tracking-wide text-emerald-300 uppercase">Filtered in</div>
+                <div className="text-xl font-semibold tabular-nums text-emerald-200">{matched}</div>
+              </div>
+              <div className="rounded-lg border border-red-400/20 bg-red-400/8 px-3 py-2">
+                <div className="text-[10px] font-bold tracking-wide text-red-300 uppercase">Filtered out</div>
+                <div className="text-xl font-semibold tabular-nums text-red-200">{filtered}</div>
+              </div>
+            </div>
+
+            <div className="shrink-0 border-b border-border px-5 py-4">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold text-fg">Filter pattern</h3>
+                {patterns.length > 1 && <span className="text-xs text-fg-muted">{patterns.length} patterns</span>}
+              </div>
+              <pre className="max-h-32 overflow-auto rounded-lg border border-amber-400/15 bg-amber-400/6 p-3 text-xs leading-relaxed whitespace-pre-wrap text-fg">
+                {filterPatternText}
+              </pre>
+            </div>
+
+            <div className="shrink-0 border-b border-border px-5 py-4">
+              <div className="mb-3 flex flex-col gap-3 @md:flex-row @md:items-center @md:justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-fg">Record history</h3>
+                  <p className="text-xs text-fg-subtle">
+                    Showing {visibleDecisions.length} matching records from the local event cache.
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border bg-bg p-1 text-xs">
+                  {(["all", "matched", "filtered"] as const).map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setMode(value)}
+                      className={cn(
+                        "rounded-md px-3 py-1.5 font-medium transition-colors",
+                        mode === value
+                          ? "bg-amber-400/20 text-amber-100 shadow-sm"
+                          : "text-fg-muted hover:bg-bg-elevated hover:text-fg",
+                      )}
+                    >
+                      {value === "all" ? "Both" : value === "matched" ? "In" : "Out"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="relative">
+                <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-fg-subtle" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search keys, image values, sequence numbers..."
+                  className="w-full rounded-lg border border-border bg-bg py-2.5 pr-3 pl-9 text-sm text-fg placeholder:text-fg-subtle focus:border-amber-300 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+              {decisions.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-border bg-bg/60 p-8 text-center">
+                  <Filter className="mx-auto mb-3 h-8 w-8 text-fg-subtle" />
+                  <p className="text-sm font-medium text-fg">No records have reached this filter yet.</p>
+                  <p className="mt-1 text-xs text-fg-muted">
+                    Write to the DynamoDB table after opening the map to see filter decisions here.
+                  </p>
+                </div>
+              ) : visibleDecisions.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-border bg-bg/60 p-8 text-center text-sm text-fg-muted">
+                  No records match the current toggle and search.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {visibleDecisions.map(({ event, receipt }) => {
+                    const didMatch = event.payload?.matched === true
+                    return (
+                      <article
+                        key={`${event.time}:${receipt}`}
+                        className={cn(
+                          "overflow-hidden rounded-xl border bg-bg-muted shadow-sm",
+                          didMatch ? "border-emerald-400/20" : "border-red-400/20",
+                        )}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-bg/60 px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <span className="rounded-md bg-bg-elevated px-2 py-1 text-[10px] font-bold text-fg-muted tabular-nums">
+                              #{receipt}
+                            </span>
+                            <span
+                              className={cn(
+                                "rounded-md px-2 py-1 text-[10px] font-black tracking-wide uppercase",
+                                didMatch
+                                  ? "bg-emerald-400/15 text-emerald-300"
+                                  : "bg-red-400/15 text-red-300",
+                              )}
+                            >
+                              {didMatch ? "Filtered in" : "Filtered out"}
+                            </span>
+                            {event.payload?.eventName && (
+                              <span className="rounded-md bg-fg-muted/10 px-2 py-1 text-[10px] font-semibold text-fg-muted">
+                                {event.payload.eventName}
+                              </span>
+                            )}
+                          </div>
+                          {event.time && <time className="text-xs text-fg-subtle">{event.time}</time>}
+                        </div>
+                        <div className="p-4">
+                          <ESMRecordDetails event={event} query={query} />
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </RadixDialog.Content>
+        </RadixDialog.Portal>
+      </RadixDialog.Root>
+    </>
   )
 }
 
@@ -796,6 +1157,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
     dataSourceCount,
     resolverCount,
   } = data as ServiceNodeData
+  const { esmId, filterPatterns = [] } = data as ServiceNodeData
 
   // Capture isNew at mount time only — never re-triggers on subsequent renders
   const [animated] = useState(() => !!isNew)
@@ -838,16 +1200,25 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
 
   const { hasTarget, hasSource } = data as ServiceNodeData
 
-  const meta = SERVICE_THEME[service] ?? {
-    color: "text-fg-muted",
-    bg: "bg-fg-muted/10",
-    border: "border-fg-muted/30",
-    hex: "#6b7280",
-    letter: "?",
-  }
-  const Icon =
-    (SERVICES as Record<string, (typeof SERVICES)[keyof typeof SERVICES] | undefined>)[service]
-      ?.icon ?? Box
+  const meta = service === "esm-filter"
+    ? {
+        color: "text-amber-300",
+        bg: "bg-amber-400/10",
+        border: "border-amber-400/30",
+        hex: "#facc15",
+        letter: "F",
+      }
+    : (SERVICE_THEME[service] ?? {
+        color: "text-fg-muted",
+        bg: "bg-fg-muted/10",
+        border: "border-fg-muted/30",
+        hex: "#6b7280",
+        letter: "?",
+      })
+  const Icon = service === "esm-filter"
+    ? Filter
+    : ((SERVICES as Record<string, (typeof SERVICES)[keyof typeof SERVICES] | undefined>)[service]
+        ?.icon ?? Box)
   const actionButtonClass = {
     sqs: "hover:bg-emerald-400/15 hover:text-emerald-400",
     sns: "hover:bg-orange-400/15 hover:text-orange-400",
@@ -864,6 +1235,36 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
     service === "sqs" ? liveInFlightCount : (approximateNumberOfMessagesNotVisible ?? 0)
   const totalMsgs = service === "sqs" ? visualMessages.length : visibleCount + inFlightCount
   const showMsgList = service === "sqs" && totalMsgs > 0
+
+  if (service === "esm-filter" && esmId) {
+    return (
+      <div className={cn("relative h-full w-full", enterClass)}>
+        {(eventCount ?? 0) > 0 && (
+          <span
+            key={eventCount}
+            aria-hidden
+            className="pointer-events-none absolute -inset-1 rounded-full ring-2 ring-amber-300"
+            style={{ animation: `overcastPulseRing ${PULSE_TTL}ms ease-out forwards` }}
+          />
+        )}
+        {hasTarget && (
+          <Handle
+            type="target"
+            position={Position.Left}
+            className="size-2! rounded-full! border-0! bg-amber-300/70!"
+          />
+        )}
+        <ESMFilterPanel esmId={esmId} patterns={filterPatterns} />
+        {hasSource && (
+          <Handle
+            type="source"
+            position={Position.Right}
+            className="size-2! rounded-full! border-0! bg-amber-300/70!"
+          />
+        )}
+      </div>
+    )
+  }
 
   return (
     <div
@@ -973,6 +1374,8 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
                 </span>
               )}
             </div>
+          ) : service === "esm-filter" ? (
+            <p className="text-sm leading-tight text-amber-300">DynamoDB stream filter</p>
           ) : (
             <p className="text-sm leading-tight text-fg-subtle capitalize">{service}</p>
           )}

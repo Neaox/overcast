@@ -1348,6 +1348,7 @@ var resourceHandlers = map[string]resourceHandler{
 	"AWS::DynamoDB::Table": &dynamodbTableHandler{},
 	// Lambda
 	"AWS::Lambda::Function":           &lambdaFunctionHandler{},
+	"AWS::Lambda::Alias":              &lambdaAliasHandler{},
 	"AWS::Lambda::EventSourceMapping": &lambdaEventSourceMappingHandler{},
 	"AWS::Lambda::Permission":         &stubResourceHandler{},
 	"AWS::Lambda::LayerVersion":       &lambdaLayerVersionHandler{},
@@ -2173,6 +2174,48 @@ func (h *lambdaFunctionHandler) Update(ctx context.Context, router http.Handler,
 		attrs["Arn"] = arn
 	}
 	return name, attrs, nil
+}
+
+// ── Lambda Alias handler ──────────────────────────────────────────────────
+
+type lambdaAliasHandler struct{}
+
+func (h *lambdaAliasHandler) Create(ctx context.Context, router http.Handler, _ *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	functionName, _ := props["FunctionName"].(string)
+	aliasName, _ := props["Name"].(string)
+	functionVersion, _ := props["FunctionVersion"].(string)
+	if functionName == "" || aliasName == "" || functionVersion == "" {
+		return "", nil, fmt.Errorf("Lambda Alias: FunctionName, Name, and FunctionVersion are required")
+	}
+	body := map[string]any{"Name": aliasName, "FunctionVersion": functionVersion}
+	if desc, ok := props["Description"]; ok {
+		body["Description"] = desc
+	}
+	data, _ := json.Marshal(body)
+	path := "/2015-03-31/functions/" + url.PathEscape(functionName) + "/aliases"
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPost, path, "application/json", data)
+	if err != nil {
+		return "", nil, fmt.Errorf("lambda CreateAlias: %w", err)
+	}
+	var resp map[string]any
+	attrs := map[string]string{"Ref": aliasName, "Name": aliasName, "FunctionVersion": functionVersion}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err == nil {
+		if arn, ok := resp["AliasArn"].(string); ok {
+			attrs["Arn"] = arn
+			attrs["AliasArn"] = arn
+		}
+	}
+	return functionName + ":" + aliasName, attrs, nil
+}
+
+func (h *lambdaAliasHandler) Delete(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, rCtx *resolveContext) error {
+	parts := strings.SplitN(physicalID, ":", 2)
+	if len(parts) != 2 {
+		return nil
+	}
+	path := "/2015-03-31/functions/" + url.PathEscape(parts[0]) + "/aliases/" + url.PathEscape(parts[1])
+	_, _ = internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return nil
 }
 
 func mergeLambdaTags(stackTags []Tag, rawResourceTags any) map[string]string {

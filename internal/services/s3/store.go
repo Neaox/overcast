@@ -42,16 +42,23 @@ type CORSRule struct {
 	MaxAgeSeconds  int      `json:"max_age_seconds,omitempty"`
 }
 
+type BucketEncryptionRule struct {
+	SSEAlgorithm     string `json:"sse_algorithm"`
+	KMSMasterKeyID   string `json:"kms_master_key_id,omitempty"`
+	BucketKeyEnabled *bool  `json:"bucket_key_enabled,omitempty"`
+}
+
 // Bucket represents a stored S3 bucket.
 type Bucket struct {
-	Name             string                `json:"name"`
-	Region           string                `json:"region"`
-	CreationDate     time.Time             `json:"creation_date"`
-	VersioningStatus string                `json:"versioning_status,omitempty"` // "Enabled", "Suspended", or ""
-	Tags             map[string]string     `json:"tags,omitempty"`
-	WebsiteConfig    *WebsiteConfiguration `json:"website_config,omitempty"`
-	CORSRules        []CORSRule            `json:"cors_rules,omitempty"`
-	Policy           string                `json:"policy,omitempty"`
+	Name             string                 `json:"name"`
+	Region           string                 `json:"region"`
+	CreationDate     time.Time              `json:"creation_date"`
+	VersioningStatus string                 `json:"versioning_status,omitempty"` // "Enabled", "Suspended", or ""
+	Tags             map[string]string      `json:"tags,omitempty"`
+	WebsiteConfig    *WebsiteConfiguration  `json:"website_config,omitempty"`
+	CORSRules        []CORSRule             `json:"cors_rules,omitempty"`
+	Policy           string                 `json:"policy,omitempty"`
+	EncryptionRules  []BucketEncryptionRule `json:"encryption_rules,omitempty"`
 }
 
 // Object represents a stored S3 object.

@@ -169,6 +169,9 @@ func TestCreateGraphqlApi_success(t *testing.T) {
 	if api.Uris["GRAPHQL"] == "" {
 		t.Error("expected uris.GRAPHQL to be set")
 	}
+	if want := srv.URL + "/_appsync/" + api.ApiId + "/graphql"; api.Uris["GRAPHQL"] != want {
+		t.Fatalf("expected executable GraphQL URL %q, got %q", want, api.Uris["GRAPHQL"])
+	}
 	if api.Uris["REALTIME"] == "" {
 		t.Error("expected uris.REALTIME to be set")
 	}
@@ -183,6 +186,33 @@ func TestCreateGraphqlApi_success(t *testing.T) {
 	}
 	if api.Tags["env"] != "test" {
 		t.Errorf("expected tags.env=test, got %q", api.Tags["env"])
+	}
+}
+
+func TestListGraphqlApis_localGraphQLURLs(t *testing.T) {
+	// Given: an AppSync API exists.
+	srv := helpers.NewTestServer(t)
+	apiID, _ := createTestAPI(t, srv)
+
+	// When: ListGraphqlApis is called.
+	resp := appsyncGet(t, srv, "/v1/apis")
+	defer resp.Body.Close()
+
+	// Then: the returned GraphQL URL is directly executable against this Overcast instance.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		GraphqlApis []struct {
+			ApiId string            `json:"apiId"`
+			Uris  map[string]string `json:"uris"`
+		} `json:"graphqlApis"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if len(result.GraphqlApis) != 1 {
+		t.Fatalf("expected one API, got %d", len(result.GraphqlApis))
+	}
+	want := srv.URL + "/_appsync/" + apiID + "/graphql"
+	if got := result.GraphqlApis[0].Uris["GRAPHQL"]; got != want {
+		t.Fatalf("expected executable GraphQL URL %q, got %q", want, got)
 	}
 }
 

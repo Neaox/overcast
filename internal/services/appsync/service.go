@@ -10,6 +10,7 @@
 package appsync
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -67,6 +68,7 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {
 		if codec.Supports(s.SupportedProtocols(), c) {
 			if typed, ok := s.handler.typedOp[opName]; ok {
+				r = r.WithContext(context.WithValue(r.Context(), requestBaseURLKey{}, requestBaseURL(r)))
 				typed.Invoke(w, r, c)
 				return
 			}

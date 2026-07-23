@@ -86,7 +86,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 
 | Service          | Doc                                                 | Ops | Coverage tier                 |
 | ---------------- | --------------------------------------------------- | --- | ----------------------------- |
-| S3               | [s3.md](./services/s3.md)                           | 44  | Comprehensive / broad support |
+| S3               | [s3.md](./services/s3.md)                           | 47  | Comprehensive / broad support |
 | SQS              | [sqs.md](./services/sqs.md)                         | 21  | Comprehensive / broad support |
 | DynamoDB         | [dynamodb.md](./services/dynamodb.md)               | 19  | Comprehensive / broad support |
 | Lambda           | [lambda.md](./services/lambda.md)                   | 33  | Comprehensive / broad support |
@@ -218,6 +218,8 @@ docker run --rm \
 ```
 
 Persistent/hybrid SQLite data lives at `$OVERCAST_DATA_DIR/overcast.db`. WAL mode uses `$OVERCAST_DATA_DIR/overcast.wal`. You can also override the backend per-service:
+
+Hybrid seeds small control-plane namespaces into memory on startup and keeps large data-plane namespaces SQLite-backed until read, so background schedulers and dashboards do not continuously poll SQLite for hot resource metadata.
 
 ```bash
 -e OVERCAST_STATE=memory -e OVERCAST_STATE_S3=hybrid

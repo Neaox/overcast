@@ -603,6 +603,84 @@ func TestStream_PutItem_ModifyGeneratesRecord(t *testing.T) {
 	}
 }
 
+func TestStream_BatchWriteItem_putsGenerateRecords(t *testing.T) {
+	// Given: a stream-enabled table and an iterator at the start of the stream.
+	srv := helpers.NewTestServer(t)
+	streamArn := createStreamTable(t, srv, "batch-stream-items", "NEW_AND_OLD_IMAGES")
+	shardId := describeStreamShardId(t, srv, streamArn)
+	iter := getShardIterator(t, srv, streamArn, shardId, "TRIM_HORIZON", "")
+
+	// When: BatchWriteItem writes two items.
+	resp := ddbCall(t, srv, "BatchWriteItem", map[string]any{
+		"RequestItems": map[string]any{
+			"batch-stream-items": []map[string]any{
+				{"PutRequest": map[string]any{"Item": map[string]any{"id": map[string]string{"S": "b1"}}}},
+				{"PutRequest": map[string]any{"Item": map[string]any{"id": map[string]string{"S": "b2"}}}},
+			},
+		},
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: both writes are available as stream INSERT records.
+	resp = streamsCall(t, srv, "GetRecords", map[string]any{"ShardIterator": iter})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var result struct {
+		Records []struct {
+			EventName string `json:"eventName"`
+		} `json:"Records"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if len(result.Records) != 2 {
+		t.Fatalf("expected 2 BatchWriteItem stream records, got %d", len(result.Records))
+	}
+	for i, record := range result.Records {
+		if record.EventName != "INSERT" {
+			t.Fatalf("record %d: expected INSERT, got %q", i, record.EventName)
+		}
+	}
+}
+
+func TestStream_TransactWriteItems_putsGenerateRecords(t *testing.T) {
+	// Given: a stream-enabled table and an iterator at the start of the stream.
+	srv := helpers.NewTestServer(t)
+	streamArn := createStreamTable(t, srv, "transact-stream-items", "NEW_AND_OLD_IMAGES")
+	shardId := describeStreamShardId(t, srv, streamArn)
+	iter := getShardIterator(t, srv, streamArn, shardId, "TRIM_HORIZON", "")
+
+	// When: TransactWriteItems writes two items atomically.
+	resp := ddbCall(t, srv, "TransactWriteItems", map[string]any{
+		"TransactItems": []map[string]any{
+			{"Put": map[string]any{"TableName": "transact-stream-items", "Item": map[string]any{"id": map[string]string{"S": "t1"}}}},
+			{"Put": map[string]any{"TableName": "transact-stream-items", "Item": map[string]any{"id": map[string]string{"S": "t2"}}}},
+		},
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: both writes are available as stream INSERT records.
+	resp = streamsCall(t, srv, "GetRecords", map[string]any{"ShardIterator": iter})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var result struct {
+		Records []struct {
+			EventName string `json:"eventName"`
+		} `json:"Records"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if len(result.Records) != 2 {
+		t.Fatalf("expected 2 TransactWriteItems stream records, got %d", len(result.Records))
+	}
+	for i, record := range result.Records {
+		if record.EventName != "INSERT" {
+			t.Fatalf("record %d: expected INSERT, got %q", i, record.EventName)
+		}
+	}
+}
+
 // ---- helper functions ------------------------------------------------------
 
 func describeStreamShardId(t *testing.T, srv *helpers.TestServer, streamArn string) string {

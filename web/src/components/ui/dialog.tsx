@@ -37,7 +37,7 @@ const DialogContent = React.forwardRef<
       onClick={(e) => e.stopPropagation()}
       className={cn(
         "fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2",
-        "@container flex max-h-[calc(100vh-4rem)] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-bg-elevated shadow-2xl",
+        "@container flex max-h-[calc(100vh-4rem)] w-full max-w-lg flex-col overflow-y-auto rounded-xl border border-border bg-bg-elevated shadow-2xl",
         "data-[state=open]:animate-in data-[state=closed]:animate-out",
         "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
         "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",

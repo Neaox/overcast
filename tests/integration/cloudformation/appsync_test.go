@@ -145,6 +145,79 @@ const appsyncPipelineTemplate = `{
   }
 }`
 
+const appsyncLambdaAliasTemplate = `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "GraphqlApi": {
+      "Type": "AWS::AppSync::GraphQLApi",
+      "Properties": {
+        "Name": "cfn-appsync-lambda-alias-api",
+        "AuthenticationType": "API_KEY"
+      }
+    },
+    "Schema": {
+      "Type": "AWS::AppSync::GraphQLSchema",
+      "Properties": {
+        "ApiId": {"Fn::GetAtt": ["GraphqlApi", "ApiId"]},
+        "Definition": "type Query { namespaces: String }"
+      }
+    },
+    "NamespaceFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "lambda-function-l-ue1-digital-guides-namespace",
+        "Runtime": "nodejs20.x",
+        "Handler": "index.handler",
+        "Role": "arn:aws:iam::000000000000:role/test",
+        "Code": {"ZipFile": "exports.handler = async () => 'ok';"}
+      }
+    },
+    "NamespaceAlias": {
+      "Type": "AWS::Lambda::Alias",
+      "Properties": {
+        "FunctionName": {"Ref": "NamespaceFunction"},
+        "Name": "live",
+        "FunctionVersion": "$LATEST"
+      }
+    },
+    "NamespaceDataSource": {
+      "Type": "AWS::AppSync::DataSource",
+      "DependsOn": ["GraphqlApi", "NamespaceAlias"],
+      "Properties": {
+        "ApiId": {"Fn::GetAtt": ["GraphqlApi", "ApiId"]},
+        "Name": "appsync_datasource_l_ue1_digital_guides_namespace",
+        "Type": "AWS_LAMBDA",
+        "LambdaConfig": {
+          "LambdaFunctionArn": {"Fn::GetAtt": ["NamespaceAlias", "Arn"]}
+        }
+      }
+    },
+    "NamespacesResolver": {
+      "Type": "AWS::AppSync::Resolver",
+      "DependsOn": ["Schema", "NamespaceDataSource"],
+      "Properties": {
+        "ApiId": {"Fn::GetAtt": ["GraphqlApi", "ApiId"]},
+        "TypeName": "Query",
+        "FieldName": "namespaces",
+        "DataSourceName": "appsync_datasource_l_ue1_digital_guides_namespace",
+        "Kind": "UNIT"
+      }
+    },
+    "ApiKey": {
+      "Type": "AWS::AppSync::ApiKey",
+      "DependsOn": "Schema",
+      "Properties": {
+        "ApiId": {"Fn::GetAtt": ["GraphqlApi", "ApiId"]}
+      }
+    }
+  },
+  "Outputs": {
+    "ApiId": {"Value": {"Fn::GetAtt": ["GraphqlApi", "ApiId"]}},
+    "ApiKey": {"Value": {"Fn::GetAtt": ["ApiKey", "ApiKey"]}},
+    "AliasArn": {"Value": {"Fn::GetAtt": ["NamespaceAlias", "Arn"]}}
+  }
+}`
+
 func TestCreateStack_AppSyncUsableGraphQLApi(t *testing.T) {
 	// Given: a CDK-like AppSync stack template
 	srv := helpers.NewTestServer(t)
@@ -260,6 +333,41 @@ func TestCreateStack_AppSyncGraphQLApiTags(t *testing.T) {
 	}
 	if envResult.EnvironmentVariables["GUIDE"] != "digital" {
 		t.Fatalf("expected GUIDE env var digital, got %#v", envResult.EnvironmentVariables)
+	}
+}
+
+func TestCreateStack_AppSyncLambdaAliasDataSource(t *testing.T) {
+	// Given: a CDK-like AppSync data source that points at a Lambda alias.
+	srv := helpers.NewTestServer(t)
+	stackName := "appsync-lambda-alias"
+
+	// When: CloudFormation creates the stack.
+	createAppSyncStack(t, srv, stackName, appsyncLambdaAliasTemplate)
+
+	// Then: the alias is provisioned and Fn::GetAtt Alias.Arn is not an unsupported-resource stub.
+	outputs := describeStackOutputs(t, srv, stackName)
+	aliasArn := outputs["AliasArn"]
+	if !strings.Contains(aliasArn, ":function:lambda-function-l-ue1-digital-guides-namespace:live") {
+		t.Fatalf("expected Lambda alias ARN, got %q", aliasArn)
+	}
+	if strings.Contains(aliasArn, "-stub") {
+		t.Fatalf("expected real Lambda alias ARN, got unsupported stub %q", aliasArn)
+	}
+
+	// And: executing the resolver targets the underlying function name, not the alias resource stub.
+	graphqlResp := appsyncGraphQL(t, srv, outputs["ApiId"], outputs["ApiKey"], `{ namespaces }`)
+	defer graphqlResp.Body.Close()
+	helpers.AssertStatus(t, graphqlResp, http.StatusOK)
+	var result struct {
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	helpers.DecodeJSON(t, graphqlResp, &result)
+	for _, gqlErr := range result.Errors {
+		if strings.Contains(gqlErr.Message, "not found or unavailable") || strings.Contains(gqlErr.Message, "-stub") {
+			t.Fatalf("expected resolver to invoke the real Lambda function, got error %q", gqlErr.Message)
+		}
 	}
 }
 

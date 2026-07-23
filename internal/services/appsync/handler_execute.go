@@ -2012,9 +2012,12 @@ func unwrapDynamoDBAttr(v any) any {
 // lambdaFunctionNameFromARN extracts the function name from a Lambda ARN.
 // Input: "arn:aws:lambda:us-east-1:000000000000:function:my-fn" → "my-fn".
 func lambdaFunctionNameFromARN(arn string) string {
-	parts := strings.Split(arn, ":")
-	if len(parts) >= 7 {
-		return parts[6]
+	if idx := strings.Index(arn, ":function:"); idx >= 0 {
+		name := arn[idx+len(":function:"):]
+		if colonIdx := strings.IndexByte(name, ':'); colonIdx >= 0 {
+			name = name[:colonIdx]
+		}
+		return name
 	}
 	// Fallback: if not an ARN, treat the whole string as a function name.
 	return arn

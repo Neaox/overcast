@@ -58,10 +58,7 @@ func (h *Handler) createGraphqlApiTyped(ctx context.Context, req *createGraphqlA
 	if api.IntrospectionConfig == "" {
 		api.IntrospectionConfig = "ENABLED"
 	}
-	api.Uris = map[string]string{
-		"GRAPHQL":  fmt.Sprintf("https://%s.appsync-api.%s.amazonaws.com/graphql", apiID, h.cfg.Region),
-		"REALTIME": fmt.Sprintf("wss://%s.appsync-realtime-api.%s.amazonaws.com/graphql", apiID, h.cfg.Region),
-	}
+	api.Uris = localGraphQLURIs(baseURLFromContext(ctx), apiID)
 	api.Dns = map[string]string{
 		"GRAPHQL":  fmt.Sprintf("%s.appsync-api.%s.amazonaws.com", apiID, h.cfg.Region),
 		"REALTIME": fmt.Sprintf("%s.appsync-realtime-api.%s.amazonaws.com", apiID, h.cfg.Region),
@@ -93,7 +90,7 @@ func (h *Handler) getGraphqlApiTyped(ctx context.Context, req *getGraphqlApiRequ
 	if api == nil {
 		return nil, notFoundErr("GraphQL API " + req.ApiId + " not found.")
 	}
-	return &getGraphqlApiResponse{GraphqlApi: api}, nil
+	return &getGraphqlApiResponse{GraphqlApi: api.withLocalURIs(baseURLFromContext(ctx))}, nil
 }
 
 type listGraphqlApisRequest struct{}
@@ -106,6 +103,10 @@ func (h *Handler) listGraphqlApisTyped(ctx context.Context, _ *listGraphqlApisRe
 	apis, err := h.store.ListAPIs(ctx)
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	baseURL := baseURLFromContext(ctx)
+	for i, api := range apis {
+		apis[i] = api.withLocalURIs(baseURL)
 	}
 	return &listGraphqlApisResponse{GraphqlApis: apis}, nil
 }
@@ -151,7 +152,7 @@ func (h *Handler) updateGraphqlApiTyped(ctx context.Context, req *updateGraphqlA
 	if err := h.store.PutAPI(ctx, &update); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	return &updateGraphqlApiResponse{GraphqlApi: &update}, nil
+	return &updateGraphqlApiResponse{GraphqlApi: update.withLocalURIs(baseURLFromContext(ctx))}, nil
 }
 
 type deleteGraphqlApiRequest struct {

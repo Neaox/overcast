@@ -396,15 +396,18 @@ func TestHybridStore_RestoreLargeState(t *testing.T) {
 	}
 }
 
-func TestHybridStore_RestoreSkipsStartupKVScan(t *testing.T) {
+func TestHybridStore_RestoreSeedsHotNamespacesOnly(t *testing.T) {
 	if testing.Short() {
 		t.Skip("large restore regression test")
 	}
 
-	// Given: mostly bulk SQS messages plus a small metadata namespace.
+	// Given: mostly bulk SQS messages plus small hot control-plane namespaces
+	// used by background engines.
 	dir := t.TempDir()
 	ctx := context.Background()
 	seedHybridSQLiteNamespace(t, dir, "sqs:queues", 2, "queue-metadata")
+	seedHybridSQLiteNamespace(t, dir, "scheduler:schedules", 1, "schedule-metadata")
+	seedHybridSQLiteNamespace(t, dir, "eb:rules", 1, "rule-metadata")
 	seedHybridSQLiteNamespace(t, dir, "sqs:messages", 5000, strings.Repeat("x", 4096))
 
 	// When: hybrid restore completes.
@@ -416,11 +419,11 @@ func TestHybridStore_RestoreSkipsStartupKVScan(t *testing.T) {
 	defer s.Close()
 	waitForObservedLog(t, logs, "hybrid seed complete")
 
-	// Then: startup does not hydrate any KV rows, but both metadata and bulk
-	// messages remain readable via SQLite-backed hybrid reads.
+	// Then: startup hydrates only hot metadata rows. Bulk messages remain readable
+	// through the SQLite-backed lazy path without forcing full data-plane restore.
 	loaded := observedIntField(t, logs, "hybrid seed complete", "loaded")
-	if loaded != 0 {
-		t.Fatalf("seeded rows = %d, want no startup KV scan", loaded)
+	if loaded != 4 {
+		t.Fatalf("seeded rows = %d, want hot metadata only", loaded)
 	}
 	metadataKeys, err := s.List(ctx, "sqs:queues", "queue/")
 	if err != nil {
@@ -428,6 +431,20 @@ func TestHybridStore_RestoreSkipsStartupKVScan(t *testing.T) {
 	}
 	if len(metadataKeys) != 2 {
 		t.Fatalf("metadata rows = %d, want 2", len(metadataKeys))
+	}
+	schedulerKeys, err := s.List(ctx, "scheduler:schedules", "queue/")
+	if err != nil {
+		t.Fatalf("List scheduler metadata after seed: %v", err)
+	}
+	if len(schedulerKeys) != 1 {
+		t.Fatalf("scheduler rows = %d, want 1", len(schedulerKeys))
+	}
+	ruleKeys, err := s.List(ctx, "eb:rules", "queue/")
+	if err != nil {
+		t.Fatalf("List eventbridge metadata after seed: %v", err)
+	}
+	if len(ruleKeys) != 1 {
+		t.Fatalf("eventbridge rule rows = %d, want 1", len(ruleKeys))
 	}
 	keys, err := s.List(ctx, "sqs:messages", "queue/")
 	if err != nil {

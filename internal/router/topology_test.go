@@ -43,6 +43,61 @@ func TestBuildTopologyESMEdgesFromLambdaESMNamespace(t *testing.T) {
 	}
 }
 
+func TestBuildTopologyDynamoDBESMFilterNode(t *testing.T) {
+	// Given: a stream-enabled DynamoDB table, a Lambda function, and a filtered ESM.
+	tablePayload, _ := json.Marshal(map[string]any{
+		"TableName": "items",
+		"TableArn":  "arn:aws:dynamodb:us-east-1:000000000000:table/items",
+		"StreamSpecification": map[string]any{
+			"StreamEnabled": true,
+		},
+	})
+	functionPayload, _ := json.Marshal(map[string]any{
+		"name": "stream-fn",
+		"arn":  "arn:aws:lambda:us-east-1:000000000000:function:stream-fn",
+	})
+	esmPayload, _ := json.Marshal(map[string]any{
+		"UUID":           "esm-1",
+		"FunctionArn":    "arn:aws:lambda:us-east-1:000000000000:function:stream-fn",
+		"EventSourceArn": "arn:aws:dynamodb:us-east-1:000000000000:table/items/stream/2026-01-01T00:00:00.000",
+		"FilterCriteria": map[string]any{
+			"Filters": []map[string]any{{"Pattern": `{"eventName":["INSERT"]}`}},
+		},
+	})
+
+	// When: topology is built.
+	resp := buildTopology(&config.Config{Region: "us-east-1"}, map[string][]state.KV{
+		tNsTables:    {{Key: "us-east-1/items", Value: string(tablePayload)}},
+		tNsFunctions: {{Key: "us-east-1/stream-fn", Value: string(functionPayload)}},
+		tNsESM:       {{Key: "us-east-1/esm-1", Value: string(esmPayload)}},
+	}, "")
+
+	// Then: the filter is visible as a node between DynamoDB and Lambda.
+	nodes := map[string]topologyNode{}
+	for _, node := range resp.Nodes {
+		nodes[node.ID] = node
+	}
+	filterID := "us-east-1::esm-filter::esm-1"
+	filter, ok := nodes[filterID]
+	if !ok {
+		t.Fatalf("expected ESM filter node %s, got nodes: %v", filterID, resp.Nodes)
+	}
+	if filter.Service != "esm-filter" || filter.ESMID != "esm-1" || len(filter.FilterPatterns) != 1 {
+		t.Fatalf("unexpected filter node: %#v", filter)
+	}
+
+	edges := map[string]topologyEdge{}
+	for _, edge := range resp.Edges {
+		edges[edge.ID] = edge
+	}
+	if edge := edges["esm-filter-in::esm-1"]; edge.Source != "us-east-1::dynamodb::items" || edge.Target != filterID {
+		t.Fatalf("unexpected filter input edge: %#v", edge)
+	}
+	if edge := edges["esm-filter-out::esm-1"]; edge.Source != filterID || edge.Target != "us-east-1::lambda::stream-fn" {
+		t.Fatalf("unexpected filter output edge: %#v", edge)
+	}
+}
+
 func TestBuildTopologyAddsECREdgesForLambdaAndECSConsumers(t *testing.T) {
 	repoPayload, _ := json.Marshal(map[string]any{
 		"repositoryArn":  "arn:aws:ecr:us-east-1:000000000000:repository/sample-app",

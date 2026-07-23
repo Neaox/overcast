@@ -28,6 +28,7 @@ export const EDGE_THEME: Record<
   notification: { color: "#fb923c", dash: false, label: "S3 notification" },
   subscription: { color: "#f472b6", dash: false, label: "SNS subscription" },
   esm: { color: "#a78bfa", dash: false, label: "Lambda ESM" },
+  "esm-filter": { color: "#facc15", dash: true, label: "ESM filter" },
   pipe: { color: "#38bdf8", dash: true, label: "EventBridge Pipe" },
   logs: { color: "#34d399", dash: false, label: "CloudWatch Logs" },
   dlq: { color: "#f87171", dash: true, label: "Dead Letter Queue" },

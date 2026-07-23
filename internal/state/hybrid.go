@@ -785,24 +785,28 @@ func fallbackRetryErr(lastErr, ctxErr error) error {
 }
 
 func shouldRetryHybridSQLiteRead(err error) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || isSQLiteBusyOrLocked(err)
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || isSQLiteTransient(err)
 }
 
 func shouldRetryHybridSQLiteWrite(err error) bool {
-	return isSQLiteBusyOrLocked(err)
+	return isSQLiteTransient(err)
 }
 
-func isSQLiteBusyOrLocked(err error) bool {
+func isSQLiteTransient(err error) bool {
 	if err == nil {
 		return false
 	}
 	var sqliteErr *msqlite.Error
 	if errors.As(err, &sqliteErr) {
 		code := sqliteErr.Code()
-		return code == sqlite3.SQLITE_BUSY || code == sqlite3.SQLITE_LOCKED
+		return code == sqlite3.SQLITE_BUSY || code == sqlite3.SQLITE_LOCKED || code == sqlite3.SQLITE_INTERRUPT
 	}
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "database is locked") || strings.Contains(msg, "sqlite_busy") || strings.Contains(msg, "sqlite_locked")
+	return strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "sqlite_busy") ||
+		strings.Contains(msg, "sqlite_locked") ||
+		strings.Contains(msg, "interrupted (9)") ||
+		strings.Contains(msg, "sqlite_interrupt")
 }
 
 func (s *HybridStore) logHybridSQLiteRetry(op string, retryErr error, fields ...zap.Field) {
@@ -1044,11 +1048,11 @@ func (s *HybridStore) mergePendingPairs(namespace, prefix string, pairs []KV) []
 
 // Hybrid startup must never discover namespaces by scanning kv. On Windows
 // bind-mounted data directories that can turn a tiny metadata seed into a
-// multi-minute startup stall. Keep seeding opt-in and explicit; namespaces not
-// listed here remain SQLite-backed and are read lazily with the dirty overlay.
-var hybridSeedNamespaceList = []string{}
+// multi-minute startup stall. Seed the explicit TierHot namespace list and keep
+// every other namespace SQLite-backed with the dirty overlay.
+var hybridSeedNamespaceList = hybridHotNamespaces()
 
-var hybridSeedNamespaces = map[string]struct{}{}
+var hybridSeedNamespaces = hybridNamespaceSet(hybridSeedNamespaceList)
 
 var hybridLazyNamespaceList = []string{"*"}
 
@@ -1062,6 +1066,25 @@ const (
 func shouldReadHybridNamespaceFromSQLite(namespace string) bool {
 	_, seeded := hybridSeedNamespaces[namespace]
 	return !seeded
+}
+
+func hybridHotNamespaces() []string {
+	namespaces := make([]string, 0, len(namespaceTiers))
+	for namespace, tier := range namespaceTiers {
+		if tier == TierHot {
+			namespaces = append(namespaces, namespace)
+		}
+	}
+	sort.Strings(namespaces)
+	return namespaces
+}
+
+func hybridNamespaceSet(namespaces []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(namespaces))
+	for _, namespace := range namespaces {
+		set[namespace] = struct{}{}
+	}
+	return set
 }
 
 func (s *HybridStore) logDebug(msg string, fields ...zap.Field) {

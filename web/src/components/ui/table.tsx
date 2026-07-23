@@ -17,14 +17,16 @@ function TableBody({ className, ...props }: React.HTMLAttributes<HTMLTableSectio
   return <tbody className={cn("[&_tr:last-child]:border-0", className)} {...props} />
 }
 
-function TableRow({ className, ...props }: React.HTMLAttributes<HTMLTableRowElement>) {
+function TableRow({ className, onClick, ...props }: React.HTMLAttributes<HTMLTableRowElement>) {
   return (
     <tr
       className={cn(
-        "cursor-pointer border-b border-border-muted transition-colors hover:bg-bg-subtle",
+        "border-b border-border-muted transition-colors",
+        onClick && "cursor-pointer hover:bg-bg-subtle",
         "data-[selected=true]:bg-accent-muted",
         className,
       )}
+      onClick={onClick}
       {...props}
     />
   )

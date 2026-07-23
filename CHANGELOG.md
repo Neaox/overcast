@@ -71,8 +71,14 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
-- **State** — hybrid SQLite-backed reads now retry canceled, busy, and locked SQLite operations with bounded backoff, serialize SQLite flushes to avoid concurrent transaction contention, expose persistent backend health and pending-write counts, persist accepted writes to a pending log before async flush, and force CloudFormation terminal stack state through synchronous persistence.
+- **AppSync** — `CreateGraphqlApi`, `GetGraphqlApi`, and `ListGraphqlApis` now return local executable GraphQL URLs for the connected Overcast endpoint, and Lambda data sources strip ARN aliases/versions before invocation.
+- **CloudFormation/Lambda** — `AWS::Lambda::Alias` resources now create and delete real Lambda aliases instead of being treated as unsupported/stubbed resources.
+- **DynamoDB/Lambda** — DynamoDB stream event source mappings now process records through a bounded per-mapping worker, honor `BatchSize` and `MaximumBatchingWindowInSeconds`, apply filters per record before Lambda invocation, and expose filter decision evidence in the system map through a compact filter node with a searchable ordered receipt-history drawer.
+- **DynamoDB** — `BatchWriteItem` and `TransactWriteItems` writes now emit stream records, and composite-key `PutItem` condition checks such as `attribute_not_exists(PK) AND attribute_not_exists(SK)` reject existing items consistently.
+- **S3** — bucket encryption APIs now support CDK asset bucket checks by returning default SSE-S3 encryption and round-tripping AES256/KMS encryption configuration.
+- **State** — hybrid SQLite-backed reads now retry canceled, busy, locked, and interrupted SQLite operations with bounded backoff, serialize SQLite flushes to avoid concurrent transaction contention, seed hot control-plane namespaces into memory while keeping bulk data-plane namespaces lazy, expose persistent backend health and pending-write counts, persist accepted writes to a pending log before async flush, and force CloudFormation terminal stack state through synchronous persistence.
 - **Lambda** — startup no longer pre-pulls every managed runtime image by default; set `LAMBDA_SEED_RUNTIME_IMAGES=true` to opt back into broad startup seeding while per-function prewarming and lazy first-use pulls remain enabled.
+- **Web UI** — bundled console builds now include the Tailwind typography plugin as a production build dependency, fixing Docker release builds that install only runtime dependencies.
 
 ## [0.0.1-alpha.22] - 2026-07-22
 

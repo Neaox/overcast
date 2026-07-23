@@ -52,6 +52,14 @@ export function defaultEventSummary(event: StreamEvent): string {
     return `${src} → ${fn}${nameStr} filtered ${count} record${count !== 1 ? "s" : ""}${reasonStr}`
   }
 
+  if (event.type === "lambda:ESMRecordMatched") {
+    const fn = String(p.functionName ?? "")
+    const src = String(p.eventSource ?? "")
+    const name = String(p.eventName ?? "")
+    const nameStr = name ? ` [${name}]` : ""
+    return `${src} → ${fn}${nameStr} matched filter`
+  }
+
   if (event.type === "lambda:ImagePulling") {
     const image = String(p.image ?? "")
     return `Pulling image: ${image}`
