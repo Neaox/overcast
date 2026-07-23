@@ -33,13 +33,65 @@ describe("DebugPage", () => {
     render(<DebugPage />)
 
     // Then: the namespace, key, and pretty-printed raw value are visible read-only.
-    expect(await screen.findAllByRole("button", { name: /sqs:queues/ })).toHaveLength(2)
+    expect((await screen.findAllByRole("button", { name: /queues/ })).length).toBeGreaterThan(0)
+    expect(screen.getAllByText("sqs:queues").length).toBeGreaterThan(0)
     expect((await screen.findAllByText("us-east-1/my-dlq.fifo")).length).toBeGreaterThan(1)
     const viewer = screen.getByText(/MessageRetentionPeriod/).closest("section")
     expect(viewer).not.toBeNull()
+    expect(within(viewer as HTMLElement).getByText('"MessageRetentionPeriod"')).toBeInTheDocument()
+    expect(within(viewer as HTMLElement).getByText('"0"')).toBeInTheDocument()
+  })
+
+  it("shows slash-delimited keys as a tree", async () => {
+    // Given: S3 object state contains CDK asset keys nested under a bucket name.
+    server.use(
+      http.get("/api/debug/state", () =>
+        HttpResponse.json({
+          "s3:objects": [
+            "cdk-hnb659fds-assets-000000000000-us-east-1/0f677178c635e11d325450ded55a9c7dea158330a1e7cfdeba69cbf7bdfd96ac.json",
+          ],
+        }),
+      ),
+      http.get("/api/debug/state/s3%3Aobjects", () =>
+        HttpResponse.json({
+          "cdk-hnb659fds-assets-000000000000-us-east-1/0f677178c635e11d325450ded55a9c7dea158330a1e7cfdeba69cbf7bdfd96ac.json":
+            JSON.stringify({ body: "{}" }),
+        }),
+      ),
+    )
+
+    // When: the raw state debugger opens in its default tree view.
+    render(<DebugPage />)
+
+    // Then: the bucket-like prefix and object leaf are shown separately.
+    expect(await screen.findByText("cdk-hnb659fds-assets-000000000000-us-east-1")).toBeInTheDocument()
     expect(
-      within(viewer as HTMLElement).getByText(/"MessageRetentionPeriod": "0"/),
+      screen.getByText("0f677178c635e11d325450ded55a9c7dea158330a1e7cfdeba69cbf7bdfd96ac.json"),
     ).toBeInTheDocument()
+  })
+
+  it("decodes nested JSON string values", async () => {
+    // Given: a stored record contains an escaped JSON document inside a string field.
+    server.use(
+      http.get("/api/debug/state", () =>
+        HttpResponse.json({ "appsync": ["us-east-1:resolver:api-id:Query:namespaces"] }),
+      ),
+      http.get("/api/debug/state/appsync", () =>
+        HttpResponse.json({
+          "us-east-1:resolver:api-id:Query:namespaces": JSON.stringify({
+            requestMappingTemplate: JSON.stringify({ version: "2018-05-29", operation: "Invoke" }),
+          }),
+        }),
+      ),
+    )
+
+    // When: the raw value is rendered.
+    render(<DebugPage />)
+
+    // Then: the nested string is expanded into readable highlighted JSON.
+    expect(await screen.findByText('"requestMappingTemplate"')).toBeInTheDocument()
+    expect(screen.getByText('"operation"')).toBeInTheDocument()
+    expect(screen.getByText('"Invoke"')).toBeInTheDocument()
   })
 
   it("filters keys by raw stored values", async () => {
@@ -87,7 +139,8 @@ describe("DebugPage", () => {
 
     // When: the user copies the raw value and direct debug link.
     render(<DebugPage />)
-    await screen.findByText(/"name": "my-dlq.fifo"/)
+    await screen.findByText('"name"')
+    await screen.findByText('"my-dlq.fifo"')
     const valueButton = screen.getByRole("button", { name: "Value" })
     await waitFor(() => expect(valueButton).toBeEnabled())
     fireEvent.click(valueButton)
