@@ -68,7 +68,7 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {
 		if codec.Supports(s.SupportedProtocols(), c) {
 			if typed, ok := s.handler.typedOp[opName]; ok {
-				r = r.WithContext(context.WithValue(r.Context(), requestBaseURLKey{}, s.handler.clientBaseURL(r)))
+				r = r.WithContext(context.WithValue(r.Context(), requestBaseURLKey{}, serviceutil.ClientBaseURL(s.handler.cfg, r)))
 				typed.Invoke(w, r, c)
 				return
 			}

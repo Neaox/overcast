@@ -175,8 +175,8 @@ const appsyncLambdaAliasTemplate = `{
     "NamespaceAlias": {
       "Type": "AWS::Lambda::Alias",
       "Properties": {
-        "FunctionName": {"Ref": "NamespaceFunction"},
-        "Name": "live",
+        "FunctionName": {"Fn::GetAtt": ["NamespaceFunction", "Arn"]},
+        "Name": "DEFAULT",
         "FunctionVersion": "$LATEST"
       }
     },
@@ -188,7 +188,7 @@ const appsyncLambdaAliasTemplate = `{
         "Name": "appsync_datasource_l_ue1_digital_guides_namespace",
         "Type": "AWS_LAMBDA",
         "LambdaConfig": {
-          "LambdaFunctionArn": {"Fn::GetAtt": ["NamespaceAlias", "Arn"]}
+          "LambdaFunctionArn": {"Ref": "NamespaceAlias"}
         }
       }
     },
@@ -214,7 +214,8 @@ const appsyncLambdaAliasTemplate = `{
   "Outputs": {
     "ApiId": {"Value": {"Fn::GetAtt": ["GraphqlApi", "ApiId"]}},
     "ApiKey": {"Value": {"Fn::GetAtt": ["ApiKey", "ApiKey"]}},
-    "AliasArn": {"Value": {"Fn::GetAtt": ["NamespaceAlias", "Arn"]}}
+    "AliasRef": {"Value": {"Ref": "NamespaceAlias"}},
+    "AliasArn": {"Value": {"Fn::GetAtt": ["NamespaceAlias", "AliasArn"]}}
   }
 }`
 
@@ -346,12 +347,32 @@ func TestCreateStack_AppSyncLambdaAliasDataSource(t *testing.T) {
 
 	// Then: the alias is provisioned and Fn::GetAtt Alias.Arn is not an unsupported-resource stub.
 	outputs := describeStackOutputs(t, srv, stackName)
+	aliasRef := outputs["AliasRef"]
 	aliasArn := outputs["AliasArn"]
-	if !strings.Contains(aliasArn, ":function:lambda-function-l-ue1-digital-guides-namespace:live") {
+	if aliasRef != aliasArn {
+		t.Fatalf("expected Lambda alias Ref to equal AliasArn, ref=%q arn=%q", aliasRef, aliasArn)
+	}
+	if !strings.Contains(aliasArn, ":function:lambda-function-l-ue1-digital-guides-namespace:DEFAULT") {
 		t.Fatalf("expected Lambda alias ARN, got %q", aliasArn)
 	}
 	if strings.Contains(aliasArn, "-stub") {
 		t.Fatalf("expected real Lambda alias ARN, got unsupported stub %q", aliasArn)
+	}
+	dataSourceResp := appsyncGet(t, srv, "/v1/apis/"+outputs["ApiId"]+"/datasources/appsync_datasource_l_ue1_digital_guides_namespace")
+	defer dataSourceResp.Body.Close()
+	helpers.AssertStatus(t, dataSourceResp, http.StatusOK)
+	var dataSourceResult struct {
+		DataSource struct {
+			LambdaConfig map[string]string `json:"lambdaConfig"`
+		} `json:"dataSource"`
+	}
+	helpers.DecodeJSON(t, dataSourceResp, &dataSourceResult)
+	storedArn := dataSourceResult.DataSource.LambdaConfig["LambdaFunctionArn"]
+	if storedArn == "" {
+		storedArn = dataSourceResult.DataSource.LambdaConfig["lambdaFunctionArn"]
+	}
+	if storedArn != aliasArn {
+		t.Fatalf("expected AppSync data source LambdaFunctionArn to be alias ARN %q, got %q", aliasArn, storedArn)
 	}
 
 	// And: executing the resolver targets the underlying function name, not the alias resource stub.

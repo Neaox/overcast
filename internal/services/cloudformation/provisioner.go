@@ -2187,6 +2187,7 @@ func (h *lambdaAliasHandler) Create(ctx context.Context, router http.Handler, _ 
 	if functionName == "" || aliasName == "" || functionVersion == "" {
 		return "", nil, fmt.Errorf("Lambda Alias: FunctionName, Name, and FunctionVersion are required")
 	}
+	functionName = cfnLambdaFunctionName(functionName)
 	body := map[string]any{"Name": aliasName, "FunctionVersion": functionVersion}
 	if desc, ok := props["Description"]; ok {
 		body["Description"] = desc
@@ -2198,14 +2199,25 @@ func (h *lambdaAliasHandler) Create(ctx context.Context, router http.Handler, _ 
 		return "", nil, fmt.Errorf("lambda CreateAlias: %w", err)
 	}
 	var resp map[string]any
-	attrs := map[string]string{"Ref": aliasName, "Name": aliasName, "FunctionVersion": functionVersion}
+	attrs := map[string]string{"Name": aliasName, "FunctionVersion": functionVersion}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err == nil {
 		if arn, ok := resp["AliasArn"].(string); ok {
-			attrs["Arn"] = arn
+			attrs["Ref"] = arn
 			attrs["AliasArn"] = arn
 		}
 	}
 	return functionName + ":" + aliasName, attrs, nil
+}
+
+func cfnLambdaFunctionName(identifier string) string {
+	if idx := strings.Index(identifier, ":function:"); idx >= 0 {
+		name := identifier[idx+len(":function:"):]
+		if colonIdx := strings.IndexByte(name, ':'); colonIdx >= 0 {
+			name = name[:colonIdx]
+		}
+		return name
+	}
+	return identifier
 }
 
 func (h *lambdaAliasHandler) Delete(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, rCtx *resolveContext) error {
