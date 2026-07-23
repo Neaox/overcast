@@ -1,0 +1,11 @@
+# Normalize line endings to LF in the repository regardless of which OS
+# checks a file out. This keeps `git status` clean whether you're on native
+# Windows, macOS, Linux, or the dev container.
+* text=auto eol=lf
+
+# Known binaries checked into the repo (compat suite helpers) — never run
+# text normalization or diff them as text.
+capgen -text -diff
+stub-report -text -diff
+compat/suites/cli/runner -text -diff
+compat/suites/go-sdk/runner -text -diff
