@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { ChevronRight, Copy, Database, LinkIcon, RefreshCw, Search } from "lucide-react"
+import { ChevronRight, Copy, Database, ExternalLink, LinkIcon, RefreshCw, Search } from "lucide-react"
 import { PageHeader, QueryListState } from "@/components/ui/primitives"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -24,6 +24,9 @@ import {
   groupDebugNamespaces,
   serviceForDebugNamespace,
 } from "./namespaces"
+
+const MAX_HIGHLIGHTED_JSON_BYTES = 256 * 1024
+const MAX_NESTED_JSON_DECODE_BYTES = 1024 * 1024
 
 export function DebugPage({
   initialService,
@@ -472,6 +475,22 @@ function StateValueViewer({
           <Button
             variant="ghost"
             size="sm"
+            asChild
+            className={cn(!stateKey && "pointer-events-none opacity-50")}
+          >
+            <a
+              href={stateKey ? buildDebugRawValueURL(namespace, stateKey) : undefined}
+              target="_blank"
+              rel="noreferrer"
+              aria-disabled={!stateKey}
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Open
+            </a>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() =>
               stateKey && onCopy(buildDebugDeepLink(namespace, stateKey), "Debug link copied")
             }
@@ -484,7 +503,8 @@ function StateValueViewer({
       </div>
       {stateKey ? (
         <pre className="min-h-0 flex-1 overflow-auto p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap text-fg">
-          {parsed.isJSON ? (
+          {parsed.note ? <span className="mb-3 block text-fg-muted">{parsed.note}</span> : null}
+          {parsed.isJSON && parsed.highlight ? (
             <HighlightedJSON text={parsed.text} />
           ) : (
             <span className="text-fg-muted">{parsed.text}</span>
@@ -499,13 +519,35 @@ function StateValueViewer({
   )
 }
 
-function parseStoredValue(value: string | undefined): { text: string; isJSON: boolean } {
-  if (value == null || value === "") return { text: "", isJSON: false }
+function parseStoredValue(value: string | undefined): {
+  text: string
+  isJSON: boolean
+  highlight: boolean
+  note?: string
+} {
+  if (value == null || value === "") return { text: "", isJSON: false, highlight: false }
+  const shouldDecodeNested = value.length <= MAX_NESTED_JSON_DECODE_BYTES
   try {
-    return { text: JSON.stringify(decodeNestedJSON(JSON.parse(value)), null, 2), isJSON: true }
+    const parsed = shouldDecodeNested ? decodeNestedJSON(JSON.parse(value)) : JSON.parse(value)
+    const text = JSON.stringify(parsed, null, 2)
+    if (text.length > MAX_HIGHLIGHTED_JSON_BYTES) {
+      return {
+        text,
+        isJSON: true,
+        highlight: false,
+        note: `Syntax highlighting skipped for large JSON (${formatBytes(text.length)}).`,
+      }
+    }
+    return { text, isJSON: true, highlight: true }
   } catch {
-    return { text: value, isJSON: false }
+    return { text: value, isJSON: false, highlight: false }
   }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`
 }
 
 function decodeNestedJSON(value: unknown, depth = 0): unknown {
@@ -567,4 +609,8 @@ function highlightJSON(text: string): ReactNode[] {
 function buildDebugDeepLink(namespace: string, stateKey: string): string {
   const params = new URLSearchParams({ namespace, key: stateKey })
   return `${window.location.origin}/debug?${params.toString()}`
+}
+
+function buildDebugRawValueURL(namespace: string, stateKey: string): string {
+  return `/api/debug/state/${encodeURIComponent(namespace)}?key=${encodeURIComponent(stateKey)}`
 }

@@ -94,6 +94,33 @@ describe("DebugPage", () => {
     expect(screen.getByText('"Invoke"')).toBeInTheDocument()
   })
 
+  it("renders backend-truncated large JSON string values", async () => {
+    // Given: Lambda layer state contains a backend-truncated zip payload field.
+    const largeLayer = JSON.stringify({
+      layer_name: "deps",
+      content: `${"A".repeat(1024)}...(truncated)`,
+    })
+    server.use(
+      http.get("/api/debug/state", () =>
+        HttpResponse.json({ "lambda:layers": ["us-east-1/deps:0000000001"] }),
+      ),
+      http.get("/api/debug/state/lambda%3Alayers", () =>
+        HttpResponse.json({ "us-east-1/deps:0000000001": largeLayer }),
+      ),
+    )
+
+    // When: the raw Lambda layer record is selected.
+    render(<DebugPage />)
+
+    // Then: metadata remains readable and the truncation marker is visible.
+    expect(await screen.findByText(/"layer_name"/)).toBeInTheDocument()
+    const viewer = screen.getByText(/"layer_name"/).closest("section")
+    expect(viewer).not.toBeNull()
+    expect(within(viewer as HTMLElement).getByText(/"layer_name"/)).toBeInTheDocument()
+    expect(within(viewer as HTMLElement).getByText(/"content"/)).toBeInTheDocument()
+    expect(within(viewer as HTMLElement).getByText(/\.\.\.\(truncated\)/)).toBeInTheDocument()
+  })
+
   it("filters keys by raw stored values", async () => {
     // Given: a namespace contains multiple records.
     server.use(
@@ -145,6 +172,11 @@ describe("DebugPage", () => {
     await waitFor(() => expect(valueButton).toBeEnabled())
     fireEvent.click(valueButton)
     await waitFor(() => expect(clipboardWriteText).toHaveBeenCalled())
+    expect(screen.getByRole("link", { name: "Open" })).toHaveAttribute(
+      "href",
+      "/api/debug/state/sqs%3Aqueues?key=us-east-1%2Fmy-dlq.fifo",
+    )
+    expect(screen.getByRole("link", { name: "Open" })).toHaveAttribute("target", "_blank")
     fireEvent.click(screen.getByRole("button", { name: "Link" }))
 
     // Then: the clipboard receives the raw value and a link scoped to the record.

@@ -26,12 +26,17 @@ debugRoutes.get("/state", async (c) => {
 debugRoutes.get("/state/:namespace", async (c) => {
   const endpoint = endpointFromHeaders(c)
   const namespace = c.req.param("namespace")
-  const res = await fetch(`${endpoint.baseUrl}/_debug/state/${encodeURIComponent(namespace)}`)
-  if (res.status === 404) {
+  const key = c.req.query("key")
+  const search = key ? `?key=${encodeURIComponent(key)}` : ""
+  const res = await fetch(`${endpoint.baseUrl}/_debug/state/${encodeURIComponent(namespace)}${search}`)
+  if (res.status === 404 && !key) {
     return c.json(
       { error: "DebugDisabled", message: "OVERCAST_DEBUG must be enabled to inspect raw state." },
       404,
     )
+  }
+  if (key) {
+    return new Response(res.body, { status: res.status, headers: Object.fromEntries(res.headers) })
   }
   if (!res.ok) return c.json({ error: "debug namespace fetch failed" }, 502)
   return c.json(await res.json())

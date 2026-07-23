@@ -2,8 +2,10 @@ package router
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -120,6 +122,139 @@ func TestDebugState_includesSQSMessagesNamespace(t *testing.T) {
 	}
 }
 
+func TestDebugStateNamespace_truncatesLargeValues(t *testing.T) {
+	// Given: a namespace has a very large raw string value such as a Lambda layer zip payload.
+	store := state.NewMemoryStore()
+	ctx := context.Background()
+	largeValue := `{"layer_name":"deps","content":"` + strings.Repeat("A", debugStateValuePreviewBytes+1024) + `"}`
+	if err := store.Set(ctx, "lambda:layers", "us-east-1/deps:0000000001", largeValue); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: the raw state namespace is requested.
+	req := httptest.NewRequest(http.MethodGet, "/_debug/state/lambda:layers", nil)
+	rec := httptest.NewRecorder()
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("namespace", "lambda:layers")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	debugStateNamespace(store, nil).ServeHTTP(rec, req)
+
+	// Then: the value is capped for UI rendering and marked as truncated.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	got := body["us-east-1/deps:0000000001"]
+	var layer map[string]string
+	if err := json.Unmarshal([]byte(got), &layer); err != nil {
+		t.Fatalf("expected valid JSON after truncation: %v; body=%q", err, got)
+	}
+	if layer["layer_name"] != "deps" {
+		t.Fatalf("expected metadata to remain readable, got %q", layer["layer_name"])
+	}
+	if !strings.HasSuffix(layer["content"], debugStateTruncatedSuffix) {
+		t.Fatalf("expected truncation marker, got suffix %q", layer["content"][len(layer["content"])-32:])
+	}
+	if len(layer["content"]) != debugStateValuePreviewBytes+len(debugStateTruncatedSuffix) {
+		t.Fatalf("expected capped content length, got %d", len(layer["content"]))
+	}
+}
+
+func TestDebugStateNamespace_truncatesLargePlainTextValues(t *testing.T) {
+	// Given: a namespace has a large non-JSON raw string value.
+	store := state.NewMemoryStore()
+	ctx := context.Background()
+	largeValue := strings.Repeat("A", debugStateValuePreviewBytes+1024)
+	if err := store.Set(ctx, "debug:plain", "record", largeValue); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: the raw state namespace is requested.
+	req := httptest.NewRequest(http.MethodGet, "/_debug/state/debug:plain", nil)
+	rec := httptest.NewRecorder()
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("namespace", "debug:plain")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	debugStateNamespace(store, nil).ServeHTTP(rec, req)
+
+	// Then: the plain value is capped for UI rendering and marked as truncated.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	got := body["record"]
+	if !strings.HasSuffix(got, debugStateTruncatedSuffix) {
+		t.Fatalf("expected truncation marker, got suffix %q", got[len(got)-32:])
+	}
+	if len(got) != debugStateValuePreviewBytes+len(debugStateTruncatedSuffix) {
+		t.Fatalf("expected capped value length, got %d", len(got))
+	}
+}
+
+func TestDebugStateNamespaceKey_returnsRawJSONValue(t *testing.T) {
+	// Given: a selected raw state value is itself JSON and larger than the UI preview cap.
+	store := state.NewMemoryStore()
+	ctx := context.Background()
+	key := "us-east-1/deps:0000000001"
+	largeValue := `{"layer_name":"deps","content":"` + strings.Repeat("A", debugStateValuePreviewBytes+1024) + `"}`
+	if err := store.Set(ctx, "lambda:layers", key, largeValue); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: the selected value is requested directly.
+	req := httptest.NewRequest(http.MethodGet, "/_debug/state/lambda:layers?key="+key, nil)
+	rec := httptest.NewRecorder()
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("namespace", "lambda:layers")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	debugStateNamespace(store, nil).ServeHTTP(rec, req)
+
+	// Then: the full raw JSON value is returned without UI truncation.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("expected JSON content-type, got %q", got)
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != largeValue {
+		t.Fatalf("expected full raw value, got length %d want %d", len(got), len(largeValue))
+	}
+}
+
+func TestDebugStateNamespaceKey_returnsRawTextValue(t *testing.T) {
+	// Given: a selected raw state value is plain text.
+	store := state.NewMemoryStore()
+	ctx := context.Background()
+	if err := store.Set(ctx, "debug:plain", "record", "not json"); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: the selected value is requested directly.
+	req := httptest.NewRequest(http.MethodGet, "/_debug/state/debug:plain?key=record", nil)
+	rec := httptest.NewRecorder()
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("namespace", "debug:plain")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	debugStateNamespace(store, nil).ServeHTTP(rec, req)
+
+	// Then: the value is served as plain text for the browser to display or download.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+		t.Fatalf("expected text content-type, got %q", got)
+	}
+	if got := rec.Body.String(); got != "not json" {
+		t.Fatalf("unexpected body %q", got)
+	}
+}
+
 func TestResetAllNamespaces_deletesAppSyncAndAPIGatewayState(t *testing.T) {
 	// Given: AppSync and API Gateway state exists.
 	store := state.NewMemoryStore()
@@ -158,7 +293,7 @@ func TestDebugResetService_dynamodbClearsVirtualItems(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("service", "dynamodb")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	debugResetService(store, dynamo).ServeHTTP(rec, req)
+	debugResetService(store, dynamo, map[string]bool{"dynamodb": true}).ServeHTTP(rec, req)
 
 	// Then: store-backed metadata and virtual item state are both cleared.
 	body := rec.Body.String()
