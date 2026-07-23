@@ -501,9 +501,7 @@ func sigV4AccessKey(r *http.Request) string {
 	if auth := r.Header.Get("Authorization"); auth != "" {
 		for _, part := range strings.Split(auth, ",") {
 			part = strings.TrimSpace(part)
-			if strings.HasPrefix(part, "AWS4-HMAC-SHA256 ") {
-				part = strings.TrimPrefix(part, "AWS4-HMAC-SHA256 ")
-			}
+			part = strings.TrimPrefix(part, "AWS4-HMAC-SHA256 ")
 			if strings.HasPrefix(part, "Credential=") {
 				credential := strings.TrimPrefix(part, "Credential=")
 				if idx := strings.IndexByte(credential, '/'); idx > 0 {

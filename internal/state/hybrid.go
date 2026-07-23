@@ -950,6 +950,12 @@ func (s *HybridStore) applyPendingEntry(ctx context.Context, entry walEntry) {
 	case walDelete:
 		_ = s.mem.Delete(ctx, entry.Namespace, entry.Key)
 		s.dirty[storeKey(entry.Namespace, entry.Key)] = dirtyEntry{deleted: true}
+	case walDeletePrefix:
+		keys, _ := s.mem.List(ctx, entry.Namespace, entry.Key)
+		for _, key := range keys {
+			_ = s.mem.Delete(ctx, entry.Namespace, key)
+			s.dirty[storeKey(entry.Namespace, key)] = dirtyEntry{deleted: true}
+		}
 	}
 }
 

@@ -553,11 +553,6 @@ func (m *esmDeliveryManager) processStreamRecords(ctx context.Context, esm *Even
 	}
 }
 
-// deliverStreamRecord is a compatibility wrapper for single-record delivery.
-func (m *esmDeliveryManager) deliverStreamRecord(ctx context.Context, esm *EventSourceMapping, payload events.DynamoDBStreamPayload, evt events.Event) {
-	m.deliverStreamBatch(ctx, esm, []streamDeliveryEvent{{payload: payload, evt: evt}})
-}
-
 func (m *esmDeliveryManager) deliverStreamBatch(ctx context.Context, esm *EventSourceMapping, batch []streamDeliveryEvent) {
 	// Re-check ESM state before invoking.
 	current, aerr := m.store.getESM(ctx, esm.UUID)
