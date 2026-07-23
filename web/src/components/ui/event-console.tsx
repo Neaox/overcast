@@ -14,11 +14,12 @@
  */
 import { useRef, useEffect, useState, useCallback } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { X, Wifi, WifiOff } from "lucide-react"
+import { Code2, X, Wifi, WifiOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import type { StreamEvent } from "@/hooks/use-event-stream"
 import { cn } from "@/lib/utils"
+import Prism from "@/lib/prism"
 import { defaultEventSummary } from "./event-summary"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -133,6 +134,163 @@ function formatTime(iso: string): string {
   } catch {
     return iso
   }
+}
+
+interface DecodedString {
+  formatted: string
+  json: boolean
+}
+
+const BASE64_RE = /^[A-Za-z0-9+/_-]+={0,2}$/
+
+function decodeBase64Value(value: string): DecodedString | null {
+  const compact = value.trim()
+  if (compact.length < 8 || compact.length % 4 === 1 || !BASE64_RE.test(compact)) return null
+
+  try {
+    const normalized = compact.replace(/-/g, "+").replace(/_/g, "/")
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=")
+    const binary = atob(padded)
+    if (!binary) return null
+
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes)
+    if (!isUsefulDecodedText(decoded)) return null
+
+    const formattedJSON = formatJSONString(decoded)
+    return {
+      formatted: formattedJSON ?? decoded,
+      json: formattedJSON !== null,
+    }
+  } catch {
+    return null
+  }
+}
+
+function isUsefulDecodedText(value: string): boolean {
+  const trimmed = value.trim()
+  if (!trimmed) return false
+
+  let printable = 0
+  for (const char of value) {
+    const code = char.charCodeAt(0)
+    if (code === 9 || code === 10 || code === 13 || code >= 32) printable++
+  }
+  return printable / value.length > 0.9
+}
+
+function formatJSONString(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, 2)
+  } catch {
+    return null
+  }
+}
+
+function highlightedJSON(value: string) {
+  return { __html: Prism.highlight(value, Prism.languages.json, "json") }
+}
+
+function jsonLiteral(value: string | number | boolean | null): string {
+  return JSON.stringify(value)
+}
+
+function JsonString({ value, path }: { value: string; path: string }) {
+  const [showRaw, setShowRaw] = useState(false)
+  const decoded = decodeBase64Value(value)
+
+  if (!decoded) {
+    return <span className="text-emerald-300">{jsonLiteral(value)}</span>
+  }
+
+  const visible = showRaw ? jsonLiteral(value) : decoded.formatted
+  return (
+    <span className="inline-flex max-w-full flex-wrap items-start gap-1 align-top">
+      <button
+        type="button"
+        aria-label={showRaw ? `Show decoded value at ${path}` : `Show raw value at ${path}`}
+        title={showRaw ? "Show decoded value" : "Show raw value"}
+        className={cn(
+          "mt-0.5 inline-flex h-4 w-4 items-center justify-center rounded border border-cyan-400/30 text-cyan-300 hover:bg-cyan-400/10",
+          !showRaw && "bg-cyan-400/10",
+        )}
+        onClick={(event) => {
+          event.stopPropagation()
+          setShowRaw(!showRaw)
+        }}
+      >
+        <Code2 className="h-3 w-3" aria-hidden="true" />
+      </button>
+      <span className="text-cyan-300">
+        {showRaw ? "raw" : decoded.json ? "decoded JSON" : "decoded"}
+      </span>
+      {decoded.json && !showRaw ? (
+        <span
+          className="block whitespace-pre-wrap text-fg-muted"
+          dangerouslySetInnerHTML={highlightedJSON(visible)}
+        />
+      ) : (
+        <span className={cn(showRaw ? "text-emerald-300" : "text-fg-muted")}>{visible}</span>
+      )}
+    </span>
+  )
+}
+
+function JsonValue({ value, path }: { value: unknown; path: string }) {
+  if (value === null) return <span className="text-fg-subtle">null</span>
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <span>[]</span>
+    return (
+      <span>
+        [
+        {value.map((item, index) => (
+          <span key={`${path}.${index}`} className="block pl-4">
+            <JsonValue value={item} path={`${path}[${index}]`} />
+            {index < value.length - 1 ? <span>,</span> : null}
+          </span>
+        ))}
+        <span className="block">]</span>
+      </span>
+    )
+  }
+
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+    if (entries.length === 0) return <span>{"{}"}</span>
+    return (
+      <span>
+        {"{"}
+        {entries.map(([key, item], index) => (
+          <span key={`${path}.${key}`} className="block pl-4">
+            <span className="text-sky-300">{jsonLiteral(key)}</span>:{" "}
+            <JsonValue value={item} path={`${path}.${key}`} />
+            {index < entries.length - 1 ? <span>,</span> : null}
+          </span>
+        ))}
+        <span className="block">{"}"}</span>
+      </span>
+    )
+  }
+
+  if (typeof value === "string") return <JsonString value={value} path={path} />
+  if (typeof value === "number") return <span className="text-amber-300">{jsonLiteral(value)}</span>
+  if (typeof value === "boolean")
+    return <span className="text-purple-300">{jsonLiteral(value)}</span>
+  return <span className="text-fg-muted">{jsonLiteral(String(value))}</span>
+}
+
+function EventPayloadDetails({ event }: { event: StreamEvent }) {
+  return (
+    <div className="mt-1 rounded bg-white/5 p-2 text-xs break-all whitespace-pre-wrap text-fg-muted">
+      <JsonValue
+        value={{ type: event.type, time: event.time, source: event.source, payload: event.payload }}
+        path="$"
+      />
+    </div>
+  )
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -253,15 +411,7 @@ export function EventConsole({
                     </Badge>
                     <span className="min-w-0 truncate text-sm text-fg-muted">{summary}</span>
                   </div>
-                  {isExpanded && (
-                    <pre className="mt-1 rounded bg-white/5 p-2 text-xs break-all whitespace-pre-wrap text-fg-muted">
-                      {JSON.stringify(
-                        { type: ev.type, time: ev.time, source: ev.source, payload: ev.payload },
-                        null,
-                        2,
-                      )}
-                    </pre>
-                  )}
+                  {isExpanded && <EventPayloadDetails event={ev} />}
                 </div>
               )
             })}
