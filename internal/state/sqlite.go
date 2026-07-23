@@ -271,6 +271,33 @@ func (s *SQLiteStore) List(ctx context.Context, namespace, prefix string) ([]str
 	return keys, nil
 }
 
+func (s *SQLiteStore) ListNamespaces(ctx context.Context) ([]string, error) {
+	if err := s.ensureReady(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT namespace FROM kv ORDER BY namespace`)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite list namespaces: %w", err)
+	}
+	defer rows.Close()
+
+	var namespaces []string
+	for rows.Next() {
+		var namespace string
+		if err := rows.Scan(&namespace); err != nil {
+			return nil, fmt.Errorf("sqlite list namespaces scan: %w", err)
+		}
+		namespaces = append(namespaces, namespace)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite list namespaces rows: %w", err)
+	}
+	if namespaces == nil {
+		namespaces = []string{}
+	}
+	return namespaces, nil
+}
+
 // Scan returns all key-value pairs whose keys start with prefix in a single
 // query — prefer this over List+Get when you need both keys and values.
 func (s *SQLiteStore) Scan(ctx context.Context, namespace, prefix string) ([]KV, error) {

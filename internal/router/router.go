@@ -152,21 +152,11 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	r.Get("/_overcast/init", initStatusHandler(initRunner))
 	r.Get("/_overcast/init/{stage}", initStageStatusHandler(initRunner))
 
-	// ---- Debug endpoints (gated by OVERCAST_DEBUG) --------------------------
-	// Equivalent to LocalStack's /_localstack/* namespace.
-	// Always 404 when debug is disabled — safe to leave cfg.Debug=false in CI.
-	//
-	// ec2Svc is constructed here (before the rest of the services) because the
-	// debug namespace exposes EC2 internals (/_debug/ec2/vpcs). Its constructor
-	// has no startup side-effects — see docs/performance.md § Startup budget.
+	// ---- Debug dependencies ---------------------------------------------------
+	// ec2Svc is constructed before the rest of the services because the debug
+	// namespace exposes EC2 internals (/_debug/ec2/vpcs). Its constructor has no
+	// startup side-effects — see docs/performance.md § Startup budget.
 	ec2Svc := ec2.New(cfg, store, logger, clk)
-	if cfg.Debug {
-		var ec2Debug debugEC2Provider
-		if cfg.Services["ec2"] {
-			ec2Debug = ec2Svc
-		}
-		r.Route("/_debug", debugHandlers(cfg, store, ec2Debug))
-	}
 
 	// ---- Event bus (create) ------------------------------------------------
 	bus = events.NewBus()
@@ -213,6 +203,17 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	prof.mark("  new: ses")
 	ddbSvc := dynamodb.New(cfg, store, logger, clk, bus)
 	prof.mark("  new: dynamodb")
+	if cfg.Debug {
+		var ec2Debug debugEC2Provider
+		if cfg.Services["ec2"] {
+			ec2Debug = ec2Svc
+		}
+		var dynamoDebug debugDynamoDBProvider
+		if cfg.Services["dynamodb"] {
+			dynamoDebug = ddbSvc
+		}
+		r.Route("/_debug", debugHandlers(cfg, store, ec2Debug, dynamoDebug))
+	}
 	lambdaSvc := lambda.New(cfg, store, logger, clk)
 	prof.mark("  new: lambda")
 	pipesSvc := pipes.New(cfg, store, logger, clk)

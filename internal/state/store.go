@@ -74,6 +74,10 @@ type Store interface {
 	// Returns an empty slice (not nil) when no keys match.
 	List(ctx context.Context, namespace, prefix string) (keys []string, err error)
 
+	// ListNamespaces returns all namespaces that currently contain at least one
+	// key. Returns an empty slice (not nil) when the store is empty.
+	ListNamespaces(ctx context.Context) (namespaces []string, err error)
+
 	// Scan returns all key-value pairs in namespace whose keys start with prefix,
 	// in a single atomic read. Prefer Scan over List+Get when you need both keys
 	// and values — it avoids N individual Get calls and holds the lock only once.

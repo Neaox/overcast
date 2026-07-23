@@ -404,6 +404,41 @@ func (s *HybridStore) List(ctx context.Context, namespace, prefix string) ([]str
 	return s.mergePendingKeys(namespace, prefix, keys), nil
 }
 
+func (s *HybridStore) ListNamespaces(ctx context.Context) ([]string, error) {
+	seen := map[string]bool{}
+	var namespaces []string
+	add := func(items []string) {
+		for _, namespace := range items {
+			if namespace == "" || seen[namespace] {
+				continue
+			}
+			seen[namespace] = true
+			namespaces = append(namespaces, namespace)
+		}
+	}
+
+	memNamespaces, err := s.mem.ListNamespaces(ctx)
+	if err != nil {
+		return nil, err
+	}
+	add(memNamespaces)
+
+	if s.sqliteReadyNow() {
+		sqliteNamespaces, err := s.sqliteListNamespaces(ctx)
+		if err != nil {
+			return nil, err
+		}
+		add(sqliteNamespaces)
+	}
+	add(s.pendingNamespaces())
+
+	sort.Strings(namespaces)
+	if namespaces == nil {
+		return []string{}, nil
+	}
+	return namespaces, nil
+}
+
 // Scan serves from memory after the initial seed completes. During seed it
 // uses SQLite plus the dirty overlay to avoid first-request stalls.
 func (s *HybridStore) Scan(ctx context.Context, namespace, prefix string) ([]KV, error) {
@@ -650,6 +685,32 @@ func (s *HybridStore) pendingValue(namespace, key string) (dirtyEntry, bool) {
 	return entry, ok
 }
 
+func (s *HybridStore) pendingNamespaces() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	seen := map[string]bool{}
+	var namespaces []string
+	add := func(composite string, entry dirtyEntry) {
+		if entry.deleted {
+			return
+		}
+		namespace, _, ok := strings.Cut(composite, "\x00")
+		if !ok || namespace == "" || seen[namespace] {
+			return
+		}
+		seen[namespace] = true
+		namespaces = append(namespaces, namespace)
+	}
+	for composite, entry := range s.dirty {
+		add(composite, entry)
+	}
+	for composite, entry := range s.flushing {
+		add(composite, entry)
+	}
+	return namespaces
+}
+
 func (s *HybridStore) setLoadErr(err error) {
 	s.mu.Lock()
 	s.loadErr = err
@@ -705,6 +766,27 @@ func (s *HybridStore) sqliteList(ctx context.Context, namespace, prefix string) 
 	return retryKeys, retryErr
 }
 
+func (s *HybridStore) sqliteListNamespaces(ctx context.Context) ([]string, error) {
+	namespaces, err := s.sqlite.ListNamespaces(ctx)
+	if !shouldRetryHybridSQLiteRead(err) {
+		if err != nil {
+			s.markPersistentError(err)
+		}
+		return namespaces, err
+	}
+
+	retryCtx, cancel := context.WithTimeout(context.Background(), hybridSQLiteReadRetryTimeout)
+	defer cancel()
+	retryNamespaces, retryErr := s.retrySQLiteListNamespaces(retryCtx)
+	s.logHybridSQLiteRetry("list namespaces", retryErr, zap.Error(err))
+	if retryErr != nil {
+		s.markPersistentError(retryErr)
+	} else {
+		s.markPersistentSuccess()
+	}
+	return retryNamespaces, retryErr
+}
+
 func (s *HybridStore) sqliteScan(ctx context.Context, namespace, prefix string) ([]KV, error) {
 	pairs, err := s.sqlite.Scan(ctx, namespace, prefix)
 	if !shouldRetryHybridSQLiteRead(err) {
@@ -746,6 +828,20 @@ func (s *HybridStore) retrySQLiteList(ctx context.Context, namespace, prefix str
 		keys, err := s.sqlite.List(ctx, namespace, prefix)
 		if !shouldRetryHybridSQLiteRead(err) {
 			return keys, err
+		}
+		lastErr = err
+		if err := sleepHybridSQLiteRetry(ctx); err != nil {
+			return nil, fallbackRetryErr(lastErr, err)
+		}
+	}
+}
+
+func (s *HybridStore) retrySQLiteListNamespaces(ctx context.Context) ([]string, error) {
+	var lastErr error
+	for {
+		namespaces, err := s.sqlite.ListNamespaces(ctx)
+		if !shouldRetryHybridSQLiteRead(err) {
+			return namespaces, err
 		}
 		lastErr = err
 		if err := sleepHybridSQLiteRetry(ctx); err != nil {

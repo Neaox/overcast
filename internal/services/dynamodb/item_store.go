@@ -53,6 +53,19 @@ type itemBackend interface {
 	// Unix epoch timestamp in seconds) is > 0 and <= cutoffUnix. This allows
 	// the sweeper to fetch only expired items instead of scanning every item.
 	scanExpiredTTL(ctx context.Context, tableName, ttlAttr string, cutoffUnix int64) ([]Item, error)
+
+	// debugScan returns raw item rows for /_debug/state/dynamodb:items.
+	debugScan(ctx context.Context) ([]debugItemRecord, error)
+
+	// debugDeleteAll removes all item rows for debug reset operations.
+	debugDeleteAll(ctx context.Context) error
+}
+
+type debugItemRecord struct {
+	TableName string
+	HashKey   string
+	SortKey   string
+	Item      Item
 }
 
 // ---------------------------------------------------------------------------
@@ -194,6 +207,31 @@ func (b *memItemBackend) scanExpiredTTL(_ context.Context, tableName, ttlAttr st
 		return []Item{}, nil
 	}
 	return items, nil
+}
+
+func (b *memItemBackend) debugScan(_ context.Context) ([]debugItemRecord, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	var records []debugItemRecord
+	for tableName, table := range b.tables {
+		for hashKey, partition := range table {
+			for sortKey, item := range partition {
+				records = append(records, debugItemRecord{TableName: tableName, HashKey: hashKey, SortKey: sortKey, Item: item})
+			}
+		}
+	}
+	if records == nil {
+		return []debugItemRecord{}, nil
+	}
+	return records, nil
+}
+
+func (b *memItemBackend) debugDeleteAll(_ context.Context) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.tables = make(map[string]map[string]map[string]Item)
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -416,4 +454,47 @@ func scanItemRows(rows *sql.Rows) ([]Item, error) {
 		return []Item{}, nil
 	}
 	return items, nil
+}
+
+func (b *sqlItemBackend) debugScan(ctx context.Context) ([]debugItemRecord, error) {
+	if err := b.init(); err != nil {
+		return nil, err
+	}
+	rows, err := b.db.QueryContext(ctx,
+		`SELECT table_name, hash_key, sort_key, item_json FROM dynamodb_items ORDER BY table_name, hash_key, sort_key`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("dynamodb items debug scan: %w", err)
+	}
+	defer rows.Close()
+
+	var records []debugItemRecord
+	for rows.Next() {
+		var record debugItemRecord
+		var raw string
+		if err := rows.Scan(&record.TableName, &record.HashKey, &record.SortKey, &raw); err != nil {
+			return nil, fmt.Errorf("dynamodb items debug scan row: %w", err)
+		}
+		if err := json.Unmarshal([]byte(raw), &record.Item); err != nil {
+			return nil, fmt.Errorf("dynamodb items debug decode: %w", err)
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("dynamodb items debug scan rows: %w", err)
+	}
+	if records == nil {
+		return []debugItemRecord{}, nil
+	}
+	return records, nil
+}
+
+func (b *sqlItemBackend) debugDeleteAll(ctx context.Context) error {
+	if err := b.init(); err != nil {
+		return err
+	}
+	if _, err := b.db.ExecContext(ctx, `DELETE FROM dynamodb_items`); err != nil {
+		return fmt.Errorf("dynamodb items debug delete all: %w", err)
+	}
+	return nil
 }

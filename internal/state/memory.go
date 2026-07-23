@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 
@@ -112,6 +113,23 @@ func (s *MemoryStore) List(_ context.Context, namespace, prefix string) ([]strin
 		return []string{}, nil // always a slice, never nil
 	}
 	return keys, nil
+}
+
+func (s *MemoryStore) ListNamespaces(_ context.Context) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	namespaces := make([]string, 0, len(s.data))
+	for namespace, tree := range s.data {
+		if tree != nil && tree.Len() > 0 {
+			namespaces = append(namespaces, namespace)
+		}
+	}
+	sort.Strings(namespaces)
+	if namespaces == nil {
+		return []string{}, nil
+	}
+	return namespaces, nil
 }
 
 // Scan returns all key-value pairs whose keys start with prefix, under a single

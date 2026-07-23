@@ -246,6 +246,10 @@ func (s *WALStore) List(ctx context.Context, namespace, prefix string) ([]string
 	return s.mem.List(ctx, namespace, prefix)
 }
 
+func (s *WALStore) ListNamespaces(ctx context.Context) ([]string, error) {
+	return s.mem.ListNamespaces(ctx)
+}
+
 func (s *WALStore) Scan(ctx context.Context, namespace, prefix string) ([]KV, error) {
 	return s.mem.Scan(ctx, namespace, prefix)
 }

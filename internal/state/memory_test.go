@@ -2,6 +2,7 @@ package state_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/Neaox/overcast/internal/state"
@@ -102,6 +103,30 @@ func TestMemoryStore_List_returnsEmptySlice(t *testing.T) {
 	}
 	if keys == nil {
 		t.Error("List should return empty slice, not nil")
+	}
+}
+
+func TestMemoryStore_ListNamespaces(t *testing.T) {
+	// Given: keys exist across multiple namespaces.
+	s := state.NewMemoryStore()
+	ctx := context.Background()
+	if err := s.Set(ctx, "sqs:queues", "orders", "{}"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Set(ctx, "appsync", "us-east-1/api:abc", "{}"); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: namespaces are listed.
+	namespaces, err := s.ListNamespaces(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Then: only populated namespaces are returned in deterministic order.
+	want := []string{"appsync", "sqs:queues"}
+	if !reflect.DeepEqual(namespaces, want) {
+		t.Fatalf("expected namespaces %#v, got %#v", want, namespaces)
 	}
 }
 
