@@ -117,6 +117,12 @@ type HybridStore struct {
 	syncInterval  time.Duration
 	log           *zap.Logger
 
+	// maintenanceInterval controls runMaintenance's ticker (3.5: passive WAL
+	// checkpoint + conditional incremental vacuum). The loop is always
+	// started; it no-ops on each tick while the store is still seeding or
+	// has degraded to memory-only (see runMaintenance).
+	maintenanceInterval time.Duration
+
 	// sqliteReady is closed when SQLite is open and migrated. loaded is closed
 	// when the background SQLite -> memory seed finishes.
 	sqliteReady chan struct{}
@@ -187,6 +193,16 @@ type HybridOptions struct {
 	// byte size of unflushed writes exceeds this many bytes. Defaults to
 	// 8 MiB. A value <= 0 disables this trigger.
 	DirtyByteThreshold int64
+
+	// MaintenanceInterval controls how often the background loop runs
+	// routine SQLite housekeeping (3.5 in docs/storage-plan.md): a passive
+	// WAL checkpoint plus a conditional incremental vacuum. Never runs on
+	// the request path. Defaults to 5 minutes. A value <= 0 falls back to
+	// the default rather than disabling the loop — unlike the dirty
+	// thresholds above, there's no useful "off" state for routine
+	// maintenance, so this intentionally doesn't support disabling it via a
+	// non-positive value.
+	MaintenanceInterval time.Duration
 }
 
 const (
@@ -235,6 +251,9 @@ func NewHybridStoreWithOptions(dataDir string, opts HybridOptions, logger *zap.L
 	if opts.DirtyByteThreshold == 0 {
 		opts.DirtyByteThreshold = defaultHybridDirtyByteThreshold
 	}
+	if opts.MaintenanceInterval <= 0 {
+		opts.MaintenanceInterval = defaultMaintenanceInterval
+	}
 
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("hybrid store: create data dir %q: %w", dataDir, err)
@@ -253,6 +272,7 @@ func NewHybridStoreWithOptions(dataDir string, opts HybridOptions, logger *zap.L
 		flushInterval:       opts.FlushInterval,
 		syncMode:            opts.SyncMode,
 		syncInterval:        opts.SyncInterval,
+		maintenanceInterval: opts.MaintenanceInterval,
 		log:                 logger,
 		sqliteReady:         make(chan struct{}),
 		loaded:              make(chan struct{}),
@@ -283,6 +303,10 @@ func NewHybridStoreWithOptions(dataDir string, opts HybridOptions, logger *zap.L
 		hs.wg.Add(1)
 		go hs.runPendingSync(bgCtx)
 	}
+
+	hs.wg.Add(1)
+	go hs.runMaintenance(bgCtx)
+
 	return hs, nil
 }
 
@@ -695,6 +719,246 @@ func (s *HybridStore) Scan(ctx context.Context, namespace, prefix string) ([]KV,
 	return s.mergePendingPairs(namespace, prefix, pairs), nil
 }
 
+// ScanPage is the paginated counterpart to Scan (3.2 in
+// docs/storage-plan.md). Branching mirrors Scan/List exactly: once a TierHot
+// namespace has finished seeding, memory alone is authoritative (every write
+// updates mem synchronously inside Set/Delete/DeletePrefix, so there is
+// nothing left to merge) and ScanPage delegates straight to
+// MemoryStore.ScanPage's seek-based pagination. Every other case — a
+// TierCached namespace, or a TierHot namespace still mid-seed — must merge a
+// paginated base read (SQLite once ready, memory as a startup fallback)
+// against the pending write overlay; see hybridScanPageMerged for how that
+// merge preserves exact pagination correctness across the boundary between
+// persisted/seeded state and not-yet-flushed writes.
+func (s *HybridStore) ScanPage(ctx context.Context, namespace, prefix, startAfter string, limit int) ([]KV, string, error) {
+	if shouldReadHybridNamespaceFromSQLite(namespace) {
+		if s.sqliteReadyNow() {
+			return s.hybridScanPageMerged(ctx, namespace, prefix, startAfter, limit, s.sqliteScanPage)
+		}
+		return s.hybridScanPageMerged(ctx, namespace, prefix, startAfter, limit, s.mem.ScanPage)
+	}
+	if s.isLoaded() {
+		return s.mem.ScanPage(ctx, namespace, prefix, startAfter, limit)
+	}
+	if s.sqliteReadyNow() {
+		return s.hybridScanPageMerged(ctx, namespace, prefix, startAfter, limit, s.sqliteScanPage)
+	}
+	return s.hybridScanPageMerged(ctx, namespace, prefix, startAfter, limit, s.mem.ScanPage)
+}
+
+// hybridScanPageBaseFunc fetches one page of raw, overlay-unaware results
+// from whichever base source ScanPage selected — s.sqliteScanPage and
+// s.mem.ScanPage both already satisfy this signature directly, since
+// Store.ScanPage's shape is exactly what a "base source" needs to provide.
+type hybridScanPageBaseFunc func(ctx context.Context, namespace, prefix, startAfter string, limit int) ([]KV, string, error)
+
+// hybridScanPageMergeChunk is the page size hybridScanPageMerged requests
+// from the base source per internal round trip. It is independent of the
+// caller's requested limit — see hybridScanPageMerged.
+const hybridScanPageMergeChunk = 1000
+
+// hybridScanPageMerged pages through a base source (SQLite or memory) and
+// merges the result with the pending write overlay, preserving exact
+// pagination correctness across the boundary between persisted/seeded state
+// and not-yet-flushed writes.
+//
+// Correctness approach: the overlay for any one namespace is bounded by the
+// configured dirty-flush thresholds (HybridOptions.DirtyEntryThreshold /
+// DirtyByteThreshold — a burst triggers an early flush well before the
+// overlay grows large; see dirtyThresholdExceededLocked), never by the
+// namespace's total size. That makes it always cheap to snapshot the
+// *entire* relevant slice of the overlay up front (snapshotOverlayLocked)
+// and hold it in memory for the duration of one ScanPage call, even though
+// the base itself — the reason ScanPage/pagination exists at all — may be
+// huge. The merge walks two sorted-by-key sources in lockstep: the overlay
+// snapshot (fully available in memory) and the base (fetched incrementally
+// in hybridScanPageMergeChunk-sized rounds via fetchBase), resolving every
+// candidate key against the overlay snapshot (which also carries
+// prefix-tombstone precedence — see resolveOverlayKey) before deciding
+// whether it belongs on this page. This correctly handles every interesting
+// case: a pending Set introducing a brand-new key inside the page's key
+// range, a pending Delete or DeletePrefix removing a key the base still
+// has, and an overlay entry landing exactly on a page boundary — nextKey is
+// always the literal next candidate key the merge walk would have
+// considered, so resuming from it on the next call can never skip or
+// duplicate a key regardless of which source (base or overlay) it came
+// from.
+//
+// This never holds s.mu while calling fetchBase — snapshotOverlayLocked
+// takes a point-in-time copy up front and releases the lock before the walk
+// begins, so a slow multi-page SQLite scan cannot block concurrent
+// Set/Delete calls.
+//
+// Efficiency note: the worst case (a large not-yet-flushed DeletePrefix
+// tombstoning a long run of base keys right at the start of the requested
+// range, or a caller passing limit <= 0 for "no limit") may fetch many
+// chunks from the base before returning — bounded by the total remaining
+// size of the base, i.e. no worse than the unpaginated Scan this
+// complements for large reads. The plan's escape hatch for this item
+// explicitly allows falling back to a full mergePendingPairs-then-slice
+// implementation if exact pagination proves too costly to get right; that
+// fallback turned out unnecessary here because the overlay — not the base —
+// is the only thing that needs to be held in full, and the overlay is
+// already bounded by design.
+func (s *HybridStore) hybridScanPageMerged(
+	ctx context.Context,
+	namespace, prefix, startAfter string,
+	limit int,
+	fetchBase hybridScanPageBaseFunc,
+) ([]KV, string, error) {
+	snap := s.snapshotOverlayLocked(namespace, prefix, startAfter)
+
+	var result []KV
+	overlayIdx := 0
+
+	var baseBatch []KV
+	basePos := 0
+	baseCursor := startAfter
+	baseHasMore := true
+
+	for {
+		if basePos >= len(baseBatch) && baseHasMore {
+			batch, next, err := fetchBase(ctx, namespace, prefix, baseCursor, hybridScanPageMergeChunk)
+			if err != nil {
+				return nil, "", err
+			}
+			baseBatch = batch
+			basePos = 0
+			baseCursor = next
+			baseHasMore = next != ""
+		}
+
+		baseAvail := basePos < len(baseBatch)
+		overlayAvail := overlayIdx < len(snap.newKeys)
+		if !baseAvail && !overlayAvail {
+			return finalizeMergedScanPage(result, "")
+		}
+
+		var candidateKey, candidateBaseValue string
+		fromBase, fromOverlay := false, false
+		switch {
+		case baseAvail && overlayAvail && baseBatch[basePos].Key == snap.newKeys[overlayIdx]:
+			candidateKey = baseBatch[basePos].Key
+			candidateBaseValue = baseBatch[basePos].Value
+			fromBase, fromOverlay = true, true
+		case baseAvail && (!overlayAvail || baseBatch[basePos].Key < snap.newKeys[overlayIdx]):
+			candidateKey = baseBatch[basePos].Key
+			candidateBaseValue = baseBatch[basePos].Value
+			fromBase = true
+		default:
+			candidateKey = snap.newKeys[overlayIdx]
+			fromOverlay = true
+		}
+
+		if limit > 0 && len(result) == limit {
+			// candidateKey is the first item beyond this page — proof a next
+			// page exists — but nextKey must be the *last included* item's
+			// key (startAfter is exclusive), not candidateKey itself, or the
+			// next call would skip candidateKey entirely.
+			return finalizeMergedScanPage(result, result[len(result)-1].Key)
+		}
+
+		if resolved, ok := snap.resolve(namespace, candidateKey); ok {
+			if !resolved.deleted {
+				result = append(result, KV{Key: candidateKey, Value: resolved.value})
+			}
+		} else if fromBase {
+			result = append(result, KV{Key: candidateKey, Value: candidateBaseValue})
+		}
+
+		if fromBase {
+			basePos++
+		}
+		if fromOverlay {
+			overlayIdx++
+		}
+	}
+}
+
+func finalizeMergedScanPage(result []KV, nextKey string) ([]KV, string, error) {
+	if result == nil {
+		result = []KV{}
+	}
+	return result, nextKey, nil
+}
+
+// hybridOverlaySnapshot is a point-in-time, lock-free-usable copy of the
+// portion of HybridStore's pending overlay relevant to one namespace+prefix
+// ScanPage call, built once under s.mu (see snapshotOverlayLocked) so
+// hybridScanPageMerged's walk through the (potentially slow,
+// multi-round-trip) base source never holds s.mu — see that function's doc
+// comment for why this is safe.
+type hybridOverlaySnapshot struct {
+	dirty              map[string]dirtyEntry
+	flushing           map[string]dirtyEntry
+	tombstones         []prefixTombstone
+	flushingTombstones []prefixTombstone
+
+	// newKeys holds every key with an explicit dirty/flushing entry under
+	// namespace+prefix, strictly after startAfter, sorted ascending. A
+	// prefix tombstone alone never introduces a candidate key (it only
+	// shadows existing ones — see forEachPendingCandidateKeyLocked, which
+	// this mirrors), so tombstone-only coverage of a base key is instead
+	// caught when resolve() is called against that base key directly during
+	// the merge walk.
+	newKeys []string
+}
+
+// resolve applies the exact same overlay precedence as
+// HybridStore.resolvePendingLocked, against this snapshot's copied data
+// instead of the live store — safe to call without s.mu held.
+func (snap hybridOverlaySnapshot) resolve(namespace, key string) (dirtyEntry, bool) {
+	return resolveOverlayKey(snap.dirty, snap.flushing, snap.tombstones, snap.flushingTombstones, namespace, key)
+}
+
+// snapshotOverlayLocked builds a hybridOverlaySnapshot for namespace+prefix,
+// restricted to overlay entries newer than startAfter. Copies the full
+// dirty/flushing maps and tombstone lists (bounded by the configured
+// dirty-flush thresholds, not by namespace size — see
+// hybridScanPageMerged's doc comment) rather than trying to filter
+// client-side per source map, since a straightforward point-in-time copy is
+// what makes it safe to release s.mu before hybridScanPageMerged's walk
+// begins.
+func (s *HybridStore) snapshotOverlayLocked(namespace, prefix, startAfter string) hybridOverlaySnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	snap := hybridOverlaySnapshot{
+		dirty:              make(map[string]dirtyEntry, len(s.dirty)),
+		flushing:           make(map[string]dirtyEntry, len(s.flushing)),
+		tombstones:         append([]prefixTombstone(nil), s.tombstones...),
+		flushingTombstones: append([]prefixTombstone(nil), s.flushingTombstones...),
+	}
+	for k, v := range s.dirty {
+		snap.dirty[k] = v
+	}
+	for k, v := range s.flushing {
+		snap.flushing[k] = v
+	}
+
+	seen := make(map[string]struct{})
+	collect := func(m map[string]dirtyEntry) {
+		for composite := range m {
+			ns, key := splitStoreKey(composite)
+			if ns != namespace || !strings.HasPrefix(key, prefix) {
+				continue
+			}
+			if startAfter != "" && key <= startAfter {
+				continue
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			snap.newKeys = append(snap.newKeys, key)
+		}
+	}
+	collect(s.dirty)
+	collect(s.flushing)
+	sort.Strings(snap.newKeys)
+	return snap
+}
+
 // WaitReady blocks until the background SQLite open and migration has
 // completed, satisfying state.ReadyAwaiter. Returns nil when the store
 // is ready for reads, or ctx.Err() if the context is cancelled first.
@@ -709,6 +973,28 @@ func (s *HybridStore) WaitReady(ctx context.Context) error {
 		return s.getLoadErr()
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+// NotReady implements state.NotReadyReporter: true only while the background
+// schema migration is still in flight (sqliteReady not yet closed) —
+// deliberately not gated on sqliteDegraded or isLoaded. A store that finished
+// migrating and then degraded to memory-only (see degradeToMemoryOnly) is
+// done with its startup phase and serves memory reads correctly forever
+// after; that is an ongoing health condition (PersistentHealth), not a
+// "still starting up" one, so NotReady must not keep reporting true for it.
+// Likewise, the seed phase that follows a successful migration is not
+// included here: once sqliteReady closes, Get/List/Scan already fall back to
+// querying SQLite directly for anything not yet loaded into memory, so reads
+// are accurate (just slower) — only the migration itself has a window where
+// TierHot reads would otherwise silently return "not found" for data that
+// exists once migration finishes.
+func (s *HybridStore) NotReady() bool {
+	select {
+	case <-s.sqliteReady:
+		return false
+	default:
+		return true
 	}
 }
 
@@ -832,6 +1118,30 @@ func (s *HybridStore) runPendingSync(ctx context.Context) {
 				_ = s.pendingFile.Sync()
 			}
 			s.mu.Unlock()
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// runMaintenance is the background goroutine that runs routine SQLite
+// housekeeping (3.5): a passive WAL checkpoint plus a conditional
+// incremental vacuum, via the shared runSQLitePragmaMaintenance helper (see
+// maintenance.go). Ticks that land while the store is still seeding or has
+// permanently degraded to memory-only are silent no-ops — this must never
+// run on the request path and must never error out the store; a failed
+// pragma is logged and retried on the next tick.
+func (s *HybridStore) runMaintenance(ctx context.Context) {
+	defer s.wg.Done()
+	ticker := time.NewTicker(s.maintenanceInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if !s.sqliteReadyNow() {
+				continue // still seeding, or degraded to memory-only — nothing to maintain
+			}
+			runSQLitePragmaMaintenance(ctx, s.sqlite.db, s.log, "hybrid maintenance")
 		case <-ctx.Done():
 			return
 		}
@@ -1065,13 +1375,38 @@ func (s *HybridStore) recomputeDirtyApproxBytesLocked() {
 // This is what makes "Set(k1); DeletePrefix(p); Set(k2)" (both k1, k2 under
 // p) resolve correctly: k1 reads deleted, k2 survives. Callers must hold
 // s.mu.
+//
+// The actual precedence logic lives in the package-level resolveOverlayKey
+// so ScanPage's merge walk (hybridScanPageMerged) can apply the identical
+// rule against a point-in-time snapshot of dirty/flushing/tombstones without
+// holding s.mu for the (potentially slow, multi-round-trip) duration of a
+// paginated base scan — see hybridOverlaySnapshot.
 func (s *HybridStore) resolvePendingLocked(namespace, key string) (dirtyEntry, bool) {
+	return resolveOverlayKey(s.dirty, s.flushing, s.tombstones, s.flushingTombstones, namespace, key)
+}
+
+// latestPrefixTombstoneSeqLocked returns the highest sequence number among
+// pending prefix tombstones (current and in-flight-flush generations) that
+// cover key in namespace. Callers must hold s.mu.
+func (s *HybridStore) latestPrefixTombstoneSeqLocked(namespace, key string) (int64, bool) {
+	return latestPrefixTombstoneSeqIn(s.tombstones, s.flushingTombstones, namespace, key)
+}
+
+// resolveOverlayKey is the pure, lock-free core of resolvePendingLocked: it
+// computes the effective pending-overlay state for namespace/key given
+// explicit copies of the dirty/flushing maps and the current/in-flight-flush
+// tombstone lists. Split out so hybridOverlaySnapshot.resolve (used by
+// ScanPage's merge walk against a point-in-time snapshot, not live store
+// state — see hybridScanPageMerged) shares the exact same precedence rule as
+// the request-path resolvePendingLocked instead of risking the two
+// implementations drifting apart.
+func resolveOverlayKey(dirty, flushing map[string]dirtyEntry, tombstones, flushingTombstones []prefixTombstone, namespace, key string) (dirtyEntry, bool) {
 	composite := storeKey(namespace, key)
-	entry, hasEntry := s.dirty[composite]
+	entry, hasEntry := dirty[composite]
 	if !hasEntry {
-		entry, hasEntry = s.flushing[composite]
+		entry, hasEntry = flushing[composite]
 	}
-	tombSeq, hasTomb := s.latestPrefixTombstoneSeqLocked(namespace, key)
+	tombSeq, hasTomb := latestPrefixTombstoneSeqIn(tombstones, flushingTombstones, namespace, key)
 	if hasEntry && (!hasTomb || entry.seq > tombSeq) {
 		return entry, true
 	}
@@ -1081,10 +1416,12 @@ func (s *HybridStore) resolvePendingLocked(namespace, key string) (dirtyEntry, b
 	return dirtyEntry{}, false
 }
 
-// latestPrefixTombstoneSeqLocked returns the highest sequence number among
-// pending prefix tombstones (current and in-flight-flush generations) that
-// cover key in namespace. Callers must hold s.mu.
-func (s *HybridStore) latestPrefixTombstoneSeqLocked(namespace, key string) (int64, bool) {
+// latestPrefixTombstoneSeqIn returns the highest sequence number among
+// tombstones (current and in-flight-flush generations, passed separately)
+// that cover key in namespace. The pure core of
+// HybridStore.latestPrefixTombstoneSeqLocked, also used directly by
+// resolveOverlayKey against a snapshot copy.
+func latestPrefixTombstoneSeqIn(tombstones, flushingTombstones []prefixTombstone, namespace, key string) (int64, bool) {
 	best := int64(-1)
 	found := false
 	check := func(tombs []prefixTombstone) {
@@ -1098,8 +1435,8 @@ func (s *HybridStore) latestPrefixTombstoneSeqLocked(namespace, key string) (int
 			}
 		}
 	}
-	check(s.tombstones)
-	check(s.flushingTombstones)
+	check(tombstones)
+	check(flushingTombstones)
 	return best, found
 }
 
@@ -1232,6 +1569,31 @@ func (s *HybridStore) sqliteScan(ctx context.Context, namespace, prefix string) 
 	return retryPairs, retryErr
 }
 
+// sqliteScanPage satisfies hybridScanPageBaseFunc, letting
+// hybridScanPageMerged call it interchangeably with s.mem.ScanPage.
+func (s *HybridStore) sqliteScanPage(ctx context.Context, namespace, prefix, startAfter string, limit int) ([]KV, string, error) {
+	pairs, nextKey, err := hybridSQLiteRawScanPage(ctx, s.readDB(), namespace, prefix, startAfter, limit)
+	if !shouldRetryHybridSQLiteRead(err) {
+		if err != nil {
+			s.markPersistentError(err)
+		}
+		return pairs, nextKey, err
+	}
+
+	retryCtx, cancel := context.WithTimeout(context.Background(), hybridSQLiteReadRetryTimeout)
+	defer cancel()
+	retryPairs, retryNextKey, retryErr := s.retrySQLiteScanPage(retryCtx, namespace, prefix, startAfter, limit)
+	s.logHybridSQLiteRetry("scan page", retryErr,
+		zap.String("namespace", namespace), zap.String("prefix", prefix),
+		zap.String("start_after", startAfter), zap.Error(err))
+	if retryErr != nil {
+		s.markPersistentError(retryErr)
+	} else {
+		s.markPersistentSuccess()
+	}
+	return retryPairs, retryNextKey, retryErr
+}
+
 func (s *HybridStore) retrySQLiteGet(ctx context.Context, namespace, key string) (string, bool, error) {
 	var lastErr error
 	for {
@@ -1284,6 +1646,20 @@ func (s *HybridStore) retrySQLiteScan(ctx context.Context, namespace, prefix str
 		lastErr = err
 		if err := sleepHybridSQLiteRetry(ctx); err != nil {
 			return nil, fallbackRetryErr(lastErr, err)
+		}
+	}
+}
+
+func (s *HybridStore) retrySQLiteScanPage(ctx context.Context, namespace, prefix, startAfter string, limit int) ([]KV, string, error) {
+	var lastErr error
+	for {
+		pairs, nextKey, err := hybridSQLiteRawScanPage(ctx, s.readDB(), namespace, prefix, startAfter, limit)
+		if !shouldRetryHybridSQLiteRead(err) {
+			return pairs, nextKey, err
+		}
+		lastErr = err
+		if err := sleepHybridSQLiteRetry(ctx); err != nil {
+			return nil, "", fallbackRetryErr(lastErr, err)
 		}
 	}
 }
@@ -1399,6 +1775,27 @@ func hybridSQLiteRawScan(ctx context.Context, db *sql.DB, namespace, prefix stri
 		pairs = []KV{}
 	}
 	return pairs, nil
+}
+
+// hybridSQLiteRawScanPage is hybridSQLiteRawScan's paginated counterpart. It
+// shares its query shape with SQLiteStore.ScanPage via the scanPageQuery /
+// collectScanPageRows / finalizeScanPage helpers in sqlite.go so the two
+// SQLite-backed Store implementations can never drift on key-range
+// semantics, while still running against an arbitrary *sql.DB (hybrid.go's
+// dedicated read pool) like the other hybridSQLiteRaw* helpers.
+func hybridSQLiteRawScanPage(ctx context.Context, db *sql.DB, namespace, prefix, startAfter string, limit int) ([]KV, string, error) {
+	query, args := scanPageQuery(namespace, prefix, startAfter, limit)
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, "", fmt.Errorf("hybrid sqlite scan page [%s/%s* after %q]: %w", namespace, prefix, startAfter, err)
+	}
+	defer rows.Close()
+
+	pairs, err := collectScanPageRows(rows)
+	if err != nil {
+		return nil, "", err
+	}
+	return finalizeScanPage(pairs, limit)
 }
 
 func sleepHybridSQLiteRetry(ctx context.Context) error {

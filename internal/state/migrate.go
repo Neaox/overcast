@@ -28,10 +28,12 @@ import (
 //     used today — see migrationKVTableVersion and migrationAutoVacuumVersion
 //     below.
 //   - 10-19: reserved for the CloudWatch Logs events table (storage-plan.md
-//     Phase 2 item 2.3), not yet registered.
-//   - 20+:   free for future dedicated tables (e.g. the DynamoDB retrofit in
-//     storage-plan.md item 3.9). Claim the next unused decade and document it
-//     here when a package registers into it.
+//     Phase 2 item 2.3) — see internal/services/cloudwatch/logs/migrations.go.
+//   - 20-29: reserved for the DynamoDB items/stream-records tables
+//     (storage-plan.md Phase 3 item 3.9) — see
+//     internal/services/dynamodb/migrations.go.
+//   - 30+:   free for future dedicated tables. Claim the next unused decade
+//     and document it here when a package registers into it.
 //
 // There are no down-migrations. The runner takes a file-copy backup of
 // overcast.db before applying the first pending migration (see

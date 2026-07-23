@@ -110,23 +110,27 @@ type sqlStreamBackend struct {
 	err  error // set by init; sticky
 }
 
-// newSQLStreamBackend returns a backend that lazily resolves the *sql.DB and
-// creates the stream records table on first use. Deferring DB resolution
-// avoids blocking startup when the underlying store opens SQLite
-// asynchronously.
+// newSQLStreamBackend returns a backend that lazily resolves the *sql.DB on
+// first use. Deferring DB resolution avoids blocking startup when the
+// underlying store opens SQLite asynchronously — dbFn (typically
+// state.SQLiteDBProvider.DB) blocks until the store's background open and
+// migration have completed, so by the time it returns here the
+// dynamodb_stream_records table already exists (created by the migration
+// registered in migrations.go, storage-plan.md item 3.9) without this
+// backend having to create it itself.
 func newSQLStreamBackend(dbFn func() *sql.DB) *sqlStreamBackend {
 	return &sqlStreamBackend{dbFn: dbFn}
 }
 
+// init resolves b.db from dbFn exactly once. Schema setup for
+// dynamodb_stream_records happens via the migration runner (migrations.go),
+// not here — see newSQLStreamBackend's doc comment for why that ordering is
+// safe.
 func (b *sqlStreamBackend) init() error {
 	b.once.Do(func() {
 		b.db = b.dbFn()
 		if b.db == nil {
 			b.err = fmt.Errorf("dynamodb stream_store: sqlite DB unavailable")
-			return
-		}
-		if _, err := b.db.Exec(createStreamRecordsTable); err != nil {
-			b.err = fmt.Errorf("dynamodb stream_store: create table: %w", err)
 		}
 	})
 	return b.err

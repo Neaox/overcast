@@ -37,6 +37,7 @@ see the [root README](../README.md).
 - [Development setup](./development-setup.md) — building from source
 - [Debugging](./debugging.md) — debug endpoints, logging, profiling
 - [Performance](./performance.md) — benchmarks and tuning
+- [Storage backend internals](./storage-backends.md) — durability, performance, and known limitations of each `state.Store` backend
 
 ---
 

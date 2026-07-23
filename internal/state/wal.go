@@ -289,6 +289,13 @@ func (s *WALStore) Scan(ctx context.Context, namespace, prefix string) ([]KV, er
 	return s.mem.Scan(ctx, namespace, prefix)
 }
 
+// ScanPage delegates to the underlying MemoryStore exactly like Get/List/
+// Scan above — WALStore always reads from memory; only writes touch the
+// append-only log.
+func (s *WALStore) ScanPage(ctx context.Context, namespace, prefix, startAfter string, limit int) ([]KV, string, error) {
+	return s.mem.ScanPage(ctx, namespace, prefix, startAfter, limit)
+}
+
 func (s *WALStore) Close() error {
 	s.mu.Lock()
 	if s.closed {

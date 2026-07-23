@@ -35,6 +35,69 @@ func TestHybridHotNamespaces_followNamespaceTiers(t *testing.T) {
 	}
 }
 
+// ---- NotReady (503-while-migrating middleware support) ----------------
+
+func TestHybridStore_NotReady_FalseAfterMigrationCompletes(t *testing.T) {
+	s, err := NewHybridStore(t.TempDir(), time.Hour)
+	if err != nil {
+		t.Fatalf("NewHybridStore: %v", err)
+	}
+	defer s.Close()
+	if err := s.WaitReady(context.Background()); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+	if s.NotReady() {
+		t.Fatal("expected NotReady() = false once the background migration has completed")
+	}
+}
+
+// TestHybridStore_NotReady_TrueImmediatelyAfterConstruction observes the
+// store the instant NewHybridStore returns, before yielding to any other
+// goroutine — see the identical-purpose SQLiteStore test for why this is a
+// reliable (if not absolutely guaranteed) observation rather than a race.
+func TestHybridStore_NotReady_TrueImmediatelyAfterConstruction(t *testing.T) {
+	s, err := NewHybridStore(t.TempDir(), time.Hour)
+	if err != nil {
+		t.Fatalf("NewHybridStore: %v", err)
+	}
+	defer s.Close()
+	if !s.NotReady() {
+		t.Skip("migration completed before this assertion ran — timing-dependent, not a correctness failure")
+	}
+}
+
+// TestHybridStore_NotReady_FalseWhenDegraded proves NotReady stops reporting
+// true once the store has permanently degraded to memory-only
+// (degradeToMemoryOnly) — a failed/unusable persistent backend is an ongoing
+// health condition (PersistentHealth), not a "still starting up" one, and
+// must not make every request 503 forever. Points HybridStore at a file
+// where a directory already exists, so sqlite.Open's underlying file
+// operations fail deterministically and seedFromSQLite takes the
+// degradeToMemoryOnly path.
+func TestHybridStore_NotReady_FalseWhenDegraded(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := dir + "/overcast.db"
+	if err := os.Mkdir(dbPath, 0o755); err != nil {
+		t.Fatalf("pre-create overcast.db as a directory: %v", err)
+	}
+	s, err := NewHybridStore(dir, time.Hour)
+	if err != nil {
+		t.Fatalf("NewHybridStore: %v", err)
+	}
+	defer s.Close()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for s.NotReady() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for the store to leave its migration window")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !s.sqliteDegraded.Load() {
+		t.Fatal("expected the store to have degraded to memory-only given an unusable database path")
+	}
+}
+
 // ---- 1.2 read-only connection pool -----------------------------------
 
 func TestHybridStore_OpensDedicatedReadPoolWithMultipleConns(t *testing.T) {

@@ -262,30 +262,26 @@ type sqlItemBackend struct {
 	err  error // set by init; sticky
 }
 
-// newSQLItemBackend returns a backend that lazily resolves the *sql.DB and
-// creates the items table on first use. Deferring DB resolution avoids
-// blocking startup when the underlying store opens SQLite asynchronously.
+// newSQLItemBackend returns a backend that lazily resolves the *sql.DB on
+// first use. Deferring DB resolution avoids blocking startup when the
+// underlying store opens SQLite asynchronously — dbFn (typically
+// state.SQLiteDBProvider.DB) blocks until the store's background open and
+// migration have completed, so by the time it returns here the
+// dynamodb_items table already exists (created by the migration registered
+// in migrations.go, storage-plan.md item 3.9) without this backend having to
+// create it itself.
 func newSQLItemBackend(dbFn func() *sql.DB) *sqlItemBackend {
 	return &sqlItemBackend{dbFn: dbFn}
 }
 
+// init resolves b.db from dbFn exactly once. Schema setup for
+// dynamodb_items happens via the migration runner (migrations.go), not
+// here — see newSQLItemBackend's doc comment for why that ordering is safe.
 func (b *sqlItemBackend) init() error {
 	b.once.Do(func() {
 		b.db = b.dbFn()
 		if b.db == nil {
 			b.err = fmt.Errorf("dynamodb: sqlite DB unavailable")
-			return
-		}
-		const schema = `
-		CREATE TABLE IF NOT EXISTS dynamodb_items (
-			table_name  TEXT NOT NULL,
-			hash_key    TEXT NOT NULL,
-			sort_key    TEXT NOT NULL DEFAULT '',
-			item_json   TEXT NOT NULL,
-			PRIMARY KEY (table_name, hash_key, sort_key)
-		);`
-		if _, err := b.db.Exec(schema); err != nil {
-			b.err = fmt.Errorf("dynamodb: migrate items table: %w", err)
 		}
 	})
 	return b.err

@@ -21,7 +21,10 @@ import (
 
 const (
 	nsStreams = "kinesis:streams"
-	nsRecords = "kinesis:records" // key: "<streamName>/<shardId>/<seqNo>"
+	// nsRecords key: "<region>/<streamName>/<shardId>/<seqNo>" (see
+	// serviceutil.RegionKey at every call site) — records from two regions
+	// sharing a stream name never collide.
+	nsRecords = "kinesis:records"
 )
 
 // Stream represents a Kinesis Data Stream.

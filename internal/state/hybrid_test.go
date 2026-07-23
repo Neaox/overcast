@@ -935,3 +935,247 @@ func TestHybridStore_DegradesToMemoryOnlyWhenDatabaseFileIsCorrupt(t *testing.T)
 
 	waitForObservedLog(t, logs, "hybrid store degraded to memory-only for this run; persisted state is unavailable until restart")
 }
+
+// ---- 3.2 ScanPage --------------------------------------------------------
+
+// TestHybridStore_ScanPage_TierHotAfterSeed exercises ScanPage's simplest
+// branch: a TierHot namespace (sqs:queues is TierHot per tier.go) once the
+// background seed has finished, which delegates straight to
+// MemoryStore.ScanPage with no overlay merge — see HybridStore.ScanPage's
+// doc comment.
+func TestHybridStore_ScanPage_TierHotAfterSeed(t *testing.T) {
+	core, logs := observer.New(zap.DebugLevel)
+	s, err := state.NewHybridStoreWithLogger(t.TempDir(), 10*time.Second, zap.New(core))
+	if err != nil {
+		t.Fatalf("NewHybridStoreWithLogger: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	if err := s.WaitReady(context.Background()); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+	waitForObservedLog(t, logs, "hybrid seed complete")
+	assertScanPagePaginatesFullRange(t, s, "sqs:queues", "queue/", 29, 5)
+}
+
+// TestHybridStore_ScanPage_LazyNamespaceMergesOverlayAndBase exercises
+// ScanPage against a namespace HybridStore treats as lazy/SQLite-backed
+// (anything absent from the static TierHot seed list, e.g. "svc" — see
+// shouldReadHybridNamespaceFromSQLite), where every write is accepted into
+// the pending overlay and ScanPage must merge it with the (in this test,
+// not-yet-flushed) base via hybridScanPageMerged.
+func TestHybridStore_ScanPage_LazyNamespaceMergesOverlayAndBase(t *testing.T) {
+	s, err := state.NewHybridStoreWithOptions(t.TempDir(), state.HybridOptions{FlushInterval: time.Hour}, nil)
+	if err != nil {
+		t.Fatalf("NewHybridStoreWithOptions: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	if err := s.WaitReady(context.Background()); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+	assertScanPagePaginatesFullRange(t, s, "svc", "queue/", 31, 4)
+}
+
+// TestHybridStore_ScanPage_OverlayBaseBoundary_NoDuplicatesOrGaps is the
+// pagination-correctness test the storage plan calls out explicitly for
+// HybridStore: entries in both the base store (SQLite, seeded before the
+// store even opens, so definitely not in the overlay) and the pending
+// overlay (new keys, an override of an existing base key, an outright
+// delete of a base key, and a DeletePrefix tombstone with a later Set under
+// the same prefix — the exact ordering case HybridStore.DeletePrefix's own
+// doc comment calls out), paginated with a small page size that forces the
+// walk across several base/overlay boundaries.
+//
+// s.Scan (already covered by its own tests) is used as the correctness
+// oracle: it performs the identical merge, just unpaginated. If ScanPage's
+// paginated walk agrees with it exactly, the pagination itself introduced no
+// duplicates or gaps.
+func TestHybridStore_ScanPage_OverlayBaseBoundary_NoDuplicatesOrGaps(t *testing.T) {
+	dir := t.TempDir()
+	const baseRows = 20
+	seedHybridSQLiteNamespace(t, dir, "sqs:messages", baseRows, "base") // queue/00000000 .. queue/00000019
+
+	s, err := state.NewHybridStoreWithOptions(dir, state.HybridOptions{FlushInterval: time.Hour}, nil)
+	if err != nil {
+		t.Fatalf("NewHybridStoreWithOptions: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	ctx := context.Background()
+	if err := s.WaitReady(ctx); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+
+	// Overlay entries layered on top of the persisted base, all still
+	// pending (FlushInterval is an hour, and nothing calls Flush).
+	mustSet := func(key, value string) {
+		t.Helper()
+		if err := s.Set(ctx, "sqs:messages", key, value); err != nil {
+			t.Fatalf("Set %s: %v", key, err)
+		}
+	}
+	// Brand-new keys interleaved between existing base keys.
+	mustSet("queue/00000003a", "new")
+	mustSet("queue/00000010a", "new")
+	// Override an existing base key's value.
+	mustSet("queue/00000005", "overridden")
+	// Delete an existing base key outright.
+	if err := s.Delete(ctx, "sqs:messages", "queue/00000007"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	// DeletePrefix a sub-range covering several base keys (00000012..00000019
+	// plus anything else under that prefix), then Set one key back into the
+	// tombstoned range — it must survive per HybridStore.DeletePrefix's
+	// ordering guarantee, while the rest of the range stays deleted.
+	if err := s.DeletePrefix(ctx, "sqs:messages", "queue/0000001"); err != nil {
+		t.Fatalf("DeletePrefix: %v", err)
+	}
+	mustSet("queue/00000015", "resurrected")
+
+	want, err := s.Scan(ctx, "sqs:messages", "queue/")
+	if err != nil {
+		t.Fatalf("Scan (oracle): %v", err)
+	}
+	if len(want) == 0 {
+		t.Fatal("test setup produced an empty oracle result — the scenario isn't exercising anything")
+	}
+
+	for _, pageSize := range []int{1, 3, 7, 1000} {
+		t.Run(fmt.Sprintf("pageSize=%d", pageSize), func(t *testing.T) {
+			var got []state.KV
+			startAfter := ""
+			pages := 0
+			for {
+				pages++
+				if pages > len(want)+2 {
+					t.Fatalf("ScanPage did not terminate after %d pages", pages)
+				}
+				page, next, err := s.ScanPage(ctx, "sqs:messages", "queue/", startAfter, pageSize)
+				if err != nil {
+					t.Fatalf("ScanPage(startAfter=%q): %v", startAfter, err)
+				}
+				got = append(got, page...)
+				if next == "" {
+					break
+				}
+				startAfter = next
+			}
+			if len(got) != len(want) {
+				t.Fatalf("paginated result has %d entries, oracle Scan has %d\ngot:  %v\nwant: %v", len(got), len(want), got, want)
+			}
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("entry %d = %+v, want %+v (full got=%v want=%v)", i, got[i], want[i], got, want)
+				}
+			}
+		})
+	}
+}
+
+// ---- 3.5 vacuum/checkpoint maintenance loop ------------------------------
+
+// TestHybridStore_Maintenance_RunsOnConfiguredInterval proves the background
+// maintenance loop actually runs on its configured interval and executes the
+// full pragma sequence end to end: enough dead rows are created to push the
+// freelist ratio over the vacuum threshold, and the test waits for the
+// resulting "incremental_vacuum complete" log — which runSQLitePragmaMaintenance
+// only reaches after PRAGMA wal_checkpoint(PASSIVE) has already succeeded,
+// so this also proves the checkpoint step works.
+func TestHybridStore_Maintenance_RunsOnConfiguredInterval(t *testing.T) {
+	core, logs := observer.New(zap.DebugLevel)
+	s, err := state.NewHybridStoreWithOptions(t.TempDir(), state.HybridOptions{
+		FlushInterval:       50 * time.Millisecond,
+		MaintenanceInterval: 50 * time.Millisecond,
+	}, zap.New(core))
+	if err != nil {
+		t.Fatalf("NewHybridStoreWithOptions: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	ctx := context.Background()
+	if err := s.WaitReady(ctx); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+
+	// Create and then delete a large number of rows so the freelist ratio
+	// clears maintenanceVacuumFreelistRatio, and flush so the deletes are
+	// actually committed to SQLite (freelist accounting is a SQLite-file
+	// property, not something the pending overlay can influence).
+	const rows = 2000
+	for i := 0; i < rows; i++ {
+		if err := s.Set(ctx, "svc", fmt.Sprintf("bulk/%05d", i), strings.Repeat("x", 512)); err != nil {
+			t.Fatalf("Set %d: %v", i, err)
+		}
+	}
+	if err := s.Flush(ctx); err != nil {
+		t.Fatalf("Flush after inserts: %v", err)
+	}
+	for i := 0; i < rows-5; i++ {
+		if err := s.Delete(ctx, "svc", fmt.Sprintf("bulk/%05d", i)); err != nil {
+			t.Fatalf("Delete %d: %v", i, err)
+		}
+	}
+	if err := s.Flush(ctx); err != nil {
+		t.Fatalf("Flush after deletes: %v", err)
+	}
+
+	waitForObservedLog(t, logs, "hybrid maintenance: incremental_vacuum complete")
+}
+
+// TestHybridStore_Maintenance_SkipsWhileDegraded proves the maintenance loop
+// never attempts a pragma against a store that degraded to memory-only (an
+// unopenable/corrupt database file — see degradeToMemoryOnly) and,
+// critically, never panics or logs an error trying: the store must keep
+// serving reads/writes normally across several maintenance-interval ticks.
+func TestHybridStore_Maintenance_SkipsWhileDegraded(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "overcast.db"), []byte("not a sqlite database"), 0o644); err != nil {
+		t.Fatalf("write corrupt db fixture: %v", err)
+	}
+
+	core, logs := observer.New(zap.WarnLevel)
+	s, err := state.NewHybridStoreWithOptions(dir, state.HybridOptions{
+		FlushInterval:       time.Hour,
+		MaintenanceInterval: 20 * time.Millisecond,
+	}, zap.New(core))
+	if err != nil {
+		t.Fatalf("NewHybridStoreWithOptions: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	ctx := context.Background()
+	if err := s.WaitReady(ctx); err == nil {
+		t.Fatal("expected WaitReady to surface the corrupt-database error")
+	}
+
+	// Let several maintenance ticks pass while degraded.
+	time.Sleep(150 * time.Millisecond)
+
+	if err := s.Set(ctx, "svc", "key", "value"); err != nil {
+		t.Fatalf("Set on degraded store after maintenance ticks: %v", err)
+	}
+	got, found, err := s.Get(ctx, "svc", "key")
+	if err != nil || !found || got != "value" {
+		t.Fatalf("Get on degraded store after maintenance ticks: err=%v found=%v got=%q", err, found, got)
+	}
+	if n := logs.FilterMessage("hybrid maintenance: wal_checkpoint(PASSIVE) failed").Len(); n != 0 {
+		t.Fatalf("maintenance loop attempted a pragma against a degraded store %d times, want 0", n)
+	}
+}
+
+// TestHybridStore_Close_StopsMaintenanceGoroutineCleanly proves Close waits
+// for the maintenance goroutine (started alongside run/runPendingSync in
+// NewHybridStoreWithOptions) to actually exit — no goroutine leak across
+// repeated open/close cycles. If runMaintenance failed to respect ctx.Done()
+// or wg.Done(), Close (which calls s.wg.Wait()) would hang and this test
+// would time out.
+func TestHybridStore_Close_StopsMaintenanceGoroutineCleanly(t *testing.T) {
+	for i := 0; i < 3; i++ {
+		s, err := state.NewHybridStoreWithOptions(t.TempDir(), state.HybridOptions{
+			FlushInterval:       time.Hour,
+			MaintenanceInterval: time.Millisecond,
+		}, nil)
+		if err != nil {
+			t.Fatalf("NewHybridStoreWithOptions: %v", err)
+		}
+		if err := s.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	}
+}

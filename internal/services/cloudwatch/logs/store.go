@@ -136,7 +136,7 @@ func newLogsStore(store state.Store, clk clock.Clock, defaultRegion string) *log
 	// routed away from SQLite. See internal/state's state.Unwrap doc comment
 	// and the equivalent DynamoDB fix in internal/services/dynamodb/service.go.
 	backendStore := state.Unwrap(store, serviceName)
-	return &logsStore{
+	s := &logsStore{
 		store:         store,
 		backend:       newEventBackendFor(backendStore),
 		clk:           clk,
@@ -144,6 +144,8 @@ func newLogsStore(store state.Store, clk clock.Clock, defaultRegion string) *log
 		flushBg:       bg,
 		flushBgCancel: cancel,
 	}
+	s.startRetentionSweeper()
+	return s
 }
 
 // region extracts the AWS region from the request context, falling back to the
@@ -545,6 +547,83 @@ func (s *logsStore) Stop(ctx context.Context) {
 		c.mu.Unlock()
 		return true
 	})
+}
+
+// ---- RetentionInDays enforcement --------------------------------------------
+//
+// LogGroup.RetentionInDays is stored but, on its own, does nothing — real
+// CloudWatch Logs asynchronously purges events older than the configured
+// retention period, and this periodic sweep is Overcast's equivalent
+// (storage-plan.md 3.4). It reuses the same background-goroutine lifecycle as
+// the debounced flush machinery above: started once from newLogsStore,
+// listening on flushBg.Done() for the stop signal, tracked by flushWG so
+// Stop() waits for it to exit before returning.
+
+// retentionSweepInterval is how often sweepExpiredEventsOnce runs.
+// RetentionInDays is expressed in whole days, so a much finer cadence would
+// be wasted work; this balances timeliness (bounding how long expired events
+// can linger on disk) against overhead for the common local dev/CI case.
+const retentionSweepInterval = 5 * time.Minute
+
+// startRetentionSweeper starts the background retention sweep goroutine.
+// Called once from newLogsStore, mirroring how the package already treats
+// "start a long-lived background loop tied to this store's lifecycle" as a
+// construction-time concern.
+//
+// The ticker is created here — synchronously, on newLogsStore's calling
+// goroutine — rather than inside the spawned goroutine. This matters for
+// tests: it guarantees clk.Ticker has already registered with a mock clock
+// by the time newLogsStore (and so New) returns, so a test that calls
+// mock.Add() immediately after construction can't race against the
+// goroutine not having started yet (advancing a mock clock before a ticker
+// exists is simply lost — the ticker only anchors its first firing to
+// whatever time it observes at creation). The loop itself is kept in its own
+// goroutine closure rather than a named method (separate from
+// sweepExpiredEventsOnce) so tests can still call sweepExpiredEventsOnce
+// directly for a deterministic, single-sweep assertion instead of driving a
+// real or mocked ticker.
+func (s *logsStore) startRetentionSweeper() {
+	ticker := s.clk.Ticker(retentionSweepInterval)
+	s.flushWG.Add(1)
+	go func() {
+		defer s.flushWG.Done()
+		defer ticker.Stop()
+		for {
+			select {
+			case <-s.flushBg.Done():
+				return
+			case <-ticker.C:
+				s.sweepExpiredEventsOnce(context.Background())
+			}
+		}
+	}()
+}
+
+// sweepExpiredEventsOnce scans every log group, across every region, and
+// deletes events older than each group's RetentionInDays via one group-scoped
+// ranged delete (eventBackend.deleteEventsOlderThan). Groups with
+// RetentionInDays == 0 (the zero value, and what DeleteRetentionPolicy resets
+// to — see handler.go/typed_logic.go) are never swept: real CloudWatch Logs
+// treats 0/unset as "never expire", and this codebase already follows that
+// convention for every other retention-related code path.
+func (s *logsStore) sweepExpiredEventsOnce(ctx context.Context) {
+	pairs, err := s.store.Scan(ctx, nsLogGroups, "")
+	if err != nil {
+		return
+	}
+	now := s.clk.Now().UTC()
+	for _, kv := range pairs {
+		var g LogGroup
+		if err := json.Unmarshal([]byte(kv.Value), &g); err != nil {
+			continue
+		}
+		if g.RetentionInDays <= 0 {
+			continue
+		}
+		region, _ := serviceutil.SplitRegionKey(kv.Key)
+		cutoff := now.AddDate(0, 0, -g.RetentionInDays)
+		_ = s.backend.deleteEventsOlderThan(ctx, region, g.Name, cutoff)
+	}
 }
 
 // ---- CloudWatch Logs-specific errors ---------------------------------------

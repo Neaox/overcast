@@ -43,6 +43,51 @@ func (b *blockingReadyStore) WaitReady(ctx context.Context) error {
 	}
 }
 
+// notReadyStore is a state.Store that also implements state.NotReadyReporter
+// with a directly settable return value, standing in for a real store's
+// migration-in-progress window without any real SQLite timing.
+type notReadyStore struct {
+	*state.MemoryStore
+	notReady bool
+}
+
+func newNotReadyStore(notReady bool) *notReadyStore {
+	return &notReadyStore{MemoryStore: state.NewMemoryStore(), notReady: notReady}
+}
+
+func (n *notReadyStore) NotReady() bool { return n.notReady }
+
+func TestNamespacedStore_NotReady_TrueIfAnyUnderlyingStoreNotReady(t *testing.T) {
+	defaultStore := newNotReadyStore(false)
+	sqsStore := newNotReadyStore(true) // still migrating
+	ns := state.NewNamespacedStore(defaultStore, map[string]state.Store{"sqs": sqsStore})
+
+	if !ns.NotReady() {
+		t.Fatal("expected NotReady() = true when one underlying store is still migrating")
+	}
+}
+
+func TestNamespacedStore_NotReady_FalseWhenAllUnderlyingStoresReady(t *testing.T) {
+	defaultStore := newNotReadyStore(false)
+	sqsStore := newNotReadyStore(false)
+	ns := state.NewNamespacedStore(defaultStore, map[string]state.Store{"sqs": sqsStore})
+
+	if ns.NotReady() {
+		t.Fatal("expected NotReady() = false when every underlying store is ready")
+	}
+}
+
+func TestNamespacedStore_NotReady_FalseForStoresWithoutTheInterface(t *testing.T) {
+	// state.MemoryStore doesn't implement NotReadyReporter at all — the
+	// same "absence means always ready" convention as ReadyAwaiter.
+	ns := state.NewNamespacedStore(state.NewMemoryStore(), map[string]state.Store{
+		"s3": state.NewMemoryStore(),
+	})
+	if ns.NotReady() {
+		t.Fatal("expected NotReady() = false for underlying stores that never implement NotReadyReporter")
+	}
+}
+
 func TestNamespacedStore_RoutesToOverrideStore(t *testing.T) {
 	// Given a namespaced store with SQS routed to a dedicated store.
 	defaultStore := state.NewMemoryStore()
@@ -161,6 +206,34 @@ func TestNamespacedStore_ListAndScan(t *testing.T) {
 	}
 	if len(keys) != 1 {
 		t.Errorf("List s3: expected 1 key, got %d", len(keys))
+	}
+}
+
+// TestNamespacedStore_ScanPage proves ScanPage routes to the correct
+// underlying store by service prefix, exactly like List/Scan above, and that
+// the routed store's own pagination contract still holds through the
+// wrapper.
+func TestNamespacedStore_ScanPage(t *testing.T) {
+	defaultStore := state.NewMemoryStore()
+	sqsStore := state.NewMemoryStore()
+	ns := state.NewNamespacedStore(defaultStore, map[string]state.Store{
+		"sqs": sqsStore,
+	})
+	assertScanPagePaginatesFullRange(t, ns, "sqs:queues", "queue/", 17, 4)
+
+	// A namespace with no override still routes through to the default
+	// store's ScanPage.
+	assertScanPagePaginatesFullRange(t, ns, "s3:buckets", "bucket/", 6, 2)
+
+	// Sanity: routing actually went to distinct stores, not just the default
+	// for both.
+	ctx := context.Background()
+	sqsKeys, err := sqsStore.List(ctx, "sqs:queues", "")
+	if err != nil {
+		t.Fatalf("List (routed store): %v", err)
+	}
+	if len(sqsKeys) != 17 {
+		t.Fatalf("expected the sqs override store to hold 17 keys directly, got %d", len(sqsKeys))
 	}
 }
 

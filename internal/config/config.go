@@ -105,6 +105,12 @@ type Config struct {
 	// bytes. A value <= 0 disables the byte-size trigger.
 	HybridDirtyByteThreshold int64
 
+	// HybridMaintenanceInterval controls how often the hybrid store's
+	// background loop runs routine SQLite housekeeping (a passive WAL
+	// checkpoint plus a conditional incremental vacuum — see
+	// docs/storage-plan.md item 3.5). Never runs on the request path.
+	HybridMaintenanceInterval time.Duration
+
 	// WALFsyncMode controls fsync policy for the WAL backend.
 	// Valid values: always, interval, never.
 	WALFsyncMode string
@@ -436,6 +442,7 @@ var allServices = []string{"s3", "sqs", "sns", "ses", "dynamodb", "dynamodbstrea
 //	OVERCAST_HYBRID_SYNC_INTERVAL       100ms
 //	OVERCAST_HYBRID_DIRTY_ENTRY_THRESHOLD 10000
 //	OVERCAST_HYBRID_DIRTY_BYTE_THRESHOLD  8388608
+//	OVERCAST_HYBRID_MAINTENANCE_INTERVAL  5m
 //	OVERCAST_WAL_FSYNC                 interval (always | interval | never)
 //	OVERCAST_WAL_FSYNC_INTERVAL        100ms
 //	OVERCAST_WAL_MAX_LOG_BYTES         67108864
@@ -559,6 +566,14 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: OVERCAST_HYBRID_DIRTY_BYTE_THRESHOLD %q must be a positive integer", hybridByteThresholdStr)
 	}
 	cfg.HybridDirtyByteThreshold = hybridByteThreshold
+
+	// Hybrid background maintenance loop interval (3.5: passive WAL
+	// checkpoint + conditional incremental vacuum).
+	maintenanceIntervalStr := envOr("OVERCAST_HYBRID_MAINTENANCE_INTERVAL", "5m")
+	cfg.HybridMaintenanceInterval, err = time.ParseDuration(maintenanceIntervalStr)
+	if err != nil || cfg.HybridMaintenanceInterval <= 0 {
+		return nil, fmt.Errorf("config: OVERCAST_HYBRID_MAINTENANCE_INTERVAL %q is not a valid positive duration", maintenanceIntervalStr)
+	}
 
 	// WAL settings
 	cfg.WALFsyncMode = strings.ToLower(strings.TrimSpace(envOr("OVERCAST_WAL_FSYNC", "interval")))

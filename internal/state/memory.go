@@ -158,6 +158,53 @@ func (s *MemoryStore) Scan(_ context.Context, namespace, prefix string) ([]KV, e
 	return pairs, nil
 }
 
+// ScanPage returns up to limit key-value pairs whose keys start with prefix,
+// in key order, starting strictly after startAfter — see Store.ScanPage for
+// the full contract. Uses the underlying btree's ordered Ascend to seek
+// directly to the resume point rather than re-scanning from the start of the
+// prefix range on every page, and stops as soon as limit is reached instead
+// of fetching limit+1 rows the way the SQL-backed implementations do — an
+// in-memory ordered seek makes that trick unnecessary here.
+func (s *MemoryStore) ScanPage(_ context.Context, namespace, prefix, startAfter string, limit int) ([]KV, string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	tree, ok := s.data[namespace]
+	if !ok {
+		return []KV{}, "", nil
+	}
+
+	pivot := prefix
+	if startAfter != "" && startAfter > pivot {
+		pivot = startAfter
+	}
+
+	var pairs []KV
+	nextKey := ""
+	tree.Ascend(pivot, func(key string, value string) bool {
+		if !strings.HasPrefix(key, prefix) {
+			return false
+		}
+		if startAfter != "" && key <= startAfter {
+			return true // seeked to startAfter itself (or earlier); keep advancing
+		}
+		if limit > 0 && len(pairs) == limit {
+			// key itself is the first item beyond this page — proof a next
+			// page exists — but nextKey must be the *last included* item's
+			// key (startAfter is exclusive), not key itself, or the next
+			// call would skip key entirely.
+			nextKey = pairs[len(pairs)-1].Key
+			return false
+		}
+		pairs = append(pairs, KV{Key: key, Value: value})
+		return true
+	})
+	if pairs == nil {
+		pairs = []KV{}
+	}
+	return pairs, nextKey, nil
+}
+
 func (s *MemoryStore) Close() error {
 	return nil // nothing to release
 }

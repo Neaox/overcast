@@ -4,6 +4,7 @@ package router_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -285,6 +286,18 @@ func TestDebugReset_withSQLiteStore(t *testing.T) {
 		t.Fatalf("NewSQLiteStore: %v", err)
 	}
 	t.Cleanup(func() { sqliteStore.Close() })
+
+	// Wait for the background schema migration to finish before issuing any
+	// requests. Without this, a request that races migration now correctly
+	// gets a fast 503 (middleware.NotReady, storage-plan.md) instead of
+	// silently blocking-then-succeeding the way it used to — this test cares
+	// about debug reset behavior against a SQLiteStore backend, not about
+	// exercising that race, so synchronize past it explicitly. SQLiteStore
+	// has no ReadyAwaiter of its own; any real operation blocks on the same
+	// internal gate migration completion closes.
+	if _, _, err := sqliteStore.Get(context.Background(), "warmup", "warmup"); err != nil {
+		t.Fatalf("warm-up Get (waiting for migration): %v", err)
+	}
 
 	srv := helpers.NewTestServer(t, helpers.WithDebug(true), helpers.WithStore(sqliteStore))
 

@@ -152,6 +152,10 @@ func (s *NamespacedStore) Scan(ctx context.Context, namespace, prefix string) ([
 	return s.storeFor(namespace).Scan(ctx, namespace, prefix)
 }
 
+func (s *NamespacedStore) ScanPage(ctx context.Context, namespace, prefix, startAfter string, limit int) ([]KV, string, error) {
+	return s.storeFor(namespace).ScanPage(ctx, namespace, prefix, startAfter, limit)
+}
+
 // Close closes the default store and all per-service stores. Each underlying
 // store is closed exactly once even if it serves multiple namespace prefixes.
 func (s *NamespacedStore) Close() error {
@@ -178,4 +182,20 @@ func (s *NamespacedStore) WaitReady(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// NotReady implements state.NotReadyReporter directly on *NamespacedStore
+// itself — rather than via a package-level aggregator like
+// PersistentHealthSnapshot's — so a caller that type-asserts a possibly-
+// wrapped Store to NotReadyReporter (as middleware.NotReady does) sees the
+// same interface-erasure protection WaitReady already established in
+// Phase 1: any one underlying store still completing startup work makes the
+// whole NamespacedStore not ready yet.
+func (s *NamespacedStore) NotReady() bool {
+	for _, st := range s.UnderlyingStores() {
+		if nr, ok := st.(NotReadyReporter); ok && nr.NotReady() {
+			return true
+		}
+	}
+	return false
 }

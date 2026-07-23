@@ -119,6 +119,14 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Recovery(logger))
 	r.Use(middleware.Logger(logger, clk))
+	// NotReady short-circuits with a 503 while the storage backend is still
+	// completing a one-time startup migration (storage-plan.md item — see
+	// internal/middleware/notready.go) — placed after Logger so a rejected
+	// request is still observable in logs, and before every other
+	// middleware below so none of that work (event recording, SigV4, IAM,
+	// region/protocol detection) runs for a request about to be rejected
+	// anyway.
+	r.Use(middleware.NotReady(store))
 	r.Use(middleware.RequestEvents(&bus, clk))
 	r.Use(middleware.SigV4(cfg.SigV4Validate, middleware.NewSecretResolver(store), logger, clk))
 	r.Use(middleware.IAMEnforce(cfg.EnforceIAM, store, logger))

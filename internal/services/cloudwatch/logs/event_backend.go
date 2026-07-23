@@ -30,6 +30,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Neaox/overcast/internal/state"
 )
@@ -53,6 +54,14 @@ type eventBackend interface {
 
 	// deleteGroup removes every persisted event for every stream in a group.
 	deleteGroup(ctx context.Context, region, group string) error
+
+	// deleteEventsOlderThan removes every persisted event for every stream in
+	// a group whose Timestamp is strictly before cutoff. Group-scoped rather
+	// than per-stream: the logs_events table's (region, group_name, ts) index
+	// (see migrations.go) makes a group-wide ranged delete just as cheap as a
+	// single-stream one, so there is no benefit to iterating streams
+	// individually — see storage-plan.md 3.4 (RetentionInDays enforcement).
+	deleteEventsOlderThan(ctx context.Context, region, group string, cutoff time.Time) error
 
 	// debugScan returns up to limit raw event rows for
 	// /_debug/state/logs:events, ordered deterministically. When limit <= 0,
@@ -143,6 +152,30 @@ func (b *memEventBackend) deleteGroup(_ context.Context, region, group string) e
 		if strings.HasPrefix(k, prefix) {
 			delete(b.streams, k)
 		}
+	}
+	return nil
+}
+
+func (b *memEventBackend) deleteEventsOlderThan(_ context.Context, region, group string, cutoff time.Time) error {
+	cutoffMillis := cutoff.UnixMilli()
+	prefix := region + "\x00" + group + "\x00"
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for k, events := range b.streams {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		kept := events[:0]
+		for _, e := range events {
+			if e.Timestamp >= cutoffMillis {
+				kept = append(kept, e)
+			}
+		}
+		if len(kept) == 0 {
+			delete(b.streams, k)
+			continue
+		}
+		b.streams[k] = kept
 	}
 	return nil
 }
@@ -318,6 +351,19 @@ func (b *sqlEventBackend) deleteGroup(ctx context.Context, region, group string)
 		region, group,
 	); err != nil {
 		return fmt.Errorf("cloudwatch logs delete group events [%s/%s]: %w", region, group, err)
+	}
+	return nil
+}
+
+func (b *sqlEventBackend) deleteEventsOlderThan(ctx context.Context, region, group string, cutoff time.Time) error {
+	if err := b.init(); err != nil {
+		return err
+	}
+	if _, err := b.db.ExecContext(ctx,
+		`DELETE FROM logs_events WHERE region = ? AND group_name = ? AND ts < ?`,
+		region, group, cutoff.UnixMilli(),
+	); err != nil {
+		return fmt.Errorf("cloudwatch logs delete events older than cutoff [%s/%s]: %w", region, group, err)
 	}
 	return nil
 }

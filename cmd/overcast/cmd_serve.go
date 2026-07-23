@@ -434,6 +434,7 @@ func buildStore(cfg *config.Config, mode config.StateBackend, dataDir string, lo
 			SyncInterval:        cfg.HybridSyncInterval,
 			DirtyEntryThreshold: cfg.HybridDirtyEntryThreshold,
 			DirtyByteThreshold:  cfg.HybridDirtyByteThreshold,
+			MaintenanceInterval: cfg.HybridMaintenanceInterval,
 		}, logger)
 		if err != nil {
 			return nil, fmt.Errorf("hybrid store: %w", err)
@@ -463,7 +464,8 @@ func logStoreMode(logger *zap.Logger, cfg *config.Config) {
 			zap.String("hybrid_sync", cfg.HybridSyncMode),
 			zap.Duration("hybrid_sync_interval", cfg.HybridSyncInterval),
 			zap.Int("hybrid_dirty_entry_threshold", cfg.HybridDirtyEntryThreshold),
-			zap.Int64("hybrid_dirty_byte_threshold", cfg.HybridDirtyByteThreshold))
+			zap.Int64("hybrid_dirty_byte_threshold", cfg.HybridDirtyByteThreshold),
+			zap.Duration("hybrid_maintenance_interval", cfg.HybridMaintenanceInterval))
 	default:
 		logger.Info("state backend: memory (data will not persist across restarts)")
 	}

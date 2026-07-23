@@ -80,6 +80,17 @@ func TestWALStore_ListAndScanPrefix(t *testing.T) {
 	}
 }
 
+// TestWALStore_ScanPage_PaginatesFullRangeNoDuplicatesOrGaps proves
+// WALStore's ScanPage — a straight delegation to its underlying MemoryStore
+// (see wal.go) — satisfies the same pagination contract as every other Store
+// implementation.
+func TestWALStore_ScanPage_PaginatesFullRangeNoDuplicatesOrGaps(t *testing.T) {
+	dir := t.TempDir()
+	s := newWALStore(t, dir)
+	defer s.Close()
+	assertScanPagePaginatesFullRange(t, s, "sns:topics", "queue/", 23, 4)
+}
+
 func TestWALStore_CompactsLogAtThreshold(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()

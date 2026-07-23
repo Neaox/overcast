@@ -47,13 +47,38 @@ type SQLiteDBProvider interface {
 // visible before reading — such as startup reload routines — should
 // type-assert the Store to ReadyAwaiter and wait before scanning.
 //
-// Stores that are always immediately ready (MemoryStore, SQLiteStore)
+// Stores that are always immediately ready (MemoryStore, WALStore)
 // do not need to implement this interface; callers must treat its absence
 // as "already ready".
 type ReadyAwaiter interface {
 	// WaitReady blocks until the store's background initialisation is
 	// complete or ctx is cancelled. Returns nil when the store is ready.
 	WaitReady(ctx context.Context) error
+}
+
+// NotReadyReporter is implemented by stores with a distinguishable
+// "still completing one-time startup work" state — currently, an in-progress
+// schema migration (see internal/state/migrate.go). Unlike ReadyAwaiter,
+// this is a non-blocking check: middleware.NotReady uses it once per request
+// to return a proper "service unavailable, retry" response instead of
+// letting the request observe whatever the store would otherwise do during
+// this window — HybridStore's TierHot reads silently returning empty because
+// the seed hasn't started yet, or SQLiteStore blocking the request
+// indefinitely inside ensureReady.
+//
+// Once a store's one-time startup work finishes (successfully, or by
+// degrading — see HybridStore's degradeToMemoryOnly), NotReady must return
+// false for the rest of the process's life; it reports a startup phase, not
+// an ongoing health condition — PersistentHealthReporter is the interface
+// for that.
+//
+// Stores that never have this kind of startup phase (MemoryStore, WALStore)
+// do not need to implement this interface; callers must treat its absence
+// as "already ready", the same convention ReadyAwaiter uses.
+type NotReadyReporter interface {
+	// NotReady reports, without blocking, whether the store is still
+	// completing one-time startup work.
+	NotReady() bool
 }
 
 // Store is the single interface all service state flows through.
@@ -85,6 +110,25 @@ type Store interface {
 	// and values — it avoids N individual Get calls and holds the lock only once.
 	// Returns an empty slice (not nil) when no keys match.
 	Scan(ctx context.Context, namespace, prefix string) ([]KV, error)
+
+	// ScanPage returns up to limit key-value pairs in namespace whose keys
+	// start with prefix, in key order, starting strictly after startAfter —
+	// a paginated variant of Scan for namespaces too large to return in one
+	// response (e.g. sqs:messages, logs:events). Pass startAfter == "" for
+	// the first page.
+	//
+	// nextKey is the startAfter value to pass for the next page, or "" when
+	// this page reached the end of the prefix range (no more results).
+	// limit <= 0 means "no limit" — behaves exactly like Scan(ctx, namespace,
+	// prefix) with nextKey always "". This keeps ScanPage a strict superset
+	// of Scan (a caller can always pass limit 0 and get Scan's behavior)
+	// rather than making an unbounded request an error, matching this
+	// package's general preference for permissive zero-value defaults (see
+	// e.g. HybridOptions' zero-valued fields falling back to documented
+	// defaults) over forcing every caller to think about a limit.
+	//
+	// Returns an empty slice (not nil) when no keys match.
+	ScanPage(ctx context.Context, namespace, prefix, startAfter string, limit int) (page []KV, nextKey string, err error)
 
 	// Close releases any resources held by the store (file handles, DB connections).
 	// Called once on graceful shutdown.

@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"go.uber.org/zap"
 	_ "modernc.org/sqlite" // Pure-Go SQLite driver — no CGO, works on all platforms
@@ -47,6 +49,14 @@ type SQLiteStore struct {
 	// failure). migrateErr captures the result.
 	ready      chan struct{}
 	migrateErr error
+
+	// maintenanceCancel/maintenanceWG govern the background routine-
+	// maintenance loop (3.5: passive WAL checkpoint + conditional
+	// incremental vacuum, see runSQLitePragmaMaintenance in maintenance.go).
+	// Mirrors HybridStore's cancel+WaitGroup goroutine lifecycle so Close
+	// can stop it deterministically before closing db.
+	maintenanceCancel context.CancelFunc
+	maintenanceWG     sync.WaitGroup
 }
 
 // NewSQLiteStore opens (or creates) the SQLite database at dataDir/overcast.db
@@ -111,7 +121,42 @@ func newSQLiteStoreFile(dbPath, syncMode string, logger *zap.Logger) (*SQLiteSto
 		ready:  make(chan struct{}),
 	}
 	go s.runMigrate()
+
+	maintCtx, maintCancel := context.WithCancel(context.Background())
+	s.maintenanceCancel = maintCancel
+	s.maintenanceWG.Add(1)
+	go s.runMaintenance(maintCtx)
+
 	return s, nil
+}
+
+// runMaintenance periodically runs routine SQLite housekeeping (3.5) against
+// the persistent-mode database, entirely off the request path. SQLiteStore
+// has no size-triggered burst concerns the way HybridStore's pending overlay
+// does — its writes go straight to SQLite — so a fixed default interval is
+// used rather than adding a second, SQLiteStore-specific config knob
+// alongside HybridStore's OVERCAST_HYBRID_MAINTENANCE_INTERVAL; see
+// docs/storage-plan.md item 3.5 for the reasoning.
+func (s *SQLiteStore) runMaintenance(ctx context.Context) {
+	defer s.maintenanceWG.Done()
+	ticker := time.NewTicker(defaultMaintenanceInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			select {
+			case <-s.ready:
+			default:
+				continue // migration still running; nothing to maintain yet
+			}
+			if s.migrateErr != nil {
+				continue // migration failed — DB may be unusable, don't poke it
+			}
+			runSQLitePragmaMaintenance(ctx, s.db, s.log, "sqlite maintenance")
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // runMigrate executes the schema migration in the background. The first
@@ -145,6 +190,21 @@ func (s *SQLiteStore) ensureReady(ctx context.Context) error {
 		return s.migrateErr
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+// NotReady implements state.NotReadyReporter: true only while the background
+// schema migration is still in flight (s.ready not yet closed). Unlike
+// HybridStore, SQLiteStore has no memory-backed fallback for an in-flight
+// migration — every method blocks on ensureReady until it finishes — so this
+// is what lets middleware.NotReady turn that indefinite per-request block
+// into a single fast, explicit "not ready yet" response instead.
+func (s *SQLiteStore) NotReady() bool {
+	select {
+	case <-s.ready:
+		return false
+	default:
+		return true
 	}
 }
 
@@ -351,6 +411,97 @@ func (s *SQLiteStore) Scan(ctx context.Context, namespace, prefix string) ([]KV,
 	return pairs, nil
 }
 
+// ScanPage returns up to limit key-value pairs whose keys start with prefix,
+// in key order, starting strictly after startAfter — see Store.ScanPage for
+// the full contract. Shares its query-building and page-trimming logic
+// (scanPageQuery / finalizeScanPage) with HybridStore's raw SQLite helpers
+// in hybrid.go, which run the identical query shape against a different
+// *sql.DB (the dedicated read pool) — see hybridSQLiteRawScanPage.
+func (s *SQLiteStore) ScanPage(ctx context.Context, namespace, prefix, startAfter string, limit int) ([]KV, string, error) {
+	if err := s.ensureReady(ctx); err != nil {
+		return nil, "", err
+	}
+	query, args := scanPageQuery(namespace, prefix, startAfter, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, "", fmt.Errorf("sqlite scan page [%s/%s* after %q]: %w", namespace, prefix, startAfter, err)
+	}
+	defer rows.Close()
+
+	pairs, err := collectScanPageRows(rows)
+	if err != nil {
+		return nil, "", err
+	}
+	return finalizeScanPage(pairs, limit)
+}
+
+// scanPageQuery builds the SQL and bind args for a ScanPage query, shared by
+// SQLiteStore.ScanPage and HybridStore's hybridSQLiteRawScanPage so the two
+// SQLite-backed implementations can never drift on key-range semantics. When
+// limit > 0 it fetches one extra row (LIMIT limit+1) so the caller can tell
+// whether another page follows without a second round trip — the same
+// LIMIT-plus-one truncation-detection trick already used elsewhere in this
+// codebase (e.g. CloudWatch Logs' debugScan) — see finalizeScanPage for the
+// other half.
+func scanPageQuery(namespace, prefix, startAfter string, limit int) (string, []any) {
+	query := `SELECT key, value FROM kv WHERE namespace = ?`
+	args := []any{namespace}
+	if prefix != "" {
+		query += ` AND key >= ?`
+		args = append(args, prefix)
+		if upper := prefixUpperBound(prefix); upper != "" {
+			query += ` AND key < ?`
+			args = append(args, upper)
+		}
+	}
+	if startAfter != "" {
+		query += ` AND key > ?`
+		args = append(args, startAfter)
+	}
+	query += ` ORDER BY key`
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit+1)
+	}
+	return query, args
+}
+
+// collectScanPageRows drains a ScanPage query's *sql.Rows into a []KV. The
+// caller remains responsible for closing rows.
+func collectScanPageRows(rows *sql.Rows) ([]KV, error) {
+	var pairs []KV
+	for rows.Next() {
+		var kv KV
+		if err := rows.Scan(&kv.Key, &kv.Value); err != nil {
+			return nil, fmt.Errorf("sqlite scan page row: %w", err)
+		}
+		pairs = append(pairs, kv)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite scan page rows: %w", err)
+	}
+	return pairs, nil
+}
+
+// finalizeScanPage trims a scanPageQuery result (which holds one extra row
+// beyond limit when limit > 0, per the LIMIT limit+1 trick) down to at most
+// limit rows and derives nextKey from the *last kept* row, if the extra row
+// proved a next page exists. nextKey must be the last row this page actually
+// returns, not the trimmed-off row itself — startAfter is exclusive (see
+// Store.ScanPage), so using the trimmed-off row's own key as nextKey would
+// cause the next call to skip it.
+func finalizeScanPage(pairs []KV, limit int) ([]KV, string, error) {
+	nextKey := ""
+	if limit > 0 && len(pairs) > limit {
+		pairs = pairs[:limit]
+		nextKey = pairs[limit-1].Key
+	}
+	if pairs == nil {
+		pairs = []KV{}
+	}
+	return pairs, nextKey, nil
+}
+
 // DB returns the underlying *sql.DB so that service-specific stores can add
 // their own tables to the same database file. Blocks until the background
 // schema migration has finished.
@@ -369,6 +520,10 @@ func (s *SQLiteStore) Close() error {
 	// Wait for the background migration to finish before closing — otherwise
 	// the db handle could be closed mid-CREATE-TABLE.
 	<-s.ready
+	if s.maintenanceCancel != nil {
+		s.maintenanceCancel()
+		s.maintenanceWG.Wait()
+	}
 	return s.db.Close()
 }
 

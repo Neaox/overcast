@@ -61,6 +61,7 @@ type HybridOptions struct {
 	SyncInterval        time.Duration
 	DirtyEntryThreshold int
 	DirtyByteThreshold  int64
+	MaintenanceInterval time.Duration
 }
 
 // NewHybridStoreWithOptions returns an error — SQLite support was excluded at build time.
