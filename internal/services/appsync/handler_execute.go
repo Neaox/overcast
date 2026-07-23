@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/vektah/gqlparser/v2/ast"
@@ -28,6 +29,12 @@ import (
 )
 
 const lambdaAuthorizerDeniedFieldsKey = "__overcastDeniedFields"
+
+type graphQLExecutionRequest struct {
+	Query         string         `json:"query"`
+	Variables     map[string]any `json:"variables"`
+	OperationName string         `json:"operationName"`
+}
 
 // ─── ExecuteGraphQL ──────────────────────────────────────────────────────────
 
@@ -46,20 +53,20 @@ func (h *Handler) ExecuteGraphQL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Authenticate.
-	identity, authErr := h.authenticateRequest(r, api)
-	if authErr != nil {
-		protocol.WriteJSONError(w, r, authErr)
+	// 2. Decode the GraphQL request body. Lambda authorizers receive the query
+	// context in their requestContext, so decode before auth.
+	var gqlReq graphQLExecutionRequest
+	if !serviceutil.DecodeJSON(w, r, &gqlReq) {
 		return
 	}
-
-	// 3. Decode the GraphQL request body.
-	var gqlReq struct {
-		Query         string         `json:"query"`
-		Variables     map[string]any `json:"variables"`
-		OperationName string         `json:"operationName"`
+	if gqlReq.Variables == nil {
+		gqlReq.Variables = map[string]any{}
 	}
-	if !serviceutil.DecodeJSON(w, r, &gqlReq) {
+
+	// 3. Authenticate.
+	identity, authErr := h.authenticateRequest(r, api, &gqlReq)
+	if authErr != nil {
+		protocol.WriteJSONError(w, r, authErr)
 		return
 	}
 
@@ -106,9 +113,9 @@ func (h *Handler) ExecuteGraphQL(w http.ResponseWriter, r *http.Request) {
 // authenticateRequest validates the incoming request based on the API's auth config.
 // It returns a RequestIdentity on success (may be nil for API_KEY) or an AWSError on failure.
 // Supports multi-auth: tries primary, then additionalAuthenticationProviders.
-func (h *Handler) authenticateRequest(r *http.Request, api *GraphqlAPI) (map[string]any, *protocol.AWSError) {
+func (h *Handler) authenticateRequest(r *http.Request, api *GraphqlAPI, gqlReq *graphQLExecutionRequest) (map[string]any, *protocol.AWSError) {
 	// Try the primary auth type first.
-	identity, authErr := h.tryAuth(r, api, api.AuthenticationType, api.UserPoolConfig, api.OpenIDConnectConfig, api.LambdaAuthorizerConfig)
+	identity, authErr := h.tryAuth(r, api, api.AuthenticationType, api.UserPoolConfig, api.OpenIDConnectConfig, api.LambdaAuthorizerConfig, gqlReq)
 	if authErr == nil {
 		return identity, nil
 	}
@@ -123,7 +130,7 @@ func (h *Handler) authenticateRequest(r *http.Request, api *GraphqlAPI) (map[str
 		}
 		if err := json.Unmarshal(api.AdditionalAuthenticationProviders, &providers); err == nil {
 			for _, p := range providers {
-				id, pErr := h.tryAuth(r, api, p.AuthenticationType, p.UserPoolConfig, p.OpenIDConnectConfig, p.LambdaAuthorizerConfig)
+				id, pErr := h.tryAuth(r, api, p.AuthenticationType, p.UserPoolConfig, p.OpenIDConnectConfig, p.LambdaAuthorizerConfig, gqlReq)
 				if pErr == nil {
 					return id, nil
 				}
@@ -135,7 +142,7 @@ func (h *Handler) authenticateRequest(r *http.Request, api *GraphqlAPI) (map[str
 }
 
 // tryAuth attempts a single authentication method.
-func (h *Handler) tryAuth(r *http.Request, api *GraphqlAPI, authType string, userPoolCfg, oidcCfg, lambdaCfg json.RawMessage) (map[string]any, *protocol.AWSError) {
+func (h *Handler) tryAuth(r *http.Request, api *GraphqlAPI, authType string, userPoolCfg, oidcCfg, lambdaCfg json.RawMessage, gqlReq *graphQLExecutionRequest) (map[string]any, *protocol.AWSError) {
 	switch authType {
 	case "API_KEY":
 		if err := h.authenticateAPIKey(r, api); err != nil {
@@ -147,7 +154,7 @@ func (h *Handler) tryAuth(r *http.Request, api *GraphqlAPI, authType string, use
 	case "OPENID_CONNECT":
 		return h.authenticateOIDC(r, oidcCfg)
 	case "AWS_LAMBDA":
-		return h.authenticateLambdaAuthorizer(r, api, lambdaCfg)
+		return h.authenticateLambdaAuthorizer(r, api, lambdaCfg, gqlReq)
 	case "AWS_IAM":
 		return h.iamIdentity(r), nil
 	default:
@@ -230,10 +237,11 @@ func (h *Handler) authenticateOIDC(r *http.Request, oidcCfg json.RawMessage) (ma
 	return identity, nil
 }
 
-func (h *Handler) authenticateLambdaAuthorizer(r *http.Request, api *GraphqlAPI, lambdaCfg json.RawMessage) (map[string]any, *protocol.AWSError) {
+func (h *Handler) authenticateLambdaAuthorizer(r *http.Request, api *GraphqlAPI, lambdaCfg json.RawMessage, gqlReq *graphQLExecutionRequest) (map[string]any, *protocol.AWSError) {
 	var cfg struct {
 		AuthorizerURI                string `json:"authorizerUri"`
 		IdentityValidationExpression string `json:"identityValidationExpression"`
+		AuthorizerResultTTLInSeconds int    `json:"authorizerResultTtlInSeconds"`
 	}
 	if len(lambdaCfg) > 0 {
 		if err := json.Unmarshal(lambdaCfg, &cfg); err != nil {
@@ -257,6 +265,18 @@ func (h *Handler) authenticateLambdaAuthorizer(r *http.Request, api *GraphqlAPI,
 			return nil, unauthorizedError("Unauthorized")
 		}
 	}
+	cacheKey := api.ApiId + "\x00" + token
+	if cfg.AuthorizerResultTTLInSeconds > 0 {
+		if identity, ok := h.getAuthorizerCache(cacheKey); ok {
+			return identity, nil
+		}
+	}
+	if gqlReq == nil {
+		gqlReq = &graphQLExecutionRequest{Variables: map[string]any{}}
+	}
+	if gqlReq.Variables == nil {
+		gqlReq.Variables = map[string]any{}
+	}
 
 	event := map[string]any{
 		"authorizationToken": token,
@@ -264,9 +284,9 @@ func (h *Handler) authenticateLambdaAuthorizer(r *http.Request, api *GraphqlAPI,
 			"apiId":         api.ApiId,
 			"accountId":     h.accountID(),
 			"requestId":     r.Header.Get("x-amzn-requestid"),
-			"queryString":   "",
-			"operationName": "",
-			"variables":     map[string]any{},
+			"queryString":   gqlReq.Query,
+			"operationName": gqlReq.OperationName,
+			"variables":     gqlReq.Variables,
 		},
 		"requestHeaders": flattenHeaders(r.Header),
 	}
@@ -284,6 +304,7 @@ func (h *Handler) authenticateLambdaAuthorizer(r *http.Request, api *GraphqlAPI,
 		IsAuthorized    bool           `json:"isAuthorized"`
 		ResolverContext map[string]any `json:"resolverContext"`
 		DeniedFields    []string       `json:"deniedFields"`
+		TTLOverride     *int           `json:"ttlOverride"`
 	}
 	if err := json.Unmarshal(outcome.Payload, &resp); err != nil || !resp.IsAuthorized {
 		return nil, unauthorizedError("Unauthorized")
@@ -295,7 +316,57 @@ func (h *Handler) authenticateLambdaAuthorizer(r *http.Request, api *GraphqlAPI,
 	if len(resp.DeniedFields) > 0 {
 		identity[lambdaAuthorizerDeniedFieldsKey] = resp.DeniedFields
 	}
+	ttl := cfg.AuthorizerResultTTLInSeconds
+	if resp.TTLOverride != nil {
+		ttl = *resp.TTLOverride
+	}
+	if ttl > 0 {
+		h.setAuthorizerCache(cacheKey, identity, ttl)
+	}
 	return identity, nil
+}
+
+func (h *Handler) getAuthorizerCache(key string) (map[string]any, bool) {
+	if h == nil || h.authorizerCache == nil || h.clk == nil {
+		return nil, false
+	}
+	h.authorizerCacheMu.Lock()
+	defer h.authorizerCacheMu.Unlock()
+	cached, ok := h.authorizerCache[key]
+	if !ok {
+		return nil, false
+	}
+	if !cached.expiresAt.After(h.clk.Now()) {
+		delete(h.authorizerCache, key)
+		return nil, false
+	}
+	return cloneIdentity(cached.identity), true
+}
+
+func (h *Handler) setAuthorizerCache(key string, identity map[string]any, ttlSeconds int) {
+	if h == nil || h.clk == nil || ttlSeconds <= 0 {
+		return
+	}
+	h.authorizerCacheMu.Lock()
+	defer h.authorizerCacheMu.Unlock()
+	if h.authorizerCache == nil {
+		h.authorizerCache = make(map[string]cachedLambdaAuthorizerIdentity)
+	}
+	h.authorizerCache[key] = cachedLambdaAuthorizerIdentity{
+		identity:  cloneIdentity(identity),
+		expiresAt: h.clk.Now().Add(time.Duration(ttlSeconds) * time.Second),
+	}
+}
+
+func cloneIdentity(identity map[string]any) map[string]any {
+	if identity == nil {
+		return nil
+	}
+	clone := make(map[string]any, len(identity))
+	for k, v := range identity {
+		clone[k] = v
+	}
+	return clone
 }
 
 // extractBearerToken extracts a Bearer token from the Authorization header.
@@ -366,7 +437,13 @@ func sourceIPs(r *http.Request) []string {
 
 func (h *Handler) iamIdentity(r *http.Request) map[string]any {
 	accountID := h.accountID()
-	username := sigV4AccessKey(r)
+	accessKey := sigV4AccessKey(r)
+	username := accessKey
+	userArn := ""
+	if user, ok := h.iamUserForAccessKey(r.Context(), accessKey); ok {
+		username = user.UserName
+		userArn = user.Arn
+	}
 	identity := map[string]any{
 		"accountId": accountID,
 		"sourceIp":  sourceIPs(r),
@@ -374,9 +451,43 @@ func (h *Handler) iamIdentity(r *http.Request) map[string]any {
 	if username != "" {
 		identity["username"] = username
 		identity["user"] = username
-		identity["userArn"] = "arn:aws:iam::" + accountID + ":user/" + username
+		if userArn == "" {
+			userArn = "arn:aws:iam::" + accountID + ":user/" + username
+		}
+		identity["userArn"] = userArn
 	}
 	return identity
+}
+
+type iamUserRecord struct {
+	UserName   string `json:"UserName"`
+	Arn        string `json:"Arn"`
+	AccessKeys []struct {
+		AccessKeyID string `json:"AccessKeyId"`
+		Status      string `json:"Status"`
+	} `json:"AccessKeys"`
+}
+
+func (h *Handler) iamUserForAccessKey(ctx context.Context, accessKey string) (*iamUserRecord, bool) {
+	if h == nil || h.store == nil || h.store.s == nil || accessKey == "" {
+		return nil, false
+	}
+	records, err := h.store.s.Scan(ctx, "iam:users", "")
+	if err != nil {
+		return nil, false
+	}
+	for _, record := range records {
+		var user iamUserRecord
+		if err := json.Unmarshal([]byte(record.Value), &user); err != nil {
+			continue
+		}
+		for _, key := range user.AccessKeys {
+			if key.AccessKeyID == accessKey && !strings.EqualFold(key.Status, "Inactive") {
+				return &user, true
+			}
+		}
+	}
+	return nil, false
 }
 
 func (h *Handler) accountID() string {
@@ -706,7 +817,15 @@ func (h *Handler) resolveBatchedListSelectionSet(r *http.Request, api *GraphqlAP
 			if len(rctxs) == 0 {
 				continue
 			}
-			results, batchErrs := h.resolveDirectLambdaBatchDataSource(r.Context(), bf.ds, rctxs)
+			var results []any
+			var batchErrs []GraphQLError
+			if bf.resolver.RequestMappingTemplate != "" {
+				results, batchErrs = h.resolveMappedLambdaBatchDataSource(r, api, bf.resolver, bf.ds, rctxs)
+			} else if h.jsEvaluator != nil && isAppSyncJSRuntime(bf.resolver.Runtime) && bf.resolver.Code != "" {
+				results, batchErrs = h.resolveJSLambdaBatchDataSource(r, api, bf.resolver, bf.ds, rctxs)
+			} else {
+				results, batchErrs = h.resolveDirectLambdaBatchDataSource(r.Context(), bf.ds, rctxs)
+			}
 			errors = append(errors, batchErrs...)
 			for j, result := range results {
 				idx := indices[j]
@@ -747,7 +866,10 @@ func (h *Handler) batchableDirectLambdaResolver(r *http.Request, api *GraphqlAPI
 		return nil, nil, false
 	}
 	resolver, err := h.store.GetResolver(r.Context(), api.ApiId, parentType, field.Name)
-	if err != nil || resolver == nil || resolver.MaxBatchSize <= 0 || resolver.Kind == "PIPELINE" || resolver.RequestMappingTemplate != "" || resolver.ResponseMappingTemplate != "" || resolver.Code != "" || resolver.DataSourceName == "" {
+	if err != nil || resolver == nil || resolver.MaxBatchSize <= 0 || resolver.Kind == "PIPELINE" || resolver.ResponseMappingTemplate != "" || resolver.DataSourceName == "" {
+		return nil, nil, false
+	}
+	if resolver.Code != "" && !isAppSyncJSRuntime(resolver.Runtime) {
 		return nil, nil, false
 	}
 	ds, err := h.store.GetDataSource(r.Context(), api.ApiId, resolver.DataSourceName)
@@ -1625,7 +1747,7 @@ func (h *Handler) resolveLambdaDataSource(ctx context.Context, ds *DataSource, r
 	var payload []byte
 	asyncEventInvocation := false
 	if strings.TrimSpace(requestTemplate) != "" {
-		requestObject, gqlErr := parseLambdaRequestObject(requestTemplate)
+		requestObject, gqlErr := parseLambdaRequestObject(requestTemplate, false)
 		if gqlErr != nil {
 			return nil, gqlErr
 		}
@@ -1680,12 +1802,15 @@ type lambdaRequestObject struct {
 	InvocationType string `json:"invocationType"`
 }
 
-func parseLambdaRequestObject(requestTemplate string) (*lambdaRequestObject, *GraphQLError) {
+func parseLambdaRequestObject(requestTemplate string, allowBatch bool) (*lambdaRequestObject, *GraphQLError) {
 	var requestObject lambdaRequestObject
 	if err := json.Unmarshal([]byte(requestTemplate), &requestObject); err != nil {
 		return nil, &GraphQLError{Message: "invalid Lambda request mapping template output"}
 	}
 	if requestObject.Operation == "BatchInvoke" {
+		if allowBatch {
+			return &requestObject, nil
+		}
 		return nil, &GraphQLError{Message: "Lambda BatchInvoke request mapping is not yet supported"}
 	}
 	if requestObject.Operation != "Invoke" {
@@ -1730,14 +1855,172 @@ func (h *Handler) resolveDirectLambdaBatchDataSource(ctx context.Context, ds *Da
 		return nil, []GraphQLError{{Message: "Lambda function error: " + outcome.FunctionError}}
 	}
 
-	var rawResults []any
-	if err := json.Unmarshal(outcome.Payload, &rawResults); err != nil {
-		return nil, []GraphQLError{{Message: "Lambda BatchInvoke response must be a list"}}
+	return parseLambdaBatchInvokeResponse(outcome.Payload, len(rctxs))
+}
+
+func (h *Handler) resolveMappedLambdaBatchDataSource(r *http.Request, api *GraphqlAPI, resolver *Resolver, ds *DataSource, rctxs []*resolveContext) ([]any, []GraphQLError) {
+	if len(rctxs) == 0 {
+		return []any{}, nil
 	}
-	if len(rawResults) != len(rctxs) {
-		return nil, []GraphQLError{{Message: "Lambda BatchInvoke response length does not match request length"}}
+	if h.vtlEvaluator == nil {
+		return nil, []GraphQLError{{Message: "VTL evaluator not available for Lambda BatchInvoke"}}
+	}
+	var lambdaCfg struct {
+		LambdaFunctionArn string `json:"lambdaFunctionArn"`
+	}
+	if err := json.Unmarshal(ds.LambdaConfig, &lambdaCfg); err != nil || lambdaCfg.LambdaFunctionArn == "" {
+		return nil, []GraphQLError{{Message: "AWS_LAMBDA data source missing lambdaFunctionArn configuration"}}
 	}
 
+	payloads := make([]any, 0, len(rctxs))
+	var merged map[string]any
+	invocationType := ""
+	for _, rctx := range rctxs {
+		output, err := h.vtlEvaluator.Evaluate(resolver.RequestMappingTemplate, h.buildVTLContext(r, api, rctx, nil, map[string]any{}, nil))
+		if err != nil {
+			return nil, []GraphQLError{*vtlErrorToGraphQL(err, "VTL request template error")}
+		}
+		requestObject, gqlErr := parseLambdaRequestObject(output, true)
+		if gqlErr != nil {
+			return nil, []GraphQLError{*gqlErr}
+		}
+		if requestObject.Operation != "BatchInvoke" {
+			return nil, []GraphQLError{{Message: "Lambda batched resolver request must use BatchInvoke"}}
+		}
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(output), &obj); err != nil {
+			return nil, []GraphQLError{{Message: "invalid Lambda request mapping template output"}}
+		}
+		if merged == nil {
+			merged = obj
+			invocationType = requestObject.InvocationType
+		} else if requestObject.InvocationType != invocationType {
+			return nil, []GraphQLError{{Message: "Lambda BatchInvoke invocationType mismatch"}}
+		}
+		payloads = append(payloads, obj["payload"])
+	}
+	if merged == nil {
+		return []any{}, nil
+	}
+	merged["payload"] = payloads
+	payload, err := json.Marshal(merged)
+	if err != nil {
+		return nil, []GraphQLError{{Message: "failed to marshal Lambda batch event: " + err.Error()}}
+	}
+	outcome, err := h.invoker.Invoke(r.Context(), lambdaFunctionNameFromARN(lambdaCfg.LambdaFunctionArn), payload)
+	if err != nil {
+		return nil, []GraphQLError{{Message: "Lambda invocation failed: " + err.Error()}}
+	}
+	if invocationType == "Event" {
+		return make([]any, len(rctxs)), nil
+	}
+	if outcome == nil {
+		return nil, []GraphQLError{{Message: "Lambda function " + lambdaFunctionNameFromARN(lambdaCfg.LambdaFunctionArn) + " not found or unavailable"}}
+	}
+	if outcome.FunctionError != "" {
+		return nil, []GraphQLError{{Message: "Lambda function error: " + outcome.FunctionError}}
+	}
+	return parseLambdaBatchInvokeResponse(outcome.Payload, len(rctxs))
+}
+
+func (h *Handler) resolveJSLambdaBatchDataSource(r *http.Request, api *GraphqlAPI, resolver *Resolver, ds *DataSource, rctxs []*resolveContext) ([]any, []GraphQLError) {
+	if len(rctxs) == 0 {
+		return []any{}, nil
+	}
+	if h.jsEvaluator == nil {
+		return nil, []GraphQLError{{Message: "JS evaluator not available for Lambda BatchInvoke"}}
+	}
+	var lambdaCfg struct {
+		LambdaFunctionArn string `json:"lambdaFunctionArn"`
+	}
+	if err := json.Unmarshal(ds.LambdaConfig, &lambdaCfg); err != nil || lambdaCfg.LambdaFunctionArn == "" {
+		return nil, []GraphQLError{{Message: "AWS_LAMBDA data source missing lambdaFunctionArn configuration"}}
+	}
+
+	payloads := make([]any, 0, len(rctxs))
+	var merged map[string]any
+	invocationType := ""
+	stashes := make([]map[string]any, len(rctxs))
+	for i, rctx := range rctxs {
+		stash := map[string]any{}
+		stashes[i] = stash
+		reqResult, err := h.jsEvaluator.Evaluate(resolver.Code, "request", h.buildJSContext(r, api, rctx, nil, stash, nil))
+		if err != nil {
+			return nil, []GraphQLError{{Message: "JS request() error: " + err.Error()}}
+		}
+		if reqResult.Error != nil {
+			return nil, []GraphQLError{*jsEvalErrorToGraphQL(reqResult.Error)}
+		}
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(reqResult.EvaluationResult), &obj); err != nil {
+			return nil, []GraphQLError{{Message: "invalid Lambda request mapping template output"}}
+		}
+		requestObject, gqlErr := parseLambdaRequestObject(reqResult.EvaluationResult, true)
+		if gqlErr != nil {
+			return nil, []GraphQLError{*gqlErr}
+		}
+		if requestObject.Operation != "BatchInvoke" {
+			return nil, []GraphQLError{{Message: "Lambda batched resolver request must use BatchInvoke"}}
+		}
+		if merged == nil {
+			merged = obj
+			invocationType = requestObject.InvocationType
+		} else if requestObject.InvocationType != invocationType {
+			return nil, []GraphQLError{{Message: "Lambda BatchInvoke invocationType mismatch"}}
+		}
+		payloads = append(payloads, obj["payload"])
+	}
+	if merged == nil {
+		return []any{}, nil
+	}
+	merged["payload"] = payloads
+	payload, err := json.Marshal(merged)
+	if err != nil {
+		return nil, []GraphQLError{{Message: "failed to marshal Lambda batch event: " + err.Error()}}
+	}
+	outcome, err := h.invoker.Invoke(r.Context(), lambdaFunctionNameFromARN(lambdaCfg.LambdaFunctionArn), payload)
+	if err != nil {
+		return nil, []GraphQLError{{Message: "Lambda invocation failed: " + err.Error()}}
+	}
+	if invocationType == "Event" {
+		return make([]any, len(rctxs)), nil
+	}
+	if outcome == nil {
+		return nil, []GraphQLError{{Message: "Lambda function " + lambdaFunctionNameFromARN(lambdaCfg.LambdaFunctionArn) + " not found or unavailable"}}
+	}
+	if outcome.FunctionError != "" {
+		return nil, []GraphQLError{{Message: "Lambda function error: " + outcome.FunctionError}}
+	}
+
+	results, errs := parseLambdaBatchInvokeResponse(outcome.Payload, len(rctxs))
+	if len(errs) > 0 {
+		return results, errs
+	}
+	parsed := make([]any, len(results))
+	for i, result := range results {
+		respCtx := h.buildJSContext(r, api, rctxs[i], result, stashes[i], nil)
+		respResult, err := h.jsEvaluator.Evaluate(resolver.Code, "response", respCtx)
+		if err != nil {
+			return nil, []GraphQLError{{Message: "JS response() error: " + err.Error()}}
+		}
+		if respResult.Error != nil {
+			return nil, []GraphQLError{*jsEvalErrorToGraphQL(respResult.Error)}
+		}
+		if err := json.Unmarshal([]byte(respResult.EvaluationResult), &parsed[i]); err != nil {
+			parsed[i] = respResult.EvaluationResult
+		}
+	}
+	return parsed, nil
+}
+
+func parseLambdaBatchInvokeResponse(payload []byte, wantLen int) ([]any, []GraphQLError) {
+	var rawResults []any
+	if err := json.Unmarshal(payload, &rawResults); err != nil {
+		return nil, []GraphQLError{{Message: "Lambda BatchInvoke response must be a list"}}
+	}
+	if len(rawResults) != wantLen {
+		return nil, []GraphQLError{{Message: "Lambda BatchInvoke response length does not match request length"}}
+	}
 	results := make([]any, len(rawResults))
 	var errs []GraphQLError
 	for i, item := range rawResults {

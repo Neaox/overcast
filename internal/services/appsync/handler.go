@@ -21,6 +21,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -68,18 +70,27 @@ type Handler struct {
 
 	// subscriptions manages active WebSocket subscriptions.
 	subscriptions *subscriptionManager
+
+	authorizerCacheMu sync.Mutex
+	authorizerCache   map[string]cachedLambdaAuthorizerIdentity
+}
+
+type cachedLambdaAuthorizerIdentity struct {
+	identity  map[string]any
+	expiresAt time.Time
 }
 
 func newHandler(cfg *config.Config, store *Store, log *serviceutil.ServiceLogger, clk clock.Clock, sp *schemaParser) *Handler {
 	h := &Handler{
-		cfg:           cfg,
-		store:         store,
-		log:           log,
-		clk:           clk,
-		sp:            sp,
-		jsEvaluator:   newJSEvaluator(clk),
-		vtlEvaluator:  newVTLEvaluator(clk),
-		subscriptions: newSubscriptionManager(clk, log),
+		cfg:             cfg,
+		store:           store,
+		log:             log,
+		clk:             clk,
+		sp:              sp,
+		jsEvaluator:     newJSEvaluator(clk),
+		vtlEvaluator:    newVTLEvaluator(clk),
+		subscriptions:   newSubscriptionManager(clk, log),
+		authorizerCache: make(map[string]cachedLambdaAuthorizerIdentity),
 	}
 	h.typedOp = h.typedOps()
 	return h

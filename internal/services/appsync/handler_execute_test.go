@@ -10,6 +10,7 @@ import (
 
 	"github.com/vektah/gqlparser/v2/ast"
 
+	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/state"
@@ -20,6 +21,7 @@ type captureLambdaInvoker struct {
 	payload      []byte
 	payloads     [][]byte
 	outcome      *events.InvokeOutcome
+	outcomes     []*events.InvokeOutcome
 }
 
 func TestAuthenticateCognito_identityShape(t *testing.T) {
@@ -64,7 +66,7 @@ func TestTryAuthIAM_identityShape(t *testing.T) {
 	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=AKIAEXAMPLE/20260723/us-east-1/appsync/aws4_request, SignedHeaders=host;x-amz-date, Signature=abc")
 
 	// When: AppSync accepts IAM auth.
-	identity, authErr := h.tryAuth(req, &GraphqlAPI{}, "AWS_IAM", nil, nil, nil)
+	identity, authErr := h.tryAuth(req, &GraphqlAPI{}, "AWS_IAM", nil, nil, nil, nil)
 
 	// Then: the resolver identity has the AWS-documented IAM keys that can be derived locally.
 	if authErr != nil {
@@ -74,6 +76,28 @@ func TestTryAuthIAM_identityShape(t *testing.T) {
 	assertIdentityField(t, identity, "username", "AKIAEXAMPLE")
 	assertIdentityField(t, identity, "user", "AKIAEXAMPLE")
 	assertIdentityField(t, identity, "userArn", "arn:aws:iam::123456789012:user/AKIAEXAMPLE")
+}
+
+func TestTryAuthIAM_identityFromIAMUserStore(t *testing.T) {
+	// Given: an IAM user record with the signing access key exists in shared state.
+	mem := state.NewMemoryStore()
+	if err := mem.Set(context.Background(), "iam:users", "alice", `{"UserName":"alice","Arn":"arn:aws:iam::123456789012:user/team/alice","AccessKeys":[{"AccessKeyId":"AKIAALICE","Status":"Active"}]}`); err != nil {
+		t.Fatalf("seed IAM user: %v", err)
+	}
+	h := &Handler{cfg: &config.Config{AccountID: "123456789012"}, store: newStore(mem, "us-east-1")}
+	req := httptest.NewRequest(http.MethodPost, "/graphql", nil)
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=AKIAALICE/20260723/us-east-1/appsync/aws4_request, SignedHeaders=host;x-amz-date, Signature=abc")
+
+	// When: AppSync builds IAM resolver identity.
+	identity, authErr := h.tryAuth(req, &GraphqlAPI{}, "AWS_IAM", nil, nil, nil, nil)
+
+	// Then: username and userArn come from the IAM user, not the raw access key.
+	if authErr != nil {
+		t.Fatalf("unexpected auth error: %v", authErr)
+	}
+	assertIdentityField(t, identity, "username", "alice")
+	assertIdentityField(t, identity, "user", "alice")
+	assertIdentityField(t, identity, "userArn", "arn:aws:iam::123456789012:user/team/alice")
 }
 
 func TestAuthenticateOIDC_identityShape(t *testing.T) {
@@ -113,7 +137,7 @@ func TestTryAuthLambdaAuthorizer_identityShape(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/graphql", nil)
 
 	// When: AppSync accepts Lambda authorizer auth.
-	identity, authErr := h.tryAuth(req, &GraphqlAPI{}, "AWS_LAMBDA", nil, nil, nil)
+	identity, authErr := h.tryAuth(req, &GraphqlAPI{}, "AWS_LAMBDA", nil, nil, nil, nil)
 
 	// Then: identity follows the documented resolverContext container shape.
 	if authErr != nil {
@@ -138,7 +162,12 @@ func TestTryAuthLambdaAuthorizer_invokesFunction(t *testing.T) {
 	lambdaCfg := json.RawMessage(`{"authorizerUri":"arn:aws:lambda:us-east-1:123456789012:function:auth-fn"}`)
 
 	// When: AppSync authenticates with AWS_LAMBDA.
-	identity, authErr := h.tryAuth(req, &GraphqlAPI{ApiId: "api123"}, "AWS_LAMBDA", nil, nil, lambdaCfg)
+	gqlReq := &graphQLExecutionRequest{
+		Query:         "query GetThing($id: ID!) { thing(id: $id) { id } }",
+		OperationName: "GetThing",
+		Variables:     map[string]any{"id": "thing-1"},
+	}
+	identity, authErr := h.tryAuth(req, &GraphqlAPI{ApiId: "api123"}, "AWS_LAMBDA", nil, nil, lambdaCfg, gqlReq)
 
 	// Then: the authorizer is invoked and resolverContext becomes resolver identity.
 	if authErr != nil {
@@ -158,6 +187,13 @@ func TestTryAuthLambdaAuthorizer_invokesFunction(t *testing.T) {
 	if requestContext["apiId"] != "api123" || requestContext["accountId"] != "123456789012" {
 		t.Fatalf("unexpected requestContext: %#v", requestContext)
 	}
+	if requestContext["queryString"] != gqlReq.Query || requestContext["operationName"] != "GetThing" {
+		t.Fatalf("unexpected GraphQL requestContext: %#v", requestContext)
+	}
+	variables := requestContext["variables"].(map[string]any)
+	if variables["id"] != "thing-1" {
+		t.Fatalf("expected variables in authorizer requestContext, got %#v", variables)
+	}
 	resolverContext := identity["resolverContext"].(map[string]any)
 	if resolverContext["tenant"] != "acme" {
 		t.Fatalf("expected resolverContext tenant, got %#v", resolverContext)
@@ -173,7 +209,7 @@ func TestTryAuthLambdaAuthorizer_unauthorized(t *testing.T) {
 	lambdaCfg := json.RawMessage(`{"authorizerUri":"arn:aws:lambda:us-east-1:000000000000:function:auth-fn"}`)
 
 	// When: AppSync authenticates with AWS_LAMBDA.
-	_, authErr := h.tryAuth(req, &GraphqlAPI{ApiId: "api123"}, "AWS_LAMBDA", nil, nil, lambdaCfg)
+	_, authErr := h.tryAuth(req, &GraphqlAPI{ApiId: "api123"}, "AWS_LAMBDA", nil, nil, lambdaCfg, nil)
 
 	// Then: the request is rejected with UnauthorizedException.
 	if authErr == nil {
@@ -193,7 +229,7 @@ func TestTryAuthLambdaAuthorizer_deniedFields(t *testing.T) {
 	lambdaCfg := json.RawMessage(`{"authorizerUri":"arn:aws:lambda:us-east-1:000000000000:function:auth-fn"}`)
 
 	// When: AppSync authenticates with AWS_LAMBDA.
-	identity, authErr := h.tryAuth(req, &GraphqlAPI{ApiId: "api123"}, "AWS_LAMBDA", nil, nil, lambdaCfg)
+	identity, authErr := h.tryAuth(req, &GraphqlAPI{ApiId: "api123"}, "AWS_LAMBDA", nil, nil, lambdaCfg, nil)
 
 	// Then: deniedFields are retained internally for response nulling.
 	if authErr != nil {
@@ -204,6 +240,53 @@ func TestTryAuthLambdaAuthorizer_deniedFields(t *testing.T) {
 	}
 	if h.deniesField(&GraphqlAPI{ApiId: "api123"}, identity, "Query", "public") {
 		t.Fatal("did not expect Query.public to be denied")
+	}
+}
+
+func TestTryAuthLambdaAuthorizer_cachesWithTTL(t *testing.T) {
+	// Given: a Lambda authorizer with API-level TTL caching enabled.
+	clk := clock.NewMock()
+	invoker := &captureLambdaInvoker{outcome: &events.InvokeOutcome{Payload: []byte(`{"isAuthorized":true,"resolverContext":{"tenant":"cached"}}`)}}
+	h := &Handler{clk: clk, invoker: invoker}
+	req := httptest.NewRequest(http.MethodPost, "/graphql", nil)
+	req.Header.Set("Authorization", "custom-token")
+	lambdaCfg := json.RawMessage(`{"authorizerUri":"arn:aws:lambda:us-east-1:000000000000:function:auth-fn","authorizerResultTtlInSeconds":60}`)
+
+	// When: the same token is authenticated twice before TTL expiry.
+	first, firstErr := h.tryAuth(req, &GraphqlAPI{ApiId: "api123"}, "AWS_LAMBDA", nil, nil, lambdaCfg, nil)
+	second, secondErr := h.tryAuth(req, &GraphqlAPI{ApiId: "api123"}, "AWS_LAMBDA", nil, nil, lambdaCfg, nil)
+
+	// Then: Lambda is invoked once and the cached identity is reused.
+	if firstErr != nil || secondErr != nil {
+		t.Fatalf("unexpected auth errors: %#v %#v", firstErr, secondErr)
+	}
+	if len(invoker.payloads) != 1 {
+		t.Fatalf("expected one authorizer invocation, got %d", len(invoker.payloads))
+	}
+	if first["resolverContext"].(map[string]any)["tenant"] != "cached" || second["resolverContext"].(map[string]any)["tenant"] != "cached" {
+		t.Fatalf("unexpected identities: %#v %#v", first, second)
+	}
+}
+
+func TestTryAuthLambdaAuthorizer_ttlOverrideZeroDisablesCache(t *testing.T) {
+	// Given: a Lambda authorizer response that disables caching with ttlOverride=0.
+	clk := clock.NewMock()
+	invoker := &captureLambdaInvoker{outcome: &events.InvokeOutcome{Payload: []byte(`{"isAuthorized":true,"resolverContext":{},"ttlOverride":0}`)}}
+	h := &Handler{clk: clk, invoker: invoker}
+	req := httptest.NewRequest(http.MethodPost, "/graphql", nil)
+	req.Header.Set("Authorization", "custom-token")
+	lambdaCfg := json.RawMessage(`{"authorizerUri":"arn:aws:lambda:us-east-1:000000000000:function:auth-fn","authorizerResultTtlInSeconds":60}`)
+
+	// When: the same token is authenticated twice.
+	_, firstErr := h.tryAuth(req, &GraphqlAPI{ApiId: "api123"}, "AWS_LAMBDA", nil, nil, lambdaCfg, nil)
+	_, secondErr := h.tryAuth(req, &GraphqlAPI{ApiId: "api123"}, "AWS_LAMBDA", nil, nil, lambdaCfg, nil)
+
+	// Then: ttlOverride=0 prevents cache reuse.
+	if firstErr != nil || secondErr != nil {
+		t.Fatalf("unexpected auth errors: %#v %#v", firstErr, secondErr)
+	}
+	if len(invoker.payloads) != 2 {
+		t.Fatalf("expected two authorizer invocations, got %d", len(invoker.payloads))
 	}
 }
 
@@ -296,6 +379,11 @@ func (i *captureLambdaInvoker) Invoke(_ context.Context, functionName string, pa
 	i.functionName = functionName
 	i.payload = append([]byte(nil), payload...)
 	i.payloads = append(i.payloads, append([]byte(nil), payload...))
+	if len(i.outcomes) > 0 {
+		outcome := i.outcomes[0]
+		i.outcomes = i.outcomes[1:]
+		return outcome, nil
+	}
 	if i.outcome != nil {
 		return i.outcome, nil
 	}
@@ -535,6 +623,126 @@ func TestResolveNestedField_directLambdaBatchResolver(t *testing.T) {
 	item := list[0].(map[string]any)
 	if item["id"] != "one" || item["child"] != "batched" {
 		t.Fatalf("unexpected resolved item: %#v", item)
+	}
+}
+
+func TestResolveNestedField_mappedLambdaBatchResolver(t *testing.T) {
+	// Given: a nested child resolver whose VTL request template uses BatchInvoke.
+	ctx := context.Background()
+	store := newStore(state.NewMemoryStore(), "us-east-1")
+	ds := &DataSource{
+		Name:         "LambdaDS",
+		Type:         "AWS_LAMBDA",
+		LambdaConfig: json.RawMessage(`{"lambdaFunctionArn":"arn:aws:lambda:us-east-1:000000000000:function:batch-fn"}`),
+	}
+	if err := store.PutDataSource(ctx, "api123", ds); err != nil {
+		t.Fatalf("put data source: %v", err)
+	}
+	if err := store.PutResolver(ctx, "api123", &Resolver{
+		TypeName:               "Item",
+		FieldName:              "child",
+		DataSourceName:         "LambdaDS",
+		MaxBatchSize:           2,
+		RequestMappingTemplate: `{"version":"2018-05-29","operation":"BatchInvoke","payload":{"id":"$context.source.id"}}`,
+	}); err != nil {
+		t.Fatalf("put resolver: %v", err)
+	}
+	invoker := &captureLambdaInvoker{outcome: &events.InvokeOutcome{Payload: []byte(`[{"data":"one-child"},{"data":"two-child"}]`)}}
+	h := &Handler{store: store, invoker: invoker, vtlEvaluator: newVTLEvaluator(clock.NewMock())}
+	field := &ast.Field{
+		Definition:   &ast.FieldDefinition{Type: ast.ListType(ast.NamedType("Item", nil), nil)},
+		SelectionSet: ast.SelectionSet{&ast.Field{Name: "id"}, &ast.Field{Name: "child"}},
+	}
+	items := []any{map[string]any{"id": "one"}, map[string]any{"id": "two"}}
+
+	// When: nested list selection resolution batches mapped child resolver payloads.
+	resolved, errs := h.resolveNestedField(httptest.NewRequest(http.MethodPost, "/graphql", nil), &GraphqlAPI{ApiId: "api123"}, field, items, nil, nil)
+
+	// Then: Lambda receives a single BatchInvoke request whose payload is a list.
+	if len(errs) != 0 {
+		t.Fatalf("unexpected GraphQL errors: %#v", errs)
+	}
+	if len(invoker.payloads) != 1 {
+		t.Fatalf("expected one batched Lambda invocation, got %d", len(invoker.payloads))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(invoker.payload, &payload); err != nil {
+		t.Fatalf("batch payload is not JSON: %v", err)
+	}
+	if payload["operation"] != "BatchInvoke" {
+		t.Fatalf("expected BatchInvoke operation, got %#v", payload)
+	}
+	batchedPayload := payload["payload"].([]any)
+	if len(batchedPayload) != 2 {
+		t.Fatalf("expected two merged payloads, got %#v", batchedPayload)
+	}
+	list := resolved.([]any)
+	first := list[0].(map[string]any)
+	second := list[1].(map[string]any)
+	if first["child"] != "one-child" || second["child"] != "two-child" {
+		t.Fatalf("unexpected resolved list: %#v", list)
+	}
+}
+
+func TestResolveNestedField_jsLambdaBatchResolver(t *testing.T) {
+	// Given: a nested APPSYNC_JS child resolver whose request uses BatchInvoke.
+	ctx := context.Background()
+	store := newStore(state.NewMemoryStore(), "us-east-1")
+	ds := &DataSource{
+		Name:         "LambdaDS",
+		Type:         "AWS_LAMBDA",
+		LambdaConfig: json.RawMessage(`{"lambdaFunctionArn":"arn:aws:lambda:us-east-1:000000000000:function:batch-fn"}`),
+	}
+	if err := store.PutDataSource(ctx, "api123", ds); err != nil {
+		t.Fatalf("put data source: %v", err)
+	}
+	code := `
+export function request(ctx) {
+  return { operation: 'BatchInvoke', payload: { id: ctx.source.id } };
+}
+export function response(ctx) {
+  return ctx.result.label;
+}`
+	if err := store.PutResolver(ctx, "api123", &Resolver{
+		TypeName:       "Item",
+		FieldName:      "child",
+		DataSourceName: "LambdaDS",
+		MaxBatchSize:   2,
+		Runtime:        json.RawMessage(`{"name":"APPSYNC_JS","runtimeVersion":"1.0.0"}`),
+		Code:           code,
+	}); err != nil {
+		t.Fatalf("put resolver: %v", err)
+	}
+	invoker := &captureLambdaInvoker{outcome: &events.InvokeOutcome{Payload: []byte(`[{"data":{"label":"one-child"}},{"data":{"label":"two-child"}}]`)}}
+	h := &Handler{store: store, invoker: invoker, jsEvaluator: newJSEvaluator(clock.NewMock())}
+	field := &ast.Field{
+		Definition:   &ast.FieldDefinition{Type: ast.ListType(ast.NamedType("Item", nil), nil)},
+		SelectionSet: ast.SelectionSet{&ast.Field{Name: "id"}, &ast.Field{Name: "child"}},
+	}
+	items := []any{map[string]any{"id": "one"}, map[string]any{"id": "two"}}
+
+	// When: nested list selection resolution batches APPSYNC_JS child resolver payloads.
+	resolved, errs := h.resolveNestedField(httptest.NewRequest(http.MethodPost, "/graphql", nil), &GraphqlAPI{ApiId: "api123"}, field, items, nil, nil)
+
+	// Then: Lambda receives one BatchInvoke request and response() maps each result.
+	if len(errs) != 0 {
+		t.Fatalf("unexpected GraphQL errors: %#v", errs)
+	}
+	if len(invoker.payloads) != 1 {
+		t.Fatalf("expected one batched Lambda invocation, got %d", len(invoker.payloads))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(invoker.payload, &payload); err != nil {
+		t.Fatalf("batch payload is not JSON: %v", err)
+	}
+	if payload["operation"] != "BatchInvoke" {
+		t.Fatalf("expected BatchInvoke operation, got %#v", payload)
+	}
+	list := resolved.([]any)
+	first := list[0].(map[string]any)
+	second := list[1].(map[string]any)
+	if first["child"] != "one-child" || second["child"] != "two-child" {
+		t.Fatalf("unexpected resolved list: %#v", list)
 	}
 }
 
