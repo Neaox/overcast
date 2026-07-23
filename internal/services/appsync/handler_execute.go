@@ -11,7 +11,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -24,6 +26,8 @@ import (
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
+
+const lambdaAuthorizerDeniedFieldsKey = "__overcastDeniedFields"
 
 // ─── ExecuteGraphQL ──────────────────────────────────────────────────────────
 
@@ -143,10 +147,11 @@ func (h *Handler) tryAuth(r *http.Request, api *GraphqlAPI, authType string, use
 	case "OPENID_CONNECT":
 		return h.authenticateOIDC(r, oidcCfg)
 	case "AWS_LAMBDA":
-		// Accept all requests — emulator does not actually invoke the authorizer Lambda.
-		return map[string]any{"authType": "AWS_LAMBDA"}, nil
+		return h.authenticateLambdaAuthorizer(r, api, lambdaCfg)
+	case "AWS_IAM":
+		return h.iamIdentity(r), nil
 	default:
-		// AWS_IAM and unknown — accept (SigV4 stub passes all).
+		// Unknown auth types are accepted by the local emulator.
 		return nil, nil
 	}
 }
@@ -186,9 +191,12 @@ func (h *Handler) authenticateCognito(r *http.Request, _ json.RawMessage) (map[s
 	}
 	claims := parseJWTClaims(token)
 	identity := map[string]any{
-		"sub":    claims["sub"],
-		"issuer": claims["iss"],
-		"claims": claims,
+		"sub":                 claims["sub"],
+		"issuer":              claims["iss"],
+		"username":            claimString(claims, "cognito:username", "username"),
+		"claims":              claims,
+		"sourceIp":            sourceIPs(r),
+		"defaultAuthStrategy": "ALLOW",
 	}
 	return identity, nil
 }
@@ -213,9 +221,79 @@ func (h *Handler) authenticateOIDC(r *http.Request, oidcCfg json.RawMessage) (ma
 	}
 
 	identity := map[string]any{
-		"sub":    claims["sub"],
-		"issuer": issuer,
-		"claims": claims,
+		"sub":      claims["sub"],
+		"issuer":   issuer,
+		"username": claimString(claims, "username", "cognito:username"),
+		"claims":   claims,
+		"sourceIp": sourceIPs(r),
+	}
+	return identity, nil
+}
+
+func (h *Handler) authenticateLambdaAuthorizer(r *http.Request, api *GraphqlAPI, lambdaCfg json.RawMessage) (map[string]any, *protocol.AWSError) {
+	var cfg struct {
+		AuthorizerURI                string `json:"authorizerUri"`
+		IdentityValidationExpression string `json:"identityValidationExpression"`
+	}
+	if len(lambdaCfg) > 0 {
+		if err := json.Unmarshal(lambdaCfg, &cfg); err != nil {
+			return nil, unauthorizedError("Invalid Lambda authorizer configuration.")
+		}
+	}
+	if cfg.AuthorizerURI == "" {
+		return map[string]any{"resolverContext": map[string]any{}}, nil
+	}
+	if h.invoker == nil {
+		return nil, unauthorizedError("Lambda authorizer invocation not available.")
+	}
+
+	token := r.Header.Get("Authorization")
+	if token == "" {
+		return nil, unauthorizedError("Missing Authorization header for AWS_LAMBDA.")
+	}
+	if cfg.IdentityValidationExpression != "" {
+		matched, err := regexp.MatchString(cfg.IdentityValidationExpression, token)
+		if err != nil || !matched {
+			return nil, unauthorizedError("Unauthorized")
+		}
+	}
+
+	event := map[string]any{
+		"authorizationToken": token,
+		"requestContext": map[string]any{
+			"apiId":         api.ApiId,
+			"accountId":     h.accountID(),
+			"requestId":     r.Header.Get("x-amzn-requestid"),
+			"queryString":   "",
+			"operationName": "",
+			"variables":     map[string]any{},
+		},
+		"requestHeaders": flattenHeaders(r.Header),
+	}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+
+	functionName := lambdaFunctionNameFromARN(cfg.AuthorizerURI)
+	outcome, err := h.invoker.Invoke(r.Context(), functionName, payload)
+	if err != nil || outcome == nil || outcome.FunctionError != "" {
+		return nil, unauthorizedError("Unauthorized")
+	}
+	var resp struct {
+		IsAuthorized    bool           `json:"isAuthorized"`
+		ResolverContext map[string]any `json:"resolverContext"`
+		DeniedFields    []string       `json:"deniedFields"`
+	}
+	if err := json.Unmarshal(outcome.Payload, &resp); err != nil || !resp.IsAuthorized {
+		return nil, unauthorizedError("Unauthorized")
+	}
+	if resp.ResolverContext == nil {
+		resp.ResolverContext = map[string]any{}
+	}
+	identity := map[string]any{"resolverContext": resp.ResolverContext}
+	if len(resp.DeniedFields) > 0 {
+		identity[lambdaAuthorizerDeniedFieldsKey] = resp.DeniedFields
 	}
 	return identity, nil
 }
@@ -256,6 +334,80 @@ func parseJWTClaims(token string) map[string]any {
 	return claims
 }
 
+func claimString(claims map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if v, ok := claims[key].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func sourceIPs(r *http.Request) []string {
+	var ips []string
+	for _, part := range strings.Split(r.Header.Get("X-Forwarded-For"), ",") {
+		ip := strings.TrimSpace(part)
+		if ip != "" {
+			ips = append(ips, ip)
+		}
+	}
+	remote := strings.TrimSpace(r.RemoteAddr)
+	if host, _, err := net.SplitHostPort(remote); err == nil {
+		remote = host
+	}
+	if remote != "" {
+		ips = append(ips, remote)
+	}
+	if ips == nil {
+		return []string{}
+	}
+	return ips
+}
+
+func (h *Handler) iamIdentity(r *http.Request) map[string]any {
+	accountID := h.accountID()
+	username := sigV4AccessKey(r)
+	identity := map[string]any{
+		"accountId": accountID,
+		"sourceIp":  sourceIPs(r),
+	}
+	if username != "" {
+		identity["username"] = username
+		identity["user"] = username
+		identity["userArn"] = "arn:aws:iam::" + accountID + ":user/" + username
+	}
+	return identity
+}
+
+func (h *Handler) accountID() string {
+	if h != nil && h.cfg != nil && h.cfg.AccountID != "" {
+		return h.cfg.AccountID
+	}
+	return "000000000000"
+}
+
+func sigV4AccessKey(r *http.Request) string {
+	if auth := r.Header.Get("Authorization"); auth != "" {
+		for _, part := range strings.Split(auth, ",") {
+			part = strings.TrimSpace(part)
+			if strings.HasPrefix(part, "AWS4-HMAC-SHA256 ") {
+				part = strings.TrimPrefix(part, "AWS4-HMAC-SHA256 ")
+			}
+			if strings.HasPrefix(part, "Credential=") {
+				credential := strings.TrimPrefix(part, "Credential=")
+				if idx := strings.IndexByte(credential, '/'); idx > 0 {
+					return credential[:idx]
+				}
+			}
+		}
+	}
+	credential := r.URL.Query().Get("X-Amz-Credential")
+	if idx := strings.IndexByte(credential, '/'); idx > 0 {
+		return credential[:idx]
+	}
+	return ""
+}
+
 // ─── Query Execution Engine ──────────────────────────────────────────────────
 
 // resolveContext carries field-level information through the resolution chain.
@@ -268,8 +420,18 @@ type resolveContext struct {
 	Source     any // parent object for nested resolvers (nil at root)
 	Variables  map[string]any
 	Headers    http.Header
+	DomainName string
+	Stash      map[string]any
+	PrevResult any
 	Field      *ast.Field     // AST field for sub-selection access
 	Identity   map[string]any // authenticated caller's identity for $context.identity
+}
+
+type batchField struct {
+	field    *ast.Field
+	alias    string
+	resolver *Resolver
+	ds       *DataSource
 }
 
 // executeQuery walks the selection set and resolves fields using stored resolvers.
@@ -368,6 +530,10 @@ func (h *Handler) resolveSelectionSet(r *http.Request, api *GraphqlAPI, selectio
 			data[alias] = parentType
 			continue
 		}
+		if h.deniesField(api, identity, parentType, field.Name) {
+			data[alias] = nil
+			continue
+		}
 
 		resolver, resolverErr := h.store.GetResolver(r.Context(), api.ApiId, parentType, field.Name)
 		if resolverErr != nil {
@@ -381,7 +547,7 @@ func (h *Handler) resolveSelectionSet(r *http.Request, api *GraphqlAPI, selectio
 			if sourceMap, ok := source.(map[string]any); ok {
 				val, exists := sourceMap[field.Name]
 				if exists {
-					data[alias] = filterSubFields(val, field)
+					data[alias] = h.filterSubFields(val, field, api, identity, fieldTypeName(field))
 					continue
 				}
 			}
@@ -449,9 +615,12 @@ func (h *Handler) resolveNestedField(r *http.Request, api *GraphqlAPI, field *as
 		if hasChildResolvers {
 			return h.resolveSelectionSet(r, api, field.SelectionSet, childType, v, variables, identity)
 		}
-		return filterSubFields(v, field), nil
+		return h.filterSubFields(v, field, api, identity, childType), nil
 
 	case []any:
+		if batched, ok, batchErrs := h.resolveBatchedListSelectionSet(r, api, field.SelectionSet, childType, v, variables, identity); ok {
+			return batched, batchErrs
+		}
 		// Array of objects — resolve each element.
 		out := make([]any, len(v))
 		var errors []GraphQLError
@@ -465,6 +634,127 @@ func (h *Handler) resolveNestedField(r *http.Request, api *GraphqlAPI, field *as
 	default:
 		return result, nil
 	}
+}
+
+func (h *Handler) resolveBatchedListSelectionSet(r *http.Request, api *GraphqlAPI, selections ast.SelectionSet, parentType string, items []any, variables map[string]any, identity map[string]any) ([]any, bool, []GraphQLError) {
+	if len(items) == 0 || len(selections) == 0 {
+		return nil, false, nil
+	}
+	batchFields := []batchField{}
+	for _, sel := range selections {
+		field, ok := sel.(*ast.Field)
+		if !ok {
+			continue
+		}
+		resolver, ds, ok := h.batchableDirectLambdaResolver(r, api, parentType, field)
+		if !ok {
+			continue
+		}
+		alias := field.Alias
+		if alias == "" {
+			alias = field.Name
+		}
+		batchFields = append(batchFields, batchField{field: field, alias: alias, resolver: resolver, ds: ds})
+	}
+	if len(batchFields) == 0 {
+		return nil, false, nil
+	}
+
+	out := make([]any, len(items))
+	var errors []GraphQLError
+	for i, item := range items {
+		obj, ok := item.(map[string]any)
+		if !ok {
+			out[i] = item
+			continue
+		}
+		resolved, childErrs := h.resolveSelectionSetWithoutBatchFields(r, api, selections, parentType, obj, variables, identity, batchFields)
+		errors = append(errors, childErrs...)
+		out[i] = resolved
+	}
+
+	for _, bf := range batchFields {
+		for i := range out {
+			if m, ok := out[i].(map[string]any); ok {
+				m[bf.alias] = nil
+			}
+		}
+		for start := 0; start < len(items); start += bf.resolver.MaxBatchSize {
+			end := start + bf.resolver.MaxBatchSize
+			if end > len(items) {
+				end = len(items)
+			}
+			rctxs := make([]*resolveContext, 0, end-start)
+			indices := make([]int, 0, end-start)
+			for i := start; i < end; i++ {
+				obj, ok := items[i].(map[string]any)
+				if !ok || h.deniesField(api, identity, parentType, bf.field.Name) {
+					continue
+				}
+				rctxs = append(rctxs, &resolveContext{
+					FieldName:  bf.field.Name,
+					ParentType: parentType,
+					Arguments:  extractArguments(bf.field, variables),
+					Source:     obj,
+					Variables:  variables,
+					Headers:    r.Header,
+					Field:      bf.field,
+					Identity:   identity,
+				})
+				indices = append(indices, i)
+			}
+			if len(rctxs) == 0 {
+				continue
+			}
+			results, batchErrs := h.resolveDirectLambdaBatchDataSource(r.Context(), bf.ds, rctxs)
+			errors = append(errors, batchErrs...)
+			for j, result := range results {
+				idx := indices[j]
+				if m, ok := out[idx].(map[string]any); ok {
+					m[bf.alias] = h.filterSubFields(result, bf.field, api, identity, fieldTypeName(bf.field))
+				}
+			}
+		}
+	}
+
+	return out, true, errors
+}
+
+func (h *Handler) resolveSelectionSetWithoutBatchFields(r *http.Request, api *GraphqlAPI, selections ast.SelectionSet, parentType string, source map[string]any, variables map[string]any, identity map[string]any, batchFields []batchField) (map[string]any, []GraphQLError) {
+	filtered := make(ast.SelectionSet, 0, len(selections))
+	for _, sel := range selections {
+		field, ok := sel.(*ast.Field)
+		if !ok {
+			filtered = append(filtered, sel)
+			continue
+		}
+		isBatch := false
+		for _, bf := range batchFields {
+			if bf.field == field {
+				isBatch = true
+				break
+			}
+		}
+		if !isBatch {
+			filtered = append(filtered, sel)
+		}
+	}
+	return h.resolveSelectionSet(r, api, filtered, parentType, source, variables, identity)
+}
+
+func (h *Handler) batchableDirectLambdaResolver(r *http.Request, api *GraphqlAPI, parentType string, field *ast.Field) (*Resolver, *DataSource, bool) {
+	if field == nil || h.store == nil {
+		return nil, nil, false
+	}
+	resolver, err := h.store.GetResolver(r.Context(), api.ApiId, parentType, field.Name)
+	if err != nil || resolver == nil || resolver.MaxBatchSize <= 0 || resolver.Kind == "PIPELINE" || resolver.RequestMappingTemplate != "" || resolver.ResponseMappingTemplate != "" || resolver.Code != "" || resolver.DataSourceName == "" {
+		return nil, nil, false
+	}
+	ds, err := h.store.GetDataSource(r.Context(), api.ApiId, resolver.DataSourceName)
+	if err != nil || ds == nil || ds.Type != "AWS_LAMBDA" {
+		return nil, nil, false
+	}
+	return resolver, ds, true
 }
 
 // fieldTypeName extracts the named type from a field's type definition.
@@ -595,7 +885,7 @@ func (h *Handler) resolveDataSource(r *http.Request, ds *DataSource, requestTemp
 	case "HTTP":
 		return h.resolveHTTPTemplate(r.Context(), ds, requestTemplate)
 	case "AWS_LAMBDA":
-		return h.resolveLambdaDataSource(r.Context(), ds, rctx)
+		return h.resolveLambdaDataSource(r.Context(), ds, requestTemplate, rctx)
 	case "AMAZON_DYNAMODB":
 		return h.resolveDynamoDBDataSource(r.Context(), ds, requestTemplate, rctx)
 	default:
@@ -796,7 +1086,7 @@ func (h *Handler) buildJSContext(r *http.Request, api *GraphqlAPI, rctx *resolve
 
 	// Inject identity if available on the resolve context.
 	if rctx.Identity != nil {
-		ctx["identity"] = rctx.Identity
+		ctx["identity"] = publicResolverIdentity(rctx.Identity)
 	}
 
 	return ctx
@@ -809,6 +1099,16 @@ func syncStash(ctx map[string]any, stash map[string]any) {
 			stash[k] = v
 		}
 	}
+}
+
+func withPipelineContext(rctx *resolveContext, stash map[string]any, prevResult any) *resolveContext {
+	if rctx == nil {
+		return &resolveContext{Stash: stash, PrevResult: prevResult}
+	}
+	copy := *rctx
+	copy.Stash = stash
+	copy.PrevResult = prevResult
+	return &copy
 }
 
 // resolveFieldJS executes a UNIT resolver that uses APPSYNC_JS runtime.
@@ -907,7 +1207,7 @@ func (h *Handler) resolveFunctionJS(r *http.Request, api *GraphqlAPI, fn *Functi
 				}
 			}
 		} else {
-			dsResult2, gqlErr := h.resolveDataSource(r, ds, reqResult.EvaluationResult, rctx)
+			dsResult2, gqlErr := h.resolveDataSource(r, ds, reqResult.EvaluationResult, withPipelineContext(rctx, stash, prevResult))
 			if gqlErr != nil {
 				return nil, gqlErr
 			}
@@ -998,7 +1298,7 @@ func (h *Handler) buildVTLContext(r *http.Request, api *GraphqlAPI, rctx *resolv
 		ctx["prev"] = map[string]any{"result": prevResult}
 	}
 	if rctx.Identity != nil {
-		ctx["identity"] = rctx.Identity
+		ctx["identity"] = publicResolverIdentity(rctx.Identity)
 	}
 
 	// Load environment variables if available.
@@ -1137,7 +1437,7 @@ func (h *Handler) resolveFunctionVTL(r *http.Request, api *GraphqlAPI, fn *Funct
 			}
 			dsResult = result
 		} else {
-			result, gqlErr := h.resolveDataSource(r, ds, reqOutput, rctx)
+			result, gqlErr := h.resolveDataSource(r, ds, reqOutput, withPipelineContext(rctx, stash, prevResult))
 			if gqlErr != nil {
 				return nil, gqlErr
 			}
@@ -1307,7 +1607,7 @@ func (h *Handler) resolveHTTPTemplate(ctx context.Context, ds *DataSource, reque
 // resolveLambdaDataSource handles AWS_LAMBDA data sources by invoking the
 // configured Lambda function synchronously. The function receives an AppSync
 // resolver event with arguments, source, and field info.
-func (h *Handler) resolveLambdaDataSource(ctx context.Context, ds *DataSource, rctx *resolveContext) (any, *GraphQLError) {
+func (h *Handler) resolveLambdaDataSource(ctx context.Context, ds *DataSource, requestTemplate string, rctx *resolveContext) (any, *GraphQLError) {
 	if h.invoker == nil {
 		return nil, &GraphQLError{Message: "Lambda invocation not available (Lambda service not enabled)"}
 	}
@@ -1322,32 +1622,32 @@ func (h *Handler) resolveLambdaDataSource(ctx context.Context, ds *DataSource, r
 
 	functionName := lambdaFunctionNameFromARN(lambdaCfg.LambdaFunctionArn)
 
-	// Build the AppSync Lambda resolver event.
-	// See: https://docs.aws.amazon.com/appsync/latest/devguide/resolver-context-reference-js.html
-	selectionSetList := selectionNames(rctx.Field)
-	event := map[string]any{
-		"arguments": rctx.Arguments,
-		"source":    rctx.Source,
-		"info": map[string]any{
-			"fieldName":        rctx.FieldName,
-			"parentTypeName":   rctx.ParentType,
-			"selectionSetList": selectionSetList,
-		},
-		"request": map[string]any{
-			"headers": flattenHeaders(rctx.Headers),
-		},
-		"stash": map[string]any{},
-		"prev":  map[string]any{"result": nil},
-	}
-
-	payload, err := json.Marshal(event)
-	if err != nil {
-		return nil, &GraphQLError{Message: "failed to marshal Lambda event: " + err.Error()}
+	var payload []byte
+	asyncEventInvocation := false
+	if strings.TrimSpace(requestTemplate) != "" {
+		requestObject, gqlErr := parseLambdaRequestObject(requestTemplate)
+		if gqlErr != nil {
+			return nil, gqlErr
+		}
+		asyncEventInvocation = requestObject.InvocationType == "Event"
+		payload = []byte(requestTemplate)
+	} else {
+		// AWS direct Lambda resolvers receive the AppSync resolver context when
+		// no request mapping template is configured.
+		event := h.buildDirectLambdaResolverEvent(rctx)
+		var err error
+		payload, err = json.Marshal(event)
+		if err != nil {
+			return nil, &GraphQLError{Message: "failed to marshal Lambda event: " + err.Error()}
+		}
 	}
 
 	outcome, err := h.invoker.Invoke(ctx, functionName, payload)
 	if err != nil {
 		return nil, &GraphQLError{Message: "Lambda invocation failed: " + err.Error()}
+	}
+	if asyncEventInvocation {
+		return nil, nil
 	}
 	if outcome == nil {
 		return nil, &GraphQLError{Message: "Lambda function " + functionName + " not found or unavailable"}
@@ -1373,6 +1673,92 @@ func (h *Handler) resolveLambdaDataSource(ctx context.Context, ds *DataSource, r
 		}
 	}
 	return result, nil
+}
+
+type lambdaRequestObject struct {
+	Operation      string `json:"operation"`
+	InvocationType string `json:"invocationType"`
+}
+
+func parseLambdaRequestObject(requestTemplate string) (*lambdaRequestObject, *GraphQLError) {
+	var requestObject lambdaRequestObject
+	if err := json.Unmarshal([]byte(requestTemplate), &requestObject); err != nil {
+		return nil, &GraphQLError{Message: "invalid Lambda request mapping template output"}
+	}
+	if requestObject.Operation == "BatchInvoke" {
+		return nil, &GraphQLError{Message: "Lambda BatchInvoke request mapping is not yet supported"}
+	}
+	if requestObject.Operation != "Invoke" {
+		return nil, &GraphQLError{Message: "invalid Lambda request operation"}
+	}
+	if requestObject.InvocationType != "" && requestObject.InvocationType != "RequestResponse" && requestObject.InvocationType != "Event" {
+		return nil, &GraphQLError{Message: "invalid Lambda invocationType"}
+	}
+	return &requestObject, nil
+}
+
+func (h *Handler) resolveDirectLambdaBatchDataSource(ctx context.Context, ds *DataSource, rctxs []*resolveContext) ([]any, []GraphQLError) {
+	if len(rctxs) == 0 {
+		return []any{}, nil
+	}
+	if h.invoker == nil {
+		return nil, []GraphQLError{{Message: "Lambda invocation not available (Lambda service not enabled)"}}
+	}
+	var lambdaCfg struct {
+		LambdaFunctionArn string `json:"lambdaFunctionArn"`
+	}
+	if err := json.Unmarshal(ds.LambdaConfig, &lambdaCfg); err != nil || lambdaCfg.LambdaFunctionArn == "" {
+		return nil, []GraphQLError{{Message: "AWS_LAMBDA data source missing lambdaFunctionArn configuration"}}
+	}
+
+	events := make([]map[string]any, 0, len(rctxs))
+	for _, rctx := range rctxs {
+		events = append(events, h.buildDirectLambdaResolverEvent(rctx))
+	}
+	payload, err := json.Marshal(events)
+	if err != nil {
+		return nil, []GraphQLError{{Message: "failed to marshal Lambda batch event: " + err.Error()}}
+	}
+	outcome, err := h.invoker.Invoke(ctx, lambdaFunctionNameFromARN(lambdaCfg.LambdaFunctionArn), payload)
+	if err != nil {
+		return nil, []GraphQLError{{Message: "Lambda invocation failed: " + err.Error()}}
+	}
+	if outcome == nil {
+		return nil, []GraphQLError{{Message: "Lambda function " + lambdaFunctionNameFromARN(lambdaCfg.LambdaFunctionArn) + " not found or unavailable"}}
+	}
+	if outcome.FunctionError != "" {
+		return nil, []GraphQLError{{Message: "Lambda function error: " + outcome.FunctionError}}
+	}
+
+	var rawResults []any
+	if err := json.Unmarshal(outcome.Payload, &rawResults); err != nil {
+		return nil, []GraphQLError{{Message: "Lambda BatchInvoke response must be a list"}}
+	}
+	if len(rawResults) != len(rctxs) {
+		return nil, []GraphQLError{{Message: "Lambda BatchInvoke response length does not match request length"}}
+	}
+
+	results := make([]any, len(rawResults))
+	var errs []GraphQLError
+	for i, item := range rawResults {
+		if m, ok := item.(map[string]any); ok {
+			if msg, _ := m["errorMessage"].(string); msg != "" {
+				err := GraphQLError{Message: msg}
+				if typ, _ := m["errorType"].(string); typ != "" {
+					err.Extensions = map[string]any{"errorType": typ}
+				}
+				errs = append(errs, err)
+				results[i] = nil
+				continue
+			}
+			if data, ok := m["data"]; ok {
+				results[i] = data
+				continue
+			}
+		}
+		results[i] = item
+	}
+	return results, errs
 }
 
 // resolveDynamoDBDataSource handles AMAZON_DYNAMODB data sources by invoking
@@ -2073,6 +2459,99 @@ func selectionNames(field *ast.Field) []string {
 	return names
 }
 
+func (h *Handler) buildDirectLambdaResolverEvent(rctx *resolveContext) map[string]any {
+	selectionSetList := selectionNames(rctx.Field)
+	if selectionSetList == nil {
+		selectionSetList = []string{}
+	}
+	arguments := rctx.Arguments
+	if arguments == nil {
+		arguments = map[string]any{}
+	}
+	variables := rctx.Variables
+	if variables == nil {
+		variables = map[string]any{}
+	}
+	headers := flattenHeaders(rctx.Headers)
+	if headers == nil {
+		headers = map[string]string{}
+	}
+	stash := rctx.Stash
+	if stash == nil {
+		stash = map[string]any{}
+	}
+
+	var domainName any
+	if rctx.DomainName != "" {
+		domainName = rctx.DomainName
+	}
+
+	return map[string]any{
+		"arguments": arguments,
+		"identity":  publicResolverIdentity(rctx.Identity),
+		"source":    rctx.Source,
+		"info": map[string]any{
+			"fieldName":           rctx.FieldName,
+			"parentTypeName":      rctx.ParentType,
+			"selectionSetList":    selectionSetList,
+			"selectionSetGraphQL": selectionSetToGraphQL(vtlFieldSelectionSet(rctx.Field)),
+			"variables":           variables,
+		},
+		"request": map[string]any{
+			"headers":    headers,
+			"domainName": domainName,
+		},
+		"stash": stash,
+		"prev":  map[string]any{"result": rctx.PrevResult},
+	}
+}
+
+func publicResolverIdentity(identity map[string]any) map[string]any {
+	if identity == nil {
+		return nil
+	}
+	if _, ok := identity[lambdaAuthorizerDeniedFieldsKey]; !ok {
+		return identity
+	}
+	public := make(map[string]any, len(identity)-1)
+	for k, v := range identity {
+		if k != lambdaAuthorizerDeniedFieldsKey {
+			public[k] = v
+		}
+	}
+	return public
+}
+
+func (h *Handler) deniesField(api *GraphqlAPI, identity map[string]any, typeName, fieldName string) bool {
+	if identity == nil {
+		return false
+	}
+	raw, ok := identity[lambdaAuthorizerDeniedFieldsKey]
+	if !ok {
+		return false
+	}
+	denied, ok := raw.([]string)
+	if !ok {
+		return false
+	}
+	short := typeName + "." + fieldName
+	suffix := "/types/" + typeName + "/fields/" + fieldName
+	full := ""
+	if api != nil && api.ApiId != "" {
+		region := "us-east-1"
+		if h != nil && h.cfg != nil && h.cfg.Region != "" {
+			region = h.cfg.Region
+		}
+		full = "arn:aws:appsync:" + region + ":" + h.accountID() + ":apis/" + api.ApiId + suffix
+	}
+	for _, item := range denied {
+		if item == short || item == full {
+			return true
+		}
+	}
+	return false
+}
+
 // flattenHeaders converts http.Header (multi-valued) to a single-valued map.
 // AppSync sends only the first value for each header.
 func flattenHeaders(h http.Header) map[string]string {
@@ -2081,6 +2560,9 @@ func flattenHeaders(h http.Header) map[string]string {
 	}
 	flat := make(map[string]string, len(h))
 	for k, vs := range h {
+		if strings.EqualFold(k, "cookie") {
+			continue
+		}
 		if len(vs) > 0 {
 			flat[k] = vs[0]
 		}
@@ -2088,10 +2570,9 @@ func flattenHeaders(h http.Header) map[string]string {
 	return flat
 }
 
-// filterSubFields filters a resolved value to only include fields requested
-// in the GraphQL selection set. If the resolved value is a map and the field
-// has sub-selections, only those sub-fields are returned.
-func filterSubFields(result any, field *ast.Field) any {
+// filterSubFields filters a resolved value to only include fields requested in
+// the GraphQL selection set, while applying Lambda authorizer deniedFields.
+func (h *Handler) filterSubFields(result any, field *ast.Field, api *GraphqlAPI, identity map[string]any, parentType string) any {
 	if len(field.SelectionSet) == 0 || result == nil {
 		return result
 	}
@@ -2111,9 +2592,13 @@ func filterSubFields(result any, field *ast.Field) any {
 		if alias == "" {
 			alias = subField.Name
 		}
+		if h.deniesField(api, identity, parentType, subField.Name) {
+			filtered[alias] = nil
+			continue
+		}
 		val, exists := obj[subField.Name]
 		if exists {
-			filtered[alias] = filterSubFields(val, subField)
+			filtered[alias] = h.filterSubFields(val, subField, api, identity, fieldTypeName(subField))
 		} else {
 			filtered[alias] = nil
 		}

@@ -2,7 +2,7 @@ service: appsync
 status: fixed
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-07-22
+last_updated: 2026-07-23
 protocols: [rest_json, graphql_execution, websocket_realtime, aws_json_1_0, aws_json_1_1, rpcv2_cbor]
 implementation: [internal/services/appsync]
 integration_tests: [tests/integration/appsync]
@@ -146,6 +146,44 @@ operations:
         status: fixed
         evidence: TestSchema_appSyncDirectives
         notes: Parser preloads definitions for @aws_api_key, @aws_iam, @aws_oidc, @aws_cognito_user_pools, @aws_lambda, @aws_auth, and @aws_subscribe before validating SDL.
+  LambdaResolverExecution:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/appsync/latest/devguide/resolver-mapping-template-reference-lambda.html
+      - https://docs.aws.amazon.com/appsync/latest/devguide/resolver-context-reference.html
+      - https://docs.powertools.aws.dev/lambda/typescript/latest/features/event-handler/appsync-graphql/
+    scenario_matrix:
+      - scenario: Direct Lambda resolver event with no request mapping template
+        status: fixed
+        evidence: TestResolveLambdaDataSource_directResolverEventShape
+        notes: Direct Lambda payload now includes AppSync resolver context fields required by AWS/Powertools-compatible handlers, including identity, request.domainName, info.variables, selectionSetList, selectionSetGraphQL, stash, and prev.result.
+      - scenario: Lambda resolver with evaluated request mapping template
+        status: fixed
+        evidence: TestResolveLambdaDataSource_requestMappingTemplatePayload
+        notes: Non-empty evaluated mapping template JSON is passed to Lambda instead of being ignored and replaced with the direct resolver context.
+      - scenario: Auth-specific identity shapes in Lambda resolver context
+        status: fixed
+        evidence: TestAuthenticateCognito_identityShape; TestAuthenticateOIDC_identityShape; TestTryAuthIAM_identityShape; TestTryAuthLambdaAuthorizer_identityShape; TestTryAuthLambdaAuthorizer_invokesFunction; TestTryAuthLambdaAuthorizer_unauthorized
+        notes: Cognito and OIDC identities now include documented username/sourceIp fields, Cognito includes defaultAuthStrategy=ALLOW, IAM includes locally derivable accountId/sourceIp/user/userArn/username fields from SigV4 credentials, and configured Lambda authorizers are invoked with AWS-shaped authorization events so resolverContext is propagated. ttlOverride/cache behavior and full queryString/operationName/variables requestContext fidelity remain unimplemented.
+      - scenario: Request headers and default endpoint domainName in direct Lambda resolver context
+        status: fixed
+        evidence: TestBuildDirectLambdaResolverEvent_defaultDomainAndHeaders
+        notes: Direct resolver events now omit Cookie from request.headers and use null request.domainName for the default GraphQL endpoint.
+      - scenario: Direct Lambda resolver batching with maxBatchSize
+        status: fixed
+        evidence: TestResolveDirectLambdaBatchDataSource; TestResolveNestedField_directLambdaBatchResolver
+        notes: Nested list child fields backed by direct AWS_LAMBDA resolvers with maxBatchSize now send arrays of direct resolver context events, chunked by maxBatchSize, and map list-shaped {data,errorMessage,errorType} responses back per item. Broader batching scheduler parity should still be reviewed against real nested query cases.
+      - scenario: APPSYNC_JS Lambda data source request and response semantics
+        status: fixed
+        evidence: TestResolveLambdaDataSource_requestMappingTemplatePayload; TestResolveLambdaDataSource_requestMappingTemplateInvalidOperation; TestResolveLambdaDataSource_requestMappingTemplateEventInvocation
+        notes: Evaluated VTL/APPSYNC_JS Lambda Invoke request objects are passed through as the Lambda event, operation and invocationType are validated, and invocationType=Event resolves to null after invoking Lambda. BatchInvoke in mapped request objects is rejected until mapped batching is implemented instead of silently diverging.
+      - scenario: Lambda authorizer deniedFields behavior
+        status: fixed
+        evidence: TestTryAuthLambdaAuthorizer_deniedFields; TestBuildDirectLambdaResolverEvent_hidesAuthorizerDeniedFields; TestDeniedFields_fullARNDoesNotDenyOtherAPI; TestFilterSubFields_authorizerDeniedStructuralField
+        notes: deniedFields short names and exact matching AppSync field ARNs are honored by nulling denied fields, including structural nested fields, without exposing internal metadata in resolver identity.
+      - scenario: Lambda authorizer ttlOverride/cache behavior
+        status: tests_missing
+        evidence: Lambda authorizer responses are invoked per request; ttlOverride and configured authorizerResultTtlInSeconds response caching are not implemented.
   TagResource:
     status: fixed
     aws_docs:
@@ -185,14 +223,20 @@ findings:
       - StartSchemaCreation now accepts AppSync built-in auth and subscription directives in uploaded SDL; covered by TestSchema_appSyncDirectives and TestCreateStack_AppSyncGraphQLSchemaWithAwsDirectives.
       - StartSchemaCreation now accepts AppSync built-in scalar types in uploaded SDL; covered by TestSchema_appSyncScalars and TestCreateStack_AppSyncGraphQLSchemaWithAwsScalars.
       - StartSchemaCreation now rejects user-defined custom scalars and custom object types with the reserved AWS prefix; covered by TestSchema_customScalar and TestSchema_customTypeWithAWSPrefix.
+      - Direct Lambda resolver events now include AWS/Powertools-compatible resolver context fields, and Lambda data source invocations with evaluated request mapping templates pass that mapped JSON to Lambda instead of always using the direct context.
+      - AppSync resolver identities now expose closer AWS-shaped Cognito, OIDC, IAM, and Lambda-authorizer-stub fields, and direct resolver request context omits Cookie with null default endpoint domainName.
+      - Configured AWS_LAMBDA authorizers are now invoked with AWS-shaped authorization events and propagate resolverContext into resolver identity.
+      - Lambda authorizer deniedFields now null denied resolver fields, mapped Lambda request objects validate operation/invocationType and support Event invocation null results, and direct Lambda nested list batching is implemented for maxBatchSize resolvers.
+      - Direct Lambda resolver events now carry pipeline stash and prev.result when invoked from pipeline functions, and deniedFields matching avoids cross-API full-ARN bleed-through.
   remaining_gaps:
     - Continue typed protocol validation tests beyond the UpdateGraphqlApi missing-name, TagResource invalid-key, and CreateGraphqlApi ownerContact boundary cases.
     - Audit support claims category by category.
     - Downgrade or annotate config-only and inert behavior where AWS compatibility is limited.
     - Continue CreateGraphqlApi boundary/nested-config coverage before marking reviewed.
+    - Complete Lambda authorizer cache behavior, broader nested batching scheduler verification, and pipeline scenario coverage before marking LambdaResolverExecution reviewed.
   intentionally_partial: []
 handoff:
   issue: https://github.com/Neaox/overcast/issues/8
-  start_with: [remaining typed protocol validation, AppSync data-source CloudFormation end-to-end coverage]
+  start_with: [Lambda authorizer cache behavior, broader nested batching scheduler verification, pipeline Lambda coverage, remaining typed protocol validation, AppSync data-source CloudFormation end-to-end coverage]
   do_not_redo: [CreateGraphqlApi success status, required name/authenticationType, authenticationType enum, apiType enum, CloudFormation GraphQLApi tag-array conversion, GraphQLApi EnvironmentVariables, GraphQLEndpointArn, resolver/function S3-backed schema/template/code locations, DomainName, DomainNameApiAssociation, ApiCache, SourceApiAssociation, AWS::AppSync::Api, AWS::AppSync::ChannelNamespace, AppSync tag route conflict, TagResource regex validation, UpdateGraphqlApi required-field/enum validation, CreateGraphqlApi typed ownerContact validation, CreateApiKey CDK-style Expires upper bound, StartSchemaCreation AppSync built-in directives, StartSchemaCreation AppSync built-in scalar types, StartSchemaCreation custom scalar and AWS-prefix object validation]
   commands: [go test -count=1 ./internal/services/appsync/... ./internal/services/cloudformation/... ./tests/integration/appsync/... ./tests/integration/cloudformation/...]
