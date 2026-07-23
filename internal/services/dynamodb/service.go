@@ -88,6 +88,16 @@ func newStreamBackendFor(store state.Store) streamBackend {
 	return newMemStreamBackend()
 }
 
+// debugItemsNamespace is the virtual raw-state namespace name for DynamoDB
+// items (DebugNamespace below). Defined here, not in internal/router, since
+// internal/router imports this package (a reverse import would cycle) — see
+// router.DebugStateProvider for the generalized interface this satisfies.
+const debugItemsNamespace = "dynamodb:items"
+
+// DebugNamespace returns the virtual raw-state namespace name for DynamoDB
+// items, implementing router.DebugStateProvider.
+func (s *Service) DebugNamespace() string { return debugItemsNamespace }
+
 // DebugStateKeys returns the virtual raw-state keys for DynamoDB items.
 func (s *Service) DebugStateKeys(ctx context.Context) ([]string, error) {
 	records, err := s.handler.store.items.debugScan(ctx)

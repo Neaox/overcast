@@ -309,7 +309,7 @@ func (s *HybridStore) seedFromSQLite() {
 	s.logDebug("hybrid seed started", zap.String("data_dir", s.dataDir))
 
 	openStart := time.Now()
-	sq, err := NewSQLiteStore(s.dataDir)
+	sq, err := NewSQLiteStoreWithLogger(s.dataDir, s.log)
 	if err != nil {
 		s.degradeToMemoryOnly(fmt.Errorf("hybrid store: open sqlite: %w", err), 0, 0, seedStart)
 		return

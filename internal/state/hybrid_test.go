@@ -490,9 +490,20 @@ func seedHybridSQLiteNamespace(t *testing.T, dir string, namespace string, rows 
 	}
 }
 
+// waitForObservedLog polls for message for up to 30s. The bound is generous
+// (rather than sub-second) because two callers seed tens of megabytes into a
+// legacy (pre-migration-runner) overcast.db before opening the store: the
+// first HybridStore open against that fixture now also runs the
+// PRAGMA-user_version migration runner's one-time pre-migration backup
+// (file copy) and the auto_vacuum migration's VACUUM (internal/state/migrate.go),
+// both of which are proportional to database size and can legitimately take
+// several seconds on a slow disk/bind mount — see storage-plan.md Phase 2
+// item 2.4 ("acceptable as a one-time migration"). A real hang is still
+// caught well within this bound in practice, and well within `go test`'s own
+// default per-test timeout.
 func waitForObservedLog(t *testing.T, logs *observer.ObservedLogs, message string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if logs.FilterMessage(message).Len() > 0 {
 			return

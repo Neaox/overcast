@@ -9,14 +9,19 @@ import (
 	"os"
 	"path/filepath"
 
+	"go.uber.org/zap"
 	_ "modernc.org/sqlite" // Pure-Go SQLite driver — no CGO, works on all platforms
 )
 
 // SQLiteStore is the persistent Store implementation.
 // State survives process restarts, stored in a single SQLite file under DataDir.
 //
-// Schema is a single key-value table — deliberately simple. We don't need
-// relational features; we need durable K/V storage with prefix scanning.
+// The core schema is a single key-value table — deliberately simple. We
+// don't need relational features; we need durable K/V storage with prefix
+// scanning. Other packages may add their own dedicated tables to the same
+// file (see SQLiteDBProvider); every schema change, including the kv table
+// itself, is applied by the PRAGMA user_version-based migration runner in
+// migrate.go.
 //
 // The file path is: <DataDir>/overcast.db.
 //
@@ -29,6 +34,14 @@ import (
 // the same approach used by HybridStore. Quick-start aware.
 type SQLiteStore struct {
 	db *sql.DB
+
+	// dbPath is the on-disk path to db's backing file, used by the
+	// migration runner to name/write its pre-migration backup file.
+	dbPath string
+
+	// log is optional and used only for migration-runner diagnostics (see
+	// RunMigrations) — SQLiteStore has no other structured logging today.
+	log *zap.Logger
 
 	// ready is closed once the background migration finishes (success or
 	// failure). migrateErr captures the result.
@@ -44,7 +57,13 @@ type SQLiteStore struct {
 // The first call into any DB-touching method blocks until the migration
 // completes (or returns the migration error if it failed).
 func NewSQLiteStore(dataDir string) (*SQLiteStore, error) {
-	return newSQLiteStoreFile(filepath.Join(dataDir, "overcast.db"), "NORMAL")
+	return NewSQLiteStoreWithLogger(dataDir, nil)
+}
+
+// NewSQLiteStoreWithLogger is NewSQLiteStore with structured migration-runner
+// diagnostics (see RunMigrations) when logger is non-nil.
+func NewSQLiteStoreWithLogger(dataDir string, logger *zap.Logger) (*SQLiteStore, error) {
+	return newSQLiteStoreFile(filepath.Join(dataDir, "overcast.db"), "NORMAL", logger)
 }
 
 // NewSQLiteStoreWAL opens (or creates) the SQLite database at dataDir/overcast.db
@@ -55,12 +74,12 @@ func NewSQLiteStore(dataDir string) (*SQLiteStore, error) {
 // Returns immediately; the schema migration runs in a background goroutine
 // (see NewSQLiteStore for details).
 func NewSQLiteStoreWAL(dataDir string) (*SQLiteStore, error) {
-	return newSQLiteStoreFile(filepath.Join(dataDir, "overcast.db"), "OFF")
+	return newSQLiteStoreFile(filepath.Join(dataDir, "overcast.db"), "OFF", nil)
 }
 
 // newSQLiteStoreFile is the shared constructor. syncMode is the SQLite
-// PRAGMA synchronous value: "FULL", "NORMAL", or "OFF".
-func newSQLiteStoreFile(dbPath, syncMode string) (*SQLiteStore, error) {
+// PRAGMA synchronous value: "FULL", "NORMAL", or "OFF". logger may be nil.
+func newSQLiteStoreFile(dbPath, syncMode string, logger *zap.Logger) (*SQLiteStore, error) {
 	dir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("sqlite store: create data dir %q: %w", dir, err)
@@ -75,7 +94,8 @@ func newSQLiteStoreFile(dbPath, syncMode string) (*SQLiteStore, error) {
 	// sql.Open does NOT establish a connection or touch the database file —
 	// it only validates the driver name and DSN. The first real connection
 	// (and therefore the modernc driver's lazy parser/codegen init) happens
-	// inside migrate() below, which we run in the background.
+	// inside RunMigrations (migrate.go), invoked from runMigrate below in
+	// the background.
 	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_synchronous="+syncMode)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite store: open %q: %w", dbPath, err)
@@ -85,8 +105,10 @@ func newSQLiteStoreFile(dbPath, syncMode string) (*SQLiteStore, error) {
 	markSQLitePhase("sql.Open")
 
 	s := &SQLiteStore{
-		db:    db,
-		ready: make(chan struct{}),
+		db:     db,
+		dbPath: dbPath,
+		log:    logger,
+		ready:  make(chan struct{}),
 	}
 	go s.runMigrate()
 	return s, nil
@@ -103,7 +125,7 @@ func newSQLiteStoreFile(dbPath, syncMode string) (*SQLiteStore, error) {
 func (s *SQLiteStore) runMigrate() {
 	defer close(s.ready)
 	defer markSQLitePhase("migrate") // always emit so the profiler shows the failure case too
-	if err := migrate(s.db); err != nil {
+	if err := RunMigrations(context.Background(), s.db, s.dbPath, s.log); err != nil {
 		s.migrateErr = fmt.Errorf("sqlite store: migrate: %w", err)
 		// Surface the error eagerly. Without this log a failed migration is
 		// invisible until the first kv operation runs — which may be never
@@ -124,25 +146,6 @@ func (s *SQLiteStore) ensureReady(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-}
-
-// migrate creates the schema if it doesn't already exist.
-// We use IF NOT EXISTS so this is idempotent — safe to call on every startup.
-func migrate(db *sql.DB) error {
-	const schema = `
-	CREATE TABLE IF NOT EXISTS kv (
-		namespace TEXT NOT NULL,
-		key       TEXT NOT NULL,
-		value     TEXT NOT NULL,
-		PRIMARY KEY (namespace, key)
-	);
-	`
-	if _, err := db.Exec(schema); err != nil {
-		return err
-	}
-	// Drop the redundant index that duplicates the PRIMARY KEY exactly.
-	_, _ = db.Exec(`DROP INDEX IF EXISTS idx_kv_ns_key`)
-	return nil
 }
 
 func (s *SQLiteStore) Get(ctx context.Context, namespace, key string) (string, bool, error) {

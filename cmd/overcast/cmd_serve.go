@@ -412,7 +412,7 @@ func closeStoreBounded(store state.Store, timeout time.Duration, logger *zap.Log
 func buildStore(cfg *config.Config, mode config.StateBackend, dataDir string, logger *zap.Logger) (state.Store, error) {
 	switch mode {
 	case config.StateBackendPersistent:
-		s, err := state.NewSQLiteStore(dataDir)
+		s, err := state.NewSQLiteStoreWithLogger(dataDir, logger)
 		if err != nil {
 			return nil, fmt.Errorf("persistent store: %w", err)
 		}

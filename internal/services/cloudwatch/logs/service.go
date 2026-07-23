@@ -4,6 +4,7 @@ package logs
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -62,6 +63,68 @@ func (s *Service) RegisterRoutes(r chi.Router) {}
 // this during graceful shutdown.
 func (s *Service) Stop(ctx context.Context) {
 	s.handler.store.Stop(ctx)
+}
+
+// debugEventsScanLimit bounds how many rows DebugStateKeys/DebugStateValues
+// return in one response. Log event volume is unbounded (that's the whole
+// reason it graduated to a dedicated table — see storage-plan.md 2.3), so
+// dumping every row into a synchronous JSON response is unsafe for a busy
+// deployment. Real pagination for the raw state debugger is tracked
+// separately (storage-plan.md 3.13); this is a stopgap that keeps the debug
+// view usable in the meantime.
+const debugEventsScanLimit = 500
+
+// DebugNamespace returns the virtual raw-state namespace name for CloudWatch
+// Logs events, implementing router.DebugStateProvider. Log events live in
+// the dedicated logs_events SQL table (or the in-memory equivalent), not the
+// generic kv store, so without this they'd be invisible to /_debug/state and
+// exempt from /_debug/reset — mirrors DynamoDB's "dynamodb:items" virtual
+// namespace (internal/services/dynamodb/service.go).
+func (s *Service) DebugNamespace() string { return "logs:events" }
+
+// DebugStateKeys returns up to debugEventsScanLimit virtual keys for
+// /_debug/state's top-level listing.
+func (s *Service) DebugStateKeys(ctx context.Context) ([]string, error) {
+	records, _, err := s.handler.store.backend.debugScan(ctx, debugEventsScanLimit)
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(records))
+	for _, r := range records {
+		keys = append(keys, logsDebugEventKey(r))
+	}
+	return keys, nil
+}
+
+// DebugStateValues returns raw log event values keyed by
+// region/group/stream/timestamp/seq, capped at debugEventsScanLimit rows. A
+// "_truncated" pseudo-key is added when more rows exist than were returned.
+func (s *Service) DebugStateValues(ctx context.Context) (map[string]string, error) {
+	records, truncated, err := s.handler.store.backend.debugScan(ctx, debugEventsScanLimit)
+	if err != nil {
+		return nil, err
+	}
+	values := make(map[string]string, len(records)+1)
+	for _, r := range records {
+		raw, err := json.Marshal(LogEvent{Timestamp: r.Timestamp, Message: r.Message})
+		if err != nil {
+			return nil, err
+		}
+		values[logsDebugEventKey(r)] = string(raw)
+	}
+	if truncated {
+		values["_truncated"] = fmt.Sprintf("showing first %d events only (storage-plan.md 3.13 tracks real pagination)", debugEventsScanLimit)
+	}
+	return values, nil
+}
+
+// DebugResetState deletes every persisted log event, for /_debug/reset.
+func (s *Service) DebugResetState(ctx context.Context) error {
+	return s.handler.store.backend.debugDeleteAll(ctx)
+}
+
+func logsDebugEventKey(r debugEventRecord) string {
+	return fmt.Sprintf("%s/%s/%s/%d/%d", r.Region, r.Group, r.Stream, r.Timestamp, r.Seq)
 }
 
 // Dispatch routes to the correct CloudWatch Logs handler based on X-Amz-Target.

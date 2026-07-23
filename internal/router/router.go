@@ -203,23 +203,32 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	prof.mark("  new: ses")
 	ddbSvc := dynamodb.New(cfg, store, logger, clk, bus)
 	prof.mark("  new: dynamodb")
+	// logsSvc is constructed here (ahead of its usual place in the service
+	// registry order below) because the debug namespace below needs it as a
+	// DebugStateProvider (its events live in a dedicated logs_events SQL
+	// table — see storage-plan.md 2.3 — invisible to /_debug/state without
+	// this). Its constructor has no startup side-effects, same as ec2Svc
+	// above — see docs/performance.md § Startup budget.
+	logsSvc := logs.New(cfg, store, logger, clk)
+	prof.mark("  new: logs")
 	if cfg.Debug {
 		var ec2Debug debugEC2Provider
 		if cfg.Services["ec2"] {
 			ec2Debug = ec2Svc
 		}
-		var dynamoDebug debugDynamoDBProvider
+		var debugProviders []DebugStateProvider
 		if cfg.Services["dynamodb"] {
-			dynamoDebug = ddbSvc
+			debugProviders = append(debugProviders, ddbSvc)
 		}
-		r.Route("/_debug", debugHandlers(cfg, store, ec2Debug, dynamoDebug))
+		if cfg.Services["logs"] {
+			debugProviders = append(debugProviders, logsSvc)
+		}
+		r.Route("/_debug", debugHandlers(cfg, store, ec2Debug, debugProviders))
 	}
 	lambdaSvc := lambda.New(cfg, store, logger, clk)
 	prof.mark("  new: lambda")
 	pipesSvc := pipes.New(cfg, store, logger, clk)
 	prof.mark("  new: pipes")
-	logsSvc := logs.New(cfg, store, logger, clk)
-	prof.mark("  new: logs")
 	smSvc := secretsmanager.New(cfg, store, logger, clk)
 	prof.mark("  new: secretsmanager")
 	stsSvc := sts.New(cfg, store, logger, clk)

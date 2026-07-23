@@ -21,7 +21,14 @@ import (
 const (
 	nsLogGroups = "logs:groups"
 	nsStreams   = "logs:streams" // key: <groupName>/<streamName>
-	nsEvents    = "logs:events"  // key: <groupName>/<streamName>
+
+	// nsEvents is the legacy generic-kv namespace event blobs used to live
+	// under. Event storage moved to the dedicated logs_events SQL table
+	// (storage-plan.md Phase 2 item 2.3, see event_backend.go); this constant
+	// now exists only so migrations.go's one-time blob-to-row conversion can
+	// find and delete the old rows. Nothing in the runtime read/write path
+	// below touches this namespace anymore.
+	nsEvents = "logs:events"
 )
 
 // LogGroup represents a stored CloudWatch Logs log group.
@@ -51,34 +58,37 @@ type LogEvent struct {
 	IngestionTime int64  `json:"ingestion_time"` // epoch millis (set by server)
 }
 
-// storedEvents holds the full list of events for a stream (stored as a single
-// JSON blob per stream). This keeps reads simple and avoids per-event keys.
-type storedEvents struct {
-	Events []LogEvent `json:"events"`
-}
-
 // logsStore wraps state.Store with CloudWatch Logs-specific helpers.
 //
-// Event storage uses a hybrid model: per-stream in-memory caches are the
-// authoritative source for reads and writes during the process's lifetime.
-// Mutations mark the cache dirty and schedule a debounced async flush to
-// state.Store; getEvents always serves from the cache (which is consistent
-// with un-flushed writes). On graceful shutdown, Stop synchronously flushes
-// every dirty cache so nothing is lost.
+// Log group/stream metadata (small, finite, TierHot) still goes through
+// state.Store's generic kv path unchanged. Event storage is different: it's
+// unbounded and high-frequency, so it goes through a dedicated eventBackend
+// (event_backend.go) backed by the logs_events SQL table (or an in-memory
+// map in memory-mode) instead of a JSON blob per stream.
 //
-// This eliminates three cliffs from the previous write-through design:
-//   - global mutex contention across streams (now per-stream),
-//   - JSON unmarshal on every append (now once on first access),
-//   - JSON marshal + state.Store write on every append (now coalesced; one
-//     write per debounce window or when a size watermark is hit).
+// Event storage keeps a hybrid model, but the cache's role has changed from
+// the previous design: per-stream in-memory eventCaches now hold ONLY
+// unflushed events (a write buffer), not the stream's full history — the
+// backend is the source of truth for everything already persisted. This
+// keeps the valuable part of the old design (coalescing bursty writers like
+// Lambda's log batcher into one write per debounce window) while dropping
+// its two worst properties: rewriting the entire stream's JSON on every
+// flush, and holding a stream's entire history resident in memory forever.
+//
+// getEvents merges the backend's persisted, already-sorted events with the
+// cache's small sorted buffer of not-yet-flushed events (a linear merge, not
+// a re-sort — see mergeEventsSorted). On graceful shutdown, Stop
+// synchronously flushes every dirty cache so nothing is lost.
 type logsStore struct {
 	store         state.Store
+	backend       eventBackend
 	clk           clock.Clock
 	defaultRegion string
 
-	// streamCaches is a sync.Map of region-scoped event-key → *streamCache.
+	// streamCaches is a sync.Map of region-scoped event-key → *eventCache.
 	// sync.Map fits the access pattern (write-once, read-many for the cache
-	// pointer; no iteration required) and avoids a single coarse lock.
+	// pointer; no iteration required outside Stop) and avoids a single
+	// coarse lock across unrelated streams.
 	streamCaches sync.Map
 
 	// flushBg is the context for background flush operations. Cancelled by
@@ -92,17 +102,23 @@ type logsStore struct {
 	stopped atomic.Bool // set true once Stop has been called
 }
 
-// streamCache is the per-stream authoritative event list. Loaded lazily from
-// state.Store on first access; mutations are coalesced via a debounced flush
-// goroutine.
-type streamCache struct {
-	mu     sync.Mutex
-	events []LogEvent // sorted ascending by Timestamp
-	lastTS int64      // Timestamp of last event; used for monotonic fast-path
-	loaded bool       // false until first read from state.Store completes
+// eventCache is the per-stream write buffer for events not yet flushed to
+// the backend. Loaded lazily on first append/read; mutations are coalesced
+// via a debounced flush goroutine, same shape as the previous design, but
+// buffer only ever holds the events accumulated since the last successful
+// flush — never the stream's full history.
+type eventCache struct {
+	mu sync.Mutex
 
-	// dirty is true when events has been mutated since the last successful
-	// state.Store write. Caller of flushLocked clears it after Set returns.
+	region string
+	group  string
+	stream string
+
+	buffer []LogEvent // unflushed events, sorted ascending by Timestamp
+	lastTS int64      // Timestamp of buffer's last event; monotonic fast-path
+
+	// dirty is true when buffer has been mutated since the last successful
+	// backend flush. Cleared by flushLocked after a successful append.
 	dirty bool
 
 	// flushScheduled is true when a debounced flush goroutine is pending or
@@ -112,8 +128,17 @@ type streamCache struct {
 
 func newLogsStore(store state.Store, clk clock.Clock, defaultRegion string) *logsStore {
 	bg, cancel := context.WithCancel(context.Background())
+	// Resolve past any state.NamespacedStore wrapping before probing for
+	// SQLiteDBProvider — an unrelated OVERCAST_STATE_<SVC> override on some
+	// other service would otherwise wrap store in a type that satisfies
+	// neither SQLiteDBProvider nor ReadyAwaiter, silently downgrading Logs
+	// events to the in-memory-only backend even though Logs itself was never
+	// routed away from SQLite. See internal/state's state.Unwrap doc comment
+	// and the equivalent DynamoDB fix in internal/services/dynamodb/service.go.
+	backendStore := state.Unwrap(store, serviceName)
 	return &logsStore{
 		store:         store,
+		backend:       newEventBackendFor(backendStore),
 		clk:           clk,
 		defaultRegion: defaultRegion,
 		flushBg:       bg,
@@ -251,40 +276,39 @@ func (s *logsStore) deleteLogStream(ctx context.Context, groupName, streamName s
 	if err := s.store.Delete(ctx, nsStreams, key); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	// Drop the in-memory cache before deleting events, and mark the cache
-	// non-dirty so any in-flight debounced flush becomes a no-op (otherwise
-	// it would re-create the events blob immediately after Delete).
-	eventsCacheKey := serviceutil.RegionKey(region, eventsKey(groupName, streamName))
-	if v, ok := s.streamCaches.Load(eventsCacheKey); ok {
-		c := v.(*streamCache)
-		c.mu.Lock()
-		c.dirty = false
-		c.events = nil
-		c.lastTS = 0
-		c.loaded = true // prevent reload from soon-to-be-deleted store entry
-		c.mu.Unlock()
-	}
-	s.invalidateStreamCache(eventsCacheKey)
-	if err := s.store.Delete(ctx, nsEvents, eventsCacheKey); err != nil {
+	// Drop the in-memory write buffer before deleting persisted events, and
+	// mark it non-dirty so an in-flight debounced flush becomes a no-op
+	// (otherwise it could re-create rows immediately after the delete below).
+	s.clearEventCache(region, groupName, streamName)
+	if err := s.backend.deleteStream(ctx, region, groupName, streamName); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil
 }
 
 func (s *logsStore) deleteLogGroup(ctx context.Context, name string) *protocol.AWSError {
+	region := s.region(ctx)
 	// Delete the group itself.
-	if err := s.store.Delete(ctx, nsLogGroups, serviceutil.RegionKey(s.region(ctx), name)); err != nil {
+	if err := s.store.Delete(ctx, nsLogGroups, serviceutil.RegionKey(region, name)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	// Delete all streams and events belonging to this group.
+	// Delete all stream records + write buffers belonging to this group. The
+	// persisted events themselves are removed in one ranged DELETE below
+	// (backend.deleteGroup) rather than per-stream, since the backend has an
+	// index that makes a group-wide delete cheap regardless of stream count.
 	streams, aerr := s.listLogStreams(ctx, name, "")
 	if aerr != nil {
 		return aerr
 	}
 	for _, st := range streams {
-		if aerr := s.deleteLogStream(ctx, name, st.Name); aerr != nil {
-			return aerr
+		key := serviceutil.RegionKey(region, streamKey(name, st.Name))
+		if err := s.store.Delete(ctx, nsStreams, key); err != nil {
+			return protocol.Wrap(protocol.ErrInternalError, err)
 		}
+		s.clearEventCache(region, name, st.Name)
+	}
+	if err := s.backend.deleteGroup(ctx, region, name); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil
 }
@@ -295,80 +319,109 @@ func eventsKey(groupName, streamName string) string {
 	return groupName + "/" + streamName
 }
 
-// streamCacheKey returns the region-scoped cache key for a stream's events.
+// streamCacheKey returns the region-scoped cache key for a stream's write
+// buffer. Purely an opaque sync.Map key — nothing parses it back apart, so
+// it's safe even though group/stream names may themselves contain "/".
 func (s *logsStore) streamCacheKey(ctx context.Context, groupName, streamName string) string {
 	return serviceutil.RegionKey(s.region(ctx), eventsKey(groupName, streamName))
 }
 
-// loadStreamCache returns the *streamCache for a stream, creating it on first
-// access. The cache is populated from state.Store lazily inside getOrLoad to
-// avoid blocking other streams behind a global init.
-func (s *logsStore) loadStreamCache(key string) *streamCache {
-	if v, ok := s.streamCaches.Load(key); ok {
-		return v.(*streamCache)
-	}
-	c := &streamCache{}
-	actual, _ := s.streamCaches.LoadOrStore(key, c)
-	return actual.(*streamCache)
-}
-
-// ensureLoaded reads the persisted blob from state.Store on first access.
-// Caller must hold c.mu.
-func (s *logsStore) ensureLoaded(ctx context.Context, c *streamCache, key string) *protocol.AWSError {
-	if c.loaded {
-		return nil
-	}
-	raw, found, err := s.store.Get(ctx, nsEvents, key)
-	if err != nil {
-		return protocol.Wrap(protocol.ErrInternalError, err)
-	}
-	if found {
-		var se storedEvents
-		if err := json.Unmarshal([]byte(raw), &se); err != nil {
-			return protocol.Wrap(protocol.ErrInternalError, err)
-		}
-		c.events = se.Events
-		if n := len(c.events); n > 0 {
-			// Stored events are sorted; trust the last entry.
-			c.lastTS = c.events[n-1].Timestamp
-		}
-	}
-	c.loaded = true
-	return nil
-}
-
-func (s *logsStore) getEvents(ctx context.Context, groupName, streamName string) ([]LogEvent, *protocol.AWSError) {
+// loadEventCache returns the *eventCache for a stream, creating it (empty)
+// on first access. Unlike the previous design's loadStreamCache, this never
+// touches the backend — there is nothing to lazily load, since the cache
+// only ever holds not-yet-flushed events.
+func (s *logsStore) loadEventCache(ctx context.Context, groupName, streamName string) *eventCache {
 	key := s.streamCacheKey(ctx, groupName, streamName)
-	c := s.loadStreamCache(key)
+	if v, ok := s.streamCaches.Load(key); ok {
+		return v.(*eventCache)
+	}
+	c := &eventCache{region: s.region(ctx), group: groupName, stream: streamName}
+	actual, _ := s.streamCaches.LoadOrStore(key, c)
+	return actual.(*eventCache)
+}
+
+// clearEventCache drops a stream's write buffer without flushing it (used on
+// stream/group deletion, where flushing would just re-create what's about to
+// be deleted).
+func (s *logsStore) clearEventCache(region, groupName, streamName string) {
+	key := serviceutil.RegionKey(region, eventsKey(groupName, streamName))
+	if v, ok := s.streamCaches.Load(key); ok {
+		c := v.(*eventCache)
+		c.mu.Lock()
+		c.dirty = false
+		c.buffer = nil
+		c.lastTS = 0
+		c.mu.Unlock()
+	}
+	s.streamCaches.Delete(key)
+}
+
+// getEvents returns every event for a stream, merging the backend's
+// persisted (already sorted) events with the cache's small sorted buffer of
+// not-yet-flushed events — a linear merge, not a re-sort, so the cost of a
+// read stays proportional to persisted+buffered size rather than paying an
+// extra O(n log n) on every call.
+func (s *logsStore) getEvents(ctx context.Context, groupName, streamName string) ([]LogEvent, *protocol.AWSError) {
+	region := s.region(ctx)
+	persisted, err := s.backend.getEvents(ctx, region, groupName, streamName)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+
+	c := s.loadEventCache(ctx, groupName, streamName)
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if aerr := s.ensureLoaded(ctx, c, key); aerr != nil {
-		return nil, aerr
+	var buffered []LogEvent
+	if len(c.buffer) > 0 {
+		buffered = make([]LogEvent, len(c.buffer))
+		copy(buffered, c.buffer)
 	}
-	if len(c.events) == 0 {
-		return []LogEvent{}, nil
+	c.mu.Unlock()
+
+	if len(buffered) == 0 {
+		if persisted == nil {
+			return []LogEvent{}, nil
+		}
+		return persisted, nil
 	}
-	// Return a copy so callers can sort/slice without mutating the cache.
-	out := make([]LogEvent, len(c.events))
-	copy(out, c.events)
-	return out, nil
+	return mergeEventsSorted(persisted, buffered), nil
+}
+
+// mergeEventsSorted merges two ascending-by-Timestamp slices in O(len(a)+len(b))
+// via a standard two-pointer merge. Ties keep a's element first (persisted
+// before buffered), which is an arbitrary but deterministic and stable choice.
+func mergeEventsSorted(a, b []LogEvent) []LogEvent {
+	if len(b) == 0 {
+		return a
+	}
+	if len(a) == 0 {
+		return b
+	}
+	out := make([]LogEvent, 0, len(a)+len(b))
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		if a[i].Timestamp <= b[j].Timestamp {
+			out = append(out, a[i])
+			i++
+		} else {
+			out = append(out, b[j])
+			j++
+		}
+	}
+	out = append(out, a[i:]...)
+	out = append(out, b[j:]...)
+	return out
 }
 
 func (s *logsStore) appendEvents(ctx context.Context, groupName, streamName string, newEvents []LogEvent) *protocol.AWSError {
 	if len(newEvents) == 0 {
 		return nil
 	}
-	key := s.streamCacheKey(ctx, groupName, streamName)
-	c := s.loadStreamCache(key)
+	c := s.loadEventCache(ctx, groupName, streamName)
 	c.mu.Lock()
-	if aerr := s.ensureLoaded(ctx, c, key); aerr != nil {
-		c.mu.Unlock()
-		return aerr
-	}
 
-	// Fast path: if every incoming event is at or after the current tail,
-	// append without re-sorting (the common case — Lambda's log batcher
-	// emits events in monotonically-non-decreasing order).
+	// Fast path: if every incoming event is at or after the current buffer
+	// tail, append without re-sorting (the common case — Lambda's log
+	// batcher emits events in monotonically-non-decreasing order).
 	monotonic := true
 	for _, e := range newEvents {
 		if e.Timestamp < c.lastTS {
@@ -377,11 +430,11 @@ func (s *logsStore) appendEvents(ctx context.Context, groupName, streamName stri
 		}
 		c.lastTS = e.Timestamp
 	}
-	c.events = append(c.events, newEvents...)
+	c.buffer = append(c.buffer, newEvents...)
 	if !monotonic {
-		sort.SliceStable(c.events, func(i, j int) bool { return c.events[i].Timestamp < c.events[j].Timestamp })
-		if n := len(c.events); n > 0 {
-			c.lastTS = c.events[n-1].Timestamp
+		sort.SliceStable(c.buffer, func(i, j int) bool { return c.buffer[i].Timestamp < c.buffer[j].Timestamp })
+		if n := len(c.buffer); n > 0 {
+			c.lastTS = c.buffer[n-1].Timestamp
 		}
 	}
 	c.dirty = true
@@ -390,11 +443,14 @@ func (s *logsStore) appendEvents(ctx context.Context, groupName, streamName stri
 	// the lock instead of waiting for the debounce — bounds the worst-case
 	// data loss window on hard crash and bounds peak memory if a stream is
 	// extremely chatty. The watermark is intentionally generous so the
-	// common case stays on the debounce path.
+	// common case stays on the debounce path. Unlike the previous blob
+	// design, hitting this watermark repeatedly is cheap: each flush is a
+	// batched INSERT of only the buffered events, not a rewrite of the
+	// stream's full history.
 	const flushWatermark = 1024
-	if len(c.events) >= flushWatermark && c.dirty {
+	if len(c.buffer) >= flushWatermark {
 		// Use the request ctx for the inline flush so failures propagate.
-		aerr := s.flushLocked(ctx, c, key)
+		aerr := s.flushLocked(ctx, c)
 		c.mu.Unlock()
 		return aerr
 	}
@@ -403,71 +459,68 @@ func (s *logsStore) appendEvents(ctx context.Context, groupName, streamName stri
 	if !c.flushScheduled && !s.stopped.Load() {
 		c.flushScheduled = true
 		s.flushWG.Add(1)
-		go s.debouncedFlush(c, key)
+		go s.debouncedFlush(c)
 	}
 	c.mu.Unlock()
 	return nil
 }
 
 // flushDebounceInterval is the quiet period after the last append during which
-// the cache may accumulate further appends before being persisted to
-// state.Store. Tuned so a typical Lambda invocation (which produces a burst
-// of log lines in <50 ms) results in a single coalesced write.
+// the cache may accumulate further appends before being persisted to the
+// backend. Tuned so a typical Lambda invocation (which produces a burst of
+// log lines in <50 ms) results in a single coalesced write.
 var flushDebounceInterval = 50 * time.Millisecond
 
 // debouncedFlush runs in its own goroutine; it sleeps for flushDebounceInterval
-// and then performs a single write of the cache's current contents. Subsequent
+// and then performs a single flush of the buffer's current contents. Subsequent
 // appends during the sleep window do NOT spawn additional goroutines (gated by
 // flushScheduled), so flush rate is bounded at 1 per debounce interval per
 // stream.
-func (s *logsStore) debouncedFlush(c *streamCache, key string) {
+func (s *logsStore) debouncedFlush(c *eventCache) {
 	defer s.flushWG.Done()
 	select {
 	case <-time.After(flushDebounceInterval):
 	case <-s.flushBg.Done():
 		// Stop was called; do a final flush now using a fresh ctx.
 		c.mu.Lock()
-		_ = s.flushLocked(context.Background(), c, key)
+		_ = s.flushLocked(context.Background(), c)
 		c.flushScheduled = false
 		c.mu.Unlock()
 		return
 	}
 	c.mu.Lock()
-	_ = s.flushLocked(s.flushBg, c, key)
+	_ = s.flushLocked(s.flushBg, c)
 	c.flushScheduled = false
 	c.mu.Unlock()
 }
 
-// flushLocked persists the cache's current events slice to state.Store and
-// clears the dirty flag. Caller must hold c.mu. No-op when the cache is not
-// dirty (e.g. another flush already happened).
-func (s *logsStore) flushLocked(ctx context.Context, c *streamCache, key string) *protocol.AWSError {
+// flushLocked persists the cache's buffered events to the backend as one
+// batched append and clears the buffer. Caller must hold c.mu. No-op when
+// the cache is not dirty (e.g. another flush already happened).
+func (s *logsStore) flushLocked(ctx context.Context, c *eventCache) *protocol.AWSError {
 	if !c.dirty {
 		return nil
 	}
-	raw, err := json.Marshal(storedEvents{Events: c.events})
-	if err != nil {
-		return protocol.Wrap(protocol.ErrInternalError, err)
-	}
-	// Use a non-cancelled context for store writes triggered by debounce
+	// Use a non-cancelled context for backend writes triggered by debounce
 	// completion (the request ctx that originally produced the events may
 	// already be done — we still want to persist).
 	writeCtx := ctx
 	if writeCtx == nil || writeCtx.Err() != nil {
 		writeCtx = context.Background()
 	}
-	if err := s.store.Set(writeCtx, nsEvents, key, string(raw)); err != nil {
+	if err := s.backend.appendEvents(writeCtx, c.region, c.group, c.stream, c.buffer); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
+	c.buffer = nil
 	c.dirty = false
 	return nil
 }
 
-// Stop synchronously flushes every dirty stream cache. Called by the service
-// during graceful shutdown so no in-memory log events are lost. After Stop
-// returns, further appends are still served (cache continues to function),
-// but they fall back to inline write-through because debounce goroutines are
-// no longer scheduled.
+// Stop synchronously flushes every dirty stream's write buffer. Called by the
+// service during graceful shutdown so no in-memory log events are lost. After
+// Stop returns, further appends are still served (cache continues to
+// function), but they fall back to inline write-through because debounce
+// goroutines are no longer scheduled.
 func (s *logsStore) Stop(ctx context.Context) {
 	if !s.stopped.CompareAndSwap(false, true) {
 		return // already stopped
@@ -483,21 +536,15 @@ func (s *logsStore) Stop(ctx context.Context) {
 	// caches that were dirtied between the goroutine's flushLocked and Stop
 	// returning, and any caches that never had a debounce scheduled because
 	// their only append went via the inline watermark path.)
-	s.streamCaches.Range(func(k, v any) bool {
-		c := v.(*streamCache)
+	s.streamCaches.Range(func(_, v any) bool {
+		c := v.(*eventCache)
 		c.mu.Lock()
 		if c.dirty {
-			_ = s.flushLocked(ctx, c, k.(string))
+			_ = s.flushLocked(ctx, c)
 		}
 		c.mu.Unlock()
 		return true
 	})
-}
-
-// invalidateStreamCache drops the in-memory cache for a stream so a subsequent
-// access reloads from state.Store. Called on stream/group deletion.
-func (s *logsStore) invalidateStreamCache(key string) {
-	s.streamCaches.Delete(key)
 }
 
 // ---- CloudWatch Logs-specific errors ---------------------------------------
