@@ -9,9 +9,14 @@ const (
 	// are small, finite, and needed for instant topology/dashboard renders.
 	TierHot Tier = iota
 
-	// TierCached namespaces are served from an LRU-bounded memory cache with
-	// SQLite as the overflow tier. When the memory budget is exceeded, least
-	// recently accessed entries are evicted from memory but remain on disk.
+	// TierCached namespaces are read straight from SQLite on every access
+	// (HybridStore's lazy SQLite-backed path — see
+	// shouldReadHybridNamespaceFromSQLite in hybrid.go), overlaid with a small
+	// pending-write cache for changes not yet flushed. There is currently no
+	// in-memory LRU cache in front of SQLite for these namespaces — every read
+	// not covered by the pending overlay is a SQLite round trip. An
+	// LRU-bounded cache tier is a possible future enhancement, not
+	// implemented today.
 	TierCached
 )
 

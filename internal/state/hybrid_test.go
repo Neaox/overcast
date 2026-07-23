@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -514,4 +515,412 @@ func observedIntField(t *testing.T, logs *observer.ObservedLogs, message, field 
 	}
 	t.Fatalf("missing field %q in log %q: %#v", field, message, entries[0].Context)
 	return 0
+}
+
+// ---- 1.2 read-only connection pool ----------------------------------------
+
+// TestHybridStore_ReadsDontBlockOnConcurrentFlush is a -race-safe concurrency
+// test that hammers a TierCached namespace with concurrent writes and reads
+// while the background flush loop runs on a short interval. Before 1.2, all
+// SQLite access (including reads) shared one connection with the flush
+// writer, so this scenario would serialize reads behind flush transactions;
+// it must complete promptly, without deadlock, and without any error.
+func TestHybridStore_ReadsDontBlockOnConcurrentFlush(t *testing.T) {
+	s, err := state.NewHybridStore(t.TempDir(), 5*time.Millisecond)
+	if err != nil {
+		t.Fatalf("NewHybridStore: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	ctx := context.Background()
+	if err := s.WaitReady(ctx); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+
+	const ns = "sqs:messages" // TierCached — routed through the SQLite read path.
+	const writers = 8
+	const readers = 8
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	errCh := make(chan error, writers+readers)
+
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for j := 0; ; j++ {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				key := fmt.Sprintf("queue/%d-%d", i, j)
+				if err := s.Set(ctx, ns, key, "v"); err != nil {
+					select {
+					case errCh <- fmt.Errorf("set: %w", err):
+					default:
+					}
+					return
+				}
+			}
+		}(i)
+	}
+	for i := 0; i < readers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if _, err := s.List(ctx, ns, ""); err != nil {
+					select {
+					case errCh <- fmt.Errorf("list: %w", err):
+					default:
+					}
+					return
+				}
+			}
+		}()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		close(stop)
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out — reads likely blocked on an in-flight flush")
+	}
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
+	}
+}
+
+// ---- 1.3 pending-log fsync modes --------------------------------------
+
+func TestNewHybridStoreWithOptions_InvalidSyncMode(t *testing.T) {
+	_, err := state.NewHybridStoreWithOptions(t.TempDir(), state.HybridOptions{SyncMode: "bogus"}, nil)
+	if err == nil {
+		t.Fatal("expected error for invalid sync mode")
+	}
+}
+
+func TestHybridStore_SyncModesCloseCleanlyAndPersist(t *testing.T) {
+	for _, mode := range []state.WALSyncMode{state.WALSyncAlways, state.WALSyncInterval, state.WALSyncNever} {
+		t.Run(string(mode), func(t *testing.T) {
+			dir := t.TempDir()
+			s, err := state.NewHybridStoreWithOptions(dir, state.HybridOptions{
+				FlushInterval: time.Hour,
+				SyncMode:      mode,
+				SyncInterval:  10 * time.Millisecond,
+			}, nil)
+			if err != nil {
+				t.Fatalf("NewHybridStoreWithOptions: %v", err)
+			}
+			ctx := context.Background()
+			if err := s.Set(ctx, "svc", "key", "value"); err != nil {
+				t.Fatalf("Set: %v", err)
+			}
+			if err := s.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+
+			s2, err := state.NewHybridStore(dir, time.Hour)
+			if err != nil {
+				t.Fatalf("NewHybridStore (reopen): %v", err)
+			}
+			defer s2.Close()
+			if err := s2.WaitReady(ctx); err != nil {
+				t.Fatalf("WaitReady (reopen): %v", err)
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				got, found, err := s2.Get(ctx, "svc", "key")
+				if err != nil {
+					t.Fatalf("Get after reopen: %v", err)
+				}
+				if found && got == "value" {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("Get after reopen: found=%v got=%q", found, got)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		})
+	}
+}
+
+// ---- 1.4 size-triggered flush ------------------------------------------
+
+// TestHybridStore_DirtyEntryThresholdTriggersEarlyFlush writes past the
+// configured entry threshold with a long timer-driven flush interval and
+// asserts an out-of-band flush happens promptly anyway.
+func TestHybridStore_DirtyEntryThresholdTriggersEarlyFlush(t *testing.T) {
+	dir := t.TempDir()
+	s, err := state.NewHybridStoreWithOptions(dir, state.HybridOptions{
+		FlushInterval:       time.Hour, // never fires during the test
+		DirtyEntryThreshold: 5,
+		DirtyByteThreshold:  1 << 30, // effectively disabled
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewHybridStoreWithOptions: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	ctx := context.Background()
+	if err := s.WaitReady(ctx); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+
+	for i := 0; i < 6; i++ {
+		if err := s.Set(ctx, "svc", fmt.Sprintf("key-%d", i), "v"); err != nil {
+			t.Fatalf("Set %d: %v", i, err)
+		}
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		pending := s.PersistentHealth().PendingWrites
+		if pending == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("dirty entries not flushed promptly after crossing threshold: pending=%d", pending)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// ---- 1.6 corrupt pending-log lines: skip-and-warn -----------------------
+
+// TestHybridStore_CorruptMidFilePendingLine_SkipsAndContinues writes a
+// pending log with a corrupt line in the middle (not the final line) and
+// asserts the store still starts and the surrounding valid entries survive.
+func TestHybridStore_CorruptMidFilePendingLine_SkipsAndContinues(t *testing.T) {
+	dir := t.TempDir()
+	pendingPath := filepath.Join(dir, "overcast.hybrid.pending.wal")
+	lines := []string{
+		`{"op":"set","namespace":"svc","key":"before","value":"1"}`,
+		`{not valid json at all`,
+		`{"op":"set","namespace":"svc","key":"after","value":"2"}`,
+	}
+	if err := os.WriteFile(pendingPath, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write pending log fixture: %v", err)
+	}
+
+	core, logs := observer.New(zap.WarnLevel)
+	s, err := state.NewHybridStoreWithLogger(dir, time.Hour, zap.New(core))
+	if err != nil {
+		t.Fatalf("NewHybridStoreWithLogger: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	got, found, err := s.Get(ctx, "svc", "before")
+	if err != nil || !found || got != "1" {
+		t.Fatalf("Get before: err=%v found=%v got=%q", err, found, got)
+	}
+	got, found, err = s.Get(ctx, "svc", "after")
+	if err != nil || !found || got != "2" {
+		t.Fatalf("Get after: err=%v found=%v got=%q", err, found, got)
+	}
+	if logs.FilterMessage("hybrid pending log entry undecodable; skipping").Len() == 0 {
+		t.Fatalf("expected a warning for the corrupt mid-file line, got logs: %#v", logs.All())
+	}
+	if logs.FilterMessage("hybrid pending log replay skipped corrupt entries").Len() == 0 {
+		t.Fatalf("expected a replay summary warning, got logs: %#v", logs.All())
+	}
+}
+
+// ---- 1.8 ranged tombstones for DeletePrefix -----------------------------
+
+// TestHybridStore_DeletePrefix_LaterSetSurvives is the ordering test called
+// out by the storage plan: Set(k1) under prefix p, DeletePrefix(p), then
+// Set(k2) under the same prefix. k1 must read as deleted and k2 must survive
+// both immediately (overlay) and after a flush + store reload (SQLite).
+func TestHybridStore_DeletePrefix_LaterSetSurvives(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	s, err := state.NewHybridStore(dir, time.Hour)
+	if err != nil {
+		t.Fatalf("NewHybridStore: %v", err)
+	}
+	if err := s.WaitReady(ctx); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+
+	if err := s.Set(ctx, "svc", "p/k1", "v1"); err != nil {
+		t.Fatalf("Set k1: %v", err)
+	}
+	if err := s.DeletePrefix(ctx, "svc", "p/"); err != nil {
+		t.Fatalf("DeletePrefix: %v", err)
+	}
+	if err := s.Set(ctx, "svc", "p/k2", "v2"); err != nil {
+		t.Fatalf("Set k2: %v", err)
+	}
+
+	// Overlay (pre-flush) view.
+	assertDeletePrefixOrdering(t, s)
+
+	// Flush to SQLite and confirm the ranged tombstone landed correctly.
+	if err := s.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	assertDeletePrefixOrdering(t, s)
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Reload from SQLite and confirm the flushed state survived.
+	s2, err := state.NewHybridStore(dir, time.Hour)
+	if err != nil {
+		t.Fatalf("NewHybridStore (reopen): %v", err)
+	}
+	defer s2.Close()
+	if err := s2.WaitReady(ctx); err != nil {
+		t.Fatalf("WaitReady (reopen): %v", err)
+	}
+	assertDeletePrefixOrdering(t, s2)
+}
+
+func assertDeletePrefixOrdering(t *testing.T, s *state.HybridStore) {
+	t.Helper()
+	ctx := context.Background()
+	_, found, err := s.Get(ctx, "svc", "p/k1")
+	if err != nil {
+		t.Fatalf("Get k1: %v", err)
+	}
+	if found {
+		t.Error("k1 should be deleted by DeletePrefix")
+	}
+	got, found, err := s.Get(ctx, "svc", "p/k2")
+	if err != nil || !found || got != "v2" {
+		t.Fatalf("Get k2: err=%v found=%v got=%q, want found=true got=\"v2\"", err, found, got)
+	}
+	keys, err := s.List(ctx, "svc", "p/")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(keys) != 1 || keys[0] != "p/k2" {
+		t.Fatalf("List p/ = %#v, want only [p/k2]", keys)
+	}
+}
+
+// TestHybridStore_DeletePrefix_PurgesManyKeysInOneFlushRoundTrip exercises a
+// PurgeQueue-shaped workload: many keys under one prefix, deleted with a
+// single DeletePrefix call. This must not enumerate keys on the write path
+// (see TestHybridStore_DeletePrefixDoesNotEnumerateKeys in the internal test
+// file for the structural assertion) and must correctly purge everything
+// after a flush + reload.
+func TestHybridStore_DeletePrefix_PurgesManyKeysInOneFlushRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	s, err := state.NewHybridStore(dir, time.Hour)
+	if err != nil {
+		t.Fatalf("NewHybridStore: %v", err)
+	}
+	if err := s.WaitReady(ctx); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+
+	const n = 500
+	for i := 0; i < n; i++ {
+		if err := s.Set(ctx, "svc", fmt.Sprintf("queue/%04d", i), "v"); err != nil {
+			t.Fatalf("Set %d: %v", i, err)
+		}
+	}
+	if err := s.Set(ctx, "svc", "other/keep", "keep-me"); err != nil {
+		t.Fatalf("Set unrelated key: %v", err)
+	}
+	if err := s.DeletePrefix(ctx, "svc", "queue/"); err != nil {
+		t.Fatalf("DeletePrefix: %v", err)
+	}
+	if err := s.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	s2, err := state.NewHybridStore(dir, time.Hour)
+	if err != nil {
+		t.Fatalf("NewHybridStore (reopen): %v", err)
+	}
+	defer s2.Close()
+	if err := s2.WaitReady(ctx); err != nil {
+		t.Fatalf("WaitReady (reopen): %v", err)
+	}
+	keys, err := s2.List(ctx, "svc", "queue/")
+	if err != nil {
+		t.Fatalf("List queue/: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("List queue/ after purge+reload = %d keys, want 0", len(keys))
+	}
+	_, found, err := s2.Get(ctx, "svc", "other/keep")
+	if err != nil || !found {
+		t.Fatalf("Get other/keep: err=%v found=%v, want found=true", err, found)
+	}
+}
+
+// ---- 1.11 corrupt-database startup policy: degrade, don't poison -------
+
+// TestHybridStore_DegradesToMemoryOnlyWhenDatabaseFileIsCorrupt points a
+// store at a directory whose overcast.db file is not a valid SQLite
+// database. Reads and writes must keep working via the memory fallback and
+// PersistentHealth must report unhealthy, instead of every subsequent
+// request failing (the pre-1.11 behavior).
+func TestHybridStore_DegradesToMemoryOnlyWhenDatabaseFileIsCorrupt(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "overcast.db"), []byte("this is not a sqlite database file"), 0o644); err != nil {
+		t.Fatalf("write corrupt db fixture: %v", err)
+	}
+
+	core, logs := observer.New(zap.WarnLevel)
+	s, err := state.NewHybridStoreWithLogger(dir, time.Hour, zap.New(core))
+	if err != nil {
+		t.Fatalf("NewHybridStoreWithLogger: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	if err := s.WaitReady(ctx); err == nil {
+		t.Fatal("expected WaitReady to surface the corrupt-database error")
+	}
+
+	// Reads and writes must still work via the memory fallback.
+	if err := s.Set(ctx, "svc", "key", "value"); err != nil {
+		t.Fatalf("Set on degraded store: %v", err)
+	}
+	got, found, err := s.Get(ctx, "svc", "key")
+	if err != nil || !found || got != "value" {
+		t.Fatalf("Get on degraded store: err=%v found=%v got=%q", err, found, got)
+	}
+	if _, err := s.List(ctx, "svc", ""); err != nil {
+		t.Fatalf("List on degraded store: %v", err)
+	}
+
+	health := s.PersistentHealth()
+	if health.Healthy {
+		t.Fatal("expected PersistentHealth.Healthy = false for a corrupt database")
+	}
+	if health.LastError == "" {
+		t.Fatal("expected PersistentHealth.LastError to be populated")
+	}
+
+	// An explicit Flush must be a no-op, not an error, while degraded.
+	if err := s.Flush(ctx); err != nil {
+		t.Fatalf("Flush on degraded store should no-op, got: %v", err)
+	}
+
+	waitForObservedLog(t, logs, "hybrid store degraded to memory-only for this run; persisted state is unavailable until restart")
 }

@@ -40,6 +40,18 @@ func TestLoad_defaults(t *testing.T) {
 	if cfg.HybridFlushInterval != 5*time.Second {
 		t.Errorf("HybridFlushInterval: expected 5s, got %v", cfg.HybridFlushInterval)
 	}
+	if cfg.HybridSyncMode != "interval" {
+		t.Errorf("HybridSyncMode: expected interval, got %q", cfg.HybridSyncMode)
+	}
+	if cfg.HybridSyncInterval != 100*time.Millisecond {
+		t.Errorf("HybridSyncInterval: expected 100ms, got %v", cfg.HybridSyncInterval)
+	}
+	if cfg.HybridDirtyEntryThreshold != 10000 {
+		t.Errorf("HybridDirtyEntryThreshold: expected 10000, got %d", cfg.HybridDirtyEntryThreshold)
+	}
+	if cfg.HybridDirtyByteThreshold != 8388608 {
+		t.Errorf("HybridDirtyByteThreshold: expected 8388608, got %d", cfg.HybridDirtyByteThreshold)
+	}
 	if cfg.WALFsyncMode != "interval" {
 		t.Errorf("WALFsyncMode: expected interval, got %q", cfg.WALFsyncMode)
 	}
@@ -336,6 +348,59 @@ func TestLoad_hybridFlushInterval(t *testing.T) {
 	if cfg.HybridFlushInterval != 10*time.Second {
 		t.Errorf("HybridFlushInterval: expected 10s, got %v", cfg.HybridFlushInterval)
 	}
+}
+
+// TestLoad_hybridSyncConfigOverrides verifies the pending-log sync mode and
+// size-triggered flush thresholds (1.3/1.4) can be overridden.
+func TestLoad_hybridSyncConfigOverrides(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_HYBRID_SYNC", "always")
+	t.Setenv("OVERCAST_HYBRID_SYNC_INTERVAL", "250ms")
+	t.Setenv("OVERCAST_HYBRID_DIRTY_ENTRY_THRESHOLD", "42")
+	t.Setenv("OVERCAST_HYBRID_DIRTY_BYTE_THRESHOLD", "4096")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.HybridSyncMode != "always" {
+		t.Errorf("HybridSyncMode: expected always, got %q", cfg.HybridSyncMode)
+	}
+	if cfg.HybridSyncInterval != 250*time.Millisecond {
+		t.Errorf("HybridSyncInterval: expected 250ms, got %v", cfg.HybridSyncInterval)
+	}
+	if cfg.HybridDirtyEntryThreshold != 42 {
+		t.Errorf("HybridDirtyEntryThreshold: expected 42, got %d", cfg.HybridDirtyEntryThreshold)
+	}
+	if cfg.HybridDirtyByteThreshold != 4096 {
+		t.Errorf("HybridDirtyByteThreshold: expected 4096, got %d", cfg.HybridDirtyByteThreshold)
+	}
+}
+
+func TestLoad_invalidHybridSyncConfig(t *testing.T) {
+	t.Run("invalid sync mode", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("OVERCAST_HYBRID_SYNC", "sometimes")
+		if _, err := config.Load(); err == nil {
+			t.Fatal("expected error for invalid OVERCAST_HYBRID_SYNC")
+		}
+	})
+
+	t.Run("invalid interval", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("OVERCAST_HYBRID_SYNC_INTERVAL", "0s")
+		if _, err := config.Load(); err == nil {
+			t.Fatal("expected error for invalid OVERCAST_HYBRID_SYNC_INTERVAL")
+		}
+	})
+
+	t.Run("invalid dirty byte threshold", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("OVERCAST_HYBRID_DIRTY_BYTE_THRESHOLD", "0")
+		if _, err := config.Load(); err == nil {
+			t.Fatal("expected error for invalid OVERCAST_HYBRID_DIRTY_BYTE_THRESHOLD")
+		}
+	})
 }
 
 // TestLoad_walState verifies the WAL backend is selected correctly.
@@ -785,6 +850,8 @@ func clearEnv(t *testing.T) {
 	t.Helper()
 	awsEmuVars := []string{
 		"OVERCAST_HOST", "OVERCAST_PORT", "OVERCAST_SERVICES", "OVERCAST_STATE",
+		"OVERCAST_HYBRID_FLUSH_INTERVAL", "OVERCAST_HYBRID_SYNC", "OVERCAST_HYBRID_SYNC_INTERVAL",
+		"OVERCAST_HYBRID_DIRTY_ENTRY_THRESHOLD", "OVERCAST_HYBRID_DIRTY_BYTE_THRESHOLD",
 		"OVERCAST_WAL_FSYNC", "OVERCAST_WAL_FSYNC_INTERVAL", "OVERCAST_WAL_MAX_LOG_BYTES",
 		"OVERCAST_DATA_DIR", "OVERCAST_DEFAULT_REGION", "OVERCAST_ACCOUNT_ID",
 		"OVERCAST_SIGV4_VALIDATE", "OVERCAST_ENFORCE_IAM", "OVERCAST_LOG_LEVEL", "OVERCAST_SHUTDOWN_TIMEOUT",

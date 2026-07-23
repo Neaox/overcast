@@ -308,6 +308,65 @@ func TestDebugResetService_dynamodbClearsVirtualItems(t *testing.T) {
 	}
 }
 
+func TestDebugReset_clearsStateAcrossNamespacedStoreOverrides(t *testing.T) {
+	// Given a namespaced store where an unrelated service (s3) is routed to a
+	// dedicated store, distinct from the default store used by everything else.
+	defaultStore := state.NewMemoryStore()
+	s3Store := state.NewMemoryStore()
+	ns := state.NewNamespacedStore(defaultStore, map[string]state.Store{
+		"s3": s3Store,
+	})
+	ctx := context.Background()
+	if err := ns.Set(ctx, "sqs:queues", "q1", `{"name":"q1"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := ns.Set(ctx, "s3:buckets", "b1", `{"name":"b1"}`); err != nil {
+		t.Fatal(err)
+	}
+
+	// When the global debug reset endpoint is invoked with the wrapped store...
+	req := httptest.NewRequest(http.MethodPost, "/_debug/reset", nil)
+	rec := httptest.NewRecorder()
+	debugReset(ns, nil).ServeHTTP(rec, req)
+
+	// Then both the default store's data and the routed store's data are
+	// cleared — reset must not silently miss data because the top-level
+	// store is a *state.NamespacedStore rather than a bare *state.MemoryStore.
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, body)
+	}
+	if _, found, _ := defaultStore.Get(ctx, "sqs:queues", "q1"); found {
+		t.Error("expected default store state cleared after reset")
+	}
+	if _, found, _ := s3Store.Get(ctx, "s3:buckets", "b1"); found {
+		t.Error("expected routed (s3) store state cleared after reset")
+	}
+}
+
+func TestResetStore_recursesIntoNamespacedStoreUnderlyingStores(t *testing.T) {
+	// Direct unit test of the resetStore helper used by debugReset — proves
+	// it doesn't rely on a concrete `*state.MemoryStore` assertion against the
+	// (possibly wrapped) top-level store.
+	defaultStore := state.NewMemoryStore()
+	sqsStore := state.NewMemoryStore()
+	ns := state.NewNamespacedStore(defaultStore, map[string]state.Store{
+		"sqs": sqsStore,
+	})
+	ctx := context.Background()
+	ns.Set(ctx, "sqs:queues", "q1", "v1")
+	ns.Set(ctx, "appsync", "ds1", "v2")
+
+	resetStore(ctx, ns)
+
+	if _, found, _ := sqsStore.Get(ctx, "sqs:queues", "q1"); found {
+		t.Error("expected sqs-routed store cleared")
+	}
+	if _, found, _ := defaultStore.Get(ctx, "appsync", "ds1"); found {
+		t.Error("expected default store cleared")
+	}
+}
+
 func containsDebugBody(body, want string) bool {
 	for i := 0; i+len(want) <= len(body); i++ {
 		if body[i:i+len(want)] == want {

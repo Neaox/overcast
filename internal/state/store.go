@@ -23,6 +23,8 @@ package state
 import (
 	"context"
 	"database/sql"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -132,10 +134,67 @@ func Flush(ctx context.Context, s Store) error {
 
 // PersistentHealthSnapshot returns persistent backend health when the store has
 // one. The boolean is false for memory-only or otherwise non-reporting stores.
+//
+// A *NamespacedStore does not itself implement PersistentHealthReporter — a
+// direct type assertion against it would silently report "no persistent
+// health" for every service whenever any unrelated OVERCAST_STATE_<SVC>
+// override is configured, even though the underlying per-service stores do
+// have real health to report (the same erasure class Unwrap exists to guard
+// against). Since this function's callers (the health endpoint, shutdown
+// logging) want one aggregate view rather than a specific service's, it
+// unwraps a NamespacedStore into its distinct underlying stores and combines
+// their reports instead of delegating to Unwrap.
 func PersistentHealthSnapshot(s Store) (PersistentHealth, bool) {
+	if ns, ok := s.(*NamespacedStore); ok {
+		return aggregatePersistentHealth(ns.UnderlyingStores())
+	}
 	reporter, ok := s.(PersistentHealthReporter)
 	if !ok {
 		return PersistentHealth{}, false
 	}
 	return reporter.PersistentHealth(), true
+}
+
+// aggregatePersistentHealth combines the PersistentHealth of every reporting
+// store into one snapshot: PendingWrites sums, Healthy is the AND of all
+// reporting stores, LastError/LastErrorAt come from whichever unhealthy store
+// errored most recently, LastSuccessAt is the most recent across all stores,
+// and Mode lists every distinct backend mode present (e.g. "hybrid+memory"
+// when a per-service override mixes backends). The boolean is false only when
+// none of the stores report health at all (e.g. every backend is memory-only).
+func aggregatePersistentHealth(stores []Store) (PersistentHealth, bool) {
+	var agg PersistentHealth
+	agg.Healthy = true
+	found := false
+	modes := make(map[string]bool, len(stores))
+	var modeList []string
+	for _, st := range stores {
+		reporter, ok := st.(PersistentHealthReporter)
+		if !ok {
+			continue
+		}
+		found = true
+		h := reporter.PersistentHealth()
+		agg.PendingWrites += h.PendingWrites
+		if !h.Healthy {
+			agg.Healthy = false
+			if h.LastErrorAt.After(agg.LastErrorAt) {
+				agg.LastError = h.LastError
+				agg.LastErrorAt = h.LastErrorAt
+			}
+		}
+		if h.LastSuccessAt.After(agg.LastSuccessAt) {
+			agg.LastSuccessAt = h.LastSuccessAt
+		}
+		if h.Mode != "" && !modes[h.Mode] {
+			modes[h.Mode] = true
+			modeList = append(modeList, h.Mode)
+		}
+	}
+	if !found {
+		return PersistentHealth{}, false
+	}
+	sort.Strings(modeList)
+	agg.Mode = strings.Join(modeList, "+")
+	return agg, true
 }

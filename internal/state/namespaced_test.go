@@ -2,10 +2,46 @@ package state_test
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/Neaox/overcast/internal/state"
 )
+
+// fakeSQLiteStore is a minimal state.Store that also implements
+// state.SQLiteDBProvider, standing in for *state.SQLiteStore / *state.HybridStore
+// without pulling in real SQLite machinery for these unit tests.
+type fakeSQLiteStore struct {
+	*state.MemoryStore
+}
+
+func newFakeSQLiteStore() *fakeSQLiteStore {
+	return &fakeSQLiteStore{MemoryStore: state.NewMemoryStore()}
+}
+
+func (f *fakeSQLiteStore) DB() *sql.DB { return nil }
+
+// blockingReadyStore is a state.Store that also implements state.ReadyAwaiter,
+// blocking WaitReady until the ready channel is closed or ctx is cancelled.
+type blockingReadyStore struct {
+	*state.MemoryStore
+	ready chan struct{}
+}
+
+func newBlockingReadyStore() *blockingReadyStore {
+	return &blockingReadyStore{MemoryStore: state.NewMemoryStore(), ready: make(chan struct{})}
+}
+
+func (b *blockingReadyStore) WaitReady(ctx context.Context) error {
+	select {
+	case <-b.ready:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 func TestNamespacedStore_RoutesToOverrideStore(t *testing.T) {
 	// Given a namespaced store with SQS routed to a dedicated store.
@@ -143,6 +179,132 @@ func TestNamespacedStore_Delete(t *testing.T) {
 	_, found, _ := sqsStore.Get(ctx, "sqs:queues", "q1")
 	if found {
 		t.Error("key should be deleted from sqsStore")
+	}
+}
+
+// TestUnwrap_UnrelatedOverrideStillResolvesSQLiteBackend is the regression
+// test for the 1.1 storage-plan bug: an OVERCAST_STATE_<SVC> override on an
+// UNRELATED service must not erase the SQLiteDBProvider capability of the
+// default (dynamodb) store.
+func TestUnwrap_UnrelatedOverrideStillResolvesSQLiteBackend(t *testing.T) {
+	// Given a namespaced store whose default is SQLite-backed and only an
+	// unrelated service ("s3") has a memory override.
+	sqliteDefault := newFakeSQLiteStore()
+	ns := state.NewNamespacedStore(sqliteDefault, map[string]state.Store{
+		"s3": state.NewMemoryStore(),
+	})
+
+	// When DynamoDB resolves its backing store through Unwrap...
+	resolved := state.Unwrap(ns, "dynamodb")
+
+	// Then it still gets a store implementing SQLiteDBProvider — the
+	// dedicated-table backend selection must not silently downgrade to
+	// memory-only just because s3 was routed elsewhere.
+	if _, ok := resolved.(state.SQLiteDBProvider); !ok {
+		t.Fatalf("Unwrap(ns, \"dynamodb\") = %T, want a state.SQLiteDBProvider", resolved)
+	}
+	if resolved != state.Store(sqliteDefault) {
+		t.Fatalf("Unwrap(ns, \"dynamodb\") should resolve to the default store")
+	}
+}
+
+func TestUnwrap_MatchingOverrideResolvesToRoutedStore(t *testing.T) {
+	// Given dynamodb itself has an override configured.
+	dynamoStore := newFakeSQLiteStore()
+	ns := state.NewNamespacedStore(state.NewMemoryStore(), map[string]state.Store{
+		"dynamodb": dynamoStore,
+	})
+
+	resolved := state.Unwrap(ns, "dynamodb")
+	if resolved != state.Store(dynamoStore) {
+		t.Fatalf("Unwrap should resolve to the dynamodb-routed store, got %T", resolved)
+	}
+}
+
+func TestUnwrap_NonNamespacedStoreReturnedUnchanged(t *testing.T) {
+	// A plain (non-wrapped) store must pass through Unwrap unchanged.
+	plain := newFakeSQLiteStore()
+	resolved := state.Unwrap(plain, "dynamodb")
+	if resolved != state.Store(plain) {
+		t.Fatalf("Unwrap should return a non-namespaced store unchanged, got %T", resolved)
+	}
+}
+
+func TestNamespacedStore_StoreFor(t *testing.T) {
+	defaultStore := state.NewMemoryStore()
+	sqsStore := state.NewMemoryStore()
+	ns := state.NewNamespacedStore(defaultStore, map[string]state.Store{
+		"sqs": sqsStore,
+	})
+
+	if got := ns.StoreFor("sqs"); got != state.Store(sqsStore) {
+		t.Errorf("StoreFor(\"sqs\") = %T, want the sqs store", got)
+	}
+	if got := ns.StoreFor("s3"); got != state.Store(defaultStore) {
+		t.Errorf("StoreFor(\"s3\") = %T, want the default store", got)
+	}
+}
+
+func TestNamespacedStore_WaitReady_blocksUntilUnderlyingStoresAreReady(t *testing.T) {
+	// Given a namespaced store whose default backend has an async init phase.
+	blocking := newBlockingReadyStore()
+	ns := state.NewNamespacedStore(blocking, map[string]state.Store{
+		"sqs": state.NewMemoryStore(), // ready immediately — doesn't implement ReadyAwaiter
+	})
+
+	done := make(chan error, 1)
+	go func() { done <- ns.WaitReady(context.Background()) }()
+
+	// Then WaitReady must not return before the underlying store signals ready.
+	select {
+	case err := <-done:
+		t.Fatalf("WaitReady returned early (err=%v) before underlying store was ready", err)
+	case <-time.After(75 * time.Millisecond):
+	}
+
+	close(blocking.ready)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("WaitReady: unexpected error %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("WaitReady did not return after underlying store became ready")
+	}
+}
+
+func TestNamespacedStore_WaitReady_respectsContextCancellation(t *testing.T) {
+	blocking := newBlockingReadyStore() // never becomes ready
+	ns := state.NewNamespacedStore(blocking, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- ns.WaitReady(ctx) }()
+
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("WaitReady error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("WaitReady did not return after context cancellation")
+	}
+}
+
+func TestNamespacedStore_UnderlyingStores_deduplicates(t *testing.T) {
+	shared := state.NewMemoryStore()
+	other := state.NewMemoryStore()
+	ns := state.NewNamespacedStore(shared, map[string]state.Store{
+		"sqs": shared,
+		"sns": other,
+	})
+
+	stores := ns.UnderlyingStores()
+	if len(stores) != 2 {
+		t.Fatalf("UnderlyingStores() = %d stores, want 2 (deduplicated)", len(stores))
 	}
 }
 

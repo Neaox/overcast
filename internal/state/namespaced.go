@@ -33,11 +33,63 @@ func NewNamespacedStore(defaultStore Store, routes map[string]Store) *Namespaced
 // storeFor returns the store responsible for a given namespace.
 func (s *NamespacedStore) storeFor(namespace string) Store {
 	if i := strings.IndexByte(namespace, ':'); i > 0 {
-		if st, ok := s.routes[namespace[:i]]; ok {
-			return st
-		}
+		return s.StoreFor(namespace[:i])
 	}
 	return s.defaultStore
+}
+
+// StoreFor returns the store responsible for a given service prefix — the
+// namespace segment before the colon (e.g. "dynamodb", "s3", "sqs"). Returns
+// the default store when no override is registered for servicePrefix.
+//
+// Callers that need to type-assert a Store to an optional interface
+// (state.SQLiteDBProvider, state.ReadyAwaiter, ...) should resolve through
+// this method first — see Unwrap — rather than asserting directly against a
+// possibly-wrapped Store, which silently erases the capability whenever any
+// unrelated service has an OVERCAST_STATE_<SVC> override configured.
+func (s *NamespacedStore) StoreFor(servicePrefix string) Store {
+	if st, ok := s.routes[servicePrefix]; ok {
+		return st
+	}
+	return s.defaultStore
+}
+
+// Unwrap returns the store that actually handles operations for the given
+// service prefix. If store is a *NamespacedStore, it resolves to the routed
+// store (or the default store when no override exists for servicePrefix).
+// For any other Store, it returns store unchanged.
+//
+// Any consumer that type-asserts a Store to an optional interface
+// (SQLiteDBProvider, ReadyAwaiter, PersistentHealthReporter, ...) MUST call
+// Unwrap first with its own service prefix. Without it, wrapping the store in
+// NamespacedStore — triggered by an unrelated OVERCAST_STATE_<SVC> override —
+// silently erases the capability for every other service, because
+// *NamespacedStore itself does not implement most optional interfaces.
+func Unwrap(store Store, servicePrefix string) Store {
+	if ns, ok := store.(*NamespacedStore); ok {
+		return ns.StoreFor(servicePrefix)
+	}
+	return store
+}
+
+// UnderlyingStores returns the default store plus every distinct routed
+// store, each exactly once even if the same Store instance is shared by
+// multiple service prefixes (or is also the default store).
+func (s *NamespacedStore) UnderlyingStores() []Store {
+	seen := make(map[Store]bool, 1+len(s.routes))
+	stores := make([]Store, 0, 1+len(s.routes))
+	add := func(st Store) {
+		if seen[st] {
+			return
+		}
+		seen[st] = true
+		stores = append(stores, st)
+	}
+	add(s.defaultStore)
+	for _, st := range s.routes {
+		add(st)
+	}
+	return stores
 }
 
 func (s *NamespacedStore) Get(ctx context.Context, namespace, key string) (string, bool, error) {
@@ -76,12 +128,7 @@ func (s *NamespacedStore) List(ctx context.Context, namespace, prefix string) ([
 func (s *NamespacedStore) ListNamespaces(ctx context.Context) ([]string, error) {
 	seen := map[string]bool{}
 	var namespaces []string
-	stores := make([]Store, 0, 1+len(s.routes))
-	stores = append(stores, s.defaultStore)
-	for _, st := range s.routes {
-		stores = append(stores, st)
-	}
-	for _, st := range stores {
+	for _, st := range s.UnderlyingStores() {
 		items, err := st.ListNamespaces(ctx)
 		if err != nil {
 			return nil, err
@@ -108,22 +155,27 @@ func (s *NamespacedStore) Scan(ctx context.Context, namespace, prefix string) ([
 // Close closes the default store and all per-service stores. Each underlying
 // store is closed exactly once even if it serves multiple namespace prefixes.
 func (s *NamespacedStore) Close() error {
-	seen := make(map[Store]bool, 1+len(s.routes))
 	var first error
-
-	closeOnce := func(st Store) {
-		if seen[st] {
-			return
-		}
-		seen[st] = true
+	for _, st := range s.UnderlyingStores() {
 		if err := st.Close(); err != nil && first == nil {
 			first = err
 		}
 	}
-
-	closeOnce(s.defaultStore)
-	for _, st := range s.routes {
-		closeOnce(st)
-	}
 	return first
+}
+
+// WaitReady implements ReadyAwaiter by waiting on every distinct underlying
+// store that itself implements ReadyAwaiter. Stores that don't implement it
+// are treated as already ready, per the ReadyAwaiter contract. Returns the
+// first error encountered (including ctx cancellation), or nil once every
+// underlying store that needed it is ready.
+func (s *NamespacedStore) WaitReady(ctx context.Context) error {
+	for _, st := range s.UnderlyingStores() {
+		if awaiter, ok := st.(ReadyAwaiter); ok {
+			if err := awaiter.WaitReady(ctx); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

@@ -305,12 +305,7 @@ func truncateDebugJSONStrings(value any) any {
 
 func debugReset(store state.Store, dynamo debugDynamoDBProvider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if ms, ok := store.(*state.MemoryStore); ok {
-			ms.Reset()
-		} else {
-			// For SQLite, delete all keys across all namespaces.
-			resetAllNamespaces(r.Context(), store)
-		}
+		resetStore(r.Context(), store)
 		if dynamo != nil {
 			if err := dynamo.DebugResetState(r.Context()); err != nil {
 				writeDebugJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -402,6 +397,29 @@ func debugServicePrefix(service string) string {
 	default:
 		return service
 	}
+}
+
+// resetStore clears all data in store. It fast-paths *state.MemoryStore via
+// its Reset() method and falls back to a generic list-and-delete sweep
+// (resetAllNamespaces) for anything else. When store is a
+// *state.NamespacedStore, the same logic is applied recursively to every
+// distinct underlying store instead of asserting the concrete type of the
+// wrapper itself — a bare `store.(*state.MemoryStore)` check silently missed
+// wrapped stores regardless of what backend they actually wrap, doing a
+// (still-correct-but-unintended) generic sweep even when a fast reset was
+// available on every underlying store.
+func resetStore(ctx context.Context, store state.Store) {
+	if ns, ok := store.(*state.NamespacedStore); ok {
+		for _, underlying := range ns.UnderlyingStores() {
+			resetStore(ctx, underlying)
+		}
+		return
+	}
+	if ms, ok := store.(*state.MemoryStore); ok {
+		ms.Reset()
+		return
+	}
+	resetAllNamespaces(ctx, store)
 }
 
 func resetAllNamespaces(ctx context.Context, store state.Store) {

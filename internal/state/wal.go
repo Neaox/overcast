@@ -1,7 +1,7 @@
 package state
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -140,27 +140,52 @@ func validateWALSyncMode(mode WALSyncMode) error {
 	}
 }
 
+// replayWALFile rebuilds mem from the on-disk append log at path.
+//
+// Two forms of damage are tolerated rather than treated as fatal, since a
+// process kill mid-append (the common case, given the default interval sync
+// mode) always produces one of them:
+//
+//   - A torn final line: the very last line fails to decode AND the file does
+//     not end with a trailing newline. This is exactly what a kill mid-Write
+//     leaves behind. It is logged and replay stops there — every earlier,
+//     complete entry has already been applied.
+//   - A corrupt line anywhere else (mid-file garbage, or an unknown op): logged
+//     and skipped, replay continues with the remaining lines. A summary count
+//     is logged once replay finishes.
+//
+// Any other error (I/O failure, a decoded entry that MemoryStore itself
+// rejects) still aborts replay — those are not the "expected torn write" case
+// this function exists to tolerate.
 func replayWALFile(path string, mem *MemoryStore) error {
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("wal store: open replay file %q: %w", path, err)
 	}
-	defer f.Close()
 
-	sc := bufio.NewScanner(f)
+	lines := bytes.Split(data, []byte{'\n'})
 	ctx := context.Background()
-	for sc.Scan() {
-		line := sc.Bytes()
+	var skipped int
+	for i, line := range lines {
 		if len(line) == 0 {
 			continue
 		}
+		lineNum := i + 1
+
 		var e walEntry
 		if err := json.Unmarshal(line, &e); err != nil {
-			return fmt.Errorf("wal store: decode replay entry: %w", err)
+			if i == len(lines)-1 && len(data) > 0 && data[len(data)-1] != '\n' {
+				walLogWarnf("wal store: %q has an incomplete final entry (line %d); ignoring: %v", path, lineNum, err)
+				break
+			}
+			walLogWarnf("wal store: %q has a corrupt entry at line %d; skipping: %v", path, lineNum, err)
+			skipped++
+			continue
 		}
+
 		switch e.Op {
 		case walSet:
 			if err := mem.Set(ctx, e.Namespace, e.Key, e.Value); err != nil {
@@ -175,13 +200,23 @@ func replayWALFile(path string, mem *MemoryStore) error {
 				return fmt.Errorf("wal store: replay delete prefix [%s/%s*]: %w", e.Namespace, e.Key, err)
 			}
 		default:
-			return fmt.Errorf("wal store: unknown replay op %q", e.Op)
+			walLogWarnf("wal store: %q has an unknown op %q at line %d; skipping", path, e.Op, lineNum)
+			skipped++
 		}
 	}
-	if err := sc.Err(); err != nil {
-		return fmt.Errorf("wal store: replay scan: %w", err)
+
+	if skipped > 0 {
+		walLogWarnf("wal store: replay of %q skipped %d corrupt/unknown entries", path, skipped)
 	}
 	return nil
+}
+
+// walLogWarnf reports replay warnings to stderr. WALStore has no logger of
+// its own to inject (unlike HybridStore's NewHybridStoreWithLogger) — this
+// mirrors the no-logger-available fallback already used elsewhere in this
+// package, e.g. sqlite.go's migration-failure path.
+func walLogWarnf(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...) //nolint:errcheck // best-effort diagnostic write.
 }
 
 func (s *WALStore) runPeriodicSync() {

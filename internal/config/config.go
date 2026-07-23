@@ -83,6 +83,28 @@ type Config struct {
 	// mode is "hybrid".
 	HybridFlushInterval time.Duration
 
+	// HybridSyncMode controls fsync policy for the hybrid store's pending
+	// log. Valid values: always, interval, never. Corresponds to
+	// state.WALSyncMode (the hybrid pending log reuses the same sync-mode
+	// mechanism as the WAL backend).
+	HybridSyncMode string
+
+	// HybridSyncInterval controls periodic fsync cadence for the hybrid
+	// pending log when HybridSyncMode is "interval".
+	HybridSyncInterval time.Duration
+
+	// HybridDirtyEntryThreshold triggers an early, out-of-band hybrid flush
+	// once this many unflushed pending-log operations have accumulated,
+	// ahead of the next HybridFlushInterval tick. A value <= 0 disables the
+	// entry-count trigger (the byte threshold still applies unless it is
+	// also disabled).
+	HybridDirtyEntryThreshold int
+
+	// HybridDirtyByteThreshold triggers an early, out-of-band hybrid flush
+	// once the approximate byte size of unflushed writes exceeds this many
+	// bytes. A value <= 0 disables the byte-size trigger.
+	HybridDirtyByteThreshold int64
+
 	// WALFsyncMode controls fsync policy for the WAL backend.
 	// Valid values: always, interval, never.
 	WALFsyncMode string
@@ -410,6 +432,10 @@ var allServices = []string{"s3", "sqs", "sns", "ses", "dynamodb", "dynamodbstrea
 //	OVERCAST_STATE                     hybrid  (memory | persistent | hybrid | wal)
 //	OVERCAST_STATE_<SERVICE>           <mode>  (per-service override, e.g. OVERCAST_STATE_S3=memory)
 //	OVERCAST_HYBRID_FLUSH_INTERVAL     5s
+//	OVERCAST_HYBRID_SYNC                interval (always | interval | never)
+//	OVERCAST_HYBRID_SYNC_INTERVAL       100ms
+//	OVERCAST_HYBRID_DIRTY_ENTRY_THRESHOLD 10000
+//	OVERCAST_HYBRID_DIRTY_BYTE_THRESHOLD  8388608
 //	OVERCAST_WAL_FSYNC                 interval (always | interval | never)
 //	OVERCAST_WAL_FSYNC_INTERVAL        100ms
 //	OVERCAST_WAL_MAX_LOG_BYTES         67108864
@@ -510,6 +536,29 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: OVERCAST_HYBRID_FLUSH_INTERVAL %q is not a valid duration", flushStr)
 	}
+
+	// Hybrid pending-log sync mode — mirrors the WAL sync settings below,
+	// applied to the hybrid store's own pending log instead.
+	cfg.HybridSyncMode = strings.ToLower(strings.TrimSpace(envOr("OVERCAST_HYBRID_SYNC", "interval")))
+	switch cfg.HybridSyncMode {
+	case "always", "interval", "never":
+	default:
+		return nil, fmt.Errorf("config: OVERCAST_HYBRID_SYNC must be 'always', 'interval', or 'never', got %q", cfg.HybridSyncMode)
+	}
+	hybridSyncIntervalStr := envOr("OVERCAST_HYBRID_SYNC_INTERVAL", "100ms")
+	cfg.HybridSyncInterval, err = time.ParseDuration(hybridSyncIntervalStr)
+	if err != nil || cfg.HybridSyncInterval <= 0 {
+		return nil, fmt.Errorf("config: OVERCAST_HYBRID_SYNC_INTERVAL %q is not a valid positive duration", hybridSyncIntervalStr)
+	}
+
+	// Hybrid size-triggered flush thresholds.
+	cfg.HybridDirtyEntryThreshold = envInt("OVERCAST_HYBRID_DIRTY_ENTRY_THRESHOLD", 10000)
+	hybridByteThresholdStr := envOr("OVERCAST_HYBRID_DIRTY_BYTE_THRESHOLD", "8388608")
+	hybridByteThreshold, err := strconv.ParseInt(hybridByteThresholdStr, 10, 64)
+	if err != nil || hybridByteThreshold <= 0 {
+		return nil, fmt.Errorf("config: OVERCAST_HYBRID_DIRTY_BYTE_THRESHOLD %q must be a positive integer", hybridByteThresholdStr)
+	}
+	cfg.HybridDirtyByteThreshold = hybridByteThreshold
 
 	// WAL settings
 	cfg.WALFsyncMode = strings.ToLower(strings.TrimSpace(envOr("OVERCAST_WAL_FSYNC", "interval")))
