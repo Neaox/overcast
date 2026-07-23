@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -216,7 +217,7 @@ func (h *Handler) CreateGraphqlApi(w http.ResponseWriter, r *http.Request) {
 		api.IntrospectionConfig = "ENABLED"
 	}
 
-	api.Uris = localGraphQLURIs(requestBaseURL(r), apiID)
+	api.Uris = localGraphQLURIs(h.clientBaseURL(r), apiID)
 	api.Dns = map[string]string{
 		"GRAPHQL":  fmt.Sprintf("%s.appsync-api.%s.amazonaws.com", apiID, h.region(r)),
 		"REALTIME": fmt.Sprintf("%s.appsync-realtime-api.%s.amazonaws.com", apiID, h.region(r)),
@@ -243,7 +244,7 @@ func (h *Handler) CreateGraphqlApi(w http.ResponseWriter, r *http.Request) {
 
 	h.publish(r, events.AppSyncAPICreated, events.ResourcePayload{Name: api.Name})
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"graphqlApi": api.withLocalURIs(requestBaseURL(r))})
+	writeJSON(w, r, http.StatusOK, map[string]any{"graphqlApi": api.withLocalURIs(h.clientBaseURL(r))})
 }
 
 // ─── GetGraphqlApi ───────────────────────────────────────────────────────────
@@ -254,7 +255,7 @@ func (h *Handler) GetGraphqlApi(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"graphqlApi": api.withLocalURIs(requestBaseURL(r))})
+	writeJSON(w, r, http.StatusOK, map[string]any{"graphqlApi": api.withLocalURIs(h.clientBaseURL(r))})
 }
 
 // ─── ListGraphqlApis ─────────────────────────────────────────────────────────
@@ -276,7 +277,7 @@ func (h *Handler) ListGraphqlApis(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, badRequestError("owner is invalid."))
 		return
 	}
-	baseURL := requestBaseURL(r)
+	baseURL := h.clientBaseURL(r)
 	filtered := make([]*GraphqlAPI, 0, len(apis))
 	for _, api := range apis {
 		if apiType != "" && api.ApiType != apiType {
@@ -340,7 +341,7 @@ func (h *Handler) UpdateGraphqlApi(w http.ResponseWriter, r *http.Request) {
 
 	h.publish(r, events.AppSyncAPIUpdated, events.ResourcePayload{Name: update.Name, ARN: update.ARN})
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"graphqlApi": update.withLocalURIs(requestBaseURL(r))})
+	writeJSON(w, r, http.StatusOK, map[string]any{"graphqlApi": update.withLocalURIs(h.clientBaseURL(r))})
 }
 
 // ─── DeleteGraphqlApi ────────────────────────────────────────────────────────
@@ -361,11 +362,30 @@ func (h *Handler) DeleteGraphqlApi(w http.ResponseWriter, r *http.Request) {
 
 type requestBaseURLKey struct{}
 
-func baseURLFromContext(ctx context.Context) string {
+func (h *Handler) baseURLFromContext(ctx context.Context) string {
 	if base, ok := ctx.Value(requestBaseURLKey{}).(string); ok && base != "" {
 		return base
 	}
-	return "http://localhost:4566"
+	return h.cfg.ExternalBaseURL()
+}
+
+func (h *Handler) clientBaseURL(r *http.Request) string {
+	if h.cfg.Hostname == "" {
+		return requestBaseURL(r)
+	}
+	scheme := r.Header.Get("X-Forwarded-Proto")
+	if scheme == "" {
+		if r.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	_, port, err := net.SplitHostPort(r.Host)
+	if err != nil || port == "" {
+		return h.cfg.ExternalBaseURL()
+	}
+	return scheme + "://" + net.JoinHostPort(h.cfg.Hostname, port)
 }
 
 func requestBaseURL(r *http.Request) string {

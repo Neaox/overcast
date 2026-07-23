@@ -216,6 +216,36 @@ func TestListGraphqlApis_localGraphQLURLs(t *testing.T) {
 	}
 }
 
+func TestListGraphqlApis_configuredHostname(t *testing.T) {
+	// Given: Overcast is configured with an externally reachable hostname.
+	srv := helpers.NewTestServer(t, helpers.WithHostname("overcast.local"))
+	apiID, _ := createTestAPI(t, srv)
+
+	// When: ListGraphqlApis is called.
+	resp := appsyncGet(t, srv, "/v1/apis")
+	defer resp.Body.Close()
+
+	// Then: the returned GraphQL URL uses the configured client-facing base URL.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		GraphqlApis []struct {
+			Uris map[string]string `json:"uris"`
+		} `json:"graphqlApis"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if len(result.GraphqlApis) != 1 {
+		t.Fatalf("expected one API, got %d", len(result.GraphqlApis))
+	}
+	serverURL, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("parse test server URL: %v", err)
+	}
+	want := "http://overcast.local:" + serverURL.Port() + "/_appsync/" + apiID + "/graphql"
+	if got := result.GraphqlApis[0].Uris["GRAPHQL"]; got != want {
+		t.Fatalf("expected configured GraphQL URL %q, got %q", want, got)
+	}
+}
+
 func TestCreateGraphqlApi_jsonProtocolTags(t *testing.T) {
 	// Given: an empty store
 	srv := helpers.NewTestServer(t)
