@@ -21,6 +21,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -68,18 +70,27 @@ type Handler struct {
 
 	// subscriptions manages active WebSocket subscriptions.
 	subscriptions *subscriptionManager
+
+	authorizerCacheMu sync.Mutex
+	authorizerCache   map[string]cachedLambdaAuthorizerIdentity
+}
+
+type cachedLambdaAuthorizerIdentity struct {
+	identity  map[string]any
+	expiresAt time.Time
 }
 
 func newHandler(cfg *config.Config, store *Store, log *serviceutil.ServiceLogger, clk clock.Clock, sp *schemaParser) *Handler {
 	h := &Handler{
-		cfg:           cfg,
-		store:         store,
-		log:           log,
-		clk:           clk,
-		sp:            sp,
-		jsEvaluator:   newJSEvaluator(clk),
-		vtlEvaluator:  newVTLEvaluator(clk),
-		subscriptions: newSubscriptionManager(clk, log),
+		cfg:             cfg,
+		store:           store,
+		log:             log,
+		clk:             clk,
+		sp:              sp,
+		jsEvaluator:     newJSEvaluator(clk),
+		vtlEvaluator:    newVTLEvaluator(clk),
+		subscriptions:   newSubscriptionManager(clk, log),
+		authorizerCache: make(map[string]cachedLambdaAuthorizerIdentity),
 	}
 	h.typedOp = h.typedOps()
 	return h
@@ -216,11 +227,7 @@ func (h *Handler) CreateGraphqlApi(w http.ResponseWriter, r *http.Request) {
 		api.IntrospectionConfig = "ENABLED"
 	}
 
-	// Generate synthetic URIs matching the real AWS format.
-	api.Uris = map[string]string{
-		"GRAPHQL":  fmt.Sprintf("https://%s.appsync-api.%s.amazonaws.com/graphql", apiID, h.region(r)),
-		"REALTIME": fmt.Sprintf("wss://%s.appsync-realtime-api.%s.amazonaws.com/graphql", apiID, h.region(r)),
-	}
+	api.Uris = localGraphQLURIs(serviceutil.ClientBaseURL(h.cfg, r), apiID)
 	api.Dns = map[string]string{
 		"GRAPHQL":  fmt.Sprintf("%s.appsync-api.%s.amazonaws.com", apiID, h.region(r)),
 		"REALTIME": fmt.Sprintf("%s.appsync-realtime-api.%s.amazonaws.com", apiID, h.region(r)),
@@ -247,7 +254,7 @@ func (h *Handler) CreateGraphqlApi(w http.ResponseWriter, r *http.Request) {
 
 	h.publish(r, events.AppSyncAPICreated, events.ResourcePayload{Name: api.Name})
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"graphqlApi": &api})
+	writeJSON(w, r, http.StatusOK, map[string]any{"graphqlApi": api.withLocalURIs(serviceutil.ClientBaseURL(h.cfg, r))})
 }
 
 // ─── GetGraphqlApi ───────────────────────────────────────────────────────────
@@ -258,7 +265,7 @@ func (h *Handler) GetGraphqlApi(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"graphqlApi": api})
+	writeJSON(w, r, http.StatusOK, map[string]any{"graphqlApi": api.withLocalURIs(serviceutil.ClientBaseURL(h.cfg, r))})
 }
 
 // ─── ListGraphqlApis ─────────────────────────────────────────────────────────
@@ -280,6 +287,7 @@ func (h *Handler) ListGraphqlApis(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, badRequestError("owner is invalid."))
 		return
 	}
+	baseURL := serviceutil.ClientBaseURL(h.cfg, r)
 	filtered := make([]*GraphqlAPI, 0, len(apis))
 	for _, api := range apis {
 		if apiType != "" && api.ApiType != apiType {
@@ -291,7 +299,7 @@ func (h *Handler) ListGraphqlApis(w http.ResponseWriter, r *http.Request) {
 		if owner == "OTHER_ACCOUNTS" && api.Owner == h.cfg.AccountID {
 			continue
 		}
-		filtered = append(filtered, api)
+		filtered = append(filtered, api.withLocalURIs(baseURL))
 	}
 	writeListJSON(w, r, "graphqlApis", filtered)
 }
@@ -343,7 +351,7 @@ func (h *Handler) UpdateGraphqlApi(w http.ResponseWriter, r *http.Request) {
 
 	h.publish(r, events.AppSyncAPIUpdated, events.ResourcePayload{Name: update.Name, ARN: update.ARN})
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"graphqlApi": &update})
+	writeJSON(w, r, http.StatusOK, map[string]any{"graphqlApi": update.withLocalURIs(serviceutil.ClientBaseURL(h.cfg, r))})
 }
 
 // ─── DeleteGraphqlApi ────────────────────────────────────────────────────────
@@ -360,6 +368,53 @@ func (h *Handler) DeleteGraphqlApi(w http.ResponseWriter, r *http.Request) {
 	h.publish(r, events.AppSyncAPIDeleted, events.ResourcePayload{Name: apiID})
 
 	writeJSON(w, r, http.StatusOK, map[string]any{})
+}
+
+type requestBaseURLKey struct{}
+
+func (h *Handler) baseURLFromContext(ctx context.Context) string {
+	if base, ok := ctx.Value(requestBaseURLKey{}).(string); ok && base != "" {
+		return base
+	}
+	return h.cfg.ExternalBaseURL()
+}
+
+func localGraphQLURIs(baseURL, apiID string) map[string]string {
+	return map[string]string{
+		"GRAPHQL":  fmt.Sprintf("%s/_appsync/%s/graphql", baseURL, apiID),
+		"REALTIME": fmt.Sprintf("%s/_appsync/%s/realtime", websocketBaseURL(baseURL), apiID),
+	}
+}
+
+func websocketBaseURL(baseURL string) string {
+	if strings.HasPrefix(baseURL, "https://") {
+		return "wss://" + strings.TrimPrefix(baseURL, "https://")
+	}
+	if strings.HasPrefix(baseURL, "http://") {
+		return "ws://" + strings.TrimPrefix(baseURL, "http://")
+	}
+	return baseURL
+}
+
+func (api *GraphqlAPI) withLocalURIs(baseURL string) *GraphqlAPI {
+	if api == nil {
+		return nil
+	}
+	out := *api
+	out.Uris = localGraphQLURIs(baseURL, api.ApiId)
+	if api.Dns != nil {
+		out.Dns = make(map[string]string, len(api.Dns))
+		for k, v := range api.Dns {
+			out.Dns[k] = v
+		}
+	}
+	if api.Tags != nil {
+		out.Tags = make(map[string]string, len(api.Tags))
+		for k, v := range api.Tags {
+			out.Tags[k] = v
+		}
+	}
+	return &out
 }
 
 // ─── Tags ────────────────────────────────────────────────────────────────────

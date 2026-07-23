@@ -254,6 +254,29 @@ func TestCreateFunction_defaults(t *testing.T) {
 	}
 }
 
+func TestCreateFunction_nodejs24Runtime(t *testing.T) {
+	// Given: a fresh server with Docker disabled for deterministic control-plane testing.
+	srv := helpers.NewTestServer(t)
+
+	// When: CreateFunction is called with the current Node.js Lambda runtime emitted by CDK.
+	resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions"), createFunctionReq{
+		FunctionName: "nodejs24-fn",
+		Runtime:      "nodejs24.x",
+		Handler:      "index.handler",
+		Role:         "arn:aws:iam::000000000000:role/lambda-role",
+		Code:         &lambdaCode{},
+	})
+	defer resp.Body.Close()
+
+	// Then: the control plane accepts the runtime and persists the function.
+	helpers.AssertStatus(t, resp, http.StatusCreated)
+	var cfg functionConfiguration
+	decodeJSON(t, resp, &cfg)
+	if cfg.Runtime != "nodejs24.x" {
+		t.Fatalf("Runtime = %q, want nodejs24.x", cfg.Runtime)
+	}
+}
+
 func TestCreateFunction_missingName(t *testing.T) {
 	// Given a fresh server
 	srv := helpers.NewTestServer(t)

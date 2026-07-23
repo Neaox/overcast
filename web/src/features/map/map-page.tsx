@@ -252,6 +252,8 @@ function computeSizeOverrides(
       overrides[n.id] = { width: NODE_WIDTH, height: SQS_NODE_EXPANDED_H }
     } else if (n.service === "logs") {
       overrides[n.id] = { width: NODE_WIDTH, height: LOGS_NODE_EXPANDED_H }
+    } else if (n.service === "esm-filter") {
+      overrides[n.id] = { width: 56, height: 56 }
     } else if (n.service === "igw") {
       overrides[n.id] = { width: IGW_NODE_WIDTH, height: IGW_NODE_HEIGHT }
     }

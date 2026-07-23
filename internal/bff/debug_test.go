@@ -77,6 +77,47 @@ func TestDebugStateNamespace_proxiesNamespaceFromEmulator(t *testing.T) {
 	}
 }
 
+func TestDebugStateNamespaceKey_proxiesRawValueFromEmulator(t *testing.T) {
+	// Given: a fake emulator returns a selected raw JSON state value.
+	var gotPath string
+	var gotQuery string
+	emulator := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.EscapedPath()
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"name":"layer"}`))
+	}))
+	defer emulator.Close()
+
+	origClient := bffHTTPClient
+	bffHTTPClient = emulator.Client()
+	defer func() { bffHTTPClient = origClient }()
+
+	// When: the browser opens one raw state value through the shipped Go BFF.
+	handler := NewHandler(testStaticFS(), nil, UIConfig{})
+	req := httptest.NewRequest(http.MethodGet, "/api/debug/state/lambda%3Alayers?key=us-east-1%2Fdeps%3A0000000001", nil)
+	req.Header.Set(endpointHeader, emulator.URL)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	// Then: the BFF forwards the selected key query and streams the raw response.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if gotPath != "/_debug/state/lambda%3Alayers" {
+		t.Fatalf("expected encoded emulator namespace path, got %q", gotPath)
+	}
+	if gotQuery != "key=us-east-1%2Fdeps%3A0000000001" {
+		t.Fatalf("expected raw key query forwarded, got %q", gotQuery)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("expected JSON content-type, got %q", got)
+	}
+	if got := rec.Body.String(); got != `{"name":"layer"}` {
+		t.Fatalf("unexpected body: %q", got)
+	}
+}
+
 func TestDebugState_disabledReturnsJSONError(t *testing.T) {
 	// Given: a fake emulator where OVERCAST_DEBUG is disabled.
 	emulator := httptest.NewServer(http.NotFoundHandler())

@@ -36,6 +36,16 @@ export interface TopologyNode {
   resolverCount?: number
   /** ECR only — full push-ready repository URI (e.g. localhost:5000/my-repo). */
   repositoryUri?: string
+  /** Lambda ESM filter node only — EventSourceMapping UUID. */
+  esmId?: string
+  /** Lambda ESM filter node only — target function name. */
+  functionName?: string
+  /** Lambda ESM filter node only — source queue/table name. */
+  eventSource?: string
+  /** Lambda ESM filter node only — source type, e.g. dynamodb. */
+  sourceType?: string
+  /** Lambda ESM filter node only — raw FilterCriteria patterns. */
+  filterPatterns?: string[]
 }
 
 export interface TopologyEdge {

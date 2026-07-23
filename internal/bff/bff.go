@@ -264,15 +264,24 @@ func handleDebugNamespace(w http.ResponseWriter, r *http.Request) {
 
 func proxyDebugState(w http.ResponseWriter, r *http.Request, path string) {
 	ep := resolveEndpoint(r)
-	resp, err := doGet(r.Context(), ep+path)
+	debugURL := ep + path
+	if r.URL.RawQuery != "" {
+		debugURL += "?" + r.URL.RawQuery
+	}
+	resp, err := doGet(r.Context(), debugURL)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "debug state fetch failed")
 		return
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
+	selectedKey := r.URL.Query().Get("key")
+	if resp.StatusCode == http.StatusNotFound && selectedKey == "" {
 		writeDebugDisabledError(w)
+		return
+	}
+	if selectedKey != "" {
+		copyDebugResponse(w, resp)
 		return
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -280,7 +289,15 @@ func proxyDebugState(w http.ResponseWriter, r *http.Request, path string) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	copyDebugResponse(w, resp)
+}
+
+func copyDebugResponse(w http.ResponseWriter, resp *http.Response) {
+	if contentType := resp.Header.Get("Content-Type"); contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+	}
 	w.WriteHeader(resp.StatusCode)
 	if !copyResponseBody(w, resp.Body) {
 		return

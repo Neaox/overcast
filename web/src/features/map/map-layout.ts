@@ -154,6 +154,12 @@ function toFlowNode(
       authenticationType: p.node.authenticationType,
       dataSourceCount: p.node.dataSourceCount,
       resolverCount: p.node.resolverCount,
+      repositoryUri: p.node.repositoryUri,
+      esmId: p.node.esmId,
+      functionName: p.node.functionName,
+      eventSource: p.node.eventSource,
+      sourceType: p.node.sourceType,
+      filterPatterns: p.node.filterPatterns,
     },
     style: { width: p.w },
   }

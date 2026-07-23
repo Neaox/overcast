@@ -145,6 +145,80 @@ const appsyncPipelineTemplate = `{
   }
 }`
 
+const appsyncLambdaAliasTemplate = `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "GraphqlApi": {
+      "Type": "AWS::AppSync::GraphQLApi",
+      "Properties": {
+        "Name": "cfn-appsync-lambda-alias-api",
+        "AuthenticationType": "API_KEY"
+      }
+    },
+    "Schema": {
+      "Type": "AWS::AppSync::GraphQLSchema",
+      "Properties": {
+        "ApiId": {"Fn::GetAtt": ["GraphqlApi", "ApiId"]},
+        "Definition": "type Query { namespaces: String }"
+      }
+    },
+    "NamespaceFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "lambda-function-l-ue1-digital-guides-namespace",
+        "Runtime": "nodejs20.x",
+        "Handler": "index.handler",
+        "Role": "arn:aws:iam::000000000000:role/test",
+        "Code": {"ZipFile": "exports.handler = async () => 'ok';"}
+      }
+    },
+    "NamespaceAlias": {
+      "Type": "AWS::Lambda::Alias",
+      "Properties": {
+        "FunctionName": {"Fn::GetAtt": ["NamespaceFunction", "Arn"]},
+        "Name": "DEFAULT",
+        "FunctionVersion": "$LATEST"
+      }
+    },
+    "NamespaceDataSource": {
+      "Type": "AWS::AppSync::DataSource",
+      "DependsOn": ["GraphqlApi", "NamespaceAlias"],
+      "Properties": {
+        "ApiId": {"Fn::GetAtt": ["GraphqlApi", "ApiId"]},
+        "Name": "appsync_datasource_l_ue1_digital_guides_namespace",
+        "Type": "AWS_LAMBDA",
+        "LambdaConfig": {
+          "LambdaFunctionArn": {"Ref": "NamespaceAlias"}
+        }
+      }
+    },
+    "NamespacesResolver": {
+      "Type": "AWS::AppSync::Resolver",
+      "DependsOn": ["Schema", "NamespaceDataSource"],
+      "Properties": {
+        "ApiId": {"Fn::GetAtt": ["GraphqlApi", "ApiId"]},
+        "TypeName": "Query",
+        "FieldName": "namespaces",
+        "DataSourceName": "appsync_datasource_l_ue1_digital_guides_namespace",
+        "Kind": "UNIT"
+      }
+    },
+    "ApiKey": {
+      "Type": "AWS::AppSync::ApiKey",
+      "DependsOn": "Schema",
+      "Properties": {
+        "ApiId": {"Fn::GetAtt": ["GraphqlApi", "ApiId"]}
+      }
+    }
+  },
+  "Outputs": {
+    "ApiId": {"Value": {"Fn::GetAtt": ["GraphqlApi", "ApiId"]}},
+    "ApiKey": {"Value": {"Fn::GetAtt": ["ApiKey", "ApiKey"]}},
+    "AliasRef": {"Value": {"Ref": "NamespaceAlias"}},
+    "AliasArn": {"Value": {"Fn::GetAtt": ["NamespaceAlias", "AliasArn"]}}
+  }
+}`
+
 func TestCreateStack_AppSyncUsableGraphQLApi(t *testing.T) {
 	// Given: a CDK-like AppSync stack template
 	srv := helpers.NewTestServer(t)
@@ -260,6 +334,61 @@ func TestCreateStack_AppSyncGraphQLApiTags(t *testing.T) {
 	}
 	if envResult.EnvironmentVariables["GUIDE"] != "digital" {
 		t.Fatalf("expected GUIDE env var digital, got %#v", envResult.EnvironmentVariables)
+	}
+}
+
+func TestCreateStack_AppSyncLambdaAliasDataSource(t *testing.T) {
+	// Given: a CDK-like AppSync data source that points at a Lambda alias.
+	srv := helpers.NewTestServer(t)
+	stackName := "appsync-lambda-alias"
+
+	// When: CloudFormation creates the stack.
+	createAppSyncStack(t, srv, stackName, appsyncLambdaAliasTemplate)
+
+	// Then: the alias is provisioned and Fn::GetAtt Alias.Arn is not an unsupported-resource stub.
+	outputs := describeStackOutputs(t, srv, stackName)
+	aliasRef := outputs["AliasRef"]
+	aliasArn := outputs["AliasArn"]
+	if aliasRef != aliasArn {
+		t.Fatalf("expected Lambda alias Ref to equal AliasArn, ref=%q arn=%q", aliasRef, aliasArn)
+	}
+	if !strings.Contains(aliasArn, ":function:lambda-function-l-ue1-digital-guides-namespace:DEFAULT") {
+		t.Fatalf("expected Lambda alias ARN, got %q", aliasArn)
+	}
+	if strings.Contains(aliasArn, "-stub") {
+		t.Fatalf("expected real Lambda alias ARN, got unsupported stub %q", aliasArn)
+	}
+	dataSourceResp := appsyncGet(t, srv, "/v1/apis/"+outputs["ApiId"]+"/datasources/appsync_datasource_l_ue1_digital_guides_namespace")
+	defer dataSourceResp.Body.Close()
+	helpers.AssertStatus(t, dataSourceResp, http.StatusOK)
+	var dataSourceResult struct {
+		DataSource struct {
+			LambdaConfig map[string]string `json:"lambdaConfig"`
+		} `json:"dataSource"`
+	}
+	helpers.DecodeJSON(t, dataSourceResp, &dataSourceResult)
+	storedArn := dataSourceResult.DataSource.LambdaConfig["LambdaFunctionArn"]
+	if storedArn == "" {
+		storedArn = dataSourceResult.DataSource.LambdaConfig["lambdaFunctionArn"]
+	}
+	if storedArn != aliasArn {
+		t.Fatalf("expected AppSync data source LambdaFunctionArn to be alias ARN %q, got %q", aliasArn, storedArn)
+	}
+
+	// And: executing the resolver targets the underlying function name, not the alias resource stub.
+	graphqlResp := appsyncGraphQL(t, srv, outputs["ApiId"], outputs["ApiKey"], `{ namespaces }`)
+	defer graphqlResp.Body.Close()
+	helpers.AssertStatus(t, graphqlResp, http.StatusOK)
+	var result struct {
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	helpers.DecodeJSON(t, graphqlResp, &result)
+	for _, gqlErr := range result.Errors {
+		if strings.Contains(gqlErr.Message, "not found or unavailable") || strings.Contains(gqlErr.Message, "-stub") {
+			t.Fatalf("expected resolver to invoke the real Lambda function, got error %q", gqlErr.Message)
+		}
 	}
 }
 
@@ -557,6 +686,71 @@ func TestCreateStack_AppSyncEventsApiAndChannelNamespace(t *testing.T) {
 	getResp := appsyncEventsGet(t, srv, "/v2/apis/"+outputs["ApiId"])
 	defer getResp.Body.Close()
 	helpers.AssertStatus(t, getResp, http.StatusNotFound)
+}
+
+func TestCreateStack_AppSyncResolverWithOnlyResponseMappingTemplate(t *testing.T) {
+	// Given: a CDK-like AppSync resolver that omits RequestMappingTemplate.
+	srv := helpers.NewTestServer(t)
+	stackName := "appsync-response-template-only"
+	template := `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "GraphqlApi": {
+      "Type": "AWS::AppSync::GraphQLApi",
+      "Properties": {
+        "Name": "cfn-appsync-response-only-api",
+        "AuthenticationType": "API_KEY"
+      }
+    },
+    "Schema": {
+      "Type": "AWS::AppSync::GraphQLSchema",
+      "Properties": {
+        "ApiId": {"Fn::GetAtt": ["GraphqlApi", "ApiId"]},
+        "Definition": "type Topic { id: ID! } type Mutation { createTopic: Topic } type Query { health: String }"
+      }
+    },
+    "TopicDataSource": {
+      "Type": "AWS::AppSync::DataSource",
+      "Properties": {
+        "ApiId": {"Fn::GetAtt": ["GraphqlApi", "ApiId"]},
+        "Name": "appsync_datasource_l_ue1_digital_guides_topic",
+        "Type": "NONE"
+      }
+    },
+    "CreateTopicResolver": {
+      "Type": "AWS::AppSync::Resolver",
+      "DependsOn": ["Schema", "TopicDataSource"],
+      "Properties": {
+        "ApiId": {"Fn::GetAtt": ["GraphqlApi", "ApiId"]},
+        "TypeName": "Mutation",
+        "FieldName": "createTopic",
+        "DataSourceName": "appsync_datasource_l_ue1_digital_guides_topic",
+        "Kind": "UNIT",
+        "ResponseMappingTemplate": "#if (!$util.isNull($ctx.result.error))\n  $util.error($ctx.result.error.message, $ctx.result.error.type, $ctx.result.data, $ctx.result.errorInfo)\n#end\n\n$utils.toJson($ctx.result)"
+      }
+    }
+  },
+  "Outputs": {
+    "ApiId": {"Value": {"Fn::GetAtt": ["GraphqlApi", "ApiId"]}},
+    "ResolverArn": {"Value": {"Fn::GetAtt": ["CreateTopicResolver", "ResolverArn"]}}
+  }
+}`
+
+	// When: CloudFormation creates the stack.
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{stackName},
+		"TemplateBody": []string{template},
+	})
+	defer resp.Body.Close()
+
+	// Then: the resolver is provisioned without an internal AppSync error.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+	outputs := describeStackOutputs(t, srv, stackName)
+	if outputs["ResolverArn"] == "" {
+		t.Fatalf("expected resolver ARN output; outputs=%#v", outputs)
+	}
+	appsyncAssertOK(t, appsyncGet(t, srv, "/v1/apis/"+outputs["ApiId"]+"/types/Mutation/resolvers/createTopic"))
 }
 
 func TestCreateStack_AppSyncPipelineResolver(t *testing.T) {

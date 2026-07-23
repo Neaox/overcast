@@ -205,6 +205,44 @@ func TestPutItem_conditionCheckPasses(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusOK)
 }
 
+func TestPutItem_conditionCheckCompositeKey(t *testing.T) {
+	// Given: a table with a composite PK/SK key and one existing item.
+	srv := helpers.NewTestServer(t)
+	createTableWithSortKey(t, srv, "seed-items", "PK", "S", "SK", "S")
+	item := map[string]any{
+		"PK": map[string]string{"S": "COMPANY#4"},
+		"SK": map[string]string{"S": "NAMESPACE#01KRFDC90PW61ZQNAMDETMM47W"},
+	}
+	putItem(t, srv, "seed-items", item)
+
+	// When: the same item is written with the seed script's insert-only condition.
+	resp := ddbCall(t, srv, "PutItem", map[string]any{
+		"TableName":           "seed-items",
+		"Item":                item,
+		"ConditionExpression": "attribute_not_exists(PK) AND attribute_not_exists(SK)",
+	})
+	defer resp.Body.Close()
+
+	// Then: DynamoDB rejects it as an existing item.
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "ConditionalCheckFailedException")
+
+	// When: a different sort key is written with the same condition.
+	newItem := map[string]any{
+		"PK": map[string]string{"S": "COMPANY#4"},
+		"SK": map[string]string{"S": "NAMESPACE#new"},
+	}
+	resp = ddbCall(t, srv, "PutItem", map[string]any{
+		"TableName":           "seed-items",
+		"Item":                newItem,
+		"ConditionExpression": "attribute_not_exists(PK) AND attribute_not_exists(SK)",
+	})
+	defer resp.Body.Close()
+
+	// Then: the non-existing composite key is inserted.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
 // ---- GetItem ---------------------------------------------------------------
 
 func TestGetItem_success(t *testing.T) {

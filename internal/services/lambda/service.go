@@ -477,13 +477,12 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 	s.pool = pool
 	s.mu.Unlock()
 
-	// Pre-pull all active runtime images (nodejs, python, java, dotnet,
-	// ruby, provided) in parallel so the first cold start of any runtime
-	// skips the image pull entirely. This is the single biggest lever for
-	// cold-start latency — base images are 200–500 MB and pulling them on
-	// the first Invoke path can take minutes.
-	// Run in background — do not block the container-runtime transition.
-	go containerRuntime.SeedImages()
+	// Optionally pre-pull all active runtime images. This is disabled by default
+	// because pulling every runtime on each restart can overload Docker Desktop;
+	// images are still pulled lazily on first use.
+	if cfg.LambdaSeedRuntimeImages {
+		go containerRuntime.SeedImages()
+	}
 
 	// Pre-pull images for any functions that were persisted from a previous
 	// session (e.g. after a restart with SQLite store). This ensures their

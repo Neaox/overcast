@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/pprof"
 	"runtime"
@@ -23,6 +24,12 @@ type debugEC2Provider interface {
 	DebugVPCsHandler() http.HandlerFunc
 }
 
+type debugDynamoDBProvider interface {
+	DebugStateKeys(ctx context.Context) ([]string, error)
+	DebugStateValues(ctx context.Context) (map[string]string, error)
+	DebugResetState(ctx context.Context) error
+}
+
 // debugHandlers registers the /_debug/* endpoint namespace.
 // These are only mounted when cfg.Debug == true.
 //
@@ -32,14 +39,14 @@ type debugEC2Provider interface {
 //   - Verifying configuration is what you expect
 //
 // A web UI for these endpoints is planned. For now they return JSON.
-func debugHandlers(cfg *config.Config, store state.Store, ec2 debugEC2Provider) func(chi.Router) {
+func debugHandlers(cfg *config.Config, store state.Store, ec2 debugEC2Provider, dynamo debugDynamoDBProvider) func(chi.Router) {
 	return func(r chi.Router) {
-		r.Get("/health", debugHealth(cfg))
+		r.Get("/health", debugHealth(cfg, store))
 		r.Get("/config", debugConfig(cfg))
-		r.Get("/state", debugState(store))
-		r.Get("/state/{namespace}", debugStateNamespace(store))
-		r.Post("/reset", debugReset(store))
-		r.Post("/reset/{service}", debugResetService(store))
+		r.Get("/state", debugState(store, dynamo))
+		r.Get("/state/{namespace}", debugStateNamespace(store, dynamo))
+		r.Post("/reset", debugReset(store, dynamo))
+		r.Post("/reset/{service}", debugResetService(store, dynamo, cfg.Services))
 		r.Get("/metrics", debugMetrics())
 
 		// ---- Service-specific debug endpoints ---------------------------------
@@ -72,6 +79,7 @@ type debugHealthResponse struct {
 	Services      map[string]bool   `json:"services"`
 	State         string            `json:"state"`
 	ServiceStates map[string]string `json:"serviceStates,omitempty"`
+	Persistent    *persistentHealth `json:"persistent,omitempty"`
 	Debug         bool              `json:"debug"`
 }
 
@@ -80,20 +88,26 @@ var (
 	goStartTime = boottime.GoStart
 )
 
-func debugHealth(cfg *config.Config) http.HandlerFunc {
+func debugHealth(cfg *config.Config, store state.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		svcStates := make(map[string]string, len(cfg.ServiceStates))
 		for svc, mode := range cfg.ServiceStates {
 			svcStates[svc] = string(mode)
 		}
+		persistent := persistentHealthSnapshot(store)
+		status := "ok"
+		if persistent != nil && !persistent.Healthy {
+			status = "degraded"
+		}
 		resp := &debugHealthResponse{
-			Status:        "ok",
+			Status:        status,
 			Timestamp:     time.Now().UTC().Format(time.RFC3339),
 			Uptime:        time.Since(startTime).Round(time.Second).String(),
 			GoVersion:     runtime.Version(),
 			Services:      cfg.Services,
 			State:         string(cfg.State),
 			ServiceStates: svcStates,
+			Persistent:    persistent,
 			Debug:         cfg.Debug,
 		}
 		writeDebugJSON(w, http.StatusOK, resp)
@@ -138,18 +152,22 @@ func debugConfig(cfg *config.Config) http.HandlerFunc {
 	}
 }
 
-func debugState(store state.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// List all known namespaces and their keys.
-		// CAVEAT: This does a full scan — expensive on large datasets.
-		namespaces := []string{
-			"s3:buckets", "s3:objects",
-			"sqs:queues", "sqs:messages",
-			"sns:topics", "sns:subscriptions",
-			"dynamodb:tables", "dynamodb:items",
-			"lambda:functions",
-		}
+const (
+	debugDynamoDBItemsNamespace = "dynamodb:items"
+	debugStateValuePreviewBytes = 100 * 1024
+	debugStateTruncatedSuffix   = "...(truncated)"
+)
 
+func debugState(store state.Store, dynamo debugDynamoDBProvider) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// List all namespaces currently present and their keys. Store backends keep
+		// namespace/key scans indexed, but this debug endpoint still enumerates all
+		// keys so the UI can build a complete hierarchy.
+		namespaces, err := store.ListNamespaces(r.Context())
+		if err != nil {
+			writeDebugJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
 		result := make(map[string][]string)
 		for _, ns := range namespaces {
 			keys, err := store.List(r.Context(), ns, "")
@@ -158,15 +176,39 @@ func debugState(store state.Store) http.HandlerFunc {
 			}
 			result[ns] = keys
 		}
+		if dynamo != nil {
+			keys, err := dynamo.DebugStateKeys(r.Context())
+			if err != nil {
+				writeDebugJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			if len(keys) > 0 {
+				result[debugDynamoDBItemsNamespace] = keys
+			}
+		}
 		writeDebugJSON(w, http.StatusOK, result)
 	}
 }
 
-func debugStateNamespace(store state.Store) http.HandlerFunc {
+func debugStateNamespace(store state.Store, dynamo debugDynamoDBProvider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ns := chi.URLParam(r, "namespace")
 		// Replace URL-encoded colons: "s3:buckets" → "s3:buckets"
 		ns = strings.ReplaceAll(ns, "%3A", ":")
+		if key := r.URL.Query().Get("key"); key != "" {
+			writeDebugStateRawValue(w, r, store, dynamo, ns, key)
+			return
+		}
+		if ns == debugDynamoDBItemsNamespace && dynamo != nil {
+			result, err := dynamo.DebugStateValues(r.Context())
+			if err != nil {
+				writeDebugJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			truncateDebugStateValues(result)
+			writeDebugJSON(w, http.StatusOK, result)
+			return
+		}
 
 		keys, err := store.List(r.Context(), ns, "")
 		if err != nil {
@@ -178,13 +220,90 @@ func debugStateNamespace(store state.Store) http.HandlerFunc {
 		result := make(map[string]string, len(keys))
 		for _, k := range keys {
 			v, _, _ := store.Get(r.Context(), ns, k)
-			result[k] = v
+			result[k] = truncateDebugStateValue(v)
 		}
 		writeDebugJSON(w, http.StatusOK, result)
 	}
 }
 
-func debugReset(store state.Store) http.HandlerFunc {
+func writeDebugStateRawValue(w http.ResponseWriter, r *http.Request, store state.Store, dynamo debugDynamoDBProvider, namespace, key string) {
+	var value string
+	var found bool
+	if namespace == debugDynamoDBItemsNamespace && dynamo != nil {
+		values, err := dynamo.DebugStateValues(r.Context())
+		if err != nil {
+			writeDebugJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		value, found = values[key]
+	} else {
+		var err error
+		value, found, err = store.Get(r.Context(), namespace, key)
+		if err != nil {
+			writeDebugJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+	if !found {
+		writeDebugJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("state key %q not found", key)})
+		return
+	}
+	writeDebugRawValue(w, value)
+}
+
+func writeDebugRawValue(w http.ResponseWriter, value string) {
+	if json.Valid([]byte(value)) {
+		w.Header().Set("Content-Type", "application/json")
+	} else {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(value))
+}
+
+func truncateDebugStateValues(values map[string]string) {
+	for key, value := range values {
+		values[key] = truncateDebugStateValue(value)
+	}
+}
+
+func truncateDebugStateValue(value string) string {
+	if len(value) <= debugStateValuePreviewBytes {
+		return value
+	}
+	var decoded any
+	if err := json.Unmarshal([]byte(value), &decoded); err == nil {
+		truncated := truncateDebugJSONStrings(decoded)
+		if raw, err := json.Marshal(truncated); err == nil {
+			return string(raw)
+		}
+	}
+	return value[:debugStateValuePreviewBytes] + debugStateTruncatedSuffix
+}
+
+func truncateDebugJSONStrings(value any) any {
+	switch v := value.(type) {
+	case string:
+		if len(v) <= debugStateValuePreviewBytes {
+			return v
+		}
+		return v[:debugStateValuePreviewBytes] + debugStateTruncatedSuffix
+	case []any:
+		for i, item := range v {
+			v[i] = truncateDebugJSONStrings(item)
+		}
+		return v
+	case map[string]any:
+		for key, item := range v {
+			v[key] = truncateDebugJSONStrings(item)
+		}
+		return v
+	default:
+		return value
+	}
+}
+
+func debugReset(store state.Store, dynamo debugDynamoDBProvider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if ms, ok := store.(*state.MemoryStore); ok {
 			ms.Reset()
@@ -192,18 +311,28 @@ func debugReset(store state.Store) http.HandlerFunc {
 			// For SQLite, delete all keys across all namespaces.
 			resetAllNamespaces(r.Context(), store)
 		}
+		if dynamo != nil {
+			if err := dynamo.DebugResetState(r.Context()); err != nil {
+				writeDebugJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+		}
 		writeDebugJSON(w, http.StatusOK, map[string]string{"status": "reset"})
 	}
 }
 
-func debugResetService(store state.Store) http.HandlerFunc {
+func debugResetService(store state.Store, dynamo debugDynamoDBProvider, services map[string]bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		service := chi.URLParam(r, "service")
-		namespaces := namespacesForService(service)
-		if len(namespaces) == 0 {
+		if !services[service] {
 			writeDebugJSON(w, http.StatusBadRequest, map[string]string{
 				"error": "unknown service: " + service,
 			})
+			return
+		}
+		namespaces, err := namespacesForService(r.Context(), store, service)
+		if err != nil {
+			writeDebugJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
 
@@ -211,6 +340,12 @@ func debugResetService(store state.Store) http.HandlerFunc {
 			keys, _ := store.List(r.Context(), ns, "")
 			for _, k := range keys {
 				_ = store.Delete(r.Context(), ns, k)
+			}
+		}
+		if service == "dynamodb" && dynamo != nil {
+			if err := dynamo.DebugResetState(r.Context()); err != nil {
+				writeDebugJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
 			}
 		}
 		writeDebugJSON(w, http.StatusOK, map[string]string{
@@ -238,26 +373,43 @@ func writeDebugJSON(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
-func namespacesForService(service string) []string {
-	m := map[string][]string{
-		"s3":       {"s3:buckets", "s3:objects", "s3:meta"},
-		"sqs":      {"sqs:queues", "sqs:messages"},
-		"sns":      {"sns:topics", "sns:subscriptions"},
-		"dynamodb": {"dynamodb:tables", "dynamodb:items"},
-		"lambda":   {"lambda:functions"},
+func namespacesForService(ctx context.Context, store state.Store, service string) ([]string, error) {
+	all, err := store.ListNamespaces(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return m[service]
+	prefix := debugServicePrefix(service)
+	if prefix == "" {
+		return []string{}, nil
+	}
+	var namespaces []string
+	for _, ns := range all {
+		if ns == prefix || strings.HasPrefix(ns, prefix+":") {
+			namespaces = append(namespaces, ns)
+		}
+	}
+	return namespaces, nil
+}
+
+func debugServicePrefix(service string) string {
+	switch service {
+	case "cloudformation":
+		return "cfn"
+	case "apigateway":
+		return "apigw"
+	case "eventbridge":
+		return "eb"
+	default:
+		return service
+	}
 }
 
 func resetAllNamespaces(ctx context.Context, store state.Store) {
-	all := []string{
-		"s3:buckets", "s3:objects", "s3:meta",
-		"sqs:queues", "sqs:messages",
-		"sns:topics", "sns:subscriptions",
-		"dynamodb:tables", "dynamodb:items",
-		"lambda:functions",
+	namespaces, err := store.ListNamespaces(ctx)
+	if err != nil {
+		return
 	}
-	for _, ns := range all {
+	for _, ns := range namespaces {
 		keys, _ := store.List(ctx, ns, "")
 		for _, k := range keys {
 			_ = store.Delete(ctx, ns, k)

@@ -32,16 +32,19 @@ import (
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
+
+const streamDeliveryQueueSize = 4096
 
 // esmDeliveryManager manages the lifecycle of ESM event delivery.
 // Each enabled ESM has either a polling goroutine (SQS) or a bus subscription
 // (DynamoDB Streams) tracked by UUID.
 type esmDeliveryManager struct {
 	store    *esmStore
-	invoker  *ServiceInvoker
+	invoker  lambdaInvoker
 	receiver events.MessageReceiver // nil when SQS service is not available
 	enqueuer events.MessageEnqueuer // nil when SQS service is not available
 	bus      *events.Bus            // nil when event bus is not wired
@@ -55,9 +58,18 @@ type esmDeliveryManager struct {
 	wg   sync.WaitGroup
 }
 
+type lambdaInvoker interface {
+	Invoke(ctx context.Context, functionName string, payload []byte) (*events.InvokeOutcome, error)
+}
+
+type streamDeliveryEvent struct {
+	payload events.DynamoDBStreamPayload
+	evt     events.Event
+}
+
 func newESMDeliveryManager(
 	store *esmStore,
-	invoker *ServiceInvoker,
+	invoker lambdaInvoker,
 	receiver events.MessageReceiver,
 	enqueuer events.MessageEnqueuer,
 	bus *events.Bus,
@@ -118,16 +130,23 @@ func (m *esmDeliveryManager) Start(esm *EventSourceMapping) {
 		}
 		// Use a cancellable context so Stop() terminates in-flight retries.
 		ctx, cancel := context.WithCancel(m.baseCtx)
+		streamCh := make(chan streamDeliveryEvent, streamDeliveryQueueSize)
 		// Subscribe to all three stream event types.
-		unsub1 := m.bus.Subscribe(events.DynamoDBStreamInsert, m.makeStreamHandler(ctx, &esmCopy))
-		unsub2 := m.bus.Subscribe(events.DynamoDBStreamModify, m.makeStreamHandler(ctx, &esmCopy))
-		unsub3 := m.bus.Subscribe(events.DynamoDBStreamRemove, m.makeStreamHandler(ctx, &esmCopy))
+		handler := m.makeStreamHandler(ctx, &esmCopy, streamCh)
+		unsub1 := m.bus.Subscribe(events.DynamoDBStreamInsert, handler)
+		unsub2 := m.bus.Subscribe(events.DynamoDBStreamModify, handler)
+		unsub3 := m.bus.Subscribe(events.DynamoDBStreamRemove, handler)
 		m.stop[esm.UUID] = func() {
 			cancel()
 			unsub1()
 			unsub2()
 			unsub3()
 		}
+		m.wg.Add(1)
+		go func() {
+			defer m.wg.Done()
+			m.processStreamRecords(ctx, &esmCopy, streamCh)
+		}()
 
 	default:
 		m.log.Logger().Warn("lambda: esm: unsupported event source",
@@ -177,7 +196,7 @@ func (m *esmDeliveryManager) ReloadAll(ctx context.Context) {
 	}
 	mappings, aerr := m.store.listAllESMs(ctx)
 	if aerr != nil {
-		m.log.Logger().Warn("lambda: esm reload failed", zap.String("error", aerr.Message))
+		m.log.Logger().Warn("lambda: esm reload failed", zap.String("error", aerr.Message), zap.Error(protocol.Cause(aerr)))
 		return
 	}
 	for _, esm := range mappings {
@@ -233,7 +252,8 @@ func (m *esmDeliveryManager) pollSQS(ctx context.Context, esm *EventSourceMappin
 		if aerr != nil {
 			m.log.Logger().Warn("lambda: esm sqs: store read error — skipping tick",
 				zap.String("uuid", esm.UUID),
-				zap.String("error", aerr.Message))
+				zap.String("error", aerr.Message),
+				zap.Error(protocol.Cause(aerr)))
 			continue
 		}
 		if current == nil || current.State != esmStateEnabled {
@@ -380,7 +400,7 @@ func (m *esmDeliveryManager) filterAndDeleteSQS(ctx context.Context, esm *EventS
 		}
 	}
 	if len(toDelete) > 0 {
-		m.publishESMFiltered(ctx, esm, "", len(toDelete), esm.FilterCriteria)
+		m.publishESMFiltered(ctx, esm, "", len(toDelete), esm.FilterCriteria, nil)
 		if err := m.receiver.DeleteMessages(ctx, queueName, toDelete); err != nil {
 			m.log.Logger().Warn("lambda: esm sqs: delete filtered messages error",
 				zap.String("queue", queueName),
@@ -432,12 +452,11 @@ func (m *esmDeliveryManager) buildSQSEvent(esm *EventSourceMapping, msgs []event
 
 // makeStreamHandler returns a HandlerFunc that delivers stream records for
 // the given ESM. Each subscription call gets its own closure over esmCopy.
-// The handler dispatches invocation (which may involve cold starts and retries)
-// onto a separate goroutine so bus workers are never blocked.
-func (m *esmDeliveryManager) makeStreamHandler(ctx context.Context, esm *EventSourceMapping) events.HandlerFunc {
+// The handler queues invocation work onto a per-mapping worker so bus workers
+// are not tied to Lambda execution and stream bursts do not create a cold-start
+// storm for one function.
+func (m *esmDeliveryManager) makeStreamHandler(ctx context.Context, esm *EventSourceMapping, streamCh chan<- streamDeliveryEvent) events.HandlerFunc {
 	// Pre-compute region context once (immutable per ESM).
-	region := m.regionFromARN(esm.FunctionArn)
-	regionCtx := middleware.ContextWithRegion(ctx, region)
 	tableName := tableNameFromStreamARN(esm.EventSourceArn)
 
 	return func(_ context.Context, evt events.Event) {
@@ -450,25 +469,91 @@ func (m *esmDeliveryManager) makeStreamHandler(ctx context.Context, esm *EventSo
 			return
 		}
 
-		// Dispatch the (potentially slow) invoke+retry loop off the bus
-		// worker pool so we don't starve other event deliveries.
+		// Queue delivery off the shared bus worker pool. A single per-mapping
+		// worker drains this channel, preserving stream order for one mapping and
+		// avoiding a burst of concurrent cold starts for seed-style bulk writes.
 		m.mu.Lock()
 		if _, running := m.stop[esm.UUID]; !running {
 			m.mu.Unlock()
 			return
 		}
-		m.wg.Add(1)
 		m.mu.Unlock()
-		go func() {
-			defer m.wg.Done()
-			m.deliverStreamRecord(regionCtx, esm, payload, evt)
-		}()
+
+		select {
+		case streamCh <- streamDeliveryEvent{payload: payload, evt: evt}:
+		case <-ctx.Done():
+		}
 	}
 }
 
-// deliverStreamRecord performs the actual Lambda invocation with retries for
-// a single DynamoDB stream record. Runs on its own goroutine.
-func (m *esmDeliveryManager) deliverStreamRecord(ctx context.Context, esm *EventSourceMapping, payload events.DynamoDBStreamPayload, evt events.Event) {
+func (m *esmDeliveryManager) processStreamRecords(ctx context.Context, esm *EventSourceMapping, streamCh <-chan streamDeliveryEvent) {
+	region := m.regionFromARN(esm.FunctionArn)
+	regionCtx := middleware.ContextWithRegion(ctx, region)
+	batchSize := esm.BatchSize
+	if batchSize <= 0 {
+		batchSize = 10
+	}
+	batchWindow := time.Duration(esm.MaximumBatchingWindowInSeconds) * time.Second
+
+	flush := func(batch []streamDeliveryEvent) {
+		if len(batch) == 0 || ctx.Err() != nil {
+			return
+		}
+		m.deliverStreamBatch(regionCtx, esm, batch)
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case first := <-streamCh:
+			if ctx.Err() != nil {
+				return
+			}
+
+			batch := make([]streamDeliveryEvent, 0, batchSize)
+			batch = append(batch, first)
+
+			draining := true
+			for draining && len(batch) < batchSize {
+				select {
+				case item := <-streamCh:
+					batch = append(batch, item)
+				default:
+					draining = false
+				}
+			}
+
+			if len(batch) >= batchSize || batchWindow <= 0 {
+				flush(batch)
+				continue
+			}
+
+			timer := m.clk.Timer(batchWindow)
+			for len(batch) < batchSize {
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				case item := <-streamCh:
+					batch = append(batch, item)
+				case <-timer.C:
+					flush(batch)
+					batch = nil
+				}
+				if batch == nil {
+					break
+				}
+			}
+			if batch != nil {
+				timer.Stop()
+				flush(batch)
+			}
+		}
+	}
+}
+
+func (m *esmDeliveryManager) deliverStreamBatch(ctx context.Context, esm *EventSourceMapping, batch []streamDeliveryEvent) {
 	// Re-check ESM state before invoking.
 	current, aerr := m.store.getESM(ctx, esm.UUID)
 	if aerr != nil || current == nil || current.State != esmStateEnabled {
@@ -476,20 +561,36 @@ func (m *esmDeliveryManager) deliverStreamRecord(ctx context.Context, esm *Event
 	}
 
 	funcName := functionNameFromARN(esm.FunctionArn)
-	record := m.buildDynamoDBRecord(esm.EventSourceArn, evt, payload)
-
+	records := make([]any, 0, len(batch))
+	var eventName string
+	var lastPayload events.DynamoDBStreamPayload
 	// Apply filter criteria before invoking. Non-matching records are silently
 	// dropped — the DynamoDB Streams iterator advances past them (per AWS spec).
-	if !matchesFilterCriteria(current.FilterCriteria, record) {
-		if current.FilterCriteria != nil && len(current.FilterCriteria.Filters) > 0 {
-			m.publishESMFiltered(ctx, current, payload.EventName, 1, current.FilterCriteria)
+	for _, item := range batch {
+		record := m.buildDynamoDBRecord(esm.EventSourceArn, item.evt, item.payload)
+		if !matchesFilterCriteria(current.FilterCriteria, record) {
+			if current.FilterCriteria != nil && len(current.FilterCriteria.Filters) > 0 {
+				m.publishESMFiltered(ctx, current, item.payload.EventName, 1, current.FilterCriteria, record)
+			}
+			continue
 		}
+		if current.FilterCriteria != nil && len(current.FilterCriteria.Filters) > 0 {
+			m.publishESMRecordMatched(ctx, current, item.payload.EventName, current.FilterCriteria, record)
+		}
+		records = append(records, record)
+		if eventName == "" {
+			eventName = item.payload.EventName
+		}
+		lastPayload = item.payload
+	}
+
+	if len(records) == 0 {
 		return
 	}
 
-	m.publishESMInvoked(ctx, current, payload.EventName, 1)
+	m.publishESMInvoked(ctx, current, eventName, len(records))
 
-	lambdaPayload, err := json.Marshal(map[string]any{"Records": []any{record}})
+	lambdaPayload, err := json.Marshal(map[string]any{"Records": records})
 	if err != nil {
 		m.log.Logger().Error("lambda: esm dynamodb: marshal failed", zap.Error(err))
 		return
@@ -542,7 +643,7 @@ func (m *esmDeliveryManager) deliverStreamRecord(ctx context.Context, esm *Event
 	}
 
 	// Exhausted all retries — send to on-failure destination if configured.
-	m.sendOnFailure(ctx, current, payload, funcName, lastErr)
+	m.sendOnFailure(ctx, current, lastPayload, funcName, lastErr)
 }
 
 // buildDynamoDBRecord formats a DynamoDB stream payload into the standard
@@ -727,7 +828,7 @@ func esmSourceType(arn string) string {
 // count is the number of records/messages that were dropped.
 // fc is the criteria that rejected them; its patterns are included in the
 // payload so subscribers can display the reason without further API calls.
-func (m *esmDeliveryManager) publishESMFiltered(ctx context.Context, esm *EventSourceMapping, eventName string, count int, fc *FilterCriteria) {
+func (m *esmDeliveryManager) publishESMFiltered(ctx context.Context, esm *EventSourceMapping, eventName string, count int, fc *FilterCriteria, record map[string]any) {
 	if m.bus == nil {
 		return
 	}
@@ -735,6 +836,7 @@ func (m *esmDeliveryManager) publishESMFiltered(ctx context.Context, esm *EventS
 	for i, f := range fc.Filters {
 		patterns[i] = f.Pattern
 	}
+	matched := false
 	m.bus.Publish(ctx, events.Event{
 		Type:   events.LambdaESMRecordFiltered,
 		Time:   m.clk.Now(),
@@ -747,6 +849,35 @@ func (m *esmDeliveryManager) publishESMFiltered(ctx context.Context, esm *EventS
 			EventName:      eventName,
 			RecordCount:    count,
 			FilterPatterns: patterns,
+			Matched:        &matched,
+			Record:         record,
+		},
+	})
+}
+
+func (m *esmDeliveryManager) publishESMRecordMatched(ctx context.Context, esm *EventSourceMapping, eventName string, fc *FilterCriteria, record map[string]any) {
+	if m.bus == nil {
+		return
+	}
+	patterns := make([]string, len(fc.Filters))
+	for i, f := range fc.Filters {
+		patterns[i] = f.Pattern
+	}
+	matched := true
+	m.bus.Publish(ctx, events.Event{
+		Type:   events.LambdaESMRecordMatched,
+		Time:   m.clk.Now(),
+		Source: "lambda",
+		Payload: events.LambdaESMEventPayload{
+			ESMID:          esm.UUID,
+			FunctionName:   functionNameFromARN(esm.FunctionArn),
+			EventSource:    esmSourceName(esm.EventSourceArn),
+			SourceType:     esmSourceType(esm.EventSourceArn),
+			EventName:      eventName,
+			RecordCount:    1,
+			FilterPatterns: patterns,
+			Matched:        &matched,
+			Record:         record,
 		},
 	})
 }

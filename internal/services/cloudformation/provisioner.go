@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -257,6 +258,10 @@ func (p *provisioner) provisionStackResources(stack *Stack, tmpl *Template) {
 	stack.Status = StatusCreateComplete
 	stack.StatusReason = ""
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusCreateComplete, "")
+	if err := p.flushCriticalState(ctx); err != nil {
+		p.failStack(ctx, stack, StatusCreateFailed, fmt.Sprintf("persistent state flush failed: %v", err))
+		return
+	}
 	p.publishStackEvent(ctx, events.CFNStackCreated, stack)
 	p.log.Debug("cfn: stack provisioned",
 		zap.String("stack", stack.StackName),
@@ -454,6 +459,10 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 	stack.Status = StatusUpdateComplete
 	stack.StatusReason = ""
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusUpdateComplete, "")
+	if err := p.flushCriticalState(ctx); err != nil {
+		p.failStack(ctx, stack, StatusUpdateFailed, fmt.Sprintf("persistent state flush failed: %v", err))
+		return
+	}
 	p.publishStackEvent(ctx, events.CFNStackUpdated, stack)
 }
 
@@ -523,6 +532,10 @@ func (p *provisioner) deleteStackResources(stack *Stack) {
 	stack.StatusReason = ""
 	stack.Resources = nil
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusDeleteComplete, "")
+	if err := p.flushCriticalState(ctx); err != nil {
+		p.failStack(ctx, stack, StatusDeleteFailed, fmt.Sprintf("persistent state flush failed: %v", err))
+		return
+	}
 	p.publishStackEvent(ctx, events.CFNStackDeleted, stack)
 }
 
@@ -792,7 +805,16 @@ func (p *provisioner) failStack(ctx context.Context, stack *Stack, status, reaso
 	stack.Status = status
 	stack.StatusReason = reason
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", status, reason)
+	if err := p.flushCriticalState(ctx); err != nil {
+		p.log.Warn("cfn: failed to flush terminal stack state", zap.String("stack", stack.StackName), zap.Error(err))
+	}
 	p.publishStackEvent(ctx, events.CFNStackFailed, stack)
+}
+
+func (p *provisioner) flushCriticalState(ctx context.Context) error {
+	flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	return p.store.flush(flushCtx)
 }
 
 // rollbackCreate is the default failure handler for CreateStack.
@@ -850,6 +872,9 @@ func (p *provisioner) rollbackCreate(ctx context.Context, stack *Stack, rCtx *re
 		stack.StatusReason = ""
 	}
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", stack.Status, stack.StatusReason)
+	if err := p.flushCriticalState(ctx); err != nil {
+		p.log.Warn("cfn: failed to flush rollback state", zap.String("stack", stack.StackName), zap.Error(err))
+	}
 	p.publishStackEvent(ctx, events.CFNStackFailed, stack)
 }
 
@@ -929,6 +954,9 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 		stack.StatusReason = ""
 	}
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", stack.Status, stack.StatusReason)
+	if err := p.flushCriticalState(ctx); err != nil {
+		p.log.Warn("cfn: failed to flush update rollback state", zap.String("stack", stack.StackName), zap.Error(err))
+	}
 	p.publishStackEvent(ctx, events.CFNStackFailed, stack)
 }
 
@@ -1320,6 +1348,7 @@ var resourceHandlers = map[string]resourceHandler{
 	"AWS::DynamoDB::Table": &dynamodbTableHandler{},
 	// Lambda
 	"AWS::Lambda::Function":           &lambdaFunctionHandler{},
+	"AWS::Lambda::Alias":              &lambdaAliasHandler{},
 	"AWS::Lambda::EventSourceMapping": &lambdaEventSourceMappingHandler{},
 	"AWS::Lambda::Permission":         &stubResourceHandler{},
 	"AWS::Lambda::LayerVersion":       &lambdaLayerVersionHandler{},
@@ -2145,6 +2174,60 @@ func (h *lambdaFunctionHandler) Update(ctx context.Context, router http.Handler,
 		attrs["Arn"] = arn
 	}
 	return name, attrs, nil
+}
+
+// ── Lambda Alias handler ──────────────────────────────────────────────────
+
+type lambdaAliasHandler struct{}
+
+func (h *lambdaAliasHandler) Create(ctx context.Context, router http.Handler, _ *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	functionName, _ := props["FunctionName"].(string)
+	aliasName, _ := props["Name"].(string)
+	functionVersion, _ := props["FunctionVersion"].(string)
+	if functionName == "" || aliasName == "" || functionVersion == "" {
+		return "", nil, fmt.Errorf("Lambda Alias: FunctionName, Name, and FunctionVersion are required")
+	}
+	functionName = cfnLambdaFunctionName(functionName)
+	body := map[string]any{"Name": aliasName, "FunctionVersion": functionVersion}
+	if desc, ok := props["Description"]; ok {
+		body["Description"] = desc
+	}
+	data, _ := json.Marshal(body)
+	path := "/2015-03-31/functions/" + url.PathEscape(functionName) + "/aliases"
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPost, path, "application/json", data)
+	if err != nil {
+		return "", nil, fmt.Errorf("lambda CreateAlias: %w", err)
+	}
+	var resp map[string]any
+	attrs := map[string]string{"Name": aliasName, "FunctionVersion": functionVersion}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err == nil {
+		if arn, ok := resp["AliasArn"].(string); ok {
+			attrs["Ref"] = arn
+			attrs["AliasArn"] = arn
+		}
+	}
+	return functionName + ":" + aliasName, attrs, nil
+}
+
+func cfnLambdaFunctionName(identifier string) string {
+	if idx := strings.Index(identifier, ":function:"); idx >= 0 {
+		name := identifier[idx+len(":function:"):]
+		if colonIdx := strings.IndexByte(name, ':'); colonIdx >= 0 {
+			name = name[:colonIdx]
+		}
+		return name
+	}
+	return identifier
+}
+
+func (h *lambdaAliasHandler) Delete(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, rCtx *resolveContext) error {
+	parts := strings.SplitN(physicalID, ":", 2)
+	if len(parts) != 2 {
+		return nil
+	}
+	path := "/2015-03-31/functions/" + url.PathEscape(parts[0]) + "/aliases/" + url.PathEscape(parts[1])
+	_, _ = internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return nil
 }
 
 func mergeLambdaTags(stackTags []Tag, rawResourceTags any) map[string]string {

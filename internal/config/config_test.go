@@ -61,6 +61,9 @@ func TestLoad_defaults(t *testing.T) {
 	if cfg.LambdaDockerMaxConcurrentStarts != 4 {
 		t.Errorf("LambdaDockerMaxConcurrentStarts: expected 4, got %d", cfg.LambdaDockerMaxConcurrentStarts)
 	}
+	if cfg.LambdaSeedRuntimeImages {
+		t.Error("LambdaSeedRuntimeImages: expected false by default")
+	}
 	if cfg.LambdaInitTimeout != 10*time.Second {
 		t.Errorf("LambdaInitTimeout: expected 10s, got %v", cfg.LambdaInitTimeout)
 	}
@@ -127,6 +130,23 @@ func TestLoad_lambdaDockerMaxConcurrentStarts(t *testing.T) {
 	}
 	if cfg.LambdaDockerMaxConcurrentStarts != 7 {
 		t.Fatalf("LambdaDockerMaxConcurrentStarts = %d, want 7", cfg.LambdaDockerMaxConcurrentStarts)
+	}
+}
+
+func TestLoad_lambdaSeedRuntimeImages(t *testing.T) {
+	// Given: LAMBDA_SEED_RUNTIME_IMAGES is enabled.
+	clearEnv(t)
+	t.Setenv("LAMBDA_SEED_RUNTIME_IMAGES", "true")
+
+	// When: we load config.
+	cfg, err := config.Load()
+
+	// Then: broad startup runtime image seeding is enabled explicitly.
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.LambdaSeedRuntimeImages {
+		t.Fatal("LambdaSeedRuntimeImages = false, want true")
 	}
 }
 

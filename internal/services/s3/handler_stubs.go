@@ -54,12 +54,6 @@ func (h *Handler) GetBucketReplication(w http.ResponseWriter, r *http.Request) {
 	protocol.NotImplementedXML(w, r)
 }
 
-// GetBucketEncryption handles GET /{bucket}?encryption
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketEncryption.html
-func (h *Handler) GetBucketEncryption(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
 // GetBucketAccelerateConfiguration handles GET /{bucket}?accelerate
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketAccelerateConfiguration.html
 func (h *Handler) GetBucketAccelerateConfiguration(w http.ResponseWriter, r *http.Request) {
@@ -193,12 +187,6 @@ func (h *Handler) PutBucketReplication(w http.ResponseWriter, r *http.Request) {
 	protocol.NotImplementedXML(w, r)
 }
 
-// PutBucketEncryption handles PUT /{bucket}?encryption
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketEncryption.html
-func (h *Handler) PutBucketEncryption(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
 // PutBucketAccelerateConfiguration handles PUT /{bucket}?accelerate
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketAccelerateConfiguration.html
 func (h *Handler) PutBucketAccelerateConfiguration(w http.ResponseWriter, r *http.Request) {
@@ -295,12 +283,6 @@ func (h *Handler) DeleteBucketWebsite(w http.ResponseWriter, r *http.Request) {
 // DeleteBucketReplication handles DELETE /{bucket}?replication
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketReplication.html
 func (h *Handler) DeleteBucketReplication(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
-}
-
-// DeleteBucketEncryption handles DELETE /{bucket}?encryption
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketEncryption.html
-func (h *Handler) DeleteBucketEncryption(w http.ResponseWriter, r *http.Request) {
 	protocol.NotImplementedXML(w, r)
 }
 

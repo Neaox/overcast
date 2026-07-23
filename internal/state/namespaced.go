@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"sort"
 	"strings"
 )
 
@@ -70,6 +71,34 @@ func (s *NamespacedStore) DeletePrefix(ctx context.Context, namespace, prefix st
 
 func (s *NamespacedStore) List(ctx context.Context, namespace, prefix string) ([]string, error) {
 	return s.storeFor(namespace).List(ctx, namespace, prefix)
+}
+
+func (s *NamespacedStore) ListNamespaces(ctx context.Context) ([]string, error) {
+	seen := map[string]bool{}
+	var namespaces []string
+	stores := make([]Store, 0, 1+len(s.routes))
+	stores = append(stores, s.defaultStore)
+	for _, st := range s.routes {
+		stores = append(stores, st)
+	}
+	for _, st := range stores {
+		items, err := st.ListNamespaces(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, namespace := range items {
+			if seen[namespace] {
+				continue
+			}
+			seen[namespace] = true
+			namespaces = append(namespaces, namespace)
+		}
+	}
+	sort.Strings(namespaces)
+	if namespaces == nil {
+		return []string{}, nil
+	}
+	return namespaces, nil
 }
 
 func (s *NamespacedStore) Scan(ctx context.Context, namespace, prefix string) ([]KV, error) {

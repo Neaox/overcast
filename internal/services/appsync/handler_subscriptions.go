@@ -40,7 +40,7 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	authReq := realtimeAuthRequest(r)
-	if _, aerr := h.authenticateRequest(authReq, api); aerr != nil {
+	if _, aerr := h.authenticateRequest(authReq, api, &graphQLExecutionRequest{Variables: map[string]any{}}); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}

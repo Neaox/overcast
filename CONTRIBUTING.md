@@ -257,6 +257,17 @@ See [tests/AGENTS.md](./tests/AGENTS.md) for test conventions.
 - **No globals:** All dependencies are injected via function parameters.
 - **Time:** Never call `time.Now()` directly in service or handler code. Use the injected `clock.Clock` (from `internal/clock`). See [Time / clock injection](#time--clock-injection) below.
 
+### State Store Key Conventions
+
+`state.Store` keys are internal, but they power reset/debug tooling and should remain predictable.
+
+- Use a service namespace such as `sqs:queues`, `lambda:functions`, or `appsync`; register new namespaces in `internal/state/tier.go` when they use `state.Store`.
+- For region-scoped resources, build keys with `serviceutil.RegionKey(region, resourceKey)`, which produces `{region}/{resourceKey}` and allows empty-region scans across all regions.
+- Prefer slash-delimited resource keys when the AWS identifier is path-like or naturally hierarchical, for example `{bucket}/{objectKey}`, `{table}/{hashKey}/{sortKey}`, or `{apiId}/{resourceId}`.
+- Do not force slash hierarchy when AWS uses another stable identifier shape; preserve identifiers that are naturally ARN-, colon-, or name-based.
+- Keep flat keys canonical. Debug tree views may split on `/` for readability, but all reads/deletes/copy links must use the exact stored key.
+- Large or highly indexed data may use a service-specific backend instead of `state.Store` when there is a measured access-pattern reason, as DynamoDB items do; expose those through virtual debug namespaces rather than duplicating data into `state.Store`.
+
 ### Clean, idiomatic, performant code
 
 These apply **everywhere** — handlers, stores, tests, utilities, middleware:

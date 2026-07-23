@@ -2,8 +2,10 @@ package lambda
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -66,6 +68,367 @@ func (noopReceiver) ReceiveMessages(ctx context.Context, _ string, _, _ int) ([]
 	return nil, ctx.Err()
 }
 func (noopReceiver) DeleteMessages(_ context.Context, _ string, _ []string) error { return nil }
+
+type concurrencyTrackingInvoker struct {
+	entered chan struct{}
+	release chan struct{}
+	current int32
+	max     int32
+}
+
+type payloadCapturingInvoker struct {
+	invoked chan []byte
+}
+
+func newPayloadCapturingInvoker() *payloadCapturingInvoker {
+	return &payloadCapturingInvoker{invoked: make(chan []byte, 8)}
+}
+
+func (i *payloadCapturingInvoker) Invoke(_ context.Context, _ string, payload []byte) (*events.InvokeOutcome, error) {
+	i.invoked <- append([]byte(nil), payload...)
+	return &events.InvokeOutcome{}, nil
+}
+
+func newConcurrencyTrackingInvoker() *concurrencyTrackingInvoker {
+	return &concurrencyTrackingInvoker{
+		entered: make(chan struct{}, 32),
+		release: make(chan struct{}),
+	}
+}
+
+func (i *concurrencyTrackingInvoker) Invoke(ctx context.Context, _ string, _ []byte) (*events.InvokeOutcome, error) {
+	current := atomic.AddInt32(&i.current, 1)
+	for {
+		max := atomic.LoadInt32(&i.max)
+		if current <= max || atomic.CompareAndSwapInt32(&i.max, max, current) {
+			break
+		}
+	}
+	i.entered <- struct{}{}
+	defer atomic.AddInt32(&i.current, -1)
+
+	select {
+	case <-i.release:
+		return &events.InvokeOutcome{}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestDynamoDBESM_StreamRecordsAreDeliveredSequentiallyPerMapping(t *testing.T) {
+	// Given: an enabled DynamoDB stream ESM and an invoker that records concurrency.
+	store := state.NewMemoryStore()
+	ls := newLambdaStore(store, "us-east-1", clock.New())
+	es := newESMStore(ls)
+
+	ctx := middleware.ContextWithRegion(context.Background(), "us-east-1")
+	esmInst := &EventSourceMapping{
+		UUID:           "ddb-sequential-uuid",
+		FunctionArn:    "arn:aws:lambda:us-east-1:000000000000:function:fn",
+		EventSourceArn: "arn:aws:dynamodb:us-east-1:000000000000:table/SeedTable/stream/2024-01-01T00:00:00.000",
+		State:          esmStateEnabled,
+		BatchSize:      10,
+	}
+	if aerr := es.putESM(ctx, esmInst); aerr != nil {
+		t.Fatal(aerr)
+	}
+
+	bus := events.NewBus()
+	defer bus.Stop()
+	invoker := newConcurrencyTrackingInvoker()
+	slog := serviceutil.NewServiceLogger(zap.NewNop(), "lambda")
+	mgr := newESMDeliveryManager(
+		es, invoker, noopReceiver{}, nil, bus,
+		slog, clock.New(), &config.Config{},
+		context.Background(),
+	)
+	mgr.Start(esmInst)
+
+	// When: a seed-like burst publishes multiple stream records for the same table.
+	for n := 0; n < 5; n++ {
+		bus.Publish(ctx, events.Event{
+			Type: events.DynamoDBStreamInsert,
+			Payload: events.DynamoDBStreamPayload{
+				Table:          "SeedTable",
+				EventName:      "INSERT",
+				SequenceNumber: int64(n + 1),
+				Keys:           map[string]any{"PK": map[string]any{"S": "row"}},
+			},
+		})
+	}
+
+	select {
+	case <-invoker.entered:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first stream invoke")
+	}
+
+	deadline := time.After(200 * time.Millisecond)
+	for atomic.LoadInt32(&invoker.max) <= 1 {
+		select {
+		case <-invoker.entered:
+		case <-deadline:
+			close(invoker.release)
+			mgr.StopAll()
+			return
+		}
+	}
+
+	close(invoker.release)
+	mgr.StopAll()
+	t.Fatalf("DynamoDB stream ESM invoked concurrently for one mapping; max concurrency = %d, want 1", atomic.LoadInt32(&invoker.max))
+}
+
+func TestDynamoDBESM_StreamRecordsAreBatchedByBatchSize(t *testing.T) {
+	// Given: an enabled DynamoDB stream ESM with BatchSize 5.
+	store := state.NewMemoryStore()
+	ls := newLambdaStore(store, "us-east-1", clock.New())
+	es := newESMStore(ls)
+
+	ctx := middleware.ContextWithRegion(context.Background(), "us-east-1")
+	esmInst := &EventSourceMapping{
+		UUID:                           "ddb-batch-uuid",
+		FunctionArn:                    "arn:aws:lambda:us-east-1:000000000000:function:fn",
+		EventSourceArn:                 "arn:aws:dynamodb:us-east-1:000000000000:table/BatchTable/stream/2024-01-01T00:00:00.000",
+		State:                          esmStateEnabled,
+		BatchSize:                      5,
+		MaximumBatchingWindowInSeconds: 1,
+	}
+	if aerr := es.putESM(ctx, esmInst); aerr != nil {
+		t.Fatal(aerr)
+	}
+
+	bus := events.NewBus()
+	defer bus.Stop()
+	invoker := newPayloadCapturingInvoker()
+	slog := serviceutil.NewServiceLogger(zap.NewNop(), "lambda")
+	mgr := newESMDeliveryManager(
+		es, invoker, noopReceiver{}, nil, bus,
+		slog, clock.New(), &config.Config{},
+		context.Background(),
+	)
+	mgr.Start(esmInst)
+	defer mgr.StopAll()
+
+	// When: exactly one full batch of records is published quickly.
+	for n := 0; n < 5; n++ {
+		bus.Publish(ctx, events.Event{
+			Type: events.DynamoDBStreamInsert,
+			Payload: events.DynamoDBStreamPayload{
+				Table:          "BatchTable",
+				EventName:      "INSERT",
+				SequenceNumber: int64(n + 1),
+				Keys:           map[string]any{"PK": map[string]any{"S": "row"}},
+			},
+		})
+	}
+
+	// Then: Lambda receives one event containing all five records.
+	select {
+	case payload := <-invoker.invoked:
+		var event struct {
+			Records []any `json:"Records"`
+		}
+		if err := json.Unmarshal(payload, &event); err != nil {
+			t.Fatalf("unmarshal lambda payload: %v", err)
+		}
+		if len(event.Records) != 5 {
+			t.Fatalf("expected one Lambda invoke with 5 stream records, got %d", len(event.Records))
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for batched stream invoke")
+	}
+
+	select {
+	case payload := <-invoker.invoked:
+		t.Fatalf("expected one batched invoke, got additional payload: %s", string(payload))
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestDynamoDBESM_PartialBatchFlushesAfterBatchingWindow(t *testing.T) {
+	// Given: an enabled DynamoDB stream ESM whose BatchSize is larger than the burst.
+	store := state.NewMemoryStore()
+	ls := newLambdaStore(store, "us-east-1", clock.New())
+	es := newESMStore(ls)
+
+	ctx := middleware.ContextWithRegion(context.Background(), "us-east-1")
+	esmInst := &EventSourceMapping{
+		UUID:                           "ddb-window-uuid",
+		FunctionArn:                    "arn:aws:lambda:us-east-1:000000000000:function:fn",
+		EventSourceArn:                 "arn:aws:dynamodb:us-east-1:000000000000:table/WindowTable/stream/2024-01-01T00:00:00.000",
+		State:                          esmStateEnabled,
+		BatchSize:                      5,
+		MaximumBatchingWindowInSeconds: 1,
+	}
+	if aerr := es.putESM(ctx, esmInst); aerr != nil {
+		t.Fatal(aerr)
+	}
+
+	bus := events.NewBus()
+	defer bus.Stop()
+	invoker := newPayloadCapturingInvoker()
+	slog := serviceutil.NewServiceLogger(zap.NewNop(), "lambda")
+	mgr := newESMDeliveryManager(
+		es, invoker, noopReceiver{}, nil, bus,
+		slog, clock.New(), &config.Config{},
+		context.Background(),
+	)
+	mgr.Start(esmInst)
+	defer mgr.StopAll()
+
+	// When: fewer records than BatchSize are published.
+	for n := 0; n < 2; n++ {
+		bus.Publish(ctx, events.Event{
+			Type: events.DynamoDBStreamInsert,
+			Payload: events.DynamoDBStreamPayload{
+				Table:          "WindowTable",
+				EventName:      "INSERT",
+				SequenceNumber: int64(n + 1),
+				Keys:           map[string]any{"PK": map[string]any{"S": "row"}},
+			},
+		})
+	}
+
+	// Then: the partial batch is not invoked immediately, but is flushed by the window.
+	select {
+	case payload := <-invoker.invoked:
+		t.Fatalf("partial batch invoked before batching window elapsed: %s", string(payload))
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	select {
+	case payload := <-invoker.invoked:
+		var event struct {
+			Records []any `json:"Records"`
+		}
+		if err := json.Unmarshal(payload, &event); err != nil {
+			t.Fatalf("unmarshal lambda payload: %v", err)
+		}
+		if len(event.Records) != 2 {
+			t.Fatalf("expected partial Lambda invoke with 2 stream records, got %d", len(event.Records))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for batching-window flush")
+	}
+}
+
+func TestDynamoDBESM_BatchedStreamFilteringIncludesOnlyMatchingRecords(t *testing.T) {
+	// Given: an enabled DynamoDB stream ESM filtering to INSERT records only.
+	store := state.NewMemoryStore()
+	ls := newLambdaStore(store, "us-east-1", clock.New())
+	es := newESMStore(ls)
+
+	ctx := middleware.ContextWithRegion(context.Background(), "us-east-1")
+	esmInst := &EventSourceMapping{
+		UUID:                           "ddb-filter-batch-uuid",
+		FunctionArn:                    "arn:aws:lambda:us-east-1:000000000000:function:fn",
+		EventSourceArn:                 "arn:aws:dynamodb:us-east-1:000000000000:table/FilterBatchTable/stream/2024-01-01T00:00:00.000",
+		State:                          esmStateEnabled,
+		BatchSize:                      4,
+		MaximumBatchingWindowInSeconds: 1,
+		FilterCriteria: &FilterCriteria{
+			Filters: []Filter{{Pattern: `{"eventName": ["INSERT"]}`}},
+		},
+	}
+	if aerr := es.putESM(ctx, esmInst); aerr != nil {
+		t.Fatal(aerr)
+	}
+
+	bus := events.NewBus()
+	defer bus.Stop()
+	matchedDecisions := make(chan events.LambdaESMEventPayload, 4)
+	filteredDecisions := make(chan events.LambdaESMEventPayload, 4)
+	bus.Subscribe(events.LambdaESMRecordMatched, func(_ context.Context, e events.Event) {
+		if p, ok := e.Payload.(events.LambdaESMEventPayload); ok && p.ESMID == esmInst.UUID {
+			matchedDecisions <- p
+		}
+	})
+	bus.Subscribe(events.LambdaESMRecordFiltered, func(_ context.Context, e events.Event) {
+		if p, ok := e.Payload.(events.LambdaESMEventPayload); ok && p.ESMID == esmInst.UUID {
+			filteredDecisions <- p
+		}
+	})
+	invoker := newPayloadCapturingInvoker()
+	slog := serviceutil.NewServiceLogger(zap.NewNop(), "lambda")
+	mgr := newESMDeliveryManager(
+		es, invoker, noopReceiver{}, nil, bus,
+		slog, clock.New(), &config.Config{},
+		context.Background(),
+	)
+	mgr.Start(esmInst)
+	defer mgr.StopAll()
+
+	// When: a full batch contains both matching INSERT and non-matching MODIFY records.
+	eventsToPublish := []struct {
+		eventType events.Type
+		name      string
+	}{
+		{events.DynamoDBStreamInsert, "INSERT"},
+		{events.DynamoDBStreamModify, "MODIFY"},
+		{events.DynamoDBStreamInsert, "INSERT"},
+		{events.DynamoDBStreamModify, "MODIFY"},
+	}
+	for n, eventToPublish := range eventsToPublish {
+		bus.Publish(ctx, events.Event{
+			Type: eventToPublish.eventType,
+			Payload: events.DynamoDBStreamPayload{
+				Table:          "FilterBatchTable",
+				EventName:      eventToPublish.name,
+				SequenceNumber: int64(n + 1),
+				Keys:           map[string]any{"PK": map[string]any{"S": "row"}},
+			},
+		})
+	}
+
+	// Then: Lambda is invoked once with only the two matching INSERT records.
+	select {
+	case payload := <-invoker.invoked:
+		var event struct {
+			Records []struct {
+				EventName string `json:"eventName"`
+			} `json:"Records"`
+		}
+		if err := json.Unmarshal(payload, &event); err != nil {
+			t.Fatalf("unmarshal lambda payload: %v", err)
+		}
+		if len(event.Records) != 2 {
+			t.Fatalf("expected 2 filtered stream records, got %d", len(event.Records))
+		}
+		for i, record := range event.Records {
+			if record.EventName != "INSERT" {
+				t.Fatalf("record %d: expected INSERT, got %q", i, record.EventName)
+			}
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for filtered batch invoke")
+	}
+
+	for i := 0; i < 2; i++ {
+		select {
+		case decision := <-matchedDecisions:
+			if decision.Matched == nil || !*decision.Matched || decision.Record == nil {
+				t.Fatalf("matched decision missing evidence: %#v", decision)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for matched filter decision event")
+		}
+		select {
+		case decision := <-filteredDecisions:
+			if decision.Matched == nil || *decision.Matched || decision.Record == nil {
+				t.Fatalf("filtered decision missing evidence: %#v", decision)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for filtered decision event")
+		}
+	}
+
+	select {
+	case payload := <-invoker.invoked:
+		t.Fatalf("expected one filtered batch invoke, got additional payload: %s", string(payload))
+	case <-time.After(100 * time.Millisecond):
+	}
+}
 
 // TestReloadAll_WaitsForStoreReady verifies that ReloadAll waits for the
 // store's ReadyAwaiter before scanning for ESMs. Without this wait, a

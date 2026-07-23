@@ -17,6 +17,12 @@ func init() {
 			Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "s3", Operation: "GetBucketLocation", Category: "Buckets",
 			Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "s3", Operation: "GetBucketEncryption", Category: "Buckets",
+			Status: capabilities.StatusSupported, Notes: "Returns default SSE-S3 config; stores AES256/KMS bucket encryption rules"},
+		capabilities.Capability{Service: "s3", Operation: "PutBucketEncryption", Category: "Buckets",
+			Status: capabilities.StatusSupported, Notes: "Stores AES256/KMS bucket encryption rules"},
+		capabilities.Capability{Service: "s3", Operation: "DeleteBucketEncryption", Category: "Buckets",
+			Status: capabilities.StatusSupported},
 
 		// Objects
 		capabilities.Capability{Service: "s3", Operation: "PutObject", Category: "Objects",

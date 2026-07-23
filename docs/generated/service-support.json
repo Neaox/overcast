@@ -1,12 +1,12 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1253,
+  "total_ops": 1256,
   "services": [
     {
       "service": "s3",
       "display_name": "S3",
-      "total_ops": 44,
-      "implemented_ops": 33,
+      "total_ops": 47,
+      "implemented_ops": 36,
       "operations": [
         {
           "operation": "CreateBucket",
@@ -31,6 +31,23 @@
         },
         {
           "operation": "GetBucketLocation",
+          "category": "Buckets",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "GetBucketEncryption",
+          "category": "Buckets",
+          "status": "✅ Supported",
+          "notes": "Returns default SSE-S3 config; stores AES256/KMS bucket encryption rules"
+        },
+        {
+          "operation": "PutBucketEncryption",
+          "category": "Buckets",
+          "status": "✅ Supported",
+          "notes": "Stores AES256/KMS bucket encryption rules"
+        },
+        {
+          "operation": "DeleteBucketEncryption",
           "category": "Buckets",
           "status": "✅ Supported"
         },

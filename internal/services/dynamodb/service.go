@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -72,6 +73,49 @@ func newStreamBackendFor(store state.Store) streamBackend {
 		return newSQLStreamBackend(provider.DB)
 	}
 	return newMemStreamBackend()
+}
+
+// DebugStateKeys returns the virtual raw-state keys for DynamoDB items.
+func (s *Service) DebugStateKeys(ctx context.Context) ([]string, error) {
+	records, err := s.handler.store.items.debugScan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(records))
+	for _, record := range records {
+		keys = append(keys, dynamoDebugItemKey(record))
+	}
+	sort.Strings(keys)
+	return keys, nil
+}
+
+// DebugStateValues returns raw DynamoDB item values keyed by table/hash/sort.
+func (s *Service) DebugStateValues(ctx context.Context) (map[string]string, error) {
+	records, err := s.handler.store.items.debugScan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	values := make(map[string]string, len(records))
+	for _, record := range records {
+		raw, err := json.Marshal(record.Item)
+		if err != nil {
+			return nil, err
+		}
+		values[dynamoDebugItemKey(record)] = string(raw)
+	}
+	return values, nil
+}
+
+// DebugResetState deletes all DynamoDB item rows for debug reset operations.
+func (s *Service) DebugResetState(ctx context.Context) error {
+	return s.handler.store.items.debugDeleteAll(ctx)
+}
+
+func dynamoDebugItemKey(record debugItemRecord) string {
+	if record.SortKey == "" {
+		return record.TableName + "/" + record.HashKey
+	}
+	return record.TableName + "/" + record.HashKey + "/" + record.SortKey
 }
 
 // ---- Exported methods for the dynamodbstreams service ----------------------

@@ -151,6 +151,10 @@ const (
 	// by an EventSourceMapping's FilterCriteria before being sent to Lambda.
 	// Payload: LambdaESMEventPayload.
 	LambdaESMRecordFiltered Type = "lambda:ESMRecordFiltered"
+	// LambdaESMRecordMatched fires when a DynamoDB stream record matches an
+	// EventSourceMapping's FilterCriteria and is allowed into an invocation batch.
+	// Payload: LambdaESMEventPayload.
+	LambdaESMRecordMatched Type = "lambda:ESMRecordMatched"
 
 	// LambdaESMInvoked fires when a record batch passes filter criteria and
 	// Lambda is about to be called. Payload: LambdaESMEventPayload.
@@ -664,6 +668,10 @@ type LambdaESMEventPayload struct {
 	// criteria is configured. Since filters are OR'd, all patterns must fail
 	// for a record to be dropped, so the full list indicates the reason.
 	FilterPatterns []string `json:"filterPatterns,omitempty"`
+	// Matched reports the per-record FilterCriteria decision when present.
+	Matched *bool `json:"matched,omitempty"`
+	// Record is the DynamoDB stream record shape that was evaluated by the filter.
+	Record map[string]any `json:"record,omitempty"`
 }
 
 // LambdaInstancePayload carries a snapshot of a Lambda execution instance.

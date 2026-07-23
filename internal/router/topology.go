@@ -30,25 +30,30 @@ type topologyNode struct {
 	Label   string `json:"label"`
 	Region  string `json:"region"`
 
-	StreamEnabled                         *bool   `json:"streamEnabled,omitempty"`
-	ApproximateNumberOfMessages           *int    `json:"approximateNumberOfMessages,omitempty"`
-	ApproximateNumberOfMessagesNotVisible *int    `json:"approximateNumberOfMessagesNotVisible,omitempty"`
-	StackName                             *string `json:"stackName,omitempty"`
-	VpcID                                 string  `json:"vpcId,omitempty"`
-	Status                                string  `json:"status,omitempty"`
-	CidrBlock                             string  `json:"cidrBlock,omitempty"`
-	SubnetCount                           *int    `json:"subnetCount,omitempty"`
-	HasInternetGateway                    *bool   `json:"hasInternetGateway,omitempty"`
-	AttachedVpcID                         string  `json:"attachedVpcId,omitempty"`
-	ProtocolType                          string  `json:"protocolType,omitempty"`
-	RouteCount                            *int    `json:"routeCount,omitempty"`
-	StageCount                            *int    `json:"stageCount,omitempty"`
-	DomainName                            string  `json:"domainName,omitempty"`
-	OriginCount                           *int    `json:"originCount,omitempty"`
-	AuthenticationType                    string  `json:"authenticationType,omitempty"`
-	DataSourceCount                       *int    `json:"dataSourceCount,omitempty"`
-	ResolverCount                         *int    `json:"resolverCount,omitempty"`
-	RepositoryUri                         string  `json:"repositoryUri,omitempty"`
+	StreamEnabled                         *bool    `json:"streamEnabled,omitempty"`
+	ApproximateNumberOfMessages           *int     `json:"approximateNumberOfMessages,omitempty"`
+	ApproximateNumberOfMessagesNotVisible *int     `json:"approximateNumberOfMessagesNotVisible,omitempty"`
+	StackName                             *string  `json:"stackName,omitempty"`
+	VpcID                                 string   `json:"vpcId,omitempty"`
+	Status                                string   `json:"status,omitempty"`
+	CidrBlock                             string   `json:"cidrBlock,omitempty"`
+	SubnetCount                           *int     `json:"subnetCount,omitempty"`
+	HasInternetGateway                    *bool    `json:"hasInternetGateway,omitempty"`
+	AttachedVpcID                         string   `json:"attachedVpcId,omitempty"`
+	ProtocolType                          string   `json:"protocolType,omitempty"`
+	RouteCount                            *int     `json:"routeCount,omitempty"`
+	StageCount                            *int     `json:"stageCount,omitempty"`
+	DomainName                            string   `json:"domainName,omitempty"`
+	OriginCount                           *int     `json:"originCount,omitempty"`
+	AuthenticationType                    string   `json:"authenticationType,omitempty"`
+	DataSourceCount                       *int     `json:"dataSourceCount,omitempty"`
+	ResolverCount                         *int     `json:"resolverCount,omitempty"`
+	RepositoryUri                         string   `json:"repositoryUri,omitempty"`
+	ESMID                                 string   `json:"esmId,omitempty"`
+	FunctionName                          string   `json:"functionName,omitempty"`
+	EventSource                           string   `json:"eventSource,omitempty"`
+	SourceType                            string   `json:"sourceType,omitempty"`
+	FilterPatterns                        []string `json:"filterPatterns,omitempty"`
 }
 
 type topologyEdge struct {
@@ -60,6 +65,12 @@ type topologyEdge struct {
 	State        string `json:"state,omitempty"`
 	SourceRegion string `json:"sourceRegion,omitempty"`
 	TargetRegion string `json:"targetRegion,omitempty"`
+}
+
+type tFilterCriteria struct {
+	Filters []struct {
+		Pattern string `json:"Pattern"`
+	} `json:"Filters"`
 }
 
 type topologyResponse struct {
@@ -191,8 +202,10 @@ type tFunction struct {
 }
 
 type tESM struct {
-	FunctionArn    string `json:"FunctionArn"`
-	EventSourceArn string `json:"EventSourceArn"`
+	UUID           string           `json:"UUID"`
+	FunctionArn    string           `json:"FunctionArn"`
+	EventSourceArn string           `json:"EventSourceArn"`
+	FilterCriteria *tFilterCriteria `json:"FilterCriteria,omitempty"`
 }
 
 type tLogGroup struct {
@@ -1458,6 +1471,36 @@ func buildTopology(cfg *config.Config, byNS map[string][]state.KV, regionFilter 
 			if srcID == "" {
 				continue
 			}
+			patterns := esmFilterPatterns(esm.FilterCriteria)
+			if len(patterns) > 0 {
+				filterID := tblRegion + "::esm-filter::" + esm.UUID
+				addNode(topologyNode{
+					ID:             filterID,
+					Service:        "esm-filter",
+					Label:          "ESM filter",
+					Region:         tblRegion,
+					ESMID:          esm.UUID,
+					FunctionName:   fnName,
+					EventSource:    tblName,
+					SourceType:     "dynamodb",
+					FilterPatterns: patterns,
+				})
+				addEdge(topologyEdge{
+					ID:     "esm-filter-in::" + esm.UUID,
+					Source: srcID,
+					Target: filterID,
+					Type:   "esm-filter",
+					Label:  "filter",
+				})
+				addEdge(topologyEdge{
+					ID:     "esm-filter-out::" + esm.UUID,
+					Source: filterID,
+					Target: tgtID,
+					Type:   "esm",
+					Label:  "matched",
+				})
+				continue
+			}
 			addEdge(topologyEdge{
 				ID:     "esm::" + srcID + "→" + tgtID,
 				Source: srcID,
@@ -1796,6 +1839,19 @@ func buildTopology(cfg *config.Config, byNS map[string][]state.KV, regionFilter 
 		Nodes:   nodes,
 		Edges:   edges,
 	}
+}
+
+func esmFilterPatterns(fc *tFilterCriteria) []string {
+	if fc == nil || len(fc.Filters) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(fc.Filters))
+	for _, f := range fc.Filters {
+		if f.Pattern != "" {
+			out = append(out, f.Pattern)
+		}
+	}
+	return out
 }
 
 // ── ARN helpers ────────────────────────────────────────────────────────────

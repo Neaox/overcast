@@ -26,6 +26,7 @@ export interface TopologyEdgeData extends Record<string, unknown> {
     | "pipe"
     | "logs"
     | "dlq"
+    | "esm-filter"
     | "apigw-integration"
   /** pipe/dlq label shown at mid-point */
   label?: string
@@ -69,6 +70,7 @@ export const TopologyEdge = memo(function TopologyEdge({
   const { glowing, edgeType, label, state, burstCount } = (data ?? {}) as TopologyEdgeData
   const isPipe = edgeType === "pipe"
   const isDlq = edgeType === "dlq"
+  const isESMFilter = edgeType === "esm-filter"
   const isDashed = EDGE_THEME[edgeType ?? ""]?.dash ?? false
   const isStopped = isPipe && state === "STOPPED"
   const color = isStopped
@@ -120,7 +122,7 @@ export const TopologyEdge = memo(function TopologyEdge({
       )}
 
       {/* Edge label (pipes, DLQ, and other labeled edges) */}
-      {isDashed && label && (
+      {isDashed && label && !isESMFilter && (
         <EdgeLabelRenderer>
           <div
             className={cn(
@@ -144,7 +146,7 @@ export const TopologyEdge = memo(function TopologyEdge({
       )}
 
       {/* Burst counter badge — shown when > 1 to avoid interfering with type labels */}
-      {(burstCount ?? 0) > 1 && !isStopped && (
+      {(burstCount ?? 0) > 1 && !isStopped && !isESMFilter && (
         <EdgeLabelRenderer>
           <div
             className="nodrag nopan pointer-events-none absolute flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-bold tabular-nums"

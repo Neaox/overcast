@@ -71,6 +71,21 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
+## [0.0.1-alpha.23] - 2026-07-23
+
+### Fixed
+
+- **Web UI** — Raw State Debugger namespace views now truncate large stored value strings for responsive browsing and provide an `Open` action for the selected full raw value with JSON/text content-type detection.
+- **Debug endpoints** — `POST /_debug/reset/{service}` now succeeds for enabled services even when they have no stored resources yet instead of reporting them as unknown.
+- **AppSync** — `CreateGraphqlApi`, `GetGraphqlApi`, and `ListGraphqlApis` now return local executable GraphQL URLs for the connected Overcast endpoint, Lambda data sources strip ARN aliases/versions before invocation, direct Lambda resolver events include AWS/Powertools-compatible context fields while mapped Lambda requests pass their evaluated JSON payloads through, resolver identities now better match AWS shapes for Cognito/OIDC/IAM including IAM user-store lookup, configured Lambda authorizers now invoke Lambda with GraphQL request context and propagate/cache `resolverContext`/`deniedFields`, mapped Lambda request objects validate operation/invocation type with async `Event` null results, and direct plus VTL/APPSYNC_JS-mapped Lambda nested-list batching now supports `maxBatchSize`.
+- **CloudFormation/Lambda** — `AWS::Lambda::Alias` resources now create and delete real Lambda aliases instead of being treated as unsupported/stubbed resources.
+- **DynamoDB/Lambda** — DynamoDB stream event source mappings now process records through a bounded per-mapping worker, honor `BatchSize` and `MaximumBatchingWindowInSeconds`, apply filters per record before Lambda invocation, and expose filter decision evidence in the system map through a compact filter node with a searchable ordered receipt-history drawer.
+- **DynamoDB** — `BatchWriteItem` and `TransactWriteItems` writes now emit stream records, and composite-key `PutItem` condition checks such as `attribute_not_exists(PK) AND attribute_not_exists(SK)` reject existing items consistently.
+- **S3** — bucket encryption APIs now support CDK asset bucket checks by returning default SSE-S3 encryption and round-tripping AES256/KMS encryption configuration.
+- **State** — hybrid SQLite-backed reads now retry canceled, busy, locked, and interrupted SQLite operations with bounded backoff, serialize SQLite flushes to avoid concurrent transaction contention, seed hot control-plane namespaces into memory while keeping bulk data-plane namespaces lazy, expose persistent backend health and pending-write counts, persist accepted writes to a pending log before async flush, and force CloudFormation terminal stack state through synchronous persistence.
+- **Lambda** — startup no longer pre-pulls every managed runtime image by default; set `LAMBDA_SEED_RUNTIME_IMAGES=true` to opt back into broad startup seeding while per-function prewarming and lazy first-use pulls remain enabled.
+- **Web UI** — bundled console builds now include the Tailwind typography plugin as a production build dependency, fixing Docker release builds that install only runtime dependencies.
+
 ## [0.0.1-alpha.22] - 2026-07-22
 
 ### Added
@@ -342,7 +357,8 @@ need it than accidentally ship a breaking change as a patch.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.22...HEAD
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.23...HEAD
+[0.0.1-alpha.23]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.22...v0.0.1-alpha.23
 [0.0.1-alpha.22]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.21...v0.0.1-alpha.22
 [0.0.1-alpha.21]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.20...v0.0.1-alpha.21
 [0.0.1-alpha.20]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.19...v0.0.1-alpha.20

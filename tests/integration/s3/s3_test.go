@@ -702,6 +702,84 @@ func TestGetBucketLocation_notFound(t *testing.T) {
 	helpers.AssertXMLError(t, resp, "NoSuchBucket")
 }
 
+// ---- Bucket encryption -----------------------------------------------------
+
+func TestGetBucketEncryption_defaultSSES3(t *testing.T) {
+	// Given: an existing bucket.
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "encrypted-bucket")
+
+	// When: CDK/S3 asks for the bucket encryption configuration.
+	resp, err := http.DefaultClient.Do(get(srv, "/encrypted-bucket?encryption"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: it gets a supported AWS-shaped SSE-S3 configuration instead of a 501.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		Rules []struct {
+			ApplyServerSideEncryptionByDefault struct {
+				SSEAlgorithm string `xml:"SSEAlgorithm"`
+			} `xml:"ApplyServerSideEncryptionByDefault"`
+		} `xml:"Rule"`
+	}
+	helpers.DecodeXML(t, resp, &result)
+	if len(result.Rules) != 1 {
+		t.Fatalf("expected 1 encryption rule, got %d", len(result.Rules))
+	}
+	if got := result.Rules[0].ApplyServerSideEncryptionByDefault.SSEAlgorithm; got != "AES256" {
+		t.Fatalf("expected SSEAlgorithm AES256, got %q", got)
+	}
+}
+
+func TestPutBucketEncryption_roundTrip(t *testing.T) {
+	// Given: an existing bucket.
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "roundtrip-encryption-bucket")
+
+	// When: a bucket encryption configuration is stored.
+	body := `<ServerSideEncryptionConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Rule><ApplyServerSideEncryptionByDefault><SSEAlgorithm>aws:kms</SSEAlgorithm><KMSMasterKeyID>alias/test</KMSMasterKeyID></ApplyServerSideEncryptionByDefault><BucketKeyEnabled>true</BucketKeyEnabled></Rule></ServerSideEncryptionConfiguration>`
+	req := mustReq(http.MethodPut, srv.URL+"/roundtrip-encryption-bucket?encryption", strings.NewReader(body), map[string]string{"Content-Type": "application/xml"})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: GET returns the stored configuration.
+	resp, err = http.DefaultClient.Do(get(srv, "/roundtrip-encryption-bucket?encryption"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		Rules []struct {
+			ApplyServerSideEncryptionByDefault struct {
+				SSEAlgorithm   string `xml:"SSEAlgorithm"`
+				KMSMasterKeyID string `xml:"KMSMasterKeyID"`
+			} `xml:"ApplyServerSideEncryptionByDefault"`
+			BucketKeyEnabled bool `xml:"BucketKeyEnabled"`
+		} `xml:"Rule"`
+	}
+	helpers.DecodeXML(t, resp, &result)
+	if len(result.Rules) != 1 {
+		t.Fatalf("expected 1 encryption rule, got %d", len(result.Rules))
+	}
+	if got := result.Rules[0].ApplyServerSideEncryptionByDefault.SSEAlgorithm; got != "aws:kms" {
+		t.Fatalf("expected SSEAlgorithm aws:kms, got %q", got)
+	}
+	if got := result.Rules[0].ApplyServerSideEncryptionByDefault.KMSMasterKeyID; got != "alias/test" {
+		t.Fatalf("expected KMSMasterKeyID alias/test, got %q", got)
+	}
+	if !result.Rules[0].BucketKeyEnabled {
+		t.Fatal("expected BucketKeyEnabled true")
+	}
+}
+
 // ---- CopyObject (additional error paths) -----------------------------------
 
 func TestCopyObject_missingSourceKey(t *testing.T) {
@@ -1724,7 +1802,6 @@ func TestS3_UnimplementedOperations_return501(t *testing.T) {
 		{"GetBucketLifecycleConfiguration", http.MethodGet, "/stub-bucket?lifecycle"},
 		{"GetBucketLogging", http.MethodGet, "/stub-bucket?logging"},
 		{"GetBucketReplication", http.MethodGet, "/stub-bucket?replication"},
-		{"GetBucketEncryption", http.MethodGet, "/stub-bucket?encryption"},
 		{"GetBucketAccelerateConfiguration", http.MethodGet, "/stub-bucket?accelerate"},
 		{"GetBucketRequestPayment", http.MethodGet, "/stub-bucket?requestPayment"},
 		{"GetBucketOwnershipControls", http.MethodGet, "/stub-bucket?ownershipControls"},
@@ -1744,7 +1821,6 @@ func TestS3_UnimplementedOperations_return501(t *testing.T) {
 		{"PutBucketLifecycleConfiguration", http.MethodPut, "/stub-bucket?lifecycle"},
 		{"PutBucketLogging", http.MethodPut, "/stub-bucket?logging"},
 		{"PutBucketReplication", http.MethodPut, "/stub-bucket?replication"},
-		{"PutBucketEncryption", http.MethodPut, "/stub-bucket?encryption"},
 		{"PutBucketAccelerateConfiguration", http.MethodPut, "/stub-bucket?accelerate"},
 		{"PutBucketRequestPayment", http.MethodPut, "/stub-bucket?requestPayment"},
 		{"PutBucketOwnershipControls", http.MethodPut, "/stub-bucket?ownershipControls"},
@@ -1763,7 +1839,6 @@ func TestS3_UnimplementedOperations_return501(t *testing.T) {
 		{"DeleteBucketLifecycle", http.MethodDelete, "/stub-bucket?lifecycle"},
 		{"DeleteBucketWebsite", http.MethodDelete, "/stub-bucket?website"},
 		{"DeleteBucketReplication", http.MethodDelete, "/stub-bucket?replication"},
-		{"DeleteBucketEncryption", http.MethodDelete, "/stub-bucket?encryption"},
 		{"DeleteBucketAnalyticsConfiguration", http.MethodDelete, "/stub-bucket?analytics"},
 		{"DeleteBucketIntelligentTieringConfiguration", http.MethodDelete, "/stub-bucket?intelligent-tiering"},
 		{"DeleteBucketInventoryConfiguration", http.MethodDelete, "/stub-bucket?inventory"},

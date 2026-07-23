@@ -1,42 +1,71 @@
-export const DEBUG_SERVICE_NAMESPACES: Record<string, string[]> = {
-  s3: ["s3:buckets", "s3:objects", "s3:meta"],
-  sqs: ["sqs:queues", "sqs:messages"],
-  sns: ["sns:topics", "sns:subscriptions"],
-  dynamodb: ["dynamodb:tables", "dynamodb:items"],
-  lambda: ["lambda:functions"],
-}
-
 export const DEBUG_SERVICE_LABELS: Record<string, string> = {
+  acm: "ACM",
+  apigw: "API Gateway",
+  appconfig: "AppConfig",
+  appconfigdata: "AppConfig Data",
+  appregistry: "AppRegistry",
   s3: "S3",
   sqs: "SQS",
   sns: "SNS",
   dynamodb: "DynamoDB",
   lambda: "Lambda",
+  cfn: "CloudFormation",
+  appsync: "AppSync",
+  eb: "EventBridge",
+  ecr: "ECR",
+  ecs: "ECS",
+  ec2: "EC2",
+  eks: "EKS",
+  elbv2: "ELBv2",
+  iam: "IAM",
+  kms: "KMS",
+  logs: "CloudWatch Logs",
+  msk: "MSK",
+  rds: "RDS",
+  ses: "SES",
+  ssm: "SSM",
+}
+
+const SERVICE_ALIASES: Record<string, string> = {
+  apigateway: "apigw",
+  cloudformation: "cfn",
+  eventbridge: "eb",
 }
 
 export function serviceForDebugNamespace(namespace: string): string | undefined {
-  return Object.entries(DEBUG_SERVICE_NAMESPACES).find(([, namespaces]) =>
-    namespaces.includes(namespace),
-  )?.[0]
+  return namespaceService(namespace)
 }
 
 export function firstDebugNamespaceForService(
   service: string,
   availableNamespaces: string[],
 ): string {
-  const allowed = DEBUG_SERVICE_NAMESPACES[service] ?? []
-  return allowed.find((namespace) => availableNamespaces.includes(namespace)) ?? ""
+  const canonical = SERVICE_ALIASES[service] ?? service
+  return availableNamespaces.find((namespace) => namespaceService(namespace) === canonical) ?? ""
 }
 
 export function groupDebugNamespaces(
   namespaces: string[],
-): { service: string; namespaces: string[] }[] {
+): { service: string; namespaces: { namespace: string; category: string }[] }[] {
   const grouped = new Map<string, string[]>()
   for (const namespace of namespaces) {
-    const service = serviceForDebugNamespace(namespace) ?? "other"
+    const service = namespaceService(namespace)
     const existing = grouped.get(service) ?? []
     existing.push(namespace)
     grouped.set(service, existing)
   }
-  return Array.from(grouped.entries()).map(([service, ns]) => ({ service, namespaces: ns }))
+  return Array.from(grouped.entries()).map(([service, ns]) => ({
+    service,
+    namespaces: ns.map((namespace) => ({ namespace, category: namespaceCategory(namespace) })),
+  }))
+}
+
+function namespaceService(namespace: string): string {
+  const colon = namespace.indexOf(":")
+  return colon >= 0 ? namespace.slice(0, colon) : namespace
+}
+
+function namespaceCategory(namespace: string): string {
+  const colon = namespace.indexOf(":")
+  return colon >= 0 ? namespace.slice(colon + 1) : "state"
 }

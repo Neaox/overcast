@@ -92,6 +92,30 @@ const dynamodbTableSource = fieldSourceNode("dynamodb", "table")
 const snsTopicSource = fieldSourceNode("sns", "topicName")
 const logsGroupSource = fieldSourceNode("logs", "logGroupName")
 
+function esmFilterNode(p: Payload): string | null {
+  const esmId = getString(p, "esmId")
+  return esmId ? `esm-filter::${esmId}` : null
+}
+
+function esmFilterEdges(p: Payload, edges: TopologyEdge[], direction: "in" | "out"): string[] {
+  const esmId = getString(p, "esmId")
+  if (!esmId) return []
+  const prefix = direction === "in" ? "esm-filter-in::" : "esm-filter-out::"
+  return edges.filter((e) => e.id === `${prefix}${esmId}`).map((e) => e.id)
+}
+
+function directEsmEdges(p: Payload, edges: TopologyEdge[]): string[] {
+  const source = getString(p, "eventSource")
+  const fn = getString(p, "functionName")
+  const sourceType = getString(p, "sourceType")
+  if (!source || !fn || !sourceType) return []
+  const srcSuffix = sourceType === "sqs" ? `::sqs::${source}` : `::dynamodb::${source}`
+  const tgtSuffix = `::lambda::${fn}`
+  return edges
+    .filter((e) => e.type === "esm" && e.source.endsWith(srcSuffix) && e.target.endsWith(tgtSuffix))
+    .map((e) => e.id)
+}
+
 function s3NotificationEdges(p: Payload, edges: TopologyEdge[]): string[] {
   const bucket = getString(p, "Bucket")
   if (!bucket) return []
@@ -116,6 +140,27 @@ const EVENT_REGISTRY: Record<string, EventDescriptor | undefined> = {
   [EventType.dynamodb.Insert]: { sourceNode: dynamodbTableSource, isWrite: true },
   [EventType.dynamodb.Modify]: { sourceNode: dynamodbTableSource, isWrite: true },
   [EventType.dynamodb.Remove]: { sourceNode: dynamodbTableSource },
+  [EventType.lambda.ESMRecordFiltered]: {
+    sourceNode: esmFilterNode,
+    matchEdges: (p, edges) => esmFilterEdges(p, edges, "in"),
+    edgeDependent: true,
+  },
+  [EventType.lambda.ESMRecordMatched]: {
+    sourceNode: esmFilterNode,
+    matchEdges: (p, edges) => esmFilterEdges(p, edges, "in"),
+    edgeDependent: true,
+  },
+  [EventType.lambda.ESMInvoked]: {
+    sourceNode: (p) => {
+      const esmId = getString(p, "esmId")
+      return esmId ? `esm-filter::${esmId}` : null
+    },
+    matchEdges: (p, edges) => {
+      const filtered = esmFilterEdges(p, edges, "out")
+      return filtered.length > 0 ? filtered : directEsmEdges(p, edges)
+    },
+    edgeDependent: true,
+  },
   [EventType.sns.Notification]: {
     sourceNode: snsTopicSource,
     matchEdges: (p, edges) => {

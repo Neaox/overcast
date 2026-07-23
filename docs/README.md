@@ -86,7 +86,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 
 | Service          | Doc                                                 | Ops | Coverage tier                 |
 | ---------------- | --------------------------------------------------- | --- | ----------------------------- |
-| S3               | [s3.md](./services/s3.md)                           | 44  | Comprehensive / broad support |
+| S3               | [s3.md](./services/s3.md)                           | 47  | Comprehensive / broad support |
 | SQS              | [sqs.md](./services/sqs.md)                         | 21  | Comprehensive / broad support |
 | DynamoDB         | [dynamodb.md](./services/dynamodb.md)               | 19  | Comprehensive / broad support |
 | Lambda           | [lambda.md](./services/lambda.md)                   | 33  | Comprehensive / broad support |
@@ -174,6 +174,7 @@ All configuration is via environment variables. No config file required.
 | `LAMBDA_NETWORK`                 | `overcast_lambda`      | Docker network for Lambda containers                                                 |
 | `LAMBDA_RUNTIME_API_PORT`        | `9001`                 | Port Overcast exposes the Lambda Runtime API on                                      |
 | `LAMBDA_DOCKER_MAX_CONCURRENT_STARTS` | `4`                    | Max concurrent Docker-backed Lambda container starts                                 |
+| `LAMBDA_SEED_RUNTIME_IMAGES`     | `false`                | Pre-pull every managed Lambda runtime image at startup                               |
 | `LAMBDA_INIT_TIMEOUT_SECONDS`    | `10`                   | Max seconds to wait for a Lambda runtime to finish INIT                              |
 | `LAMBDA_KEEP_CONTAINERS`         | `false`                | Keep stopped Lambda containers after expiry/delete (useful for debugging)            |
 | `ECS_DOCKER_SOCKET`              | _(Lambda socket)_      | Docker endpoint for ECS — Unix path or `tcp://host:port`                             |
@@ -218,6 +219,8 @@ docker run --rm \
 
 Persistent/hybrid SQLite data lives at `$OVERCAST_DATA_DIR/overcast.db`. WAL mode uses `$OVERCAST_DATA_DIR/overcast.wal`. You can also override the backend per-service:
 
+Hybrid seeds small control-plane namespaces into memory on startup and keeps large data-plane namespaces SQLite-backed until read, so background schedulers and dashboards do not continuously poll SQLite for hot resource metadata.
+
 ```bash
 -e OVERCAST_STATE=memory -e OVERCAST_STATE_S3=hybrid
 ```
@@ -243,7 +246,7 @@ storage. Each overridden service gets its own SQLite file under
 
 The active storage configuration is visible in two places:
 
-- **`GET /_health`** — the `storage` object shows the default backend and any per-service overrides.
+- **`GET /_health`** — the `storage` object shows the default backend, per-service overrides, and persistent backend health including pending hybrid writes when available.
 - **Dashboard footer** — the web management console displays the storage mode with a tooltip listing overrides.
 
 ---
@@ -309,7 +312,7 @@ Set `OVERCAST_DEBUG=true` to enable the `/_debug` namespace:
 | `/_events`                  | GET    | SSE stream of internal events (always enabled)        |
 | `/_metrics`                 | GET    | Go runtime memory/GC/goroutine stats (always enabled) |
 | `/_topology`                | GET    | Full cross-region resource graph (always enabled)     |
-| `/_debug/health`            | GET    | Detailed: uptime, services, state backend             |
+| `/_debug/health`            | GET    | Detailed: uptime, services, state backend and health  |
 | `/_debug/config`            | GET    | Effective configuration (secrets redacted)            |
 | `/_debug/state`             | GET    | Full state dump across all namespaces                 |
 | `/_debug/state/{namespace}` | GET    | State for one namespace, e.g. `s3:buckets`            |

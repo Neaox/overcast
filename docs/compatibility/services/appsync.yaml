@@ -2,7 +2,7 @@ service: appsync
 status: fixed
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-07-22
+last_updated: 2026-07-23
 protocols: [rest_json, graphql_execution, websocket_realtime, aws_json_1_0, aws_json_1_1, rpcv2_cbor]
 implementation: [internal/services/appsync]
 integration_tests: [tests/integration/appsync]
@@ -146,6 +146,49 @@ operations:
         status: fixed
         evidence: TestSchema_appSyncDirectives
         notes: Parser preloads definitions for @aws_api_key, @aws_iam, @aws_oidc, @aws_cognito_user_pools, @aws_lambda, @aws_auth, and @aws_subscribe before validating SDL.
+  LambdaResolverExecution:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/appsync/latest/devguide/resolver-mapping-template-reference-lambda.html
+      - https://docs.aws.amazon.com/appsync/latest/devguide/resolver-context-reference.html
+      - https://docs.powertools.aws.dev/lambda/typescript/latest/features/event-handler/appsync-graphql/
+    scenario_matrix:
+      - scenario: Direct Lambda resolver event with no request mapping template
+        status: fixed
+        evidence: TestResolveLambdaDataSource_directResolverEventShape
+        notes: Direct Lambda payload now includes AppSync resolver context fields required by AWS/Powertools-compatible handlers, including identity, request.domainName, info.variables, selectionSetList, selectionSetGraphQL, stash, and prev.result.
+      - scenario: Lambda resolver with evaluated request mapping template
+        status: fixed
+        evidence: TestResolveLambdaDataSource_requestMappingTemplatePayload
+        notes: Non-empty evaluated mapping template JSON is passed to Lambda instead of being ignored and replaced with the direct resolver context.
+      - scenario: Auth-specific identity shapes in Lambda resolver context
+        status: fixed
+        evidence: TestAuthenticateCognito_identityShape; TestAuthenticateOIDC_identityShape; TestTryAuthIAM_identityShape; TestTryAuthIAM_identityFromIAMUserStore; TestTryAuthLambdaAuthorizer_identityShape; TestTryAuthLambdaAuthorizer_invokesFunction; TestTryAuthLambdaAuthorizer_unauthorized
+        notes: Cognito and OIDC identities now include documented username/sourceIp fields, Cognito includes defaultAuthStrategy=ALLOW, IAM includes accountId/sourceIp/user/userArn/username fields derived from matching IAM user records when available with SigV4 access-key fallback, and configured Lambda authorizers are invoked with AWS-shaped authorization events so resolverContext is propagated.
+      - scenario: Request headers and default endpoint domainName in direct Lambda resolver context
+        status: fixed
+        evidence: TestBuildDirectLambdaResolverEvent_defaultDomainAndHeaders
+        notes: Direct resolver events now omit Cookie from request.headers and use null request.domainName for the default GraphQL endpoint.
+      - scenario: Direct Lambda resolver batching with maxBatchSize
+        status: fixed
+        evidence: TestResolveDirectLambdaBatchDataSource; TestResolveNestedField_directLambdaBatchResolver; TestResolveNestedField_mappedLambdaBatchResolver; TestResolveNestedField_jsLambdaBatchResolver
+        notes: Nested list child fields backed by AWS_LAMBDA resolvers with maxBatchSize now send arrays of direct resolver context events for direct resolvers, merge VTL/APPSYNC_JS BatchInvoke payloads for mapped resolvers, chunk by maxBatchSize, and map list-shaped {data,errorMessage,errorType} responses back per item.
+      - scenario: APPSYNC_JS Lambda data source request and response semantics
+        status: fixed
+        evidence: TestResolveLambdaDataSource_requestMappingTemplatePayload; TestResolveLambdaDataSource_requestMappingTemplateInvalidOperation; TestResolveLambdaDataSource_requestMappingTemplateEventInvocation
+        notes: Evaluated VTL/APPSYNC_JS Lambda Invoke request objects are passed through as the Lambda event, operation and invocationType are validated, invocationType=Event resolves to null after invoking Lambda, and nested maxBatchSize APPSYNC_JS BatchInvoke requests merge payloads and run response(ctx) per returned item.
+      - scenario: Lambda authorizer deniedFields behavior
+        status: fixed
+        evidence: TestTryAuthLambdaAuthorizer_deniedFields; TestBuildDirectLambdaResolverEvent_hidesAuthorizerDeniedFields; TestDeniedFields_fullARNDoesNotDenyOtherAPI; TestFilterSubFields_authorizerDeniedStructuralField
+        notes: deniedFields short names and exact matching AppSync field ARNs are honored by nulling denied fields, including structural nested fields, without exposing internal metadata in resolver identity.
+      - scenario: Lambda authorizer ttlOverride/cache behavior
+        status: fixed
+        evidence: TestTryAuthLambdaAuthorizer_cachesWithTTL; TestTryAuthLambdaAuthorizer_ttlOverrideZeroDisablesCache
+        notes: authorizerResultTtlInSeconds caches positive authorizer responses by API ID and token, ttlOverride overrides that TTL, and ttlOverride=0 disables caching.
+      - scenario: Lambda authorizer requestContext GraphQL fields
+        status: fixed
+        evidence: TestTryAuthLambdaAuthorizer_invokesFunction
+        notes: Lambda authorizer events now include queryString, operationName, and variables from the decoded GraphQL request body.
   TagResource:
     status: fixed
     aws_docs:
@@ -185,11 +228,18 @@ findings:
       - StartSchemaCreation now accepts AppSync built-in auth and subscription directives in uploaded SDL; covered by TestSchema_appSyncDirectives and TestCreateStack_AppSyncGraphQLSchemaWithAwsDirectives.
       - StartSchemaCreation now accepts AppSync built-in scalar types in uploaded SDL; covered by TestSchema_appSyncScalars and TestCreateStack_AppSyncGraphQLSchemaWithAwsScalars.
       - StartSchemaCreation now rejects user-defined custom scalars and custom object types with the reserved AWS prefix; covered by TestSchema_customScalar and TestSchema_customTypeWithAWSPrefix.
+      - Direct Lambda resolver events now include AWS/Powertools-compatible resolver context fields, and Lambda data source invocations with evaluated request mapping templates pass that mapped JSON to Lambda instead of always using the direct context.
+      - AppSync resolver identities now expose closer AWS-shaped Cognito, OIDC, IAM, and Lambda-authorizer-stub fields, and direct resolver request context omits Cookie with null default endpoint domainName.
+      - Configured AWS_LAMBDA authorizers are now invoked with AWS-shaped authorization events and propagate resolverContext into resolver identity.
+      - Lambda authorizer deniedFields now null denied resolver fields, mapped Lambda request objects validate operation/invocationType and support Event invocation null results, and direct Lambda nested list batching is implemented for maxBatchSize resolvers.
+      - Direct Lambda resolver events now carry pipeline stash and prev.result when invoked from pipeline functions, and deniedFields matching avoids cross-API full-ARN bleed-through.
+      - Lambda authorizer requestContext now includes GraphQL query details, authorizer TTL caching honors authorizerResultTtlInSeconds and ttlOverride, and VTL BatchInvoke payloads are merged for nested Lambda batch resolvers.
   remaining_gaps:
     - Continue typed protocol validation tests beyond the UpdateGraphqlApi missing-name, TagResource invalid-key, and CreateGraphqlApi ownerContact boundary cases.
     - Audit support claims category by category.
     - Downgrade or annotate config-only and inert behavior where AWS compatibility is limited.
     - Continue CreateGraphqlApi boundary/nested-config coverage before marking reviewed.
+    - Continue broader typed protocol validation and data-source CloudFormation coverage before marking the full AppSync service reviewed.
   intentionally_partial: []
 handoff:
   issue: https://github.com/Neaox/overcast/issues/8

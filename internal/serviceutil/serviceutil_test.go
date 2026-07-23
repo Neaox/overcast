@@ -11,6 +11,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
@@ -139,6 +140,50 @@ func TestHasQueryParam_absent(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/bucket", nil)
 	if serviceutil.HasQueryParam(req, "location") {
 		t.Error("expected location param to be absent")
+	}
+}
+
+// ---- ClientBaseURL ---------------------------------------------------------
+
+func TestClientBaseURL_configuredHostname(t *testing.T) {
+	// Given: an explicit external hostname and port are configured.
+	cfg := &config.Config{Hostname: "overcast.local", Port: 4566}
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:12345/", nil)
+
+	// When: a service asks for its client-facing base URL.
+	got := serviceutil.ClientBaseURL(cfg, req)
+
+	// Then: the configured external URL is authoritative.
+	if got != "http://overcast.local:4566" {
+		t.Fatalf("expected configured base URL, got %q", got)
+	}
+}
+
+func TestClientBaseURL_configuredHostnameWithDynamicPort(t *testing.T) {
+	// Given: tests configured a hostname but the server port is assigned by httptest.
+	cfg := &config.Config{Hostname: "overcast.local", Port: 0}
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:12345/", nil)
+
+	// When: a service asks for its client-facing base URL.
+	got := serviceutil.ClientBaseURL(cfg, req)
+
+	// Then: the configured host is retained and the request port fills the dynamic value.
+	if got != "http://overcast.local:12345" {
+		t.Fatalf("expected configured hostname with request port, got %q", got)
+	}
+}
+
+func TestClientBaseURL_requestHostFallback(t *testing.T) {
+	// Given: no external hostname is configured.
+	cfg := &config.Config{Port: 4566}
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:12345/", nil)
+
+	// When: a service asks for its client-facing base URL.
+	got := serviceutil.ClientBaseURL(cfg, req)
+
+	// Then: the request host is used so local test/proxy URLs remain executable.
+	if got != "http://127.0.0.1:12345" {
+		t.Fatalf("expected request base URL, got %q", got)
 	}
 }
 

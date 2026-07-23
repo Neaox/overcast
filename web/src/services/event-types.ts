@@ -79,6 +79,7 @@ export const EventType = {
     InstanceEvicted: "lambda:InstanceEvicted",
     ESMInvoked: "lambda:ESMInvoked",
     ESMRecordFiltered: "lambda:ESMRecordFiltered",
+    ESMRecordMatched: "lambda:ESMRecordMatched",
     ImagePulling: "lambda:ImagePulling",
     ImagePullComplete: "lambda:ImagePullComplete",
   },

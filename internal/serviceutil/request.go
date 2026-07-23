@@ -23,9 +23,12 @@ package serviceutil
 import (
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
 
+	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/protocol"
 )
 
@@ -107,6 +110,76 @@ func HasQueryParam(r *http.Request, param string) bool {
 	return ok
 }
 
+// ClientBaseURL returns the base URL services should embed in client-facing
+// responses. OVERCAST_HOSTNAME/OVERCAST_PORT are authoritative in normal
+// runtime config; request headers provide the fallback for httptest servers and
+// reverse-proxy deployments where no explicit external hostname is configured.
+func ClientBaseURL(cfg *config.Config, r *http.Request) string {
+	if cfg != nil && cfg.Hostname != "" {
+		scheme := "http"
+		if cfg.TLSEnabled() {
+			scheme = "https"
+		}
+		port := cfg.Port
+		if port <= 0 {
+			port = requestPort(r)
+		}
+		if port > 0 {
+			return scheme + "://" + net.JoinHostPort(cfg.Hostname, strconv.Itoa(port))
+		}
+		return scheme + "://" + cfg.Hostname
+	}
+	if base := RequestBaseURL(r); base != "" {
+		return base
+	}
+	if cfg != nil {
+		return cfg.ExternalBaseURL()
+	}
+	return "http://localhost:4566"
+}
+
+// RequestBaseURL derives a base URL from proxy headers or the request host.
+func RequestBaseURL(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	host := r.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = r.Host
+	}
+	if host == "" {
+		return ""
+	}
+	scheme := r.Header.Get("X-Forwarded-Proto")
+	if scheme == "" {
+		if r.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	return scheme + "://" + host
+}
+
+func requestPort(r *http.Request) int {
+	if r == nil {
+		return 0
+	}
+	host := r.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = r.Host
+	}
+	_, port, err := net.SplitHostPort(host)
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
 // ClampInt returns v clamped to [min, max].
 //
 //	maxMessages := serviceutil.ClampInt(req.MaxNumberOfMessages, 1, 10)
@@ -169,19 +242,10 @@ func HeaderPrefix(r *http.Request, prefix string) map[string]string {
 	return result
 }
 
-// toLower and hasPrefix avoid importing strings to keep this package lean.
 func toLower(s string) string {
-	b := make([]byte, len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c >= 'A' && c <= 'Z' {
-			c += 'a' - 'A'
-		}
-		b[i] = c
-	}
-	return string(b)
+	return strings.ToLower(s)
 }
 
 func hasPrefix(s, prefix string) bool {
-	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+	return strings.HasPrefix(s, prefix)
 }
