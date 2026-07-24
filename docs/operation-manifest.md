@@ -1,6 +1,6 @@
 ---
 title: "Overcast Operation Manifest"
-description: "Total: 795 operations across 42 services"
+description: "Total: 834 operations across 43 services"
 section: "Getting Started"
 tags:
   - docs
@@ -210,7 +210,23 @@ tags:
   - StopLogging (loggingRequest → struct{})
   - UpdateTrail (updateTrailInput → createTrailOutput)
 
-## cognito — 52 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## cloudwatch-logs — 14 ops, protocols: JSON10, JSON11, RPCv2CBOR
+  - CreateLogGroup (createLogGroupRequest → struct{})
+  - CreateLogStream (createLogStreamRequest → struct{})
+  - DeleteLogGroup (deleteLogGroupRequest → struct{})
+  - DeleteLogStream (deleteLogStreamRequest → struct{})
+  - DeleteRetentionPolicy (deleteRetentionPolicyRequest → struct{})
+  - DescribeLogGroups (describeLogGroupsRequest → describeLogGroupsResponse)
+  - DescribeLogStreams (describeLogStreamsRequest → describeLogStreamsResponse)
+  - FilterLogEvents (filterLogEventsRequest → filterLogEventsResponse)
+  - GetLogEvents (getLogEventsRequest → getLogEventsResponse)
+  - ListTagsLogGroup (listTagsLogGroupRequest → listTagsLogGroupResponse)
+  - PutLogEvents (putLogEventsRequest → putLogEventsResponse)
+  - PutRetentionPolicy (putRetentionPolicyRequest → struct{})
+  - TagLogGroup (tagLogGroupRequest → struct{})
+  - UntagLogGroup (untagLogGroupRequest → struct{})
+
+## cognito — 67 ops, protocols: JSON10, JSON11, RPCv2CBOR
   - AdminAddUserToGroup (PoolAndUserGroupReq → struct{})
   - AdminConfirmSignUp (PoolAndUserReq → struct{})
   - AdminCreateUser (AdminCreateUserReq → AdminCreateUserResp)
@@ -218,18 +234,24 @@ tags:
   - AdminDeleteUserAttributes (AdminDeleteUserAttributesReq → struct{})
   - AdminDisableUser (PoolAndUserReq → struct{})
   - AdminEnableUser (PoolAndUserReq → struct{})
+  - AdminForgetDevice (AdminDeviceReq → struct{})
+  - AdminGetDevice (AdminDeviceReq → GetDeviceResp)
   - AdminGetUser (PoolAndUserReq → AdminGetUserResp)
   - AdminInitiateAuth (AdminInitiateAuthReq → InitiateAuthResp)
+  - AdminListDevices (AdminListDevicesReq → ListDevicesResp)
   - AdminListGroupsForUser (PoolAndUserLimitReq → ListGroupsResp)
   - AdminRemoveUserFromGroup (PoolAndUserGroupReq → struct{})
   - AdminRespondToAuthChallenge (AdminRespondToAuthChallengeReq → RespondToAuthChallengeResp)
   - AdminSetUserMFAPreference (AdminSetUserMFAPreferenceReq → struct{})
   - AdminSetUserPassword (AdminSetUserPasswordReq → struct{})
+  - AdminUpdateDeviceStatus (AdminUpdateDeviceStatusReq → struct{})
   - AdminUpdateUserAttributes (AdminUpdateUserAttributesReq → struct{})
   - AssociateSoftwareToken (AccessTokenReq → AssociateSoftwareTokenResp)
   - ChangePassword (ChangePasswordReq → struct{})
+  - CompleteWebAuthnRegistration (CompleteWebAuthnRegistrationReq → struct{})
+  - ConfirmDevice (ConfirmDeviceReq → ConfirmDeviceResp)
   - ConfirmForgotPassword (ConfirmForgotPasswordReq → struct{})
-  - ConfirmSignUp (ConfirmSignUpReq → struct{})
+  - ConfirmSignUp (ConfirmSignUpReq → ConfirmSignUpResp)
   - CreateGroup (CreateGroupReq → CreateGroupResp)
   - CreateUserPool (CreateUserPoolReq → CreateUserPoolResp)
   - CreateUserPoolClient (CreateUserPoolClientReq → CreateUserPoolClientResp)
@@ -242,27 +264,36 @@ tags:
   - DescribeUserPool (UserPoolIDReq → DescribeUserPoolResp)
   - DescribeUserPoolClient (PoolAndClientReq → DescribeUserPoolClientResp)
   - DescribeUserPoolDomain (DescribeUserPoolDomainReq → DescribeUserPoolDomainResp)
+  - ForgetDevice (DeviceKeyAccessReq → struct{})
   - ForgotPassword (ClientUserSecretReq → ForgotPasswordResp)
+  - GetDevice (DeviceKeyAccessReq → GetDeviceResp)
   - GetGroup (PoolAndGroupReq → GetGroupResp)
   - GetUser (AccessTokenReq → GetUserResp)
+  - GetUserAttributeVerificationCode (GetUserAttributeVerificationCodeReq → GetUserAttributeVerificationCodeResp)
+  - GetUserPoolMfaConfig (UserPoolIDReq → UserPoolMfaConfigResp)
   - GlobalSignOut (AccessTokenReq → struct{})
   - InitiateAuth (InitiateAuthReq → InitiateAuthResp)
+  - ListDevices (ListDevicesReq → ListDevicesResp)
   - ListGroups (PoolLimitReq → ListGroupsResp)
   - ListUserPoolClients (UserPoolIDReq → ListUserPoolClientsResp)
   - ListUserPools (struct{} → ListUserPoolsResp)
-  - ListUsers (UserPoolIDReq → ListUsersResp)
+  - ListUsers (ListUsersReq → ListUsersResp)
   - ListUsersInGroup (PoolAndGroupLimitReq → ListUsersInGroupResp)
   - ResendConfirmationCode (ClientUserSecretReq → struct{})
   - RespondToAuthChallenge (RespondToAuthChallengeReq → RespondToAuthChallengeResp)
   - RevokeToken (RevokeTokenReq → struct{})
   - SetUserMFAPreference (SetUserMFAPreferenceReq → struct{})
+  - SetUserPoolMfaConfig (UserPoolMfaConfigReq → UserPoolMfaConfigResp)
   - SignUp (SignUpReq → SignUpResp)
+  - StartWebAuthnRegistration (AccessTokenReq → StartWebAuthnRegistrationResp)
+  - UpdateDeviceStatus (UpdateDeviceStatusReq → struct{})
   - UpdateGroup (UpdateGroupReq → struct{})
-  - UpdateUserAttributes (UpdateUserAttributesReq → struct{})
+  - UpdateUserAttributes (UpdateUserAttributesReq → UpdateUserAttributesResp)
   - UpdateUserPool (UpdateUserPoolReq → struct{})
   - UpdateUserPoolClient (UpdateUserPoolClientReq → UpdateUserPoolClientResp)
   - UpdateUserPoolDomain (DomainAndPoolReq → struct{})
   - VerifySoftwareToken (VerifySoftwareTokenReq → VerifySoftwareTokenResp)
+  - VerifyUserAttribute (VerifyUserAttributeReq → struct{})
 
 ## dynamodb — 17 ops, protocols: JSON10, JSON11, RPCv2CBOR
   - BatchGetItem (batchGetItemRequest → batchGetItemResponse)
@@ -289,12 +320,13 @@ tags:
   - GetShardIterator (getShardIteratorRequest → getShardIteratorResponse)
   - ListStreams (listStreamsRequest → listStreamsResponse)
 
-## ec2 — 64 ops, protocols: QueryXML
+## ec2 — 69 ops, protocols: QueryXML
   - AcceptVpcPeeringConnection (acceptVPCPeeringReq → acceptVPCPeeringResp)
   - AllocateAddress (allocateAddressReq → allocateAddressResp)
   - AssociateAddress (associateAddressReq → associateAddressResp)
   - AssociateRouteTable (associateRouteTableReq → associateRouteTableResp)
   - AttachInternetGateway (attachIGWReq → attachIGWResp)
+  - AttachVpnGateway (attachVpnGatewayReq → attachVpnGatewayResp)
   - AuthorizeSecurityGroupEgress (authorizeSGEgressReq → authorizeSGEgressResp)
   - AuthorizeSecurityGroupIngress (authorizeSGIngressReq → authorizeSGIngressResp)
   - CreateInternetGateway (createIGWReq → createIGWResp)
@@ -309,6 +341,7 @@ tags:
   - CreateVpc (createVpcReq → createVpcResp)
   - CreateVpcEndpoint (createVpcEndpointReq → createVpcEndpointResp)
   - CreateVpcPeeringConnection (createVPCPeeringReq → createVPCPeeringResp)
+  - CreateVpnGateway (createVpnGatewayReq → createVpnGatewayResp)
   - DeleteInternetGateway (deleteIGWReq → deleteIGWResp)
   - DeleteKeyPair (deleteKeyPairReq → deleteKeyPairResp)
   - DeleteNatGateway (deleteNatGatewayReq → deleteNatGatewayResp)
@@ -321,6 +354,7 @@ tags:
   - DeleteVpc (deleteVpcReq → deleteVpcResp)
   - DeleteVpcEndpoints (deleteVpcEndpointsReq → deleteVpcEndpointsResp)
   - DeleteVpcPeeringConnection (deleteVPCPeeringReq → deleteVPCPeeringResp)
+  - DeleteVpnGateway (deleteVpnGatewayReq → deleteVpnGatewayResp)
   - DescribeAccountAttributes (describeAccountAttributesReq → describeAccountAttributesResp)
   - DescribeAddresses (describeAddressesReq → describeAddressesResp)
   - DescribeAvailabilityZones (describeAzsReq → describeAzsResp)
@@ -341,7 +375,9 @@ tags:
   - DescribeVpcEndpoints (describeVpcEndpointsReq → describeVpcEndpointsResp)
   - DescribeVpcPeeringConnections (describeVPCPeeringsReq → describeVPCPeeringsResp)
   - DescribeVpcs (describeVpcsReq → describeVpcsResp)
+  - DescribeVpnGateways (describeVpnGatewaysReq → describeVpnGatewaysResp)
   - DetachInternetGateway (detachIGWReq → detachIGWResp)
+  - DetachVpnGateway (detachVpnGatewayReq → detachVpnGatewayResp)
   - DisassociateAddress (disassociateAddressReq → disassociateAddressResp)
   - DisassociateRouteTable (disassociateRouteTableReq → disassociateRouteTableResp)
   - ModifyInstanceAttribute (modifyInstanceAttributeReq → modifyInstanceAttributeResp)
@@ -481,25 +517,29 @@ tags:
   - UpdateNodegroupVersion (updateNodegroupVersionRequest → updateNodegroupVersionResponse)
   - UpdatePodIdentityAssociation (updatePodIdentityAssociationRequest → updatePodIdentityAssociationResponse)
 
-## elasticache — 20 ops, protocols: QueryXML
+## elasticache — 24 ops, protocols: QueryXML
   - AddTagsToResource (? → ?)
   - CreateCacheCluster (ecCreateCacheClusterReq → ecCreateCacheClusterResp)
   - CreateCacheParameterGroup (ecCreateCacheParameterGroupReq → ecCreateCacheParameterGroupResp)
   - CreateCacheSubnetGroup (ecCreateCacheSubnetGroupReq → ecCreateCacheSubnetGroupResp)
   - CreateReplicationGroup (ecCreateReplicationGroupReq → ecCreateReplicationGroupResp)
+  - CreateServerlessCache (? → ?)
   - DeleteCacheCluster (ecDeleteCacheClusterReq → ecDeleteCacheClusterResp)
   - DeleteCacheParameterGroup (ecDeleteCacheParameterGroupReq → ecDeleteCacheParameterGroupResp)
   - DeleteCacheSubnetGroup (ecDeleteCacheSubnetGroupReq → ecDeleteCacheSubnetGroupResp)
   - DeleteReplicationGroup (ecDeleteReplicationGroupReq → ecDeleteReplicationGroupResp)
+  - DeleteServerlessCache (? → ?)
   - DescribeCacheClusters (ecDescribeCacheClustersReq → ecDescribeCacheClustersResp)
   - DescribeCacheEngineVersions (? → ?)
   - DescribeCacheParameterGroups (ecDescribeCacheParameterGroupsReq → ecDescribeCacheParameterGroupsResp)
   - DescribeCacheParameters (ecDescribeCacheParametersReq → ecDescribeCacheParametersResp)
   - DescribeCacheSubnetGroups (ecDescribeCacheSubnetGroupsReq → ecDescribeCacheSubnetGroupsResp)
   - DescribeReplicationGroups (ecDescribeReplicationGroupsReq → ecDescribeReplicationGroupsResp)
+  - DescribeServerlessCaches (? → ?)
   - ListTagsForResource (? → ?)
   - ModifyCacheCluster (ecModifyCacheClusterReq → ecModifyCacheClusterResp)
   - ModifyReplicationGroup (ecModifyReplicationGroupReq → ecModifyReplicationGroupResp)
+  - ModifyServerlessCache (? → ?)
   - RebootCacheCluster (? → ?)
   - RemoveTagsFromResource (? → ?)
 
@@ -824,7 +864,7 @@ tags:
   - Subscribe (subscribeReq → subscribeResp)
   - Unsubscribe (unsubscribeReq → unsubscribeResp)
 
-## sqs — 20 ops, protocols: JSON10, JSON11, RPCv2CBOR, QueryXML
+## sqs — 21 ops, protocols: JSON10, JSON11, RPCv2CBOR, QueryXML
   - AddPermission (struct{} → struct{})
   - ChangeMessageVisibility (changeMessageVisibilityRequest → struct{})
   - ChangeMessageVisibilityBatch (changeMessageVisibilityBatchRequest → changeMessageVisibilityBatchResponse)
@@ -843,6 +883,7 @@ tags:
   - SendMessage (sendMessageRequest → sendMessageResponse)
   - SendMessageBatch (sendMessageBatchRequest → sendMessageBatchResponse)
   - SetQueueAttributes (setQueueAttributesRequest → struct{})
+  - StartMessageMoveTask (startMessageMoveTaskRequest → startMessageMoveTaskResponse)
   - TagQueue (tagQueueRequest → struct{})
   - UntagQueue (untagQueueRequest → struct{})
 
@@ -891,4 +932,4 @@ tags:
   - ListWebACLs (listWebACLsRequest → listWebACLsResponse)
 
 ---
-Total: 795 operations across 42 services
+Total: 834 operations across 43 services

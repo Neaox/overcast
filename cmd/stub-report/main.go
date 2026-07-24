@@ -1,12 +1,13 @@
 // Command stub-report scans the Overcast codebase for typed operation
 // manifests and prints a summary report per service.
 //
-// Phase 7 of the Smithy wire-protocol plan (docs/plans/smithy.md).
+// Phase 7 of the Smithy wire-protocol plan (docs/plans/level2-codegen.md).
 //
-// Usage: go run ./cmd/stub-report
+// Usage: go run ./cmd/stub-report [--workspace <dir>]
 package main
 
 import (
+	"flag"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -29,8 +30,26 @@ type opEntry struct {
 	respType string
 }
 
+// subServices maps virtual service names to their directory path under
+// internal/services/, for service packages that live nested inside another
+// service's directory (e.g. CloudWatch Logs lives at cloudwatch/logs rather
+// than a top-level internal/services/cloudwatch-logs). Mirrors the same map
+// in cmd/capgen/main.go.
+var subServices = map[string]string{
+	"cloudwatch-logs": filepath.Join("cloudwatch", "logs"),
+}
+
 func main() {
-	svcs, err := scanServices("/workspace/internal/services")
+	workspace := flag.String("workspace", ".", "workspace root (directory containing go.mod); defaults to the current directory")
+	flag.Parse()
+
+	root, err := findWorkspaceRoot(*workspace)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "workspace root: %v\n", err)
+		os.Exit(1)
+	}
+
+	svcs, err := scanServices(filepath.Join(root, "internal", "services"))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "scan: %v\n", err)
 		os.Exit(1)
@@ -55,27 +74,74 @@ func main() {
 	fmt.Printf("---\nTotal: %d operations across %d services\n", total, len(svcs))
 }
 
+// scanServices walks internal/services, one level deep, plus the known
+// subServices nested a level further (e.g. cloudwatch/logs), and returns an
+// entry for every directory that has a typed_ops.go file.
+//
+// It intentionally does not recurse arbitrarily deep: internal/services is a
+// flat-per-service layout (see AGENTS.md "Using subfolders as sub-packages
+// inside a service" as a mistake to avoid), and the only nested service
+// packages that exist today are declared in subServices. Walking unbounded
+// would risk picking up unrelated nested directories (e.g. template assets)
+// that happen to sit under a service directory.
 func scanServices(root string) ([]serviceOps, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err
 	}
-	var result []serviceOps
+	var names []string
 	for _, e := range entries {
-		if !e.IsDir() {
-			continue
+		if e.IsDir() {
+			names = append(names, e.Name())
 		}
-		svcDir := filepath.Join(root, e.Name())
+	}
+	for name := range subServices {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var result []serviceOps
+	for _, name := range names {
+		svcDir := filepath.Join(root, serviceDir(name))
 		opsFile := filepath.Join(svcDir, "typed_ops.go")
 		if _, err := os.Stat(opsFile); err != nil {
 			continue
 		}
-		svc := serviceOps{name: e.Name()}
+		svc := serviceOps{name: name}
 		svc.ops = extractOps(opsFile)
 		svc.protos = extractProtocols(opsFile)
 		result = append(result, svc)
 	}
 	return result, nil
+}
+
+// serviceDir returns the directory path for a service relative to
+// root/internal/services/.
+func serviceDir(name string) string {
+	if sub, ok := subServices[name]; ok {
+		return sub
+	}
+	return name
+}
+
+// findWorkspaceRoot walks up from start until it finds go.mod, so the tool
+// works from any working directory instead of assuming a fixed container
+// path.
+func findWorkspaceRoot(start string) (string, error) {
+	abs, err := filepath.Abs(start)
+	if err != nil {
+		return "", err
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(abs, "go.mod")); err == nil {
+			return abs, nil
+		}
+		parent := filepath.Dir(abs)
+		if parent == abs {
+			return "", fmt.Errorf("go.mod not found in %s or any parent", start)
+		}
+		abs = parent
+	}
 }
 
 func extractOps(filename string) []opEntry {
