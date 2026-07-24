@@ -23,11 +23,15 @@ if ($args.Count -eq 0) {
     exit 2
 }
 
+# GOFLAGS=-buildvcs=false: see docker-go.sh's comment — git inside the
+# container refuses the bind-mounted repo ("dubious ownership"), which
+# fails VCS stamping during `go build` of main packages.
 $dockerArgs = @(
     "run", "--rm",
     "-v", "${repoRoot}:/src",
     "-v", "${modCache}:/go/pkg/mod",
     "-v", "${buildCache}:/root/.cache/go-build",
+    "-e", "GOFLAGS=-buildvcs=false",
     "-w", "/src"
 )
 # Only attach a TTY for interactive sessions; plain command output pipes

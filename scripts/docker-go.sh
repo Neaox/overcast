@@ -51,11 +51,16 @@ fi
 
 # MSYS_NO_PATHCONV stops Git Bash from rewriting container paths like /src
 # into host paths. Harmless elsewhere.
+# GOFLAGS=-buildvcs=false: the bind-mounted repo is owned by a different
+# uid than the container's root, so git refuses to read it ("dubious
+# ownership") and `go build` of main packages fails trying to stamp VCS
+# info. Nothing built through this script needs VCS stamping.
 run() {
     MSYS_NO_PATHCONV=1 docker run --rm $tty_flags \
         -v "$repo_root:/src" \
         -v "$MOD_CACHE_VOLUME:/go/pkg/mod" \
         -v "$BUILD_CACHE_VOLUME:/root/.cache/go-build" \
+        -e GOFLAGS=-buildvcs=false \
         -w /src \
         "$IMAGE" "$@"
 }
