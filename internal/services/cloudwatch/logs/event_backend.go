@@ -72,6 +72,145 @@ type eventBackend interface {
 
 	// debugDeleteAll removes every persisted event, for /_debug/reset.
 	debugDeleteAll(ctx context.Context) error
+
+	// getEventsRange returns up to limit persisted events for one stream
+	// within the inclusive window [startTs, endTs], ordered by the stream's
+	// total (Timestamp, Seq) order — the same order the PRIMARY KEY/
+	// idx_logs_events_group index already sorts by (see migrations.go).
+	//
+	// forward=true selects the EARLIEST matching events: results ascending,
+	// starting strictly after `after` (when after.Valid) or from startTs
+	// otherwise.
+	// forward=false selects the LATEST matching events: results are still
+	// returned in ascending order (AWS always returns events chronologically
+	// regardless of paging direction), but the *selection* works backward
+	// from endTs — strictly before `after` (when after.Valid) or up to
+	// endTs otherwise.
+	//
+	// Implements the storage half of GetLogEvents' forward/backward paging
+	// (docs/plans/pagination-plan.md G1; docs/plans/storage-access-plan.md
+	// A4 — P2 structural pushdown). The full semantics additionally merge in
+	// the stream's unflushed write buffer — see logsStore.getEventsRangeMerged
+	// (P4 — overlay/buffer merge), not this method.
+	getEventsRange(ctx context.Context, region, group, stream string, startTs, endTs int64, after eventCursor, limit int, forward bool) ([]RangedEvent, error)
+
+	// getGroupEventsRange returns up to limit persisted events across every
+	// stream in (region, group) whose name has streamPrefix (empty =
+	// every stream), within the inclusive window [startTs, endTs], ordered
+	// ascending by the group's total (Timestamp, StreamName, Seq) order,
+	// starting strictly after `after` (when after.Valid) or from startTs
+	// otherwise.
+	//
+	// This is what turns FilterLogEvents into ONE group-range query instead
+	// of N per-stream full reads (docs/plans/storage-access-plan.md A4):
+	// filter-pattern matching, arbitrary stream-name-set selection (as
+	// opposed to a simple prefix), interleaving, and searchedLogStreams
+	// shaping all stay in the handler (behavioral, per the fidelity
+	// principle) — this method only pushes down the structural time-window
+	// + limit predicate using idx_logs_events_group.
+	getGroupEventsRange(ctx context.Context, region, group, streamPrefix string, startTs, endTs int64, after groupCursor, limit int) ([]GroupRangedEvent, error)
+}
+
+// RangedEvent is one persisted event returned by getEventsRange, tagged with
+// its per-(region,group,stream) monotonic sequence number — the same
+// tiebreaker sqlEventBackend already assigns at append time (the `seq`
+// column) and memEventBackend now assigns too (see memStoredEvent). Callers
+// building resumable cursors (GetLogEvents' f/·b/· tokens) need this to
+// resume deterministically past events that share a millisecond timestamp,
+// which is common under bursty writers (Lambda log batching, etc).
+type RangedEvent struct {
+	LogEvent
+	Seq int64
+}
+
+// GroupRangedEvent is one persisted event returned by getGroupEventsRange,
+// additionally tagged with the stream it came from — a single getEventsRange
+// call already implies the stream, but a group-wide query spans many.
+type GroupRangedEvent struct {
+	LogEvent
+	Seq        int64
+	StreamName string
+}
+
+// eventCursor is an exclusive resume position within one stream's
+// (Timestamp, Seq) total order, used by getEventsRange. Valid is false for
+// "no cursor" — start from the window's natural edge (the beginning when
+// reading forward, the end when reading backward).
+type eventCursor struct {
+	Valid     bool
+	Timestamp int64
+	Seq       int64
+}
+
+// groupCursor is eventCursor's group-wide analogue: a group-wide range read
+// orders by (Timestamp, StreamName, Seq), so resuming past a tie needs the
+// stream name too.
+type groupCursor struct {
+	Valid      bool
+	Timestamp  int64
+	StreamName string
+	Seq        int64
+}
+
+// cursorAllows reports whether (ts, seq) lies on the far side of `after` in
+// the direction implied by forward — i.e. whether it should be included in
+// a getEventsRange/getGroupEventsRange result page continuing from that
+// cursor. A zero-value (Valid == false) cursor allows everything (no
+// resume position yet).
+func cursorAllows(ts, seq int64, after eventCursor, forward bool) bool {
+	if !after.Valid {
+		return true
+	}
+	if forward {
+		if ts != after.Timestamp {
+			return ts > after.Timestamp
+		}
+		return seq > after.Seq
+	}
+	if ts != after.Timestamp {
+		return ts < after.Timestamp
+	}
+	return seq < after.Seq
+}
+
+// groupCursorAllows is cursorAllows' group-wide analogue: ties are broken by
+// (StreamName, Seq) instead of Seq alone, matching getGroupEventsRange's
+// documented (Timestamp, StreamName, Seq) total order. Group-wide range
+// reads are always forward-only (FilterLogEvents has no backward-paging
+// concept), so there is no `forward` parameter to thread through.
+func groupCursorAllows(ts int64, streamName string, seq int64, after groupCursor) bool {
+	if !after.Valid {
+		return true
+	}
+	if ts != after.Timestamp {
+		return ts > after.Timestamp
+	}
+	if streamName != after.StreamName {
+		return streamName > after.StreamName
+	}
+	return seq > after.Seq
+}
+
+// streamPrefixUpperBound returns the exclusive upper bound for a prefix
+// range query — mirrors internal/state's identically-behaved (but
+// unexported, and off-limits: this package must consume internal/state
+// frozen) prefixUpperBound. Duplicated locally rather than promoted since
+// only one consumer exists here (rule of two, storage-access-plan.md) and
+// the two packages must not couple over an unexported helper.
+// For example, "app/" -> "app0" (the byte after '/' is '0').
+// Returns "" if no upper bound exists (all bytes are 0xFF).
+func streamPrefixUpperBound(prefix string) string {
+	if prefix == "" {
+		return ""
+	}
+	b := []byte(prefix)
+	for i := len(b) - 1; i >= 0; i-- {
+		if b[i] < 0xFF {
+			b[i]++
+			return string(b[:i+1])
+		}
+	}
+	return ""
 }
 
 // debugEventRecord is one row surfaced by debugScan.
@@ -88,13 +227,27 @@ type debugEventRecord struct {
 // memEventBackend — zero-serialisation in-process store (memory-mode parity)
 // ---------------------------------------------------------------------------
 
+// memStoredEvent pairs a LogEvent with its per-stream monotonic sequence
+// number, assigned once at append time and never reassigned — mirrors
+// sqlEventBackend's `seq` column exactly, including the A1-style lesson that
+// the counter must never be derived from len(existing) (retention deletes
+// would then make a fresh seq collide with a surviving one).
+type memStoredEvent struct {
+	LogEvent
+	seq int64
+}
+
 type memEventBackend struct {
 	mu      sync.RWMutex
-	streams map[string][]LogEvent // key: memEventKey(region, group, stream)
+	streams map[string][]memStoredEvent // key: memEventKey(region, group, stream); kept sorted ascending by (Timestamp, seq)
+	nextSeq map[string]int64            // key: memEventKey(region, group, stream); never derived from len(streams[key])
 }
 
 func newMemEventBackend() *memEventBackend {
-	return &memEventBackend{streams: make(map[string][]LogEvent)}
+	return &memEventBackend{
+		streams: make(map[string][]memStoredEvent),
+		nextSeq: make(map[string]int64),
+	}
 }
 
 // memEventKey builds an opaque, collision-free map key for one stream. Uses
@@ -120,8 +273,20 @@ func (b *memEventBackend) appendEvents(_ context.Context, region, group, stream 
 	key := memEventKey(region, group, stream)
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	merged := append(b.streams[key], events...)
-	sort.SliceStable(merged, func(i, j int) bool { return merged[i].Timestamp < merged[j].Timestamp })
+	seq := b.nextSeq[key]
+	stored := make([]memStoredEvent, len(events))
+	for i, e := range events {
+		stored[i] = memStoredEvent{LogEvent: e, seq: seq}
+		seq++
+	}
+	b.nextSeq[key] = seq
+	merged := append(b.streams[key], stored...)
+	sort.SliceStable(merged, func(i, j int) bool {
+		if merged[i].Timestamp != merged[j].Timestamp {
+			return merged[i].Timestamp < merged[j].Timestamp
+		}
+		return merged[i].seq < merged[j].seq
+	})
 	b.streams[key] = merged
 	return nil
 }
@@ -132,7 +297,144 @@ func (b *memEventBackend) getEvents(_ context.Context, region, group, stream str
 	defer b.mu.RUnlock()
 	src := b.streams[key]
 	out := make([]LogEvent, len(src))
-	copy(out, src)
+	for i, e := range src {
+		out[i] = e.LogEvent
+	}
+	return out, nil
+}
+
+// getEventsRange implements the eventBackend interface method of the same
+// name (see its doc comment there) against the in-process map. b.streams'
+// per-stream slice is already sorted ascending by (Timestamp, seq), so both
+// directions are a single linear scan with early termination.
+func (b *memEventBackend) getEventsRange(_ context.Context, region, group, stream string, startTs, endTs int64, after eventCursor, limit int, forward bool) ([]RangedEvent, error) {
+	key := memEventKey(region, group, stream)
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	src := b.streams[key]
+
+	if forward {
+		out := make([]RangedEvent, 0)
+		for _, e := range src {
+			if e.Timestamp > endTs {
+				break
+			}
+			if e.Timestamp < startTs {
+				continue
+			}
+			if !cursorAllows(e.Timestamp, e.seq, after, true) {
+				continue
+			}
+			out = append(out, RangedEvent{LogEvent: e.LogEvent, Seq: e.seq})
+			if limit > 0 && len(out) >= limit {
+				break
+			}
+		}
+		return out, nil
+	}
+
+	// Backward: walk from the end, collecting the LAST `limit` matches, then
+	// reverse to ascending order — AWS always returns events chronologically
+	// ascending regardless of paging direction.
+	var rev []RangedEvent
+	for i := len(src) - 1; i >= 0; i-- {
+		e := src[i]
+		if e.Timestamp < startTs {
+			break
+		}
+		if e.Timestamp > endTs {
+			continue
+		}
+		if !cursorAllows(e.Timestamp, e.seq, after, false) {
+			continue
+		}
+		rev = append(rev, RangedEvent{LogEvent: e.LogEvent, Seq: e.seq})
+		if limit > 0 && len(rev) >= limit {
+			break
+		}
+	}
+	out := make([]RangedEvent, len(rev))
+	for i, e := range rev {
+		out[len(rev)-1-i] = e
+	}
+	return out, nil
+}
+
+// getGroupEventsRange implements the eventBackend interface method of the
+// same name (see its doc comment there) against the in-process map: a
+// k-way merge of every matching stream's already-sorted slice, each
+// pre-positioned (via a starting index resolved once up front) past
+// startTs/the cursor, so the merge loop itself never re-examines an
+// already-excluded event.
+func (b *memEventBackend) getGroupEventsRange(_ context.Context, region, group, streamPrefix string, startTs, endTs int64, after groupCursor, limit int) ([]GroupRangedEvent, error) {
+	prefix := region + "\x00" + group + "\x00"
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	type streamCursor struct {
+		name   string
+		events []memStoredEvent
+		idx    int
+	}
+	var streams []streamCursor
+	for key, events := range b.streams {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		_, _, streamName := splitMemEventKey(key)
+		if streamPrefix != "" && !strings.HasPrefix(streamName, streamPrefix) {
+			continue
+		}
+		// Position idx at the first event satisfying startTs/the cursor —
+		// binary search on Timestamp>=startTs (monotonic since ascending),
+		// then a short linear advance past any tied-at-cursor entries.
+		startIdx := sort.Search(len(events), func(i int) bool { return events[i].Timestamp >= startTs })
+		for startIdx < len(events) && !groupCursorAllows(events[startIdx].Timestamp, streamName, events[startIdx].seq, after) {
+			startIdx++
+		}
+		streams = append(streams, streamCursor{name: streamName, events: events, idx: startIdx})
+	}
+
+	out := make([]GroupRangedEvent, 0)
+	for {
+		best := -1
+		for si := range streams {
+			cs := &streams[si]
+			if cs.idx >= len(cs.events) || cs.events[cs.idx].Timestamp > endTs {
+				continue
+			}
+			if best == -1 {
+				best = si
+				continue
+			}
+			a, bcur := cs.events[cs.idx], streams[best].events[streams[best].idx]
+			if a.Timestamp != bcur.Timestamp {
+				if a.Timestamp < bcur.Timestamp {
+					best = si
+				}
+				continue
+			}
+			if cs.name != streams[best].name {
+				if cs.name < streams[best].name {
+					best = si
+				}
+				continue
+			}
+			if a.seq < bcur.seq {
+				best = si
+			}
+		}
+		if best == -1 {
+			break
+		}
+		cs := &streams[best]
+		e := cs.events[cs.idx]
+		out = append(out, GroupRangedEvent{LogEvent: e.LogEvent, Seq: e.seq, StreamName: cs.name})
+		cs.idx++
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
 	return out, nil
 }
 
@@ -140,6 +442,11 @@ func (b *memEventBackend) deleteStream(_ context.Context, region, group, stream 
 	key := memEventKey(region, group, stream)
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	// Deliberately NOT clearing b.nextSeq[key] here: per-stream seq must stay
+	// monotonic even across a delete+recreate of the same stream name (the
+	// same A1 lesson as Kinesis's per-shard counter — deriving a fresh
+	// counter from post-delete state risks colliding with, or invalidating,
+	// any cursor token issued before the delete).
 	delete(b.streams, key)
 	return nil
 }
@@ -150,7 +457,7 @@ func (b *memEventBackend) deleteGroup(_ context.Context, region, group string) e
 	defer b.mu.Unlock()
 	for k := range b.streams {
 		if strings.HasPrefix(k, prefix) {
-			delete(b.streams, k)
+			delete(b.streams, k) // see deleteStream: nextSeq is intentionally left intact
 		}
 	}
 	return nil
@@ -195,14 +502,14 @@ func (b *memEventBackend) debugScan(_ context.Context, limit int) ([]debugEventR
 outer:
 	for _, k := range keys {
 		region, group, stream := splitMemEventKey(k)
-		for seq, e := range b.streams[k] {
+		for _, e := range b.streams[k] {
 			if limit > 0 && len(records) >= limit {
 				truncated = true
 				break outer
 			}
 			records = append(records, debugEventRecord{
 				Region: region, Group: group, Stream: stream,
-				Timestamp: e.Timestamp, Seq: int64(seq), Message: e.Message,
+				Timestamp: e.Timestamp, Seq: e.seq, Message: e.Message,
 			})
 		}
 	}
@@ -212,7 +519,8 @@ outer:
 func (b *memEventBackend) debugDeleteAll(_ context.Context) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.streams = make(map[string][]LogEvent)
+	b.streams = make(map[string][]memStoredEvent)
+	b.nextSeq = make(map[string]int64)
 	return nil
 }
 
@@ -327,6 +635,119 @@ func (b *sqlEventBackend) getEvents(ctx context.Context, region, group, stream s
 		return []LogEvent{}, nil
 	}
 	return events, nil
+}
+
+// getEventsRange implements the eventBackend interface method of the same
+// name (see its doc comment there) as a single indexed range query against
+// logs_events' PRIMARY KEY (region, group_name, stream_name, ts, seq) — the
+// equality-matched region/group/stream prefix plus a ts range is exactly
+// what that index serves, per storage-access-plan.md P2.
+func (b *sqlEventBackend) getEventsRange(ctx context.Context, region, group, stream string, startTs, endTs int64, after eventCursor, limit int, forward bool) ([]RangedEvent, error) {
+	if err := b.init(); err != nil {
+		return nil, err
+	}
+	query := `SELECT ts, seq, ingestion_ts, message FROM logs_events
+		WHERE region = ? AND group_name = ? AND stream_name = ? AND ts >= ? AND ts <= ?`
+	args := []any{region, group, stream, startTs, endTs}
+	if after.Valid {
+		if forward {
+			query += ` AND (ts > ? OR (ts = ? AND seq > ?))`
+		} else {
+			query += ` AND (ts < ? OR (ts = ? AND seq < ?))`
+		}
+		args = append(args, after.Timestamp, after.Timestamp, after.Seq)
+	}
+	if forward {
+		query += ` ORDER BY ts ASC, seq ASC`
+	} else {
+		query += ` ORDER BY ts DESC, seq DESC`
+	}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+
+	rows, err := b.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("cloudwatch logs get events range [%s/%s/%s]: %w", region, group, stream, err)
+	}
+	defer rows.Close()
+
+	var out []RangedEvent
+	for rows.Next() {
+		var e RangedEvent
+		if err := rows.Scan(&e.Timestamp, &e.Seq, &e.IngestionTime, &e.Message); err != nil {
+			return nil, fmt.Errorf("cloudwatch logs get events range [%s/%s/%s]: scan: %w", region, group, stream, err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("cloudwatch logs get events range [%s/%s/%s]: rows: %w", region, group, stream, err)
+	}
+	if !forward {
+		// Query ran DESC (closest-to-cursor/most-recent first); reverse to
+		// the AWS-documented chronological-ascending response order.
+		for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+			out[i], out[j] = out[j], out[i]
+		}
+	}
+	if out == nil {
+		return []RangedEvent{}, nil
+	}
+	return out, nil
+}
+
+// getGroupEventsRange implements the eventBackend interface method of the
+// same name (see its doc comment there) as a single indexed range query
+// against idx_logs_events_group (region, group_name, ts) — the whole point
+// of that index, built in migrations.go specifically for this query and
+// previously unused (storage-access-plan.md A4's evidence).
+func (b *sqlEventBackend) getGroupEventsRange(ctx context.Context, region, group, streamPrefix string, startTs, endTs int64, after groupCursor, limit int) ([]GroupRangedEvent, error) {
+	if err := b.init(); err != nil {
+		return nil, err
+	}
+	query := `SELECT ts, seq, ingestion_ts, message, stream_name FROM logs_events
+		WHERE region = ? AND group_name = ? AND ts >= ? AND ts <= ?`
+	args := []any{region, group, startTs, endTs}
+	if streamPrefix != "" {
+		query += ` AND stream_name >= ?`
+		args = append(args, streamPrefix)
+		if upper := streamPrefixUpperBound(streamPrefix); upper != "" {
+			query += ` AND stream_name < ?`
+			args = append(args, upper)
+		}
+	}
+	if after.Valid {
+		query += ` AND (ts > ? OR (ts = ? AND (stream_name > ? OR (stream_name = ? AND seq > ?))))`
+		args = append(args, after.Timestamp, after.Timestamp, after.StreamName, after.StreamName, after.Seq)
+	}
+	query += ` ORDER BY ts ASC, stream_name ASC, seq ASC`
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+
+	rows, err := b.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("cloudwatch logs get group events range [%s/%s]: %w", region, group, err)
+	}
+	defer rows.Close()
+
+	var out []GroupRangedEvent
+	for rows.Next() {
+		var e GroupRangedEvent
+		if err := rows.Scan(&e.Timestamp, &e.Seq, &e.IngestionTime, &e.Message, &e.StreamName); err != nil {
+			return nil, fmt.Errorf("cloudwatch logs get group events range [%s/%s]: scan: %w", region, group, err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("cloudwatch logs get group events range [%s/%s]: rows: %w", region, group, err)
+	}
+	if out == nil {
+		return []GroupRangedEvent{}, nil
+	}
+	return out, nil
 }
 
 func (b *sqlEventBackend) deleteStream(ctx context.Context, region, group, stream string) error {

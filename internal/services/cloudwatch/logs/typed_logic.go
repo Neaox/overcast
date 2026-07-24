@@ -3,6 +3,7 @@ package logs
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 
@@ -130,6 +131,7 @@ type searchedLogStreamResponse struct {
 type filterLogEventsResponse struct {
 	Events             []filteredEventResponse     `json:"events" cbor:"events"`
 	SearchedLogStreams []searchedLogStreamResponse `json:"searchedLogStreams" cbor:"searchedLogStreams"`
+	NextToken          string                      `json:"nextToken,omitempty" cbor:"nextToken,omitempty"`
 }
 
 type putRetentionPolicyRequest struct {
@@ -342,6 +344,35 @@ func (h *Handler) putLogEventsTyped(ctx context.Context, req *putLogEventsReques
 	return &putLogEventsResponse{NextSequenceToken: ls.UploadSequenceToken}, nil
 }
 
+// GetLogEvents Limit — AWS docs: "Minimum value of 1. Maximum value of
+// 10000." The default when the client omits Limit is documented as "as many
+// log events as can fit in a response size of 1 MB, up to 10,000 log
+// events"; this emulator doesn't track response byte size, so it uses the
+// 10,000-event cap as the default too.
+// https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_GetLogEvents.html
+const (
+	getLogEventsDefaultLimit = 10000
+	getLogEventsMaxLimit     = 10000
+)
+
+// getLogEventsTyped implements GetLogEvents' full pagination contract
+// (pagination-plan.md G1) against the range+limit pushdown backend
+// (storage-access-plan.md A4):
+//
+//   - Limit is honored (default/cap 10,000, above).
+//   - StartFromHead selects direction on a fresh call (default false —
+//     "the latest log events are returned first"); once a nextToken is
+//     supplied, the token's own "f/"/"b/" prefix determines direction and
+//     StartFromHead is ignored, matching real GetLogEvents' documented
+//     token-driven paging.
+//   - nextForwardToken/nextBackwardToken always encode a real (Timestamp,
+//     Seq) resume position (tokens.go) — never the old synthesized
+//     f/<count>/b/0 placeholders.
+//   - Same-token-when-exhausted: if the client polls with a token and finds
+//     nothing new in that direction, this operation echoes the same token
+//     back rather than a fresh one — the standard CloudWatch Logs tail-loop
+//     termination signal SDK paginators rely on (pagination-plan.md's
+//     accept criterion for G1).
 func (h *Handler) getLogEventsTyped(ctx context.Context, req *getLogEventsRequest) (*getLogEventsResponse, *protocol.AWSError) {
 	if req.LogGroupName == "" || req.LogStreamName == "" {
 		return nil, errInvalidParameter("logGroupName and logStreamName are required")
@@ -352,31 +383,126 @@ func (h *Handler) getLogEventsTyped(ctx context.Context, req *getLogEventsReques
 	if _, aerr := h.store.getLogStream(ctx, req.LogGroupName, req.LogStreamName); aerr != nil {
 		return nil, aerr
 	}
-	allEvents, aerr := h.store.getEvents(ctx, req.LogGroupName, req.LogStreamName)
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = getLogEventsDefaultLimit
+	}
+	if limit > getLogEventsMaxLimit {
+		limit = getLogEventsMaxLimit
+	}
+
+	// startTime is inclusive; endTime is EXCLUSIVE for GetLogEvents per AWS
+	// docs ("events with a timestamp equal to or later than this time are
+	// not exported") — distinct from FilterLogEvents' inclusive endTime,
+	// see filterLogEventsTyped below. getEventsRange's own window contract
+	// is inclusive-both-ends (matching the A5 metrics-range precedent), so
+	// the exclusive upper bound is translated to inclusive right here.
+	startTs := int64(math.MinInt64)
+	if req.StartTime != nil {
+		startTs = *req.StartTime
+	}
+	endTs := int64(math.MaxInt64)
+	if req.EndTime != nil {
+		endTs = *req.EndTime - 1
+	}
+
+	forward := req.StartFromHead != nil && *req.StartFromHead
+	var cursor eventCursor
+	haveToken := req.NextToken != ""
+	if haveToken {
+		f, c, ok := decodeLogEventsToken(req.NextToken)
+		if !ok {
+			return nil, errInvalidParameter("The specified nextToken is invalid.")
+		}
+		forward = f
+		cursor = c
+	}
+
+	events, aerr := h.store.getEventsRangeMerged(ctx, req.LogGroupName, req.LogStreamName, startTs, endTs, cursor, limit, forward)
 	if aerr != nil {
 		return nil, aerr
 	}
-	filtered := make([]LogEvent, 0, len(allEvents))
-	for _, e := range allEvents {
-		if req.StartTime != nil && e.Timestamp < *req.StartTime {
-			continue
-		}
-		if req.EndTime != nil && e.Timestamp >= *req.EndTime {
-			continue
-		}
-		filtered = append(filtered, e)
+
+	out := make([]logEventResponse, 0, len(events))
+	for _, e := range events {
+		out = append(out, logEventResponse{Timestamp: e.Timestamp, Message: e.Message, IngestionTime: e.IngestionTime})
 	}
-	out := make([]logEventResponse, 0, len(filtered))
-	for _, e := range filtered {
-		out = append(out, logEventResponse(e))
+
+	var fwdToken, bwdToken string
+	switch {
+	case len(events) == 0 && haveToken:
+		// Same-token-when-exhausted: the direction the client was polling
+		// found nothing new — echo its own token back unchanged. The other
+		// direction's token still reflects the (unchanged) cursor position
+		// so flipping direction from here remains well-defined.
+		if forward {
+			fwdToken = req.NextToken
+			bwdToken = encodeLogEventsToken(false, cursor.Timestamp, cursor.Seq)
+		} else {
+			bwdToken = req.NextToken
+			fwdToken = encodeLogEventsToken(true, cursor.Timestamp, cursor.Seq)
+		}
+	case len(events) == 0:
+		// Fresh call (no input token), nothing in the window at all —
+		// anchor both tokens on the window's own edges (seq sentinels
+		// chosen so a real event later landing exactly at that edge is
+		// still included once ingested) so a subsequent call resumes from
+		// the right place instead of a meaningless placeholder.
+		fwdToken = encodeLogEventsToken(true, startTs, -1)
+		bwdToken = encodeLogEventsToken(false, endTs, math.MaxInt64)
+	default:
+		first, last := events[0], events[len(events)-1]
+		fwdToken = encodeLogEventsToken(true, last.Timestamp, last.Seq)
+		bwdToken = encodeLogEventsToken(false, first.Timestamp, first.Seq)
 	}
+
 	return &getLogEventsResponse{
 		Events:            out,
-		NextForwardToken:  fmt.Sprintf("f/%d", len(allEvents)),
-		NextBackwardToken: "b/0",
+		NextForwardToken:  fwdToken,
+		NextBackwardToken: bwdToken,
 	}, nil
 }
 
+// FilterLogEvents Limit — AWS docs: "The maximum number of events to
+// return. ... Valid Range: Minimum value of 1. Maximum value of 10000." The
+// default when omitted is documented as "as many events as can fit in a
+// response size of 1MB, up to 10,000" — approximated here (no response byte
+// tracking) as the 10,000-event cap.
+// https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_FilterLogEvents.html
+const (
+	filterLogEventsDefaultLimit = 10000
+	filterLogEventsMaxLimit     = 10000
+
+	// filterLogEventsRawBatchSize is how many raw (pre-filter-pattern)
+	// events are pulled from storage per internal group-range round trip
+	// while hunting for `limit` matches — large enough that a typical
+	// filter (matching a meaningful fraction of events) fills a page in one
+	// or two round trips, small enough to keep any single backend call
+	// bounded.
+	filterLogEventsRawBatchSize = 1000
+
+	// filterLogEventsScanBudget bounds how many RAW events one
+	// FilterLogEvents call reads before returning a resumable nextToken —
+	// this emulator's event-count analogue of AWS's documented ~1MB-per-call
+	// read budget (no response byte tracking here). Without this, a narrow
+	// filter pattern over a huge time window would turn one API call into
+	// an unbounded server-side scan; with it, the call returns whatever
+	// matches it found within budget plus a nextToken, matching AWS's own
+	// documented "doesn't guarantee exactly limit matching events per call"
+	// behavior.
+	filterLogEventsScanBudget = 50000
+)
+
+// filterLogEventsTyped implements FilterLogEvents' limit + nextToken
+// contract (pagination-plan.md G6) on top of storage-access-plan.md A4's
+// group-range pushdown: ONE group-wide range query (getGroupEventsRangeMerged,
+// looped internally only to accumulate enough MATCHED events or exhaust the
+// scan budget) replaces the old per-stream full-history reads. Filter
+// pattern matching, stream-name-set selection, interleaving, and
+// searchedLogStreams shaping stay here (behavioral, per the fidelity
+// principle) — only the structural time-window + limit predicate is pushed
+// down.
 func (h *Handler) filterLogEventsTyped(ctx context.Context, req *filterLogEventsRequest) (*filterLogEventsResponse, *protocol.AWSError) {
 	if req.LogGroupName == "" {
 		return nil, errInvalidParameter("logGroupName is required")
@@ -388,12 +514,17 @@ func (h *Handler) filterLogEventsTyped(ctx context.Context, req *filterLogEvents
 	if _, aerr := h.store.getLogGroup(ctx, req.LogGroupName); aerr != nil {
 		return nil, aerr
 	}
+
+	// Resolve the candidate stream set exactly as before (behavioral,
+	// unchanged): explicit LogStreamNames wins, else every stream matching
+	// LogStreamNamePrefix.
 	var streams []*LogStream
-	if len(req.LogStreamNames) > 0 {
+	explicitNames := len(req.LogStreamNames) > 0
+	if explicitNames {
 		for _, name := range req.LogStreamNames {
 			ls, aerr := h.store.getLogStream(ctx, req.LogGroupName, name)
 			if aerr != nil {
-				continue
+				continue // skip missing streams (AWS behavior)
 			}
 			streams = append(streams, ls)
 		}
@@ -404,8 +535,46 @@ func (h *Handler) filterLogEventsTyped(ctx context.Context, req *filterLogEvents
 			return nil, aerr
 		}
 	}
-	var matched []filteredEventResponse
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = filterLogEventsDefaultLimit
+	}
+	if limit > filterLogEventsMaxLimit {
+		limit = filterLogEventsMaxLimit
+	}
+
+	startTs := int64(math.MinInt64)
+	if req.StartTime != nil {
+		startTs = *req.StartTime
+	}
+	// endTime is INCLUSIVE for FilterLogEvents (unlike GetLogEvents) —
+	// pinned by the existing TestFilterLogEvents_timeRange integration test
+	// and preserved unchanged by this range-pushdown rewrite.
+	endTs := int64(math.MaxInt64)
+	if req.EndTime != nil {
+		endTs = *req.EndTime
+	}
+
+	var cursor groupCursor
+	if req.NextToken != "" {
+		c, ok := decodeFilterEventsToken(req.NextToken)
+		if !ok {
+			return nil, errInvalidParameter("The specified nextToken is invalid.")
+		}
+		cursor = c
+	}
+
+	// A stream whose own [FirstEventTimestamp, LastEventTimestamp] provably
+	// can't overlap the query window is fully searched without ever being
+	// queried (existing behavior, preserved); every other candidate is
+	// "relevant" — its events come back via the group-range query below —
+	// and, since that query already covers the whole window in one pass
+	// (not a partial per-stream cursor), it too is fully searched by the
+	// time this call returns.
 	searched := make([]searchedLogStreamResponse, 0, len(streams))
+	relevant := make(map[string]bool, len(streams))
+	relevantNames := make([]string, 0, len(streams))
 	for _, ls := range streams {
 		if req.StartTime != nil && ls.LastEventTimestamp > 0 && ls.LastEventTimestamp < *req.StartTime {
 			searched = append(searched, searchedLogStreamResponse{LogStreamName: ls.Name, SearchedCompletely: true})
@@ -415,23 +584,46 @@ func (h *Handler) filterLogEventsTyped(ctx context.Context, req *filterLogEvents
 			searched = append(searched, searchedLogStreamResponse{LogStreamName: ls.Name, SearchedCompletely: true})
 			continue
 		}
-		events, aerr := h.store.getEvents(ctx, req.LogGroupName, ls.Name)
+		relevant[ls.Name] = true
+		relevantNames = append(relevantNames, ls.Name)
+		searched = append(searched, searchedLogStreamResponse{LogStreamName: ls.Name, SearchedCompletely: true})
+	}
+
+	// An explicit LogStreamNames set isn't expressible as a single SQL
+	// prefix, so that case queries the whole group (streamPrefix "") and
+	// filters to the requested names in Go below — less efficient than the
+	// prefix/no-filter case when the group has many unrelated streams, but
+	// still bounded by the time window (never a full-history read) and
+	// still correct. LogStreamNamePrefix, the far more common filter shape,
+	// pushes all the way down to SQL (see sqlEventBackend.getGroupEventsRange).
+	streamPrefix := ""
+	if !explicitNames {
+		streamPrefix = req.LogStreamNamePrefix
+	}
+
+	var matched []filteredEventResponse
+	var lastScanned GroupRangedEvent
+	haveLastScanned := false
+	rawScanned := 0
+	exhausted := false
+
+scanLoop:
+	for rawScanned < filterLogEventsScanBudget {
+		batch, aerr := h.store.getGroupEventsRangeMerged(ctx, req.LogGroupName, streamPrefix, relevantNames, startTs, endTs, cursor, filterLogEventsRawBatchSize)
 		if aerr != nil {
-			continue
+			return nil, aerr
 		}
-		startIdx := 0
-		if req.StartTime != nil {
-			startIdx = sort.Search(len(events), func(i int) bool {
-				return events[i].Timestamp >= *req.StartTime
-			})
+		if len(batch) == 0 {
+			exhausted = true
+			break
 		}
-		endIdx := len(events)
-		if req.EndTime != nil {
-			endIdx = sort.Search(len(events), func(i int) bool {
-				return events[i].Timestamp > *req.EndTime
-			})
-		}
-		for _, e := range events[startIdx:endIdx] {
+		for _, e := range batch {
+			rawScanned++
+			lastScanned = e
+			haveLastScanned = true
+			if explicitNames && !relevant[e.StreamName] {
+				continue
+			}
 			if !matcher(e.Message) {
 				continue
 			}
@@ -439,13 +631,25 @@ func (h *Handler) filterLogEventsTyped(ctx context.Context, req *filterLogEvents
 				Timestamp:     e.Timestamp,
 				Message:       e.Message,
 				IngestionTime: e.IngestionTime,
-				LogStreamName: ls.Name,
+				LogStreamName: e.StreamName,
 			})
+			if len(matched) >= limit {
+				break scanLoop
+			}
 		}
-		searched = append(searched, searchedLogStreamResponse{LogStreamName: ls.Name, SearchedCompletely: true})
+		cursor = groupCursor{Valid: true, Timestamp: lastScanned.Timestamp, StreamName: lastScanned.StreamName, Seq: lastScanned.Seq}
+		if len(batch) < filterLogEventsRawBatchSize {
+			exhausted = true
+			break
+		}
 	}
-	sort.Slice(matched, func(i, j int) bool { return matched[i].Timestamp < matched[j].Timestamp })
-	return &filterLogEventsResponse{Events: matched, SearchedLogStreams: searched}, nil
+
+	var nextToken string
+	if haveLastScanned && !exhausted {
+		nextToken = encodeFilterEventsToken(lastScanned.Timestamp, lastScanned.StreamName, lastScanned.Seq)
+	}
+
+	return &filterLogEventsResponse{Events: matched, SearchedLogStreams: searched, NextToken: nextToken}, nil
 }
 
 func (h *Handler) putRetentionPolicyTyped(ctx context.Context, req *putRetentionPolicyRequest) (*struct{}, *protocol.AWSError) {
