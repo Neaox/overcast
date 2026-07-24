@@ -136,7 +136,7 @@ func newSQLiteStoreFile(dbPath, syncMode string, logger *zap.Logger) (*SQLiteSto
 // does — its writes go straight to SQLite — so a fixed default interval is
 // used rather than adding a second, SQLiteStore-specific config knob
 // alongside HybridStore's OVERCAST_HYBRID_MAINTENANCE_INTERVAL; see
-// docs/storage-plan.md item 3.5 for the reasoning.
+// docs/plans/storage-plan.md item 3.5 for the reasoning.
 func (s *SQLiteStore) runMaintenance(ctx context.Context) {
 	defer s.maintenanceWG.Done()
 	ticker := time.NewTicker(defaultMaintenanceInterval)

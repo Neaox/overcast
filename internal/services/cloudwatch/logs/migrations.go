@@ -1,7 +1,7 @@
 //go:build !nosqlite
 
 // Package logs: migration registration for the logs_events dedicated table
-// (docs/storage-plan.md Phase 2 item 2.3).
+// (docs/plans/storage-plan.md Phase 2 item 2.3).
 //
 // Build-tagged out of `-tags nosqlite` builds because it depends on
 // state.Migration / state.RegisterMigration, which are themselves only

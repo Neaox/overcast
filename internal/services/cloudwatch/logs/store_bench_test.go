@@ -1,7 +1,7 @@
 package logs
 
 // Benchmarks for the dedicated-table CloudWatch Logs event storage model
-// (docs/storage-plan.md Phase 2.3), re-run against the same shapes as the
+// (docs/plans/storage-plan.md Phase 2.3), re-run against the same shapes as the
 // Phase 2.1 baseline that measured the OLD blob-per-stream design (see git
 // history for this file's pre-2.3 version, and the PR description for the
 // recorded before/after numbers). See docs/performance.md "Documenting

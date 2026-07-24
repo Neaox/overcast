@@ -1,21 +1,9 @@
----
-title: "Storage access patterns plan"
-description: "Standard, reusable patterns for services consuming the storage layer — key-as-index, structural pushdown, cursor pagination, buffer-merge — with an audit-backed item list and anti-shoehorn rules."
-section: "Development"
-tags:
-  - docs
-  - storage
-  - state
-  - patterns
-  - plan
----
-
 # Storage access patterns — standardization plan
 
 > **Status:** planned — no items started. Audit completed 2026-07-24 (agent sweep of every service's storage reads/writes; evidence file:line below).
 > **Scope:** how services *consume* `internal/state` and the dedicated SQL tables — read shapes, write shapes, and the shared helpers they should go through. The storage *layer* itself is done ([storage-plan.md](./storage-plan.md), Phases 1–3); this plan governs usage on top of it.
 > **Relationship to other plans:** [storage-plan.md](./storage-plan.md) items 3.3/3.10/3.12 stay there (benchmark-gated layer work; 3.10's SQS table is cross-referenced by A-items here, not duplicated). Wire-level pagination fidelity (ignored `Limit`/`NextToken` params, truncation-flag correctness) is tracked in the pagination plan — items here note when they *enable* a pagination fix but the wire contract itself is that plan's acceptance criterion.
-> **Audience:** any contributor or agent. [CONTRIBUTING.md](../CONTRIBUTING.md) and [AGENTS.md](../AGENTS.md) rules apply throughout (failing test first, `clock.Clock`, scoped verification, benchmark discipline per [storage-test-plan.md](./storage-test-plan.md)).
+> **Audience:** any contributor or agent. [CONTRIBUTING.md](../../CONTRIBUTING.md) and [AGENTS.md](../../AGENTS.md) rules apply throughout (failing test first, `clock.Clock`, scoped verification, benchmark discipline per [storage-test-plan.md](./storage-test-plan.md)).
 
 ---
 
@@ -48,9 +36,9 @@ A helper graduates to `serviceutil` when its **second** consumer appears, not be
 | # | Pattern | One-line rule | Reusable home | In-repo precedent |
 |---|---------|---------------|---------------|-------------------|
 | P1 | **Key-as-index** | Encode the query dimension (time, sequence) as a fixed-width sortable key suffix; read with prefix + key range (`ScanPage`/`startAfter`) instead of scan-and-decode-everything | `serviceutil` sortable-suffix helper (see M2) | CFN events `uniqueSuffix` (1.9); metricdata `…/<UnixNano>` keys |
-| P2 | **Structural pushdown** | Dedicated-table reads take range + limit parameters in SQL; never fetch full history when the API has a window | Per-backend by nature; the convention is a `…Range(ctx, …, startTs, endTs, limit)` method on the narrow backend interface | DynamoDB Streams `GetRecords`: `WHERE table_name=? AND id>? ORDER BY id ASC LIMIT ?` ([stream_store.go:177-183](../internal/services/dynamodb/stream_store.go)) — **the model implementation** |
+| P2 | **Structural pushdown** | Dedicated-table reads take range + limit parameters in SQL; never fetch full history when the API has a window | Per-backend by nature; the convention is a `…Range(ctx, …, startTs, endTs, limit)` method on the narrow backend interface | DynamoDB Streams `GetRecords`: `WHERE table_name=? AND id>? ORDER BY id ASC LIMIT ?` ([stream_store.go:177-183](../../internal/services/dynamodb/stream_store.go)) — **the model implementation** |
 | P3 | **Cursor-in-token** | AWS continuation tokens are opaque by contract — encode a storage cursor in them; never materialize-then-slice unbounded data | `serviceutil` token codec (see M1) | `ScanPage`'s `startAfter`/`nextKey` contract |
-| P4 | **Overlay/buffer merge** | Any pushdown must preserve read-your-writes through write buffers and pending overlays | Per-buffer today (rule of two: extract `MergeSorted[T]` only when a second consumer appears) | `hybridScanPageMerged` ([hybrid.go](../internal/state/hybrid.go)); logs `mergeEventsSorted` |
+| P4 | **Overlay/buffer merge** | Any pushdown must preserve read-your-writes through write buffers and pending overlays | Per-buffer today (rule of two: extract `MergeSorted[T]` only when a second consumer appears) | `hybridScanPageMerged` ([hybrid.go](../../internal/state/hybrid.go)); logs `mergeEventsSorted` |
 | P5 | **Scan, not List+Get** | One round trip for list reads (done branch-wide in 3.1 — standing rule for new code) | n/a | storage-plan 3.1 |
 | P6 | **Narrow backend interfaces** | Services own small consumer-side interfaces (`eventBackend`, `itemBackend`); never widen `state.Store` for one service's need | n/a (SOLID convention) | logs/dynamodb backends |
 
@@ -60,7 +48,7 @@ A helper graduates to `serviceutil` when its **second** consumer appears, not be
 One codec for opaque continuation tokens: encode/decode a storage cursor (string key or small struct), tolerant decode that maps garbage tokens to the caller-supplied AWS error. Written once, used by every item below that emits tokens and by the pagination plan's fidelity fixes. **Do first** — it is the DRY chokepoint; five handlers inventing token encoding is the failure mode this plan exists to prevent.
 
 ### M2 — promote the sortable-suffix helper to `serviceutil`
-`uniqueSuffix` exists twice by deliberate copy (Lambda [store.go:142-149](../internal/services/lambda/store.go), CFN [store.go:115-118](../internal/services/cloudformation/store.go)); Kinesis's A1 fix is a third consumer. Rule of two is satisfied; promote once, with the fixed-width/zero-padding requirement documented (lexicographic order must equal numeric order — 19-digit nanos hold until 2286).
+`uniqueSuffix` exists twice by deliberate copy (Lambda [store.go:142-149](../../internal/services/lambda/store.go), CFN [store.go:115-118](../../internal/services/cloudformation/store.go)); Kinesis's A1 fix is a third consumer. Rule of two is satisfied; promote once, with the fixed-width/zero-padding requirement documented (lexicographic order must equal numeric order — 19-digit nanos hold until 2286).
 
 ---
 
@@ -68,7 +56,7 @@ One codec for opaque continuation tokens: encode/decode a storage cursor (string
 
 ### A1 — Kinesis: stored per-shard sequence counter  **[correctness + hot write path — do first]**
 
-**Evidence.** Every `PutRecord` calls `listRecords` — a full-shard `Scan` + JSON decode + sort — solely so `nextSeqNo` can use `len(existing)` as the next counter ([typed_logic.go:254](../internal/services/kinesis/typed_logic.go), [store.go:243-246](../internal/services/kinesis/store.go)); `PutRecords` repeats this **per record in the batch** ([typed_logic.go:284](../internal/services/kinesis/typed_logic.go)). O(n) per write, O(n²) to fill a shard.
+**Evidence.** Every `PutRecord` calls `listRecords` — a full-shard `Scan` + JSON decode + sort — solely so `nextSeqNo` can use `len(existing)` as the next counter ([typed_logic.go:254](../../internal/services/kinesis/typed_logic.go), [store.go:243-246](../../internal/services/kinesis/store.go)); `PutRecords` repeats this **per record in the batch** ([typed_logic.go:284](../../internal/services/kinesis/typed_logic.go)). O(n) per write, O(n²) to fill a shard.
 
 **Worse than perf:** `len(existing)` regresses when records are ever removed (retention, stream recreation with residue), so a fresh sequence number can collide with a surviving key and **silently overwrite a record**. Note the seq format itself is fine — `"49%019d%010d"` is fixed-width and sorts correctly; only the counter derivation is broken.
 
@@ -80,7 +68,7 @@ One codec for opaque continuation tokens: encode/decode a storage cursor (string
 
 ### A2 — Kinesis: `GetRecords` range read instead of full-shard scan
 
-**Evidence.** `getRecordsTyped` honors `Limit` and the shard-iterator cursor only by slicing the result of a full-shard `listRecords` ([typed_logic.go:332-339](../internal/services/kinesis/typed_logic.go), [store.go:164-184](../internal/services/kinesis/store.go)).
+**Evidence.** `getRecordsTyped` honors `Limit` and the shard-iterator cursor only by slicing the result of a full-shard `listRecords` ([typed_logic.go:332-339](../../internal/services/kinesis/typed_logic.go), [store.go:164-184](../../internal/services/kinesis/store.go)).
 
 **Change.** Keys are `<region>/<stream>/<shard>/<seq>` with sortable seqs (per A1): read with `ScanPage(nsRecords, shardPrefix, startAfter=iteratorSeq, limit)` — copy the DynamoDB Streams `GetRecords` shape. Keep the defensive sort until A1 has been released long enough that pre-A1 non-contiguous data is implausible, then drop it.
 
@@ -88,7 +76,7 @@ One codec for opaque continuation tokens: encode/decode a storage cursor (string
 
 ### A3 — DynamoDB: `Scan` pages at the item store instead of full-table reads
 
-**Evidence.** The `Scan` handler fetches the **entire table** every call via `scanItems` → `itemBackend.scanAll` ([handler.go:578](../internal/services/dynamodb/handler.go), [store.go:345-346](../internal/services/dynamodb/store.go)), then applies `ExclusiveStartKey`/`Limit` by in-memory slice ([handler.go:635,651](../internal/services/dynamodb/handler.go)). A `Limit: 1` Scan costs the same as reading the whole table. DynamoDB `Query`/`Scan` is the most-exercised pagination contract in AWS client code.
+**Evidence.** The `Scan` handler fetches the **entire table** every call via `scanItems` → `itemBackend.scanAll` ([handler.go:578](../../internal/services/dynamodb/handler.go), [store.go:345-346](../../internal/services/dynamodb/store.go)), then applies `ExclusiveStartKey`/`Limit` by in-memory slice ([handler.go:635,651](../../internal/services/dynamodb/handler.go)). A `Limit: 1` Scan costs the same as reading the whole table. DynamoDB `Query`/`Scan` is the most-exercised pagination contract in AWS client code.
 
 **Change.** Add `scanPage(ctx, table, exclusiveStartKey, limit)` to `itemBackend` (both implementations — memory keyset slice, SQL keyset `WHERE (hash_key, sort_key) > (?, ?) ORDER BY … LIMIT ?` on the existing PK). The handler's `LastEvaluatedKey` maps 1:1 onto the keyset cursor — no token codec needed (DynamoDB's cursor is structured, not opaque). Filter expressions stay in the handler (behavioral); note AWS semantics: `Limit` counts *evaluated* items pre-filter, which keyset paging reproduces naturally.
 
@@ -96,7 +84,7 @@ One codec for opaque continuation tokens: encode/decode a storage cursor (string
 
 ### A4 — CloudWatch Logs: range + limit pushdown for `GetLogEvents`/`FilterLogEvents`
 
-**Evidence.** Both fetch each stream's **full history** via `getEvents` and window in memory ([typed_logic.go:345-378, 380-449](../internal/services/cloudwatch/logs/typed_logic.go)); `req.Limit`/`req.NextToken` are never referenced; `idx_logs_events_group (region, group_name, ts)` was built for exactly this and is unused ([migrations.go:75](../internal/services/cloudwatch/logs/migrations.go)).
+**Evidence.** Both fetch each stream's **full history** via `getEvents` and window in memory ([typed_logic.go:345-378, 380-449](../../internal/services/cloudwatch/logs/typed_logic.go)); `req.Limit`/`req.NextToken` are never referenced; `idx_logs_events_group (region, group_name, ts)` was built for exactly this and is unused ([migrations.go:75](../../internal/services/cloudwatch/logs/migrations.go)).
 
 **Change.** Extend `eventBackend` (P6) with `getEventsRange(ctx, region, group, stream, startTs, endTs, limit, direction)` and `getGroupEventsRange(ctx, region, group, streamPrefix, startTs, endTs, limit)` — FilterLogEvents becomes **one** indexed query for the whole group instead of N per-stream full reads. Merge each stream's write buffer into the result (P4 — time-window the buffer too). `CompileFilter` matching, interleaving, and `searchedLogStreams` shaping stay in the handler (behavioral). Memory backend gets the same methods (slice window).
 
@@ -106,7 +94,7 @@ One codec for opaque continuation tokens: encode/decode a storage cursor (string
 
 ### A5 — CloudWatch metrics: key-range time windows for datapoint reads
 
-**Evidence.** Keys are `<ns>/<metric>/<dims>/<UnixNano>` — sortable ([service.go:209](../internal/services/cloudwatch/service.go)) — yet `GetMetricStatistics` ([service.go:1094](../internal/services/cloudwatch/service.go)), `GetMetricData` (1207), the alarm evaluator (1625, background, every tick), and `listMetricDataPoints` (232-253) all `Scan` the full prefix and decode every retained point to filter by time.
+**Evidence.** Keys are `<ns>/<metric>/<dims>/<UnixNano>` — sortable ([service.go:209](../../internal/services/cloudwatch/service.go)) — yet `GetMetricStatistics` ([service.go:1094](../../internal/services/cloudwatch/service.go)), `GetMetricData` (1207), the alarm evaluator (1625, background, every tick), and `listMetricDataPoints` (232-253) all `Scan` the full prefix and decode every retained point to filter by time.
 
 **Change.** Read `[prefix+startNano, prefix+endNano]` via `ScanPage`'s `startAfter` (no interface change) or a bounded key-range `Scan`; decode only in-window points. The retention sweep can also parse the key suffix and skip decoding values entirely. No wire change at all — pure P1 harvest of a key design that already exists.
 
@@ -114,7 +102,7 @@ One codec for opaque continuation tokens: encode/decode a storage cursor (string
 
 ### A6 — S3: `ListObjects` pages internally instead of materializing the bucket
 
-**Evidence.** Handlers honor `MaxKeys`/`ContinuationToken`/`StartAfter`/`Delimiter` correctly — but against an in-memory copy of the **whole bucket** from `listObjects`' full `Scan` ([handler_bucket.go:421-551, Scan at 448](../internal/services/s3/handler_bucket.go); [store.go:323-341](../internal/services/s3/store.go)).
+**Evidence.** Handlers honor `MaxKeys`/`ContinuationToken`/`StartAfter`/`Delimiter` correctly — but against an in-memory copy of the **whole bucket** from `listObjects`' full `Scan` ([handler_bucket.go:421-551, Scan at 448](../../internal/services/s3/handler_bucket.go); [store.go:323-341](../../internal/services/s3/store.go)).
 
 **Change — not a 1:1 ScanPage swap (audit's explicit shoehorn warning).** With a delimiter, many keys collapse into one CommonPrefix before a page fills, so the handler must **loop internal `ScanPage` fetches until it has `MaxKeys` *effective* entries** (keys + common prefixes), carrying the cursor across internal pages. Delimiter/common-prefix collapse logic stays in the handler unchanged; only the source of keys becomes incremental. Bounds memory by page size instead of bucket size; V1 (`Marker`) gets the same treatment.
 
@@ -122,7 +110,7 @@ One codec for opaque continuation tokens: encode/decode a storage cursor (string
 
 ### A7 — DynamoDB: GSI `Query` secondary index  **[design-first, gated]**
 
-**Evidence.** Query on a GSI falls back to full-table scan + in-memory hash filter ([handler.go:817-825](../internal/services/dynamodb/handler.go)) — the only Query path not partition-scoped (base-table Query is already fine, [handler.go:848-865](../internal/services/dynamodb/handler.go)).
+**Evidence.** Query on a GSI falls back to full-table scan + in-memory hash filter ([handler.go:817-825](../../internal/services/dynamodb/handler.go)) — the only Query path not partition-scoped (base-table Query is already fine, [handler.go:848-865](../../internal/services/dynamodb/handler.go)).
 
 **Gate.** Fixing it properly means a real secondary-index structure in the item store (rows or an index table maintained on write), not a pagination change — a design of its own, with write-amplification and backfill questions. Write the short design (index shape, maintenance on Put/Update/Delete, backfill migration via the runner) **before** any code; treat like storage-plan's benchmark-gated items: only proceed if a workload actually exercises GSI queries at depth (the emulator's typical GSI tables are small).
 
@@ -132,8 +120,8 @@ One codec for opaque continuation tokens: encode/decode a storage cursor (string
 
 All bounded-by-resource-count; the simple scan-and-filter shape is correct here. Wire-level pagination gaps in these (ignored `MaxResults` etc.) belong to the pagination plan, which may still choose in-memory slice pagination for them — that is the right tool for bounded data.
 
-- **DynamoDB base-table `Query`** — already partition-scoped, fine ([handler.go:848](../internal/services/dynamodb/handler.go)).
-- **ECS `ListTasks`** family/status filtering — dimensions aren't key-encodable (many-to-many via task-def ARN); typical cluster sizes make this moot ([handler_tasks.go:456-489](../internal/services/ecs/handler_tasks.go)).
+- **DynamoDB base-table `Query`** — already partition-scoped, fine ([handler.go:848](../../internal/services/dynamodb/handler.go)).
+- **ECS `ListTasks`** family/status filtering — dimensions aren't key-encodable (many-to-many via task-def ARN); typical cluster sizes make this moot ([handler_tasks.go:456-489](../../internal/services/ecs/handler_tasks.go)).
 - **Logs `DescribeLogGroups`/`DescribeLogStreams`**, **CloudWatch `DescribeAlarms`**, **Lambda `ListFunctions`**, **ECR listings**, **SNS/SES/EventBridge listings**, **Route53 `ListResourceRecordSets`**, **S3 `ListMultipartUploads`** — bounded metadata.
 - **S3 `ListParts`** — borderline (10k parts max in real AWS); revisit only if the pagination plan's fidelity work lands a limit there anyway.
 - **SQS receive** — tracked as [storage-plan.md](./storage-plan.md) 3.10, benchmark-gated there; not duplicated here.

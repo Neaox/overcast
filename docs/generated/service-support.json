@@ -420,7 +420,8 @@
         {
           "operation": "ListTables",
           "category": "Table management",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Limit/ExclusiveStartTableName currently ignored — returns all tables in one response"
         },
         {
           "operation": "UpdateTable",

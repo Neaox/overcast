@@ -221,7 +221,7 @@ type HybridOptions struct {
 	DirtyByteThreshold int64
 
 	// MaintenanceInterval controls how often the background loop runs
-	// routine SQLite housekeeping (3.5 in docs/storage-plan.md): a passive
+	// routine SQLite housekeeping (3.5 in docs/plans/storage-plan.md): a passive
 	// WAL checkpoint plus a conditional incremental vacuum. Never runs on
 	// the request path. Defaults to 5 minutes. A value <= 0 falls back to
 	// the default rather than disabling the loop — unlike the dirty
@@ -785,7 +785,7 @@ func (s *HybridStore) Scan(ctx context.Context, namespace, prefix string) ([]KV,
 }
 
 // ScanPage is the paginated counterpart to Scan (3.2 in
-// docs/storage-plan.md). Branching mirrors Scan/List exactly: once a TierHot
+// docs/plans/storage-plan.md). Branching mirrors Scan/List exactly: once a TierHot
 // namespace has finished seeding, memory alone is authoritative (every write
 // updates mem synchronously inside Set/Delete/DeletePrefix, so there is
 // nothing left to merge) and ScanPage delegates straight to
@@ -1364,7 +1364,7 @@ func (s *HybridStore) flushOnce(ctx context.Context) error {
 	// it (defers execute LIFO) — by the time this reads committed, every
 	// other defer and the function body have finished, so it observes the
 	// final outcome of this flush attempt on both the success and failure
-	// paths (3.6 in docs/storage-plan.md).
+	// paths (3.6 in docs/plans/storage-plan.md).
 	defer func() {
 		s.recordFlushHistory(start, len(toFlushOps), committed)
 	}()
@@ -1544,13 +1544,6 @@ func (s *HybridStore) resolvePendingLocked(namespace, key string) (dirtyEntry, b
 	return resolveOverlayKey(s.dirty, s.flushing, s.tombstones, s.flushingTombstones, namespace, key)
 }
 
-// latestPrefixTombstoneSeqLocked returns the highest sequence number among
-// pending prefix tombstones (current and in-flight-flush generations) that
-// cover key in namespace. Callers must hold s.mu.
-func (s *HybridStore) latestPrefixTombstoneSeqLocked(namespace, key string) (int64, bool) {
-	return latestPrefixTombstoneSeqIn(s.tombstones, s.flushingTombstones, namespace, key)
-}
-
 // resolveOverlayKey is the pure, lock-free core of resolvePendingLocked: it
 // computes the effective pending-overlay state for namespace/key given
 // explicit copies of the dirty/flushing maps and the current/in-flight-flush
@@ -1577,9 +1570,8 @@ func resolveOverlayKey(dirty, flushing map[string]dirtyEntry, tombstones, flushi
 
 // latestPrefixTombstoneSeqIn returns the highest sequence number among
 // tombstones (current and in-flight-flush generations, passed separately)
-// that cover key in namespace. The pure core of
-// HybridStore.latestPrefixTombstoneSeqLocked, also used directly by
-// resolveOverlayKey against a snapshot copy.
+// that cover key in namespace. Used by resolveOverlayKey against both live
+// store state and snapshot copies.
 func latestPrefixTombstoneSeqIn(tombstones, flushingTombstones []prefixTombstone, namespace, key string) (int64, bool) {
 	best := int64(-1)
 	found := false

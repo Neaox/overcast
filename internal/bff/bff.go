@@ -1131,13 +1131,7 @@ func handleDocsPage(docsFS fs.FS) http.HandlerFunc {
 			writeJSONError(w, http.StatusNotFound, "NotFound")
 			return
 		}
-		content, err := fs.ReadFile(docsFS, path)
-		if err != nil {
-			writeJSONError(w, http.StatusNotFound, "NotFound")
-			return
-		}
-		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-		w.Write(stripFrontmatter(content))
+		serveDocMarkdown(w, docsFS, path)
 	}
 }
 
@@ -1210,12 +1204,21 @@ func handleDocs(docsFS fs.FS) http.HandlerFunc {
 			writeJSONError(w, http.StatusNotFound, "NotFound")
 			return
 		}
-		content, err := fs.ReadFile(docsFS, "services/"+service+".md")
-		if err != nil {
-			writeJSONError(w, http.StatusNotFound, "NotFound")
-			return
-		}
-		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-		w.Write(content)
+		serveDocMarkdown(w, docsFS, "services/"+service+".md")
 	}
+}
+
+// serveDocMarkdown reads one embedded doc and writes it as markdown with any
+// leading YAML frontmatter stripped — the single serving path shared by
+// /api/docs/page and /api/docs/{service}, so the two endpoints can never
+// diverge on frontmatter handling again (the service endpoint originally
+// skipped stripping, and the service docs modal rendered raw frontmatter).
+func serveDocMarkdown(w http.ResponseWriter, docsFS fs.FS, path string) {
+	content, err := fs.ReadFile(docsFS, path)
+	if err != nil {
+		writeJSONError(w, http.StatusNotFound, "NotFound")
+		return
+	}
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Write(stripFrontmatter(content)) //nolint:errcheck // best-effort HTTP write.
 }

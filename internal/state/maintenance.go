@@ -11,7 +11,7 @@ import (
 )
 
 // defaultMaintenanceInterval is how often the background maintenance loop
-// (3.5 in docs/storage-plan.md) runs routine SQLite housekeeping — a passive
+// (3.5 in docs/plans/storage-plan.md) runs routine SQLite housekeeping — a passive
 // WAL checkpoint plus a conditional incremental vacuum. Shared by
 // HybridStore (overridable via HybridOptions.MaintenanceInterval /
 // OVERCAST_HYBRID_MAINTENANCE_INTERVAL) and SQLiteStore (fixed — see

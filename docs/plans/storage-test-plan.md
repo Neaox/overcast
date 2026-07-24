@@ -1,14 +1,3 @@
----
-title: "Storage regression test plan"
-description: "Tiered regression test plan (static, unit/race, storage-mode matrix, upgrade/crash, burst benchmarks, end-to-end) for storage-layer changes, with commands, pass criteria, and the recorded execution results."
-section: "Development"
-tags:
-  - docs
-  - storage
-  - testing
-  - plan
----
-
 # Storage stabilization — full regression test plan
 
 > **Scope:** the entire `feat/storage-stabilization` branch (Phases 1–2, Phase 3 Waves 1–3 of
@@ -116,7 +105,7 @@ that motivated the plan (blob rewrites, N+1 scans, single-connection contention)
 | Sustained-write bound | `TestHybridStore_DirtyEntryThresholdTriggersEarlyFlush` + 1.4 acceptance: dirty count stays bounded regardless of `FlushInterval` | covered in T1 |
 | Cold start vs DB size | `go test -bench 'BenchmarkHybridStore_ColdStartHydration' -run '^$' ./internal/state/` | linear in row count, no regression vs recorded baselines |
 
-Benchmark conditions per [performance.md](./performance.md): record machine, container vs native,
+Benchmark conditions per [performance.md](../performance.md): record machine, container vs native,
 tmpfs vs disk, and Go version alongside any number quoted from these.
 
 ## T5 — End-to-end (pre-release, manual + scripted)

@@ -1,20 +1,9 @@
----
-title: "Pagination fidelity plan"
-description: "Audit of every paginating operation versus real AWS — ignored limits, broken continuation tokens, untruthful truncation flags — with a canonical-helper decision and a prioritized remediation order."
-section: "Development"
-tags:
-  - docs
-  - pagination
-  - aws-compatibility
-  - plan
----
-
 # Pagination fidelity — audit & remediation plan
 
 > **Status:** planned — no items started. Audit completed 2026-07-24 (agent sweep of every paginating operation across all supported services; evidence file:line below).
 > **Scope:** the **wire contract** of pagination vs real AWS — limit params honored with AWS's defaults/caps, continuation tokens that actually resume, truthful truncation flags, and AWS-shaped errors on invalid tokens. This matters more than usual for an emulator: people specifically test their pagination loops against local stacks, so an ignored `Limit` or a lying `IsTruncated` breaks exactly the client code Overcast exists to exercise.
 > **Relationship to other plans:** [storage-access-plan.md](./storage-access-plan.md) owns the *storage shape* behind pagination (cursors at the storage boundary, range reads); this plan owns what the client observes. For bounded, resource-count namespaces (most `List*` ops), **in-memory slice pagination over a full scan is the correct implementation** — this plan deliberately does not require storage cursors for them. Items that need both (logs) say so and land together.
-> **Audience:** any contributor or agent; [CONTRIBUTING.md](../CONTRIBUTING.md)/[AGENTS.md](../AGENTS.md) rules apply (failing test first, wire-format changes are the compatibility contract, prefer AWS SDK clients in tests).
+> **Audience:** any contributor or agent; [CONTRIBUTING.md](../../CONTRIBUTING.md)/[AGENTS.md](../../AGENTS.md) rules apply (failing test first, wire-format changes are the compatibility contract, prefer AWS SDK clients in tests).
 
 ---
 
@@ -32,9 +21,9 @@ The audit found **four** coexisting pagination idioms:
 
 | Idiom | Users | Invalid-token behavior |
 |---|---|---|
-| `serviceutil.Paginate[T]` ([pagination.go](../internal/serviceutil/pagination.go)) | CloudFormation `DescribeStackEvents`; CloudFront ×4; SSM ×3 | ❌ **silent restart from page 1** (`decodeToken` returns `(0,false)`, caller treats as no-token) |
-| Cognito `pageBounds` ([store.go:189-282](../internal/services/cognito/store.go)) | in-pool ListUsers/ListGroups/ListUsersInGroup | ✅ `InvalidParameterException` |
-| AppSync `paginateList[T]` ([handler.go:138-185](../internal/services/appsync/handler.go)) | ~9 AppSync List ops | ✅ `badRequest` on bad token/limit |
+| `serviceutil.Paginate[T]` ([pagination.go](../../internal/serviceutil/pagination.go)) | CloudFormation `DescribeStackEvents`; CloudFront ×4; SSM ×3 | ❌ **silent restart from page 1** (`decodeToken` returns `(0,false)`, caller treats as no-token) |
+| Cognito `pageBounds` ([store.go:189-282](../../internal/services/cognito/store.go)) | in-pool ListUsers/ListGroups/ListUsersInGroup | ✅ `InvalidParameterException` |
+| AppSync `paginateList[T]` ([handler.go:138-185](../../internal/services/appsync/handler.go)) | ~9 AppSync List ops | ✅ `badRequest` on bad token/limit |
 | Inline bespoke | ElastiCache (✅ errors), S3 object listing (❌ silent fallback on bad token) | mixed |
 
 **Decision:**
@@ -48,7 +37,7 @@ The audit found **four** coexisting pagination idioms:
 
 ### G1 — CloudWatch Logs `GetLogEvents`: the one class-D (actually broken) contract
 
-**Evidence.** [handler.go:422-492](../internal/services/cloudwatch/logs/handler.go): `Limit`/`NextToken`/`StartFromHead` are parsed and never used; `nextForwardToken`/`nextBackwardToken` are synthesized from `len(allEvents)`/hardcoded `0`. A client polling with the returned token — the *standard* CloudWatch Logs tailing pattern — re-receives the full event set every call, forever. SDK paginators loop or desync.
+**Evidence.** [handler.go:422-492](../../internal/services/cloudwatch/logs/handler.go): `Limit`/`NextToken`/`StartFromHead` are parsed and never used; `nextForwardToken`/`nextBackwardToken` are synthesized from `len(allEvents)`/hardcoded `0`. A client polling with the returned token — the *standard* CloudWatch Logs tailing pattern — re-receives the full event set every call, forever. SDK paginators loop or desync.
 
 **Change.** Real position tokens (AWS's `f/`+index / `b/`+index shape), `StartFromHead` direction semantics, `Limit` (AWS default 10 000 / 1 MB), and the **same-token-when-exhausted** termination convention (this op never returns a null token — the test must pin that). Implementable against today's in-memory reads first; [storage-access A4](./storage-access-plan.md) then makes it efficient — land as one unit if practical, this contract first if not.
 
@@ -56,7 +45,7 @@ The audit found **four** coexisting pagination idioms:
 
 ### G2 — DynamoDB `Query`/`Scan`: cursor resolution by position, not item identity
 
-**Evidence.** [handler.go:634-646, 888-900](../internal/services/dynamodb/handler.go): `ExclusiveStartKey` is resolved by scanning for an item *equal* to the cursor; if that item was deleted between pages (or a sparse GSI omits it), the match silently fails and pagination **restarts from page 1** — duplicate delivery on AWS's most-tested pagination contract.
+**Evidence.** [handler.go:634-646, 888-900](../../internal/services/dynamodb/handler.go): `ExclusiveStartKey` is resolved by scanning for an item *equal* to the cursor; if that item was deleted between pages (or a sparse GSI omits it), the match silently fails and pagination **restarts from page 1** — duplicate delivery on AWS's most-tested pagination contract.
 
 **Change.** Resolve the cursor by **key-order position** (first item strictly after `ExclusiveStartKey` in the operation's sort order) so a vanished cursor item degrades exactly as real DynamoDB does. Also add the page-size truncation AWS implies (1 MB accumulated / explicit `Limit`) so unbounded single-page responses stop. Coordinates with [storage-access A3](./storage-access-plan.md) (keyset paging wants the same by-position semantics); the semantic fix here must not wait for A3.
 
@@ -64,15 +53,15 @@ The audit found **four** coexisting pagination idioms:
 
 ### G3 — `serviceutil.Paginate` invalid-token contract (H1's first payoff)
 
-One change to [pagination.go:41,70-80](../internal/serviceutil/pagination.go) plus three call-site error mappings repairs CloudFormation `DescribeStackEvents`, CloudFront ×4, and SSM ×3 — the silent-restart class. Each service maps to its own AWS error (`ValidationError` for CFN Query protocol, `InvalidArgument` for CloudFront, `InvalidNextToken` for SSM — verify each against AWS docs in the PR).
+One change to [pagination.go:41,70-80](../../internal/serviceutil/pagination.go) plus three call-site error mappings repairs CloudFormation `DescribeStackEvents`, CloudFront ×4, and SSM ×3 — the silent-restart class. Each service maps to its own AWS error (`ValidationError` for CFN Query protocol, `InvalidArgument` for CloudFront, `InvalidNextToken` for SSM — verify each against AWS docs in the PR).
 
 ### G4 — S3 `ListParts` / `ListMultipartUploads`: response shape is missing truncation fields entirely
 
-**Evidence.** [handler_multipart.go:56-84, 359-431](../internal/services/s3/handler_multipart.go): no `MaxParts`/`PartNumberMarker`/`MaxUploads`/`KeyMarker` handling, and the XML response structs don't declare `IsTruncated`/`NextPartNumberMarker`/`NextKeyMarker` at all — a wire-shape gap, not just behavior (real AWS caps parts at 1000/page, 10 000/upload). Also fold in the v2/v1 object-listing invalid-token fix (garbage `ContinuationToken` currently silently means "from the start"; AWS returns `InvalidArgument`).
+**Evidence.** [handler_multipart.go:56-84, 359-431](../../internal/services/s3/handler_multipart.go): no `MaxParts`/`PartNumberMarker`/`MaxUploads`/`KeyMarker` handling, and the XML response structs don't declare `IsTruncated`/`NextPartNumberMarker`/`NextKeyMarker` at all — a wire-shape gap, not just behavior (real AWS caps parts at 1000/page, 10 000/upload). Also fold in the v2/v1 object-listing invalid-token fix (garbage `ContinuationToken` currently silently means "from the start"; AWS returns `InvalidArgument`).
 
 ### G5 — DynamoDB `ListTables`: honor the params it already declares
 
-**Evidence.** Request struct has `Limit`/`ExclusiveStartTableName`; the handler discards the request entirely ([handler.go:283-308](../internal/services/dynamodb/handler.go)); no `LastEvaluatedTableName` in the response. AWS: default/cap 100, `LastEvaluatedTableName` echo. The service-doc caveat this audit exposed has already been corrected ([docs/services/dynamodb.md](./services/dynamodb.md)); remove it when this lands. Small, mechanical, high-visibility.
+**Evidence.** Request struct has `Limit`/`ExclusiveStartTableName`; the handler discards the request entirely ([handler.go:283-308](../../internal/services/dynamodb/handler.go)); no `LastEvaluatedTableName` in the response. AWS: default/cap 100, `LastEvaluatedTableName` echo. The service-doc caveat this audit exposed has already been corrected ([docs/services/dynamodb.md](../services/dynamodb.md)); remove it when this lands. Small, mechanical, high-visibility.
 
 ### G6 — `FilterLogEvents` limit + nextToken
 
@@ -80,15 +69,15 @@ Class B (params parsed, unused; no `nextToken` response field). Specified here, 
 
 ### G7 — EC2 `Describe*` family: zero pagination scaffolding
 
-**Evidence.** No `NextToken` anywhere in `internal/services/ec2/` ([handler_instances.go:239-302](../internal/services/ec2/handler_instances.go)). EC2 is one of the most-paginated real SDK surfaces. Data is bounded (emulated instances), so H1 in-memory paging is the correct fix — fidelity, not storage. Start with `DescribeInstances` (`MaxResults` default 1000, min 5 — AWS rejects `MaxResults < 5`, worth pinning), extend to the other `Describe*` ops mechanically.
+**Evidence.** No `NextToken` anywhere in `internal/services/ec2/` ([handler_instances.go:239-302](../../internal/services/ec2/handler_instances.go)). EC2 is one of the most-paginated real SDK surfaces. Data is bounded (emulated instances), so H1 in-memory paging is the correct fix — fidelity, not storage. Start with `DescribeInstances` (`MaxResults` default 1000, min 5 — AWS rejects `MaxResults < 5`, worth pinning), extend to the other `Describe*` ops mechanically.
 
 ### G8 — Mechanical H1 adoption across the all-class-B services  **[per-service PRs, low urgency each]**
 
-IAM (ListUsers/Roles/Policies/Groups — 18 hardcoded `IsTruncated: false`, Query-protocol `Marker` semantics), Lambda (×3, `Marker`/`NextMarker`), SNS (×3), SQS `ListQueues` (`MaxResults`/`NextToken`), Kinesis `ListStreams` (`HasMoreStreams` hardcoded false) + `ListShards`, CloudWatch (ListMetrics/GetMetricData/DescribeAlarms), logs `DescribeLogGroups`/`DescribeLogStreams`, ECS ×2, EventBridge `ListRules` (params missing from request struct), Secrets Manager `ListSecrets` (request is `struct{}`), Step Functions `ListStateMachines`, MSK, API Gateway `GetRestApis` (`position` param; has a self-documented TODO at [handler_rest.go:140](../internal/services/apigateway/handler_rest.go)), Cognito `ListUserPools` (AWS *requires* `MaxResults` — also add that validation). Each: H1 + H2 test + AWS default/cap citation. Bounded data throughout — in-memory paging is correct; no storage work.
+IAM (ListUsers/Roles/Policies/Groups — 18 hardcoded `IsTruncated: false`, Query-protocol `Marker` semantics), Lambda (×3, `Marker`/`NextMarker`), SNS (×3), SQS `ListQueues` (`MaxResults`/`NextToken`), Kinesis `ListStreams` (`HasMoreStreams` hardcoded false) + `ListShards`, CloudWatch (ListMetrics/GetMetricData/DescribeAlarms), logs `DescribeLogGroups`/`DescribeLogStreams`, ECS ×2, EventBridge `ListRules` (params missing from request struct), Secrets Manager `ListSecrets` (request is `struct{}`), Step Functions `ListStateMachines`, MSK, API Gateway `GetRestApis` (`position` param; has a self-documented TODO at [handler_rest.go:140](../../internal/services/apigateway/handler_rest.go)), Cognito `ListUserPools` (AWS *requires* `MaxResults` — also add that validation). Each: H1 + H2 test + AWS default/cap citation. Bounded data throughout — in-memory paging is correct; no storage work.
 
 ### G9 — AppSync default-limit divergence  **[smallest item]**
 
-[handler.go:138-185](../internal/services/appsync/handler.go) already validates tokens and caps `maxResults` at 25 — but when the client omits it, default = everything. AWS default is 25. One-line default; keep their helper (see migration policy).
+[handler.go:138-185](../../internal/services/appsync/handler.go) already validates tokens and caps `maxResults` at 25 — but when the client omits it, default = everything. AWS default is 25. One-line default; keep their helper (see migration policy).
 
 ---
 
@@ -101,7 +90,7 @@ IAM (ListUsers/Roles/Policies/Groups — 18 hardcoded `IsTruncated: false`, Quer
 
 ## Verification standard
 
-Every item: failing test first (the broken behavior, e.g. token-loop duplication, pinned before the fix); H2 contract walk in the integration suite with the real SDK paginator where one exists; AWS doc citation for the op's default/cap/token names in the PR description; wire-format changes reviewed as compatibility changes per [CONTRIBUTING.md](../CONTRIBUTING.md). CHANGELOG: one Pagination bullet extended per landing, per its inline rules.
+Every item: failing test first (the broken behavior, e.g. token-loop duplication, pinned before the fix); H2 contract walk in the integration suite with the real SDK paginator where one exists; AWS doc citation for the op's default/cap/token names in the PR description; wire-format changes reviewed as compatibility changes per [CONTRIBUTING.md](../../CONTRIBUTING.md). CHANGELOG: one Pagination bullet extended per landing, per its inline rules.
 
 ## Proposed order of work
 

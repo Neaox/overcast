@@ -108,7 +108,7 @@ type Config struct {
 	// HybridMaintenanceInterval controls how often the hybrid store's
 	// background loop runs routine SQLite housekeeping (a passive WAL
 	// checkpoint plus a conditional incremental vacuum — see
-	// docs/storage-plan.md item 3.5). Never runs on the request path.
+	// docs/plans/storage-plan.md item 3.5). Never runs on the request path.
 	HybridMaintenanceInterval time.Duration
 
 	// WALFsyncMode controls fsync policy for the WAL backend.

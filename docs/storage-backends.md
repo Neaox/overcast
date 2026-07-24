@@ -183,7 +183,7 @@ into two tiers ([internal/state/tier.go](../internal/state/tier.go)):
   for changes not yet flushed. `tier.go`'s doc comment is explicit about this: *"There is
   currently no in-memory LRU cache in front of SQLite for these namespaces — every read not
   covered by the pending overlay is a SQLite round trip."* An LRU-bounded cache tier is a
-  possible future enhancement (storage-plan.md item 3.3), not implemented today — the comment
+  possible future enhancement (`docs/plans/storage-plan.md` item 3.3 in the repository), not implemented today — the comment
   used to claim an LRU existed; that was corrected to describe reality.
 
 TierCached reads don't queue behind an in-flight flush transaction — they go through a

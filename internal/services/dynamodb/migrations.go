@@ -1,7 +1,7 @@
 //go:build !nosqlite
 
 // Package dynamodb: migration registration for the dynamodb_items and
-// dynamodb_stream_records dedicated tables (docs/storage-plan.md Phase 3
+// dynamodb_stream_records dedicated tables (docs/plans/storage-plan.md Phase 3
 // item 3.9).
 //
 // Build-tagged out of `-tags nosqlite` builds because it depends on

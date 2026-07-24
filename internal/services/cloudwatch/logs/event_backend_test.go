@@ -15,7 +15,7 @@ import (
 // newTestBackends returns one memEventBackend and one sqlEventBackend backed
 // by a real, temp-dir-rooted *state.HybridStore, so tests can run the same
 // assertions against both — the memory-mode parity requirement from
-// docs/storage-plan.md 2.3.
+// docs/plans/storage-plan.md 2.3.
 func newTestBackends(t *testing.T) (mem eventBackend, sqlBackend eventBackend) {
 	t.Helper()
 	mem = newMemEventBackend()
@@ -52,7 +52,7 @@ func eventsEqual(a, b []LogEvent) bool {
 
 // TestEventBackend_MemoryAndSQL_Parity runs the same append/get/delete
 // sequence against both backends and asserts identical externally-observable
-// behavior — docs/storage-plan.md 2.3's "memory-mode parity suite run
+// behavior — docs/plans/storage-plan.md 2.3's "memory-mode parity suite run
 // against both backends" requirement.
 func TestEventBackend_MemoryAndSQL_Parity(t *testing.T) {
 	mem, sqlBackend := newTestBackends(t)
@@ -266,7 +266,7 @@ func TestNewEventBackendFor_WithoutUnwrap_FallsBackToMemory(t *testing.T) {
 // events still sitting in the unflushed write buffer must come back as one
 // correctly time-ordered sequence — the same result the old blob-based
 // full-scan-then-filter design would have produced from the caller's
-// perspective (docs/storage-plan.md 2.3's explicit "no behavior change"
+// perspective (docs/plans/storage-plan.md 2.3's explicit "no behavior change"
 // requirement).
 func TestLogsStore_GetEvents_MergesPersistedAndBufferedInOrder(t *testing.T) {
 	mem := state.NewMemoryStore()

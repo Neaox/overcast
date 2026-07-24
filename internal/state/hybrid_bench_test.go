@@ -3,7 +3,7 @@
 package state
 
 // Baseline benchmarks for HybridStore, captured ahead of the Phase 2 storage
-// work (docs/storage-plan.md item 2.1) so the CloudWatch Logs table rewrite
+// work (docs/plans/storage-plan.md item 2.1) so the CloudWatch Logs table rewrite
 // (2.3) and any future HybridStore changes have a measured "before" to diff
 // against. These are relative/indicative numbers, not absolute production
 // numbers — see docs/performance.md "Documenting performance claims".
