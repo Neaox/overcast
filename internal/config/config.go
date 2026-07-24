@@ -144,13 +144,21 @@ type Config struct {
 	// Default false.
 	EnforceIAM bool
 
+	// ProtocolStrict restores strict rejection of "claimed-but-undeclared"
+	// wire protocols: when a request's identified protocol isn't one a
+	// service's SupportedProtocols() lists, the service returns 415
+	// UnsupportedProtocol instead of attempting the decode anyway. Default
+	// false (lenient): the emulator logs a "protocol drift" warning and
+	// attempts dispatch regardless, since AWS SDKs may switch a service's
+	// wire protocol without notice (see docs/plans/level2-codegen.md
+	// Track 1.2). Corresponds to env var OVERCAST_PROTOCOL_STRICT.
+	ProtocolStrict bool
+
 	// CFNSyncWait is the bounded time CloudFormation waits for fast stack
 	// create/update/delete provisioning to reach a terminal state before returning.
 	// A zero value disables the wait and restores fully asynchronous behaviour.
 	// Corresponds to env var OVERCAST_CFN_SYNC_WAIT_MS. Default 1000ms.
 	CFNSyncWait time.Duration
-
-	// ProtocolDispatch enables the typed wire-protocol dispatcher and the
 
 	// ShutdownTimeout is how long the server waits for in-flight
 	// requests to complete before forcibly closing.
@@ -721,6 +729,9 @@ func Load() (*Config, error) {
 
 	// Optional IAM enforcement middleware (default off).
 	cfg.EnforceIAM = envBool("OVERCAST_ENFORCE_IAM", false)
+
+	// Protocol drift strictness (default off — lenient "attempt anyway" posture).
+	cfg.ProtocolStrict = envBool("OVERCAST_PROTOCOL_STRICT", false)
 
 	// CloudFormation synchronous fast-path wait budget.
 	cfg.CFNSyncWait = time.Duration(envInt("OVERCAST_CFN_SYNC_WAIT_MS", 1000)) * time.Millisecond

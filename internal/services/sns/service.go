@@ -96,24 +96,44 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Get("/_overcast/sns/topics/{topicName}/subscriptions", s.adminListSubscriptions)
 }
 
+// snsLegacyOnlyOps lists SNS operations that must stay on the legacy
+// dispatch path even though a typed implementation exists in typedOp.
+// publishTyped's request struct (publishReq) has no MessageAttributes
+// field at all, so message-attribute-based SNS subscription filter
+// policies (FilterPolicy) can never match — messages that should be
+// filtered/delivered based on attributes silently stop being delivered.
+// Decoding MessageAttributes.entry.N.Name / .Value.DataType /
+// .Value.StringValue also isn't something the generic Query-form decoder
+// supports today (it only handles simple string-keyed map entries), so
+// this is a real feature gap, not a one-line fix. PublishBatch shares the
+// same request-shape limitation for its entries. Discovered running the
+// full SNS integration suite after docs/plans/level2-codegen.md Track 1.1
+// (Query Action resolution) made this registry reachable for the first
+// time. Track 2 follow-up: add MessageAttributes decoding support (codec
+// and request struct) before re-enabling these two ops.
+var snsLegacyOnlyOps = map[string]bool{
+	"Publish":      true,
+	"PublishBatch": true,
+}
+
 // DispatchQuery satisfies router.QueryDispatcher.
 // SNS uses the AWS Query protocol: form-encoded POST body with Action field, XML responses.
 // The router calls r.ParseForm() before invoking this method.
 func (s *Service) DispatchQuery(w http.ResponseWriter, r *http.Request) {
 	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {
-		if !codec.Supports(s.SupportedProtocols(), c) {
+		if !serviceutil.AllowProtocolDrift(s.cfg, s.log, opName, c, s.SupportedProtocols()) {
 			c.WriteError(w, r, &protocol.AWSError{
 				Code: "UnsupportedProtocol", Message: "SNS does not support wire protocol " + c.Name() + ".",
 				HTTPStatus: http.StatusUnsupportedMediaType,
 			})
 			return
 		}
-		if typed, ok := s.handler.typedOp[opName]; ok {
+		if typed, ok := s.handler.typedOp[opName]; ok && !snsLegacyOnlyOps[opName] {
 			typed.Invoke(w, r, c)
 			return
 		}
-		c.WriteError(w, r, protocol.ErrNotImplemented)
-		return
+		// No typed impl for this op (or it's deliberately excluded above)
+		// — fall through to legacy dispatch below.
 	}
 	s.handler.dispatch(w, r)
 }

@@ -10,9 +10,20 @@ import (
 // identification rules, returns the matching Codec and the AWS operation
 // name encoded in the request.
 //
-// Identifiers MUST NOT consume the request body — only headers, method,
-// path, and (for query-protocol form bodies) the parsed form. Body
-// consumption belongs to the codec's Decode pass.
+// Identifiers generally MUST NOT consume the request body — only headers,
+// method, path, and (for query-protocol form bodies) the URL query string.
+// Body consumption belongs to the codec's Decode pass.
+//
+// identifyQuery is the sole, documented exception: the AWS Query protocol
+// encodes Action into the POST body for the overwhelming majority of real
+// SDK traffic, so resolving an operation name at all requires reading the
+// body. It does so via r.FormValue, which parses (and caches on the
+// request) exactly once via the standard library's idempotent
+// r.ParseForm — every later read of Action/other fields, whether by the
+// router's own QueryDispatcher resolution, a legacy handler's
+// r.FormValue calls, or the typed codec's Decode pass, reuses that same
+// cached r.Form instead of re-reading (and re-draining) r.Body. See
+// docs/plans/level2-codegen.md Track 1.1.
 //
 // The order in which identifiers are tried matters; see the Smithy AWS
 // service protocol precision rules:
@@ -93,22 +104,14 @@ func (identifyQuery) Claim(r *http.Request) (Codec, string, bool) {
 	if !hasContentTypePrefix(r, "application/x-www-form-urlencoded") {
 		return nil, "", false
 	}
-	// PostForm requires a prior ParseForm. Doing it here would consume
-	// the request body, which the contract forbids. The middleware
-	// either parses the form earlier (downstream services already do
-	// this for legacy handlers) or the codec parses it during Decode.
-	//
-	// For identification, we look at the URL query string (Action= can
-	// appear there for some SDKs) and fall back to peeking at the body
-	// only if the body is form-encoded AND already buffered by an
-	// earlier middleware. We deliberately do NOT call r.ParseForm here.
-	if action := r.URL.Query().Get("Action"); action != "" {
-		return QueryXML, action, true
-	}
-	// No header-only operation hint available. The middleware will
-	// still record the codec; the operation name will be resolved
-	// later when the body is parsed (Phase 6 query decoder).
-	return QueryXML, "", true
+	// r.FormValue parses the URL query string and, for POST bodies, the
+	// form-encoded body — via the standard library's r.ParseForm, which
+	// caches its result on the request (r.Form) and is a no-op on any
+	// later call. Content-Type is already confirmed above, so the body
+	// read here is exactly the parse the codec's Decode pass (and any
+	// legacy handler) needs anyway; nothing downstream re-reads r.Body
+	// directly, so there is no double-consumption hazard.
+	return QueryXML, r.FormValue("Action"), true
 }
 
 // --- helpers ----------------------------------------------------------

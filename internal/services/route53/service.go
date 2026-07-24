@@ -106,7 +106,7 @@ func (s *Service) Name() string { return serviceName }
 // Query-protocol form-encoded POST requests with Action fields.
 func (s *Service) DispatchQuery(w http.ResponseWriter, r *http.Request) {
 	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {
-		if !codec.Supports(s.SupportedProtocols(), c) {
+		if !serviceutil.AllowProtocolDrift(s.cfg, s.log, opName, c, s.SupportedProtocols()) {
 			c.WriteError(w, r, &protocol.AWSError{
 				Code: "UnsupportedProtocol", Message: "Route 53 does not support wire protocol " + c.Name() + ".",
 				HTTPStatus: http.StatusUnsupportedMediaType,
@@ -117,8 +117,10 @@ func (s *Service) DispatchQuery(w http.ResponseWriter, r *http.Request) {
 			typed.Invoke(w, r, c)
 			return
 		}
-		c.WriteError(w, r, protocol.ErrNotImplemented)
-		return
+		// No typed impl for this op — Route 53 has no separate legacy
+		// Query dispatch (its non-typed implementation is REST-XML
+		// path-routed), so this falls through to the same
+		// NotImplementedQueryXML response as an unresolved codec below.
 	}
 	protocol.NotImplementedQueryXML(w, r)
 }

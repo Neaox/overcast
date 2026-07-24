@@ -117,7 +117,7 @@ func (s *Service) Stop(ctx context.Context) {
 // DispatchQuery satisfies router.QueryDispatcher; routes to the correct handler.
 func (s *Service) DispatchQuery(w http.ResponseWriter, r *http.Request) {
 	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {
-		if !codec.Supports(s.SupportedProtocols(), c) {
+		if !serviceutil.AllowProtocolDrift(s.handler.cfg, s.log, opName, c, s.SupportedProtocols()) {
 			c.WriteError(w, r, &protocol.AWSError{
 				Code: "UnsupportedProtocol", Message: "ElastiCache does not support wire protocol " + c.Name() + ".",
 				HTTPStatus: http.StatusUnsupportedMediaType,
@@ -128,8 +128,7 @@ func (s *Service) DispatchQuery(w http.ResponseWriter, r *http.Request) {
 			typed.Invoke(w, r, c)
 			return
 		}
-		c.WriteError(w, r, protocol.ErrNotImplemented)
-		return
+		// No typed impl for this op — fall through to legacy dispatch below.
 	}
 	if err := r.ParseForm(); err != nil {
 		protocol.NotImplementedQueryXML(w, r)

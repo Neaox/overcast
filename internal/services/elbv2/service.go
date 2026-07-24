@@ -87,7 +87,7 @@ func (s *Service) OwnsAction(action string) bool { return s.handler.ownsAction(a
 
 func (s *Service) DispatchQuery(w http.ResponseWriter, r *http.Request) {
 	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {
-		if !codec.Supports(s.SupportedProtocols(), c) {
+		if !serviceutil.AllowProtocolDrift(s.handler.cfg, s.log, opName, c, s.SupportedProtocols()) {
 			c.WriteError(w, r, &protocol.AWSError{
 				Code: "UnsupportedProtocol", Message: "ELBv2 does not support wire protocol " + c.Name() + ".",
 				HTTPStatus: http.StatusUnsupportedMediaType,
@@ -98,8 +98,7 @@ func (s *Service) DispatchQuery(w http.ResponseWriter, r *http.Request) {
 			typed.Invoke(w, r, c)
 			return
 		}
-		c.WriteError(w, r, protocol.ErrNotImplemented)
-		return
+		// No typed impl for this op — fall through to legacy dispatch below.
 	}
 	s.handler.dispatch(w, r)
 }

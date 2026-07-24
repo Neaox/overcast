@@ -251,7 +251,7 @@ func (h *Handler) createStackTyped(ctx context.Context, req *createStackReq) (*c
 		return nil, cfnerr("ValidationError", err.Error(), http.StatusBadRequest)
 	}
 
-	region := h.cfg.Region
+	region := middleware.RegionFromContext(ctx, h.cfg.Region)
 
 	stackID := fmt.Sprintf("arn:aws:cloudformation:%s:%s:stack/%s/%s",
 		region, h.cfg.AccountID, req.StackName, uuid.NewString())
@@ -458,7 +458,7 @@ func (h *Handler) createChangeSetTyped(ctx context.Context, req *createChangeSet
 		changeSetType = "UPDATE"
 	}
 
-	chsRegion := h.cfg.Region
+	chsRegion := middleware.RegionFromContext(ctx, h.cfg.Region)
 
 	stack, _ := h.store.getStack(ctx, req.StackName)
 	var stackID string
@@ -933,12 +933,10 @@ func (h *Handler) resolveTypedTemplateBody(ctx context.Context, templateBody, te
 	if router == nil {
 		return "", fmt.Errorf("internal router not initialised")
 	}
-	region := h.cfg.Region
+	region := middleware.RegionFromContext(ctx, h.cfg.Region)
 	rec, err := internalRequest(context.Background(), router, region, http.MethodGet, u.Path, "", nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch template from %s: %w", templateURL, err)
 	}
 	return rec.Body.String(), nil
 }
-
-var _ = middleware.RegionFromContext

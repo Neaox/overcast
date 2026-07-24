@@ -27,6 +27,7 @@ import (
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/protocol/codec"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
@@ -478,22 +479,39 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock
 func (s *Service) Name() string                { return serviceName }
 func (s *Service) RegisterRoutes(_ chi.Router) {}
 
+// cloudwatchJSONTargetPrefix is the X-Amz-Target prefix the JS/TS AWS SDK
+// uses for CloudWatch metrics calls sent over the JSON protocol
+// (Content-Type: application/x-amz-json-1.0). CloudWatch is the
+// historical precedent for AWS switching a service's wire protocol
+// without notice (see docs/plans/level2-codegen.md); this constant only
+// remains as Dispatch's defensive fallback below, not its primary path.
+const cloudwatchJSONTargetPrefix = "GraniteServiceVersion20100801."
+
 // TargetPrefix satisfies router.TargetDispatcher for AWS SDK JSON protocol.
-// The JS/TS AWS SDK sends CloudWatch calls as x-amz-json-1.0 with this target prefix.
-func (s *Service) TargetPrefix() string { return "GraniteServiceVersion20100801." }
+func (s *Service) TargetPrefix() string { return cloudwatchJSONTargetPrefix }
 
 // Dispatch satisfies router.TargetDispatcher.
+//
+// Like every other JSON-tier service, the operation name comes from
+// codec.FromContext — populated by middleware.Protocol identifying the
+// X-Amz-Target header before Dispatch ever runs. Dispatch no longer parses
+// X-Amz-Target itself; the header-trimming fallback below only covers
+// callers that invoke Dispatch without going through the router's
+// middleware chain (e.g. a unit test constructing a bare request).
 func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
-	target := r.Header.Get("X-Amz-Target")
-	const prefix = "GraniteServiceVersion20100801."
-	action := strings.TrimPrefix(target, prefix)
-	if action == target {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "UnknownOperationException",
-			Message:    "Unknown target: " + target,
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
+	_, action := codec.FromContext(r.Context())
+	if action == "" {
+		target := r.Header.Get("X-Amz-Target")
+		trimmed := strings.TrimPrefix(target, cloudwatchJSONTargetPrefix)
+		if trimmed == target {
+			protocol.WriteJSONError(w, r, &protocol.AWSError{
+				Code:       "UnknownOperationException",
+				Message:    "Unknown target: " + target,
+				HTTPStatus: http.StatusBadRequest,
+			})
+			return
+		}
+		action = trimmed
 	}
 
 	s.dispatchJSON(w, r, action)

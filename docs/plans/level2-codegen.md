@@ -59,12 +59,24 @@ Keep v1's mechanism (consume AWS's published **Smithy JSON AST**; generated file
 | Phase | Contents | Effort | Gate/acceptance |
 |---|---|---|---|
 | P0 quick wins **[✅ done 2026-07-24, branch chore/wire-protocol-p0]** | stub-report recursion+path fix (subServices map + `--workspace` flag + first tests), `docs/smithy.md` stale link, decodeJSON clone sweep (pure delegates deleted; behavior-variants kept — see the P0 census correction in §2) | S | manifest includes cloudwatch-logs (14 ops, 834 total across 43 services); pure-delegate clones gone |
-| P1 | Track 1.1 Query `Action` resolution + 1.2 drift policy + 1.4 cloudwatch metrics | M | IAM/CFN SDK traffic hits typed ops; drift warning covered by tests; goldens green |
+| P1 **[✅ done 2026-07-24, branch feat/wire-protocol-p1-query-dispatch]** | Track 1.1 Query `Action` resolution + 1.2 drift policy + 1.4 cloudwatch metrics | M | IAM/CFN SDK traffic hits typed ops; drift warning covered by tests; goldens green — see "P1 landing notes" below |
 | P2 | Track 2 delegation sweep (worst-5 first, then per-service; Query services post-P1) | M×n, mechanical, parallelizable per service | per service: legacy path is decode-shim or deleted; parity pinned by goldens + existing suites |
 | P3 | Track 3 generator (`cmd/codegen`): manifests+traits fleet-wide, allowlisted types; pilot sqs + scheduler | M | regen-diff CI job green; SupportedProtocols generated for pilots |
 | P4 | Fleet regen; delete legacy dispatch where shims are total; capgen/stub-report converge on generated manifest | L, mechanical | one implementation per op fleet-wide; new-protocol drill (add a fake codec in a test) costs zero service edits |
 
 Every phase: failing/pinning tests first; wire-byte goldens are the codec-change safety net; benchmark discipline per [storage-test-plan.md](./storage-test-plan.md) where perf is claimed.
+
+### P1 landing notes (2026-07-24)
+
+- **Mechanism:** `identifyQuery.Claim` resolves `Action` via `r.FormValue` — the stdlib's idempotent `r.ParseForm` caches `r.Form` on the request, so the router's owner checks, legacy handlers, and the typed codec's `Decode` all reuse one parse. This also surfaced and fixed a second latent bug: the router's own `ParseForm` drained `r.Body` before `queryXML.Decode` ever ran — `Decode` now prefers the populated `r.Form`.
+- **The safety valve fired, as predicted.** Waking ~250 dead registrations surfaced three real divergences, fixed failing-test-first: CloudFormation typed ops hardcoded the server region; IAM `SimulatePrincipalPolicy` skipped `PolicySourceArn` validation; SNS `Subscribe` skipped cross-region validation.
+- **Kept-on-legacy register (Track 2.3's explicit work queue):**
+  - **ec2 — entire typed branch disabled**: filters ignored across `Describe*` ops, mutations (Terminate/Stop/ModifyAttribute/DeleteTags/DeleteVpcEndpoints) not taking effect. Needs its own audited migration.
+  - **cloudformation `DeleteStack`/`ExecuteChangeSet`/`DeleteChangeSet`** (`cfnLegacyOnlyOps`): typed `Out` is an anonymous `struct{}` that `encoding/xml` can't marshal — every call 500s until given named wrappers.
+  - **sns `Publish`/`PublishBatch`** (`snsLegacyOnlyOps`): typed request type lacks `MessageAttributes` entirely (breaks `FilterPolicy` matching) and the Query-form decoder doesn't parse the `MessageAttributes.entry.N.…` shape — a real feature gap, not just plumbing.
+- **Drift policy home:** `serviceutil.AllowProtocolDrift(cfg, log, op, claimed, declared)` — lenient+warn by default, strict under `OVERCAST_PROTOCOL_STRICT` (typed `config.Config` field). Wired into all 11 Query services in place of direct `codec.Supports` checks.
+- CloudWatch (metrics) `Dispatch` reads `codec.FromContext` like every other JSON service; header parsing survives only as the standard context-less fallback. Its Query/boto3 tier is untouched (separate, valid).
+- The orphaned `ProtocolDispatch` config doc fragment (flagged by the SQS stream) was removed in passing.
 
 ## 5. What "done" means
 
