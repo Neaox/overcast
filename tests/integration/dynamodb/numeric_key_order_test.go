@@ -167,7 +167,7 @@ func TestQuery_NumberSortKey_PaginationWalk_SurvivesDeletedCursorItem(t *testing
 
 	var page1 struct {
 		Items            []map[string]map[string]any `json:"Items"`
-		LastEvaluatedKey map[string]any               `json:"LastEvaluatedKey"`
+		LastEvaluatedKey map[string]any              `json:"LastEvaluatedKey"`
 	}
 	helpers.DecodeJSON(t, resp1, &page1)
 	if len(page1.Items) != 2 {
@@ -204,7 +204,7 @@ func TestQuery_NumberSortKey_PaginationWalk_SurvivesDeletedCursorItem(t *testing
 
 	var page2 struct {
 		Items            []map[string]map[string]any `json:"Items"`
-		LastEvaluatedKey map[string]any               `json:"LastEvaluatedKey"`
+		LastEvaluatedKey map[string]any              `json:"LastEvaluatedKey"`
 	}
 	helpers.DecodeJSON(t, resp2, &page2)
 
