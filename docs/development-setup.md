@@ -239,6 +239,30 @@ git config --global core.eol lf
 The `.gitattributes` file enforces LF in the repository. With `core.autocrlf false`
 your working copy will also use LF, which is what Go tools expect.
 
+### File permissions on Windows
+
+Windows doesn't track the Unix executable bit, so Git will report every
+committed script as "modified" (mode `100755` → `100644`) even though nothing
+in the file changed. This is especially noticeable if you switch between the
+dev container (Linux) and native Windows on the **same clone** — each side
+sees the other's checkout as dirty.
+
+Silence this locally (safe on native Windows; do **not** set it inside the
+dev container, since Linux needs real permission tracking for scripts):
+
+```powershell
+git config core.fileMode false
+```
+
+If you add a new script that must be executable (e.g. a `.sh` file invoked
+directly rather than via `bash script.sh`), mark it in the repo explicitly
+so Linux/CI checkouts get the right bit regardless of your local
+`core.fileMode` setting:
+
+```powershell
+git update-index --chmod=+x path/to/script.sh
+```
+
 ---
 
 ## CI — GitHub Actions

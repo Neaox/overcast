@@ -142,14 +142,27 @@ export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: Lo
       }}
     >
       <Dialog.Portal>
-        {/* Backdrop */}
-        <Dialog.Overlay className="fixed inset-0 z-60" onClick={onClose} />
+        {/* Backdrop — pointer-events-none so clicking another peek-able node on the
+            canvas (e.g. a different log stream) reaches that node instead of being
+            swallowed here. Outside-click-to-close is still handled below via
+            onInteractOutside. */}
+        <Dialog.Overlay className="fixed inset-0 z-60 pointer-events-none" />
 
         {/* Slide-in panel */}
         <Dialog.Content
           aria-describedby={undefined}
           onEscapeKeyDown={onClose}
-          onInteractOutside={onClose}
+          onInteractOutside={(e) => {
+            // Clicking another peek trigger (a lambda instance or log stream row)
+            // should switch this panel to the new target, not close it — that
+            // trigger's own onClick already calls onPeek with the new target.
+            const target = e.detail.originalEvent.target as HTMLElement | null
+            if (target?.closest("[data-peek-trigger]")) {
+              e.preventDefault()
+              return
+            }
+            onClose()
+          }}
           className={cn(
             "fixed inset-y-0 right-0 z-70 flex w-120 flex-col border-l border-border bg-bg-elevated shadow-2xl",
             "transition-transform duration-300",
