@@ -156,7 +156,7 @@ func collectDocs(writeFrontmatter, refreshFrontmatter bool) ([]weightedDoc, int,
 		if err != nil {
 			return err
 		}
-		if d.IsDir() && filepath.ToSlash(path) == "docs/plans" {
+		if d.IsDir() && (filepath.ToSlash(path) == "docs/plans" || filepath.ToSlash(path) == "docs/dev") {
 			return filepath.SkipDir
 		}
 		if d.IsDir() {
@@ -224,7 +224,7 @@ func collectDocs(writeFrontmatter, refreshFrontmatter bool) ([]weightedDoc, int,
 }
 
 func isPublishedDocPath(path string) bool {
-	return !strings.HasPrefix(path, "docs/plans/")
+	return !strings.HasPrefix(path, "docs/plans/") && !strings.HasPrefix(path, "docs/dev/")
 }
 
 func splitFrontmatter(raw string) (docMeta, string, bool) {
@@ -335,6 +335,8 @@ func inferSection(path string) string {
 		return "Compatibility"
 	case "plans":
 		return "Plans"
+	case "dev":
+		return "Development"
 	case "perf-baselines":
 		return "Performance"
 	default:

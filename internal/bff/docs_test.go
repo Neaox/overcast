@@ -179,6 +179,24 @@ func TestDocsPage_rejectsDeveloperPlans(t *testing.T) {
 	}
 }
 
+func TestDocsPage_rejectsDeveloperDevDocs(t *testing.T) {
+	// Given: a docs filesystem that contains contributor-only developer docs.
+	docsFS := fstest.MapFS{
+		"dev/debugging.md": &fstest.MapFile{Data: []byte("# Debugging\n")},
+	}
+	handler := NewHandler(nil, docsFS, UIConfig{})
+
+	// When: a dev doc is requested directly.
+	req := httptest.NewRequest(http.MethodGet, "/api/docs/page?path=dev%2Fdebugging.md", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	// Then: developer-only docs are not served through the docs browser API.
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestDocsService_usesServicesSubdirectory(t *testing.T) {
 	// Given: the BFF docs filesystem is rooted at docs/.
 	docsFS := fstest.MapFS{

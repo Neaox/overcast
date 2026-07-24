@@ -16,10 +16,6 @@
 !docs/*.md
 !docs/cdk/
 !docs/cdk/**
-!docs/compatibility/
-!docs/compatibility/**
-!docs/perf-baselines/
-!docs/perf-baselines/**
 !docs/services/
 !docs/services/**
 
