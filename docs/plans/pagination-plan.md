@@ -51,7 +51,7 @@ The audit found **four** coexisting pagination idioms:
 
 **Accept when** the failing-first test — page 1, delete the last-returned item, page 2 — yields no duplicates and no gap.
 
-### G3 — `serviceutil.Paginate` invalid-token contract (H1's first payoff)
+### G3 — `serviceutil.Paginate` invalid-token contract (H1's first payoff)  **[✅ done — with H1 and H2]**
 
 One change to [pagination.go:41,70-80](../../internal/serviceutil/pagination.go) plus three call-site error mappings repairs CloudFormation `DescribeStackEvents`, CloudFront ×4, and SSM ×3 — the silent-restart class. Each service maps to its own AWS error (`ValidationError` for CFN Query protocol, `InvalidArgument` for CloudFront, `InvalidNextToken` for SSM — verify each against AWS docs in the PR).
 
@@ -96,7 +96,7 @@ Every item: failing test first (the broken behavior, e.g. token-loop duplication
 
 | Priority | Items | Why this order |
 |---|---|---|
-| **P0 — foundations** | **H1+G3** (canonical helper + invalid-token contract), **H2** (contract test helper) | One helper change repairs three services' silent-restart bug at once, and every later item builds on both; doing any G-item first would re-create per-service machinery this exists to prevent. |
+| **P0 — foundations ✅ done (branch fix/pagination-foundations)** | **H1+G3** (canonical helper + invalid-token contract), **H2** (contract test helper) | One helper change repairs three services' silent-restart bug at once, and every later item builds on both; doing any G-item first would re-create per-service machinery this exists to prevent. |
 | **P1 — broken contracts** | **G1** (GetLogEvents, the only class-D), **G2** (DynamoDB cursor duplicate-delivery) | These actively corrupt client pagination loops today (infinite re-fetch; silent duplicates) — worse than any ignored parameter. G1 can precede storage-access A4 (correctness first, efficiency after); G2's semantic fix must not wait for A3. |
 | **P2 — small, high-visibility fidelity** | **G5** (DynamoDB ListTables), **G4** (S3 multipart response shapes + v2/v1 token errors), **G9** (AppSync default) | Cheap, mechanical, on surfaces users actually script against; each is an afternoon with H1/H2 in place. |
 | **P3 — coordinated with storage-access-plan** | **G6** (FilterLogEvents) with **A4**; interleave with access-plan A1–A3/A5 per its own ordering | Single landing per surface: the logs work satisfies both plans at once rather than touching the same handler twice. |
