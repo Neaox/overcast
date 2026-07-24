@@ -32,7 +32,6 @@ import (
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/protocol/codec"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
@@ -45,19 +44,6 @@ const serviceName = "ec2"
 type Service struct {
 	handler *Handler
 	log     *serviceutil.ServiceLogger
-}
-
-// ec2ErrorCodec wraps a Codec so typed EC2 operations render errors in
-// EC2's XML shape rather than the generic Query error envelope. Currently
-// unused: EC2's typed dispatch branch is disabled pending a Track 2 audit
-// (see the comment on DispatchQuery below). Kept in place so re-enabling
-// typed dispatch is a one-line change rather than a re-derivation.
-type ec2ErrorCodec struct {
-	codec.Codec
-}
-
-func (c ec2ErrorCodec) WriteError(w http.ResponseWriter, r *http.Request, aerr *protocol.AWSError) {
-	protocol.WriteEC2QueryXMLError(w, r, aerr)
 }
 
 // New returns a configured EC2 Service.
@@ -157,7 +143,9 @@ func (s *Service) Stop(ctx context.Context) {
 // DeleteTags, DeleteVpcEndpoints). Per the P1 safety valve, a service-wide
 // spread of unrelated bugs like this is routed to the legacy path rather than
 // patched piecemeal; a dedicated Track 2 pass should audit ec2/typed_logic.go
-// op by op before re-enabling this branch.
+// op by op before re-enabling this branch. The ec2ErrorCodec wrapper (renders
+// typed-op errors in EC2's XML error shape) was deleted along with the branch
+// to keep lint clean — recover both from git history when re-enabling.
 func (s *Service) DispatchQuery(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		protocol.WriteEC2QueryXMLError(w, r, protocol.ErrInvalidArgument("invalid request form encoding"))

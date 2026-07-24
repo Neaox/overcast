@@ -208,6 +208,23 @@ func (s *Service) TargetPrefix() string { return "AmazonSQS." }
 // operation has been migrated to the typed dispatcher, the typed path is
 // taken. Otherwise the legacy http.HandlerFunc registry runs unchanged.
 func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
+	// Query-protocol requests (boto2-style form posts, typically to the
+	// queue URL /{accountID}/{queueName}) always go through DispatchQuery's
+	// form→JSON translation tier, never the typed fast path below: SQS's
+	// typed In types are JSON-shaped, and the Query form encoding of SQS
+	// parameters (Attribute.N, MessageAttribute.N.… member shapes) is
+	// handled by sqsFormToJSON's mapping table, which a generic Query
+	// decode cannot replicate. Since the protocol middleware began
+	// resolving Action from the form body (wire-protocol plan P1), these
+	// requests arrive with a non-empty opName and would otherwise be
+	// intercepted by the typed path and mis-decoded.
+	if c, _ := codec.FromContext(r.Context()); c != nil && c.Name() == codec.NameAWSQuery {
+		if err := r.ParseForm(); err == nil {
+			s.DispatchQuery(w, r)
+			return
+		}
+	}
+
 	// Typed-dispatch fast path.
 	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {
 		if !codec.Supports(s.SupportedProtocols(), c) {
@@ -221,20 +238,6 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 		}
 		if top, ok := s.handler.typedOp[opName]; ok {
 			top.Invoke(w, r, c)
-			return
-		}
-	}
-
-	// Query protocol fallback: the Protocol middleware identifies form-encoded
-	// requests as QueryXML but cannot extract the operation name without
-	// parsing the body (identifyQuery returns opName="" when Action= is in
-	// the body rather than the URL query string). When this request arrived
-	// via the queue-URL route (/{accountID}/{queueName}), Dispatch is
-	// responsible for finishing the dispatch — delegate to DispatchQuery,
-	// which handles form parsing and JSON translation.
-	if c, _ := codec.FromContext(r.Context()); c != nil && c.Name() == codec.NameAWSQuery {
-		if err := r.ParseForm(); err == nil {
-			s.DispatchQuery(w, r)
 			return
 		}
 	}
