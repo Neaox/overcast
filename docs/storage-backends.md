@@ -66,30 +66,34 @@ progress log *during* a long-running migration (e.g. the `VACUUM` above) — the
 its entire duration, which is indistinguishable from a hang if you're watching them without
 knowing this.
 
-**What a request sees during this window depends on the backend:**
+**What a request sees during this window: a fast 503, by design.** Requests that arrive while a
+migration is still in flight are rejected by the `NotReady` middleware
+([internal/middleware/notready.go](../internal/middleware/notready.go)) with a 503
+`ServiceUnavailable` response (the real AWS error code, which AWS SDKs already retry
+automatically) plus a `Retry-After: 2` header — in the service's own wire format (XML for S3,
+JSON elsewhere). Overcast's own `/_`-prefixed endpoints (`/_health`, `/_debug/*`, …) are exempt,
+so operators can still check status while a long migration (the `VACUUM` above) runs.
 
-- **`persistent` mode**: every `Get`/`Set`/`Delete`/`List`/`Scan` calls `ensureReady(ctx)`
-  first, which blocks until migration finishes or the request's own context is cancelled. A
-  client hitting the API during this window simply hangs — no response, no error — until
-  migration completes or the client's own timeout fires.
-- **`hybrid` mode (default)** — more subtle: reads for `TierHot` data (buckets, queues, tables,
-  functions — nearly everything control-plane) fall back to the in-memory store when SQLite
-  isn't ready yet ([hybrid.go `Get`/`List`/`Scan`](../internal/state/hybrid.go)), and that memory
-  store is still empty — seeding hasn't started, because seeding only begins after migration
-  succeeds. The request returns immediately with **"not found" / an empty list, not an error and
-  not a hang**, for data that genuinely exists once migration finishes. A client listing their
-  resources at exactly this moment sees them as gone, not delayed. This window is narrower than
-  "the whole startup" — once migration finishes and seeding begins (a separate phase), reads
-  correctly fall back to querying SQLite directly and are accurate again, just slower than the
-  fully-warmed cache; only the migration itself (backup copy + each registered migration's `Up`/
-  `AfterCommit`) has this gap. **Writes are unaffected the entire time** — `Set`/`Delete`/
-  `DeletePrefix` always land in the in-memory overlay and pending log immediately, regardless of
-  migration or seed state; nothing is lost or delayed.
+The middleware exists because of what each backend would otherwise do in this window — worth
+knowing when reasoning about the store internals, since the underlying behavior is still there
+beneath the gate:
 
-None of this needs a code fix to be correct — migrations already run off the request path, writes
-are never at risk, and the window closes itself. It is a real, user-visible gap between "the
-server is listening" and "the server has fully caught up", worth knowing about if you're
-diagnosing a "my resources disappeared for a bit right after I upgraded/restarted" report.
+- **`persistent` mode**: every store method calls `ensureReady(ctx)` first, which blocks until
+  migration finishes — an ungated request would simply hang until its own client timeout.
+- **`hybrid` mode (default)**: `TierHot` reads fall back to the in-memory store when SQLite
+  isn't ready, and that memory store is still empty during migration (seeding only begins after
+  migration succeeds) — an ungated request would get **"not found" / an empty list** for data
+  that genuinely exists once migration finishes, which is worse than an error because nothing
+  looks wrong. This gap is scoped to the migration window only: once migration finishes and
+  seeding begins, reads fall back to querying SQLite directly and are accurate (just slower than
+  the warmed cache), which is why `NotReady()` reports false from that point on.
+
+**Writes are never at risk in either mode** — in hybrid they land in the in-memory overlay and
+pending log immediately regardless of migration/seed state; in persistent they block on
+`ensureReady` like reads. And a store that *permanently* degrades to memory-only (unopenable/
+corrupt database — see the `hybrid` section below) is deliberately **not** gated: that's an
+ongoing health condition surfaced via `PersistentHealth`, not a startup phase, so it must not
+503 forever.
 
 ---
 
@@ -190,11 +194,29 @@ which WAL mode allows to proceed concurrently with the single writer. That solve
 still pays a real SQLite query per operation — just one that doesn't wait on a writer lock.
 
 Writes are cheap and async: `Set`/`Delete`/`DeletePrefix` update the in-memory overlay and
-append to an unsynced-by-default pending log, then return — a background loop batches the
-dirty set to SQLite on a timer (`OVERCAST_HYBRID_FLUSH_INTERVAL`, default 5s) or when a
-dirty-entry/byte threshold is crossed, whichever comes first. This is why `hybrid` is fast
-*and* durable enough for local dev: crash-before-flush loses at most one flush interval's
-writes, recovered by pending-log replay, not the whole dataset.
+append to a pending log, then return — a background loop batches the dirty set to SQLite on a
+timer (`OVERCAST_HYBRID_FLUSH_INTERVAL`, default 5s) or when a dirty-entry/byte threshold is
+crossed (`OVERCAST_HYBRID_DIRTY_ENTRY_THRESHOLD` / `_DIRTY_BYTE_THRESHOLD`, defaults 10 000
+entries / 8 MiB), whichever comes first. The pending log's fsync policy is configurable
+(`OVERCAST_HYBRID_SYNC`: `always` | `interval` | `never`, default `interval` at
+`OVERCAST_HYBRID_SYNC_INTERVAL` = 100 ms — the same mechanism as `wal` mode's
+`OVERCAST_WAL_FSYNC`). This is why `hybrid` is fast *and* durable enough for local dev: a
+process kill loses nothing that reached the pending log; an OS crash/power loss loses at most
+one sync interval (100 ms by default), recovered by pending-log replay — not the whole dataset.
+
+Replay tolerates real-world crash damage: a torn final line (the signature of a kill
+mid-append) is logged and ignored, a corrupt line anywhere else is logged and skipped, and the
+file is streamed rather than loaded whole, so replay memory is bounded by the largest single
+entry. The same tolerance applies to `wal` mode's log replay.
+
+**Degraded mode (unopenable/corrupt database): degrade, don't poison.** If the SQLite file
+can't be opened, migrated, or seeded, the store logs loudly once and continues **memory-only**
+for the rest of the process lifetime: reads and writes keep working, flushes are skipped, and
+`PersistentHealth` reports unhealthy (surfaced via `/_health`). The pending log keeps
+appending so a restart can replay — but with flushes gone, nothing ever compacts it, so its
+growth is hard-capped at 64 MiB; past the cap, writes are memory-only for the rest of the run
+and a one-time warning is logged. One corrupt *row* (as opposed to a corrupt file) never
+triggers this: the seed skips undecodable rows individually and keeps loading the rest.
 
 ### Known limitation: `TierCached` has no caching layer
 
@@ -225,6 +247,23 @@ reproducible when Overcast is the only thing touching the disk.
 
 ---
 
+## Shutdown: the flush budget and `docker stop`
+
+Graceful shutdown ends with a final synchronous flush of everything the hybrid store hasn't
+written to SQLite yet, then the database close. That close is **time-budgeted by
+`OVERCAST_SHUTDOWN_TIMEOUT`** (default 5s, [cmd_serve.go `closeStoreBounded`](../cmd/overcast/cmd_serve.go)):
+if the flush can't finish inside the budget — realistic on a slow bind-mounted `/data` volume
+under Docker Desktop — Overcast logs `store close exceeded shutdown timeout`, exits anyway, and
+the unflushed writes replay from the pending log on the next start. Nothing is lost either way;
+the budget exists so a slow disk can't push the process past `docker stop`'s ~10s grace period
+and get it SIGKILLed with no record of why. If you routinely see the timeout warning, either
+raise `OVERCAST_SHUTDOWN_TIMEOUT` (and `docker stop -t` to match) or move `/data` off the
+bind mount. Error-path shutdowns (listener failure) run the same cleanup tail as
+signal-triggered ones, including service-level buffered flushes like CloudWatch Logs' write
+cache.
+
+---
+
 ## Backend selection guidance
 
 The config-level version of this table — the four `OVERCAST_STATE` values, Docker examples,
@@ -249,3 +288,8 @@ only the internals-level "why", not a restatement of the config table:
 - **Per-service overrides** (`OVERCAST_STATE_<SERVICE>`) let you mix backends — e.g. `hybrid`
   globally with `persistent` only for the one service under test — see
   [docs/README.md § Per-service storage overrides](./README.md#per-service-storage-overrides).
+  **Known bug:** overrides for `cloudformation`, `apigateway`, and `eventbridge` are currently
+  accepted but silently never take effect, because those services' storage namespaces use short
+  prefixes (`cfn:`, `apigw:`, `eb:`) that don't match the config name the override is registered
+  under — tracked as [storage-plan.md item 3.14](./storage-plan.md). Every other service's
+  override works as documented.
