@@ -10,7 +10,7 @@ func init() {
 		capabilities.Capability{Service: "dynamodb", Operation: "CreateTable", Category: "Table management", Status: capabilities.StatusSupported, Notes: "Includes GSI/LSI definitions"},
 		capabilities.Capability{Service: "dynamodb", Operation: "DeleteTable", Category: "Table management", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "dynamodb", Operation: "DescribeTable", Category: "Table management", Status: capabilities.StatusSupported},
-		capabilities.Capability{Service: "dynamodb", Operation: "ListTables", Category: "Table management", Status: capabilities.StatusSupported, Notes: "Limit/ExclusiveStartTableName currently ignored — returns all tables in one response"},
+		capabilities.Capability{Service: "dynamodb", Operation: "ListTables", Category: "Table management", Status: capabilities.StatusSupported, Notes: "Limit (default/max 100) and ExclusiveStartTableName honored; LastEvaluatedTableName echoed when more tables remain"},
 		capabilities.Capability{Service: "dynamodb", Operation: "UpdateTable", Category: "Table management", Status: capabilities.StatusSupported, Notes: "BillingMode, ProvisionedThroughput, GSI create/delete/update-throughput, AttributeDefinitions, StreamSpecification"},
 		capabilities.Capability{Service: "dynamodb", Operation: "DescribeTimeToLive", Category: "Table management", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "dynamodb", Operation: "UpdateTimeToLive", Category: "Table management", Status: capabilities.StatusSupported, Notes: "TTL-based item expiry; sweeper deletes expired items hourly"},

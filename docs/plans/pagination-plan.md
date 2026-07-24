@@ -1,6 +1,6 @@
 # Pagination fidelity — audit & remediation plan
 
-> **Status:** planned — no items started. Audit completed 2026-07-24 (agent sweep of every paginating operation across all supported services; evidence file:line below).
+> **Status:** in progress — H1/H2/G3 done (foundations), G2/G5 done (DynamoDB, with storage-access A3); G1/G6 and G4 in flight. Audit completed 2026-07-24 (agent sweep of every paginating operation across all supported services; evidence file:line below).
 > **Scope:** the **wire contract** of pagination vs real AWS — limit params honored with AWS's defaults/caps, continuation tokens that actually resume, truthful truncation flags, and AWS-shaped errors on invalid tokens. This matters more than usual for an emulator: people specifically test their pagination loops against local stacks, so an ignored `Limit` or a lying `IsTruncated` breaks exactly the client code Overcast exists to exercise.
 > **Relationship to other plans:** [storage-access-plan.md](./storage-access-plan.md) owns the *storage shape* behind pagination (cursors at the storage boundary, range reads); this plan owns what the client observes. For bounded, resource-count namespaces (most `List*` ops), **in-memory slice pagination over a full scan is the correct implementation** — this plan deliberately does not require storage cursors for them. Items that need both (logs) say so and land together.
 > **Audience:** any contributor or agent; [CONTRIBUTING.md](../../CONTRIBUTING.md)/[AGENTS.md](../../AGENTS.md) rules apply (failing test first, wire-format changes are the compatibility contract, prefer AWS SDK clients in tests).
@@ -43,13 +43,15 @@ The audit found **four** coexisting pagination idioms:
 
 **Accept when** the H2 walk terminates via same-token, a tail-loop (poll, get token, poll again) receives each event exactly once, and an invalid token errors.
 
-### G2 — DynamoDB `Query`/`Scan`: cursor resolution by position, not item identity
+### G2 — DynamoDB `Query`/`Scan`: cursor resolution by position, not item identity  **[✅ done — with A3 and G5]**
 
 **Evidence.** [handler.go:634-646, 888-900](../../internal/services/dynamodb/handler.go): `ExclusiveStartKey` is resolved by scanning for an item *equal* to the cursor; if that item was deleted between pages (or a sparse GSI omits it), the match silently fails and pagination **restarts from page 1** — duplicate delivery on AWS's most-tested pagination contract.
 
 **Change.** Resolve the cursor by **key-order position** (first item strictly after `ExclusiveStartKey` in the operation's sort order) so a vanished cursor item degrades exactly as real DynamoDB does. Also add the page-size truncation AWS implies (1 MB accumulated / explicit `Limit`) so unbounded single-page responses stop. Coordinates with [storage-access A3](./storage-access-plan.md) (keyset paging wants the same by-position semantics); the semantic fix here must not wait for A3.
 
 **Accept when** the failing-first test — page 1, delete the last-returned item, page 2 — yields no duplicates and no gap.
+
+**Done (2026-07-24, branch fix/dynamodb-scan-paging-cursors):** `resolveCursorPosition` (position-based, direction-aware for `ScanIndexForward`) replaces the identity search on both Query and Scan, including the GSI/parallel-scan fallback path (which now sorts by the full (hash, sort) tuple so "position after the cursor" is well-defined). Failing-first evidence: the delete-cursor-item tests reproduced the silent page-1 restart for both Scan and Query pre-fix. Page truncation: explicit `Limit` honored, plus an implicit 1000-item cap (`dynamoDefaultPageLimit`) standing in for AWS's 1 MB byte bound — true accumulated-byte accounting deferred (documented in code as a heuristic; nothing tracks item byte size on this path yet).
 
 ### G3 — `serviceutil.Paginate` invalid-token contract (H1's first payoff)  **[✅ done — with H1 and H2]**
 
@@ -59,9 +61,11 @@ One change to [pagination.go:41,70-80](../../internal/serviceutil/pagination.go)
 
 **Evidence.** [handler_multipart.go:56-84, 359-431](../../internal/services/s3/handler_multipart.go): no `MaxParts`/`PartNumberMarker`/`MaxUploads`/`KeyMarker` handling, and the XML response structs don't declare `IsTruncated`/`NextPartNumberMarker`/`NextKeyMarker` at all — a wire-shape gap, not just behavior (real AWS caps parts at 1000/page, 10 000/upload). Also fold in the v2/v1 object-listing invalid-token fix (garbage `ContinuationToken` currently silently means "from the start"; AWS returns `InvalidArgument`).
 
-### G5 — DynamoDB `ListTables`: honor the params it already declares
+### G5 — DynamoDB `ListTables`: honor the params it already declares  **[✅ done]**
 
 **Evidence.** Request struct has `Limit`/`ExclusiveStartTableName`; the handler discards the request entirely ([handler.go:283-308](../../internal/services/dynamodb/handler.go)); no `LastEvaluatedTableName` in the response. AWS: default/cap 100, `LastEvaluatedTableName` echo. The service-doc caveat this audit exposed has already been corrected ([docs/services/dynamodb.md](../services/dynamodb.md)); remove it when this lands. Small, mechanical, high-visibility.
+
+**Done (2026-07-24, branch fix/dynamodb-scan-paging-cursors):** `Limit` (default and cap 100 per AWS docs), position-based `ExclusiveStartTableName` (a deleted start table resumes from where it would sort, pinned by test), `LastEvaluatedTableName` omitted on the final page. Handler-level pagination over the already-sorted bounded table list — no storage change, per this plan's boundedness rule. Stale service-doc caveat removed via `capabilities_dev.go` + `capgen` regeneration.
 
 ### G6 — `FilterLogEvents` limit + nextToken
 
@@ -97,8 +101,8 @@ Every item: failing test first (the broken behavior, e.g. token-loop duplication
 | Priority | Items | Why this order |
 |---|---|---|
 | **P0 — foundations ✅ done (branch fix/pagination-foundations)** | **H1+G3** (canonical helper + invalid-token contract), **H2** (contract test helper) | One helper change repairs three services' silent-restart bug at once, and every later item builds on both; doing any G-item first would re-create per-service machinery this exists to prevent. |
-| **P1 — broken contracts** | **G1** (GetLogEvents, the only class-D), **G2** (DynamoDB cursor duplicate-delivery) | These actively corrupt client pagination loops today (infinite re-fetch; silent duplicates) — worse than any ignored parameter. G1 can precede storage-access A4 (correctness first, efficiency after); G2's semantic fix must not wait for A3. |
-| **P2 — small, high-visibility fidelity** | **G5** (DynamoDB ListTables), **G4** (S3 multipart response shapes + v2/v1 token errors), **G9** (AppSync default) | Cheap, mechanical, on surfaces users actually script against; each is an afternoon with H1/H2 in place. |
+| **P1 — broken contracts** | **G1** (GetLogEvents, the only class-D), **G2** (DynamoDB cursor duplicate-delivery — ✅ done) | These actively corrupt client pagination loops today (infinite re-fetch; silent duplicates) — worse than any ignored parameter. G1 can precede storage-access A4 (correctness first, efficiency after); G2's semantic fix must not wait for A3. |
+| **P2 — small, high-visibility fidelity** | **G5** (DynamoDB ListTables — ✅ done), **G4** (S3 multipart response shapes + v2/v1 token errors), **G9** (AppSync default) | Cheap, mechanical, on surfaces users actually script against; each is an afternoon with H1/H2 in place. |
 | **P3 — coordinated with storage-access-plan** | **G6** (FilterLogEvents) with **A4**; interleave with access-plan A1–A3/A5 per its own ordering | Single landing per surface: the logs work satisfies both plans at once rather than touching the same handler twice. |
 | **P4 — breadth, per-service PRs** | **G7** (EC2 family first — biggest zero-scaffolding surface), then **G8** service by service (suggested within-G8 order: IAM → SQS/SNS/Lambda → Kinesis lists → CloudWatch/logs Describe* → the rest) | Mechanical H1 adoption; no dependencies between services, so parallelizable across agents and safe to schedule opportunistically. |
 | **Explicitly last / never** | Won't-fix register above | Documented decisions, revisit only on user demand. |

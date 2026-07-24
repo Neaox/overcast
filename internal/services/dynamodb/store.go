@@ -350,6 +350,38 @@ func (s *dynamoStore) scanItems(ctx context.Context, tableName string) ([]Item, 
 	return items, nil
 }
 
+// scanItemsPage returns up to limit items from the table via a single
+// keyset-paginated backend call, ordered by (hashKey, sortKey) — the plain
+// Scan fast path for storage-access-plan.md A3. exclusiveStartKey is the raw
+// DynamoDB ExclusiveStartKey item (nil means "start of table"); it is
+// resolved to the backend's (hashKey, sortKey) cursor via the table's key
+// schema, exactly like putItem/getItem/deleteItem already do.
+//
+// hasMore reports whether items beyond the returned page exist. The backend
+// is asked for one extra item (limit+1) to answer this without a second
+// round trip — the same "peek one ahead" trick state.MemoryStore/SQLiteStore
+// ScanPage callers use elsewhere in this codebase.
+func (s *dynamoStore) scanItemsPage(ctx context.Context, table *Table, exclusiveStartKey Item, limit int) (items []Item, hasMore bool, aerr *protocol.AWSError) {
+	hasAfter := false
+	var afterHash, afterSort string
+	if exclusiveStartKey != nil {
+		h, sk, aerr := resolveKeys(table, exclusiveStartKey)
+		if aerr != nil {
+			return nil, false, aerr
+		}
+		hasAfter, afterHash, afterSort = true, h, sk
+	}
+
+	fetched, err := s.items.scanPage(ctx, table.TableName, hasAfter, afterHash, afterSort, limit+1)
+	if err != nil {
+		return nil, false, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if len(fetched) > limit {
+		return fetched[:limit], true, nil
+	}
+	return fetched, false, nil
+}
+
 // scanExpiredTTL returns only items whose TTL attribute is expired (> 0 and <= cutoffUnix).
 func (s *dynamoStore) scanExpiredTTL(ctx context.Context, tableName, ttlAttr string, cutoffUnix int64) ([]Item, *protocol.AWSError) {
 	items, err := s.items.scanExpiredTTL(ctx, tableName, ttlAttr, cutoffUnix)

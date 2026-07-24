@@ -7,12 +7,15 @@ package dynamodb
 //
 //   - GetItem:        O(1) / O(log n) — single map lookup or indexed SQL row read
 //   - Query by hash:  O(k) — loads only the items in one partition
-//   - Full Scan:      O(n) — always a full table scan (unavoidable)
+//   - Full Scan:      O(n) — always a full table scan (unavoidable; scanAll)
+//   - Scan pages:      O(log n + limit) — scanPage (storage-access-plan.md A3)
 //   - DeleteItem:     O(1) / O(log n) — single map delete or indexed SQL delete
 //
 // Two implementations are provided:
 //
-//   memItemBackend  — in-process nested maps, zero JSON serialisation overhead
+//   memItemBackend  — an in-process ordered tree per table (tidwall/btree,
+//                     the same library internal/state/memory.go uses for
+//                     MemoryStore), zero JSON serialisation overhead
 //   sqlItemBackend  — SQLite table with a (table_name, hash_key, sort_key) primary key
 //
 // The appropriate backend is chosen at startup based on the state.Store type.
@@ -22,7 +25,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
+
+	"github.com/tidwall/btree"
 )
 
 // itemBackend is the interface every DynamoDB item store must implement.
@@ -42,6 +48,21 @@ type itemBackend interface {
 
 	// scanAll returns every item in a table.
 	scanAll(ctx context.Context, tableName string) ([]Item, error)
+
+	// scanPage returns up to limit items ordered by (hashKey, sortKey), strictly
+	// after (afterHash, afterSort) when hasAfter is true, or starting from the
+	// beginning of the table when hasAfter is false. This is a keyset page
+	// (`WHERE (hash_key, sort_key) > (?, ?) ORDER BY hash_key, sort_key LIMIT ?`
+	// on the SQL backend; an ordered-tree seek on the memory backend) — cost is
+	// proportional to limit, not to table size, unlike scanAll.
+	//
+	// The cursor is positional, not an identity lookup: (afterHash, afterSort)
+	// need not name a row that still exists. A deleted "last returned item"
+	// still resolves to the correct resume point because the comparison is a
+	// key-order predicate, not an equality match — this is what lets
+	// pagination-plan.md G2's duplicate-delivery fix and storage-access-plan.md
+	// A3's paging share one implementation.
+	scanPage(ctx context.Context, tableName string, hasAfter bool, afterHash, afterSort string, limit int) ([]Item, error)
 
 	// count returns the number of items in a table without loading item values.
 	count(ctx context.Context, tableName string) (int64, error)
@@ -68,13 +89,31 @@ type debugItemRecord struct {
 	Item      Item
 }
 
+// itemCompositeKey builds the ordered map key for one item: hashKey and
+// sortKey concatenated with a NUL separator so lexicographic string order on
+// the composite key matches DynamoDB's (hashKey, sortKey) tuple order — the
+// same separator convention internal/state/memory.go's storeKey uses, for the
+// same reason (AWS resource/attribute values are always printable UTF-8, so
+// NUL never appears inside a real key).
+func itemCompositeKey(hashKey, sortKey string) string {
+	return hashKey + "\x00" + sortKey
+}
+
 // ---------------------------------------------------------------------------
-// memItemBackend — zero-serialisation in-process store
+// memItemBackend — zero-serialisation in-process store, ordered by key
 // ---------------------------------------------------------------------------
 //
 // Data layout:
 //
-//	tables[tableName][hashKey][sortKey] = Item
+//	tables[tableName] = ordered tree of itemCompositeKey(hashKey, sortKey) -> Item
+//
+// Using an ordered tree (rather than the nested maps this backend used
+// before storage-access-plan.md A3) is what makes scanPage an O(log n+limit)
+// seek instead of an O(n) sort-then-slice: the tree keeps items in
+// (hashKey, sortKey) order at all times, so a page starting after any cursor
+// — including one whose exact item has since been deleted — is a single
+// bounded Ascend from that position (mirrors state.MemoryStore.ScanPage's
+// btree seek, storage-access-plan.md pattern P1).
 //
 // A single RWMutex protects the whole store. Per-table locking would improve
 // throughput under concurrent multi-table workloads, but the emulator's target
@@ -82,24 +121,23 @@ type debugItemRecord struct {
 
 type memItemBackend struct {
 	mu     sync.RWMutex
-	tables map[string]map[string]map[string]Item
+	tables map[string]*btree.Map[string, Item]
 }
 
 func newMemItemBackend() *memItemBackend {
-	return &memItemBackend{tables: make(map[string]map[string]map[string]Item)}
+	return &memItemBackend{tables: make(map[string]*btree.Map[string, Item])}
 }
 
 func (b *memItemBackend) put(_ context.Context, tableName, hashKey, sortKey string, item Item) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if b.tables[tableName] == nil {
-		b.tables[tableName] = make(map[string]map[string]Item)
+	tree := b.tables[tableName]
+	if tree == nil {
+		tree = &btree.Map[string, Item]{}
+		b.tables[tableName] = tree
 	}
-	if b.tables[tableName][hashKey] == nil {
-		b.tables[tableName][hashKey] = make(map[string]Item)
-	}
-	b.tables[tableName][hashKey][sortKey] = item
+	tree.Set(itemCompositeKey(hashKey, sortKey), item)
 	return nil
 }
 
@@ -107,11 +145,11 @@ func (b *memItemBackend) get(_ context.Context, tableName, hashKey, sortKey stri
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	partition := b.tables[tableName][hashKey]
-	if partition == nil {
+	tree := b.tables[tableName]
+	if tree == nil {
 		return nil, false, nil
 	}
-	item, ok := partition[sortKey]
+	item, ok := tree.Get(itemCompositeKey(hashKey, sortKey))
 	return item, ok, nil
 }
 
@@ -119,14 +157,11 @@ func (b *memItemBackend) remove(_ context.Context, tableName, hashKey, sortKey s
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	partition := b.tables[tableName][hashKey]
-	if partition == nil {
+	tree := b.tables[tableName]
+	if tree == nil {
 		return nil
 	}
-	delete(partition, sortKey)
-	if len(partition) == 0 {
-		delete(b.tables[tableName], hashKey)
-	}
+	tree.Delete(itemCompositeKey(hashKey, sortKey))
 	return nil
 }
 
@@ -134,13 +169,21 @@ func (b *memItemBackend) queryByHash(_ context.Context, tableName, hashKey strin
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	partition := b.tables[tableName][hashKey]
-	if len(partition) == 0 {
+	tree := b.tables[tableName]
+	if tree == nil {
 		return []Item{}, nil
 	}
-	items := make([]Item, 0, len(partition))
-	for _, item := range partition {
+	prefix := hashKey + "\x00"
+	var items []Item
+	tree.Ascend(prefix, func(key string, item Item) bool {
+		if !strings.HasPrefix(key, prefix) {
+			return false
+		}
 		items = append(items, item)
+		return true
+	})
+	if items == nil {
+		return []Item{}, nil
 	}
 	return items, nil
 }
@@ -149,15 +192,49 @@ func (b *memItemBackend) scanAll(_ context.Context, tableName string) ([]Item, e
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	table := b.tables[tableName]
-	if len(table) == 0 {
+	tree := b.tables[tableName]
+	if tree == nil {
 		return []Item{}, nil
 	}
+	items := make([]Item, 0, tree.Len())
+	tree.Scan(func(_ string, item Item) bool {
+		items = append(items, item)
+		return true
+	})
+	return items, nil
+}
+
+// scanPage implements the itemBackend contract via a single Ascend seek to
+// the cursor position, then collects up to limit items — see
+// state.MemoryStore.ScanPage for the identical technique on the generic
+// key/value store.
+func (b *memItemBackend) scanPage(_ context.Context, tableName string, hasAfter bool, afterHash, afterSort string, limit int) ([]Item, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	tree := b.tables[tableName]
+	if tree == nil {
+		return []Item{}, nil
+	}
+
+	afterKey := ""
+	if hasAfter {
+		afterKey = itemCompositeKey(afterHash, afterSort)
+	}
+
 	var items []Item
-	for _, partition := range table {
-		for _, item := range partition {
-			items = append(items, item)
+	tree.Ascend(afterKey, func(key string, item Item) bool {
+		if hasAfter && key <= afterKey {
+			return true // seeked to the cursor itself (or before it); keep advancing
 		}
+		if limit > 0 && len(items) >= limit {
+			return false
+		}
+		items = append(items, item)
+		return true
+	})
+	if items == nil {
+		items = []Item{}
 	}
 	return items, nil
 }
@@ -166,11 +243,11 @@ func (b *memItemBackend) count(_ context.Context, tableName string) (int64, erro
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	var n int64
-	for _, partition := range b.tables[tableName] {
-		n += int64(len(partition))
+	tree := b.tables[tableName]
+	if tree == nil {
+		return 0, nil
 	}
-	return n, nil
+	return int64(tree.Len()), nil
 }
 
 func (b *memItemBackend) deleteAll(_ context.Context, tableName string) error {
@@ -185,24 +262,23 @@ func (b *memItemBackend) scanExpiredTTL(_ context.Context, tableName, ttlAttr st
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	table := b.tables[tableName]
-	if len(table) == 0 {
+	tree := b.tables[tableName]
+	if tree == nil {
 		return []Item{}, nil
 	}
 	var items []Item
-	for _, partition := range table {
-		for _, item := range partition {
-			av, ok := item[ttlAttr]
-			if !ok {
-				continue
-			}
-			ts, ok := parseTTLValue(av)
-			if !ok || ts == 0 || ts > cutoffUnix {
-				continue
-			}
-			items = append(items, item)
+	tree.Scan(func(_ string, item Item) bool {
+		av, ok := item[ttlAttr]
+		if !ok {
+			return true
 		}
-	}
+		ts, ok := parseTTLValue(av)
+		if !ok || ts == 0 || ts > cutoffUnix {
+			return true
+		}
+		items = append(items, item)
+		return true
+	})
 	if items == nil {
 		return []Item{}, nil
 	}
@@ -214,12 +290,12 @@ func (b *memItemBackend) debugScan(_ context.Context) ([]debugItemRecord, error)
 	defer b.mu.RUnlock()
 
 	var records []debugItemRecord
-	for tableName, table := range b.tables {
-		for hashKey, partition := range table {
-			for sortKey, item := range partition {
-				records = append(records, debugItemRecord{TableName: tableName, HashKey: hashKey, SortKey: sortKey, Item: item})
-			}
-		}
+	for tableName, tree := range b.tables {
+		tree.Scan(func(key string, item Item) bool {
+			hashKey, sortKey := splitItemCompositeKey(key)
+			records = append(records, debugItemRecord{TableName: tableName, HashKey: hashKey, SortKey: sortKey, Item: item})
+			return true
+		})
 	}
 	if records == nil {
 		return []debugItemRecord{}, nil
@@ -230,8 +306,19 @@ func (b *memItemBackend) debugScan(_ context.Context) ([]debugItemRecord, error)
 func (b *memItemBackend) debugDeleteAll(_ context.Context) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.tables = make(map[string]map[string]map[string]Item)
+	b.tables = make(map[string]*btree.Map[string, Item])
 	return nil
+}
+
+// splitItemCompositeKey is the inverse of itemCompositeKey: given
+// "hashKey\x00sortKey" it returns ("hashKey", "sortKey"). Only ever called
+// with keys this package created via itemCompositeKey.
+func splitItemCompositeKey(composite string) (hashKey, sortKey string) {
+	i := strings.IndexByte(composite, '\x00')
+	if i < 0 {
+		return composite, ""
+	}
+	return composite[:i], composite[i+1:]
 }
 
 // ---------------------------------------------------------------------------
@@ -253,6 +340,9 @@ func (b *memItemBackend) debugDeleteAll(_ context.Context) error {
 //   - GetItem:       point lookup on all 3 key columns
 //   - QueryByHash:   range scan on (table_name, hash_key) prefix
 //   - ScanAll:       range scan on (table_name) prefix
+//   - ScanPage:      row-value range scan `(hash_key, sort_key) > (?, ?)` on
+//     the same PK, LIMIT-bounded (storage-access-plan.md A3;
+//     "the model implementation" pattern from stream_store.go's GetRecords)
 //   - DeleteAll:     table_name equality delete
 
 type sqlItemBackend struct {
@@ -374,6 +464,44 @@ func (b *sqlItemBackend) scanAll(ctx context.Context, tableName string) ([]Item,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("dynamodb scan [%s]: %w", tableName, err)
+	}
+	defer rows.Close()
+	return scanItemRows(rows)
+}
+
+// scanPage is the SQL half of storage-access-plan.md A3: a single indexed
+// query bounded by LIMIT, using the existing (table_name, hash_key, sort_key)
+// primary key — no new index, no full-table read. The row-value comparison
+// `(hash_key, sort_key) > (?, ?)` is a positional predicate: it has no
+// opinion on whether a row with exactly that key ever existed, which is
+// exactly the semantic pagination-plan.md G2 wants (a deleted cursor item
+// must not restart pagination from page 1).
+func (b *sqlItemBackend) scanPage(ctx context.Context, tableName string, hasAfter bool, afterHash, afterSort string, limit int) ([]Item, error) {
+	if err := b.init(); err != nil {
+		return nil, err
+	}
+
+	var rows *sql.Rows
+	var err error
+	if hasAfter {
+		rows, err = b.db.QueryContext(ctx,
+			`SELECT item_json FROM dynamodb_items
+			 WHERE table_name = ? AND (hash_key, sort_key) > (?, ?)
+			 ORDER BY hash_key, sort_key
+			 LIMIT ?`,
+			tableName, afterHash, afterSort, limit,
+		)
+	} else {
+		rows, err = b.db.QueryContext(ctx,
+			`SELECT item_json FROM dynamodb_items
+			 WHERE table_name = ?
+			 ORDER BY hash_key, sort_key
+			 LIMIT ?`,
+			tableName, limit,
+		)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("dynamodb scanPage [%s]: %w", tableName, err)
 	}
 	defer rows.Close()
 	return scanItemRows(rows)
