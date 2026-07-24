@@ -73,19 +73,29 @@ middleware.Protocol (precision-ordered identifier walk)
 Service.Dispatch (or DispatchQuery)
     │
     ├── codec.FromContext(ctx) != nil ?
-    │   ├── Yes → supportsCodec?
-    │   │   ├── Yes → typedOp[op].Invoke(w, r, codec)   ← typed path (CBOR, etc.)
-    │   │   └── No  → 415 UnsupportedProtocol
-    │   └── No  → legacy dispatch (form-parse, switch/map)  ← existing path (JSON 1.x, Query)
+    │   ├── Yes → supportsCodec (or lenient "protocol drift" attempt)?
+    │   │   ├── Yes → op in typedOp?
+    │   │   │   ├── Yes → typedOp[op].Invoke(w, r, codec)  ← typed path
+    │   │   │   └── No  → legacy dispatch (fallback)
+    │   │   └── No  → 415 UnsupportedProtocol (strict mode only)
+    │   └── No  → legacy dispatch (form-parse, switch/map)
     │
     ▼
 Response (JSON, XML, or CBOR)
 ```
 
-The legacy dispatch path handles JSON 1.0, JSON 1.1, and Query requests using
-the existing handler code. CBOR requests go through the **typed dispatcher**
-via `codec.FromContext`. This dual-path design keeps every existing client
-working while adding CBOR support.
+For every protocol — JSON 1.0, JSON 1.1, Query, and CBOR — `codec.FromContext`
+is the source of truth for the operation name, and a service's typed registry
+is tried first whenever it has an entry for that operation; legacy dispatch is
+the fallback for operations without a typed implementation (or ones a service
+deliberately keeps on legacy — see the per-service exclusion comments in
+`cloudformation/service.go`, `ec2/service.go`, and `sns/service.go`). Query
+resolves its operation name from the form-encoded POST body via `r.FormValue`
+(see `identify.go`'s `identifyQuery`); this was previously a gap ("Phase 6
+query decoder") that left every Query-protocol service's typed registry
+unreachable — see docs/plans/level2-codegen.md Track 1.1. Claimed-but-undeclared
+protocol drift (Track 1.2) is lenient by default (log and attempt dispatch
+anyway); set `OVERCAST_PROTOCOL_STRICT=1` to restore the hard 415 rejection.
 
 ---
 
