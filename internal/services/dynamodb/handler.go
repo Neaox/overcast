@@ -190,7 +190,8 @@ type listTablesRequest struct {
 }
 
 type listTablesResponse struct {
-	TableNames []string `json:"TableNames"`
+	TableNames             []string `json:"TableNames"`
+	LastEvaluatedTableName string   `json:"LastEvaluatedTableName,omitempty"`
 }
 
 // ---- Handlers --------------------------------------------------------------
@@ -293,18 +294,64 @@ func (h *Handler) ListTables(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
-func (h *Handler) listTablesTyped(ctx context.Context, _ *listTablesRequest) (*listTablesResponse, *protocol.AWSError) {
+// dynamoListTablesDefaultLimit is both the default and the maximum number of
+// table names ListTables returns per page — see "ListTables" in the API
+// reference: https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ListTables.html
+// ("If you don't specify a value for the Limit parameter, then ListTables
+// returns up to 100 table names").
+const dynamoListTablesDefaultLimit = 100
+
+func (h *Handler) listTablesTyped(ctx context.Context, req *listTablesRequest) (*listTablesResponse, *protocol.AWSError) {
+	// ListTables is bounded metadata (tables are created by humans/IaC, not
+	// workload traffic — storage-access-plan.md's boundedness rule), so
+	// paginating the already-materialized, already-sorted list in the
+	// handler is the correct shape; no storage-layer change is needed here
+	// (contrast with Scan/Query's A3 item, which pages unbounded item data
+	// at the storage layer). store.listTables already returns tables in
+	// table-name order because both state.Store implementations return List
+	// results in lexicographic key order and table keys are region-prefixed
+	// names.
 	tables, aerr := h.store.listTables(ctx, "")
 	if aerr != nil {
 		return nil, aerr
 	}
 
-	names := make([]string, len(tables))
-	for i, t := range tables {
+	limit := req.Limit
+	if limit <= 0 || limit > dynamoListTablesDefaultLimit {
+		limit = dynamoListTablesDefaultLimit
+	}
+
+	start := 0
+	if req.ExclusiveStartTableName != "" {
+		// Position-based, exactly like Scan/Query's cursor fix
+		// (pagination-plan.md G2): resume after the first table name that
+		// sorts strictly after the given name. AWS documents no validation
+		// error for an ExclusiveStartTableName that names a table which no
+		// longer exists (or never did) — real DynamoDB resumes from where
+		// that name would sort, it does not reject the request or restart
+		// from the beginning, so that is the behavior modeled here too.
+		start = len(tables)
+		for i, t := range tables {
+			if t.TableName > req.ExclusiveStartTableName {
+				start = i
+				break
+			}
+		}
+	}
+
+	page := tables[start:]
+	var lastEvaluated string
+	if len(page) > limit {
+		page = page[:limit]
+		lastEvaluated = page[len(page)-1].TableName
+	}
+
+	names := make([]string, len(page))
+	for i, t := range page {
 		names[i] = t.TableName
 	}
 
-	return &listTablesResponse{TableNames: names}, nil
+	return &listTablesResponse{TableNames: names, LastEvaluatedTableName: lastEvaluated}, nil
 }
 
 // DescribeTable handles the DynamoDB DescribeTable operation.
@@ -575,10 +622,6 @@ func (h *Handler) scanTyped(ctx context.Context, req *scanRequest) (any, *protoc
 	if aerr != nil {
 		return nil, aerr
 	}
-	items, aerr := h.store.scanItems(ctx, req.TableName)
-	if aerr != nil {
-		return nil, aerr
-	}
 
 	// When scanning a GSI, exclude items that lack the index's hash key attribute.
 	var scanIdx *SecondaryIndex
@@ -591,66 +634,100 @@ func (h *Handler) scanTyped(ctx context.Context, req *scanRequest) (any, *protoc
 				HTTPStatus: http.StatusBadRequest,
 			}
 		}
-		hashKey := indexHashKeyName(scanIdx)
-		filtered := make([]Item, 0, len(items))
-		for _, item := range items {
-			if _, ok := item[hashKey]; ok {
-				filtered = append(filtered, item)
-			}
-		}
-		items = filtered
 	}
 
-	if items == nil {
-		items = []Item{}
-	}
+	limit := effectivePageLimit(req.Limit)
 
-	// Sort items by primary hash key for deterministic ordering (pagination + parallel scan).
-	hashKeyName := table.hashKeyName()
-	sort.Slice(items, func(i, j int) bool {
-		return extractKeyValue(items[i][hashKeyName]) < extractKeyValue(items[j][hashKeyName])
-	})
-
-	// Parallel scan: slice items by segment.
-	if req.TotalSegments > 1 {
-		seg := req.Segment
-		if seg < 0 {
-			seg = 0
-		}
-		n := len(items)
-		segSize := (n + req.TotalSegments - 1) / req.TotalSegments
-		start := seg * segSize
-		if start >= n {
-			items = []Item{}
-		} else {
-			end := start + segSize
-			if end > n {
-				end = n
-			}
-			items = items[start:end]
-		}
-	}
-
-	// Apply ExclusiveStartKey: skip items up to and including the start key.
-	if req.ExclusiveStartKey != nil {
-		startIdx := -1
-		for i, item := range items {
-			if itemKeysEqual(item, req.ExclusiveStartKey, table) {
-				startIdx = i
-				break
-			}
-		}
-		if startIdx >= 0 {
-			items = items[startIdx+1:]
-		}
-	}
-
-	// Apply Limit (must be before FilterExpression per DynamoDB semantics: Limit caps the
-	// number of items READ, not the number returned after filtering).
+	var items []Item
 	var lastKey Item
-	if req.Limit > 0 && len(items) > req.Limit {
-		items = items[:req.Limit]
-		lastKey = extractItemKeysWithIndex(items[len(items)-1], table, scanIdx)
+
+	if scanIdx == nil && req.TotalSegments <= 1 {
+		// Base-table scan (no GSI, no parallel segments): page directly at the
+		// storage layer instead of reading the whole table on every call
+		// (storage-access-plan.md A3). scanItemsPage's keyset cursor is
+		// position-based by construction, not identity-based — a deleted
+		// "last returned item" still resolves to the correct resume point
+		// (pagination-plan.md G2), so no separate cursor-search step is needed
+		// on this path.
+		pageItems, hasMore, aerr := h.store.scanItemsPage(ctx, table, req.ExclusiveStartKey, limit)
+		if aerr != nil {
+			return nil, aerr
+		}
+		items = pageItems
+		if hasMore {
+			lastKey = extractItemKeys(items[len(items)-1], table)
+		}
+	} else {
+		// GSI scan or parallel scan: no ordered storage structure exists yet
+		// for a secondary index (that is A7's design-gated item) or for
+		// per-segment ranges, so this path still reads the whole table and
+		// paginates in memory. It still gets G2's position-based cursor fix:
+		// ExclusiveStartKey is resolved by where it falls in (hash, sort)
+		// order, not by searching for an exact item match.
+		allItems, aerr := h.store.scanItems(ctx, req.TableName)
+		if aerr != nil {
+			return nil, aerr
+		}
+
+		if scanIdx != nil {
+			hashKey := indexHashKeyName(scanIdx)
+			filtered := make([]Item, 0, len(allItems))
+			for _, item := range allItems {
+				if _, ok := item[hashKey]; ok {
+					filtered = append(filtered, item)
+				}
+			}
+			allItems = filtered
+		}
+		if allItems == nil {
+			allItems = []Item{}
+		}
+
+		// Sort by (hashKey, sortKey) — a full total order, needed for
+		// position-based cursor resolution to be well-defined (ties on hash
+		// key alone would make "the position after the cursor" ambiguous).
+		hashKeyName := table.hashKeyName()
+		sortKeyName := table.sortKeyName()
+		sort.Slice(allItems, func(i, j int) bool {
+			ih := extractKeyValue(allItems[i][hashKeyName])
+			jh := extractKeyValue(allItems[j][hashKeyName])
+			if ih != jh {
+				return ih < jh
+			}
+			return extractKeyValue(allItems[i][sortKeyName]) < extractKeyValue(allItems[j][sortKeyName])
+		})
+
+		// Parallel scan: slice items by segment.
+		if req.TotalSegments > 1 {
+			seg := req.Segment
+			if seg < 0 {
+				seg = 0
+			}
+			n := len(allItems)
+			segSize := (n + req.TotalSegments - 1) / req.TotalSegments
+			start := seg * segSize
+			if start >= n {
+				allItems = []Item{}
+			} else {
+				end := start + segSize
+				if end > n {
+					end = n
+				}
+				allItems = allItems[start:end]
+			}
+		}
+
+		// Apply ExclusiveStartKey by position, not identity (pagination-plan.md G2).
+		startIdx := resolveCursorPosition(allItems, req.ExclusiveStartKey, hashKeyName, sortKeyName, true)
+		allItems = allItems[startIdx:]
+
+		// Apply Limit (must be before FilterExpression per DynamoDB semantics: Limit caps the
+		// number of items READ, not the number returned after filtering).
+		if len(allItems) > limit {
+			allItems = allItems[:limit]
+			lastKey = extractItemKeysWithIndex(allItems[len(allItems)-1], table, scanIdx)
+		}
+		items = allItems
 	}
 
 	scannedCount := len(items)
@@ -885,25 +962,23 @@ func (h *Handler) queryTyped(ctx context.Context, req *queryRequest) (any, *prot
 		}
 	}
 
-	// Apply ExclusiveStartKey: skip items up to and including the start key.
-	if req.ExclusiveStartKey != nil {
-		startIdx := -1
-		for i, item := range matched {
-			if itemKeysEqual(item, req.ExclusiveStartKey, table) {
-				startIdx = i
-				break
-			}
-		}
-		if startIdx >= 0 {
-			matched = matched[startIdx+1:]
-		}
-	}
+	// Apply ExclusiveStartKey by position, not identity: find the first item
+	// that sorts strictly after the cursor in the order just established
+	// above (ascending or reversed per ScanIndexForward). Real DynamoDB
+	// degrades the same way when the cursor's item no longer exists — a
+	// position-based search still lands on the correct resume point, where
+	// an exact-match search silently restarts from the beginning and
+	// duplicates every item already delivered (pagination-plan.md G2).
+	ascending := req.ScanIndexForward == nil || *req.ScanIndexForward
+	startIdx := resolveCursorPosition(matched, req.ExclusiveStartKey, hashAttrName, effectiveSortKey, ascending)
+	matched = matched[startIdx:]
 
 	// Apply Limit (must be before FilterExpression per DynamoDB semantics: Limit caps the
 	// number of items READ, not the number returned after filtering).
+	limit := effectivePageLimit(req.Limit)
 	var lastKey Item
-	if req.Limit > 0 && len(matched) > req.Limit {
-		matched = matched[:req.Limit]
+	if len(matched) > limit {
+		matched = matched[:limit]
 		lastKey = extractItemKeysWithIndex(matched[len(matched)-1], table, activeIdx)
 	}
 
@@ -1516,19 +1591,81 @@ func (h *Handler) batchWriteItemTyped(ctx context.Context, req *batchWriteItemRe
 	}, nil
 }
 
-// itemKeysEqual checks whether item's key attributes match the given key map.
-func itemKeysEqual(item, key Item, table *Table) bool {
-	hk := table.hashKeyName()
-	if extractKeyValue(item[hk]) != extractKeyValue(key[hk]) {
-		return false
+// dynamoDefaultPageLimit is the implicit cap on the number of items a single
+// Query or Scan response returns when the caller supplies no Limit (or one
+// larger than this cap).
+//
+// Real DynamoDB bounds a Query/Scan response page to 1 MB of item data,
+// evaluated before FilterExpression — see "Query" and "Scan" in the API
+// reference: https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Query.html
+// and https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Scan.html
+// ("A single Scan/Query only returns a result set that fits within the 1 MB
+// size limit"). Overcast does not track accumulated item byte size on this
+// path today (deferred — see docs/plans/pagination-plan.md G2's landing
+// notes), so this constant approximates that bound with a fixed item count
+// instead: 1000 items, chosen as a conservative stand-in assuming AWS's own
+// documented average item size guidance (items are commonly well under 1 KB;
+// 1000 items keeps a page far below 1 MB for the vast majority of realistic
+// test/dev item shapes) while still being large enough that no existing
+// behavioral test (all of which use small, human-sized tables) is truncated
+// by it. The purpose of the cap is solely to stop a client-observable
+// "unbounded single page" response on very large tables — pinning the exact
+// number is not part of AWS's compatibility contract the way the 1 MB byte
+// bound is, so this is a heuristic, not a wire-fidelity guarantee.
+const dynamoDefaultPageLimit = 1000
+
+// effectivePageLimit returns the Limit to apply to a Query/Scan page: the
+// caller's explicit Limit when it's a positive value at or under the
+// implicit cap, otherwise the cap itself (dynamoDefaultPageLimit) — see its
+// doc comment for why an implicit cap exists at all (pagination-plan.md G2).
+func effectivePageLimit(requested int) int {
+	if requested <= 0 || requested > dynamoDefaultPageLimit {
+		return dynamoDefaultPageLimit
 	}
-	sk := table.sortKeyName()
-	if sk != "" {
-		if extractKeyValue(item[sk]) != extractKeyValue(key[sk]) {
-			return false
+	return requested
+}
+
+// resolveCursorPosition returns the index of the first item in items — which
+// must already be sorted by (hashName, sortName) in the given direction —
+// that lies strictly after cursor's position. Returns 0 when cursor is nil
+// (no ExclusiveStartKey: start from the beginning) and len(items) when every
+// item is at or before the cursor's position.
+//
+// This is a positional search, not an identity lookup: cursor need not match
+// any item in items by value. That is exactly the fix pagination-plan.md G2
+// requires — the old code searched for an item *equal* to the cursor and
+// silently restarted from page 1 when that exact item had been deleted
+// between pages. A position-based search degrades the same way real
+// DynamoDB does: the page simply resumes from where the deleted item would
+// have sorted.
+func resolveCursorPosition(items []Item, cursor Item, hashName, sortName string, ascending bool) int {
+	if cursor == nil {
+		return 0
+	}
+	cursorHash := extractKeyValue(cursor[hashName])
+	var cursorSort string
+	if sortName != "" {
+		cursorSort = extractKeyValue(cursor[sortName])
+	}
+
+	for i, item := range items {
+		itemHash := extractKeyValue(item[hashName])
+		var itemSort string
+		if sortName != "" {
+			itemSort = extractKeyValue(item[sortName])
+		}
+
+		var after bool
+		if ascending {
+			after = itemHash > cursorHash || (itemHash == cursorHash && itemSort > cursorSort)
+		} else {
+			after = itemHash < cursorHash || (itemHash == cursorHash && itemSort < cursorSort)
+		}
+		if after {
+			return i
 		}
 	}
-	return true
+	return len(items)
 }
 
 // extractItemKeys returns only the table primary-key attributes from the given item.

@@ -4576,3 +4576,379 @@ func TestQuery_GSI_LastEvaluatedKey_IncludesIndexKeys(t *testing.T) {
 		t.Error("page 2 LastEvaluatedKey should be nil (no more items)")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// pagination-plan.md G2 / storage-access-plan.md A3
+// ---------------------------------------------------------------------------
+
+// TestScan_pagination_survivesDeletedCursorItem is pagination-plan.md G2's
+// headline test: page 1, delete the last-returned item, page 2 — must yield
+// no duplicates and no gap. Before the fix, ExclusiveStartKey was resolved by
+// searching for an item *equal* to the cursor; once that item was deleted the
+// search silently failed and Scan restarted from page 1 (item1 delivered
+// twice, and page 2 never reached item4).
+func TestScan_pagination_survivesDeletedCursorItem(t *testing.T) {
+	// Given: a hash-only table with 4 items, id values sorting item1..item4.
+	srv := helpers.NewTestServer(t)
+	createTable(t, srv, "scan-del-cursor")
+	for i := 1; i <= 4; i++ {
+		putItem(t, srv, "scan-del-cursor", map[string]any{
+			"id": map[string]string{"S": fmt.Sprintf("item%d", i)},
+		})
+	}
+
+	// When: page 1 returns item1, item2.
+	resp1 := ddbCall(t, srv, "Scan", map[string]any{
+		"TableName": "scan-del-cursor",
+		"Limit":     2,
+	})
+	defer resp1.Body.Close()
+	helpers.AssertStatus(t, resp1, http.StatusOK)
+
+	var page1 struct {
+		Items            []map[string]map[string]any `json:"Items"`
+		LastEvaluatedKey map[string]any              `json:"LastEvaluatedKey"`
+	}
+	helpers.DecodeJSON(t, resp1, &page1)
+	if len(page1.Items) != 2 {
+		t.Fatalf("page1: want 2 items, got %d", len(page1.Items))
+	}
+	if page1.LastEvaluatedKey == nil {
+		t.Fatal("page1: expected LastEvaluatedKey")
+	}
+
+	// And: the last-returned item (item2) is deleted before page 2 is fetched.
+	cursorID := page1.Items[len(page1.Items)-1]["id"]["S"].(string)
+	delResp := ddbCall(t, srv, "DeleteItem", map[string]any{
+		"TableName": "scan-del-cursor",
+		"Key":       map[string]any{"id": map[string]string{"S": cursorID}},
+	})
+	defer delResp.Body.Close()
+	helpers.AssertStatus(t, delResp, http.StatusOK)
+
+	// When: page 2 resumes using page 1's LastEvaluatedKey.
+	resp2 := ddbCall(t, srv, "Scan", map[string]any{
+		"TableName":         "scan-del-cursor",
+		"Limit":             2,
+		"ExclusiveStartKey": page1.LastEvaluatedKey,
+	})
+	defer resp2.Body.Close()
+	helpers.AssertStatus(t, resp2, http.StatusOK)
+
+	var page2 struct {
+		Items            []map[string]map[string]any `json:"Items"`
+		LastEvaluatedKey map[string]any              `json:"LastEvaluatedKey"`
+	}
+	helpers.DecodeJSON(t, resp2, &page2)
+
+	// Then: page 2 contains item3 and item4 — not a restart from item1, and
+	// not skipping past item3.
+	got := map[string]bool{}
+	for _, item := range page2.Items {
+		got[item["id"]["S"].(string)] = true
+	}
+	if got["item1"] {
+		t.Error("page2 re-delivered item1 — pagination silently restarted from page 1")
+	}
+	if !got["item3"] || !got["item4"] {
+		t.Errorf("page2 should contain item3 and item4, got %v", got)
+	}
+	if len(page2.Items) != 2 {
+		t.Errorf("page2: want 2 items (item3, item4), got %d: %v", len(page2.Items), got)
+	}
+}
+
+// TestQuery_pagination_survivesDeletedCursorItem is G2's headline test for
+// Query: same scenario as the Scan test above, but within a single hash-key
+// partition (sort-key ordered).
+func TestQuery_pagination_survivesDeletedCursorItem(t *testing.T) {
+	// Given: a hash+sort table with 4 items sharing one hash key.
+	srv := helpers.NewTestServer(t)
+	createTableWithSortKey(t, srv, "q-del-cursor", "pk", "S", "sk", "S")
+	for _, sk := range []string{"a", "b", "c", "d"} {
+		putItem(t, srv, "q-del-cursor", map[string]any{
+			"pk": map[string]any{"S": "user#1"},
+			"sk": map[string]any{"S": sk},
+		})
+	}
+
+	// When: page 1 returns sk=a, sk=b.
+	resp1 := ddbCall(t, srv, "Query", map[string]any{
+		"TableName":                 "q-del-cursor",
+		"KeyConditionExpression":    "pk = :pk",
+		"ExpressionAttributeValues": map[string]any{":pk": map[string]any{"S": "user#1"}},
+		"Limit":                     2,
+	})
+	defer resp1.Body.Close()
+	helpers.AssertStatus(t, resp1, http.StatusOK)
+
+	var page1 struct {
+		Items            []map[string]map[string]any `json:"Items"`
+		LastEvaluatedKey map[string]any              `json:"LastEvaluatedKey"`
+	}
+	helpers.DecodeJSON(t, resp1, &page1)
+	if len(page1.Items) != 2 {
+		t.Fatalf("page1: want 2 items, got %d", len(page1.Items))
+	}
+	if page1.LastEvaluatedKey == nil {
+		t.Fatal("page1: expected LastEvaluatedKey")
+	}
+
+	// And: the last-returned item (sk=b) is deleted before page 2 is fetched.
+	cursorSK := page1.Items[len(page1.Items)-1]["sk"]["S"].(string)
+	delResp := ddbCall(t, srv, "DeleteItem", map[string]any{
+		"TableName": "q-del-cursor",
+		"Key": map[string]any{
+			"pk": map[string]any{"S": "user#1"},
+			"sk": map[string]any{"S": cursorSK},
+		},
+	})
+	defer delResp.Body.Close()
+	helpers.AssertStatus(t, delResp, http.StatusOK)
+
+	// When: page 2 resumes using page 1's LastEvaluatedKey.
+	resp2 := ddbCall(t, srv, "Query", map[string]any{
+		"TableName":                 "q-del-cursor",
+		"KeyConditionExpression":    "pk = :pk",
+		"ExpressionAttributeValues": map[string]any{":pk": map[string]any{"S": "user#1"}},
+		"Limit":                     2,
+		"ExclusiveStartKey":         page1.LastEvaluatedKey,
+	})
+	defer resp2.Body.Close()
+	helpers.AssertStatus(t, resp2, http.StatusOK)
+
+	var page2 struct {
+		Items            []map[string]map[string]any `json:"Items"`
+		LastEvaluatedKey map[string]any              `json:"LastEvaluatedKey"`
+	}
+	helpers.DecodeJSON(t, resp2, &page2)
+
+	// Then: page 2 contains sk=c and sk=d — not a restart from sk=a.
+	got := map[string]bool{}
+	for _, item := range page2.Items {
+		got[item["sk"]["S"].(string)] = true
+	}
+	if got["a"] {
+		t.Error("page2 re-delivered sk=a — pagination silently restarted from page 1")
+	}
+	if !got["c"] || !got["d"] {
+		t.Errorf("page2 should contain sk=c and sk=d, got %v", got)
+	}
+	if len(page2.Items) != 2 {
+		t.Errorf("page2: want 2 items (c, d), got %d: %v", len(page2.Items), got)
+	}
+}
+
+// TestScan_paginationWalk_matchesFullScan is storage-access-plan.md A3's
+// parity check at the wire level: walking Scan with a small Limit until
+// LastEvaluatedKey is exhausted must return exactly the same item set as an
+// unpaginated Scan over the same table — no duplicates, no gaps — regardless
+// of which storage path (scanItemsPage vs the legacy scanAll fallback)
+// answers the request.
+func TestScan_paginationWalk_matchesFullScan(t *testing.T) {
+	// Given: a table with 23 items (not an even multiple of the page size).
+	srv := helpers.NewTestServer(t)
+	createTable(t, srv, "scan-parity-walk")
+	const n = 23
+	for i := 0; i < n; i++ {
+		putItem(t, srv, "scan-parity-walk", map[string]any{
+			"id": map[string]string{"S": fmt.Sprintf("item%03d", i)},
+		})
+	}
+
+	// When: reading the whole table in one unpaginated Scan (the reference).
+	fullResp := ddbCall(t, srv, "Scan", map[string]any{
+		"TableName": "scan-parity-walk",
+	})
+	defer fullResp.Body.Close()
+	helpers.AssertStatus(t, fullResp, http.StatusOK)
+	var full struct {
+		Items []map[string]map[string]any `json:"Items"`
+	}
+	helpers.DecodeJSON(t, fullResp, &full)
+	if len(full.Items) != n {
+		t.Fatalf("reference Scan: want %d items, got %d", n, len(full.Items))
+	}
+
+	// And: walking the table with Limit=5 per page.
+	seen := map[string]bool{}
+	var exclusiveStartKey map[string]any
+	pages := 0
+	for {
+		pages++
+		if pages > n {
+			t.Fatalf("too many pages (%d) — probable infinite loop", pages)
+		}
+		req := map[string]any{
+			"TableName": "scan-parity-walk",
+			"Limit":     5,
+		}
+		if exclusiveStartKey != nil {
+			req["ExclusiveStartKey"] = exclusiveStartKey
+		}
+		resp := ddbCall(t, srv, "Scan", req)
+		helpers.AssertStatus(t, resp, http.StatusOK)
+		var page struct {
+			Items            []map[string]map[string]any `json:"Items"`
+			LastEvaluatedKey map[string]any              `json:"LastEvaluatedKey"`
+		}
+		helpers.DecodeJSON(t, resp, &page)
+		resp.Body.Close()
+
+		for _, item := range page.Items {
+			id := item["id"]["S"].(string)
+			if seen[id] {
+				t.Fatalf("duplicate item %s delivered across pages", id)
+			}
+			seen[id] = true
+		}
+
+		if page.LastEvaluatedKey == nil {
+			break
+		}
+		exclusiveStartKey = page.LastEvaluatedKey
+	}
+
+	// Then: the paginated walk covers exactly the same items as the reference Scan.
+	if len(seen) != n {
+		t.Fatalf("paginated walk covered %d distinct items, want %d", len(seen), n)
+	}
+	for _, item := range full.Items {
+		id := item["id"]["S"].(string)
+		if !seen[id] {
+			t.Errorf("paginated walk missed item %s present in the reference Scan", id)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// pagination-plan.md G5 — ListTables
+// ---------------------------------------------------------------------------
+
+// TestListTables_pagination_walk is G5's headline test: an SDK-paginator-style
+// walk (Limit=1, follow LastEvaluatedTableName until absent) over 3 tables
+// terminates and visits each table exactly once.
+func TestListTables_pagination_walk(t *testing.T) {
+	// Given: 3 tables.
+	srv := helpers.NewTestServer(t)
+	createTable(t, srv, "aaa-table")
+	createTable(t, srv, "bbb-table")
+	createTable(t, srv, "ccc-table")
+
+	// When: walking ListTables with Limit=1.
+	seen := map[string]bool{}
+	var exclusiveStart string
+	pages := 0
+	for {
+		pages++
+		if pages > 10 {
+			t.Fatalf("too many pages (%d) — probable infinite loop", pages)
+		}
+		req := map[string]any{"Limit": 1}
+		if exclusiveStart != "" {
+			req["ExclusiveStartTableName"] = exclusiveStart
+		}
+		resp := ddbCall(t, srv, "ListTables", req)
+		helpers.AssertStatus(t, resp, http.StatusOK)
+
+		var page struct {
+			TableNames             []string `json:"TableNames"`
+			LastEvaluatedTableName string   `json:"LastEvaluatedTableName"`
+		}
+		helpers.DecodeJSON(t, resp, &page)
+		resp.Body.Close()
+
+		if len(page.TableNames) != 1 {
+			t.Fatalf("page %d: want exactly 1 table name (Limit=1), got %d", pages, len(page.TableNames))
+		}
+		name := page.TableNames[0]
+		if seen[name] {
+			t.Fatalf("table %q visited more than once", name)
+		}
+		seen[name] = true
+
+		if page.LastEvaluatedTableName == "" {
+			break
+		}
+		exclusiveStart = page.LastEvaluatedTableName
+	}
+
+	// Then: each of the 3 tables was visited exactly once.
+	for _, name := range []string{"aaa-table", "bbb-table", "ccc-table"} {
+		if !seen[name] {
+			t.Errorf("table %q was never visited by the walk", name)
+		}
+	}
+	if len(seen) != 3 {
+		t.Errorf("expected exactly 3 distinct tables visited, got %d: %v", len(seen), seen)
+	}
+}
+
+// TestListTables_exclusiveStartTableName_deletedTable checks the behavior AWS
+// documents no validation error for: an ExclusiveStartTableName naming a
+// table that no longer exists still resumes from the correct alphabetical
+// position instead of erroring or silently returning every table from the
+// start (see the AWS doc citation on dynamoListTablesDefaultLimit).
+func TestListTables_exclusiveStartTableName_deletedTable(t *testing.T) {
+	// Given: 3 tables, the middle one subsequently deleted.
+	srv := helpers.NewTestServer(t)
+	createTable(t, srv, "aaa-table")
+	createTable(t, srv, "bbb-table")
+	createTable(t, srv, "ccc-table")
+
+	delResp := ddbCall(t, srv, "DeleteTable", map[string]any{"TableName": "bbb-table"})
+	defer delResp.Body.Close()
+	helpers.AssertStatus(t, delResp, http.StatusOK)
+
+	// When: ListTables resumes from the now-deleted table's name.
+	resp := ddbCall(t, srv, "ListTables", map[string]any{
+		"ExclusiveStartTableName": "bbb-table",
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var result struct {
+		TableNames             []string `json:"TableNames"`
+		LastEvaluatedTableName string   `json:"LastEvaluatedTableName"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+
+	// Then: no error, and the response resumes at the table that sorts after
+	// "bbb-table" — "ccc-table" — not an empty result and not every table.
+	if len(result.TableNames) != 1 || result.TableNames[0] != "ccc-table" {
+		t.Errorf("expected [\"ccc-table\"] after a deleted ExclusiveStartTableName, got %v", result.TableNames)
+	}
+	if result.LastEvaluatedTableName != "" {
+		t.Errorf("expected no LastEvaluatedTableName (list exhausted), got %q", result.LastEvaluatedTableName)
+	}
+}
+
+// TestListTables_defaultLimit checks the AWS-documented default/cap of 100
+// table names per page (no Limit specified).
+func TestListTables_defaultLimit(t *testing.T) {
+	// Given: a handful of tables, well under the 100 default cap.
+	srv := helpers.NewTestServer(t)
+	for i := 0; i < 5; i++ {
+		createTable(t, srv, fmt.Sprintf("table-%d", i))
+	}
+
+	// When: ListTables is called with no Limit.
+	resp := ddbCall(t, srv, "ListTables", map[string]any{})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var result struct {
+		TableNames             []string `json:"TableNames"`
+		LastEvaluatedTableName string   `json:"LastEvaluatedTableName"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+
+	// Then: all 5 tables are returned in one page (under the 100 cap), no
+	// LastEvaluatedTableName since the list is exhausted.
+	if len(result.TableNames) != 5 {
+		t.Errorf("want 5 table names, got %d", len(result.TableNames))
+	}
+	if result.LastEvaluatedTableName != "" {
+		t.Errorf("expected no LastEvaluatedTableName, got %q", result.LastEvaluatedTableName)
+	}
+}

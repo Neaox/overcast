@@ -421,7 +421,7 @@
           "operation": "ListTables",
           "category": "Table management",
           "status": "✅ Supported",
-          "notes": "Limit/ExclusiveStartTableName currently ignored — returns all tables in one response"
+          "notes": "Limit (default/max 100) and ExclusiveStartTableName honored; LastEvaluatedTableName echoed when more tables remain"
         },
         {
           "operation": "UpdateTable",
