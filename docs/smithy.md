@@ -178,8 +178,8 @@ type ProtocolService interface {
 ```
 
 The `cmd/stub-report` tool walks all services and produces the complete
-operation manifest at `docs/operation-manifest.md` — 795 operations across
-42 services.
+operation manifest at `docs/operation-manifest.md` — 834 operations across
+43 services.
 
 ---
 
@@ -187,9 +187,8 @@ operation manifest at `docs/operation-manifest.md` — 795 operations across
 
 | Document | Purpose |
 |----------|---------|
-| [plans/smithy.md](plans/smithy.md) | Full architecture plan (phases, services, status) |
+| [plans/level2-codegen.md](plans/level2-codegen.md) | Wire-protocol architecture plan — phases, tracks, and current status (supersedes the old, now-deleted `plans/smithy.md`) |
 | [plans/wire-byte-goldens.md](plans/wire-byte-goldens.md) | Golden test infrastructure |
-| [plans/level2-codegen.md](plans/level2-codegen.md) | Code generation from Smithy models |
 | [perf-baselines/README.md](perf-baselines/README.md) | Performance budgets and baselines |
 | [Smithy wire protocol selection](https://smithy.io/2.0/guides/wire-protocol-selection.html) | Upstream spec this architecture follows |
 | [Smithy RPC v2 CBOR](https://smithy.io/2.0/additional-specs/protocols/smithy-rpc-v2.html) | CBOR protocol spec |
