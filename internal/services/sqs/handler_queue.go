@@ -164,15 +164,9 @@ func (h *Handler) getQueueAttributesTyped(ctx context.Context, in *getQueueAttri
 		return nil, aerr
 	}
 
-	msgs, _ := h.store.listMessages(ctx, queueName)
-	visibleCount := 0
-	for _, m := range msgs {
-		if m.IsVisible(h.clk) {
-			visibleCount++
-		}
-	}
+	visibleCount, total, _ := h.store.countMessages(ctx, queueName, h.clk.Now())
 	q.Attributes["ApproximateNumberOfMessages"] = strconv.Itoa(visibleCount)
-	q.Attributes["ApproximateNumberOfMessagesNotVisible"] = strconv.Itoa(len(msgs) - visibleCount)
+	q.Attributes["ApproximateNumberOfMessagesNotVisible"] = strconv.Itoa(total - visibleCount)
 	q.Attributes["QueueArn"] = q.ARN
 
 	attrs := q.Attributes
@@ -415,15 +409,9 @@ func (h *Handler) GetQueueAttributes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Count visible messages for ApproximateNumberOfMessages.
-	msgs, _ := h.store.listMessages(r.Context(), queueName)
-	visibleCount := 0
-	for _, m := range msgs {
-		if m.IsVisible(h.clk) {
-			visibleCount++
-		}
-	}
+	visibleCount, total, _ := h.store.countMessages(r.Context(), queueName, h.clk.Now())
 	q.Attributes["ApproximateNumberOfMessages"] = strconv.Itoa(visibleCount)
-	q.Attributes["ApproximateNumberOfMessagesNotVisible"] = strconv.Itoa(len(msgs) - visibleCount)
+	q.Attributes["ApproximateNumberOfMessagesNotVisible"] = strconv.Itoa(total - visibleCount)
 	q.Attributes["QueueArn"] = q.ARN
 
 	attrs := q.Attributes

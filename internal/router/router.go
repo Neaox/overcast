@@ -231,6 +231,9 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		if cfg.Services["logs"] {
 			debugProviders = append(debugProviders, logsSvc)
 		}
+		if cfg.Services["sqs"] {
+			debugProviders = append(debugProviders, sqsSvc)
+		}
 		r.Route("/_debug", debugHandlers(cfg, store, ec2Debug, debugProviders))
 	}
 	lambdaSvc := lambda.New(cfg, store, logger, clk)

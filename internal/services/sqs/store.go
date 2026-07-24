@@ -80,14 +80,37 @@ func (m *Message) IsVisible(clk clock.Clock) bool {
 }
 
 // sqsStore wraps state.Store with SQS-specific helpers.
+//
+// Queue metadata (sqs:queues), purge windows (sqs:purge), receive-attempt
+// replay records (sqs:receive-attempts), and FIFO dedup tracking (sqs:dedup)
+// stay in the generic kv store via s.store — the storage-access-plan.md
+// audit classed them "row-shaped and fine" (bounded, no query the key order
+// can't already serve). Messages (sqs:messages) graduated to a dedicated
+// backend (message_backend.go, docs/plans/storage-plan.md item 3.10) after
+// a benchmark showed the old full-queue Scan+decode receive path growing
+// linearly with queue depth — s.backend is that dedicated storage.
 type sqsStore struct {
 	store         state.Store
+	backend       messageBackend
 	clk           clock.Clock
 	defaultRegion string
 }
 
 func newSQSStore(store state.Store, clk clock.Clock, defaultRegion string) *sqsStore {
-	return &sqsStore{store: store, clk: clk, defaultRegion: defaultRegion}
+	// Resolve past any state.NamespacedStore wrapping before probing for
+	// SQLiteDBProvider — an unrelated OVERCAST_STATE_<SVC> override on some
+	// other service would otherwise wrap store in a type that satisfies
+	// neither SQLiteDBProvider nor ReadyAwaiter, silently downgrading SQS
+	// messages to the in-memory-only backend even though SQS itself was
+	// never routed away from SQLite. See internal/state's state.Unwrap doc
+	// comment and the equivalent DynamoDB/CloudWatch Logs fixes.
+	backendStore := state.Unwrap(store, serviceName)
+	return &sqsStore{
+		store:         store,
+		backend:       newMessageBackendFor(backendStore),
+		clk:           clk,
+		defaultRegion: defaultRegion,
+	}
 }
 
 // region extracts the per-request region from context, falling back to the default.
@@ -163,12 +186,7 @@ func (s *sqsStore) putMessage(ctx context.Context, queueName string, msg *Messag
 	if active {
 		return nil
 	}
-	raw, err := json.Marshal(msg)
-	if err != nil {
-		return protocol.Wrap(protocol.ErrInternalError, err)
-	}
-	key := serviceutil.RegionKey(s.region(ctx), messageKey(queueName, msg.MessageID))
-	if err := s.store.Set(ctx, nsMessages, key, string(raw)); err != nil {
+	if err := s.backend.putMessage(ctx, s.region(ctx), queueName, msg); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil
@@ -207,45 +225,26 @@ func (s *sqsStore) putReceiveAttempt(ctx context.Context, queueName, attemptID s
 }
 
 func (s *sqsStore) getMessage(ctx context.Context, queueName, messageID string) (*Message, *protocol.AWSError) {
-	key := serviceutil.RegionKey(s.region(ctx), messageKey(queueName, messageID))
-	raw, found, err := s.store.Get(ctx, nsMessages, key)
+	msg, found, err := s.backend.getMessage(ctx, s.region(ctx), queueName, messageID)
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	if !found {
 		return nil, &protocol.AWSError{Code: "ReceiptHandleIsInvalid", Message: "The receipt handle is invalid.", HTTPStatus: http.StatusBadRequest}
 	}
-	var msg Message
-	if err := json.Unmarshal([]byte(raw), &msg); err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
-	}
-	return &msg, nil
+	return msg, nil
 }
 
 func (s *sqsStore) deleteMessage(ctx context.Context, queueName, messageID string) *protocol.AWSError {
-	key := serviceutil.RegionKey(s.region(ctx), messageKey(queueName, messageID))
-	if err := s.store.Delete(ctx, nsMessages, key); err != nil {
+	if err := s.backend.deleteMessage(ctx, s.region(ctx), queueName, messageID); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil
 }
 
 func (s *sqsStore) deleteMessagesByQueuePrefix(ctx context.Context, queueName string) *protocol.AWSError {
-	prefix := serviceutil.RegionKey(s.region(ctx), queueName+"/")
-	if deleter, ok := s.store.(state.PrefixDeleter); ok {
-		if err := deleter.DeletePrefix(ctx, nsMessages, prefix); err != nil {
-			return protocol.Wrap(protocol.ErrInternalError, err)
-		}
-		return nil
-	}
-	keys, err := s.store.List(ctx, nsMessages, prefix)
-	if err != nil {
+	if err := s.backend.deleteQueueMessages(ctx, s.region(ctx), queueName); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
-	}
-	for _, key := range keys {
-		if err := s.store.Delete(ctx, nsMessages, key); err != nil {
-			return protocol.Wrap(protocol.ErrInternalError, err)
-		}
 	}
 	return nil
 }
@@ -285,21 +284,49 @@ func (s *sqsStore) purgeActive(ctx context.Context, queueName string) (bool, *pr
 	return true, nil
 }
 
+// listMessages returns every message in the queue, decoded, in no
+// particular order. Not the receive path — see receiveCandidates. Used by
+// PeekMessages, StartMessageMoveTask (DLQ redrive), and the background
+// visibility watcher, all of which genuinely need the full set.
 func (s *sqsStore) listMessages(ctx context.Context, queueName string) ([]*Message, *protocol.AWSError) {
-	prefix := serviceutil.RegionKey(s.region(ctx), queueName+"/")
-	pairs, err := s.store.Scan(ctx, nsMessages, prefix)
+	msgs, err := s.backend.listMessages(ctx, s.region(ctx), queueName)
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	msgs := make([]*Message, 0, len(pairs))
-	for _, p := range pairs {
-		var msg Message
-		if err := json.Unmarshal([]byte(p.Value), &msg); err != nil {
-			continue
-		}
-		msgs = append(msgs, &msg)
+	return msgs, nil
+}
+
+// receiveCandidates returns up to limit messages visible at or before now,
+// ordered for FIFO delivery when fifo is true — the storage-plan.md 3.10
+// receive-path win. See messageBackend.receiveCandidates and
+// selectVisibleMessages (handler_message.go) for how a bounded fetch is
+// reconciled with FIFO's per-group locking.
+func (s *sqsStore) receiveCandidates(ctx context.Context, queueName string, now time.Time, limit int, fifo bool) ([]*Message, *protocol.AWSError) {
+	msgs, err := s.backend.receiveCandidates(ctx, s.region(ctx), queueName, now, limit, fifo)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return msgs, nil
+}
+
+// blockedGroups returns the set of FIFO MessageGroupIds currently blocked by
+// an invisible message — see messageBackend.blockedGroups.
+func (s *sqsStore) blockedGroups(ctx context.Context, queueName string, now time.Time) (map[string]bool, *protocol.AWSError) {
+	groups, err := s.backend.blockedGroups(ctx, s.region(ctx), queueName, now)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return groups, nil
+}
+
+// countMessages returns (visible, total) message counts for
+// ApproximateNumberOfMessages / ApproximateNumberOfMessagesNotVisible.
+func (s *sqsStore) countMessages(ctx context.Context, queueName string, now time.Time) (visible, total int, aerr *protocol.AWSError) {
+	v, t, err := s.backend.countMessages(ctx, s.region(ctx), queueName, now)
+	if err != nil {
+		return 0, 0, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return v, t, nil
 }
 
 // ---- FIFO deduplication helpers --------------------------------------------
@@ -340,10 +367,14 @@ func (s *sqsStore) scanAllQueues(ctx context.Context) ([]state.KV, error) {
 	return s.store.Scan(ctx, nsQueues, "")
 }
 
-// scanAllMessagesForQueue returns all messages for a queue identified by its
-// full region-prefixed key (as returned by scanAllQueues).
-func (s *sqsStore) scanAllMessagesForQueue(ctx context.Context, regionQueueKey string) ([]state.KV, error) {
-	return s.store.Scan(ctx, nsMessages, regionQueueKey+"/")
+// scanAllMessagesForQueue returns every decoded message for one queue
+// identified by region and queue name (region, queueName), the split form of
+// the region-prefixed keys scanAllQueues returns — see
+// serviceutil.SplitRegionKey. Messages live in the dedicated message backend
+// (message_backend.go), not the generic kv store, so this delegates there
+// directly rather than scanning a kv namespace.
+func (s *sqsStore) scanAllMessagesForQueue(ctx context.Context, region, queueName string) ([]*Message, error) {
+	return s.backend.listMessages(ctx, region, queueName)
 }
 
 // ---- SQS-specific errors ---------------------------------------------------

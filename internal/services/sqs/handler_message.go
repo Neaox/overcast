@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1007,115 +1006,175 @@ func (h *Handler) ReceiveMessage(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, &receiveMessageResponse{Messages: received})
 }
 
-// selectVisibleMessages fetches all messages in the queue and returns up to
-// maxMessages visible ones, marking them in-flight. It handles FIFO ordering,
-// DLQ movement, and event publishing. It is called both for immediate receives
-// and from the long-polling loop in ReceiveMessage.
+// maxCandidateFetchLimit bounds selectVisibleMessages' retry-with-larger-limit
+// loop. Not a production-scale emulator (see AGENTS.md's non-goals), so this
+// is a safety cap against pathological inputs (e.g. every visible message
+// stuck in one blocked FIFO group), not a tuned-for-scale value.
+const maxCandidateFetchLimit = 5000
+
+// candidateFetchLimit picks the initial candidate-fetch size for
+// selectVisibleMessages' call to h.store.receiveCandidates.
+//
+// Standard queues have no ordering or grouping constraint, so the only
+// reason a candidate goes unfulfilled is a DLQ redirect (moveToDLQ) consuming
+// it without delivering it — a small multiplier absorbs that without
+// fetching more than necessary on the common path; the retry loop still
+// covers the pathological "every candidate is DLQ-eligible" case.
+//
+// FIFO queues must over-fetch more aggressively: group-locking and
+// same-receive-call group dedup (see selectVisibleMessages) can skip many
+// candidates before finding maxMessages deliverable ones from distinct
+// groups. This is the accepted "over-fetch and select in Go" trade-off
+// storage-plan.md 3.10 calls for — group selection is AWS behavioral
+// semantics, not a structural predicate SQL should encode (see
+// docs/plans/storage-access-plan.md's "fidelity principle").
+func candidateFetchLimit(maxMessages int, fifo bool) int {
+	if fifo {
+		if base := maxMessages * 20; base > 100 {
+			return base
+		}
+		return 100
+	}
+	return maxMessages * 4
+}
+
+// selectVisibleMessages fetches visible candidate messages from storage and
+// returns up to maxMessages of them, marking them in-flight. It handles FIFO
+// ordering/group-locking, DLQ movement, and event publishing. It is called
+// both for immediate receives and from the long-polling loop in
+// ReceiveMessage.
+//
+// Storage access is a bounded, indexed candidate fetch
+// (h.store.receiveCandidates — docs/plans/storage-plan.md item 3.10) rather
+// than a full-queue scan. FIFO's per-group locking and per-receive-call
+// group dedup are AWS behavioral semantics that stay in Go (never
+// re-implemented in SQL — see docs/plans/storage-access-plan.md's fidelity
+// principle): candidates are over-fetched and filtered here exactly as they
+// were when the input was the whole queue, so wire-observable behavior is
+// unchanged; only how many storage rows get inspected per call differs. When
+// the initial fetch doesn't yield enough deliverable messages (e.g. many
+// candidates skipped for a blocked/already-delivered FIFO group, or DLQ
+// redirects), the fetch limit doubles and retries — already-delivered or
+// already-DLQ'd messages naturally drop out of the next fetch (their
+// visible_at moved to the future, or the row was deleted), so no
+// already-processed message can be double-delivered across retries.
 //
 // systemAttrNames and messageAttrNames control which system attributes and
 // user-defined message attributes are included in the response, mirroring AWS
 // which returns them only when explicitly requested.
 func (h *Handler) selectVisibleMessages(ctx context.Context, queueName string, q *Queue, maxMessages, visibilityTimeout int, systemAttrNames, messageAttrNames []string) ([]receivedMessage, *protocol.AWSError) {
-	allMessages, aerr := h.store.listMessages(ctx, queueName)
-	if aerr != nil {
-		return nil, aerr
-	}
-
 	rp, _ := parseRedrivePolicy(q.Attributes)
 	fifo := isFifoQueue(q)
+	now := h.clk.Now()
 
-	// FIFO: sort by sequence number so messages are delivered in order.
+	// FIFO: identify which message groups currently have an in-flight (or
+	// delayed) message. Within a group, only the first visible message may
+	// be delivered; groups with any invisible message are blocked entirely.
+	// Computed once, up front, from a visibility snapshot — matching the
+	// previous full-scan implementation's behavior exactly.
+	var blockedGroups map[string]bool
 	if fifo {
-		sort.Slice(allMessages, func(i, j int) bool {
-			si, _ := strconv.ParseInt(allMessages[i].SequenceNumber, 10, 64)
-			sj, _ := strconv.ParseInt(allMessages[j].SequenceNumber, 10, 64)
-			return si < sj
-		})
+		var aerr *protocol.AWSError
+		blockedGroups, aerr = h.store.blockedGroups(ctx, queueName, now)
+		if aerr != nil {
+			return nil, aerr
+		}
 	}
 
-	// FIFO: track which message groups have an in-flight message. Within a
-	// group, only the first visible message may be delivered. Groups that
-	// already have an in-flight message are blocked entirely.
-	blockedGroups := map[string]bool{}
 	deliveredGroups := map[string]bool{}
-	if fifo {
-		for _, msg := range allMessages {
-			if !msg.IsVisible(h.clk) && msg.MessageGroupId != "" {
-				blockedGroups[msg.MessageGroupId] = true
-			}
-		}
-	}
-
 	var received []receivedMessage
-	for _, msg := range allMessages {
-		if len(received) >= maxMessages {
-			break
-		}
-		if !msg.IsVisible(h.clk) {
-			continue
-		}
 
-		// FIFO: skip this message if its group is blocked (has an in-flight
-		// message) or if we already delivered a message from this group in
-		// this receive call.
-		if fifo && msg.MessageGroupId != "" {
-			if blockedGroups[msg.MessageGroupId] || deliveredGroups[msg.MessageGroupId] {
-				continue
-			}
-		}
-
-		// Generate a fresh receipt handle for this receive. AWS issues a new
-		// handle on every receive so callers cannot reuse handles from a
-		// previous receive cycle once the visibility timeout has expired.
-		newHandle := encodeReceiptHandle(queueName, msg.MessageID)
-		msg.ReceiptHandle = newHandle
-
-		// Mark as invisible for visibilityTimeout seconds.
-		msg.VisibleAfter = h.clk.Now().Add(time.Duration(visibilityTimeout) * time.Second)
-		msg.ApproximateReceiveCount++
-		if msg.Attributes == nil {
-			msg.Attributes = map[string]string{}
-		}
-		msg.Attributes["ApproximateReceiveCount"] = strconv.Itoa(msg.ApproximateReceiveCount)
-		if msg.ApproximateReceiveCount == 1 {
-			msg.Attributes["ApproximateFirstReceiveTimestamp"] = strconv.FormatInt(h.clk.Now().UnixMilli(), 10)
-		}
-
-		// DLQ check: AWS moves a message after its receive count exceeds
-		// maxReceiveCount, so the maxReceiveCount-th receive is still delivered.
-		if rp != nil && msg.ApproximateReceiveCount > rp.MaxReceiveCount {
-			if aerr := h.moveToDLQ(ctx, queueName, q, rp, msg); aerr != nil {
-				return nil, aerr
-			}
-			// Skip: do not return this message to the caller.
-			continue
-		}
-
-		if aerr := h.store.putMessage(ctx, queueName, msg); aerr != nil {
+	limit := candidateFetchLimit(maxMessages, fifo)
+	for {
+		candidates, aerr := h.store.receiveCandidates(ctx, queueName, now, limit, fifo)
+		if aerr != nil {
 			return nil, aerr
 		}
 
-		if h.bus != nil {
-			h.bus.Publish(ctx, events.Event{
-				Type:   events.SQSMessageInflight,
-				Time:   h.clk.Now(),
-				Source: serviceName,
-				Payload: events.SQSMessagePayload{
-					QueueName:               queueName,
-					MessageID:               msg.MessageID,
-					VisibleAfter:            msg.VisibleAfter.UnixMilli(),
-					ApproximateReceiveCount: msg.ApproximateReceiveCount,
-				},
-			})
+		for _, msg := range candidates {
+			if len(received) >= maxMessages {
+				break
+			}
+
+			// FIFO: skip this message if its group is blocked (has an
+			// in-flight message) or if we already delivered a message from
+			// this group in this receive call.
+			if fifo && msg.MessageGroupId != "" {
+				if blockedGroups[msg.MessageGroupId] || deliveredGroups[msg.MessageGroupId] {
+					continue
+				}
+			}
+
+			// Generate a fresh receipt handle for this receive. AWS issues a
+			// new handle on every receive so callers cannot reuse handles
+			// from a previous receive cycle once the visibility timeout has
+			// expired.
+			newHandle := encodeReceiptHandle(queueName, msg.MessageID)
+			msg.ReceiptHandle = newHandle
+
+			// Mark as invisible for visibilityTimeout seconds.
+			msg.VisibleAfter = h.clk.Now().Add(time.Duration(visibilityTimeout) * time.Second)
+			msg.ApproximateReceiveCount++
+			if msg.Attributes == nil {
+				msg.Attributes = map[string]string{}
+			}
+			msg.Attributes["ApproximateReceiveCount"] = strconv.Itoa(msg.ApproximateReceiveCount)
+			if msg.ApproximateReceiveCount == 1 {
+				msg.Attributes["ApproximateFirstReceiveTimestamp"] = strconv.FormatInt(h.clk.Now().UnixMilli(), 10)
+			}
+
+			// DLQ check: AWS moves a message after its receive count exceeds
+			// maxReceiveCount, so the maxReceiveCount-th receive is still delivered.
+			if rp != nil && msg.ApproximateReceiveCount > rp.MaxReceiveCount {
+				if aerr := h.moveToDLQ(ctx, queueName, q, rp, msg); aerr != nil {
+					return nil, aerr
+				}
+				// Skip: do not return this message to the caller. Deleted
+				// from storage by moveToDLQ, so it cannot reappear in a
+				// later retry round of this same call.
+				continue
+			}
+
+			if aerr := h.store.putMessage(ctx, queueName, msg); aerr != nil {
+				return nil, aerr
+			}
+
+			if h.bus != nil {
+				h.bus.Publish(ctx, events.Event{
+					Type:   events.SQSMessageInflight,
+					Time:   h.clk.Now(),
+					Source: serviceName,
+					Payload: events.SQSMessagePayload{
+						QueueName:               queueName,
+						MessageID:               msg.MessageID,
+						VisibleAfter:            msg.VisibleAfter.UnixMilli(),
+						ApproximateReceiveCount: msg.ApproximateReceiveCount,
+					},
+				})
+			}
+
+			received = append(received, receivedMessageFromStored(msg, systemAttrNames, messageAttrNames))
+
+			// FIFO: mark this group as delivered so no more messages from it
+			// are returned in this receive call.
+			if fifo && msg.MessageGroupId != "" {
+				deliveredGroups[msg.MessageGroupId] = true
+			}
 		}
 
-		received = append(received, receivedMessageFromStored(msg, systemAttrNames, messageAttrNames))
-
-		// FIFO: mark this group as delivered so no more messages from it
-		// are returned in this receive call.
-		if fifo && msg.MessageGroupId != "" {
-			deliveredGroups[msg.MessageGroupId] = true
+		if len(received) >= maxMessages {
+			break
 		}
+		if len(candidates) < limit {
+			// Storage returned fewer candidates than asked for — the queue
+			// has no more visible messages to offer, so a bigger limit
+			// cannot help.
+			break
+		}
+		if limit >= maxCandidateFetchLimit {
+			break
+		}
+		limit *= 2
 	}
 
 	return received, nil

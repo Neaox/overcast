@@ -108,6 +108,20 @@ func TestQueueNameFromURL(t *testing.T) {
 
 func TestReceiveMessageTyped_persistedMessageWithoutAttributes(t *testing.T) {
 	// Given: a persisted message from an older store shape with nil Attributes.
+	//
+	// Originally seeded by marshaling the message and writing the raw JSON
+	// directly into the kv store's "sqs:messages" namespace via a second,
+	// separately-constructed sqsStore that happened to share the same
+	// underlying generic state.Store as h. Since messages graduated to a
+	// dedicated backend (docs/plans/storage-plan.md item 3.10), each
+	// sqsStore now owns its own private in-process message backend in
+	// memory-mode — a second sqsStore instance no longer observes the first
+	// one's messages even though they share the same underlying
+	// state.Store (queue metadata still does, since that stays in the
+	// generic kv layer). Seeding through h.store.putMessage directly
+	// exercises the identical behavior (a message record with a nil
+	// Attributes map, round-tripped through JSON exactly as putMessage
+	// always does) via the same store instance the handler under test uses.
 	ctx := context.Background()
 	store := state.NewMemoryStore()
 	h := newHandler(&config.Config{
@@ -116,7 +130,6 @@ func TestReceiveMessageTyped_persistedMessageWithoutAttributes(t *testing.T) {
 		Region:    "ap-southeast-2",
 		AccountID: "000000000000",
 	}, store, serviceutil.NewServiceLogger(zap.NewNop(), serviceName), clock.New())
-	sqsStore := newSQSStore(store, clock.New(), "ap-southeast-2")
 	queue := &Queue{
 		Name: "test-queue",
 		URL:  "http://localhost.localstack.cloud:4566/000000000000/test-queue",
@@ -124,7 +137,7 @@ func TestReceiveMessageTyped_persistedMessageWithoutAttributes(t *testing.T) {
 			"VisibilityTimeout": "30",
 		},
 	}
-	if aerr := sqsStore.putQueue(ctx, queue); aerr != nil {
+	if aerr := h.store.putQueue(ctx, queue); aerr != nil {
 		t.Fatalf("putQueue: %v", aerr)
 	}
 	msg := &Message{
@@ -134,13 +147,8 @@ func TestReceiveMessageTyped_persistedMessageWithoutAttributes(t *testing.T) {
 		VisibleAfter: time.Now().Add(-time.Second),
 		Attributes:   nil,
 	}
-	raw, err := json.Marshal(msg)
-	if err != nil {
-		t.Fatalf("marshal message: %v", err)
-	}
-	key := serviceutil.RegionKey("ap-southeast-2", messageKey(queue.Name, msg.MessageID))
-	if err := store.Set(ctx, nsMessages, key, string(raw)); err != nil {
-		t.Fatalf("seed message: %v", err)
+	if aerr := h.store.putMessage(ctx, queue.Name, msg); aerr != nil {
+		t.Fatalf("seed message: %v", aerr)
 	}
 
 	// When: the message is received with system attributes requested.
