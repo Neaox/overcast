@@ -220,6 +220,22 @@ make run               # build and run on :4566
 docker compose up      # run in Docker (rebuilds image)
 ```
 
+### No local Go toolchain? (e.g. Windows outside the devcontainer)
+
+`scripts/docker-go.sh` (Git Bash/macOS/Linux) and `scripts/docker-go.ps1`
+(PowerShell) run any `go` command in a Docker container with the repo mounted
+and shared module/build caches, so no host Go install is needed:
+
+```bash
+scripts/docker-go.sh test -count=1 ./internal/state/...
+scripts/docker-go.sh vet ./...
+scripts/docker-go.sh shell   # interactive shell in the container
+```
+
+They also work from git worktrees, which the devcontainer cannot see (it
+mounts only the main checkout). See the header comment in
+[scripts/docker-go.sh](./scripts/docker-go.sh) for cache/performance details.
+
 ### Step debugging
 
 Full step debugging is supported. Set a breakpoint (click left of line number),
