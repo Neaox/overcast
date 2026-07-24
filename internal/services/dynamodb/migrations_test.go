@@ -5,6 +5,7 @@ package dynamodb
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -163,6 +164,132 @@ func TestRunMigrations_preExistingBareDynamoDBTables_adoptsCleanly(t *testing.T)
 	}
 
 	// Running again is idempotent — nothing pending, no error, data intact.
+	if err := state.RunMigrations(ctx, db, dbPath, nil); err != nil {
+		t.Fatalf("RunMigrations (second run): %v", err)
+	}
+}
+
+// TestMigration_ReencodeNumericKeys_reencodesExistingRows is item 4's
+// evidence: a database with pre-existing dynamodb_items rows for a
+// Number-sort-keyed table, written before migration 22 existed (so
+// hash_key/sort_key hold raw, unencoded decimal text), must come out of
+// RunMigrations with those rows re-encoded — an ORDER BY sort_key query
+// (exactly what sqlItemBackend.scanPage/scanAll issue) now returns numeric
+// order, not lexicographic order on the old raw text.
+func TestMigration_ReencodeNumericKeys_reencodesExistingRows(t *testing.T) {
+	db, dbPath := openRawMigrationTestDB(t)
+
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS dynamodb_items (
+			table_name  TEXT NOT NULL,
+			hash_key    TEXT NOT NULL,
+			sort_key    TEXT NOT NULL DEFAULT '',
+			item_json   TEXT NOT NULL,
+			PRIMARY KEY (table_name, hash_key, sort_key)
+		)
+	`); err != nil {
+		t.Fatalf("create dynamodb_items table: %v", err)
+	}
+
+	// A Number-sort-keyed table ("scores"), pre-existing rows with raw
+	// (unencoded) decimal sort_key text — exactly what putItem wrote before
+	// resolveStorageKeys started encoding Number-typed key components.
+	scoresSchema := `{"TableName":"scores","KeySchema":[{"AttributeName":"game","KeyType":"HASH"},{"AttributeName":"score","KeyType":"RANGE"}],"AttributeDefinitions":[{"AttributeName":"game","AttributeType":"S"},{"AttributeName":"score","AttributeType":"N"}],"TableStatus":"ACTIVE"}`
+	if _, err := db.Exec(`INSERT INTO kv (namespace, key, value) VALUES (?, ?, ?)`, "dynamodb:tables", "us-east-1/scores", scoresSchema); err != nil {
+		t.Fatalf("insert scores table schema: %v", err)
+	}
+	scoreRows := []struct{ sort, json string }{
+		{"50", `{"game":{"S":"g1"},"score":{"N":"50"}}`},
+		{"5", `{"game":{"S":"g1"},"score":{"N":"5"}}`},
+		{"10", `{"game":{"S":"g1"},"score":{"N":"10"}}`},
+	}
+	for _, r := range scoreRows {
+		if _, err := db.Exec(`INSERT INTO dynamodb_items (table_name, hash_key, sort_key, item_json) VALUES (?, ?, ?, ?)`,
+			"scores", "g1", r.sort, r.json); err != nil {
+			t.Fatalf("insert scores row (sort=%s): %v", r.sort, err)
+		}
+	}
+
+	// A pure-String-keyed table ("users") — must be a byte-for-byte no-op.
+	usersSchema := `{"TableName":"users","KeySchema":[{"AttributeName":"id","KeyType":"HASH"}],"AttributeDefinitions":[{"AttributeName":"id","AttributeType":"S"}],"TableStatus":"ACTIVE"}`
+	if _, err := db.Exec(`INSERT INTO kv (namespace, key, value) VALUES (?, ?, ?)`, "dynamodb:tables", "us-east-1/users", usersSchema); err != nil {
+		t.Fatalf("insert users table schema: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO dynamodb_items (table_name, hash_key, sort_key, item_json) VALUES (?, ?, ?, ?)`,
+		"users", "alice", "", `{"id":{"S":"alice"}}`); err != nil {
+		t.Fatalf("insert users row: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := state.RunMigrations(ctx, db, dbPath, nil); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatalf("read user_version: %v", err)
+	}
+	if version < migrationDynamoDBReencodeNumericKeysVersion {
+		t.Fatalf("user_version = %d, want >= %d", version, migrationDynamoDBReencodeNumericKeysVersion)
+	}
+
+	// Then: a plain ORDER BY sort_key (exactly what scanAll/scanPage issue)
+	// now returns the scores in NUMERIC order (5, 10, 50), not the
+	// lexicographic order the raw text would have given ("10", "5", "50").
+	rows, err := db.Query(`SELECT item_json FROM dynamodb_items WHERE table_name = 'scores' ORDER BY hash_key, sort_key`)
+	if err != nil {
+		t.Fatalf("query re-encoded rows: %v", err)
+	}
+	defer rows.Close()
+	var gotOrder []string
+	for rows.Next() {
+		var itemJSON string
+		if err := rows.Scan(&itemJSON); err != nil {
+			t.Fatalf("scan re-encoded row: %v", err)
+		}
+		var item struct {
+			Score struct {
+				N string `json:"N"`
+			} `json:"score"`
+		}
+		if err := json.Unmarshal([]byte(itemJSON), &item); err != nil {
+			t.Fatalf("unmarshal item_json %q: %v", itemJSON, err)
+		}
+		gotOrder = append(gotOrder, item.Score.N)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate re-encoded rows: %v", err)
+	}
+	want := []string{"5", "10", "50"}
+	if len(gotOrder) != len(want) {
+		t.Fatalf("got %d rows, want %d: %v", len(gotOrder), len(want), gotOrder)
+	}
+	for i := range want {
+		if gotOrder[i] != want[i] {
+			t.Fatalf("ORDER BY sort_key after migration = %v, want numeric order %v", gotOrder, want)
+		}
+	}
+
+	// And: the stored sort_key values are no longer the raw "5"/"10"/"50" —
+	// confirms this test actually exercised the re-encoding, not a no-op.
+	var rawSortKey string
+	if err := db.QueryRow(`SELECT sort_key FROM dynamodb_items WHERE table_name = 'scores' AND hash_key = 'g1' AND json_extract(item_json, '$.score.N') = '5'`).Scan(&rawSortKey); err != nil {
+		t.Fatalf("read re-encoded sort_key for score=5: %v", err)
+	}
+	if rawSortKey == "5" {
+		t.Fatal("sort_key for score=5 is still the raw \"5\" — migration did not re-encode it")
+	}
+
+	// Then: the pure-String-keyed table's row is untouched (no-op).
+	var usersHashKey string
+	if err := db.QueryRow(`SELECT hash_key FROM dynamodb_items WHERE table_name = 'users'`).Scan(&usersHashKey); err != nil {
+		t.Fatalf("read users row: %v", err)
+	}
+	if usersHashKey != "alice" {
+		t.Fatalf("users hash_key = %q, want unchanged \"alice\" (String-keyed table must be a no-op)", usersHashKey)
+	}
+
+	// Running again is idempotent.
 	if err := state.RunMigrations(ctx, db, dbPath, nil); err != nil {
 		t.Fatalf("RunMigrations (second run): %v", err)
 	}

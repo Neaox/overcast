@@ -100,7 +100,7 @@ func (s *Service) DebugNamespace() string { return debugItemsNamespace }
 
 // DebugStateKeys returns the virtual raw-state keys for DynamoDB items.
 func (s *Service) DebugStateKeys(ctx context.Context) ([]string, error) {
-	records, err := s.handler.store.items.debugScan(ctx)
+	records, err := s.debugScanRawDisplay(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +114,7 @@ func (s *Service) DebugStateKeys(ctx context.Context) ([]string, error) {
 
 // DebugStateValues returns raw DynamoDB item values keyed by table/hash/sort.
 func (s *Service) DebugStateValues(ctx context.Context) (map[string]string, error) {
-	records, err := s.handler.store.items.debugScan(ctx)
+	records, err := s.debugScanRawDisplay(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -127,6 +127,64 @@ func (s *Service) DebugStateValues(ctx context.Context) (map[string]string, erro
 		values[dynamoDebugItemKey(record)] = string(raw)
 	}
 	return values, nil
+}
+
+// debugScanRawDisplay wraps itemBackend.debugScan and rewrites each record's
+// HashKey/SortKey to the raw (unencoded) decimal text for Number-typed key
+// attributes, instead of the storage-encoded form debugScan returns
+// directly.
+//
+// Storage keys (memItemBackend's composite tree key, sqlItemBackend's
+// hash_key/sort_key columns) are now encodeOrderableNumber-encoded for
+// Number-typed key attributes (dynamodb-gsi-design.md §2) — that encoding is
+// an internal ordering detail, not something a developer inspecting
+// /_debug/state should ever see. The item's own attribute map is unchanged
+// by that encoding (only the derived storage/seek key changed shape), so
+// the raw display value is recovered straight from record.Item via the same
+// schema-aware extraction putItem/getItem use (resolveKeys), not by trying
+// to decode the encoded key.
+//
+// Table schemas are looked up once per call (not once per record) via
+// scanAllTables; item storage itself is not region-scoped (dynamoStore.items
+// keys purely by Table.TableName — see store.go), so a table found in any
+// region is used for display purposes. Best-effort: a record whose table
+// can't be found/decoded keeps whatever debugScan returned as-is, per
+// CLAUDE.md's isolation rule — this is a debug-introspection path, not a
+// client-facing one, so degrading gracefully beats failing the whole scan.
+func (s *Service) debugScanRawDisplay(ctx context.Context) ([]debugItemRecord, error) {
+	records, err := s.handler.store.items.debugScan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(records) == 0 {
+		return records, nil
+	}
+
+	pairs, err := s.handler.store.scanAllTables(ctx)
+	if err != nil {
+		// Best-effort: fall back to the backend's raw (possibly encoded) keys
+		// rather than failing debug output entirely.
+		return records, nil
+	}
+	byName := make(map[string]*Table, len(pairs))
+	for _, kv := range pairs {
+		var t Table
+		if err := json.Unmarshal([]byte(kv.Value), &t); err != nil {
+			continue // malformed table record — isolate, skip (CLAUDE.md isolation rule)
+		}
+		byName[t.TableName] = &t
+	}
+
+	out := make([]debugItemRecord, len(records))
+	for i, record := range records {
+		if table, ok := byName[record.TableName]; ok {
+			if h, sk, aerr := resolveKeys(table, record.Item); aerr == nil {
+				record.HashKey, record.SortKey = h, sk
+			}
+		}
+		out[i] = record
+	}
+	return out, nil
 }
 
 // DebugResetState deletes all DynamoDB item rows for debug reset operations.

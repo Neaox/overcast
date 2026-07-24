@@ -686,15 +686,21 @@ func (h *Handler) scanTyped(ctx context.Context, req *scanRequest) (any, *protoc
 		// Sort by (hashKey, sortKey) — a full total order, needed for
 		// position-based cursor resolution to be well-defined (ties on hash
 		// key alone would make "the position after the cursor" ambiguous).
+		// Type-aware per AWS's ordering contract: a Number-typed key sorts
+		// numerically, not as raw decimal text (dynamodb-gsi-design.md §2).
 		hashKeyName := table.hashKeyName()
 		sortKeyName := table.sortKeyName()
+		hashKeyType := keyAttrType(table, hashKeyName)
+		sortKeyType := keyAttrType(table, sortKeyName)
 		sort.Slice(allItems, func(i, j int) bool {
 			ih := extractKeyValue(allItems[i][hashKeyName])
 			jh := extractKeyValue(allItems[j][hashKeyName])
-			if ih != jh {
-				return ih < jh
+			if c := compareKeyAttr(hashKeyType, ih, jh); c != 0 {
+				return c < 0
 			}
-			return extractKeyValue(allItems[i][sortKeyName]) < extractKeyValue(allItems[j][sortKeyName])
+			iv := extractKeyValue(allItems[i][sortKeyName])
+			jv := extractKeyValue(allItems[j][sortKeyName])
+			return compareKeyAttr(sortKeyType, iv, jv) < 0
 		})
 
 		// Parallel scan: slice items by segment.
@@ -718,7 +724,7 @@ func (h *Handler) scanTyped(ctx context.Context, req *scanRequest) (any, *protoc
 		}
 
 		// Apply ExclusiveStartKey by position, not identity (pagination-plan.md G2).
-		startIdx := resolveCursorPosition(allItems, req.ExclusiveStartKey, hashKeyName, sortKeyName, true)
+		startIdx := resolveCursorPosition(allItems, req.ExclusiveStartKey, table, hashKeyName, sortKeyName, true)
 		allItems = allItems[startIdx:]
 
 		// Apply Limit (must be before FilterExpression per DynamoDB semantics: Limit caps the
@@ -924,7 +930,7 @@ func (h *Handler) queryTyped(ctx context.Context, req *queryRequest) (any, *prot
 		}
 	} else {
 		// Hash+sort table: load all items for the hash key, then filter by sort condition.
-		candidates, aerr := h.store.scanItemsByHashKey(ctx, table.TableName, hashVal)
+		candidates, aerr := h.store.scanItemsByHashKey(ctx, table, hashVal)
 		if aerr != nil {
 			return nil, aerr
 		}
@@ -945,13 +951,18 @@ func (h *Handler) queryTyped(ctx context.Context, req *queryRequest) (any, *prot
 		matched = []Item{}
 	}
 
-	// Sort matched items by sort key for stable pagination order.
+	// Sort matched items by sort key for stable pagination order. Type-aware
+	// per AWS's ordering contract (dynamodb-gsi-design.md §2): effectiveSortKey
+	// may be the table's own sort key or an index's sort key, but either way
+	// its declared type lives in table.AttributeDefinitions (AWS requires
+	// every key attribute — table or index — to be declared there).
 	effectiveSortKey := sortAttrName
 	if effectiveSortKey != "" {
+		effectiveSortKeyType := keyAttrType(table, effectiveSortKey)
 		sort.Slice(matched, func(i, j int) bool {
 			iv := extractKeyValue(matched[i][effectiveSortKey])
 			jv := extractKeyValue(matched[j][effectiveSortKey])
-			return iv < jv
+			return compareKeyAttr(effectiveSortKeyType, iv, jv) < 0
 		})
 	}
 
@@ -970,7 +981,7 @@ func (h *Handler) queryTyped(ctx context.Context, req *queryRequest) (any, *prot
 	// an exact-match search silently restarts from the beginning and
 	// duplicates every item already delivered (pagination-plan.md G2).
 	ascending := req.ScanIndexForward == nil || *req.ScanIndexForward
-	startIdx := resolveCursorPosition(matched, req.ExclusiveStartKey, hashAttrName, effectiveSortKey, ascending)
+	startIdx := resolveCursorPosition(matched, req.ExclusiveStartKey, table, hashAttrName, effectiveSortKey, ascending)
 	matched = matched[startIdx:]
 
 	// Apply Limit (must be before FilterExpression per DynamoDB semantics: Limit caps the
@@ -1638,10 +1649,18 @@ func effectivePageLimit(requested int) int {
 // between pages. A position-based search degrades the same way real
 // DynamoDB does: the page simply resumes from where the deleted item would
 // have sorted.
-func resolveCursorPosition(items []Item, cursor Item, hashName, sortName string, ascending bool) int {
+//
+// Comparisons are type-aware via table's AttributeDefinitions
+// (dynamodb-gsi-design.md §2): a Number-typed hashName/sortName compares
+// numerically, matching the order items is expected to already be sorted
+// in (String/Binary compare as raw UTF-8 byte order, unchanged).
+func resolveCursorPosition(items []Item, cursor Item, table *Table, hashName, sortName string, ascending bool) int {
 	if cursor == nil {
 		return 0
 	}
+	hashType := keyAttrType(table, hashName)
+	sortType := keyAttrType(table, sortName)
+
 	cursorHash := extractKeyValue(cursor[hashName])
 	var cursorSort string
 	if sortName != "" {
@@ -1655,11 +1674,13 @@ func resolveCursorPosition(items []Item, cursor Item, hashName, sortName string,
 			itemSort = extractKeyValue(item[sortName])
 		}
 
+		hc := compareKeyAttr(hashType, itemHash, cursorHash)
+		sc := compareKeyAttr(sortType, itemSort, cursorSort)
 		var after bool
 		if ascending {
-			after = itemHash > cursorHash || (itemHash == cursorHash && itemSort > cursorSort)
+			after = hc > 0 || (hc == 0 && sc > 0)
 		} else {
-			after = itemHash < cursorHash || (itemHash == cursorHash && itemSort < cursorSort)
+			after = hc < 0 || (hc == 0 && sc < 0)
 		}
 		if after {
 			return i

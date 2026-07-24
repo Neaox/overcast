@@ -21,6 +21,7 @@ package dynamodb
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 
 	"github.com/Neaox/overcast/internal/state"
@@ -40,9 +41,23 @@ import (
 // migration. The only effect on such a database is that user_version
 // advances past these versions, so the runner stops re-checking them on
 // every future startup.
+//
+// migrationDynamoDBReencodeNumericKeysVersion (22) is a data migration, not
+// pure schema setup: it re-encodes existing dynamodb_items rows for tables
+// whose declared hash or sort key is Number-typed, using
+// encodeOrderableNumber (numeric_encoding.go) — see that migration's own doc
+// comment below for why and how.
+//
+// NOTE on version 22: it was originally proposed for the GSI index-entries
+// table (docs/plans/dynamodb-gsi-design.md §3/§7, "dynamodb_index_entries...
+// migration: version 22") — that document was written before this
+// prerequisite migration's landing order was fixed. This migration lands
+// first and claims 22; the GSI index-entries table (phase 2) takes the next
+// free slot, 23, when it lands.
 const (
-	migrationDynamoDBItemsTableVersion   = 20
-	migrationDynamoDBStreamsTableVersion = 21
+	migrationDynamoDBItemsTableVersion          = 20
+	migrationDynamoDBStreamsTableVersion        = 21
+	migrationDynamoDBReencodeNumericKeysVersion = 22
 )
 
 func init() {
@@ -75,4 +90,161 @@ func init() {
 			return nil
 		},
 	})
+
+	state.RegisterMigration(state.Migration{
+		Version: migrationDynamoDBReencodeNumericKeysVersion,
+		Name:    "re-encode Number-typed base-table keys for numeric order",
+		Up:      migrateReencodeNumericKeys,
+	})
+}
+
+// migrateReencodeNumericKeys is dynamodb-gsi-design.md §2/§7 phase 1's
+// storage-layer retrofit, applied to data already on disk: before this
+// migration, dynamodb_items.hash_key/sort_key stored a Number-typed key
+// attribute as its raw decimal text, which sorts lexicographically ("10" <
+// "5") instead of numerically. putItem/getItem/deleteItem/scanItemsPage now
+// write and look up encodeOrderableNumber-encoded keys instead (store.go's
+// resolveStorageKeys) — this migration brings pre-existing rows in line so
+// they're reachable and correctly ordered under the new scheme, exactly
+// once, at startup.
+//
+// Table schemas live in the kv table (namespace dynamodb:tables, JSON
+// Table records) — read here inside the same migration transaction so the
+// re-encoding decision and the row rewrite are atomic with the schema read.
+// A row whose owning table JSON fails to decode is skipped (CLAUDE.md's
+// isolation rule: one malformed table record must not fail the whole
+// migration) — its dynamodb_items rows are simply left unencoded, same as
+// they were before this migration (a correctness gap only for that one
+// broken table, not a new failure mode).
+//
+// No-op for the overwhelmingly common case: a table whose hash and sort key
+// are both String/Binary is skipped entirely — its dynamodb_items rows are
+// never even read, let alone rewritten.
+//
+// The memory backend needs no equivalent migration: memItemBackend only
+// exists for a process using state.MemoryStore (see
+// newItemBackendFor/newStreamBackendFor in service.go), which has no
+// on-disk persistence at all — there is nothing to re-encode because there
+// is nothing surviving a restart to begin with. Migrations only ever run
+// against a real SQLite file (state.RunMigrations is wired into
+// SQLite/Hybrid store startup), so this function only needs to handle the
+// SQL rows.
+func migrateReencodeNumericKeys(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `SELECT value FROM kv WHERE namespace = ?`, nsTables)
+	if err != nil {
+		return fmt.Errorf("read dynamodb table schemas: %w", err)
+	}
+	var schemas []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan dynamodb table schema row: %w", err)
+		}
+		schemas = append(schemas, v)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate dynamodb table schemas: %w", err)
+	}
+	rows.Close()
+
+	// De-duplicate by TableName: item storage is keyed purely by
+	// Table.TableName (not region — see dynamoStore.putItem/getItem), so if
+	// the same table name somehow appears in more than one region's schema
+	// record, processing it more than once would just repeat the same
+	// (idempotent) rewrite. Skip repeats rather than doing pointless work.
+	seen := make(map[string]bool, len(schemas))
+
+	for _, raw := range schemas {
+		var t Table
+		if err := json.Unmarshal([]byte(raw), &t); err != nil {
+			continue // malformed table record — isolate, skip (CLAUDE.md isolation rule)
+		}
+		if t.TableName == "" || seen[t.TableName] {
+			continue
+		}
+		seen[t.TableName] = true
+
+		hashName := t.hashKeyName()
+		sortName := t.sortKeyName()
+		hashIsN := keyAttrType(&t, hashName) == "N"
+		sortIsN := sortName != "" && keyAttrType(&t, sortName) == "N"
+		if !hashIsN && !sortIsN {
+			continue // pure String/Binary keyed table — no-op, the common case
+		}
+
+		if err := reencodeTableItemKeys(ctx, tx, t.TableName, hashIsN, sortIsN); err != nil {
+			return fmt.Errorf("re-encode numeric keys for table %q: %w", t.TableName, err)
+		}
+	}
+	return nil
+}
+
+// reencodeTableItemKeys rewrites every dynamodb_items row for tableName,
+// re-encoding whichever of hash_key/sort_key the table declares as
+// Number-typed. Uses rowid (implicit on this non-WITHOUT-ROWID table) to
+// target each row precisely: a delete-then-insert-or-replace per row rather
+// than an in-place UPDATE, so that if two pre-existing rows held different
+// textual representations of the same numeric value (e.g. "5" and "05" —
+// already an inconsistency real AWS would never have allowed, since it
+// treats them as the same key), the encoding collision resolves via
+// last-write-wins (whichever row this loop reaches second) instead of a
+// PRIMARY KEY constraint failure aborting the whole migration.
+func reencodeTableItemKeys(ctx context.Context, tx *sql.Tx, tableName string, hashIsN, sortIsN bool) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT rowid, hash_key, sort_key, item_json FROM dynamodb_items WHERE table_name = ?
+	`, tableName)
+	if err != nil {
+		return fmt.Errorf("select rows: %w", err)
+	}
+	type itemRow struct {
+		rowid            int64
+		hashKey, sortKey string
+		itemJSON         string
+	}
+	var toProcess []itemRow
+	for rows.Next() {
+		var r itemRow
+		if err := rows.Scan(&r.rowid, &r.hashKey, &r.sortKey, &r.itemJSON); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan row: %w", err)
+		}
+		toProcess = append(toProcess, r)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate rows: %w", err)
+	}
+	rows.Close()
+
+	for _, r := range toProcess {
+		newHash, newSort := r.hashKey, r.sortKey
+		if hashIsN {
+			// A malformed/non-numeric persisted hash_key (shouldn't happen for
+			// a well-formed table, but CLAUDE.md's isolation rule applies to
+			// migrations too) is left as-is rather than aborting the migration.
+			if enc, encErr := encodeOrderableNumber(r.hashKey); encErr == nil {
+				newHash = enc
+			}
+		}
+		if sortIsN {
+			if enc, encErr := encodeOrderableNumber(r.sortKey); encErr == nil {
+				newSort = enc
+			}
+		}
+		if newHash == r.hashKey && newSort == r.sortKey {
+			continue // already canonical (or left alone above) — skip a no-op write
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM dynamodb_items WHERE rowid = ?`, r.rowid); err != nil {
+			return fmt.Errorf("delete pre-encoding row (rowid %d): %w", r.rowid, err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT OR REPLACE INTO dynamodb_items (table_name, hash_key, sort_key, item_json)
+			VALUES (?, ?, ?, ?)
+		`, tableName, newHash, newSort, r.itemJSON); err != nil {
+			return fmt.Errorf("insert re-encoded row (rowid %d): %w", r.rowid, err)
+		}
+	}
+	return nil
 }
