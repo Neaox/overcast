@@ -117,6 +117,16 @@ const (
 	// set — don't accumulate more than about one interval's worth of
 	// overdue rows on disk between sweeps.
 	metricDataSweepInterval = 5 * time.Minute
+
+	// metricDataScanPageSize bounds each internal ScanPage fetch inside
+	// listMetricDataPoints (storage-plan.md A5). Keys within one metric's
+	// prefix are already time-ordered (see the key-format comment on
+	// putMetricDataPoint), so a range read only needs to walk pages until it
+	// passes the requested window's end — it does not need to load the rest
+	// of a large, mostly-out-of-window history in one shot. This value is
+	// just the per-round-trip chunk size, not a cap on how many points a
+	// window can contain.
+	metricDataScanPageSize = 256
 )
 
 func canonicalizeDimensions(in []Dimension) []Dimension {
@@ -203,10 +213,47 @@ func (s *cloudwatchStore) putMetric(ctx context.Context, namespace, metricName s
 	return s.store.Set(ctx, nsMetrics, key, string(raw))
 }
 
+// metricDataPrefix builds the cloudwatch:metricdata key prefix shared by
+// every datapoint for one namespace/metric/dimension-set combination. Keys
+// are this prefix plus the point's UnixNano timestamp
+// (metricDataKeyForNanos), which for any date in roughly 2001-2286 is a
+// fixed-width 19-digit decimal string — so within one prefix, key order is
+// time order. listMetricDataPoints (A5) relies on that to turn a full
+// prefix scan into a bounded key-range read.
+func metricDataPrefix(namespace, metricName, dimsKey string) string {
+	return namespace + "/" + metricName + "/" + dimsKey + "/"
+}
+
+// metricDataKeyForNanos appends a UnixNano timestamp to a metricDataPrefix
+// result to build a full cloudwatch:metricdata key.
+func metricDataKeyForNanos(prefix string, nanos int64) string {
+	return prefix + strconv.FormatInt(nanos, 10)
+}
+
+// metricDataKeySuffixNanos extracts the trailing UnixNano timestamp from a
+// cloudwatch:metricdata key without needing to know the namespace/metric/
+// dimension prefix in advance — used by sweepMetricDataOnce, which scans
+// across every metric's keys at once, and as the range-read boundary check
+// in listMetricDataPoints. Returns false for a key that doesn't end in a
+// parseable integer suffix (defensively: a malformed/foreign key should be
+// skipped, not crash the scan — see AGENTS.md on isolating malformed
+// persisted records).
+func metricDataKeySuffixNanos(key string) (int64, bool) {
+	idx := strings.LastIndex(key, "/")
+	if idx < 0 || idx == len(key)-1 {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(key[idx+1:], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
 func (s *cloudwatchStore) putMetricDataPoint(ctx context.Context, dp *MetricDataPoint) error {
 	metricDims := canonicalizeDimensions(dp.Dimensions)
 	dp.Dimensions = metricDims
-	key := dp.Namespace + "/" + dp.MetricName + "/" + dimensionsKey(metricDims) + "/" + strconv.FormatInt(dp.Timestamp.UnixNano(), 10)
+	key := metricDataKeyForNanos(metricDataPrefix(dp.Namespace, dp.MetricName, dimensionsKey(metricDims)), dp.Timestamp.UnixNano())
 	raw, err := json.Marshal(dp)
 	if err != nil {
 		return err
@@ -229,27 +276,72 @@ func (s *cloudwatchStore) putMetricDataPoint(ctx context.Context, dp *MetricData
 	return nil
 }
 
-func (s *cloudwatchStore) listMetricDataPoints(ctx context.Context, namespace, metricName string, dimensions []Dimension) ([]*MetricDataPoint, error) {
+// listMetricDataPoints returns the datapoints for one namespace/metric/
+// dimension-set combination whose timestamp falls in [startTime, endTime]
+// (inclusive both ends — matching aggregateMetricBuckets' own
+// ts.Before(startTime) || ts.After(endTime) filter, which every caller
+// applies to this method's result immediately afterward).
+//
+// storage-plan.md A5: rather than Scan-ing the metric's entire retained
+// history and JSON-decoding every point just to throw away everything
+// outside the window, this walks ScanPage in metricDataScanPageSize chunks
+// starting just before the window and stops the moment a key's timestamp
+// suffix exceeds endTime — since keys within a prefix are time-ordered, no
+// point past that can be in range, so nothing after it needs to be fetched
+// or decoded. Namespace/metric/dimension filtering is still exact (it's the
+// ScanPage prefix); only the time bound is new.
+//
+// The read-path retention behavior is unchanged: any in-window point older
+// than the retention cutoff is deleted here rather than returned (see
+// metricDataRetentionCutoff's doc comment) — it just now only ever inspects
+// points inside the caller's requested window instead of the whole metric,
+// which is fine because the periodic sweep (sweepMetricDataOnce) is the
+// backstop that guarantees full-history cleanup regardless of what any
+// particular read happens to touch.
+func (s *cloudwatchStore) listMetricDataPoints(ctx context.Context, namespace, metricName string, dimensions []Dimension, startTime, endTime time.Time) ([]*MetricDataPoint, error) {
 	metricDims := canonicalizeDimensions(dimensions)
-	prefix := namespace + "/" + metricName + "/" + dimensionsKey(metricDims) + "/"
-	pairs, err := s.store.Scan(ctx, nsMetricData, prefix)
-	if err != nil {
-		return nil, err
-	}
+	prefix := metricDataPrefix(namespace, metricName, dimensionsKey(metricDims))
+	startNanos := startTime.UnixNano()
+	endNanos := endTime.UnixNano()
+
 	cutoff := s.metricDataRetentionCutoff()
-	out := make([]*MetricDataPoint, 0, len(pairs))
-	for _, kv := range pairs {
-		var dp MetricDataPoint
-		if err := json.Unmarshal([]byte(kv.Value), &dp); err != nil {
-			continue
+	out := make([]*MetricDataPoint, 0)
+
+	// Exclusive predecessor of the inclusive lower bound: ScanPage's
+	// startAfter is strictly-after semantics, so to include the point at
+	// exactly startNanos we must pass the key just below it.
+	startAfter := metricDataKeyForNanos(prefix, startNanos-1)
+
+	for {
+		page, next, err := s.store.ScanPage(ctx, nsMetricData, prefix, startAfter, metricDataScanPageSize)
+		if err != nil {
+			return nil, err
 		}
-		if dp.Timestamp.UTC().Before(cutoff) {
-			_ = s.store.Delete(ctx, nsMetricData, kv.Key)
-			continue
+		for _, kv := range page {
+			nanos, ok := metricDataKeySuffixNanos(kv.Key)
+			if !ok {
+				continue
+			}
+			if nanos > endNanos {
+				// Keys are time-ordered within this prefix — everything from
+				// here on is past the window, so stop without decoding it.
+				return out, nil
+			}
+			var dp MetricDataPoint
+			if err := json.Unmarshal([]byte(kv.Value), &dp); err != nil {
+				continue
+			}
+			if dp.Timestamp.UTC().Before(cutoff) {
+				_ = s.store.Delete(ctx, nsMetricData, kv.Key)
+				continue
+			}
+			out = append(out, &dp)
 		}
-		out = append(out, &dp)
+		if next == "" {
+			return out, nil
+		}
+		startAfter = next
 	}
-	return out, nil
 }
 
 // metricDataRetentionCutoff returns the time before which cloudwatch:metricdata
@@ -276,17 +368,22 @@ func (s *cloudwatchStore) metricDataRetentionCutoff() time.Time {
 // from the ticker-loop wrapper, so tests can trigger one sweep
 // deterministically without waiting on a real or mocked ticker tick.
 func (s *cloudwatchStore) sweepMetricDataOnce(ctx context.Context) {
-	cutoff := s.metricDataRetentionCutoff()
+	cutoffNanos := s.metricDataRetentionCutoff().UnixNano()
 	pairs, err := s.store.Scan(ctx, nsMetricData, "")
 	if err != nil {
 		return
 	}
 	for _, kv := range pairs {
-		var dp MetricDataPoint
-		if err := json.Unmarshal([]byte(kv.Value), &dp); err != nil {
+		// storage-plan.md A5: the timestamp lives in the key suffix, so the
+		// sweep never needs to JSON-decode a point's value just to check its
+		// age — same isolation-of-malformed-records posture as before: a key
+		// whose suffix doesn't parse is skipped rather than deleted or
+		// treated as a scan failure.
+		nanos, ok := metricDataKeySuffixNanos(kv.Key)
+		if !ok {
 			continue
 		}
-		if dp.Timestamp.UTC().Before(cutoff) {
+		if nanos < cutoffNanos {
 			_ = s.store.Delete(ctx, nsMetricData, kv.Key)
 		}
 	}
@@ -603,7 +700,7 @@ func (s *Service) getMetricStatisticsJSON(w http.ResponseWriter, r *http.Request
 	}
 
 	dimensions := canonicalizeDimensions(in.Dimensions)
-	points, err := s.store.listMetricDataPoints(r.Context(), in.Namespace, in.MetricName, dimensions)
+	points, err := s.store.listMetricDataPoints(r.Context(), in.Namespace, in.MetricName, dimensions, startTime, endTime)
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
@@ -1091,7 +1188,7 @@ func (s *Service) getMetricStatistics(w http.ResponseWriter, r *http.Request) {
 		requestedStats["Average"] = true
 	}
 
-	points, err := s.store.listMetricDataPoints(r.Context(), namespace, metricName, dimensions)
+	points, err := s.store.listMetricDataPoints(r.Context(), namespace, metricName, dimensions, startTime, endTime)
 	if err != nil {
 		protocol.WriteXMLError(w, r, protocol.ErrInternalError)
 		return
@@ -1204,7 +1301,7 @@ func (s *Service) getMetricData(w http.ResponseWriter, r *http.Request) {
 		}
 		dimensions = canonicalizeDimensions(dimensions)
 
-		points, err := s.store.listMetricDataPoints(r.Context(), namespace, metricName, dimensions)
+		points, err := s.store.listMetricDataPoints(r.Context(), namespace, metricName, dimensions, startTime, endTime)
 		if err != nil {
 			protocol.WriteXMLError(w, r, protocol.ErrInternalError)
 			return
@@ -1622,7 +1719,7 @@ func (s *Service) evaluateAlarms() {
 		}
 
 		windowStart := now.Add(-time.Duration(period*evaluationPeriods) * time.Second)
-		points, err := s.store.listMetricDataPoints(ctx, alarm.Namespace, alarm.MetricName, nil)
+		points, err := s.store.listMetricDataPoints(ctx, alarm.Namespace, alarm.MetricName, nil, windowStart, now)
 		if err != nil {
 			continue
 		}
