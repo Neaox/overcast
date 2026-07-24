@@ -3,6 +3,7 @@ package sns
 import (
 	"context"
 	"encoding/xml"
+	"net/http"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/smtp"
 )
 
@@ -390,6 +392,21 @@ func (h *Handler) subscribeTyped(ctx context.Context, req *subscribeReq) (*subsc
 	switch strings.ToLower(req.Protocol) {
 	case "application", "firehose":
 		return nil, errInvalidProtocol(req.Protocol)
+	}
+
+	// Real AWS requires the subscription endpoint to be in the same region as
+	// the topic (applies to sqs and lambda protocols which use ARN endpoints).
+	switch strings.ToLower(req.Protocol) {
+	case "sqs", "lambda":
+		if endpointRegion := serviceutil.ARNRegion(req.Endpoint); endpointRegion != "" {
+			if topicRegion := serviceutil.ARNRegion(req.TopicArn); topicRegion != "" && topicRegion != endpointRegion {
+				return nil, &protocol.AWSError{
+					Code:       "InvalidParameter",
+					Message:    "Invalid parameter: SQS endpoint ARN must be in the same region as the SNS topic.",
+					HTTPStatus: http.StatusBadRequest,
+				}
+			}
+		}
 	}
 
 	subID := uuid.New().String()
