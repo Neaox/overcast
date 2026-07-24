@@ -37,6 +37,12 @@ see the [root README](../README.md).
 - [Development setup](./development-setup.md) — building from source
 - [Debugging](./debugging.md) — debug endpoints, logging, profiling
 - [Performance](./performance.md) — benchmarks and tuning
+- [Storage backend internals](./storage-backends.md) — durability, performance, and known limitations of each `state.Store` backend
+
+Internal working plans (storage stabilization, storage access patterns, pagination fidelity,
+the storage regression test plan, and others) live in `docs/plans/` in the repository — they
+are contributor-facing planning documents, deliberately excluded from this published
+documentation set.
 
 ---
 
@@ -157,6 +163,11 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_STATE`                 | `hybrid`               | Storage backend: `memory`, `hybrid` (default), `persistent`, or `wal`                |
 | `OVERCAST_STATE_<SERVICE>`       | _(global)_             | Per-service backend override, e.g. `OVERCAST_STATE_S3=memory`                        |
 | `OVERCAST_HYBRID_FLUSH_INTERVAL` | `5s`                   | How often the hybrid backend flushes in-memory state to disk                         |
+| `OVERCAST_HYBRID_SYNC`           | `interval`             | Hybrid pending-log fsync policy: `always`, `interval`, or `never`                    |
+| `OVERCAST_HYBRID_SYNC_INTERVAL`  | `100ms`                | Periodic fsync interval used when `OVERCAST_HYBRID_SYNC=interval`                    |
+| `OVERCAST_HYBRID_DIRTY_ENTRY_THRESHOLD` | `10000`         | Unflushed-write count that triggers an early hybrid flush ahead of the timer (`<= 0` disables) |
+| `OVERCAST_HYBRID_DIRTY_BYTE_THRESHOLD`  | `8388608`       | Approximate unflushed-write bytes that trigger an early hybrid flush (default 8 MiB; `<= 0` disables) |
+| `OVERCAST_HYBRID_MAINTENANCE_INTERVAL`  | `5m`            | How often the hybrid backend runs background SQLite housekeeping (passive WAL checkpoint + conditional incremental vacuum) |
 | `OVERCAST_WAL_FSYNC`             | `interval`             | WAL fsync policy: `always`, `interval`, or `never`                                   |
 | `OVERCAST_WAL_FSYNC_INTERVAL`    | `100ms`                | Periodic fsync interval used when `OVERCAST_WAL_FSYNC=interval`                      |
 | `OVERCAST_WAL_MAX_LOG_BYTES`     | `67108864`             | WAL log compaction threshold in bytes (default 64 MiB)                               |
@@ -169,7 +180,7 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_CFN_SYNC_WAIT_MS`      | `1000`                 | Milliseconds CloudFormation waits for fast stack provisioning before returning (`0` disables) |
 | `OVERCAST_TLS_CERT`              | —                      | Path to TLS certificate (enables HTTPS)                                              |
 | `OVERCAST_TLS_KEY`               | —                      | Path to TLS private key                                                              |
-| `OVERCAST_SHUTDOWN_TIMEOUT`      | `5s`                   | Graceful shutdown wait                                                               |
+| `OVERCAST_SHUTDOWN_TIMEOUT`      | `5s`                   | Graceful shutdown wait; also budgets the final store flush — if it can't finish in time the process exits anyway and unflushed writes replay from the pending log on next start |
 | `LAMBDA_DOCKER_SOCKET`           | `/var/run/docker.sock` | Docker endpoint — Unix path or `tcp://host:port` (for DinD)                          |
 | `LAMBDA_NETWORK`                 | `overcast_lambda`      | Docker network for Lambda containers                                                 |
 | `LAMBDA_RUNTIME_API_PORT`        | `9001`                 | Port Overcast exposes the Lambda Runtime API on                                      |
@@ -219,7 +230,7 @@ docker run --rm \
 
 Persistent/hybrid SQLite data lives at `$OVERCAST_DATA_DIR/overcast.db`. WAL mode uses `$OVERCAST_DATA_DIR/overcast.wal`. You can also override the backend per-service:
 
-Hybrid seeds small control-plane namespaces into memory on startup and keeps large data-plane namespaces SQLite-backed until read, so background schedulers and dashboards do not continuously poll SQLite for hot resource metadata.
+Hybrid seeds small control-plane namespaces into memory on startup and reads large data-plane namespaces (messages, log events, metric datapoints) from SQLite on every access — there is no read-through cache for those, by design — so background schedulers and dashboards do not continuously poll SQLite for hot resource metadata, while high-volume data never has to fit in memory. See [storage-backends.md](./storage-backends.md) for the full internals comparison.
 
 ```bash
 -e OVERCAST_STATE=memory -e OVERCAST_STATE_S3=hybrid
@@ -238,6 +249,11 @@ docker run --rm -p 4566:4566 \
   -v $(pwd)/data:/data \
   ghcr.io/neaox/overcast:latest
 ```
+
+> **Note:** a few services accept an override that can have no effect, and log a startup
+> warning when one is set: `DYNAMODBSTREAMS` (a facade over the `dynamodb` service, which owns
+> all stream state), `STS` (its session state lives under IAM's storage), and
+> `BEDROCK`/`ORGANIZATIONS` (stateless stubs). Every other service's override works.
 
 In this example DynamoDB writes synchronously to disk, S3 flushes
 asynchronously, and every other service uses in-memory (ephemeral)
@@ -314,11 +330,11 @@ Set `OVERCAST_DEBUG=true` to enable the `/_debug` namespace:
 | `/_topology`                | GET    | Full cross-region resource graph (always enabled)     |
 | `/_debug/health`            | GET    | Detailed: uptime, services, state backend and health  |
 | `/_debug/config`            | GET    | Effective configuration (secrets redacted)            |
-| `/_debug/state`             | GET    | Full state dump across all namespaces                 |
-| `/_debug/state/{namespace}` | GET    | State for one namespace, e.g. `s3:buckets`            |
+| `/_debug/state`             | GET    | Every namespace and its keys (no values)              |
+| `/_debug/state/{namespace}` | GET    | Paginated key/value pages for one namespace (`?after=` cursor, `?limit=` ≤ 5000, default 500); `?key=` fetches one raw value |
 | `/_debug/reset`             | POST   | Wipe all state                                        |
 | `/_debug/reset/{service}`   | POST   | Wipe state for one service                            |
-| `/_debug/metrics`           | GET    | Request counts and latencies                          |
+| `/_debug/metrics`           | GET    | Storage diagnostics: flush history, seed duration, pending-log size; `?includeRowCounts=true` adds per-namespace row counts |
 | `/_debug/pprof/`            | GET    | Go pprof index (goroutine, heap, CPU profiles, etc.)  |
 
 ---

@@ -2,6 +2,7 @@ package state
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -140,6 +141,28 @@ func validateWALSyncMode(mode WALSyncMode) error {
 	}
 }
 
+// replayWALFile rebuilds mem from the on-disk append log at path.
+//
+// Two forms of damage are tolerated rather than treated as fatal, since a
+// process kill mid-append (the common case, given the default interval sync
+// mode) always produces one of them:
+//
+//   - A torn final line: the very last line fails to decode AND the file does
+//     not end with a trailing newline. This is exactly what a kill mid-Write
+//     leaves behind. It is logged and replay stops there — every earlier,
+//     complete entry has already been applied.
+//   - A corrupt line anywhere else (mid-file garbage, or an unknown op): logged
+//     and skipped, replay continues with the remaining lines. A summary count
+//     is logged once replay finishes.
+//
+// Any other error (I/O failure, a decoded entry that MemoryStore itself
+// rejects) still aborts replay — those are not the "expected torn write" case
+// this function exists to tolerate.
+//
+// The file is streamed line by line rather than read whole, so replay's
+// transient memory stays proportional to the longest single entry instead of
+// the full log — which can legitimately reach MaxLogBytes (64 MiB default)
+// right before a compaction.
 func replayWALFile(path string, mem *MemoryStore) error {
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -150,17 +173,42 @@ func replayWALFile(path string, mem *MemoryStore) error {
 	}
 	defer f.Close()
 
-	sc := bufio.NewScanner(f)
+	reader := bufio.NewReader(f)
 	ctx := context.Background()
-	for sc.Scan() {
-		line := sc.Bytes()
+	var skipped int
+	for lineNum := 1; ; lineNum++ {
+		line, readErr := reader.ReadBytes('\n')
+		atEOF := errors.Is(readErr, io.EOF)
+		if readErr != nil && !atEOF {
+			return fmt.Errorf("wal store: read replay file %q: %w", path, readErr)
+		}
+		hadNewline := bytes.HasSuffix(line, []byte{'\n'})
+		line = bytes.TrimSuffix(line, []byte{'\n'})
 		if len(line) == 0 {
+			if atEOF {
+				break
+			}
 			continue
 		}
+
 		var e walEntry
 		if err := json.Unmarshal(line, &e); err != nil {
-			return fmt.Errorf("wal store: decode replay entry: %w", err)
+			// A torn final line is only possible on the file's last physical
+			// line, which ReadBytes hands back unterminated together with
+			// io.EOF — the same condition the old whole-file check expressed
+			// as "last split segment and no trailing newline".
+			if atEOF && !hadNewline {
+				walLogWarnf("wal store: %q has an incomplete final entry (line %d); ignoring: %v", path, lineNum, err)
+				break
+			}
+			walLogWarnf("wal store: %q has a corrupt entry at line %d; skipping: %v", path, lineNum, err)
+			skipped++
+			if atEOF {
+				break
+			}
+			continue
 		}
+
 		switch e.Op {
 		case walSet:
 			if err := mem.Set(ctx, e.Namespace, e.Key, e.Value); err != nil {
@@ -175,13 +223,26 @@ func replayWALFile(path string, mem *MemoryStore) error {
 				return fmt.Errorf("wal store: replay delete prefix [%s/%s*]: %w", e.Namespace, e.Key, err)
 			}
 		default:
-			return fmt.Errorf("wal store: unknown replay op %q", e.Op)
+			walLogWarnf("wal store: %q has an unknown op %q at line %d; skipping", path, e.Op, lineNum)
+			skipped++
+		}
+		if atEOF {
+			break
 		}
 	}
-	if err := sc.Err(); err != nil {
-		return fmt.Errorf("wal store: replay scan: %w", err)
+
+	if skipped > 0 {
+		walLogWarnf("wal store: replay of %q skipped %d corrupt/unknown entries", path, skipped)
 	}
 	return nil
+}
+
+// walLogWarnf reports replay warnings to stderr. WALStore has no logger of
+// its own to inject (unlike HybridStore's NewHybridStoreWithLogger) — this
+// mirrors the no-logger-available fallback already used elsewhere in this
+// package, e.g. sqlite.go's migration-failure path.
+func walLogWarnf(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...) //nolint:errcheck // best-effort diagnostic write.
 }
 
 func (s *WALStore) runPeriodicSync() {
@@ -252,6 +313,13 @@ func (s *WALStore) ListNamespaces(ctx context.Context) ([]string, error) {
 
 func (s *WALStore) Scan(ctx context.Context, namespace, prefix string) ([]KV, error) {
 	return s.mem.Scan(ctx, namespace, prefix)
+}
+
+// ScanPage delegates to the underlying MemoryStore exactly like Get/List/
+// Scan above — WALStore always reads from memory; only writes touch the
+// append-only log.
+func (s *WALStore) ScanPage(ctx context.Context, namespace, prefix, startAfter string, limit int) ([]KV, string, error) {
+	return s.mem.ScanPage(ctx, namespace, prefix, startAfter, limit)
 }
 
 func (s *WALStore) Close() error {

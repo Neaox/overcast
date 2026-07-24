@@ -21,6 +21,18 @@ RPC v2 CBOR at `/service/Logs_20140328/operation/<OperationName>` with
 Log group names are typically in the form `/aws/lambda/<function-name>` or
 `/custom/<app-name>`. Log stream names can be any valid string.
 
+Storage and retention behavior:
+
+- In the SQLite-backed storage modes, log events live in a dedicated indexed table
+  (`logs_events`), so appends and time-range reads stay fast regardless of stream size;
+  pre-existing blob-format events are converted automatically by a one-time migration on
+  first startup after upgrade.
+- `RetentionInDays` (set via `PutRetentionPolicy`) is **enforced**: a periodic background
+  sweep deletes events older than the group's retention window in every storage mode. Groups
+  with no retention policy keep events indefinitely.
+- Incoming events are briefly write-buffered per stream (~50 ms debounce, flushed early on
+  bursts) to coalesce writes; buffers are flushed synchronously on graceful shutdown.
+
 ---
 
 <!-- BEGIN overcast:capabilities -->

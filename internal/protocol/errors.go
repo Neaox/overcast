@@ -148,6 +148,23 @@ var (
 		Message:    "This service is not enabled in this emulator. Add it to OVERCAST_SERVICES to enable it.",
 		HTTPStatus: http.StatusServiceUnavailable,
 	}
+
+	// ErrStorageMigrating is returned by middleware.NotReady while the
+	// storage backend is still completing a one-time schema migration on
+	// startup (see internal/state/migrate.go) and cannot yet serve requests
+	// reliably — without this check, a request in this window would either
+	// block indefinitely (persistent mode) or silently observe incomplete
+	// state as if it simply didn't exist (hybrid mode's TierHot reads,
+	// before the post-migration seed has populated memory). "ServiceUnavailable"
+	// is a real AWS error code multiple services return for their own
+	// transient unavailability, so AWS SDKs already retry it automatically
+	// per their standard retry policy — a client normally needs no special
+	// handling for this.
+	ErrStorageMigrating = &AWSError{
+		Code:       "ServiceUnavailable",
+		Message:    "Overcast is completing a one-time database migration and is not yet ready to serve requests. This happens after an upgrade or first startup against existing data and should resolve within moments — retry the request.",
+		HTTPStatus: http.StatusServiceUnavailable,
+	}
 )
 
 // ErrInvalidArgument returns a 400 error for malformed input.

@@ -83,6 +83,34 @@ type Config struct {
 	// mode is "hybrid".
 	HybridFlushInterval time.Duration
 
+	// HybridSyncMode controls fsync policy for the hybrid store's pending
+	// log. Valid values: always, interval, never. Corresponds to
+	// state.WALSyncMode (the hybrid pending log reuses the same sync-mode
+	// mechanism as the WAL backend).
+	HybridSyncMode string
+
+	// HybridSyncInterval controls periodic fsync cadence for the hybrid
+	// pending log when HybridSyncMode is "interval".
+	HybridSyncInterval time.Duration
+
+	// HybridDirtyEntryThreshold triggers an early, out-of-band hybrid flush
+	// once this many unflushed pending-log operations have accumulated,
+	// ahead of the next HybridFlushInterval tick. A value <= 0 disables the
+	// entry-count trigger (the byte threshold still applies unless it is
+	// also disabled).
+	HybridDirtyEntryThreshold int
+
+	// HybridDirtyByteThreshold triggers an early, out-of-band hybrid flush
+	// once the approximate byte size of unflushed writes exceeds this many
+	// bytes. A value <= 0 disables the byte-size trigger.
+	HybridDirtyByteThreshold int64
+
+	// HybridMaintenanceInterval controls how often the hybrid store's
+	// background loop runs routine SQLite housekeeping (a passive WAL
+	// checkpoint plus a conditional incremental vacuum — see
+	// docs/plans/storage-plan.md item 3.5). Never runs on the request path.
+	HybridMaintenanceInterval time.Duration
+
 	// WALFsyncMode controls fsync policy for the WAL backend.
 	// Valid values: always, interval, never.
 	WALFsyncMode string
@@ -398,6 +426,97 @@ func (c *Config) TLSEnabled() bool {
 // allServices is the canonical list of supported service names.
 var allServices = []string{"s3", "sqs", "sns", "ses", "dynamodb", "dynamodbstreams", "lambda", "pipes", "logs", "secretsmanager", "sts", "ssm", "kms", "iam", "cloudformation", "ec2", "rds", "ecs", "ecr", "eks", "cognito", "stepfunctions", "waf", "shield", "appsync", "apigateway", "cloudfront", "eventbridge", "kinesis", "appregistry", "cloudwatch", "acm", "opensearch", "appconfig", "appconfigdata", "bedrock", "glue", "firehose", "athena", "elasticache", "msk", "scheduler", "route53", "elbv2", "organizations", "autoscaling", "cloudtrail", "backup", "transfer"}
 
+// ServiceNamespacePrefix returns the canonical mapping from a config service
+// name (as used in OVERCAST_SERVICES, OVERCAST_STATE_<SERVICE>, and
+// allServices) to the storage-namespace prefix that service actually writes
+// under — the segment before the first ":" in namespaces like "cfn:stacks" or
+// "sqs:queues".
+//
+// Most services use their config name as their namespace prefix unchanged
+// (e.g. "sqs" → "sqs"), but a few historical namespace prefixes are shorter
+// than the config name:
+//
+//	cloudformation → cfn
+//	apigateway     → apigw
+//	eventbridge    → eb
+//
+// This function is the single source of truth for that mapping. It is used
+// by both the per-service storage override routing in cmd/overcast's serve
+// command and the /_debug endpoints in internal/router — state.NamespacedStore
+// (internal/state/namespaced.go) routes purely on namespace prefix, not on
+// config service name, so any caller that keys a NamespacedStore route map
+// (or unwraps one) by config service name instead of this prefix will build
+// an override that silently never takes effect.
+//
+// "dynamodbstreams" is intentionally left identity-mapped here — it must
+// NOT be remapped to "dynamodb". cfg.ServiceStates is an unordered map: if
+// both OVERCAST_STATE_DYNAMODB and OVERCAST_STATE_DYNAMODBSTREAMS were ever
+// set to different modes, remapping dynamodbstreams to "dynamodb" would make
+// both resolve to the same route-map key and collide, nondeterministically
+// redirecting real DynamoDB item/table storage depending on map iteration
+// order. It's also moot: dynamodbstreams.New (internal/services/dynamodbstreams/service.go)
+// takes no state.Store parameter at all — it's a store-less facade over the
+// dynamodb service, so an override for it can never have any effect
+// regardless of prefix. See ServiceOverrideIneffective, which documents this
+// (and a few other services) as a known no-op override.
+func ServiceNamespacePrefix(service string) string {
+	switch service {
+	case "cloudformation":
+		return "cfn"
+	case "apigateway":
+		return "apigw"
+	case "eventbridge":
+		return "eb"
+	default:
+		return service
+	}
+}
+
+// ServiceOverrideIneffective reports whether an OVERCAST_STATE_<SERVICE>
+// override for service is accepted by config validation but has no
+// observable effect, and if so, a short human-readable reason why.
+//
+// These services fall into two groups, both of which mean the service never
+// reads or writes through the store instance that a per-service override
+// would substitute:
+//
+//   - "dynamodbstreams": a store-less facade over the dynamodb service.
+//     dynamodbstreams.New(ddb DynamoDBService, logger *zap.Logger) — see
+//     internal/services/dynamodbstreams/service.go — takes no state.Store
+//     parameter; all persisted data actually lives under the dynamodb
+//     service's own store.
+//   - "sts": STS session state is written under the IAM namespace, not
+//     "sts" — see internal/services/sts/handler.go, which calls
+//     `h.st.Set(ctx, "iam:sessions", accessKeyID, ...)`. An OVERCAST_STATE_STS
+//     override builds a store that is registered under the "sts" prefix,
+//     but NamespacedStore.storeFor never routes "iam:sessions" there.
+//   - "bedrock": a stateless stub. bedrock.New's state.Store parameter is
+//     the blank identifier (see internal/services/bedrock/service.go) — the
+//     service struct holds no store field and never persists anything.
+//   - "organizations": a stateless stub. organizations.New accepts a
+//     state.Store parameter but never assigns or otherwise uses it (see
+//     internal/services/organizations/service.go) — the service struct
+//     holds no store field.
+//
+// Callers that build per-service storage overrides (cmd/overcast's serve
+// command) should still build and route the override store for these
+// services when configured — it's harmless — but should log a warning so
+// the no-op isn't silently misread as "the override took effect".
+func ServiceOverrideIneffective(service string) (reason string, ok bool) {
+	switch service {
+	case "dynamodbstreams":
+		return "store-less facade over the dynamodb service; dynamodbstreams.New takes no state.Store and owns no stored state of its own", true
+	case "sts":
+		return `STS session state is written under the "iam:sessions" namespace, not "sts"; a per-service override for sts is never consulted`, true
+	case "bedrock":
+		return "stateless stub; bedrock.New's state.Store parameter is discarded and never persists anything", true
+	case "organizations":
+		return "stateless stub; organizations.New's state.Store parameter is accepted but never used", true
+	default:
+		return "", false
+	}
+}
+
 // Load reads configuration from environment variables and returns a validated
 // Config. Returns an error if any required value is invalid.
 //
@@ -410,6 +529,11 @@ var allServices = []string{"s3", "sqs", "sns", "ses", "dynamodb", "dynamodbstrea
 //	OVERCAST_STATE                     hybrid  (memory | persistent | hybrid | wal)
 //	OVERCAST_STATE_<SERVICE>           <mode>  (per-service override, e.g. OVERCAST_STATE_S3=memory)
 //	OVERCAST_HYBRID_FLUSH_INTERVAL     5s
+//	OVERCAST_HYBRID_SYNC                interval (always | interval | never)
+//	OVERCAST_HYBRID_SYNC_INTERVAL       100ms
+//	OVERCAST_HYBRID_DIRTY_ENTRY_THRESHOLD 10000
+//	OVERCAST_HYBRID_DIRTY_BYTE_THRESHOLD  8388608
+//	OVERCAST_HYBRID_MAINTENANCE_INTERVAL  5m
 //	OVERCAST_WAL_FSYNC                 interval (always | interval | never)
 //	OVERCAST_WAL_FSYNC_INTERVAL        100ms
 //	OVERCAST_WAL_MAX_LOG_BYTES         67108864
@@ -509,6 +633,37 @@ func Load() (*Config, error) {
 	cfg.HybridFlushInterval, err = time.ParseDuration(flushStr)
 	if err != nil {
 		return nil, fmt.Errorf("config: OVERCAST_HYBRID_FLUSH_INTERVAL %q is not a valid duration", flushStr)
+	}
+
+	// Hybrid pending-log sync mode — mirrors the WAL sync settings below,
+	// applied to the hybrid store's own pending log instead.
+	cfg.HybridSyncMode = strings.ToLower(strings.TrimSpace(envOr("OVERCAST_HYBRID_SYNC", "interval")))
+	switch cfg.HybridSyncMode {
+	case "always", "interval", "never":
+	default:
+		return nil, fmt.Errorf("config: OVERCAST_HYBRID_SYNC must be 'always', 'interval', or 'never', got %q", cfg.HybridSyncMode)
+	}
+	hybridSyncIntervalStr := envOr("OVERCAST_HYBRID_SYNC_INTERVAL", "100ms")
+	cfg.HybridSyncInterval, err = time.ParseDuration(hybridSyncIntervalStr)
+	if err != nil || cfg.HybridSyncInterval <= 0 {
+		return nil, fmt.Errorf("config: OVERCAST_HYBRID_SYNC_INTERVAL %q is not a valid positive duration", hybridSyncIntervalStr)
+	}
+
+	// Hybrid size-triggered flush thresholds.
+	cfg.HybridDirtyEntryThreshold = envInt("OVERCAST_HYBRID_DIRTY_ENTRY_THRESHOLD", 10000)
+	hybridByteThresholdStr := envOr("OVERCAST_HYBRID_DIRTY_BYTE_THRESHOLD", "8388608")
+	hybridByteThreshold, err := strconv.ParseInt(hybridByteThresholdStr, 10, 64)
+	if err != nil || hybridByteThreshold <= 0 {
+		return nil, fmt.Errorf("config: OVERCAST_HYBRID_DIRTY_BYTE_THRESHOLD %q must be a positive integer", hybridByteThresholdStr)
+	}
+	cfg.HybridDirtyByteThreshold = hybridByteThreshold
+
+	// Hybrid background maintenance loop interval (3.5: passive WAL
+	// checkpoint + conditional incremental vacuum).
+	maintenanceIntervalStr := envOr("OVERCAST_HYBRID_MAINTENANCE_INTERVAL", "5m")
+	cfg.HybridMaintenanceInterval, err = time.ParseDuration(maintenanceIntervalStr)
+	if err != nil || cfg.HybridMaintenanceInterval <= 0 {
+		return nil, fmt.Errorf("config: OVERCAST_HYBRID_MAINTENANCE_INTERVAL %q is not a valid positive duration", maintenanceIntervalStr)
 	}
 
 	// WAL settings

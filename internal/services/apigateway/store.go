@@ -538,16 +538,27 @@ func (s *apigatewayStore) listResources(ctx context.Context, apiID string) ([]*R
 	for _, p := range pairs {
 		var res Resource
 		if err := json.Unmarshal([]byte(p.Value), &res); err != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, err)
+			// One malformed persisted record must not fail the whole list
+			// (CLAUDE.md malformed-persisted-state rule; storage-plan.md 3.1).
+			continue
 		}
 		resources = append(resources, &res)
 	}
 	return resources, nil
 }
 
-// deleteAllResources removes every resource belonging to an API.
+// deleteAllResources removes every resource belonging to an API. Uses
+// PrefixDeleter for a single ranged delete when the store supports it
+// (storage-plan.md item 3.1), falling back to List+Delete otherwise —
+// mirroring sqs.deleteMessagesByQueuePrefix.
 func (s *apigatewayStore) deleteAllResources(ctx context.Context, apiID string) *protocol.AWSError {
 	prefix := serviceutil.RegionKey(s.region(ctx), apiID+"/")
+	if deleter, ok := s.store.(state.PrefixDeleter); ok {
+		if err := deleter.DeletePrefix(ctx, nsResources, prefix); err != nil {
+			return protocol.Wrap(protocol.ErrInternalError, err)
+		}
+		return nil
+	}
 	keys, err := s.store.List(ctx, nsResources, prefix)
 	if err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
@@ -613,16 +624,26 @@ func (s *apigatewayStore) listStages(ctx context.Context, apiID string) ([]*Stag
 	for _, p := range pairs {
 		var stage Stage
 		if err := json.Unmarshal([]byte(p.Value), &stage); err != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, err)
+			// One malformed persisted record must not fail the whole list
+			// (CLAUDE.md malformed-persisted-state rule; storage-plan.md 3.1).
+			continue
 		}
 		stages = append(stages, &stage)
 	}
 	return stages, nil
 }
 
-// deleteAllStages removes every stage belonging to an API.
+// deleteAllStages removes every stage belonging to an API. Uses PrefixDeleter
+// for a single ranged delete when the store supports it (storage-plan.md
+// item 3.1), falling back to List+Delete otherwise.
 func (s *apigatewayStore) deleteAllStages(ctx context.Context, apiID string) *protocol.AWSError {
 	prefix := serviceutil.RegionKey(s.region(ctx), apiID+"/")
+	if deleter, ok := s.store.(state.PrefixDeleter); ok {
+		if err := deleter.DeletePrefix(ctx, nsStages, prefix); err != nil {
+			return protocol.Wrap(protocol.ErrInternalError, err)
+		}
+		return nil
+	}
 	keys, err := s.store.List(ctx, nsStages, prefix)
 	if err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
@@ -664,16 +685,26 @@ func (s *apigatewayStore) listDeployments(ctx context.Context, apiID string) ([]
 	for _, p := range pairs {
 		var dep Deployment
 		if err := json.Unmarshal([]byte(p.Value), &dep); err != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, err)
+			// One malformed persisted record must not fail the whole list
+			// (CLAUDE.md malformed-persisted-state rule; storage-plan.md 3.1).
+			continue
 		}
 		deps = append(deps, &dep)
 	}
 	return deps, nil
 }
 
-// deleteAllDeployments removes every deployment belonging to an API.
+// deleteAllDeployments removes every deployment belonging to an API. Uses
+// PrefixDeleter for a single ranged delete when the store supports it
+// (storage-plan.md item 3.1), falling back to List+Delete otherwise.
 func (s *apigatewayStore) deleteAllDeployments(ctx context.Context, apiID string) *protocol.AWSError {
 	prefix := serviceutil.RegionKey(s.region(ctx), apiID+"/")
+	if deleter, ok := s.store.(state.PrefixDeleter); ok {
+		if err := deleter.DeletePrefix(ctx, nsDeployments, prefix); err != nil {
+			return protocol.Wrap(protocol.ErrInternalError, err)
+		}
+		return nil
+	}
 	keys, err := s.store.List(ctx, nsDeployments, prefix)
 	if err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
@@ -789,16 +820,26 @@ func (s *apigatewayStore) listV2Routes(ctx context.Context, apiID string) ([]*Ro
 	for _, p := range pairs {
 		var route RouteV2
 		if err := json.Unmarshal([]byte(p.Value), &route); err != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, err)
+			// One malformed persisted record must not fail the whole list
+			// (CLAUDE.md malformed-persisted-state rule; storage-plan.md 3.1).
+			continue
 		}
 		routes = append(routes, &route)
 	}
 	return routes, nil
 }
 
-// deleteAllV2Routes removes every route belonging to a v2 API.
+// deleteAllV2Routes removes every route belonging to a v2 API. Uses
+// PrefixDeleter for a single ranged delete when the store supports it
+// (storage-plan.md item 3.1), falling back to List+Delete otherwise.
 func (s *apigatewayStore) deleteAllV2Routes(ctx context.Context, apiID string) *protocol.AWSError {
 	prefix := serviceutil.RegionKey(s.region(ctx), apiID+"/")
+	if deleter, ok := s.store.(state.PrefixDeleter); ok {
+		if err := deleter.DeletePrefix(ctx, nsV2Routes, prefix); err != nil {
+			return protocol.Wrap(protocol.ErrInternalError, err)
+		}
+		return nil
+	}
 	keys, err := s.store.List(ctx, nsV2Routes, prefix)
 	if err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
@@ -859,7 +900,9 @@ func (s *apigatewayStore) listV2Integrations(ctx context.Context, apiID string) 
 	for _, p := range pairs {
 		var integ IntegrationV2
 		if err := json.Unmarshal([]byte(p.Value), &integ); err != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, err)
+			// One malformed persisted record must not fail the whole list
+			// (CLAUDE.md malformed-persisted-state rule; storage-plan.md 3.1).
+			continue
 		}
 		integs = append(integs, &integ)
 	}
@@ -867,8 +910,16 @@ func (s *apigatewayStore) listV2Integrations(ctx context.Context, apiID string) 
 }
 
 // deleteAllV2Integrations removes every integration belonging to a v2 API.
+// Uses PrefixDeleter for a single ranged delete when the store supports it
+// (storage-plan.md item 3.1), falling back to List+Delete otherwise.
 func (s *apigatewayStore) deleteAllV2Integrations(ctx context.Context, apiID string) *protocol.AWSError {
 	prefix := serviceutil.RegionKey(s.region(ctx), apiID+"/")
+	if deleter, ok := s.store.(state.PrefixDeleter); ok {
+		if err := deleter.DeletePrefix(ctx, nsV2Integ, prefix); err != nil {
+			return protocol.Wrap(protocol.ErrInternalError, err)
+		}
+		return nil
+	}
 	keys, err := s.store.List(ctx, nsV2Integ, prefix)
 	if err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
@@ -929,16 +980,26 @@ func (s *apigatewayStore) listV2Stages(ctx context.Context, apiID string) ([]*St
 	for _, p := range pairs {
 		var stage StageV2
 		if err := json.Unmarshal([]byte(p.Value), &stage); err != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, err)
+			// One malformed persisted record must not fail the whole list
+			// (CLAUDE.md malformed-persisted-state rule; storage-plan.md 3.1).
+			continue
 		}
 		stages = append(stages, &stage)
 	}
 	return stages, nil
 }
 
-// deleteAllV2Stages removes every stage belonging to a v2 API.
+// deleteAllV2Stages removes every stage belonging to a v2 API. Uses
+// PrefixDeleter for a single ranged delete when the store supports it
+// (storage-plan.md item 3.1), falling back to List+Delete otherwise.
 func (s *apigatewayStore) deleteAllV2Stages(ctx context.Context, apiID string) *protocol.AWSError {
 	prefix := serviceutil.RegionKey(s.region(ctx), apiID+"/")
+	if deleter, ok := s.store.(state.PrefixDeleter); ok {
+		if err := deleter.DeletePrefix(ctx, nsV2Stages, prefix); err != nil {
+			return protocol.Wrap(protocol.ErrInternalError, err)
+		}
+		return nil
+	}
 	keys, err := s.store.List(ctx, nsV2Stages, prefix)
 	if err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
@@ -975,7 +1036,9 @@ func (s *apigatewayStore) listV2Deployments(ctx context.Context, apiID string) (
 	for _, p := range pairs {
 		var dep DeploymentV2
 		if err := json.Unmarshal([]byte(p.Value), &dep); err != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, err)
+			// One malformed persisted record must not fail the whole list
+			// (CLAUDE.md malformed-persisted-state rule; storage-plan.md 3.1).
+			continue
 		}
 		deps = append(deps, &dep)
 	}
@@ -983,8 +1046,16 @@ func (s *apigatewayStore) listV2Deployments(ctx context.Context, apiID string) (
 }
 
 // deleteAllV2Deployments removes every deployment belonging to a v2 API.
+// Uses PrefixDeleter for a single ranged delete when the store supports it
+// (storage-plan.md item 3.1), falling back to List+Delete otherwise.
 func (s *apigatewayStore) deleteAllV2Deployments(ctx context.Context, apiID string) *protocol.AWSError {
 	prefix := serviceutil.RegionKey(s.region(ctx), apiID+"/")
+	if deleter, ok := s.store.(state.PrefixDeleter); ok {
+		if err := deleter.DeletePrefix(ctx, nsV2Deploys, prefix); err != nil {
+			return protocol.Wrap(protocol.ErrInternalError, err)
+		}
+		return nil
+	}
 	keys, err := s.store.List(ctx, nsV2Deploys, prefix)
 	if err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)

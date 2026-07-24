@@ -207,3 +207,177 @@ func TestMemoryStore_Len(t *testing.T) {
 		t.Errorf("expected Len()=2, got %d", n)
 	}
 }
+
+// ---- 3.2 ScanPage ------------------------------------------------------
+
+func TestMemoryStore_ScanPage_PaginatesFullRangeNoDuplicatesOrGaps(t *testing.T) {
+	s := state.NewMemoryStore()
+	assertScanPagePaginatesFullRange(t, s, "ns", "queue/", 37, 5)
+}
+
+func TestMemoryStore_ScanPage_StartAfterBoundary(t *testing.T) {
+	s := state.NewMemoryStore()
+	ctx := context.Background()
+	seedScanPageKeys(t, s, "ns", "queue/", 5)
+
+	// startAfter == the last key of a previous page must exclude that key.
+	page, next, err := s.ScanPage(ctx, "ns", "queue/", "queue/0002", 0)
+	if err != nil {
+		t.Fatalf("ScanPage: %v", err)
+	}
+	if next != "" {
+		t.Fatalf("nextKey = %q, want empty (limit 0 = unlimited)", next)
+	}
+	wantKeys := []string{"queue/0003", "queue/0004"}
+	if got := scanPageKeys(page); !equalStringSlices(got, wantKeys) {
+		t.Fatalf("ScanPage after queue/0002 = %v, want %v", got, wantKeys)
+	}
+
+	// startAfter beyond every key returns an empty page.
+	page, next, err = s.ScanPage(ctx, "ns", "queue/", "queue/9999", 0)
+	if err != nil {
+		t.Fatalf("ScanPage: %v", err)
+	}
+	if len(page) != 0 || next != "" {
+		t.Fatalf("ScanPage past the end = %v (next=%q), want empty", page, next)
+	}
+}
+
+func TestMemoryStore_ScanPage_EmptyNamespace(t *testing.T) {
+	s := state.NewMemoryStore()
+	page, next, err := s.ScanPage(context.Background(), "does-not-exist", "", "", 10)
+	if err != nil {
+		t.Fatalf("ScanPage: %v", err)
+	}
+	if page == nil {
+		t.Error("ScanPage should return an empty slice, not nil, for a missing namespace")
+	}
+	if len(page) != 0 || next != "" {
+		t.Fatalf("ScanPage on empty namespace = %v (next=%q), want empty", page, next)
+	}
+}
+
+func TestMemoryStore_ScanPage_LimitEdgeCases(t *testing.T) {
+	s := state.NewMemoryStore()
+	ctx := context.Background()
+	seedScanPageKeys(t, s, "ns", "queue/", 3)
+
+	t.Run("limit zero means unlimited", func(t *testing.T) {
+		page, next, err := s.ScanPage(ctx, "ns", "queue/", "", 0)
+		if err != nil {
+			t.Fatalf("ScanPage: %v", err)
+		}
+		if len(page) != 3 || next != "" {
+			t.Fatalf("ScanPage limit=0 = %d items (next=%q), want all 3 items and no nextKey", len(page), next)
+		}
+	})
+
+	t.Run("negative limit means unlimited", func(t *testing.T) {
+		page, next, err := s.ScanPage(ctx, "ns", "queue/", "", -1)
+		if err != nil {
+			t.Fatalf("ScanPage: %v", err)
+		}
+		if len(page) != 3 || next != "" {
+			t.Fatalf("ScanPage limit=-1 = %d items (next=%q), want all 3 items and no nextKey", len(page), next)
+		}
+	})
+
+	t.Run("limit larger than dataset", func(t *testing.T) {
+		page, next, err := s.ScanPage(ctx, "ns", "queue/", "", 1000)
+		if err != nil {
+			t.Fatalf("ScanPage: %v", err)
+		}
+		if len(page) != 3 || next != "" {
+			t.Fatalf("ScanPage limit=1000 over 3 items = %d items (next=%q), want all 3 and no nextKey", len(page), next)
+		}
+	})
+}
+
+// ---- shared ScanPage test helpers, used across MemoryStore, SQLiteStore,
+// WALStore, and NamespacedStore's contract tests --------------------------
+
+// seedScanPageKeys writes n sequential, zero-padded keys under prefix so
+// their lexical and insertion order match.
+func seedScanPageKeys(t *testing.T, s state.Store, namespace, prefix string, n int) {
+	t.Helper()
+	ctx := context.Background()
+	for i := 0; i < n; i++ {
+		key := prefix + zeroPad4(i)
+		if err := s.Set(ctx, namespace, key, "v"); err != nil {
+			t.Fatalf("seed Set %s: %v", key, err)
+		}
+	}
+}
+
+func zeroPad4(i int) string {
+	digits := "0123456789"
+	b := make([]byte, 4)
+	for pos := 3; pos >= 0; pos-- {
+		b[pos] = digits[i%10]
+		i /= 10
+	}
+	return string(b)
+}
+
+func scanPageKeys(page []state.KV) []string {
+	keys := make([]string, len(page))
+	for i, kv := range page {
+		keys[i] = kv.Key
+	}
+	return keys
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// assertScanPagePaginatesFullRange seeds n sequential keys under prefix,
+// pages through the whole range in pageSize-sized calls, and asserts every
+// key is returned exactly once, in order, with nextKey empty only on the
+// final page. This is the core pagination contract every Store
+// implementation's ScanPage must satisfy.
+func assertScanPagePaginatesFullRange(t *testing.T, s state.Store, namespace, prefix string, n, pageSize int) {
+	t.Helper()
+	ctx := context.Background()
+	seedScanPageKeys(t, s, namespace, prefix, n)
+
+	var got []string
+	startAfter := ""
+	pages := 0
+	for {
+		pages++
+		if pages > n+1 {
+			t.Fatalf("ScanPage did not terminate after %d pages (n=%d)", pages, n)
+		}
+		page, next, err := s.ScanPage(ctx, namespace, prefix, startAfter, pageSize)
+		if err != nil {
+			t.Fatalf("ScanPage(startAfter=%q): %v", startAfter, err)
+		}
+		if pageSize > 0 && len(page) > pageSize {
+			t.Fatalf("ScanPage returned %d items, want at most limit=%d", len(page), pageSize)
+		}
+		for _, kv := range page {
+			got = append(got, kv.Key)
+		}
+		if next == "" {
+			break
+		}
+		startAfter = next
+	}
+
+	want := make([]string, n)
+	for i := 0; i < n; i++ {
+		want[i] = prefix + zeroPad4(i)
+	}
+	if !equalStringSlices(got, want) {
+		t.Fatalf("paginated ScanPage over %d keys (page size %d) = %v\nwant %v", n, pageSize, got, want)
+	}
+}

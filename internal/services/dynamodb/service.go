@@ -40,8 +40,15 @@ type Service struct {
 // New returns a configured DynamoDB Service.
 func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Clock, bus *events.Bus) *Service {
 	log := serviceutil.NewServiceLogger(logger, serviceName)
-	items := newItemBackendFor(store)
-	streams := newStreamBackendFor(store)
+	// Resolve past any state.NamespacedStore wrapping before probing for
+	// SQLiteDBProvider — an unrelated OVERCAST_STATE_<SVC> override on some
+	// other service would otherwise wrap store in a type that satisfies
+	// neither SQLiteDBProvider nor ReadyAwaiter, silently downgrading
+	// DynamoDB items/streams to the in-memory-only backend even though
+	// DynamoDB itself was never routed away from SQLite.
+	backendStore := state.Unwrap(store, serviceName)
+	items := newItemBackendFor(backendStore)
+	streams := newStreamBackendFor(backendStore)
 
 	ttlCtx, ttlCancel := context.WithCancel(context.Background())
 
@@ -60,6 +67,10 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 // newItemBackendFor selects the right itemBackend based on the store type:
 //   - SQLiteDBProvider → sqlItemBackend (dedicated indexed table in the same DB file)
 //   - anything else    → memItemBackend (nested maps, zero JSON overhead)
+//
+// Callers must pass a store already resolved with state.Unwrap (see New) —
+// a *state.NamespacedStore never implements SQLiteDBProvider itself, so
+// passing one through unresolved always falls back to the memory backend.
 func newItemBackendFor(store state.Store) itemBackend {
 	if provider, ok := store.(state.SQLiteDBProvider); ok {
 		return newSQLItemBackend(provider.DB)
@@ -67,13 +78,25 @@ func newItemBackendFor(store state.Store) itemBackend {
 	return newMemItemBackend()
 }
 
-// newStreamBackendFor selects the right streamBackend based on the store type.
+// newStreamBackendFor selects the right streamBackend based on the store
+// type. Callers must pass a store already resolved with state.Unwrap — see
+// newItemBackendFor.
 func newStreamBackendFor(store state.Store) streamBackend {
 	if provider, ok := store.(state.SQLiteDBProvider); ok {
 		return newSQLStreamBackend(provider.DB)
 	}
 	return newMemStreamBackend()
 }
+
+// debugItemsNamespace is the virtual raw-state namespace name for DynamoDB
+// items (DebugNamespace below). Defined here, not in internal/router, since
+// internal/router imports this package (a reverse import would cycle) — see
+// router.DebugStateProvider for the generalized interface this satisfies.
+const debugItemsNamespace = "dynamodb:items"
+
+// DebugNamespace returns the virtual raw-state namespace name for DynamoDB
+// items, implementing router.DebugStateProvider.
+func (s *Service) DebugNamespace() string { return debugItemsNamespace }
 
 // DebugStateKeys returns the virtual raw-state keys for DynamoDB items.
 func (s *Service) DebugStateKeys(ctx context.Context) ([]string, error) {

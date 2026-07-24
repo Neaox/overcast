@@ -200,4 +200,33 @@ func TestDocsService_usesServicesSubdirectory(t *testing.T) {
 	}
 }
 
+// TestDocsService_stripsFrontmatter pins that the per-service docs endpoint
+// strips leading YAML frontmatter exactly like /api/docs/page does — the
+// service docs modal renders this response verbatim, so unstripped
+// frontmatter would show up in the UI as a thematic break plus raw
+// "title:/description:" text above every service doc.
+func TestDocsService_stripsFrontmatter(t *testing.T) {
+	// Given: a service doc with a frontmatter block (as scripts/docs-index.go
+	// writes for every published doc).
+	docsFS := fstest.MapFS{
+		"services/sqs.md": &fstest.MapFile{
+			Data: []byte("---\ntitle: \"SQS\"\nsection: \"Service Reference\"\n---\n\n# SQS\nbody\n"),
+		},
+	}
+	handler := NewHandler(nil, docsFS, UIConfig{})
+
+	// When: the service docs endpoint is requested.
+	req := httptest.NewRequest(http.MethodGet, "/api/docs/sqs", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	// Then: the frontmatter is gone and the markdown body starts at the title.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); got != "# SQS\nbody\n" {
+		t.Fatalf("expected frontmatter to be stripped, got: %q", got)
+	}
+}
+
 var _ fs.FS = fstest.MapFS{}

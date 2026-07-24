@@ -87,12 +87,11 @@ type Dimension struct {
 
 type cloudwatchStore struct {
 	store state.Store
-	cfg   *config.Config
 	clk   clock.Clock
 }
 
-func newCloudwatchStore(s state.Store, cfg *config.Config, clk clock.Clock) *cloudwatchStore {
-	return &cloudwatchStore{store: s, cfg: cfg, clk: clk}
+func newCloudwatchStore(s state.Store, clk clock.Clock) *cloudwatchStore {
+	return &cloudwatchStore{store: s, clk: clk}
 }
 
 const (
@@ -101,7 +100,23 @@ const (
 	nsMetricData = "cloudwatch:metricdata"
 	nsTags       = "cloudwatch:tags"
 
+	// memoryMetricDataRetention is the retention window applied to
+	// PutMetricData datapoints in every backend mode (storage-plan.md 3.4).
+	// It used to be enforced only in memory mode (backendMode() gate,
+	// removed); real CloudWatch retains metric data for up to 15 months at
+	// declining resolution, but Overcast only needs to bound growth for
+	// local dev/test workflows, not serve historical analysis, so a single
+	// flat window is enough.
 	memoryMetricDataRetention = 1 * time.Hour
+
+	// metricDataSweepInterval is how often Service.runMetricDataSweeper
+	// scans the entire cloudwatch:metricdata namespace and deletes points
+	// older than memoryMetricDataRetention, regardless of backend mode.
+	// Deliberately well under the retention window so hybrid/persistent
+	// backends — which no longer benefit from memory mode's small working
+	// set — don't accumulate more than about one interval's worth of
+	// overdue rows on disk between sweeps.
+	metricDataSweepInterval = 5 * time.Minute
 )
 
 func canonicalizeDimensions(in []Dimension) []Dimension {
@@ -199,9 +214,18 @@ func (s *cloudwatchStore) putMetricDataPoint(ctx context.Context, dp *MetricData
 	if err := s.store.Set(ctx, nsMetricData, key, string(raw)); err != nil {
 		return err
 	}
-	if cutoff, enforce := s.metricDataRetentionCutoff(); enforce {
-		s.pruneMetricDataPoints(ctx, dp.Namespace, dp.MetricName, metricDims, cutoff)
-	}
+	// Deliberately NO inline prune here. An earlier version pruned this
+	// metric's expired points on every put, which on the hybrid/persistent
+	// backends meant a TierCached SQLite Scan + JSON decode of every retained
+	// point per PutMetricData — O(points-in-window) per write, quadratic over
+	// a burst to one metric (measured: see
+	// BenchmarkCloudWatch_PutMetricDataHybrid_*Retained in
+	// metric_burst_bench_test.go). Retention doesn't need it: reads filter
+	// and drop expired points themselves (listMetricDataPoints), and the
+	// periodic sweep (Service.runMetricDataSweeper / sweepMetricDataOnce)
+	// guarantees physical cleanup within one sweep interval, so the only
+	// cost of not pruning inline is at most one interval's worth of expired
+	// rows per hot metric — invisible to readers.
 	return nil
 }
 
@@ -212,14 +236,14 @@ func (s *cloudwatchStore) listMetricDataPoints(ctx context.Context, namespace, m
 	if err != nil {
 		return nil, err
 	}
-	cutoff, enforceRetention := s.metricDataRetentionCutoff()
+	cutoff := s.metricDataRetentionCutoff()
 	out := make([]*MetricDataPoint, 0, len(pairs))
 	for _, kv := range pairs {
 		var dp MetricDataPoint
 		if err := json.Unmarshal([]byte(kv.Value), &dp); err != nil {
 			continue
 		}
-		if enforceRetention && dp.Timestamp.UTC().Before(cutoff) {
+		if dp.Timestamp.UTC().Before(cutoff) {
 			_ = s.store.Delete(ctx, nsMetricData, kv.Key)
 			continue
 		}
@@ -228,31 +252,32 @@ func (s *cloudwatchStore) listMetricDataPoints(ctx context.Context, namespace, m
 	return out, nil
 }
 
-func (s *cloudwatchStore) backendMode() config.StateBackend {
-	if s.cfg == nil {
-		return config.StateBackendHybrid
-	}
-	if s.cfg.ServiceStates != nil {
-		if mode, ok := s.cfg.ServiceStates[serviceName]; ok {
-			return mode
-		}
-	}
-	if s.cfg.State == "" {
-		return config.StateBackendHybrid
-	}
-	return s.cfg.State
+// metricDataRetentionCutoff returns the time before which cloudwatch:metricdata
+// points are eligible for deletion. Applied universally across every backend
+// mode (storage-plan.md 3.4) — there used to be a backendMode() gate here that
+// disabled retention outside memory mode; hybrid/persistent backends grew
+// unboundedly on disk as a result. Both the read-path filter
+// (listMetricDataPoints, which drops and deletes expired points as it reads)
+// and the periodic background sweep (sweepMetricDataOnce, driven by
+// Service.runMetricDataSweeper) use this cutoff. The write path deliberately
+// does not — see putMetricDataPoint.
+func (s *cloudwatchStore) metricDataRetentionCutoff() time.Time {
+	return s.clk.Now().UTC().Add(-memoryMetricDataRetention)
 }
 
-func (s *cloudwatchStore) metricDataRetentionCutoff() (time.Time, bool) {
-	if s.backendMode() != config.StateBackendMemory {
-		return time.Time{}, false
-	}
-	return s.clk.Now().UTC().Add(-memoryMetricDataRetention), true
-}
-
-func (s *cloudwatchStore) pruneMetricDataPoints(ctx context.Context, namespace, metricName string, dimensions []Dimension, cutoff time.Time) {
-	prefix := namespace + "/" + metricName + "/" + dimensionsKey(canonicalizeDimensions(dimensions)) + "/"
-	pairs, err := s.store.Scan(ctx, nsMetricData, prefix)
+// sweepMetricDataOnce scans every point in the cloudwatch:metricdata
+// namespace — across every namespace/metric/dimension combination — and
+// deletes any older than the retention cutoff. This full scan is intended
+// for periodic background use only (Service.runMetricDataSweeper): together
+// with listMetricDataPoints' read-path filtering it is the entire retention
+// mechanism, guaranteeing metrics that stop being written or read still get
+// physically pruned, in every backend mode including hybrid/persistent
+// (storage-plan.md 3.4). Extracted as a directly-callable method, separate
+// from the ticker-loop wrapper, so tests can trigger one sweep
+// deterministically without waiting on a real or mocked ticker tick.
+func (s *cloudwatchStore) sweepMetricDataOnce(ctx context.Context) {
+	cutoff := s.metricDataRetentionCutoff()
+	pairs, err := s.store.Scan(ctx, nsMetricData, "")
 	if err != nil {
 		return
 	}
@@ -328,7 +353,7 @@ type Service struct {
 func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock) *Service {
 	s := &Service{
 		log:    serviceutil.NewServiceLogger(logger, serviceName),
-		store:  newCloudwatchStore(st, cfg, clk),
+		store:  newCloudwatchStore(st, clk),
 		cfg:    cfg,
 		clk:    clk,
 		stopCh: make(chan struct{}),
@@ -349,6 +374,7 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock
 	}
 	s.wg.Add(1)
 	go s.runAlarmEvaluator()
+	s.startMetricDataSweeper()
 	return s
 }
 
@@ -1542,6 +1568,37 @@ func (s *Service) runAlarmEvaluator() {
 			s.evaluateAlarms()
 		}
 	}
+}
+
+// startMetricDataSweeper starts the background metric-data retention sweep.
+// It periodically deletes cloudwatch:metricdata points older than the
+// retention window, in every backend mode (storage-plan.md 3.4). Tracked by
+// the same s.wg/s.stopCh as runAlarmEvaluator, so Service.Stop waits for
+// both goroutines together.
+//
+// The ticker is created here — synchronously, on New's calling goroutine —
+// rather than inside the spawned goroutine. This matters for tests: it
+// guarantees clk.Ticker has already registered with a mock clock by the time
+// New() returns, so a test that calls mock.Add() immediately after
+// constructing the Service can't race against the goroutine not having
+// started yet (advancing a mock clock before a ticker exists is simply lost
+// — the ticker only anchors its first firing to whatever time it observes at
+// creation).
+func (s *Service) startMetricDataSweeper() {
+	ticker := s.clk.Ticker(metricDataSweepInterval)
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		defer ticker.Stop()
+		for {
+			select {
+			case <-s.stopCh:
+				return
+			case <-ticker.C:
+				s.store.sweepMetricDataOnce(context.Background())
+			}
+		}
+	}()
 }
 
 func (s *Service) evaluateAlarms() {

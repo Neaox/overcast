@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -108,9 +109,24 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	if err != nil {
 		return fmt.Errorf("init state backend: %w", err)
 	}
-	// Use a closure so the defer always calls Close on the final value of store
-	// (which may be replaced by a NamespacedStore below).
-	defer func() { store.Close() }()
+	// closeStore performs a bounded, logged Close() on the final value of
+	// `store` (which may be replaced by a NamespacedStore below — the closure
+	// reads the variable, not a snapshot, so it always sees the final value).
+	//
+	// It is invoked explicitly at the end of the graceful shutdown sequence,
+	// after cleanup() has run, so that both signal-triggered and error-triggered
+	// shutdowns close the store the same bounded way. The deferred call here is
+	// only a safety net for early-return paths above that point in the function
+	// (e.g. a per-service buildStore failure, or the listener failing to bind) —
+	// sync.Once makes the deferred call a no-op once the explicit call has
+	// already run.
+	var closeStoreOnce sync.Once
+	closeStore := func() {
+		closeStoreOnce.Do(func() {
+			closeStoreBounded(store, cfg.ShutdownTimeout, logger)
+		})
+	}
+	defer closeStore()
 
 	logStoreMode(logger, cfg)
 	prof.mark("buildStore")
@@ -118,35 +134,13 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	// Per-service overrides: build a NamespacedStore when any service requests
 	// a different mode from the global default.
 	if len(cfg.ServiceStates) > 0 {
-		routes := make(map[string]state.Store, len(cfg.ServiceStates))
-		var perSvcStores []state.Store // tracked for cleanup on error
-
-		for svc, mode := range cfg.ServiceStates {
-			if mode == cfg.State {
-				continue // same mode as global default — no need to create a separate store
-			}
-			// Each service gets its own sub-directory so db files don't collide.
-			svcDir := filepath.Join(cfg.DataDir, svc)
-			svcStore, err := buildStore(cfg, mode, svcDir, logger.With(zap.String("service_state", svc)))
-			if err != nil {
-				for _, s := range perSvcStores {
-					s.Close()
-				}
-				return fmt.Errorf("init state backend for service %s: %w", svc, err)
-			}
-			routes[svc] = svcStore
-			perSvcStores = append(perSvcStores, svcStore)
-			logger.Info("service state override",
-				zap.String("service", svc),
-				zap.String("mode", string(mode)),
-			)
+		newStore, err := buildServiceRoutes(cfg, store, logger)
+		if err != nil {
+			return err
 		}
-		if len(routes) > 0 {
-			// Replace store with a dispatcher; NamespacedStore.Close() handles
-			// closing all underlying stores, so we swap the deferred Close target.
-			newStore := state.NewNamespacedStore(store, routes)
-			store = newStore
-		}
+		// Replace store with the (possibly wrapping) result; NamespacedStore.Close()
+		// handles closing all underlying stores, so we swap the deferred Close target.
+		store = newStore
 		prof.mark("buildStore: per-svc overrides")
 	}
 
@@ -287,9 +281,17 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 		go hookRunner.Run(context.Background(), inithooks.StageReady)
 	}
 
+	// Both branches below converge on the same shutdown tail: preShutdown,
+	// SHUTDOWN hooks, HTTP drain, cleanup, and the bounded store close. A
+	// server-serve error must still surface as a non-nil return, but it must
+	// not skip cleanup — cleanup() flushes service-level buffered state (e.g.
+	// CloudWatch Logs' debounced write cache via Stop) that would otherwise be
+	// lost if the daemon failed shortly after a partial start.
+	var serveErr error
 	select {
 	case err := <-serverErr:
-		return fmt.Errorf("server error: %w", err)
+		serveErr = err
+		logger.Error("server error; running shutdown sequence before exiting", zap.Error(err))
 	case sig := <-quit:
 		logger.Info("shutdown signal received", zap.String("signal", sig.String()))
 	}
@@ -327,8 +329,148 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	cleanup(cleanupCtx)
 	logger.Info("cleanup complete", zap.Duration("elapsed", time.Since(shutdownStart)))
 
+	// Explicit, bounded close on the normal shutdown path — see closeStore's
+	// definition above, near where `store` is created. The deferred call
+	// registered there is a sync.Once no-op by the time it runs, since it
+	// already ran here.
+	closeStore()
+	logger.Info("store close sequence complete", zap.Duration("elapsed", time.Since(shutdownStart)))
+
+	if serveErr != nil {
+		return fmt.Errorf("server error: %w", serveErr)
+	}
 	logger.Info("server stopped cleanly")
 	return nil
+}
+
+// closeStoreBounded closes store with a time budget so shutdown can never
+// hang indefinitely on it. HybridStore.Close (and similarly-shaped persistent
+// backends) perform a full synchronous flush of all dirty entries to SQLite
+// before returning; on a slow disk — notably a bind-mounted /data volume
+// under Docker Desktop — that flush can run long enough to exceed `docker
+// stop`'s default ~10s grace period, which SIGKILLs the process mid-flush.
+// That's survivable: SQLite writes are transactional and the hybrid store's
+// pending log replays anything that didn't make it into SQLite on the next
+// start. But an unbounded wait here would defeat the point of a "graceful"
+// shutdown, so the wait is capped: on timeout we log loudly and let the
+// process exit anyway rather than block indefinitely (or get SIGKILLed with
+// no record of why).
+func closeStoreBounded(store state.Store, timeout time.Duration, logger *zap.Logger) {
+	pendingBefore := -1
+	if health, ok := state.PersistentHealthSnapshot(store); ok {
+		pendingBefore = health.PendingWrites
+	}
+
+	start := time.Now()
+	done := make(chan error, 1)
+	go func() { done <- store.Close() }()
+
+	select {
+	case err := <-done:
+		elapsed := time.Since(start)
+		if err != nil {
+			logger.Warn("store close returned error", zap.Error(err), zap.Duration("elapsed", elapsed))
+			return
+		}
+		fields := []zap.Field{zap.Duration("elapsed", elapsed)}
+		if pendingBefore >= 0 {
+			fields = append(fields, zap.Int("pending_writes_at_close", pendingBefore))
+		}
+		logger.Info("store closed cleanly", fields...)
+	case <-time.After(timeout):
+		logger.Warn("store close exceeded shutdown timeout; process exiting with the close still in flight — pending writes will replay from the pending log on next start",
+			zap.Duration("timeout", timeout),
+			zap.Int("pending_writes_at_timeout", pendingBefore),
+		)
+	}
+}
+
+// buildServiceRoutes builds the per-service storage overrides described by
+// cfg.ServiceStates and wraps defaultStore in a state.NamespacedStore when at
+// least one service ends up needing a storage mode different from the global
+// default (cfg.State). Services whose override mode matches cfg.State are
+// skipped — there's no need for a separate store when it would behave
+// identically to the default.
+//
+// When there are no overrides left after that skip (including the
+// len(cfg.ServiceStates) == 0 case), defaultStore is returned unchanged so
+// callers never need to special-case "no overrides configured".
+//
+// Namespaces route on storage-namespace prefix (state.NamespacedStore.storeFor
+// matches the segment before ":", e.g. "cfn" in "cfn:stacks"), which is NOT
+// always the same as the config service name used in cfg.ServiceStates — see
+// config.ServiceNamespacePrefix for the handful of services (cloudformation,
+// apigateway, eventbridge) where they differ. The route map returned here is
+// therefore keyed by the resolved prefix, not by the raw config service name;
+// keying by the config name would silently make the override for those three
+// services a no-op, since NamespacedStore would never match their real
+// namespace prefix. The on-disk sub-directory for each override's data
+// (svcDir) is deliberately kept keyed by the config service name instead,
+// since that's the human-readable name operators expect to find on disk.
+//
+// On a per-service buildStore failure, every store already built earlier in
+// this call is closed before the error is returned, so a partial failure
+// never leaks stores that were successfully constructed for other services.
+//
+// A handful of services accept an OVERCAST_STATE_<SERVICE> override that can
+// never take effect regardless of prefix routing — see
+// config.ServiceOverrideIneffective for the full list and why (e.g.
+// dynamodbstreams is a store-less facade over dynamodb; sts writes under the
+// "iam:sessions" namespace). The override store is still built and routed
+// for these services (harmless, and keeps behavior uniform), but a Warn is
+// logged so the no-op isn't silently mistaken for a working override.
+func buildServiceRoutes(cfg *config.Config, defaultStore state.Store, logger *zap.Logger) (state.Store, error) {
+	if len(cfg.ServiceStates) == 0 {
+		return defaultStore, nil
+	}
+
+	routes := make(map[string]state.Store, len(cfg.ServiceStates))
+	var perSvcStores []state.Store // tracked for cleanup on error
+
+	for svc, mode := range cfg.ServiceStates {
+		if mode == cfg.State {
+			continue // same mode as global default — no need to create a separate store
+		}
+		// Each service gets its own sub-directory, keyed by the human-readable
+		// config service name, so db files don't collide and stay easy to
+		// find on disk.
+		svcDir := filepath.Join(cfg.DataDir, svc)
+		svcStore, err := buildStore(cfg, mode, svcDir, logger.With(zap.String("service_state", svc)))
+		if err != nil {
+			for _, s := range perSvcStores {
+				s.Close()
+			}
+			return nil, fmt.Errorf("init state backend for service %s: %w", svc, err)
+		}
+
+		prefix := config.ServiceNamespacePrefix(svc)
+		routes[prefix] = svcStore
+		perSvcStores = append(perSvcStores, svcStore)
+
+		logFields := []zap.Field{
+			zap.String("service", svc),
+			zap.String("mode", string(mode)),
+		}
+		if prefix != svc {
+			logFields = append(logFields, zap.String("namespace_prefix", prefix))
+		}
+		logger.Info("service state override", logFields...)
+
+		if reason, ineffective := config.ServiceOverrideIneffective(svc); ineffective {
+			logger.Warn("service state override has no effect",
+				zap.String("service", svc),
+				zap.String("reason", reason),
+			)
+		}
+	}
+
+	if len(routes) == 0 {
+		return defaultStore, nil
+	}
+	// NamespacedStore.Close() handles closing all underlying stores
+	// (including defaultStore), so the caller only needs to track this
+	// single returned value going forward.
+	return state.NewNamespacedStore(defaultStore, routes), nil
 }
 
 // buildStore creates a Store for the given mode and dataDir.
@@ -336,7 +478,7 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 func buildStore(cfg *config.Config, mode config.StateBackend, dataDir string, logger *zap.Logger) (state.Store, error) {
 	switch mode {
 	case config.StateBackendPersistent:
-		s, err := state.NewSQLiteStore(dataDir)
+		s, err := state.NewSQLiteStoreWithLogger(dataDir, logger)
 		if err != nil {
 			return nil, fmt.Errorf("persistent store: %w", err)
 		}
@@ -352,7 +494,14 @@ func buildStore(cfg *config.Config, mode config.StateBackend, dataDir string, lo
 		}
 		return s, nil
 	case config.StateBackendHybrid:
-		s, err := state.NewHybridStoreWithLogger(dataDir, cfg.HybridFlushInterval, logger)
+		s, err := state.NewHybridStoreWithOptions(dataDir, state.HybridOptions{
+			FlushInterval:       cfg.HybridFlushInterval,
+			SyncMode:            state.WALSyncMode(cfg.HybridSyncMode),
+			SyncInterval:        cfg.HybridSyncInterval,
+			DirtyEntryThreshold: cfg.HybridDirtyEntryThreshold,
+			DirtyByteThreshold:  cfg.HybridDirtyByteThreshold,
+			MaintenanceInterval: cfg.HybridMaintenanceInterval,
+		}, logger)
 		if err != nil {
 			return nil, fmt.Errorf("hybrid store: %w", err)
 		}
@@ -377,7 +526,12 @@ func logStoreMode(logger *zap.Logger, cfg *config.Config) {
 	case config.StateBackendHybrid:
 		logger.Info("state backend: hybrid (memory reads, async SQLite flush)",
 			zap.String("path", cfg.DataDir),
-			zap.Duration("flush_interval", cfg.HybridFlushInterval))
+			zap.Duration("flush_interval", cfg.HybridFlushInterval),
+			zap.String("hybrid_sync", cfg.HybridSyncMode),
+			zap.Duration("hybrid_sync_interval", cfg.HybridSyncInterval),
+			zap.Int("hybrid_dirty_entry_threshold", cfg.HybridDirtyEntryThreshold),
+			zap.Int64("hybrid_dirty_byte_threshold", cfg.HybridDirtyByteThreshold),
+			zap.Duration("hybrid_maintenance_interval", cfg.HybridMaintenanceInterval))
 	default:
 		logger.Info("state backend: memory (data will not persist across restarts)")
 	}

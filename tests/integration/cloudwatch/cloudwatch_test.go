@@ -351,7 +351,12 @@ func TestGetMetricStatistics_memoryRetentionWindow(t *testing.T) {
 	}
 }
 
-func TestGetMetricStatistics_persistentDoesNotEnforceMemoryRetention(t *testing.T) {
+// TestGetMetricStatistics_persistentEnforcesRetention proves storage-plan.md
+// 3.4's change: metric data retention now applies in every backend mode, not
+// only memory mode. This replaces the old
+// TestGetMetricStatistics_persistentDoesNotEnforceMemoryRetention, which
+// asserted the opposite (the removed backendMode() gate's behavior).
+func TestGetMetricStatistics_persistentEnforcesRetention(t *testing.T) {
 	// Given: CloudWatch is configured with a persistent service backend
 	srv := helpers.NewTestServer(
 		t,
@@ -383,15 +388,18 @@ func TestGetMetricStatistics_persistentDoesNotEnforceMemoryRetention(t *testing.
 	})
 	defer resp.Body.Close()
 
-	// Then: both datapoints remain visible for durable backends
+	// Then: the expired datapoint is excluded in persistent mode too
 	helpers.AssertStatus(t, resp, http.StatusOK)
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read body: %v", err)
 	}
 	xml := string(body)
-	if !strings.Contains(xml, "<Sum>100</Sum>") || !strings.Contains(xml, "<Sum>40</Sum>") {
-		t.Fatalf("expected both datapoints to be returned in persistent mode, got: %s", xml)
+	if !strings.Contains(xml, "<Sum>40</Sum>") {
+		t.Fatalf("expected persistent-mode retention to keep the recent datapoint, got: %s", xml)
+	}
+	if strings.Contains(xml, "<Sum>100</Sum>") || strings.Contains(xml, "<Sum>140</Sum>") {
+		t.Fatalf("expected expired datapoint to be excluded in persistent mode, got: %s", xml)
 	}
 }
 

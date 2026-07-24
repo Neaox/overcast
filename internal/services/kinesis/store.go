@@ -21,7 +21,10 @@ import (
 
 const (
 	nsStreams = "kinesis:streams"
-	nsRecords = "kinesis:records" // key: "<streamName>/<shardId>/<seqNo>"
+	// nsRecords key: "<region>/<streamName>/<shardId>/<seqNo>" (see
+	// serviceutil.RegionKey at every call site) — records from two regions
+	// sharing a stream name never collide.
+	nsRecords = "kinesis:records"
 )
 
 // Stream represents a Kinesis Data Stream.
@@ -156,21 +159,21 @@ func (s *kinesisStore) putRecord(ctx context.Context, streamName, shardID string
 	return nil
 }
 
+// listRecords uses Scan instead of List+per-key Get (storage-plan.md item
+// 3.1) — one store round trip instead of N+1.
 func (s *kinesisStore) listRecords(ctx context.Context, streamName, shardID string) ([]Record, *protocol.AWSError) {
 	prefix := serviceutil.RegionKey(s.region(ctx), streamName+"/"+shardID+"/")
-	keys, err := s.store.List(ctx, nsRecords, prefix)
+	pairs, err := s.store.Scan(ctx, nsRecords, prefix)
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	records := make([]Record, 0, len(keys))
-	for _, k := range keys {
-		raw, found, err := s.store.Get(ctx, nsRecords, k)
-		if err != nil || !found {
-			continue
-		}
+	records := make([]Record, 0, len(pairs))
+	for _, kv := range pairs {
 		var rec Record
-		if err := json.Unmarshal([]byte(raw), &rec); err != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, err)
+		if err := json.Unmarshal([]byte(kv.Value), &rec); err != nil {
+			// One malformed persisted record must not fail the whole list
+			// (CLAUDE.md malformed-persisted-state rule).
+			continue
 		}
 		records = append(records, rec)
 	}

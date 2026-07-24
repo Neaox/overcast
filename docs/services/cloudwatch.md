@@ -24,6 +24,10 @@ POST requests with `Action` and `Version=2010-08-01` parameters.
 - Unrecognized operations return an XML `501 Not Implemented` error response.
 - PutMetricData appears in both Alarms and Metrics categories as it supports both use cases.
 - Alarm state transitions are tracked but no actual metric evaluation is performed.
+- **Metric datapoint retention diverges from real AWS:** datapoints are retained for ~1 hour
+  (all storage backends), enforced by read-time filtering plus a periodic background sweep —
+  real CloudWatch retains metric data for up to 15 months at declining resolution. Overcast
+  only bounds local growth; it is not suitable for historical metric analysis.
 
 <!-- BEGIN overcast:capabilities -->
 

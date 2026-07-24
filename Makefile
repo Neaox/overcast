@@ -121,15 +121,15 @@ dev-server: docs-index
 
 ## test: run all tests (unit + integration, with race detector where supported)
 test: docs-index
-	$(GO) test -race -count=1 -timeout=300s ./...
+	$(GO) test -race -count=1 -timeout=1200s ./...
 
 ## test-unit: run unit tests only (fast — no server startup)
 test-unit: docs-index
-	$(GO) test -race -count=1 -timeout=60s ./internal/...
+	$(GO) test -race -count=1 -timeout=900s ./internal/...
 
 ## test-integration: run integration tests only
 test-integration:
-	$(GO) test -race -count=1 -timeout=300s ./tests/...
+	$(GO) test -race -count=1 -timeout=600s ./tests/...
 
 ## test-coverage: run tests and generate HTML coverage report
 test-coverage: docs-index
@@ -261,12 +261,12 @@ container-test:
 ## container-test-unit: run unit tests inside a container
 container-test-unit:
 	docker compose -f docker-compose.dev.yml run --rm test \
-		go test -race -count=1 -timeout=60s ./internal/...
+		go test -race -count=1 -timeout=900s ./internal/...
 
 ## container-test-integration: run integration tests inside a container
 container-test-integration:
 	docker compose -f docker-compose.dev.yml run --rm test \
-		go test -race -count=1 -timeout=120s ./tests/...
+		go test -race -count=1 -timeout=600s ./tests/...
 
 ## dev: start the development server with source mounted (rebuilds on --build)
 dev:

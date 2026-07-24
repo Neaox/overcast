@@ -285,7 +285,7 @@ OVERCAST_LOG_LEVEL=debug \
 | `--bridge-bind-ip`               | `127.0.0.1` | IP advertised in mDNS when `--bridge` is set.                                                |
 | `OVERCAST_PORT`                  | `4566`      | AWS API port.                                                                                |
 | `OVERCAST_HOST`                  | `127.0.0.1` | Interface to bind.                                                                           |
-| `OVERCAST_STATE`                 | `memory`    | State backend: `memory`, `hybrid`, `persistent`, `wal`.                                      |
+| `OVERCAST_STATE`                 | `hybrid`    | State backend: `memory`, `hybrid`, `persistent`, `wal`.                                      |
 | `OVERCAST_SERVICES`              | all         | Comma-separated list of services to enable.                                                  |
 
 See the [configuration reference](./docs/README.md#configuration-reference) for the full list.

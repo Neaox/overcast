@@ -32,6 +32,10 @@ AI agents using this repo should also read [AGENTS.md](./AGENTS.md) for agent-sp
     - [When to use each level](#when-to-use-each-level)
   - [Time / clock injection](#time--clock-injection)
   - [Shared utilities — use serviceutil, never duplicate](#shared-utilities--use-serviceutil-never-duplicate)
+  - [Persisted state: JSON compatibility, table graduation, and migrations](#persisted-state-json-compatibility-table-graduation-and-migrations)
+    - [JSON compatibility: evolving a persisted struct](#json-compatibility-evolving-a-persisted-struct)
+    - [Data earns a table](#data-earns-a-table)
+    - [Writing a migration](#writing-a-migration)
   - [Performance and safety](#performance-and-safety)
   - [Design patterns](#design-patterns)
   - [CloudFormation integration](#cloudformation-integration)
@@ -216,6 +220,22 @@ make run               # build and run on :4566
 docker compose up      # run in Docker (rebuilds image)
 ```
 
+### No local Go toolchain? (e.g. Windows outside the devcontainer)
+
+`scripts/docker-go.sh` (Git Bash/macOS/Linux) and `scripts/docker-go.ps1`
+(PowerShell) run any `go` command in a Docker container with the repo mounted
+and shared module/build caches, so no host Go install is needed:
+
+```bash
+scripts/docker-go.sh test -count=1 ./internal/state/...
+scripts/docker-go.sh vet ./...
+scripts/docker-go.sh shell   # interactive shell in the container
+```
+
+They also work from git worktrees, which the devcontainer cannot see (it
+mounts only the main checkout). See the header comment in
+[scripts/docker-go.sh](./scripts/docker-go.sh) for cache/performance details.
+
 ### Step debugging
 
 Full step debugging is supported. Set a breakpoint (click left of line number),
@@ -396,6 +416,179 @@ serviceutil.LazyInit.Do(fn)                // sync.Once with retry; Reset() for 
 ```
 
 Add to `serviceutil` when a pattern appears in two or more services. Never add service-specific logic there.
+
+---
+
+## Persisted state: JSON compatibility, table graduation, and migrations
+
+Most persisted state in `internal/state`'s generic `kv` table is a JSON blob owned by each
+service's own `store.go` — `internal/state` itself never parses those values, it only stores
+and retrieves opaque strings. This section covers how to evolve those structs safely, when a
+namespace has outgrown the generic store, and how to register a migration when either need
+arises.
+
+### JSON compatibility: evolving a persisted struct
+
+- **Additive changes are free.** `encoding/json` silently ignores unknown fields on decode
+  and leaves missing fields at their Go zero value. A new struct field with a sensible
+  zero-value default needs no migration and no data conversion — old rows decode fine as-is,
+  and newly written rows carry the new field going forward.
+- **Reshaping is breaking.** Renaming a field, changing its type, or restructuring the struct
+  (splitting one field into several, changing a slice to a map, moving data to a different
+  key shape) changes how existing rows decode. You have two options, and only two:
+  1. **Convert the data**, via a numbered migration registered with
+     `internal/state/migrate.go`'s `Migration`/`RegisterMigration` — the right choice when
+     the data needs an actual transformation, or is moving to a new storage location
+     entirely (a dedicated table). See the CloudWatch Logs blob→row conversion in
+     [internal/services/cloudwatch/logs/migrations.go](./internal/services/cloudwatch/logs/migrations.go)
+     for a worked example: it decodes the legacy `logs:events` JSON blob (one array per
+     stream) and inserts one row per event into the new `logs_events` table.
+  2. **Accept data loss on old→new upgrade**, documented explicitly — in the PR description
+     and in a code comment near the struct — with a stated reason it's acceptable. Overcast
+     is a local dev tool with no durability guarantees (see
+     [AGENTS.md § Non-goals](./AGENTS.md#non-goals--decision-guide-for-agents)), so losing
+     state that predates a reshape is often a reasonable tradeoff — but it must be a
+     deliberate, written decision, never a silent side effect of a struct edit.
+- **When the data stays in the same generic `kv` namespace and the old and new shapes can
+  coexist,** prefer an **inline runtime fallback** over a migration: decode the old shape
+  lazily on read, convert it in place, and write it back in the new shape. No migration
+  needed at all. See
+  [internal/services/cloudformation/store.go](./internal/services/cloudformation/store.go)'s
+  `getStackEvents`/`getLegacyStackEvents`: `cfn:events` moved from one JSON-array blob per
+  stack to one row per event, but both shapes live in the same `cfn:events` namespace — a
+  read that finds no per-event rows for a stack falls back to the legacy blob key, decodes
+  it, and opportunistically rewrites it as rows so later reads take the fast path.
+
+**Deciding which to use:** ask whether the data is moving to a **new storage location or
+shape** the generic `kv` store can't represent — a dedicated SQL table (see
+[Data earns a table](#data-earns-a-table) below). If so, use a migration: it runs once, in
+the background, off the request path. If the data is staying in the generic `kv` store and
+the old and new shapes can be told apart on read (a missing field, a different key pattern,
+a type-sniffable JSON shape), an inline runtime fallback is lighter weight than adding a
+migration for what is, from SQLite's point of view, not a schema change at all.
+
+### Data earns a table
+
+The generic `kv` table is the default for a reason: it comes for free with `HybridStore`'s
+memory-speed reads, the async flush path, `/_debug/state` visibility, and `/_debug/reset`
+support. A dedicated SQL table forfeits all of that — it needs its own backend
+implementation(s), its own migration, and its own debug wiring. **A namespace earns a
+dedicated table; a service does not automatically get one just because it's high-traffic.**
+Most services should never need one.
+
+A namespace earns a dedicated table only when at least one of these is true:
+
+1. **Unbounded, high-frequency append that would force blob rewrites.** The generic store
+   holds one JSON value per key — if a namespace's natural shape is "one growing list per
+   resource" (events, log lines, stream records), every append is a full
+   get-decode-append-encode-set of the *whole* history, which is quadratic over the
+   resource's lifetime. `logs:events` was the textbook case (see
+   [internal/services/cloudwatch/logs/migrations.go](./internal/services/cloudwatch/logs/migrations.go)).
+2. **A query need the key order can't serve.** The generic store only supports exact-key
+   lookups and prefix scans in key order. If a namespace genuinely needs a secondary index
+   (querying by an attribute that isn't a prefix of the key), a real SQL table with real
+   indexes is the only way to serve that without an in-process full scan.
+3. **Measured evidence the K/V path is the bottleneck, after generic fixes are exhausted.**
+   Benchmark first (see [docs/performance.md](./docs/performance.md)), and try the generic
+   fixes first — `Scan` instead of N `Get`s, the dedicated read pool, dirty-overlay flush
+   thresholds — before concluding the K/V path itself is the problem. `sqs:messages`,
+   `cloudwatch:metricdata`, `kinesis:records`, and most other high-volume namespaces are
+   row-shaped and fine in the generic store today; don't graduate a namespace speculatively.
+
+Graduating a namespace to a dedicated table obligates the author to build all of the
+following — treat this as the real cost of graduating, not an afterthought:
+
+- **Dual backends** — a memory-mode implementation (in-process maps/slices, zero JSON
+  overhead) and a SQLite-mode implementation, selected at startup based on the underlying
+  `state.Store`. See
+  [internal/services/dynamodb/item_store.go](./internal/services/dynamodb/item_store.go)
+  (`memItemBackend` / `sqlItemBackend`) or
+  [internal/services/cloudwatch/logs/event_backend.go](./internal/services/cloudwatch/logs/event_backend.go)
+  (`memEventBackend` / `sqlEventBackend`) as the two existing worked examples. Memory mode
+  must keep full functional parity — it is not a second-class fallback.
+- **A migration registered per the reserved version-range convention** in
+  [internal/state/migrate.go](./internal/state/migrate.go) — see
+  [Writing a migration](#writing-a-migration) below.
+- **A `router.DebugStateProvider` implementation**, so the new table stays visible to
+  `/_debug/state` and resettable via `/_debug/reset`. The raw state debugger only enumerates
+  the generic `kv` store by default, so a dedicated table is otherwise invisible to it and
+  immune to reset. Implement
+  `DebugNamespace`/`DebugStateKeys`/`DebugStateValues`/`DebugResetState` (see
+  [internal/router/debug.go](./internal/router/debug.go)'s `DebugStateProvider` interface)
+  and register the provider with the router. DynamoDB's and CloudWatch Logs' `Service`
+  methods of the same names are the two existing worked examples.
+- **Its own write buffering, if writes are hot** — a dedicated table does not automatically
+  inherit `HybridStore`'s async flush behavior; if the table sees frequent writes, the
+  service owns batching them (see CloudWatch Logs' per-stream unflushed-event write buffer
+  in `event_backend.go`).
+
+### Writing a migration
+
+Migrations are registered once, from a package `init()`, via
+[`state.RegisterMigration`](./internal/state/migrate.go). See
+`internal/services/cloudwatch/logs/migrations.go` and
+`internal/services/dynamodb/migrations.go` for two complete worked examples — a
+schema-plus-data-conversion migration and a schema-only migration, respectively.
+
+**Claim a version range.** `internal/state/migrate.go`'s `Migration` doc comment is the
+authoritative list of reserved ranges — read it before picking a version, and update it in
+the same PR that claims a new decade. As of this writing: 1-9 is `internal/state` core (the
+`kv` table, `auto_vacuum`), 10-19 is CloudWatch Logs (`logs_events`, versions 10-11 used),
+20-29 is DynamoDB (`dynamodb_items` / `dynamodb_stream_records`, versions 20-21 used), and
+30+ is free. Claim the next unused decade for a new dedicated table, and leave a comment
+there explaining what you claimed — a duplicate `Version` value panics at binary startup (a
+programmer error to catch immediately, not a runtime condition calling code should handle).
+
+**`Up` runs inside the wrapping transaction — respect that.** `Up` receives a `*sql.Tx`, not
+a `*sql.DB`. Most DDL and DML is fine inside a transaction, but SQLite refuses a handful of
+statements there — `VACUUM` is the one you're most likely to hit ("cannot VACUUM from within
+a transaction"). If your migration needs one of those, split it: do the transactional part
+(e.g. a `PRAGMA` that merely requests a mode change) in `Up`, and do the actual
+transaction-refusing statement in `AfterCommit`, which runs against the raw `*sql.DB`
+immediately after `Up`'s transaction commits. Copy the pattern from `migrate.go`'s own
+`auto_vacuum` migration (`migrationAutoVacuumVersion`): `Up` sets
+`PRAGMA auto_vacuum = INCREMENTAL` transactionally; `AfterCommit` runs `VACUUM` afterward,
+since auto_vacuum mode has no effect on an existing non-empty database until a `VACUUM`
+actually runs.
+
+**New table vs. inline fallback is the same decision as JSON compatibility, just phrased the
+other way round.** If you're here because you're adding a *new* dedicated table (see
+[Data earns a table](#data-earns-a-table) above), you need a migration — there is no
+generic-store alternative once the data has its own schema. If you're here because you're
+*reshaping* an existing blob in the generic `kv` store, re-read
+[JSON compatibility](#json-compatibility-evolving-a-persisted-struct) first: a migration is
+only the right tool when the data is moving to a new storage location, or the old and new
+shapes genuinely can't coexist in the same key. Don't reach for a migration to reshape a blob
+that could just be normalized lazily on read.
+
+**Idempotency: `Up` must be safe to run against a database that already has the schema it
+creates.** Databases created before the migration runner existed — or before your specific
+migration was added — need to adopt your schema cleanly the first time they run under the
+runner, not fail because the table is already there from an old ad-hoc `CREATE TABLE`. Use
+`CREATE TABLE IF NOT EXISTS` (and `CREATE INDEX IF NOT EXISTS`). Migration #1
+(`migrationKVTableVersion`) is the canonical example — it recreates the bare `kv` table so a
+database created before the runner existed adopts version 1 transparently on first open — and
+the CloudWatch Logs table migration (`migrationLogsEventsTableVersion`) does the same for
+`logs_events`.
+
+**There are no down-migrations.** The runner takes a file-copy backup
+(`<dbPath>.bak-v<fromVersion>`) before the first pending migration runs against a database
+that already has schema (`backupBeforeMigration` in `migrate.go`) — restoring that backup
+file by hand is the only rollback story. Do not build migration-reversal tooling.
+
+**Testing.** Follow the shape in
+[internal/state/migrate_test.go](./internal/state/migrate_test.go) for the runner's own
+mechanics (fresh database, a pre-existing bare-`kv` database adopting cleanly, an idempotent
+no-op on a second run, a failed migration leaving `user_version` unchanged and later
+migrations never running) and
+[internal/services/cloudwatch/logs/migrations_test.go](./internal/services/cloudwatch/logs/migrations_test.go)
+for a real data-conversion migration (valid blobs converted, malformed blobs skipped and
+logged per the malformed-persisted-state rule, a no-op when there's no legacy data to
+convert).
+
+For a comparison of what each `state.Store` backend does with this data once it's written —
+durability, memory residency, read/write performance, and known limitations — see
+[docs/storage-backends.md](./docs/storage-backends.md).
 
 ---
 

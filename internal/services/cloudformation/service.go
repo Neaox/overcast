@@ -47,7 +47,7 @@ type Service struct {
 // New returns a configured CloudFormation Service.
 func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Clock) *Service {
 	log := serviceutil.NewServiceLogger(logger, serviceName)
-	cfnSt := newCFNStore(store, cfg.Region)
+	cfnSt := newCFNStore(store, cfg.Region, clk)
 	prov := newProvisioner(cfg, cfnSt, clk, log)
 	return &Service{
 		cfg:         cfg,

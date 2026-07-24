@@ -119,6 +119,14 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Recovery(logger))
 	r.Use(middleware.Logger(logger, clk))
+	// NotReady short-circuits with a 503 while the storage backend is still
+	// completing a one-time startup migration (storage-plan.md item — see
+	// internal/middleware/notready.go) — placed after Logger so a rejected
+	// request is still observable in logs, and before every other
+	// middleware below so none of that work (event recording, SigV4, IAM,
+	// region/protocol detection) runs for a request about to be rejected
+	// anyway.
+	r.Use(middleware.NotReady(store))
 	r.Use(middleware.RequestEvents(&bus, clk))
 	r.Use(middleware.SigV4(cfg.SigV4Validate, middleware.NewSecretResolver(store), logger, clk))
 	r.Use(middleware.IAMEnforce(cfg.EnforceIAM, store, logger))
@@ -203,23 +211,32 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	prof.mark("  new: ses")
 	ddbSvc := dynamodb.New(cfg, store, logger, clk, bus)
 	prof.mark("  new: dynamodb")
+	// logsSvc is constructed here (ahead of its usual place in the service
+	// registry order below) because the debug namespace below needs it as a
+	// DebugStateProvider (its events live in a dedicated logs_events SQL
+	// table — see storage-plan.md 2.3 — invisible to /_debug/state without
+	// this). Its constructor has no startup side-effects, same as ec2Svc
+	// above — see docs/performance.md § Startup budget.
+	logsSvc := logs.New(cfg, store, logger, clk)
+	prof.mark("  new: logs")
 	if cfg.Debug {
 		var ec2Debug debugEC2Provider
 		if cfg.Services["ec2"] {
 			ec2Debug = ec2Svc
 		}
-		var dynamoDebug debugDynamoDBProvider
+		var debugProviders []DebugStateProvider
 		if cfg.Services["dynamodb"] {
-			dynamoDebug = ddbSvc
+			debugProviders = append(debugProviders, ddbSvc)
 		}
-		r.Route("/_debug", debugHandlers(cfg, store, ec2Debug, dynamoDebug))
+		if cfg.Services["logs"] {
+			debugProviders = append(debugProviders, logsSvc)
+		}
+		r.Route("/_debug", debugHandlers(cfg, store, ec2Debug, debugProviders))
 	}
 	lambdaSvc := lambda.New(cfg, store, logger, clk)
 	prof.mark("  new: lambda")
 	pipesSvc := pipes.New(cfg, store, logger, clk)
 	prof.mark("  new: pipes")
-	logsSvc := logs.New(cfg, store, logger, clk)
-	prof.mark("  new: logs")
 	smSvc := secretsmanager.New(cfg, store, logger, clk)
 	prof.mark("  new: secretsmanager")
 	stsSvc := sts.New(cfg, store, logger, clk)

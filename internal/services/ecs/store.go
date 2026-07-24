@@ -590,6 +590,17 @@ func (s *ecsStore) getTags(ctx context.Context, arn string) (map[string]string, 
 // ---- Task definition family listing -------------------------------------------
 
 // listTaskDefinitionFamilies returns the distinct family names that have registered task definitions.
+//
+// storage-plan.md item 3.1 evaluation: nsTaskDefFamilies stores a plain
+// revision counter per family (see nextRevision/currentRevision above), not a
+// JSON blob, and this function only needs the key (the family name) — it
+// never reads or unmarshals the value. List is therefore already a single
+// store round trip with nothing to decode, so there is no List+Get N+1 to
+// fix and no malformed-record isolation gap here (a corrupt counter value
+// would still leave the family visible, since only the key is inspected).
+// Converting this to Scan would add a wasted per-key value fetch with no
+// corresponding benefit, so it deliberately stays List-based — see the
+// storage-plan.md Wave 3 notes for the corresponding "no bug" write-up.
 func (s *ecsStore) listTaskDefinitionFamilies(ctx context.Context) ([]string, *protocol.AWSError) {
 	keys, err := s.store.List(ctx, nsTaskDefFamilies, serviceutil.RegionKey(s.region(ctx), ""))
 	if err != nil {
