@@ -68,7 +68,7 @@ func (h *Handler) CreateCapacityProvider(w http.ResponseWriter, r *http.Request)
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"capacityProvider": cp})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"capacityProvider": cp}, "application/x-amz-json-1.1")
 }
 
 // DescribeCapacityProviders handles AmazonEC2ContainerServiceV20141113.DescribeCapacityProviders.
@@ -116,10 +116,10 @@ func (h *Handler) DescribeCapacityProviders(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"capacityProviders": cps,
 		"failures":          failures,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // UpdateCapacityProvider handles AmazonEC2ContainerServiceV20141113.UpdateCapacityProvider.
@@ -168,7 +168,7 @@ func (h *Handler) UpdateCapacityProvider(w http.ResponseWriter, r *http.Request)
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"capacityProvider": cp})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"capacityProvider": cp}, "application/x-amz-json-1.1")
 }
 
 // PutClusterCapacityProviders handles AmazonEC2ContainerServiceV20141113.PutClusterCapacityProviders.
@@ -197,7 +197,7 @@ func (h *Handler) PutClusterCapacityProviders(w http.ResponseWriter, r *http.Req
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"cluster": cluster})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"cluster": cluster}, "application/x-amz-json-1.1")
 }
 
 // capacityProviderARN builds an ECS capacity provider ARN.

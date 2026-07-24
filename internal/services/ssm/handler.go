@@ -156,10 +156,10 @@ func (h *Handler) PutParameter(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"Version": rec.Version(),
 		"Tier":    "Standard",
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // GetParameter returns the latest version of a parameter.
@@ -186,9 +186,9 @@ func (h *Handler) GetParameter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"Parameter": h.toWire(rec, rec.Version(), rec.Latest(), req.WithDecryption),
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // GetParameters returns the latest version of multiple parameters.
@@ -211,10 +211,10 @@ func (h *Handler) GetParameters(w http.ResponseWriter, r *http.Request) {
 		}
 		params = append(params, h.toWire(rec, rec.Version(), rec.Latest(), req.WithDecryption))
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"Parameters":        params,
 		"InvalidParameters": invalid,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // GetParametersByPath returns parameters matching a path prefix.
@@ -276,7 +276,7 @@ func (h *Handler) GetParametersByPath(w http.ResponseWriter, r *http.Request) {
 	if page.NextToken != "" {
 		resp["NextToken"] = page.NextToken
 	}
-	writeJSON(w, r, http.StatusOK, resp)
+	protocol.WriteAWSJSON(w, r, http.StatusOK, resp, "application/x-amz-json-1.1")
 }
 
 // DescribeParameters returns parameter metadata with optional filters.
@@ -336,7 +336,7 @@ func (h *Handler) DescribeParameters(w http.ResponseWriter, r *http.Request) {
 	if page.NextToken != "" {
 		resp["NextToken"] = page.NextToken
 	}
-	writeJSON(w, r, http.StatusOK, resp)
+	protocol.WriteAWSJSON(w, r, http.StatusOK, resp, "application/x-amz-json-1.1")
 }
 
 // matchesFilters returns true if the record satisfies all ParameterFilters.
@@ -421,7 +421,7 @@ func (h *Handler) GetParameterHistory(w http.ResponseWriter, r *http.Request) {
 	if page.NextToken != "" {
 		resp["NextToken"] = page.NextToken
 	}
-	writeJSON(w, r, http.StatusOK, resp)
+	protocol.WriteAWSJSON(w, r, http.StatusOK, resp, "application/x-amz-json-1.1")
 }
 
 // AddTagsToResource adds tags to a parameter.
@@ -461,7 +461,7 @@ func (h *Handler) AddTagsToResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{}, "application/x-amz-json-1.1")
 }
 
 // ListTagsForResource returns tags associated with a parameter.
@@ -491,7 +491,7 @@ func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 	for k, v := range rec.Tags {
 		tags = append(tags, map[string]string{"Key": k, "Value": v})
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"TagList": tags})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"TagList": tags}, "application/x-amz-json-1.1")
 }
 
 // DeleteParameter deletes a single parameter.
@@ -526,7 +526,7 @@ func (h *Handler) DeleteParameter(w http.ResponseWriter, r *http.Request) {
 			Payload: events.ResourcePayload{Name: req.Name},
 		})
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{}, "application/x-amz-json-1.1")
 }
 
 // DeleteParameters deletes multiple parameters.
@@ -560,10 +560,10 @@ func (h *Handler) DeleteParameters(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"DeletedParameters": deleted,
 		"InvalidParameters": invalid,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // ─── Helper functions ─────────────────────────────────────────────────────────
@@ -612,10 +612,6 @@ func errInvalidNextToken() *protocol.AWSError {
 		Message:    "The specified token isn't valid.",
 		HTTPStatus: http.StatusBadRequest,
 	}
-}
-
-func writeJSON(w http.ResponseWriter, r *http.Request, status int, v any) {
-	protocol.WriteAWSJSON(w, r, status, v, "application/x-amz-json-1.1")
 }
 
 // Ensure time package is used.

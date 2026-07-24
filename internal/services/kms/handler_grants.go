@@ -59,10 +59,10 @@ func (h *Handler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"GrantId":    grantID,
 		"GrantToken": grantToken,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // ListGrants lists grants for a KMS key.
@@ -132,10 +132,10 @@ func (h *Handler) ListGrants(w http.ResponseWriter, r *http.Request) {
 			KeyId:             k.ARN,
 		})
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"Grants":    entries,
 		"Truncated": false,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // RevokeGrant revokes a grant from a KMS key.
@@ -170,7 +170,7 @@ func (h *Handler) RevokeGrant(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{}, "application/x-amz-json-1.1")
 }
 
 // RetireGrant retires a grant. The grantId must match the retiring principal.
@@ -216,7 +216,7 @@ func (h *Handler) RetireGrant(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{}, "application/x-amz-json-1.1")
 }
 
 // ListRetirableGrants lists grants that the specified principal can retire.
@@ -250,8 +250,8 @@ func (h *Handler) ListRetirableGrants(w http.ResponseWriter, r *http.Request) {
 			Name:             g.Name,
 		})
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"Grants":    entries,
 		"Truncated": false,
-	})
+	}, "application/x-amz-json-1.1")
 }

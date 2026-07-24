@@ -22,6 +22,8 @@ The goal state, in one sentence: **adopting a new wire format costs one codec + 
 
 **Small rot:** three coexisting legacy-dispatch idioms (map literal / `dispatchLegacy` switch / inline switch); 9+ private clones of `decodeJSON`/`writeJSON` (appsync, backup, cloudtrail, ecs ×2, kinesis, kms, ssm, stepfunctions, transfer); `cmd/stub-report` misses nested service dirs (`cloudwatch/logs` absent from `docs/operation-manifest.md`) and hardcodes a container path; dynamodb's migrated-in-place `rawOps()` base is dead weight (every entry overridden).
 
+> **P0 census correction (2026-07-24, branch chore/wire-protocol-p0):** the sweep found the "9+ clones" claim was half right. *Pure delegates* (ecs/kinesis/kms/ssm `writeJSON` → `protocol.WriteAWSJSON`; stepfunctions → `protocol.WriteJSON`) were deleted (~89 call sites now call the shared helper directly). The rest are **wire-behavior variants, not clones**, left in place deliberately: appsync's `writeJSON` uses `application/json` + `json.Encoder` (its real control-plane shape); backup/cloudtrail/transfer/ecs/kinesis `decodeJSON*` return `SerializationException` on malformed JSON where `serviceutil.DecodeJSON` returns `InvalidArgument` — and `SerializationException` is likely the *more* AWS-faithful code for JSON-1.x protocols, so the open question is whether the **shared helper** has the wrong error code, not the variants. Resolve that (with AWS-doc/goldens evidence) as a rider on Track 2's per-service delegation passes; ecs's `handler_capacity.go` error-swallowing decoder is intentional (empty body legal for `DescribeCapacityProviders`).
+
 ## 3. The approach — three decoupled tracks
 
 The v1 plan led with generating types for everything. That inverts the value order: the April-2026 exposure is **dispatch-level**, the DRY debt is **implementation-count-level**, and neither needs type generation. Codegen comes last and smaller.
@@ -56,7 +58,7 @@ Keep v1's mechanism (consume AWS's published **Smithy JSON AST**; generated file
 
 | Phase | Contents | Effort | Gate/acceptance |
 |---|---|---|---|
-| P0 quick wins | stub-report recursion+path fix, `docs/smithy.md` stale link, decodeJSON clone sweep | S | manifest includes cloudwatch/logs; clones gone |
+| P0 quick wins **[✅ done 2026-07-24, branch chore/wire-protocol-p0]** | stub-report recursion+path fix (subServices map + `--workspace` flag + first tests), `docs/smithy.md` stale link, decodeJSON clone sweep (pure delegates deleted; behavior-variants kept — see the P0 census correction in §2) | S | manifest includes cloudwatch-logs (14 ops, 834 total across 43 services); pure-delegate clones gone |
 | P1 | Track 1.1 Query `Action` resolution + 1.2 drift policy + 1.4 cloudwatch metrics | M | IAM/CFN SDK traffic hits typed ops; drift warning covered by tests; goldens green |
 | P2 | Track 2 delegation sweep (worst-5 first, then per-service; Query services post-P1) | M×n, mechanical, parallelizable per service | per service: legacy path is decode-shim or deleted; parity pinned by goldens + existing suites |
 | P3 | Track 3 generator (`cmd/codegen`): manifests+traits fleet-wide, allowlisted types; pilot sqs + scheduler | M | regen-diff CI job green; SupportedProtocols generated for pilots |
