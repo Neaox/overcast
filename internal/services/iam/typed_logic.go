@@ -1798,6 +1798,9 @@ func (h *Handler) listInstanceProfilesTyped(ctx context.Context, _ *listInstance
 // --- Policy Simulation ---
 
 func (h *Handler) simulatePrincipalPolicyTyped(ctx context.Context, req *simulatePrincipalPolicyReq) (*simulatePrincipalPolicyResp, *protocol.AWSError) {
+	if req.PolicySourceArn == "" {
+		return nil, protocol.ErrMissingParameter("PolicySourceArn")
+	}
 	resource := "*"
 	if len(req.ResourceArns) > 0 {
 		resource = req.ResourceArns[0]
