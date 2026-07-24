@@ -106,6 +106,9 @@ func TestLoad_defaults(t *testing.T) {
 	if cfg.EnforceIAM {
 		t.Error("EnforceIAM: expected false by default")
 	}
+	if cfg.ProtocolStrict {
+		t.Error("ProtocolStrict: expected false by default (lenient drift posture)")
+	}
 	if cfg.CFNSyncWait != time.Second {
 		t.Errorf("CFNSyncWait: expected 1s, got %v", cfg.CFNSyncWait)
 	}
@@ -842,6 +845,31 @@ func TestLoad_enforceIAMEnabled(t *testing.T) {
 	}
 }
 
+func TestLoad_protocolStrictEnabled(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_PROTOCOL_STRICT", "true")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.ProtocolStrict {
+		t.Fatal("expected ProtocolStrict=true")
+	}
+}
+
+func TestLoad_protocolStrictDisabledByDefault(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ProtocolStrict {
+		t.Fatal("expected ProtocolStrict=false by default")
+	}
+}
+
 // ---- Helpers ---------------------------------------------------------------
 
 // clearEnv unsets all OVERCAST_* environment variables for test isolation.
@@ -854,7 +882,7 @@ func clearEnv(t *testing.T) {
 		"OVERCAST_HYBRID_DIRTY_ENTRY_THRESHOLD", "OVERCAST_HYBRID_DIRTY_BYTE_THRESHOLD",
 		"OVERCAST_WAL_FSYNC", "OVERCAST_WAL_FSYNC_INTERVAL", "OVERCAST_WAL_MAX_LOG_BYTES",
 		"OVERCAST_DATA_DIR", "OVERCAST_DEFAULT_REGION", "OVERCAST_ACCOUNT_ID",
-		"OVERCAST_SIGV4_VALIDATE", "OVERCAST_ENFORCE_IAM", "OVERCAST_LOG_LEVEL", "OVERCAST_SHUTDOWN_TIMEOUT",
+		"OVERCAST_SIGV4_VALIDATE", "OVERCAST_ENFORCE_IAM", "OVERCAST_PROTOCOL_STRICT", "OVERCAST_LOG_LEVEL", "OVERCAST_SHUTDOWN_TIMEOUT",
 		"OVERCAST_LAMBDA_HOT_RELOAD",
 		"OVERCAST_LAMBDA_NODE_BIN", "OVERCAST_DEBUG", "OVERCAST_TLS_CERT", "OVERCAST_TLS_KEY",
 		"OVERCAST_HOSTNAME", "OVERCAST_EKS_MODE", "OVERCAST_EC2_VPC_STRATEGY",
