@@ -6,6 +6,7 @@ package s3
 // Dispatchers (BucketGet, BucketPut, …) live in handler.go.
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
@@ -274,6 +275,13 @@ func (h *Handler) ListObjectsV1(w http.ResponseWriter, r *http.Request) {
 	delimiter := serviceutil.QueryString(r, "delimiter", "")
 	maxKeys := serviceutil.QueryInt(r, "max-keys", 1000)
 	marker := serviceutil.QueryString(r, "marker", "")
+	// AWS: "Marker can be any key in the bucket" — a real (possibly
+	// nonexistent) key, not an opaque token — see
+	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjects.html#API_ListObjects_RequestParameters.
+	// Unlike V2's ContinuationToken there is nothing to validate: a
+	// marker with no matching successor key is exactly what real AWS
+	// returns an empty/short result for, not an error (the Errors section
+	// of that doc page lists only NoSuchBucket).
 
 	exists, aerr := h.store.bucketExists(r.Context(), bucket)
 	if aerr != nil {
@@ -285,54 +293,10 @@ func (h *Handler) ListObjectsV1(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	allObjects, aerr := h.store.listObjects(r.Context(), bucket, prefix)
+	entries, aerr := h.buildListPage(r.Context(), bucket, prefix, delimiter, marker, maxKeys)
 	if aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
 		return
-	}
-
-	sort.Slice(allObjects, func(i, j int) bool { return allObjects[i].Key < allObjects[j].Key })
-
-	type pageEntry struct {
-		isPrefix bool
-		key      string
-		obj      *Object
-	}
-
-	var entries []pageEntry
-	seenPrefixes := map[string]bool{}
-
-	for _, obj := range allObjects {
-		effectiveKey := obj.Key
-		isPrefix := false
-		cpKey := ""
-
-		if delimiter != "" {
-			remainder := obj.Key[len(prefix):]
-			if idx := strings.Index(remainder, delimiter); idx >= 0 {
-				cpKey = prefix + remainder[:idx+len(delimiter)]
-				effectiveKey = cpKey
-				isPrefix = true
-			}
-		}
-
-		// Skip entries at or before the marker (already returned on previous page).
-		if marker != "" && effectiveKey <= marker {
-			continue
-		}
-
-		if isPrefix {
-			if !seenPrefixes[cpKey] {
-				seenPrefixes[cpKey] = true
-				entries = append(entries, pageEntry{isPrefix: true, key: cpKey})
-			}
-		} else {
-			entries = append(entries, pageEntry{key: obj.Key, obj: obj})
-		}
-
-		if len(entries) > maxKeys {
-			break
-		}
 	}
 
 	truncated := len(entries) > maxKeys
@@ -416,6 +380,123 @@ type commonPrefix struct {
 	Prefix string `xml:"Prefix"`
 }
 
+// pageEntry is one "effective" entry in a ListObjects{V1,V2} response —
+// either a leaf object or a delimiter-collapsed common prefix. key is the
+// "effective key": the object's own key for leaves, or the collapsed prefix
+// string (e.g. "photos/") for CommonPrefixes.
+type pageEntry struct {
+	isPrefix bool
+	key      string
+	obj      *Object
+}
+
+// internalListPageChunk is the internal ScanPage fetch size buildListPage
+// uses while looping to fill one client-facing page. It is deliberately
+// independent of the client's requested MaxKeys: with a delimiter, many
+// consecutive keys can collapse into a single CommonPrefix (e.g. thousands
+// of objects under one "folder"), so a small MaxKeys does not bound how many
+// raw keys must be scanned before the next *effective* entry appears —
+// storage-access-plan.md A6's explicit shoehorn warning. A chunk size fixed
+// independently of MaxKeys keeps the number of internal round trips
+// reasonable regardless of how the client paginates.
+const internalListPageChunk = 1000
+
+// buildListPage incrementally scans a bucket's objects — via repeated
+// s3Store.listObjectsPage calls (ScanPage-backed), never a full-bucket Scan
+// — and returns up to maxKeys+1 effective entries (objects + collapsed
+// common prefixes) with keys greater than startAfter. The caller must trim
+// the result to maxKeys and treat a maxKeys+1-th entry as the truncation
+// signal (mirrors the pre-A6 single-Scan implementation's own convention).
+//
+// This is NOT a 1:1 ScanPage swap for the old full-bucket Scan: because a
+// delimiter can collapse many consecutive keys into one CommonPrefix before
+// a page fills, the loop below keeps pulling internal ScanPage pages —
+// carrying the storage cursor forward across them via listObjectsPage's
+// nextKey — until it has accumulated enough effective entries or the bucket
+// is exhausted. The delimiter/common-prefix collapse rules themselves, and
+// the startAfter/marker skip semantics, are unchanged from before A6; only
+// the source of raw keys becomes incremental instead of fully materialized
+// up front. Memory is now bounded by internalListPageChunk instead of the
+// bucket size.
+func (h *Handler) buildListPage(ctx context.Context, bucket, prefix, delimiter, startAfter string, maxKeys int) ([]pageEntry, *protocol.AWSError) {
+	var entries []pageEntry
+	seenPrefixes := map[string]bool{}
+	cursor := startAfter
+
+	for {
+		objs, nextCursor, aerr := h.store.listObjectsPage(ctx, bucket, prefix, cursor, internalListPageChunk)
+		if aerr != nil {
+			return nil, aerr
+		}
+
+		for _, obj := range objs {
+			effectiveKey := obj.Key
+			isPrefix := false
+			cpKey := ""
+
+			if delimiter != "" {
+				remainder := obj.Key[len(prefix):]
+				if idx := strings.Index(remainder, delimiter); idx >= 0 {
+					cpKey = prefix + remainder[:idx+len(delimiter)]
+					effectiveKey = cpKey
+					isPrefix = true
+				}
+			}
+
+			// Skip entries already returned on a previous page. Compared
+			// against the ORIGINAL startAfter (not the advancing internal
+			// cursor): because all objects inside a common prefix have
+			// actual keys lexicographically greater than the prefix string
+			// itself (e.g. "photos/" < "photos/img.jpg"), ScanPage's raw-key
+			// cursor alone would let already-collapsed objects back in
+			// (a later object with a raw key past the cursor can still
+			// collapse into a prefix effective key <= startAfter) — this
+			// check is what re-excludes them.
+			if startAfter != "" && effectiveKey <= startAfter {
+				continue
+			}
+
+			if isPrefix {
+				if !seenPrefixes[cpKey] {
+					seenPrefixes[cpKey] = true
+					entries = append(entries, pageEntry{isPrefix: true, key: cpKey})
+				}
+			} else {
+				entries = append(entries, pageEntry{key: obj.Key, obj: obj})
+			}
+
+			// Collect one extra entry to detect truncation without scanning
+			// everything.
+			if len(entries) > maxKeys {
+				return entries, nil
+			}
+		}
+
+		if nextCursor == "" {
+			// Reached the end of the bucket/prefix range.
+			return entries, nil
+		}
+		cursor = nextCursor
+	}
+}
+
+// errInvalidContinuationToken mirrors real S3's rejection of a
+// garbled/foreign ListObjectsV2 ContinuationToken. AWS's API reference page
+// documents only NoSuchBucket in its Errors section, but the documented
+// InvalidArgument code is well established as the observed behavior for an
+// unparseable continuation token ("The continuation token provided is
+// incorrect") — see e.g.
+// https://github.com/aws/aws-sdk-js-v3/issues/1636. Before this fix, a
+// garbled token silently fell back to "start from the beginning"
+// (pagination-plan.md G4 / storage-access-plan.md A6's invalid-token gap).
+func errInvalidContinuationToken() *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "InvalidArgument",
+		Message:    "The continuation token provided is incorrect",
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
 // ListObjectsV2 handles GET /{bucket}?list-type=2.
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
 func (h *Handler) ListObjectsV2(w http.ResponseWriter, r *http.Request) {
@@ -427,12 +508,19 @@ func (h *Handler) ListObjectsV2(w http.ResponseWriter, r *http.Request) {
 	requestedStartAfter := serviceutil.QueryString(r, "start-after", "")
 	startAfter := requestedStartAfter
 
-	// Decode the opaque continuation token to a "start-after" key.
-	// The token is base64(lastEffectiveKeyOnPreviousPage).
+	// Decode the opaque continuation token to a "start-after" key. The
+	// token is base64(lastEffectiveKeyOnPreviousPage) — P3's cursor-in-token
+	// pattern, just a raw string cursor rather than M1's integer-index
+	// codec (the wrong shape here: S3's cursor is a key, not an index).
+	// AWS rejects an invalid/garbled token with InvalidArgument rather than
+	// silently restarting from page 1 (pagination-plan.md G4).
 	if contToken != "" {
-		if decoded, err := base64.StdEncoding.DecodeString(contToken); err == nil {
-			startAfter = string(decoded)
+		decoded, err := base64.StdEncoding.DecodeString(contToken)
+		if err != nil {
+			protocol.WriteXMLError(w, r, errInvalidContinuationToken())
+			return
 		}
+		startAfter = string(decoded)
 	}
 
 	exists, aerr := h.store.bucketExists(r.Context(), bucket)
@@ -445,64 +533,10 @@ func (h *Handler) ListObjectsV2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	allObjects, aerr := h.store.listObjects(r.Context(), bucket, prefix)
+	entries, aerr := h.buildListPage(r.Context(), bucket, prefix, delimiter, startAfter, maxKeys)
 	if aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
 		return
-	}
-
-	// Sort by key for deterministic lexicographic pagination.
-	sort.Slice(allObjects, func(i, j int) bool { return allObjects[i].Key < allObjects[j].Key })
-
-	// Build a deduplicated, paginated entry list.
-	// Each entry has an "effective key":
-	//   - for leaf objects: the object key itself
-	//   - for collapsed common prefixes: the prefix string (e.g. "photos/")
-	// Entries with effectiveKey <= startAfter are skipped (already returned on a
-	// previous page). Because all objects inside a common prefix have actual keys
-	// that are lexicographically greater than the prefix string (e.g. "photos/"
-	// < "photos/img.jpg"), they are all correctly skipped by the same comparison.
-	type pageEntry struct {
-		isPrefix bool
-		key      string // effective key
-		obj      *Object
-	}
-
-	var entries []pageEntry
-	seenPrefixes := map[string]bool{}
-
-	for _, obj := range allObjects {
-		effectiveKey := obj.Key
-		isPrefix := false
-		cpKey := ""
-
-		if delimiter != "" {
-			remainder := obj.Key[len(prefix):]
-			if idx := strings.Index(remainder, delimiter); idx >= 0 {
-				cpKey = prefix + remainder[:idx+len(delimiter)]
-				effectiveKey = cpKey
-				isPrefix = true
-			}
-		}
-
-		// Skip entries from previous pages.
-		if startAfter != "" && effectiveKey <= startAfter {
-			continue
-		}
-
-		if isPrefix {
-			if !seenPrefixes[cpKey] {
-				seenPrefixes[cpKey] = true
-				entries = append(entries, pageEntry{isPrefix: true, key: cpKey})
-			}
-		} else {
-			entries = append(entries, pageEntry{key: obj.Key, obj: obj})
-		}
-
-		// Collect one extra entry to detect truncation without scanning everything.
-		if len(entries) > maxKeys {
-			break
-		}
 	}
 
 	truncated := len(entries) > maxKeys

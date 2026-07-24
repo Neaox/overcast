@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"time"
 
@@ -53,13 +54,23 @@ type xmlCompleteMultipartUploadResult struct {
 	ETag     string   `xml:"ETag"`
 }
 
+// xmlListPartsResult is ListParts' response envelope.
+// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html#API_ListParts_ResponseSyntax
+// NextPartNumberMarker is typed Integer per the doc's XSD (Go SDKs decode it
+// as an int) and, per the Response Elements section, is only meaningful
+// "when a list is truncated" — omitempty is safe because valid part numbers
+// start at 1, so a zero value only ever occurs on an untruncated response.
 type xmlListPartsResult struct {
-	XMLName  xml.Name  `xml:"ListPartsResult"`
-	NS       string    `xml:"xmlns,attr"`
-	Bucket   string    `xml:"Bucket"`
-	Key      string    `xml:"Key"`
-	UploadId string    `xml:"UploadId"`
-	Parts    []xmlPart `xml:"Part"`
+	XMLName              xml.Name  `xml:"ListPartsResult"`
+	NS                   string    `xml:"xmlns,attr"`
+	Bucket               string    `xml:"Bucket"`
+	Key                  string    `xml:"Key"`
+	UploadId             string    `xml:"UploadId"`
+	PartNumberMarker     int       `xml:"PartNumberMarker"`
+	NextPartNumberMarker int       `xml:"NextPartNumberMarker,omitempty"`
+	MaxParts             int       `xml:"MaxParts"`
+	IsTruncated          bool      `xml:"IsTruncated"`
+	Parts                []xmlPart `xml:"Part"`
 }
 
 type xmlPart struct {
@@ -69,11 +80,23 @@ type xmlPart struct {
 	LastModified string `xml:"LastModified"`
 }
 
+// xmlListMultipartUploadsResult is ListMultipartUploads' response envelope.
+// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListMultipartUploads.html#API_ListMultipartUploads_ResponseSyntax
+// Unlike ListParts' NextPartNumberMarker, AWS's own example responses show
+// KeyMarker/UploadIdMarker/NextKeyMarker/NextUploadIdMarker present (as
+// empty elements) even on an untruncated response with no markers supplied
+// — so these are plain (non-omitempty) string fields, matching that shape.
 type xmlListMultipartUploadsResult struct {
-	XMLName xml.Name    `xml:"ListMultipartUploadsResult"`
-	NS      string      `xml:"xmlns,attr"`
-	Bucket  string      `xml:"Bucket"`
-	Uploads []xmlUpload `xml:"Upload"`
+	XMLName            xml.Name    `xml:"ListMultipartUploadsResult"`
+	NS                 string      `xml:"xmlns,attr"`
+	Bucket             string      `xml:"Bucket"`
+	KeyMarker          string      `xml:"KeyMarker"`
+	UploadIdMarker     string      `xml:"UploadIdMarker"`
+	NextKeyMarker      string      `xml:"NextKeyMarker"`
+	NextUploadIdMarker string      `xml:"NextUploadIdMarker"`
+	MaxUploads         int         `xml:"MaxUploads"`
+	IsTruncated        bool        `xml:"IsTruncated"`
+	Uploads            []xmlUpload `xml:"Upload"`
 }
 
 type xmlUpload struct {
@@ -354,12 +377,64 @@ func (h *Handler) AbortMultipartUpload(w http.ResponseWriter, r *http.Request) {
 
 // ---- ListParts -------------------------------------------------------------
 
+// listMax clamps a requested MaxParts/MaxUploads value to AWS's documented
+// default-and-cap of 1000 for both ListParts and ListMultipartUploads (the
+// same numeric limit also serves as the default when the client omits the
+// parameter or supplies a non-positive value — mirrors the existing
+// max-keys handling in handler_bucket.go, and Cognito's local pageBounds
+// convention for a non-opaque, per-operation clamp).
+func listMax(requested int) int {
+	if requested <= 0 || requested > 1000 {
+		return 1000
+	}
+	return requested
+}
+
+// errInvalidPartNumberMarker mirrors S3's InvalidArgument error shape (see
+// UploadPart's partNumber validation above) for a part-number-marker that
+// isn't a non-negative integer. AWS documents part-number-marker as a plain
+// part number, not an opaque token (API_ListParts.html), so — unlike
+// ListObjectsV2's ContinuationToken — there's no base64/JSON envelope to
+// decode; validation is just "does this parse as an AWS-legal part number."
+// A malformed value must error rather than silently resetting to 0 (i.e.
+// "start from part 1"), the same invalid-token-silently-restarts-page-1
+// divergence the pagination plan's H1/G3 fixed for other operations.
+func errInvalidPartNumberMarker() *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "InvalidArgument",
+		Message:    "Part number marker must be a non-negative integer",
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
 // ListParts handles GET /{bucket}/{key}?uploadId=xxx
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html
+//
+// Pagination shape (pagination-plan.md G4): parts are bounded (AWS caps a
+// single multipart upload at 10,000 parts), so this is exactly the
+// boundedness rule's "simple in-memory slice pagination is correct" case —
+// no ScanPage/storage change needed (store.listParts already Scans once and
+// sorts). It deliberately does NOT use serviceutil.Paginate/H1: AWS types
+// PartNumberMarker/NextPartNumberMarker as real integers on the wire (the
+// part number itself, not an opaque cursor), so Paginate's base64(JSON)
+// token would be the wrong shape here — a client (or another SDK) is
+// entitled to jump to an arbitrary part-number-marker without having been
+// handed a NextPartNumberMarker first, which an opaque token can't support.
 func (h *Handler) ListParts(w http.ResponseWriter, r *http.Request) {
 	bucket := chi.URLParam(r, "bucket")
 	key := objectKey(r)
 	uploadID := r.URL.Query().Get("uploadId")
+
+	maxParts := listMax(serviceutil.QueryInt(r, "max-parts", 1000))
+	partNumberMarker := 0
+	if raw := serviceutil.QueryString(r, "part-number-marker", ""); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 0 {
+			protocol.WriteXMLError(w, r, errInvalidPartNumberMarker())
+			return
+		}
+		partNumberMarker = v
+	}
 
 	upload, aerr := h.store.getMultipartUpload(r.Context(), uploadID)
 	if aerr != nil {
@@ -377,8 +452,28 @@ func (h *Handler) ListParts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	xmlParts := make([]xmlPart, 0, len(parts))
+	// AWS: "Only parts with higher part numbers will be listed." parts is
+	// already sorted ascending by PartNumber (store.listParts).
+	filtered := make([]*Part, 0, len(parts))
 	for _, p := range parts {
+		if p.PartNumber > partNumberMarker {
+			filtered = append(filtered, p)
+		}
+	}
+
+	truncated := len(filtered) > maxParts
+	page := filtered
+	if truncated {
+		page = filtered[:maxParts]
+	}
+
+	var nextPartNumberMarker int
+	if truncated {
+		nextPartNumberMarker = page[len(page)-1].PartNumber
+	}
+
+	xmlParts := make([]xmlPart, 0, len(page))
+	for _, p := range page {
 		xmlParts = append(xmlParts, xmlPart{
 			PartNumber:   p.PartNumber,
 			ETag:         p.ETag,
@@ -388,11 +483,15 @@ func (h *Handler) ListParts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	protocol.WriteXML(w, r, http.StatusOK, &xmlListPartsResult{
-		NS:       s3XMLNamespace,
-		Bucket:   bucket,
-		Key:      key,
-		UploadId: uploadID,
-		Parts:    xmlParts,
+		NS:                   s3XMLNamespace,
+		Bucket:               bucket,
+		Key:                  key,
+		UploadId:             uploadID,
+		PartNumberMarker:     partNumberMarker,
+		NextPartNumberMarker: nextPartNumberMarker,
+		MaxParts:             maxParts,
+		IsTruncated:          truncated,
+		Parts:                xmlParts,
 	})
 }
 
@@ -400,6 +499,19 @@ func (h *Handler) ListParts(w http.ResponseWriter, r *http.Request) {
 
 // ListMultipartUploads handles GET /{bucket}?uploads
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListMultipartUploads.html
+//
+// Pagination shape (pagination-plan.md G4): in-progress uploads are bounded
+// metadata (storage-access-plan.md's keep-as-is register already lists this
+// op there) — store.listMultipartUploads keeps its existing single Scan, no
+// storage change. Like ListParts, this deliberately does NOT use
+// serviceutil.Paginate/H1: KeyMarker/UploadIdMarker are plain, AWS-documented
+// values (a real object key and a real upload ID), and AWS's resume rule is
+// a compound comparison over both — Key > KeyMarker, OR Key == KeyMarker AND
+// UploadId > UploadIdMarker — not an opaque position a service alone can
+// mint. Wrapping them in an opaque token would also break AWS's documented
+// "any multipart uploads for a key equal to key-marker might also be
+// included" jump-to behavior for a client that constructs its own markers
+// rather than echoing back NextKeyMarker/NextUploadIdMarker.
 func (h *Handler) ListMultipartUploads(w http.ResponseWriter, r *http.Request) {
 	bucket := chi.URLParam(r, "bucket")
 
@@ -408,14 +520,57 @@ func (h *Handler) ListMultipartUploads(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	maxUploads := listMax(serviceutil.QueryInt(r, "max-uploads", 1000))
+	keyMarker := serviceutil.QueryString(r, "key-marker", "")
+	uploadIDMarker := serviceutil.QueryString(r, "upload-id-marker", "")
+	// AWS: "If key-marker is not specified, the upload-id-marker parameter
+	// is ignored."
+	if keyMarker == "" {
+		uploadIDMarker = ""
+	}
+
 	uploads, aerr := h.store.listMultipartUploads(r.Context(), bucket)
 	if aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
 		return
 	}
 
-	xmlUploads := make([]xmlUpload, 0, len(uploads))
+	// AWS sorts uploads by key ascending, then by initiation time ascending
+	// for uploads that share a key.
+	sort.Slice(uploads, func(i, j int) bool {
+		if uploads[i].Key != uploads[j].Key {
+			return uploads[i].Key < uploads[j].Key
+		}
+		return uploads[i].Initiated.Before(uploads[j].Initiated)
+	})
+
+	filtered := make([]*MultipartUpload, 0, len(uploads))
 	for _, u := range uploads {
+		switch {
+		case keyMarker == "":
+			filtered = append(filtered, u)
+		case u.Key > keyMarker:
+			filtered = append(filtered, u)
+		case u.Key == keyMarker && uploadIDMarker != "" && u.UploadID > uploadIDMarker:
+			filtered = append(filtered, u)
+		}
+	}
+
+	truncated := len(filtered) > maxUploads
+	page := filtered
+	if truncated {
+		page = filtered[:maxUploads]
+	}
+
+	var nextKeyMarker, nextUploadIDMarker string
+	if truncated {
+		last := page[len(page)-1]
+		nextKeyMarker = last.Key
+		nextUploadIDMarker = last.UploadID
+	}
+
+	xmlUploads := make([]xmlUpload, 0, len(page))
+	for _, u := range page {
 		xmlUploads = append(xmlUploads, xmlUpload{
 			UploadId:  u.UploadID,
 			Key:       u.Key,
@@ -424,9 +579,15 @@ func (h *Handler) ListMultipartUploads(w http.ResponseWriter, r *http.Request) {
 	}
 
 	protocol.WriteXML(w, r, http.StatusOK, &xmlListMultipartUploadsResult{
-		NS:      s3XMLNamespace,
-		Bucket:  bucket,
-		Uploads: xmlUploads,
+		NS:                 s3XMLNamespace,
+		Bucket:             bucket,
+		KeyMarker:          keyMarker,
+		UploadIdMarker:     uploadIDMarker,
+		NextKeyMarker:      nextKeyMarker,
+		NextUploadIdMarker: nextUploadIDMarker,
+		MaxUploads:         maxUploads,
+		IsTruncated:        truncated,
+		Uploads:            xmlUploads,
 	})
 }
 

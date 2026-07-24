@@ -340,6 +340,58 @@ func (s *s3Store) listObjects(ctx context.Context, bucket, prefix string) ([]*Ob
 	return objects, nil
 }
 
+// listObjectsPage returns up to limit objects in bucket whose keys start
+// with prefix, in key order, starting strictly after startAfter (a plain
+// object key, not a storage key).
+//
+// This is ListObjects{V1,V2}'s internal-pagination primitive
+// (storage-access-plan.md item A6): the handler loops this instead of
+// calling listObjects (a full-bucket Scan), so memory is bounded by the
+// internal page size instead of the bucket size. ScanPage already returns
+// results in key order, so — unlike listObjects' callers — nothing needs to
+// re-sort the result.
+//
+// nextKey is the object key to pass as startAfter for the next internal
+// page, or "" when the scan reached the end of the prefix range (no more
+// objects in this bucket/prefix).
+func (s *s3Store) listObjectsPage(ctx context.Context, bucket, prefix, startAfter string, limit int) ([]*Object, string, *protocol.AWSError) {
+	scanPrefix := objectStoreKey(bucket, prefix)
+	storageStartAfter := ""
+	if startAfter != "" {
+		storageStartAfter = objectStoreKey(bucket, startAfter)
+	}
+
+	pairs, nextStorageKey, err := s.store.ScanPage(ctx, nsObjects, scanPrefix, storageStartAfter, limit)
+	if err != nil {
+		return nil, "", protocol.Wrap(protocol.ErrInternalError, err)
+	}
+
+	objects := make([]*Object, 0, len(pairs))
+	for _, kv := range pairs {
+		var obj Object
+		if err := json.Unmarshal([]byte(kv.Value), &obj); err != nil {
+			// One malformed persisted record must not fail the whole list
+			// (CLAUDE.md malformed-persisted-state rule). The storage
+			// cursor below tracks raw keys, not decoded objects, so
+			// skipping this record here does not skip it at the storage
+			// layer — the next internal page still starts after it.
+			continue
+		}
+		objects = append(objects, &obj)
+	}
+
+	nextKey := ""
+	if nextStorageKey != "" {
+		// nextStorageKey is "<bucket>/<key>" (objectStoreKey's format) —
+		// strip the "<bucket>/" prefix back to a plain object key so
+		// callers can feed it back into startAfter (and into StartAfter /
+		// Marker / ContinuationToken wire fields) without knowing the
+		// storage key's internal shape.
+		nextKey = nextStorageKey[len(bucket)+1:]
+	}
+	return objects, nextKey, nil
+}
+
 // ---- S3-specific errors ----------------------------------------------------
 
 func errNoSuchBucket(name string) *protocol.AWSError {

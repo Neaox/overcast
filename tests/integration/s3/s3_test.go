@@ -1193,6 +1193,176 @@ func TestListObjectsV2_startAfter(t *testing.T) {
 	}
 }
 
+// TestListObjectsV2_invalidContinuationToken_returnsInvalidArgument pins the
+// pagination-plan.md G4 / storage-access-plan.md A6 invalid-token fix: a
+// garbled ContinuationToken must be rejected with S3's InvalidArgument
+// error, not silently treated as "start from page 1" (which would look like
+// a legitimate empty/first page to a paginating client and cause duplicate
+// delivery). See https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html.
+func TestListObjectsV2_invalidContinuationToken_returnsInvalidArgument(t *testing.T) {
+	// Given: a bucket with at least one object
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "bad-token-bucket")
+	putObject(t, srv, "bad-token-bucket", "a.txt", []byte("x"), "text/plain")
+
+	// When: we list with a continuation-token that isn't valid base64
+	resp, err := http.DefaultClient.Do(get(srv, "/bad-token-bucket?list-type=2&continuation-token=not-valid-base64!!!"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 400 InvalidArgument, not a silent restart from page 1
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertXMLError(t, resp, "InvalidArgument")
+}
+
+// TestListObjectsV2_delimiterHeavyBucket_paginationWalkMatchesFullListing is
+// storage-access-plan.md A6's equivalence test: buildListPage must loop
+// internal ScanPage fetches until it accumulates enough *effective* entries
+// (not just enough raw keys), because with a delimiter many keys collapse
+// into a single CommonPrefix before a small MaxKeys page fills. This seeds
+// far more objects per "folder" than MaxKeys, forcing several internal
+// round trips per client-facing page, and asserts that walking small pages
+// to completion yields exactly the same CommonPrefixes and Contents as one
+// large, untruncated request (the oracle) — same set, no duplicates, no
+// gaps.
+func TestListObjectsV2_delimiterHeavyBucket_paginationWalkMatchesFullListing(t *testing.T) {
+	// Given: 12 "folders" of 30 objects each (360 objects), all collapsing
+	// into CommonPrefixes under a root-level delimiter listing — far more
+	// objects per folder than the MaxKeys=3 page size used below.
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "delim-heavy-bucket")
+	const numFolders = 12
+	const objsPerFolder = 30
+	for f := 0; f < numFolders; f++ {
+		for o := 0; o < objsPerFolder; o++ {
+			key := fmt.Sprintf("folder-%02d/obj-%03d.txt", f, o)
+			putObject(t, srv, "delim-heavy-bucket", key, []byte("x"), "text/plain")
+		}
+	}
+	// Also a couple of root-level leaf objects (not collapsed).
+	putObject(t, srv, "delim-heavy-bucket", "root-a.txt", []byte("x"), "text/plain")
+	putObject(t, srv, "delim-heavy-bucket", "root-b.txt", []byte("x"), "text/plain")
+
+	// Oracle: one request with MaxKeys large enough to return everything
+	// in a single, untruncated page.
+	oracleResp, err := http.DefaultClient.Do(get(srv, "/delim-heavy-bucket?list-type=2&delimiter=%2F&max-keys=10000"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer oracleResp.Body.Close()
+	helpers.AssertStatus(t, oracleResp, http.StatusOK)
+
+	var oracle struct {
+		Contents []struct {
+			Key string `xml:"Key"`
+		} `xml:"Contents"`
+		CommonPrefixes []struct {
+			Prefix string `xml:"Prefix"`
+		} `xml:"CommonPrefixes"`
+		IsTruncated bool `xml:"IsTruncated"`
+	}
+	helpers.DecodeXML(t, oracleResp, &oracle)
+	if oracle.IsTruncated {
+		t.Fatal("oracle request should not be truncated (max-keys=10000 over 362 effective entries)")
+	}
+	wantPrefixes := make([]string, 0, len(oracle.CommonPrefixes))
+	for _, cp := range oracle.CommonPrefixes {
+		wantPrefixes = append(wantPrefixes, cp.Prefix)
+	}
+	wantContents := make([]string, 0, len(oracle.Contents))
+	for _, c := range oracle.Contents {
+		wantContents = append(wantContents, c.Key)
+	}
+	sort.Strings(wantPrefixes)
+	sort.Strings(wantContents)
+
+	if len(wantPrefixes) != numFolders {
+		t.Fatalf("oracle: expected %d CommonPrefixes, got %d: %v", numFolders, len(wantPrefixes), wantPrefixes)
+	}
+	if len(wantContents) != 2 {
+		t.Fatalf("oracle: expected 2 root-level Contents, got %d: %v", len(wantContents), wantContents)
+	}
+
+	// When: walking with MaxKeys=3 (much smaller than objsPerFolder), so
+	// buildListPage must internally loop several ScanPage fetches to
+	// collapse each folder's 30 objects into a single effective
+	// CommonPrefix entry before a client-facing page can fill.
+	var gotPrefixes, gotContents []string
+	token := ""
+	for pages := 0; ; pages++ {
+		if pages > 200 {
+			t.Fatal("pagination walk did not terminate within 200 pages")
+		}
+		reqURL := "/delim-heavy-bucket?list-type=2&delimiter=%2F&max-keys=3"
+		if token != "" {
+			reqURL += "&continuation-token=" + url.QueryEscape(token)
+		}
+		resp, err := http.DefaultClient.Do(get(srv, reqURL))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var page struct {
+			Contents []struct {
+				Key string `xml:"Key"`
+			} `xml:"Contents"`
+			CommonPrefixes []struct {
+				Prefix string `xml:"Prefix"`
+			} `xml:"CommonPrefixes"`
+			IsTruncated           bool   `xml:"IsTruncated"`
+			NextContinuationToken string `xml:"NextContinuationToken"`
+		}
+		helpers.DecodeXML(t, resp, &page)
+		resp.Body.Close()
+
+		for _, cp := range page.CommonPrefixes {
+			gotPrefixes = append(gotPrefixes, cp.Prefix)
+		}
+		for _, c := range page.Contents {
+			gotContents = append(gotContents, c.Key)
+		}
+
+		if !page.IsTruncated {
+			break
+		}
+		if page.NextContinuationToken == "" {
+			t.Fatal("IsTruncated=true but NextContinuationToken is empty")
+		}
+		token = page.NextContinuationToken
+	}
+
+	// Then: the paginated walk's union of effective entries equals the
+	// oracle's, with no duplicates (each CommonPrefix/Content must appear
+	// on exactly one page — seenPrefixes is per-buildListPage-call, i.e.
+	// per HTTP request, so a prefix spanning an internal-loop boundary
+	// must still be collapsed exactly once per page and never repeated
+	// across pages).
+	sortedGotPrefixes := append([]string(nil), gotPrefixes...)
+	sort.Strings(sortedGotPrefixes)
+	sortedGotContents := append([]string(nil), gotContents...)
+	sort.Strings(sortedGotContents)
+
+	if !slicesEqual(sortedGotPrefixes, wantPrefixes) {
+		t.Fatalf("paginated CommonPrefixes walk mismatch:\n got:  %v\n want: %v", sortedGotPrefixes, wantPrefixes)
+	}
+	if !slicesEqual(sortedGotContents, wantContents) {
+		t.Fatalf("paginated Contents walk mismatch:\n got:  %v\n want: %v", sortedGotContents, wantContents)
+	}
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // ---- ListObjects v1 --------------------------------------------------------
 
 func TestListObjects_v1_returnsObjects(t *testing.T) {
@@ -1600,6 +1770,238 @@ func TestMultipartUpload_listMultipartUploads(t *testing.T) {
 	}
 	if ids[id2] != "file-b.bin" {
 		t.Errorf("expected upload %q key=file-b.bin, got %q", id2, ids[id2])
+	}
+}
+
+// ---- ListParts / ListMultipartUploads pagination (pagination-plan.md G4) --
+
+// TestListParts_paginationContract pins pagination-plan.md G4's ListParts
+// fix: MaxParts/PartNumberMarker are now honored (previously ignored
+// entirely, always returning every part on one page with no IsTruncated/
+// NextPartNumberMarker fields in the XML schema at all), and a malformed
+// part-number-marker is rejected with InvalidArgument instead of silently
+// defaulting to part 1 (the same invalid-token-restarts-page-1 divergence
+// H1/G3 fixed elsewhere). AWS docs:
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html.
+func TestListParts_paginationContract(t *testing.T) {
+	// Given: an upload with 5 parts — more than the MaxParts=2 page size
+	// used below, so the walk must take at least 3 pages.
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "parts-paging-bucket")
+	uploadID := createMultipartUpload(t, srv, "parts-paging-bucket", "big-file.bin")
+	wantIDs := make([]string, 0, 5)
+	for i := 1; i <= 5; i++ {
+		uploadPart(t, srv, "parts-paging-bucket", "big-file.bin", uploadID, i, []byte(fmt.Sprintf("part-%d", i)))
+		wantIDs = append(wantIDs, strconv.Itoa(i))
+	}
+
+	fetch := func(t *testing.T, token string) ([]string, string) {
+		t.Helper()
+		path := fmt.Sprintf("/parts-paging-bucket/big-file.bin?uploadId=%s&max-parts=2", uploadID)
+		if token != "" {
+			path += "&part-number-marker=" + token
+		}
+		resp, err := http.DefaultClient.Do(get(srv, path))
+		if err != nil {
+			t.Fatalf("ListParts: %v", err)
+		}
+		defer resp.Body.Close()
+		helpers.AssertStatus(t, resp, http.StatusOK)
+
+		var page struct {
+			Parts []struct {
+				PartNumber int `xml:"PartNumber"`
+			} `xml:"Part"`
+			IsTruncated          bool `xml:"IsTruncated"`
+			NextPartNumberMarker int  `xml:"NextPartNumberMarker"`
+		}
+		helpers.DecodeXML(t, resp, &page)
+
+		ids := make([]string, len(page.Parts))
+		for i, p := range page.Parts {
+			ids[i] = strconv.Itoa(p.PartNumber)
+		}
+		next := ""
+		if page.IsTruncated {
+			next = strconv.Itoa(page.NextPartNumberMarker)
+		}
+		return ids, next
+	}
+
+	probe := func(t *testing.T) (int, string) {
+		t.Helper()
+		path := fmt.Sprintf("/parts-paging-bucket/big-file.bin?uploadId=%s&part-number-marker=not-an-integer", uploadID)
+		resp, err := http.DefaultClient.Do(get(srv, path))
+		if err != nil {
+			t.Fatalf("ListParts probe: %v", err)
+		}
+		defer resp.Body.Close()
+		var errResp struct {
+			Code string `xml:"Code"`
+		}
+		helpers.DecodeXML(t, resp, &errResp)
+		return resp.StatusCode, errResp.Code
+	}
+
+	helpers.PaginationContractTest(t, wantIDs, func(id string) string { return id }, fetch, probe,
+		helpers.PaginationContractOptions{
+			WantInvalidTokenStatus:    http.StatusBadRequest,
+			WantInvalidTokenErrorCode: "InvalidArgument",
+		})
+}
+
+// TestListParts_maxPartsDefaultAndCap pins AWS's documented MaxParts
+// default and cap of 1000 (both the same value) —
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html.
+func TestListParts_maxPartsDefaultAndCap(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "parts-cap-bucket")
+	uploadID := createMultipartUpload(t, srv, "parts-cap-bucket", "file.bin")
+	uploadPart(t, srv, "parts-cap-bucket", "file.bin", uploadID, 1, []byte("x"))
+
+	cases := []struct {
+		name    string
+		query   string
+		wantMax int
+	}{
+		{"omitted", "", 1000},
+		{"over cap clamps to 1000", "&max-parts=5000", 1000},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := fmt.Sprintf("/parts-cap-bucket/file.bin?uploadId=%s%s", uploadID, tc.query)
+			resp, err := http.DefaultClient.Do(get(srv, path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			helpers.AssertStatus(t, resp, http.StatusOK)
+			var result struct {
+				MaxParts int `xml:"MaxParts"`
+			}
+			helpers.DecodeXML(t, resp, &result)
+			if result.MaxParts != tc.wantMax {
+				t.Errorf("expected MaxParts=%d, got %d", tc.wantMax, result.MaxParts)
+			}
+		})
+	}
+}
+
+// TestListMultipartUploads_paginationContract pins pagination-plan.md G4's
+// ListMultipartUploads fix: MaxUploads/KeyMarker/UploadIdMarker are now
+// honored (previously ignored entirely — no IsTruncated/NextKeyMarker/
+// NextUploadIdMarker in the XML schema at all). AWS docs:
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListMultipartUploads.html.
+func TestListMultipartUploads_paginationContract(t *testing.T) {
+	// Given: 5 uploads on 5 distinct keys — more than the MaxUploads=2 page
+	// size used below, so the walk must take at least 3 pages. AWS sorts
+	// ListMultipartUploads by key ascending, so name the keys so sorted
+	// order is predictable.
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "uploads-paging-bucket")
+	wantIDs := make([]string, 0, 5)
+	for _, key := range []string{"a.bin", "b.bin", "c.bin", "d.bin", "e.bin"} {
+		createMultipartUpload(t, srv, "uploads-paging-bucket", key)
+		wantIDs = append(wantIDs, key)
+	}
+
+	fetch := func(t *testing.T, token string) ([]string, string) {
+		t.Helper()
+		path := "/uploads-paging-bucket?uploads&max-uploads=2"
+		if token != "" {
+			path += "&key-marker=" + token
+		}
+		resp, err := http.DefaultClient.Do(get(srv, path))
+		if err != nil {
+			t.Fatalf("ListMultipartUploads: %v", err)
+		}
+		defer resp.Body.Close()
+		helpers.AssertStatus(t, resp, http.StatusOK)
+
+		var page struct {
+			Uploads []struct {
+				Key string `xml:"Key"`
+			} `xml:"Upload"`
+			IsTruncated   bool   `xml:"IsTruncated"`
+			NextKeyMarker string `xml:"NextKeyMarker"`
+		}
+		helpers.DecodeXML(t, resp, &page)
+
+		ids := make([]string, len(page.Uploads))
+		for i, u := range page.Uploads {
+			ids[i] = u.Key
+		}
+		next := ""
+		if page.IsTruncated {
+			next = page.NextKeyMarker
+		}
+		return ids, next
+	}
+
+	// AWS documents KeyMarker/UploadIdMarker as plain (non-opaque) values,
+	// not tokens with a rejectable "invalid" shape — any string is a
+	// syntactically legal key-marker (see ListObjects' Marker for the same
+	// convention) — so there is no invalid-marker probe here, unlike
+	// ListObjectsV2's ContinuationToken or ListParts' PartNumberMarker.
+	helpers.PaginationContractTest(t, wantIDs, func(key string) string { return key }, fetch, nil,
+		helpers.PaginationContractOptions{})
+}
+
+// TestListMultipartUploads_sameKeyCompoundMarker pins AWS's compound
+// KeyMarker+UploadIdMarker resume rule for two uploads that share a key:
+// "any multipart uploads for a key equal to the key-marker might also be
+// included, provided those multipart uploads have upload IDs
+// lexicographically greater than the specified upload-id-marker."
+func TestListMultipartUploads_sameKeyCompoundMarker(t *testing.T) {
+	// Given: two uploads initiated for the same key
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "same-key-bucket")
+	id1 := createMultipartUpload(t, srv, "same-key-bucket", "shared.bin")
+	id2 := createMultipartUpload(t, srv, "same-key-bucket", "shared.bin")
+	lo, hi := id1, id2
+	if hi < lo {
+		lo, hi = hi, lo
+	}
+
+	// When: key-marker=shared.bin with no upload-id-marker
+	resp1, err := http.DefaultClient.Do(get(srv, "/same-key-bucket?uploads&key-marker=shared.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp1.Body.Close()
+	helpers.AssertStatus(t, resp1, http.StatusOK)
+	var page1 struct {
+		Uploads []struct {
+			UploadId string `xml:"UploadId"`
+		} `xml:"Upload"`
+	}
+	helpers.DecodeXML(t, resp1, &page1)
+
+	// Then: neither upload for "shared.bin" is included — AWS excludes
+	// keys equal to key-marker entirely when upload-id-marker is absent.
+	if len(page1.Uploads) != 0 {
+		t.Errorf("expected 0 uploads with key-marker=shared.bin and no upload-id-marker, got %d", len(page1.Uploads))
+	}
+
+	// When: key-marker=shared.bin AND upload-id-marker=lo (the
+	// lexicographically smaller of the two upload IDs)
+	resp2, err := http.DefaultClient.Do(get(srv, "/same-key-bucket?uploads&key-marker=shared.bin&upload-id-marker="+lo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	helpers.AssertStatus(t, resp2, http.StatusOK)
+	var page2 struct {
+		Uploads []struct {
+			UploadId string `xml:"UploadId"`
+		} `xml:"Upload"`
+	}
+	helpers.DecodeXML(t, resp2, &page2)
+
+	// Then: only the upload with the lexicographically greater ID (hi) is
+	// included.
+	if len(page2.Uploads) != 1 || page2.Uploads[0].UploadId != hi {
+		t.Fatalf("expected exactly the upload with ID %q, got %#v", hi, page2.Uploads)
 	}
 }
 

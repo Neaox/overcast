@@ -1,6 +1,6 @@
 # Storage access patterns — standardization plan
 
-> **Status:** in progress — A1/A2 (Kinesis), A3 (DynamoDB), A5 (CloudWatch metrics) done; A4 (Logs) and A6 (S3) in flight; A7 design-gated. Audit completed 2026-07-24 (agent sweep of every service's storage reads/writes; evidence file:line below).
+> **Status:** in progress — A1/A2 (Kinesis), A3 (DynamoDB), A5 (CloudWatch metrics), A6 (S3) done; A4 (Logs) in flight; A7 design-gated. Audit completed 2026-07-24 (agent sweep of every service's storage reads/writes; evidence file:line below).
 > **Scope:** how services *consume* `internal/state` and the dedicated SQL tables — read shapes, write shapes, and the shared helpers they should go through. The storage *layer* itself is done ([storage-plan.md](./storage-plan.md), Phases 1–3); this plan governs usage on top of it.
 > **Relationship to other plans:** [storage-plan.md](./storage-plan.md) items 3.3/3.10/3.12 stay there (benchmark-gated layer work; 3.10's SQS table is cross-referenced by A-items here, not duplicated). Wire-level pagination fidelity (ignored `Limit`/`NextToken` params, truncation-flag correctness) is tracked in the pagination plan — items here note when they *enable* a pagination fix but the wire contract itself is that plan's acceptance criterion.
 > **Audience:** any contributor or agent. [CONTRIBUTING.md](../../CONTRIBUTING.md) and [AGENTS.md](../../AGENTS.md) rules apply throughout (failing test first, `clock.Clock`, scoped verification, benchmark discipline per [storage-test-plan.md](./storage-test-plan.md)).
@@ -102,13 +102,15 @@ One codec for opaque continuation tokens: encode/decode a storage cursor (string
 
 **Tests.** Window-equality property vs current behavior; benchmark GetMetricStatistics + one alarm-eval tick vs points-in-retention, flat at fixed window. Patterns: P1. Unbounded. **Done (2026-07-24, branch fix/cloudwatch-metric-key-ranges):** ScanPage range walk with exclusive-predecessor start cursor; oracle property test proves window equality with the old full-scan behavior; boundary semantics pinned inclusive-both-ends; allocs/op flat at 226 regardless of out-of-window history (0/2k/8k preloaded); sweep now key-suffix-driven, zero value decodes.
 
-### A6 — S3: `ListObjects` pages internally instead of materializing the bucket
+### A6 — S3: `ListObjects` pages internally instead of materializing the bucket  **[✅ done — with pagination G4]**
 
 **Evidence.** Handlers honor `MaxKeys`/`ContinuationToken`/`StartAfter`/`Delimiter` correctly — but against an in-memory copy of the **whole bucket** from `listObjects`' full `Scan` ([handler_bucket.go:421-551, Scan at 448](../../internal/services/s3/handler_bucket.go); [store.go:323-341](../../internal/services/s3/store.go)).
 
 **Change — not a 1:1 ScanPage swap (audit's explicit shoehorn warning).** With a delimiter, many keys collapse into one CommonPrefix before a page fills, so the handler must **loop internal `ScanPage` fetches until it has `MaxKeys` *effective* entries** (keys + common prefixes), carrying the cursor across internal pages. Delimiter/common-prefix collapse logic stays in the handler unchanged; only the source of keys becomes incremental. Bounds memory by page size instead of bucket size; V1 (`Marker`) gets the same treatment.
 
 **Tests.** Existing ListObjectsV2 wire tests unchanged (the fidelity net); new: pagination walk over a delimiter-heavy bucket equals current full-scan output exactly; benchmark `MaxKeys=100` flat vs bucket size. Patterns: P3 (token already exists — S3's ContinuationToken can wrap the storage cursor via M1), P2. Unbounded.
+
+**Done (2026-07-24, branch feat/s3-paging):** `buildListPage` loops `listObjectsPage` (ScanPage, 1000-key internal chunks) accumulating *effective* entries as planned — the effective-key-vs-original-marker skip check is what re-excludes objects that collapse into an already-returned CommonPrefix, since the raw-key cursor alone can't. ScanPage's key ordering removed the old full-bucket `sort.Slice`. Every pre-existing wire test passed unmodified. Benchmark (`MaxKeys=100`, allocs/op): pre-change scaled linearly with bucket size (110,316 at 10k keys); post-change flat once past one internal chunk (11,301–11,303 at both 1k and 10k). Invalid `ContinuationToken` now returns `InvalidArgument` instead of silently restarting (V1's `Marker` deliberately unvalidated — AWS documents it as a plain key with no error semantics). M1's integer-index token codec was correctly NOT used: S3's cursor is a key string.
 
 ### A7 — DynamoDB: GSI `Query` secondary index  **[design-first, gated]**
 
