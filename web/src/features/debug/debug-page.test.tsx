@@ -4,6 +4,9 @@ import { server } from "@/test/server"
 import { debugClipboard } from "./clipboard"
 import { DebugPage } from "./debug-page"
 
+/** Wraps a flat key->value map in the paginated /_debug/state/{ns} response shape. */
+const namespacePage = (values: Record<string, string>) => HttpResponse.json({ values })
+
 describe("DebugPage", () => {
   const clipboardWriteText = vi.fn<() => Promise<void>>()
 
@@ -20,7 +23,7 @@ describe("DebugPage", () => {
         HttpResponse.json({ "sqs:queues": ["us-east-1/my-dlq.fifo"] }),
       ),
       http.get("/api/debug/state/sqs%3Aqueues", () =>
-        HttpResponse.json({
+        namespacePage({
           "us-east-1/my-dlq.fifo": JSON.stringify({
             name: "my-dlq.fifo",
             attributes: { MessageRetentionPeriod: "0", FifoQueue: "true" },
@@ -53,7 +56,7 @@ describe("DebugPage", () => {
         }),
       ),
       http.get("/api/debug/state/s3%3Aobjects", () =>
-        HttpResponse.json({
+        namespacePage({
           "cdk-hnb659fds-assets-000000000000-us-east-1/0f677178c635e11d325450ded55a9c7dea158330a1e7cfdeba69cbf7bdfd96ac.json":
             JSON.stringify({ body: "{}" }),
         }),
@@ -77,7 +80,7 @@ describe("DebugPage", () => {
         HttpResponse.json({ "appsync": ["us-east-1:resolver:api-id:Query:namespaces"] }),
       ),
       http.get("/api/debug/state/appsync", () =>
-        HttpResponse.json({
+        namespacePage({
           "us-east-1:resolver:api-id:Query:namespaces": JSON.stringify({
             requestMappingTemplate: JSON.stringify({ version: "2018-05-29", operation: "Invoke" }),
           }),
@@ -105,7 +108,7 @@ describe("DebugPage", () => {
         HttpResponse.json({ "lambda:layers": ["us-east-1/deps:0000000001"] }),
       ),
       http.get("/api/debug/state/lambda%3Alayers", () =>
-        HttpResponse.json({ "us-east-1/deps:0000000001": largeLayer }),
+        namespacePage({ "us-east-1/deps:0000000001": largeLayer }),
       ),
     )
 
@@ -128,7 +131,7 @@ describe("DebugPage", () => {
         HttpResponse.json({ "sqs:queues": ["us-east-1/orders", "us-east-1/orders-dlq.fifo"] }),
       ),
       http.get("/api/debug/state/sqs%3Aqueues", () =>
-        HttpResponse.json({
+        namespacePage({
           "us-east-1/orders": JSON.stringify({
             name: "orders",
             attributes: { FifoQueue: "false" },
@@ -158,7 +161,7 @@ describe("DebugPage", () => {
         HttpResponse.json({ "sqs:queues": ["us-east-1/my-dlq.fifo"] }),
       ),
       http.get("/api/debug/state/sqs%3Aqueues", () =>
-        HttpResponse.json({
+        namespacePage({
           "us-east-1/my-dlq.fifo": JSON.stringify({ name: "my-dlq.fifo" }),
         }),
       ),

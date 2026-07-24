@@ -199,6 +199,102 @@ func PersistentHealthSnapshot(s Store) (PersistentHealth, bool) {
 	return reporter.PersistentHealth(), true
 }
 
+// DebugMetricsOptions controls which (potentially expensive) fields
+// DebugMetricsReporter.DebugMetrics computes.
+type DebugMetricsOptions struct {
+	// IncludeNamespaceRowCounts additionally populates
+	// DebugMetrics.NamespaceRowCounts. For TierCached namespaces this issues
+	// one SQL COUNT(*) per namespace currently known to the store — cheap
+	// enough for an on-demand debug call, but not something to compute
+	// unconditionally on every /_debug/metrics hit, so callers opt in.
+	IncludeNamespaceRowCounts bool
+}
+
+// DebugFlushRecord is one entry in DebugMetrics.FlushHistory: a single
+// attempt to persist buffered writes, whether or not it succeeded.
+type DebugFlushRecord struct {
+	Timestamp      time.Time `json:"timestamp"`
+	DurationMillis int64     `json:"durationMillis"`
+	Entries        int       `json:"entries"`
+	Committed      bool      `json:"committed"`
+}
+
+// DebugMetrics is a snapshot of storage-layer diagnostics for
+// GET /_debug/metrics (storage-plan.md item 3.6): recent flush history, the
+// one-time TierHot seed duration, the pending write-ahead log's on-disk
+// size, and — only when DebugMetricsOptions.IncludeNamespaceRowCounts is
+// set — per-namespace row counts.
+type DebugMetrics struct {
+	// Mode identifies which backend produced this snapshot (e.g. "hybrid",
+	// "persistent"), matching config.Config.State's values.
+	Mode string `json:"mode"`
+
+	// FlushHistory holds the most recent flush attempts, oldest first,
+	// bounded to a small ring buffer. Empty for backends that write
+	// synchronously and never batch/flush (e.g. SQLiteStore).
+	FlushHistory []DebugFlushRecord `json:"flushHistory,omitempty"`
+
+	// SeedDurationMillis is how long the background TierHot seed took to
+	// complete, in milliseconds, or nil if seeding hasn't finished yet, is
+	// still in flight, degraded to memory-only before finishing (see
+	// HybridStore.degradeToMemoryOnly — there is no coherent "seed
+	// duration" for a seed that didn't complete), or never happens for this
+	// backend at all.
+	SeedDurationMillis *int64 `json:"seedDurationMillis,omitempty"`
+
+	// PendingLogBytes is the current on-disk size of the not-yet-flushed
+	// write-ahead log, in bytes. 0 for backends without one.
+	PendingLogBytes int64 `json:"pendingLogBytes,omitempty"`
+
+	// NamespaceRowCounts maps namespace -> row count, populated only when
+	// DebugMetricsOptions.IncludeNamespaceRowCounts was set.
+	NamespaceRowCounts map[string]int `json:"namespaceRowCounts,omitempty"`
+}
+
+// DebugMetricsReporter is an optional Store extension exposing the
+// diagnostics in DebugMetrics. Stores without an async write path or a
+// one-time startup seed (MemoryStore, WALStore) do not implement it; callers
+// must treat its absence as "nothing to report", the same convention
+// PersistentHealthReporter and NotReadyReporter use.
+type DebugMetricsReporter interface {
+	DebugMetrics(ctx context.Context, opts DebugMetricsOptions) DebugMetrics
+}
+
+// DebugMetricsSnapshot returns one DebugMetrics entry per distinct
+// underlying store that implements DebugMetricsReporter. The returned bool
+// is false only when no underlying store reports anything (e.g. store is a
+// MemoryStore/WALStore, or a NamespacedStore wrapping only those).
+//
+// Deliberately does NOT follow PersistentHealthSnapshot's merge-into-one
+// approach for a *NamespacedStore: PersistentHealth's fields combine
+// sensibly across backends (Healthy is a meaningful AND, PendingWrites is a
+// meaningful sum), but DebugMetrics's fields do not — merging two distinct
+// stores' flush-history ring buffers into one timeline, or averaging two
+// unrelated seed durations, would produce a number that doesn't correspond
+// to anything real. So instead of one merged snapshot, this returns one
+// snapshot per distinct underlying store and lets the caller (the
+// /_debug/metrics handler) render them as a list. It also doesn't follow
+// NotReadyReporter's direct-implementation-on-NamespacedStore approach,
+// since NotReady's single boolean OR *is* meaningful to compute directly on
+// the wrapper, whereas "the" DebugMetrics of a NamespacedStore isn't a
+// single value at all once more than one distinct backend is in play.
+func DebugMetricsSnapshot(ctx context.Context, store Store, opts DebugMetricsOptions) ([]DebugMetrics, bool) {
+	if ns, ok := store.(*NamespacedStore); ok {
+		var all []DebugMetrics
+		for _, st := range ns.UnderlyingStores() {
+			if reporter, ok := st.(DebugMetricsReporter); ok {
+				all = append(all, reporter.DebugMetrics(ctx, opts))
+			}
+		}
+		return all, len(all) > 0
+	}
+	reporter, ok := store.(DebugMetricsReporter)
+	if !ok {
+		return nil, false
+	}
+	return []DebugMetrics{reporter.DebugMetrics(ctx, opts)}, true
+}
+
 // aggregatePersistentHealth combines the PersistentHealth of every reporting
 // store into one snapshot: PendingWrites sums, Healthy is the AND of all
 // reporting stores, LastError/LastErrorAt come from whichever unhealthy store

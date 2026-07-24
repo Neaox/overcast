@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -157,32 +158,54 @@ func validateWALSyncMode(mode WALSyncMode) error {
 // Any other error (I/O failure, a decoded entry that MemoryStore itself
 // rejects) still aborts replay — those are not the "expected torn write" case
 // this function exists to tolerate.
+//
+// The file is streamed line by line rather than read whole, so replay's
+// transient memory stays proportional to the longest single entry instead of
+// the full log — which can legitimately reach MaxLogBytes (64 MiB default)
+// right before a compaction.
 func replayWALFile(path string, mem *MemoryStore) error {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("wal store: open replay file %q: %w", path, err)
 	}
+	defer f.Close()
 
-	lines := bytes.Split(data, []byte{'\n'})
+	reader := bufio.NewReader(f)
 	ctx := context.Background()
 	var skipped int
-	for i, line := range lines {
+	for lineNum := 1; ; lineNum++ {
+		line, readErr := reader.ReadBytes('\n')
+		atEOF := errors.Is(readErr, io.EOF)
+		if readErr != nil && !atEOF {
+			return fmt.Errorf("wal store: read replay file %q: %w", path, readErr)
+		}
+		hadNewline := bytes.HasSuffix(line, []byte{'\n'})
+		line = bytes.TrimSuffix(line, []byte{'\n'})
 		if len(line) == 0 {
+			if atEOF {
+				break
+			}
 			continue
 		}
-		lineNum := i + 1
 
 		var e walEntry
 		if err := json.Unmarshal(line, &e); err != nil {
-			if i == len(lines)-1 && len(data) > 0 && data[len(data)-1] != '\n' {
+			// A torn final line is only possible on the file's last physical
+			// line, which ReadBytes hands back unterminated together with
+			// io.EOF — the same condition the old whole-file check expressed
+			// as "last split segment and no trailing newline".
+			if atEOF && !hadNewline {
 				walLogWarnf("wal store: %q has an incomplete final entry (line %d); ignoring: %v", path, lineNum, err)
 				break
 			}
 			walLogWarnf("wal store: %q has a corrupt entry at line %d; skipping: %v", path, lineNum, err)
 			skipped++
+			if atEOF {
+				break
+			}
 			continue
 		}
 
@@ -202,6 +225,9 @@ func replayWALFile(path string, mem *MemoryStore) error {
 		default:
 			walLogWarnf("wal store: %q has an unknown op %q at line %d; skipping", path, e.Op, lineNum)
 			skipped++
+		}
+		if atEOF {
+			break
 		}
 	}
 

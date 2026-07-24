@@ -208,6 +208,34 @@ func (s *SQLiteStore) NotReady() bool {
 	}
 }
 
+// DebugMetrics implements state.DebugMetricsReporter (storage-plan.md item
+// 3.6). SQLiteStore writes synchronously and has no pending log or
+// background seed, so FlushHistory/SeedDurationMillis/PendingLogBytes stay
+// at their zero values — only NamespaceRowCounts (opt-in, see
+// DebugMetricsOptions) applies to this backend.
+func (s *SQLiteStore) DebugMetrics(ctx context.Context, opts DebugMetricsOptions) DebugMetrics {
+	m := DebugMetrics{Mode: "persistent"}
+	if !opts.IncludeNamespaceRowCounts {
+		return m
+	}
+	if err := s.ensureReady(ctx); err != nil {
+		return m
+	}
+	namespaces, err := s.ListNamespaces(ctx)
+	if err != nil {
+		return m
+	}
+	counts := make(map[string]int, len(namespaces))
+	for _, ns := range namespaces {
+		var n int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM kv WHERE namespace = ?`, ns).Scan(&n); err == nil {
+			counts[ns] = n
+		}
+	}
+	m.NamespaceRowCounts = counts
+	return m
+}
+
 func (s *SQLiteStore) Get(ctx context.Context, namespace, key string) (string, bool, error) {
 	if err := s.ensureReady(ctx); err != nil {
 		return "", false, err

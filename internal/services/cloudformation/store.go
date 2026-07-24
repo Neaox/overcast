@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/Neaox/overcast/internal/clock"
@@ -27,6 +28,12 @@ type cfnStore struct {
 	s             state.Store
 	defaultRegion string
 	clk           clock.Clock
+
+	// legacyConvertMu serialises convertLegacyStackEvents so two concurrent
+	// DescribeStackEvents calls that both find the same legacy blob can't
+	// both rewrite it as rows (the kv store has no compare-and-swap, so
+	// without this the second writer would duplicate every event).
+	legacyConvertMu sync.Mutex
 }
 
 func newCFNStore(s state.Store, defaultRegion string, clk clock.Clock) *cfnStore {
@@ -196,6 +203,13 @@ func (st *cfnStore) getLegacyStackEvents(ctx context.Context, region, name strin
 // retries the conversion, but still returns the events that were already
 // decoded from it.
 func (st *cfnStore) convertLegacyStackEvents(ctx context.Context, blobKey string, evts []StackEvent) {
+	st.legacyConvertMu.Lock()
+	defer st.legacyConvertMu.Unlock()
+	// Re-check under the lock: a concurrent reader may have completed the
+	// conversion (and deleted the blob) while this call waited.
+	if _, found, err := st.s.Get(ctx, nsEvents, blobKey); err != nil || !found {
+		return
+	}
 	for _, e := range evts {
 		data, err := json.Marshal(e)
 		if err != nil {

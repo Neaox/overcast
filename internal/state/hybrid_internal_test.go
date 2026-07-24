@@ -376,3 +376,53 @@ func waitForHybridSeedLoaded(t *testing.T, s *HybridStore) {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+// ---- 1.11 degraded-mode pending log growth cap -------------------------
+
+// TestHybridStore_DegradedPendingLogCap_stopsFileGrowth proves that once the
+// store has degraded to memory-only and the pending log has reached
+// hybridDegradedPendingLogCap, further writes are accepted into memory but no
+// longer grow the log file — and that the cap warning machinery marks itself
+// fired exactly once.
+func TestHybridStore_DegradedPendingLogCap_stopsFileGrowth(t *testing.T) {
+	s, err := NewHybridStore(t.TempDir(), time.Hour)
+	if err != nil {
+		t.Fatalf("NewHybridStore: %v", err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if err := s.WaitReady(ctx); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+	waitForHybridSeedLoaded(t, s)
+
+	// Given: a degraded store whose pending log is already at the cap.
+	s.sqliteDegraded.Store(true)
+	s.mu.Lock()
+	s.pendingLogSize = hybridDegradedPendingLogCap
+	s.mu.Unlock()
+	sizeBefore := s.pendingLogSizeBytes()
+
+	// When: more writes arrive.
+	for i := 0; i < 3; i++ {
+		if err := s.Set(ctx, "svc", fmt.Sprintf("capped-%d", i), "v"); err != nil {
+			t.Fatalf("Set past cap: %v", err)
+		}
+	}
+
+	// Then: the file did not grow, the writes are still readable from
+	// memory, and the one-time warning latch is set.
+	if sizeAfter := s.pendingLogSizeBytes(); sizeAfter != sizeBefore {
+		t.Fatalf("pending log grew past the degraded-mode cap: before=%d after=%d", sizeBefore, sizeAfter)
+	}
+	got, found, err := s.Get(ctx, "svc", "capped-0")
+	if err != nil || !found || got != "v" {
+		t.Fatalf("capped write not served from memory: got=%q found=%v err=%v", got, found, err)
+	}
+	s.mu.Lock()
+	warned := s.pendingCapWarned
+	s.mu.Unlock()
+	if !warned {
+		t.Fatal("expected the degraded-mode cap warning latch to be set after a capped write")
+	}
+}

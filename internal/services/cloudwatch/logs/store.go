@@ -182,25 +182,22 @@ func (s *logsStore) putLogGroup(ctx context.Context, g *LogGroup) *protocol.AWSE
 	return nil
 }
 
+// listLogGroups uses Scan instead of List+per-key Get (storage-plan.md item
+// 3.1) — one store round trip instead of N+1.
 func (s *logsStore) listLogGroups(ctx context.Context, prefix string) ([]*LogGroup, *protocol.AWSError) {
-	keys, err := s.store.List(ctx, nsLogGroups, serviceutil.RegionKey(s.region(ctx), prefix))
+	pairs, err := s.store.Scan(ctx, nsLogGroups, serviceutil.RegionKey(s.region(ctx), prefix))
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	groups := make([]*LogGroup, 0, len(keys))
-	for _, k := range keys {
-		raw, found, err := s.store.Get(ctx, nsLogGroups, k)
-		if err != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, err)
-		}
-		if !found {
+	groups := make([]*LogGroup, 0, len(pairs))
+	for _, kv := range pairs {
+		var g LogGroup
+		if err := json.Unmarshal([]byte(kv.Value), &g); err != nil {
+			// One malformed persisted record must not fail the whole list
+			// (CLAUDE.md malformed-persisted-state rule).
 			continue
 		}
-		var g LogGroup
-		if err := json.Unmarshal([]byte(raw), &g); err != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, err)
-		}
-		// Apply prefix filter: List returns keys that have the prefix as a
+		// Apply prefix filter: Scan returns keys that have the prefix as a
 		// storage-level prefix, but CloudWatch uses full path names so we
 		// double-check with strings.HasPrefix.
 		if prefix == "" || strings.HasPrefix(g.Name, prefix) {
@@ -243,28 +240,24 @@ func (s *logsStore) putLogStream(ctx context.Context, groupName string, ls *LogS
 	return nil
 }
 
+// listLogStreams uses Scan instead of List+per-key Get (storage-plan.md item
+// 3.1) — one store round trip instead of N+1.
 func (s *logsStore) listLogStreams(ctx context.Context, groupName, prefix string) ([]*LogStream, *protocol.AWSError) {
 	fullPrefix := groupName + "/"
 	if prefix != "" {
 		fullPrefix += prefix
 	}
-	keys, err := s.store.List(ctx, nsStreams, serviceutil.RegionKey(s.region(ctx), fullPrefix))
+	pairs, err := s.store.Scan(ctx, nsStreams, serviceutil.RegionKey(s.region(ctx), fullPrefix))
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	streams := make([]*LogStream, 0, len(keys))
-	for _, k := range keys {
-		// Keys returned by List are already region-scoped; read them directly.
-		raw, found, err := s.store.Get(ctx, nsStreams, k)
-		if err != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, err)
-		}
-		if !found {
-			continue
-		}
+	streams := make([]*LogStream, 0, len(pairs))
+	for _, kv := range pairs {
 		var ls LogStream
-		if err := json.Unmarshal([]byte(raw), &ls); err != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, err)
+		if err := json.Unmarshal([]byte(kv.Value), &ls); err != nil {
+			// One malformed persisted record must not fail the whole list
+			// (CLAUDE.md malformed-persisted-state rule).
+			continue
 		}
 		streams = append(streams, &ls)
 	}
@@ -457,8 +450,18 @@ func (s *logsStore) appendEvents(ctx context.Context, groupName, streamName stri
 		return aerr
 	}
 
+	// After Stop, debounce goroutines are no longer scheduled and Stop's
+	// final pass has already run — buffering would strand these events in
+	// memory forever, so write through inline instead (this is the
+	// "write-through after Stop" behavior Stop's doc comment promises).
+	if s.stopped.Load() {
+		aerr := s.flushLocked(ctx, c)
+		c.mu.Unlock()
+		return aerr
+	}
+
 	// Schedule a debounced flush if one isn't already pending.
-	if !c.flushScheduled && !s.stopped.Load() {
+	if !c.flushScheduled {
 		c.flushScheduled = true
 		s.flushWG.Add(1)
 		go s.debouncedFlush(c)

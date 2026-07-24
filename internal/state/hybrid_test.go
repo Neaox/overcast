@@ -700,12 +700,17 @@ func TestHybridStore_DirtyEntryThresholdTriggersEarlyFlush(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		pending := s.PersistentHealth().PendingWrites
-		if pending == 0 {
+		h := s.PersistentHealth()
+		if h.PendingWrites == 0 {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("dirty entries not flushed promptly after crossing threshold: pending=%d", pending)
+			// Dump the full health snapshot: it distinguishes a flush that
+			// never started (healthy, no error) from one stuck or failing
+			// (LastError set / Healthy false) when this timing-sensitive
+			// test trips under load.
+			t.Fatalf("dirty entries not flushed promptly after crossing threshold: pending=%d healthy=%v mode=%q lastErr=%q",
+				h.PendingWrites, h.Healthy, h.Mode, h.LastError)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

@@ -69,7 +69,11 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Added
 
+- **Debug endpoints** — `GET /_debug/metrics` now reports storage diagnostics (recent flush history, seed duration, pending-log size, and opt-in per-namespace row counts via `?includeRowCounts=true`) instead of a "not yet implemented" stub; `GET /_debug/state/{namespace}` is now paginated (`?after=` cursor, `?limit=` capped at 5000) and the web Raw State Debugger follows the cursor transparently.
+
 ### Fixed
+
+- **Storage** — hybrid-mode writes that crossed the size-trigger flush threshold while the background seed was still running could miss their early-flush wakeup and sit unflushed until the next timer interval; S3, Kinesis, CloudWatch Logs, and SNS list operations now skip a malformed persisted record instead of failing the whole listing, and large listings use single-scan reads instead of per-key lookups; a store degraded to memory-only now caps its pending-log file at 64 MiB instead of growing it on every write for the rest of the run, and startup log replay streams the file instead of loading it whole.
 
 ## [0.0.1-alpha.23] - 2026-07-23
 

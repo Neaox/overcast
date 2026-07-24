@@ -200,19 +200,17 @@ func (s *snsStore) listSubscriptionsByTopic(ctx context.Context, topicName strin
 	return subs, nil
 }
 
+// listAllSubscriptions uses Scan instead of List+per-key Get (storage-plan.md
+// item 3.1), mirroring listSubscriptionsByTopic above.
 func (s *snsStore) listAllSubscriptions(ctx context.Context) ([]*Subscription, *protocol.AWSError) {
-	keys, err := s.store.List(ctx, nsSubscriptions, "")
+	pairs, err := s.store.Scan(ctx, nsSubscriptions, "")
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	subs := make([]*Subscription, 0, len(keys))
-	for _, k := range keys {
-		raw, found, err2 := s.store.Get(ctx, nsSubscriptions, k)
-		if err2 != nil || !found {
-			continue
-		}
+	subs := make([]*Subscription, 0, len(pairs))
+	for _, p := range pairs {
 		var sub Subscription
-		if err2 := json.Unmarshal([]byte(raw), &sub); err2 != nil {
+		if err := json.Unmarshal([]byte(p.Value), &sub); err != nil {
 			continue
 		}
 		subs = append(subs, &sub)

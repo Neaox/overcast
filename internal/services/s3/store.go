@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/Neaox/overcast/internal/protocol"
@@ -148,23 +147,23 @@ func (s *s3Store) bucketExists(ctx context.Context, name string) (bool, *protoco
 	return found, nil
 }
 
-// listBuckets returns all stored buckets in an unspecified order.
+// listBuckets returns all stored buckets in an unspecified order. Uses Scan
+// instead of List+per-key Get so listing N buckets costs one store round trip
+// instead of N+1 (storage-plan.md item 3.1).
 func (s *s3Store) listBuckets(ctx context.Context) ([]*Bucket, *protocol.AWSError) {
-	keys, err := s.store.List(ctx, nsBuckets, "")
+	pairs, err := s.store.Scan(ctx, nsBuckets, "")
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	buckets := make([]*Bucket, 0, len(keys))
-	for _, k := range keys {
-		b, aerr := s.getBucket(ctx, k)
-		if aerr != nil {
-			// Bucket was deleted between List and getBucket (TOCTOU race).
-			if aerr.HTTPStatus == http.StatusNotFound {
-				continue
-			}
-			return nil, aerr
+	buckets := make([]*Bucket, 0, len(pairs))
+	for _, kv := range pairs {
+		var b Bucket
+		if err := json.Unmarshal([]byte(kv.Value), &b); err != nil {
+			// One malformed persisted record must not fail the whole list
+			// (CLAUDE.md malformed-persisted-state rule).
+			continue
 		}
-		buckets = append(buckets, b)
+		buckets = append(buckets, &b)
 	}
 	return buckets, nil
 }
@@ -318,24 +317,25 @@ func (s *s3Store) copyBody(srcBucket, srcKey, dstBucket, dstKey string) (etag st
 }
 
 // listObjects returns all objects in bucket whose keys start with prefix.
-// Uses getObjectMeta to avoid loading object bodies from disk.
+// Uses Scan (a single store round trip) instead of List+per-key Get
+// (storage-plan.md item 3.1) — object bodies still stay on disk and unread,
+// only the metadata values already returned by Scan are decoded.
 func (s *s3Store) listObjects(ctx context.Context, bucket, prefix string) ([]*Object, *protocol.AWSError) {
 	scanPrefix := objectStoreKey(bucket, prefix)
-	keys, err := s.store.List(ctx, nsObjects, scanPrefix)
+	pairs, err := s.store.Scan(ctx, nsObjects, scanPrefix)
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 
-	objects := make([]*Object, 0, len(keys))
-	for _, k := range keys {
-		// List returns keys that include the bucket/ prefix — strip it to get
-		// just the object key for the individual get.
-		objKey := strings.TrimPrefix(k, bucket+"/")
-		obj, aerr := s.getObjectMeta(ctx, bucket, objKey)
-		if aerr != nil {
-			return nil, aerr
+	objects := make([]*Object, 0, len(pairs))
+	for _, kv := range pairs {
+		var obj Object
+		if err := json.Unmarshal([]byte(kv.Value), &obj); err != nil {
+			// One malformed persisted record must not fail the whole list
+			// (CLAUDE.md malformed-persisted-state rule).
+			continue
 		}
-		objects = append(objects, obj)
+		objects = append(objects, &obj)
 	}
 	return objects, nil
 }
@@ -522,19 +522,22 @@ func (s *s3Store) deleteMultipartUpload(ctx context.Context, uploadID string) *p
 }
 
 // listMultipartUploads returns all in-progress uploads for the given bucket.
+// Uses Scan instead of List+per-key Get (storage-plan.md item 3.1).
 func (s *s3Store) listMultipartUploads(ctx context.Context, bucket string) ([]*MultipartUpload, *protocol.AWSError) {
-	keys, err := s.store.List(ctx, nsMultipart, "")
+	pairs, err := s.store.Scan(ctx, nsMultipart, "")
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	result := make([]*MultipartUpload, 0)
-	for _, k := range keys {
-		u, aerr := s.getMultipartUpload(ctx, k)
-		if aerr != nil {
-			return nil, aerr
+	for _, kv := range pairs {
+		var u MultipartUpload
+		if err := json.Unmarshal([]byte(kv.Value), &u); err != nil {
+			// One malformed persisted record must not fail the whole list
+			// (CLAUDE.md malformed-persisted-state rule).
+			continue
 		}
 		if u.Bucket == bucket {
-			result = append(result, u)
+			result = append(result, &u)
 		}
 	}
 	return result, nil
@@ -577,24 +580,20 @@ func (s *s3Store) savePart(ctx context.Context, uploadID string, part *Part) *pr
 	return nil
 }
 
-// listParts returns all parts for an upload, sorted by part number.
+// listParts returns all parts for an upload, sorted by part number. Uses
+// Scan instead of List+per-key Get (storage-plan.md item 3.1).
 func (s *s3Store) listParts(ctx context.Context, uploadID string) ([]*Part, *protocol.AWSError) {
-	keys, err := s.store.List(ctx, nsParts, uploadID+"/")
+	pairs, err := s.store.Scan(ctx, nsParts, uploadID+"/")
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	parts := make([]*Part, 0, len(keys))
-	for _, k := range keys {
-		raw, found, getErr := s.store.Get(ctx, nsParts, k)
-		if getErr != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, getErr)
-		}
-		if !found {
-			continue
-		}
+	parts := make([]*Part, 0, len(pairs))
+	for _, kv := range pairs {
 		var p Part
-		if jsonErr := json.Unmarshal([]byte(raw), &p); jsonErr != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, jsonErr)
+		if jsonErr := json.Unmarshal([]byte(kv.Value), &p); jsonErr != nil {
+			// One malformed persisted record must not fail the whole list
+			// (CLAUDE.md malformed-persisted-state rule).
+			continue
 		}
 		parts = append(parts, &p)
 	}

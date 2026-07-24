@@ -3,6 +3,7 @@
 package state
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
@@ -74,6 +75,18 @@ type HybridStore struct {
 	pendingPath string
 	pendingFile *os.File
 
+	// pendingLogSize tracks the pending log file's current on-disk size,
+	// maintained incrementally on append and refreshed after compaction, so
+	// the degraded-mode growth cap (hybridDegradedPendingLogCap) can be
+	// checked without a stat syscall per write. Guarded by mu.
+	pendingLogSize int64
+
+	// pendingCapWarned makes the degraded-mode cap warning fire exactly once
+	// per process — the condition is sticky (compaction never runs while
+	// degraded), so repeating it per write would only flood the log. Guarded
+	// by mu.
+	pendingCapWarned bool
+
 	mu      sync.Mutex
 	flushMu sync.Mutex
 
@@ -129,6 +142,19 @@ type HybridStore struct {
 	loaded      chan struct{}
 	loadErr     error // guarded by mu
 	health      PersistentHealth
+
+	// flushHistory is a bounded ring buffer of the most recent flush
+	// attempts (storage-plan.md item 3.6), oldest first, appended to at the
+	// end of flushOnce for both the success and failure paths — see
+	// recordFlushHistory. Guarded by mu.
+	flushHistory []DebugFlushRecord
+
+	// seedDuration is set once, right after seedFromSQLite's TierHot load
+	// completes successfully. Left nil if seeding is still in flight or
+	// degraded to memory-only before finishing (see degradeToMemoryOnly) —
+	// there is no coherent "how long did seeding take" for a seed that
+	// didn't complete. Guarded by mu.
+	seedDuration *time.Duration
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -212,6 +238,23 @@ const (
 
 	hybridReadPoolMaxOpenConns = 4
 	hybridBusyTimeoutMillis    = 5000
+
+	// hybridFlushHistoryCap bounds HybridStore.flushHistory's ring buffer
+	// (storage-plan.md item 3.6) — small and fixed so it can never grow
+	// unbounded under a long-running process with frequent flushes.
+	hybridFlushHistoryCap = 20
+
+	// hybridDegradedPendingLogCap is the hard stop on pending-log file growth
+	// once the store has degraded to memory-only (storage-plan.md item 1.11).
+	// In healthy operation the log is compacted after every successful flush
+	// and never approaches this; in degraded mode flushes are skipped forever,
+	// so without a cap every write would grow the file unboundedly for the
+	// rest of the process lifetime. Past the cap, writes still land in memory
+	// (and are served correctly) but are no longer appended to the log — they
+	// were never going to reach SQLite this run anyway, and the log's replay
+	// value is already compromised by the degradation that got us here. Reuses
+	// WALStore's compaction threshold per the plan.
+	hybridDegradedPendingLogCap = defaultWALMaxLogBytes
 )
 
 // NewHybridStore creates a HybridStore backed by a SQLite file in dataDir,
@@ -292,6 +335,9 @@ func NewHybridStoreWithOptions(dataDir string, opts HybridOptions, logger *zap.L
 		return nil, fmt.Errorf("hybrid store: open pending log %q: %w", pendingPath, err)
 	}
 	hs.pendingFile = pendingFile
+	if info, err := pendingFile.Stat(); err == nil {
+		hs.pendingLogSize = info.Size()
+	}
 
 	hs.wg.Add(1)
 	go hs.seedFromSQLite()
@@ -322,7 +368,12 @@ func NewHybridStoreWithOptions(dataDir string, opts HybridOptions, logger *zap.L
 // rule.
 func (s *HybridStore) seedFromSQLite() {
 	defer s.wg.Done()
-	defer close(s.loaded)
+	loadedClosed := false
+	defer func() {
+		if !loadedClosed {
+			close(s.loaded)
+		}
+	}()
 	sqliteReadyClosed := false
 	defer func() {
 		if !sqliteReadyClosed {
@@ -445,10 +496,24 @@ func (s *HybridStore) seedFromSQLite() {
 			zap.Int("skipped_rows", skippedRows),
 			zap.Int("loaded", loaded))
 	}
+	elapsed := time.Since(seedStart)
+	s.mu.Lock()
+	s.seedDuration = &elapsed
+	s.mu.Unlock()
 	// A size-triggered flush signal (1.4) fired while s.loaded was still open
 	// is a silent no-op in flushOnce (it defers to the next tick/signal
 	// rather than blocking). Nudge once here so any threshold crossed during
 	// seeding gets flushed promptly instead of waiting up to FlushInterval.
+	//
+	// loaded MUST be closed before the nudge, and here rather than in the
+	// deferred close: if the nudge were sent first, the run loop could
+	// receive it and reach flushOnce's not-yet-loaded no-op branch before
+	// the close, silently consuming the only signal covering writes buffered
+	// during the seed — a lost wakeup that leaves them unflushed until the
+	// next FlushInterval tick (observed as a -race flake in
+	// TestHybridStore_DirtyEntryThresholdTriggersEarlyFlush).
+	close(s.loaded)
+	loadedClosed = true
 	s.signalFlush()
 	s.logInfo("hybrid seed complete",
 		zap.Int("loaded", loaded),
@@ -458,7 +523,7 @@ func (s *HybridStore) seedFromSQLite() {
 		zap.Strings("lazy_namespaces", hybridLazyNamespaceList),
 		zap.Int64("bytes", bytesLoaded),
 		zap.Duration("query_and_seed", time.Since(queryStart)),
-		zap.Duration("elapsed", time.Since(seedStart)))
+		zap.Duration("elapsed", elapsed))
 }
 
 // degradeToMemoryOnly marks the persistent backend unhealthy and disables all
@@ -1020,6 +1085,92 @@ func (s *HybridStore) PersistentHealth() PersistentHealth {
 	return health
 }
 
+// recordFlushHistory appends one entry to the bounded flushHistory ring
+// buffer (storage-plan.md item 3.6). Called from a defer in flushOnce for
+// every attempted flush (i.e. one that actually had pending ops to write),
+// on both the success and failure paths.
+func (s *HybridStore) recordFlushHistory(start time.Time, entries int, committed bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.flushHistory = append(s.flushHistory, DebugFlushRecord{
+		Timestamp:      start.UTC(),
+		DurationMillis: time.Since(start).Milliseconds(),
+		Entries:        entries,
+		Committed:      committed,
+	})
+	if over := len(s.flushHistory) - hybridFlushHistoryCap; over > 0 {
+		s.flushHistory = s.flushHistory[over:]
+	}
+}
+
+// pendingLogSizeBytes stats the on-disk pending log file. Deliberately not
+// tracked incrementally on the write path (Set/Delete/DeletePrefix) — an
+// os.Stat call only when the debug endpoint is actually hit is simplest and
+// adds zero overhead to the hot path (storage-plan.md item 3.6).
+func (s *HybridStore) pendingLogSizeBytes() int64 {
+	info, err := os.Stat(s.pendingPath)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+// namespaceRowCount returns the row count for one namespace, used only by
+// DebugMetrics when the caller opts into IncludeNamespaceRowCounts. TierHot
+// namespaces are already resident in memory, so List+len is cheap; TierCached
+// namespaces use a SQL COUNT(*) instead of List — a debug endpoint has no
+// business pulling every key over the wire just to count them. The COUNT(*)
+// deliberately ignores the pending write overlay (dirty/unflushed entries),
+// so a TierCached count can lag reality by up to one flush interval — fine
+// for a diagnostics endpoint, not a source of truth.
+func (s *HybridStore) namespaceRowCount(ctx context.Context, namespace string) (int, error) {
+	if !shouldReadHybridNamespaceFromSQLite(namespace) {
+		keys, err := s.mem.List(ctx, namespace, "")
+		return len(keys), err
+	}
+	if !s.sqliteReadyNow() {
+		keys, err := s.List(ctx, namespace, "")
+		return len(keys), err
+	}
+	var count int
+	err := s.readDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM kv WHERE namespace = ?`, namespace).Scan(&count)
+	return count, err
+}
+
+// DebugMetrics implements state.DebugMetricsReporter (storage-plan.md item
+// 3.6).
+func (s *HybridStore) DebugMetrics(ctx context.Context, opts DebugMetricsOptions) DebugMetrics {
+	s.mu.Lock()
+	mode := s.health.Mode
+	history := append([]DebugFlushRecord(nil), s.flushHistory...)
+	var seedDurationMillis *int64
+	if s.seedDuration != nil {
+		ms := s.seedDuration.Milliseconds()
+		seedDurationMillis = &ms
+	}
+	s.mu.Unlock()
+
+	m := DebugMetrics{
+		Mode:               mode,
+		FlushHistory:       history,
+		SeedDurationMillis: seedDurationMillis,
+		PendingLogBytes:    s.pendingLogSizeBytes(),
+	}
+	if opts.IncludeNamespaceRowCounts {
+		namespaces, err := s.ListNamespaces(ctx)
+		if err == nil {
+			counts := make(map[string]int, len(namespaces))
+			for _, ns := range namespaces {
+				if n, err := s.namespaceRowCount(ctx, ns); err == nil {
+					counts[ns] = n
+				}
+			}
+			m.NamespaceRowCounts = counts
+		}
+	}
+	return m
+}
+
 // DB returns the underlying *sql.DB, satisfying SQLiteDBProvider. Blocks
 // until the background SQLite open has completed. Returns nil if the open
 // failed — callers that hit this path should have already seen the load
@@ -1209,6 +1360,14 @@ func (s *HybridStore) flushOnce(ctx context.Context) error {
 	s.mu.Unlock()
 
 	committed := false
+	// Registered before the restore-on-failure defer below so it runs after
+	// it (defers execute LIFO) — by the time this reads committed, every
+	// other defer and the function body have finished, so it observes the
+	// final outcome of this flush attempt on both the success and failure
+	// paths (3.6 in docs/storage-plan.md).
+	defer func() {
+		s.recordFlushHistory(start, len(toFlushOps), committed)
+	}()
 	defer func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -1855,38 +2014,59 @@ func (s *HybridStore) logHybridSQLiteRetry(op string, retryErr error, fields ...
 // startup — only a truncated final line (the torn-write case from a crash
 // mid-append) gets the original "ignore and stop" treatment, since anything
 // after a torn write cannot exist.
+// The file is streamed line by line rather than read whole, so replay's
+// transient memory stays proportional to the longest single entry instead of
+// the full log — normally tiny (compaction rewrites it after every
+// successful flush), but potentially large after a run that degraded to
+// memory-only, where the log grows until the degraded-mode cap (see
+// hybridDegradedPendingLogCap).
 func (s *HybridStore) replayPendingLog() error {
-	data, err := os.ReadFile(s.pendingPath)
+	f, err := os.Open(s.pendingPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("hybrid store: read pending log replay %q: %w", s.pendingPath, err)
+		return fmt.Errorf("hybrid store: open pending log replay %q: %w", s.pendingPath, err)
 	}
-	lines := bytes.Split(data, []byte{'\n'})
+	defer f.Close()
+
+	reader := bufio.NewReader(f)
 	ctx := context.Background()
 	var skipped int
-	for i, line := range lines {
-		if len(line) == 0 {
-			continue
+	for lineNum := 1; ; lineNum++ {
+		line, readErr := reader.ReadBytes('\n')
+		atEOF := errors.Is(readErr, io.EOF)
+		if readErr != nil && !atEOF {
+			return fmt.Errorf("hybrid store: read pending log replay %q: %w", s.pendingPath, readErr)
 		}
-		var entry walEntry
-		if err := json.Unmarshal(line, &entry); err != nil {
-			isFinal := i == len(lines)-1 && len(data) > 0 && data[len(data)-1] != '\n'
-			if isFinal {
-				s.logWarn("hybrid pending log has incomplete final entry; ignoring", zap.Error(err))
-				break
+		hadNewline := bytes.HasSuffix(line, []byte{'\n'})
+		line = bytes.TrimSuffix(line, []byte{'\n'})
+		if len(line) > 0 {
+			var entry walEntry
+			if err := json.Unmarshal(line, &entry); err != nil {
+				// A torn final line is only possible on the file's last
+				// physical line, which ReadBytes hands back unterminated
+				// together with io.EOF — the same condition the old
+				// whole-file check expressed as "last split segment and no
+				// trailing newline".
+				if atEOF && !hadNewline {
+					s.logWarn("hybrid pending log has incomplete final entry; ignoring", zap.Error(err))
+					break
+				}
+				skipped++
+				s.logWarn("hybrid pending log entry undecodable; skipping",
+					zap.Int("line", lineNum), zap.Error(err))
+			} else {
+				s.applyPendingEntry(ctx, entry)
 			}
-			skipped++
-			s.logWarn("hybrid pending log entry undecodable; skipping",
-				zap.Int("line", i+1), zap.Error(err))
-			continue
 		}
-		s.applyPendingEntry(ctx, entry)
+		if atEOF {
+			break
+		}
 	}
 	if skipped > 0 {
 		s.logWarn("hybrid pending log replay skipped corrupt entries",
-			zap.Int("skipped", skipped), zap.Int("total_lines", len(lines)))
+			zap.Int("skipped", skipped))
 	}
 	return nil
 }
@@ -1922,13 +2102,29 @@ func (s *HybridStore) appendPendingBatchLocked(entries []walEntry) error {
 		s.markPersistentErrorLocked(err)
 		return fmt.Errorf("hybrid store: append pending log: %w", err)
 	}
+	// Degraded-mode growth cap (storage-plan.md 1.11): once the store is
+	// memory-only for the rest of this run, flushes — and therefore
+	// compaction — never happen, so the log would otherwise grow with every
+	// write until the disk fills. Past the cap, accept the write into memory
+	// but stop appending to the file. See hybridDegradedPendingLogCap.
+	if s.sqliteDegraded.Load() && s.pendingLogSize >= hybridDegradedPendingLogCap {
+		if !s.pendingCapWarned {
+			s.pendingCapWarned = true
+			s.logWarn("hybrid pending log reached its degraded-mode size cap; further writes this run are memory-only and will not survive a restart",
+				zap.Int64("cap_bytes", int64(hybridDegradedPendingLogCap)),
+				zap.String("path", s.pendingPath))
+		}
+		return nil
+	}
 	for _, entry := range entries {
 		b, err := json.Marshal(entry)
 		if err != nil {
 			return fmt.Errorf("hybrid store: encode pending log entry: %w", err)
 		}
 		b = append(b, '\n')
-		if _, err := s.pendingFile.Write(b); err != nil {
+		n, err := s.pendingFile.Write(b)
+		s.pendingLogSize += int64(n)
+		if err != nil {
 			s.markPersistentErrorLocked(err)
 			return fmt.Errorf("hybrid store: append pending log: %w", err)
 		}
@@ -1998,6 +2194,10 @@ func (s *HybridStore) rewritePendingLocked() error {
 		return fmt.Errorf("hybrid store: reopen pending log: %w", err)
 	}
 	s.pendingFile = file
+	s.pendingLogSize = 0
+	if info, err := file.Stat(); err == nil {
+		s.pendingLogSize = info.Size()
+	}
 	return nil
 }
 

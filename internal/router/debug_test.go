@@ -174,11 +174,11 @@ func TestDebugStateNamespace_truncatesLargeValues(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	var body map[string]string
+	var body debugStateNamespacePage
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	got := body["us-east-1/deps:0000000001"]
+	got := body.Values["us-east-1/deps:0000000001"]
 	var layer map[string]string
 	if err := json.Unmarshal([]byte(got), &layer); err != nil {
 		t.Fatalf("expected valid JSON after truncation: %v; body=%q", err, got)
@@ -215,11 +215,11 @@ func TestDebugStateNamespace_truncatesLargePlainTextValues(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	var body map[string]string
+	var body debugStateNamespacePage
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	got := body["record"]
+	got := body.Values["record"]
 	if !strings.HasSuffix(got, debugStateTruncatedSuffix) {
 		t.Fatalf("expected truncation marker, got suffix %q", got[len(got)-32:])
 	}
@@ -523,6 +523,195 @@ func TestDebugResetService_dynamodbUnaffectedByOtherProviders(t *testing.T) {
 	}
 	if logsProvider.resets != 0 {
 		t.Fatalf("expected logs provider untouched, got %d resets", logsProvider.resets)
+	}
+}
+
+// ---- 3.13: /_debug/state/{namespace} pagination -----------------------------
+
+func TestDebugStateNamespace_paginatesStoreBackedNamespace(t *testing.T) {
+	// Given: a namespace with three keys.
+	store := state.NewMemoryStore()
+	ctx := context.Background()
+	for _, k := range []string{"a", "b", "c"} {
+		if err := store.Set(ctx, "test:ns", k, `"v-`+k+`"`); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// When: the first page is requested with limit=2.
+	page1 := fetchDebugStateNamespacePage(t, store, nil, "test:ns", "", "2")
+
+	// Then: it returns the first two keys in order and a nextKey cursor.
+	if len(page1.Values) != 2 {
+		t.Fatalf("expected 2 values on page 1, got %d: %+v", len(page1.Values), page1.Values)
+	}
+	if _, ok := page1.Values["a"]; !ok {
+		t.Errorf("expected key %q on page 1, got %+v", "a", page1.Values)
+	}
+	if _, ok := page1.Values["b"]; !ok {
+		t.Errorf("expected key %q on page 1, got %+v", "b", page1.Values)
+	}
+	if page1.NextKey != "b" {
+		t.Fatalf("expected nextKey %q, got %q", "b", page1.NextKey)
+	}
+
+	// When: the second page is requested using the first page's nextKey.
+	page2 := fetchDebugStateNamespacePage(t, store, nil, "test:ns", page1.NextKey, "2")
+
+	// Then: it returns exactly the remaining key, and signals no further page.
+	if len(page2.Values) != 1 {
+		t.Fatalf("expected 1 value on page 2, got %d: %+v", len(page2.Values), page2.Values)
+	}
+	if _, ok := page2.Values["c"]; !ok {
+		t.Errorf("expected key %q on page 2, got %+v", "c", page2.Values)
+	}
+	if page2.NextKey != "" {
+		t.Fatalf("expected empty nextKey on the last page, got %q", page2.NextKey)
+	}
+}
+
+func TestDebugStateNamespace_defaultLimitAppliedWhenAbsent(t *testing.T) {
+	// Given: a namespace with fewer keys than the default page limit.
+	store := state.NewMemoryStore()
+	ctx := context.Background()
+	if err := store.Set(ctx, "test:ns", "only-key", `"v"`); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: the namespace is requested with no ?limit= at all.
+	page := fetchDebugStateNamespacePage(t, store, nil, "test:ns", "", "")
+
+	// Then: every key is returned in a single page (well under the default cap).
+	if len(page.Values) != 1 {
+		t.Fatalf("expected 1 value, got %d: %+v", len(page.Values), page.Values)
+	}
+	if page.NextKey != "" {
+		t.Fatalf("expected empty nextKey, got %q", page.NextKey)
+	}
+}
+
+func TestParseDebugStateLimit(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want int
+	}{
+		{"absent", "", debugStateDefaultPageLimit},
+		{"non-numeric", "not-a-number", debugStateDefaultPageLimit},
+		{"zero", "0", debugStateDefaultPageLimit},
+		{"negative", "-5", debugStateDefaultPageLimit},
+		{"valid", "10", 10},
+		{"exceeds max", "999999", debugStateMaxPageLimit},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseDebugStateLimit(tc.raw); got != tc.want {
+				t.Errorf("parseDebugStateLimit(%q) = %d, want %d", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+// fakeMultiKeyDebugProvider is a DebugStateProvider with more than one key,
+// used to exercise pagination over a provider-backed virtual namespace
+// (which has no ScanPage of its own — see paginateDebugStateValues).
+type fakeMultiKeyDebugProvider struct{}
+
+func (fakeMultiKeyDebugProvider) DebugNamespace() string { return "fake:multi" }
+
+func (fakeMultiKeyDebugProvider) DebugStateKeys(context.Context) ([]string, error) {
+	return []string{"k1", "k2", "k3"}, nil
+}
+
+func (fakeMultiKeyDebugProvider) DebugStateValues(context.Context) (map[string]string, error) {
+	return map[string]string{"k1": `"v1"`, "k2": `"v2"`, "k3": `"v3"`}, nil
+}
+
+func (fakeMultiKeyDebugProvider) DebugResetState(context.Context) error { return nil }
+
+func TestDebugStateNamespace_paginatesProviderBackedNamespace(t *testing.T) {
+	// Given: a virtual (provider-backed) namespace with three keys.
+	store := state.NewMemoryStore()
+	providers := []DebugStateProvider{fakeMultiKeyDebugProvider{}}
+
+	// When: the first page is requested with limit=2.
+	page1 := fetchDebugStateNamespacePage(t, store, providers, "fake:multi", "", "2")
+
+	// Then: pagination applies the same way it does for a store-backed namespace.
+	if len(page1.Values) != 2 {
+		t.Fatalf("expected 2 values on page 1, got %d: %+v", len(page1.Values), page1.Values)
+	}
+	if page1.NextKey != "k2" {
+		t.Fatalf("expected nextKey %q, got %q", "k2", page1.NextKey)
+	}
+
+	// When: the second page follows the cursor.
+	page2 := fetchDebugStateNamespacePage(t, store, providers, "fake:multi", page1.NextKey, "2")
+
+	// Then: the remaining key is returned and pagination terminates.
+	if len(page2.Values) != 1 {
+		t.Fatalf("expected 1 value on page 2, got %d: %+v", len(page2.Values), page2.Values)
+	}
+	if _, ok := page2.Values["k3"]; !ok {
+		t.Errorf("expected key %q on page 2, got %+v", "k3", page2.Values)
+	}
+	if page2.NextKey != "" {
+		t.Fatalf("expected empty nextKey on the last page, got %q", page2.NextKey)
+	}
+}
+
+// fetchDebugStateNamespacePage issues a GET /_debug/state/{namespace} request
+// with the given after/limit query parameters and decodes the paginated
+// response.
+func fetchDebugStateNamespacePage(t *testing.T, store state.Store, providers []DebugStateProvider, namespace, after, limit string) debugStateNamespacePage {
+	t.Helper()
+	url := "/_debug/state/" + namespace + "?"
+	if after != "" {
+		url += "after=" + after + "&"
+	}
+	if limit != "" {
+		url += "limit=" + limit
+	}
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	rec := httptest.NewRecorder()
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("namespace", namespace)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	debugStateNamespace(store, providers).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var page debugStateNamespacePage
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	return page
+}
+
+// ---- 3.6: /_debug/metrics ----------------------------------------------------
+
+func TestDebugMetrics_zeroValueForMemoryStore(t *testing.T) {
+	// Given: a store backend that does not implement state.DebugMetricsReporter.
+	store := state.NewMemoryStore()
+
+	// When: the metrics endpoint is requested.
+	req := httptest.NewRequest(http.MethodGet, "/_debug/metrics", nil)
+	rec := httptest.NewRecorder()
+	debugMetrics(store).ServeHTTP(rec, req)
+
+	// Then: it responds 200 with an empty (never null) store list, not an error.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp debugMetricsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Stores == nil {
+		t.Fatal("expected a non-nil (possibly empty) stores list")
+	}
+	if len(resp.Stores) != 0 {
+		t.Fatalf("expected no reporting stores for MemoryStore, got %+v", resp.Stores)
 	}
 }
 
