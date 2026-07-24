@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/state"
 )
 
 // TestWriteXMLError_structuredResponse verifies the XML error envelope is correct.
@@ -115,6 +116,213 @@ func TestNotImplemented_setsUnsupportedHeader(t *testing.T) {
 	}
 	if got := resp.Header.Get("x-emulator-unsupported"); got != "true" {
 		t.Errorf("expected x-emulator-unsupported: true, got %q", got)
+	}
+}
+
+// ---- Storage-pressure -> AWS throttling remap (storage-pressure-handling item 1) ----
+
+// pressureAWSError builds the error shape a service store layer actually
+// produces under storage pressure: protocol.Wrap(protocol.ErrInternalError,
+// cause) where cause carries state.ErrStorePressure in its chain (exactly
+// what HybridStore.wrapStorePressure attaches — see internal/state/hybrid.go).
+func pressureAWSError() *protocol.AWSError {
+	cause := fmt.Errorf("hybrid sqlite read retry exhausted: %w: %w", state.ErrStorePressure, errors.New("context deadline exceeded"))
+	return protocol.Wrap(protocol.ErrInternalError, cause)
+}
+
+// plainAWSError builds an ordinary InternalError with a cause that is NOT
+// storage pressure — the negative case every family must leave untouched.
+func plainAWSError() *protocol.AWSError {
+	return protocol.Wrap(protocol.ErrInternalError, errors.New("disk I/O error"))
+}
+
+func TestWriteXMLError_storagePressureRemapsToSlowDown(t *testing.T) {
+	// Given: a storage-pressure error reaching the S3/XML error writer
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		protocol.WriteXMLError(w, r, pressureAWSError())
+	})
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req = req.WithContext(protocol.ContextWithRequestID(req.Context(), "req-1"))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	resp := w.Result()
+
+	// Then: the client sees S3's real throttling shape, not InternalError
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status: expected 503, got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	var errResp struct {
+		Code string `xml:"Code"`
+	}
+	if err := xml.Unmarshal(body, &errResp); err != nil {
+		t.Fatalf("failed to parse XML error: %v\nbody: %s", err, body)
+	}
+	if errResp.Code != "SlowDown" {
+		t.Errorf("Code: expected SlowDown, got %q", errResp.Code)
+	}
+}
+
+func TestWriteXMLError_plainErrorStaysInternalError(t *testing.T) {
+	// Given: a plain (non-pressure) internal error
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		protocol.WriteXMLError(w, r, plainAWSError())
+	})
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req = req.WithContext(protocol.ContextWithRequestID(req.Context(), "req-1"))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	resp := w.Result()
+
+	// Then: it must NOT be remapped to a throttling shape
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status: expected 500, got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	var errResp struct {
+		Code string `xml:"Code"`
+	}
+	if err := xml.Unmarshal(body, &errResp); err != nil {
+		t.Fatalf("failed to parse XML error: %v\nbody: %s", err, body)
+	}
+	if errResp.Code != "InternalError" {
+		t.Errorf("Code: expected InternalError, got %q", errResp.Code)
+	}
+}
+
+func TestWriteJSONError_storagePressureRemapsToThrottlingException(t *testing.T) {
+	// Given: a storage-pressure error reaching a JSON-protocol error writer
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		protocol.WriteJSONError(w, r, pressureAWSError())
+	})
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req = req.WithContext(protocol.ContextWithRequestID(req.Context(), "req-1"))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	resp := w.Result()
+
+	// Then: the client sees the standard JSON-protocol throttling shape
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status: expected 400, got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	var errResp struct {
+		Type string `json:"__type"`
+	}
+	if err := json.Unmarshal(body, &errResp); err != nil {
+		t.Fatalf("failed to parse JSON error: %v\nbody: %s", err, body)
+	}
+	if errResp.Type != "ThrottlingException" {
+		t.Errorf("__type: expected ThrottlingException, got %q", errResp.Type)
+	}
+}
+
+func TestWriteJSONError_plainErrorStaysInternalError(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		protocol.WriteJSONError(w, r, plainAWSError())
+	})
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req = req.WithContext(protocol.ContextWithRequestID(req.Context(), "req-1"))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	resp := w.Result()
+
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status: expected 500, got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	var errResp struct {
+		Type string `json:"__type"`
+	}
+	if err := json.Unmarshal(body, &errResp); err != nil {
+		t.Fatalf("failed to parse JSON error: %v\nbody: %s", err, body)
+	}
+	if errResp.Type != "InternalError" {
+		t.Errorf("__type: expected InternalError, got %q", errResp.Type)
+	}
+}
+
+func TestWriteQueryXMLError_storagePressureRemapsToThrottling(t *testing.T) {
+	// Given: a storage-pressure error reaching the Query-protocol error writer
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		protocol.WriteQueryXMLError(w, r, pressureAWSError())
+	})
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req = req.WithContext(protocol.ContextWithRequestID(req.Context(), "req-1"))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	resp := w.Result()
+
+	// Then: the client sees AWS's general Query-protocol throttling shape
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status: expected 400, got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	var errResp struct {
+		Error struct {
+			Code string `xml:"Code"`
+		} `xml:"Error"`
+	}
+	if err := xml.Unmarshal(body, &errResp); err != nil {
+		t.Fatalf("failed to parse Query XML error: %v\nbody: %s", err, body)
+	}
+	if errResp.Error.Code != "Throttling" {
+		t.Errorf("Code: expected Throttling, got %q", errResp.Error.Code)
+	}
+}
+
+func TestWriteQueryXMLError_plainErrorStaysInternalError(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		protocol.WriteQueryXMLError(w, r, plainAWSError())
+	})
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req = req.WithContext(protocol.ContextWithRequestID(req.Context(), "req-1"))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	resp := w.Result()
+
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status: expected 500, got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	var errResp struct {
+		Error struct {
+			Code string `xml:"Code"`
+		} `xml:"Error"`
+	}
+	if err := xml.Unmarshal(body, &errResp); err != nil {
+		t.Fatalf("failed to parse Query XML error: %v\nbody: %s", err, body)
+	}
+	if errResp.Error.Code != "InternalError" {
+		t.Errorf("Code: expected InternalError, got %q", errResp.Error.Code)
+	}
+}
+
+func TestWriteEC2QueryXMLError_storagePressureRemapsToThrottling(t *testing.T) {
+	// Given: a storage-pressure error reaching the EC2 Query-protocol error writer
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		protocol.WriteEC2QueryXMLError(w, r, pressureAWSError())
+	})
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req = req.WithContext(protocol.ContextWithRequestID(req.Context(), "req-1"))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	resp := w.Result()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status: expected 400, got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	var errResp struct {
+		Errors []struct {
+			Code string `xml:"Code"`
+		} `xml:"Errors>Error"`
+	}
+	if err := xml.Unmarshal(body, &errResp); err != nil {
+		t.Fatalf("failed to parse EC2 Query XML error: %v\nbody: %s", err, body)
+	}
+	if len(errResp.Errors) != 1 || errResp.Errors[0].Code != "Throttling" {
+		t.Errorf("Code: expected [Throttling], got %+v", errResp.Errors)
 	}
 }
 
