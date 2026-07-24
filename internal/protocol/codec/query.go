@@ -18,31 +18,65 @@ import (
 // RDS, SES, CloudWatch metrics, ELBv2, AutoScaling, Route53, ElastiCache.
 type queryXML struct{}
 
+// maxQueryBodyBytes bounds how much of a Query-protocol form body is ever
+// read into memory by Decode's direct-body-read fallback (below). AWS
+// Query-protocol requests are small parameter forms; this is generous
+// headroom, not a realistic limit for legitimate traffic.
+const maxQueryBodyBytes = 1 << 20
+
 // QueryXML is the singleton AWS Query codec.
 var QueryXML Codec = queryXML{}
 
 func (queryXML) Name() string { return NameAWSQuery }
 
 func (q queryXML) Decode(r *http.Request, into any) *protocol.AWSError {
-	if r.Body == nil {
-		return nil
-	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-	if err != nil {
-		return &protocol.AWSError{
-			Code: "SerializationException", Message: "Failed to read request body: " + err.Error(), HTTPStatus: http.StatusBadRequest,
-		}
-	}
-	values, err := url.ParseQuery(string(body))
-	if err != nil {
-		return &protocol.AWSError{
-			Code: "SerializationException", Message: "Failed to parse form body: " + err.Error(), HTTPStatus: http.StatusBadRequest,
-		}
+	values, aerr := queryFormValues(r)
+	if aerr != nil {
+		return aerr
 	}
 	if aerr := decodeQueryForm(values, into); aerr != nil {
 		return aerr
 	}
 	return nil
+}
+
+// queryFormValues returns the request's form values.
+//
+// By the time a Query-protocol request reaches a typed operation's Decode
+// call, r.Form has almost always already been populated — by
+// identifyQuery.Claim resolving Action for dispatch (identify.go), and/or
+// by the router's own QueryDispatcher resolution (OwnsVersion/OwnsAction),
+// both of which call r.ParseForm()/r.FormValue(). r.ParseForm reads and
+// fully drains r.Body the first time it runs and is a cached no-op on
+// every subsequent call — so a second direct read of r.Body here would
+// silently see an empty body and decode every field as absent. Preferring
+// r.Form (once populated) sidesteps that hazard entirely and, as a bonus,
+// guarantees byte-for-byte identical field parsing to legacy handlers,
+// which already read fields via r.FormValue.
+//
+// The direct-body-read fallback below only runs for callers that invoke
+// Decode without going through the router at all (e.g. codec-package unit
+// tests constructing a bare *http.Request) — r.Form is nil in that case.
+func queryFormValues(r *http.Request) (url.Values, *protocol.AWSError) {
+	if r.Form != nil {
+		return r.Form, nil
+	}
+	if r.Body == nil {
+		return url.Values{}, nil
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxQueryBodyBytes))
+	if err != nil {
+		return nil, &protocol.AWSError{
+			Code: "SerializationException", Message: "Failed to read request body: " + err.Error(), HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	values, err := url.ParseQuery(string(body))
+	if err != nil {
+		return nil, &protocol.AWSError{
+			Code: "SerializationException", Message: "Failed to parse form body: " + err.Error(), HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	return values, nil
 }
 
 func (queryXML) WriteResponse(w http.ResponseWriter, r *http.Request, status int, v any) {

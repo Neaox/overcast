@@ -74,9 +74,61 @@ func TestIdentifyQuery_ActionInURL(t *testing.T) {
 }
 
 func TestIdentifyQuery_BodyOnlyAction(t *testing.T) {
-	// Operation lives in the form body — identifier returns the codec
-	// but no operation name; resolver runs later (Phase 6).
-	r := req("POST", "/", "Action=ListTopics", map[string]string{
+	// The vast majority of real AWS-SDK Query-protocol traffic encodes
+	// Action into the POST body rather than the URL query string. The
+	// identifier must resolve it there too so dispatch gets a usable
+	// operation name — see docs/plans/level2-codegen.md Track 1.1.
+	r := req("POST", "/", "Action=ListTopics&Version=2010-03-31", map[string]string{
+		"Content-Type": "application/x-www-form-urlencoded",
+	})
+	c, op, ok := (identifyQuery{}).Claim(r)
+	if !ok || c != QueryXML || op != "ListTopics" {
+		t.Fatalf("got (%v, %q, %v); want (QueryXML, \"ListTopics\", true)", c, op, ok)
+	}
+}
+
+func TestIdentifyQuery_FieldsStillDecodableAfterClaim(t *testing.T) {
+	// Claim reads the body via r.FormValue (r.ParseForm), which caches
+	// the parsed values on r.Form rather than draining r.Body for good.
+	// The codec's own Decode pass runs afterwards and must still see
+	// every field — not just Action.
+	r := req("POST", "/", "Action=CreateRole&RoleName=test-role", map[string]string{
+		"Content-Type": "application/x-www-form-urlencoded",
+	})
+	_, op, ok := (identifyQuery{}).Claim(r)
+	if !ok || op != "CreateRole" {
+		t.Fatalf("Claim: got (%q, %v), want (CreateRole, true)", op, ok)
+	}
+
+	var into struct {
+		RoleName string `json:"RoleName"`
+	}
+	if aerr := QueryXML.Decode(r, &into); aerr != nil {
+		t.Fatalf("Decode after Claim: unexpected error %+v", aerr)
+	}
+	if into.RoleName != "test-role" {
+		t.Fatalf("Decode after Claim: RoleName = %q, want %q (fields lost after Claim)", into.RoleName, "test-role")
+	}
+}
+
+func TestIdentifyQuery_BodyOnlyAction_NoAction(t *testing.T) {
+	// A form-encoded POST with no Action anywhere still claims the codec
+	// (so callers can render a Query-protocol-shaped error) but resolves
+	// no operation name.
+	r := req("POST", "/", "RoleName=test-role", map[string]string{
+		"Content-Type": "application/x-www-form-urlencoded",
+	})
+	c, op, ok := (identifyQuery{}).Claim(r)
+	if !ok || c != QueryXML || op != "" {
+		t.Fatalf("got (%v, %q, %v); want (QueryXML, \"\", true)", c, op, ok)
+	}
+}
+
+func TestIdentifyQuery_GETNoBody(t *testing.T) {
+	// GET requests never carry a body to peek at; Action must already be
+	// in the URL query string (handled by the branch above) or the op
+	// name stays unresolved. Must not panic on a nil/absent body.
+	r := req("GET", "/", "", map[string]string{
 		"Content-Type": "application/x-www-form-urlencoded",
 	})
 	c, op, ok := (identifyQuery{}).Claim(r)
