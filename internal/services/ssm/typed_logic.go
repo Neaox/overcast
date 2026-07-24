@@ -213,11 +213,14 @@ func (h *Handler) getParametersByPathTyped(ctx context.Context, req *getParamete
 		filtered = append(filtered, p)
 	}
 
-	maxResults := req.MaxResults
-	if maxResults <= 0 {
-		maxResults = 10
+	// See handler.go's GetParametersByPath for the AWS doc citation behind
+	// this default/cap/error mapping (both call sites dispatch to the same
+	// operation depending on wire protocol and must stay in sync).
+	page, err := serviceutil.Paginate(filtered, req.MaxResults, req.NextToken,
+		serviceutil.PaginateOptions{DefaultLimit: 10, MaxLimit: 10})
+	if err != nil {
+		return nil, errInvalidNextToken()
 	}
-	page := serviceutil.Paginate(filtered, maxResults, req.NextToken)
 
 	params := make([]parameterWire, 0, len(page.Items))
 	for _, rec := range page.Items {
@@ -238,11 +241,13 @@ func (h *Handler) describeParametersTyped(ctx context.Context, req *describePara
 		}
 	}
 
-	maxResults := req.MaxResults
-	if maxResults <= 0 {
-		maxResults = 50
+	// See handler.go's DescribeParameters for the AWS doc citation behind
+	// this default/cap/error mapping.
+	page, err := serviceutil.Paginate(filtered, req.MaxResults, req.NextToken,
+		serviceutil.PaginateOptions{DefaultLimit: 50, MaxLimit: 50})
+	if err != nil {
+		return nil, errInvalidNextToken()
 	}
-	page := serviceutil.Paginate(filtered, maxResults, req.NextToken)
 
 	params := make([]describeParameterWire, 0, len(page.Items))
 	for _, rec := range page.Items {
@@ -284,11 +289,13 @@ func (h *Handler) getParameterHistoryTyped(ctx context.Context, req *getParamete
 		items = append(items, versionedItem{v: v, version: int64(i + 1)})
 	}
 
-	maxResults := req.MaxResults
-	if maxResults <= 0 {
-		maxResults = 50
+	// See handler.go's GetParameterHistory for the AWS doc citation behind
+	// this default/cap/error mapping.
+	page, err := serviceutil.Paginate(items, req.MaxResults, req.NextToken,
+		serviceutil.PaginateOptions{DefaultLimit: 50, MaxLimit: 50})
+	if err != nil {
+		return nil, errInvalidNextToken()
 	}
-	page := serviceutil.Paginate(items, maxResults, req.NextToken)
 
 	params := make([]historyParameterWire, 0, len(page.Items))
 	for _, item := range page.Items {

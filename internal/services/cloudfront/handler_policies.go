@@ -838,7 +838,11 @@ func (h *Handler) ListCloudFrontOriginAccessIdentities(w http.ResponseWriter, r 
 
 	marker := r.URL.Query().Get("Marker")
 	maxItems := serviceutil.QueryInt(r, "MaxItems", 100)
-	page := serviceutil.Paginate(all, maxItems, marker)
+	page, err := serviceutil.Paginate(all, maxItems, marker, serviceutil.PaginateOptions{DefaultLimit: 100})
+	if err != nil {
+		protocol.WriteXMLError(w, r, errInvalidMarker())
+		return
+	}
 
 	summaries := make([]CloudFrontOriginAccessIdentitySummary, 0, len(page.Items))
 	for _, oai := range page.Items {
