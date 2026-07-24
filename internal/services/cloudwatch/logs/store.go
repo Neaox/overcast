@@ -407,6 +407,207 @@ func mergeEventsSorted(a, b []LogEvent) []LogEvent {
 	return out
 }
 
+// ---- Range + limit pushdown (storage-access-plan.md A4, pagination-plan.md G1/G6) ----
+
+// bufferedSeqBase is added to a buffered (not-yet-flushed) event's index
+// within its cache snapshot to build a synthetic Seq comparable to a
+// persisted event's real seq — chosen far larger than any realistic
+// persisted seq so buffered events always sort after a persisted event
+// sharing the same millisecond timestamp, matching mergeEventsSorted's
+// existing "ties keep persisted before buffered" convention (extended here
+// to also give buffered events a cursor-comparable Seq).
+//
+// Known, accepted limitation: this synthetic Seq is only stable across
+// calls that observe the SAME buffer snapshot — a resume cursor pointing at
+// a buffered event, polled faster than the ~50ms flush debounce while the
+// buffer is still being mutated, can rarely mis-order relative to a
+// same-millisecond event that lands in the buffer between polls. Once the
+// event flushes (at most one debounce interval later), its identity becomes
+// the backend's own stable seq and resumption is exact again — the same
+// category of narrow, documented race as sweepExpiredStreamsOnce's above.
+const bufferedSeqBase = int64(1) << 62
+
+// getEventsRangeMerged combines eventBackend.getEventsRange's persisted
+// range read with the stream's unflushed write buffer (storage-access-plan.md
+// P4 — a pushdown must preserve read-your-writes through write buffers), so
+// callers see exactly what the old full-getEvents-then-filter path would
+// have shown, without paying for a full-history read.
+//
+// Fetching exactly `limit` persisted events (not more) is sufficient: any
+// persisted event that could appear in the final merged-and-trimmed page is
+// necessarily within persisted's own top-`limit` in the requested direction
+// — buffered events can only displace persisted ones out of the final page,
+// never require reaching further back than persisted's own top-`limit`.
+func (s *logsStore) getEventsRangeMerged(ctx context.Context, groupName, streamName string, startTs, endTs int64, after eventCursor, limit int, forward bool) ([]RangedEvent, *protocol.AWSError) {
+	region := s.region(ctx)
+
+	c := s.loadEventCache(ctx, groupName, streamName)
+	c.mu.Lock()
+	var buffered []LogEvent
+	if len(c.buffer) > 0 {
+		buffered = make([]LogEvent, len(c.buffer))
+		copy(buffered, c.buffer)
+	}
+	c.mu.Unlock()
+
+	persisted, err := s.backend.getEventsRange(ctx, region, groupName, streamName, startTs, endTs, after, limit, forward)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if len(buffered) == 0 {
+		return persisted, nil
+	}
+
+	bufferedRanged := make([]RangedEvent, 0, len(buffered))
+	for i, e := range buffered {
+		if e.Timestamp < startTs || e.Timestamp > endTs {
+			continue
+		}
+		seq := bufferedSeqBase + int64(i)
+		if !cursorAllows(e.Timestamp, seq, after, forward) {
+			continue
+		}
+		bufferedRanged = append(bufferedRanged, RangedEvent{LogEvent: e, Seq: seq})
+	}
+	merged := mergeRangedEventsSorted(persisted, bufferedRanged)
+	return trimRangedEvents(merged, limit, forward), nil
+}
+
+// mergeRangedEventsSorted merges two ascending-by-(Timestamp,Seq) slices in
+// O(len(a)+len(b)) — RangedEvent's analogue of mergeEventsSorted above, kept
+// as a separate function rather than genericized since these are the only
+// two consumers (rule of two not yet triggered) and the item shapes differ.
+// Ties keep a (persisted) before b (buffered), matching mergeEventsSorted's
+// existing convention.
+func mergeRangedEventsSorted(a, b []RangedEvent) []RangedEvent {
+	if len(b) == 0 {
+		return a
+	}
+	if len(a) == 0 {
+		return b
+	}
+	out := make([]RangedEvent, 0, len(a)+len(b))
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		if a[i].Timestamp <= b[j].Timestamp {
+			out = append(out, a[i])
+			i++
+		} else {
+			out = append(out, b[j])
+			j++
+		}
+	}
+	out = append(out, a[i:]...)
+	out = append(out, b[j:]...)
+	return out
+}
+
+// trimRangedEvents caps a merged, ascending-ordered event slice at limit,
+// keeping the PREFIX when forward (the earliest events) or the SUFFIX when
+// !forward (the latest events) — mirroring getEventsRange's own
+// forward/backward selection semantics for the post-merge trim.
+func trimRangedEvents(events []RangedEvent, limit int, forward bool) []RangedEvent {
+	if limit <= 0 || len(events) <= limit {
+		return events
+	}
+	if forward {
+		return events[:limit]
+	}
+	return events[len(events)-limit:]
+}
+
+// getGroupEventsRangeMerged is getEventsRangeMerged's group-wide analogue
+// for FilterLogEvents: it combines eventBackend.getGroupEventsRange's
+// persisted read with the write buffers of every stream in candidateStreams
+// (the set the caller has already resolved via listLogStreams/explicit
+// LogStreamNames — see typed_logic.go's filterLogEventsTyped) whose window
+// overlaps [startTs, endTs]. Group-wide range reads are always forward-only
+// (FilterLogEvents has no backward-paging concept).
+func (s *logsStore) getGroupEventsRangeMerged(ctx context.Context, groupName, streamPrefix string, candidateStreams []string, startTs, endTs int64, after groupCursor, limit int) ([]GroupRangedEvent, *protocol.AWSError) {
+	region := s.region(ctx)
+
+	persisted, err := s.backend.getGroupEventsRange(ctx, region, groupName, streamPrefix, startTs, endTs, after, limit)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+
+	var bufferedRanged []GroupRangedEvent
+	for _, streamName := range candidateStreams {
+		if !s.streamHasBufferedEvents(region, groupName, streamName) {
+			continue
+		}
+		c := s.loadEventCache(ctx, groupName, streamName)
+		c.mu.Lock()
+		buffered := make([]LogEvent, len(c.buffer))
+		copy(buffered, c.buffer)
+		c.mu.Unlock()
+		for i, e := range buffered {
+			if e.Timestamp < startTs || e.Timestamp > endTs {
+				continue
+			}
+			seq := bufferedSeqBase + int64(i)
+			if !groupCursorAllows(e.Timestamp, streamName, seq, after) {
+				continue
+			}
+			bufferedRanged = append(bufferedRanged, GroupRangedEvent{LogEvent: e, Seq: seq, StreamName: streamName})
+		}
+	}
+
+	if len(bufferedRanged) == 0 {
+		return persisted, nil
+	}
+	sort.Slice(bufferedRanged, func(i, j int) bool {
+		a, b := bufferedRanged[i], bufferedRanged[j]
+		if a.Timestamp != b.Timestamp {
+			return a.Timestamp < b.Timestamp
+		}
+		if a.StreamName != b.StreamName {
+			return a.StreamName < b.StreamName
+		}
+		return a.Seq < b.Seq
+	})
+	merged := mergeGroupRangedEventsSorted(persisted, bufferedRanged)
+	if limit > 0 && len(merged) > limit {
+		merged = merged[:limit]
+	}
+	return merged, nil
+}
+
+// mergeGroupRangedEventsSorted is mergeRangedEventsSorted's group-wide
+// analogue, ordering by (Timestamp, StreamName, Seq) instead of
+// (Timestamp, Seq) — matching getGroupEventsRange's documented total order.
+func mergeGroupRangedEventsSorted(a, b []GroupRangedEvent) []GroupRangedEvent {
+	if len(b) == 0 {
+		return a
+	}
+	if len(a) == 0 {
+		return b
+	}
+	less := func(x, y GroupRangedEvent) bool {
+		if x.Timestamp != y.Timestamp {
+			return x.Timestamp < y.Timestamp
+		}
+		if x.StreamName != y.StreamName {
+			return x.StreamName < y.StreamName
+		}
+		return x.Seq <= y.Seq
+	}
+	out := make([]GroupRangedEvent, 0, len(a)+len(b))
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		if less(a[i], b[j]) {
+			out = append(out, a[i])
+			i++
+		} else {
+			out = append(out, b[j])
+			j++
+		}
+	}
+	out = append(out, a[i:]...)
+	out = append(out, b[j:]...)
+	return out
+}
+
 func (s *logsStore) appendEvents(ctx context.Context, groupName, streamName string, newEvents []LogEvent) *protocol.AWSError {
 	if len(newEvents) == 0 {
 		return nil

@@ -142,6 +142,208 @@ func TestEventBackend_MemoryAndSQL_Parity(t *testing.T) {
 	}
 }
 
+// rangedTimestamps extracts just the Timestamp field from a []RangedEvent,
+// for terse assertions below.
+func rangedTimestamps(events []RangedEvent) []int64 {
+	out := make([]int64, len(events))
+	for i, e := range events {
+		out[i] = e.Timestamp
+	}
+	return out
+}
+
+func int64sEqual(a, b []int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestEventBackend_GetEventsRange_MemoryAndSQL_Parity exercises
+// getEventsRange (storage-access-plan.md A4) directly against both
+// implementations: window bounds, forward vs backward selection, limit, and
+// cursor-based resume — the storage half of GetLogEvents' pagination
+// contract (pagination-plan.md G1).
+func TestEventBackend_GetEventsRange_MemoryAndSQL_Parity(t *testing.T) {
+	mem, sqlBackend := newTestBackends(t)
+
+	for name, b := range map[string]eventBackend{"memory": mem, "sql": sqlBackend} {
+		b := b
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			const region, group, stream = "us-east-1", "g", "s"
+
+			// Seed 5 events at ts=100..500, plus two events tied at ts=300
+			// (seq tiebreak matters for cursor resume across a tie).
+			if err := b.appendEvents(ctx, region, group, stream, []LogEvent{
+				{Timestamp: 100, Message: "m100"},
+				{Timestamp: 200, Message: "m200"},
+				{Timestamp: 300, Message: "m300a"},
+				{Timestamp: 400, Message: "m400"},
+				{Timestamp: 500, Message: "m500"},
+			}); err != nil {
+				t.Fatalf("appendEvents: %v", err)
+			}
+			if err := b.appendEvents(ctx, region, group, stream, []LogEvent{
+				{Timestamp: 300, Message: "m300b"},
+			}); err != nil {
+				t.Fatalf("appendEvents (tie): %v", err)
+			}
+
+			// Full window, forward, no cursor: ascending, all 6.
+			got, err := b.getEventsRange(ctx, region, group, stream, 0, 1000, eventCursor{}, 0, true)
+			if err != nil {
+				t.Fatalf("getEventsRange forward full: %v", err)
+			}
+			want := []int64{100, 200, 300, 300, 400, 500}
+			if !int64sEqual(rangedTimestamps(got), want) {
+				t.Fatalf("forward full window = %v, want %v", rangedTimestamps(got), want)
+			}
+
+			// Full window, backward, no cursor, limit=3: the LAST 3, still
+			// ascending in the response.
+			got, err = b.getEventsRange(ctx, region, group, stream, 0, 1000, eventCursor{}, 3, false)
+			if err != nil {
+				t.Fatalf("getEventsRange backward limit3: %v", err)
+			}
+			want = []int64{300, 400, 500}
+			if !int64sEqual(rangedTimestamps(got), want) {
+				t.Fatalf("backward limit3 = %v, want %v", rangedTimestamps(got), want)
+			}
+
+			// Narrowed window [200,400] inclusive both ends: 200,300,300,400.
+			got, err = b.getEventsRange(ctx, region, group, stream, 200, 400, eventCursor{}, 0, true)
+			if err != nil {
+				t.Fatalf("getEventsRange narrowed window: %v", err)
+			}
+			want = []int64{200, 300, 300, 400}
+			if !int64sEqual(rangedTimestamps(got), want) {
+				t.Fatalf("narrowed window = %v, want %v", rangedTimestamps(got), want)
+			}
+
+			// Cursor resume: forward from the first ts=300 event should
+			// yield the SECOND ts=300 event then 400,500 — proving the
+			// (Timestamp, Seq) cursor breaks the tie correctly rather than
+			// re-returning or skipping the tied event.
+			firstPage, err := b.getEventsRange(ctx, region, group, stream, 0, 1000, eventCursor{}, 3, true)
+			if err != nil {
+				t.Fatalf("getEventsRange firstPage: %v", err)
+			}
+			if len(firstPage) != 3 {
+				t.Fatalf("firstPage len = %d, want 3", len(firstPage))
+			}
+			cursor := eventCursor{Valid: true, Timestamp: firstPage[2].Timestamp, Seq: firstPage[2].Seq}
+			secondPage, err := b.getEventsRange(ctx, region, group, stream, 0, 1000, cursor, 3, true)
+			if err != nil {
+				t.Fatalf("getEventsRange secondPage: %v", err)
+			}
+			wantSecond := []int64{300, 400, 500}
+			if !int64sEqual(rangedTimestamps(secondPage), wantSecond) {
+				t.Fatalf("secondPage = %v, want %v (cursor tie-break failed)", rangedTimestamps(secondPage), wantSecond)
+			}
+
+			// Exhaustion: resuming forward from the very last event yields
+			// nothing.
+			lastEvent := secondPage[len(secondPage)-1]
+			exhaustedCursor := eventCursor{Valid: true, Timestamp: lastEvent.Timestamp, Seq: lastEvent.Seq}
+			exhausted, err := b.getEventsRange(ctx, region, group, stream, 0, 1000, exhaustedCursor, 3, true)
+			if err != nil {
+				t.Fatalf("getEventsRange exhausted: %v", err)
+			}
+			if len(exhausted) != 0 {
+				t.Fatalf("expected exhausted forward read to return 0 events, got %v", rangedTimestamps(exhausted))
+			}
+		})
+	}
+}
+
+// TestEventBackend_GetGroupEventsRange_MemoryAndSQL_Parity exercises
+// getGroupEventsRange (storage-access-plan.md A4) directly against both
+// implementations: multi-stream interleaving, streamPrefix filtering, and
+// cursor-based resume across a (Timestamp, StreamName, Seq) tie — the
+// storage half of FilterLogEvents becoming one group-range query
+// (pagination-plan.md G6).
+func TestEventBackend_GetGroupEventsRange_MemoryAndSQL_Parity(t *testing.T) {
+	mem, sqlBackend := newTestBackends(t)
+
+	for name, b := range map[string]eventBackend{"memory": mem, "sql": sqlBackend} {
+		b := b
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			const region, group = "us-east-1", "g"
+
+			if err := b.appendEvents(ctx, region, group, "alpha", []LogEvent{
+				{Timestamp: 100, Message: "a100"},
+				{Timestamp: 300, Message: "a300"},
+			}); err != nil {
+				t.Fatalf("appendEvents alpha: %v", err)
+			}
+			if err := b.appendEvents(ctx, region, group, "beta", []LogEvent{
+				{Timestamp: 200, Message: "b200"},
+				{Timestamp: 300, Message: "b300"}, // ties with alpha's 300
+			}); err != nil {
+				t.Fatalf("appendEvents beta: %v", err)
+			}
+			if err := b.appendEvents(ctx, region, group, "other-prefix", []LogEvent{
+				{Timestamp: 50, Message: "o50"},
+			}); err != nil {
+				t.Fatalf("appendEvents other-prefix: %v", err)
+			}
+
+			// No prefix: all 5 events, interleaved by (ts, streamName).
+			got, err := b.getGroupEventsRange(ctx, region, group, "", 0, 1000, groupCursor{}, 0)
+			if err != nil {
+				t.Fatalf("getGroupEventsRange no-prefix: %v", err)
+			}
+			if len(got) != 5 {
+				t.Fatalf("no-prefix len = %d, want 5: %+v", len(got), got)
+			}
+			// At ts=300, "alpha" sorts before "beta" (StreamName tiebreak).
+			var tsAt300 []string
+			for _, e := range got {
+				if e.Timestamp == 300 {
+					tsAt300 = append(tsAt300, e.StreamName)
+				}
+			}
+			if !(len(tsAt300) == 2 && tsAt300[0] == "alpha" && tsAt300[1] == "beta") {
+				t.Fatalf("ts=300 stream order = %v, want [alpha beta]", tsAt300)
+			}
+
+			// streamPrefix "a" excludes beta and other-prefix.
+			got, err = b.getGroupEventsRange(ctx, region, group, "a", 0, 1000, groupCursor{}, 0)
+			if err != nil {
+				t.Fatalf("getGroupEventsRange prefix=a: %v", err)
+			}
+			if len(got) != 2 {
+				t.Fatalf("prefix=a len = %d, want 2 (alpha's events only): %+v", len(got), got)
+			}
+			for _, e := range got {
+				if e.StreamName != "alpha" {
+					t.Fatalf("prefix=a returned event from stream %q", e.StreamName)
+				}
+			}
+
+			// Cursor resume past the ts=300 tie: alpha's 300 as cursor
+			// should yield beta's 300 next (not re-return alpha's). alpha's
+			// ts=300 event is the SECOND event in its single appendEvents
+			// call ({100,300}), so its seq is 1, not 0.
+			cursor := groupCursor{Valid: true, Timestamp: 300, StreamName: "alpha", Seq: 1}
+			resumed, err := b.getGroupEventsRange(ctx, region, group, "", 0, 1000, cursor, 0)
+			if err != nil {
+				t.Fatalf("getGroupEventsRange resumed: %v", err)
+			}
+			if len(resumed) != 1 || resumed[0].StreamName != "beta" || resumed[0].Timestamp != 300 {
+				t.Fatalf("resumed past alpha/300 tie = %+v, want exactly beta's ts=300 event", resumed)
+			}
+		})
+	}
+}
+
 // TestEventBackend_DebugScan_MemoryAndSQL_Parity exercises the
 // DebugStateProvider-backing debugScan/debugDeleteAll methods on both
 // backends, including the truncation contract used by the bounded
