@@ -973,16 +973,39 @@ func TestPurgeQueue_clearsAllMessages(t *testing.T) {
 	}
 }
 
+// TestPurgeQueue_messagesWithUnreadablePayloads previously seeded directly
+// undecodable message rows into the generic kv store's "sqs:messages"
+// namespace and asserted PurgeQueue cleared them. That namespace stopped
+// being where live message data lives once messages graduated to the
+// dedicated sqs_messages table (docs/plans/storage-plan.md item 3.10) — a
+// stray raw kv write under "sqs:messages" is now permanently invisible to
+// every message operation (it only still exists at all so the one-time
+// blob-to-row migration has something to convert on a real SQLite-backed
+// store; this test's server runs the plain in-memory backend, which never
+// runs that migration). Seeding there no longer reaches anything PurgeQueue
+// touches, so the original assertion would pass vacuously rather than
+// exercising corruption tolerance.
+//
+// Real corruption tolerance for the new dedicated table (a row whose
+// message_json can't be decoded) is now covered where it can actually occur
+// — the SQL backend — by
+// TestSQLMessageBackend_ToleratesCorruptRows in
+// internal/services/sqs/message_backend_test.go. This test is kept, adjusted
+// to verify what's still true and observable from the public HTTP surface:
+// PurgeQueue succeeds and clears real messages even when an unrelated,
+// unreadable legacy value happens to be sitting in the now-dead
+// "sqs:messages" kv namespace (e.g. left over from before this graduation).
 func TestPurgeQueue_messagesWithUnreadablePayloads(t *testing.T) {
-	// Given: a queue contains message rows that cannot be decoded.
+	// Given: a queue with real messages, plus a stray unreadable legacy value
+	// in the kv namespace messages no longer live in.
 	srv := helpers.NewTestServer(t)
 	queueURL := createQueue(t, srv, "purge-unreadable-queue")
 	ctx := t.Context()
 	for i := 0; i < 3; i++ {
-		key := fmt.Sprintf("us-east-1/purge-unreadable-queue/msg-%d", i)
-		if err := srv.Store.Set(ctx, "sqs:messages", key, "{"); err != nil {
-			t.Fatalf("seed unreadable message %d: %v", i, err)
-		}
+		sendMessage(t, srv, queueURL, fmt.Sprintf("message-%d", i))
+	}
+	if err := srv.Store.Set(ctx, "sqs:messages", "us-east-1/purge-unreadable-queue/legacy-stray", "{"); err != nil {
+		t.Fatalf("seed stray legacy kv value: %v", err)
 	}
 
 	// When: the queue is purged.
@@ -991,14 +1014,20 @@ func TestPurgeQueue_messagesWithUnreadablePayloads(t *testing.T) {
 	})
 	defer purgeResp.Body.Close()
 
-	// Then: purge succeeds because it only needs message keys, not payloads.
+	// Then: purge succeeds and every real message is gone, unaffected by the
+	// stray legacy kv value.
 	helpers.AssertStatus(t, purgeResp, http.StatusOK)
-	pairs, err := srv.Store.Scan(ctx, "sqs:messages", "us-east-1/purge-unreadable-queue/")
-	if err != nil {
-		t.Fatalf("scan purged messages: %v", err)
+	attrResp := sqsCall(t, srv, "GetQueueAttributes", map[string]any{
+		"QueueUrl":       queueURL,
+		"AttributeNames": []string{"ApproximateNumberOfMessages"},
+	})
+	defer attrResp.Body.Close()
+	var result struct {
+		Attributes map[string]string `json:"Attributes"`
 	}
-	if len(pairs) != 0 {
-		t.Fatalf("expected all unreadable messages to be purged, got %d", len(pairs))
+	helpers.DecodeJSON(t, attrResp, &result)
+	if result.Attributes["ApproximateNumberOfMessages"] != "0" {
+		t.Fatalf("expected 0 messages after purge, got %s", result.Attributes["ApproximateNumberOfMessages"])
 	}
 }
 

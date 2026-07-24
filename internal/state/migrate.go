@@ -32,7 +32,9 @@ import (
 //   - 20-29: reserved for the DynamoDB items/stream-records tables
 //     (storage-plan.md Phase 3 item 3.9) — see
 //     internal/services/dynamodb/migrations.go.
-//   - 30+:   free for future dedicated tables. Claim the next unused decade
+//   - 30-39: reserved for the SQS messages table (storage-plan.md item 3.10)
+//     — see internal/services/sqs/migrations.go.
+//   - 40+:   free for future dedicated tables. Claim the next unused decade
 //     and document it here when a package registers into it.
 //
 // There are no down-migrations. The runner takes a file-copy backup of

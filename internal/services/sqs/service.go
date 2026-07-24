@@ -77,6 +77,60 @@ func (s *Service) Stop(_ context.Context) {
 	}
 }
 
+// debugMessagesScanLimit bounds how many rows DebugStateKeys/DebugStateValues
+// return in one response — mirrors CloudWatch Logs' debugEventsScanLimit
+// (internal/services/cloudwatch/logs/service.go). Message volume is
+// unbounded (that's why sqs:messages graduated to a dedicated table — see
+// docs/plans/storage-plan.md item 3.10), so dumping every row into a
+// synchronous JSON response is unsafe for a busy queue.
+const debugMessagesScanLimit = 500
+
+// DebugNamespace returns the virtual raw-state namespace name for SQS
+// messages, implementing router.DebugStateProvider. Messages live in the
+// dedicated sqs_messages SQL table (or the in-memory equivalent), not the
+// generic kv store, so without this they'd be invisible to /_debug/state and
+// exempt from /_debug/reset — the graduation rule (storage-plan.md
+// "Settled decisions") requires this for every dedicated table, mirroring
+// DynamoDB's "dynamodb:items" and CloudWatch Logs' "logs:events".
+func (s *Service) DebugNamespace() string { return "sqs:messages" }
+
+// DebugStateKeys returns up to debugMessagesScanLimit virtual keys for
+// /_debug/state's top-level listing.
+func (s *Service) DebugStateKeys(ctx context.Context) ([]string, error) {
+	records, _, err := s.handler.store.backend.debugScan(ctx, debugMessagesScanLimit)
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(records))
+	for _, r := range records {
+		keys = append(keys, debugMessageKey(r))
+	}
+	return keys, nil
+}
+
+// DebugStateValues returns raw message values keyed by
+// region/queueName/messageID, capped at debugMessagesScanLimit rows. A
+// "_truncated" pseudo-key is added when more rows exist than were returned.
+func (s *Service) DebugStateValues(ctx context.Context) (map[string]string, error) {
+	records, truncated, err := s.handler.store.backend.debugScan(ctx, debugMessagesScanLimit)
+	if err != nil {
+		return nil, err
+	}
+	values := make(map[string]string, len(records)+1)
+	for _, r := range records {
+		values[debugMessageKey(r)] = r.RawJSON
+	}
+	if truncated {
+		values["_truncated"] = fmt.Sprintf("showing first %d messages only", debugMessagesScanLimit)
+	}
+	return values, nil
+}
+
+// DebugResetState deletes every persisted message, for /_debug/reset.
+func (s *Service) DebugResetState(ctx context.Context) error {
+	return s.handler.store.backend.debugDeleteAll(ctx)
+}
+
 // watchVisibility runs in a background goroutine and emits SQSMessageVisible
 // when an in-flight message's visibility timeout expires.
 // It tracks which messages are currently in-flight per queue; when a message
@@ -103,7 +157,8 @@ func (s *Service) watchVisibility(ctx context.Context, bus *events.Bus) {
 				if err := json.Unmarshal([]byte(p.Value), &q); err != nil {
 					continue
 				}
-				msgPairs, err := s.handler.store.scanAllMessagesForQueue(ctx, p.Key)
+				region, queueName := serviceutil.SplitRegionKey(p.Key)
+				messages, err := s.handler.store.scanAllMessagesForQueue(ctx, region, queueName)
 				if err != nil {
 					continue
 				}
@@ -114,11 +169,7 @@ func (s *Service) watchVisibility(ctx context.Context, bus *events.Bus) {
 				}
 				next := make(map[string]bool)
 
-				for _, mp := range msgPairs {
-					var msg Message
-					if err := json.Unmarshal([]byte(mp.Value), &msg); err != nil {
-						continue
-					}
+				for _, msg := range messages {
 					// Only messages that have been received (not just delayed) qualify.
 					if msg.ApproximateReceiveCount == 0 {
 						continue
