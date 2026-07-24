@@ -609,6 +609,12 @@ func (s *logsStore) startRetentionSweeper() {
 // to — see handler.go/typed_logic.go) are never swept: real CloudWatch Logs
 // treats 0/unset as "never expire", and this codebase already follows that
 // convention for every other retention-related code path.
+//
+// After pruning a group's expired events, it also sweeps that group's stream
+// *metadata* records (sweepExpiredStreamsOnce): real CloudWatch Logs
+// eventually deletes a log stream's DescribeLogStreams entry once its last
+// event has aged out of the retention window, rather than leaving an
+// empty-forever stream with stale First/LastEventTimestamp fields behind.
 func (s *logsStore) sweepExpiredEventsOnce(ctx context.Context) {
 	pairs, err := s.store.Scan(ctx, nsLogGroups, "")
 	if err != nil {
@@ -626,7 +632,82 @@ func (s *logsStore) sweepExpiredEventsOnce(ctx context.Context) {
 		region, _ := serviceutil.SplitRegionKey(kv.Key)
 		cutoff := now.AddDate(0, 0, -g.RetentionInDays)
 		_ = s.backend.deleteEventsOlderThan(ctx, region, g.Name, cutoff)
+		s.sweepExpiredStreamsOnce(ctx, region, g.Name, cutoff)
 	}
+}
+
+// sweepExpiredStreamsOnce deletes the logs:streams metadata record for every
+// stream in (region, group) whose LastEventTimestamp is older than cutoff and
+// which now has no events left anywhere — neither persisted (the backend,
+// re-checked here rather than assumed, since deleteEventsOlderThan already
+// ran for this group this sweep) nor buffered (the per-stream write cache).
+// Called after deleteEventsOlderThan so a stream's persisted events, if any
+// survived, are already up to date.
+//
+// Conservative by design, matching the retention feature's failure mode
+// (leaking metadata forever) rather than the alternative (losing data):
+//   - LastEventTimestamp == 0 means "never had an event, or metadata was
+//     lost" — indistinguishable from each other, and real CloudWatch Logs
+//     never removes a stream that has had no events at all — so those
+//     streams are always skipped.
+//   - a stream with anything in its write buffer is skipped even if
+//     LastEventTimestamp looks expired, since that metadata field isn't
+//     updated by buffered (not-yet-flushed) appends.
+//
+// Known, accepted race: a PutLogEvents that validates the stream and buffers
+// an event in the microseconds between this function's buffer/persisted
+// checks and its Delete would lose that event (clearEventCache drops the
+// buffer). Reaching it requires appending to a stream that has been dormant
+// past its whole retention window at the exact instant of a five-minute
+// sweep tick — the same order-of-operations window the explicit
+// deleteLogStream path has always had. Documented rather than locked
+// against; revisit only if a real workload ever hits it.
+func (s *logsStore) sweepExpiredStreamsOnce(ctx context.Context, region, group string, cutoff time.Time) {
+	streamPrefix := serviceutil.RegionKey(region, group+"/")
+	pairs, err := s.store.Scan(ctx, nsStreams, streamPrefix)
+	if err != nil {
+		return
+	}
+	cutoffMillis := cutoff.UnixMilli()
+	for _, kv := range pairs {
+		var st LogStream
+		if err := json.Unmarshal([]byte(kv.Value), &st); err != nil {
+			continue
+		}
+		if st.LastEventTimestamp == 0 || st.LastEventTimestamp >= cutoffMillis {
+			continue
+		}
+		if s.streamHasBufferedEvents(region, group, st.Name) {
+			continue
+		}
+		persisted, err := s.backend.getEvents(ctx, region, group, st.Name)
+		if err != nil || len(persisted) > 0 {
+			continue
+		}
+		if err := s.store.Delete(ctx, nsStreams, kv.Key); err != nil {
+			continue
+		}
+		// Reuse clearEventCache so an empty (or stale, never-populated) cache
+		// entry for this now-deleted stream doesn't linger in streamCaches.
+		s.clearEventCache(region, group, st.Name)
+	}
+}
+
+// streamHasBufferedEvents reports whether a stream currently has unflushed
+// events sitting in its write buffer. Unlike loadEventCache, this never
+// creates a cache entry for a stream that doesn't already have one — the
+// retention sweep should not conjure up empty cache entries for every stream
+// it merely inspects.
+func (s *logsStore) streamHasBufferedEvents(region, group, stream string) bool {
+	key := serviceutil.RegionKey(region, eventsKey(group, stream))
+	v, ok := s.streamCaches.Load(key)
+	if !ok {
+		return false
+	}
+	c := v.(*eventCache)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.buffer) > 0
 }
 
 // ---- CloudWatch Logs-specific errors ---------------------------------------
