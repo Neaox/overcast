@@ -73,7 +73,7 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
-- **Storage** — hybrid-mode writes that crossed the size-trigger flush threshold while the background seed was still running could miss their early-flush wakeup and sit unflushed until the next timer interval; S3, Kinesis, CloudWatch Logs, and SNS list operations now skip a malformed persisted record instead of failing the whole listing, and large listings use single-scan reads instead of per-key lookups; a store degraded to memory-only now caps its pending-log file at 64 MiB instead of growing it on every write for the rest of the run, and startup log replay streams the file instead of loading it whole.
+- **Storage** — hybrid-mode writes that crossed the size-trigger flush threshold while the background seed was still running could miss their early-flush wakeup and sit unflushed until the next timer interval; S3, Kinesis, CloudWatch Logs, and SNS list operations now skip a malformed persisted record instead of failing the whole listing, and large listings use single-scan reads instead of per-key lookups; API Gateway's REST and HTTP API resource/stage/deployment/route/integration listings now also skip a malformed persisted record instead of failing the whole listing, and their per-API delete-all-by-prefix helpers use a single ranged delete when the store supports it instead of one delete per key (ECS's task-definition-family listing was audited too and confirmed already free of the per-key-lookup pattern, so it needed no change); a store degraded to memory-only now caps its pending-log file at 64 MiB instead of growing it on every write for the rest of the run, and startup log replay streams the file instead of loading it whole.
 
 ## [0.0.1-alpha.23] - 2026-07-23
 
