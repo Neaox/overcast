@@ -54,7 +54,7 @@ One codec for opaque continuation tokens: encode/decode a storage cursor (string
 
 ## Items
 
-### A1 — Kinesis: stored per-shard sequence counter  **[correctness + hot write path — do first]**
+### A1 — Kinesis: stored per-shard sequence counter  **[✅ done — correctness + hot write path]**
 
 **Evidence.** Every `PutRecord` calls `listRecords` — a full-shard `Scan` + JSON decode + sort — solely so `nextSeqNo` can use `len(existing)` as the next counter ([typed_logic.go:254](../../internal/services/kinesis/typed_logic.go), [store.go:243-246](../../internal/services/kinesis/store.go)); `PutRecords` repeats this **per record in the batch** ([typed_logic.go:284](../../internal/services/kinesis/typed_logic.go)). O(n) per write, O(n²) to fill a shard.
 
@@ -66,13 +66,13 @@ One codec for opaque continuation tokens: encode/decode a storage cursor (string
 
 **Patterns:** P1 (keys already comply), M2 consumer. Unbounded/data-plane. **Accept when** the benchmark is flat and the collision test passes.
 
-### A2 — Kinesis: `GetRecords` range read instead of full-shard scan
+### A2 — Kinesis: `GetRecords` range read instead of full-shard scan  **[✅ done]**
 
 **Evidence.** `getRecordsTyped` honors `Limit` and the shard-iterator cursor only by slicing the result of a full-shard `listRecords` ([typed_logic.go:332-339](../../internal/services/kinesis/typed_logic.go), [store.go:164-184](../../internal/services/kinesis/store.go)).
 
 **Change.** Keys are `<region>/<stream>/<shard>/<seq>` with sortable seqs (per A1): read with `ScanPage(nsRecords, shardPrefix, startAfter=iteratorSeq, limit)` — copy the DynamoDB Streams `GetRecords` shape. Keep the defensive sort until A1 has been released long enough that pre-A1 non-contiguous data is implausible, then drop it.
 
-**Tests.** Iterator-resume correctness (no skips/duplicates across pages — mirror the ScanPage no-dup/no-gap suites); benchmark GetRecords vs shard depth, flat. **Depends on** A1. Patterns: P1, P3 (iterator is already the cursor). Unbounded.
+**Tests.** Iterator-resume correctness (no skips/duplicates across pages — mirror the ScanPage no-dup/no-gap suites); benchmark GetRecords vs shard depth, flat. **Depends on** A1. Patterns: P1, P3 (iterator is already the cursor). Unbounded. **Done (2026-07-24, branch fix/kinesis-seq-and-range-reads):** persisted per-shard counter (failing-first: two puts after a delete produced identical seq numbers pre-fix); PutRecord flat at 31 allocs/op across 0/1k/10k depth; GetRecords flat 1k→10k. Bonus: the JSON1.1 handlers — the default SDK wire path — duplicated the buggy logic and now delegate to the typed implementations (~140 duplicate lines removed). SplitShard/MergeShards share the duplication pattern (flagged, out of scope).
 
 ### A3 — DynamoDB: `Scan` pages at the item store instead of full-table reads
 

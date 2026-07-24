@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -251,11 +252,14 @@ func (h *Handler) putRecordTyped(ctx context.Context, req *putRecordRequest) (*p
 	}
 	shardIdx := pickShard(st.Shards, req.PartitionKey)
 	shardID := st.Shards[shardIdx].ShardId
-	existing, aerr := h.store.listRecords(ctx, req.StreamName, shardID)
+	// Persisted per-shard counter, not len(records) — storage-access-plan.md
+	// A1: len() regresses after a deletion and can collide with a
+	// surviving record's sequence number.
+	base, aerr := h.store.nextShardSeqBlock(ctx, req.StreamName, shardID, 1)
 	if aerr != nil {
 		return nil, aerr
 	}
-	seqNo := nextSeqNo(existing, shardIdx)
+	seqNo := formatSeqNo(shardIdx, base)
 	rec := &Record{
 		SequenceNumber:              seqNo,
 		ApproximateArrivalTimestamp: h.clk.Now().UTC(),
@@ -276,13 +280,35 @@ func (h *Handler) putRecordsTyped(ctx context.Context, req *putRecordsRequest) (
 	if aerr != nil {
 		return nil, aerr
 	}
-	results := make([]putRecordsEntry, 0, len(req.Records))
+
+	n := len(req.Records)
+	shardIdxs := make([]int, n)
+	shardIDs := make([]string, n)
+	counts := make(map[string]int, n)
+	for i, entry := range req.Records {
+		idx := pickShard(st.Shards, entry.PartitionKey)
+		shardIdxs[i] = idx
+		shardIDs[i] = st.Shards[idx].ShardId
+		counts[shardIDs[i]]++
+	}
+
+	// One contiguous block reservation per shard touched by this batch —
+	// not one read-modify-write per record (storage-access-plan.md A1).
+	bases := make(map[string]int64, len(counts))
+	for shardID, count := range counts {
+		base, aerr := h.store.nextShardSeqBlock(ctx, req.StreamName, shardID, count)
+		if aerr != nil {
+			return nil, aerr
+		}
+		bases[shardID] = base
+	}
+
 	now := h.clk.Now().UTC()
-	for _, entry := range req.Records {
-		shardIdx := pickShard(st.Shards, entry.PartitionKey)
-		shardID := st.Shards[shardIdx].ShardId
-		existing, _ := h.store.listRecords(ctx, req.StreamName, shardID)
-		seqNo := nextSeqNo(existing, shardIdx)
+	results := make([]putRecordsEntry, n)
+	for i, entry := range req.Records {
+		shardID := shardIDs[i]
+		seqNo := formatSeqNo(shardIdxs[i], bases[shardID])
+		bases[shardID]++
 		rec := &Record{
 			SequenceNumber:              seqNo,
 			ApproximateArrivalTimestamp: now,
@@ -290,7 +316,7 @@ func (h *Handler) putRecordsTyped(ctx context.Context, req *putRecordsRequest) (
 			PartitionKey:                entry.PartitionKey,
 		}
 		_ = h.store.putRecord(ctx, req.StreamName, shardID, rec)
-		results = append(results, putRecordsEntry{ShardId: shardID, SequenceNumber: seqNo})
+		results[i] = putRecordsEntry{ShardId: shardID, SequenceNumber: seqNo}
 	}
 	return &putRecordsResponse{FailedRecordCount: 0, Records: results}, nil
 }
@@ -329,51 +355,80 @@ func (h *Handler) getRecordsTyped(ctx context.Context, req *getRecordsRequest) (
 	if !ok {
 		return nil, invalidShardIterator("Invalid ShardIterator format")
 	}
-	allRecords, aerr := h.store.listRecords(ctx, streamName, shardID)
-	if aerr != nil {
-		return nil, aerr
-	}
 	limit := req.Limit
 	if limit <= 0 {
 		limit = 10000
 	}
-	var filtered []Record
-	if afterSeqNo == "LATEST" {
-		filtered = nil
-		if len(allRecords) > 0 {
-			afterSeqNo = allRecords[len(allRecords)-1].SequenceNumber
+
+	var (
+		records   []Record
+		lastSeqNo string
+	)
+
+	switch {
+	case afterSeqNo == "LATEST", strings.HasPrefix(afterSeqNo, "before:"):
+		// LATEST and AT_SEQUENCE_NUMBER ("before:") iterators only need a
+		// full-shard read once, to resolve their starting point on first
+		// use — the NextShardIterator this call returns carries a concrete
+		// sequence number, so every later poll takes the ScanPage range
+		// read below instead. That one-time resolution isn't the hot path
+		// A2 targets (repeated polling with a TRIM_HORIZON/
+		// AFTER_SEQUENCE_NUMBER-style cursor), so it's deliberately left
+		// as a full-shard read (storage-access-plan.md A2).
+		allRecords, aerr := h.store.listRecords(ctx, streamName, shardID)
+		if aerr != nil {
+			return nil, aerr
 		}
-	} else {
-		for _, rec := range allRecords {
-			if afterSeqNo == "" || rec.SequenceNumber > afterSeqNo {
-				filtered = append(filtered, rec)
-			} else if len(afterSeqNo) > 7 && afterSeqNo[:7] == "before:" {
-				target := afterSeqNo[7:]
+		if afterSeqNo == "LATEST" {
+			if len(allRecords) > 0 {
+				lastSeqNo = allRecords[len(allRecords)-1].SequenceNumber
+			}
+		} else {
+			target := afterSeqNo[len("before:"):]
+			for _, rec := range allRecords {
 				if rec.SequenceNumber >= target {
-					filtered = append(filtered, rec)
+					records = append(records, rec)
 				}
 			}
+			if len(records) > limit {
+				records = records[:limit]
+			}
+			switch {
+			case len(records) > 0:
+				lastSeqNo = records[len(records)-1].SequenceNumber
+			case len(allRecords) > 0:
+				lastSeqNo = allRecords[len(allRecords)-1].SequenceNumber
+			default:
+				lastSeqNo = afterSeqNo
+			}
+		}
+	default:
+		// TRIM_HORIZON ("") or a resolved/resumed cursor: range read via
+		// ScanPage instead of a full-shard scan-and-slice
+		// (storage-access-plan.md A2, the read-side twin of A1).
+		page, aerr := h.store.listRecordsPage(ctx, streamName, shardID, afterSeqNo, limit)
+		if aerr != nil {
+			return nil, aerr
+		}
+		records = page
+		// No new records past the cursor: keep the cursor exactly where it
+		// was (a stable no-op iterator) rather than rewinding to the
+		// shard's tail — matches real Kinesis iterators, which never
+		// regress or re-deliver already-consumed records.
+		lastSeqNo = afterSeqNo
+		if len(records) > 0 {
+			lastSeqNo = records[len(records)-1].SequenceNumber
 		}
 	}
-	if len(filtered) > limit {
-		filtered = filtered[:limit]
-	}
-	out := make([]recordResponse, len(filtered))
-	var lastSeqNo string
-	for i, rec := range filtered {
+
+	out := make([]recordResponse, len(records))
+	for i, rec := range records {
 		out[i] = recordResponse{
 			SequenceNumber:              rec.SequenceNumber,
 			ApproximateArrivalTimestamp: float64(rec.ApproximateArrivalTimestamp.Unix()),
 			Data:                        rec.Data,
 			PartitionKey:                rec.PartitionKey,
 		}
-		lastSeqNo = rec.SequenceNumber
-	}
-	if lastSeqNo == "" && len(allRecords) > 0 {
-		lastSeqNo = allRecords[len(allRecords)-1].SequenceNumber
-	}
-	if lastSeqNo == "" {
-		lastSeqNo = afterSeqNo
 	}
 	nextIter := encodeShardIterator(streamName, shardID, lastSeqNo)
 	return &getRecordsResponse{

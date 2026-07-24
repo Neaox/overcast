@@ -6,7 +6,6 @@ package kinesis
 import (
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"math/big"
 	"net/http"
 
@@ -241,98 +240,40 @@ func (h *Handler) ListStreams(w http.ResponseWriter, r *http.Request) {
 
 // PutRecord handles Kinesis_20131202.PutRecord.
 // AWS docs: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_PutRecord.html
+//
+// Delegates to putRecordTyped (typed_logic.go) — the JSON1.1/legacy wire
+// path (this file) and the CBOR/typed-dispatch path (typed_ops.go) share
+// one implementation so the A1 sequence-counter fix (storage-access-plan.md)
+// applies to both instead of being duplicated and drifting.
 func (h *Handler) PutRecord(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		StreamName   string `json:"StreamName"`
-		Data         []byte `json:"Data"`
-		PartitionKey string `json:"PartitionKey"`
-	}
+	var req putRecordRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.StreamName == "" {
-		protocol.WriteJSONError(w, r, protocol.ErrMissingParameter("StreamName"))
-		return
-	}
-	st, aerr := h.store.getStream(r.Context(), req.StreamName)
+	resp, aerr := h.putRecordTyped(r.Context(), &req)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-
-	shardIdx := pickShard(st.Shards, req.PartitionKey)
-	shardID := st.Shards[shardIdx].ShardId
-
-	existing, aerr := h.store.listRecords(r.Context(), req.StreamName, shardID)
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	seqNo := nextSeqNo(existing, shardIdx)
-	rec := &Record{
-		SequenceNumber:              seqNo,
-		ApproximateArrivalTimestamp: h.clk.Now().UTC(),
-		Data:                        req.Data,
-		PartitionKey:                req.PartitionKey,
-	}
-	if aerr := h.store.putRecord(r.Context(), req.StreamName, shardID, rec); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
-		"ShardId":        shardID,
-		"SequenceNumber": seqNo,
-	})
+	writeJSON(w, r, http.StatusOK, resp)
 }
 
 // PutRecords handles Kinesis_20131202.PutRecords.
 // AWS docs: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_PutRecords.html
+//
+// Delegates to putRecordsTyped (typed_logic.go) — see PutRecord's doc
+// comment.
 func (h *Handler) PutRecords(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		StreamName string `json:"StreamName"`
-		Records    []struct {
-			Data         []byte `json:"Data"`
-			PartitionKey string `json:"PartitionKey"`
-		} `json:"Records"`
-	}
+	var req putRecordsRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.StreamName == "" {
-		protocol.WriteJSONError(w, r, protocol.ErrMissingParameter("StreamName"))
-		return
-	}
-	st, aerr := h.store.getStream(r.Context(), req.StreamName)
+	resp, aerr := h.putRecordsTyped(r.Context(), &req)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-
-	type resultEntry struct {
-		ShardId        string `json:"ShardId"`
-		SequenceNumber string `json:"SequenceNumber"`
-	}
-	results := make([]resultEntry, 0, len(req.Records))
-	now := h.clk.Now().UTC()
-	for _, entry := range req.Records {
-		shardIdx := pickShard(st.Shards, entry.PartitionKey)
-		shardID := st.Shards[shardIdx].ShardId
-		existing, _ := h.store.listRecords(r.Context(), req.StreamName, shardID)
-		seqNo := nextSeqNo(existing, shardIdx)
-		rec := &Record{
-			SequenceNumber:              seqNo,
-			ApproximateArrivalTimestamp: now,
-			Data:                        entry.Data,
-			PartitionKey:                entry.PartitionKey,
-		}
-		_ = h.store.putRecord(r.Context(), req.StreamName, shardID, rec)
-		results = append(results, resultEntry{ShardId: shardID, SequenceNumber: seqNo})
-	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
-		"FailedRecordCount": 0,
-		"Records":           results,
-	})
+	writeJSON(w, r, http.StatusOK, resp)
 }
 
 // GetShardIterator handles Kinesis_20131202.GetShardIterator.
@@ -381,109 +322,21 @@ func (h *Handler) GetShardIterator(w http.ResponseWriter, r *http.Request) {
 
 // GetRecords handles Kinesis_20131202.GetRecords.
 // AWS docs: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_GetRecords.html
+//
+// Delegates to getRecordsTyped (typed_logic.go) — see PutRecord's doc
+// comment; this also carries the A2 ScanPage range-read fix
+// (storage-access-plan.md).
 func (h *Handler) GetRecords(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ShardIterator string `json:"ShardIterator"`
-		Limit         int    `json:"Limit"`
-	}
+	var req getRecordsRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.ShardIterator == "" {
-		protocol.WriteJSONError(w, r, protocol.ErrMissingParameter("ShardIterator"))
-		return
-	}
-
-	raw, err := base64.StdEncoding.DecodeString(req.ShardIterator)
-	if err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "InvalidArgumentException",
-			Message:    "Invalid ShardIterator",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
-	}
-	streamName, shardID, afterSeqNo, ok := decodeShardIterator(string(raw))
-	if !ok {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "InvalidArgumentException",
-			Message:    "Invalid ShardIterator format",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
-	}
-
-	allRecords, aerr := h.store.listRecords(r.Context(), streamName, shardID)
+	resp, aerr := h.getRecordsTyped(r.Context(), &req)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-
-	limit := req.Limit
-	if limit <= 0 {
-		limit = 10000
-	}
-
-	// Filter by position.
-	var filtered []Record
-	if afterSeqNo == "LATEST" {
-		// LATEST: no records on first call, advance past all existing.
-		// afterSeqNo for next iterator is last known seqNo.
-		filtered = nil
-		if len(allRecords) > 0 {
-			afterSeqNo = allRecords[len(allRecords)-1].SequenceNumber
-		}
-	} else {
-		for _, rec := range allRecords {
-			if afterSeqNo == "" || rec.SequenceNumber > afterSeqNo {
-				filtered = append(filtered, rec)
-			} else if len(afterSeqNo) > 7 && afterSeqNo[:7] == "before:" {
-				// AT_SEQUENCE_NUMBER: include the named sequence number itself.
-				target := afterSeqNo[7:]
-				if rec.SequenceNumber >= target {
-					filtered = append(filtered, rec)
-				}
-			}
-		}
-	}
-
-	if len(filtered) > limit {
-		filtered = filtered[:limit]
-	}
-
-	type recordJSON struct {
-		SequenceNumber              string  `json:"SequenceNumber"`
-		ApproximateArrivalTimestamp float64 `json:"ApproximateArrivalTimestamp"`
-		Data                        []byte  `json:"Data"`
-		PartitionKey                string  `json:"PartitionKey"`
-	}
-	out := make([]recordJSON, len(filtered))
-	var lastSeqNo string
-	for i, rec := range filtered {
-		out[i] = recordJSON{
-			SequenceNumber:              rec.SequenceNumber,
-			ApproximateArrivalTimestamp: float64(rec.ApproximateArrivalTimestamp.Unix()),
-			Data:                        rec.Data,
-			PartitionKey:                rec.PartitionKey,
-		}
-		lastSeqNo = rec.SequenceNumber
-	}
-	if lastSeqNo == "" && len(allRecords) > 0 {
-		lastSeqNo = allRecords[len(allRecords)-1].SequenceNumber
-	}
-	if lastSeqNo == "" {
-		lastSeqNo = afterSeqNo
-	}
-
-	// Build next iterator pointing past the last returned record.
-	nextIter := encodeShardIterator(streamName, shardID, lastSeqNo)
-	nextEncoded := base64.StdEncoding.EncodeToString([]byte(nextIter))
-
-	writeJSON(w, r, http.StatusOK, map[string]any{
-		"Records":            out,
-		"NextShardIterator":  nextEncoded,
-		"MillisBehindLatest": 0,
-	})
+	writeJSON(w, r, http.StatusOK, resp)
 }
 
 // ---- Shards ------------------------------------------------------------------
@@ -521,73 +374,18 @@ func (h *Handler) ListShards(w http.ResponseWriter, r *http.Request) {
 
 // SplitShard handles Kinesis_20131202.SplitShard.
 // AWS docs: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_SplitShard.html
+//
+// Delegates to splitShardTyped (typed_logic.go) — see PutRecord's doc
+// comment. Success has an empty body on the JSON1.1 wire (w.WriteHeader
+// only, no writeJSON call) to match this handler's pre-existing behavior
+// for void operations; splitShardTyped's *struct{} return is only used to
+// check for an error.
 func (h *Handler) SplitShard(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		StreamName         string `json:"StreamName"`
-		ShardToSplit       string `json:"ShardToSplit"`
-		NewStartingHashKey string `json:"NewStartingHashKey"`
-	}
+	var req splitShardRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.StreamName == "" {
-		protocol.WriteJSONError(w, r, protocol.ErrMissingParameter("StreamName"))
-		return
-	}
-	st, aerr := h.store.getStream(r.Context(), req.StreamName)
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	// Find the shard to split.
-	idx := -1
-	for i, shard := range st.Shards {
-		if shard.ShardId == req.ShardToSplit && shard.SequenceNumberRange.EndingSequenceNumber == "" {
-			idx = i
-			break
-		}
-	}
-	if idx < 0 {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    fmt.Sprintf("Could not find shard %s in stream %s", req.ShardToSplit, req.StreamName),
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
-	}
-
-	orig := st.Shards[idx]
-	nowSeq := fmt.Sprintf("49%019d", len(st.Shards))
-
-	// Close the original shard.
-	st.Shards[idx].SequenceNumberRange.EndingSequenceNumber = nowSeq
-
-	// Create two child shards.
-	child1 := Shard{
-		ShardId: fmt.Sprintf("shardId-%012d", len(st.Shards)),
-		HashKeyRange: HashKeyRange{
-			StartingHashKey: orig.HashKeyRange.StartingHashKey,
-			EndingHashKey:   req.NewStartingHashKey,
-		},
-		SequenceNumberRange: SequenceNumberRange{
-			StartingSequenceNumber: nowSeq,
-		},
-	}
-	child2 := Shard{
-		ShardId: fmt.Sprintf("shardId-%012d", len(st.Shards)+1),
-		HashKeyRange: HashKeyRange{
-			StartingHashKey: req.NewStartingHashKey,
-			EndingHashKey:   orig.HashKeyRange.EndingHashKey,
-		},
-		SequenceNumberRange: SequenceNumberRange{
-			StartingSequenceNumber: nowSeq,
-		},
-	}
-	st.Shards = append(st.Shards, child1, child2)
-	st.ShardCount = activeShardCount(st)
-
-	if aerr := h.store.putStream(r.Context(), st); aerr != nil {
+	if _, aerr := h.splitShardTyped(r.Context(), &req); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -595,89 +393,15 @@ func (h *Handler) SplitShard(w http.ResponseWriter, r *http.Request) {
 }
 
 // MergeShards handles Kinesis_20131202.MergeShards (basic implementation).
+//
+// Delegates to mergeShardsTyped (typed_logic.go) — see SplitShard's doc
+// comment about the empty-body convention.
 func (h *Handler) MergeShards(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		StreamName           string `json:"StreamName"`
-		ShardToMerge         string `json:"ShardToMerge"`
-		AdjacentShardToMerge string `json:"AdjacentShardToMerge"`
-	}
+	var req mergeShardsRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.StreamName == "" {
-		protocol.WriteJSONError(w, r, protocol.ErrMissingParameter("StreamName"))
-		return
-	}
-	st, aerr := h.store.getStream(r.Context(), req.StreamName)
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	// Find the two shards to merge — both must be open (no EndingSequenceNumber).
-	mergeIdx, adjIdx := -1, -1
-	for i, shard := range st.Shards {
-		if shard.SequenceNumberRange.EndingSequenceNumber != "" {
-			continue
-		}
-		if shard.ShardId == req.ShardToMerge {
-			mergeIdx = i
-		}
-		if shard.ShardId == req.AdjacentShardToMerge {
-			adjIdx = i
-		}
-	}
-	if mergeIdx < 0 {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    fmt.Sprintf("Could not find shard %s in stream %s", req.ShardToMerge, req.StreamName),
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
-	}
-	if adjIdx < 0 {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    fmt.Sprintf("Could not find shard %s in stream %s", req.AdjacentShardToMerge, req.StreamName),
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
-	}
-
-	nowSeq := fmt.Sprintf("49%019d", len(st.Shards))
-
-	// Close both parent shards.
-	st.Shards[mergeIdx].SequenceNumberRange.EndingSequenceNumber = nowSeq
-	st.Shards[adjIdx].SequenceNumberRange.EndingSequenceNumber = nowSeq
-
-	// Create a merged child shard covering the combined hash key range.
-	startHash := st.Shards[mergeIdx].HashKeyRange.StartingHashKey
-	endHash := st.Shards[mergeIdx].HashKeyRange.EndingHashKey
-	adjStart := st.Shards[adjIdx].HashKeyRange.StartingHashKey
-	adjEnd := st.Shards[adjIdx].HashKeyRange.EndingHashKey
-
-	// Use the smallest starting and largest ending hash key.
-	if cmpHashKey(adjStart, startHash) < 0 {
-		startHash = adjStart
-	}
-	if cmpHashKey(adjEnd, endHash) > 0 {
-		endHash = adjEnd
-	}
-
-	merged := Shard{
-		ShardId: fmt.Sprintf("shardId-%012d", len(st.Shards)),
-		HashKeyRange: HashKeyRange{
-			StartingHashKey: startHash,
-			EndingHashKey:   endHash,
-		},
-		SequenceNumberRange: SequenceNumberRange{
-			StartingSequenceNumber: nowSeq,
-		},
-	}
-	st.Shards = append(st.Shards, merged)
-	st.ShardCount = activeShardCount(st)
-
-	if aerr := h.store.putStream(r.Context(), st); aerr != nil {
+	if _, aerr := h.mergeShardsTyped(r.Context(), &req); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
