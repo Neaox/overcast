@@ -142,7 +142,7 @@ func (h *Handler) CreateTaskSet(w http.ResponseWriter, r *http.Request) {
 	svc.TaskSets = append(svc.TaskSets, ts.TaskSetArn)
 	_ = h.store.putService(r.Context(), clusterName, svc)
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"taskSet": ts})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"taskSet": ts}, "application/x-amz-json-1.1")
 }
 
 // UpdateTaskSet handles AmazonEC2ContainerServiceV20141113.UpdateTaskSet.
@@ -193,7 +193,7 @@ func (h *Handler) UpdateTaskSet(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"taskSet": ts})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"taskSet": ts}, "application/x-amz-json-1.1")
 }
 
 // DeleteTaskSet handles AmazonEC2ContainerServiceV20141113.DeleteTaskSet.
@@ -252,7 +252,7 @@ func (h *Handler) DeleteTaskSet(w http.ResponseWriter, r *http.Request) {
 	_ = h.store.putService(r.Context(), clusterName, svc)
 
 	ts.Status = "DRAINING"
-	writeJSON(w, r, http.StatusOK, map[string]any{"taskSet": ts})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"taskSet": ts}, "application/x-amz-json-1.1")
 }
 
 // DescribeTaskSets handles AmazonEC2ContainerServiceV20141113.DescribeTaskSets.
@@ -312,10 +312,10 @@ func (h *Handler) DescribeTaskSets(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"taskSets": result,
 		"failures": failures,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // UpdateServicePrimaryTaskSet handles AmazonEC2ContainerServiceV20141113.UpdateServicePrimaryTaskSet.
@@ -371,5 +371,5 @@ func (h *Handler) UpdateServicePrimaryTaskSet(w http.ResponseWriter, r *http.Req
 
 	// Re-read the updated primary.
 	primary, _ = h.store.getTaskSet(r.Context(), clusterName, serviceName, primaryID)
-	writeJSON(w, r, http.StatusOK, map[string]any{"taskSet": primary})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"taskSet": primary}, "application/x-amz-json-1.1")
 }

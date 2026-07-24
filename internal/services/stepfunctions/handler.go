@@ -86,7 +86,7 @@ func (h *Handler) CreateStateMachine(w http.ResponseWriter, r *http.Request) {
 		}
 		if existing.Definition == req.Definition && existing.RoleArn == req.RoleArn && existing.Type == smType {
 			// Idempotent create — return existing ARN.
-			writeJSON(w, r, http.StatusOK, map[string]any{
+			protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 				"stateMachineArn": existing.ARN,
 				"creationDate":    float64(existing.CreatedAt.UnixMilli()) / 1000.0,
 			})
@@ -124,7 +124,7 @@ func (h *Handler) CreateStateMachine(w http.ResponseWriter, r *http.Request) {
 
 	h.publish(r, events.SFNStateMachineCreated, events.ResourcePayload{Name: req.Name})
 
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"stateMachineArn": arn,
 		"creationDate":    float64(now.UnixMilli()) / 1000.0,
 	})
@@ -151,7 +151,7 @@ func (h *Handler) DescribeStateMachine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"stateMachineArn": sm.ARN,
 		"name":            sm.Name,
 		"definition":      sm.Definition,
@@ -181,7 +181,7 @@ func (h *Handler) ListStateMachines(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"stateMachines": items,
 	})
 }
@@ -232,7 +232,7 @@ func (h *Handler) StartExecution(w http.ResponseWriter, r *http.Request) {
 
 	h.publish(r, events.SFNExecutionStarted, events.ResourcePayload{Name: execName})
 
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"executionArn": execArn,
 		"startDate":    float64(now.UnixMilli()) / 1000.0,
 	})
@@ -256,7 +256,7 @@ func (h *Handler) DeleteStateMachine(w http.ResponseWriter, r *http.Request) {
 
 	h.publish(r, events.SFNStateMachineDeleted, events.ResourcePayload{Name: name})
 
-	writeJSON(w, r, http.StatusOK, map[string]any{})
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -274,10 +274,6 @@ func extractSMName(arn string) string {
 		return arn[i+1:]
 	}
 	return arn
-}
-
-func writeJSON(w http.ResponseWriter, r *http.Request, status int, v any) {
-	protocol.WriteJSON(w, r, status, v)
 }
 
 func errSMNotFound(arn string) *protocol.AWSError {

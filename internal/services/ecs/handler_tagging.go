@@ -41,7 +41,7 @@ func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{}, "application/x-amz-json-1.1")
 }
 
 // UntagResource handles AmazonEC2ContainerServiceV20141113.UntagResource.
@@ -76,7 +76,7 @@ func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{}, "application/x-amz-json-1.1")
 }
 
 // ListTagsForResource handles AmazonEC2ContainerServiceV20141113.ListTagsForResource.
@@ -105,5 +105,5 @@ func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 	for k, v := range existing {
 		tags = append(tags, Tag{Key: k, Value: v})
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"tags": tags})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"tags": tags}, "application/x-amz-json-1.1")
 }

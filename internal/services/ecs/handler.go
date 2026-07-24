@@ -78,11 +78,6 @@ func newHandler(cfg *config.Config, store *ecsStore, log *serviceutil.ServiceLog
 	return h
 }
 
-// writeJSON writes a JSON response with the given status code.
-func writeJSON(w http.ResponseWriter, r *http.Request, status int, v any) {
-	protocol.WriteAWSJSON(w, r, status, v, "application/x-amz-json-1.1")
-}
-
 // decodeJSON decodes the request body into v. Returns false and writes an error if it fails.
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
@@ -246,7 +241,7 @@ func (h *Handler) CreateCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.publish(r, events.ECSClusterCreated, events.ResourcePayload{Name: c.ClusterName})
-	writeJSON(w, r, http.StatusOK, map[string]any{"cluster": c})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"cluster": c}, "application/x-amz-json-1.1")
 }
 
 // DescribeClusters handles AmazonEC2ContainerServiceV20141113.DescribeClusters.
@@ -276,10 +271,10 @@ func (h *Handler) DescribeClusters(w http.ResponseWriter, r *http.Request) {
 		}
 		found = append(found, *c)
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"clusters": found,
 		"failures": failures,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // ListClusters handles AmazonEC2ContainerServiceV20141113.ListClusters.
@@ -297,7 +292,7 @@ func (h *Handler) ListClusters(w http.ResponseWriter, r *http.Request) {
 	for _, c := range clusters {
 		arns = append(arns, c.ClusterArn)
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"clusterArns": arns})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"clusterArns": arns}, "application/x-amz-json-1.1")
 }
 
 // DeleteCluster handles AmazonEC2ContainerServiceV20141113.DeleteCluster.
@@ -320,7 +315,7 @@ func (h *Handler) DeleteCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.publish(r, events.ECSClusterDeleted, events.ResourcePayload{Name: name})
-	writeJSON(w, r, http.StatusOK, map[string]any{"cluster": c})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"cluster": c}, "application/x-amz-json-1.1")
 }
 
 // ---- Task definition handlers -------------------------------------------------
@@ -409,7 +404,7 @@ func (h *Handler) RegisterTaskDefinition(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	h.publish(r, events.ECSTaskDefinitionRegistered, events.ResourcePayload{Name: req.Family})
-	writeJSON(w, r, http.StatusOK, map[string]any{"taskDefinition": td})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"taskDefinition": td}, "application/x-amz-json-1.1")
 }
 
 // DescribeTaskDefinition handles AmazonEC2ContainerServiceV20141113.DescribeTaskDefinition.
@@ -441,7 +436,7 @@ func (h *Handler) DescribeTaskDefinition(w http.ResponseWriter, r *http.Request)
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"taskDefinition": td})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"taskDefinition": td}, "application/x-amz-json-1.1")
 }
 
 // ListTaskDefinitions handles AmazonEC2ContainerServiceV20141113.ListTaskDefinitions.
@@ -467,7 +462,7 @@ func (h *Handler) ListTaskDefinitions(w http.ResponseWriter, r *http.Request) {
 	for _, td := range defs {
 		arns = append(arns, td.TaskDefinitionArn)
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"taskDefinitionArns": arns})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"taskDefinitionArns": arns}, "application/x-amz-json-1.1")
 }
 
 // DeregisterTaskDefinition handles AmazonEC2ContainerServiceV20141113.DeregisterTaskDefinition.
@@ -508,7 +503,7 @@ func (h *Handler) DeregisterTaskDefinition(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	h.publish(r, events.ECSTaskDefinitionDeregistered, events.ResourcePayload{Name: family})
-	writeJSON(w, r, http.StatusOK, map[string]any{"taskDefinition": td})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"taskDefinition": td}, "application/x-amz-json-1.1")
 }
 
 // ListTaskDefinitionFamilies handles AmazonEC2ContainerServiceV20141113.ListTaskDefinitionFamilies.
@@ -532,7 +527,7 @@ func (h *Handler) ListTaskDefinitionFamilies(w http.ResponseWriter, r *http.Requ
 		}
 		filtered = append(filtered, f)
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"families": filtered})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"families": filtered}, "application/x-amz-json-1.1")
 }
 
 // ---- Cluster update handlers --------------------------------------------------
@@ -561,7 +556,7 @@ func (h *Handler) UpdateCluster(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"cluster": c})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"cluster": c}, "application/x-amz-json-1.1")
 }
 
 // UpdateClusterSettings handles AmazonEC2ContainerServiceV20141113.UpdateClusterSettings.
@@ -587,5 +582,5 @@ func (h *Handler) UpdateClusterSettings(w http.ResponseWriter, r *http.Request) 
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"cluster": c})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"cluster": c}, "application/x-amz-json-1.1")
 }

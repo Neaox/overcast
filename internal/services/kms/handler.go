@@ -189,9 +189,9 @@ func (h *Handler) CreateKey(w http.ResponseWriter, r *http.Request) {
 
 	h.publish(r, events.KMSKeyCreated, events.ResourcePayload{Name: k.KeyID})
 
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"KeyMetadata": h.toMeta(k),
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // DescribeKey returns key metadata.
@@ -212,7 +212,7 @@ func (h *Handler) DescribeKey(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, errNotFound(req.KeyId))
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"KeyMetadata": h.toMeta(k)})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"KeyMetadata": h.toMeta(k)}, "application/x-amz-json-1.1")
 }
 
 // ListKeys returns all key IDs and ARNs.
@@ -229,7 +229,7 @@ func (h *Handler) ListKeys(w http.ResponseWriter, r *http.Request) {
 			entries = append(entries, map[string]string{"KeyId": k.KeyID, "KeyArn": k.ARN})
 		}
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"Keys": entries, "Truncated": false})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"Keys": entries, "Truncated": false}, "application/x-amz-json-1.1")
 }
 
 // DisableKey disables a key.
@@ -257,7 +257,7 @@ func (h *Handler) DisableKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.publish(r, events.KMSKeyStateChanged, events.ResourcePayload{Name: k.KeyID})
-	writeJSON(w, r, http.StatusOK, map[string]any{})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{}, "application/x-amz-json-1.1")
 }
 
 // EnableKey enables a key.
@@ -285,7 +285,7 @@ func (h *Handler) EnableKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.publish(r, events.KMSKeyStateChanged, events.ResourcePayload{Name: k.KeyID})
-	writeJSON(w, r, http.StatusOK, map[string]any{})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{}, "application/x-amz-json-1.1")
 }
 
 // ScheduleKeyDeletion marks a key as pending deletion.
@@ -319,12 +319,12 @@ func (h *Handler) ScheduleKeyDeletion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.publish(r, events.KMSKeyDeleted, events.ResourcePayload{Name: k.KeyID})
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"KeyId":        k.KeyID,
 		"KeyArn":       k.ARN,
 		"DeletionDate": float64(deletionDate.UnixMilli()) / 1000.0,
 		"KeyState":     k.KeyState,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // CancelKeyDeletion cancels pending deletion.
@@ -353,11 +353,11 @@ func (h *Handler) CancelKeyDeletion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.publish(r, events.KMSKeyStateChanged, events.ResourcePayload{Name: k.KeyID})
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"KeyId":    k.KeyID,
 		"KeyArn":   k.ARN,
 		"KeyState": k.KeyState,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // ── Alias handlers ────────────────────────────────────────────────────────────
@@ -395,7 +395,7 @@ func (h *Handler) CreateAlias(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{}, "application/x-amz-json-1.1")
 }
 
 // DeleteAlias removes an alias.
@@ -411,7 +411,7 @@ func (h *Handler) DeleteAlias(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{}, "application/x-amz-json-1.1")
 }
 
 // ListAliases returns all aliases, optionally filtered by key ID.
@@ -454,7 +454,7 @@ func (h *Handler) ListAliases(w http.ResponseWriter, r *http.Request) {
 			CreationDate: float64(a.CreatedAt.UnixMilli()) / 1000.0,
 		})
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"Aliases": entries, "Truncated": false})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"Aliases": entries, "Truncated": false}, "application/x-amz-json-1.1")
 }
 
 // ── Crypto handlers ───────────────────────────────────────────────────────────
@@ -487,11 +487,11 @@ func (h *Handler) Encrypt(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"CiphertextBlob":      ciphertext,
 		"KeyId":               k.ARN,
 		"EncryptionAlgorithm": "SYMMETRIC_DEFAULT",
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // Decrypt decrypts a ciphertext blob.
@@ -534,11 +534,11 @@ func (h *Handler) Decrypt(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"Plaintext":           plaintext,
 		"KeyId":               k.ARN,
 		"EncryptionAlgorithm": "SYMMETRIC_DEFAULT",
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // GenerateDataKey returns a new random data key, both plaintext and encrypted.
@@ -579,11 +579,11 @@ func (h *Handler) GenerateDataKey(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"Plaintext":      dataKey,
 		"CiphertextBlob": ciphertext,
 		"KeyId":          k.ARN,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // GenerateDataKeyWithoutPlaintext returns an encrypted data key only.
@@ -623,10 +623,10 @@ func (h *Handler) GenerateDataKeyWithoutPlaintext(w http.ResponseWriter, r *http
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"CiphertextBlob": ciphertext,
 		"KeyId":          k.ARN,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // Sign signs a message using an asymmetric key.
@@ -661,11 +661,11 @@ func (h *Handler) Sign(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"KeyId":            k.ARN,
 		"Signature":        sig,
 		"SigningAlgorithm": req.SigningAlgorithm,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // Verify verifies a signature.
@@ -697,11 +697,11 @@ func (h *Handler) Verify(w http.ResponseWriter, r *http.Request) {
 	}
 	digest := sha256.Sum256(req.Message)
 	verifyErr := rsa.VerifyPKCS1v15(&privKey.PublicKey, crypto.SHA256, digest[:], req.Signature)
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"KeyId":            k.ARN,
 		"SignatureValid":   verifyErr == nil,
 		"SigningAlgorithm": req.SigningAlgorithm,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // ── GetPublicKey ──────────────────────────────────────────────────────────────
@@ -764,7 +764,7 @@ func (h *Handler) GetPublicKey(w http.ResponseWriter, r *http.Request) {
 			"RSAES_OAEP_SHA_256",
 		}
 	}
-	writeJSON(w, r, http.StatusOK, resp)
+	protocol.WriteAWSJSON(w, r, http.StatusOK, resp, "application/x-amz-json-1.1")
 }
 
 // ── UpdateAlias ──────────────────────────────────────────────────────────────
@@ -806,7 +806,7 @@ func (h *Handler) UpdateAlias(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{}, "application/x-amz-json-1.1")
 }
 
 // ── ReEncrypt ────────────────────────────────────────────────────────────────
@@ -872,13 +872,13 @@ func (h *Handler) ReEncrypt(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"CiphertextBlob":                 newCiphertext,
 		"KeyId":                          dstKey.ARN,
 		"SourceKeyId":                    srcKey.ARN,
 		"SourceEncryptionAlgorithm":      "SYMMETRIC_DEFAULT",
 		"DestinationEncryptionAlgorithm": "SYMMETRIC_DEFAULT",
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // ── GenerateDataKeyPair ─────────────────────────────────────────────────────
@@ -936,13 +936,13 @@ func (h *Handler) GenerateDataKeyPair(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"KeyId":                    k.ARN,
 		"KeyPairSpec":              req.KeyPairSpec,
 		"PrivateKeyCiphertextBlob": privateCiphertext,
 		"PrivateKeyPlaintext":      privPEM,
 		"PublicKey":                pubPEM,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // ── VerifyMac ────────────────────────────────────────────────────────────────
@@ -991,11 +991,11 @@ func (h *Handler) VerifyMac(w http.ResponseWriter, r *http.Request) {
 	}
 	mac.Write(req.Message)
 	expected := mac.Sum(nil)
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"KeyId":        k.ARN,
 		"MacValid":     hmac.Equal(expected, req.Mac),
 		"MacAlgorithm": req.MacAlgorithm,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // ── Key policy handlers ──────────────────────────────────────────────────────
@@ -1026,10 +1026,10 @@ func (h *Handler) GetKeyPolicy(w http.ResponseWriter, r *http.Request) {
 	if policy == "" {
 		policy = defaultKeyPolicy(k.ARN, h.cfg.AccountID)
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"Policy":     policy,
 		"PolicyName": req.PolicyName,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // PutKeyPolicy attaches a key policy to a KMS key.
@@ -1060,7 +1060,7 @@ func (h *Handler) PutKeyPolicy(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{}, "application/x-amz-json-1.1")
 }
 
 // ListKeyPolicies lists the policy names for a KMS key.
@@ -1082,10 +1082,10 @@ func (h *Handler) ListKeyPolicies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	policyNames := []string{"default"}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"PolicyNames": policyNames,
 		"Truncated":   false,
-	})
+	}, "application/x-amz-json-1.1")
 	_ = k // suppress unused warning
 }
 
@@ -1244,7 +1244,7 @@ func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{}, "application/x-amz-json-1.1")
 }
 
 // UntagResource removes tags from a KMS key by key names.
@@ -1278,7 +1278,7 @@ func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{}, "application/x-amz-json-1.1")
 }
 
 // ListResourceTags lists tags on a KMS key.
@@ -1300,15 +1300,10 @@ func (h *Handler) ListResourceTags(w http.ResponseWriter, r *http.Request) {
 	if tags == nil {
 		tags = []Tag{}
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"Tags":      tags,
 		"Truncated": false,
-	})
-}
-
-// writeJSON writes a JSON response with Content-Length set.
-func writeJSON(w http.ResponseWriter, r *http.Request, status int, v any) {
-	protocol.WriteAWSJSON(w, r, status, v, "application/x-amz-json-1.1")
+	}, "application/x-amz-json-1.1")
 }
 
 // errNotFound returns a KMS NotFoundException.

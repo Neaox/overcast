@@ -63,11 +63,6 @@ func (h *Handler) initOps() {
 	h.typedOp = h.typedOps()
 }
 
-// writeJSON writes a JSON response with the given status code.
-func writeJSON(w http.ResponseWriter, r *http.Request, status int, v any) {
-	protocol.WriteAWSJSON(w, r, status, v, "application/x-amz-json-1.1")
-}
-
 // decodeJSON decodes the request body into v. Returns false and writes an error if it fails.
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
@@ -176,9 +171,9 @@ func (h *Handler) DescribeStream(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"StreamDescription": toStreamDescription(st),
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // DescribeStreamSummary handles Kinesis_20131202.DescribeStreamSummary.
@@ -199,7 +194,7 @@ func (h *Handler) DescribeStreamSummary(w http.ResponseWriter, r *http.Request) 
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"StreamDescriptionSummary": map[string]any{
 			"StreamName":              st.StreamName,
 			"StreamARN":               st.StreamARN,
@@ -209,7 +204,7 @@ func (h *Handler) DescribeStreamSummary(w http.ResponseWriter, r *http.Request) 
 			"StreamCreationTimestamp": st.CreatedAt.Unix(),
 			"EnhancedMonitoring":      []any{},
 		},
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // ListStreams handles Kinesis_20131202.ListStreams.
@@ -230,10 +225,10 @@ func (h *Handler) ListStreams(w http.ResponseWriter, r *http.Request) {
 	for i, st := range streams {
 		names[i] = st.StreamName
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"StreamNames":    names,
 		"HasMoreStreams": false,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // ---- Records -----------------------------------------------------------------
@@ -255,7 +250,7 @@ func (h *Handler) PutRecord(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, resp)
+	protocol.WriteAWSJSON(w, r, http.StatusOK, resp, "application/x-amz-json-1.1")
 }
 
 // PutRecords handles Kinesis_20131202.PutRecords.
@@ -273,7 +268,7 @@ func (h *Handler) PutRecords(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, resp)
+	protocol.WriteAWSJSON(w, r, http.StatusOK, resp, "application/x-amz-json-1.1")
 }
 
 // GetShardIterator handles Kinesis_20131202.GetShardIterator.
@@ -315,9 +310,9 @@ func (h *Handler) GetShardIterator(w http.ResponseWriter, r *http.Request) {
 
 	iter := encodeShardIterator(req.StreamName, req.ShardId, afterSeqNo)
 	encoded := base64.StdEncoding.EncodeToString([]byte(iter))
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"ShardIterator": encoded,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // GetRecords handles Kinesis_20131202.GetRecords.
@@ -336,7 +331,7 @@ func (h *Handler) GetRecords(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, resp)
+	protocol.WriteAWSJSON(w, r, http.StatusOK, resp, "application/x-amz-json-1.1")
 }
 
 // ---- Shards ------------------------------------------------------------------
@@ -366,10 +361,10 @@ func (h *Handler) ListShards(w http.ResponseWriter, r *http.Request) {
 		}
 		shards = append(shards, shardToMap(shard))
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"Shards":    shards,
 		"NextToken": nil,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // SplitShard handles Kinesis_20131202.SplitShard.
@@ -468,10 +463,10 @@ func (h *Handler) ListTagsForStream(w http.ResponseWriter, r *http.Request) {
 	for k, v := range st.Tags {
 		tags = append(tags, tagEntry{Key: k, Value: v})
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"Tags":        tags,
 		"HasMoreTags": false,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // RemoveTagsFromStream handles Kinesis_20131202.RemoveTagsFromStream.

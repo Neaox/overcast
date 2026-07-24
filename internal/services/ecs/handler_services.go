@@ -199,7 +199,7 @@ func (h *Handler) CreateService(w http.ResponseWriter, r *http.Request) {
 	svc, _ = h.store.getService(r.Context(), clusterName, req.ServiceName)
 
 	h.publish(r, events.ECSServiceCreated, events.ResourcePayload{Name: req.ServiceName})
-	writeJSON(w, r, http.StatusOK, map[string]any{"service": svc})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"service": svc}, "application/x-amz-json-1.1")
 }
 
 // UpdateService handles AmazonEC2ContainerServiceV20141113.UpdateService.
@@ -324,7 +324,7 @@ func (h *Handler) UpdateService(w http.ResponseWriter, r *http.Request) {
 	svc, _ = h.store.getService(r.Context(), clusterName, serviceName)
 
 	h.publish(r, events.ECSServiceUpdated, events.ResourcePayload{Name: serviceName})
-	writeJSON(w, r, http.StatusOK, map[string]any{"service": svc})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"service": svc}, "application/x-amz-json-1.1")
 }
 
 // DeleteService handles AmazonEC2ContainerServiceV20141113.DeleteService.
@@ -373,7 +373,7 @@ func (h *Handler) DeleteService(w http.ResponseWriter, r *http.Request) {
 	svc, _ = h.store.getService(r.Context(), clusterName, serviceName)
 
 	h.publish(r, events.ECSServiceDeleted, events.ResourcePayload{Name: serviceName})
-	writeJSON(w, r, http.StatusOK, map[string]any{"service": svc})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"service": svc}, "application/x-amz-json-1.1")
 }
 
 // DescribeServices handles AmazonEC2ContainerServiceV20141113.DescribeServices.
@@ -415,10 +415,10 @@ func (h *Handler) DescribeServices(w http.ResponseWriter, r *http.Request) {
 		found = append(found, *svc)
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"services": found,
 		"failures": failures,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // ListServices handles AmazonEC2ContainerServiceV20141113.ListServices.
@@ -450,7 +450,7 @@ func (h *Handler) ListServices(w http.ResponseWriter, r *http.Request) {
 		arns = append(arns, s.ServiceArn)
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"serviceArns": arns})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"serviceArns": arns}, "application/x-amz-json-1.1")
 }
 
 // refreshServiceCounts recounts running/pending tasks for a service from the store.

@@ -168,10 +168,10 @@ func (h *Handler) RunTask(w http.ResponseWriter, r *http.Request) {
 		tasks = append(tasks, task)
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"tasks":    tasks,
 		"failures": []any{},
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // startTaskContainers creates and starts Docker containers for all container
@@ -407,7 +407,7 @@ func (h *Handler) StopTask(w http.ResponseWriter, r *http.Request) {
 	}
 	h.publish(r, events.ECSTaskStopped, events.ResourcePayload{Name: taskID})
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"task": task})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"task": task}, "application/x-amz-json-1.1")
 }
 
 // DescribeTasks handles AmazonEC2ContainerServiceV20141113.DescribeTasks.
@@ -446,10 +446,10 @@ func (h *Handler) DescribeTasks(w http.ResponseWriter, r *http.Request) {
 		found = append(found, *task)
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"tasks":    found,
 		"failures": failures,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // ListTasks handles AmazonEC2ContainerServiceV20141113.ListTasks.
@@ -485,7 +485,7 @@ func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
 		arns = append(arns, t.TaskArn)
 	}
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"taskArns": arns})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"taskArns": arns}, "application/x-amz-json-1.1")
 }
 
 // firstOrEmpty extracts a string from a pointer value using a getter, returning "" if nil.
