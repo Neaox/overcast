@@ -86,13 +86,26 @@ func hybridBackedStore(b *testing.B) state.Store {
 	return s
 }
 
-func BenchmarkSQSReceiveScan_Memory_100(b *testing.B)  { benchmarkListMessages(b, memoryBackedStore, 100) }
-func BenchmarkSQSReceiveScan_Memory_1000(b *testing.B) { benchmarkListMessages(b, memoryBackedStore, 1000) }
+func BenchmarkSQSReceiveScan_Memory_100(b *testing.B) {
+	benchmarkListMessages(b, memoryBackedStore, 100)
+}
+
+func BenchmarkSQSReceiveScan_Memory_1000(b *testing.B) {
+	benchmarkListMessages(b, memoryBackedStore, 1000)
+}
+
 func BenchmarkSQSReceiveScan_Memory_10000(b *testing.B) {
 	benchmarkListMessages(b, memoryBackedStore, 10000)
 }
-func BenchmarkSQSReceiveScan_Hybrid_100(b *testing.B)  { benchmarkListMessages(b, hybridBackedStore, 100) }
-func BenchmarkSQSReceiveScan_Hybrid_1000(b *testing.B) { benchmarkListMessages(b, hybridBackedStore, 1000) }
+
+func BenchmarkSQSReceiveScan_Hybrid_100(b *testing.B) {
+	benchmarkListMessages(b, hybridBackedStore, 100)
+}
+
+func BenchmarkSQSReceiveScan_Hybrid_1000(b *testing.B) {
+	benchmarkListMessages(b, hybridBackedStore, 1000)
+}
+
 func BenchmarkSQSReceiveScan_Hybrid_10000(b *testing.B) {
 	benchmarkListMessages(b, hybridBackedStore, 10000)
 }
