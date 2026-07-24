@@ -1,3 +1,15 @@
+---
+title: "Storage access patterns plan"
+description: "Standard, reusable patterns for services consuming the storage layer — key-as-index, structural pushdown, cursor pagination, buffer-merge — with an audit-backed item list and anti-shoehorn rules."
+section: "Development"
+tags:
+  - docs
+  - storage
+  - state
+  - patterns
+  - plan
+---
+
 # Storage access patterns — standardization plan
 
 > **Status:** planned — no items started. Audit completed 2026-07-24 (agent sweep of every service's storage reads/writes; evidence file:line below).

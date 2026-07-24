@@ -63,17 +63,19 @@ export const debugState = {
    * The endpoint returns the raw stored value as the response body — it is
    * not JSON-enveloped like other debug endpoints (it may not even be JSON:
    * plain strings are returned as `text/plain`) — so this bypasses `apiFetch`
-   * and reads the body as text directly. Returns `undefined` on a 404 (key
-   * not found) rather than throwing, since "not found" is an expected,
-   * handleable outcome here, not an error condition.
+   * and reads the body as text directly. Returns `null` on a 404 (key not
+   * found) rather than throwing, since "not found" is an expected,
+   * handleable outcome here, not an error condition. (`null`, not
+   * `undefined`: this feeds a TanStack Query `queryFn`, which forbids
+   * resolving `undefined` — see @tanstack/query/no-void-query-fn.)
    */
-  value: async (namespace: string, key: string): Promise<string | undefined> => {
+  value: async (namespace: string, key: string): Promise<string | null> => {
     const endpoint = endpointResolver.get()
     const res = await fetch(
       `${API_BASE}/debug/state/${encodeURIComponent(namespace)}?key=${encodeURIComponent(key)}`,
       { headers: endpointHeaders(endpoint) },
     )
-    if (res.status === 404) return undefined
+    if (res.status === 404) return null
     if (!res.ok) {
       const body = (await res.json().catch(() => ({ error: res.statusText }))) as {
         error?: string

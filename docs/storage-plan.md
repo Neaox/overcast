@@ -1,3 +1,14 @@
+---
+title: "Storage plan: stabilization & enhancement"
+description: "The executed multi-phase plan for stabilizing and enhancing Overcast's storage layer: crash recovery, migrations, dedicated tables, retention, debug tooling, and override routing — with per-wave progress notes."
+section: "Development"
+tags:
+  - docs
+  - storage
+  - state
+  - plan
+---
+
 # Storage layer — stabilization & enhancement plan
 
 > **Status:** Phases 1 and 2 are complete, committed, and rebased onto `main` (branch `feat/storage-stabilization` — now checked out in the main working copy; the dedicated worktree used during earlier waves has been removed). **Phase 3 Wave 1 (3.2, 3.4, 3.5, 3.8, 3.9, 3.11), Wave 2 (3.1 partial, 3.6, 3.13 backend), and Wave 3 (3.13 frontend, 3.1 finished) are all complete** — see the three "Phase 3 progress notes" subsections below. Every Phase 3 item is now either done or explicitly gated on a prerequisite that hasn't happened yet: **3.3, 3.10, and 3.12 need a benchmark run first (none has been done for these three)**, and **3.14** (the per-service override config-name vs. `NamespacedStore` routing-prefix mismatch, found during Phase 1 and left undecided until now) has been itemized as a normal, ungated bug fix. See **"Phase 3 — what's left, and the trigger to pick each one up"** (right after the item table) for exactly what to run or check before starting any of them.

@@ -1,3 +1,14 @@
+---
+title: "Storage regression test plan"
+description: "Tiered regression test plan (static, unit/race, storage-mode matrix, upgrade/crash, burst benchmarks, end-to-end) for storage-layer changes, with commands, pass criteria, and the recorded execution results."
+section: "Development"
+tags:
+  - docs
+  - storage
+  - testing
+  - plan
+---
+
 # Storage stabilization — full regression test plan
 
 > **Scope:** the entire `feat/storage-stabilization` branch (Phases 1–2, Phase 3 Waves 1–3 of

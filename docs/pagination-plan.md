@@ -1,3 +1,14 @@
+---
+title: "Pagination fidelity plan"
+description: "Audit of every paginating operation versus real AWS — ignored limits, broken continuation tokens, untruthful truncation flags — with a canonical-helper decision and a prioritized remediation order."
+section: "Development"
+tags:
+  - docs
+  - pagination
+  - aws-compatibility
+  - plan
+---
+
 # Pagination fidelity — audit & remediation plan
 
 > **Status:** planned — no items started. Audit completed 2026-07-24 (agent sweep of every paginating operation across all supported services; evidence file:line below).

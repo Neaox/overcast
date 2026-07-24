@@ -66,7 +66,6 @@ function useLoadMoreOnReachEnd({
     if (last.index >= itemCount - 1 && hasNextPage && !isFetchingNextPage) {
       fetchNextPage()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, virtualItems, itemCount, hasNextPage, isFetchingNextPage, fetchNextPage])
 }
 
@@ -170,12 +169,12 @@ export function DebugPage({
   )
   const activeKey =
     resolvedKey ??
-    (usingValueFallback && valueFallbackQuery.data !== undefined ? selectedKey : undefined) ??
+    (usingValueFallback && valueFallbackQuery.data != null ? selectedKey : undefined) ??
     rows[0]?.[0]
   const activeValue = resolvedKey
     ? loadedValues[resolvedKey]
     : usingValueFallback
-      ? valueFallbackQuery.data
+      ? (valueFallbackQuery.data ?? undefined)
       : activeKey
         ? loadedValues[activeKey]
         : undefined
@@ -551,10 +550,8 @@ function KeyTree({
                 type="button"
                 data-selected={isLeaf && node.key === activeKey}
                 className={cn(
-                  "flex w-full items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left font-mono text-xs",
-                  isLeaf
-                    ? "text-fg hover:bg-bg-muted data-[selected=true]:bg-accent/10"
-                    : "text-fg-muted hover:bg-bg-muted",
+                  "flex w-full items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left font-mono text-xs hover:bg-bg-muted",
+                  isLeaf ? "text-fg data-[selected=true]:bg-accent/10" : "text-fg-muted",
                 )}
                 style={{ paddingLeft: `${depth * 0.75 + 0.5}rem` }}
                 onClick={() => {
