@@ -1,384 +1,69 @@
-# Level 2 — Code Generation from Smithy Models
-
-> Status: proposal. Owner: TBD.
-> Depends on: [smithy.md](./smithy.md) Level 1 complete (✅).
-> Related: [code-as-source-of-truth.md](./code-as-source-of-truth.md),
-> [wire-byte-goldens.md](./wire-byte-goldens.md).
-
-## 1. Problem
-
-Today every Overcast service declares its operations **manually** — hand-written
-Go structs for `In`/`Out` types, hand-written `Operations()` slices, and
-hand-written `SupportedProtocols()` lists. When AWS ships a model update
-(adds an operation, deprecates a field, announces `@rpcv2Cbor`), a human must:
-
-1. Read the published Smithy model
-2. Hand-transcribe the shape into Go structs with `json`/`cbor` tags
-3. Add the operation to `typed_ops.go`
-4. Update `SupportedProtocols()`
-5. Update `docs/services/<svc>.md`
-
-This is error-prone and doesn't scale. Overcast has 40+ services to maintain.
-
-## 2. Goals
-
-1. **Smithy model → Go code, in one `go generate` invocation.** A CLI tool
-   reads the JSON AST of an AWS-published Smithy 2.0 model and emits:
-   - `internal/services/<svc>/model_generated.go` — Input/Output structs
-     with `json` and `cbor` tags
-   - `internal/services/<svc>/manifest_generated.go` — `Operations()` slice
-     with stub registrations for unimplemented ops
-   - `internal/services/<svc>/protocols_generated.go` —
-     `SupportedProtocols()` derived from the service's protocol traits
-2. **Implemented operations stay in human-written files.** The generator
-   emits stubs (501) for ALL operations, then an "override" map lets service
-   authors replace stubs with real implementations one at a time.
-3. **Regeneration is safe and reviewable.** Generated files are checked in.
-   A CI job regenerates and diffs — if the diff is non-empty, a human
-   reviews the AWS model change before merging the generated code.
-4. **When AWS adds `@rpcv2Cbor` to a service, Overcast picks it up
-   automatically on next regeneration.** No manual intervention needed.
-5. **The stub-report tool (`cmd/stub-report`) drives the gap analysis.**
-   Combined with the generator, it reports "declared, unimplemented" (stubs)
-   vs "not declared, but in AWS model" (holes to fill).
-
-## 3. Non-goals
-
-- **Not a full Smithy IDL parser.** We consume only the **JSON AST**
-  (pre-parsed Smithy model in JSON format) — no `.smithy` file parsing.
-- **Not runtime code generation.** Structs are generated at build time and
-  compiled in. No `reflect`-based dynamic dispatch.
-- **Not a client generator.** Only server-side operation manifests and types.
-- **Not replacing human-written business logic.** The generator produces
-  stub registrations. Human `Handler` methods remain hand-written.
-
-## 4. Input format — Smithy JSON AST
-
-AWS publishes Smithy 2.0 models for every service as part of the
-`aws-sdk-go-v2` release cycle. They live in:
-
-```
-aws-sdk-go-v2/codegen/sdk-codegen/aws-models/<svc>.json
-```
-
-Each file is a **Smithy JSON AST** document (per
-[smithy.io/2.0/spec/json-ast.html](https://smithy.io/2.0/spec/json-ast.html)).
-Example structure:
-
-```json
-{
-  "smithy": "2.0",
-  "metadata": {
-    "suppressions": [...]
-  },
-  "shapes": {
-    "com.amazonaws.sqs#CreateQueue": {
-      "type": "operation",
-      "input": { "target": "com.amazonaws.sqs#CreateQueueRequest" },
-      "output": { "target": "com.amazonaws.sqs#CreateQueueResult" },
-      "traits": {
-        "aws.protocols#awsJson1_0": {},
-        "smithy.api#http": { "method": "POST", "uri": "/", "code": 200 }
-      }
-    },
-    "com.amazonaws.sqs#CreateQueueRequest": {
-      "type": "structure",
-      "members": {
-        "QueueName": {
-          "target": "smithy.api#String",
-          "traits": { "smithy.api#xmlName": {} }
-        },
-        "Attributes": {
-          "target": "com.amazonaws.sqs#QueueAttributeMap"
-        }
-      }
-    }
-  }
-}
-```
-
-Key fields we consume:
-
-| JSON AST path | What we extract |
-|---|---|
-| `shapes.* where type=operation` | Operation name, input/output targets |
-| `shapes.* where type=structure` | Input/output/error structs, member names, member types |
-| `shapes.* where type=service` | Service-wide protocol traits (`awsJson1_0`, `rpcv2Cbor`, `awsQuery`, etc.) |
-| `traits.aws.protocols#awsJson1_0` | Service uses JSON 1.0 |
-| `traits.aws.protocols#awsJson1_1` | Service uses JSON 1.1 |
-| `traits.smithy.protocols#rpcv2Cbor` | Service supports CBOR |
-| `traits.aws.protocols#awsQuery` | Service uses Query protocol |
-| `traits.smithy.api#http` | Operation-level HTTP binding (method, URI, status code) |
-| `traits.smithy.api#httpError` | Error HTTP status code |
-
-## 5. Generator tool — `cmd/codegen`
-
-### 5.1 CLI
-
-```
-go run ./cmd/codegen \
-    -model aws-sdk-go-v2/codegen/sdk-codegen/aws-models/sqs.json \
-    -service sqs \
-    -out internal/services/sqs/
-```
-
-Flags:
-- `-model` — path to Smithy JSON AST file
-- `-service` — target Overcast service directory name
-- `-out` — output directory for generated files (default: `internal/services/<service>/`)
-- `-dry-run` — print generated code to stdout instead of writing files
-
-### 5.2 Generated files
-
-For each service, the generator writes three files:
-
-#### `model_generated.go`
-
-```go
-// Code generated by cmd/codegen. DO NOT EDIT.
-package sqs
-
-// CreateQueueInput is the input for CreateQueue.
-type CreateQueueInput struct {
-    QueueName  string            `json:"QueueName" cbor:"QueueName"`
-    Attributes map[string]string `json:"Attributes,omitempty" cbor:"Attributes,omitempty"`
-    Tags       map[string]string `json:"tags,omitempty" cbor:"tags,omitempty"`
-}
-
-// CreateQueueOutput is the output for CreateQueue.
-type CreateQueueOutput struct {
-    QueueUrl string `json:"QueueUrl" cbor:"QueueUrl"`
-}
-
-// ... one pair per operation ...
-```
-
-Rules:
-- Name conversion: `CreateQueue` → `CreateQueueInput` / `CreateQueueOutput`
-- `omitempty` on optional members (not marked `@required`)
-- Member types use Go `map[string]string` for Smithy `map<String, String>`
-- Nested structs emitted as named types if referenced by multiple operations
-- `@httpHeader`, `@httpLabel`, `@httpQuery` members get `header:"..."` / `uri:"..."` / `query:"..."` struct tags
-- Timestamps use `time.Time` (CBOR codec handles this natively; JSON codec uses `epoch-seconds`)
-- Blobs use `[]byte`
-- Documents use `any`
-
-#### `manifest_generated.go`
-
-```go
-// Code generated by cmd/codegen. DO NOT EDIT.
-package sqs
-
-import "github.com/Neaox/overcast/internal/protocol/op"
-
-// GeneratedOps returns all AWS operations for this service.
-// Unimplemented operations are registered as stubs returning 501.
-// Override entries in hand-written typed_ops.go take precedence via
-// a merger in typed_ops.go.
-func GeneratedOps() map[string]op.Operation {
-    return map[string]op.Operation{
-        "CreateQueue":        op.NewTyped[CreateQueueInput, CreateQueueOutput]("CreateQueue", nil),
-        "GetQueueUrl":        op.NewTyped[GetQueueUrlInput, GetQueueUrlOutput]("GetQueueUrl", nil),
-        "DeleteQueue":        op.NewTyped[DeleteQueueInput, struct{}]("DeleteQueue", nil),
-        "AddPermission":      op.NewTyped[AddPermissionInput, struct{}]("AddPermission", nil),
-        // ... all operations from the model ...
-    }
-}
-```
-
-When `Fn` is `nil`, the typed dispatcher returns `501 NotImplemented`.
-When a handler is implemented, the hand-written `typed_ops.go` registration
-(with a real `Fn`) is merged in and takes precedence.
-
-#### `protocols_generated.go`
-
-```go
-// Code generated by cmd/codegen. DO NOT EDIT.
-package sqs
-
-import "github.com/Neaox/overcast/internal/protocol/codec"
-
-// GeneratedProtocols returns the wire protocols advertised by this
-// service's AWS Smithy model.
-func GeneratedProtocols() []codec.Codec {
-    return []codec.Codec{
-        codec.JSON10,    // from aws.protocols#awsJson1_0
-        codec.JSON11,    // (emulator: also accept 1.1)
-        codec.RPCv2CBOR,  // from smithy.protocols#rpcv2Cbor
-        codec.QueryXML,   // from aws.protocols#awsQuery
-    }
-}
-```
-
-### 5.3 Merging with hand-written code
-
-In `typed_ops.go`, the service's final operation list merges generated stubs
-with hand-written overrides:
-
-```go
-func (h *Handler) typedOps() map[string]op.Operation {
-    // Start from generated base (all AWS ops as stubs)
-    ops := GeneratedOps()
-
-    // Override implemented operations with real handlers
-    ops["CreateQueue"] = op.NewTyped[CreateQueueInput, CreateQueueOutput](
-        "CreateQueue", h.createQueueTyped,
-    )
-    ops["GetQueueUrl"] = op.NewTyped[GetQueueUrlInput, GetQueueUrlOutput](
-        "GetQueueUrl", h.getQueueUrlTyped,
-    )
-    // ... only implemented ops override ...
-
-    return ops
-}
-```
-
-Similarly for protocols:
-
-```go
-func (s *Service) SupportedProtocols() []codec.Codec {
-    return GeneratedProtocols() // auto-updates when model adds @rpcv2Cbor
-}
-```
-
-### 5.4 Smithy type → Go type mapping
-
-| Smithy type | Go type | Notes |
-|---|---|---|
-| `blob` | `[]byte` | |
-| `boolean` | `bool` | |
-| `byte` | `int8` | |
-| `short` | `int16` | |
-| `integer` | `int` | |
-| `long` | `int64` | |
-| `float` | `float32` | NaN/Inf as strings per protocol |
-| `double` | `float64` | NaN/Inf as strings per protocol |
-| `string` | `string` | |
-| `timestamp` | `time.Time` | |
-| `document` | `any` | |
-| `list<T>` | `[]T` | |
-| `set<T>` | `[]T` | (unique values enforced at runtime) |
-| `map<K,V>` | `map[K]V` | K must be string |
-| `structure` | named `struct` | |
-| `union` | named `struct` with one non-nil field | |
-| `enum` | `string` | (constraint trait for validation) |
-| `@required` | no `omitempty` | Go zero-value for missing fields |
-
-### 5.5 HTTP binding traits
-
-For REST-JSON services (Phase 5 #23-25), the generator also emits HTTP binding
-metadata. These are `http.Handler`-level concerns that don't affect typed
-dispatch, so they're emitted as comments or constants:
-
-```go
-// Operation "GetFoo" has HTTP binding: GET /applications/{applicationId}
-//   applicationId → uri label → input field ApplicationId
-```
-
-## 6. Integration with existing tooling
-
-### 6.1 `cmd/stub-report`
-
-The Phase 7 stub-report tool (`cmd/stub-report`) compares the generated
-operation set against the currently-registered set. Its output changes from
-"what's in typed_ops.go" to:
-
-```
-gap analysis for sqs:
-  generated (model):  25 ops
-  implemented:        14 ops
-  stubs (501):        11 ops
-  missing from model: 0 ops  (all model ops have at least stub registration)
-```
-
-### 6.2 CI regeneration check
-
-```yaml
-# .github/workflows/codegen.yml
-- name: Check generated code is up to date
-  run: |
-    go run ./cmd/codegen -all
-    git diff --exit-code -- 'internal/services/*/model_generated.go' \
-                              'internal/services/*/manifest_generated.go' \
-                              'internal/services/*/protocols_generated.go'
-```
-
-If the diff is non-empty, the CI fails — a human must review the Regeneration
-PR that adds/removes operations, changes types, or updates protocols.
-
-### 6.3 docs/services update
-
-The generator can also emit a partial docs table by reading the model's
-`@documentation` trait and mapping operations to their implementation status.
-Combined with the stub-report gap analysis, this drives automatic updates
-to `docs/services/<svc>.md`.
-
-## 7. Phased rollout
-
-### Phase L2.0 — model ingestion (1 PR)
-
-- [ ] Add `cmd/codegen` CLI skeleton with `-model` / `-service` / `-out` flags
-- [ ] Implement Smithy JSON AST parser: operation discovery, structure member
-      extraction, protocol trait detection
-- [ ] Implement type mapper: Smithy → Go with json/cbor struct tags
-- [ ] Generate `model_generated.go` for **one** service (SQS) as proof-of-concept
-- [ ] Verify generated types match existing hand-written `typed_logic.go` types
-
-### Phase L2.1 — stub manifest + protocol generation (1 PR)
-
-- [ ] Generate `manifest_generated.go` with full operation → stub registration
-- [ ] Generate `protocols_generated.go` from service protocol traits
-- [ ] Wire SQS's `typed_ops.go` and `SupportedProtocols()` to use generated base
-- [ ] Hand-written overrides merge with generated stubs
-- [ ] All SQS tests pass with generated types
-
-### Phase L2.2 — bulk generation (1 PR)
-
-- [ ] Run codegen for all 40+ services
-- [ ] Drop hand-written type definitions in favor of generated ones
-- [ ] Migrate `SupportedProtocols()` to generated
-- [ ] All integration tests pass
-- [ ] CI regeneration check added
-
-### Phase L2.3 — docs automation (1 PR)
-
-- [ ] Codegen emits `capabilities_generated.go` matching existing capabilities
-- [ ] `cmd/stub-report` updated to compare generated vs. implemented
-
-### Phase L2.4 — continuous regeneration (ongoing)
-
-- [ ] CI job tracks model changes in aws-sdk-go-v2 dependency bumps
-- [ ] Regeneration creates auto-PR when new model operations appear
-- [ ] `@rpcv2Cbor` additions auto-propagate to `SupportedProtocols()`
-
-## 8. Risks & mitigations
-
-| Risk | Mitigation |
-|------|-----------|
-| Model changes break existing types | Generated types are in a separate file; human-written overrides in typed_ops.go take precedence. Tests catch regression. |
-| Generated types add compile-time cost | Go's incremental build caches unchanged packages. Generated files only cause recompilation when they change. |
-| AWS model format drifts | CI regeneration check catches format changes immediately. Pinned dependency on aws-sdk-go-v2 version. |
-| Hand-written and generated types diverge | The merge pattern (generated stubs overridden) is one-way: human code always wins for implemented ops. Stubs stay in sync with model. |
-| Nested type explosion | Flatten deeply-nested shapes into named Go types referenced by multiple operations where possible. |
-| Too many stubs at first | Acceptable — stubs are 501 NotImplemented, which is the current behavior. Implementation is incremental. |
-
-## 9. Dependencies
-
-- **aws-sdk-go-v2** — already a dev dependency (used in compat suites). Models
-  live at `aws-sdk-go-v2/codegen/sdk-codegen/aws-models/`.
-- **Smithy JSON AST spec** — [smithy.io/2.0/spec/json-ast.html](https://smithy.io/2.0/spec/json-ast.html).
-  Single page, well-defined, stable.
-- **Smithy 2.0 model reference** — [smithy.io/2.0/spec/model.html](https://smithy.io/2.0/spec/model.html).
-  Understanding of shapes, traits, and service closures.
-
-## 10. Acceptance criteria (Level 2 complete)
-
-- [ ] `cmd/codegen` tool reads a Smithy JSON AST and emits valid Go that compiles
-- [ ] All 40+ services have generated `model_generated.go`,
-      `manifest_generated.go`, and `protocols_generated.go`
-- [ ] Hand-written `typed_ops.go` merges with generated stubs; all tests pass
-- [ ] `SupportedProtocols()` is auto-derived from service protocol traits
-- [ ] CI regeneration check gates model→code mismatch
-- [ ] When a model adds `@rpcv2Cbor`, the regeneration auto-adds it to
-      `SupportedProtocols()` — no manual intervention
-- [ ] `cmd/stub-report` gap analysis uses generated operation set as baseline
+# Wire protocols — claim-first dispatch, single-implementation ops, and model-driven codegen (v2)
+
+> Status: proposal v2, 2026-07-24 — rewrites the original "Level 2 codegen" proposal (kept below as inspiration where still valid; superseded where it conflicts). Owner: TBD.
+> Level 1 (the codec/op architecture) is live in code — design doc: [docs/smithy.md](../smithy.md) (note: its link to `plans/smithy.md` is stale; fix alongside this plan).
+> Inputs: the 2026-07-24 protocol/codec architecture audit (census embedded below); AWS's April-2026 wire-protocol policy and the "reactive protocol identification" guidance it points at (see e.g. floci-io/floci#156 for the same problem in a sibling emulator); [wire-byte-goldens.md](./wire-byte-goldens.md) as the codec safety net.
+
+## 1. Why this plan exists (the forcing function)
+
+Since **April 2026**, AWS SDKs may add or switch a service's wire protocol **without advance notice** (the earlier CloudWatch protocol switch was the precedent). AWS's sanctioned defense for emulators is **reactive protocol identification**: each Smithy protocol defines "identification for claiming" rules (`Smithy-Protocol: rpc-v2-cbor`, `Content-Type: application/x-amz-json-1.x` + `X-Amz-Target`, form-encoded `Action=`, …) — a request *tells you* its protocol; hardcoded per-service protocol assumptions are the thing that breaks.
+
+The goal state, in one sentence: **adopting a new wire format costs one codec + one identifier, with zero per-service edits — because every operation has exactly one implementation and protocol handling is entirely the codec layer's job.**
+
+## 2. Current state (verified 2026-07-24)
+
+**What's right.** `internal/protocol/codec` (Codec interface, `JSON10/JSON11/QueryXML/RESTXML/RPCv2CBOR`, precision-ordered `DefaultIdentifiers()`, `middleware.Protocol` stashing `(codec, opName)` in context) and `internal/protocol/op` (`Typed[In,Out]`, `TypedAny`, `NewRaw`) are sound, well-documented, byte-stability-disciplined. Error envelopes are fully centralized (`protocol.Write{JSON,XML,QueryXML,EC2QueryXML}Error`); no hand-rolled AWS error envelopes exist in service code. Nine services are cleanly typed-only (appconfig, appconfigdata, appregistry, appsync, bedrock, eks, msk, opensearch, scheduler).
+
+**Debt D1 — the dead Query typed path (architecture gap, worst debt).** The Query codec never surfaces the resolved `Action` to dispatch (`identify.go:108-111` defers to a "Phase 6 query decoder" that was never built), so the typed registries of all ~11 Query-protocol services (iam 61 ops, ec2 64, rds 33, cloudformation, sts, sns, ses, autoscaling, elasticache, elbv2, route53) are **unreachable for real SDK traffic** — a complete second copy of every operation with no live traffic to catch rot. No per-service migration fixes this; only the codec can.
+
+**Debt D2 — live dual-path duplication (~28 JSON/CBOR hybrid services).** JSON 1.x traffic runs hand-written untyped handlers; CBOR runs the typed twin; business logic is maintained twice per op. Confirmed-identical worst cases (audit): Kinesis `GetRecords`/`PutRecord` (~100 dup lines each — since fixed by delegation in PR #272, which is the **pilot for the pattern**), SSM's paginated ops (the class PR #271 fixed once and nothing prevents diverging again), and the switch-based five (backup, cognito, eventbridge, organizations, transfer). Two *incompatible* migration semantics coexist: map-style hybrids route JSON to untyped even when a typed impl exists; SQS routes typed-first for any codec.
+
+**Debt D3 — tiers outside the architecture.** REST-XML/REST-JSON services (s3, cloudfront, apigateway, lambda, pipes) use chi routing only — no codec/op involvement (acceptable: HTTP-binding protocols are route-shaped; see non-goals). `cloudwatch` (metrics) bypasses `middleware.Protocol` entirely with bespoke `GraniteServiceVersion…` prefix parsing — not acceptable, just drift.
+
+**Small rot:** three coexisting legacy-dispatch idioms (map literal / `dispatchLegacy` switch / inline switch); 9+ private clones of `decodeJSON`/`writeJSON` (appsync, backup, cloudtrail, ecs ×2, kinesis, kms, ssm, stepfunctions, transfer); `cmd/stub-report` misses nested service dirs (`cloudwatch/logs` absent from `docs/operation-manifest.md`) and hardcodes a container path; dynamodb's migrated-in-place `rawOps()` base is dead weight (every entry overridden).
+
+## 3. The approach — three decoupled tracks
+
+The v1 plan led with generating types for everything. That inverts the value order: the April-2026 exposure is **dispatch-level**, the DRY debt is **implementation-count-level**, and neither needs type generation. Codegen comes last and smaller.
+
+### Track 1 — Claim-first protocol agility (no codegen required)
+
+1. **Build the missing Query operation-name resolution** (audit rec #1): parse `Action` early (bounded form read; the body is re-readable for the codec's full decode) so `(codec, opName)` context works for Query exactly as for JSON/CBOR — this single change makes ~250 already-written typed registrations reachable. Acceptance: an IAM/CFN SDK request dispatches through `typedOps` with the legacy switch as fallback only.
+2. **Claimed-but-undeclared policy:** when identification claims a protocol a service's `SupportedProtocols()` doesn't declare, attempt the decode anyway and log a loud `protocol drift` warning (service, op, claimed protocol). This is the reactive posture: a silent SDK protocol switch becomes a working request plus a signal, not a 415/501 mystery. (Gate behind a config flag if fidelity-strictness is preferred in CI: `OVERCAST_PROTOCOL_STRICT`.)
+3. **New-format adoption recipe (documented in CONTRIBUTING):** implement one `Codec`, register one identifier in precision order, add golden-byte fixtures ([wire-byte-goldens.md](./wire-byte-goldens.md)) — done. No service edits. This is the deliverable the whole plan is named for.
+4. **Bring `cloudwatch` (metrics) onto `middleware.Protocol`/`codec.FromContext`** like every other JSON service; delete its bespoke prefix parsing.
+5. **REST tier stance (explicit):** s3/apigateway/lambda/pipes/cloudfront stay chi-routed — `restXml`/`restJson1` are HTTP-binding protocols where the route *is* the operation identity; forcing them through the target-header codec layer would be shoehorning. Identification may still *label* them (logging/metrics) cheaply.
+
+### Track 2 — One implementation per operation (no codegen required)
+
+1. **One migration semantic, everywhere:** typed-first for *any* codec once an op has a typed impl (SQS's semantic; the map-style "JSON prefers untyped" rule is what keeps duplicates alive). One legacy idiom: the map literal; the five switch-based services convert when touched.
+2. **Delegate, don't duplicate — fleet-wide:** untyped handlers become decode-shims calling the typed implementation (the PR #272 Kinesis pattern, proven byte-identical including empty-body response conventions). Order by the audit census: confirmed-identical pairs first (mechanical), then the long tail per-service. Diverged pairs, if any turn up during migration, are **bugs** — fix with failing tests, not silent unification.
+3. **Query services after Track 1.1 lands:** their typed registries go live; verify per-service parity (goldens + integration suites), then shrink legacy switches to fallback-only, then delete.
+4. **Cleanups that ride along:** replace the 9+ `decodeJSON`/`writeJSON` clones with the shared helpers; drop dynamodb's dead `rawOps()` base; fix `cmd/stub-report` recursion + hardcoded path and regenerate the manifest.
+5. **CONTRIBUTING rule:** business logic for an operation lives in exactly one function; wire-path files may only decode/delegate/encode. Review checklist item.
+
+### Track 3 — Model-driven codegen (v1's idea, re-scoped smaller)
+
+Keep v1's mechanism (consume AWS's published **Smithy JSON AST**; generated files checked in; CI regen-and-diff gate; stubs overridable by hand-written registrations) — it was sound. Change the scope:
+
+1. **Generate the operation *manifest* + protocol traits for every service** — op names, protocol list (`SupportedProtocols()` becomes generated), HTTP bindings. This is tiny per service, drives correct 501 stubs for every unimplemented op, feeds `cmd/stub-report` gap analysis, and is what auto-adopts a model's new `@rpcv2Cbor`/future trait on regeneration.
+2. **Generate typed Input/Output structs only for *implemented* operations** (the override allowlist). v1 generated full model types for everything — for EC2-sized models that's an enormous checked-in surface serving 501 stubs that need only an op name. Types-on-demand keeps diffs reviewable and compile times sane.
+3. **Model snapshot vendored** under `models/` with a VERSION stamp and a refresh script; regeneration diffs are reviewed PRs (v1's goal 3, kept verbatim).
+4. **Convergence, not new registries:** the generated manifest becomes the single declared-ops source that `capgen` capability tables and `stub-report` both read, ending the parallel hand-maintained lists.
+5. v1's non-goals stand: JSON AST only (no `.smithy` parsing), no runtime codegen, no client generation, business logic stays hand-written.
+
+## 4. Phasing
+
+| Phase | Contents | Effort | Gate/acceptance |
+|---|---|---|---|
+| P0 quick wins | stub-report recursion+path fix, `docs/smithy.md` stale link, decodeJSON clone sweep | S | manifest includes cloudwatch/logs; clones gone |
+| P1 | Track 1.1 Query `Action` resolution + 1.2 drift policy + 1.4 cloudwatch metrics | M | IAM/CFN SDK traffic hits typed ops; drift warning covered by tests; goldens green |
+| P2 | Track 2 delegation sweep (worst-5 first, then per-service; Query services post-P1) | M×n, mechanical, parallelizable per service | per service: legacy path is decode-shim or deleted; parity pinned by goldens + existing suites |
+| P3 | Track 3 generator (`cmd/codegen`): manifests+traits fleet-wide, allowlisted types; pilot sqs + scheduler | M | regen-diff CI job green; SupportedProtocols generated for pilots |
+| P4 | Fleet regen; delete legacy dispatch where shims are total; capgen/stub-report converge on generated manifest | L, mechanical | one implementation per op fleet-wide; new-protocol drill (add a fake codec in a test) costs zero service edits |
+
+Every phase: failing/pinning tests first; wire-byte goldens are the codec-change safety net; benchmark discipline per [storage-test-plan.md](./storage-test-plan.md) where perf is claimed.
+
+## 5. What "done" means
+
+A new AWS wire format announced tomorrow is adopted by: vendoring the refreshed models (P3 machinery flags which services gained the trait), implementing one codec + one identifier, adding goldens. No service files change. No duplicated business logic exists for any operation, so the Kinesis-class bug (fix lands on one wire path, stays live on the other) is structurally impossible.
