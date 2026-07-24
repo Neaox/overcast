@@ -69,22 +69,43 @@ func (s *Service) RegisterRoutes(_ chi.Router) {}
 // the action name.
 func (s *Service) OwnsVersion(version string) bool { return version == awsapi.VersionCloudFormation }
 
+// cfnLegacyOnlyOps lists CloudFormation operations that must stay on the
+// legacy dispatch path even though a typed implementation exists in
+// typedOp. DeleteStack, ExecuteChangeSet, and DeleteChangeSet declare a
+// bare anonymous struct{} as their typed Out type; encoding/xml cannot
+// marshal that (no XMLName, no Go type name to fall back on), so
+// queryXML.WriteResponse fails and every call 500s with a generic
+// InternalError. Every other CFN response type (createStackResp,
+// updateStackResp, describeStacksResp, ...) carries an explicit XMLName
+// field tagged with its response element name (e.g. "CreateStackResponse")
+// and is unaffected. Discovered running the full CloudFormation
+// integration suite after docs/plans/level2-codegen.md Track 1.1 (Query
+// Action resolution) made this registry reachable for the first time.
+// Track 2 follow-up: give these three ops a properly named response
+// wrapper (mirroring createStackResp) instead of struct{}, then drop this
+// exclusion.
+var cfnLegacyOnlyOps = map[string]bool{
+	"DeleteStack":      true,
+	"ExecuteChangeSet": true,
+	"DeleteChangeSet":  true,
+}
+
 // DispatchQuery satisfies router.QueryDispatcher.
 func (s *Service) DispatchQuery(w http.ResponseWriter, r *http.Request) {
 	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {
-		if !codec.Supports(s.SupportedProtocols(), c) {
+		if !serviceutil.AllowProtocolDrift(s.cfg, s.log, opName, c, s.SupportedProtocols()) {
 			c.WriteError(w, r, &protocol.AWSError{
 				Code: "UnsupportedProtocol", Message: "CloudFormation does not support wire protocol " + c.Name() + ".",
 				HTTPStatus: http.StatusUnsupportedMediaType,
 			})
 			return
 		}
-		if typed, ok := s.handler.typedOp[opName]; ok {
+		if typed, ok := s.handler.typedOp[opName]; ok && !cfnLegacyOnlyOps[opName] {
 			typed.Invoke(w, r, c)
 			return
 		}
-		c.WriteError(w, r, protocol.ErrNotImplemented)
-		return
+		// No typed impl for this op (or it's deliberately excluded above)
+		// — fall through to legacy dispatch below.
 	}
 	s.handler.dispatch(w, r)
 }

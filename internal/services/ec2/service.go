@@ -47,6 +47,11 @@ type Service struct {
 	log     *serviceutil.ServiceLogger
 }
 
+// ec2ErrorCodec wraps a Codec so typed EC2 operations render errors in
+// EC2's XML shape rather than the generic Query error envelope. Currently
+// unused: EC2's typed dispatch branch is disabled pending a Track 2 audit
+// (see the comment on DispatchQuery below). Kept in place so re-enabling
+// typed dispatch is a one-line change rather than a re-derivation.
 type ec2ErrorCodec struct {
 	codec.Codec
 }
@@ -139,23 +144,21 @@ func (s *Service) Stop(ctx context.Context) {
 }
 
 // DispatchQuery satisfies router.QueryDispatcher; routes to the correct handler.
+//
+// EC2's typed operation registry is intentionally NOT dispatched to yet.
+// Resolving the Query-protocol Action for dispatch (docs/plans/level2-codegen.md
+// Track 1.1) made this registry reachable for the first time, and a full
+// integration-suite run against it surfaced behavioral drift broad enough to
+// call structural rather than one-off: filters silently ignored on multiple
+// Describe* operations (DescribeInstances state filter, DescribeSecurityGroups
+// / DescribeSubnets VPC filters, DescribeImages ID filter,
+// DescribeVpcPeeringConnections ID filter) and state mutations not taking
+// effect (TerminateInstances, StopInstances, ModifyInstanceAttribute,
+// DeleteTags, DeleteVpcEndpoints). Per the P1 safety valve, a service-wide
+// spread of unrelated bugs like this is routed to the legacy path rather than
+// patched piecemeal; a dedicated Track 2 pass should audit ec2/typed_logic.go
+// op by op before re-enabling this branch.
 func (s *Service) DispatchQuery(w http.ResponseWriter, r *http.Request) {
-	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {
-		if !codec.Supports(s.SupportedProtocols(), c) {
-			protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
-				Code: "UnsupportedProtocol", Message: "EC2 does not support wire protocol " + c.Name() + ".",
-				HTTPStatus: http.StatusUnsupportedMediaType,
-			})
-			return
-		}
-		if typed, ok := s.handler.typedOp[opName]; ok {
-			typed.Invoke(w, r, ec2ErrorCodec{Codec: c})
-			return
-		}
-		protocol.WriteEC2QueryXMLError(w, r, protocol.ErrNotImplemented)
-		return
-	}
-
 	if err := r.ParseForm(); err != nil {
 		protocol.WriteEC2QueryXMLError(w, r, protocol.ErrInvalidArgument("invalid request form encoding"))
 		return
