@@ -2,6 +2,7 @@ package serviceutil_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -214,9 +215,12 @@ func TestPaginate_firstPage(t *testing.T) {
 	}
 
 	// When: we request the first page
-	page := serviceutil.Paginate(items, 10, "")
+	page, err := serviceutil.Paginate(items, 10, "", serviceutil.PaginateOptions{})
 
 	// Then: we get the first 10 items and a continuation token
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(page.Items) != 10 {
 		t.Errorf("expected 10 items, got %d", len(page.Items))
 	}
@@ -231,12 +235,18 @@ func TestPaginate_firstPage(t *testing.T) {
 func TestPaginate_lastPage(t *testing.T) {
 	// Given: 15 items, max 10, fetching page 2
 	items := make([]int, 15)
-	firstPage := serviceutil.Paginate(items, 10, "")
+	firstPage, err := serviceutil.Paginate(items, 10, "", serviceutil.PaginateOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error on page 1: %v", err)
+	}
 
 	// When: we request the second page using the continuation token
-	secondPage := serviceutil.Paginate(items, 10, firstPage.NextToken)
+	secondPage, err := serviceutil.Paginate(items, 10, firstPage.NextToken, serviceutil.PaginateOptions{})
 
 	// Then: we get the remaining 5 items with no continuation token
+	if err != nil {
+		t.Fatalf("unexpected error on page 2: %v", err)
+	}
 	if len(secondPage.Items) != 5 {
 		t.Errorf("expected 5 items on last page, got %d", len(secondPage.Items))
 	}
@@ -253,7 +263,10 @@ func TestPaginate_allItemsFitOnOnePage(t *testing.T) {
 	items := []string{"a", "b", "c", "d", "e"}
 
 	// When + Then: single page with no truncation
-	page := serviceutil.Paginate(items, 100, "")
+	page, err := serviceutil.Paginate(items, 100, "", serviceutil.PaginateOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(page.Items) != 5 {
 		t.Errorf("expected 5 items, got %d", len(page.Items))
 	}
@@ -262,14 +275,94 @@ func TestPaginate_allItemsFitOnOnePage(t *testing.T) {
 	}
 }
 
-func TestPaginate_invalidToken_treatsAsFirstPage(t *testing.T) {
+// TestPaginate_invalidToken_returnsError pins the fix for this codebase's
+// most common AWS-fidelity divergence (docs/plans/pagination-plan.md, H1/G3):
+// a garbled continuation token must surface as a distinguishable error, not
+// silently restart the walk from page 1 (which causes duplicate delivery to
+// any client polling with a stale/corrupted token).
+func TestPaginate_invalidToken_returnsError(t *testing.T) {
 	// Given: an invalid/corrupt continuation token
 	items := []int{1, 2, 3}
-	page := serviceutil.Paginate(items, 10, "!!not-valid-base64!!")
 
-	// Then: graceful degradation — returns from the beginning
-	if len(page.Items) != 3 {
-		t.Errorf("expected all 3 items for invalid token, got %d", len(page.Items))
+	// When: paginating with the garbled token
+	page, err := serviceutil.Paginate(items, 10, "!!not-valid-base64!!", serviceutil.PaginateOptions{})
+
+	// Then: ErrInvalidPageToken is returned (errors.Is-checkable) and no
+	// items are silently handed back as if this were page 1.
+	if !errors.Is(err, serviceutil.ErrInvalidPageToken) {
+		t.Fatalf("expected ErrInvalidPageToken, got %v", err)
+	}
+	if len(page.Items) != 0 {
+		t.Errorf("expected zero-value page on error, got %d items", len(page.Items))
+	}
+}
+
+func TestPaginate_invalidToken_outOfRange_returnsError(t *testing.T) {
+	// Given: a well-formed token (valid base64/JSON int) whose index is
+	// past the end of the current item set — e.g. items were deleted
+	// since the token was issued.
+	items := []int{1, 2, 3}
+	farToken := base64.URLEncoding.EncodeToString([]byte("999"))
+
+	// When: paginating with the out-of-range token
+	_, err := serviceutil.Paginate(items, 10, farToken, serviceutil.PaginateOptions{})
+
+	// Then: it errors instead of silently restarting from index 0.
+	if !errors.Is(err, serviceutil.ErrInvalidPageToken) {
+		t.Fatalf("expected ErrInvalidPageToken for out-of-range index, got %v", err)
+	}
+}
+
+func TestPaginate_tokenAtExactEnd_returnsEmptyLastPage(t *testing.T) {
+	// Given: a token pointing exactly at len(items) — the legitimate
+	// "no more results" position, not an error.
+	items := []int{1, 2, 3}
+	endToken := base64.URLEncoding.EncodeToString([]byte("3"))
+
+	// When: paginating with that token
+	page, err := serviceutil.Paginate(items, 10, endToken, serviceutil.PaginateOptions{})
+
+	// Then: an empty, non-truncated page — not an error.
+	if err != nil {
+		t.Fatalf("unexpected error at exact-end token: %v", err)
+	}
+	if len(page.Items) != 0 || page.IsTruncated {
+		t.Errorf("expected empty non-truncated page, got %#v", page)
+	}
+}
+
+func TestPaginate_defaultLimit_appliedWhenRequestedLimitZero(t *testing.T) {
+	// Given: 30 items and a caller that supplies its own AWS-documented
+	// default via options instead of a client-provided limit.
+	items := make([]int, 30)
+
+	// When: requestedLimit is 0 (client omitted MaxResults)
+	page, err := serviceutil.Paginate(items, 0, "", serviceutil.PaginateOptions{DefaultLimit: 10})
+
+	// Then: the operation's own default is used, not the package fallback.
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(page.Items) != 10 {
+		t.Errorf("expected DefaultLimit=10 to apply, got %d items", len(page.Items))
+	}
+}
+
+func TestPaginate_maxLimit_capsRequestedLimit(t *testing.T) {
+	// Given: 30 items and an operation whose AWS-documented cap is lower
+	// than what the client requested (e.g. SSM GetParametersByPath caps at
+	// 10 even though nothing stops a client from asking for more).
+	items := make([]int, 30)
+
+	// When: the client asks for more than the cap
+	page, err := serviceutil.Paginate(items, 25, "", serviceutil.PaginateOptions{DefaultLimit: 10, MaxLimit: 10})
+
+	// Then: the cap wins.
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(page.Items) != 10 {
+		t.Errorf("expected MaxLimit=10 to cap the page, got %d items", len(page.Items))
 	}
 }
 

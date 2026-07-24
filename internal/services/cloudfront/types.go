@@ -1260,6 +1260,26 @@ func errMissingCallerReference() *protocol.AWSError {
 	}
 }
 
+// errInvalidMarker maps a garbled/out-of-range pagination Marker to
+// CloudFront's documented error. A silent restart from page 1 (this
+// codebase's most common pagination divergence, see
+// docs/plans/pagination-plan.md G3) causes duplicate delivery to any client
+// polling with a stale token. Verified against every List op that uses
+// serviceutil.Paginate in this package:
+//   - https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_ListDistributions.html#API_ListDistributions_Errors
+//   - https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_ListInvalidations.html#API_ListInvalidations_Errors
+//   - https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_ListOriginAccessControls.html#API_ListOriginAccessControls_Errors
+//   - https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_ListCloudFrontOriginAccessIdentities.html#API_ListCloudFrontOriginAccessIdentities_Errors
+//
+// All four document InvalidArgument, HTTP 400.
+func errInvalidMarker() *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "InvalidArgument",
+		Message:    "The Marker parameter is not valid.",
+		HTTPStatus: 400,
+	}
+}
+
 func errNoSuchKeyGroup(id string) *protocol.AWSError {
 	return &protocol.AWSError{
 		Code:       "NoSuchResource",
