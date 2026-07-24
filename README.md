@@ -6,11 +6,10 @@ Overcast emulates the APIs of popular cloud services so you can develop and test
 locally without an internet connection, a cloud account, or a bill.
 
 [![Tests](https://github.com/Neaox/overcast/actions/workflows/test.yml/badge.svg)](https://github.com/Neaox/overcast/actions)
-[![GitHub release](https://img.shields.io/github/v/release/Neaox/overcast)](https://github.com/Neaox/overcast/releases)
+[![GitHub release](https://img.shields.io/github/v/release/Neaox/overcast?include_prereleases)](https://github.com/Neaox/overcast/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go 1.24+](https://img.shields.io/badge/Go-1.24+-blue.svg)](https://go.dev)
-[![Go Report Card](https://goreportcard.com/badge/github.com/Neaox/overcast)](https://goreportcard.com/report/github.com/Neaox/overcast)
-[![Docker image](https://img.shields.io/docker/image-size/neaox/overcast/latest?registry_url=https://ghcr.io)](https://github.com/Neaox/overcast/pkgs/container/overcast)
+[![Container image](https://img.shields.io/badge/ghcr.io-neaox%2Fovercast-blue?logo=docker&logoColor=white)](https://github.com/Neaox/overcast/pkgs/container/overcast)
 
 ---
 
@@ -474,3 +473,19 @@ Full documentation lives in [`docs/`](./docs/README.md):
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for coding standards and workflow, and
 [docs/development-setup.md](./docs/development-setup.md) for building from source.
+
+## Disclaimer
+
+Overcast is an independent open-source project. It is **not affiliated with,
+endorsed by, or sponsored by Amazon Web Services**. "AWS" and all AWS service
+names are trademarks of Amazon.com, Inc. or its affiliates, used here solely to
+describe compatibility.
+
+Overcast is provided **as-is**, without warranty of any kind, under the
+[MIT License](LICENSE). It emulates the most-used AWS API surface with high
+fidelity, but it is not a perfect replica — divergences exist, particularly on
+edge cases, and per-service coverage is documented in the
+[support matrices](docs/services/). If you find behavior that differs from real
+AWS, please
+[open a compatibility issue](https://github.com/Neaox/overcast/issues/new?template=compat_review.md)
+— discrepancy reports directly drive fidelity work.
