@@ -92,13 +92,13 @@ One codec for opaque continuation tokens: encode/decode a storage cursor (string
 
 **Tests.** Range-correctness vs the current full-scan behavior (property: same events for same window); buffer-visibility (event ingested < debounce ago appears in a filter over its window); benchmark FilterLogEvents vs group size, flat at fixed window. Patterns: P2, P4, P6, M1 consumer. Unbounded.
 
-### A5 — CloudWatch metrics: key-range time windows for datapoint reads
+### A5 — CloudWatch metrics: key-range time windows for datapoint reads  **[✅ done]**
 
 **Evidence.** Keys are `<ns>/<metric>/<dims>/<UnixNano>` — sortable ([service.go:209](../../internal/services/cloudwatch/service.go)) — yet `GetMetricStatistics` ([service.go:1094](../../internal/services/cloudwatch/service.go)), `GetMetricData` (1207), the alarm evaluator (1625, background, every tick), and `listMetricDataPoints` (232-253) all `Scan` the full prefix and decode every retained point to filter by time.
 
 **Change.** Read `[prefix+startNano, prefix+endNano]` via `ScanPage`'s `startAfter` (no interface change) or a bounded key-range `Scan`; decode only in-window points. The retention sweep can also parse the key suffix and skip decoding values entirely. No wire change at all — pure P1 harvest of a key design that already exists.
 
-**Tests.** Window-equality property vs current behavior; benchmark GetMetricStatistics + one alarm-eval tick vs points-in-retention, flat at fixed window. Patterns: P1. Unbounded.
+**Tests.** Window-equality property vs current behavior; benchmark GetMetricStatistics + one alarm-eval tick vs points-in-retention, flat at fixed window. Patterns: P1. Unbounded. **Done (2026-07-24, branch fix/cloudwatch-metric-key-ranges):** ScanPage range walk with exclusive-predecessor start cursor; oracle property test proves window equality with the old full-scan behavior; boundary semantics pinned inclusive-both-ends; allocs/op flat at 226 regardless of out-of-window history (0/2k/8k preloaded); sweep now key-suffix-driven, zero value decodes.
 
 ### A6 — S3: `ListObjects` pages internally instead of materializing the bucket
 
