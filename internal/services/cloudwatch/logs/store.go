@@ -653,6 +653,15 @@ func (s *logsStore) sweepExpiredEventsOnce(ctx context.Context) {
 //   - a stream with anything in its write buffer is skipped even if
 //     LastEventTimestamp looks expired, since that metadata field isn't
 //     updated by buffered (not-yet-flushed) appends.
+//
+// Known, accepted race: a PutLogEvents that validates the stream and buffers
+// an event in the microseconds between this function's buffer/persisted
+// checks and its Delete would lose that event (clearEventCache drops the
+// buffer). Reaching it requires appending to a stream that has been dormant
+// past its whole retention window at the exact instant of a five-minute
+// sweep tick — the same order-of-operations window the explicit
+// deleteLogStream path has always had. Documented rather than locked
+// against; revisit only if a real workload ever hits it.
 func (s *logsStore) sweepExpiredStreamsOnce(ctx context.Context, region, group string, cutoff time.Time) {
 	streamPrefix := serviceutil.RegionKey(region, group+"/")
 	pairs, err := s.store.Scan(ctx, nsStreams, streamPrefix)
