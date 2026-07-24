@@ -1,6 +1,6 @@
 # Pagination fidelity — audit & remediation plan
 
-> **Status:** in progress — H1/H2/G3 done (foundations), G2/G5 done (DynamoDB, with storage-access A3), G4 done (S3, with storage-access A6); G1/G6 in flight. Audit completed 2026-07-24 (agent sweep of every paginating operation across all supported services; evidence file:line below).
+> **Status:** in progress — H1/H2/G3 (foundations), G1/G6 (CloudWatch Logs, with storage-access A4), G2/G5 (DynamoDB, with A3), G4 (S3, with A6) all done; remaining: wave-3 items G7 (EC2), G8 (breadth), G9 (AppSync). Audit completed 2026-07-24 (agent sweep of every paginating operation across all supported services; evidence file:line below).
 > **Scope:** the **wire contract** of pagination vs real AWS — limit params honored with AWS's defaults/caps, continuation tokens that actually resume, truthful truncation flags, and AWS-shaped errors on invalid tokens. This matters more than usual for an emulator: people specifically test their pagination loops against local stacks, so an ignored `Limit` or a lying `IsTruncated` breaks exactly the client code Overcast exists to exercise.
 > **Relationship to other plans:** [storage-access-plan.md](./storage-access-plan.md) owns the *storage shape* behind pagination (cursors at the storage boundary, range reads); this plan owns what the client observes. For bounded, resource-count namespaces (most `List*` ops), **in-memory slice pagination over a full scan is the correct implementation** — this plan deliberately does not require storage cursors for them. Items that need both (logs) say so and land together.
 > **Audience:** any contributor or agent; [CONTRIBUTING.md](../../CONTRIBUTING.md)/[AGENTS.md](../../AGENTS.md) rules apply (failing test first, wire-format changes are the compatibility contract, prefer AWS SDK clients in tests).
@@ -35,13 +35,15 @@ The audit found **four** coexisting pagination idioms:
 
 ## Items (ranked)
 
-### G1 — CloudWatch Logs `GetLogEvents`: the one class-D (actually broken) contract
+### G1 — CloudWatch Logs `GetLogEvents`: the one class-D (actually broken) contract  **[✅ done — with G6 and storage-access A4]**
 
 **Evidence.** [handler.go:422-492](../../internal/services/cloudwatch/logs/handler.go): `Limit`/`NextToken`/`StartFromHead` are parsed and never used; `nextForwardToken`/`nextBackwardToken` are synthesized from `len(allEvents)`/hardcoded `0`. A client polling with the returned token — the *standard* CloudWatch Logs tailing pattern — re-receives the full event set every call, forever. SDK paginators loop or desync.
 
 **Change.** Real position tokens (AWS's `f/`+index / `b/`+index shape), `StartFromHead` direction semantics, `Limit` (AWS default 10 000 / 1 MB), and the **same-token-when-exhausted** termination convention (this op never returns a null token — the test must pin that). Implementable against today's in-memory reads first; [storage-access A4](./storage-access-plan.md) then makes it efficient — land as one unit if practical, this contract first if not.
 
 **Accept when** the H2 walk terminates via same-token, a tail-loop (poll, get token, poll again) receives each event exactly once, and an invalid token errors.
+
+**Done (2026-07-24, branch feat/logs-range-and-tokens):** real `f/`/`b/` tokens wrapping base64(JSON) `(Timestamp, Seq)`; `StartFromHead` direction semantics; Limit default/cap 10,000 per AWS docs; same-token-when-exhausted pinned by test (including a poll → new event → poll cycle); invalid token → `InvalidParameterException`. The tail-loop test reproduces the old re-deliver-everything bug (tokens were synthesized from `len(allEvents)`). The JSON-1.1 wire handler now delegates to the typed implementation — previously the JSON path (the default SDK path) still ran a separate broken copy. Known accepted edge: a token minted at an *unflushed buffered* event's synthetic seq can, across the flush boundary, skip a brand-new event sharing the exact same millisecond timestamp — inside AWS's own sub-millisecond ordering ambiguity for this API; revisit only if a real client pattern surfaces it.
 
 ### G2 — DynamoDB `Query`/`Scan`: cursor resolution by position, not item identity  **[✅ done — with A3 and G5]**
 
@@ -69,9 +71,11 @@ One change to [pagination.go:41,70-80](../../internal/serviceutil/pagination.go)
 
 **Done (2026-07-24, branch fix/dynamodb-scan-paging-cursors):** `Limit` (default and cap 100 per AWS docs), position-based `ExclusiveStartTableName` (a deleted start table resumes from where it would sort, pinned by test), `LastEvaluatedTableName` omitted on the final page. Handler-level pagination over the already-sorted bounded table list — no storage change, per this plan's boundedness rule. Stale service-doc caveat removed via `capabilities_dev.go` + `capgen` regeneration.
 
-### G6 — `FilterLogEvents` limit + nextToken
+### G6 — `FilterLogEvents` limit + nextToken  **[✅ done — with G1 and storage-access A4]**
 
 Class B (params parsed, unused; no `nextToken` response field). Specified here, implemented together with [storage-access A4](./storage-access-plan.md)'s group-range query — the token wraps the (stream, ts, seq) cursor via H1/M1.
+
+**Done (2026-07-24, branch feat/logs-range-and-tokens):** `nextToken` wraps base64(JSON) `(Timestamp, StreamName, Seq)`; `limit` honored (AWS default 10,000); the handler loops the single group-range query until `limit` matches or a 50,000-raw-event scan budget is hit — the count-based analogue of AWS's ~1 MB budget and its documented "a call may return fewer than limit matches" behavior. `searchedLogStreams` shaping and filter-pattern matching stayed behavioral in the handler per the fidelity principle. Invalid token → `InvalidParameterException` (same convention as G1, no third convention introduced).
 
 ### G7 — EC2 `Describe*` family: zero pagination scaffolding
 
@@ -103,9 +107,9 @@ Every item: failing test first (the broken behavior, e.g. token-loop duplication
 | Priority | Items | Why this order |
 |---|---|---|
 | **P0 — foundations ✅ done (branch fix/pagination-foundations)** | **H1+G3** (canonical helper + invalid-token contract), **H2** (contract test helper) | One helper change repairs three services' silent-restart bug at once, and every later item builds on both; doing any G-item first would re-create per-service machinery this exists to prevent. |
-| **P1 — broken contracts** | **G1** (GetLogEvents, the only class-D), **G2** (DynamoDB cursor duplicate-delivery — ✅ done) | These actively corrupt client pagination loops today (infinite re-fetch; silent duplicates) — worse than any ignored parameter. G1 can precede storage-access A4 (correctness first, efficiency after); G2's semantic fix must not wait for A3. |
+| **P1 — broken contracts** | **G1** (GetLogEvents, the only class-D — ✅ done), **G2** (DynamoDB cursor duplicate-delivery — ✅ done) | These actively corrupt client pagination loops today (infinite re-fetch; silent duplicates) — worse than any ignored parameter. G1 can precede storage-access A4 (correctness first, efficiency after); G2's semantic fix must not wait for A3. |
 | **P2 — small, high-visibility fidelity** | **G5** (DynamoDB ListTables — ✅ done), **G4** (S3 multipart response shapes + v2/v1 token errors — ✅ done), **G9** (AppSync default) | Cheap, mechanical, on surfaces users actually script against; each is an afternoon with H1/H2 in place. |
-| **P3 — coordinated with storage-access-plan** | **G6** (FilterLogEvents) with **A4**; interleave with access-plan A1–A3/A5 per its own ordering | Single landing per surface: the logs work satisfies both plans at once rather than touching the same handler twice. |
+| **P3 — coordinated with storage-access-plan** | **G6** (FilterLogEvents) with **A4** — ✅ done; interleave with access-plan A1–A3/A5 per its own ordering | Single landing per surface: the logs work satisfies both plans at once rather than touching the same handler twice. |
 | **P4 — breadth, per-service PRs** | **G7** (EC2 family first — biggest zero-scaffolding surface), then **G8** service by service (suggested within-G8 order: IAM → SQS/SNS/Lambda → Kinesis lists → CloudWatch/logs Describe* → the rest) | Mechanical H1 adoption; no dependencies between services, so parallelizable across agents and safe to schedule opportunistically. |
 | **Explicitly last / never** | Won't-fix register above | Documented decisions, revisit only on user demand. |
 
