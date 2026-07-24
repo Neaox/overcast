@@ -336,6 +336,7 @@ export const LambdaInstanceNode = memo(function LambdaInstanceNode({ data }: Nod
         {hasLogs && onPeek && (
           <button
             type="button"
+            data-peek-trigger
             className="ml-0.5 flex items-center rounded p-0.5 text-purple-400 hover:bg-purple-400/15"
             title="Peek log stream"
             onClick={(e) => {

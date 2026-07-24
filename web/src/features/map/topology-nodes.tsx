@@ -567,6 +567,7 @@ const LogStreamList = memo(function LogStreamList({
             <button
               key={stream.logStreamName}
               type="button"
+              data-peek-trigger
               onClick={() => onSelect(stream)}
               style={{
                 position: "absolute",
