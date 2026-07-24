@@ -160,8 +160,6 @@ type Config struct {
 	// Corresponds to env var OVERCAST_CFN_SYNC_WAIT_MS. Default 1000ms.
 	CFNSyncWait time.Duration
 
-	// ProtocolDispatch enables the typed wire-protocol dispatcher and the
-
 	// ShutdownTimeout is how long the server waits for in-flight
 	// requests to complete before forcibly closing.
 	ShutdownTimeout time.Duration
