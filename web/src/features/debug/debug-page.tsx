@@ -1,23 +1,20 @@
-import { useMemo, useState, type ReactNode } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
+import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual"
 import { ChevronRight, Copy, Database, ExternalLink, LinkIcon, RefreshCw, Search } from "lucide-react"
-import { PageHeader, QueryListState } from "@/components/ui/primitives"
+import { PageHeader, QueryListState, Spinner } from "@/components/ui/primitives"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableEmpty,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { Table, TableBody, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
 import { useToast } from "@/components/ui/toast"
 import { debugClipboard } from "./clipboard"
-import { debugNamespaceQueryOptions, debugStateQueryOptions } from "./data"
+import {
+  debugNamespaceInfiniteQueryOptions,
+  debugStateQueryOptions,
+  debugValueQueryOptions,
+} from "./data"
 import {
   DEBUG_SERVICE_LABELS,
   firstDebugNamespaceForService,
@@ -27,6 +24,77 @@ import {
 
 const MAX_HIGHLIGHTED_JSON_BYTES = 256 * 1024
 const MAX_NESTED_JSON_DECODE_BYTES = 1024 * 1024
+
+/**
+ * Row height estimate for both the virtualized flat table and the
+ * virtualized key tree — both render a single line of monospace text per
+ * row, so one constant covers both (see useVirtualizer calls below).
+ */
+const DEBUG_ROW_HEIGHT_ESTIMATE = 33
+
+/**
+ * Fires `fetchNextPage` once the virtualizer's last rendered row is within
+ * reach of the end of the currently loaded row set — the standard
+ * TanStack Virtual + infinite-query pattern (mirrors
+ * web/src/features/s3/components/bucket-detail.tsx's rowVirtualizer effect).
+ *
+ * Deliberately does nothing while `enabled` is false — see debug-page.tsx's
+ * callers, which disable this while a key-only search filter is active so a
+ * narrow (or zero-match) filter doesn't cause it to auto-page through the
+ * entire namespace hunting for matches. In that state the UI instead shows a
+ * manual "Load more" control (see `LoadMoreNotice`).
+ */
+function useLoadMoreOnReachEnd({
+  enabled,
+  itemCount,
+  virtualItems,
+  hasNextPage,
+  isFetchingNextPage,
+  fetchNextPage,
+}: {
+  enabled: boolean
+  itemCount: number
+  virtualItems: VirtualItem[]
+  hasNextPage: boolean
+  isFetchingNextPage: boolean
+  fetchNextPage: () => void
+}) {
+  useEffect(() => {
+    if (!enabled) return
+    const last = virtualItems.at(-1)
+    if (!last) return
+    if (last.index >= itemCount - 1 && hasNextPage && !isFetchingNextPage) {
+      fetchNextPage()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, virtualItems, itemCount, hasNextPage, isFetchingNextPage, fetchNextPage])
+}
+
+function LoadMoreNotice({
+  hasNextPage,
+  isFetchingNextPage,
+  fetchNextPage,
+}: {
+  hasNextPage: boolean
+  isFetchingNextPage: boolean
+  fetchNextPage: () => void
+}) {
+  if (!hasNextPage) return null
+  return (
+    <div className="flex items-center justify-between gap-2 border-b border-border bg-bg-muted/40 px-3 py-1.5 text-xs text-fg-muted">
+      <span>Search only covers keys loaded so far.</span>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 px-2 text-xs"
+        onClick={() => fetchNextPage()}
+        disabled={isFetchingNextPage}
+      >
+        {isFetchingNextPage ? <Spinner className="h-3 w-3" /> : "Load more"}
+      </Button>
+    </div>
+  )
+}
 
 export function DebugPage({
   initialService,
@@ -55,26 +123,62 @@ export function DebugPage({
     return all.filter((ns) => serviceForDebugNamespace(ns) === serviceFilter)
   }, [serviceFilter, summaryQuery.data])
   const activeNamespace = namespace || namespaces[0] || ""
-  const valuesQuery = useQuery(debugNamespaceQueryOptions(activeNamespace))
   const activeService = serviceForDebugNamespace(activeNamespace) ?? serviceFilter
 
-  const rows = useMemo(() => {
-    const values = valuesQuery.data ?? {}
-    const lower = filter.trim().toLowerCase()
-    return Object.entries(values)
-      .filter(([key, value]) =>
-        lower ? key.toLowerCase().includes(lower) || value.toLowerCase().includes(lower) : true,
-      )
-      .sort(([a], [b]) => a.localeCompare(b))
-  }, [filter, valuesQuery.data])
+  // Incremental paging (storage-plan.md item 3.13): each page is fetched
+  // only as the virtualized views below actually scroll near the end of
+  // what's loaded — see useLoadMoreOnReachEnd.
+  const namespaceQuery = useInfiniteQuery(debugNamespaceInfiniteQueryOptions(activeNamespace))
+  const loadedValues = useMemo(() => {
+    const merged: Record<string, string> = {}
+    for (const page of namespaceQuery.data?.pages ?? []) Object.assign(merged, page.values)
+    return merged
+  }, [namespaceQuery.data])
+  const loadedCount = Object.keys(loadedValues).length
+  // The summary endpoint (debugState.list) already enumerates every key in
+  // the namespace up front (keys only, no values — see debug.go's comment on
+  // why that endpoint stays unpaginated), so it's the authoritative "total"
+  // count independent of how many pages this component has fetched so far.
+  const totalKeys = summaryQuery.data?.[activeNamespace]?.length ?? loadedCount
 
+  // Search is key-only and scoped to loaded rows (storage-plan.md item 3.13,
+  // "make search key-only or server-side" — there is no server-side search
+  // endpoint, so value-substring search over unloaded pages simply isn't
+  // possible once pages are fetched incrementally rather than eagerly).
+  const rows = useMemo(() => {
+    const lower = filter.trim().toLowerCase()
+    return Object.entries(loadedValues)
+      .filter(([key]) => (lower ? key.toLowerCase().includes(lower) : true))
+      .sort(([a], [b]) => a.localeCompare(b))
+  }, [filter, loadedValues])
+  const searchActive = filter.trim() !== ""
+
+  const resolvedKey = resolveActiveKey(
+    selectedKey,
+    rows.map(([key]) => key),
+  )
+  // If a requested key (deep link / RawStateLink) isn't among the rows
+  // loaded so far, fetch it directly via the single-key endpoint instead of
+  // forcing every page to load just to find it (storage-plan.md item 3.13,
+  // "lazy per-key values"). This only resolves an *exact* key match — the
+  // suffix-matching resolveActiveKey does for keys already loaded (e.g. a
+  // RawStateLink passing just a resource name) can't be replicated against
+  // unloaded pages, since the single-key endpoint requires an exact key.
+  const usingValueFallback = selectedKey !== "" && resolvedKey == null
+  const valueFallbackQuery = useQuery(
+    debugValueQueryOptions(activeNamespace, selectedKey, usingValueFallback),
+  )
   const activeKey =
-    resolveActiveKey(
-      selectedKey,
-      rows.map(([key]) => key),
-    ) ?? rows[0]?.[0]
-  const activeValue = activeKey ? valuesQuery.data?.[activeKey] : undefined
-  const totalKeys = Object.keys(valuesQuery.data ?? {}).length
+    resolvedKey ??
+    (usingValueFallback && valueFallbackQuery.data !== undefined ? selectedKey : undefined) ??
+    rows[0]?.[0]
+  const activeValue = resolvedKey
+    ? loadedValues[resolvedKey]
+    : usingValueFallback
+      ? valueFallbackQuery.data
+      : activeKey
+        ? loadedValues[activeKey]
+        : undefined
 
   function copyText(text: string, title: string) {
     void debugClipboard.writeText(text).then(
@@ -84,7 +188,7 @@ export function DebugPage({
   }
 
   function refreshState() {
-    void Promise.all([summaryQuery.refetch(), valuesQuery.refetch()])
+    void Promise.all([summaryQuery.refetch(), namespaceQuery.refetch()])
   }
 
   return (
@@ -168,10 +272,10 @@ export function DebugPage({
                 <div className="flex items-center gap-2">
                   <Search className="h-4 w-4 text-fg-muted" />
                   <Input
-                    aria-label="Filter raw state keys and values"
+                    aria-label="Filter raw state keys"
                     value={filter}
                     onChange={(e) => setFilter(e.target.value)}
-                    placeholder="Search keys and raw values"
+                    placeholder="Search keys"
                     className="h-8"
                   />
                   <div className="flex rounded-md border border-border p-0.5">
@@ -197,43 +301,44 @@ export function DebugPage({
                   Showing {rows.length.toLocaleString()} of {totalKeys.toLocaleString()} record
                   {totalKeys !== 1 ? "s" : ""} in{" "}
                   <span className="font-mono">{activeNamespace}</span>
+                  {loadedCount < totalKeys && (
+                    <span className="text-fg-subtle">
+                      {" "}
+                      ({loadedCount.toLocaleString()} loaded
+                      {namespaceQuery.hasNextPage ? " — scroll to load more" : ""})
+                    </span>
+                  )}
                 </p>
               </div>
-              {valuesQuery.isLoading ? (
+              {searchActive && (
+                <LoadMoreNotice
+                  hasNextPage={namespaceQuery.hasNextPage}
+                  isFetchingNextPage={namespaceQuery.isFetchingNextPage}
+                  fetchNextPage={() => void namespaceQuery.fetchNextPage()}
+                />
+              )}
+              {namespaceQuery.isLoading ? (
                 <QueryListState isLoading isEmpty={false} />
               ) : keyView === "tree" ? (
-                <KeyTree rows={rows} activeKey={activeKey} onSelect={setSelectedKey} />
+                <KeyTree
+                  rows={rows}
+                  activeKey={activeKey}
+                  onSelect={setSelectedKey}
+                  searchActive={searchActive}
+                  hasNextPage={namespaceQuery.hasNextPage}
+                  isFetchingNextPage={namespaceQuery.isFetchingNextPage}
+                  fetchNextPage={() => void namespaceQuery.fetchNextPage()}
+                />
               ) : (
-                <div className="min-h-0 flex-1 overflow-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="cursor-default hover:bg-transparent">
-                        <TableHead>Key</TableHead>
-                        <TableHead className="w-16 text-right">Bytes</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {rows.length === 0 ? (
-                        <TableEmpty colSpan={2}>No records match the current filter.</TableEmpty>
-                      ) : (
-                        rows.map(([key, value]) => (
-                          <TableRow
-                            key={key}
-                            data-selected={key === activeKey}
-                            onClick={() => setSelectedKey(key)}
-                          >
-                            <TableCell className="max-w-0 truncate font-mono text-xs">
-                              {key}
-                            </TableCell>
-                            <TableCell className="text-right font-mono text-xs text-fg-muted">
-                              {value.length.toLocaleString()}
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
+                <FlatKeyTable
+                  rows={rows}
+                  activeKey={activeKey}
+                  onSelect={setSelectedKey}
+                  searchActive={searchActive}
+                  hasNextPage={namespaceQuery.hasNextPage}
+                  isFetchingNextPage={namespaceQuery.isFetchingNextPage}
+                  fetchNextPage={() => void namespaceQuery.fetchNextPage()}
+                />
               )}
             </section>
 
@@ -241,7 +346,7 @@ export function DebugPage({
               namespace={activeNamespace}
               stateKey={activeKey}
               value={activeValue}
-              isRefreshing={summaryQuery.isFetching || valuesQuery.isFetching}
+              isRefreshing={summaryQuery.isFetching || namespaceQuery.isFetching}
               onRefresh={refreshState}
               onCopy={copyText}
             />
@@ -260,82 +365,226 @@ interface KeyTreeNode {
   children: Map<string, KeyTreeNode>
 }
 
-function KeyTree({
-  rows,
-  activeKey,
-  onSelect,
-}: {
+interface VirtualizedListProps {
   rows: [string, string][]
   activeKey?: string
   onSelect: (key: string) => void
-}) {
-  const roots = useMemo(() => buildKeyTree(rows), [rows])
+  searchActive: boolean
+  hasNextPage: boolean
+  isFetchingNextPage: boolean
+  fetchNextPage: () => void
+}
+
+/**
+ * Flat key/value table (keyView === "flat"). Uses the same spacer-row
+ * virtualization technique as web/src/features/s3/components/bucket-detail.tsx
+ * — two spacer `<tr>`s bracket the currently-rendered slice of rows inside a
+ * real `<table>`, so the DOM node count stays bounded regardless of
+ * namespace size while keeping the existing Table/TableRow/TableHead styling.
+ */
+function FlatKeyTable({
+  rows,
+  activeKey,
+  onSelect,
+  searchActive,
+  hasNextPage,
+  isFetchingNextPage,
+  fetchNextPage,
+}: VirtualizedListProps) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => DEBUG_ROW_HEIGHT_ESTIMATE,
+    overscan: 15,
+  })
+  const virtualItems = virtualizer.getVirtualItems()
+  useLoadMoreOnReachEnd({
+    enabled: !searchActive,
+    itemCount: rows.length,
+    virtualItems,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  })
 
   if (rows.length === 0) {
     return <div className="p-6 text-sm text-fg-muted">No records match the current filter.</div>
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-auto p-2">
-      {roots.map((node) => (
-        <KeyTreeNodeRow
-          key={node.path}
-          node={node}
-          depth={0}
-          activeKey={activeKey}
-          onSelect={onSelect}
-        />
-      ))}
+    <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
+      <Table>
+        <TableHeader>
+          <TableRow className="cursor-default hover:bg-transparent">
+            <TableHead>Key</TableHead>
+            <TableHead className="w-16 text-right">Bytes</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {virtualItems.length > 0 && (
+            <tr>
+              <td colSpan={2} style={{ height: virtualItems[0].start }} />
+            </tr>
+          )}
+          {virtualItems.map((vr) => {
+            const [key, value] = rows[vr.index]
+            return (
+              <TableRow key={key} data-selected={key === activeKey} onClick={() => onSelect(key)}>
+                <td className="max-w-0 truncate px-3 py-2 font-mono text-xs text-fg">{key}</td>
+                <td className="px-3 py-2 text-right font-mono text-xs text-fg-muted">
+                  {value.length.toLocaleString()}
+                </td>
+              </TableRow>
+            )
+          })}
+          {virtualItems.length > 0 && (
+            <tr>
+              <td
+                colSpan={2}
+                style={{ height: virtualizer.getTotalSize() - (virtualItems.at(-1)?.end ?? 0) }}
+              />
+            </tr>
+          )}
+        </TableBody>
+      </Table>
+      {isFetchingNextPage && (
+        <div className="flex items-center justify-center gap-2 border-t border-border py-2 text-xs text-fg-muted">
+          <Spinner className="h-3.5 w-3.5" /> Loading more…
+        </div>
+      )}
     </div>
   )
 }
 
-function KeyTreeNodeRow({
-  node,
-  depth,
-  activeKey,
-  onSelect,
-}: {
+interface FlatTreeRow {
   node: KeyTreeNode
   depth: number
-  activeKey?: string
-  onSelect: (key: string) => void
-}) {
-  const children = Array.from(node.children.values()).sort((a, b) => a.name.localeCompare(b.name))
-  const isLeaf = node.key != null
+}
+
+/** Flattens the tree into the visible-row list a virtualizer can index — a node's children are omitted once its path is in `collapsed`. */
+function flattenVisibleTree(roots: KeyTreeNode[], collapsed: Set<string>): FlatTreeRow[] {
+  const out: FlatTreeRow[] = []
+  const walk = (nodes: KeyTreeNode[], depth: number) => {
+    for (const node of nodes) {
+      out.push({ node, depth })
+      if (node.children.size > 0 && !collapsed.has(node.path)) {
+        walk(Array.from(node.children.values()).sort((a, b) => a.name.localeCompare(b.name)), depth + 1)
+      }
+    }
+  }
+  walk(roots, 0)
+  return out
+}
+
+/**
+ * Key tree (keyView === "tree"). Nodes default to expanded (matching the
+ * pre-virtualization behavior this replaces) with per-node collapse state;
+ * collapsing a branch removes its subtree from the flattened visible-row
+ * list fed to the virtualizer, so a deep/wide namespace never has to mount
+ * every leaf at once even before the user collapses anything — the
+ * virtualizer alone already bounds the DOM to the visible window.
+ */
+function KeyTree({
+  rows,
+  activeKey,
+  onSelect,
+  searchActive,
+  hasNextPage,
+  isFetchingNextPage,
+  fetchNextPage,
+}: VirtualizedListProps) {
+  const roots = useMemo(() => buildKeyTree(rows), [rows])
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
+  const flatRows = useMemo(() => flattenVisibleTree(roots, collapsed), [roots, collapsed])
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const virtualizer = useVirtualizer({
+    count: flatRows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => DEBUG_ROW_HEIGHT_ESTIMATE,
+    overscan: 20,
+  })
+  const virtualItems = virtualizer.getVirtualItems()
+  useLoadMoreOnReachEnd({
+    enabled: !searchActive,
+    itemCount: flatRows.length,
+    virtualItems,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  })
+
+  if (rows.length === 0) {
+    return <div className="p-6 text-sm text-fg-muted">No records match the current filter.</div>
+  }
+
+  function toggleCollapsed(path: string) {
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }
 
   return (
-    <div>
-      <button
-        type="button"
-        disabled={!isLeaf}
-        data-selected={node.key === activeKey}
-        className={cn(
-          "flex w-full items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left font-mono text-xs",
-          isLeaf
-            ? "text-fg hover:bg-bg-muted data-[selected=true]:bg-accent/10"
-            : "cursor-default text-fg-muted",
-        )}
-        style={{ paddingLeft: `${depth * 0.75 + 0.5}rem` }}
-        onClick={() => node.key && onSelect(node.key)}
-      >
-        <span className="min-w-0 truncate">
-          {!isLeaf && <span className="mr-1 text-fg-subtle">/</span>}
-          {node.name}
-        </span>
-        {isLeaf && node.value != null ? (
-          <span className="shrink-0 text-fg-muted">{node.value.length.toLocaleString()} B</span>
-        ) : null}
-      </button>
-      {children.map((child) => (
-        <KeyTreeNodeRow
-          key={child.path}
-          node={child}
-          depth={depth + 1}
-          activeKey={activeKey}
-          onSelect={onSelect}
-        />
-      ))}
+    <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto p-2">
+      <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+        {virtualItems.map((vr) => {
+          const { node, depth } = flatRows[vr.index]
+          const hasChildren = node.children.size > 0
+          const isCollapsed = collapsed.has(node.path)
+          const isLeaf = node.key != null
+          return (
+            <div
+              key={vr.key}
+              data-index={vr.index}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                transform: `translateY(${vr.start}px)`,
+              }}
+            >
+              <button
+                type="button"
+                data-selected={isLeaf && node.key === activeKey}
+                className={cn(
+                  "flex w-full items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left font-mono text-xs",
+                  isLeaf
+                    ? "text-fg hover:bg-bg-muted data-[selected=true]:bg-accent/10"
+                    : "text-fg-muted hover:bg-bg-muted",
+                )}
+                style={{ paddingLeft: `${depth * 0.75 + 0.5}rem` }}
+                onClick={() => {
+                  if (hasChildren) toggleCollapsed(node.path)
+                  if (isLeaf && node.key) onSelect(node.key)
+                }}
+              >
+                <span className="flex min-w-0 items-center gap-1 truncate">
+                  {hasChildren ? (
+                    <ChevronRight
+                      className={cn("h-3 w-3 shrink-0 transition-transform", !isCollapsed && "rotate-90")}
+                    />
+                  ) : (
+                    <span className="w-3 shrink-0" />
+                  )}
+                  {node.name}
+                </span>
+                {isLeaf && node.value != null ? (
+                  <span className="shrink-0 text-fg-muted">{node.value.length.toLocaleString()} B</span>
+                ) : null}
+              </button>
+            </div>
+          )
+        })}
+      </div>
+      {isFetchingNextPage && (
+        <div className="flex items-center justify-center gap-2 py-2 text-xs text-fg-muted">
+          <Spinner className="h-3.5 w-3.5" /> Loading more…
+        </div>
+      )}
     </div>
   )
 }

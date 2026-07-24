@@ -5,7 +5,31 @@ import { debugClipboard } from "./clipboard"
 import { DebugPage } from "./debug-page"
 
 /** Wraps a flat key->value map in the paginated /_debug/state/{ns} response shape. */
-const namespacePage = (values: Record<string, string>) => HttpResponse.json({ values })
+const namespacePage = (values: Record<string, string>, nextKey?: string) =>
+  HttpResponse.json({ values, ...(nextKey ? { nextKey } : {}) })
+
+// The real virtualizer needs a laid-out scroll container (clientHeight,
+// scrollHeight, ...) that jsdom never provides, so — matching the existing
+// precedent in web/src/components/ui/event-console.test.tsx — replace it
+// with a stub that renders every row, keyed only off `count`. This also
+// means `useLoadMoreOnReachEnd` (debug-page.tsx) always sees its full loaded
+// row set as "visible", so with a non-empty search filter disabled it will
+// keep paging until the namespace is exhausted — the assertions below rely
+// on that to prove pages actually merge, not just that the first page shows.
+vi.mock("@tanstack/react-virtual", () => ({
+  useVirtualizer: ({ count }: { count: number }) => ({
+    getTotalSize: () => count * 33,
+    getVirtualItems: () =>
+      Array.from({ length: count }, (_, index) => ({
+        index,
+        key: index,
+        start: index * 33,
+        end: (index + 1) * 33,
+      })),
+    measureElement: vi.fn(),
+    scrollToIndex: vi.fn(),
+  }),
+}))
 
 describe("DebugPage", () => {
   const clipboardWriteText = vi.fn<() => Promise<void>>()
@@ -124,7 +148,7 @@ describe("DebugPage", () => {
     expect(within(viewer as HTMLElement).getByText(/\.\.\.\(truncated\)/)).toBeInTheDocument()
   })
 
-  it("filters keys by raw stored values", async () => {
+  it("filters keys by key substring (key-only search)", async () => {
     // Given: a namespace contains multiple records.
     server.use(
       http.get("/api/debug/state", () =>
@@ -144,14 +168,36 @@ describe("DebugPage", () => {
       ),
     )
 
-    // When: the user searches across raw values.
+    // When: the user searches by a substring of the key itself.
     const { user } = render(<DebugPage />)
-    await user.type(await screen.findByLabelText("Filter raw state keys and values"), "orders-dlq")
+    await user.type(await screen.findByLabelText("Filter raw state keys"), "orders-dlq")
 
     // Then: only matching records remain in the key list.
     expect(screen.getAllByText("us-east-1/orders-dlq.fifo").length).toBeGreaterThan(0)
     expect(screen.queryByText("us-east-1/orders")).not.toBeInTheDocument()
     expect(screen.getByText(/Showing 1 of 2 records/)).toBeInTheDocument()
+  })
+
+  it("does not match on value content — search is key-only", async () => {
+    // Given: two records whose keys don't contain "false", but one value does.
+    server.use(
+      http.get("/api/debug/state", () =>
+        HttpResponse.json({ "sqs:queues": ["us-east-1/orders", "us-east-1/orders-dlq"] }),
+      ),
+      http.get("/api/debug/state/sqs%3Aqueues", () =>
+        namespacePage({
+          "us-east-1/orders": JSON.stringify({ name: "orders", attributes: { FifoQueue: "false" } }),
+          "us-east-1/orders-dlq": JSON.stringify({ name: "orders-dlq", attributes: { FifoQueue: "true" } }),
+        }),
+      ),
+    )
+
+    // When: the user searches for a term that only appears in a stored value.
+    const { user } = render(<DebugPage />)
+    await user.type(await screen.findByLabelText("Filter raw state keys"), "false")
+
+    // Then: neither key matches — value content is no longer searched.
+    expect(screen.getByText(/Showing 0 of 2 records/)).toBeInTheDocument()
   })
 
   it("copies the selected raw value and deep link", async () => {
@@ -187,6 +233,45 @@ describe("DebugPage", () => {
     expect(clipboardWriteText).toHaveBeenCalledWith(
       "http://localhost:3000/debug?namespace=sqs%3Aqueues&key=us-east-1%2Fmy-dlq.fifo",
     )
+  })
+
+  it("pages through multiple server responses and merges the loaded rows", async () => {
+    // Given: the namespace endpoint returns its keys across two pages.
+    server.use(
+      http.get("/api/debug/state", () => HttpResponse.json({ "sqs:queues": ["a", "b"] })),
+      http.get("/api/debug/state/sqs%3Aqueues", ({ request }) => {
+        const after = new URL(request.url).searchParams.get("after")
+        if (!after) return namespacePage({ a: JSON.stringify({ n: 1 }) }, "a")
+        return namespacePage({ b: JSON.stringify({ n: 2 }) })
+      }),
+    )
+
+    // When: the raw state debugger opens (no search filter, so it keeps
+    // paging until the namespace is exhausted — see the react-virtual mock).
+    render(<DebugPage />)
+
+    // Then: both pages are fetched and merged into one loaded row set.
+    await waitFor(() => expect(screen.getByText(/Showing 2 of 2 records/)).toBeInTheDocument())
+  })
+
+  it("falls back to the single-key endpoint for a deep-linked key not in any loaded page", async () => {
+    // Given: the namespace's only page doesn't contain the deep-linked key,
+    // but the single-key endpoint (a separate server code path) does.
+    server.use(
+      http.get("/api/debug/state", () => HttpResponse.json({ "sqs:queues": ["a"] })),
+      http.get("/api/debug/state/sqs%3Aqueues", ({ request }) => {
+        const key = new URL(request.url).searchParams.get("key")
+        if (key === "missing-key") return HttpResponse.text(JSON.stringify({ fallback: true }))
+        return namespacePage({ a: JSON.stringify({ n: 1 }) })
+      }),
+    )
+
+    // When: the page is opened with a deep-linked key absent from the page.
+    render(<DebugPage initialNamespace="sqs:queues" initialKey="missing-key" />)
+
+    // Then: the value is fetched via the single-key endpoint and rendered,
+    // without needing "missing-key" to appear in any /_debug/state/{ns} page.
+    expect(await screen.findByText('"fallback"')).toBeInTheDocument()
   })
 
   it("explains when debug mode is disabled", async () => {

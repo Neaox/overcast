@@ -69,7 +69,7 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Added
 
-- **Debug endpoints** — `GET /_debug/metrics` now reports storage diagnostics (recent flush history, seed duration, pending-log size, and opt-in per-namespace row counts via `?includeRowCounts=true`) instead of a "not yet implemented" stub; `GET /_debug/state/{namespace}` is now paginated (`?after=` cursor, `?limit=` capped at 5000) and the web Raw State Debugger follows the cursor transparently.
+- **Debug endpoints** — `GET /_debug/metrics` now reports storage diagnostics (recent flush history, seed duration, pending-log size, and opt-in per-namespace row counts via `?includeRowCounts=true`) instead of a "not yet implemented" stub; `GET /_debug/state/{namespace}` is now paginated (`?after=` cursor, `?limit=` capped at 5000); the web Raw State Debugger now pages incrementally (fetching further pages only as the user scrolls near the end of what's loaded) instead of eagerly merging every page, virtualizes both the flat key table and the key tree (which also gained per-node collapse/expand) so large namespaces render a bounded number of DOM rows, lazily fetches a deep-linked key's value via the single-key endpoint when it hasn't loaded yet, and restricts search to key-only matching over loaded rows.
 
 ### Fixed
 
