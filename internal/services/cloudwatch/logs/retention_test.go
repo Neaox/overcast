@@ -212,6 +212,106 @@ func TestLogsStore_SweepExpiredEventsOnce_RespectsRetentionInDaysPerGroup(t *tes
 	}
 }
 
+// ---- logsStore.sweepExpiredEventsOnce: expired empty stream metadata -------
+
+// TestLogsStore_SweepExpiredEventsOnce_DeletesEmptyExpiredStreamMetadata
+// proves the retention sweep also removes a log stream's *metadata* record
+// once its LastEventTimestamp has aged out of the group's retention window
+// and the stream has no events left anywhere (persisted or buffered) —
+// mirroring real CloudWatch Logs, which eventually removes empty log
+// streams. It also proves the sweep is conservative:
+//   - a stream with LastEventTimestamp == 0 (never written, or metadata
+//     lost) is never removed, however long the group's retention has been
+//     in effect
+//   - a stream that still has buffered (unflushed) events in its write
+//     cache is never removed even if LastEventTimestamp looks expired
+//   - a stream whose persisted events don't match its (stale) metadata is
+//     never removed while it still has persisted events newer than cutoff
+func TestLogsStore_SweepExpiredEventsOnce_DeletesEmptyExpiredStreamMetadata(t *testing.T) {
+	memStore, sqlStore, mock := newTestLogsStores(t)
+
+	for name, s := range map[string]*logsStore{"memory": memStore, "sql": sqlStore} {
+		s := s
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			base := mock.Now().UTC()
+			group := "g-" + name
+			const region = "us-east-1"
+
+			if aerr := s.putLogGroup(ctx, &LogGroup{Name: group, RetentionInDays: 1}); aerr != nil {
+				t.Fatalf("putLogGroup: %v", aerr)
+			}
+
+			// expired-empty: LastEventTimestamp is well past the 1-day retention
+			// window and the stream has no events anywhere. Must be deleted.
+			if aerr := s.putLogStream(ctx, group, &LogStream{
+				Name:               "expired-empty",
+				LastEventTimestamp: base.Add(-48 * time.Hour).UnixMilli(),
+			}); aerr != nil {
+				t.Fatalf("putLogStream expired-empty: %v", aerr)
+			}
+
+			// never-written: LastEventTimestamp is the zero value. Must survive
+			// no matter how long the group's retention has been in effect.
+			if aerr := s.putLogStream(ctx, group, &LogStream{
+				Name: "never-written",
+			}); aerr != nil {
+				t.Fatalf("putLogStream never-written: %v", aerr)
+			}
+
+			// recent: LastEventTimestamp is within the retention window. Must
+			// survive.
+			if aerr := s.putLogStream(ctx, group, &LogStream{
+				Name:               "recent",
+				LastEventTimestamp: base.UnixMilli(),
+			}); aerr != nil {
+				t.Fatalf("putLogStream recent: %v", aerr)
+			}
+
+			// expired-buffered: LastEventTimestamp is expired and there are no
+			// persisted events, but the write cache still holds an unflushed
+			// event. Must survive.
+			if aerr := s.putLogStream(ctx, group, &LogStream{
+				Name:               "expired-buffered",
+				LastEventTimestamp: base.Add(-48 * time.Hour).UnixMilli(),
+			}); aerr != nil {
+				t.Fatalf("putLogStream expired-buffered: %v", aerr)
+			}
+			bufferedCache := s.loadEventCache(ctx, group, "expired-buffered")
+			bufferedCache.mu.Lock()
+			bufferedCache.buffer = []LogEvent{{Timestamp: base.Add(-48 * time.Hour).UnixMilli(), Message: "unflushed"}}
+			bufferedCache.dirty = true
+			bufferedCache.mu.Unlock()
+
+			// expired-stale-metadata: LastEventTimestamp looks expired but the
+			// backend still has a persisted event newer than cutoff (stale
+			// metadata field). Must survive.
+			if aerr := s.putLogStream(ctx, group, &LogStream{
+				Name:               "expired-stale-metadata",
+				LastEventTimestamp: base.Add(-48 * time.Hour).UnixMilli(),
+			}); aerr != nil {
+				t.Fatalf("putLogStream expired-stale-metadata: %v", aerr)
+			}
+			if err := s.backend.appendEvents(ctx, region, group, "expired-stale-metadata", []LogEvent{
+				{Timestamp: base.UnixMilli(), Message: "still-here"},
+			}); err != nil {
+				t.Fatalf("seed expired-stale-metadata events: %v", err)
+			}
+
+			s.sweepExpiredEventsOnce(ctx)
+
+			if _, aerr := s.getLogStream(ctx, group, "expired-empty"); aerr == nil {
+				t.Fatalf("expected expired-empty stream metadata to be deleted")
+			}
+			for _, keep := range []string{"never-written", "recent", "expired-buffered", "expired-stale-metadata"} {
+				if _, aerr := s.getLogStream(ctx, group, keep); aerr != nil {
+					t.Fatalf("expected stream %q to survive the sweep, got error: %v", keep, aerr)
+				}
+			}
+		})
+	}
+}
+
 // ---- Service lifecycle: ticker-driven retention sweeper --------------------
 
 // TestService_RetentionSweeper_TickDeletesExpiredEvents proves the actual
