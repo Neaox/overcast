@@ -5,7 +5,7 @@
 Overcast emulates the APIs of popular cloud services so you can develop and test
 locally without an internet connection, a cloud account, or a bill.
 
-[![Tests](https://github.com/Neaox/overcast/actions/workflows/test.yml/badge.svg)](https://github.com/Neaox/overcast/actions)
+[![CI](https://github.com/Neaox/overcast/actions/workflows/test.yml/badge.svg)](https://github.com/Neaox/overcast/actions)
 [![GitHub release](https://img.shields.io/github/v/release/Neaox/overcast?include_prereleases)](https://github.com/Neaox/overcast/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Container image](https://img.shields.io/badge/ghcr.io-neaox%2Fovercast-blue?logo=docker&logoColor=white)](https://github.com/Neaox/overcast/pkgs/container/overcast)
