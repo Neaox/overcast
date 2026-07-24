@@ -712,7 +712,22 @@ func (h *Handler) DescribeStackEvents(w http.ResponseWriter, r *http.Request) {
 		reversed[n-1-i] = e
 	}
 
-	page := serviceutil.Paginate(reversed, eventsPageSize, r.FormValue("NextToken"))
+	// AWS documents no client-settable limit for this operation (see
+	// eventsPageSize's doc comment), so requestedLimit is always 0 here and
+	// DefaultLimit is the only thing that matters.
+	page, err := serviceutil.Paginate(reversed, 0, r.FormValue("NextToken"),
+		serviceutil.PaginateOptions{DefaultLimit: eventsPageSize})
+	if err != nil {
+		// A garbled/expired NextToken must not silently restart the walk
+		// from page 1 (see docs/plans/pagination-plan.md G3) — that causes
+		// duplicate delivery to any client polling with a stale token.
+		// CloudFormation's Query-protocol API has no dedicated
+		// "invalid token" error; ValidationError is the documented
+		// catch-all for malformed request input:
+		// https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/CommonErrors.html
+		writeCFNError(w, r, "ValidationError", "The specified NextToken is invalid.", http.StatusBadRequest)
+		return
+	}
 
 	eventsXML := make([]stackEventXML, 0, len(page.Items))
 	for _, e := range page.Items {

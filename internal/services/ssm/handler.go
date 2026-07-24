@@ -258,11 +258,14 @@ func (h *Handler) GetParametersByPath(w http.ResponseWriter, r *http.Request) {
 		filtered = append(filtered, p)
 	}
 
-	maxResults := req.MaxResults
-	if maxResults <= 0 {
-		maxResults = 10
+	// AWS: MaxResults valid range is 1-10 for this op (default 10, no
+	// higher value is honored): https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParametersByPath.html#API_GetParametersByPath_RequestParameters
+	page, err := serviceutil.Paginate(filtered, req.MaxResults, req.NextToken,
+		serviceutil.PaginateOptions{DefaultLimit: 10, MaxLimit: 10})
+	if err != nil {
+		protocol.WriteJSONError(w, r, errInvalidNextToken())
+		return
 	}
-	page := serviceutil.Paginate(filtered, maxResults, req.NextToken)
 
 	params := make([]parameterWire, 0, len(page.Items))
 	for _, rec := range page.Items {
@@ -305,11 +308,13 @@ func (h *Handler) DescribeParameters(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	maxResults := req.MaxResults
-	if maxResults <= 0 {
-		maxResults = 50
+	// AWS: MaxResults valid range is 1-50 for this op: https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_DescribeParameters.html#API_DescribeParameters_RequestParameters
+	page, err := serviceutil.Paginate(filtered, req.MaxResults, req.NextToken,
+		serviceutil.PaginateOptions{DefaultLimit: 50, MaxLimit: 50})
+	if err != nil {
+		protocol.WriteJSONError(w, r, errInvalidNextToken())
+		return
 	}
-	page := serviceutil.Paginate(filtered, maxResults, req.NextToken)
 
 	params := make([]describeParameterWire, 0, len(page.Items))
 	for _, rec := range page.Items {
@@ -393,11 +398,13 @@ func (h *Handler) GetParameterHistory(w http.ResponseWriter, r *http.Request) {
 		items = append(items, versionedItem{v: v, version: int64(i + 1)})
 	}
 
-	maxResults := req.MaxResults
-	if maxResults <= 0 {
-		maxResults = 50
+	// AWS: MaxResults valid range is 1-50 for this op: https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParameterHistory.html#API_GetParameterHistory_RequestParameters
+	page, err := serviceutil.Paginate(items, req.MaxResults, req.NextToken,
+		serviceutil.PaginateOptions{DefaultLimit: 50, MaxLimit: 50})
+	if err != nil {
+		protocol.WriteJSONError(w, r, errInvalidNextToken())
+		return
 	}
-	page := serviceutil.Paginate(items, maxResults, req.NextToken)
 
 	params := make([]historyParameterWire, 0, len(page.Items))
 	for _, item := range page.Items {
@@ -585,6 +592,24 @@ func errParameterNotFound(name string) *protocol.AWSError {
 	return &protocol.AWSError{
 		Code:       "ParameterNotFound",
 		Message:    fmt.Sprintf("Parameter %s not found.", name),
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+// errInvalidNextToken maps a garbled/out-of-range pagination NextToken to
+// SSM's documented error. A silent restart from page 1 (this codebase's
+// most common pagination divergence, see docs/plans/pagination-plan.md G3)
+// causes duplicate delivery to any client polling with a stale token.
+// Verified against every List/Describe/GetHistory op that uses
+// serviceutil.Paginate in this package — all three document InvalidNextToken,
+// HTTP 400, "The specified token isn't valid.":
+//   - https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_DescribeParameters.html#API_DescribeParameters_Errors
+//   - https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParametersByPath.html#API_GetParametersByPath_Errors
+//   - https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParameterHistory.html#API_GetParameterHistory_Errors
+func errInvalidNextToken() *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "InvalidNextToken",
+		Message:    "The specified token isn't valid.",
 		HTTPStatus: http.StatusBadRequest,
 	}
 }

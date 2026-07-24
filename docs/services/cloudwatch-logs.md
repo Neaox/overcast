@@ -30,6 +30,12 @@ Storage and retention behavior:
 - `RetentionInDays` (set via `PutRetentionPolicy`) is **enforced**: a periodic background
   sweep deletes events older than the group's retention window in every storage mode. Groups
   with no retention policy keep events indefinitely.
+- The same sweep also removes a log stream's metadata (its `DescribeLogStreams` entry) once
+  its last event has aged out of the retention window and the stream has no events left
+  anywhere — matching real CloudWatch Logs, which eventually deletes empty log streams rather
+  than leaving a stale entry behind forever. A stream is only removed once it has no persisted
+  events, no buffered (not-yet-flushed) events, and a non-zero last-event timestamp — streams
+  that have never received an event are never removed, regardless of age.
 - Incoming events are briefly write-buffered per stream (~50 ms debounce, flushed early on
   bursts) to coalesce writes; buffers are flushed synchronously on graceful shutdown.
 

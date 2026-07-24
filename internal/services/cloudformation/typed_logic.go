@@ -735,7 +735,15 @@ func (h *Handler) describeStackEventsTyped(ctx context.Context, req *describeSta
 		reversed[n-1-i] = e
 	}
 
-	page := serviceutil.Paginate(reversed, eventsPageSize, req.NextToken)
+	// See handler.go's DescribeStackEvents for the AWS doc citation behind
+	// this default/error mapping (both call sites must stay in sync — the
+	// legacy Query-protocol path in handler.go and this CBOR-typed path
+	// dispatch to the same operation depending on wire protocol).
+	page, err := serviceutil.Paginate(reversed, 0, req.NextToken,
+		serviceutil.PaginateOptions{DefaultLimit: eventsPageSize})
+	if err != nil {
+		return nil, cfnerr("ValidationError", "The specified NextToken is invalid.", http.StatusBadRequest)
+	}
 
 	eventsXML := make([]stackEventXML, 0, len(page.Items))
 	for _, e := range page.Items {

@@ -409,7 +409,7 @@ This also applies to Lambda timeout enforcement and any future SNS retry backoff
 serviceutil.DecodeJSON(w, r, &req)           // JSON body -> struct, writes error on failure
 serviceutil.RequireString(w, r, v, "Name")   // validates required field
 serviceutil.QueryInt(r, "max-keys", 1000)    // query param with default
-serviceutil.Paginate(items, limit, token)    // opaque continuation tokens
+serviceutil.Paginate(items, limit, token, opts) // opaque continuation tokens; opts sets the op's AWS default/cap; errors.Is(err, serviceutil.ErrInvalidPageToken) on a bad token
 serviceutil.BucketName(name)                // validates AWS naming rules
 serviceutil.ServiceLogger(logger, "s3")     // scoped structured logger
 serviceutil.LazyInit.Do(fn)                // sync.Once with retry; Reset() for tests

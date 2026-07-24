@@ -272,7 +272,11 @@ func (h *Handler) ListDistributions(w http.ResponseWriter, r *http.Request) {
 
 	marker := r.URL.Query().Get("Marker")
 	maxItems := serviceutil.QueryInt(r, "MaxItems", 100)
-	page := serviceutil.Paginate(all, maxItems, marker)
+	page, err := serviceutil.Paginate(all, maxItems, marker, serviceutil.PaginateOptions{DefaultLimit: 100})
+	if err != nil {
+		protocol.WriteXMLError(w, r, errInvalidMarker())
+		return
+	}
 
 	summaries := make([]DistributionSummary, 0, len(page.Items))
 	for _, d := range page.Items {
@@ -408,7 +412,11 @@ func (h *Handler) ListInvalidations(w http.ResponseWriter, r *http.Request) {
 
 	marker := r.URL.Query().Get("Marker")
 	maxItems := serviceutil.QueryInt(r, "MaxItems", 100)
-	page := serviceutil.Paginate(all, maxItems, marker)
+	page, err := serviceutil.Paginate(all, maxItems, marker, serviceutil.PaginateOptions{DefaultLimit: 100})
+	if err != nil {
+		protocol.WriteXMLError(w, r, errInvalidMarker())
+		return
+	}
 
 	summaries := make([]InvalidationSummary, 0, len(page.Items))
 	for _, inv := range page.Items {
@@ -828,7 +836,11 @@ func (h *Handler) ListOriginAccessControls(w http.ResponseWriter, r *http.Reques
 
 	marker := r.URL.Query().Get("Marker")
 	maxItems := serviceutil.QueryInt(r, "MaxItems", 100)
-	page := serviceutil.Paginate(all, maxItems, marker)
+	page, err := serviceutil.Paginate(all, maxItems, marker, serviceutil.PaginateOptions{DefaultLimit: 100})
+	if err != nil {
+		protocol.WriteXMLError(w, r, errInvalidMarker())
+		return
+	}
 
 	summaries := make([]OriginAccessControlSummary, 0, len(page.Items))
 	for _, oac := range page.Items {
