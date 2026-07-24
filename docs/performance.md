@@ -74,6 +74,35 @@ bind mount: use a **named Docker volume** for `/data` (data lives in the
 Docker Desktop VM's native filesystem) and, if you need the state on the
 host, export it explicitly instead of bind-mounting it.
 
+### Startup slow-filesystem probe
+
+Since the storage-pressure-handling work, `HybridStore` runs a one-time
+fsync micro-probe in the background right after construction (never on the
+startup-budget-critical path — see "Startup budget" below): it writes a few
+KB to a throwaway file in the data dir, fsyncs it, times the round trip, and
+removes the file. If that takes longer than **75ms**, it logs one `WARN`
+line naming the data dir and suggesting a named Docker volume, and links
+back to this section.
+
+75ms is deliberately well above native/container-native filesystem noise
+(a healthy fsync of a few KB is low single digits of milliseconds, even on
+a loaded CI runner) and well below the bind-mount tax measured above
+(600ms–1s for a multi-entry flush) — it exists to catch exactly that
+pathology early, at startup, rather than waiting for the first `hybrid
+flush slow` warning under real write load.
+
+The probe's outcome is also queryable, not just logged: `GET
+/_debug/metrics` includes a `dataDirProbe` object per store
+(`{fsyncMillis, slow, probedAt}`) alongside the existing flush-history and
+pending-log diagnostics, so tooling (or a future web UI health panel) can
+surface it without scraping logs. A probe that fails outright (e.g. a
+permission error) is reported as absent (`dataDirProbe: null`) rather than
+a false "fast" or "slow" reading — that's a different, less actionable
+condition than "the check ran and found a slow disk."
+
+**What to do if you see the warning:** same remedy as `hybrid flush slow`
+above — move `/data` off the bind mount and onto a named Docker volume.
+
 ---
 
 ## Documenting performance claims

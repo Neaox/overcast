@@ -23,10 +23,35 @@ package state
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"sort"
 	"strings"
 	"time"
 )
+
+// ErrStorePressure is a sentinel marking a storage read/write error that
+// resulted from transient write pressure — SQLite busy/locked contention
+// that outlasted every retry the store attempted internally (see
+// hybrid.go's shouldRetryHybridSQLiteRead, hybridBusyTimeoutMillis, and
+// hybridSQLiteReadRetryTimeout) — rather than data corruption or an
+// unrecoverable infrastructure failure.
+//
+// Real AWS signals this class of condition with a throttling error that SDK
+// retry policies handle automatically; a plain "context deadline exceeded"
+// wrapped as InternalError (the pre-existing behavior) instead causes most
+// SDKs to give up immediately. Wrap this sentinel into an error with
+// fmt.Errorf("...: %w", ErrStorePressure) so errors.Is can find it anywhere
+// in the chain — including through a *protocol.AWSError built via
+// protocol.Wrap, since AWSError.Unwrap exposes its cause. See
+// protocol/errors.go's Write*Error functions for where this gets remapped
+// into a wire-appropriate throttling response — that is the only place any
+// code needs to check for this sentinel; no service needs to change.
+//
+// Only the hybrid SQLite read-retry path (hybrid.go) currently attaches
+// this — MemoryStore has no notion of storage pressure, and genuine
+// non-retryable SQLite errors (corruption, disk failure, schema problems)
+// are deliberately left unwrapped so they keep surfacing as InternalError.
+var ErrStorePressure = errors.New("state: storage under write pressure; retry")
 
 // KV is a key-value pair returned by Scan.
 type KV struct {
@@ -217,6 +242,12 @@ type DebugFlushRecord struct {
 	DurationMillis int64     `json:"durationMillis"`
 	Entries        int       `json:"entries"`
 	Committed      bool      `json:"committed"`
+
+	// Chunks is how many separate SQLite transactions this flush attempt
+	// split Entries across (storage-pressure-handling item 2 — see
+	// HybridStore's chunkHybridFlushOps). 1 for a batch small enough to fit
+	// in a single transaction; 0 for backends that don't chunk flushes.
+	Chunks int `json:"chunks,omitempty"`
 }
 
 // DebugMetrics is a snapshot of storage-layer diagnostics for
@@ -249,6 +280,47 @@ type DebugMetrics struct {
 	// NamespaceRowCounts maps namespace -> row count, populated only when
 	// DebugMetricsOptions.IncludeNamespaceRowCounts was set.
 	NamespaceRowCounts map[string]int `json:"namespaceRowCounts,omitempty"`
+
+	// ReadRetryCount is the total number of individual retry attempts made
+	// by the hybrid SQLite read-retry path (retrySQLiteGet/List/
+	// ListNamespaces/Scan/ScanPage in hybrid.go) since process start, after
+	// an initial read hit busy/locked contention or a canceled context. One
+	// Get/List/Scan call under contention can contribute several retries.
+	// 0 for backends without a read-retry path (MemoryStore, WALStore).
+	ReadRetryCount int64 `json:"readRetryCount,omitempty"`
+
+	// ReadTimeoutCount is the number of hybrid SQLite reads whose retry
+	// window (hybridSQLiteReadRetryTimeout) was fully exhausted without
+	// success since process start. Each of these is tagged with
+	// ErrStorePressure (see HybridStore.wrapStorePressure) so callers up
+	// the stack receive an AWS-shaped throttling error instead of a generic
+	// InternalError — see protocol/errors.go. 0 for backends without a
+	// read-retry path.
+	ReadTimeoutCount int64 `json:"readTimeoutCount,omitempty"`
+
+	// DataDirProbe reports the outcome of the one-time startup fsync
+	// micro-probe (see HybridStore's runDataDirProbe) that flags a slow
+	// data directory (e.g. a Docker Desktop bind mount) before it manifests
+	// as flush/read latency. nil for backends that don't run the probe.
+	DataDirProbe *DataDirProbeResult `json:"dataDirProbe,omitempty"`
+}
+
+// DataDirProbeResult is the outcome of the startup fsync micro-probe (see
+// HybridStore's runDataDirProbe / probeDataDirFsync): a small write+fsync
+// timed against dataDirSlowFsyncThreshold, run once per process so a slow
+// data directory is visible before it degrades flush/read latency (docs/
+// performance.md "Data dir placement").
+type DataDirProbeResult struct {
+	// FsyncMillis is how long the probe's write+fsync took, in milliseconds.
+	FsyncMillis int64 `json:"fsyncMillis"`
+
+	// Slow is true when FsyncMillis exceeded the configured threshold
+	// (dataDirSlowFsyncThreshold by default) — the same condition that
+	// triggers the one-time startup warning log line.
+	Slow bool `json:"slow"`
+
+	// ProbedAt is when the probe ran, UTC.
+	ProbedAt time.Time `json:"probedAt"`
 }
 
 // DebugMetricsReporter is an optional Store extension exposing the

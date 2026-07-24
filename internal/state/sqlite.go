@@ -101,12 +101,33 @@ func newSQLiteStoreFile(dbPath, syncMode string, logger *zap.Logger) (*SQLiteSto
 	// WAL journal mode + a connection pool of 1 writer is the standard
 	// SQLite configuration for concurrent access.
 	//
+	// DSN pragmas MUST use modernc.org/sqlite's "_pragma=name(value)" form —
+	// the go-sqlite3-style bare "_journal_mode=WAL&_synchronous=NORMAL" query
+	// parameters this used to read are silently unrecognized by this driver
+	// (no error, no effect), which meant every persistent backend has been
+	// running in the default rollback-journal mode ("delete") instead of WAL
+	// since this project's inception. That was found and fixed as part of
+	// storage-pressure-handling item 0 — see
+	// hybrid_journalmode_internal_test.go's TestHybridStore_JournalModeIsWAL
+	// / TestSQLiteStore_JournalModeIsWAL, which pin the correct mode, and
+	// hybrid_pressure_test.go's TestHybridStore_PacedWriteLoadDoesNotStarveReads,
+	// which shows the
+	// concrete symptom: rollback-journal mode requires the writer to briefly
+	// take an exclusive file lock at every commit, which serializes with
+	// concurrent readers process-wide (unlike WAL, where readers never
+	// block on a writer) — so a busy flush transaction could stall or time
+	// out unrelated point reads, exactly the "storage pressure" class this
+	// work item exists to handle. Real WAL mode removes the reader/writer
+	// contention at its source; the throttling/chunking/observability work
+	// below still matters for genuine saturation, but this was the dominant
+	// cause of starvation at realistic write rates.
+	//
 	// sql.Open does NOT establish a connection or touch the database file —
 	// it only validates the driver name and DSN. The first real connection
 	// (and therefore the modernc driver's lazy parser/codegen init) happens
 	// inside RunMigrations (migrate.go), invoked from runMigrate below in
 	// the background.
-	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_synchronous="+syncMode)
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(wal)&_pragma=synchronous("+syncMode+")")
 	if err != nil {
 		return nil, fmt.Errorf("sqlite store: open %q: %w", dbPath, err)
 	}
