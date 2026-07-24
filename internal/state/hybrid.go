@@ -156,6 +156,41 @@ type HybridStore struct {
 	// didn't complete. Guarded by mu.
 	seedDuration *time.Duration
 
+	// readRetryCount/readTimeoutCount are pressure-handling observability
+	// counters (storage-pressure-handling item 4): readRetryCount increments
+	// once per individual retry attempt made by the hybrid SQLite read-retry
+	// path (retrySQLiteGet/List/ListNamespaces/Scan/ScanPage), readTimeoutCount
+	// once per read whose retry window was fully exhausted without success
+	// (see wrapStorePressure). Atomic rather than mu-guarded so the hot read
+	// path never contends with flush/maintenance for s.mu just to bump a
+	// counter. Exposed via DebugMetrics.
+	readRetryCount   atomic.Int64
+	readTimeoutCount atomic.Int64
+
+	// dataDirSlowFsyncThreshold and dataDirFsyncProbe configure the one-time
+	// startup fsync micro-probe (storage-pressure-handling item 3) — see
+	// runDataDirProbe. dataDirFsyncProbe is nil in production (the real
+	// probeDataDirFsync is used); tests override it to simulate a slow
+	// filesystem without needing an actual slow disk.
+	dataDirSlowFsyncThreshold time.Duration
+	dataDirFsyncProbe         func(dataDir string) (time.Duration, error)
+
+	// dataDirProbeResult holds the outcome of runDataDirProbe once it has
+	// run, or nil beforehand/if the probe itself failed (e.g. permission
+	// error) — a failed probe is not reported as "slow", it's reported as
+	// absent. Guarded by mu.
+	dataDirProbeResult *DataDirProbeResult
+
+	// testFlushChunkHook, when non-nil, is called with each chunk's
+	// zero-based index immediately before flushChunk begins that chunk's
+	// transaction. Returning an error aborts the flush at that point, as if
+	// the chunk's transaction had genuinely failed — used only by
+	// TestHybridStore_FlushCrash_PartialChunkCommitReplaysSafely to
+	// deterministically simulate a crash between two chunk commits (storage-
+	// pressure-handling item 2's crash-window test). Always nil in
+	// production; never set outside a test in this package.
+	testFlushChunkHook func(chunkIndex int) error
+
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 }
@@ -229,6 +264,20 @@ type HybridOptions struct {
 	// maintenance, so this intentionally doesn't support disabling it via a
 	// non-positive value.
 	MaintenanceInterval time.Duration
+
+	// DataDirSlowFsyncThreshold overrides the duration above which the
+	// one-time startup fsync micro-probe (runDataDirProbe) considers the
+	// data directory "slow" and logs a warning (storage-pressure-handling
+	// item 3). Defaults to dataDirSlowFsyncThreshold. A value <= 0 falls
+	// back to the default.
+	DataDirSlowFsyncThreshold time.Duration
+
+	// dataDirFsyncProbe overrides the real write+fsync probe
+	// (probeDataDirFsync) used by runDataDirProbe. Unexported: this exists
+	// purely so tests within this package can simulate a slow filesystem
+	// deterministically, without needing an actually slow disk. nil (the
+	// only value available outside this package) uses the real probe.
+	dataDirFsyncProbe func(dataDir string) (time.Duration, error)
 }
 
 const (
@@ -255,6 +304,47 @@ const (
 	// value is already compromised by the degradation that got us here. Reuses
 	// WALStore's compaction threshold per the plan.
 	hybridDegradedPendingLogCap = defaultWALMaxLogBytes
+
+	// dataDirSlowFsyncThreshold is the default threshold above which the
+	// startup fsync micro-probe (runDataDirProbe, storage-pressure-handling
+	// item 3) flags the data directory as slow. A native/container-native
+	// filesystem fsyncs a few KB in low single-digit milliseconds; a Docker
+	// Desktop bind mount has been measured at 600ms-1s for a multi-entry
+	// flush (docs/performance.md "Data dir placement", measured 2026-07-19).
+	// 75ms sits well above native noise (including a loaded CI runner) and
+	// well below the observed bind-mount tax, so it flags the pathology
+	// this warning exists for without false-positiving on ordinary
+	// contention.
+	dataDirSlowFsyncThreshold = 75 * time.Millisecond
+
+	// dataDirProbeFileName is the throwaway file runDataDirProbe writes and
+	// fsyncs, then removes, inside the data directory.
+	dataDirProbeFileName = "overcast.fsync-probe"
+
+	// dataDirProbeBytes is how much data the probe writes before fsyncing —
+	// "a few KB", enough to exercise a real write+fsync round trip without
+	// adding measurable startup cost of its own.
+	dataDirProbeBytes = 4096
+
+	// hybridFlushChunkMaxOps bounds how many pending operations one flush
+	// transaction applies before committing (storage-pressure-handling item
+	// 2 — see chunkHybridFlushOps). A flush batch larger than this splits
+	// into multiple sequential transactions instead of one that holds the
+	// single writer connection for the whole burst. 500 keeps a worst-case
+	// batch (the dirty-threshold cap of ~10,000 ops — see
+	// defaultHybridDirtyEntryThreshold) to about 20 short transactions
+	// rather than one spanning the entire batch; chosen as a constant
+	// rather than an OVERCAST_* knob because it's an internal
+	// lock-hold-time tuning detail, not a behavior a user configuring
+	// Overcast would need to reach for.
+	hybridFlushChunkMaxOps = 500
+
+	// hybridFlushChunkMaxBytes is the byte-size twin of
+	// hybridFlushChunkMaxOps: a chunk also closes once its accumulated
+	// approximate payload size reaches this, so a handful of large values
+	// (e.g. multi-KB JSON blobs) can't produce an oversized transaction
+	// even while under the row cap.
+	hybridFlushChunkMaxBytes = 1 << 20 // 1 MiB
 )
 
 // NewHybridStore creates a HybridStore backed by a SQLite file in dataDir,
@@ -297,6 +387,9 @@ func NewHybridStoreWithOptions(dataDir string, opts HybridOptions, logger *zap.L
 	if opts.MaintenanceInterval <= 0 {
 		opts.MaintenanceInterval = defaultMaintenanceInterval
 	}
+	if opts.DataDirSlowFsyncThreshold <= 0 {
+		opts.DataDirSlowFsyncThreshold = dataDirSlowFsyncThreshold
+	}
 
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("hybrid store: create data dir %q: %w", dataDir, err)
@@ -323,7 +416,9 @@ func NewHybridStoreWithOptions(dataDir string, opts HybridOptions, logger *zap.L
 			Mode:    "hybrid",
 			Healthy: true,
 		},
-		cancel: cancel,
+		dataDirSlowFsyncThreshold: opts.DataDirSlowFsyncThreshold,
+		dataDirFsyncProbe:         opts.dataDirFsyncProbe,
+		cancel:                    cancel,
 	}
 	if err := hs.replayPendingLog(); err != nil {
 		cancel()
@@ -352,6 +447,9 @@ func NewHybridStoreWithOptions(dataDir string, opts HybridOptions, logger *zap.L
 
 	hs.wg.Add(1)
 	go hs.runMaintenance(bgCtx)
+
+	hs.wg.Add(1)
+	go hs.runDataDirProbe()
 
 	return hs, nil
 }
@@ -545,9 +643,16 @@ func (s *HybridStore) degradeToMemoryOnly(err error, loaded, skippedRows int, se
 // TierCached reads and seed queries, on the same database file as the writer
 // connection. Must only be called after the writer connection has been
 // opened and migrated (s.sqlite non-nil and ready).
+//
+// All three pragmas use modernc.org/sqlite's "_pragma=name(value)" DSN form —
+// see the matching comment in sqlite.go's newSQLiteStoreFile for why the
+// bare "_journal_mode="/"_synchronous=" spelling this used to have was
+// silently a no-op on this driver (rollback-journal mode was in effect the
+// whole time, not WAL), and why that made this read pool unable to deliver
+// the "readers never block on the writer" guarantee it was built for.
 func (s *HybridStore) openReadPool() error {
 	dbPath := filepath.Join(s.dataDir, "overcast.db")
-	dsn := fmt.Sprintf("%s?_journal_mode=WAL&_synchronous=NORMAL&_pragma=busy_timeout(%d)", dbPath, hybridBusyTimeoutMillis)
+	dsn := fmt.Sprintf("%s?_pragma=journal_mode(wal)&_pragma=synchronous(normal)&_pragma=busy_timeout(%d)", dbPath, hybridBusyTimeoutMillis)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return fmt.Errorf("open read pool: %w", err)
@@ -1089,7 +1194,7 @@ func (s *HybridStore) PersistentHealth() PersistentHealth {
 // buffer (storage-plan.md item 3.6). Called from a defer in flushOnce for
 // every attempted flush (i.e. one that actually had pending ops to write),
 // on both the success and failure paths.
-func (s *HybridStore) recordFlushHistory(start time.Time, entries int, committed bool) {
+func (s *HybridStore) recordFlushHistory(start time.Time, entries, chunks int, committed bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.flushHistory = append(s.flushHistory, DebugFlushRecord{
@@ -1097,6 +1202,7 @@ func (s *HybridStore) recordFlushHistory(start time.Time, entries int, committed
 		DurationMillis: time.Since(start).Milliseconds(),
 		Entries:        entries,
 		Committed:      committed,
+		Chunks:         chunks,
 	})
 	if over := len(s.flushHistory) - hybridFlushHistoryCap; over > 0 {
 		s.flushHistory = s.flushHistory[over:]
@@ -1155,6 +1261,9 @@ func (s *HybridStore) DebugMetrics(ctx context.Context, opts DebugMetricsOptions
 		FlushHistory:       history,
 		SeedDurationMillis: seedDurationMillis,
 		PendingLogBytes:    s.pendingLogSizeBytes(),
+		ReadRetryCount:     s.readRetryCount.Load(),
+		ReadTimeoutCount:   s.readTimeoutCount.Load(),
+		DataDirProbe:       s.getDataDirProbeResult(),
 	}
 	if opts.IncludeNamespaceRowCounts {
 		namespaces, err := s.ListNamespaces(ctx)
@@ -1169,6 +1278,93 @@ func (s *HybridStore) DebugMetrics(ctx context.Context, opts DebugMetricsOptions
 		}
 	}
 	return m
+}
+
+// getDataDirProbeResult returns a point-in-time copy of the startup fsync
+// probe's outcome (see runDataDirProbe), or nil if the probe hasn't finished
+// yet or failed to run at all. Safe to call concurrently; returns a copy so
+// callers never share a pointer into the mutex-guarded field.
+func (s *HybridStore) getDataDirProbeResult() *DataDirProbeResult {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.dataDirProbeResult == nil {
+		return nil
+	}
+	cp := *s.dataDirProbeResult
+	return &cp
+}
+
+// runDataDirProbe runs once, in the background, at store construction
+// (storage-pressure-handling item 3): a small write+fsync against the data
+// directory, timed against dataDirSlowFsyncThreshold. This is a one-shot
+// goroutine, not a loop — it does its work and returns, so it never needs to
+// select on a cancellation context the way the store's other background
+// loops (run/runPendingSync/runMaintenance) do.
+//
+// This intentionally runs after construction returns (never inside New*),
+// per the startup-budget rule against synchronous file I/O in a
+// constructor — see docs/performance.md "Startup budget — rules for service
+// authors". The probe itself is cheap (a few KB write+fsync), but on a slow
+// bind-mounted data dir specifically, fsync latency is exactly what this
+// probe exists to catch, so it must never be on the request or startup path.
+//
+// A failed probe (e.g. permission error) is logged at WARN and leaves
+// dataDirProbeResult nil — "the check itself didn't run" is a different,
+// less actionable condition than "the check ran and found a slow disk", and
+// conflating the two would make a permission hiccup look like a filesystem
+// performance problem.
+func (s *HybridStore) runDataDirProbe() {
+	defer s.wg.Done()
+	probe := s.dataDirFsyncProbe
+	if probe == nil {
+		probe = probeDataDirFsync
+	}
+	elapsed, err := probe(s.dataDir)
+	if err != nil {
+		s.logWarn("hybrid: data dir fsync probe failed; skipping slow-filesystem check", zap.Error(err))
+		return
+	}
+	slow := elapsed > s.dataDirSlowFsyncThreshold
+	s.mu.Lock()
+	s.dataDirProbeResult = &DataDirProbeResult{
+		FsyncMillis: elapsed.Milliseconds(),
+		Slow:        slow,
+		ProbedAt:    time.Now().UTC(),
+	}
+	s.mu.Unlock()
+	if slow {
+		s.logWarn("hybrid: data directory appears to be on a slow filesystem — flushes will hold locks longer than on a native filesystem",
+			zap.Duration("fsync_elapsed", elapsed),
+			zap.Duration("threshold", s.dataDirSlowFsyncThreshold),
+			zap.String("data_dir", s.dataDir),
+			zap.String("suggestion", "if this data dir is a Docker Desktop bind mount, use a named Docker volume instead — see docs/performance.md 'Data dir placement'"))
+	}
+}
+
+// probeDataDirFsync is the real (non-test) implementation runDataDirProbe
+// uses: write dataDirProbeBytes to a throwaway file in dataDir and fsync it,
+// timing the whole round trip, then remove the file. Mirrors exactly the
+// write-then-fsync shape a real flush performs, so it is representative of
+// the cost a slow bind mount would add to one.
+func probeDataDirFsync(dataDir string) (time.Duration, error) {
+	path := filepath.Join(dataDir, dataDirProbeFileName)
+	data := make([]byte, dataDirProbeBytes)
+	start := time.Now()
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return 0, fmt.Errorf("hybrid: open fsync probe file: %w", err)
+	}
+	defer func() {
+		_ = f.Close()
+		_ = os.Remove(path)
+	}()
+	if _, err := f.Write(data); err != nil {
+		return 0, fmt.Errorf("hybrid: write fsync probe file: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		return 0, fmt.Errorf("hybrid: sync fsync probe file: %w", err)
+	}
+	return time.Since(start), nil
 }
 
 // DB returns the underlying *sql.DB, satisfying SQLiteDBProvider. Blocks
@@ -1359,6 +1555,16 @@ func (s *HybridStore) flushOnce(ctx context.Context) error {
 	s.dirtyApproxBytes = 0
 	s.mu.Unlock()
 
+	// Split into ordered, contiguous chunks (storage-pressure-handling item
+	// 2) so a burst-sized batch commits as several short transactions
+	// instead of one that holds the single writer connection (and, before
+	// the item 0 WAL fix, blocked every concurrent reader) for the whole
+	// burst. See chunkHybridFlushOps's doc comment for the ordering
+	// guarantee this relies on, and the comment above compactPendingAfterFlush's
+	// call site below for why the pending log is only truncated once every
+	// chunk has committed, not chunk-by-chunk.
+	chunks := chunkHybridFlushOps(toFlushOps, hybridFlushChunkMaxOps, hybridFlushChunkMaxBytes)
+
 	committed := false
 	// Registered before the restore-on-failure defer below so it runs after
 	// it (defers execute LIFO) — by the time this reads committed, every
@@ -1366,7 +1572,7 @@ func (s *HybridStore) flushOnce(ctx context.Context) error {
 	// final outcome of this flush attempt on both the success and failure
 	// paths (3.6 in docs/plans/storage-plan.md).
 	defer func() {
-		s.recordFlushHistory(start, len(toFlushOps), committed)
+		s.recordFlushHistory(start, len(toFlushOps), len(chunks), committed)
 	}()
 	defer func() {
 		s.mu.Lock()
@@ -1377,7 +1583,12 @@ func (s *HybridStore) flushOnce(ctx context.Context) error {
 			return
 		}
 		// Put the failed batch back ahead of anything accumulated during the
-		// attempt so the next flush retries in original order.
+		// attempt so the next flush retries in original order. This restores
+		// the FULL original batch even if one or more leading chunks already
+		// committed successfully before a later chunk failed — see the
+		// crash-durability comment below for why redoing an already-committed
+		// chunk on the next attempt is always safe, never double-applies
+		// anything incorrectly.
 		s.pendingOps = append(toFlushOps, s.pendingOps...)
 		for composite, entry := range toFlushDirty {
 			if _, overwritten := s.dirty[composite]; !overwritten {
@@ -1390,40 +1601,35 @@ func (s *HybridStore) flushOnce(ctx context.Context) error {
 		s.recomputeDirtyApproxBytesLocked()
 	}()
 
-	tx, err := s.sqlite.db.BeginTx(ctx, nil)
-	if err != nil {
-		s.markPersistentError(err)
-		return fmt.Errorf("hybrid flush begin tx: %w", err)
-	}
-	for _, op := range toFlushOps {
-		switch op.op {
-		case walSet:
-			if _, err := tx.ExecContext(ctx,
-				`INSERT OR REPLACE INTO kv (namespace, key, value) VALUES (?, ?, ?)`,
-				op.namespace, op.key, op.value); err != nil {
-				tx.Rollback() //nolint:errcheck // best-effort; already returning an error.
+	for i, chunk := range chunks {
+		if s.testFlushChunkHook != nil {
+			if err := s.testFlushChunkHook(i); err != nil {
 				s.markPersistentError(err)
-				return fmt.Errorf("hybrid flush set [%s/%s]: %w", op.namespace, op.key, err)
-			}
-		case walDelete:
-			if _, err := tx.ExecContext(ctx,
-				`DELETE FROM kv WHERE namespace = ? AND key = ?`, op.namespace, op.key); err != nil {
-				tx.Rollback() //nolint:errcheck // best-effort; already returning an error.
-				s.markPersistentError(err)
-				return fmt.Errorf("hybrid flush delete [%s/%s]: %w", op.namespace, op.key, err)
-			}
-		case walDeletePrefix:
-			if err := hybridFlushDeletePrefix(ctx, tx, op.namespace, op.key); err != nil {
-				tx.Rollback() //nolint:errcheck // best-effort; already returning an error.
-				s.markPersistentError(err)
-				return fmt.Errorf("hybrid flush delete prefix [%s/%s*]: %w", op.namespace, op.key, err)
+				return err
 			}
 		}
+		if err := s.flushChunk(ctx, chunk); err != nil {
+			s.markPersistentError(err)
+			return err
+		}
 	}
-	if err := tx.Commit(); err != nil {
-		s.markPersistentError(err)
-		return fmt.Errorf("hybrid flush commit: %w", err)
-	}
+
+	// Crash-durability note (storage-pressure-handling item 2): the pending
+	// log is compacted (truncated to just what's still unflushed) only
+	// here, after every chunk in this batch has committed — never after an
+	// individual chunk. If the process crashed between two chunk commits,
+	// the pending log on disk still contains the WHOLE original batch
+	// (nothing was removed yet), so a restart replays all of it, including
+	// the chunk(s) that already made it into SQLite. That replay is always
+	// safe: every op this store ever flushes is either `INSERT OR REPLACE`
+	// (walSet) or a `DELETE ... WHERE` (walDelete/walDeletePrefix via
+	// hybridFlushDeletePrefix) — both idempotent under exact replay in the
+	// same order, so redoing an already-applied chunk reproduces the
+	// identical end state rather than corrupting it. The alternative
+	// (truncating the log after each chunk commits) would shrink the crash
+	// window further but adds a second failure mode — a crash *during* that
+	// per-chunk truncation write — for no correctness gain given the
+	// idempotency guarantee above, so it isn't worth the extra complexity.
 	if err := s.compactPendingAfterFlush(); err != nil {
 		s.markPersistentError(err)
 		return err
@@ -1431,11 +1637,84 @@ func (s *HybridStore) flushOnce(ctx context.Context) error {
 	committed = true
 	s.markPersistentSuccess()
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
-		s.logWarn("hybrid flush slow", zap.Int("ops", len(toFlushOps)), zap.Duration("elapsed", elapsed))
+		s.logWarn("hybrid flush slow", zap.Int("ops", len(toFlushOps)), zap.Int("chunks", len(chunks)), zap.Duration("elapsed", elapsed))
 	} else {
-		s.logDebug("hybrid flush complete", zap.Int("ops", len(toFlushOps)), zap.Duration("elapsed", elapsed))
+		s.logDebug("hybrid flush complete", zap.Int("ops", len(toFlushOps)), zap.Int("chunks", len(chunks)), zap.Duration("elapsed", elapsed))
 	}
 	return nil
+}
+
+// flushChunk applies one chunk of ordered flush ops in its own SQLite
+// transaction. Extracted from flushOnce so a burst-sized batch can be split
+// into several of these (see chunkHybridFlushOps) instead of one
+// transaction spanning the whole batch.
+func (s *HybridStore) flushChunk(ctx context.Context, chunk []hybridPendingOp) error {
+	tx, err := s.sqlite.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("hybrid flush begin tx: %w", err)
+	}
+	for _, op := range chunk {
+		switch op.op {
+		case walSet:
+			if _, err := tx.ExecContext(ctx,
+				`INSERT OR REPLACE INTO kv (namespace, key, value) VALUES (?, ?, ?)`,
+				op.namespace, op.key, op.value); err != nil {
+				tx.Rollback() //nolint:errcheck // best-effort; already returning an error.
+				return fmt.Errorf("hybrid flush set [%s/%s]: %w", op.namespace, op.key, err)
+			}
+		case walDelete:
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM kv WHERE namespace = ? AND key = ?`, op.namespace, op.key); err != nil {
+				tx.Rollback() //nolint:errcheck // best-effort; already returning an error.
+				return fmt.Errorf("hybrid flush delete [%s/%s]: %w", op.namespace, op.key, err)
+			}
+		case walDeletePrefix:
+			if err := hybridFlushDeletePrefix(ctx, tx, op.namespace, op.key); err != nil {
+				tx.Rollback() //nolint:errcheck // best-effort; already returning an error.
+				return fmt.Errorf("hybrid flush delete prefix [%s/%s*]: %w", op.namespace, op.key, err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("hybrid flush commit: %w", err)
+	}
+	return nil
+}
+
+// chunkHybridFlushOps splits ops into ordered, contiguous chunks bounded by
+// maxOps rows and maxBytes approximate payload size (storage-pressure-
+// handling item 2), so no single flush transaction holds the writer
+// connection for a burst-sized window. A chunk closes when either bound is
+// reached; passing maxOps<=0 or maxBytes<=0 disables that particular bound
+// (both <=0 returns the whole batch as one chunk, matching pre-chunking
+// behavior). Order is preserved both within and across chunks — required
+// for a ranged tombstone to stay ordered against a later Set under the same
+// prefix (see resolvePendingLocked) when replayed from either the original
+// pending log or a partially-committed chunk sequence.
+func chunkHybridFlushOps(ops []hybridPendingOp, maxOps int, maxBytes int64) [][]hybridPendingOp {
+	if len(ops) == 0 {
+		return nil
+	}
+	if maxOps <= 0 && maxBytes <= 0 {
+		return [][]hybridPendingOp{ops}
+	}
+	var chunks [][]hybridPendingOp
+	start := 0
+	var count int
+	var approxBytes int64
+	for i, op := range ops {
+		count++
+		approxBytes += int64(len(op.namespace) + len(op.key) + len(op.value))
+		atOpLimit := maxOps > 0 && count >= maxOps
+		atByteLimit := maxBytes > 0 && approxBytes >= maxBytes
+		if atOpLimit || atByteLimit || i == len(ops)-1 {
+			chunks = append(chunks, ops[start:i+1])
+			start = i + 1
+			count = 0
+			approxBytes = 0
+		}
+	}
+	return chunks
 }
 
 // hybridFlushDeletePrefix issues a single ranged DELETE for a prefix
@@ -1648,6 +1927,7 @@ func (s *HybridStore) sqliteGet(ctx context.Context, namespace, key string) (str
 	retryCtx, cancel := context.WithTimeout(context.Background(), hybridSQLiteReadRetryTimeout)
 	defer cancel()
 	retryValue, retryFound, retryErr := s.retrySQLiteGet(retryCtx, namespace, key)
+	retryErr = s.wrapStorePressure(retryErr)
 	s.logHybridSQLiteRetry("get", retryErr, zap.String("namespace", namespace), zap.String("key", key), zap.Error(err))
 	if retryErr != nil {
 		s.markPersistentError(retryErr)
@@ -1669,6 +1949,7 @@ func (s *HybridStore) sqliteList(ctx context.Context, namespace, prefix string) 
 	retryCtx, cancel := context.WithTimeout(context.Background(), hybridSQLiteReadRetryTimeout)
 	defer cancel()
 	retryKeys, retryErr := s.retrySQLiteList(retryCtx, namespace, prefix)
+	retryErr = s.wrapStorePressure(retryErr)
 	s.logHybridSQLiteRetry("list", retryErr, zap.String("namespace", namespace), zap.String("prefix", prefix), zap.Error(err))
 	if retryErr != nil {
 		s.markPersistentError(retryErr)
@@ -1690,6 +1971,7 @@ func (s *HybridStore) sqliteListNamespaces(ctx context.Context) ([]string, error
 	retryCtx, cancel := context.WithTimeout(context.Background(), hybridSQLiteReadRetryTimeout)
 	defer cancel()
 	retryNamespaces, retryErr := s.retrySQLiteListNamespaces(retryCtx)
+	retryErr = s.wrapStorePressure(retryErr)
 	s.logHybridSQLiteRetry("list namespaces", retryErr, zap.Error(err))
 	if retryErr != nil {
 		s.markPersistentError(retryErr)
@@ -1711,6 +1993,7 @@ func (s *HybridStore) sqliteScan(ctx context.Context, namespace, prefix string) 
 	retryCtx, cancel := context.WithTimeout(context.Background(), hybridSQLiteReadRetryTimeout)
 	defer cancel()
 	retryPairs, retryErr := s.retrySQLiteScan(retryCtx, namespace, prefix)
+	retryErr = s.wrapStorePressure(retryErr)
 	s.logHybridSQLiteRetry("scan", retryErr, zap.String("namespace", namespace), zap.String("prefix", prefix), zap.Error(err))
 	if retryErr != nil {
 		s.markPersistentError(retryErr)
@@ -1734,6 +2017,7 @@ func (s *HybridStore) sqliteScanPage(ctx context.Context, namespace, prefix, sta
 	retryCtx, cancel := context.WithTimeout(context.Background(), hybridSQLiteReadRetryTimeout)
 	defer cancel()
 	retryPairs, retryNextKey, retryErr := s.retrySQLiteScanPage(retryCtx, namespace, prefix, startAfter, limit)
+	retryErr = s.wrapStorePressure(retryErr)
 	s.logHybridSQLiteRetry("scan page", retryErr,
 		zap.String("namespace", namespace), zap.String("prefix", prefix),
 		zap.String("start_after", startAfter), zap.Error(err))
@@ -1753,6 +2037,7 @@ func (s *HybridStore) retrySQLiteGet(ctx context.Context, namespace, key string)
 			return value, found, err
 		}
 		lastErr = err
+		s.readRetryCount.Add(1)
 		if err := sleepHybridSQLiteRetry(ctx); err != nil {
 			return "", false, fallbackRetryErr(lastErr, err)
 		}
@@ -1767,6 +2052,7 @@ func (s *HybridStore) retrySQLiteList(ctx context.Context, namespace, prefix str
 			return keys, err
 		}
 		lastErr = err
+		s.readRetryCount.Add(1)
 		if err := sleepHybridSQLiteRetry(ctx); err != nil {
 			return nil, fallbackRetryErr(lastErr, err)
 		}
@@ -1781,6 +2067,7 @@ func (s *HybridStore) retrySQLiteListNamespaces(ctx context.Context) ([]string, 
 			return namespaces, err
 		}
 		lastErr = err
+		s.readRetryCount.Add(1)
 		if err := sleepHybridSQLiteRetry(ctx); err != nil {
 			return nil, fallbackRetryErr(lastErr, err)
 		}
@@ -1795,6 +2082,7 @@ func (s *HybridStore) retrySQLiteScan(ctx context.Context, namespace, prefix str
 			return pairs, err
 		}
 		lastErr = err
+		s.readRetryCount.Add(1)
 		if err := sleepHybridSQLiteRetry(ctx); err != nil {
 			return nil, fallbackRetryErr(lastErr, err)
 		}
@@ -1809,6 +2097,7 @@ func (s *HybridStore) retrySQLiteScanPage(ctx context.Context, namespace, prefix
 			return pairs, nextKey, err
 		}
 		lastErr = err
+		s.readRetryCount.Add(1)
 		if err := sleepHybridSQLiteRetry(ctx); err != nil {
 			return nil, "", fallbackRetryErr(lastErr, err)
 		}
@@ -1971,6 +2260,34 @@ func shouldRetryHybridSQLiteRead(err error) bool {
 
 func shouldRetryHybridSQLiteWrite(err error) bool {
 	return isSQLiteTransient(err)
+}
+
+// wrapStorePressure tags err with ErrStorePressure (storage-pressure-
+// handling item 1) when it belongs to the retryable busy/deadline class
+// shouldRetryHybridSQLiteRead recognizes — i.e. a hybrid SQLite read whose
+// retry window (hybridSQLiteReadRetryTimeout) was fully exhausted while
+// still contending with the writer, rather than a genuine
+// corruption/infrastructure failure.
+//
+// This is safe to call unconditionally on every sqliteGet/List/
+// ListNamespaces/Scan/ScanPage retry-path result: shouldRetryHybridSQLiteRead
+// is exactly the predicate retrySQLiteGet (and its four siblings) use to
+// decide whether to keep retrying at all, so an error that reaches here
+// still matching it can only mean the retry loop's ctx (hybridSQLiteReadRetryTimeout)
+// expired before the contention cleared — the retry loop itself already
+// returns any *non*-matching (genuine) error immediately, unwrapped, on its
+// own next-line "return" before this function is ever called with it.
+//
+// This is the single point that both tags AND counts pressure — see
+// protocol/errors.go's Write*Error functions for where the tag gets turned
+// into an AWS-shaped throttling response, and DebugMetrics.ReadTimeoutCount
+// for where the count surfaces.
+func (s *HybridStore) wrapStorePressure(err error) error {
+	if err == nil || !shouldRetryHybridSQLiteRead(err) {
+		return err
+	}
+	s.readTimeoutCount.Add(1)
+	return fmt.Errorf("hybrid sqlite read retry exhausted: %w: %w", ErrStorePressure, err)
 }
 
 func isSQLiteTransient(err error) bool {

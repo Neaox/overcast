@@ -11,6 +11,8 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+
+	"github.com/Neaox/overcast/internal/state"
 )
 
 // ---- Error types -----------------------------------------------------------
@@ -200,6 +202,72 @@ func AsAWSError(err error) *AWSError {
 	return nil
 }
 
+// ---- Storage-pressure -> AWS throttling remap ------------------------------
+//
+// Real AWS signals storage/service overload with a throttling error that SDK
+// retry policies retry automatically (exponential backoff, no application
+// code required). Overcast's HybridStore instead used to surface a plain
+// "context deadline exceeded", wrapped as InternalError by every service's
+// store layer via the standard protocol.Wrap(protocol.ErrInternalError, err)
+// pattern, when SQLite read contention outlasted both busy_timeout and the
+// read-retry window (see internal/state/hybrid.go's
+// shouldRetryHybridSQLiteRead / hybridSQLiteReadRetryTimeout and
+// HybridStore.wrapStorePressure, which tags the underlying error with
+// state.ErrStorePressure before it ever reaches a service). A generic 500
+// causes most SDKs to give up immediately instead of retrying.
+//
+// remapStorePressure is the single place that knows both halves of this
+// translation: "is this error actually storage pressure" (errors.Is against
+// the sentinel, which traverses AWSError.Unwrap same as any other error
+// chain) and "what does AWS's throttling error look like on this wire
+// family" (the throttle template passed by each Write*Error caller below,
+// since only those call sites know which family they're serializing for).
+// Keeping the sentinel check itself in one function — rather than
+// duplicating an errors.Is call in all four Write*Error bodies — is what
+// makes this "one place": no service code anywhere needs to special-case
+// pressure errors; every service already goes through one of these four
+// functions to write any error response.
+//
+// AWS error codes/statuses per wire family (verified against AWS docs,
+// 2026-07-25):
+//   - S3 REST-XML (WriteXMLError): "SlowDown", HTTP 503 — S3's documented
+//     write/request-rate throttling error.
+//     https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
+//   - AWS JSON 1.0/1.1 (WriteJSONError — SQS, SNS's JSON path, DynamoDB,
+//     Lambda, etc.): "ThrottlingException", HTTP 400 — the standard modeled
+//     throttling error shared by JSON-protocol services.
+//   - Query/REST-XML (WriteQueryXMLError, WriteEC2QueryXMLError — SNS's
+//     Query path, EC2, and other Query-protocol services): "Throttling",
+//     HTTP 400 — AWS's general Query-protocol throttling error ("Rate
+//     exceeded").
+var (
+	errSlowDown = &AWSError{
+		Code:       "SlowDown",
+		Message:    "Please reduce your request rate.",
+		HTTPStatus: http.StatusServiceUnavailable,
+	}
+	errThrottlingException = &AWSError{
+		Code:       "ThrottlingException",
+		Message:    "The request was denied due to request throttling.",
+		HTTPStatus: http.StatusBadRequest,
+	}
+	errThrottling = &AWSError{
+		Code:       "Throttling",
+		Message:    "Rate exceeded",
+		HTTPStatus: http.StatusBadRequest,
+	}
+)
+
+// remapStorePressure returns throttle (via Wrap, preserving aerr's cause
+// chain) when aerr's chain carries state.ErrStorePressure; otherwise it
+// returns aerr unchanged. See the package-level doc comment above.
+func remapStorePressure(aerr *AWSError, throttle *AWSError) *AWSError {
+	if aerr == nil || !errors.Is(aerr, state.ErrStorePressure) {
+		return aerr
+	}
+	return Wrap(throttle, Cause(aerr))
+}
+
 // ---- XML error format (S3 and other REST-XML services) ---------------------
 
 // xmlErrorResponse is the wire envelope S3 uses for errors.
@@ -214,6 +282,7 @@ type xmlErrorResponse struct {
 // The cause, if any, is NOT included in the response — it stays server-side
 // for logging. The x-emulator-unsupported header is set automatically for 501.
 func WriteXMLError(w http.ResponseWriter, r *http.Request, aerr *AWSError) {
+	aerr = remapStorePressure(aerr, errSlowDown)
 	recordAWSError(w, aerr)
 	reqID := RequestIDFromContext(r.Context())
 
@@ -253,6 +322,7 @@ type jsonErrorResponse struct {
 // WriteJSONError writes an AWS JSON-protocol error response.
 // The cause, if any, is NOT included in the response body.
 func WriteJSONError(w http.ResponseWriter, r *http.Request, aerr *AWSError) {
+	aerr = remapStorePressure(aerr, errThrottlingException)
 	recordAWSError(w, aerr)
 	reqID := RequestIDFromContext(r.Context())
 
@@ -319,6 +389,7 @@ type ec2QueryXMLError struct {
 
 // WriteQueryXMLError writes an AWS Query-protocol XML error response (SNS format).
 func WriteQueryXMLError(w http.ResponseWriter, r *http.Request, aerr *AWSError) {
+	aerr = remapStorePressure(aerr, errThrottling)
 	recordAWSError(w, aerr)
 	reqID := RequestIDFromContext(r.Context())
 	body, _ := xml.Marshal(&queryXMLErrorResponse{
@@ -346,6 +417,7 @@ func WriteQueryXMLError(w http.ResponseWriter, r *http.Request, aerr *AWSError) 
 
 // WriteEC2QueryXMLError writes an EC2 Query-protocol XML error response.
 func WriteEC2QueryXMLError(w http.ResponseWriter, r *http.Request, aerr *AWSError) {
+	aerr = remapStorePressure(aerr, errThrottling)
 	recordAWSError(w, aerr)
 	reqID := RequestIDFromContext(r.Context())
 	body, _ := xml.Marshal(&ec2QueryXMLErrorResponse{
