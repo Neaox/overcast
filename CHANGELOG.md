@@ -71,6 +71,8 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
+- **Web UI** — the system map log-stream peek drawer now switches directly to a newly clicked lambda instance or log stream row while already open instead of swallowing the click and just closing.
+
 ## [0.0.1-alpha.23] - 2026-07-23
 
 ### Fixed
