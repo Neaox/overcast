@@ -1762,3 +1762,370 @@ func TestDeleteRetentionPolicy_notFound(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusBadRequest)
 	helpers.AssertJSONError(t, resp, "ResourceNotFoundException")
 }
+
+// ---- GetLogEvents pagination contract (pagination-plan.md G1) --------------
+
+type getLogEventsResult struct {
+	Events []struct {
+		Timestamp     int64  `json:"timestamp"`
+		Message       string `json:"message"`
+		IngestionTime int64  `json:"ingestionTime"`
+	} `json:"events"`
+	NextForwardToken  string `json:"nextForwardToken"`
+	NextBackwardToken string `json:"nextBackwardToken"`
+}
+
+func getLogEvents(t *testing.T, srv *helpers.TestServer, body map[string]any) getLogEventsResult {
+	t.Helper()
+	resp := logsCall(t, srv, "GetLogEvents", body)
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result getLogEventsResult
+	helpers.DecodeJSON(t, resp, &result)
+	return result
+}
+
+// TestGetLogEvents_TailLoop_ForwardTokenDoesNotReRead is G1's headline
+// failing-first test (pagination-plan.md G1): before this item,
+// nextForwardToken was synthesized from len(allEvents) and never checked
+// against a real position, so polling with the returned token re-fetched
+// the full event set forever — exactly the bug a CloudWatch Logs tail loop
+// (the standard client usage pattern for this operation) hits immediately.
+func TestGetLogEvents_TailLoop_ForwardTokenDoesNotReRead(t *testing.T) {
+	// Given: a stream with three events
+	srv := helpers.NewTestServer(t)
+	createLogGroup(t, srv, "/aws/lambda/tail-loop")
+	createLogStream(t, srv, "/aws/lambda/tail-loop", "stream")
+	putLogEvents(t, srv, "/aws/lambda/tail-loop", "stream", []logEvent{
+		{Timestamp: 1000, Message: "one"},
+		{Timestamp: 2000, Message: "two"},
+		{Timestamp: 3000, Message: "three"},
+	})
+
+	// When: GetLogEvents is called from the head, then polled again with the
+	// returned forward token (the standard CloudWatch Logs tail-loop pattern)
+	first := getLogEvents(t, srv, map[string]any{
+		"logGroupName":  "/aws/lambda/tail-loop",
+		"logStreamName": "stream",
+		"startFromHead": true,
+	})
+	if len(first.Events) != 3 {
+		t.Fatalf("first call: expected 3 events, got %d", len(first.Events))
+	}
+	if first.NextForwardToken == "" {
+		t.Fatal("first call: expected a non-empty nextForwardToken")
+	}
+	second := getLogEvents(t, srv, map[string]any{
+		"logGroupName":  "/aws/lambda/tail-loop",
+		"logStreamName": "stream",
+		"nextToken":     first.NextForwardToken,
+	})
+
+	// Then: no new events have been written, so the poll must return ZERO
+	// events — not the same 3 again (the exact broken behavior G1 fixes).
+	if len(second.Events) != 0 {
+		t.Fatalf("poll with forward token re-received %d events (want 0) — this is the exact broken behavior G1 fixes", len(second.Events))
+	}
+}
+
+// TestGetLogEvents_SameTokenWhenExhausted pins the same-token-when-exhausted
+// termination convention (pagination-plan.md G1's accept criterion): once a
+// direction has caught up, GetLogEvents must echo back the SAME token it
+// was given rather than a new one — SDK paginators and tail loops rely on
+// comparing consecutive tokens to detect "nothing new yet."
+func TestGetLogEvents_SameTokenWhenExhausted(t *testing.T) {
+	// Given: a stream with one event
+	srv := helpers.NewTestServer(t)
+	createLogGroup(t, srv, "/aws/lambda/exhausted")
+	createLogStream(t, srv, "/aws/lambda/exhausted", "stream")
+	putLogEvents(t, srv, "/aws/lambda/exhausted", "stream", []logEvent{
+		{Timestamp: 1000, Message: "one"},
+	})
+
+	// When: GetLogEvents is called from the head, then polled again with the
+	// returned forward token (nothing new has been written yet)
+	first := getLogEvents(t, srv, map[string]any{
+		"logGroupName":  "/aws/lambda/exhausted",
+		"logStreamName": "stream",
+		"startFromHead": true,
+	})
+	token1 := first.NextForwardToken
+	second := getLogEvents(t, srv, map[string]any{
+		"logGroupName":  "/aws/lambda/exhausted",
+		"logStreamName": "stream",
+		"nextToken":     token1,
+	})
+
+	// Then: the poll returns 0 events and echoes the SAME token back
+	if len(second.Events) != 0 {
+		t.Fatalf("expected 0 events on the exhausted poll, got %d", len(second.Events))
+	}
+	if second.NextForwardToken != token1 {
+		t.Fatalf("nextForwardToken on an exhausted poll = %q, want the SAME token %q (same-token-when-exhausted)", second.NextForwardToken, token1)
+	}
+
+	// A third poll with the (unchanged) token must remain stable —
+	// idempotent, never drifting to a new token on repeated empty polls.
+	third := getLogEvents(t, srv, map[string]any{
+		"logGroupName":  "/aws/lambda/exhausted",
+		"logStreamName": "stream",
+		"nextToken":     token1,
+	})
+	if third.NextForwardToken != token1 {
+		t.Fatalf("nextForwardToken drifted on a repeated exhausted poll: %q, want %q", third.NextForwardToken, token1)
+	}
+
+	// New events arriving after the exhausted poll must surface on the next
+	// poll with the SAME token — proving the tail-loop actually progresses
+	// once there's something new, not just that it stays stable when idle.
+	putLogEvents(t, srv, "/aws/lambda/exhausted", "stream", []logEvent{
+		{Timestamp: 2000, Message: "two"},
+	})
+	fourth := getLogEvents(t, srv, map[string]any{
+		"logGroupName":  "/aws/lambda/exhausted",
+		"logStreamName": "stream",
+		"nextToken":     token1,
+	})
+	if len(fourth.Events) != 1 || fourth.Events[0].Message != "two" {
+		t.Fatalf("expected the newly-written event to surface on the next poll, got %+v", fourth.Events)
+	}
+}
+
+// TestGetLogEvents_TailLoop_ExactlyOnce drives a small-limit tail loop over
+// a 5-event stream and asserts every event is seen exactly once, in order,
+// and the loop terminates via the same-token convention.
+func TestGetLogEvents_TailLoop_ExactlyOnce(t *testing.T) {
+	// Given: a stream with five events
+	srv := helpers.NewTestServer(t)
+	createLogGroup(t, srv, "/aws/lambda/exactly-once")
+	createLogStream(t, srv, "/aws/lambda/exactly-once", "stream")
+	putLogEvents(t, srv, "/aws/lambda/exactly-once", "stream", []logEvent{
+		{Timestamp: 1000, Message: "e1"},
+		{Timestamp: 2000, Message: "e2"},
+		{Timestamp: 3000, Message: "e3"},
+		{Timestamp: 4000, Message: "e4"},
+		{Timestamp: 5000, Message: "e5"},
+	})
+
+	// When: a tail loop drains the stream 2 events at a time
+	var seen []string
+	token := ""
+	for pages := 0; pages < 20; pages++ {
+		body := map[string]any{
+			"logGroupName":  "/aws/lambda/exactly-once",
+			"logStreamName": "stream",
+			"limit":         2,
+		}
+		if token == "" {
+			body["startFromHead"] = true
+		} else {
+			body["nextToken"] = token
+		}
+		page := getLogEvents(t, srv, body)
+		for _, e := range page.Events {
+			seen = append(seen, e.Message)
+		}
+		if page.NextForwardToken == token && token != "" {
+			break // caught up
+		}
+		token = page.NextForwardToken
+		if len(page.Events) == 0 {
+			break
+		}
+	}
+
+	// Then: every event was seen exactly once, in order
+	want := []string{"e1", "e2", "e3", "e4", "e5"}
+	if len(seen) != len(want) {
+		t.Fatalf("tail loop collected %v, want %v", seen, want)
+	}
+	for i := range want {
+		if seen[i] != want[i] {
+			t.Fatalf("tail loop order = %v, want %v", seen, want)
+		}
+	}
+}
+
+// TestGetLogEvents_StartFromHead_BothDirections proves StartFromHead
+// selects direction on a fresh (no-token) call: true returns the earliest
+// events, false (the documented default) returns the latest.
+func TestGetLogEvents_StartFromHead_BothDirections(t *testing.T) {
+	// Given: a stream with three events
+	srv := helpers.NewTestServer(t)
+	createLogGroup(t, srv, "/aws/lambda/start-from-head")
+	createLogStream(t, srv, "/aws/lambda/start-from-head", "stream")
+	putLogEvents(t, srv, "/aws/lambda/start-from-head", "stream", []logEvent{
+		{Timestamp: 1000, Message: "oldest"},
+		{Timestamp: 2000, Message: "middle"},
+		{Timestamp: 3000, Message: "newest"},
+	})
+
+	// When/Then: startFromHead=true returns the earliest events
+	head := getLogEvents(t, srv, map[string]any{
+		"logGroupName":  "/aws/lambda/start-from-head",
+		"logStreamName": "stream",
+		"startFromHead": true,
+		"limit":         2,
+	})
+	if len(head.Events) != 2 || head.Events[0].Message != "oldest" || head.Events[1].Message != "middle" {
+		t.Fatalf("startFromHead=true: got %+v, want [oldest middle]", head.Events)
+	}
+
+	// When/Then: startFromHead=false returns the latest events
+	tail := getLogEvents(t, srv, map[string]any{
+		"logGroupName":  "/aws/lambda/start-from-head",
+		"logStreamName": "stream",
+		"startFromHead": false,
+		"limit":         2,
+	})
+	if len(tail.Events) != 2 || tail.Events[0].Message != "middle" || tail.Events[1].Message != "newest" {
+		t.Fatalf("startFromHead=false: got %+v, want [middle newest]", tail.Events)
+	}
+
+	// Default (omitted) must match startFromHead=false per AWS docs.
+	defaultDir := getLogEvents(t, srv, map[string]any{
+		"logGroupName":  "/aws/lambda/start-from-head",
+		"logStreamName": "stream",
+		"limit":         2,
+	})
+	if len(defaultDir.Events) != 2 || defaultDir.Events[0].Message != "middle" || defaultDir.Events[1].Message != "newest" {
+		t.Fatalf("default direction: got %+v, want [middle newest] (default must match startFromHead=false)", defaultDir.Events)
+	}
+}
+
+// TestGetLogEvents_InvalidNextToken proves a garbled nextToken returns
+// GetLogEvents' documented InvalidParameterException instead of silently
+// restarting the read.
+func TestGetLogEvents_InvalidNextToken(t *testing.T) {
+	// Given: a group and stream exist
+	srv := helpers.NewTestServer(t)
+	createLogGroup(t, srv, "/aws/lambda/bad-token")
+	createLogStream(t, srv, "/aws/lambda/bad-token", "stream")
+
+	// When: GetLogEvents is called with a garbled nextToken
+	resp := logsCall(t, srv, "GetLogEvents", map[string]any{
+		"logGroupName":  "/aws/lambda/bad-token",
+		"logStreamName": "stream",
+		"nextToken":     "not-a-real-token",
+	})
+	defer resp.Body.Close()
+
+	// Then: InvalidParameterException, not a silent restart
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidParameterException")
+}
+
+// ---- FilterLogEvents limit + nextToken (pagination-plan.md G6) -------------
+
+// TestFilterLogEvents_paginationContract walks a multi-stream group with a
+// filter pattern via helpers.PaginationContractTest (pagination-plan.md H2),
+// proving exactly-once delivery, termination, and the documented
+// invalid-token error — the same contract every other paginated operation
+// in this codebase is held to.
+func TestFilterLogEvents_paginationContract(t *testing.T) {
+	// Given: two streams with 6 matching ERROR events interleaved by
+	// timestamp, plus a few non-matching INFO events mixed in
+	srv := helpers.NewTestServer(t)
+	createLogGroup(t, srv, "/aws/lambda/filter-pagination")
+	createLogStream(t, srv, "/aws/lambda/filter-pagination", "stream-a")
+	createLogStream(t, srv, "/aws/lambda/filter-pagination", "stream-b")
+
+	putLogEvents(t, srv, "/aws/lambda/filter-pagination", "stream-a", []logEvent{
+		{Timestamp: 1000, Message: "ERROR e1"},
+		{Timestamp: 3000, Message: "INFO ignored-1"},
+		{Timestamp: 5000, Message: "ERROR e3"},
+		{Timestamp: 7000, Message: "ERROR e5"},
+	})
+	putLogEvents(t, srv, "/aws/lambda/filter-pagination", "stream-b", []logEvent{
+		{Timestamp: 2000, Message: "ERROR e2"},
+		{Timestamp: 4000, Message: "INFO ignored-2"},
+		{Timestamp: 6000, Message: "ERROR e4"},
+		{Timestamp: 8000, Message: "ERROR e6"},
+	})
+	wantIDs := []string{"e1", "e2", "e3", "e4", "e5", "e6"}
+
+	fetch := func(t *testing.T, token string) ([]string, string) {
+		t.Helper()
+		body := map[string]any{
+			"logGroupName":  "/aws/lambda/filter-pagination",
+			"filterPattern": "ERROR",
+			"limit":         2,
+		}
+		if token != "" {
+			body["nextToken"] = token
+		}
+		resp := logsCall(t, srv, "FilterLogEvents", body)
+		defer resp.Body.Close()
+		helpers.AssertStatus(t, resp, http.StatusOK)
+		var page filterResult
+		helpers.DecodeJSON(t, resp, &page)
+		ids := make([]string, len(page.Events))
+		for i, e := range page.Events {
+			// Message is "ERROR eN" — the last two characters are the ID.
+			ids[i] = e.Message[len(e.Message)-2:]
+		}
+		next := ""
+		if page.NextToken != nil {
+			next = *page.NextToken
+		}
+		return ids, next
+	}
+
+	probe := func(t *testing.T) (int, string) {
+		t.Helper()
+		resp := logsCall(t, srv, "FilterLogEvents", map[string]any{
+			"logGroupName": "/aws/lambda/filter-pagination",
+			"nextToken":    "not-a-real-token",
+		})
+		defer resp.Body.Close()
+		var errResp struct {
+			Type string `json:"__type"`
+		}
+		helpers.DecodeJSON(t, resp, &errResp)
+		return resp.StatusCode, errResp.Type
+	}
+
+	// When/Then: walking FilterLogEvents with limit=2 must deliver each
+	// matching event exactly once, in order, terminate, and reject a
+	// garbled nextToken with the documented AWS error.
+	helpers.PaginationContractTest(t, wantIDs, func(id string) string { return id }, fetch, probe,
+		helpers.PaginationContractOptions{
+			WantInvalidTokenStatus:    http.StatusBadRequest,
+			WantInvalidTokenErrorCode: "InvalidParameterException",
+		})
+}
+
+// TestFilterLogEvents_BufferedEventVisibleInWindow proves
+// storage-access-plan.md A4's P4 requirement end-to-end: an event ingested
+// less than one debounce interval ago (still sitting in the stream's write
+// buffer, not yet flushed to the backend) is visible to FilterLogEvents —
+// exactly as it was before the group-range pushdown replaced the old
+// per-stream full reads.
+func TestFilterLogEvents_BufferedEventVisibleInWindow(t *testing.T) {
+	// Given: a stream with a single event, written immediately before the
+	// FilterLogEvents call — well under the flush watermark and debounce
+	// interval, so it should still be sitting in the write buffer
+	srv := helpers.NewTestServer(t)
+	createLogGroup(t, srv, "/aws/lambda/filter-buffered")
+	createLogStream(t, srv, "/aws/lambda/filter-buffered", "stream")
+	putLogEvents(t, srv, "/aws/lambda/filter-buffered", "stream", []logEvent{
+		{Timestamp: 1000, Message: "ERROR freshly buffered"},
+	})
+
+	// When: FilterLogEvents is called over a window covering that event
+	resp := logsCall(t, srv, "FilterLogEvents", map[string]any{
+		"logGroupName":  "/aws/lambda/filter-buffered",
+		"filterPattern": "ERROR",
+		"startTime":     0,
+		"endTime":       2000,
+	})
+	defer resp.Body.Close()
+
+	// Then: the buffered event is visible
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result filterResult
+	helpers.DecodeJSON(t, resp, &result)
+	if len(result.Events) != 1 || result.Events[0].Message != "ERROR freshly buffered" {
+		t.Fatalf("expected the freshly-buffered event to be visible, got %+v", result.Events)
+	}
+}

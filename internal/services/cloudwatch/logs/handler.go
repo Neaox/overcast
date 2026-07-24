@@ -419,76 +419,23 @@ func (h *Handler) PutLogEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 // AWS docs: https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_GetLogEvents.html
+//
+// Delegates to getLogEventsTyped (typed_logic.go) so the JSON 1.1 wire path
+// (registered here in h.ops, still preferred over the typed-operation path
+// for JSON per Service.Dispatch's doc comment) and the CBOR/typed-operation
+// path share one implementation of GetLogEvents' pagination contract
+// (pagination-plan.md G1) instead of two copies drifting apart.
 func (h *Handler) GetLogEvents(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		LogGroupName  string `json:"logGroupName"`
-		LogStreamName string `json:"logStreamName"`
-		StartTime     *int64 `json:"startTime,omitempty"`
-		EndTime       *int64 `json:"endTime,omitempty"`
-		Limit         int    `json:"limit,omitempty"`
-		NextToken     string `json:"nextToken,omitempty"`
-		StartFromHead *bool  `json:"startFromHead,omitempty"`
-	}
+	var req getLogEventsRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.LogGroupName == "" || req.LogStreamName == "" {
-		protocol.WriteJSONError(w, r, errInvalidParameter("logGroupName and logStreamName are required"))
-		return
-	}
-
-	ctx := r.Context()
-
-	// Group must exist.
-	if _, aerr := h.store.getLogGroup(ctx, req.LogGroupName); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	// Stream must exist.
-	if _, aerr := h.store.getLogStream(ctx, req.LogGroupName, req.LogStreamName); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	allEvents, aerr := h.store.getEvents(ctx, req.LogGroupName, req.LogStreamName)
+	resp, aerr := h.getLogEventsTyped(r.Context(), &req)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-
-	// Apply time-range filter.
-	filtered := make([]LogEvent, 0, len(allEvents))
-	for _, e := range allEvents {
-		if req.StartTime != nil && e.Timestamp < *req.StartTime {
-			continue
-		}
-		// endTime is exclusive per AWS docs — events at exactly endTime are excluded.
-		if req.EndTime != nil && e.Timestamp >= *req.EndTime {
-			continue
-		}
-		filtered = append(filtered, e)
-	}
-
-	type eventResp struct {
-		Timestamp     int64  `json:"timestamp"`
-		Message       string `json:"message"`
-		IngestionTime int64  `json:"ingestionTime"`
-	}
-	out := make([]eventResp, 0, len(filtered))
-	for _, e := range filtered {
-		out = append(out, eventResp(e))
-	}
-
-	// AWS returns pagination tokens even for the first/only page.
-	fwdToken := fmt.Sprintf("f/%d", len(allEvents))
-	bwdToken := fmt.Sprintf("b/%d", 0)
-
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"events":            out,
-		"nextForwardToken":  fwdToken,
-		"nextBackwardToken": bwdToken,
-	})
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
 // FilterLogEvents searches log events across one or more streams in a log group.
@@ -496,132 +443,22 @@ func (h *Handler) GetLogEvents(w http.ResponseWriter, r *http.Request) {
 // quoted phrases, ?OR), JSON patterns ({ $.field op value } with &&/||), time
 // range, logStreamNames, and logStreamNamePrefix.
 // AWS docs: https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_FilterLogEvents.html
+//
+// Delegates to filterLogEventsTyped (typed_logic.go) — see GetLogEvents'
+// doc comment above for why the JSON and CBOR/typed-operation paths share
+// one implementation of FilterLogEvents' limit + nextToken contract
+// (pagination-plan.md G6).
 func (h *Handler) FilterLogEvents(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		LogGroupName        string   `json:"logGroupName"`
-		FilterPattern       string   `json:"filterPattern,omitempty"`
-		StartTime           *int64   `json:"startTime,omitempty"`
-		EndTime             *int64   `json:"endTime,omitempty"`
-		LogStreamNames      []string `json:"logStreamNames,omitempty"`
-		LogStreamNamePrefix string   `json:"logStreamNamePrefix,omitempty"`
-		Limit               int      `json:"limit,omitempty"`
-		NextToken           string   `json:"nextToken,omitempty"`
-	}
+	var req filterLogEventsRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.LogGroupName == "" {
-		protocol.WriteJSONError(w, r, errInvalidParameter("logGroupName is required"))
-		return
-	}
-
-	// Compile filter pattern once (text, JSON, or match-all).
-	matcher, err := CompileFilter(req.FilterPattern)
-	if err != nil {
-		protocol.WriteJSONError(w, r, errInvalidParameter(err.Error()))
-		return
-	}
-
-	ctx := r.Context()
-
-	// Group must exist.
-	if _, aerr := h.store.getLogGroup(ctx, req.LogGroupName); aerr != nil {
+	resp, aerr := h.filterLogEventsTyped(r.Context(), &req)
+	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-
-	// Determine which streams to search.
-	var streams []*LogStream
-	if len(req.LogStreamNames) > 0 {
-		// Specific streams requested.
-		for _, name := range req.LogStreamNames {
-			ls, aerr := h.store.getLogStream(ctx, req.LogGroupName, name)
-			if aerr != nil {
-				continue // skip missing streams (AWS behaviour)
-			}
-			streams = append(streams, ls)
-		}
-	} else {
-		// All streams, optionally filtered by prefix.
-		var aerr *protocol.AWSError
-		streams, aerr = h.store.listLogStreams(ctx, req.LogGroupName, req.LogStreamNamePrefix)
-		if aerr != nil {
-			protocol.WriteJSONError(w, r, aerr)
-			return
-		}
-	}
-
-	// Collect matching events from all streams.
-	type filteredEvent struct {
-		Timestamp     int64  `json:"timestamp"`
-		Message       string `json:"message"`
-		IngestionTime int64  `json:"ingestionTime"`
-		LogStreamName string `json:"logStreamName"`
-	}
-	var matched []filteredEvent
-
-	type searchedStream struct {
-		LogStreamName      string `json:"logStreamName"`
-		SearchedCompletely bool   `json:"searchedCompletely"`
-	}
-	searched := make([]searchedStream, 0, len(streams))
-
-	for _, ls := range streams {
-		// Skip stream if its time range doesn't overlap the query range.
-		if req.StartTime != nil && ls.LastEventTimestamp > 0 && ls.LastEventTimestamp < *req.StartTime {
-			searched = append(searched, searchedStream{LogStreamName: ls.Name, SearchedCompletely: true})
-			continue
-		}
-		if req.EndTime != nil && ls.FirstEventTimestamp > 0 && ls.FirstEventTimestamp > *req.EndTime {
-			searched = append(searched, searchedStream{LogStreamName: ls.Name, SearchedCompletely: true})
-			continue
-		}
-
-		events, aerr := h.store.getEvents(ctx, req.LogGroupName, ls.Name)
-		if aerr != nil {
-			continue
-		}
-
-		// Binary search for the time window within the sorted events slice.
-		startIdx := 0
-		if req.StartTime != nil {
-			startIdx = sort.Search(len(events), func(i int) bool {
-				return events[i].Timestamp >= *req.StartTime
-			})
-		}
-		endIdx := len(events)
-		if req.EndTime != nil {
-			endIdx = sort.Search(len(events), func(i int) bool {
-				return events[i].Timestamp > *req.EndTime
-			})
-		}
-
-		for _, e := range events[startIdx:endIdx] {
-			if !matcher(e.Message) {
-				continue
-			}
-			matched = append(matched, filteredEvent{
-				Timestamp:     e.Timestamp,
-				Message:       e.Message,
-				IngestionTime: e.IngestionTime,
-				LogStreamName: ls.Name,
-			})
-		}
-		searched = append(searched, searchedStream{
-			LogStreamName:      ls.Name,
-			SearchedCompletely: true,
-		})
-	}
-
-	// Sort by timestamp across all streams.
-	sort.Slice(matched, func(i, j int) bool {
-		return matched[i].Timestamp < matched[j].Timestamp
-	})
-
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"events":             matched,
-		"searchedLogStreams": searched,
-	})
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
 // ---- Retention policy -------------------------------------------------------
