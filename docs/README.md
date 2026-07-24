@@ -39,6 +39,7 @@ see the [root README](../README.md).
 - [Performance](./performance.md) — benchmarks and tuning
 - [Storage backend internals](./storage-backends.md) — durability, performance, and known limitations of each `state.Store` backend
 - [Storage regression test plan](./storage-test-plan.md) — tiered test plan (unit/race → mode matrix → upgrade/crash → burst → E2E) for storage-layer changes
+- [Storage access patterns plan](./storage-access-plan.md) — standard read/write patterns for services consuming storage (key-as-index, pushdown, cursor pagination), with the audit-backed item list
 
 ---
 
