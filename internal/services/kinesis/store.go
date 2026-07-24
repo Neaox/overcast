@@ -10,7 +10,9 @@ import (
 	"math/big"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Neaox/overcast/internal/middleware"
@@ -25,6 +27,12 @@ const (
 	// serviceutil.RegionKey at every call site) — records from two regions
 	// sharing a stream name never collide.
 	nsRecords = "kinesis:records"
+	// nsShardSeq holds the persisted per-shard sequence-number counter (see
+	// nextShardSeqBlock, storage-access-plan.md A1). Key:
+	// "<region>/<streamName>/<shardId>" — deliberately a separate namespace
+	// from nsRecords so incrementing the counter never touches (or is
+	// affected by) actual record storage.
+	nsShardSeq = "kinesis:shardseq"
 )
 
 // Stream represents a Kinesis Data Stream.
@@ -68,6 +76,10 @@ type Record struct {
 
 // kinesisStore wraps state.Store with Kinesis-specific helpers.
 type kinesisStore struct {
+	// mu guards nextShardSeqBlock's read-modify-write of the persisted
+	// per-shard counter — the same single-mutex-around-a-counter-key
+	// pattern as ecsStore.nextRevision (internal/services/ecs/store.go).
+	mu            sync.Mutex
 	store         state.Store
 	defaultRegion string
 }
@@ -121,6 +133,15 @@ func (s *kinesisStore) deleteStream(ctx context.Context, name string) *protocol.
 	if err := s.store.Delete(ctx, nsStreams, serviceutil.RegionKey(region, name)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
+	// Deliberately NOT deleting nsShardSeq counters here. The record
+	// deletion loop above ignores per-key errors, so it cannot guarantee
+	// every record was actually removed; if a stream with the same name is
+	// recreated later, leaving the counter in place guarantees the next
+	// PutRecord still allocates a sequence number strictly after anything
+	// that survived, instead of resetting to 0 and risking exactly the
+	// collision A1 exists to prevent. The cost is that a recreated stream's
+	// sequence numbers won't restart at a low value — harmless, since
+	// clients only ever compare/sort them, never assume a starting point.
 	return nil
 }
 
@@ -183,6 +204,95 @@ func (s *kinesisStore) listRecords(ctx context.Context, streamName, shardID stri
 	return records, nil
 }
 
+// listRecordsPage returns up to limit records for shardID whose sequence
+// number sorts strictly after afterSeqNo (pass "" for the start of the
+// shard), reading via ScanPage's key range instead of a full-shard Scan +
+// slice (storage-access-plan.md A2 — the read-side twin of A1). Keys are
+// "<region>/<streamName>/<shardId>/<seqNo>" with a fixed-width sortable
+// seqNo (see formatSeqNo), so ScanPage's startAfter is just the shard's
+// prefix plus the raw seqNo — copies the shape of DynamoDB Streams'
+// GetRecords (internal/services/dynamodb/stream_store.go sqlStreamBackend.since).
+func (s *kinesisStore) listRecordsPage(ctx context.Context, streamName, shardID, afterSeqNo string, limit int) ([]Record, *protocol.AWSError) {
+	prefix := serviceutil.RegionKey(s.region(ctx), streamName+"/"+shardID+"/")
+	startAfter := ""
+	if afterSeqNo != "" {
+		startAfter = prefix + afterSeqNo
+	}
+	pairs, _, err := s.store.ScanPage(ctx, nsRecords, prefix, startAfter, limit)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	records := make([]Record, 0, len(pairs))
+	for _, kv := range pairs {
+		var rec Record
+		if err := json.Unmarshal([]byte(kv.Value), &rec); err != nil {
+			// One malformed persisted record must not fail the whole page
+			// (CLAUDE.md malformed-persisted-state rule).
+			continue
+		}
+		records = append(records, rec)
+	}
+	// Defensive re-sort: pre-A1 data could have non-contiguous or
+	// out-of-order sequence numbers for a shard (the old counter derived
+	// from len(records), which regressed after a deletion — see A1).
+	// ScanPage already returns rows in key order, so this is a no-op once
+	// no pre-A1 data remains. Drop it then (storage-access-plan.md A2).
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].SequenceNumber < records[j].SequenceNumber
+	})
+	return records, nil
+}
+
+// ---- Sequence counter ---------------------------------------------------------
+
+// nextShardSeqBlock reserves a contiguous block of `count` sequence-number
+// slots for shardID and persists the updated counter, returning the first
+// (lowest) value in the block. The caller assigns base, base+1, ...,
+// base+count-1 (via formatSeqNo) to the count records it is about to write,
+// in that order.
+//
+// This replaces deriving the next sequence number from
+// len(listRecords(...)) (storage-access-plan.md A1): that count regresses
+// whenever records are removed (retention trim, a stream recreated with
+// residual data), so a freshly computed "next" number could collide with a
+// sequence number a surviving record still holds — silently overwriting it.
+// The counter here is monotonic and independent of how many records
+// currently exist for the shard, so it never regresses.
+//
+// Guarded by s.mu (mirrors ecsStore.nextRevision): Get+increment+Set is not
+// atomic on its own against a concurrent caller, and state.Store has no
+// compare-and-swap primitive to make it so.
+func (s *kinesisStore) nextShardSeqBlock(ctx context.Context, streamName, shardID string, count int) (int64, *protocol.AWSError) {
+	if count <= 0 {
+		return 0, nil
+	}
+	key := serviceutil.RegionKey(s.region(ctx), streamName+"/"+shardID)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	raw, found, err := s.store.Get(ctx, nsShardSeq, key)
+	if err != nil {
+		return 0, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	var base int64
+	if found {
+		// A corrupt counter value must not crash the write path or wedge
+		// the shard (CLAUDE.md malformed-persisted-state rule); treat it
+		// as an unset counter instead of failing the request. This method
+		// always writes a valid decimal integer, so this only matters if
+		// something else corrupted the persisted value.
+		if parsed, perr := strconv.ParseInt(raw, 10, 64); perr == nil {
+			base = parsed
+		}
+	}
+	next := base + int64(count)
+	if err := s.store.Set(ctx, nsShardSeq, key, strconv.FormatInt(next, 10)); err != nil {
+		return 0, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return base, nil
+}
+
 // ---- Helpers ----------------------------------------------------------------
 
 // buildInitialShards returns evenly distributed shards for a new stream.
@@ -239,9 +349,14 @@ func pickShard(shards []Shard, partitionKey string) int {
 	return active[sum%len(active)]
 }
 
-// nextSeqNo generates a monotonically increasing sequence number for a shard.
-func nextSeqNo(existing []Record, shardIdx int) string {
-	n := len(existing)
+// formatSeqNo renders a Kinesis-style sequence number: fixed-width and
+// lexicographically sortable ("49" + 19-digit shard index + 10-digit
+// per-shard counter) — unchanged from the pre-A1 wire format. shardIdx is
+// stable for the lifetime of a shard (Shards is append-only: see
+// buildInitialShards, splitShardTyped, mergeShardsTyped). n is the
+// persisted per-shard counter value from nextShardSeqBlock — never derived
+// from how many records currently exist for the shard.
+func formatSeqNo(shardIdx int, n int64) string {
 	return fmt.Sprintf("49%019d%010d", shardIdx, n)
 }
 
