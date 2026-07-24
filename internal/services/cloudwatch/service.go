@@ -214,14 +214,18 @@ func (s *cloudwatchStore) putMetricDataPoint(ctx context.Context, dp *MetricData
 	if err := s.store.Set(ctx, nsMetricData, key, string(raw)); err != nil {
 		return err
 	}
-	// Fast-path prune: scoped to just this metric+dimension prefix, so it
-	// stays cheap on the write path. This runs alongside — not instead of —
-	// the periodic background sweep (Service.runMetricDataSweeper /
-	// sweepMetricDataOnce): the fast path keeps hot metrics trimmed between
-	// sweep ticks, while the sweep is what guarantees eventual cleanup for
-	// metrics that stop being written to (and would otherwise never hit
-	// this code path again).
-	s.pruneMetricDataPoints(ctx, dp.Namespace, dp.MetricName, metricDims, s.metricDataRetentionCutoff())
+	// Deliberately NO inline prune here. An earlier version pruned this
+	// metric's expired points on every put, which on the hybrid/persistent
+	// backends meant a TierCached SQLite Scan + JSON decode of every retained
+	// point per PutMetricData — O(points-in-window) per write, quadratic over
+	// a burst to one metric (measured: see
+	// BenchmarkCloudWatch_PutMetricDataHybrid_*Retained in
+	// metric_burst_bench_test.go). Retention doesn't need it: reads filter
+	// and drop expired points themselves (listMetricDataPoints), and the
+	// periodic sweep (Service.runMetricDataSweeper / sweepMetricDataOnce)
+	// guarantees physical cleanup within one sweep interval, so the only
+	// cost of not pruning inline is at most one interval's worth of expired
+	// rows per hot metric — invisible to readers.
 	return nil
 }
 
@@ -252,43 +256,25 @@ func (s *cloudwatchStore) listMetricDataPoints(ctx context.Context, namespace, m
 // points are eligible for deletion. Applied universally across every backend
 // mode (storage-plan.md 3.4) — there used to be a backendMode() gate here that
 // disabled retention outside memory mode; hybrid/persistent backends grew
-// unboundedly on disk as a result. Both the write/read-path fast prune
-// (pruneMetricDataPoints, called from putMetricDataPoint/listMetricDataPoints)
+// unboundedly on disk as a result. Both the read-path filter
+// (listMetricDataPoints, which drops and deletes expired points as it reads)
 // and the periodic background sweep (sweepMetricDataOnce, driven by
-// Service.runMetricDataSweeper) use this cutoff.
+// Service.runMetricDataSweeper) use this cutoff. The write path deliberately
+// does not — see putMetricDataPoint.
 func (s *cloudwatchStore) metricDataRetentionCutoff() time.Time {
 	return s.clk.Now().UTC().Add(-memoryMetricDataRetention)
 }
 
-func (s *cloudwatchStore) pruneMetricDataPoints(ctx context.Context, namespace, metricName string, dimensions []Dimension, cutoff time.Time) {
-	prefix := namespace + "/" + metricName + "/" + dimensionsKey(canonicalizeDimensions(dimensions)) + "/"
-	pairs, err := s.store.Scan(ctx, nsMetricData, prefix)
-	if err != nil {
-		return
-	}
-	for _, kv := range pairs {
-		var dp MetricDataPoint
-		if err := json.Unmarshal([]byte(kv.Value), &dp); err != nil {
-			continue
-		}
-		if dp.Timestamp.UTC().Before(cutoff) {
-			_ = s.store.Delete(ctx, nsMetricData, kv.Key)
-		}
-	}
-}
-
 // sweepMetricDataOnce scans every point in the cloudwatch:metricdata
-// namespace — across every namespace/metric/dimension combination, not just
-// one prefix — and deletes any older than the retention cutoff. Unlike
-// pruneMetricDataPoints (scoped to a single metric+dimension prefix so it's
-// cheap enough to run inline on the write/read hot paths), this is a full
-// scan intended for periodic background use (Service.runMetricDataSweeper):
-// it is what guarantees metrics that stop being written or read — and so
-// never hit the inline fast path again — still get pruned, in every backend
-// mode including hybrid/persistent (storage-plan.md 3.4). Extracted as a
-// directly-callable method, separate from the ticker-loop wrapper, so tests
-// can trigger one sweep deterministically without waiting on a real or
-// mocked ticker tick.
+// namespace — across every namespace/metric/dimension combination — and
+// deletes any older than the retention cutoff. This full scan is intended
+// for periodic background use only (Service.runMetricDataSweeper): together
+// with listMetricDataPoints' read-path filtering it is the entire retention
+// mechanism, guaranteeing metrics that stop being written or read still get
+// physically pruned, in every backend mode including hybrid/persistent
+// (storage-plan.md 3.4). Extracted as a directly-callable method, separate
+// from the ticker-loop wrapper, so tests can trigger one sweep
+// deterministically without waiting on a real or mocked ticker tick.
 func (s *cloudwatchStore) sweepMetricDataOnce(ctx context.Context) {
 	cutoff := s.metricDataRetentionCutoff()
 	pairs, err := s.store.Scan(ctx, nsMetricData, "")

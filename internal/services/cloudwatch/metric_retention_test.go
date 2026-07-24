@@ -56,17 +56,17 @@ func TestSweepMetricDataOnce_MemoryBackend_DeletesStaleKeepsRecent(t *testing.T)
 		t.Fatalf("putMetricDataPoint(fresh): %v", err)
 	}
 
-	// Advance the clock so `fresh` is now old, WITHOUT any further put/get on
-	// the *same* metric — that would trigger putMetricDataPoint's own
-	// write-path fast prune (scoped to that metric+dimension prefix) and
-	// mask whether the background sweep itself does the work.
+	// Advance the clock so `fresh` is now old, WITHOUT any read on the
+	// *same* metric — listMetricDataPoints deletes expired points as it
+	// reads, which would mask whether the background sweep itself does the
+	// work. (The write path deliberately never prunes — see
+	// putMetricDataPoint.)
 	mock.Add(memoryMetricDataRetention + time.Minute)
 
 	// A point for a *different* metric, written after the clock advance, so
-	// it stays within the (now-shifted) retention window. Its own fast-path
-	// prune only scans its own metric+dimension prefix, so it does not touch
-	// "Fresh"'s now-stale row — this keeps the pre-sweep row count
-	// deterministic at 2, isolating what the sweep itself deletes.
+	// it stays within the (now-shifted) retention window and keeps the
+	// pre-sweep row count deterministic at 2, isolating what the sweep
+	// itself deletes.
 	recent := freshDataPoint("TestNS", "Other", mock.Now().UTC(), 2)
 	if err := s.putMetricDataPoint(ctx, recent); err != nil {
 		t.Fatalf("putMetricDataPoint(recent): %v", err)
