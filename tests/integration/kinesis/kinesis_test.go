@@ -393,6 +393,112 @@ func TestGetRecords_iteratorResumeNoDuplicatesOrGaps(t *testing.T) {
 	}
 }
 
+// ---- SplitShard -------------------------------------------------------------
+
+// TestSplitShard pins the JSON1.1 wire path's behavior for SplitShard,
+// which now delegates to splitShardTyped (typed_logic.go) instead of
+// duplicating shard-splitting logic in handler.go. There was no existing
+// integration coverage for SplitShard at all before this test.
+func TestSplitShard(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	// Given: a stream with a single shard
+	resp := kinesisCall(t, srv, "CreateStream", map[string]any{
+		"StreamName": "split-test",
+		"ShardCount": 1,
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	resp = kinesisCall(t, srv, "ListShards", map[string]any{
+		"StreamName": "split-test",
+	})
+	var before struct {
+		Shards []struct {
+			ShardId      string `json:"ShardId"`
+			HashKeyRange struct {
+				StartingHashKey string `json:"StartingHashKey"`
+				EndingHashKey   string `json:"EndingHashKey"`
+			} `json:"HashKeyRange"`
+		} `json:"Shards"`
+	}
+	decodeJSON(t, resp, &before)
+	if len(before.Shards) != 1 {
+		t.Fatalf("expected 1 open shard before split, got %d", len(before.Shards))
+	}
+	parentShardID := before.Shards[0].ShardId
+	startHash := before.Shards[0].HashKeyRange.StartingHashKey
+	endHash := before.Shards[0].HashKeyRange.EndingHashKey
+
+	// Split roughly at the midpoint of the shard's hash key range: the
+	// exact math isn't the point of this test (that's covered by the
+	// shared implementation's own logic in typed_logic.go/handler.go
+	// history), the wire round trip is.
+	newStartingHashKey := "1"
+
+	// When: SplitShard is called via the JSON1.1 wire (X-Amz-Target), the
+	// same path real AWS SDKs use by default.
+	resp = kinesisCall(t, srv, "SplitShard", map[string]any{
+		"StreamName":         "split-test",
+		"ShardToSplit":       parentShardID,
+		"NewStartingHashKey": newStartingHashKey,
+	})
+
+	// Then: it succeeds with an empty body (matching this handler's
+	// pre-existing void-operation convention — see SplitShard's doc
+	// comment in handler.go).
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	body := helpers.ReadBody(t, resp)
+	if body != "" {
+		t.Fatalf("expected empty body for SplitShard success, got %q", body)
+	}
+
+	// And: ListShards now shows two open child shards covering the
+	// original hash key range, with the parent no longer open.
+	resp = kinesisCall(t, srv, "ListShards", map[string]any{
+		"StreamName": "split-test",
+	})
+	var after struct {
+		Shards []struct {
+			ShardId      string `json:"ShardId"`
+			HashKeyRange struct {
+				StartingHashKey string `json:"StartingHashKey"`
+				EndingHashKey   string `json:"EndingHashKey"`
+			} `json:"HashKeyRange"`
+		} `json:"Shards"`
+	}
+	decodeJSON(t, resp, &after)
+	if len(after.Shards) != 2 {
+		t.Fatalf("expected 2 open shards after split, got %d", len(after.Shards))
+	}
+	for _, s := range after.Shards {
+		if s.ShardId == parentShardID {
+			t.Fatalf("parent shard %s is still open after split", parentShardID)
+		}
+	}
+	gotStart := after.Shards[0].HashKeyRange.StartingHashKey
+	gotEnd := after.Shards[1].HashKeyRange.EndingHashKey
+	if gotStart != startHash {
+		t.Fatalf("first child StartingHashKey = %q, want parent's %q", gotStart, startHash)
+	}
+	if gotEnd != endHash {
+		t.Fatalf("second child EndingHashKey = %q, want parent's %q", gotEnd, endHash)
+	}
+
+	resp = kinesisCall(t, srv, "DescribeStreamSummary", map[string]any{
+		"StreamName": "split-test",
+	})
+	var summary struct {
+		StreamDescriptionSummary struct {
+			OpenShardCount int `json:"OpenShardCount"`
+		} `json:"StreamDescriptionSummary"`
+	}
+	decodeJSON(t, resp, &summary)
+	if summary.StreamDescriptionSummary.OpenShardCount != 2 {
+		t.Fatalf("expected OpenShardCount=2, got %d", summary.StreamDescriptionSummary.OpenShardCount)
+	}
+}
+
 // ---- MergeShards -----------------------------------------------------------
 
 func TestMergeShards(t *testing.T) {

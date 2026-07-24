@@ -6,7 +6,6 @@ package kinesis
 import (
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"math/big"
 	"net/http"
 
@@ -375,73 +374,18 @@ func (h *Handler) ListShards(w http.ResponseWriter, r *http.Request) {
 
 // SplitShard handles Kinesis_20131202.SplitShard.
 // AWS docs: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_SplitShard.html
+//
+// Delegates to splitShardTyped (typed_logic.go) — see PutRecord's doc
+// comment. Success has an empty body on the JSON1.1 wire (w.WriteHeader
+// only, no writeJSON call) to match this handler's pre-existing behavior
+// for void operations; splitShardTyped's *struct{} return is only used to
+// check for an error.
 func (h *Handler) SplitShard(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		StreamName         string `json:"StreamName"`
-		ShardToSplit       string `json:"ShardToSplit"`
-		NewStartingHashKey string `json:"NewStartingHashKey"`
-	}
+	var req splitShardRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.StreamName == "" {
-		protocol.WriteJSONError(w, r, protocol.ErrMissingParameter("StreamName"))
-		return
-	}
-	st, aerr := h.store.getStream(r.Context(), req.StreamName)
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	// Find the shard to split.
-	idx := -1
-	for i, shard := range st.Shards {
-		if shard.ShardId == req.ShardToSplit && shard.SequenceNumberRange.EndingSequenceNumber == "" {
-			idx = i
-			break
-		}
-	}
-	if idx < 0 {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    fmt.Sprintf("Could not find shard %s in stream %s", req.ShardToSplit, req.StreamName),
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
-	}
-
-	orig := st.Shards[idx]
-	nowSeq := fmt.Sprintf("49%019d", len(st.Shards))
-
-	// Close the original shard.
-	st.Shards[idx].SequenceNumberRange.EndingSequenceNumber = nowSeq
-
-	// Create two child shards.
-	child1 := Shard{
-		ShardId: fmt.Sprintf("shardId-%012d", len(st.Shards)),
-		HashKeyRange: HashKeyRange{
-			StartingHashKey: orig.HashKeyRange.StartingHashKey,
-			EndingHashKey:   req.NewStartingHashKey,
-		},
-		SequenceNumberRange: SequenceNumberRange{
-			StartingSequenceNumber: nowSeq,
-		},
-	}
-	child2 := Shard{
-		ShardId: fmt.Sprintf("shardId-%012d", len(st.Shards)+1),
-		HashKeyRange: HashKeyRange{
-			StartingHashKey: req.NewStartingHashKey,
-			EndingHashKey:   orig.HashKeyRange.EndingHashKey,
-		},
-		SequenceNumberRange: SequenceNumberRange{
-			StartingSequenceNumber: nowSeq,
-		},
-	}
-	st.Shards = append(st.Shards, child1, child2)
-	st.ShardCount = activeShardCount(st)
-
-	if aerr := h.store.putStream(r.Context(), st); aerr != nil {
+	if _, aerr := h.splitShardTyped(r.Context(), &req); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -449,89 +393,15 @@ func (h *Handler) SplitShard(w http.ResponseWriter, r *http.Request) {
 }
 
 // MergeShards handles Kinesis_20131202.MergeShards (basic implementation).
+//
+// Delegates to mergeShardsTyped (typed_logic.go) — see SplitShard's doc
+// comment about the empty-body convention.
 func (h *Handler) MergeShards(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		StreamName           string `json:"StreamName"`
-		ShardToMerge         string `json:"ShardToMerge"`
-		AdjacentShardToMerge string `json:"AdjacentShardToMerge"`
-	}
+	var req mergeShardsRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.StreamName == "" {
-		protocol.WriteJSONError(w, r, protocol.ErrMissingParameter("StreamName"))
-		return
-	}
-	st, aerr := h.store.getStream(r.Context(), req.StreamName)
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	// Find the two shards to merge — both must be open (no EndingSequenceNumber).
-	mergeIdx, adjIdx := -1, -1
-	for i, shard := range st.Shards {
-		if shard.SequenceNumberRange.EndingSequenceNumber != "" {
-			continue
-		}
-		if shard.ShardId == req.ShardToMerge {
-			mergeIdx = i
-		}
-		if shard.ShardId == req.AdjacentShardToMerge {
-			adjIdx = i
-		}
-	}
-	if mergeIdx < 0 {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    fmt.Sprintf("Could not find shard %s in stream %s", req.ShardToMerge, req.StreamName),
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
-	}
-	if adjIdx < 0 {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    fmt.Sprintf("Could not find shard %s in stream %s", req.AdjacentShardToMerge, req.StreamName),
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
-	}
-
-	nowSeq := fmt.Sprintf("49%019d", len(st.Shards))
-
-	// Close both parent shards.
-	st.Shards[mergeIdx].SequenceNumberRange.EndingSequenceNumber = nowSeq
-	st.Shards[adjIdx].SequenceNumberRange.EndingSequenceNumber = nowSeq
-
-	// Create a merged child shard covering the combined hash key range.
-	startHash := st.Shards[mergeIdx].HashKeyRange.StartingHashKey
-	endHash := st.Shards[mergeIdx].HashKeyRange.EndingHashKey
-	adjStart := st.Shards[adjIdx].HashKeyRange.StartingHashKey
-	adjEnd := st.Shards[adjIdx].HashKeyRange.EndingHashKey
-
-	// Use the smallest starting and largest ending hash key.
-	if cmpHashKey(adjStart, startHash) < 0 {
-		startHash = adjStart
-	}
-	if cmpHashKey(adjEnd, endHash) > 0 {
-		endHash = adjEnd
-	}
-
-	merged := Shard{
-		ShardId: fmt.Sprintf("shardId-%012d", len(st.Shards)),
-		HashKeyRange: HashKeyRange{
-			StartingHashKey: startHash,
-			EndingHashKey:   endHash,
-		},
-		SequenceNumberRange: SequenceNumberRange{
-			StartingSequenceNumber: nowSeq,
-		},
-	}
-	st.Shards = append(st.Shards, merged)
-	st.ShardCount = activeShardCount(st)
-
-	if aerr := h.store.putStream(r.Context(), st); aerr != nil {
+	if _, aerr := h.mergeShardsTyped(r.Context(), &req); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
