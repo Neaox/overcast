@@ -40,6 +40,7 @@ see the [root README](../README.md).
 - [Storage backend internals](./storage-backends.md) — durability, performance, and known limitations of each `state.Store` backend
 - [Storage regression test plan](./storage-test-plan.md) — tiered test plan (unit/race → mode matrix → upgrade/crash → burst → E2E) for storage-layer changes
 - [Storage access patterns plan](./storage-access-plan.md) — standard read/write patterns for services consuming storage (key-as-index, pushdown, cursor pagination), with the audit-backed item list
+- [Pagination fidelity plan](./pagination-plan.md) — audit of every paginating operation vs real AWS (ignored limits, broken tokens, lying truncation flags) with the canonical-helper decision and prioritized remediation order
 
 ---
 
