@@ -307,8 +307,34 @@ func resolveKeys(table *Table, keyOrItem Item) (hashKey, sortKey string, aerr *p
 	return hashKey, sortKey, nil
 }
 
+// resolveStorageKeys extracts and encodes the (hashKey, sortKey) pair for
+// storage/indexing purposes: Number-typed key components are transformed via
+// encodeOrderableNumber so the backend's composite/ORDER BY key sorts
+// numerically (docs/plans/dynamodb-gsi-design.md §2); String/Binary
+// components pass through unchanged, since their raw form already sorts
+// correctly (UTF-8 byte order). This is the single choke point every
+// storage call site (put/get/delete/scanPage cursor resolution) goes
+// through so memItemBackend/sqlItemBackend never need to know about table
+// schema or key types — they just store/compare whatever strings they're
+// given.
+//
+// resolveKeys itself is left returning raw (unencoded) values — callers that
+// need the original decimal text (e.g. debug display) call it directly; only
+// storage callers need the encoded form.
+func resolveStorageKeys(table *Table, keyOrItem Item) (hashKey, sortKey string, aerr *protocol.AWSError) {
+	hashKey, sortKey, aerr = resolveKeys(table, keyOrItem)
+	if aerr != nil {
+		return "", "", aerr
+	}
+	hashKey = encodeStorageKeyComponent(keyAttrType(table, table.hashKeyName()), hashKey)
+	if sortName := table.sortKeyName(); sortName != "" {
+		sortKey = encodeStorageKeyComponent(keyAttrType(table, sortName), sortKey)
+	}
+	return hashKey, sortKey, nil
+}
+
 func (s *dynamoStore) putItem(ctx context.Context, table *Table, item Item) *protocol.AWSError {
-	hashKey, sortKey, aerr := resolveKeys(table, item)
+	hashKey, sortKey, aerr := resolveStorageKeys(table, item)
 	if aerr != nil {
 		return aerr
 	}
@@ -319,7 +345,7 @@ func (s *dynamoStore) putItem(ctx context.Context, table *Table, item Item) *pro
 }
 
 func (s *dynamoStore) getItem(ctx context.Context, table *Table, key Item) (Item, *protocol.AWSError) {
-	hashKey, sortKey, aerr := resolveKeys(table, key)
+	hashKey, sortKey, aerr := resolveStorageKeys(table, key)
 	if aerr != nil {
 		return nil, aerr
 	}
@@ -331,7 +357,7 @@ func (s *dynamoStore) getItem(ctx context.Context, table *Table, key Item) (Item
 }
 
 func (s *dynamoStore) deleteItem(ctx context.Context, table *Table, key Item) *protocol.AWSError {
-	hashKey, sortKey, aerr := resolveKeys(table, key)
+	hashKey, sortKey, aerr := resolveStorageKeys(table, key)
 	if aerr != nil {
 		return aerr
 	}
@@ -365,7 +391,10 @@ func (s *dynamoStore) scanItemsPage(ctx context.Context, table *Table, exclusive
 	hasAfter := false
 	var afterHash, afterSort string
 	if exclusiveStartKey != nil {
-		h, sk, aerr := resolveKeys(table, exclusiveStartKey)
+		// Must encode identically to putItem/getItem/deleteItem
+		// (resolveStorageKeys) — the cursor is compared against the same
+		// encoded storage keys those calls wrote.
+		h, sk, aerr := resolveStorageKeys(table, exclusiveStartKey)
 		if aerr != nil {
 			return nil, false, aerr
 		}
@@ -401,9 +430,14 @@ func (s *dynamoStore) countItems(ctx context.Context, tableName string) (int64, 
 }
 
 // scanItemsByHashKey returns all items in a partition (hash key equality) via
-// a single backend call — O(k) where k is the partition size.
-func (s *dynamoStore) scanItemsByHashKey(ctx context.Context, tableName, hashVal string) ([]Item, *protocol.AWSError) {
-	items, err := s.items.queryByHash(ctx, tableName, hashVal)
+// a single backend call — O(k) where k is the partition size. hashVal is the
+// raw (unencoded) hash-key scalar value; it is encoded per the table's hash
+// key type before use as the storage lookup key, mirroring
+// resolveStorageKeys, so a Number-typed hash key looks up the same encoded
+// rows putItem wrote (docs/plans/dynamodb-gsi-design.md §2).
+func (s *dynamoStore) scanItemsByHashKey(ctx context.Context, table *Table, hashVal string) ([]Item, *protocol.AWSError) {
+	storageHashVal := encodeStorageKeyComponent(keyAttrType(table, table.hashKeyName()), hashVal)
+	items, err := s.items.queryByHash(ctx, table.TableName, storageHashVal)
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
