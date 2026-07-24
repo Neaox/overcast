@@ -168,6 +168,129 @@ func TestNamespacedStore_NoColonFallsBackToDefault(t *testing.T) {
 	}
 }
 
+// TestNamespacedStore_ColonlessNamespaceRoutesToOverride is the regression
+// test for the colonless-namespace storage-override bug: services such as
+// ssm pass their bare service name as the namespace with no colon at all
+// (namespace == "ssm"), so storeFor's old "return defaultStore whenever
+// there's no colon" fallthrough meant OVERCAST_STATE_SSM (and the same for
+// kms, stepfunctions, appsync, cloudfront) could never route to its
+// override store. storeFor must now match a colonless namespace by its
+// whole name, exactly like the prefix-before-colon rule does for namespaced
+// keys — while still refusing to prefix-match unrelated colonless names.
+func TestNamespacedStore_ColonlessNamespaceRoutesToOverride(t *testing.T) {
+	defaultStore := state.NewMemoryStore()
+	ssmStore := state.NewMemoryStore()
+	ns := state.NewNamespacedStore(defaultStore, map[string]state.Store{
+		"ssm": ssmStore,
+	})
+
+	ctx := context.Background()
+
+	// Set/Get on the bare colonless namespace "ssm" must hit the override.
+	if err := ns.Set(ctx, "ssm", "k1", "v1"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	got, found, err := ns.Get(ctx, "ssm", "k1")
+	if err != nil || !found || got != "v1" {
+		t.Fatalf("Get via namespaced: err=%v found=%v got=%q", err, found, got)
+	}
+	if got2, found2, _ := ssmStore.Get(ctx, "ssm", "k1"); !found2 || got2 != "v1" {
+		t.Errorf("value should be in ssmStore: found=%v got=%q", found2, got2)
+	}
+	if _, foundDefault, _ := defaultStore.Get(ctx, "ssm", "k1"); foundDefault {
+		t.Error("value should NOT be in defaultStore")
+	}
+
+	// List/Scan/ScanPage/Delete/DeletePrefix on "ssm" must also hit the
+	// override store.
+	if err := ns.Set(ctx, "ssm", "k2", "v2"); err != nil {
+		t.Fatalf("Set k2: %v", err)
+	}
+	keys, err := ns.List(ctx, "ssm", "")
+	if err != nil || len(keys) != 2 {
+		t.Fatalf("List: err=%v keys=%v, want 2 keys", err, keys)
+	}
+	kvs, err := ns.Scan(ctx, "ssm", "")
+	if err != nil || len(kvs) != 2 {
+		t.Fatalf("Scan: err=%v kvs=%v, want 2 KVs", err, kvs)
+	}
+	page, _, err := ns.ScanPage(ctx, "ssm", "", "", 10)
+	if err != nil || len(page) != 2 {
+		t.Fatalf("ScanPage: err=%v page=%v, want 2 KVs", err, page)
+	}
+	if err := ns.DeletePrefix(ctx, "ssm", "k"); err != nil {
+		t.Fatalf("DeletePrefix: %v", err)
+	}
+	if remaining, err := ssmStore.List(ctx, "ssm", ""); err != nil || len(remaining) != 0 {
+		t.Fatalf("DeletePrefix should have cleared ssmStore, remaining=%v err=%v", remaining, err)
+	}
+	if err := ns.Set(ctx, "ssm", "k3", "v3"); err != nil {
+		t.Fatalf("Set k3: %v", err)
+	}
+	if err := ns.Delete(ctx, "ssm", "k3"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, found, _ := ssmStore.Get(ctx, "ssm", "k3"); found {
+		t.Error("key should be deleted from ssmStore")
+	}
+
+	// The colon form "ssm:sub" must route to the same override (prefix rule).
+	if err := ns.Set(ctx, "ssm:sub", "k4", "v4"); err != nil {
+		t.Fatalf("Set (colon form): %v", err)
+	}
+	if got4, found4, _ := ssmStore.Get(ctx, "ssm:sub", "k4"); !found4 || got4 != "v4" {
+		t.Errorf("colon-form namespace should route to ssmStore: found=%v got=%q", found4, got4)
+	}
+
+	// A different colonless namespace that merely shares a prefix with "ssm"
+	// ("ssmother") must NOT accidentally prefix-match the "ssm" route — it
+	// has no route of its own, so it must fall through to the default store.
+	if err := ns.Set(ctx, "ssmother", "k5", "v5"); err != nil {
+		t.Fatalf("Set (ssmother): %v", err)
+	}
+	if _, foundSSM, _ := ssmStore.Get(ctx, "ssmother", "k5"); foundSSM {
+		t.Error("\"ssmother\" must not route to the \"ssm\" override store")
+	}
+	if got5, foundDefault, _ := defaultStore.Get(ctx, "ssmother", "k5"); !foundDefault || got5 != "v5" {
+		t.Errorf("\"ssmother\" should route to defaultStore: found=%v got=%q", foundDefault, got5)
+	}
+}
+
+// TestNamespacedStore_NoRouteFallsBackToDefault covers the three
+// no-matching-route shapes that must keep falling through to the default
+// store after the colonless-namespace fix: a colon namespace whose prefix
+// has no route, a colonless namespace whose whole name has no route, and
+// the empty namespace.
+func TestNamespacedStore_NoRouteFallsBackToDefault(t *testing.T) {
+	defaultStore := state.NewMemoryStore()
+	ns := state.NewNamespacedStore(defaultStore, map[string]state.Store{
+		"sqs": state.NewMemoryStore(),
+	})
+
+	ctx := context.Background()
+
+	cases := []struct {
+		name      string
+		namespace string
+	}{
+		{"colon namespace, no route", "nosuch:x"},
+		{"colonless namespace, no route", "nosuch"},
+		{"empty namespace", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			key := "k-" + tc.name
+			if err := ns.Set(ctx, tc.namespace, key, "v"); err != nil {
+				t.Fatalf("Set: %v", err)
+			}
+			got, found, err := defaultStore.Get(ctx, tc.namespace, key)
+			if err != nil || !found || got != "v" {
+				t.Fatalf("defaultStore.Get: err=%v found=%v got=%q", err, found, got)
+			}
+		})
+	}
+}
+
 func TestNamespacedStore_ListAndScan(t *testing.T) {
 	defaultStore := state.NewMemoryStore()
 	sqsStore := state.NewMemoryStore()

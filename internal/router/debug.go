@@ -568,17 +568,11 @@ func namespacesForService(ctx context.Context, store state.Store, service string
 	return namespaces, nil
 }
 
+// debugServicePrefix delegates to config.ServiceNamespacePrefix, the single
+// source of truth for the config-service-name → storage-namespace-prefix
+// mapping (see its doc comment for why this mapping exists).
 func debugServicePrefix(service string) string {
-	switch service {
-	case "cloudformation":
-		return "cfn"
-	case "apigateway":
-		return "apigw"
-	case "eventbridge":
-		return "eb"
-	default:
-		return service
-	}
+	return config.ServiceNamespacePrefix(service)
 }
 
 // resetStore clears all data in store. It fast-paths *state.MemoryStore via

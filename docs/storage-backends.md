@@ -288,8 +288,9 @@ only the internals-level "why", not a restatement of the config table:
 - **Per-service overrides** (`OVERCAST_STATE_<SERVICE>`) let you mix backends — e.g. `hybrid`
   globally with `persistent` only for the one service under test — see
   [docs/README.md § Per-service storage overrides](./README.md#per-service-storage-overrides).
-  **Known bug:** overrides for `cloudformation`, `apigateway`, and `eventbridge` are currently
-  accepted but silently never take effect, because those services' storage namespaces use short
-  prefixes (`cfn:`, `apigw:`, `eb:`) that don't match the config name the override is registered
-  under — tracked as [storage-plan.md item 3.14](./storage-plan.md). Every other service's
-  override works as documented.
+  Routing is by storage-namespace prefix (`config.ServiceNamespacePrefix` maps config names to
+  the historical short prefixes `cfn`/`apigw`/`eb`; colonless namespaces like `ssm` match by
+  whole name). A few services accept an override that can have no effect and log a startup
+  warning when one is set — `dynamodbstreams` (store-less facade over `dynamodb`), `sts` (state
+  lives under `iam:`), `bedrock`/`organizations` (stateless stubs); see
+  `config.ServiceOverrideIneffective`.

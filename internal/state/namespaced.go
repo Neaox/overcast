@@ -7,14 +7,31 @@ import (
 )
 
 // NamespacedStore routes Store operations to different backends based on the
-// service prefix of the namespace argument (the segment before the first ":").
+// service prefix of the namespace argument. Two rules apply, depending on
+// whether the namespace contains a colon:
 //
-//	namespace "sqs:queues"   → service prefix "sqs"
-//	namespace "s3:objects"   → service prefix "s3"
+//   - Namespaced keys use the segment before the first ":" as the service
+//     prefix:
+//
+//     namespace "sqs:queues"   → service prefix "sqs"
+//     namespace "s3:objects"   → service prefix "s3"
+//
+//   - Colonless namespaces are matched by their whole name, since some
+//     services pass their bare service name as the namespace with no colon
+//     at all. As of this fix, the known colonless-namespace services are:
+//     appsync, cloudfront, kms, ssm, and stepfunctions.
+//
+//     namespace "ssm"          → service prefix "ssm"
+//     namespace "kms"          → service prefix "kms"
 //
 // Operations whose namespace has no matching override are forwarded to the
 // default store. This allows per-service storage modes with a single Store
 // interface visible to the rest of the codebase.
+//
+// This interplay matters because route keys come from
+// config.ServiceNamespacePrefix(service) in cmd/overcast: for the colonless
+// services, service name == namespace == route key, so whole-name matching
+// is what makes their OVERCAST_STATE_<SVC> overrides take effect at all.
 type NamespacedStore struct {
 	defaultStore Store
 	routes       map[string]Store // service prefix → store
@@ -30,12 +47,18 @@ func NewNamespacedStore(defaultStore Store, routes map[string]Store) *Namespaced
 	}
 }
 
-// storeFor returns the store responsible for a given namespace.
+// storeFor returns the store responsible for a given namespace. If the
+// namespace contains a colon, the segment before the first ":" is used as
+// the service prefix. Otherwise the whole namespace is used as the service
+// prefix, since some services (e.g. "ssm", "kms") pass their bare service
+// name as the namespace with no colon at all. Either way, a namespace with
+// no matching route (including the empty string) falls through to the
+// default store via StoreFor.
 func (s *NamespacedStore) storeFor(namespace string) Store {
 	if i := strings.IndexByte(namespace, ':'); i > 0 {
 		return s.StoreFor(namespace[:i])
 	}
-	return s.defaultStore
+	return s.StoreFor(namespace)
 }
 
 // StoreFor returns the store responsible for a given service prefix — the

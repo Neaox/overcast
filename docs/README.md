@@ -246,10 +246,10 @@ docker run --rm -p 4566:4566 \
   ghcr.io/neaox/overcast:latest
 ```
 
-> **Known bug:** overrides for `CLOUDFORMATION`, `APIGATEWAY`, and `EVENTBRIDGE` are currently
-> accepted but silently never take effect (their storage namespaces use short prefixes that
-> don't match the override's config name — tracked as
-> [storage-plan.md item 3.14](./storage-plan.md)). All other services' overrides work.
+> **Note:** a few services accept an override that can have no effect, and log a startup
+> warning when one is set: `DYNAMODBSTREAMS` (a facade over the `dynamodb` service, which owns
+> all stream state), `STS` (its session state lives under IAM's storage), and
+> `BEDROCK`/`ORGANIZATIONS` (stateless stubs). Every other service's override works.
 
 In this example DynamoDB writes synchronously to disk, S3 flushes
 asynchronously, and every other service uses in-memory (ephemeral)

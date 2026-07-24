@@ -134,35 +134,13 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	// Per-service overrides: build a NamespacedStore when any service requests
 	// a different mode from the global default.
 	if len(cfg.ServiceStates) > 0 {
-		routes := make(map[string]state.Store, len(cfg.ServiceStates))
-		var perSvcStores []state.Store // tracked for cleanup on error
-
-		for svc, mode := range cfg.ServiceStates {
-			if mode == cfg.State {
-				continue // same mode as global default — no need to create a separate store
-			}
-			// Each service gets its own sub-directory so db files don't collide.
-			svcDir := filepath.Join(cfg.DataDir, svc)
-			svcStore, err := buildStore(cfg, mode, svcDir, logger.With(zap.String("service_state", svc)))
-			if err != nil {
-				for _, s := range perSvcStores {
-					s.Close()
-				}
-				return fmt.Errorf("init state backend for service %s: %w", svc, err)
-			}
-			routes[svc] = svcStore
-			perSvcStores = append(perSvcStores, svcStore)
-			logger.Info("service state override",
-				zap.String("service", svc),
-				zap.String("mode", string(mode)),
-			)
+		newStore, err := buildServiceRoutes(cfg, store, logger)
+		if err != nil {
+			return err
 		}
-		if len(routes) > 0 {
-			// Replace store with a dispatcher; NamespacedStore.Close() handles
-			// closing all underlying stores, so we swap the deferred Close target.
-			newStore := state.NewNamespacedStore(store, routes)
-			store = newStore
-		}
+		// Replace store with the (possibly wrapping) result; NamespacedStore.Close()
+		// handles closing all underlying stores, so we swap the deferred Close target.
+		store = newStore
 		prof.mark("buildStore: per-svc overrides")
 	}
 
@@ -405,6 +383,94 @@ func closeStoreBounded(store state.Store, timeout time.Duration, logger *zap.Log
 			zap.Int("pending_writes_at_timeout", pendingBefore),
 		)
 	}
+}
+
+// buildServiceRoutes builds the per-service storage overrides described by
+// cfg.ServiceStates and wraps defaultStore in a state.NamespacedStore when at
+// least one service ends up needing a storage mode different from the global
+// default (cfg.State). Services whose override mode matches cfg.State are
+// skipped — there's no need for a separate store when it would behave
+// identically to the default.
+//
+// When there are no overrides left after that skip (including the
+// len(cfg.ServiceStates) == 0 case), defaultStore is returned unchanged so
+// callers never need to special-case "no overrides configured".
+//
+// Namespaces route on storage-namespace prefix (state.NamespacedStore.storeFor
+// matches the segment before ":", e.g. "cfn" in "cfn:stacks"), which is NOT
+// always the same as the config service name used in cfg.ServiceStates — see
+// config.ServiceNamespacePrefix for the handful of services (cloudformation,
+// apigateway, eventbridge) where they differ. The route map returned here is
+// therefore keyed by the resolved prefix, not by the raw config service name;
+// keying by the config name would silently make the override for those three
+// services a no-op, since NamespacedStore would never match their real
+// namespace prefix. The on-disk sub-directory for each override's data
+// (svcDir) is deliberately kept keyed by the config service name instead,
+// since that's the human-readable name operators expect to find on disk.
+//
+// On a per-service buildStore failure, every store already built earlier in
+// this call is closed before the error is returned, so a partial failure
+// never leaks stores that were successfully constructed for other services.
+//
+// A handful of services accept an OVERCAST_STATE_<SERVICE> override that can
+// never take effect regardless of prefix routing — see
+// config.ServiceOverrideIneffective for the full list and why (e.g.
+// dynamodbstreams is a store-less facade over dynamodb; sts writes under the
+// "iam:sessions" namespace). The override store is still built and routed
+// for these services (harmless, and keeps behavior uniform), but a Warn is
+// logged so the no-op isn't silently mistaken for a working override.
+func buildServiceRoutes(cfg *config.Config, defaultStore state.Store, logger *zap.Logger) (state.Store, error) {
+	if len(cfg.ServiceStates) == 0 {
+		return defaultStore, nil
+	}
+
+	routes := make(map[string]state.Store, len(cfg.ServiceStates))
+	var perSvcStores []state.Store // tracked for cleanup on error
+
+	for svc, mode := range cfg.ServiceStates {
+		if mode == cfg.State {
+			continue // same mode as global default — no need to create a separate store
+		}
+		// Each service gets its own sub-directory, keyed by the human-readable
+		// config service name, so db files don't collide and stay easy to
+		// find on disk.
+		svcDir := filepath.Join(cfg.DataDir, svc)
+		svcStore, err := buildStore(cfg, mode, svcDir, logger.With(zap.String("service_state", svc)))
+		if err != nil {
+			for _, s := range perSvcStores {
+				s.Close()
+			}
+			return nil, fmt.Errorf("init state backend for service %s: %w", svc, err)
+		}
+
+		prefix := config.ServiceNamespacePrefix(svc)
+		routes[prefix] = svcStore
+		perSvcStores = append(perSvcStores, svcStore)
+
+		logFields := []zap.Field{
+			zap.String("service", svc),
+			zap.String("mode", string(mode)),
+		}
+		if prefix != svc {
+			logFields = append(logFields, zap.String("namespace_prefix", prefix))
+		}
+		logger.Info("service state override", logFields...)
+
+		if reason, ineffective := config.ServiceOverrideIneffective(svc); ineffective {
+			logger.Warn("service state override has no effect",
+				zap.String("service", svc),
+				zap.String("reason", reason),
+			)
+		}
+	}
+
+	if len(routes) == 0 {
+		return defaultStore, nil
+	}
+	// NamespacedStore.Close() handles closing all underlying stores
+	// (including defaultStore), so the caller only needs to track this
+	// single returned value going forward.
+	return state.NewNamespacedStore(defaultStore, routes), nil
 }
 
 // buildStore creates a Store for the given mode and dataDir.
