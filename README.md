@@ -5,12 +5,14 @@
 Overcast emulates the APIs of popular cloud services so you can develop and test
 locally without an internet connection, a cloud account, or a bill.
 
-[![Tests](https://github.com/Neaox/overcast/actions/workflows/test.yml/badge.svg)](https://github.com/Neaox/overcast/actions)
-[![GitHub release](https://img.shields.io/github/v/release/Neaox/overcast)](https://github.com/Neaox/overcast/releases)
+[![CI](https://github.com/Neaox/overcast/actions/workflows/test.yml/badge.svg)](https://github.com/Neaox/overcast/actions)
+[![GitHub release](https://img.shields.io/github/v/release/Neaox/overcast?include_prereleases)](https://github.com/Neaox/overcast/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Go 1.24+](https://img.shields.io/badge/Go-1.24+-blue.svg)](https://go.dev)
-[![Go Report Card](https://goreportcard.com/badge/github.com/Neaox/overcast)](https://goreportcard.com/report/github.com/Neaox/overcast)
-[![Docker image](https://img.shields.io/docker/image-size/neaox/overcast/latest?registry_url=https://ghcr.io)](https://github.com/Neaox/overcast/pkgs/container/overcast)
+[![Container image](https://img.shields.io/badge/ghcr.io-neaox%2Fovercast-blue?logo=docker&logoColor=white)](https://github.com/Neaox/overcast/pkgs/container/overcast)
+
+Every change is tested against **eight official AWS clients** — the AWS CLI,
+the CDK, and the Go, JavaScript, Python, Java, .NET, and Rust SDKs — via the
+[compatibility suite](./docs/compatibility/).
 
 ---
 
@@ -27,29 +29,18 @@ locally without an internet connection, a cloud account, or a bill.
 
 ---
 
-## What Overcast is NOT
-
 > [!CAUTION]
 > Overcast is a local development and CI tool only. Never expose it on a public network,
 > use it as a staging environment, or make production go/no-go decisions based on its behavior.
-
-| Not for                          | Why                                                                                                                                                                               |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Staging environments**         | API parity is not 100%. Differences are documented but exist.                                                                                                                     |
-| **Production traffic**           | Overcast is not hardened, not monitored, not replicated.                                                                                                                          |
-| **Self-hosted AWS replacement**  | This is not a platform you host for others. IAM resources are emulated, but Overcast is not a security boundary and has no durability guarantees. Running it as a persistent internal service is building on quicksand. |
-| **Security testing**             | Credentials are accepted. SigV4 validation is optional, and IAM policies are not enforced as an authorization layer.                                                               |
-| **Performance / load testing**   | AWS throttling, quotas, and latency are not emulated.                                                                                                                             |
-| **IAM policy testing**           | IAM resource APIs exist for local development and IaC compatibility, but policy enforcement is out of scope. All operations are permitted.                                         |
-| **CloudFormation / CDK deploys** | CloudFormation emulation supports ~50 resource types. `cdk deploy` works for stacks using [supported types](./docs/cdk.md#supported-resource-types). Coverage is not exhaustive.  |
+> Details: [What Overcast is NOT](#what-overcast-is-not).
 
 ## Contents
 
 - [Overcast](#overcast)
   - [Project goals](#project-goals)
-  - [What Overcast is NOT](#what-overcast-is-not)
   - [Contents](#contents)
   - [Quick start](#quick-start)
+  - [What Overcast is NOT](#what-overcast-is-not)
   - [Running with Docker](#running-with-docker)
     - [docker run](#docker-run)
     - [docker compose (recommended for local dev)](#docker-compose-recommended-for-local-dev)
@@ -105,6 +96,18 @@ aws dynamodb list-tables
 ```
 
 ---
+
+## What Overcast is NOT
+
+| Not for                          | Why                                                                                                                                                                               |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Staging environments**         | API parity is not 100%. Differences are documented but exist.                                                                                                                     |
+| **Production traffic**           | Overcast is not hardened, not monitored, not replicated.                                                                                                                          |
+| **Self-hosted AWS replacement**  | This is not a platform you host for others. IAM resources are emulated, but Overcast is not a security boundary and has no durability guarantees. Running it as a persistent internal service is building on quicksand. |
+| **Security testing**             | Credentials are accepted. SigV4 validation is optional, and IAM policies are not enforced as an authorization layer.                                                               |
+| **Performance / load testing**   | AWS throttling, quotas, and latency are not emulated.                                                                                                                             |
+| **IAM policy testing**           | IAM resource APIs exist for local development and IaC compatibility, but policy enforcement is out of scope. All operations are permitted.                                         |
+| **CloudFormation / CDK deploys** | CloudFormation emulation supports ~50 resource types. `cdk deploy` works for stacks using [supported types](./docs/cdk.md#supported-resource-types). Coverage is not exhaustive.  |
 
 ## Running with Docker
 
@@ -474,3 +477,20 @@ Full documentation lives in [`docs/`](./docs/README.md):
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for coding standards and workflow, and
 [docs/development-setup.md](./docs/development-setup.md) for building from source.
+
+## Disclaimer
+
+Overcast is an independent open-source project. It is **not affiliated with,
+endorsed by, or sponsored by Amazon Web Services**. "AWS" and all AWS service
+names are trademarks of Amazon.com, Inc. or its affiliates, used here solely to
+describe compatibility.
+
+Overcast is a **work in progress**, provided **as-is** and on a
+**best-effort basis**, without warranty of any kind, under the
+[MIT License](LICENSE). It aims for high fidelity on the most-used AWS API
+surface, but it is not a perfect replica: there are compatibility gaps we know
+about (documented in the per-service [support matrices](docs/services/)) and
+inevitably some we haven't found yet. Fidelity improves all the time — and
+discrepancy reports are what drive that work. If you find behavior that
+differs from real AWS, please
+[open a compatibility issue](https://github.com/Neaox/overcast/issues/new?template=compat_review.md).
