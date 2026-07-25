@@ -64,7 +64,7 @@ services:
 | `DEBUG=1`         | `OVERCAST_LOG_LEVEL=debug`               | Verbose logging                                                   |
 | `DEFAULT_REGION`  | `OVERCAST_DEFAULT_REGION`                | Default: `us-east-1`                                              |
 | `GATEWAY_LISTEN`  | `OVERCAST_HOST:OVERCAST_PORT`            | Split into two variables                                          |
-| —                 | `OVERCAST_STATE=persistent`              | Explicit persistence opt-in (LocalStack uses `DATA_DIR` presence) |
+| —                 | `OVERCAST_STATE`                         | Explicit backend override; unset defaults to `auto`, which — like LocalStack's `DATA_DIR` presence — resolves to persistent (`hybrid`) when a volume/data dir is present, `memory` otherwise |
 | —                 | `OVERCAST_DEBUG=true`                    | Enable `/_debug/*` endpoints                                      |
 | —                 | `OVERCAST_TLS_CERT` / `OVERCAST_TLS_KEY` | HTTPS support                                                     |
 
@@ -193,14 +193,18 @@ a built-in Node.js runtime for simple handlers.
 Edition. Ensure Docker is accessible to the overcast container (see the
 `LAMBDA_DOCKER_SOCKET` and `LAMBDA_NETWORK` configuration variables).
 
-### Persistence: explicit opt-in
+### Persistence: auto-detected, same as LocalStack's `DATA_DIR` presence
 
-LocalStack enables persistence when `DATA_DIR` is set. overcast requires an
-explicit `OVERCAST_STATE=persistent` (or `hybrid`, `wal`) in addition to
-`OVERCAST_DATA_DIR`.
+LocalStack enables persistence when `DATA_DIR` is set. overcast's default
+(`OVERCAST_STATE` unset, i.e. `auto`) works the same way in practice: it resolves to
+`hybrid` when a volume or bind mount is present at `OVERCAST_DATA_DIR` (or an existing
+database is already there), and `memory` otherwise. See
+[docs/storage.md § The auto default](./storage.md#the-auto-default) for the exact rule.
 
-This makes the intent unambiguous — you can set `OVERCAST_DATA_DIR` for other
-purposes without accidentally enabling persistence.
+Set `OVERCAST_STATE` explicitly (`persistent`, `hybrid`, `wal`, or `memory`) if you want a
+specific backend regardless of what's mounted — for example, to use `OVERCAST_DATA_DIR`
+for something else without triggering persistence, or to force `persistent` durability
+semantics that `auto` wouldn't pick on its own.
 
 ### Request IDs: always present
 

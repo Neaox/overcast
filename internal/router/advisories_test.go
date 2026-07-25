@@ -1,6 +1,7 @@
 package router
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -256,10 +257,10 @@ func TestCheckReadPressure_absentOnRetriesAlone(t *testing.T) {
 // ---- memory-mode ---------------------------------------------------------------
 
 func TestCheckMemoryMode_firesWhenBackendIsMemory(t *testing.T) {
-	// When: the rule evaluates OVERCAST_STATE=memory.
-	a := checkMemoryMode(config.StateBackendMemory)
+	// When: the rule evaluates an explicitly-set OVERCAST_STATE=memory.
+	a := checkMemoryMode(config.StateBackendMemory, config.StateSourceExplicit)
 
-	// Then: an info advisory fires.
+	// Then: an info advisory fires with the explicit-mode wording.
 	if a == nil {
 		t.Fatal("expected an advisory, got nil")
 	}
@@ -269,6 +270,43 @@ func TestCheckMemoryMode_firesWhenBackendIsMemory(t *testing.T) {
 	if a.Code != advisoryCodeMemoryMode {
 		t.Errorf("code = %q, want %q", a.Code, advisoryCodeMemoryMode)
 	}
+	if a.Title != "Running in memory-only mode" {
+		t.Errorf("title = %q, want the explicit-mode wording", a.Title)
+	}
+	if a.Detail != "OVERCAST_STATE=memory — state won't survive restarts; expected in this mode." {
+		t.Errorf("detail = %q, want the explicit-mode wording", a.Detail)
+	}
+}
+
+// TestCheckMemoryMode_actionableWhenAutoResolvedToMemory covers the variant
+// introduced for OVERCAST_STATE=auto (also the default when unset): when the
+// auto resolver lands on memory because it found no evidence of persistence
+// intent, the advisory must use the actionable wording — nobody deliberately
+// typed OVERCAST_STATE=memory to get here, so the message should say what to
+// do about it instead of just describing the current mode.
+func TestCheckMemoryMode_actionableWhenAutoResolvedToMemory(t *testing.T) {
+	// When: the rule evaluates an auto-resolved memory backend.
+	a := checkMemoryMode(config.StateBackendMemory, config.StateSourceAuto)
+
+	// Then: severity stays info, but Title/Detail switch to the actionable
+	// variant naming the remediation options.
+	if a == nil {
+		t.Fatal("expected an advisory, got nil")
+	}
+	if a.Severity != advisorySeverityInfo {
+		t.Errorf("severity = %q, want %q (auto-resolved memory is working as designed)", a.Severity, advisorySeverityInfo)
+	}
+	if a.Code != advisoryCodeMemoryMode {
+		t.Errorf("code = %q, want %q", a.Code, advisoryCodeMemoryMode)
+	}
+	if a.Title == "Running in memory-only mode" {
+		t.Error("title: expected the actionable auto-detected variant, got the explicit-mode wording")
+	}
+	for _, want := range []string{"volume", "OVERCAST_DATA_DIR", "OVERCAST_STATE"} {
+		if !strings.Contains(a.Detail, want) {
+			t.Errorf("detail = %q, expected it to mention %q", a.Detail, want)
+		}
+	}
 }
 
 func TestCheckMemoryMode_absentForPersistentBackends(t *testing.T) {
@@ -277,11 +315,13 @@ func TestCheckMemoryMode_absentForPersistentBackends(t *testing.T) {
 		config.StateBackendPersistent,
 		config.StateBackendWAL,
 	} {
-		t.Run(string(backend), func(t *testing.T) {
-			if a := checkMemoryMode(backend); a != nil {
-				t.Fatalf("expected no advisory for backend %q, got %+v", backend, a)
-			}
-		})
+		for _, source := range []config.StateSource{config.StateSourceExplicit, config.StateSourceAuto} {
+			t.Run(string(backend)+"/"+string(source), func(t *testing.T) {
+				if a := checkMemoryMode(backend, source); a != nil {
+					t.Fatalf("expected no advisory for backend %q source %q, got %+v", backend, source, a)
+				}
+			})
+		}
 	}
 }
 

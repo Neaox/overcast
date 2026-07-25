@@ -162,7 +162,7 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_HOSTNAME`              | `localhost`            | Hostname used in client-facing URLs (e.g. SQS queue URLs, SNS unsubscribe links)     |
 | `OVERCAST_PORT`                  | `4566`                 | TCP port                                                                             |
 | `OVERCAST_SERVICES`              | all                    | Comma-separated list of services to enable, e.g. `s3,sqs,dynamodb`                   |
-| `OVERCAST_STATE`                 | `hybrid`               | Storage backend: `memory`, `hybrid` (default), `persistent`, or `wal`                |
+| `OVERCAST_STATE`                 | `auto`                 | Storage backend: `auto` (default when unset), `memory`, `hybrid`, `persistent`, or `wal`. `auto` resolves to `hybrid` when a volume/bind mount or existing database is found at `OVERCAST_DATA_DIR` (or the dir was explicitly set), otherwise `memory` — see [storage.md § The auto default](./storage.md#the-auto-default) |
 | `OVERCAST_STATE_<SERVICE>`       | _(global)_             | Per-service backend override, e.g. `OVERCAST_STATE_S3=memory`                        |
 | `OVERCAST_HYBRID_FLUSH_INTERVAL` | `5s`                   | How often the hybrid backend flushes in-memory state to disk                         |
 | `OVERCAST_HYBRID_SYNC`           | `interval`             | Hybrid pending-log fsync policy: `always`, `interval`, or `never`                    |
@@ -225,25 +225,36 @@ For contributors: the full call-site policy (what belongs at `debug` vs
 
 ## Persistence
 
-Overcast supports four storage backends, set via `OVERCAST_STATE`:
+Overcast supports four concrete storage backends, set via `OVERCAST_STATE`:
 
 | Backend      | Description                                                                             |
 | ------------ | --------------------------------------------------------------------------------------- |
+| `auto`       | **Default when unset.** Resolves to `hybrid` or `memory` at startup — see below.         |
 | `memory`     | All state in-process; lost on restart. Fastest — ideal for CI.                          |
-| `hybrid`     | **Default.** Reads from memory, flushes to SQLite asynchronously. Fast with durability. |
+| `hybrid`     | Reads from memory, flushes to SQLite asynchronously. Fast with durability.               |
 | `persistent` | Every mutation written synchronously to SQLite. Fully durable, slightly slower.         |
 | `wal`        | In-memory reads + append-log durability with replay on startup and periodic compaction. |
 
-For state that persists across restarts (recommended: `hybrid`):
+**`OVERCAST_STATE` is unset by default, which means `auto`:** Overcast picks a mode based
+on whether a durable data location was provided — a volume or bind mount at the data
+directory resolves to `hybrid` (persist); nothing mounted resolves to `memory`. In CI,
+where containers typically run with no data volume, this means `auto` lands on `memory` —
+the fast, ephemeral mode CI wants — with zero configuration. See
+[storage.md § The auto default](./storage.md#the-auto-default) for the full decision
+rule (it also covers native, non-Docker runs).
+
+For state that persists across restarts, just mount a volume — `auto` does the rest:
 
 ```bash
 docker run --rm \
   -p 4566:4566 \
-  -e OVERCAST_STATE=hybrid \
-  -e OVERCAST_DATA_DIR=/data \
   -v $(pwd)/overcast-data:/data \
   ghcr.io/neaox/overcast:latest
 ```
+
+This resolves to `hybrid` automatically because a volume is mounted at `/data`. Set
+`OVERCAST_STATE` explicitly (e.g. `-e OVERCAST_STATE=persistent`) if you need a different
+backend than what `auto` would pick.
 
 Persistent/hybrid SQLite data lives at `$OVERCAST_DATA_DIR/overcast.db`. WAL mode uses `$OVERCAST_DATA_DIR/overcast.wal`. You can also override the backend per-service:
 
@@ -277,10 +288,11 @@ asynchronously, and every other service uses in-memory (ephemeral)
 storage. Each overridden service gets its own SQLite file under
 `$OVERCAST_DATA_DIR/<service>/`.
 
-The active storage configuration is visible in two places:
+The active storage configuration is visible in three places:
 
-- **`GET /_health`** — the `storage` object shows the default backend, per-service overrides, and persistent backend health including pending hybrid writes when available.
+- **`GET /_health`** — the `storage` object shows the resolved default backend (`default`), what was actually configured (`configured` — e.g. `auto`, when `default` was resolved rather than explicitly set), per-service overrides, and persistent backend health including pending hybrid writes when available.
 - **Dashboard footer** — the web management console displays the storage mode with a tooltip listing overrides.
+- **Startup log** — when `OVERCAST_STATE` resolves via `auto`, Overcast logs which mode it picked and why (e.g. `storage mode auto-detected: memory (no persistence signal found...) — set OVERCAST_STATE to override`). The web console's Metrics & Health page also surfaces this as an advisory whenever the resolved mode is `memory`.
 
 ---
 

@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,9 +12,22 @@ import (
 
 // TestLoad_defaults verifies that Load() returns sensible defaults when no
 // environment variables are set.
+//
+// OVERCAST_STATE defaults to "auto" (config.StateSourceAuto), which resolves
+// to a concrete backend from evidence of persistence intent (see
+// resolveAutoState in state_auto.go; exhaustively covered by
+// TestResolveAutoState below). To keep *this* test deterministic regardless
+// of what happens to exist on the machine running it, OVERCAST_DATA_DIR is
+// pinned to a fresh, empty t.TempDir() and marked OVERCAST_DATA_DIR_SOURCE=
+// image — simulating the Docker image's own baked-in default data dir, i.e.
+// a genuinely fresh, volume-less, unconfigured run — so none of the three
+// auto signals fire and the resolved default is deterministically memory.
 func TestLoad_defaults(t *testing.T) {
-	// Given: no environment variables set
+	// Given: no environment variables set, data dir pinned to a fresh temp
+	// dir marked as the image's own default (not user-configured).
 	clearEnv(t)
+	t.Setenv("OVERCAST_DATA_DIR", t.TempDir())
+	t.Setenv("OVERCAST_DATA_DIR_SOURCE", "image")
 
 	// When: we load config
 	cfg, err := config.Load()
@@ -34,8 +48,20 @@ func TestLoad_defaults(t *testing.T) {
 	if cfg.AccountID != "000000000000" {
 		t.Errorf("AccountID: expected 000000000000, got %q", cfg.AccountID)
 	}
-	if cfg.State != config.StateBackendHybrid {
-		t.Errorf("State: expected hybrid, got %q", cfg.State)
+	if cfg.StateConfigured != "auto" {
+		t.Errorf("StateConfigured: expected auto, got %q", cfg.StateConfigured)
+	}
+	if cfg.StateSource != config.StateSourceAuto {
+		t.Errorf("StateSource: expected auto, got %q", cfg.StateSource)
+	}
+	if cfg.State != config.StateBackendMemory {
+		t.Errorf("State: expected memory (no persistence signal), got %q", cfg.State)
+	}
+	if cfg.StateAutoSignal != "" {
+		t.Errorf("StateAutoSignal: expected empty for a memory resolution, got %q", cfg.StateAutoSignal)
+	}
+	if cfg.StateAutoReason == "" {
+		t.Error("StateAutoReason: expected a non-empty explanation")
 	}
 	if cfg.HybridFlushInterval != 5*time.Second {
 		t.Errorf("HybridFlushInterval: expected 5s, got %v", cfg.HybridFlushInterval)
@@ -293,6 +319,12 @@ func TestLoad_persistentState(t *testing.T) {
 	if cfg.DataDir != "/tmp/test-overcast" {
 		t.Errorf("DataDir: expected /tmp/test-overcast, got %q", cfg.DataDir)
 	}
+	if cfg.StateSource != config.StateSourceExplicit {
+		t.Errorf("StateSource: expected explicit for an explicitly-set OVERCAST_STATE, got %q", cfg.StateSource)
+	}
+	if cfg.StateConfigured != "persistent" {
+		t.Errorf("StateConfigured: expected persistent, got %q", cfg.StateConfigured)
+	}
 }
 
 // TestLoad_sqliteAlias verifies "sqlite" is accepted as a deprecated alias for "persistent".
@@ -507,6 +539,142 @@ func TestLoad_perServiceInvalidState(t *testing.T) {
 	_, err := config.Load()
 	if err == nil {
 		t.Error("expected error for unknown per-service state backend, got nil")
+	}
+}
+
+// ---- OVERCAST_STATE=auto (and unset-default) resolution ------------------
+//
+// These exercise Load() end-to-end for each auto-detection signal
+// individually (the pure decision table across all signal combinations is
+// covered by TestResolveAutoState_allSignalCombinations in
+// state_auto_internal_test.go). Each test pins the environment so the
+// resolution is deterministic regardless of the host running the test.
+
+// TestLoad_explicitAutoSameAsUnset verifies that OVERCAST_STATE=auto,
+// written out literally, behaves identically to leaving it unset.
+func TestLoad_explicitAutoSameAsUnset(t *testing.T) {
+	// Given: OVERCAST_STATE=auto (literal), and no persistence signal.
+	clearEnv(t)
+	t.Setenv("OVERCAST_STATE", "auto")
+	t.Setenv("OVERCAST_DATA_DIR", t.TempDir())
+	t.Setenv("OVERCAST_DATA_DIR_SOURCE", "image")
+
+	// When
+	cfg, err := config.Load()
+
+	// Then: resolves exactly like the unset default (memory, no signal).
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.StateConfigured != "auto" {
+		t.Errorf("StateConfigured: expected auto, got %q", cfg.StateConfigured)
+	}
+	if cfg.StateSource != config.StateSourceAuto {
+		t.Errorf("StateSource: expected auto, got %q", cfg.StateSource)
+	}
+	if cfg.State != config.StateBackendMemory {
+		t.Errorf("State: expected memory, got %q", cfg.State)
+	}
+}
+
+// TestLoad_autoResolvesToHybridWhenDataDirExplicit verifies the
+// explicit-data-dir signal: a native run where the user set OVERCAST_DATA_DIR
+// themselves (no OVERCAST_DATA_DIR_SOURCE=image marker) is treated as
+// deliberate persistence intent.
+func TestLoad_autoResolvesToHybridWhenDataDirExplicit(t *testing.T) {
+	// This assumes a build with SQLite support: in a -tags nosqlite build,
+	// auto never resolves to hybrid regardless of evidence (see
+	// TestResolveAutoState_sqliteUnavailableOverridesEveryEvidenceSignal in
+	// state_auto_internal_test.go, which covers that gate directly).
+	if !config.SQLiteSupported() {
+		t.Skip("hybrid is unavailable in a -tags nosqlite build; the SQLite gate is covered directly in state_auto_internal_test.go")
+	}
+
+	// Given: OVERCAST_STATE unset, OVERCAST_DATA_DIR explicitly set (as a
+	// native user would), with no OVERCAST_DATA_DIR_SOURCE marker.
+	clearEnv(t)
+	t.Setenv("OVERCAST_DATA_DIR", t.TempDir())
+
+	// When
+	cfg, err := config.Load()
+
+	// Then: resolves to hybrid via the explicit-data-dir signal.
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.State != config.StateBackendHybrid {
+		t.Errorf("State: expected hybrid, got %q", cfg.State)
+	}
+	if cfg.StateAutoSignal != "explicit-data-dir" {
+		t.Errorf("StateAutoSignal: expected explicit-data-dir, got %q", cfg.StateAutoSignal)
+	}
+}
+
+// TestLoad_autoResolvesToHybridWhenExistingDatabaseFound verifies the
+// regression-guard signal: an overcast.db already present in the data
+// directory means someone persisted state there before, so auto must not
+// strand it in memory mode even with no other signal present.
+func TestLoad_autoResolvesToHybridWhenExistingDatabaseFound(t *testing.T) {
+	if !config.SQLiteSupported() {
+		t.Skip("hybrid is unavailable in a -tags nosqlite build; the SQLite gate is covered directly in state_auto_internal_test.go")
+	}
+
+	// Given: a data directory marked as the image's own default (so the
+	// explicit-data-dir signal does NOT fire) but containing an existing
+	// overcast.db from a prior run.
+	clearEnv(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "overcast.db"), []byte{}, 0o644); err != nil {
+		t.Fatalf("seed overcast.db: %v", err)
+	}
+	t.Setenv("OVERCAST_DATA_DIR", dir)
+	t.Setenv("OVERCAST_DATA_DIR_SOURCE", "image")
+
+	// When
+	cfg, err := config.Load()
+
+	// Then: resolves to hybrid via the existing-database signal, not memory.
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.State != config.StateBackendHybrid {
+		t.Errorf("State: expected hybrid (existing database must not be stranded in memory mode), got %q", cfg.State)
+	}
+	if cfg.StateAutoSignal != "existing-database" {
+		t.Errorf("StateAutoSignal: expected existing-database, got %q", cfg.StateAutoSignal)
+	}
+}
+
+// TestLoad_explicitStateOverridesAuto verifies that an explicit OVERCAST_STATE
+// always wins, even when auto-detection signals are present (e.g. a volume
+// mounted at the data dir, or an existing database) — rule 1 from the design:
+// "OVERCAST_STATE set by the user wins, exactly as today."
+func TestLoad_explicitStateOverridesAuto(t *testing.T) {
+	// Given: OVERCAST_STATE=memory explicitly, plus an existing database that
+	// would otherwise trigger the auto resolver's hybrid outcome.
+	clearEnv(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "overcast.db"), []byte{}, 0o644); err != nil {
+		t.Fatalf("seed overcast.db: %v", err)
+	}
+	t.Setenv("OVERCAST_STATE", "memory")
+	t.Setenv("OVERCAST_DATA_DIR", dir)
+
+	// When
+	cfg, err := config.Load()
+
+	// Then: the explicit setting wins outright — no auto resolution runs.
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.State != config.StateBackendMemory {
+		t.Errorf("State: expected memory (explicit override wins), got %q", cfg.State)
+	}
+	if cfg.StateSource != config.StateSourceExplicit {
+		t.Errorf("StateSource: expected explicit, got %q", cfg.StateSource)
+	}
+	if cfg.StateAutoSignal != "" {
+		t.Errorf("StateAutoSignal: expected empty (auto resolution never ran), got %q", cfg.StateAutoSignal)
 	}
 }
 
@@ -881,7 +1049,7 @@ func clearEnv(t *testing.T) {
 		"OVERCAST_HYBRID_FLUSH_INTERVAL", "OVERCAST_HYBRID_SYNC", "OVERCAST_HYBRID_SYNC_INTERVAL",
 		"OVERCAST_HYBRID_DIRTY_ENTRY_THRESHOLD", "OVERCAST_HYBRID_DIRTY_BYTE_THRESHOLD",
 		"OVERCAST_WAL_FSYNC", "OVERCAST_WAL_FSYNC_INTERVAL", "OVERCAST_WAL_MAX_LOG_BYTES",
-		"OVERCAST_DATA_DIR", "OVERCAST_DEFAULT_REGION", "OVERCAST_ACCOUNT_ID",
+		"OVERCAST_DATA_DIR", "OVERCAST_DATA_DIR_SOURCE", "OVERCAST_DEFAULT_REGION", "OVERCAST_ACCOUNT_ID",
 		"OVERCAST_SIGV4_VALIDATE", "OVERCAST_ENFORCE_IAM", "OVERCAST_PROTOCOL_STRICT", "OVERCAST_LOG_LEVEL", "OVERCAST_SHUTDOWN_TIMEOUT",
 		"OVERCAST_LAMBDA_HOT_RELOAD",
 		"OVERCAST_LAMBDA_NODE_BIN", "OVERCAST_DEBUG", "OVERCAST_TLS_CERT", "OVERCAST_TLS_KEY",

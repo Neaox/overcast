@@ -132,12 +132,22 @@ RUN mkdir -p /etc/localstack/init/boot.d \
 
 ENV OVERCAST_PORT=4566 \
     OVERCAST_HOST=0.0.0.0 \
-    OVERCAST_STATE=memory \
     OVERCAST_DATA_DIR=/data \
+    OVERCAST_DATA_DIR_SOURCE=image \
     OVERCAST_LOG_LEVEL=info \
     OVERCAST_DEFAULT_REGION=us-east-1 \
     OVERCAST_ACCOUNT_ID=000000000000 \
     OVERCAST_DEBUG=false
+
+# OVERCAST_STATE is intentionally NOT set here — it defaults to "auto" (see
+# internal/config/state_auto.go), which resolves to hybrid when a volume or
+# bind mount is present at OVERCAST_DATA_DIR (or an existing database is
+# found there), and memory otherwise. OVERCAST_DATA_DIR_SOURCE=image above
+# marks OVERCAST_DATA_DIR=/data as the image's own baked-in default rather
+# than user intent, so `docker run` with no volume mounted still resolves to
+# memory (fast, ephemeral — what a volume-less run and most CI usage want),
+# while `docker run -v vol:/data ...` resolves to hybrid (persistent) with
+# zero configuration. Set OVERCAST_STATE explicitly to override either way.
 
 EXPOSE 4566
 

@@ -123,14 +123,14 @@ docker run --rm \
   -e OVERCAST_LOG_LEVEL=debug \
   ghcr.io/neaox/overcast:latest
 
-# With persistent data (survives container restarts)
+# With persistent data (survives container restarts) — mounting a volume at
+# /data is enough; OVERCAST_STATE defaults to "auto", which resolves to
+# hybrid automatically whenever a volume or bind mount is present there.
 docker run --rm \
   -p 4566:4566 \
   -p 4567:4567 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v ~/.overcast:/data \
-  -e OVERCAST_STATE=hybrid \
-  -e OVERCAST_DATA_DIR=/data \
   -e OVERCAST_SERVICES=s3,sqs,dynamodb,lambda \
   ghcr.io/neaox/overcast:latest
 
@@ -153,12 +153,14 @@ services:
       - "4566:4566"
       - "4567:4567"
     environment:
-      OVERCAST_STATE: hybrid # memory | hybrid (default) | persistent | wal
+      # OVERCAST_STATE is left unset: mounting overcast-data below at /data
+      # makes auto resolve to hybrid automatically. Set OVERCAST_STATE
+      # explicitly (memory | hybrid | persistent | wal) to override.
       OVERCAST_LOG_LEVEL: debug
       OVERCAST_SERVICES: s3,sqs,dynamodb,sns,lambda
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock # required for Lambda, ECS, RDS, EC2
-      - overcast-data:/data # only needed with hybrid, persistent, or wal
+      - overcast-data:/data # mounting this is what makes auto resolve to hybrid
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:4566/_health"]
       interval: 5s
@@ -288,7 +290,7 @@ OVERCAST_LOG_LEVEL=debug \
 | `--bridge-bind-ip`               | `127.0.0.1` | IP advertised in mDNS when `--bridge` is set.                                                |
 | `OVERCAST_PORT`                  | `4566`      | AWS API port.                                                                                |
 | `OVERCAST_HOST`                  | `127.0.0.1` | Interface to bind.                                                                           |
-| `OVERCAST_STATE`                 | `hybrid`    | State backend: `memory`, `hybrid`, `persistent`, `wal`.                                      |
+| `OVERCAST_STATE`                 | `auto`      | State backend: `auto` (default — resolves to `hybrid` or `memory`, see [storage.md](./docs/storage.md#the-auto-default)), `memory`, `hybrid`, `persistent`, `wal`. |
 | `OVERCAST_SERVICES`              | all         | Comma-separated list of services to enable.                                                  |
 
 See the [configuration reference](./docs/README.md#configuration-reference) for the full list.

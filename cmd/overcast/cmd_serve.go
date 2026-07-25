@@ -106,6 +106,13 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	if cfg.Debug {
 		logger.Warn("debug endpoints enabled (/_debug/*) — do not expose this port publicly")
 	}
+	if cfg.StateSource == config.StateSourceAuto {
+		logger.Info(
+			fmt.Sprintf("storage mode auto-detected: %s (%s) — set OVERCAST_STATE to override", cfg.State, cfg.StateAutoReason),
+			zap.String("state", string(cfg.State)),
+			zap.String("stateAutoSignal", cfg.StateAutoSignal),
+		)
+	}
 
 	// ---- Init hooks -----------------------------------------------------------
 	var hookRunner *inithooks.Runner
