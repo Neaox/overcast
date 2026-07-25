@@ -1350,25 +1350,53 @@ func (s *HybridStore) runDataDirProbe() {
 	if probe == nil {
 		probe = probeDataDirFsync
 	}
-	elapsed, err := probe(s.dataDir)
-	if err != nil {
-		s.logWarn("hybrid: data dir fsync probe failed; skipping slow-filesystem check", zap.Error(err))
+	// Median of three samples: the probe runs at container boot — the
+	// busiest I/O moment of the process's life — and a single sample is
+	// easily inflated by one transient stall (image extraction, migration
+	// churn, host antivirus). One slow outlier among three no longer trips
+	// the advisory; a genuinely slow mount still shows in the median.
+	var samples []time.Duration
+	var lastErr error
+	for i := 0; i < 3; i++ {
+		elapsed, err := probe(s.dataDir)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		samples = append(samples, elapsed)
+	}
+	if len(samples) == 0 {
+		s.logWarn("hybrid: data dir fsync probe failed; skipping slow-filesystem check", zap.Error(lastErr))
 		return
 	}
+	sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
+	elapsed := samples[len(samples)/2]
+	fsType, mountClass := dataDirFsType(s.dataDir)
 	slow := elapsed > s.dataDirSlowFsyncThreshold
 	s.mu.Lock()
 	s.dataDirProbeResult = &DataDirProbeResult{
 		FsyncMillis: elapsed.Milliseconds(),
 		Slow:        slow,
 		ProbedAt:    time.Now().UTC(),
+		FsType:      fsType,
+		MountClass:  mountClass,
 	}
 	s.mu.Unlock()
 	if slow {
-		s.logWarn("hybrid: data directory appears to be on a slow filesystem — flushes will hold locks longer than on a native filesystem",
-			zap.Duration("fsync_elapsed", elapsed),
+		suggestion := "see docs/performance.md 'Data dir placement'"
+		switch mountClass {
+		case "shared":
+			suggestion = "this data dir is on a Docker Desktop file-sharing mount (" + fsType + ") — use a named Docker volume instead; see docs/performance.md 'Data dir placement'"
+		case "native":
+			suggestion = "the data dir is on a native filesystem (" + fsType + ") — the mount is fine; the disk or VM is under I/O pressure. Check host disk load, antivirus scanning of the Docker VM disk image, and VM resources; see docs/performance.md 'Data dir placement'"
+		}
+		s.logWarn("hybrid: data directory fsync is slow — flushes will hold locks longer than on a fast disk",
+			zap.Duration("fsync_median", elapsed),
 			zap.Duration("threshold", s.dataDirSlowFsyncThreshold),
 			zap.String("data_dir", s.dataDir),
-			zap.String("suggestion", "if this data dir is a Docker Desktop bind mount, use a named Docker volume instead — see docs/performance.md 'Data dir placement'"))
+			zap.String("fs_type", fsType),
+			zap.String("mount_class", mountClass),
+			zap.String("suggestion", suggestion))
 	}
 }
 

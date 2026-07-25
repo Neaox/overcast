@@ -186,6 +186,51 @@ func TestCheckDataDirSlowFilesystem_firesWhenProbeIsSlow(t *testing.T) {
 	}
 }
 
+// The Detail copy must match the actual mount type: telling a named-volume
+// user (native ext4) to "switch to a named volume" is wrong advice — that
+// exact regression shipped in alpha.24 and was reported from the field.
+func TestCheckDataDirSlowFilesystem_detailMatchesMountClass(t *testing.T) {
+	cases := []struct {
+		name       string
+		probe      state.DataDirProbeResult
+		wantSubstr string
+		banSubstr  string
+	}{
+		{
+			name:       "shared mount gets named-volume advice",
+			probe:      state.DataDirProbeResult{FsyncMillis: 120, Slow: true, FsType: "fuse.grpcfuse", MountClass: "shared"},
+			wantSubstr: "named Docker volume",
+			banSubstr:  "native filesystem",
+		},
+		{
+			name:       "native mount gets I/O-pressure advice, not bind-mount advice",
+			probe:      state.DataDirProbeResult{FsyncMillis: 106, Slow: true, FsType: "ext4", MountClass: "native"},
+			wantSubstr: "native filesystem (ext4)",
+			banSubstr:  "Use a named Docker volume",
+		},
+		{
+			name:       "unknown mount stays hedged",
+			probe:      state.DataDirProbeResult{FsyncMillis: 90, Slow: true},
+			wantSubstr: "If the data directory is a Docker Desktop bind mount",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			probe := tc.probe
+			a := checkDataDirSlowFilesystem(state.DebugMetrics{Mode: "hybrid", DataDirProbe: &probe})
+			if a == nil {
+				t.Fatal("expected an advisory, got nil")
+			}
+			if !containsDebugBody(a.Detail, tc.wantSubstr) {
+				t.Errorf("detail missing %q: %q", tc.wantSubstr, a.Detail)
+			}
+			if tc.banSubstr != "" && containsDebugBody(a.Detail, tc.banSubstr) {
+				t.Errorf("detail must not contain %q for this mount class: %q", tc.banSubstr, a.Detail)
+			}
+		})
+	}
+}
+
 func TestCheckDataDirSlowFilesystem_absentWhenProbeIsFast(t *testing.T) {
 	// Given: a store whose probe found a normal-speed filesystem.
 	m := state.DebugMetrics{
