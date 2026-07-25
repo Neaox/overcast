@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Neaox/overcast/internal/logging"
 	"github.com/Neaox/overcast/internal/state"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -1085,7 +1086,10 @@ func TestHybridStore_ScanPage_OverlayBaseBoundary_NoDuplicatesOrGaps(t *testing.
 // only reaches after PRAGMA wal_checkpoint(PASSIVE) has already succeeded,
 // so this also proves the checkpoint step works.
 func TestHybridStore_Maintenance_RunsOnConfiguredInterval(t *testing.T) {
-	core, logs := observer.New(zap.DebugLevel)
+	// The "incremental_vacuum complete" line is a per-tick maintenance-cycle
+	// log, so it's now emitted at TRACE (see runSQLitePragmaMaintenance) —
+	// the observer must be opened at that threshold to still capture it.
+	core, logs := observer.New(logging.TraceLevel)
 	s, err := state.NewHybridStoreWithOptions(t.TempDir(), state.HybridOptions{
 		FlushInterval:       50 * time.Millisecond,
 		MaintenanceInterval: 50 * time.Millisecond,

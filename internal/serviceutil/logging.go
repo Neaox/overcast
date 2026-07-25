@@ -11,8 +11,30 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	"github.com/Neaox/overcast/internal/logging"
 	"github.com/Neaox/overcast/internal/protocol"
 )
+
+// ── Trace level ──────────────────────────────────────────────────────────────
+//
+// TraceLevel, ParseLevel, and WrapLevelEncoder are defined in the leaf
+// package internal/logging (see its doc comment for why: internal/state's
+// background maintenance/flush loops need TraceLevel directly, and
+// internal/serviceutil → internal/protocol → internal/state would otherwise
+// be a cycle). Re-exported here so existing callers of this package don't
+// need to know about that split.
+const TraceLevel = logging.TraceLevel
+
+// ParseLevel parses a log-level string into a zapcore.Level, extending
+// zapcore.ParseLevel with Overcast's "trace" level. See internal/logging.ParseLevel.
+func ParseLevel(s string) (zapcore.Level, error) { return logging.ParseLevel(s) }
+
+// WrapLevelEncoder wraps a zapcore.LevelEncoder so TraceLevel renders as
+// label instead of the base encoder's zero-value fallback. See
+// internal/logging.WrapLevelEncoder.
+func WrapLevelEncoder(base zapcore.LevelEncoder, label string) zapcore.LevelEncoder {
+	return logging.WrapLevelEncoder(base, label)
+}
 
 // ── Console-mode detection ───────────────────────────────────────────────────
 
@@ -152,6 +174,17 @@ func NewServiceLogger(logger *zap.Logger, service string) *ServiceLogger {
 		log = wrapTag(log, serviceTag(service))
 	}
 	return &ServiceLogger{log: log, service: service}
+}
+
+// Trace logs at TRACE level (below DEBUG) — periodic machine-generated
+// chatter that even a debugging session rarely wants: health/readiness probe
+// and /_debug/* request logs, flush/checkpoint/maintenance/sweep cycle logs,
+// buffer/pool internals. See the TraceLevel doc comment and CONTRIBUTING.md
+// § Log levels for the full trace-vs-debug distinction.
+// Do NOT use for anything a human debugging Overcast would actually want to
+// see — that's DEBUG.
+func (l *ServiceLogger) Trace(msg string, fields ...zap.Field) {
+	l.log.Log(TraceLevel, msg, fields...)
 }
 
 // Debug logs at DEBUG level — fine-grained detail useful during development.

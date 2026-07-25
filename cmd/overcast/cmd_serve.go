@@ -22,6 +22,7 @@ import (
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/inithooks"
 	"github.com/Neaox/overcast/internal/router"
+	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
 
@@ -71,14 +72,28 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	// Use the human-friendly development encoder when stdout is a terminal so
 	// that coloured [SERVICE] tags and readable timestamps are shown. In
 	// non-interactive environments (CI, Docker, pipe) use the JSON production
-	// encoder so structured fields are machine-parseable.
+	// encoder so structured fields are machine-parseable. Either way, the
+	// zap.Config's Level is set explicitly from cfg.LogLevel (via
+	// serviceutil.ParseLevel, which understands Overcast's "trace" level in
+	// addition to zap's built-ins) rather than relying on the dev/prod
+	// config's own default level — NewDevelopmentConfig defaults to DEBUG and
+	// NewProductionConfig to INFO, neither of which honours e.g.
+	// OVERCAST_LOG_LEVEL=warn or =trace.
 	isTTY := isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())
-	var logger *zap.Logger
-	if isTTY || cfg.LogLevel == "debug" {
-		logger, err = zap.NewDevelopment()
-	} else {
-		logger, err = zap.NewProduction()
+	logLevel, err := serviceutil.ParseLevel(cfg.LogLevel)
+	if err != nil {
+		return fmt.Errorf("invalid OVERCAST_LOG_LEVEL %q: %w", cfg.LogLevel, err)
 	}
+	var zcfg zap.Config
+	if isTTY || cfg.LogLevel == "debug" || cfg.LogLevel == "trace" {
+		zcfg = zap.NewDevelopmentConfig()
+		zcfg.EncoderConfig.EncodeLevel = serviceutil.WrapLevelEncoder(zcfg.EncoderConfig.EncodeLevel, "TRACE")
+	} else {
+		zcfg = zap.NewProductionConfig()
+		zcfg.EncoderConfig.EncodeLevel = serviceutil.WrapLevelEncoder(zcfg.EncoderConfig.EncodeLevel, "trace")
+	}
+	zcfg.Level = zap.NewAtomicLevelAt(logLevel)
+	logger, err := zcfg.Build()
 	if err != nil {
 		return fmt.Errorf("init logger: %w", err)
 	}

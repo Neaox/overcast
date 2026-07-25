@@ -6,6 +6,25 @@ variables, watch expressions, and navigate the call stack — all from VS Code.
 
 ---
 
+## Log-based debugging
+
+Step debugging isn't always the fastest tool — sometimes `OVERCAST_LOG_LEVEL=debug`
+tells you what you need without a single breakpoint. Overcast's log levels are
+`trace` < `debug` < `info` < `warn` < `error`; `debug` is tuned to be exactly
+what you'd want attached to a bug report (dispatch/protocol decisions, store
+operation diagnostics, replay/seed detail), while `trace` adds the
+machine-generated chatter (health probes, `/_debug/*` polling, background
+flush/sweep ticks) that's rarely useful even mid-debugging session but can
+help when you specifically suspect a background loop. See
+[CONTRIBUTING.md § Log levels](../../CONTRIBUTING.md#log-levels) for the full
+call-site policy and the decision rule for where a given line belongs.
+
+The two tools compose well: run at `debug` (or `trace` if you're chasing a
+background loop) to narrow down where to look, then set a breakpoint once
+you know which handler or loop to step through.
+
+---
+
 ## Quick start
 
 1. Open VS Code with the project (ideally in the Dev Container)

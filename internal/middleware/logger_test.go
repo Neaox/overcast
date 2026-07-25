@@ -10,6 +10,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
@@ -163,6 +164,60 @@ func TestInternalService(t *testing.T) {
 				t.Errorf("internalService(%q) = %q, want %q", tt.path, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestLogger_healthCheckLogsAtTrace(t *testing.T) {
+	// Given: a /_health request (polled every few seconds by Docker/K8s
+	// healthchecks) and a real AWS API call (SQS CreateQueue) through the
+	// same middleware.
+	core, logs := observer.New(serviceutil.TraceLevel)
+	logger := zap.New(core)
+	handler := Logger(logger, clock.New())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// When: a health-check request is served.
+	healthReq := httptest.NewRequest(http.MethodGet, "/_health", nil)
+	handler.ServeHTTP(httptest.NewRecorder(), healthReq)
+
+	// And: a debug-namespace request is served.
+	debugReq := httptest.NewRequest(http.MethodGet, "/_debug/state", nil)
+	handler.ServeHTTP(httptest.NewRecorder(), debugReq)
+
+	// And: a real AWS API request is served.
+	awsReq := httptest.NewRequest(http.MethodPost, "/", nil)
+	awsReq.Header.Set("X-Amz-Target", "AmazonSQS.CreateQueue")
+	handler.ServeHTTP(httptest.NewRecorder(), awsReq)
+
+	// Then: the health-check and debug-namespace requests log at TRACE...
+	for _, path := range []string{"/_health", "/_debug/state"} {
+		found := false
+		for _, e := range logs.FilterMessage("request").All() {
+			if e.ContextMap()["path"] == path {
+				found = true
+				if e.Level != serviceutil.TraceLevel {
+					t.Errorf("path %s logged at %s, want trace", path, e.Level)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("no 'request' log entry found for path %s", path)
+		}
+	}
+
+	// ...and the real AWS API request still logs at INFO.
+	awsFound := false
+	for _, e := range logs.FilterMessage("request").All() {
+		if e.ContextMap()["path"] == "/" {
+			awsFound = true
+			if e.Level != zapcore.InfoLevel {
+				t.Errorf("AWS API request logged at %s, want info", e.Level)
+			}
+		}
+	}
+	if !awsFound {
+		t.Fatal("no 'request' log entry found for the AWS API call")
 	}
 }
 

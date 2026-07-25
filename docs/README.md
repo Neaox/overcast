@@ -26,6 +26,7 @@ see the [root README](../README.md).
 
 - [Service emulation reference](./services/README.md) — per-service endpoint coverage tables
 - [Configuration reference](#configuration-reference) — all environment variables
+- [Log levels](#log-levels) — `OVERCAST_LOG_LEVEL` values and what each one shows
 - [Persistence](#persistence) — storage backends
 - [HTTPS / TLS](#https--tls) — self-signed certs for local HTTPS
 - [Debug endpoints](#debug-endpoints) — health, metrics, state dump, pprof
@@ -175,7 +176,7 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_DATA_DIR`              | `~/.overcast/data`     | Directory for store files and other on-disk state                                    |
 | `OVERCAST_DEFAULT_REGION`        | `us-east-1`            | Fallback region used in ARNs when not present in SigV4 header                        |
 | `OVERCAST_ACCOUNT_ID`            | `000000000000`         | Account ID embedded in ARNs                                                          |
-| `OVERCAST_LOG_LEVEL`             | `info`                 | `debug`, `info`, `warn`, `error`                                                     |
+| `OVERCAST_LOG_LEVEL`             | `info`                 | `trace`, `debug`, `info`, `warn`, `error` — see [Log levels](#log-levels) below      |
 | `OVERCAST_DEBUG`                 | `false`                | Enable `/_debug/*` endpoints                                                         |
 | `OVERCAST_SIGV4_VALIDATE`        | `false`                | SigV4 verification _(not yet implemented)_                                           |
 | `OVERCAST_CFN_SYNC_WAIT_MS`      | `1000`                 | Milliseconds CloudFormation waits for fast stack provisioning before returning (`0` disables) |
@@ -204,6 +205,21 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_SMTP_PASSWORD`         | —                      | SMTP AUTH PLAIN password for external relay                                          |
 | `OVERCAST_SMTP_TLS`              | `false`                | Enable implicit TLS (port 465) for external relay                                    |
 | `OVERCAST_SMTP_INBOX_MAX`        | `500`                  | Maximum number of captured messages retained before eviction                         |
+
+### Log levels
+
+`OVERCAST_LOG_LEVEL` controls how much Overcast logs, from quietest to noisiest:
+
+| Level   | What you'll see                                                                                          |
+| ------- | --------------------------------------------------------------------------------------------------------- |
+| `info`  | **Default.** Lifecycle events (start, shutdown, migrations) and one line per AWS API call your app makes. |
+| `debug` | Everything in `info`, plus the reasoning behind each response — what to attach to a bug report.           |
+| `trace` | Everything in `debug`, plus emulator machinery: health-check probes, web UI polling, background flush/sweep ticks. Very high volume — use for a short capture window, not always-on. |
+| `warn`  | One-liners for handled-but-unexpected conditions (a malformed record was skipped, a slow filesystem was detected). |
+| `error` | One-liners for failures that need attention (storage degraded, a migration failed).                       |
+
+For contributors: the full call-site policy (what belongs at `debug` vs
+`trace`) is documented in [CONTRIBUTING.md § Log levels](../CONTRIBUTING.md#log-levels).
 
 ---
 

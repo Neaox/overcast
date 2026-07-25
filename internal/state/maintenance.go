@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/Neaox/overcast/internal/logging"
 )
 
 // defaultMaintenanceInterval is how often the background maintenance loop
@@ -61,7 +63,12 @@ func runSQLitePragmaMaintenance(ctx context.Context, db *sql.DB, log *zap.Logger
 		return
 	}
 	if log != nil {
-		log.Info(logSource+": incremental_vacuum complete",
+		// A per-tick maintenance-cycle log, not a state milestone: fires on
+		// its own schedule regardless of client activity, so per the
+		// trace-vs-debug policy (CONTRIBUTING.md § Log levels) it belongs at
+		// TRACE, not DEBUG — a maintenance tick every few minutes shouldn't
+		// compete with real request-explaining detail even at DEBUG.
+		log.Log(logging.TraceLevel, logSource+": incremental_vacuum complete",
 			zap.Int64("freelist_count", freelistCount),
 			zap.Int64("page_count", pageCount),
 			zap.Duration("elapsed", time.Since(start)))
