@@ -39,6 +39,13 @@ const (
 // stays at docs/performance.md.
 const performanceDocsPath = "performance.md"
 
+// dataDirDocsPath deep-links the slow-filesystem advisory straight to the
+// relevant section. The fragment is the docs browser's heading slug (see
+// web/src/routes/docs.tsx `slug`: lowercase, non-alphanumeric runs → "-")
+// for "Data dir placement — avoid host bind mounts on Docker Desktop" in
+// docs/performance.md; the UI splits DocsPath on "#" into path + hash.
+const dataDirDocsPath = performanceDocsPath + "#data-dir-placement-avoid-host-bind-mounts-on-docker-desktop"
+
 // Advisory is one actionable diagnostic surfaced alongside the storage
 // diagnostics in GET /_debug/metrics (see debugMetricsResponse.Advisories).
 // The web UI's Metrics & Health page renders these generically — icon/color
@@ -224,7 +231,7 @@ func checkDataDirSlowFilesystem(m state.DebugMetrics) *Advisory {
 				"read. Use a named Docker volume for the data directory instead.",
 			m.DataDirProbe.FsyncMillis,
 		),
-		DocsPath: performanceDocsPath,
+		DocsPath: dataDirDocsPath,
 	}
 }
 

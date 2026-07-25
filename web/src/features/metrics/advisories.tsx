@@ -66,7 +66,10 @@ function AdvisoryCard({ advisory }: { advisory: Advisory }) {
         {advisory.docsPath && (
           <Link
             to="/docs"
-            search={{ path: advisory.docsPath }}
+            // docsPath may carry a section anchor ("performance.md#data-dir-...");
+            // the search param wants only the file path, the anchor rides the hash.
+            search={{ path: advisory.docsPath.split("#")[0] }}
+            hash={advisory.docsPath.split("#")[1]}
             className="mt-1 inline-flex w-fit items-center gap-1 text-xs text-accent underline underline-offset-2"
           >
             View docs

@@ -1,3 +1,4 @@
+import { useEffect } from "react"
 import { createFileRoute, Link } from "@tanstack/react-router"
 import { useQuery, queryOptions } from "@tanstack/react-query"
 import ReactMarkdown from "react-markdown"
@@ -22,6 +23,19 @@ export const Route = createFileRoute("/docs")({
   head: () => ({ meta: [{ title: "Documentation — Overcast" }] }),
 })
 
+/**
+ * Drop the doc's leading H1 only when it repeats the page chrome's title
+ * (the header already renders title + description from the docs index).
+ * A doc whose top heading says something different keeps it.
+ */
+function stripLeadingH1(content: string, pageTitle: string): string {
+  const m = content.match(/^\s*# (.+)\r?\n+/)
+  if (!m) return content
+  return m[1].trim().toLowerCase() === pageTitle.trim().toLowerCase()
+    ? content.slice(m[0].length)
+    : content
+}
+
 async function fetchDoc(path: string): Promise<string> {
   const res = await fetch(`/api/docs/page?path=${encodeURIComponent(path)}`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -40,6 +54,15 @@ function DocsPage() {
       retry: false,
     }),
   )
+
+  // Deep links: heading ids exist (see the h2/h3 renderers below), but on
+  // client-side navigation the content arrives after the route, so the
+  // browser's native anchor scroll never fires - do it once the doc renders.
+  useEffect(() => {
+    const anchor = window.location.hash.slice(1)
+    if (!anchor || !data) return
+    document.getElementById(anchor)?.scrollIntoView({ block: "start" })
+  }, [data])
 
   return (
     <main className="mx-auto grid w-full max-w-7xl grid-cols-1 gap-5 px-6 py-6 lg:grid-cols-[18rem_minmax(0,1fr)_14rem]">
@@ -71,6 +94,19 @@ function DocsPage() {
               </div>
             </div>
           ))}
+          <div className="mt-4 border-t border-border px-2 pt-3 text-xs text-fg-subtle">
+            These docs cover <span className="text-fg-muted">using</span> Overcast. Developing
+            Overcast itself? Contributor docs live in{" "}
+            <a
+              href="https://github.com/Neaox/overcast/tree/main/docs/dev"
+              target="_blank"
+              rel="noreferrer"
+              className="text-accent underline underline-offset-2"
+            >
+              docs/dev
+            </a>{" "}
+            in the repository.
+          </div>
         </div>
       </aside>
 
@@ -159,7 +195,7 @@ function DocsPage() {
                   ),
                 }}
               >
-                {data}
+                {stripLeadingH1(data, currentDoc.title)}
               </ReactMarkdown>
             </div>
           )}

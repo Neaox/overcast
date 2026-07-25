@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "cd web && npx vite"
+      ],
+      "port": 3000,
+      "url": "https://localhost:3000"
+    }
+  ]
+}
