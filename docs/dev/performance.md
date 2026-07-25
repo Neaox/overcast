@@ -489,3 +489,26 @@ go tool pprof cpu.prof
 
 When adding a new benchmark, name it `Benchmark<Type>_<operation>` and place it
 in the `_test.go` file alongside the unit tests for that package.
+
+## Known environment pitfall: fsync-degraded Docker Desktop hosts
+
+On some Docker Desktop (Windows/WSL2, macOS) machines, fsync inside
+containers degrades badly under memory/I/O pressure — this session-measured
+range was 160ms to 5.8s per fsync (the startup probe in
+`internal/state/hybrid.go` exists to detect exactly this). Consequences for
+development:
+
+- **`go test ./internal/state/...` can exceed Go's 600s default package
+  timeout** and die with a goroutine dump showing a test "stuck" in
+  `os.(*File).Sync` — that is the slowest syscall being caught by the timer,
+  not a deadlock. `TestWALStore_CompactsLogAtThreshold` alone can cost >12s
+  per run on a degraded host (it is deliberately fsync-heavy).
+- Run the state suite with an explicit generous timeout on such machines:
+  `-timeout 1200s` (the Makefile targets already do; bare `go test`
+  invocations do not).
+- Benchmarks on such hosts follow the discipline in this document: allocs/op
+  is the signal, wall time is weather.
+
+If you suspect this environment class, the live check is the startup probe
+warning (`data directory appears to be on a slow filesystem`) or timing a
+bare fsync in the container.

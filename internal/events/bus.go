@@ -3,6 +3,8 @@ package events
 import (
 	"context"
 	"sync"
+
+	"github.com/Neaox/overcast/internal/clock"
 )
 
 const (
@@ -48,16 +50,24 @@ type Bus struct {
 	stopCh      chan struct{}
 	wg          sync.WaitGroup
 	history     *History
+	clk         clock.Clock
 }
 
 // NewBus returns an initialised Bus with its worker pool running.
 // Call Stop to shut down the workers.
 func NewBus() *Bus {
+	return NewBusWithClock(clock.New())
+}
+
+// NewBusWithClock is NewBus with an injectable clock, for tests that need
+// deterministic event timestamps (see Publish's zero-Time stamping).
+func NewBusWithClock(clk clock.Clock) *Bus {
 	b := &Bus{
 		subscribers: make(map[Type][]HandlerFunc),
 		workCh:      make(chan workItem, workQueueSize),
 		stopCh:      make(chan struct{}),
 		history:     NewHistory(HistoryCapacity),
+		clk:         clk,
 	}
 	b.wg.Add(workerCount)
 	for range workerCount {
@@ -165,6 +175,14 @@ func (b *Bus) SnapshotAndSubscribeAll(h HandlerFunc) (snapshot []Event, cancel f
 // read-lock section that reads the subscriber lists, which is what gives
 // SnapshotAndSubscribeAll its atomicity guarantee (see its doc comment).
 func (b *Bus) Publish(ctx context.Context, e Event) {
+	// Zero-Time guard: most publishers stamp their service clock, but a
+	// publisher that omits Time must never produce a zero timestamp in the
+	// history buffer or the live stream (rendered as 00:00:00.000 by the
+	// Events page). Stamping here, once, covers every publisher — past and
+	// future — without requiring 30+ call sites to remember.
+	if e.Time.IsZero() {
+		e.Time = b.clk.Now()
+	}
 	b.mu.RLock()
 	b.history.Append(e)
 	typed := make([]HandlerFunc, len(b.subscribers[e.Type]))
