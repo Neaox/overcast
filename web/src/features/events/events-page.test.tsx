@@ -1,6 +1,26 @@
-import { describe, expect, it } from "vitest"
-import { render, screen } from "@/test/render"
+import { describe, expect, it, vi } from "vitest"
+import { render, renderWithData, screen } from "@/test/render"
 import { EventsPage } from "./events-page"
+import { eventStreamQueryOptions } from "@/hooks/use-event-stream"
+import type { StreamEvent } from "@/hooks/use-event-stream"
+
+vi.mock("@tanstack/react-virtual", () => ({
+  useVirtualizer: ({ count }: { count: number }) => ({
+    getTotalSize: () => count * 34,
+    getVirtualItems: () =>
+      Array.from({ length: count }, (_, index) => ({
+        index,
+        key: index,
+        start: index * 34,
+      })),
+    measureElement: vi.fn(),
+    scrollToIndex: vi.fn(),
+  }),
+}))
+
+function seedEvents(events: StreamEvent[]): [queryKey: readonly unknown[], data: unknown][] {
+  return [[eventStreamQueryOptions().queryKey, events]]
+}
 
 describe("EventsPage", () => {
   it("renders when event sources are not navigable services", () => {
@@ -18,5 +38,69 @@ describe("EventsPage", () => {
     expect(screen.queryByText("Hide requests")).not.toBeInTheDocument()
     expect(screen.getByRole("checkbox", { name: "Requests" })).not.toBeChecked()
     expect(screen.getByRole("checkbox", { name: "Service errors" })).toBeChecked()
+  })
+
+  // Regression test for the default-allow requirement: the source filter
+  // must never be a hardcoded enumeration that silently hides a source it
+  // doesn't already know about (e.g. a service wired into the bus later).
+  it("shows events from a source it has never seen before, by default", () => {
+    renderWithData(
+      <EventsPage />,
+      seedEvents([
+        {
+          type: "widget:Frobnicated",
+          source: "totally-new-service",
+          time: "2026-07-25T12:00:00Z",
+          payload: { id: "1" },
+        },
+      ]),
+    )
+
+    // The event renders without the user touching any filter.
+    expect(screen.getByText("totally-new-service")).toBeInTheDocument()
+  })
+
+  it("lists a never-before-seen source as checked in the source dropdown", async () => {
+    const { user } = renderWithData(
+      <EventsPage />,
+      seedEvents([
+        {
+          type: "widget:Frobnicated",
+          source: "totally-new-service",
+          time: "2026-07-25T12:00:00Z",
+          payload: { id: "1" },
+        },
+      ]),
+    )
+
+    await user.click(screen.getByRole("button", { name: /sources/i }))
+
+    expect(screen.getByRole("checkbox", { name: "Totally New Service" })).toBeChecked()
+  })
+
+  // Regression test for the "Pings does nothing" bug: toggling the heartbeat
+  // toggle must actually reveal heartbeat events, which requires the
+  // "system" source (heartbeats' source) to be visible by default too —
+  // previously it was excluded from the hardcoded source enumeration
+  // entirely, so no amount of toggling could ever show it.
+  it("reveals heartbeat events once the Pings toggle is turned on", async () => {
+    const { user } = renderWithData(
+      <EventsPage />,
+      seedEvents([
+        {
+          type: "heartbeat",
+          source: "system",
+          time: "2026-07-25T12:00:00Z",
+          payload: null,
+        },
+      ]),
+    )
+
+    // Hidden by default (includeHeartbeats defaults to false at the hook level).
+    expect(screen.queryByText("system")).not.toBeInTheDocument()
+
+    await user.click(screen.getByTitle("Show heartbeat pings"))
+
+    expect(await screen.findByText("system")).toBeInTheDocument()
   })
 })
