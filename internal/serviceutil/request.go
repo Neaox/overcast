@@ -40,7 +40,7 @@ import (
 // This replaces the repetitive pattern:
 //
 //	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-//	    protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument("invalid request body"))
+//	    protocol.WriteJSONError(w, r, protocol.ErrSerialization("invalid request body"))
 //	    return
 //	}
 func DecodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
@@ -48,7 +48,7 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 		// Drain and close so the connection can be reused.
 		io.Copy(io.Discard, r.Body) //nolint:errcheck
 		r.Body.Close()              //nolint:errcheck
-		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument(
+		protocol.WriteJSONError(w, r, protocol.ErrSerialization(
 			"The request body could not be parsed as JSON: "+err.Error(),
 		))
 		return false
