@@ -69,6 +69,7 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
+- **DynamoDB** — GSI `Query` and `Scan` now read from a real per-index ordered structure instead of scanning the entire table on every call (Query on a GSI is now partition-scoped like base-table Query; costs are flat in table size). This also closes a projection-fidelity gap: `KEYS_ONLY` and `INCLUDE` GSIs previously returned base-table attributes that real AWS refuses to project — they now return exactly the projected attribute set. `TransactWriteItems` now maintains GSI index entries like every other write path. LSI queries and parallel (`TotalSegments`) scans intentionally keep the previous behavior.
 - **Storage** — SQLite's WAL auto-checkpoint threshold raised from 1000 to 4000 pages on the persistent/hybrid write path: sustained write bursts previously paid a mid-burst checkpoint that showed up as ~0.9-1.4ms per SQS send at moderate queue depths; measured after the change at ~57-74µs per send (repeatable across independent runs, allocations unchanged, no regression at higher depths). The WAL file may now grow to ~16MB between checkpoints; the background maintenance loop's periodic checkpoint behavior is unchanged.
 
 ## [0.0.1-alpha.24] - 2026-07-25
