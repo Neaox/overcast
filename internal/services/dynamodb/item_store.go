@@ -119,6 +119,19 @@ type itemBackend interface {
 	// ordered by (indexSort, baseHash, baseSort).
 	queryIndexByHash(ctx context.Context, tableName, indexName, indexHash string) ([]Item, error)
 
+	// scanIndexPage returns up to limit entries for (table, index), ordered
+	// by the composite key (indexHash, indexSort, baseHash, baseSort),
+	// strictly after (afterIndexHash, afterIndexSort, afterBaseHash,
+	// afterBaseSort) when hasAfter is true, or starting from the beginning
+	// of the index when hasAfter is false. This is the GSI-Scan analogue of
+	// scanPage — a keyset page over the index's own ordered structure
+	// (dynamodb-gsi-design.md §4), used by scanTyped's whole-index GSI Scan
+	// (no IndexName hash-equality predicate, no parallel segments). Same
+	// positional-cursor contract as scanPage: the cursor need not name a row
+	// that still exists (pagination-plan.md G2's fix, generalized to index
+	// reads).
+	scanIndexPage(ctx context.Context, tableName, indexName string, hasAfter bool, afterIndexHash, afterIndexSort, afterBaseHash, afterBaseSort string, limit int) ([]Item, error)
+
 	// countIndexEntries returns the number of entries stored for (table, index).
 	countIndexEntries(ctx context.Context, tableName, indexName string) (int64, error)
 
@@ -338,6 +351,42 @@ func (b *memItemBackend) queryIndexByHash(_ context.Context, tableName, indexNam
 	})
 	if items == nil {
 		return []Item{}, nil
+	}
+	return items, nil
+}
+
+// scanIndexPage implements the itemBackend contract via a single Ascend seek
+// to the cursor position in the (table, index) tree, then collects up to
+// limit entries — the index-tree analogue of scanPage (see its doc comment
+// for the seek technique; identical here, just against b.indexes instead of
+// b.tables).
+func (b *memItemBackend) scanIndexPage(_ context.Context, tableName, indexName string, hasAfter bool, afterIndexHash, afterIndexSort, afterBaseHash, afterBaseSort string, limit int) ([]Item, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	tree := b.indexes[indexKey{table: tableName, index: indexName}]
+	if tree == nil {
+		return []Item{}, nil
+	}
+
+	afterKey := ""
+	if hasAfter {
+		afterKey = indexCompositeKey(afterIndexHash, afterIndexSort, afterBaseHash, afterBaseSort)
+	}
+
+	var items []Item
+	tree.Ascend(afterKey, func(key string, item Item) bool {
+		if hasAfter && key <= afterKey {
+			return true // seeked to the cursor itself (or before it); keep advancing
+		}
+		if limit > 0 && len(items) >= limit {
+			return false
+		}
+		items = append(items, item)
+		return true
+	})
+	if items == nil {
+		items = []Item{}
 	}
 	return items, nil
 }
@@ -917,6 +966,42 @@ func (b *sqlItemBackend) queryIndexByHash(ctx context.Context, tableName, indexN
 	)
 	if err != nil {
 		return nil, fmt.Errorf("dynamodb queryIndexByHash [%s/%s]: %w", tableName, indexName, err)
+	}
+	defer rows.Close()
+	return scanItemRows(rows)
+}
+
+// scanIndexPage is the SQL half of scanIndexPage: a single indexed
+// row-value-range query bounded by LIMIT against dynamodb_index_entries'
+// primary key, mirroring scanPage's shape against dynamodb_items (see its
+// doc comment) but walking the 4-column composite key instead of 2.
+func (b *sqlItemBackend) scanIndexPage(ctx context.Context, tableName, indexName string, hasAfter bool, afterIndexHash, afterIndexSort, afterBaseHash, afterBaseSort string, limit int) ([]Item, error) {
+	if err := b.init(); err != nil {
+		return nil, err
+	}
+
+	var rows *sql.Rows
+	var err error
+	if hasAfter {
+		rows, err = b.db.QueryContext(ctx,
+			`SELECT item_json FROM dynamodb_index_entries
+			 WHERE table_name = ? AND index_name = ?
+			   AND (index_hash, index_sort, base_hash, base_sort) > (?, ?, ?, ?)
+			 ORDER BY index_hash, index_sort, base_hash, base_sort
+			 LIMIT ?`,
+			tableName, indexName, afterIndexHash, afterIndexSort, afterBaseHash, afterBaseSort, limit,
+		)
+	} else {
+		rows, err = b.db.QueryContext(ctx,
+			`SELECT item_json FROM dynamodb_index_entries
+			 WHERE table_name = ? AND index_name = ?
+			 ORDER BY index_hash, index_sort, base_hash, base_sort
+			 LIMIT ?`,
+			tableName, indexName, limit,
+		)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("dynamodb scanIndexPage [%s/%s]: %w", tableName, indexName, err)
 	}
 	defer rows.Close()
 	return scanItemRows(rows)
