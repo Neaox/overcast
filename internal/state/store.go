@@ -348,6 +348,18 @@ type DataDirProbeResult struct {
 
 	// ProbedAt is when the probe ran, UTC.
 	ProbedAt time.Time `json:"probedAt"`
+
+	// FsType is the filesystem type hosting the data dir per /proc/mounts
+	// (e.g. "ext4", "9p", "fuse.grpcfuse"); empty when it couldn't be read
+	// (non-Linux, or /proc/mounts unavailable).
+	FsType string `json:"fsType,omitempty"`
+
+	// MountClass is a coarse classification of FsType used to tailor the
+	// slow-filesystem advisory: "native" (real in-VM/host filesystem —
+	// slowness means I/O pressure, not a bind mount), "shared" (Docker
+	// Desktop file-sharing protocol — the bind-mount tax; switching to a
+	// named volume applies), or "unknown".
+	MountClass string `json:"mountClass,omitempty"`
 }
 
 // DebugMetricsReporter is an optional Store extension exposing the
