@@ -70,6 +70,13 @@ type WALStore struct {
 	f       *os.File
 	logSize int64
 	closed  bool
+	// dirty is true when s.f has appended bytes that a successful fsync has
+	// not yet covered. Close and the interval sync loop skip fsync when the
+	// log is clean — semantically sound (nothing new to make durable) and it
+	// avoids paying an fsync on stores that never wrote (observed stalling
+	// for hundreds of seconds on fsync-degraded Docker Desktop hosts — see
+	// docs/dev/performance.md "fsync-degraded" note).
+	dirty bool
 
 	stopSync chan struct{}
 	syncDone chan struct{}
@@ -258,7 +265,11 @@ func (s *WALStore) runPeriodicSync() {
 				s.mu.Unlock()
 				return
 			}
-			_ = s.f.Sync()
+			if s.dirty {
+				if err := s.f.Sync(); err == nil {
+					s.dirty = false
+				}
+			}
 			s.mu.Unlock()
 		case <-s.stopSync:
 			return
@@ -333,6 +344,7 @@ func (s *WALStore) Close() error {
 		close(s.stopSync)
 	}
 	f := s.f
+	dirty := s.dirty
 	s.mu.Unlock()
 
 	if s.syncMode == WALSyncInterval {
@@ -342,9 +354,15 @@ func (s *WALStore) Close() error {
 	if f == nil {
 		return nil
 	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("wal store: final sync: %w", err)
+	// Skip the final fsync when nothing was appended since the last
+	// successful sync — a clean log has nothing new to make durable, and an
+	// unconditional fsync here stalled for minutes on fsync-degraded hosts
+	// even for stores that never wrote a byte.
+	if dirty {
+		if err := f.Sync(); err != nil {
+			_ = f.Close()
+			return fmt.Errorf("wal store: final sync: %w", err)
+		}
 	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("wal store: close: %w", err)
@@ -369,11 +387,13 @@ func (s *WALStore) appendEntryLocked(entry walEntry) error {
 		return fmt.Errorf("wal store: append: %w", err)
 	}
 	s.logSize += int64(len(b))
+	s.dirty = true
 
 	if s.syncMode == WALSyncAlways {
 		if err := s.f.Sync(); err != nil {
 			return fmt.Errorf("wal store: sync: %w", err)
 		}
+		s.dirty = false
 	}
 
 	return nil
@@ -429,6 +449,9 @@ func (s *WALStore) compactLocked() error {
 
 	s.f = f
 	s.logSize = info.Size()
+	// The compacted snapshot was fsynced before the rename and the reopened
+	// log has no unsynced appends yet.
+	s.dirty = false
 	return nil
 }
 

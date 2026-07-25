@@ -489,3 +489,35 @@ go tool pprof cpu.prof
 
 When adding a new benchmark, name it `Benchmark<Type>_<operation>` and place it
 in the `_test.go` file alongside the unit tests for that package.
+
+## Known environment pitfall: fsync-degraded Docker Desktop hosts
+
+On some Docker Desktop (Windows/WSL2, macOS) machines, fsync inside
+containers degrades badly under memory/I/O pressure — this session-measured
+range was 160ms to 5.8s per fsync (the startup probe in
+`internal/state/hybrid.go` exists to detect exactly this). Consequences for
+development:
+
+- **fsync can intermittently stall for minutes on an arbitrary healthy
+  file.** Observed live (2026-07-25) at three independent, individually
+  correct call sites: `WALStore.Close`'s final sync, compaction's
+  snapshot `tmp.Sync()` (caught mid-stall in a goroutine dump after 150s),
+  and general 10x slowdowns of fsync-heavy tests. The resulting goroutine
+  dump shows a test "stuck" in `os.(*File).Sync` — it is the syscall
+  stalling in the Docker Desktop I/O layer, not a Go-level deadlock; the
+  same test passes in milliseconds on the next run. Consequence:
+  **`go test ./internal/state/...` can exceed Go's 600s default package
+  timeout** on such hosts even though nothing is wrong with the code.
+  (`WALStore` now skips fsync entirely when the log is clean — see the
+  `dirty` flag in `internal/state/wal.go` — which removes the
+  never-wrote-a-byte victim class; fsyncs that guard real durability, like
+  compaction's pre-rename sync, cannot be skipped or bounded honestly.)
+- Run the state suite with an explicit generous timeout on such machines:
+  `-timeout 1200s` (the Makefile targets already do; bare `go test`
+  invocations do not).
+- Benchmarks on such hosts follow the discipline in this document: allocs/op
+  is the signal, wall time is weather.
+
+If you suspect this environment class, the live check is the startup probe
+warning (`data directory appears to be on a slow filesystem`) or timing a
+bare fsync in the container.

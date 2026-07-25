@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Neaox/overcast/internal/clock"
 )
 
 type idPayload struct{ ID int }
@@ -152,5 +154,30 @@ func TestBus_SnapshotAndSubscribeAll_NoGapNoDuplicate(t *testing.T) {
 		if got := total[id]; got != 1 {
 			t.Errorf("event id %d delivered %d times (snapshot+live), want exactly 1", id, got)
 		}
+	}
+}
+
+// TestPublish_StampsZeroTime pins the zero-Time guard: a publisher that
+// omits Time gets the bus clock's now; one that sets Time keeps it.
+func TestPublish_StampsZeroTime(t *testing.T) {
+	clk := clock.NewMock()
+	clk.Set(time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC))
+	b := NewBusWithClock(clk)
+	defer b.Stop()
+
+	b.Publish(context.Background(), Event{Type: S3BucketCreated, Source: "s3"})
+	explicit := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+	b.Publish(context.Background(), Event{Type: SQSQueueCreated, Source: "sqs", Time: explicit})
+
+	snap, unsub := b.SnapshotAndSubscribeAll(func(context.Context, Event) {})
+	defer unsub()
+	if len(snap) != 2 {
+		t.Fatalf("expected 2 events in history, got %d", len(snap))
+	}
+	if !snap[0].Time.Equal(clk.Now()) {
+		t.Fatalf("zero-Time event not stamped: got %v want %v", snap[0].Time, clk.Now())
+	}
+	if !snap[1].Time.Equal(explicit) {
+		t.Fatalf("explicit Time overwritten: got %v want %v", snap[1].Time, explicit)
 	}
 }
