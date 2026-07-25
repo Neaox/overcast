@@ -80,3 +80,49 @@ func TestSQLiteStore_JournalModeIsWAL(t *testing.T) {
 		t.Fatalf("journal_mode = %q, want %q", mode, "wal")
 	}
 }
+
+// TestHybridStore_DebugMetrics_reportsLiveJournalMode proves the metrics
+// payload's JournalMode field (not just direct PRAGMA queries against the
+// underlying *sql.DB, as the two tests above use) reflects the same live
+// readback — this is what internal/router/advisories.go's
+// journal-mode-not-wal rule actually consumes, so the payload plumbing needs
+// its own coverage independent of the raw PRAGMA query.
+func TestHybridStore_DebugMetrics_reportsLiveJournalMode(t *testing.T) {
+	s, err := NewHybridStore(t.TempDir(), time.Hour)
+	if err != nil {
+		t.Fatalf("NewHybridStore: %v", err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if err := s.WaitReady(ctx); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+
+	m := s.DebugMetrics(ctx, DebugMetricsOptions{})
+	if m.JournalMode != "wal" {
+		t.Fatalf("DebugMetrics().JournalMode = %q, want %q", m.JournalMode, "wal")
+	}
+	if m.Degraded {
+		t.Fatal("expected Degraded = false for a healthy hybrid store")
+	}
+}
+
+// TestSQLiteStore_DebugMetrics_reportsLiveJournalMode is
+// TestHybridStore_DebugMetrics_reportsLiveJournalMode's counterpart for the
+// plain persistent backend.
+func TestSQLiteStore_DebugMetrics_reportsLiveJournalMode(t *testing.T) {
+	s, err := NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if err := s.ensureReady(ctx); err != nil {
+		t.Fatalf("ensureReady: %v", err)
+	}
+
+	m := s.DebugMetrics(ctx, DebugMetricsOptions{})
+	if m.JournalMode != "wal" {
+		t.Fatalf("DebugMetrics().JournalMode = %q, want %q", m.JournalMode, "wal")
+	}
+}

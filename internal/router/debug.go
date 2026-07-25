@@ -66,7 +66,7 @@ func debugHandlers(cfg *config.Config, store state.Store, ec2 debugEC2Provider, 
 		r.Get("/state/{namespace}", debugStateNamespace(store, providers))
 		r.Post("/reset", debugReset(store, providers))
 		r.Post("/reset/{service}", debugResetService(store, providers, cfg.Services))
-		r.Get("/metrics", debugMetrics(store))
+		r.Get("/metrics", debugMetrics(cfg, store))
 
 		// ---- Service-specific debug endpoints ---------------------------------
 		if ec2 != nil {
@@ -520,16 +520,21 @@ func debugProvidersForServicePrefix(providers []DebugStateProvider, prefix strin
 // yields a list here instead of one merged entry. Empty (never null) for
 // backends that don't implement it at all (MemoryStore, WALStore).
 //
+// Advisories is the server-computed diagnostics list the web UI's Metrics &
+// Health page renders generically (see advisories.go's computeAdvisories) —
+// always present (never null), empty when nothing needs attention.
+//
 // Query params: ?includeRowCounts=true additionally computes
 // NamespaceRowCounts per store — for TierCached namespaces this issues one
 // SQL COUNT(*) per namespace, so it is opt-in rather than always computed.
 type debugMetricsResponse struct {
 	// state.DebugMetrics carries the JSON tags for this wire shape;
 	// DebugFlushRecord timestamps are stored UTC and marshal as RFC 3339.
-	Stores []state.DebugMetrics `json:"stores"`
+	Stores     []state.DebugMetrics `json:"stores"`
+	Advisories []Advisory           `json:"advisories"`
 }
 
-func debugMetrics(store state.Store) http.HandlerFunc {
+func debugMetrics(cfg *config.Config, store state.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		opts := state.DebugMetricsOptions{
 			IncludeNamespaceRowCounts: r.URL.Query().Get("includeRowCounts") == "true",
@@ -538,7 +543,17 @@ func debugMetrics(store state.Store) http.HandlerFunc {
 		if snapshots == nil {
 			snapshots = []state.DebugMetrics{}
 		}
-		writeDebugJSON(w, http.StatusOK, debugMetricsResponse{Stores: snapshots})
+		health, hasHealth := state.PersistentHealthSnapshot(store)
+		advisories := computeAdvisories(advisoryInput{
+			StateBackend: cfg.State,
+			Stores:       snapshots,
+			Health:       health,
+			HasHealth:    hasHealth,
+		})
+		if advisories == nil {
+			advisories = []Advisory{}
+		}
+		writeDebugJSON(w, http.StatusOK, debugMetricsResponse{Stores: snapshots, Advisories: advisories})
 	}
 }
 

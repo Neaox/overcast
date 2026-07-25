@@ -278,6 +278,52 @@ func TestDebugMetrics_returnsJSON(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusOK)
 }
 
+// TestDebugMetrics_includesAdvisoriesArray is an end-to-end payload-shape
+// test for the Metrics & Health advisories feature: a real HTTP request
+// through the real router (not a direct handler call), against the test
+// server's default MemoryStore backend, which the memory-mode advisory rule
+// exists to flag.
+func TestDebugMetrics_includesAdvisoriesArray(t *testing.T) {
+	// Given: a debug-enabled server on the default (memory) state backend.
+	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
+
+	// When: the metrics endpoint is requested.
+	resp, err := http.Get(srv.URL + "/_debug/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the response carries a non-null advisories array including the
+	// memory-mode advisory for the default memory backend.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var body struct {
+		Stores     []state.DebugMetrics `json:"stores"`
+		Advisories []struct {
+			Severity string `json:"severity"`
+			Code     string `json:"code"`
+			Title    string `json:"title"`
+			Detail   string `json:"detail"`
+		} `json:"advisories"`
+	}
+	helpers.DecodeJSON(t, resp, &body)
+	if body.Advisories == nil {
+		t.Fatal("expected a non-nil (possibly empty) advisories array")
+	}
+	found := false
+	for _, a := range body.Advisories {
+		if a.Code == "memory-mode" {
+			found = true
+			if a.Severity != "info" {
+				t.Errorf("expected memory-mode advisory severity %q, got %q", "info", a.Severity)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected a memory-mode advisory for the default memory backend, got %+v", body.Advisories)
+	}
+}
+
 // TestDebugReset_withSQLiteStore covers the non-MemoryStore branch of debugReset
 // (the resetAllNamespaces code path).
 func TestDebugReset_withSQLiteStore(t *testing.T) {

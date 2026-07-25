@@ -50,6 +50,14 @@ type SQLiteStore struct {
 	ready      chan struct{}
 	migrateErr error
 
+	// journalMode is the live `PRAGMA journal_mode` readback taken once,
+	// right after a successful migration (see runMigrate) — exposed via
+	// DebugMetrics.JournalMode. Left at its zero value ("") if migration
+	// failed. Same happens-before argument as migrateErr: written before
+	// `defer close(s.ready)` runs, so any reader that first observes
+	// s.ready closed sees this value race-free without a mutex.
+	journalMode string
+
 	// maintenanceCancel/maintenanceWG govern the background routine-
 	// maintenance loop (3.5: passive WAL checkpoint + conditional
 	// incremental vacuum, see runSQLitePragmaMaintenance in maintenance.go).
@@ -197,7 +205,24 @@ func (s *SQLiteStore) runMigrate() {
 		// invisible until the first kv operation runs — which may be never
 		// for daemons that only use service-specific tables (e.g. DynamoDB).
 		fmt.Fprintf(os.Stderr, "overcast: sqlite migration failed: %v\n", s.migrateErr)
+		return
 	}
+	s.journalMode = queryJournalMode(context.Background(), s.db)
+}
+
+// queryJournalMode reads the LIVE `PRAGMA journal_mode` from db — the actual
+// active journaling mode, as opposed to the DSN parameter a caller asked
+// for. Shared by SQLiteStore.runMigrate and HybridStore.seedFromSQLite so
+// both persistent-backed stores report this identically. Returns "" if the
+// query fails; callers treat an empty JournalMode as "unknown", never as a
+// stand-in for "wal", so a query failure can't accidentally mask a real
+// misconfiguration.
+func queryJournalMode(ctx context.Context, db *sql.DB) string {
+	var mode string
+	if err := db.QueryRowContext(ctx, `PRAGMA journal_mode`).Scan(&mode); err != nil {
+		return ""
+	}
+	return mode
 }
 
 // ensureReady blocks until the background schema migration has completed
@@ -236,6 +261,17 @@ func (s *SQLiteStore) NotReady() bool {
 // DebugMetricsOptions) applies to this backend.
 func (s *SQLiteStore) DebugMetrics(ctx context.Context, opts DebugMetricsOptions) DebugMetrics {
 	m := DebugMetrics{Mode: "persistent"}
+	// Non-blocking readiness check (mirrors NotReady) rather than
+	// ensureReady: a debug endpoint call must not block on an in-flight
+	// migration just to read a diagnostics field. journalMode's
+	// happens-before guarantee (see the field's doc comment) only holds once
+	// s.ready has been observed closed, so an in-flight migration correctly
+	// reports "" here rather than racing on the field.
+	select {
+	case <-s.ready:
+		m.JournalMode = s.journalMode
+	default:
+	}
 	if !opts.IncludeNamespaceRowCounts {
 		return m
 	}

@@ -98,6 +98,41 @@ func TestHybridStore_NotReady_FalseWhenDegraded(t *testing.T) {
 	}
 }
 
+// TestHybridStore_DebugMetrics_reportsDegradedWithEmptyJournalMode proves the
+// DebugMetrics payload surfaces Degraded=true (the "store-degraded-memory-only"
+// advisory's data source, see internal/router/advisories.go) once the store
+// has fallen back to memory-only, and that JournalMode stays "" rather than a
+// stale or guessed value — the store failed before ever reaching the point
+// in seedFromSQLite where the live pragma readback happens.
+func TestHybridStore_DebugMetrics_reportsDegradedWithEmptyJournalMode(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := dir + "/overcast.db"
+	if err := os.Mkdir(dbPath, 0o755); err != nil {
+		t.Fatalf("pre-create overcast.db as a directory: %v", err)
+	}
+	s, err := NewHybridStore(dir, time.Hour)
+	if err != nil {
+		t.Fatalf("NewHybridStore: %v", err)
+	}
+	defer s.Close()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for s.NotReady() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for the store to leave its migration window")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	m := s.DebugMetrics(context.Background(), DebugMetricsOptions{})
+	if !m.Degraded {
+		t.Fatal("expected Degraded = true after an unusable database path forced a fallback to memory-only")
+	}
+	if m.JournalMode != "" {
+		t.Fatalf("expected empty JournalMode for a store that degraded before the pragma readback, got %q", m.JournalMode)
+	}
+}
+
 // ---- 1.2 read-only connection pool -----------------------------------
 
 func TestHybridStore_OpensDedicatedReadPoolWithMultipleConns(t *testing.T) {

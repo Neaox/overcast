@@ -82,6 +82,7 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	r.Get("/api/topology", handleTopology)
 	r.Get("/api/debug/state", handleDebugState)
 	r.Get("/api/debug/state/*", handleDebugNamespace)
+	r.Get("/api/debug/metrics", handleDebugMetrics)
 	r.Get("/api/lambda/runtimes", proxyJSONHandler("/_lambda/runtimes"))
 	r.Get("/api/lambda/instances", handleLambdaInstances)
 	r.Get("/api/lambda/functions/{name}/source", handleLambdaSourceGet)
@@ -262,6 +263,19 @@ func handleDebugNamespace(w http.ResponseWriter, r *http.Request) {
 	proxyDebugState(w, r, "/_debug/state/"+namespace)
 }
 
+// handleDebugMetrics proxies GET /_debug/metrics — the storage diagnostics +
+// advisories payload behind the web UI's Metrics & Health page (see
+// internal/router/debug.go's debugMetrics and advisories.go). Shares
+// proxyDebugState's "DebugDisabled" 404 translation rather than
+// proxyJSONHandler's plain pass-through, since /_debug/* only exists at all
+// when the emulator has OVERCAST_DEBUG=true — the Metrics & Health page needs
+// the same recognizable, non-generic error the raw-state debugger already
+// gives so its empty/degraded state can explain why, instead of showing a
+// bare "HTTP 404".
+func handleDebugMetrics(w http.ResponseWriter, r *http.Request) {
+	proxyDebugState(w, r, "/_debug/metrics")
+}
+
 func proxyDebugState(w http.ResponseWriter, r *http.Request, path string) {
 	ep := resolveEndpoint(r)
 	debugURL := ep + path
@@ -304,6 +318,10 @@ func copyDebugResponse(w http.ResponseWriter, resp *http.Response) {
 	}
 }
 
+// writeDebugDisabledError is shared by every /_debug/* proxy in this file
+// (raw state and metrics/advisories alike) — a stable "error": "DebugDisabled"
+// code callers can key off of, plus a human-readable message covering both
+// use cases so it reads correctly regardless of which /_debug/* route hit it.
 func writeDebugDisabledError(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNotFound)
@@ -312,7 +330,7 @@ func writeDebugDisabledError(w http.ResponseWriter) {
 		Message string `json:"message"`
 	}{
 		Error:   "DebugDisabled",
-		Message: "OVERCAST_DEBUG must be enabled to inspect raw state.",
+		Message: "OVERCAST_DEBUG must be enabled to inspect raw state or storage diagnostics.",
 	})
 }
 

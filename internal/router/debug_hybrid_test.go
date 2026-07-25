@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/state"
 )
 
@@ -44,7 +45,8 @@ func TestDebugMetrics_hybridStoreReportsFlushAndSeed(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/_debug/metrics", nil)
 	rec := httptest.NewRecorder()
-	debugMetrics(store).ServeHTTP(rec, req)
+	cfg := &config.Config{State: config.StateBackendHybrid}
+	debugMetrics(cfg, store).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
@@ -65,6 +67,32 @@ func TestDebugMetrics_hybridStoreReportsFlushAndSeed(t *testing.T) {
 	}
 	if len(got.FlushHistory) == 0 {
 		t.Error("expected at least one flush history entry after an explicit Flush")
+	}
+	if got.JournalMode != "wal" {
+		t.Errorf("expected live journal mode %q, got %q", "wal", got.JournalMode)
+	}
+	if got.Degraded {
+		t.Error("expected Degraded = false for a healthy hybrid store")
+	}
+	if resp.Advisories == nil {
+		t.Fatal("expected a non-nil (possibly empty) advisories list")
+	}
+	// Deliberately does NOT assert len(resp.Advisories) == 0: this test runs a
+	// real startup fsync probe (runDataDirProbe) against t.TempDir(), and on a
+	// heavily loaded machine (many concurrent test/build processes) that probe
+	// can legitimately exceed dataDirSlowFsyncThreshold and correctly fire the
+	// data-dir-slow-filesystem advisory — that would be an accurate reading of
+	// a genuinely slow moment, not a bug, and asserting strict emptiness here
+	// would make this test flaky under load for a reason unrelated to what it
+	// exists to cover (flush history / seed duration). The "no advisories on a
+	// healthy store" behavior itself has full, deterministic coverage in
+	// advisories_test.go against fake DebugMetrics input instead. This test
+	// only checks for the two advisories that must never fire on an
+	// undegraded, correctly-WAL-mode store regardless of disk speed.
+	for _, a := range resp.Advisories {
+		if a.Code == advisoryCodeJournalModeNotWAL || a.Code == advisoryCodeStoreDegradedMemoryOnly {
+			t.Errorf("unexpected advisory %q for a healthy, correctly-WAL-mode hybrid store: %+v", a.Code, a)
+		}
 	}
 }
 

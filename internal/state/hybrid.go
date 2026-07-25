@@ -156,6 +156,13 @@ type HybridStore struct {
 	// didn't complete. Guarded by mu.
 	seedDuration *time.Duration
 
+	// journalMode is the live `PRAGMA journal_mode` readback from the writer
+	// connection, queried once in seedFromSQLite right after the connection
+	// is open, migrated, and the read pool has been attempted — exposed via
+	// DebugMetrics.JournalMode. Left at its zero value ("") if the store
+	// degrades to memory-only before reaching that point. Guarded by mu.
+	journalMode string
+
 	// readRetryCount/readTimeoutCount are pressure-handling observability
 	// counters (storage-pressure-handling item 4): readRetryCount increments
 	// once per individual retry attempt made by the hybrid SQLite read-retry
@@ -511,6 +518,14 @@ func (s *HybridStore) seedFromSQLite() {
 		// connection for reads instead of degrading the whole store.
 		s.logWarn("hybrid: opening dedicated read pool failed; reads will share the writer connection", zap.Error(err))
 	}
+	// Query the LIVE journal mode once, here — not per-request — so a silent
+	// DSN/driver regression (see this project's WAL-disabled-since-inception
+	// incident, storage-pressure-handling item 0) shows up in DebugMetrics
+	// immediately instead of requiring someone to remember to check.
+	journalMode := queryJournalMode(context.Background(), s.sqlite.db)
+	s.mu.Lock()
+	s.journalMode = journalMode
+	s.mu.Unlock()
 	close(s.sqliteReady)
 	sqliteReadyClosed = true
 
@@ -1249,6 +1264,7 @@ func (s *HybridStore) DebugMetrics(ctx context.Context, opts DebugMetricsOptions
 	s.mu.Lock()
 	mode := s.health.Mode
 	history := append([]DebugFlushRecord(nil), s.flushHistory...)
+	journalMode := s.journalMode
 	var seedDurationMillis *int64
 	if s.seedDuration != nil {
 		ms := s.seedDuration.Milliseconds()
@@ -1264,6 +1280,8 @@ func (s *HybridStore) DebugMetrics(ctx context.Context, opts DebugMetricsOptions
 		ReadRetryCount:     s.readRetryCount.Load(),
 		ReadTimeoutCount:   s.readTimeoutCount.Load(),
 		DataDirProbe:       s.getDataDirProbeResult(),
+		JournalMode:        journalMode,
+		Degraded:           s.sqliteDegraded.Load(),
 	}
 	if opts.IncludeNamespaceRowCounts {
 		namespaces, err := s.ListNamespaces(ctx)

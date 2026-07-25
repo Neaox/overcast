@@ -1,5 +1,11 @@
 import { apiFetch, API_BASE, endpointHeaders, endpointResolver } from "./base"
-import type { MetricsSnapshot, HealthResponse, TopologyResponse, CapturedMessage } from "@/types"
+import type {
+  MetricsSnapshot,
+  HealthResponse,
+  TopologyResponse,
+  CapturedMessage,
+  DebugMetricsResponse,
+} from "@/types"
 
 export const metrics = {
   get: () => apiFetch<MetricsSnapshot>("/metrics"),
@@ -7,6 +13,19 @@ export const metrics = {
 
 export const health = {
   check: () => apiFetch<HealthResponse>("/health"),
+}
+
+/**
+ * Storage diagnostics + server-computed advisories behind the Metrics &
+ * Health page (GET /_debug/metrics, proxied at /api/debug/metrics). Only
+ * available when the emulator has OVERCAST_DEBUG=true — a disabled debug
+ * namespace responds 404 with `{"error":"DebugDisabled", ...}`, which
+ * apiFetch turns into a rejected promise (see debugMetricsQueryOptions in
+ * web/src/features/metrics/data.ts for how callers treat that as an
+ * expected, non-error "unavailable" state rather than a real fetch failure).
+ */
+export const debugMetrics = {
+  get: () => apiFetch<DebugMetricsResponse>("/debug/metrics"),
 }
 
 export const topology = {
