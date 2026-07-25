@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Neaox/overcast/internal/clock"
+
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/events"
@@ -129,7 +131,7 @@ func readSSELines(body string) []string {
 func TestEventsHandler_SetsSSEHeaders(t *testing.T) {
 	bus := newTestBus()
 	shutdownCh := newTestShutdown()
-	handler := eventsHandler(bus, nopLogger(), shutdownCh)
+	handler := eventsHandler(bus, nopLogger(), clock.New(), shutdownCh)
 
 	rec, cancel := doSSERequest(handler, "")
 	defer cancel()
@@ -151,7 +153,7 @@ func TestEventsHandler_SetsSSEHeaders(t *testing.T) {
 func TestEventsHandler_SendsConnectedComment(t *testing.T) {
 	bus := newTestBus()
 	shutdownCh := newTestShutdown()
-	handler := eventsHandler(bus, nopLogger(), shutdownCh)
+	handler := eventsHandler(bus, nopLogger(), clock.New(), shutdownCh)
 
 	rec, cancel := doSSERequest(handler, "")
 	defer cancel()
@@ -165,7 +167,7 @@ func TestEventsHandler_SendsConnectedComment(t *testing.T) {
 func TestEventsHandler_DeliversEventAsSSEData(t *testing.T) {
 	bus := newTestBus()
 	shutdownCh := newTestShutdown()
-	handler := eventsHandler(bus, nopLogger(), shutdownCh)
+	handler := eventsHandler(bus, nopLogger(), clock.New(), shutdownCh)
 
 	rec, cancel := doSSERequest(handler, "")
 	defer cancel()
@@ -214,7 +216,7 @@ func TestEventsHandler_DeliversEventAsSSEData(t *testing.T) {
 func TestEventsHandler_SourceFilterDeliverMatchingSource(t *testing.T) {
 	bus := newTestBus()
 	shutdownCh := newTestShutdown()
-	handler := eventsHandler(bus, nopLogger(), shutdownCh)
+	handler := eventsHandler(bus, nopLogger(), clock.New(), shutdownCh)
 
 	// Filter to s3 only.
 	rec, cancel := doSSERequest(handler, "source=s3")
@@ -237,7 +239,7 @@ func TestEventsHandler_SourceFilterDeliverMatchingSource(t *testing.T) {
 func TestEventsHandler_SourceFilterDropsNonMatchingSource(t *testing.T) {
 	bus := newTestBus()
 	shutdownCh := newTestShutdown()
-	handler := eventsHandler(bus, nopLogger(), shutdownCh)
+	handler := eventsHandler(bus, nopLogger(), clock.New(), shutdownCh)
 
 	// Filter to sqs only — publish an s3 event, expect no data frame.
 	rec, cancel := doSSERequest(handler, "source=sqs")
@@ -266,7 +268,7 @@ func TestEventsHandler_SourceFilterDropsNonMatchingSource(t *testing.T) {
 func TestEventsHandler_MultipleSourceFilters(t *testing.T) {
 	bus := newTestBus()
 	shutdownCh := newTestShutdown()
-	handler := eventsHandler(bus, nopLogger(), shutdownCh)
+	handler := eventsHandler(bus, nopLogger(), clock.New(), shutdownCh)
 
 	rec, cancel := doSSERequest(handler, "source=s3&source=sqs")
 	defer cancel()
@@ -288,7 +290,7 @@ func TestEventsHandler_MultipleSourceFilters(t *testing.T) {
 func TestEventsHandler_ShutdownClosesStream(t *testing.T) {
 	bus := newTestBus()
 	shutdownCh := make(chan struct{})
-	handler := eventsHandler(bus, nopLogger(), shutdownCh)
+	handler := eventsHandler(bus, nopLogger(), clock.New(), shutdownCh)
 
 	done := make(chan struct{})
 	rec := newFlushRecorder()
@@ -314,7 +316,7 @@ func TestEventsHandler_ShutdownClosesStream(t *testing.T) {
 func TestEventsHandler_ClientDisconnectClosesStream(t *testing.T) {
 	bus := newTestBus()
 	shutdownCh := newTestShutdown()
-	handler := eventsHandler(bus, nopLogger(), shutdownCh)
+	handler := eventsHandler(bus, nopLogger(), clock.New(), shutdownCh)
 
 	done := make(chan struct{})
 	rec := newFlushRecorder()
@@ -347,7 +349,7 @@ type nonFlusherWriter struct {
 func TestEventsHandler_NonFlusherReturns500(t *testing.T) {
 	bus := newTestBus()
 	shutdownCh := newTestShutdown()
-	handler := eventsHandler(bus, nopLogger(), shutdownCh)
+	handler := eventsHandler(bus, nopLogger(), clock.New(), shutdownCh)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/_events", nil)
@@ -361,7 +363,7 @@ func TestEventsHandler_NonFlusherReturns500(t *testing.T) {
 func TestEventsHandler_EnvelopeTimeIsRFC3339Nano(t *testing.T) {
 	bus := newTestBus()
 	shutdownCh := newTestShutdown()
-	handler := eventsHandler(bus, nopLogger(), shutdownCh)
+	handler := eventsHandler(bus, nopLogger(), clock.New(), shutdownCh)
 
 	rec, cancel := doSSERequest(handler, "")
 	defer cancel()
@@ -418,7 +420,7 @@ func TestEventsHandler_EnvelopeTimeIsRFC3339Nano(t *testing.T) {
 func TestEventsHandler_ReplaysHistoryOnConnect(t *testing.T) {
 	bus := newTestBus()
 	shutdownCh := newTestShutdown()
-	handler := eventsHandler(bus, nopLogger(), shutdownCh)
+	handler := eventsHandler(bus, nopLogger(), clock.New(), shutdownCh)
 
 	// Publish before any client connects — this lands in history, not on
 	// any live subscriber (there isn't one yet).
@@ -452,7 +454,7 @@ func TestEventsHandler_ReplaysHistoryOnConnect(t *testing.T) {
 func TestEventsHandler_ReplayThenLive_NoGapNoDuplicate(t *testing.T) {
 	bus := newTestBus()
 	shutdownCh := newTestShutdown()
-	handler := eventsHandler(bus, nopLogger(), shutdownCh)
+	handler := eventsHandler(bus, nopLogger(), clock.New(), shutdownCh)
 
 	rec, cancel := doSSERequest(handler, "")
 	defer cancel()
@@ -493,7 +495,7 @@ func TestEventsHandler_ReplayThenLive_NoGapNoDuplicate(t *testing.T) {
 func TestEventsHandler_HistoryRespectsSourceFilter(t *testing.T) {
 	bus := newTestBus()
 	shutdownCh := newTestShutdown()
-	handler := eventsHandler(bus, nopLogger(), shutdownCh)
+	handler := eventsHandler(bus, nopLogger(), clock.New(), shutdownCh)
 
 	bus.Publish(context.Background(), events.Event{
 		Type:   events.S3ObjectCreated,
