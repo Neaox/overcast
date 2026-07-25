@@ -344,6 +344,31 @@ func (s *dynamoStore) putItem(ctx context.Context, table *Table, item Item) *pro
 	return nil
 }
 
+// putItemWithIndexMaintenance is putItem plus GSI index-row maintenance
+// (dynamodb-gsi-design.md section 3): oldItem is the item's previous value
+// (nil if it didn't previously exist), used to diff against item and decide
+// which of table's GSI index rows need to change. The base-item write and
+// every resulting index-row write happen atomically (one *sql.Tx on the SQL
+// backend, one mutex critical section on the memory backend — see
+// item_store.go's putWithIndexMutations).
+//
+// Callers (PutItem, UpdateItem, BatchWriteItem) are responsible for having
+// already fetched oldItem when table has any GSIs — see each handler's own
+// comment for why that read is free (already needed for streams/
+// ReturnValues, or for UpdateItem's upsert semantics) rather than a new
+// cost this adds.
+func (s *dynamoStore) putItemWithIndexMaintenance(ctx context.Context, table *Table, item, oldItem Item) *protocol.AWSError {
+	hashKey, sortKey, aerr := resolveStorageKeys(table, item)
+	if aerr != nil {
+		return aerr
+	}
+	mutations := diffIndexMutations(table, oldItem, item)
+	if err := s.items.putWithIndexMutations(ctx, table.TableName, hashKey, sortKey, item, mutations); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
 func (s *dynamoStore) getItem(ctx context.Context, table *Table, key Item) (Item, *protocol.AWSError) {
 	hashKey, sortKey, aerr := resolveStorageKeys(table, key)
 	if aerr != nil {
@@ -362,6 +387,24 @@ func (s *dynamoStore) deleteItem(ctx context.Context, table *Table, key Item) *p
 		return aerr
 	}
 	if err := s.items.remove(ctx, table.TableName, hashKey, sortKey); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+// deleteItemWithIndexMaintenance is deleteItem plus GSI index-row cleanup:
+// oldItem (the item's value before this delete, or nil if it never existed)
+// is diffed against a nil "new" state, which — per diffIndexMutations —
+// produces exactly one delete mutation per GSI whose key oldItem satisfied,
+// and none for GSIs it didn't. Atomic with the base-item delete, same as
+// putItemWithIndexMaintenance.
+func (s *dynamoStore) deleteItemWithIndexMaintenance(ctx context.Context, table *Table, key, oldItem Item) *protocol.AWSError {
+	hashKey, sortKey, aerr := resolveStorageKeys(table, key)
+	if aerr != nil {
+		return aerr
+	}
+	mutations := diffIndexMutations(table, oldItem, nil)
+	if err := s.items.removeWithIndexMutations(ctx, table.TableName, hashKey, sortKey, mutations); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil
@@ -475,6 +518,9 @@ func (s *dynamoStore) latestStreamSeq(ctx context.Context, tableName string) (in
 // deleteTable removes a table descriptor and all its items.
 func (s *dynamoStore) deleteTable(ctx context.Context, name string) *protocol.AWSError {
 	if err := s.items.deleteAll(ctx, name); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if err := s.items.deleteAllIndexEntriesForTable(ctx, name); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	key := serviceutil.RegionKey(s.region(ctx), name)

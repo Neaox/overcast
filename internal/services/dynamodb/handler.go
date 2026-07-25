@@ -444,13 +444,16 @@ func (h *Handler) putItemTyped(ctx context.Context, req *putItemRequest) (*putIt
 		}
 	}
 
-	// For stream OLD_IMAGE capture or ReturnValues=ALL_OLD, read the existing item.
+	// For stream OLD_IMAGE capture, ReturnValues=ALL_OLD, or GSI index-row
+	// maintenance (dynamodb-gsi-design.md section 3 — a table with GSIs
+	// must diff the old item against the new one on every write to decide
+	// which index rows change), read the existing item.
 	var oldItem Item
-	if table.streamEnabled() || req.ReturnValues == "ALL_OLD" {
+	if table.streamEnabled() || req.ReturnValues == "ALL_OLD" || len(table.GlobalSecondaryIndexes) > 0 {
 		oldItem, _ = h.store.getItem(ctx, table, req.Item)
 	}
 
-	if aerr := h.store.putItem(ctx, table, req.Item); aerr != nil {
+	if aerr := h.store.putItemWithIndexMaintenance(ctx, table, req.Item, oldItem); aerr != nil {
 		return nil, aerr
 	}
 
@@ -542,9 +545,12 @@ func (h *Handler) deleteItemTyped(ctx context.Context, req *deleteItemRequest) (
 		return nil, aerr
 	}
 
-	// Capture old item (needed for ConditionExpression, ReturnValues, and streams).
+	// Capture old item (needed for ConditionExpression, ReturnValues,
+	// streams, and — per dynamodb-gsi-design.md section 3 — GSI index-row
+	// cleanup: every GSI whose key the old item satisfied needs its index
+	// row deleted).
 	var oldItem Item
-	if table.streamEnabled() || req.ConditionExpression != "" || req.ReturnValues == "ALL_OLD" {
+	if table.streamEnabled() || req.ConditionExpression != "" || req.ReturnValues == "ALL_OLD" || len(table.GlobalSecondaryIndexes) > 0 {
 		oldItem, _ = h.store.getItem(ctx, table, req.Key)
 	}
 
@@ -579,7 +585,7 @@ func (h *Handler) deleteItemTyped(ctx context.Context, req *deleteItemRequest) (
 		}
 	}
 
-	if aerr := h.store.deleteItem(ctx, table, req.Key); aerr != nil {
+	if aerr := h.store.deleteItemWithIndexMaintenance(ctx, table, req.Key, oldItem); aerr != nil {
 		return nil, aerr
 	}
 
@@ -1123,6 +1129,17 @@ func (h *Handler) updateTableTyped(ctx context.Context, req *updateTableRequest)
 			gsi.IndexStatus = "ACTIVE"
 			table.GlobalSecondaryIndexes = append(table.GlobalSecondaryIndexes, gsi)
 			changed = true
+
+			// Backfill (dynamodb-gsi-design.md section 3): the table may
+			// already have items when a GSI is added — synchronously scan
+			// and populate the new index's rows before returning, so
+			// IndexStatus: "ACTIVE" is truthful the instant this response
+			// is sent, matching CreateTable's existing immediate-ACTIVE
+			// convention rather than introducing a CREATING/backfilling
+			// state nothing else in this codebase models.
+			if aerr := h.backfillIndex(ctx, table, &gsi); aerr != nil {
+				return nil, aerr
+			}
 		}
 		if update.Delete != nil {
 			filtered := table.GlobalSecondaryIndexes[:0]
@@ -1133,6 +1150,13 @@ func (h *Handler) updateTableTyped(ctx context.Context, req *updateTableRequest)
 			}
 			table.GlobalSecondaryIndexes = filtered
 			changed = true
+
+			// Clean up the removed GSI's index rows so a later GSI
+			// recreated under the same name doesn't inherit stale entries
+			// from this one's lifetime (dynamodb-gsi-design.md section 3).
+			if err := h.store.items.deleteAllIndexEntriesForIndex(ctx, table.TableName, update.Delete.IndexName); err != nil {
+				return nil, protocol.Wrap(protocol.ErrInternalError, err)
+			}
 		}
 		if update.Update != nil {
 			for i := range table.GlobalSecondaryIndexes {
@@ -1174,6 +1198,50 @@ func (h *Handler) updateTableTyped(ctx context.Context, req *updateTableRequest)
 	}
 
 	return &createTableResponse{TableDescription: table}, nil
+}
+
+// backfillIndex populates idx's index rows for every item already stored in
+// table — dynamodb-gsi-design.md section 3's "UpdateTable adding a GSI to a
+// table that already has items" backfill. A brand-new table needs no
+// equivalent call: CreateTable's GSIs start with zero items to backfill,
+// so every subsequent write populates the index going forward via the
+// normal write-path maintenance (diffIndexMutations).
+//
+// Uses the same indexKeyComponents/projectForIndex helpers as the write
+// path and the migration-time backfill (migrations.go's
+// backfillIndexEntriesForTable), so all three producers of index rows agree
+// on what a row looks like for a given item.
+func (h *Handler) backfillIndex(ctx context.Context, table *Table, idx *SecondaryIndex) *protocol.AWSError {
+	items, aerr := h.store.scanItems(ctx, table.TableName)
+	if aerr != nil {
+		return aerr
+	}
+
+	var mutations []indexMutation
+	for _, item := range items {
+		indexHash, indexSort, ok := indexKeyComponents(table, idx, item)
+		if !ok {
+			continue // sparse — item doesn't satisfy this GSI's key
+		}
+		baseHash, baseSort, aerr := resolveStorageKeys(table, item)
+		if aerr != nil {
+			continue // malformed item — isolate, skip (CLAUDE.md isolation rule)
+		}
+		mutations = append(mutations, indexMutation{
+			indexName: idx.IndexName,
+			op:        indexMutationUpsert,
+			indexHash: indexHash, indexSort: indexSort,
+			baseHash: baseHash, baseSort: baseSort,
+			item: projectForIndex(table, idx, item),
+		})
+	}
+	if len(mutations) == 0 {
+		return nil
+	}
+	if err := h.store.items.applyIndexMutations(ctx, table.TableName, mutations); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
 }
 
 // ---- TTL -------------------------------------------------------------------
@@ -1562,14 +1630,19 @@ func (h *Handler) batchWriteItemTyped(ctx context.Context, req *batchWriteItemRe
 			return nil, aerr
 		}
 
+		// Same gate PutItem/DeleteItem use: a table with GSIs must read the
+		// old item to compute index-row diffs (dynamodb-gsi-design.md
+		// section 3), in addition to the existing stream-only condition.
+		needsOldItem := table.streamEnabled() || len(table.GlobalSecondaryIndexes) > 0
+
 		for _, op := range ops {
 			switch {
 			case op.PutRequest != nil:
 				var oldItem Item
-				if table.streamEnabled() {
+				if needsOldItem {
 					oldItem, _ = h.store.getItem(ctx, table, op.PutRequest.Item)
 				}
-				if aerr := h.store.putItem(ctx, table, op.PutRequest.Item); aerr != nil {
+				if aerr := h.store.putItemWithIndexMaintenance(ctx, table, op.PutRequest.Item, oldItem); aerr != nil {
 					return nil, aerr
 				}
 				if table.streamEnabled() {
@@ -1578,10 +1651,10 @@ func (h *Handler) batchWriteItemTyped(ctx context.Context, req *batchWriteItemRe
 
 			case op.DeleteRequest != nil:
 				var oldItem Item
-				if table.streamEnabled() {
+				if needsOldItem {
 					oldItem, _ = h.store.getItem(ctx, table, op.DeleteRequest.Key)
 				}
-				if aerr := h.store.deleteItem(ctx, table, op.DeleteRequest.Key); aerr != nil {
+				if aerr := h.store.deleteItemWithIndexMaintenance(ctx, table, op.DeleteRequest.Key, oldItem); aerr != nil {
 					return nil, aerr
 				}
 				if table.streamEnabled() && oldItem != nil {
