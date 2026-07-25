@@ -444,3 +444,46 @@ func TestSQLItemBackend_PutWithIndexMutations_TxRollsBackOnFailure(t *testing.T)
 		t.Fatalf("gsi-ok index entry must not be committed when the transaction rolled back, got %d rows", n)
 	}
 }
+
+// TestIndexStructure_DeleteRemovesIndexRows covers the full-item-deletion
+// half of the write-amplification table (design section 3: "every GSI whose
+// key the old item satisfied gets one index-row delete") at the backend
+// level — the sparse-rules test covers key *removal via update*; this covers
+// DeleteItem's shape, where newItem is nil and every index row for the item
+// must go.
+func TestIndexStructure_DeleteRemovesIndexRows(t *testing.T) {
+	for name, backend := range newTestItemBackends(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			table := ordersTableWithGSIs()
+
+			dense := Item{"orderId": attrValue{"S": "o1"}, "customerId": attrValue{"S": "c1"}, "status": attrValue{"S": "shipped"}, "amount": attrValue{"S": "9.99"}}
+			putViaWritePath(t, ctx, backend, table, nil, dense)
+
+			var before int64
+			for _, idx := range table.GlobalSecondaryIndexes {
+				n, err := backend.countIndexEntries(ctx, table.TableName, idx.IndexName)
+				if err != nil {
+					t.Fatalf("countIndexEntries(%s) before: %v", idx.IndexName, err)
+				}
+				before += n
+			}
+			if before == 0 {
+				t.Fatalf("expected index rows after dense put, got 0")
+			}
+
+			key := Item{"orderId": attrValue{"S": "o1"}}
+			deleteViaWritePath(t, ctx, backend, table, dense, key)
+
+			for _, idx := range table.GlobalSecondaryIndexes {
+				n, err := backend.countIndexEntries(ctx, table.TableName, idx.IndexName)
+				if err != nil {
+					t.Fatalf("countIndexEntries(%s) after: %v", idx.IndexName, err)
+				}
+				if n != 0 {
+					t.Fatalf("expected 0 index rows in %s after delete, got %d", idx.IndexName, n)
+				}
+			}
+		})
+	}
+}
