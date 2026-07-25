@@ -99,7 +99,7 @@ describe("EventsPage", () => {
     // Hidden by default (includeHeartbeats defaults to false at the hook level).
     expect(screen.queryByText("system")).not.toBeInTheDocument()
 
-    await user.click(screen.getByTitle("Show heartbeat pings"))
+    await user.click(screen.getByRole("button", { name: "Show heartbeat pings" }))
 
     expect(await screen.findByText("system")).toBeInTheDocument()
   })

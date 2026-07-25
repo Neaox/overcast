@@ -31,6 +31,7 @@ import { useEventStream, type StreamEvent } from "@/hooks/use-event-stream"
 import { EventConsole } from "@/components/ui/event-console"
 import { PageHeader } from "@/components/ui/primitives"
 import { Button } from "@/components/ui/button"
+import { Tooltip } from "@/components/ui/tooltip"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { toTitleCase } from "@/lib/format"
@@ -403,17 +404,25 @@ export function EventsPage() {
           {paused ? "Resume" : "Pause"}
         </Button>
 
-        {/* Heartbeats */}
-        <Button
-          variant={showHeartbeats ? "secondary" : "ghost"}
-          size="sm"
-          className="h-8 gap-1 text-xs"
-          onClick={() => setShowHeartbeats(v => !v)}
-          title={showHeartbeats ? "Hide heartbeat pings" : "Show heartbeat pings"}
-        >
-          <Heart className={cn("h-3.5 w-3.5", showHeartbeats && "text-fg-muted")} />
-          {showHeartbeats ? "Pings" : null}
-        </Button>
+        {/* Heartbeats — icon-only toggle: filled red when pings are shown,
+            outlined when hidden; the label lives in the tooltip. */}
+        <Tooltip content={showHeartbeats ? "Hide heartbeat pings" : "Show heartbeat pings"}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 text-xs"
+            onClick={() => setShowHeartbeats(v => !v)}
+            aria-label={showHeartbeats ? "Hide heartbeat pings" : "Show heartbeat pings"}
+            aria-pressed={showHeartbeats}
+          >
+            <Heart
+              className={cn(
+                "h-3.5 w-3.5",
+                showHeartbeats ? "fill-danger text-danger" : "text-fg-muted",
+              )}
+            />
+          </Button>
+        </Tooltip>
 
         {/* Clear filters — always visible */}
         <Button
