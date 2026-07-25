@@ -1,0 +1,7 @@
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/x-amz-json-1.1"
+  },
+  "body": "{\"Parameter\":{\"Name\":\"/golden/param\",\"Type\":\"String\",\"Value\":\"hello\",\"Version\":1,\"ARN\":\"arn:aws:ssm:us-east-1:000000000000:parameter/golden/param\",\"LastModifiedDate\":0,\"DataType\":\"text\"}}"
+}

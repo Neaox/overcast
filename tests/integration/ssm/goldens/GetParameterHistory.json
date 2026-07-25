@@ -1,0 +1,7 @@
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/x-amz-json-1.1"
+  },
+  "body": "{\"Parameters\":[{\"Name\":\"/golden/history\",\"Type\":\"String\",\"Value\":\"v1\",\"Version\":1,\"LastModifiedDate\":0,\"Tier\":\"Standard\"},{\"Name\":\"/golden/history\",\"Type\":\"String\",\"Value\":\"v2\",\"Version\":2,\"LastModifiedDate\":0,\"Tier\":\"Standard\"}]}"
+}
