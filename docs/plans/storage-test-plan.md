@@ -161,6 +161,7 @@ on Windows 11, Node v24 on host. See git history for the exact commit.
 | T1 web `vitest run` (full) | ✅ |
 | T4 PutMetricData burst benchmark | ✅ flat after fix (10–20 allocs/op regardless of retained points); pre-fix grew ~20 allocs per retained point per put — see the T4 table for full numbers/conditions |
 | T4 Logs append burst benchmarks | ✅ flat across preload sizes |
+| T4 TierCached point-Get attribution (storage-plan 3.3 gate) | ✅ recorded, item CLOSED won't-do — Get ~50–62µs/24 allocs flat 10k→100k rows (WAL) vs unmarshal ~5–26µs/23 allocs; round trip dominates but absolute cost is micro-scale for the surfaces remaining on this path; the benchmark's mixed-load variant is credited with exposing the WAL-never-enabled DSN bug (fixed, PR #284). Residual: clean post-WAL mixed-load number owed by the pragma-experiments stream (checkpoint-policy suspect); reopen conditions recorded in storage-plan 3.3. |
 | T2 persistent/wal integration matrix | ⬜ pre-release |
 | T3 upgrade-path against real `main` data dir | ⬜ pre-release |
 | T5 Docker/SDK/CDK/UI smoke | ⬜ pre-release |

@@ -155,10 +155,16 @@ func benchmarkTierCachedGet(b *testing.B, rows, valueBytes int) {
 	}
 }
 
-func BenchmarkTierCachedGet_Hybrid_10kRows_512B(b *testing.B)  { benchmarkTierCachedGet(b, 10_000, 512) }
-func BenchmarkTierCachedGet_Hybrid_10kRows_5KB(b *testing.B)   { benchmarkTierCachedGet(b, 10_000, 5*1024) }
-func BenchmarkTierCachedGet_Hybrid_100kRows_512B(b *testing.B) { benchmarkTierCachedGet(b, 100_000, 512) }
-func BenchmarkTierCachedGet_Hybrid_100kRows_5KB(b *testing.B)  { benchmarkTierCachedGet(b, 100_000, 5*1024) }
+func BenchmarkTierCachedGet_Hybrid_10kRows_512B(b *testing.B) { benchmarkTierCachedGet(b, 10_000, 512) }
+func BenchmarkTierCachedGet_Hybrid_10kRows_5KB(b *testing.B) {
+	benchmarkTierCachedGet(b, 10_000, 5*1024)
+}
+func BenchmarkTierCachedGet_Hybrid_100kRows_512B(b *testing.B) {
+	benchmarkTierCachedGet(b, 100_000, 512)
+}
+func BenchmarkTierCachedGet_Hybrid_100kRows_5KB(b *testing.B) {
+	benchmarkTierCachedGet(b, 100_000, 5*1024)
+}
 
 // benchmarkUnmarshalOnly is the attribution twin: json.Unmarshal alone on
 // exactly the payloads the Get benchmarks serve. This is the cost an LRU
