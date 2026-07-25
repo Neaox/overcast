@@ -10,6 +10,22 @@ function endpointFromHeaders(c: Context) {
   })
 }
 
+debugRoutes.get("/metrics", async (c) => {
+  const endpoint = endpointFromHeaders(c)
+  const res = await fetch(`${endpoint.baseUrl}/_debug/metrics`)
+  if (res.status === 404) {
+    return c.json(
+      {
+        error: "DebugDisabled",
+        message: "OVERCAST_DEBUG must be enabled to inspect raw state or storage diagnostics.",
+      },
+      404,
+    )
+  }
+  if (!res.ok) return c.json({ error: "debug metrics fetch failed" }, 502)
+  return c.json(await res.json())
+})
+
 debugRoutes.get("/state", async (c) => {
   const endpoint = endpointFromHeaders(c)
   const res = await fetch(`${endpoint.baseUrl}/_debug/state`)

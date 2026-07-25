@@ -135,20 +135,23 @@ export function MetricsPage() {
         error={debugMetricsQuery.error}
       />
 
-      {/* ── Static info pills ─────────────────────────────────────────── */}
+      {/* ── Runtime section ───────────────────────────────────────────── */}
+      {/* Uptime lives in the HealthStrip above; goroutines have their own
+          sparkline card below — neither is repeated here as a pill. */}
       {latest && (
-        <div className="flex flex-wrap gap-2">
-          <StartupCard
-            totalMs={latest.startup_duration_ms}
-            preInitMs={latest.pre_init_ms}
-            phases={latest.startup_phases}
-          />
-          <StatPill label="Uptime" value={latest.uptime} />
-          <StatPill label="Go Version" value={latest.go_version} />
-          <StatPill label="CPUs" value={String(latest.num_cpu)} />
-          <StatPill label="GC Runs" value={String(latest.num_gc)} />
-          <StatPill label="Goroutines" value={String(latest.goroutines)} />
-          <StatPill label="Started" value={new Date(latest.start_time).toLocaleTimeString()} />
+        <div className="flex flex-col gap-2">
+          <h2 className="text-sm font-medium tracking-wide text-fg-muted uppercase">Runtime</h2>
+          <div className="flex flex-wrap gap-2">
+            <StartupCard
+              totalMs={latest.startup_duration_ms}
+              preInitMs={latest.pre_init_ms}
+              phases={latest.startup_phases}
+            />
+            <StatPill label="Go Version" value={latest.go_version} />
+            <StatPill label="CPUs" value={String(latest.num_cpu)} />
+            <StatPill label="GC Runs" value={String(latest.num_gc)} />
+            <StatPill label="Started" value={new Date(latest.start_time).toLocaleTimeString()} />
+          </div>
         </div>
       )}
 
