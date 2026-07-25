@@ -50,3 +50,28 @@ func TestServiceLogger_TraceSuppressedAtDebugThreshold(t *testing.T) {
 		t.Fatalf("debug message entries = %d, want 1 (debug still passes at debug threshold)", n)
 	}
 }
+
+// TestParseLevelOrDefault pins the invalid-level fallback: bad values fall
+// back to info with ok=false (the caller warns, naming the effective level)
+// instead of failing startup; valid values incl. "trace" parse; empty means
+// the default.
+func TestParseLevelOrDefault(t *testing.T) {
+	cases := []struct {
+		in     string
+		want   zapcore.Level
+		wantOK bool
+	}{
+		{"", zapcore.InfoLevel, true},
+		{"trace", logging.TraceLevel, true},
+		{"debug", zapcore.DebugLevel, true},
+		{"warn", zapcore.WarnLevel, true},
+		{"verbose", zapcore.InfoLevel, false},
+		{"nonsense", zapcore.InfoLevel, false},
+	}
+	for _, c := range cases {
+		got, ok := ParseLevelOrDefault(c.in)
+		if got != c.want || ok != c.wantOK {
+			t.Errorf("ParseLevelOrDefault(%q) = (%v,%v), want (%v,%v)", c.in, got, ok, c.want, c.wantOK)
+		}
+	}
+}

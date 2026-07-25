@@ -1,6 +1,6 @@
 # DynamoDB GSI ordered secondary-index structure — design (storage-access-plan.md A7)
 
-> **Status:** design-first, gated per [storage-access-plan.md A7](./storage-access-plan.md#a7--dynamodb-gsi-query-secondary-index) — no code in this PR. Reviewer verdict requested at the bottom.
+> **Status:** IMPLEMENTED (2026-07-25) — phase 1 numeric encoding (#283), phase 2 index structure (#287), phase 3 read-path flip + Transact maintenance + projection fidelity (this PR). Deferred follow-ups from §5/§7 remain open: LSI routing fix, ConsistentRead-on-GSI ValidationException, parallel-scan segmentation. Originally: design-first, gated per [storage-access-plan.md A7](./storage-access-plan.md#a7--dynamodb-gsi-query-secondary-index) — no code in this PR. Reviewer verdict requested at the bottom.
 > **Author's framing:** this document proposes a real ordered index structure to replace the current GSI/parallel-scan full-table-read fallback, mirroring the base-table design [A3](./storage-access-plan.md#a3--dynamodb-scan-pages-at-the-item-store-instead-of-full-table-reads--done--with-pagination-g2g5) already shipped, plus the pagination fixes [G2](./pagination-plan.md#g2--dynamodb-queryscan-cursor-resolution-by-position-not-item-identity--done--with-a3-and-g5) already gave the base table.
 
 ---

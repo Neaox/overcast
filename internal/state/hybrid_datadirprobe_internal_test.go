@@ -127,6 +127,97 @@ func TestHybridStore_DataDirProbe_FailureLeavesResultNilNotSlow(t *testing.T) {
 	}
 }
 
+// TestHybridStore_DataDirProbe_MedianOfThreeToleratesOneOutlier: the probe
+// runs at container boot — the busiest I/O moment — so one transiently slow
+// sample among three must not flag the filesystem. The recorded value is the
+// median, not the outlier.
+func TestHybridStore_DataDirProbe_MedianOfThreeToleratesOneOutlier(t *testing.T) {
+	const threshold = 50 * time.Millisecond
+	samples := []time.Duration{600 * time.Millisecond, 2 * time.Millisecond, 3 * time.Millisecond}
+	call := 0
+	s, err := NewHybridStoreWithOptions(t.TempDir(), HybridOptions{
+		FlushInterval:             time.Hour,
+		DataDirSlowFsyncThreshold: threshold,
+		dataDirFsyncProbe: func(dataDir string) (time.Duration, error) {
+			d := samples[call%len(samples)]
+			call++
+			return d, nil
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewHybridStoreWithOptions: %v", err)
+	}
+	defer s.Close()
+
+	result := waitForDataDirProbe(t, s)
+	if result.Slow {
+		t.Fatalf("probe result = %+v, want Slow=false — median of {600ms, 2ms, 3ms} is 3ms, under the %v threshold", result, threshold)
+	}
+	if result.FsyncMillis != 3 {
+		t.Fatalf("probe result FsyncMillis = %d, want the median sample (3)", result.FsyncMillis)
+	}
+	if call != 3 {
+		t.Fatalf("probe called %d times, want 3", call)
+	}
+}
+
+// TestHybridStore_DataDirProbe_MedianOfThreeStillCatchesGenuinelySlow: two of
+// three slow samples means the majority is slow — the advisory must still fire.
+func TestHybridStore_DataDirProbe_MedianOfThreeStillCatchesGenuinelySlow(t *testing.T) {
+	const threshold = 50 * time.Millisecond
+	samples := []time.Duration{600 * time.Millisecond, 2 * time.Millisecond, 700 * time.Millisecond}
+	call := 0
+	s, err := NewHybridStoreWithOptions(t.TempDir(), HybridOptions{
+		FlushInterval:             time.Hour,
+		DataDirSlowFsyncThreshold: threshold,
+		dataDirFsyncProbe: func(dataDir string) (time.Duration, error) {
+			d := samples[call%len(samples)]
+			call++
+			return d, nil
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewHybridStoreWithOptions: %v", err)
+	}
+	defer s.Close()
+
+	result := waitForDataDirProbe(t, s)
+	if !result.Slow {
+		t.Fatalf("probe result = %+v, want Slow=true — median of {600ms, 2ms, 700ms} is 600ms", result)
+	}
+	if result.FsyncMillis != 600 {
+		t.Fatalf("probe result FsyncMillis = %d, want the median sample (600)", result.FsyncMillis)
+	}
+}
+
+// TestHybridStore_DataDirProbe_PartialSampleFailuresTolerated: one erroring
+// sample doesn't void the probe — the median of the remaining samples is used.
+// (All-samples-failed is covered by FailureLeavesResultNilNotSlow above.)
+func TestHybridStore_DataDirProbe_PartialSampleFailuresTolerated(t *testing.T) {
+	const threshold = 50 * time.Millisecond
+	call := 0
+	s, err := NewHybridStoreWithOptions(t.TempDir(), HybridOptions{
+		FlushInterval:             time.Hour,
+		DataDirSlowFsyncThreshold: threshold,
+		dataDirFsyncProbe: func(dataDir string) (time.Duration, error) {
+			call++
+			if call == 1 {
+				return 0, errors.New("transient EIO")
+			}
+			return 2 * time.Millisecond, nil
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewHybridStoreWithOptions: %v", err)
+	}
+	defer s.Close()
+
+	result := waitForDataDirProbe(t, s)
+	if result.Slow {
+		t.Fatalf("probe result = %+v, want Slow=false from the surviving 2ms samples", result)
+	}
+}
+
 // TestProbeDataDirFsync_realProbeSucceeds is a light sanity check on the
 // real (non-test) probe implementation against a real temp directory —
 // distinct from the fake-probe tests above, which exercise the

@@ -80,6 +80,10 @@ export interface DataDirProbeResult {
   fsyncMillis: number
   slow: boolean
   probedAt: string
+  /** Filesystem type per /proc/mounts (e.g. "ext4", "9p"); absent when unreadable. */
+  fsType?: string
+  /** Coarse class the advisory copy keys on: "native" | "shared" | "unknown". */
+  mountClass?: string
 }
 
 /**

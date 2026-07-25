@@ -643,11 +643,13 @@ func (h *Handler) scanTyped(ctx context.Context, req *scanRequest) (any, *protoc
 	}
 
 	limit := effectivePageLimit(req.Limit)
+	isGSIScan := scanIdx != nil && table.isGSI(req.IndexName)
 
 	var items []Item
 	var lastKey Item
 
-	if scanIdx == nil && req.TotalSegments <= 1 {
+	switch {
+	case scanIdx == nil && req.TotalSegments <= 1:
 		// Base-table scan (no GSI, no parallel segments): page directly at the
 		// storage layer instead of reading the whole table on every call
 		// (storage-access-plan.md A3). scanItemsPage's keyset cursor is
@@ -663,13 +665,37 @@ func (h *Handler) scanTyped(ctx context.Context, req *scanRequest) (any, *protoc
 		if hasMore {
 			lastKey = extractItemKeys(items[len(items)-1], table)
 		}
-	} else {
-		// GSI scan or parallel scan: no ordered storage structure exists yet
-		// for a secondary index (that is A7's design-gated item) or for
-		// per-segment ranges, so this path still reads the whole table and
-		// paginates in memory. It still gets G2's position-based cursor fix:
-		// ExclusiveStartKey is resolved by where it falls in (hash, sort)
-		// order, not by searching for an exact item match.
+
+	case isGSIScan && req.TotalSegments <= 1:
+		// GSI scan (no parallel segments): page directly against the GSI's
+		// ordered index structure (dynamodb-gsi-design.md §4) instead of
+		// reading the whole table — the same A3-style keyset-page upgrade
+		// the base table already has. Sparse-index exclusion needs no
+		// read-time filter here (unlike the fallback branch below): a row
+		// is only ever written to the index when the item satisfies the
+		// index's key at write time (design §3's sparse-write rule), so
+		// every row scanIndexPage returns already belongs. Entries are also
+		// already narrowed to the index's own Projection, closing the same
+		// projection-fidelity gap queryTyped's GSI branch closes below.
+		pageItems, hasMore, aerr := h.store.scanIndexPage(ctx, table, scanIdx, req.ExclusiveStartKey, limit)
+		if aerr != nil {
+			return nil, aerr
+		}
+		items = pageItems
+		if hasMore {
+			lastKey = extractItemKeysWithIndex(items[len(items)-1], table, scanIdx)
+		}
+
+	default:
+		// LSI scan and/or parallel scan (TotalSegments > 1, with or without
+		// an index): no ordered storage structure exists for these cases —
+		// LSIs have no index storage at all (dynamodb-gsi-design.md §5,
+		// separable follow-up work), and per-segment ranges over an ordered
+		// structure are explicitly out of scope for this design (§5) — so
+		// this path still reads the whole table and paginates in memory. It
+		// still gets G2's position-based cursor fix: ExclusiveStartKey is
+		// resolved by where it falls in (hash, sort) order, not by
+		// searching for an exact item match.
 		allItems, aerr := h.store.scanItems(ctx, req.TableName)
 		if aerr != nil {
 			return nil, aerr
@@ -901,8 +927,46 @@ func (h *Handler) queryTyped(ctx context.Context, req *queryRequest) (any, *prot
 
 	// Collect matching items.
 	var matched []Item
-	if req.IndexName != "" {
-		// Index query: scan all items and filter by index hash key.
+	switch {
+	case req.IndexName != "" && table.isGSI(req.IndexName):
+		// GSI query: partition-scoped read into the GSI's ordered index
+		// structure (dynamodb-gsi-design.md §4) — an O(k) read replacing
+		// the O(table size) full-scan-and-filter this branch used to do,
+		// giving GSI Query the same partition-scoped cost base-table Query
+		// already has. Entries are already narrowed to the index's own
+		// Projection (write-path maintenance in index_maintenance.go's
+		// projectForIndex), which is the projection-fidelity fix from
+		// design §2: a KEYS_ONLY/INCLUDE GSI can no longer return
+		// base-table attributes it was never projected — the downstream
+		// FilterExpression/Select/ProjectionExpression code below is
+		// unchanged, it simply now operates on a smaller candidate
+		// attribute set.
+		candidates, aerr := h.store.scanIndexByHash(ctx, table, activeIdx, hashVal)
+		if aerr != nil {
+			return nil, aerr
+		}
+		if kc.sortCond != nil {
+			sc := *kc.sortCond
+			sc.attr = sortAttrName
+			for _, item := range candidates {
+				if sc.matchItem(item) {
+					matched = append(matched, item)
+				}
+			}
+		} else {
+			matched = candidates
+		}
+
+	case req.IndexName != "":
+		// LSI query: no separate ordered structure exists for LSIs — an LSI
+		// shares the base table's hash key by definition, so a correct fix
+		// would express this as a partition-scoped scanItemsByHashKey read
+		// filtered by the LSI's sort key, but dynamodb-gsi-design.md §5
+		// explicitly calls that out as separable follow-up work, not
+		// bundled into this flip (index_maintenance.go's diffIndexMutations
+		// never populates index storage for LocalSecondaryIndexes, so there
+		// is nothing for an LSI query to read from yet). Keeps today's
+		// full-scan-and-filter behavior unchanged.
 		allItems, aerr := h.store.scanItems(ctx, req.TableName)
 		if aerr != nil {
 			return nil, aerr
@@ -922,7 +986,8 @@ func (h *Handler) queryTyped(ctx context.Context, req *queryRequest) (any, *prot
 			}
 			matched = append(matched, item)
 		}
-	} else if sortAttrName == "" {
+
+	case sortAttrName == "":
 		// Hash-only table: point lookup.
 		keyMap := Item{hashAttrName: kc.hashVal}
 		item, aerr := h.store.getItem(ctx, table, keyMap)
@@ -934,7 +999,8 @@ func (h *Handler) queryTyped(ctx context.Context, req *queryRequest) (any, *prot
 		} else {
 			matched = []Item{}
 		}
-	} else {
+
+	default:
 		// Hash+sort table: load all items for the hash key, then filter by sort condition.
 		candidates, aerr := h.store.scanItemsByHashKey(ctx, table, hashVal)
 		if aerr != nil {
