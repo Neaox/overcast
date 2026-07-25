@@ -24,6 +24,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/clock"
+	"github.com/Neaox/overcast/internal/logging"
 )
 
 const (
@@ -93,13 +94,13 @@ func (p *InstancePool) Acquire(ctx context.Context, fn *Function) (RuntimeInstan
 		inst := entry.inst
 		delete(p.entries, fn.Name)
 		p.mu.Unlock()
-		p.log.Info("lambda pool: warm start", zap.String("function", fn.Name))
+		p.log.Debug("lambda pool: warm start", zap.String("function", fn.Name))
 		return inst, nil
 	}
 	p.mu.Unlock()
 
 	// Cold start — create a new instance outside the lock.
-	p.log.Info("lambda pool: cold start", zap.String("function", fn.Name))
+	p.log.Debug("lambda pool: cold start", zap.String("function", fn.Name))
 	return p.rt.Acquire(ctx, fn)
 }
 
@@ -129,13 +130,13 @@ func (p *InstancePool) AcquireWithProgress(ctx context.Context, fn *Function, pr
 		inst := entry.inst
 		delete(p.entries, fn.Name)
 		p.mu.Unlock()
-		p.log.Info("lambda pool: warm start", zap.String("function", fn.Name))
+		p.log.Debug("lambda pool: warm start", zap.String("function", fn.Name))
 		return inst, nil
 	}
 	p.mu.Unlock()
 
 	// Cold start with progress reporting.
-	p.log.Info("lambda pool: cold start", zap.String("function", fn.Name))
+	p.log.Debug("lambda pool: cold start", zap.String("function", fn.Name))
 	if cr, ok := p.rt.(*ContainerRuntime); ok {
 		return cr.AcquireWithProgress(ctx, fn, progress)
 	}
@@ -149,7 +150,7 @@ func (p *InstancePool) Release(_ context.Context, inst RuntimeInstance, healthy 
 	name := inst.FunctionName()
 	instHealthy := inst.Healthy()
 	if !healthy || !instHealthy {
-		p.log.Info("lambda pool: discarding unhealthy instance", zap.String("function", name),
+		p.log.Debug("lambda pool: discarding unhealthy instance", zap.String("function", name),
 			zap.Bool("healthy_arg", healthy), zap.Bool("inst_healthy", instHealthy))
 		if err := inst.Close(); err != nil {
 			p.log.Warn("lambda pool: close unhealthy instance failed",
@@ -162,7 +163,7 @@ func (p *InstancePool) Release(_ context.Context, inst RuntimeInstance, healthy 
 	p.mu.Lock()
 	if p.entries == nil {
 		p.mu.Unlock()
-		p.log.Info("lambda pool: closing instance released after stop", zap.String("function", name))
+		p.log.Debug("lambda pool: closing instance released after stop", zap.String("function", name))
 		if err := inst.Close(); err != nil {
 			p.log.Warn("lambda pool: close after stop failed",
 				zap.String("function", name),
@@ -173,7 +174,7 @@ func (p *InstancePool) Release(_ context.Context, inst RuntimeInstance, healthy 
 	}
 	if _, exists := p.entries[name]; exists {
 		p.mu.Unlock()
-		p.log.Info("lambda pool: closing duplicate warm instance", zap.String("function", name))
+		p.log.Debug("lambda pool: closing duplicate warm instance", zap.String("function", name))
 		if err := inst.Close(); err != nil {
 			p.log.Warn("lambda pool: close duplicate instance failed",
 				zap.String("function", name),
@@ -188,7 +189,7 @@ func (p *InstancePool) Release(_ context.Context, inst RuntimeInstance, healthy 
 		lastUsed: p.clk.Now(),
 	}
 	p.mu.Unlock()
-	p.log.Info("lambda pool: instance returned to pool", zap.String("function", name))
+	p.log.Debug("lambda pool: instance returned to pool", zap.String("function", name))
 }
 
 // CanHandle delegates to the underlying runtime.
@@ -271,7 +272,10 @@ func (p *InstancePool) sweep() {
 	p.mu.Unlock()
 
 	for _, s := range stale {
-		p.log.Debug("lambda pool: evicting idle instance", zap.String("function", s.name))
+		// A per-tick sweep-cycle outcome (fires on the sweeper's own
+		// schedule, not because of a specific invoke) — TRACE per the
+		// trace-vs-debug policy (CONTRIBUTING.md § Log levels).
+		p.log.Log(logging.TraceLevel, "lambda pool: evicting idle instance", zap.String("function", s.name))
 		if err := s.inst.Close(); err != nil {
 			p.log.Warn("lambda pool: sweep close failed",
 				zap.String("function", s.name),

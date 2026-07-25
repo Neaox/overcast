@@ -164,7 +164,12 @@ type Config struct {
 	// requests to complete before forcibly closing.
 	ShutdownTimeout time.Duration
 
-	// LogLevel controls log verbosity: "debug", "info", "warn", "error".
+	// LogLevel controls log verbosity: "trace", "debug", "info", "warn", "error"
+	// (case-insensitive). "trace" is Overcast-specific — it sits below zap's
+	// built-in "debug" and covers periodic machine chatter (health-check and
+	// /_debug/* request logs, flush/checkpoint/maintenance/sweep cycle logs,
+	// pool internals); see serviceutil.ParseLevel and CONTRIBUTING.md § Log
+	// levels. Default "info".
 	LogLevel string
 
 	// LambdaDockerSocket is the path to the Docker daemon socket used to
@@ -552,7 +557,7 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_SIGV4_VALIDATE            false
 //	OVERCAST_ENFORCE_IAM              false
 //	OVERCAST_CFN_SYNC_WAIT_MS          1000
-//	OVERCAST_LOG_LEVEL                 info
+//	OVERCAST_LOG_LEVEL                 info    (trace | debug | info | warn | error)
 //	OVERCAST_SHUTDOWN_TIMEOUT          5s
 //	OVERCAST_LAMBDA_NODE_BIN           node
 //	OVERCAST_LAMBDA_HOT_RELOAD         false

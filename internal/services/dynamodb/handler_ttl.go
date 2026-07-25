@@ -49,8 +49,11 @@ func (h *Handler) sweepExpiredItems(ctx context.Context) {
 	for _, kv := range pairs {
 		var table Table
 		if err := json.Unmarshal([]byte(kv.Value), &table); err != nil {
+			// A single malformed persisted table record — skipped, not a
+			// sweep-wide failure, so this is WARN per the malformed-persisted-
+			// state policy (CONTRIBUTING.md / AGENTS.md), not ERROR.
 			_, name := serviceutil.SplitRegionKey(kv.Key)
-			h.log.Error("ttl: unmarshal table", zap.String("key", name), zap.Error(err))
+			h.log.Warn("ttl: unmarshal table; skipping", zap.String("key", name), zap.Error(err))
 			continue
 		}
 		if !table.ttlEnabled() {
@@ -90,7 +93,10 @@ func (h *Handler) sweepTable(ctx context.Context, table *Table, nowUnix int64) {
 			h.publishDeleteStreamRecord(ctx, table, extractKeys(table, item), oldItem)
 		}
 
-		h.log.Debug("ttl: expired item deleted",
+		// A per-tick TTL-sweep-cycle outcome (fires on the hourly sweeper's
+		// own schedule, not because of a specific client request) — TRACE
+		// per the trace-vs-debug policy (CONTRIBUTING.md § Log levels).
+		h.log.Trace("ttl: expired item deleted",
 			zap.String("table", table.TableName),
 		)
 	}

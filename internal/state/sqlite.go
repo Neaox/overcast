@@ -204,6 +204,12 @@ func (s *SQLiteStore) runMigrate() {
 		// Surface the error eagerly. Without this log a failed migration is
 		// invisible until the first kv operation runs — which may be never
 		// for daemons that only use service-specific tables (e.g. DynamoDB).
+		// Logged at ERROR (an actionable failure per the log-level policy —
+		// CONTRIBUTING.md § Log levels) in addition to the stderr line below,
+		// since s.log is optional and a nil logger must not lose the signal.
+		if s.log != nil {
+			s.log.Error("sqlite store: migration failed", zap.Error(s.migrateErr))
+		}
 		fmt.Fprintf(os.Stderr, "overcast: sqlite migration failed: %v\n", s.migrateErr)
 		return
 	}

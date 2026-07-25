@@ -318,10 +318,24 @@ func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return nil, nil, http.ErrNotSupported
 }
 
-// Logger logs every request at INFO level with structured fields.
-// When stdout is a terminal, each line is prefixed with the service badge and
-// (when known) an operation badge so log lines are easy to scan at a glance.
-// Failed requests (5xx) are logged at ERROR level.
+// isOperationalPollPath reports whether path belongs to an internal
+// health/readiness probe or the /_debug/* namespace polled by container
+// orchestrators (Docker HEALTHCHECK, Kubernetes probes) or the web UI's
+// auto-refreshing debug views. These fire purely because time passed and
+// infrastructure polled — never because of anything a real AWS client did —
+// so per the trace-vs-debug policy (CONTRIBUTING.md § Log levels) they belong
+// at TRACE: polling intervals of a few seconds would otherwise drown genuine
+// request activity even at DEBUG.
+func isOperationalPollPath(path string) bool {
+	return path == "/_health" || strings.HasPrefix(path, "/_debug/") || path == "/_debug"
+}
+
+// Logger logs every request with structured fields: real AWS API calls and
+// other requests at INFO, internal health/readiness and /_debug/* polling at
+// TRACE (see isOperationalPollPath). When stdout is a terminal, each line is
+// prefixed with the service badge and (when known) an operation badge so log
+// lines are easy to scan at a glance. Failed requests (5xx) are logged at
+// ERROR level regardless of path.
 func Logger(logger *zap.Logger, clk clock.Clock) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -383,9 +397,12 @@ func Logger(logger *zap.Logger, clk clock.Clock) func(http.Handler) http.Handler
 				}
 			}
 
-			if rw.status >= 500 {
+			switch {
+			case rw.status >= 500:
 				log.Error("request failed", fields...)
-			} else {
+			case isOperationalPollPath(r.URL.Path):
+				log.Trace("request", fields...)
+			default:
 				log.Info("request", fields...)
 			}
 		})

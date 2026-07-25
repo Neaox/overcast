@@ -161,9 +161,10 @@ Fast request handling does not guarantee a fast-*feeling* workflow.
 When a tool like the CDK drives overcast, most of the wall-clock time
 the user experiences is spent in the client, not the emulator. Before
 assuming overcast itself is slow, establish which side owns the time —
-the request log (`OVERCAST_LOG_LEVEL=verbose`) with `docker logs --timestamps`
-shows every request's duration and, by omission, every gap where the
-emulator was idle.
+the request log (every real AWS API call is logged at `INFO` by default —
+see [`OVERCAST_LOG_LEVEL`](./README.md#configuration-reference)) with
+`docker logs --timestamps` shows every request's duration and, by omission,
+every gap where the emulator was idle.
 
 Worked example, measured 2026-07-19 (Docker Desktop on Windows 11 /
 WSL2, `overcast:dev`, hybrid backend, 15 services; a CDK v2

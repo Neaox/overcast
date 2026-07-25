@@ -22,6 +22,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/logging"
 )
 
 // InstanceStatus values for LambdaInstancePayload.Status.
@@ -312,7 +313,10 @@ func (t *instanceTracker) sweep() {
 	t.mu.Unlock()
 
 	for _, e := range evict {
-		t.log.Debug("lambda tracker: evicted idle instance",
+		// A per-tick sweep-cycle outcome — TRACE per the trace-vs-debug
+		// policy (CONTRIBUTING.md § Log levels), matching InstancePool's
+		// analogous sweep loop.
+		t.log.Log(logging.TraceLevel, "lambda tracker: evicted idle instance",
 			zap.String("function", e.functionName),
 			zap.String("instance", e.instanceID),
 		)

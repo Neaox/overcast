@@ -22,6 +22,8 @@ import (
 	"go.uber.org/zap"
 	msqlite "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
+
+	"github.com/Neaox/overcast/internal/logging"
 )
 
 // HybridStore serves all reads from an in-memory map (memory speed) and
@@ -588,7 +590,10 @@ func (s *HybridStore) seedFromSQLite() {
 			loaded++
 			bytesLoaded += int64(len(namespace) + len(key) + len(value))
 			if loaded%100000 == 0 {
-				s.logInfo("hybrid seed progress",
+				// Replay/seed detail, not a lifecycle milestone (that's
+				// "hybrid seed complete" below, kept at INFO) — DEBUG per
+				// the log-level policy (CONTRIBUTING.md § Log levels).
+				s.logDebug("hybrid seed progress",
 					zap.Int("loaded", loaded),
 					zap.Int64("bytes", bytesLoaded),
 					zap.Duration("elapsed", time.Since(seedStart)))
@@ -647,7 +652,10 @@ func (s *HybridStore) seedFromSQLite() {
 func (s *HybridStore) degradeToMemoryOnly(err error, loaded, skippedRows int, seedStart time.Time) {
 	s.setLoadErr(err)
 	s.sqliteDegraded.Store(true)
-	s.logWarn("hybrid store degraded to memory-only for this run; persisted state is unavailable until restart",
+	// An actionable failure per the log-level policy (CONTRIBUTING.md § Log
+	// levels): persistence is gone for the rest of this process's life, not
+	// merely an unexpected-but-handled condition — logged at ERROR (was WARN).
+	s.logError("hybrid store degraded to memory-only for this run; persisted state is unavailable until restart",
 		zap.Error(err),
 		zap.Int("loaded_before_failure", loaded),
 		zap.Int("skipped_rows", skippedRows),
@@ -1657,7 +1665,10 @@ func (s *HybridStore) flushOnce(ctx context.Context) error {
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
 		s.logWarn("hybrid flush slow", zap.Int("ops", len(toFlushOps)), zap.Int("chunks", len(chunks)), zap.Duration("elapsed", elapsed))
 	} else {
-		s.logDebug("hybrid flush complete", zap.Int("ops", len(toFlushOps)), zap.Int("chunks", len(chunks)), zap.Duration("elapsed", elapsed))
+		// A per-cycle flush-cycle outcome (fires on the flush loop's own
+		// schedule), not a request-explaining line — TRACE per the
+		// trace-vs-debug policy (CONTRIBUTING.md § Log levels).
+		s.logTrace("hybrid flush complete", zap.Int("ops", len(toFlushOps)), zap.Int("chunks", len(chunks)), zap.Duration("elapsed", elapsed))
 	}
 	return nil
 }
@@ -2697,6 +2708,17 @@ func hybridNamespaceSet(namespaces []string) map[string]struct{} {
 	return set
 }
 
+// logTrace logs a per-tick/cycle machinery line at TRACE — see
+// internal/logging's doc comment for the trace-vs-debug policy. Use for
+// flush/checkpoint/sweep cycle outcomes that fire on their own schedule
+// regardless of client activity; use logDebug for anything that explains a
+// specific request or store decision.
+func (s *HybridStore) logTrace(msg string, fields ...zap.Field) {
+	if s.log != nil {
+		s.log.Log(logging.TraceLevel, msg, fields...)
+	}
+}
+
 func (s *HybridStore) logDebug(msg string, fields ...zap.Field) {
 	if s.log != nil {
 		s.log.Debug(msg, fields...)
@@ -2712,5 +2734,11 @@ func (s *HybridStore) logInfo(msg string, fields ...zap.Field) {
 func (s *HybridStore) logWarn(msg string, fields ...zap.Field) {
 	if s.log != nil {
 		s.log.Warn(msg, fields...)
+	}
+}
+
+func (s *HybridStore) logError(msg string, fields ...zap.Field) {
+	if s.log != nil {
+		s.log.Error(msg, fields...)
 	}
 }

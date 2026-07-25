@@ -29,6 +29,7 @@ AI agents using this repo should also read [AGENTS.md](./AGENTS.md) for agent-sp
     - [Clean, idiomatic, performant code](#clean-idiomatic-performant-code)
   - [Error handling](#error-handling)
   - [Logging standards](#logging-standards)
+    - [Log levels](#log-levels)
     - [When to use each level](#when-to-use-each-level)
   - [Time / clock injection](#time--clock-injection)
   - [Shared utilities — use serviceutil, never duplicate](#shared-utilities--use-serviceutil-never-duplicate)
@@ -352,17 +353,71 @@ logger.Info("bucket created",
 logger.Info(fmt.Sprintf("bucket %s created in %s", name, cfg.Region))
 ```
 
+### Log levels
+
+Overcast's level ladder has five rungs: `TRACE` < `DEBUG` < `INFO` < `WARN` < `ERROR`.
+`TRACE` is Overcast-specific — zap has no built-in level below `DEBUG`, so it's
+defined in [`internal/logging`](./internal/logging/level.go) as
+`zapcore.Level(-2)`, one step under zap's `DebugLevel`. It exists because
+Docker's `HEALTHCHECK` (and any orchestrator's liveness/readiness probe) hits
+`/_health` every few seconds forever, and the web UI polls `/_debug/*`
+continuously — at `INFO` that traffic drowns real activity; even at `DEBUG` it
+drowns the request-explaining detail a human actually opened the logs to
+read. `TRACE` gives that machine chatter somewhere to go without either
+problem.
+
+**The decision rule, for when you're adding a log line and unsure whether
+it's `DEBUG` or `TRACE`:**
+
+`DEBUG` is _event-driven and request-scoped_ — a line fires because a
+specific client operation happened, and it explains Overcast's reasoning
+about that operation (protocol identified, dispatch path chosen, store
+decision made, why a message wasn't delivered). `TRACE` is _time-driven or
+machinery-scoped_ — a line fires because time passed or infrastructure
+cycled (health probes, UI polling, flush/checkpoint/sweep ticks, pool/buffer
+internals), regardless of what any client did.
+
+**The litmus test:** _if the server were completely idle — no client ever
+connected — would this line still be emitted?_ If yes, it's `TRACE`. If it
+only fires because of a specific request and helps explain that request's
+outcome, it's `DEBUG`.
+
+**Secondary heuristic:** lines with unbounded frequency independent of
+request volume (per-tick, per-poll, per-cycle) are `TRACE` even when they
+mention request-adjacent state (e.g. a table name); lines bounded per-request
+(e.g. one retry-decision line within a request) are `DEBUG`.
+
+**Why it matters:** `DEBUG` must stay readable enough that "re-run with
+`OVERCAST_LOG_LEVEL=debug` and attach the output" produces a useful bug-report
+artifact — `TRACE` is where volume is allowed.
+
 ### When to use each level
 
-| Level   | Use for                                                                                                                              |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `DEBUG` | Per-request detail (parsed params, state reads/writes, middleware steps). Useful during development, too noisy for normal operation. |
-| `INFO`  | Server lifecycle events and significant operations (server start, service enabled, resource created/deleted).                        |
-| `WARN`  | Unexpected conditions that were handled (debug mode enabled, large payload, feature stub activated).                                 |
-| `ERROR` | Failures that caused a 5xx response, panic recovery, or data loss risk.                                                              |
+| Level   | Use for                                                                                                                                                                     |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TRACE` | Periodic machinery chatter: health/readiness probe request logs, `/_debug/*` polling request logs, per-tick flush/checkpoint/maintenance/sweep cycle logs, pool/buffer internals. |
+| `DEBUG` | What a human debugging Overcast actually wants: per-request internals for real AWS calls, dispatch/protocol decisions, store operation diagnostics, replay/seed detail, migration step detail beyond the INFO-level summary lines. |
+| `INFO`  | Process lifecycle (listening, shutdown, migrations applied, backup written), genuine state milestones (resource created/deleted), and one request line per **real AWS API call**. |
+| `WARN`  | Unexpected-but-handled conditions: a malformed persisted record skipped, protocol drift, a slow-filesystem probe, a torn WAL line tolerated, debug mode enabled.               |
+| `ERROR` | Actionable failures: the store degraded, a migration failed, unrecoverable request handling, a panic recovery.                                                                |
 
-The Logger middleware logs every request at INFO — don't duplicate this in handlers.
-Handler code should use DEBUG for operation detail.
+The Logger middleware logs one line per request: `INFO` for real AWS API
+calls, `TRACE` for `/_health` and `/_debug/*` polling (see
+`isOperationalPollPath` in `internal/middleware/logger.go`), `ERROR` for 5xx
+responses. Don't duplicate the per-request line in handlers — add `DEBUG`/
+`TRACE` lines only for detail the request-line summary doesn't carry.
+
+`OVERCAST_LOG_LEVEL` accepts `trace`, `debug`, `info`, `warn`, or `error`
+(case-insensitive; see `internal/config/config.go`). `internal/logging.ParseLevel`
+handles `trace` before delegating to zap's own parser, and
+`internal/logging.WrapLevelEncoder` teaches the JSON/console encoders to
+render `TraceLevel` as `"trace"`/`"TRACE"` instead of the meaningless
+`"Level(-2)"` zap would otherwise print. Service code logs at `TRACE` via
+`serviceutil.ServiceLogger.Trace(...)` (or `logger.Log(logging.TraceLevel, ...)`
+for the handful of call sites — e.g. `internal/state`'s background loops —
+that hold a raw `*zap.Logger` and can't import `internal/serviceutil` without
+an import cycle through `internal/protocol`).
+
 Never log credentials, request bodies of sensitive operations, or values that may contain PII.
 
 ---
