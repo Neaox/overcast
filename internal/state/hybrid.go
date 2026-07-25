@@ -673,6 +673,11 @@ func (s *HybridStore) degradeToMemoryOnly(err error, loaded, skippedRows int, se
 // silently a no-op on this driver (rollback-journal mode was in effect the
 // whole time, not WAL), and why that made this read pool unable to deliver
 // the "readers never block on the writer" guarantee it was built for.
+//
+// Deliberately NOT given wal_autocheckpoint(4000) (see newSQLiteStoreFile's
+// pragma-matrix comment for why the writer DSN got it): auto-checkpoint
+// triggers on a connection's own commits, and this pool only ever issues
+// reads, so the setting would be a no-op here.
 func (s *HybridStore) openReadPool() error {
 	dbPath := filepath.Join(s.dataDir, "overcast.db")
 	dsn := fmt.Sprintf("%s?_pragma=journal_mode(wal)&_pragma=synchronous(normal)&_pragma=busy_timeout(%d)", dbPath, hybridBusyTimeoutMillis)

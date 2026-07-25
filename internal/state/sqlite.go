@@ -135,7 +135,33 @@ func newSQLiteStoreFile(dbPath, syncMode string, logger *zap.Logger) (*SQLiteSto
 	// (and therefore the modernc driver's lazy parser/codegen init) happens
 	// inside RunMigrations (migrate.go), invoked from runMigrate below in
 	// the background.
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(wal)&_pragma=synchronous("+syncMode+")")
+	//
+	// wal_autocheckpoint raised from SQLite's default (1000 pages, ~4MB) to
+	// 4000: pragma-matrix experiment (post-WAL-fix, docs/plans/storage-plan.md
+	// "SQLite pragma matrix" stream), measured on golang:1.24-bookworm /
+	// Docker Desktop on Windows 11 (WSL2) — a host with the documented
+	// fsync-degraded pathology (docs/dev/performance.md). At the default
+	// threshold, SQLite runs an implicit PASSIVE checkpoint synchronously on
+	// whichever commit first pushes the WAL past the page count, and
+	// checkpoint I/O is exactly the operation this host's fsync pathology
+	// makes expensive. BenchmarkSQSSend_NewTableInsert_Hybrid_{100,1000}
+	// (internal/services/sqs/send_bench_test.go, one synchronous SQLite
+	// INSERT per op — the shape this pragma targets): default threshold
+	// ~0.9-1.4ms/op flat across two independent count=3 runs; threshold=4000
+	// ~57-74µs/op flat across two independent count=3 runs — a repeatable
+	// ~15-20x reduction, allocs/op unchanged (19-22 in both configs, per
+	// storage-test-plan.md's allocs-are-primary convention — this pragma
+	// can't move allocations, but the wall-clock delta here is large enough,
+	// and repeated enough across independent runs, to trust despite that).
+	// At depth 10000 (WAL already past either threshold from preload alone)
+	// the two configs converge (~0.7-1.4ms/op both) — no regression, just no
+	// remaining headroom to win. mmap_size (256MB/1GB) and cache_size
+	// (-65536) were tested the same way (quiet TierCached Gets, paced
+	// WithWriteLoad, this same send benchmark) and showed no repeatable
+	// effect outside this host's ordinary run-to-run noise band (roughly
+	// 1.5-3x within identical configs) — left at SQLite's defaults per the
+	// "default outcome: change nothing" rule.
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(wal)&_pragma=synchronous("+syncMode+")&_pragma=wal_autocheckpoint(4000)")
 	if err != nil {
 		return nil, fmt.Errorf("sqlite store: open %q: %w", dbPath, err)
 	}
