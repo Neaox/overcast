@@ -42,6 +42,16 @@ export interface MetricsSnapshot {
 
 export type EmulationTier = "full" | "partial" | "inert" | "stub" | "unsupported"
 
+/** Persistent-backend health snapshot (internal/state.PersistentHealth). */
+export interface PersistentHealth {
+  mode: string
+  healthy: boolean
+  pendingWrites: number
+  lastError?: string
+  lastErrorAt?: string
+  lastSuccessAt?: string
+}
+
 export interface HealthResponse {
   status: string
   timestamp: string
@@ -52,5 +62,65 @@ export interface HealthResponse {
   storage: {
     default: string
     serviceOverrides?: Record<string, string>
+    persistent?: PersistentHealth
   }
+}
+
+/** One attempted flush of buffered writes (internal/state.DebugFlushRecord). */
+export interface DebugFlushRecord {
+  timestamp: string
+  durationMillis: number
+  entries: number
+  committed: boolean
+  chunks?: number
+}
+
+/** Outcome of the startup data-dir fsync probe (internal/state.DataDirProbeResult). */
+export interface DataDirProbeResult {
+  fsyncMillis: number
+  slow: boolean
+  probedAt: string
+}
+
+/**
+ * One reporting store's storage diagnostics, as returned by
+ * GET /_debug/metrics's `stores` array (internal/state.DebugMetrics). A
+ * *state.NamespacedStore wrapping more than one distinct backend yields more
+ * than one entry here — see that type's Go doc comment for why.
+ */
+export interface DebugMetrics {
+  mode: string
+  flushHistory?: DebugFlushRecord[]
+  seedDurationMillis?: number
+  pendingLogBytes?: number
+  namespaceRowCounts?: Record<string, number>
+  readRetryCount?: number
+  readTimeoutCount?: number
+  dataDirProbe?: DataDirProbeResult
+  /** Live `PRAGMA journal_mode` readback — see internal/router/advisories.go. */
+  journalMode?: string
+  /** True once the backend has permanently fallen back to memory-only. */
+  degraded?: boolean
+}
+
+export type AdvisorySeverity = "info" | "warning" | "critical"
+
+/**
+ * One server-computed diagnostic surfaced by GET /_debug/metrics's
+ * `advisories` array (internal/router/advisories.go). The web UI renders
+ * these generically — a future rule added server-side needs no UI change.
+ */
+export interface Advisory {
+  severity: AdvisorySeverity
+  code: string
+  title: string
+  detail: string
+  /** Docs-browser-relative path (see web/src/routes/docs.tsx's `path` search param), when set. */
+  docsPath?: string
+}
+
+/** Response body of GET /_debug/metrics. */
+export interface DebugMetricsResponse {
+  stores: DebugMetrics[]
+  advisories: Advisory[]
 }

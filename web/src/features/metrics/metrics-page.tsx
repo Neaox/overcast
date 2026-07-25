@@ -1,7 +1,14 @@
 /**
- * MetricsPage — live emulator runtime metrics at /metrics.
+ * MetricsPage — Metrics & Health, at /metrics.
  *
- * Polls /_metrics every 3 seconds and renders rolling sparklines for:
+ * Top: a health strip (storage mode, healthy/degraded status, live journal
+ * mode, last flush) and a server-computed advisories list (see
+ * internal/router/advisories.go) — both sourced from GET /_health (always
+ * available) and GET /_debug/metrics (debug-gated; degrades gracefully when
+ * OVERCAST_DEBUG is off — see HealthStrip and AdvisoriesList).
+ *
+ * Below: the original live Go runtime metrics. Polls /_metrics every 3
+ * seconds and renders rolling sparklines for:
  * - Heap allocated memory
  * - Total system memory
  * - Goroutine count
@@ -9,6 +16,7 @@
  *
  * Static info cards show: uptime, Go version, CPU count, GC count, start time.
  */
+import { useQuery } from "@tanstack/react-query"
 import { BarChart2, AlertCircle, Info } from "lucide-react"
 import { useMetrics } from "@/hooks/use-metrics"
 import type { MetricsSnapshot } from "@/types"
@@ -17,6 +25,10 @@ import { Tooltip } from "@/components/ui/tooltip"
 import { PageHeader } from "@/components/ui/primitives"
 import { Spinner } from "@/components/ui/primitives"
 import { StartupCard } from "./startup-timeline"
+import { StatPill } from "./stat-pill"
+import { HealthStrip } from "./health-strip"
+import { AdvisoriesList } from "./advisories"
+import { debugMetricsQueryOptions } from "./data"
 
 // ─── Formatters ────────────────────────────────────────────────────────────
 
@@ -73,31 +85,19 @@ function MetricCard({ title, value, sub, info, sparkData, color }: MetricCardPro
   )
 }
 
-// ─── StatPill ──────────────────────────────────────────────────────────────
-
-function StatPill({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="bg-bg-card flex flex-col gap-0.5 rounded-md border border-border px-3 py-2">
-      <span className="text-[10px] font-medium tracking-wider text-fg-muted uppercase">
-        {label}
-      </span>
-      <span className="font-mono text-sm font-medium text-fg">{value}</span>
-    </div>
-  )
-}
-
 // ─── Component ─────────────────────────────────────────────────────────────
 
 export function MetricsPage() {
   const { snapshots, latest, error } = useMetrics()
+  const debugMetricsQuery = useQuery(debugMetricsQueryOptions())
 
   const extract = (fn: (s: MetricsSnapshot) => number) => snapshots.map(fn)
 
   return (
     <div className="flex w-full flex-col gap-6">
       <PageHeader
-        title="Metrics"
-        description="Live Go runtime statistics — sampled every 3 seconds."
+        title="Metrics & Health"
+        description="Storage health, advisories, and live Go runtime statistics — sampled every 3 seconds."
         actions={
           latest ? (
             <div className="flex items-center gap-1.5 rounded-full bg-green-500/10 px-2.5 py-1 text-xs font-medium text-green-400">
@@ -124,6 +124,16 @@ export function MetricsPage() {
           {error}
         </div>
       )}
+
+      {/* ── Health strip ──────────────────────────────────────────────── */}
+      <HealthStrip uptime={latest?.uptime} />
+
+      {/* ── Advisories ────────────────────────────────────────────────── */}
+      <AdvisoriesList
+        advisories={debugMetricsQuery.data?.advisories}
+        isLoading={debugMetricsQuery.isLoading}
+        error={debugMetricsQuery.error}
+      />
 
       {/* ── Static info pills ─────────────────────────────────────────── */}
       {latest && (

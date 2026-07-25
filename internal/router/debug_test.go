@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/state"
 )
 
@@ -693,11 +694,12 @@ func fetchDebugStateNamespacePage(t *testing.T, store state.Store, providers []D
 func TestDebugMetrics_zeroValueForMemoryStore(t *testing.T) {
 	// Given: a store backend that does not implement state.DebugMetricsReporter.
 	store := state.NewMemoryStore()
+	cfg := &config.Config{State: config.StateBackendMemory}
 
 	// When: the metrics endpoint is requested.
 	req := httptest.NewRequest(http.MethodGet, "/_debug/metrics", nil)
 	rec := httptest.NewRecorder()
-	debugMetrics(store).ServeHTTP(rec, req)
+	debugMetrics(cfg, store).ServeHTTP(rec, req)
 
 	// Then: it responds 200 with an empty (never null) store list, not an error.
 	if rec.Code != http.StatusOK {
@@ -712,6 +714,42 @@ func TestDebugMetrics_zeroValueForMemoryStore(t *testing.T) {
 	}
 	if len(resp.Stores) != 0 {
 		t.Fatalf("expected no reporting stores for MemoryStore, got %+v", resp.Stores)
+	}
+}
+
+// TestDebugMetrics_advisoriesReflectMemoryModeAndAreNeverNull proves the
+// endpoint's Advisories field is wired to the real config/store data (not
+// just a hardcoded empty list) and stays a non-null (possibly empty) array —
+// the same "never null" contract Stores already has, since the web UI's
+// Metrics & Health page renders Advisories generically without a null check.
+func TestDebugMetrics_advisoriesReflectMemoryModeAndAreNeverNull(t *testing.T) {
+	// Given: OVERCAST_STATE=memory, which the memory-mode advisory rule
+	// exists to surface (informational — see advisories.go).
+	store := state.NewMemoryStore()
+	cfg := &config.Config{State: config.StateBackendMemory}
+
+	// When: the metrics endpoint is requested.
+	req := httptest.NewRequest(http.MethodGet, "/_debug/metrics", nil)
+	rec := httptest.NewRecorder()
+	debugMetrics(cfg, store).ServeHTTP(rec, req)
+
+	// Then: the response carries a non-null Advisories array including the
+	// memory-mode advisory.
+	var resp debugMetricsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Advisories == nil {
+		t.Fatal("expected a non-nil (possibly empty) advisories list")
+	}
+	found := false
+	for _, a := range resp.Advisories {
+		if a.Code == advisoryCodeMemoryMode {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected the %q advisory for OVERCAST_STATE=memory, got %+v", advisoryCodeMemoryMode, resp.Advisories)
 	}
 }
 

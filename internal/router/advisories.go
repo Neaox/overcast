@@ -1,0 +1,280 @@
+package router
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/state"
+)
+
+// Advisory severities. The web UI (see web/src/features/metrics) renders
+// these generically by severity — icon/color only — so adding a value here
+// requires a matching UI mapping, unlike adding a new *rule*, which requires
+// no UI change at all (see computeAdvisories's doc comment).
+const (
+	advisorySeverityInfo     = "info"
+	advisorySeverityWarning  = "warning"
+	advisorySeverityCritical = "critical"
+)
+
+// Advisory codes — stable identifiers a caller (or a future test) can key
+// off of without parsing Title/Detail text.
+const (
+	advisoryCodeJournalModeNotWAL       = "journal-mode-not-wal"
+	advisoryCodeStoreDegradedMemoryOnly = "store-degraded-memory-only"
+	advisoryCodeStoreUnhealthy          = "store-unhealthy"
+	advisoryCodeDataDirSlowFilesystem   = "data-dir-slow-filesystem"
+	advisoryCodeReadPressureObserved    = "read-pressure-observed"
+	advisoryCodeMemoryMode              = "memory-mode"
+)
+
+// performanceDocsPath is the docs-browser-relative path (see
+// web/src/routes/docs.tsx's `path` search param, and internal/bff/bff.go's
+// handleDocsPage, both of which resolve paths relative to the embedded docs/
+// directory — cmd/overcast/embed_web.go roots docsFS at "docs") for the
+// storage tuning guide. Every advisory whose remediation is "move your data
+// dir" or "your storage backend needs attention" points here, per the
+// project's docs-reorganization guidance that user-facing tuning content
+// stays at docs/performance.md.
+const performanceDocsPath = "performance.md"
+
+// Advisory is one actionable diagnostic surfaced alongside the storage
+// diagnostics in GET /_debug/metrics (see debugMetricsResponse.Advisories).
+// The web UI's Metrics & Health page renders these generically — icon/color
+// from Severity, then Title/Detail/optional DocsPath link — so adding a
+// future rule to computeAdvisories never requires a web UI change.
+type Advisory struct {
+	// Severity is one of "info", "warning", "critical".
+	Severity string `json:"severity"`
+	// Code is a stable, machine-readable identifier for this advisory rule
+	// (e.g. "journal-mode-not-wal") — safe to key UI behavior or tests off
+	// of, unlike Title/Detail, which are free text that may be reworded.
+	Code string `json:"code"`
+	// Title is a short, human-readable summary (fits in a single UI line).
+	Title string `json:"title"`
+	// Detail is a longer explanation, including any concrete numbers/values
+	// relevant to this specific occurrence (e.g. the live journal mode
+	// actually observed, or how many reads were affected).
+	Detail string `json:"detail"`
+	// DocsPath, when non-empty, is a docs-browser-relative path (see
+	// performanceDocsPath) the web UI can open for remediation guidance.
+	DocsPath string `json:"docsPath,omitempty"`
+}
+
+// advisoryInput bundles exactly the data computeAdvisories needs — all of it
+// already computed by the debugMetrics handler for the rest of the payload,
+// nothing fetched specially for advisories. Keeping this as a plain struct
+// (rather than passing cfg/store directly) keeps every rule function a pure,
+// table-testable function of fake data — no real Store or Config required.
+type advisoryInput struct {
+	// StateBackend is cfg.State, the globally configured storage backend —
+	// drives the memory-mode rule. Deliberately the global setting only, not
+	// cfg.ServiceStates per-service overrides: a mixed-backend fleet (most of
+	// it hybrid, one service forced to memory via
+	// OVERCAST_STATE_<SERVICE>=memory) is an intentional, informed choice a
+	// per-service override implies, not the "did you mean to do this"
+	// signal this rule exists to catch.
+	StateBackend config.StateBackend
+
+	// Stores is one entry per distinct underlying store, exactly as
+	// state.DebugMetricsSnapshot returns it — drives every per-store rule
+	// (journal-mode-not-wal, store-degraded-memory-only,
+	// data-dir-slow-filesystem, read-pressure-observed). A NamespacedStore
+	// with mixed backends naturally yields one advisory per affected store,
+	// same as the underlying DebugMetrics payload.
+	Stores []state.DebugMetrics
+
+	// Health is the aggregated persistent-backend health across every
+	// underlying store (state.PersistentHealthSnapshot) — drives
+	// store-unhealthy. HasHealth false means no store reports health at all
+	// (e.g. every backend is memory-only), matching
+	// PersistentHealthSnapshot's own contract exactly.
+	Health    state.PersistentHealth
+	HasHealth bool
+}
+
+// computeAdvisories is the single generator function behind the
+// GET /_debug/metrics payload's `advisories` array. It is a pure function of
+// advisoryInput — no I/O, no clock reads beyond formatting a timestamp
+// that's already in the input — so every rule is independently unit-tested
+// with fake input (see advisories_test.go) rather than requiring a real
+// store.
+//
+// Adding a future rule means adding one more check*(...) *Advisory function
+// and one more call below. It must never require a web UI change: the
+// Metrics & Health page renders whatever this returns generically, keyed
+// only on Severity/Title/Detail/DocsPath.
+func computeAdvisories(in advisoryInput) []Advisory {
+	var advisories []Advisory
+	for _, m := range in.Stores {
+		if a := checkJournalModeNotWAL(m); a != nil {
+			advisories = append(advisories, *a)
+		}
+		if a := checkStoreDegraded(m); a != nil {
+			advisories = append(advisories, *a)
+		}
+		if a := checkDataDirSlowFilesystem(m); a != nil {
+			advisories = append(advisories, *a)
+		}
+		if a := checkReadPressure(m); a != nil {
+			advisories = append(advisories, *a)
+		}
+	}
+	if a := checkStoreUnhealthy(in.Health, in.HasHealth); a != nil {
+		advisories = append(advisories, *a)
+	}
+	if a := checkMemoryMode(in.StateBackend); a != nil {
+		advisories = append(advisories, *a)
+	}
+	return advisories
+}
+
+// checkJournalModeNotWAL is critical: this project shipped with WAL mode
+// silently disabled for its entire history (a driver DSN-spelling bug — see
+// hybrid_journalmode_internal_test.go and state.DebugMetrics.JournalMode's
+// doc comment), and rollback-journal mode's exclusive commit lock directly
+// causes the read starvation storage-pressure-handling item 0 was written to
+// fix. An empty JournalMode means the readback hasn't happened yet (still
+// starting up) or the store already degraded (see checkStoreDegraded, which
+// covers that case on its own) — neither is this rule's concern, so it only
+// fires on an actual, confirmed non-"wal" reading.
+func checkJournalModeNotWAL(m state.DebugMetrics) *Advisory {
+	if m.JournalMode == "" || m.JournalMode == "wal" {
+		return nil
+	}
+	if m.Mode != "hybrid" && m.Mode != "persistent" {
+		return nil
+	}
+	return &Advisory{
+		Severity: advisorySeverityCritical,
+		Code:     advisoryCodeJournalModeNotWAL,
+		Title:    "SQLite is not running in WAL mode",
+		Detail: fmt.Sprintf(
+			"The live PRAGMA journal_mode readback for the %q backend is %q, not \"wal\". "+
+				"Rollback-journal mode takes a brief but real exclusive lock on every commit, which "+
+				"can block concurrent readers under write pressure. Restart the emulator; if this "+
+				"persists, the SQLite driver DSN may not be applying the journal_mode pragma.",
+			m.Mode, m.JournalMode,
+		),
+		DocsPath: performanceDocsPath,
+	}
+}
+
+// checkStoreDegraded is critical: once HybridStore.degradeToMemoryOnly has
+// run, every write for the rest of the process's life is memory-only and
+// silently lost on restart — the single worst outcome this page can report.
+func checkStoreDegraded(m state.DebugMetrics) *Advisory {
+	if !m.Degraded {
+		return nil
+	}
+	return &Advisory{
+		Severity: advisorySeverityCritical,
+		Code:     advisoryCodeStoreDegradedMemoryOnly,
+		Title:    "Storage degraded to memory-only",
+		Detail: fmt.Sprintf(
+			"The %q backend permanently fell back to memory-only for this process's lifetime — "+
+				"data is no longer being persisted and will be lost on restart. Restart the emulator "+
+				"to retry opening the persistent backend; check the startup log for the underlying error.",
+			m.Mode,
+		),
+	}
+}
+
+// checkStoreUnhealthy is a warning, not critical: state.PersistentHealth's
+// Healthy flag is a transient, self-clearing signal (markPersistentSuccess
+// flips it back on the next successful flush — see hybrid.go), unlike
+// checkStoreDegraded's permanent, un-recoverable-without-a-restart
+// condition. A store can be Healthy=false for a moment under a burst of
+// write pressure and recover on its own.
+func checkStoreUnhealthy(health state.PersistentHealth, hasHealth bool) *Advisory {
+	if !hasHealth || health.Healthy {
+		return nil
+	}
+	detail := "The persistent backend reported a write/flush failure and has not yet recovered."
+	if health.LastError != "" {
+		detail += fmt.Sprintf(" Last error: %s.", health.LastError)
+	}
+	if !health.LastErrorAt.IsZero() {
+		detail += fmt.Sprintf(" Occurred at %s.", health.LastErrorAt.UTC().Format(time.RFC3339))
+	}
+	return &Advisory{
+		Severity: advisorySeverityWarning,
+		Code:     advisoryCodeStoreUnhealthy,
+		Title:    "Storage backend reported an error",
+		Detail:   detail,
+	}
+}
+
+// checkDataDirSlowFilesystem surfaces HybridStore's one-time startup fsync
+// probe (runDataDirProbe) — the same condition that already logs a WARN at
+// startup, now visible in the metrics payload too instead of requiring
+// someone to have been watching the log at the right moment.
+func checkDataDirSlowFilesystem(m state.DebugMetrics) *Advisory {
+	if m.DataDirProbe == nil || !m.DataDirProbe.Slow {
+		return nil
+	}
+	return &Advisory{
+		Severity: advisorySeverityWarning,
+		Code:     advisoryCodeDataDirSlowFilesystem,
+		Title:    "Data directory is on a slow filesystem",
+		Detail: fmt.Sprintf(
+			"A startup fsync probe against the data directory took %dms. This is characteristic of "+
+				"a Docker Desktop bind mount on macOS/Windows, which adds latency to every flush and "+
+				"read. Use a named Docker volume for the data directory instead.",
+			m.DataDirProbe.FsyncMillis,
+		),
+		DocsPath: performanceDocsPath,
+	}
+}
+
+// checkReadPressure fires on ReadTimeoutCount, deliberately NOT on
+// ReadRetryCount alone — not even as an info-level advisory.
+//
+// Justification: retries are the hybrid SQLite read-retry path (see
+// state.ErrStorePressure's doc comment) working exactly as designed —
+// individual retries happen routinely under perfectly ordinary, brief SQLite
+// busy/locked contention (e.g. a flush landing at the same moment as a
+// point read) and resolve within the retry window essentially always. A
+// non-zero ReadRetryCount on a healthy, moderately-loaded emulator is
+// unremarkable and would make this section noisy on installations that have
+// nothing wrong. A timeout, in contrast, means the ENTIRE retry window
+// (hybridSQLiteReadRetryTimeout) was exhausted without success — that read
+// was actually throttled and surfaced to its caller as a throttling error
+// (see state.ErrStorePressure) instead of the data it asked for. That is the
+// first user-visible symptom of real, sustained write pressure, which is
+// exactly the class of condition an advisory should exist to catch.
+func checkReadPressure(m state.DebugMetrics) *Advisory {
+	if m.ReadTimeoutCount <= 0 {
+		return nil
+	}
+	return &Advisory{
+		Severity: advisorySeverityWarning,
+		Code:     advisoryCodeReadPressureObserved,
+		Title:    "Storage reads are under write pressure",
+		Detail: fmt.Sprintf(
+			"%d read(s) exhausted their retry window under sustained SQLite write pressure and were "+
+				"throttled instead of served. This means writes are arriving faster than the persistent "+
+				"backend can flush. Consider reducing write volume, or moving the data directory to "+
+				"faster storage.",
+			m.ReadTimeoutCount,
+		),
+		DocsPath: performanceDocsPath,
+	}
+}
+
+// checkMemoryMode is informational only: OVERCAST_STATE=memory is a
+// deliberate, common choice for tests and CI, not a misconfiguration — this
+// exists purely so a developer who forgot they set it (or inherited an env
+// file that sets it) isn't surprised the next time they restart.
+func checkMemoryMode(backend config.StateBackend) *Advisory {
+	if backend != config.StateBackendMemory {
+		return nil
+	}
+	return &Advisory{
+		Severity: advisorySeverityInfo,
+		Code:     advisoryCodeMemoryMode,
+		Title:    "Running in memory-only mode",
+		Detail:   "OVERCAST_STATE=memory — state won't survive restarts; expected in this mode.",
+	}
+}

@@ -2,6 +2,6 @@ import { createFileRoute } from "@tanstack/react-router"
 import { MetricsPage } from "@/features/metrics/metrics-page"
 
 export const Route = createFileRoute("/metrics")({
-  head: () => ({ meta: [{ title: "Metrics — Overcast" }] }),
+  head: () => ({ meta: [{ title: "Metrics & Health — Overcast" }] }),
   component: MetricsPage,
 })

@@ -303,6 +303,33 @@ type DebugMetrics struct {
 	// data directory (e.g. a Docker Desktop bind mount) before it manifests
 	// as flush/read latency. nil for backends that don't run the probe.
 	DataDirProbe *DataDirProbeResult `json:"dataDirProbe,omitempty"`
+
+	// JournalMode is the LIVE `PRAGMA journal_mode` readback from this
+	// backend's SQLite connection, queried once during store initialisation
+	// (after the connection is open and migrated, never per-request) — see
+	// hybrid.go's seedFromSQLite and sqlite.go's runMigrate. Empty for
+	// backends with no real SQLite connection to ask (MemoryStore, WALStore)
+	// or when the backend degraded before the readback could run.
+	//
+	// This field exists because of a real historical failure, not a
+	// hypothetical one: every persistent connection's DSN silently disabled
+	// WAL mode for this project's entire history due to a driver-spelling
+	// bug (see hybrid_journalmode_internal_test.go), while every doc comment
+	// in this package confidently claimed WAL was active the whole time.
+	// Surfacing the ACTUAL, LIVE pragma value here — rather than trusting the
+	// DSN parameter we asked for — means that class of silent misconfiguration
+	// can never hide again; see internal/router/advisories.go's
+	// journal-mode-not-wal rule, which alerts the moment this diverges from
+	// "wal" on a persistent/hybrid backend.
+	JournalMode string `json:"journalMode,omitempty"`
+
+	// Degraded is true when the persistent backend permanently fell back to
+	// memory-only for this process's lifetime (see
+	// HybridStore.degradeToMemoryOnly) — every write since is memory-only and
+	// will not survive a restart. Always false for backends that cannot
+	// degrade this way: SQLiteStore fails outright rather than falling back,
+	// and MemoryStore/WALStore don't implement DebugMetricsReporter at all.
+	Degraded bool `json:"degraded,omitempty"`
 }
 
 // DataDirProbeResult is the outcome of the startup fsync micro-probe (see
