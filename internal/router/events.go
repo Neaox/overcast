@@ -4,17 +4,24 @@ package router
 //
 // GET /_events
 //
-// Streams every event published onto the bus as newline-delimited SSE.
-// Query parameters:
+// On connect, replays the bus's rolling History buffer (up to
+// events.HistoryCapacity recent events, oldest first) and then streams every
+// newly published event live as newline-delimited SSE. Query parameters:
 //   source=s3          filter to a single source (may be repeated)
 //
 // The stream stays open until the client disconnects or the server shuts down.
-// Each event is sent as:
+// Each event — replayed or live — is sent in the same shape:
 //
 //	data: {"type":"s3:ObjectCreated:*","time":"...","source":"s3","payload":{...}}\n\n
 //
 // An initial ": connected\n\n" comment is flushed immediately so the client
 // can distinguish "connected but no events yet" from "not connected at all".
+//
+// Replay + live-subscribe happen via Bus.SnapshotAndSubscribeAll, which
+// takes the history snapshot and registers the subscription atomically
+// under the bus lock — so an event published concurrently with a client
+// connecting is delivered exactly once (either in the replay or live,
+// never both, never neither).
 
 import (
 	"context"
@@ -67,7 +74,9 @@ func eventsHandler(bus *events.Bus, logger *zap.Logger, shutdownCh <-chan struct
 		// slowing down the emulator's own goroutines.
 		ch := make(chan events.Event, 64)
 
-		cancel := bus.SubscribeAll(func(_ context.Context, e events.Event) {
+		// Snapshot the history buffer and subscribe atomically — see the
+		// package doc comment above for why this must be one bus call.
+		snapshot, cancel := bus.SnapshotAndSubscribeAll(func(_ context.Context, e events.Event) {
 			select {
 			case ch <- e:
 			default:
@@ -75,6 +84,13 @@ func eventsHandler(bus *events.Bus, logger *zap.Logger, shutdownCh <-chan struct
 			}
 		})
 		defer cancel()
+
+		// Replay buffered history before going live. Ordering/dedup at this
+		// boundary is guaranteed by SnapshotAndSubscribeAll: nothing in
+		// snapshot can also arrive on ch, and vice versa.
+		for _, e := range snapshot {
+			writeSSEEvent(w, flusher, e, sourceSet, logger)
+		}
 
 		// Heartbeat ticker — sends an SSE comment every 15 s so clients can
 		// detect a stale connection even when no real events are flowing.
@@ -87,34 +103,7 @@ func eventsHandler(bus *events.Bus, logger *zap.Logger, shutdownCh <-chan struct
 			case <-shutdownCh:
 				return
 			case e := <-ch:
-				// Apply source filter.
-				if len(sourceSet) > 0 {
-					if _, ok := sourceSet[strings.ToLower(e.Source)]; !ok {
-						continue
-					}
-				}
-
-				payload, err := json.Marshal(e.Payload)
-				if err != nil {
-					logger.Error("events: marshal payload", zap.Error(err))
-					continue
-				}
-
-				env := sseEnvelope{
-					Type:    string(e.Type),
-					Time:    e.Time.UTC().Format(time.RFC3339Nano),
-					Source:  e.Source,
-					Payload: payload,
-				}
-
-				data, err := json.Marshal(env)
-				if err != nil {
-					logger.Error("events: marshal envelope", zap.Error(err))
-					continue
-				}
-
-				fmt.Fprintf(w, "data: %s\n\n", data)
-				flusher.Flush()
+				writeSSEEvent(w, flusher, e, sourceSet, logger)
 
 			case <-heartbeat.C:
 				// Lightweight heartbeat — lets clients detect a stale
@@ -134,4 +123,37 @@ func eventsHandler(bus *events.Bus, logger *zap.Logger, shutdownCh <-chan struct
 			}
 		}
 	}
+}
+
+// writeSSEEvent marshals e as an SSE data frame and writes it to w, applying
+// the source filter first. Shared by both the history-replay loop and the
+// live-tail loop so the two paths can never drift in wire format.
+func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, e events.Event, sourceSet map[string]struct{}, logger *zap.Logger) {
+	if len(sourceSet) > 0 {
+		if _, ok := sourceSet[strings.ToLower(e.Source)]; !ok {
+			return
+		}
+	}
+
+	payload, err := json.Marshal(e.Payload)
+	if err != nil {
+		logger.Error("events: marshal payload", zap.Error(err))
+		return
+	}
+
+	env := sseEnvelope{
+		Type:    string(e.Type),
+		Time:    e.Time.UTC().Format(time.RFC3339Nano),
+		Source:  e.Source,
+		Payload: payload,
+	}
+
+	data, err := json.Marshal(env)
+	if err != nil {
+		logger.Error("events: marshal envelope", zap.Error(err))
+		return
+	}
+
+	fmt.Fprintf(w, "data: %s\n\n", data)
+	flusher.Flush()
 }
