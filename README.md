@@ -12,7 +12,7 @@ locally without an internet connection, a cloud account, or a bill.
 
 Every change is tested against **eight official AWS clients** — the AWS CLI,
 the CDK, and the Go, JavaScript, Python, Java, .NET, and Rust SDKs — via the
-[compatibility suite](./docs/compatibility/).
+[compatibility suite](./docs/dev/compatibility/).
 
 ---
 
@@ -469,14 +469,14 @@ Full documentation lives in [`docs/`](./docs/README.md):
 | [Web management console](./docs/README.md#web-management-console)   | Built-in dashboard on port 4567                                          |
 | [Debug endpoints](./docs/README.md#debug-endpoints)                 | Health, metrics, state dump, pprof                                       |
 | [Migrating from LocalStack](./docs/migration-from-localstack.md)    | Drop-in replacement guide                                                |
-| [Development setup](./docs/development-setup.md)                    | Building from source                                                     |
+| [Development setup](./docs/dev/development-setup.md)                | Building from source                                                     |
 
 ---
 
 ## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for coding standards and workflow, and
-[docs/development-setup.md](./docs/development-setup.md) for building from source.
+[docs/dev/development-setup.md](./docs/dev/development-setup.md) for building from source.
 
 ## Disclaimer
 

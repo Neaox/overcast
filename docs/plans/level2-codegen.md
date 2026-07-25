@@ -1,7 +1,7 @@
 # Wire protocols — claim-first dispatch, single-implementation ops, and model-driven codegen (v2)
 
 > Status: proposal v2, 2026-07-24 — rewrites the original "Level 2 codegen" proposal (kept below as inspiration where still valid; superseded where it conflicts). Owner: TBD.
-> Level 1 (the codec/op architecture) is live in code — design doc: [docs/smithy.md](../smithy.md) (note: its link to `plans/smithy.md` is stale; fix alongside this plan).
+> Level 1 (the codec/op architecture) is live in code — design doc: [docs/smithy.md](../dev/smithy.md) (note: its link to `plans/smithy.md` is stale; fix alongside this plan).
 > Inputs: the 2026-07-24 protocol/codec architecture audit (census embedded below); AWS's April-2026 wire-protocol policy and the "reactive protocol identification" guidance it points at (see e.g. floci-io/floci#156 for the same problem in a sibling emulator); [wire-byte-goldens.md](./wire-byte-goldens.md) as the codec safety net.
 
 ## 1. Why this plan exists (the forcing function)

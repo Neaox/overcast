@@ -145,7 +145,7 @@ but says nothing about **client-perceived workflow latency**, which is
 where the "overcast feels slow" reports actually come from. Add a section
 (e.g. "Client-perceived latency: SDK waiters and CDK deploys") that
 documents, with measurement conditions per the existing
-[Documenting performance claims](../performance.md#documenting-performance-claims)
+[Documenting performance claims](../dev/performance.md#documenting-performance-claims)
 policy:
 
 - Stack provisioning is asynchronous but typically completes in

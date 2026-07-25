@@ -1303,7 +1303,7 @@ func (s *HybridStore) getDataDirProbeResult() *DataDirProbeResult {
 //
 // This intentionally runs after construction returns (never inside New*),
 // per the startup-budget rule against synchronous file I/O in a
-// constructor — see docs/performance.md "Startup budget — rules for service
+// constructor — see docs/dev/performance.md "Startup budget — rules for service
 // authors". The probe itself is cheap (a few KB write+fsync), but on a slow
 // bind-mounted data dir specifically, fsync latency is exactly what this
 // probe exists to catch, so it must never be on the request or startup path.

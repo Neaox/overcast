@@ -1,6 +1,6 @@
 ---
 name: aws-compatibility-review
-description: AWS compatibility review for Overcast services and endpoints. Use when auditing service fidelity against AWS docs, adding compatibility tests, fixing wire-format or behavior drift, or updating docs/compatibility tracking files.
+description: AWS compatibility review for Overcast services and endpoints. Use when auditing service fidelity against AWS docs, adding compatibility tests, fixing wire-format or behavior drift, or updating docs/dev/compatibility tracking files.
 ---
 
 # AWS Compatibility Review
@@ -27,9 +27,9 @@ Before reviewing or changing an endpoint:
 
 1. Use `github-issue-lifecycle` to find or create the tracking issue unless the user explicitly asks for local-only review.
 2. Read the tracking issue, comments, labels, and linked PRs before editing code.
-3. Read `docs/compatibility/README.md`.
-4. Read `docs/compatibility/matrix.yaml`.
-5. Read `docs/compatibility/services/<service>.yaml` if it exists.
+3. Read `docs/dev/compatibility/README.md`.
+4. Read `docs/dev/compatibility/matrix.yaml`.
+5. Read `docs/dev/compatibility/services/<service>.yaml` if it exists.
 6. Pick the highest-priority operation whose status is not `reviewed` unless the user named a specific operation or issue.
 7. Fetch and read the linked AWS docs for the operation before editing code.
 
@@ -147,8 +147,8 @@ Use only these status values in compatibility trackers:
 Before finishing, update:
 
 - The GitHub issue with progress, evidence, verification commands, remaining gaps, and next-agent handoff.
-- `docs/compatibility/services/<service>.yaml` with operation status, AWS docs URLs, scenario matrix, tests, evidence, gaps, findings, and next-agent handoff.
-- `docs/compatibility/matrix.yaml` with service-level status, priority, claim fields if used, progress counts, focus areas, and next action.
+- `docs/dev/compatibility/services/<service>.yaml` with operation status, AWS docs URLs, scenario matrix, tests, evidence, gaps, findings, and next-agent handoff.
+- `docs/dev/compatibility/matrix.yaml` with service-level status, priority, claim fields if used, progress counts, focus areas, and next action.
 - `CHANGELOG.md` if behavior changed.
 - Service docs/capabilities if support status or caveats changed.
 

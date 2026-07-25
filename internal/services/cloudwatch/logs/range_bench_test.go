@@ -4,7 +4,7 @@ package logs
 // range + limit pushdown. Mirrors store_bench_test.go's conventions
 // (state.NewMemoryStore backing, seed via backend.appendEvents directly to
 // bypass the debounced write path, b.ReportAllocs — see that file's header
-// for the full rationale and docs/performance.md's measurement-conditions
+// for the full rationale and docs/dev/performance.md's measurement-conditions
 // requirement). Run: `go test -run=^$ -bench=. -benchmem
 // ./internal/services/cloudwatch/logs/...`.
 //

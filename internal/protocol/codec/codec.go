@@ -80,7 +80,7 @@ type Codec interface {
 
 // Supports reports whether c is in supported, treating JSON 1.0 and 1.1 as
 // equivalent (the emulator accepts either for any JSON-tier service — see
-// docs/smithy.md). Every service's Dispatch method should use this instead
+// docs/dev/smithy.md). Every service's Dispatch method should use this instead
 // of writing its own supportsCodec loop.
 func Supports(supported []Codec, c Codec) bool {
 	name := c.Name()
