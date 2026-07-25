@@ -286,3 +286,19 @@ export const EventType = {
     ImagePushed: "ecr:ImagePushed",
   },
 } as const
+
+/**
+ * Event types classified as "noise" — high-frequency, low-signal traffic
+ * that would otherwise crowd out the state-change events someone debugging
+ * an incident actually wants to see. Mirrors the Go classification in
+ * internal/events/classify.go (IsNoise) so the server's history-buffer
+ * eviction policy and the Events page's default filters stay in lockstep:
+ * today that is exactly per-request HTTP telemetry, including the UI's own
+ * polling and any Docker/load-balancer health checks.
+ */
+const NOISE_EVENT_TYPES: ReadonlySet<string> = new Set([EventType.request.Received])
+
+/** Reports whether `type` is classified as noise. See NOISE_EVENT_TYPES. */
+export function isNoiseEventType(type: string): boolean {
+  return NOISE_EVENT_TYPES.has(type)
+}

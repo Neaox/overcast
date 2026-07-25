@@ -4,6 +4,17 @@
  * Features: multi-source filtering, free-text search, date-range filtering,
  * heartbeat toggle, pause/resume. Source and text/date
  * filters are all client-side — the SSE connection always receives everything.
+ *
+ * Source filtering is a deny-list (hiddenSources), not an allow-list: the
+ * dropdown is populated from every source seen in the stream so far, merged
+ * with the statically-known ones (for stable labels/ordering before any
+ * events arrive). A source is visible unless the user explicitly hid it.
+ * This "default allow" behaviour matters because the set of sources is not
+ * closed — a service wired into the bus later, or a source id the UI has
+ * never seen, must show up by default rather than being silently dropped by
+ * a hardcoded enumeration. The only source hidden out of the box is
+ * "request" (see DEFAULT_HIDDEN_SOURCES), matching the noise classification
+ * the server's history buffer uses to decide what to evict first.
  */
 import { useState, useCallback, useMemo, useRef, useEffect } from "react"
 import {
@@ -20,13 +31,14 @@ import { useEventStream, type StreamEvent } from "@/hooks/use-event-stream"
 import { EventConsole } from "@/components/ui/event-console"
 import { PageHeader } from "@/components/ui/primitives"
 import { Button } from "@/components/ui/button"
+import { Tooltip } from "@/components/ui/tooltip"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { toTitleCase } from "@/lib/format"
-import { EventType } from "@/services/event-types"
+import { EventType, isNoiseEventType } from "@/services/event-types"
 import { SERVICES } from "@/lib/service-registry"
 
-// ─── Derive filterable sources from EventType ────────────────────────────────
+// ─── Source labelling ────────────────────────────────────────────────────────
 
 type SourceEntry = { id: string; label: string }
 
@@ -36,7 +48,8 @@ const SOURCE_LABELS: Record<string, string> = {
   inbox: "Inbox",
 }
 
-function buildSourceEntries(): SourceEntry[] {
+/** Statically-known sources, derived from the EventType namespace keys. */
+function buildKnownSources(): SourceEntry[] {
   const entries: SourceEntry[] = []
   for (const key of Object.keys(EventType)) {
     const explicitLabel = SOURCE_LABELS[key]
@@ -56,10 +69,39 @@ function buildSourceEntries(): SourceEntry[] {
   return entries
 }
 
-const ALL_SOURCES = buildSourceEntries()
-const DEFAULT_SELECTED_SOURCES = ALL_SOURCES
-  .filter((source) => source.id !== "request" && source.id !== "heartbeat")
-  .map((source) => source.id)
+const KNOWN_SOURCES = buildKnownSources()
+const KNOWN_SOURCES_BY_ID = new Map(KNOWN_SOURCES.map((s) => [s.id, s]))
+
+/** Label for any source id, known or not (falls back to title-casing it). */
+function sourceLabel(id: string): string {
+  return KNOWN_SOURCES_BY_ID.get(id)?.label ?? toTitleCase(id)
+}
+
+/**
+ * Sources hidden by default. A source is included here only if every event
+ * type it can emit is classified as noise (see isNoiseEventType) — today
+ * that is exactly "request". Computed from the classification rather than
+ * hardcoded so the UI default can't silently drift from the server's
+ * history-buffer eviction policy as event types evolve.
+ */
+function computeDefaultHiddenSources(): Set<string> {
+  const hidden = new Set<string>()
+  for (const [key, group] of Object.entries(EventType)) {
+    const types = Object.values(group as Record<string, string>)
+    if (types.length > 0 && types.every((t) => isNoiseEventType(t))) {
+      hidden.add(key)
+    }
+  }
+  return hidden
+}
+
+const DEFAULT_HIDDEN_SOURCES = computeDefaultHiddenSources()
+
+function setsEqual(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  if (a.size !== b.size) return false
+  for (const v of a) if (!b.has(v)) return false
+  return true
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -87,16 +129,13 @@ function topSources(events: readonly StreamEvent[], n: number): { id: string; la
   return Array.from(counts.entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, n)
-    .map(([id, count]) => {
-      const entry = ALL_SOURCES.find(s => s.id === id)
-      return { id, label: entry?.label ?? id, count }
-    })
+    .map(([id, count]) => ({ id, label: sourceLabel(id), count }))
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function EventsPage() {
-  const [selectedSources, setSelectedSources] = useState<string[]>(() => DEFAULT_SELECTED_SOURCES)
+  const [hiddenSources, setHiddenSources] = useState<Set<string>>(() => new Set(DEFAULT_HIDDEN_SOURCES))
   const [showHeartbeats, setShowHeartbeats] = useState(false)
   const [paused, setPaused] = useState(false)
   const [frozenEvents, setFrozenEvents] = useState<StreamEvent[]>([])
@@ -112,15 +151,25 @@ export function EventsPage() {
     includeHeartbeats: showHeartbeats,
   })
 
-  // Client-side filtering chain. Sources pick what to include; request
-  // events are just another source and are unchecked by default.
-  const events = useMemo(() => {
-    let filtered = rawEvents
-
-    if (selectedSources.length > 0) {
-      const set = new Set(selectedSources)
-      filtered = filtered.filter((e) => set.has(e.source))
+  // Every source seen so far, merged with the statically-known ones (for
+  // stable labels/ordering before any matching event has arrived). A source
+  // that only shows up at runtime — a new service, or the "system" source
+  // heartbeats carry — is added here automatically instead of being
+  // silently unfilterable.
+  const allSources = useMemo(() => {
+    const merged = new Map<string, SourceEntry>(KNOWN_SOURCES_BY_ID)
+    for (const e of rawEvents) {
+      if (!merged.has(e.source)) {
+        merged.set(e.source, { id: e.source, label: sourceLabel(e.source) })
+      }
     }
+    return Array.from(merged.values()).sort((a, b) => a.label.localeCompare(b.label))
+  }, [rawEvents])
+
+  // Client-side filtering chain. hiddenSources is a deny-list: anything not
+  // explicitly hidden is shown, including sources the UI has never heard of.
+  const events = useMemo(() => {
+    let filtered = rawEvents.filter((e) => !hiddenSources.has(e.source))
 
     const lower = textFilter.toLowerCase().trim()
     if (lower) filtered = filtered.filter((e) => eventMatchesText(e, lower))
@@ -134,7 +183,7 @@ export function EventsPage() {
       if (!isNaN(to)) filtered = filtered.filter((e) => new Date(e.time).getTime() <= to)
     }
     return filtered
-  }, [rawEvents, selectedSources, textFilter, dateFrom, dateTo])
+  }, [rawEvents, hiddenSources, textFilter, dateFrom, dateTo])
 
   const displayedEvents = paused ? frozenEvents : events
 
@@ -169,28 +218,31 @@ export function EventsPage() {
   }, [sourceMenuOpen])
 
   const toggleSource = useCallback((id: string) => {
-    setSelectedSources(prev =>
-      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id],
-    )
+    setHiddenSources((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   }, [])
 
   const clearFilters = useCallback(() => {
-    setSelectedSources(DEFAULT_SELECTED_SOURCES)
+    setHiddenSources(new Set(DEFAULT_HIDDEN_SOURCES))
     setTextFilter("")
     setDateFrom("")
     setDateTo("")
   }, [])
 
-  const hasSourceFilter = selectedSources.length !== DEFAULT_SELECTED_SOURCES.length
-    || selectedSources.some(source => !DEFAULT_SELECTED_SOURCES.includes(source))
+  const hasSourceFilter = !setsEqual(hiddenSources, DEFAULT_HIDDEN_SOURCES)
   const hasFilter = hasSourceFilter || textFilter !== "" || dateFrom !== "" || dateTo !== ""
   const top5 = useMemo(() => topSources(rawEvents, 5), [rawEvents])
+  const visibleSourceCount = allSources.length - hiddenSources.size
 
   // Filter sources in the dropdown by search text.
   const filteredSources = useMemo(() => {
     const q = sourceSearch.toLowerCase()
-    return q ? ALL_SOURCES.filter(s => s.id.toLowerCase().includes(q) || s.label.toLowerCase().includes(q)) : ALL_SOURCES
-  }, [sourceSearch])
+    return q ? allSources.filter(s => s.id.toLowerCase().includes(q) || s.label.toLowerCase().includes(q)) : allSources
+  }, [sourceSearch, allSources])
 
   return (
     <div className="flex w-full flex-col gap-3">
@@ -249,22 +301,28 @@ export function EventsPage() {
             onClick={() => setSourceMenuOpen(o => !o)}
           >
             {(() => {
-              if (selectedSources.length > 0) {
-                return `${selectedSources.length} source${selectedSources.length !== 1 ? "s" : ""}`
-              }
-              return "No sources"
+              if (visibleSourceCount <= 0) return "No sources"
+              if (visibleSourceCount === allSources.length) return "All sources"
+              return `${visibleSourceCount} source${visibleSourceCount !== 1 ? "s" : ""}`
             })()}
             <ChevronDown className="h-3 w-3" />
           </Button>
 
           {sourceMenuOpen && (
             <div className="absolute left-0 top-full z-50 mt-1 w-56 rounded-lg border border-border bg-bg-elevated shadow-lg">
-              {selectedSources.length > 0 && (
+              {visibleSourceCount > 0 ? (
                 <button
                   className="flex w-full items-center gap-2 rounded-t-lg px-3 py-1.5 text-xs text-fg-muted hover:bg-fg/5"
-                  onClick={() => setSelectedSources([])}
+                  onClick={() => setHiddenSources(new Set(allSources.map(s => s.id)))}
                 >
-                  Clear selection
+                  Hide all
+                </button>
+              ) : (
+                <button
+                  className="flex w-full items-center gap-2 rounded-t-lg px-3 py-1.5 text-xs text-fg-muted hover:bg-fg/5"
+                  onClick={() => setHiddenSources(new Set())}
+                >
+                  Show all
                 </button>
               )}
 
@@ -286,25 +344,28 @@ export function EventsPage() {
                 {filteredSources.length === 0 ? (
                   <div className="px-3 py-4 text-center text-xs text-fg-subtle">No sources match</div>
                 ) : (
-                  filteredSources.map(s => (
-                    <button
-                      key={s.id}
-                      role="checkbox"
-                      aria-checked={selectedSources.includes(s.id)}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-fg/5"
-                      onClick={() => toggleSource(s.id)}
-                    >
-                      <span className={cn(
-                        "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
-                        selectedSources.includes(s.id)
-                          ? "border-accent bg-accent text-bg"
-                          : "border-border",
-                      )}>
-                        {selectedSources.includes(s.id) && <Check className="h-3 w-3" />}
-                      </span>
-                      <span className="flex-1 text-left">{s.label}</span>
-                    </button>
-                  ))
+                  filteredSources.map(s => {
+                    const checked = !hiddenSources.has(s.id)
+                    return (
+                      <button
+                        key={s.id}
+                        role="checkbox"
+                        aria-checked={checked}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-fg/5"
+                        onClick={() => toggleSource(s.id)}
+                      >
+                        <span className={cn(
+                          "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                          checked
+                            ? "border-accent bg-accent text-bg"
+                            : "border-border",
+                        )}>
+                          {checked && <Check className="h-3 w-3" />}
+                        </span>
+                        <span className="flex-1 text-left">{s.label}</span>
+                      </button>
+                    )
+                  })
                 )}
               </div>
             </div>
@@ -343,17 +404,25 @@ export function EventsPage() {
           {paused ? "Resume" : "Pause"}
         </Button>
 
-        {/* Heartbeats */}
-        <Button
-          variant={showHeartbeats ? "secondary" : "ghost"}
-          size="sm"
-          className="h-8 gap-1 text-xs"
-          onClick={() => setShowHeartbeats(v => !v)}
-          title={showHeartbeats ? "Hide heartbeat pings" : "Show heartbeat pings"}
-        >
-          <Heart className={cn("h-3.5 w-3.5", showHeartbeats && "text-fg-muted")} />
-          {showHeartbeats ? "Pings" : null}
-        </Button>
+        {/* Heartbeats — icon-only toggle: filled red when pings are shown,
+            outlined when hidden; the label lives in the tooltip. */}
+        <Tooltip content={showHeartbeats ? "Hide heartbeat pings" : "Show heartbeat pings"}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 text-xs"
+            onClick={() => setShowHeartbeats(v => !v)}
+            aria-label={showHeartbeats ? "Hide heartbeat pings" : "Show heartbeat pings"}
+            aria-pressed={showHeartbeats}
+          >
+            <Heart
+              className={cn(
+                "h-3.5 w-3.5",
+                showHeartbeats ? "fill-danger text-danger" : "text-fg-muted",
+              )}
+            />
+          </Button>
+        </Tooltip>
 
         {/* Clear filters — always visible */}
         <Button
