@@ -226,6 +226,14 @@ When you need to understand an unfamiliar part of the codebase (e.g. "how does t
 
 ---
 
+## Reserved ports — 4566 and 4567 belong to the user
+
+Agents must **not** start their own test instances of Overcast on port **4566** (API) or **4567** (web UI) — those are reserved for the user's own running instance, unless the user explicitly directs otherwise. Starting a test instance on those ports silently breaks whatever the user is doing with their instance, or fails confusingly when theirs is already bound.
+
+- Use `scripts/run-test-instance.sh` (or `.ps1`) — it picks a free port pair at or above 4570, refuses the reserved pair even when the scan base is moved, passes extra `docker run` args through after `--`, and prints the API endpoint and web UI URLs.
+- When you want the user to look at something in a test instance, give them the **full clickable URL including the port** (e.g. `http://localhost:4570` / `http://localhost:4571`) — never say "open the web UI" and assume a port.
+- The same courtesy applies in reverse: something already listening on 4566/4567 is the user's instance — never kill it, restart it, or point tests at it without being asked.
+
 ## What agents must NOT do
 
 - **Never push directly to `main`.** Agents must not run `git push origin main`, push the current branch when it is `main`, create or move tags on `main`, or otherwise update protected release branches directly. Always work on a feature/release branch and use a pull request or explicit human-managed merge path. If a task appears to require a direct `main` push to trigger automation, stop and ask for human confirmation instead.
