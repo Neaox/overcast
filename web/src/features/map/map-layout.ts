@@ -112,6 +112,45 @@ function layoutSubgraph(
 export const IGW_NODE_WIDTH = 200
 export const IGW_NODE_HEIGHT = 52
 
+// ─── Lambda group sizing ──────────────────────────────────────────────────
+//
+// Lives here (not topology-nodes.tsx) so this plain-data module can be
+// imported from the layout worker without pulling React component code
+// into the worker bundle — see map-layout.worker.ts.
+
+/** Header height (px) of a LambdaGroupNode — keep in sync with topology-nodes.tsx. */
+export const LAMBDA_GROUP_HEADER_H = 56
+/** Row height (px) of a single instance card — keep in sync with lambda-instance-node.tsx's LAMBDA_INSTANCE_H. */
+const LAMBDA_INSTANCE_H = 100
+/** Padding above/below the scrollable instance list inside a LambdaGroupNode. */
+const LAMBDA_LIST_PAD_TOP = 8
+const LAMBDA_LIST_PAD_BOTTOM = 8
+
+/**
+ * Maximum number of Lambda instance rows shown before the list becomes
+ * internally scrollable. Bounds LambdaGroupNode's height so a function with
+ * many concurrent instances can't grow into overlapping its neighbours on
+ * the map — mirrors the fixed max-height + scroll pattern already used by
+ * the SQS message list and CloudWatch Logs stream list.
+ */
+export const LAMBDA_GROUP_MAX_VISIBLE = 4
+
+/**
+ * Total LambdaGroupNode box height for a given instance count, capped at
+ * LAMBDA_GROUP_MAX_VISIBLE rows. Both map-page.tsx (dagre sizing) and
+ * topology-nodes.tsx (actual rendered height) call this so the two always
+ * agree — deterministic from data, no post-render measurement required.
+ */
+export function lambdaGroupHeight(instanceCount: number): number {
+  const visibleRows = Math.min(Math.max(instanceCount, 0), LAMBDA_GROUP_MAX_VISIBLE)
+  return (
+    LAMBDA_GROUP_HEADER_H +
+    LAMBDA_LIST_PAD_TOP +
+    visibleRows * LAMBDA_INSTANCE_H +
+    LAMBDA_LIST_PAD_BOTTOM
+  )
+}
+
 /** Map service key to custom React Flow node type. */
 function nodeType(service: string): string {
   switch (service) {
@@ -739,18 +778,17 @@ let _layoutId = 0
 const _layoutListeners = new Set<() => void>()
 let _layoutResult = { nodes: [] as Node[] }
 let _layoutLoading = false
-let _lastLayoutHash = ''
+let _lastLayoutHash = ""
 
 function getWorker(): Worker {
   if (!_layoutWorker) {
-    _layoutWorker = new Worker(
-      new URL('./map-layout.worker.ts', import.meta.url),
-      { type: 'module' },
-    )
+    _layoutWorker = new Worker(new URL("./map-layout.worker.ts", import.meta.url), {
+      type: "module",
+    })
     _layoutWorker.onmessage = (e: MessageEvent) => {
       if (e.data.id !== _layoutId) return
       if (e.data.error) {
-        console.error('Layout worker error:', e.data.error)
+        console.error("Layout worker error:", e.data.error)
         _layoutLoading = false
         return
       }
@@ -772,8 +810,8 @@ function layoutInputHash(
   const overridesStr = Object.entries(nodeSizeOverrides)
     .filter(([, v]) => v)
     .map(([k, v]) => `${k}:${v!.width}x${v!.height}`)
-    .join(';')
-  return `${topologyNodes.map((n) => n.id).join(',')}|${topologyEdges.length}|${overridesStr}|${activeRegion ?? ''}|${collapsedStacks?.size ?? 0}`
+    .join(";")
+  return `${topologyNodes.map((n) => n.id).join(",")}|${topologyEdges.length}|${overridesStr}|${activeRegion ?? ""}|${collapsedStacks?.size ?? 0}`
 }
 
 /**
@@ -794,7 +832,13 @@ export function requestLayoutAsync(
     return
   }
 
-  const hash = layoutInputHash(topologyNodes, topologyEdges, nodeSizeOverrides, activeRegion, collapsedStacks)
+  const hash = layoutInputHash(
+    topologyNodes,
+    topologyEdges,
+    nodeSizeOverrides,
+    activeRegion,
+    collapsedStacks,
+  )
   if (hash === _lastLayoutHash && !_layoutLoading) return
   _lastLayoutHash = hash
 

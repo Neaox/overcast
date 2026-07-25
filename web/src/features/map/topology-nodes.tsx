@@ -24,8 +24,11 @@ import { SERVICES } from "@/lib/service-registry"
 import { sqs } from "@/services/api"
 import type { SQSMessage } from "@/types"
 import { useGhostTracker } from "@/hooks/use-ghost-tracker"
+import { useLambdaInstances } from "@/hooks/use-lambda-instances"
 import { useEventStream } from "@/hooks/use-event-stream"
 import { EventType } from "@/services/event-types"
+import { LambdaInstanceCard, LAMBDA_GHOST_TTL } from "./lambda-instance-node"
+import { LAMBDA_GROUP_HEADER_H } from "./map-layout"
 import { useSqsEventMessages } from "./use-sqs-event-messages"
 import {
   computeSqsVisualMessages,
@@ -879,13 +882,17 @@ function ESMRecordDetails({ event, query }: { event: ESMDecisionEvent; query: st
       <div className="grid grid-cols-2 gap-2 text-xs text-fg-muted @md:grid-cols-4">
         {typeof record.eventID === "string" && (
           <div className="rounded bg-bg px-2 py-1">
-            <span className="block text-[10px] font-semibold text-fg-subtle uppercase">Event ID</span>
+            <span className="block text-[10px] font-semibold text-fg-subtle uppercase">
+              Event ID
+            </span>
             <span className="break-all text-fg">{record.eventID}</span>
           </div>
         )}
         {typeof record.eventVersion === "string" && (
           <div className="rounded bg-bg px-2 py-1">
-            <span className="block text-[10px] font-semibold text-fg-subtle uppercase">Version</span>
+            <span className="block text-[10px] font-semibold text-fg-subtle uppercase">
+              Version
+            </span>
             <span className="text-fg">{record.eventVersion}</span>
           </div>
         )}
@@ -897,7 +904,9 @@ function ESMRecordDetails({ event, query }: { event: ESMDecisionEvent; query: st
         )}
         {typeof dynamodb?.SequenceNumber === "string" && (
           <div className="rounded bg-bg px-2 py-1">
-            <span className="block text-[10px] font-semibold text-fg-subtle uppercase">Sequence</span>
+            <span className="block text-[10px] font-semibold text-fg-subtle uppercase">
+              Sequence
+            </span>
             <span className="break-all text-fg">{dynamodb.SequenceNumber}</span>
           </div>
         )}
@@ -918,13 +927,7 @@ function ESMRecordDetails({ event, query }: { event: ESMDecisionEvent; query: st
   )
 }
 
-function ESMFilterPanel({
-  esmId,
-  patterns,
-}: {
-  esmId: string
-  patterns: string[]
-}) {
+function ESMFilterPanel({ esmId, patterns }: { esmId: string; patterns: string[] }) {
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<ESMFilterMode>("all")
   const [query, setQuery] = useState("")
@@ -950,7 +953,9 @@ function ESMFilterPanel({
 
         const q = query.trim().toLowerCase()
         if (!q) return true
-        return `${event.payload?.eventName ?? ""}\n${recordSearchText(event)}`.toLowerCase().includes(q)
+        return `${event.payload?.eventName ?? ""}\n${recordSearchText(event)}`
+          .toLowerCase()
+          .includes(q)
       }),
     [decisions, mode, query],
   )
@@ -1014,23 +1019,31 @@ function ESMFilterPanel({
 
             <div className="grid shrink-0 grid-cols-3 gap-2 border-b border-border px-5 py-3">
               <div className="rounded-lg border border-border bg-bg px-3 py-2">
-                <div className="text-[10px] font-bold tracking-wide text-fg-subtle uppercase">Received</div>
-                <div className="text-xl font-semibold tabular-nums text-fg">{total}</div>
+                <div className="text-[10px] font-bold tracking-wide text-fg-subtle uppercase">
+                  Received
+                </div>
+                <div className="text-xl font-semibold text-fg tabular-nums">{total}</div>
               </div>
               <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/8 px-3 py-2">
-                <div className="text-[10px] font-bold tracking-wide text-emerald-300 uppercase">Filtered in</div>
-                <div className="text-xl font-semibold tabular-nums text-emerald-200">{matched}</div>
+                <div className="text-[10px] font-bold tracking-wide text-emerald-300 uppercase">
+                  Filtered in
+                </div>
+                <div className="text-xl font-semibold text-emerald-200 tabular-nums">{matched}</div>
               </div>
               <div className="rounded-lg border border-red-400/20 bg-red-400/8 px-3 py-2">
-                <div className="text-[10px] font-bold tracking-wide text-red-300 uppercase">Filtered out</div>
-                <div className="text-xl font-semibold tabular-nums text-red-200">{filtered}</div>
+                <div className="text-[10px] font-bold tracking-wide text-red-300 uppercase">
+                  Filtered out
+                </div>
+                <div className="text-xl font-semibold text-red-200 tabular-nums">{filtered}</div>
               </div>
             </div>
 
             <div className="shrink-0 border-b border-border px-5 py-4">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold text-fg">Filter pattern</h3>
-                {patterns.length > 1 && <span className="text-xs text-fg-muted">{patterns.length} patterns</span>}
+                {patterns.length > 1 && (
+                  <span className="text-xs text-fg-muted">{patterns.length} patterns</span>
+                )}
               </div>
               <pre className="max-h-32 overflow-auto rounded-lg border border-amber-400/15 bg-amber-400/6 p-3 text-xs leading-relaxed whitespace-pre-wrap text-fg">
                 {filterPatternText}
@@ -1078,7 +1091,9 @@ function ESMFilterPanel({
               {decisions.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-border bg-bg/60 p-8 text-center">
                   <Filter className="mx-auto mb-3 h-8 w-8 text-fg-subtle" />
-                  <p className="text-sm font-medium text-fg">No records have reached this filter yet.</p>
+                  <p className="text-sm font-medium text-fg">
+                    No records have reached this filter yet.
+                  </p>
                   <p className="mt-1 text-xs text-fg-muted">
                     Write to the DynamoDB table after opening the map to see filter decisions here.
                   </p>
@@ -1120,7 +1135,9 @@ function ESMFilterPanel({
                               </span>
                             )}
                           </div>
-                          {event.time && <time className="text-xs text-fg-subtle">{event.time}</time>}
+                          {event.time && (
+                            <time className="text-xs text-fg-subtle">{event.time}</time>
+                          )}
                         </div>
                         <div className="p-4">
                           <ESMRecordDetails event={event} query={query} />
@@ -1201,25 +1218,27 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
 
   const { hasTarget, hasSource } = data as ServiceNodeData
 
-  const meta = service === "esm-filter"
-    ? {
-        color: "text-amber-300",
-        bg: "bg-amber-400/10",
-        border: "border-amber-400/30",
-        hex: "#facc15",
-        letter: "F",
-      }
-    : (SERVICE_THEME[service] ?? {
-        color: "text-fg-muted",
-        bg: "bg-fg-muted/10",
-        border: "border-fg-muted/30",
-        hex: "#6b7280",
-        letter: "?",
-      })
-  const Icon = service === "esm-filter"
-    ? Filter
-    : ((SERVICES as Record<string, (typeof SERVICES)[keyof typeof SERVICES] | undefined>)[service]
-        ?.icon ?? Box)
+  const meta =
+    service === "esm-filter"
+      ? {
+          color: "text-amber-300",
+          bg: "bg-amber-400/10",
+          border: "border-amber-400/30",
+          hex: "#facc15",
+          letter: "F",
+        }
+      : (SERVICE_THEME[service] ?? {
+          color: "text-fg-muted",
+          bg: "bg-fg-muted/10",
+          border: "border-fg-muted/30",
+          hex: "#6b7280",
+          letter: "?",
+        })
+  const Icon =
+    service === "esm-filter"
+      ? Filter
+      : ((SERVICES as Record<string, (typeof SERVICES)[keyof typeof SERVICES] | undefined>)[service]
+          ?.icon ?? Box)
   const actionButtonClass = {
     sqs: "hover:bg-emerald-400/15 hover:text-emerald-400",
     sns: "hover:bg-orange-400/15 hover:text-orange-400",
@@ -1515,11 +1534,8 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
 
 // ─── LambdaGroupNode ────────────────────────────────────────────────────────
 
-export const LAMBDA_GROUP_HEADER_H = 56 // px — must match map-page.tsx constant
-
 export interface LambdaGroupNodeData extends Record<string, unknown> {
   label: string
-  instanceCount: number
   eventCount?: number
   onPeek?: (target: LogStreamTarget) => void
 }
@@ -1549,30 +1565,52 @@ function normalizeTriggerEvent(value: unknown): string | undefined {
 }
 
 /**
- * LambdaGroupNode — container node that hosts LambdaInstanceNode children.
+ * LambdaGroupNode — container node that renders its function's live +
+ * ghost instances as a bounded, internally-scrollable list.
  *
- * React Flow renders child nodes (those with parentId matching this node's id)
- * inside this container automatically.  We just need to provide a visible
- * header and connection handles.
+ * Instances are fetched directly by this component (mirroring how
+ * ServiceNode fetches its own SQS messages/log streams) rather than passed
+ * down via `data`, so per-instance updates don't depend on this node's memo
+ * comparator — see areLambdaGroupPropsEqual below.
  */
 function areLambdaGroupPropsEqual(prev: NodeProps, next: NodeProps): boolean {
   if (prev.selected !== next.selected) return false
   const pd = prev.data as LambdaGroupNodeData
   const nd = next.data as LambdaGroupNodeData
-  return (
-    pd.label === nd.label &&
-    pd.instanceCount === nd.instanceCount &&
-    pd.eventCount === nd.eventCount
-  )
+  return pd.label === nd.label && pd.eventCount === nd.eventCount
 }
 
 export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps) {
-  const { label, eventCount } = data as LambdaGroupNodeData
+  const { label, eventCount, onPeek } = data as LambdaGroupNodeData
   const navigate = useNavigate()
   const [testOpen, setTestOpen] = useState(false)
   const [showInvocations, setShowInvocations] = useState(false)
   const [invocations, setInvocations] = useState<Invocation[]>([])
   const { events: lambdaEvents } = useEventStream({ source: "lambda" })
+
+  // Instances are fetched here (not via `data`) so this node can render its
+  // own bounded, scrollable list independent of the parent's memoization —
+  // same pattern ServiceNode uses for SQS messages / log streams.
+  const instancesByFunction = useLambdaInstances()
+  const liveInstances = useMemo(
+    () => instancesByFunction[label] ?? [],
+    [instancesByFunction, label],
+  )
+  const ghostInstances = useGhostTracker({
+    items: liveInstances,
+    getKey: (i) => i.instanceId,
+    ttl: LAMBDA_GHOST_TTL,
+  })
+  const allInstances = useMemo(() => {
+    const ghosts = [...ghostInstances.values()]
+      .filter((g) => !liveInstances.some((li) => li.instanceId === g.item.instanceId))
+      .sort((a, b) => a.deletedAt - b.deletedAt)
+    return [
+      ...liveInstances.map((i) => ({ instance: i, isGhost: false, deletedAt: 0 })),
+      ...ghosts.map((g) => ({ instance: g.item, isGhost: true, deletedAt: g.deletedAt })),
+    ]
+  }, [liveInstances, ghostInstances])
+
   const eventCursorRef = useRef(0)
   const activeByInstanceRef = useRef<Map<string, string[]>>(new Map())
   const invocationsRef = useRef<Map<string, Invocation>>(new Map())
@@ -1720,8 +1758,21 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
       {/* Divider */}
       <div className="mx-2 border-t border-purple-400/20" />
 
-      {/* Child instance nodes are rendered by React Flow here — no explicit children needed */}
-      <div className="flex-1" />
+      {/* Instance list — fixed row height, scrolls internally once more than
+          LAMBDA_GROUP_MAX_VISIBLE instances are running/fading out. The
+          `nowheel` class stops scroll wheel input here from also zooming
+          the canvas. */}
+      <div className="nowheel min-h-0 flex-1 overflow-y-auto px-2">
+        {allInstances.map(({ instance, isGhost, deletedAt }) => (
+          <LambdaInstanceCard
+            key={instance.instanceId}
+            instance={instance}
+            isGhost={isGhost}
+            deletedAt={deletedAt}
+            onPeek={isGhost ? undefined : onPeek}
+          />
+        ))}
+      </div>
 
       {/* Event counter badge */}
       {(eventCount ?? 0) > 0 && (

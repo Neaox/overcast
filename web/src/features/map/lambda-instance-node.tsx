@@ -1,10 +1,14 @@
 /**
- * lambda-instance-node — React Flow node rendered as a child of a
- * LambdaGroupNode.  Displays per-instance status, stub metrics, and a
- * shrinking TTL countdown bar.
+ * lambda-instance-node — instance card rendered inside a LambdaGroupNode's
+ * internally-scrollable instance list.  Displays per-instance status, stub
+ * metrics, and a shrinking TTL countdown bar.
+ *
+ * Rendered as a plain list row (not a separate React Flow node) so the
+ * LambdaGroupNode container can clip/scroll it with native overflow — React
+ * Flow renders parent/child nodes as flat siblings positioned via absolute
+ * transforms, so a child *node* can never be scrolled by its parent's DOM.
  */
 import { memo, useEffect, useRef, useState } from "react"
-import type { NodeProps } from "@xyflow/react"
 import { FileText } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ArnLink } from "@/components/ui/arn-link"
@@ -14,11 +18,18 @@ import type { LogStreamTarget } from "./log-stream-peek"
 import { useEventStream } from "@/hooks/use-event-stream"
 import { EventType } from "@/services/event-types"
 
-export const LAMBDA_INSTANCE_H = 100 // px — keep in sync with map-page.tsx
+export const LAMBDA_INSTANCE_H = 100 // px — keep in sync with map-layout.ts's lambdaGroupHeight
 
-export interface LambdaInstanceNodeData extends Record<string, unknown> {
+/** How long a ghost (recently-vanished) instance lingers before removal (ms). */
+export const LAMBDA_GHOST_TTL = 10_000
+
+export interface LambdaInstanceCardProps {
   instance: LambdaInstance
   onPeek?: (target: LogStreamTarget) => void
+  /** True when this instance has disappeared from the live list and is fading out. */
+  isGhost?: boolean
+  /** Epoch ms when this instance was last seen live — drives the ghost fade. */
+  deletedAt?: number
 }
 
 interface LambdaInstanceEventPayload {
@@ -198,23 +209,30 @@ function barColor(frac: number): string {
   return "bg-red-500"
 }
 
-function areLambdaInstancePropsEqual(prev: NodeProps, next: NodeProps): boolean {
-  if (prev.selected !== next.selected) return false
-  const pd = prev.data as LambdaInstanceNodeData
-  const nd = next.data as LambdaInstanceNodeData
-  const pi = pd.instance
-  const ni = nd.instance
+function areLambdaInstanceCardPropsEqual(
+  prev: LambdaInstanceCardProps,
+  next: LambdaInstanceCardProps,
+): boolean {
+  const pi = prev.instance
+  const ni = next.instance
   return (
     pi.instanceId === ni.instanceId &&
     pi.status === ni.status &&
     pi.startedAt === ni.startedAt &&
     pi.expiresAt === ni.expiresAt &&
-    pi.functionName === ni.functionName
+    pi.functionName === ni.functionName &&
+    prev.isGhost === next.isGhost &&
+    prev.deletedAt === next.deletedAt &&
+    prev.onPeek === next.onPeek
   )
 }
 
-export const LambdaInstanceNode = memo(function LambdaInstanceNode({ data }: NodeProps) {
-  const { instance, onPeek } = data as LambdaInstanceNodeData
+export const LambdaInstanceCard = memo(function LambdaInstanceCard({
+  instance,
+  onPeek,
+  isGhost = false,
+  deletedAt = 0,
+}: LambdaInstanceCardProps) {
   const { events: lambdaEvents } = useEventStream({ source: "lambda" })
   const eventCursorRef = useRef(0)
   const invokeStartMsRef = useRef<number | null>(null)
@@ -307,98 +325,108 @@ export const LambdaInstanceNode = memo(function LambdaInstanceNode({ data }: Nod
     idle: "bg-fg-muted/15 text-fg-muted",
   }[instance.status]
 
+  // Ghost fade — recomputed each render from the current time so the fade
+  // progresses smoothly across the component's natural re-render cadence
+  // (driven by the lambda event stream above), same easing as the rest of
+  // the map's ghost-tracked entities (see sqs-visual-messages.ts).
+  const ghostOpacity = isGhost ? Math.max(0.2, 1 - (now - deletedAt) / LAMBDA_GHOST_TTL) : 1
+
   return (
     <div
-      className={cn(
-        "relative flex flex-col gap-1 rounded border px-2 pt-1.5 pb-4.5 text-[11px] shadow-sm",
-        "overflow-hidden border-purple-400/30 bg-bg-elevated",
-        isExpired && "opacity-55",
-      )}
-      style={{ width: "100%", height: LAMBDA_INSTANCE_H }}
+      style={{ height: LAMBDA_INSTANCE_H, opacity: ghostOpacity, transition: "opacity 1s linear" }}
     >
-      {/* Top row: status dot + short ID + buttons */}
-      <div className="nodrag nopan pointer-events-auto flex items-center gap-1.5">
-        <span
-          className={cn("h-2 w-2 shrink-0 rounded-full", statusDotClass)}
-          title={instance.status}
-        />
-        <span className="flex-1 truncate font-mono text-fg-subtle" title={instance.instanceId}>
-          {shortId}
-        </span>
-        <span
-          className={cn(
-            "rounded px-1 py-0.5 text-[9px] font-semibold uppercase",
-            statusBadgeClass,
-          )}
-        >
-          {instance.status}
-        </span>
-        {hasLogs && onPeek && (
-          <button
-            type="button"
-            data-peek-trigger
-            className="ml-0.5 flex items-center rounded p-0.5 text-purple-400 hover:bg-purple-400/15"
-            title="Peek log stream"
-            onClick={(e) => {
-              e.stopPropagation()
-              onPeek({
-                title: instance.functionName,
-                subtitle: instance.instanceId.slice(0, 8),
-                logGroup: instance.logGroup,
-                logStream: instance.logStream,
-                triggerEvent: instance.triggerEvent || undefined,
-              })
-            }}
-          >
-            <FileText className="h-3 w-3" />
-          </button>
+      <div
+        className={cn(
+          "relative flex flex-col gap-1 rounded border px-2 pt-1.5 pb-4.5 text-[11px] shadow-sm",
+          "overflow-hidden border-purple-400/30 bg-bg-elevated",
+          isExpired && "opacity-55",
         )}
-      </div>
-
-      {/* Trigger + last invocation metadata row */}
-      <TriggerRow
-        event={instance.triggerEvent}
-        lastUsed={instance.lastUsed}
-        durationLabel={durationLabel}
-        status={instance.status}
-        now={now}
-      />
-
-      {/* Stub metric bars */}
-      <div className="flex items-center gap-2">
-        <MetricBar label="MEM" value={instance.memoryUsedMB} max={256} unit="MB" />
-        <MetricBar label="CPU" value={Math.round(instance.cpuPercent)} max={100} unit="%" />
-      </div>
-
-      {/* TTL countdown — 15 minute-pills fused to the bottom border */}
-      <div className="absolute right-0 bottom-0 left-0 overflow-hidden rounded-b">
-        {/* label above pills */}
-        <div className="flex items-center justify-center pt-0.5">
-          <span className="font-mono text-[7px] font-normal tracking-widest text-fg-muted/50">
-            {fmtRemaining(remainingMs)}
+        style={{ width: "100%", height: LAMBDA_INSTANCE_H - 4 }}
+      >
+        {/* Top row: status dot + short ID + buttons */}
+        <div className="nodrag nopan pointer-events-auto flex items-center gap-1.5">
+          <span
+            className={cn("h-2 w-2 shrink-0 rounded-full", statusDotClass)}
+            title={instance.status}
+          />
+          <span className="flex-1 truncate font-mono text-fg-subtle" title={instance.instanceId}>
+            {shortId}
           </span>
+          <span
+            className={cn(
+              "rounded px-1 py-0.5 text-[9px] font-semibold uppercase",
+              statusBadgeClass,
+            )}
+          >
+            {instance.status}
+          </span>
+          {hasLogs && onPeek && (
+            <button
+              type="button"
+              data-peek-trigger
+              className="ml-0.5 flex items-center rounded p-0.5 text-purple-400 hover:bg-purple-400/15"
+              title="Peek log stream"
+              onClick={(e) => {
+                e.stopPropagation()
+                onPeek({
+                  title: instance.functionName,
+                  subtitle: instance.instanceId.slice(0, 8),
+                  logGroup: instance.logGroup,
+                  logStream: instance.logStream,
+                  triggerEvent: instance.triggerEvent || undefined,
+                })
+              }}
+            >
+              <FileText className="h-3 w-3" />
+            </button>
+          )}
         </div>
-        {/* pill row */}
-        <div className="flex gap-px px-1 pb-px">
-          {Array.from({ length: 15 }, (_, i) => {
-            const f = pillFrac(i, 15, remainingMs, totalMs || 15 * 60 * 1000)
-            return (
-              <div
-                key={i}
-                className="relative h-1.5 flex-1 overflow-hidden rounded-sm bg-fg-muted/15"
-              >
+
+        {/* Trigger + last invocation metadata row */}
+        <TriggerRow
+          event={instance.triggerEvent}
+          lastUsed={instance.lastUsed}
+          durationLabel={durationLabel}
+          status={instance.status}
+          now={now}
+        />
+
+        {/* Stub metric bars */}
+        <div className="flex items-center gap-2">
+          <MetricBar label="MEM" value={instance.memoryUsedMB} max={256} unit="MB" />
+          <MetricBar label="CPU" value={Math.round(instance.cpuPercent)} max={100} unit="%" />
+        </div>
+
+        {/* TTL countdown — 15 minute-pills fused to the bottom border */}
+        <div className="absolute right-0 bottom-0 left-0 overflow-hidden rounded-b">
+          {/* label above pills */}
+          <div className="flex items-center justify-center pt-0.5">
+            <span className="font-mono text-[7px] font-normal tracking-widest text-fg-muted/50">
+              {fmtRemaining(remainingMs)}
+            </span>
+          </div>
+          {/* pill row */}
+          <div className="flex gap-px px-1 pb-px">
+            {Array.from({ length: 15 }, (_, i) => {
+              const f = pillFrac(i, 15, remainingMs, totalMs || 15 * 60 * 1000)
+              return (
                 <div
-                  className={cn("absolute inset-y-0 left-0", barColor(frac))}
-                  style={{ width: `${f * 100}%`, opacity: 0.7 }}
-                />
-              </div>
-            )
-          })}
+                  key={i}
+                  className="relative h-1.5 flex-1 overflow-hidden rounded-sm bg-fg-muted/15"
+                >
+                  <div
+                    className={cn("absolute inset-y-0 left-0", barColor(frac))}
+                    style={{ width: `${f * 100}%`, opacity: 0.7 }}
+                  />
+                </div>
+              )
+            })}
+          </div>
         </div>
       </div>
     </div>
   )
-}, areLambdaInstancePropsEqual)
+}, areLambdaInstanceCardPropsEqual)
 
 /** Hover-to-peek row showing the trigger source and invocation timing. */
 function TriggerRow({
@@ -423,9 +451,7 @@ function TriggerRow({
   }
 
   return (
-    <div
-      className="nodrag nopan pointer-events-auto flex w-full items-center gap-1.5 rounded bg-transparent text-[9px] text-fg-muted/55"
-    >
+    <div className="nodrag nopan pointer-events-auto flex w-full items-center gap-1.5 rounded bg-transparent text-[9px] text-fg-muted/55">
       <span className="flex min-w-0 flex-1 items-center gap-1">
         {TriggerIcon ? <TriggerIcon className="h-2.5 w-2.5 shrink-0" /> : <span>⚡</span>}
         {trigger.arn ? (
