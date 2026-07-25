@@ -84,6 +84,12 @@ type advisoryInput struct {
 	// signal this rule exists to catch.
 	StateBackend config.StateBackend
 
+	// StateSource reports whether StateBackend was chosen explicitly by the
+	// user or resolved by the OVERCAST_STATE=auto heuristic — drives which
+	// wording variant checkMemoryMode uses when StateBackend is memory. See
+	// config.StateSource's doc comment.
+	StateSource config.StateSource
+
 	// Stores is one entry per distinct underlying store, exactly as
 	// state.DebugMetricsSnapshot returns it — drives every per-store rule
 	// (journal-mode-not-wal, store-degraded-memory-only,
@@ -131,7 +137,7 @@ func computeAdvisories(in advisoryInput) []Advisory {
 	if a := checkStoreUnhealthy(in.Health, in.HasHealth); a != nil {
 		advisories = append(advisories, *a)
 	}
-	if a := checkMemoryMode(in.StateBackend); a != nil {
+	if a := checkMemoryMode(in.StateBackend, in.StateSource); a != nil {
 		advisories = append(advisories, *a)
 	}
 	return advisories
@@ -270,13 +276,37 @@ func checkReadPressure(m state.DebugMetrics) *Advisory {
 	}
 }
 
-// checkMemoryMode is informational only: OVERCAST_STATE=memory is a
-// deliberate, common choice for tests and CI, not a misconfiguration — this
-// exists purely so a developer who forgot they set it (or inherited an env
-// file that sets it) isn't surprised the next time they restart.
-func checkMemoryMode(backend config.StateBackend) *Advisory {
+// checkMemoryMode is informational only in both variants below — memory
+// mode is never itself an error condition, just something worth surfacing so
+// nobody is surprised data didn't survive a restart.
+//
+// Two wordings:
+//
+//   - Explicit (StateSource == "explicit"): OVERCAST_STATE=memory is a
+//     deliberate, common choice for tests and CI — this exists purely so a
+//     developer who forgot they set it (or inherited an env file that sets
+//     it) isn't surprised the next time they restart.
+//   - Auto (StateSource == "auto"): the OVERCAST_STATE=auto resolver (see
+//     config.resolveAutoState) found no evidence of persistence intent — no
+//     mounted volume, no explicit data directory, no existing database — and
+//     landed on memory by design (e.g. a fresh `docker run` with no volume
+//     mounted). Severity stays info (this is working as designed, most
+//     visibly for CI), but the wording is the actionable variant: it tells
+//     the reader what would change the outcome, since "auto" means nobody
+//     deliberately typed OVERCAST_STATE=memory to get here.
+func checkMemoryMode(backend config.StateBackend, source config.StateSource) *Advisory {
 	if backend != config.StateBackendMemory {
 		return nil
+	}
+	if source == config.StateSourceAuto {
+		return &Advisory{
+			Severity: advisorySeverityInfo,
+			Code:     advisoryCodeMemoryMode,
+			Title:    "Running in memory-only mode (auto-detected)",
+			Detail: "OVERCAST_STATE was not set and no volume is mounted at the data directory — " +
+				"state won't survive restarts. Mount a volume there, set OVERCAST_DATA_DIR, or set " +
+				"OVERCAST_STATE=hybrid to persist.",
+		}
 	}
 	return &Advisory{
 		Severity: advisorySeverityInfo,

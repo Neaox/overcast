@@ -38,12 +38,18 @@ All four storage backends defer the modernc/sqlite cold-migrate cost
 (~200–340 ms) off the critical path. The migration runs in a background
 goroutine; the first DB-touching request blocks on it.
 
-| Backend               | Internal startup_ms | Wall spawn-to-ready |
-| --------------------- | ------------------- | ------------------- |
-| `memory`              | 1–2 ms              | ~40 ms              |
-| `hybrid` (default)    | 4–5 ms              | ~40 ms              |
-| `wal` (SQLite, async) | 5–8 ms              | ~40 ms              |
-| `persistent` (SQLite) | 2–6 ms              | ~40 ms              |
+| Backend                     | Internal startup_ms | Wall spawn-to-ready |
+| ---------------------------- | ------------------- | ------------------- |
+| `memory`                     | 1–2 ms              | ~40 ms              |
+| `hybrid` (auto, when persisting) | 4–5 ms          | ~40 ms              |
+| `wal` (SQLite, async)        | 5–8 ms              | ~40 ms              |
+| `persistent` (SQLite)        | 2–6 ms              | ~40 ms              |
+
+Each row was measured with `OVERCAST_STATE` set explicitly to that backend. The default
+(`OVERCAST_STATE` unset, i.e. `auto`) resolves to one of these at startup — `hybrid` when
+a volume/bind mount or existing database is found, `memory` otherwise — so its measured
+cost is whichever row it resolves to, plus the (negligible) resolution check itself. See
+[docs/storage.md § The auto default](./storage.md#the-auto-default).
 
 Measured 2026-04-17 in the dev container (Debian 12, x86_64, Go 1.23,
 modernc/sqlite pure-Go driver, all 27 services registered, no SDK
@@ -59,16 +65,22 @@ runs are 1–2 ms faster across the board and not reported.
 
 ## Storage backend tuning
 
-Overcast's default `hybrid` backend is a good fit for most workflows. If you're tuning for
-a specific case — CI speed, crash-recovery testing, or a slow bind-mounted data directory —
-these are the levers. See [docs/storage.md](./storage.md) for a full comparison of the four
-backends by durability and what survives a restart.
+Overcast's default (`OVERCAST_STATE` unset, i.e. `auto`) picks `hybrid` or `memory` at
+startup based on whether there's evidence you want persistence — see
+[docs/storage.md § The auto default](./storage.md#the-auto-default) for the exact rule.
+If you're tuning for a specific case — crash-recovery testing, or a slow bind-mounted data
+directory — these are the levers. See [docs/storage.md](./storage.md) for a full comparison
+of the four concrete backends by durability and what survives a restart.
 
-### Fast, disposable state: `OVERCAST_STATE=memory`
+### Fast, disposable state in CI
 
-For CI and fast local iteration, set `OVERCAST_STATE=memory` (or `OVERCAST_STATE_<SERVICE>`
-for a single noisy service) to skip disk I/O entirely. There is no durability — state is
-lost on restart — which is exactly right for a pipeline that starts fresh every run. See
+CI needs no `OVERCAST_STATE` setting at all: a CI container typically runs with no data
+volume mounted, so `auto` already resolves to `memory` — skipping disk I/O entirely, with
+no durability, which is exactly right for a pipeline that starts fresh every run. Setting
+`OVERCAST_STATE=memory` explicitly remains fine (and is still the right call if your CI
+setup happens to mount a volume you don't want used, or you just prefer to be explicit
+about it) — it's simply no longer necessary for the common case. The same applies per
+service via `OVERCAST_STATE_<SERVICE>=memory` for a single noisy service; see
 [docs/README.md § Per-service storage overrides](./README.md#per-service-storage-overrides)
 for the override syntax.
 

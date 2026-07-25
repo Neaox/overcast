@@ -22,7 +22,18 @@ type healthResponse struct {
 
 // healthStorage describes the active storage configuration.
 type healthStorage struct {
-	Default          string            `json:"default"`
+	Default string `json:"default"`
+	// Configured is the raw OVERCAST_STATE value as configured — "auto" when
+	// unset or explicitly "auto" (see config.StateSource), otherwise the
+	// same value as Default. Distinguishing the two lets a caller tell "the
+	// backend in effect" (Default, always concrete) apart from "what was
+	// actually configured" (this field) — e.g. Default: "memory",
+	// Configured: "auto" means the auto-resolver picked memory because it
+	// found no evidence of persistence intent, not that anyone set
+	// OVERCAST_STATE=memory. Omitted (not just empty) for callers/tests that
+	// build a Config directly rather than via config.Load(), where this
+	// field is never populated.
+	Configured       string            `json:"configured,omitempty"`
 	ServiceOverrides map[string]string `json:"serviceOverrides,omitempty"`
 	Persistent       *persistentHealth `json:"persistent,omitempty"`
 }
@@ -44,7 +55,7 @@ type persistentHealth struct {
 // enabledGoalTiers maps each enabled service name to its goal emulation tier.
 func newHealthHandler(cfg *config.Config, store state.Store, enabledServices []string, enabledTiers map[string]string, enabledGoalTiers map[string]string) http.HandlerFunc {
 	// Build the storage section once — it's static for the process lifetime.
-	storage := healthStorage{Default: string(cfg.State)}
+	storage := healthStorage{Default: string(cfg.State), Configured: cfg.StateConfigured}
 	if len(cfg.ServiceStates) > 0 {
 		storage.ServiceOverrides = make(map[string]string, len(cfg.ServiceStates))
 		for svc, mode := range cfg.ServiceStates {

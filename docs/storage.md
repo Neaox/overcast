@@ -11,10 +11,10 @@ tags:
 
 # Storage backends
 
-Overcast supports four storage backends, selected with `OVERCAST_STATE` (globally) or
-`OVERCAST_STATE_<SERVICE>` (per service). This page compares them by durability and
-what happens to your data across a restart or crash. For the full list of environment
-variables, Docker examples, and per-service override syntax, see
+Overcast supports four concrete storage backends, selected with `OVERCAST_STATE`
+(globally) or `OVERCAST_STATE_<SERVICE>` (per service). This page compares them by
+durability and what happens to your data across a restart or crash. For the full list of
+environment variables, Docker examples, and per-service override syntax, see
 [docs/README.md § Persistence](./README.md#persistence). For tuning guidance (bind
 mounts, the `hybrid` flush knobs, storage-related startup warnings), see
 [docs/performance.md](./performance.md).
@@ -23,15 +23,58 @@ mounts, the `hybrid` flush knobs, storage-related startup warnings), see
 
 ## At a glance
 
-| Backend      | Durability                                                                                      | Memory residency                                                       | Speed                                                                    |
-| ------------ | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
-| `memory`     | None — lost on process exit.                                                                      | Full dataset, always.                                                     | Fastest — no disk I/O at all.                                              |
-| `hybrid`     | Async — writes are journaled immediately, batch-flushed to SQLite in the background.               | Partial — resource metadata is always in memory; bulk data reads from SQLite. | Fast for typical use — memory-speed for most reads, cheap async writes.   |
-| `persistent` | Every mutation committed to SQLite before the call returns.                                        | None — every operation is a live SQLite query.                            | Slowest — a real disk (or page-cache) round trip per operation.           |
-| `wal`        | Append-only log, replayed on restart; fsync policy configurable.                                   | Full dataset, always (in-memory store with a durability log attached).    | Reads are memory-speed; writes pay a log append and periodic compaction. |
+| Backend                 | Durability                                                                            | Memory residency                                                              | Speed                                                                    |
+| ------------------------ | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `auto` (unset / default) | Resolved at startup to one of the rows below — see "The `auto` default" below.         | Depends on what it resolves to.                                                | Depends on what it resolves to.                                          |
+| `memory`                  | None — lost on process exit.                                                            | Full dataset, always.                                                           | Fastest — no disk I/O at all.                                              |
+| `hybrid`                  | Async — writes are journaled immediately, batch-flushed to SQLite in the background.    | Partial — resource metadata is always in memory; bulk data reads from SQLite. | Fast for typical use — memory-speed for most reads, cheap async writes.   |
+| `persistent`              | Every mutation committed to SQLite before the call returns.                             | None — every operation is a live SQLite query.                                | Slowest — a real disk (or page-cache) round trip per operation.           |
+| `wal`                     | Append-only log, replayed on restart; fsync policy configurable.                        | Full dataset, always (in-memory store with a durability log attached).        | Reads are memory-speed; writes pay a log append and periodic compaction. |
 
-`hybrid` is the default and the right choice for most local development — it's both fast
-and durable across restarts without paying a synchronous disk round trip on every operation.
+`auto` is the default when `OVERCAST_STATE` is unset (or explicitly set to `auto`) — see
+below for exactly how it resolves. Among the four concrete backends, `hybrid` is the
+right choice for most local development that needs to survive a restart — it's both
+fast and durable without paying a synchronous disk round trip on every operation.
+
+---
+
+## The `auto` default
+
+When `OVERCAST_STATE` is unset, Overcast picks a mode based on whether there's evidence
+you want persistence, checked in this order:
+
+1. **The data directory is a mounted volume or bind mount.** A Docker named volume or
+   bind mount at `OVERCAST_DATA_DIR` (the container's `/data` by default) is durable by
+   construction — mounting it is itself the signal.
+2. **`OVERCAST_DATA_DIR` was explicitly configured.** Setting it yourself (native
+   installs, or a Docker image customization) is evidence you intend that directory to
+   be used, whether or not it happens to be a mount.
+3. **An existing Overcast database is already present in the resolved data directory.**
+   This is a regression guard: if you (or a previous container) already persisted state
+   there, `auto` will never strand it in memory mode, even with neither of the signals
+   above present.
+
+If none of these hold, `auto` resolves to **`memory`** — persisting into a directory
+nobody asked for and nothing mounts is pointless, so the fast, ephemeral backend is the
+better default. In practice this means:
+
+- `docker run -v mydata:/data ghcr.io/neaox/overcast` → **`hybrid`** (signal 1), with zero
+  configuration.
+- `docker run ghcr.io/neaox/overcast` (no volume) → **`memory`** — including CI, where
+  containers typically run with no data volume, so `auto` lands on the fast, ephemeral
+  mode CI wants automatically.
+- A native install that already has data at `~/.overcast/data` → **`hybrid`** (signal 3),
+  so upgrading to this default never silently drops existing data.
+
+`OVERCAST_STATE` set to anything else (including explicitly `memory`) always wins outright
+— `auto` only ever applies when the variable is unset or literally `auto`.
+
+To see what `auto` actually chose for a running instance, check either:
+
+- the startup log line: `storage mode auto-detected: <mode> (<reason>) — set OVERCAST_STATE to override`
+- the Metrics & Health page in the web console (or `GET /_debug/metrics`'s
+  `advisories` array), which surfaces an info-level advisory whenever the resolved mode
+  is `memory`, with the concrete steps to change it.
 
 ---
 
@@ -63,7 +106,10 @@ condition. This is a rare, unusual-environment case, not something to expect in 
 
 ## Choosing a backend
 
-- **Default to `hybrid`** unless you have a specific reason not to.
+- **Leave `OVERCAST_STATE` unset** unless you have a specific reason not to — `auto` picks
+  `hybrid` when there's evidence you want persistence (a mounted volume, an explicit data
+  directory, or an existing database) and `memory` otherwise, which is usually exactly
+  what you want without having to think about it.
 - **Reach for `persistent`** when correctness depends on every write being durable
   *before the call returns* — for example, reproducing a crash-recovery scenario, or
   verifying behavior that must not depend on `hybrid`'s async flush timing.

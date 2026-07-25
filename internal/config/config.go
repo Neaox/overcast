@@ -69,9 +69,37 @@ type Config struct {
 	// Map key is the lowercase service name, e.g. "s3", "sqs".
 	Services map[string]bool
 
-	// State controls the global storage backend used for all services.
+	// State controls the global storage backend used for all services. This
+	// is always a concrete backend (memory, persistent, hybrid, or wal) —
+	// when OVERCAST_STATE is unset or "auto", it holds the *resolved* value
+	// (see resolveAutoState); the raw configured value ("auto" or whatever
+	// the user set) is preserved separately in StateConfigured.
 	// Individual services may override this via ServiceStates.
 	State StateBackend
+
+	// StateConfigured is the raw value of OVERCAST_STATE as configured, or
+	// "auto" if the variable was unset (auto is also the default). Unlike
+	// State, this is never resolved — it exists so /_health and startup logs
+	// can report what was actually configured, not just what it resolved to.
+	StateConfigured string
+
+	// StateSource reports whether State was chosen explicitly (OVERCAST_STATE
+	// set to a concrete backend) or resolved by the OVERCAST_STATE=auto
+	// heuristic. Drives the actionable variant of the memory-mode advisory
+	// (internal/router/advisories.go checkMemoryMode) and the startup log
+	// line below.
+	StateSource StateSource
+
+	// StateAutoReason is a short, human-readable explanation of why
+	// resolveAutoState chose State. Empty when StateSource is "explicit".
+	StateAutoReason string
+
+	// StateAutoSignal is the stable code identifying which auto-detection
+	// signal fired: "mountpoint", "explicit-data-dir", "existing-database",
+	// or "" when none fired (State resolved to memory). Empty when
+	// StateSource is "explicit". Safe to key tests off of, unlike
+	// StateAutoReason's free text.
+	StateAutoSignal string
 
 	// ServiceStates overrides the global State for individual services.
 	// Keys are lowercase service names ("s3", "sqs", "dynamodb", etc.).
@@ -539,8 +567,18 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_HOSTNAME                  (empty — defaults to localhost in URLs)
 //	OVERCAST_PORT                      4566
 //	OVERCAST_SERVICES                  s3,sqs,sns,ses,dynamodb,dynamodbstreams,lambda
-//	OVERCAST_STATE                     hybrid  (memory | persistent | hybrid | wal)
-//	OVERCAST_STATE_<SERVICE>           <mode>  (per-service override, e.g. OVERCAST_STATE_S3=memory)
+//	OVERCAST_STATE                     auto    (auto | memory | persistent | hybrid | wal)
+//	                                           auto resolves to hybrid when the data directory
+//	                                           is a mounted volume/bind mount, OVERCAST_DATA_DIR
+//	                                           was explicitly set, or an existing database is
+//	                                           found there — otherwise memory. See
+//	                                           resolveAutoState (state_auto.go).
+//	OVERCAST_STATE_<SERVICE>           <mode>  (per-service override, e.g. OVERCAST_STATE_S3=memory;
+//	                                           does not accept "auto")
+//	OVERCAST_DATA_DIR_SOURCE           (empty) internal provenance marker — the Docker image sets this
+//	                                           to "image" alongside its baked-in OVERCAST_DATA_DIR=/data,
+//	                                           so the auto-state resolver doesn't mistake the image
+//	                                           default for user intent. Not for end users to set.
 //	OVERCAST_HYBRID_FLUSH_INTERVAL     5s
 //	OVERCAST_HYBRID_SYNC                interval (always | interval | never)
 //	OVERCAST_HYBRID_SYNC_INTERVAL       100ms
@@ -630,16 +668,40 @@ func Load() (*Config, error) {
 		cfg.Services[s] = true
 	}
 
-	// State backend — accept "sqlite" as a deprecated alias for "persistent"
-	rawBackend := strings.ToLower(envOr("OVERCAST_STATE", string(StateBackendHybrid)))
-	if rawBackend == "sqlite" {
-		rawBackend = string(StateBackendPersistent)
+	// Data directory — resolved before the state backend below, since
+	// OVERCAST_STATE=auto inspects it (mountpoint check, existing-database
+	// check). dataDirEnvRaw/dataDirSource are read raw (undefaulted) because
+	// detecting "was this actually configured" requires knowing whether the
+	// env var was empty before envOr fills in the default.
+	dataDirEnvRaw := os.Getenv("OVERCAST_DATA_DIR")
+	dataDirSource := os.Getenv("OVERCAST_DATA_DIR_SOURCE")
+	cfg.DataDir = envOr("OVERCAST_DATA_DIR", defaultDataDir())
+
+	// State backend — accept "sqlite" as a deprecated alias for "persistent",
+	// and "auto" (also the default when unset) as a request to resolve the
+	// backend from evidence of persistence intent — see resolveAutoState.
+	cfg.StateConfigured = strings.ToLower(strings.TrimSpace(os.Getenv("OVERCAST_STATE")))
+	if cfg.StateConfigured == "" {
+		cfg.StateConfigured = "auto"
 	}
-	backend := StateBackend(rawBackend)
-	if err := validateStateBackend(backend, "OVERCAST_STATE"); err != nil {
-		return nil, err
+	if cfg.StateConfigured == "sqlite" {
+		cfg.StateConfigured = string(StateBackendPersistent)
 	}
-	cfg.State = backend
+	if cfg.StateConfigured == "auto" {
+		cfg.StateSource = StateSourceAuto
+		sig := detectAutoStateSignals(cfg.DataDir, dataDirEnvRaw, dataDirSource)
+		backend, signal, reason := resolveAutoState(sig)
+		cfg.State = backend
+		cfg.StateAutoSignal = signal
+		cfg.StateAutoReason = reason
+	} else {
+		backend := StateBackend(cfg.StateConfigured)
+		if err := validateStateBackend(backend, "OVERCAST_STATE"); err != nil {
+			return nil, err
+		}
+		cfg.State = backend
+		cfg.StateSource = StateSourceExplicit
+	}
 
 	// Hybrid flush interval
 	flushStr := envOr("OVERCAST_HYBRID_FLUSH_INTERVAL", "5s")
@@ -714,9 +776,6 @@ func Load() (*Config, error) {
 			cfg.ServiceStates[svc] = svcBackend
 		}
 	}
-
-	// Data directory
-	cfg.DataDir = envOr("OVERCAST_DATA_DIR", defaultDataDir())
 
 	// AWS identity defaults
 	cfg.Region = envOr("OVERCAST_DEFAULT_REGION", "us-east-1")
@@ -944,12 +1003,20 @@ func isKnownService(s string) bool {
 }
 
 // validateStateBackend returns an error if b is not one of the four recognised
-// storage modes. envKey is included in the error message for context.
+// concrete storage modes. envKey is included in the error message for
+// context. Callers peel off "auto" (and the "sqlite" alias) before reaching
+// here, so this only ever validates a concrete backend name — for the global
+// OVERCAST_STATE var specifically, "auto" is also accepted upstream and is
+// mentioned in the error for completeness even though this function itself
+// never returns nil for it.
 func validateStateBackend(b StateBackend, envKey string) error {
 	switch b {
 	case StateBackendMemory, StateBackendPersistent, StateBackendHybrid, StateBackendWAL:
 		return nil
 	default:
+		if envKey == "OVERCAST_STATE" {
+			return fmt.Errorf("config: %s must be 'auto', 'memory', 'persistent', 'hybrid' or 'wal', got %q", envKey, b)
+		}
 		return fmt.Errorf("config: %s must be 'memory', 'persistent', 'hybrid' or 'wal', got %q", envKey, b)
 	}
 }
