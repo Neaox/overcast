@@ -35,6 +35,11 @@ type HandlerFunc func(ctx context.Context, e Event)
 // handlers. This guarantees bounded goroutine count while ensuring every
 // event is eventually delivered (no drops).
 //
+// Bus also owns a rolling History of recently published events (see
+// history.go) so that newly-connecting consumers — the SSE /_events
+// endpoint in particular — can replay recent activity instead of starting
+// from a blank slate. See SnapshotAndSubscribeAll.
+//
 // Bus is safe for concurrent use.
 type Bus struct {
 	mu          sync.RWMutex
@@ -42,6 +47,7 @@ type Bus struct {
 	workCh      chan workItem
 	stopCh      chan struct{}
 	wg          sync.WaitGroup
+	history     *History
 }
 
 // NewBus returns an initialised Bus with its worker pool running.
@@ -51,6 +57,7 @@ func NewBus() *Bus {
 		subscribers: make(map[Type][]HandlerFunc),
 		workCh:      make(chan workItem, workQueueSize),
 		stopCh:      make(chan struct{}),
+		history:     NewHistory(HistoryCapacity),
 	}
 	b.wg.Add(workerCount)
 	for range workerCount {
@@ -92,9 +99,17 @@ func (b *Bus) worker() {
 // cancel more than once.
 func (b *Bus) Subscribe(t Type, h HandlerFunc) (cancel func()) {
 	b.mu.Lock()
+	cancel = b.subscribeLocked(t, h)
+	b.mu.Unlock()
+	return cancel
+}
+
+// subscribeLocked appends h to subscribers[t] and returns a cancel function
+// that removes it. Caller must hold b.mu (for writing) across the call that
+// reads idx, but the returned cancel closure re-acquires the lock itself.
+func (b *Bus) subscribeLocked(t Type, h HandlerFunc) (cancel func()) {
 	b.subscribers[t] = append(b.subscribers[t], h)
 	idx := len(b.subscribers[t]) - 1
-	b.mu.Unlock()
 
 	var once sync.Once
 	return func() {
@@ -120,13 +135,38 @@ func (b *Bus) SubscribeAll(h HandlerFunc) (cancel func()) {
 	return b.Subscribe(All, h)
 }
 
+// SnapshotAndSubscribeAll atomically returns a chronological snapshot of the
+// buffered event History and registers h as a wildcard (All) subscriber.
+//
+// The snapshot and the subscription are taken under the same exclusive lock
+// that Publish acquires (as a read lock) around its own history-append +
+// subscriber-dispatch section, so there is no gap or duplicate at the
+// connection boundary: any Publish call that is fully serialized before this
+// call is reflected in the returned snapshot only, and any Publish call
+// serialized after it is delivered to h only — never both, never neither.
+//
+// This is the primitive the SSE /_events endpoint uses to implement
+// "replay history, then tail live" without a race window.
+func (b *Bus) SnapshotAndSubscribeAll(h HandlerFunc) (snapshot []Event, cancel func()) {
+	b.mu.Lock()
+	snapshot = b.history.Snapshot()
+	cancel = b.subscribeLocked(All, h)
+	b.mu.Unlock()
+	return snapshot, cancel
+}
+
 // Publish dispatches e to all subscribers registered for e.Type and to any
 // wildcard (All) subscribers. Each subscriber invocation is enqueued onto the
 // worker pool's buffered channel. Publish returns immediately unless the
 // queue is completely full, in which case it blocks briefly until a slot
 // opens — no events are ever dropped.
+//
+// The event is also appended to the rolling History buffer under the same
+// read-lock section that reads the subscriber lists, which is what gives
+// SnapshotAndSubscribeAll its atomicity guarantee (see its doc comment).
 func (b *Bus) Publish(ctx context.Context, e Event) {
 	b.mu.RLock()
+	b.history.Append(e)
 	typed := make([]HandlerFunc, len(b.subscribers[e.Type]))
 	copy(typed, b.subscribers[e.Type])
 	wild := make([]HandlerFunc, len(b.subscribers[All]))
