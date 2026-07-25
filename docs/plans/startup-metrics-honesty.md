@@ -145,7 +145,7 @@ preserves start time); the generic label already covers this.
 ### P3 — documentation
 
 1. **Fix the stale methodology section** in
-   [docs/performance.md](../performance.md): it must describe the three
+   [docs/dev/performance.md](../dev/performance.md): it must describe the three
    anchors, state that `startup_duration_ms` is `goStart → ready`, that
    `pre_init_ms` exists and what it contains per platform (container
    setup when PID 1; loader/AV natively), and what is included/excluded

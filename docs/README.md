@@ -32,17 +32,18 @@ see the [root README](../README.md).
 - [Event pipelines](#event-pipelines) — SNS→SQS, SQS→Lambda, DynamoDB Streams
 - [Web management console](#web-management-console) — built-in dashboard
 
-### Development
+### Storage and performance
 
-- [Development setup](./development-setup.md) — building from source
-- [Debugging](./debugging.md) — debug endpoints, logging, profiling
-- [Performance](./performance.md) — benchmarks and tuning
-- [Storage backend internals](./storage-backends.md) — durability, performance, and known limitations of each `state.Store` backend
+- [Performance](./performance.md) — startup expectations, storage tuning, and where "feels slow" time actually goes
+- [Storage backends](./storage.md) — durability comparison and what survives a restart, per backend
 
 Internal working plans (storage stabilization, storage access patterns, pagination fidelity,
-the storage regression test plan, and others) live in `docs/plans/` in the repository — they
-are contributor-facing planning documents, deliberately excluded from this published
-documentation set.
+the storage regression test plan, and others) live in `docs/plans/` in the repository, and
+contributor-facing developer docs (building from source, debugging, wire-protocol design,
+storage internals, AWS compatibility review tracking) live in `docs/dev/` — both are
+deliberately excluded from this published documentation set. See
+[CONTRIBUTING.md](../CONTRIBUTING.md) and [AGENTS.md](../AGENTS.md) if you're contributing
+to Overcast itself.
 
 ---
 
@@ -230,7 +231,7 @@ docker run --rm \
 
 Persistent/hybrid SQLite data lives at `$OVERCAST_DATA_DIR/overcast.db`. WAL mode uses `$OVERCAST_DATA_DIR/overcast.wal`. You can also override the backend per-service:
 
-Hybrid seeds small control-plane namespaces into memory on startup and reads large data-plane namespaces (messages, log events, metric datapoints) from SQLite on every access — there is no read-through cache for those, by design — so background schedulers and dashboards do not continuously poll SQLite for hot resource metadata, while high-volume data never has to fit in memory. See [storage-backends.md](./storage-backends.md) for the full internals comparison.
+Hybrid seeds small control-plane namespaces into memory on startup and reads large data-plane namespaces (messages, log events, metric datapoints) from SQLite on every access — there is no read-through cache for those, by design — so background schedulers and dashboards do not continuously poll SQLite for hot resource metadata, while high-volume data never has to fit in memory. See [storage.md](./storage.md) for the full backend comparison, or [dev/storage-backends.md](./dev/storage-backends.md) for the implementation internals.
 
 ```bash
 -e OVERCAST_STATE=memory -e OVERCAST_STATE_S3=hybrid

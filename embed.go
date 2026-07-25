@@ -14,7 +14,8 @@ import "embed"
 var WebDistFS embed.FS
 
 // DocsServicesFS contains published docs served by the BFF docs endpoints.
-// Developer-only planning notes under docs/plans are intentionally excluded.
+// Developer-only planning notes under docs/plans and contributor-only docs
+// under docs/dev are intentionally excluded.
 //
-//go:embed docs/*.md docs/cdk docs/compatibility docs/perf-baselines docs/services
+//go:embed docs/*.md docs/cdk docs/services
 var DocsServicesFS embed.FS

@@ -239,7 +239,7 @@ mounts only the main checkout). See the header comment in
 ### Step debugging
 
 Full step debugging is supported. Set a breakpoint (click left of line number),
-press F5, select a launch configuration. See **[docs/debugging.md](./docs/debugging.md)**
+press F5, select a launch configuration. See **[docs/dev/debugging.md](./docs/dev/debugging.md)**
 for the full guide including conditional breakpoints, logpoints, and debugging
 test failures.
 
@@ -489,7 +489,7 @@ A namespace earns a dedicated table only when at least one of these is true:
    (querying by an attribute that isn't a prefix of the key), a real SQL table with real
    indexes is the only way to serve that without an in-process full scan.
 3. **Measured evidence the K/V path is the bottleneck, after generic fixes are exhausted.**
-   Benchmark first (see [docs/performance.md](./docs/performance.md)), and try the generic
+   Benchmark first (see [docs/dev/performance.md](./docs/dev/performance.md)), and try the generic
    fixes first — `Scan` instead of N `Get`s, the dedicated read pool, dirty-overlay flush
    thresholds — before concluding the K/V path itself is the problem. `sqs:messages`,
    `cloudwatch:metricdata`, `kinesis:records`, and most other high-volume namespaces are
@@ -588,7 +588,7 @@ convert).
 
 For a comparison of what each `state.Store` backend does with this data once it's written —
 durability, memory residency, read/write performance, and known limitations — see
-[docs/storage-backends.md](./docs/storage-backends.md).
+[docs/dev/storage-backends.md](./docs/dev/storage-backends.md).
 
 ---
 
@@ -602,8 +602,8 @@ durability, memory residency, read/write performance, and known limitations — 
 - Pre-size slices: `make([]string, 0, n)`.
 - **Stream data-heavy operations** — any operation that reads or writes large/unbounded data (object bodies, batch responses, scan results, log tails) **must** use `io.Reader`/`io.Writer` pipelines. Loading everything into memory first (`io.ReadAll`, `bytes.Buffer`) is only acceptable when the data is provably small and bounded. Prefer `io.Copy`, `json.NewDecoder(r.Body)`, and chunked writes over accumulate-then-send patterns.
 - Measure before optimising: `make bench`.
-- **Document measurement conditions for every performance claim.** A number without context is misleading. See [docs/performance.md § Documenting performance claims](docs/performance.md#documenting-performance-claims) for the required fields (what, how, environment, inclusions/exclusions).
-- **Respect the startup budget.** No store reads, network I/O, DDL, file reads, or eager goroutine work in service `New()` or any `Init*` method called from `router.New()`. Use the `sync.Once` lazy-init pattern. See [docs/performance.md § Startup budget — rules for service authors](docs/performance.md#startup-budget--rules-for-service-authors).
+- **Document measurement conditions for every performance claim.** A number without context is misleading. See [docs/dev/performance.md § Documenting performance claims](docs/dev/performance.md#documenting-performance-claims) for the required fields (what, how, environment, inclusions/exclusions).
+- **Respect the startup budget.** No store reads, network I/O, DDL, file reads, or eager goroutine work in service `New()` or any `Init*` method called from `router.New()`. Use the `sync.Once` lazy-init pattern. See [docs/dev/performance.md § Startup budget — rules for service authors](docs/dev/performance.md#startup-budget--rules-for-service-authors).
 
 **Goroutine leaks** — every goroutine must respect context cancellation:
 
@@ -838,7 +838,7 @@ Add your entry under `[Unreleased]`:
    - Add request/response types and the codec-agnostic handler function to `typed_logic.go`
    - Register the operation in `typed_ops.go` via `op.NewTyped[In, Out]("OperationName", s.handlerTyped)`
    - The `Dispatch`/`DispatchQuery` method in `service.go` already routes through the typed dispatcher — no additional wiring needed
-3. **For existing services with legacy dispatch** (see [Smithy wire protocols](./docs/smithy.md)):
+3. **For existing services with legacy dispatch** (see [Smithy wire protocols](./docs/dev/smithy.md)):
    - Add request/response types to `handler.go` — match AWS SDK wire format exactly (casing matters)
    - Add handler method; wire the route or dispatch case
 4. Add state helpers to `store.go` if needed
@@ -887,9 +887,9 @@ Add your entry under `[Unreleased]`:
    - **`store.go`** — state access, JSON serialisation
    - `handler.go` / `handler_stubs.go` — only if there is legacy dispatch code (existing services); new services should NOT create these files
    - `capabilities_dev.go` — `//go:build dev` operation inventory
-2. **All new services must use the typed dispatch pattern from the start** (see [Smithy wire protocols](./docs/smithy.md)). The `Dispatch` (or `DispatchQuery` for Query-protocol services) method must check `codec.FromContext(ctx)` at the top and route to the typed handler when a codec is present. The legacy `handler.go` / `handler_stubs.go` split only exists for older services that predate the codec infrastructure — do not create these files in new services. See `internal/services/scheduler/` (REST-path) or `internal/services/ecr/` (JSON-target) as canonical examples.
+2. **All new services must use the typed dispatch pattern from the start** (see [Smithy wire protocols](./docs/dev/smithy.md)). The `Dispatch` (or `DispatchQuery` for Query-protocol services) method must check `codec.FromContext(ctx)` at the top and route to the typed handler when a codec is present. The legacy `handler.go` / `handler_stubs.go` split only exists for older services that predate the codec infrastructure — do not create these files in new services. See `internal/services/scheduler/` (REST-path) or `internal/services/ecr/` (JSON-target) as canonical examples.
 3. Implement `router.Service` interface; append to `allServices` in `internal/router/router.go`. For JSON-protocol services implement `router.TargetDispatcher` (`TargetPrefix()` + `Dispatch()`). For Query-protocol services implement `router.QueryDispatcher` (`DispatchQuery()`). For REST-path services implement `PathPrefixService`.
-4. **Respect the startup budget.** `<svc>.New()` and any `Init*` method called from `router.New()` must be pure field assignment — no store reads, no network I/O, no DDL, no synchronous file reads, no goroutines that do work before their first tick. See [docs/performance.md § Startup budget — rules for service authors](./docs/performance.md#startup-budget--rules-for-service-authors) for the full rule set and the lazy-init pattern.
+4. **Respect the startup budget.** `<svc>.New()` and any `Init*` method called from `router.New()` must be pure field assignment — no store reads, no network I/O, no DDL, no synchronous file reads, no goroutines that do work before their first tick. See [docs/dev/performance.md § Startup budget — rules for service authors](./docs/dev/performance.md#startup-budget--rules-for-service-authors) for the full rule set and the lazy-init pattern.
 5. Create `internal/services/<n>/capabilities_dev.go` — declare every operation the service exposes, with the correct `Status` for each. Use `//go:build dev` at the top. See `internal/services/sqs/capabilities_dev.go` as the canonical example. Then generate and check:
    ```sh
    make generate-caps   # adds the new service to internal/capabilities/all.gen.go

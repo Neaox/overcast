@@ -4,7 +4,7 @@ package logs
 // (docs/plans/storage-plan.md Phase 2.3), re-run against the same shapes as the
 // Phase 2.1 baseline that measured the OLD blob-per-stream design (see git
 // history for this file's pre-2.3 version, and the PR description for the
-// recorded before/after numbers). See docs/performance.md "Documenting
+// recorded before/after numbers). See docs/dev/performance.md "Documenting
 // performance claims" — treat everything below as relative/indicative, not
 // an absolute production number.
 //

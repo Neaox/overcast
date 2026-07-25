@@ -6,7 +6,7 @@ package state
 // work (docs/plans/storage-plan.md item 2.1) so the CloudWatch Logs table rewrite
 // (2.3) and any future HybridStore changes have a measured "before" to diff
 // against. These are relative/indicative numbers, not absolute production
-// numbers — see docs/performance.md "Documenting performance claims".
+// numbers — see docs/dev/performance.md "Documenting performance claims".
 //
 // What is measured:
 //   - Set/Get throughput for a TierHot namespace ("sqs:queues", served from

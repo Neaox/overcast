@@ -1,48 +1,24 @@
----
-title: "Storage backend internals"
-description: "Durability guarantees, performance characteristics, memory residency, and known limitations of Overcast's four state.Store backends — for contributors choosing or reasoning about a backend."
-section: "Development"
-tags:
-  - docs
-  - storage
-  - state
-  - internals
----
-
 # Storage backend internals
 
 This is a contributor-depth comparison of the four `state.Store` implementations
-(`internal/state/memory.go`, `wal.go`, `sqlite.go`, `hybrid.go`). For **how to configure** a
-backend (`OVERCAST_STATE`, per-service overrides, Docker examples), see
-[docs/README.md § Persistence](./README.md#persistence) — this page does not repeat that
-material. Use this page when you need to reason about *why* a backend behaves the way it
-does: durability guarantees, what stays resident in memory, read/write performance shape, and
-known limitations worth knowing before you pick one for a workload.
+(`internal/state/memory.go`, `wal.go`, `sqlite.go`, `hybrid.go`). For the **mode/durability
+comparison table, what survives a restart, and how to choose a backend**, see
+[docs/storage.md](../storage.md) — this page does not repeat that material. For **how to
+configure** a backend (`OVERCAST_STATE`, per-service overrides, Docker examples), see
+[docs/README.md § Persistence](../README.md#persistence). Use this page when you need to
+reason about *why* a backend behaves the way it does at the implementation level: durability
+mechanics, what stays resident in memory, read/write performance shape, and known limitations
+worth knowing before you touch this code or pick a backend for a workload you're benchmarking.
 
-See also [CONTRIBUTING.md § Persisted state](../CONTRIBUTING.md#persisted-state-json-compatibility-table-graduation-and-migrations)
+See also [CONTRIBUTING.md § Persisted state](../../CONTRIBUTING.md#persisted-state-json-compatibility-table-graduation-and-migrations)
 for the policy on evolving persisted JSON structs and when a namespace earns its own table.
-
----
-
-## At a glance
-
-| Backend      | Implementation | Durability                                                        | Memory residency                                       | Reads                                                        | Writes                                                         |
-| ------------ | --------------- | ------------------------------------------------------------------ | -------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `memory`     | `MemoryStore`   | None — lost on process exit.                                       | Full dataset, always.                                     | O(log n) per key / O(log n + m) prefix scan, `sync.RWMutex`.    | O(log n), `sync.RWMutex` (exclusive).                                |
-| `wal`        | `WALStore`      | Append-only log, replayed on restart; fsync policy configurable.   | **Full dataset, always** — reads are served from an in-process `MemoryStore`. | Same as `memory` (reads never touch disk).                     | Memory write + log append (+ optional fsync) + periodic **synchronous compaction**. |
-| `persistent` | `SQLiteStore`   | Every mutation committed to SQLite before the call returns.        | None — every op is a live SQLite query.                   | One SQLite query per call, single connection.                  | One SQLite statement per call, single connection (serializes with reads). |
-| `hybrid`     | `HybridStore`   | Async: writes land in a pending log immediately, batch-flushed to SQLite on a timer/threshold. | **Partial** — `TierHot` namespaces always in memory; `TierCached` namespaces are not. | `TierHot`: memory speed. `TierCached`: a SQLite round trip per call through a dedicated read pool, every time. | Memory write + pending-log append (fast) + async batched SQLite flush. |
-
-`hybrid` is the default and the right choice for most local development. The sections below
-explain the tradeoffs behind each row, and two behaviors worth knowing before you lean on
-`wal` or `hybrid` for a larger workload.
 
 ---
 
 ## Startup: what happens to requests during a schema migration
 
 Both SQLite-backed modes (`persistent`, `hybrid`) run schema migrations
-([internal/state/migrate.go](../internal/state/migrate.go)) in a background goroutine before the
+([internal/state/migrate.go](../../internal/state/migrate.go)) in a background goroutine before the
 store is usable — this is normally instant (a no-op check of `PRAGMA user_version` against an
 already-up-to-date database), but is not always instant, and the two failure-adjacent windows
 below are real, not test artifacts.
@@ -57,7 +33,7 @@ before assuming a slow first-startup-after-upgrade means something is broken.
 
 **The server looks ready before migrations finish, and the logs go quiet while a migration is
 still running.** `overcast listening` logs as soon as the HTTP listener binds — store
-construction is non-blocking by design (see [CONTRIBUTING § Startup budget](../CONTRIBUTING.md)),
+construction is non-blocking by design (see [CONTRIBUTING § Startup budget](../../CONTRIBUTING.md)),
 so this happens before the background migration goroutine has necessarily finished, or even
 started. `RunMigrations` logs `sqlite migrations pending` (with the full list of what's about to
 run) before anything executes, and `sqlite migration applied` per migration — but only *after*
@@ -68,7 +44,7 @@ knowing this.
 
 **What a request sees during this window: a fast 503, by design.** Requests that arrive while a
 migration is still in flight are rejected by the `NotReady` middleware
-([internal/middleware/notready.go](../internal/middleware/notready.go)) with a 503
+([internal/middleware/notready.go](../../internal/middleware/notready.go)) with a 503
 `ServiceUnavailable` response (the real AWS error code, which AWS SDKs already retry
 automatically) plus a `Retry-After: 2` header — in the service's own wire format (XML for S3,
 JSON elsewhere). Overcast's own `/_`-prefixed endpoints (`/_health`, `/_debug/*`, …) are exempt,
@@ -100,16 +76,16 @@ ongoing health condition surfaced via `PersistentHealth`, not a startup phase, s
 ## `memory`
 
 Everything lives in a `sync.RWMutex`-guarded B-tree per namespace
-([internal/state/memory.go](../internal/state/memory.go)). No disk I/O of any kind. Fastest
+([internal/state/memory.go](../../internal/state/memory.go)). No disk I/O of any kind. Fastest
 backend, zero durability. This is the right default for tests and CI — see
-[docs/development-setup.md](./development-setup.md), which already recommends
+[docs/dev/development-setup.md](./development-setup.md), which already recommends
 `OVERCAST_STATE=memory` for worktrees and fast local iteration.
 
 ---
 
 ## `wal`
 
-`WALStore` ([internal/state/wal.go](../internal/state/wal.go)) is a `MemoryStore` with an
+`WALStore` ([internal/state/wal.go](../../internal/state/wal.go)) is a `MemoryStore` with an
 append-only log bolted on for durability. Every `Get`/`List`/`Scan` goes straight to the
 embedded `MemoryStore` — there is no disk read on the hot path, and no separate on-disk
 representation of the data other than the append log itself. This means:
@@ -124,11 +100,11 @@ representation of the data other than the append log itself. This means:
 ### Known limitation: compaction stalls writes for the full rewrite
 
 When the append log crosses `MaxLogBytes` (default 64 MiB), the next mutation triggers
-`compactLocked` ([wal.go:361](../internal/state/wal.go)), which rewrites the *entire current
+`compactLocked` ([wal.go:361](../../internal/state/wal.go)), which rewrites the *entire current
 dataset* to a fresh snapshot file, synchronously: open a temp file, encode every key in every
 namespace to it, `fsync`, close, close the active log file, rename, reopen. This all happens
 while holding `WALStore.mu` — which `maybeCompact` acquires from inside `Set`/`Delete`/
-`DeletePrefix` and holds for the entire compaction ([wal.go:349](../internal/state/wal.go)).
+`DeletePrefix` and holds for the entire compaction ([wal.go:349](../../internal/state/wal.go)).
 
 The practical effect:
 
@@ -138,7 +114,7 @@ The practical effect:
 - **Reads are largely unaffected.** `Get`/`List`/`Scan` call the embedded `MemoryStore`
   directly and never acquire `WALStore.mu` at all. The one brief exception is
   `writeSnapshot`'s scan of the data
-  ([wal.go:402](../internal/state/wal.go)), which holds `MemoryStore`'s own `RLock` — but
+  ([wal.go:402](../../internal/state/wal.go)), which holds `MemoryStore`'s own `RLock` — but
   `RLock` is shared, so concurrent reads proceed normally; only a concurrent *write* (which
   needs `MemoryStore`'s exclusive `Lock`) queues behind it, and then queues again behind
   `WALStore.mu` for the remainder of the compaction.
@@ -154,9 +130,9 @@ there.
 
 ## `persistent`
 
-`SQLiteStore` ([internal/state/sqlite.go](../internal/state/sqlite.go)) has no memory layer
+`SQLiteStore` ([internal/state/sqlite.go](../../internal/state/sqlite.go)) has no memory layer
 at all — `Get`/`Set`/`Delete`/`List`/`Scan` each issue one SQLite statement directly
-([sqlite.go:151-227](../internal/state/sqlite.go), `Get` through `DeletePrefix`) against a
+([sqlite.go:151-227](../../internal/state/sqlite.go), `Get` through `DeletePrefix`) against a
 single writer connection
 (`SetMaxOpenConns(1)`). Every mutation is durable the instant the call returns (subject to
 `PRAGMA synchronous`), and there is no separate read pool — reads and writes share the one
@@ -170,8 +146,8 @@ behavior that must not depend on `hybrid`'s async flush timing — and can accep
 
 ## `hybrid` (default)
 
-`HybridStore` ([internal/state/hybrid.go](../internal/state/hybrid.go)) splits namespaces
-into two tiers ([internal/state/tier.go](../internal/state/tier.go)):
+`HybridStore` ([internal/state/hybrid.go](../../internal/state/hybrid.go)) splits namespaces
+into two tiers ([internal/state/tier.go](../../internal/state/tier.go)):
 
 - **`TierHot`** — resource definitions (queues, tables, functions, stacks, …). Seeded into
   memory in a background goroutine at startup and always read from memory afterward. Small,
@@ -179,7 +155,7 @@ into two tiers ([internal/state/tier.go](../internal/state/tier.go)):
 - **`TierCached`** — high-volume data-plane namespaces (`sqs:messages`, `logs:events`,
   `cloudwatch:metricdata`, `kinesis:records`, …). These are **read straight from SQLite on
   every access** via `shouldReadHybridNamespaceFromSQLite`
-  ([hybrid.go:1752](../internal/state/hybrid.go)), overlaid with a small pending-write cache
+  ([hybrid.go:1752](../../internal/state/hybrid.go)), overlaid with a small pending-write cache
   for changes not yet flushed. `tier.go`'s doc comment is explicit about this: *"There is
   currently no in-memory LRU cache in front of SQLite for these namespaces — every read not
   covered by the pending overlay is a SQLite round trip."* An LRU-bounded cache tier is a
@@ -188,7 +164,7 @@ into two tiers ([internal/state/tier.go](../internal/state/tier.go)):
 
 TierCached reads don't queue behind an in-flight flush transaction — they go through a
 dedicated read-only connection pool opened alongside the writer connection
-(`openReadPool`/`readDB`, [hybrid.go:459](../internal/state/hybrid.go), `SetMaxOpenConns(4)`),
+(`openReadPool`/`readDB`, [hybrid.go:459](../../internal/state/hybrid.go), `SetMaxOpenConns(4)`),
 which WAL mode allows to proceed concurrently with the single writer. That solves the
 *blocking* problem; it does not add caching. Under sustained load, a `TierCached` namespace
 still pays a real SQLite query per operation — just one that doesn't wait on a writer lock.
@@ -203,6 +179,8 @@ entries / 8 MiB), whichever comes first. The pending log's fsync policy is confi
 `OVERCAST_WAL_FSYNC`). This is why `hybrid` is fast *and* durable enough for local dev: a
 process kill loses nothing that reached the pending log; an OS crash/power loss loses at most
 one sync interval (100 ms by default), recovered by pending-log replay — not the whole dataset.
+See [docs/performance.md](../performance.md) for guidance on when (and when not) to touch these
+knobs from a tuning perspective.
 
 Replay tolerates real-world crash damage: a torn final line (the signature of a kill
 mid-append) is logged and ignored, a corrupt line anywhere else is logged and skipped, and the
@@ -226,7 +204,7 @@ polling `sqs:messages` or `logs:events` from many goroutines) generates a real S
 per read, every time, forever — bounded only by the read pool's four connections and SQLite's
 own performance. This is fine for the emulator's typical local-dev/CI read volumes; it is the
 first place to look if a `TierCached` namespace shows up as a bottleneck in a benchmark (see
-[CONTRIBUTING.md § Data earns a table](../CONTRIBUTING.md#data-earns-a-table) for the
+[CONTRIBUTING.md § Data earns a table](../../CONTRIBUTING.md#data-earns-a-table) for the
 graduation criteria before reaching for a dedicated table instead).
 
 ### Known limitation: reads fail fast, not slow, under severe disk contention
@@ -251,7 +229,7 @@ reproducible when Overcast is the only thing touching the disk.
 
 Graceful shutdown ends with a final synchronous flush of everything the hybrid store hasn't
 written to SQLite yet, then the database close. That close is **time-budgeted by
-`OVERCAST_SHUTDOWN_TIMEOUT`** (default 5s, [cmd_serve.go `closeStoreBounded`](../cmd/overcast/cmd_serve.go)):
+`OVERCAST_SHUTDOWN_TIMEOUT`** (default 5s, [cmd_serve.go `closeStoreBounded`](../../cmd/overcast/cmd_serve.go)):
 if the flush can't finish inside the budget — realistic on a slow bind-mounted `/data` volume
 under Docker Desktop — Overcast logs `store close exceeded shutdown timeout`, exits anyway, and
 the unflushed writes replay from the pending log on the next start. Nothing is lost either way;
@@ -261,36 +239,3 @@ raise `OVERCAST_SHUTDOWN_TIMEOUT` (and `docker stop -t` to match) or move `/data
 bind mount. Error-path shutdowns (listener failure) run the same cleanup tail as
 signal-triggered ones, including service-level buffered flushes like CloudWatch Logs' write
 cache.
-
----
-
-## Backend selection guidance
-
-The config-level version of this table — the four `OVERCAST_STATE` values, Docker examples,
-and per-service overrides — already lives in
-[docs/README.md § Persistence](./README.md#persistence); `docs/development-setup.md` also
-recommends `OVERCAST_STATE=memory` for fast local iteration in worktrees. This section adds
-only the internals-level "why", not a restatement of the config table:
-
-- **Default to `hybrid`** unless you have a specific reason not to — it's the only backend
-  that's both fast (TierHot memory reads, async writes) and durable across restarts without
-  paying a synchronous SQLite round trip on every operation.
-- **Reach for `persistent`** when you're debugging or testing something whose correctness
-  depends on every write being durable *before the call returns* — `hybrid`'s async flush
-  window (up to one flush interval, or until a dirty threshold trips) is the wrong tool for
-  that class of test.
-- **Reach for `wal`** when you want durability with a simpler on-disk format than SQLite and
-  your dataset is small enough to live entirely in memory comfortably — and be aware of the
-  compaction stall above if the workload also has sustained write volume.
-- **Use `memory`** for tests, CI, and any workflow that doesn't need state to survive a
-  restart — it's the fastest backend by a wide margin and has zero disk-I/O variables to
-  reason about.
-- **Per-service overrides** (`OVERCAST_STATE_<SERVICE>`) let you mix backends — e.g. `hybrid`
-  globally with `persistent` only for the one service under test — see
-  [docs/README.md § Per-service storage overrides](./README.md#per-service-storage-overrides).
-  Routing is by storage-namespace prefix (`config.ServiceNamespacePrefix` maps config names to
-  the historical short prefixes `cfn`/`apigw`/`eb`; colonless namespaces like `ssm` match by
-  whole name). A few services accept an override that can have no effect and log a startup
-  warning when one is set — `dynamodbstreams` (store-less facade over `dynamodb`), `sts` (state
-  lives under `iam:`), `bedrock`/`organizations` (stateless stubs); see
-  `config.ServiceOverrideIneffective`.

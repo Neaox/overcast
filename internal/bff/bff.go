@@ -1194,6 +1194,9 @@ func safeDocsPath(path string) bool {
 	if path == "plans" || strings.HasPrefix(path, "plans/") {
 		return false
 	}
+	if path == "dev" || strings.HasPrefix(path, "dev/") {
+		return false
+	}
 	return strings.HasSuffix(path, ".md")
 }
 

@@ -104,7 +104,7 @@ Or for doc-verified behaviour:
 - Behaviour diverges from real AWS in a way that breaks SDK clients
 - A regression is suspected after a recent change
 
-If the bug is an AWS compatibility issue, also follow `docs/compatibility/README.md` and the service tracker in `docs/compatibility/services/<service>.yaml`. Examples include wrong wire shape, wrong status code, wrong error code, missing documented validation, wrong identifier/ARN/URL format, incorrect pagination or idempotency, state transition mismatch, or behavior that only fails under a documented resource configuration such as Cognito `UsernameAttributes` or SQS long polling.
+If the bug is an AWS compatibility issue, also follow `docs/dev/compatibility/README.md` and the service tracker in `docs/dev/compatibility/services/<service>.yaml`. Examples include wrong wire shape, wrong status code, wrong error code, missing documented validation, wrong identifier/ARN/URL format, incorrect pagination or idempotency, state transition mismatch, or behavior that only fails under a documented resource configuration such as Cognito `UsernameAttributes` or SQS long polling.
 
 Do NOT use this for:
 
@@ -131,7 +131,7 @@ Before writing any code, understand the bug:
    | Unimplemented              | —      | `protocol.NotImplementedXML/JSON(w, r)` |
 
 4. **Check the docs.** Look at `docs/services/<service>.md` — is the affected endpoint marked as supported? If it's marked ❌, the "bug" may be an unimplemented endpoint returning 501, which is correct behaviour.
-5. **For compatibility bugs, check compatibility tracking.** Read `docs/compatibility/README.md`, `docs/compatibility/matrix.yaml`, and `docs/compatibility/services/<service>.yaml`. Identify the affected operation and scenario, including documented resource configuration variants. If no scenario exists yet, add it before finishing.
+5. **For compatibility bugs, check compatibility tracking.** Read `docs/dev/compatibility/README.md`, `docs/dev/compatibility/matrix.yaml`, and `docs/dev/compatibility/services/<service>.yaml`. Identify the affected operation and scenario, including documented resource configuration variants. If no scenario exists yet, add it before finishing.
 6. **Check real AWS behaviour only with permission.** If docs and cheaper sources are insufficient, ask the user before using real AWS. Guessing leads to drift. The wire format is the compatibility contract — every status code, header, field name, casing, default value, and error code must match the authoritative source.
 
 ### Compatibility Bug Addendum
@@ -142,7 +142,7 @@ Before writing tests:
 
 1. Read the AWS API Reference and Developer Guide sections for the affected operation.
 2. Extract documented callouts and resource-configuration scenarios. Do not test only the default resource shape.
-3. Update or add the affected operation/scenario in `docs/compatibility/services/<service>.yaml` with `status: implementation_mismatch` or `tests_missing` as appropriate.
+3. Update or add the affected operation/scenario in `docs/dev/compatibility/services/<service>.yaml` with `status: implementation_mismatch` or `tests_missing` as appropriate.
 
 Common scenario dimensions to consider:
 
@@ -161,7 +161,7 @@ After the fix:
 1. Mark fixed scenarios as `fixed` or `reviewed` in the per-service YAML.
 2. Add evidence: AWS docs URLs, test paths, and the exact behavior now covered.
 3. Update remaining gaps and `next_action` so another agent can continue the review.
-4. Update the global `docs/compatibility/matrix.yaml` summary only if service-level status, priority, or next action changed.
+4. Update the global `docs/dev/compatibility/matrix.yaml` summary only if service-level status, priority, or next action changed.
 
 ### Phase 2 — Write a Reproducing Test
 
@@ -256,7 +256,7 @@ Documentation MUST stay in sync with behaviour. Skipping this creates drift that
    make check-caps      # verifies dispatcher entries have matching capabilities
    ```
 2. **Service docs prose:** If there are behaviour notes or caveats outside the `<!-- BEGIN/END overcast:capabilities -->` sentinel markers in `docs/services/<service>.md`, update them. Never edit anything between the sentinel markers — those are auto-generated.
-3. **Compatibility tracker:** If the bug was an AWS compatibility issue, update `docs/compatibility/services/<service>.yaml` with scenarios, evidence, tests, gaps, and handoff. Update `docs/compatibility/matrix.yaml` if the service-level next action or status changed.
+3. **Compatibility tracker:** If the bug was an AWS compatibility issue, update `docs/dev/compatibility/services/<service>.yaml` with scenarios, evidence, tests, gaps, and handoff. Update `docs/dev/compatibility/matrix.yaml` if the service-level next action or status changed.
 4. **`CHANGELOG.md`:** Add an entry under `[Unreleased]`:
 
    ```markdown
