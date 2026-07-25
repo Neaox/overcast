@@ -487,3 +487,213 @@ func TestIndexStructure_DeleteRemovesIndexRows(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Phase 3: scanIndexPage (dynamodb-gsi-design.md §4/§6) — the storage-level
+// read path scanTyped's GSI-scan branch now calls. Mirrors item_store_test.go's
+// TestItemBackend_ScanPage_ParityWithScanAll /
+// TestItemBackend_ScanPage_CursorSurvivesDeletedItem conventions, generalized
+// to the index tree's 4-tuple cursor (indexHash, indexSort, baseHash,
+// baseSort) instead of scanPage's 2-tuple (hashKey, sortKey).
+// ---------------------------------------------------------------------------
+
+// afterIndexCursor computes the 4-tuple cursor scanIndexPage expects to
+// resume after item, for idx on table — the same encode-then-compare choke
+// point dynamoStore.scanIndexPage (store.go) uses, called directly here
+// since these tests exercise the itemBackend interface below dynamoStore.
+func afterIndexCursor(t *testing.T, table *Table, idx *SecondaryIndex, item Item) (indexHash, indexSort, baseHash, baseSort string) {
+	t.Helper()
+	ih, is, ok := indexKeyComponents(table, idx, item)
+	if !ok {
+		t.Fatalf("indexKeyComponents: item unexpectedly missing the index key: %v", item)
+	}
+	bh, bs, aerr := resolveStorageKeys(table, item)
+	if aerr != nil {
+		t.Fatalf("resolveStorageKeys: %v", aerr)
+	}
+	return ih, is, bh, bs
+}
+
+// TestIndexBackend_ScanIndexPage_ParityWithScanIndexAll is dynamodb-gsi-
+// design.md §6's headline correctness check for scanIndexPage: walking it to
+// exhaustion at any page size returns exactly the same item set
+// scanIndexAll returns, with no duplicates and no gaps — the index-tree
+// analogue of TestItemBackend_ScanPage_ParityWithScanAll.
+func TestIndexBackend_ScanIndexPage_ParityWithScanIndexAll(t *testing.T) {
+	for name, backend := range newTestItemBackends(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			table := ordersTableWithGSIs()
+			idx := table.findIndex("gsi-all")
+			const n = 9
+
+			want := map[string]bool{}
+			for i := 0; i < n; i++ {
+				id := fmt.Sprintf("o%d", i)
+				item := Item{
+					"orderId":    attrValue{"S": id},
+					"customerId": attrValue{"S": fmt.Sprintf("c%d", i%3)},
+					"status":     attrValue{"S": "shipped"},
+				}
+				putViaWritePath(t, ctx, backend, table, nil, item)
+				want[id] = true
+			}
+
+			for _, pageSize := range []int{1, 2, 5, 100} {
+				t.Run(fmt.Sprintf("pageSize=%d", pageSize), func(t *testing.T) {
+					got := map[string]bool{}
+					hasAfter := false
+					var afterIH, afterIS, afterBH, afterBS string
+					for page := 0; page < n+2; page++ {
+						items, err := backend.scanIndexPage(ctx, table.TableName, idx.IndexName, hasAfter, afterIH, afterIS, afterBH, afterBS, pageSize)
+						if err != nil {
+							t.Fatalf("scanIndexPage: %v", err)
+						}
+						if len(items) == 0 {
+							break
+						}
+						for _, item := range items {
+							id := item["orderId"]["S"].(string)
+							if got[id] {
+								t.Fatalf("duplicate item %q across pages", id)
+							}
+							got[id] = true
+						}
+						afterIH, afterIS, afterBH, afterBS = afterIndexCursor(t, table, idx, items[len(items)-1])
+						hasAfter = true
+					}
+					if len(got) != len(want) {
+						t.Fatalf("scanIndexPage walk got %d items, want %d (got=%v want=%v)", len(got), len(want), got, want)
+					}
+					for id := range want {
+						if !got[id] {
+							t.Fatalf("scanIndexPage walk missing item %q", id)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+// TestIndexBackend_ScanIndexPage_CursorSurvivesDeletedCursorItem is
+// pagination-plan.md G2's headline property, generalized to the index
+// cursor: deleting the exact row a page's cursor names must not restart the
+// walk or duplicate/skip entries — the index-tree analogue of
+// TestItemBackend_ScanPage_CursorSurvivesDeletedItem.
+func TestIndexBackend_ScanIndexPage_CursorSurvivesDeletedCursorItem(t *testing.T) {
+	for name, backend := range newTestItemBackends(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			table := ordersTableWithGSIs()
+			idx := table.findIndex("gsi-all")
+
+			// 4 items, each its own distinct index key (customerId), so the
+			// composite-key tiebreak isn't exercised here — that's the next
+			// test's job.
+			items := make([]Item, 4)
+			for i := 0; i < 4; i++ {
+				items[i] = Item{
+					"orderId":    attrValue{"S": fmt.Sprintf("o%d", i)},
+					"customerId": attrValue{"S": fmt.Sprintf("c%d", i)},
+					"status":     attrValue{"S": "shipped"},
+				}
+				putViaWritePath(t, ctx, backend, table, nil, items[i])
+			}
+
+			page1, err := backend.scanIndexPage(ctx, table.TableName, idx.IndexName, false, "", "", "", "", 2)
+			if err != nil {
+				t.Fatalf("page1: %v", err)
+			}
+			if len(page1) != 2 {
+				t.Fatalf("page1: want 2 items, got %d", len(page1))
+			}
+			cursorItem := page1[1]
+
+			// Delete the cursor item's base record (and its index row with
+			// it) before fetching page 2.
+			cursorOrderID := cursorItem["orderId"]["S"].(string)
+			deleteViaWritePath(t, ctx, backend, table, cursorItem, Item{"orderId": attrValue{"S": cursorOrderID}})
+
+			afterIH, afterIS, afterBH, afterBS := afterIndexCursor(t, table, idx, cursorItem)
+			page2, err := backend.scanIndexPage(ctx, table.TableName, idx.IndexName, true, afterIH, afterIS, afterBH, afterBS, 10)
+			if err != nil {
+				t.Fatalf("page2: %v", err)
+			}
+
+			seen := map[string]bool{}
+			for _, item := range page1 {
+				seen[item["orderId"]["S"].(string)] = true
+			}
+			for _, item := range page2 {
+				id := item["orderId"]["S"].(string)
+				if seen[id] {
+					t.Fatalf("item %q duplicated across page1 and page2", id)
+				}
+				seen[id] = true
+			}
+			if len(seen) != 4 {
+				t.Fatalf("expected 4 distinct items across both pages (deleted cursor item was already delivered on page1), got %d: %v", len(seen), seen)
+			}
+			if len(page2) != 2 {
+				t.Fatalf("page2: want 2 items, got %d", len(page2))
+			}
+		})
+	}
+}
+
+// TestIndexBackend_ScanIndexPage_SurvivesDeletionOfItemSharingIndexKey is the
+// index-specific generalization of G2: unlike the base table's primary key,
+// an index key is not required to be unique — several base items can share
+// one index key (composite-key-tiebreak territory, design §3). Deleting a
+// not-yet-returned item that shares the cursor's index key must not corrupt
+// the walk.
+func TestIndexBackend_ScanIndexPage_SurvivesDeletionOfItemSharingIndexKey(t *testing.T) {
+	for name, backend := range newTestItemBackends(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			table := ordersTableWithGSIs()
+			idx := table.findIndex("gsi-all")
+
+			// o0, o1, o2 all share customerId "c0" (tiebroken by orderId);
+			// o3 alone under "c1".
+			customerIDs := []string{"c0", "c0", "c0", "c1"}
+			items := make([]Item, 4)
+			for i, cust := range customerIDs {
+				items[i] = Item{
+					"orderId":    attrValue{"S": fmt.Sprintf("o%d", i)},
+					"customerId": attrValue{"S": cust},
+					"status":     attrValue{"S": "shipped"},
+				}
+				putViaWritePath(t, ctx, backend, table, nil, items[i])
+			}
+
+			page1, err := backend.scanIndexPage(ctx, table.TableName, idx.IndexName, false, "", "", "", "", 2)
+			if err != nil {
+				t.Fatalf("page1: %v", err)
+			}
+			if len(page1) != 2 {
+				t.Fatalf("page1: want 2 items (o0, o1), got %d: %v", len(page1), page1)
+			}
+			cursorItem := page1[1] // o1, still sharing index key "c0" with o0 and the not-yet-returned o2
+
+			// o2 shares the cursor's index key ("c0") but has not been
+			// returned yet — delete it before fetching page 2.
+			deleteViaWritePath(t, ctx, backend, table, items[2], Item{"orderId": attrValue{"S": "o2"}})
+
+			afterIH, afterIS, afterBH, afterBS := afterIndexCursor(t, table, idx, cursorItem)
+			page2, err := backend.scanIndexPage(ctx, table.TableName, idx.IndexName, true, afterIH, afterIS, afterBH, afterBS, 10)
+			if err != nil {
+				t.Fatalf("page2: %v", err)
+			}
+
+			// o2 was deleted before ever being returned, so only o3 remains.
+			if len(page2) != 1 {
+				t.Fatalf("page2: want 1 item (o3; o2 deleted before delivery), got %d: %v", len(page2), page2)
+			}
+			if got := page2[0]["orderId"]["S"].(string); got != "o3" {
+				t.Fatalf("page2: want o3, got %q", got)
+			}
+		})
+	}
+}
