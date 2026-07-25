@@ -206,7 +206,13 @@ func (h *Handler) transactWriteItemsTyped(ctx context.Context, req *transactWrit
 			// No mutation needed — condition already validated.
 
 		case txItem.Put != nil:
-			if aerr := h.store.putItem(ctx, table, txItem.Put.Item); aerr != nil {
+			// oldItem was already fetched unconditionally in phase 1 above
+			// (needed for ConditionExpression evaluation regardless of
+			// GSIs) — GSI index-row maintenance
+			// (dynamodb-gsi-design.md §3) rides that same read at zero
+			// extra cost, exactly like PutItem/BatchWriteItem's
+			// putItemWithIndexMaintenance calls.
+			if aerr := h.store.putItemWithIndexMaintenance(ctx, table, txItem.Put.Item, oldItem); aerr != nil {
 				return nil, aerr
 			}
 			if table.streamEnabled() {
@@ -215,7 +221,9 @@ func (h *Handler) transactWriteItemsTyped(ctx context.Context, req *transactWrit
 			mutatedTables[table.TableName] = true
 
 		case txItem.Delete != nil:
-			if aerr := h.store.deleteItem(ctx, table, txItem.Delete.Key); aerr != nil {
+			// Same zero-extra-read situation as Put above — oldItem is
+			// diffed against nil to produce the GSI index-row deletes.
+			if aerr := h.store.deleteItemWithIndexMaintenance(ctx, table, txItem.Delete.Key, oldItem); aerr != nil {
 				return nil, aerr
 			}
 			if table.streamEnabled() && oldItem != nil {
@@ -239,7 +247,11 @@ func (h *Handler) transactWriteItemsTyped(ctx context.Context, req *transactWrit
 					}
 				}
 			}
-			if aerr := h.store.putItem(ctx, table, item); aerr != nil {
+			// Same rationale as UpdateItem's own handler
+			// (handler_update.go): oldItem is already read above for
+			// upsert semantics, so GSI index-row maintenance is free here
+			// too.
+			if aerr := h.store.putItemWithIndexMaintenance(ctx, table, item, oldItem); aerr != nil {
 				return nil, aerr
 			}
 			if table.streamEnabled() {

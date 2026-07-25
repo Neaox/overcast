@@ -158,6 +158,23 @@ func (t *Table) findIndex(name string) *SecondaryIndex {
 	return nil
 }
 
+// isGSI reports whether name identifies one of table's
+// GlobalSecondaryIndexes, as opposed to a LocalSecondaryIndex or no index at
+// all. The read path uses this to route GSI Query/Scan onto the ordered
+// index structure (dynamodb-gsi-design.md §4) while LSI Query/Scan keeps the
+// existing full-scan fallback unchanged — LSI routing is called out in §5 as
+// separable follow-up work, not part of this flip, because LSIs have no
+// equivalent index storage (index_maintenance.go's diffIndexMutations only
+// ever iterates table.GlobalSecondaryIndexes, never LocalSecondaryIndexes).
+func (t *Table) isGSI(name string) bool {
+	for i := range t.GlobalSecondaryIndexes {
+		if t.GlobalSecondaryIndexes[i].IndexName == name {
+			return true
+		}
+	}
+	return false
+}
+
 // indexHashKeyName returns the partition key name for a secondary index.
 func indexHashKeyName(idx *SecondaryIndex) string {
 	for _, k := range idx.KeySchema {
@@ -452,6 +469,60 @@ func (s *dynamoStore) scanItemsPage(ctx context.Context, table *Table, exclusive
 		return fetched[:limit], true, nil
 	}
 	return fetched, false, nil
+}
+
+// scanIndexPage returns up to limit entries from a GSI's ordered index
+// structure via a single keyset-paginated backend call
+// (dynamodb-gsi-design.md §4) — the GSI-Scan analogue of scanItemsPage.
+// exclusiveStartKey is the raw LastEvaluatedKey-shaped item (table PK plus
+// index key attributes, per extractItemKeysWithIndex); it is resolved to the
+// backend's 4-tuple (indexHash, indexSort, baseHash, baseSort) cursor via
+// idx's key schema (indexKeyComponents) and table's own key schema
+// (resolveStorageKeys), the same encode-then-compare choke point every other
+// storage call site goes through.
+func (s *dynamoStore) scanIndexPage(ctx context.Context, table *Table, idx *SecondaryIndex, exclusiveStartKey Item, limit int) (items []Item, hasMore bool, aerr *protocol.AWSError) {
+	hasAfter := false
+	var afterIndexHash, afterIndexSort, afterBaseHash, afterBaseSort string
+	if exclusiveStartKey != nil {
+		ih, is, ok := indexKeyComponents(table, idx, exclusiveStartKey)
+		if !ok {
+			return nil, false, &protocol.AWSError{
+				Code:       "ValidationException",
+				Message:    fmt.Sprintf("The provided starting key is missing required keys for index %q", idx.IndexName),
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
+		bh, bs, aerr := resolveStorageKeys(table, exclusiveStartKey)
+		if aerr != nil {
+			return nil, false, aerr
+		}
+		hasAfter, afterIndexHash, afterIndexSort, afterBaseHash, afterBaseSort = true, ih, is, bh, bs
+	}
+
+	fetched, err := s.items.scanIndexPage(ctx, table.TableName, idx.IndexName, hasAfter, afterIndexHash, afterIndexSort, afterBaseHash, afterBaseSort, limit+1)
+	if err != nil {
+		return nil, false, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if len(fetched) > limit {
+		return fetched[:limit], true, nil
+	}
+	return fetched, false, nil
+}
+
+// scanIndexByHash returns every entry stored for (table, idx) sharing the
+// index's hash-key value hashVal — an O(k) partition read into the GSI's
+// ordered index structure (dynamodb-gsi-design.md §4), the GSI-Query
+// analogue of scanItemsByHashKey. hashVal is the raw (unencoded) hash-key
+// scalar value; it is encoded per idx's hash-key type before use as the
+// storage lookup key, mirroring scanItemsByHashKey's own encoding of the
+// table's hash key.
+func (s *dynamoStore) scanIndexByHash(ctx context.Context, table *Table, idx *SecondaryIndex, hashVal string) ([]Item, *protocol.AWSError) {
+	storageHashVal := encodeStorageKeyComponent(keyAttrType(table, indexHashKeyName(idx)), hashVal)
+	items, err := s.items.queryIndexByHash(ctx, table.TableName, idx.IndexName, storageHashVal)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return items, nil
 }
 
 // scanExpiredTTL returns only items whose TTL attribute is expired (> 0 and <= cutoffUnix).
