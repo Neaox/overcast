@@ -114,7 +114,10 @@ RUN apk add --no-cache ca-certificates su-exec
 RUN addgroup -S overcast && adduser -S overcast -G overcast
 RUN mkdir -p /data && chown overcast:overcast /data
 
-COPY docker/entrypoint-slim.sh /usr/local/bin/entrypoint-slim.sh
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+# Back-compat: the script was previously installed as entrypoint-slim.sh;
+# keep the old path working for anyone overriding --entrypoint explicitly.
+RUN ln -s entrypoint.sh /usr/local/bin/entrypoint-slim.sh
 COPY docker/awslocal /usr/local/bin/awslocal
 
 # Init hook directories (LocalStack-compatible + Overcast-native).
@@ -141,7 +144,7 @@ EXPOSE 4566
 HEALTHCHECK --interval=5s --timeout=3s --start-period=2s --retries=3 \
     CMD wget -qO- http://localhost:4566/_health || exit 1
 
-ENTRYPOINT ["/usr/local/bin/entrypoint-slim.sh"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 # ---- Stage 5: slim (headless — CI pipelines) -------------------------------
 FROM base AS slim
