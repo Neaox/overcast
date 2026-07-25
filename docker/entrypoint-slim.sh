@@ -1,5 +1,7 @@
 #!/bin/sh
-# Entrypoint for the overcast slim image (headless, no web UI).
+# Entrypoint for both overcast images (slim and console — set in the shared
+# `base` stage of the Dockerfile). The console's web UI/BFF is a pure-Go layer
+# inside the same overcast binary, so both images start the same single process.
 # Handles Docker socket permissions, runs BOOT init hooks, and drops to the overcast user.
 
 # ── Docker socket permissions ───────────────────────────────────────────
