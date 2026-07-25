@@ -1,0 +1,7 @@
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/x-amz-json-1.1"
+  },
+  "body": "{\"InvalidParameters\":[\"/golden/missing\"],\"Parameters\":[{\"Name\":\"/golden/a\",\"Type\":\"String\",\"Value\":\"va\",\"Version\":1,\"ARN\":\"arn:aws:ssm:us-east-1:000000000000:parameter/golden/a\",\"LastModifiedDate\":0,\"DataType\":\"text\"},{\"Name\":\"/golden/b\",\"Type\":\"String\",\"Value\":\"vb\",\"Version\":1,\"ARN\":\"arn:aws:ssm:us-east-1:000000000000:parameter/golden/b\",\"LastModifiedDate\":0,\"DataType\":\"text\"}]}"
+}
