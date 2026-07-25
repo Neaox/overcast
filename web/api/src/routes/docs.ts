@@ -37,10 +37,25 @@ function safeDocsPath(docPath: string): boolean {
     docPath.endsWith(".md") &&
     docPath !== "plans" &&
     !docPath.startsWith("plans/") &&
+    docPath !== "dev" &&
+    !docPath.startsWith("dev/") &&
     !docPath.includes("..") &&
     !docPath.startsWith("/") &&
     !docPath.startsWith("\\")
   )
+}
+
+/**
+ * Strip a leading YAML frontmatter block. Mirrors the Go BFF's
+ * serveDocMarkdown behavior (internal/bff/bff.go) - the two BFFs must stay
+ * in lockstep on doc handling or dev mode renders frontmatter as content.
+ */
+function stripFrontmatter(content: string): string {
+  if (!content.startsWith("---")) return content
+  const end = content.indexOf("\n---", 3)
+  if (end === -1) return content
+  const after = content.indexOf("\n", end + 4)
+  return after === -1 ? "" : content.slice(after + 1).replace(/^\s*\n/, "")
 }
 
 function matchesDoc(entry: DocsIndexEntry, query: string): boolean {
@@ -81,7 +96,7 @@ docsRoutes.get("/page", async (c) => {
 
   try {
     const content = await fs.readFile(filePath, "utf-8")
-    return c.text(content, 200, { "Content-Type": "text/markdown; charset=utf-8" })
+    return c.text(stripFrontmatter(content), 200, { "Content-Type": "text/markdown; charset=utf-8" })
   } catch {
     return c.json({ error: "NotFound" }, 404)
   }
@@ -111,7 +126,7 @@ docsRoutes.get("/:service", async (c) => {
 
   try {
     const content = await fs.readFile(filePath, "utf-8")
-    return c.text(content, 200, { "Content-Type": "text/markdown; charset=utf-8" })
+    return c.text(stripFrontmatter(content), 200, { "Content-Type": "text/markdown; charset=utf-8" })
   } catch {
     return c.json({ error: "NotFound" }, 404)
   }

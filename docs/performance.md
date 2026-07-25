@@ -91,6 +91,65 @@ bind mount: use a **named Docker volume** for `/data` (data lives in the
 Docker Desktop VM's native filesystem) and, if you need the state on the
 host, export it explicitly instead of bind-mounting it.
 
+The ideal setup with `docker run`:
+
+```sh
+docker volume create overcast-data
+docker run -d --name overcast \
+  -p 4566:4566 -p 4567:4567 \
+  -e OVERCAST_STATE=hybrid \
+  -v overcast-data:/data \
+  ghcr.io/neaox/overcast
+```
+
+The same with `docker compose`:
+
+```yaml
+services:
+  overcast:
+    image: ghcr.io/neaox/overcast
+    ports:
+      - "4566:4566" # AWS API endpoint
+      - "4567:4567" # web management console
+    environment:
+      OVERCAST_STATE: hybrid
+    volumes:
+      - overcast-data:/data # named volume — NOT ./some/host/path:/data
+volumes:
+  overcast-data:
+```
+
+When you need the state on the host (backup, inspection), export it
+explicitly rather than bind-mounting:
+
+```sh
+docker cp overcast:/data ./overcast-data-backup
+```
+
+**Sharing a Lambda layer cache from the host is still fine.** The
+bind-mount penalty is about SQLite's per-commit fsyncs — read-mostly
+files like cached layer zips don't pay it. To pre-download layers on the
+host (or share one cache across containers), bind-mount just the layer
+directory and point `LAMBDA_LAYER_CACHE_DIR` at it, while `/data` stays
+on the named volume:
+
+```yaml
+services:
+  overcast:
+    image: ghcr.io/neaox/overcast
+    ports:
+      - "4566:4566"
+      - "4567:4567"
+    environment:
+      OVERCAST_STATE: hybrid
+      LAMBDA_LAYER_CACHE_DIR: /layers
+    volumes:
+      - overcast-data:/data # SQLite state: named volume (fsync-sensitive)
+      - ./layer-cache:/layers # layer zips: host bind mount is fine (read-mostly)
+volumes:
+  overcast-data:
+```
+
 ### Startup slow-filesystem probe
 
 Since the storage-pressure-handling work, `HybridStore` runs a one-time

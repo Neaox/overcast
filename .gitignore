@@ -54,3 +54,4 @@ desktop.ini
 
 .cache
 .npm
+.claude/launch.json
