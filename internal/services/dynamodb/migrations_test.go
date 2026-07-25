@@ -295,6 +295,131 @@ func TestMigration_ReencodeNumericKeys_reencodesExistingRows(t *testing.T) {
 	}
 }
 
+// TestMigration_CreateIndexEntriesTable_BackfillsExistingGSIs is
+// dynamodb-gsi-design.md section 3's migration-time backfill: a table whose
+// schema already declares a GSI (created, or given the GSI via UpdateTable,
+// before this migration ever ran) must come out of RunMigrations with
+// dynamodb_index_entries populated for every existing item that satisfies
+// the GSI's key — not silently start the new structure out empty despite
+// having qualifying data. Also covers the isolation requirement: a
+// malformed table-schema record and a malformed item row must each be
+// skipped rather than failing the whole migration (CLAUDE.md's isolation
+// rule).
+func TestMigration_CreateIndexEntriesTable_BackfillsExistingGSIs(t *testing.T) {
+	db, dbPath := openRawMigrationTestDB(t)
+
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS dynamodb_items (
+			table_name  TEXT NOT NULL,
+			hash_key    TEXT NOT NULL,
+			sort_key    TEXT NOT NULL DEFAULT '',
+			item_json   TEXT NOT NULL,
+			PRIMARY KEY (table_name, hash_key, sort_key)
+		)
+	`); err != nil {
+		t.Fatalf("create dynamodb_items table: %v", err)
+	}
+
+	// "Orders" already declares a GSI (gsi-customer, hash=customerId) —
+	// simulating a table that had a GSI before this migration existed.
+	ordersSchema := `{"TableName":"Orders","KeySchema":[{"AttributeName":"orderId","KeyType":"HASH"}],"AttributeDefinitions":[{"AttributeName":"orderId","AttributeType":"S"},{"AttributeName":"customerId","AttributeType":"S"}],"TableStatus":"ACTIVE","GlobalSecondaryIndexes":[{"IndexName":"gsi-customer","KeySchema":[{"AttributeName":"customerId","KeyType":"HASH"}],"Projection":{"ProjectionType":"ALL"}}]}`
+	if _, err := db.Exec(`INSERT INTO kv (namespace, key, value) VALUES (?, ?, ?)`, nsTables, "us-east-1/Orders", ordersSchema); err != nil {
+		t.Fatalf("insert Orders table schema: %v", err)
+	}
+
+	// A malformed table-schema record — must be skipped, not fail the migration.
+	if _, err := db.Exec(`INSERT INTO kv (namespace, key, value) VALUES (?, ?, ?)`, nsTables, "us-east-1/Broken", `{not valid json`); err != nil {
+		t.Fatalf("insert malformed table schema: %v", err)
+	}
+
+	// A table with no GSIs — must be a no-op (never even read its items).
+	usersSchema := `{"TableName":"Users","KeySchema":[{"AttributeName":"id","KeyType":"HASH"}],"AttributeDefinitions":[{"AttributeName":"id","AttributeType":"S"}],"TableStatus":"ACTIVE"}`
+	if _, err := db.Exec(`INSERT INTO kv (namespace, key, value) VALUES (?, ?, ?)`, nsTables, "us-east-1/Users", usersSchema); err != nil {
+		t.Fatalf("insert Users table schema: %v", err)
+	}
+
+	// Orders items: two dense (satisfy the GSI key), one sparse (no
+	// customerId — must get no index row), one malformed JSON row (must be
+	// skipped, not fail the migration).
+	ordersItems := []struct{ hash, json string }{
+		{"o1", `{"orderId":{"S":"o1"},"customerId":{"S":"c1"}}`},
+		{"o2", `{"orderId":{"S":"o2"},"customerId":{"S":"c2"}}`},
+		{"o3", `{"orderId":{"S":"o3"}}`}, // sparse — no customerId
+		{"o4", `{not valid item json`},   // malformed — must be isolated
+	}
+	for _, r := range ordersItems {
+		if _, err := db.Exec(`INSERT INTO dynamodb_items (table_name, hash_key, sort_key, item_json) VALUES (?, ?, ?, ?)`,
+			"Orders", r.hash, "", r.json); err != nil {
+			t.Fatalf("insert Orders item (hash=%s): %v", r.hash, err)
+		}
+	}
+
+	ctx := context.Background()
+	if err := state.RunMigrations(ctx, db, dbPath, nil); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatalf("read user_version: %v", err)
+	}
+	if version < migrationDynamoDBIndexEntriesTableVersion {
+		t.Fatalf("user_version = %d, want >= %d (malformed records must not block later migrations)", version, migrationDynamoDBIndexEntriesTableVersion)
+	}
+
+	// dynamodb_index_entries exists and has exactly the 2 dense items'
+	// rows — not 3 (the sparse item), not 4 (the malformed item didn't
+	// silently become a row), not 0 (the migration didn't just skip
+	// everything on the first error it hit).
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM dynamodb_index_entries WHERE table_name = 'Orders' AND index_name = 'gsi-customer'`).Scan(&n); err != nil {
+		t.Fatalf("count dynamodb_index_entries rows: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("dynamodb_index_entries row count for Orders/gsi-customer = %d, want 2 (o1, o2 only — not the sparse o3 or malformed o4)", n)
+	}
+
+	var indexHashes []string
+	rows, err := db.Query(`SELECT index_hash FROM dynamodb_index_entries WHERE table_name = 'Orders' AND index_name = 'gsi-customer' ORDER BY index_hash`)
+	if err != nil {
+		t.Fatalf("query index_hash values: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			t.Fatalf("scan index_hash: %v", err)
+		}
+		indexHashes = append(indexHashes, h)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate index_hash rows: %v", err)
+	}
+	want := []string{"c1", "c2"}
+	if len(indexHashes) != len(want) {
+		t.Fatalf("index_hash values = %v, want %v", indexHashes, want)
+	}
+	for i := range want {
+		if indexHashes[i] != want[i] {
+			t.Fatalf("index_hash values = %v, want %v", indexHashes, want)
+		}
+	}
+
+	// Users (no GSIs) contributed nothing.
+	var usersN int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM dynamodb_index_entries WHERE table_name = 'Users'`).Scan(&usersN); err != nil {
+		t.Fatalf("count Users index entries: %v", err)
+	}
+	if usersN != 0 {
+		t.Fatalf("Users (no GSIs) must contribute 0 index entries, got %d", usersN)
+	}
+
+	// Running again is idempotent.
+	if err := state.RunMigrations(ctx, db, dbPath, nil); err != nil {
+		t.Fatalf("RunMigrations (second run): %v", err)
+	}
+}
+
 // TestSQLItemBackend_DeferredDBResolution_DoesNotBlockConstruction proves the
 // lazy-dbFn-resolution behavior newSQLItemBackend documents still holds after
 // removing the CREATE TABLE IF NOT EXISTS from init(): dbFn is not invoked at

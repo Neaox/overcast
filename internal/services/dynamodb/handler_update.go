@@ -112,7 +112,12 @@ func (h *Handler) updateItemTyped(ctx context.Context, req *updateItemRequest) (
 		}
 	}
 
-	if aerr := h.store.putItem(ctx, table, item); aerr != nil {
+	// existing was already fetched unconditionally above (upsert semantics
+	// require it regardless of streams/GSIs) — GSI index-row maintenance
+	// (dynamodb-gsi-design.md section 3) rides that same read at zero extra
+	// cost, unlike PutItem/DeleteItem which had to extend their existing
+	// conditional gates for it.
+	if aerr := h.store.putItemWithIndexMaintenance(ctx, table, item, existing); aerr != nil {
 		return nil, aerr
 	}
 

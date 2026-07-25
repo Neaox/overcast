@@ -80,6 +80,80 @@ type itemBackend interface {
 
 	// debugDeleteAll removes all item rows for debug reset operations.
 	debugDeleteAll(ctx context.Context) error
+
+	// ---- GSI index-entry maintenance (docs/plans/dynamodb-gsi-design.md §3) --
+	//
+	// These methods are storage-only plumbing: as of this phase, no read path
+	// (Query/Scan) consults them yet — scanTyped/queryTyped still use the
+	// full-scan fallback unconditionally (phase 3 wires that up). They exist
+	// so PutItem/UpdateItem/DeleteItem/BatchWriteItem can keep a real ordered
+	// index structure in sync on every write, proven correct in isolation
+	// before anything reads from it.
+
+	// putWithIndexMutations stores (or overwrites) the base item at (table,
+	// hash, sort) — identical to put — and atomically applies mutations to
+	// the table's GSI index entries in the same operation (one *sql.Tx on
+	// the SQL backend; the same mutex critical section on the memory
+	// backend). mutations is typically produced by diffIndexMutations.
+	putWithIndexMutations(ctx context.Context, tableName, hashKey, sortKey string, item Item, mutations []indexMutation) error
+
+	// removeWithIndexMutations deletes the base item at (table, hash, sort)
+	// — identical to remove — and atomically applies mutations to the
+	// table's GSI index entries in the same operation.
+	removeWithIndexMutations(ctx context.Context, tableName, hashKey, sortKey string, mutations []indexMutation) error
+
+	// applyIndexMutations applies index-entry mutations without touching any
+	// base item — used for GSI backfill (UpdateTable adding a GSI to a
+	// table that already has items, and migration-time backfill for GSIs
+	// declared on tables created before this feature existed). All
+	// mutations are applied in one transaction on the SQL backend.
+	applyIndexMutations(ctx context.Context, tableName string, mutations []indexMutation) error
+
+	// scanIndexAll returns every entry stored for (table, index), ordered by
+	// the composite key (indexHash, indexSort, baseHash, baseSort). Each
+	// Item is the index's own projected attribute set (§3), not the base
+	// item.
+	scanIndexAll(ctx context.Context, tableName, indexName string) ([]Item, error)
+
+	// queryIndexByHash returns entries for (table, index) sharing indexHash,
+	// ordered by (indexSort, baseHash, baseSort).
+	queryIndexByHash(ctx context.Context, tableName, indexName, indexHash string) ([]Item, error)
+
+	// countIndexEntries returns the number of entries stored for (table, index).
+	countIndexEntries(ctx context.Context, tableName, indexName string) (int64, error)
+
+	// deleteAllIndexEntriesForTable removes every index row for every GSI on
+	// tableName (called on DeleteTable, alongside deleteAll).
+	deleteAllIndexEntriesForTable(ctx context.Context, tableName string) error
+
+	// deleteAllIndexEntriesForIndex removes every index row for one
+	// (table, index) (called when a GSI is removed via UpdateTable, so a
+	// later GSI recreated under the same name doesn't inherit stale rows).
+	deleteAllIndexEntriesForIndex(ctx context.Context, tableName, indexName string) error
+}
+
+// indexMutationOp identifies whether an indexMutation upserts or deletes one
+// index row.
+type indexMutationOp int
+
+const (
+	indexMutationUpsert indexMutationOp = iota
+	indexMutationDelete
+)
+
+// indexMutation describes one change to a single GSI index row, keyed by the
+// composite key (indexHash, indexSort, baseHash, baseSort) — see
+// indexCompositeKey. item is only meaningful for indexMutationUpsert (the
+// index's own projected attribute set, per idx.Projection — see
+// projectForIndex); indexMutationDelete only needs the key. Produced by
+// diffIndexMutations (write-path maintenance) and buildIndexMutation
+// (backfill).
+type indexMutation struct {
+	indexName            string
+	op                   indexMutationOp
+	indexHash, indexSort string
+	baseHash, baseSort   string
+	item                 Item
 }
 
 type debugItemRecord struct {
@@ -122,13 +196,43 @@ func itemCompositeKey(hashKey, sortKey string) string {
 type memItemBackend struct {
 	mu     sync.RWMutex
 	tables map[string]*btree.Map[string, Item]
+
+	// indexes holds one ordered tree per (table, GSI) pair — see
+	// docs/plans/dynamodb-gsi-design.md §3. Populated lazily, same
+	// convention as tables. Protected by the same mu as tables: base-item
+	// and index-tree mutations for one write share a single lock
+	// acquisition, which is what makes putWithIndexMutations/
+	// removeWithIndexMutations atomic on this backend for free.
+	indexes map[indexKey]*btree.Map[string, Item]
+}
+
+// indexKey identifies one (table, GSI) pair's index tree.
+type indexKey struct{ table, index string }
+
+// indexCompositeKey builds the ordered map key for one GSI index row:
+// indexHash and indexSort (the index's own key, possibly shared by many base
+// items — AWS's GameTitle/TopScore example explicitly allows this) followed
+// by baseHash and baseSort as a uniqueness tiebreak, NUL-separated exactly
+// like itemCompositeKey. No two rows in an index tree ever compare equal,
+// which is what makes a position-based cursor well-defined even when many
+// items share the same index key (dynamodb-gsi-design.md §3/§4 — the cursor
+// upgrade itself is phase 3, but the ordering guarantee is established here).
+func indexCompositeKey(indexHash, indexSort, baseHash, baseSort string) string {
+	return indexHash + "\x00" + indexSort + "\x00" + baseHash + "\x00" + baseSort
 }
 
 func newMemItemBackend() *memItemBackend {
-	return &memItemBackend{tables: make(map[string]*btree.Map[string, Item])}
+	return &memItemBackend{
+		tables:  make(map[string]*btree.Map[string, Item]),
+		indexes: make(map[indexKey]*btree.Map[string, Item]),
+	}
 }
 
-func (b *memItemBackend) put(_ context.Context, tableName, hashKey, sortKey string, item Item) error {
+func (b *memItemBackend) put(ctx context.Context, tableName, hashKey, sortKey string, item Item) error {
+	return b.putWithIndexMutations(ctx, tableName, hashKey, sortKey, item, nil)
+}
+
+func (b *memItemBackend) putWithIndexMutations(_ context.Context, tableName, hashKey, sortKey string, item Item, mutations []indexMutation) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -138,6 +242,7 @@ func (b *memItemBackend) put(_ context.Context, tableName, hashKey, sortKey stri
 		b.tables[tableName] = tree
 	}
 	tree.Set(itemCompositeKey(hashKey, sortKey), item)
+	b.applyIndexMutationsLocked(tableName, mutations)
 	return nil
 }
 
@@ -153,15 +258,118 @@ func (b *memItemBackend) get(_ context.Context, tableName, hashKey, sortKey stri
 	return item, ok, nil
 }
 
-func (b *memItemBackend) remove(_ context.Context, tableName, hashKey, sortKey string) error {
+func (b *memItemBackend) remove(ctx context.Context, tableName, hashKey, sortKey string) error {
+	return b.removeWithIndexMutations(ctx, tableName, hashKey, sortKey, nil)
+}
+
+func (b *memItemBackend) removeWithIndexMutations(_ context.Context, tableName, hashKey, sortKey string, mutations []indexMutation) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	tree := b.tables[tableName]
-	if tree == nil {
-		return nil
+	if tree := b.tables[tableName]; tree != nil {
+		tree.Delete(itemCompositeKey(hashKey, sortKey))
 	}
-	tree.Delete(itemCompositeKey(hashKey, sortKey))
+	b.applyIndexMutationsLocked(tableName, mutations)
+	return nil
+}
+
+// applyIndexMutationsLocked applies index mutations to b.indexes. Callers
+// must hold b.mu (write lock) — shared by putWithIndexMutations,
+// removeWithIndexMutations, and applyIndexMutations (backfill), so every
+// caller gets the same all-mutations-under-one-lock atomicity.
+func (b *memItemBackend) applyIndexMutationsLocked(tableName string, mutations []indexMutation) {
+	for _, m := range mutations {
+		k := indexKey{table: tableName, index: m.indexName}
+		switch m.op {
+		case indexMutationUpsert:
+			tree := b.indexes[k]
+			if tree == nil {
+				tree = &btree.Map[string, Item]{}
+				b.indexes[k] = tree
+			}
+			tree.Set(indexCompositeKey(m.indexHash, m.indexSort, m.baseHash, m.baseSort), m.item)
+		case indexMutationDelete:
+			if tree := b.indexes[k]; tree != nil {
+				tree.Delete(indexCompositeKey(m.indexHash, m.indexSort, m.baseHash, m.baseSort))
+			}
+		}
+	}
+}
+
+func (b *memItemBackend) applyIndexMutations(_ context.Context, tableName string, mutations []indexMutation) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.applyIndexMutationsLocked(tableName, mutations)
+	return nil
+}
+
+func (b *memItemBackend) scanIndexAll(_ context.Context, tableName, indexName string) ([]Item, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	tree := b.indexes[indexKey{table: tableName, index: indexName}]
+	if tree == nil {
+		return []Item{}, nil
+	}
+	items := make([]Item, 0, tree.Len())
+	tree.Scan(func(_ string, item Item) bool {
+		items = append(items, item)
+		return true
+	})
+	return items, nil
+}
+
+func (b *memItemBackend) queryIndexByHash(_ context.Context, tableName, indexName, indexHash string) ([]Item, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	tree := b.indexes[indexKey{table: tableName, index: indexName}]
+	if tree == nil {
+		return []Item{}, nil
+	}
+	prefix := indexHash + "\x00"
+	var items []Item
+	tree.Ascend(prefix, func(key string, item Item) bool {
+		if !strings.HasPrefix(key, prefix) {
+			return false
+		}
+		items = append(items, item)
+		return true
+	})
+	if items == nil {
+		return []Item{}, nil
+	}
+	return items, nil
+}
+
+func (b *memItemBackend) countIndexEntries(_ context.Context, tableName, indexName string) (int64, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	tree := b.indexes[indexKey{table: tableName, index: indexName}]
+	if tree == nil {
+		return 0, nil
+	}
+	return int64(tree.Len()), nil
+}
+
+func (b *memItemBackend) deleteAllIndexEntriesForTable(_ context.Context, tableName string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for k := range b.indexes {
+		if k.table == tableName {
+			delete(b.indexes, k)
+		}
+	}
+	return nil
+}
+
+func (b *memItemBackend) deleteAllIndexEntriesForIndex(_ context.Context, tableName, indexName string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	delete(b.indexes, indexKey{table: tableName, index: indexName})
 	return nil
 }
 
@@ -307,6 +515,7 @@ func (b *memItemBackend) debugDeleteAll(_ context.Context) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.tables = make(map[string]*btree.Map[string, Item])
+	b.indexes = make(map[indexKey]*btree.Map[string, Item])
 	return nil
 }
 
@@ -396,6 +605,50 @@ func (b *sqlItemBackend) put(ctx context.Context, tableName, hashKey, sortKey st
 	return nil
 }
 
+// putWithIndexMutations is put plus atomic GSI index-row maintenance
+// (dynamodb-gsi-design.md §3 "Atomicity within existing boundaries"). When
+// mutations is empty (the overwhelmingly common case — a table with no
+// GSIs) this delegates straight to put with no *sql.Tx overhead at all,
+// preserving today's zero-GSI write cost exactly. Only a table with at least
+// one GSI pays for a transaction, and then only because the transaction is
+// what makes the base-item write and every index-row write succeed or fail
+// together — this codebase's first explicit multi-statement *sql.Tx for
+// item writes (previously, all ExecContext calls here were single bare
+// statements relying on SQLite's own single-writer serialization).
+func (b *sqlItemBackend) putWithIndexMutations(ctx context.Context, tableName, hashKey, sortKey string, item Item, mutations []indexMutation) error {
+	if len(mutations) == 0 {
+		return b.put(ctx, tableName, hashKey, sortKey, item)
+	}
+	if err := b.init(); err != nil {
+		return err
+	}
+	raw, err := json.Marshal(item)
+	if err != nil {
+		return fmt.Errorf("dynamodb put: marshal item: %w", err)
+	}
+
+	tx, err := b.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("dynamodb put [%s/%s/%s]: begin tx: %w", tableName, hashKey, sortKey, err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op once committed; only matters on the error paths below
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT OR REPLACE INTO dynamodb_items (table_name, hash_key, sort_key, item_json)
+		 VALUES (?, ?, ?, ?)`,
+		tableName, hashKey, sortKey, string(raw),
+	); err != nil {
+		return fmt.Errorf("dynamodb put [%s/%s/%s]: %w", tableName, hashKey, sortKey, err)
+	}
+	if err := applyIndexMutationsTx(ctx, tx, tableName, mutations); err != nil {
+		return fmt.Errorf("dynamodb put [%s/%s/%s]: %w", tableName, hashKey, sortKey, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("dynamodb put [%s/%s/%s]: commit: %w", tableName, hashKey, sortKey, err)
+	}
+	return nil
+}
+
 func (b *sqlItemBackend) get(ctx context.Context, tableName, hashKey, sortKey string) (Item, bool, error) {
 	if err := b.init(); err != nil {
 		return nil, false, err
@@ -431,6 +684,72 @@ func (b *sqlItemBackend) remove(ctx context.Context, tableName, hashKey, sortKey
 	)
 	if err != nil {
 		return fmt.Errorf("dynamodb delete [%s/%s/%s]: %w", tableName, hashKey, sortKey, err)
+	}
+	return nil
+}
+
+// removeWithIndexMutations is remove plus atomic GSI index-row maintenance —
+// see putWithIndexMutations's doc comment for the zero-GSI fast path and the
+// atomicity rationale, both of which apply identically here.
+func (b *sqlItemBackend) removeWithIndexMutations(ctx context.Context, tableName, hashKey, sortKey string, mutations []indexMutation) error {
+	if len(mutations) == 0 {
+		return b.remove(ctx, tableName, hashKey, sortKey)
+	}
+	if err := b.init(); err != nil {
+		return err
+	}
+
+	tx, err := b.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("dynamodb delete [%s/%s/%s]: begin tx: %w", tableName, hashKey, sortKey, err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op once committed; only matters on the error paths below
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM dynamodb_items
+		 WHERE table_name = ? AND hash_key = ? AND sort_key = ?`,
+		tableName, hashKey, sortKey,
+	); err != nil {
+		return fmt.Errorf("dynamodb delete [%s/%s/%s]: %w", tableName, hashKey, sortKey, err)
+	}
+	if err := applyIndexMutationsTx(ctx, tx, tableName, mutations); err != nil {
+		return fmt.Errorf("dynamodb delete [%s/%s/%s]: %w", tableName, hashKey, sortKey, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("dynamodb delete [%s/%s/%s]: commit: %w", tableName, hashKey, sortKey, err)
+	}
+	return nil
+}
+
+// applyIndexMutationsTx applies index mutations within an already-open
+// transaction — shared by putWithIndexMutations, removeWithIndexMutations,
+// and applyIndexMutations (backfill, which opens its own single Tx for the
+// whole batch rather than one per mutation).
+func applyIndexMutationsTx(ctx context.Context, tx *sql.Tx, tableName string, mutations []indexMutation) error {
+	for _, m := range mutations {
+		switch m.op {
+		case indexMutationUpsert:
+			raw, err := json.Marshal(m.item)
+			if err != nil {
+				return fmt.Errorf("marshal index entry [%s/%s]: %w", tableName, m.indexName, err)
+			}
+			if _, err := tx.ExecContext(ctx,
+				`INSERT OR REPLACE INTO dynamodb_index_entries
+				 (table_name, index_name, index_hash, index_sort, base_hash, base_sort, item_json)
+				 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				tableName, m.indexName, m.indexHash, m.indexSort, m.baseHash, m.baseSort, string(raw),
+			); err != nil {
+				return fmt.Errorf("upsert index entry [%s/%s]: %w", tableName, m.indexName, err)
+			}
+		case indexMutationDelete:
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM dynamodb_index_entries
+				 WHERE table_name = ? AND index_name = ? AND index_hash = ? AND index_sort = ? AND base_hash = ? AND base_sort = ?`,
+				tableName, m.indexName, m.indexHash, m.indexSort, m.baseHash, m.baseSort,
+			); err != nil {
+				return fmt.Errorf("delete index entry [%s/%s]: %w", tableName, m.indexName, err)
+			}
+		}
 	}
 	return nil
 }
@@ -532,6 +851,114 @@ func (b *sqlItemBackend) deleteAll(ctx context.Context, tableName string) error 
 	)
 	if err != nil {
 		return fmt.Errorf("dynamodb deleteAll [%s]: %w", tableName, err)
+	}
+	return nil
+}
+
+// applyIndexMutations applies a batch of index mutations in a single
+// transaction, with no accompanying base-item write — used for GSI backfill
+// (UpdateTable adding a GSI to a table that already has items). One Tx for
+// the whole batch, not one per mutation, so a backfill either fully lands or
+// fully rolls back.
+func (b *sqlItemBackend) applyIndexMutations(ctx context.Context, tableName string, mutations []indexMutation) error {
+	if len(mutations) == 0 {
+		return nil
+	}
+	if err := b.init(); err != nil {
+		return err
+	}
+	tx, err := b.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("dynamodb applyIndexMutations [%s]: begin tx: %w", tableName, err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op once committed
+
+	if err := applyIndexMutationsTx(ctx, tx, tableName, mutations); err != nil {
+		return fmt.Errorf("dynamodb applyIndexMutations [%s]: %w", tableName, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("dynamodb applyIndexMutations [%s]: commit: %w", tableName, err)
+	}
+	return nil
+}
+
+// scanIndexAll returns every entry for (table, index), ordered by the
+// composite key (index_hash, index_sort, base_hash, base_sort) — the SQL
+// analogue of memItemBackend's index-tree Scan.
+func (b *sqlItemBackend) scanIndexAll(ctx context.Context, tableName, indexName string) ([]Item, error) {
+	if err := b.init(); err != nil {
+		return nil, err
+	}
+	rows, err := b.db.QueryContext(ctx,
+		`SELECT item_json FROM dynamodb_index_entries
+		 WHERE table_name = ? AND index_name = ?
+		 ORDER BY index_hash, index_sort, base_hash, base_sort`,
+		tableName, indexName,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("dynamodb scanIndexAll [%s/%s]: %w", tableName, indexName, err)
+	}
+	defer rows.Close()
+	return scanItemRows(rows)
+}
+
+// queryIndexByHash returns entries for (table, index) sharing indexHash,
+// ordered by (index_sort, base_hash, base_sort) — the row-value range scan
+// shape §3 specifies for a GSI Query (Option A).
+func (b *sqlItemBackend) queryIndexByHash(ctx context.Context, tableName, indexName, indexHash string) ([]Item, error) {
+	if err := b.init(); err != nil {
+		return nil, err
+	}
+	rows, err := b.db.QueryContext(ctx,
+		`SELECT item_json FROM dynamodb_index_entries
+		 WHERE table_name = ? AND index_name = ? AND index_hash = ?
+		 ORDER BY index_sort, base_hash, base_sort`,
+		tableName, indexName, indexHash,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("dynamodb queryIndexByHash [%s/%s]: %w", tableName, indexName, err)
+	}
+	defer rows.Close()
+	return scanItemRows(rows)
+}
+
+func (b *sqlItemBackend) countIndexEntries(ctx context.Context, tableName, indexName string) (int64, error) {
+	if err := b.init(); err != nil {
+		return 0, err
+	}
+	var n int64
+	err := b.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM dynamodb_index_entries WHERE table_name = ? AND index_name = ?`,
+		tableName, indexName,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("dynamodb countIndexEntries [%s/%s]: %w", tableName, indexName, err)
+	}
+	return n, nil
+}
+
+func (b *sqlItemBackend) deleteAllIndexEntriesForTable(ctx context.Context, tableName string) error {
+	if err := b.init(); err != nil {
+		return err
+	}
+	if _, err := b.db.ExecContext(ctx,
+		`DELETE FROM dynamodb_index_entries WHERE table_name = ?`,
+		tableName,
+	); err != nil {
+		return fmt.Errorf("dynamodb deleteAllIndexEntriesForTable [%s]: %w", tableName, err)
+	}
+	return nil
+}
+
+func (b *sqlItemBackend) deleteAllIndexEntriesForIndex(ctx context.Context, tableName, indexName string) error {
+	if err := b.init(); err != nil {
+		return err
+	}
+	if _, err := b.db.ExecContext(ctx,
+		`DELETE FROM dynamodb_index_entries WHERE table_name = ? AND index_name = ?`,
+		tableName, indexName,
+	); err != nil {
+		return fmt.Errorf("dynamodb deleteAllIndexEntriesForIndex [%s/%s]: %w", tableName, indexName, err)
 	}
 	return nil
 }

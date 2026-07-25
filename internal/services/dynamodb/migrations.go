@@ -53,11 +53,17 @@ import (
 // migration: version 22") — that document was written before this
 // prerequisite migration's landing order was fixed. This migration lands
 // first and claims 22; the GSI index-entries table (phase 2) takes the next
-// free slot, 23, when it lands.
+// free slot, 23 (migrationDynamoDBIndexEntriesTableVersion below).
+//
+// migrationDynamoDBIndexEntriesTableVersion (23) is dynamodb-gsi-design.md
+// §3's index-structure landing: creates dynamodb_index_entries (Option A)
+// and backfills it for every GSI already declared on an existing table's
+// schema — see migrateCreateIndexEntriesTable's own doc comment.
 const (
 	migrationDynamoDBItemsTableVersion          = 20
 	migrationDynamoDBStreamsTableVersion        = 21
 	migrationDynamoDBReencodeNumericKeysVersion = 22
+	migrationDynamoDBIndexEntriesTableVersion   = 23
 )
 
 func init() {
@@ -95,6 +101,12 @@ func init() {
 		Version: migrationDynamoDBReencodeNumericKeysVersion,
 		Name:    "re-encode Number-typed base-table keys for numeric order",
 		Up:      migrateReencodeNumericKeys,
+	})
+
+	state.RegisterMigration(state.Migration{
+		Version: migrationDynamoDBIndexEntriesTableVersion,
+		Name:    "create dynamodb_index_entries table + backfill existing GSIs",
+		Up:      migrateCreateIndexEntriesTable,
 	})
 }
 
@@ -244,6 +256,155 @@ func reencodeTableItemKeys(ctx context.Context, tx *sql.Tx, tableName string, ha
 			VALUES (?, ?, ?, ?)
 		`, tableName, newHash, newSort, r.itemJSON); err != nil {
 			return fmt.Errorf("insert re-encoded row (rowid %d): %w", r.rowid, err)
+		}
+	}
+	return nil
+}
+
+// migrateCreateIndexEntriesTable is dynamodb-gsi-design.md section-3's index-
+// structure landing (phase 2): creates the dynamodb_index_entries table
+// (Option A -- see the design doc's schema-choice discussion) and backfills
+// it for every GSI already declared on an existing table's schema.
+//
+// Backfill matters here specifically because a table can have GSIs recorded
+// in its schema (via CreateTable's GlobalSecondaryIndexes, or a prior
+// UpdateTable Create) from *before* this migration -- and therefore before
+// any index storage existed at all -- with items already written against
+// it. Without this step those GSIs would silently start out with an empty
+// index in the new structure despite having items that satisfy the index's
+// key, which is exactly the kind of divergence CLAUDE.md's isolation rule
+// and this design's own backfill section (section 3, "UpdateTable adding a
+// GSI... does Overcast support this today?") both call out as unacceptable.
+// This migration reuses the exact same helpers (resolveStorageKeys,
+// indexKeyComponents, projectForIndex) as the UpdateTable-Create backfill
+// path (handler.go's backfillIndex) and the write-path diff
+// (diffIndexMutations), so a table migrated at startup and a table that
+// gets a GSI added at runtime land byte-identical index rows for the same
+// data -- one code path for "compute what a GSI's index rows should be for
+// this item," landed once, reused by both backfill triggers.
+//
+// Table schemas and item rows are both read here, inside the same migration
+// transaction, so schema discovery and the backfill itself are atomic with
+// each other and with the table-creation DDL above. A table record that
+// fails to decode, or an item row whose JSON fails to decode, is skipped --
+// CLAUDE.md's isolation rule: one malformed record must not fail the whole
+// migration, or leave every other table's GSIs unbackfilled because of one
+// unrelated table's bad data.
+//
+// No-op for the common case: a table with no GlobalSecondaryIndexes is
+// skipped entirely -- its dynamodb_items rows are never even read.
+func migrateCreateIndexEntriesTable(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS dynamodb_index_entries (
+			table_name   TEXT NOT NULL,
+			index_name   TEXT NOT NULL,
+			index_hash   TEXT NOT NULL,
+			index_sort   TEXT NOT NULL DEFAULT '',
+			base_hash    TEXT NOT NULL,
+			base_sort    TEXT NOT NULL DEFAULT '',
+			item_json    TEXT NOT NULL,
+			PRIMARY KEY (table_name, index_name, index_hash, index_sort, base_hash, base_sort)
+		)
+	`); err != nil {
+		return fmt.Errorf("create dynamodb_index_entries table: %w", err)
+	}
+
+	rows, err := tx.QueryContext(ctx, `SELECT value FROM kv WHERE namespace = ?`, nsTables)
+	if err != nil {
+		return fmt.Errorf("read dynamodb table schemas: %w", err)
+	}
+	var schemas []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan dynamodb table schema row: %w", err)
+		}
+		schemas = append(schemas, v)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate dynamodb table schemas: %w", err)
+	}
+	rows.Close()
+
+	// De-duplicate by TableName for the same reason migrateReencodeNumericKeys
+	// does: item storage is keyed purely by Table.TableName, not region.
+	seen := make(map[string]bool, len(schemas))
+	for _, raw := range schemas {
+		var t Table
+		if err := json.Unmarshal([]byte(raw), &t); err != nil {
+			continue // malformed table record -- isolate, skip (CLAUDE.md isolation rule)
+		}
+		if t.TableName == "" || seen[t.TableName] {
+			continue
+		}
+		seen[t.TableName] = true
+		if len(t.GlobalSecondaryIndexes) == 0 {
+			continue // nothing to backfill -- the common case
+		}
+		if err := backfillIndexEntriesForTable(ctx, tx, &t); err != nil {
+			return fmt.Errorf("backfill GSI index entries for table %q: %w", t.TableName, err)
+		}
+	}
+	return nil
+}
+
+// backfillIndexEntriesForTable scans every item already stored for t and
+// inserts the corresponding dynamodb_index_entries row for each of t's GSIs
+// that the item's attributes satisfy -- the sparse-index write rule
+// (dynamodb-gsi-design.md section 3): an item missing the GSI's key
+// attribute(s) gets no row, exactly like a live write would produce via
+// diffIndexMutations.
+func backfillIndexEntriesForTable(ctx context.Context, tx *sql.Tx, t *Table) error {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT item_json FROM dynamodb_items WHERE table_name = ?`, t.TableName,
+	)
+	if err != nil {
+		return fmt.Errorf("select items: %w", err)
+	}
+	var itemsJSON []string
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan item row: %w", err)
+		}
+		itemsJSON = append(itemsJSON, raw)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate items: %w", err)
+	}
+	rows.Close()
+
+	for _, raw := range itemsJSON {
+		var item Item
+		if err := json.Unmarshal([]byte(raw), &item); err != nil {
+			continue // malformed item row -- isolate, skip (CLAUDE.md isolation rule)
+		}
+		baseHash, baseSort, aerr := resolveStorageKeys(t, item)
+		if aerr != nil {
+			continue // item missing/malformed key attributes -- isolate, skip
+		}
+		for i := range t.GlobalSecondaryIndexes {
+			idx := &t.GlobalSecondaryIndexes[i]
+			indexHash, indexSort, ok := indexKeyComponents(t, idx, item)
+			if !ok {
+				continue // sparse -- item doesn't satisfy this GSI's key
+			}
+			projected := projectForIndex(t, idx, item)
+			projRaw, err := json.Marshal(projected)
+			if err != nil {
+				continue // shouldn't happen for a value already round-tripped through JSON -- isolate, skip
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT OR REPLACE INTO dynamodb_index_entries
+					(table_name, index_name, index_hash, index_sort, base_hash, base_sort, item_json)
+				VALUES (?, ?, ?, ?, ?, ?, ?)
+			`, t.TableName, idx.IndexName, indexHash, indexSort, baseHash, baseSort, string(projRaw)); err != nil {
+				return fmt.Errorf("insert index entry [%s/%s]: %w", t.TableName, idx.IndexName, err)
+			}
 		}
 	}
 	return nil
