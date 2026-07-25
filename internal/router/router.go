@@ -171,7 +171,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 
 	// ---- SSE event stream (always available) --------------------------------
 	// GET /_events?source=s3 — streams all internal events to connected clients.
-	r.Get("/_events", eventsHandler(bus, logger, shutdownCh))
+	r.Get("/_events", eventsHandler(bus, logger, clk, shutdownCh))
 
 	// ---- Custom domain registry (always available) -------------------------
 	// Tracks API Gateway / CloudFront custom domain names and streams changes

@@ -80,10 +80,11 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	// NewProductionConfig to INFO, neither of which honours e.g.
 	// OVERCAST_LOG_LEVEL=warn or =trace.
 	isTTY := isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())
-	logLevel, err := serviceutil.ParseLevel(cfg.LogLevel)
-	if err != nil {
-		return fmt.Errorf("invalid OVERCAST_LOG_LEVEL %q: %w", cfg.LogLevel, err)
-	}
+	// An invalid OVERCAST_LOG_LEVEL must not prevent the emulator from
+	// starting (an observability typo shouldn't kill a CI pipeline) — fall
+	// back to the default and say so, naming the level actually in effect,
+	// once the logger exists below.
+	logLevel, logLevelOK := serviceutil.ParseLevelOrDefault(cfg.LogLevel)
 	var zcfg zap.Config
 	if isTTY || cfg.LogLevel == "debug" || cfg.LogLevel == "trace" {
 		zcfg = zap.NewDevelopmentConfig()
@@ -98,6 +99,12 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 		return fmt.Errorf("init logger: %w", err)
 	}
 	defer logger.Sync()
+	if !logLevelOK {
+		logger.Warn("invalid OVERCAST_LOG_LEVEL — falling back to default",
+			zap.String("configured", cfg.LogLevel),
+			zap.String("effective", "info"),
+			zap.String("valid_values", "trace, debug, info, warn, error"))
+	}
 	prof.mark("logger init")
 
 	if cfg.SigV4Validate {

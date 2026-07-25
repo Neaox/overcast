@@ -69,6 +69,7 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
+- **Logging** — an invalid `OVERCAST_LOG_LEVEL` no longer prevents the emulator from starting: it now logs a warning naming the configured value, the effective fallback (`info`), and the valid values, then continues — previously a typo in this observability setting was a fatal startup error. The SSE event stream's periodic heartbeat log line moved from debug to trace (it fires on an idle server — the log-level policy's litmus test), and heartbeat timestamps now come from the injected clock.
 - **Storage** — SQLite's WAL auto-checkpoint threshold raised from 1000 to 4000 pages on the persistent/hybrid write path: sustained write bursts previously paid a mid-burst checkpoint that showed up as ~0.9-1.4ms per SQS send at moderate queue depths; measured after the change at ~57-74µs per send (repeatable across independent runs, allocations unchanged, no regression at higher depths). The WAL file may now grow to ~16MB between checkpoints; the background maintenance loop's periodic checkpoint behavior is unchanged.
 
 ## [0.0.1-alpha.24] - 2026-07-25

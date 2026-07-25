@@ -31,6 +31,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Neaox/overcast/internal/clock"
+	"github.com/Neaox/overcast/internal/logging"
+
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/events"
@@ -45,7 +48,7 @@ type sseEnvelope struct {
 }
 
 // eventsHandler returns an http.HandlerFunc that fans out all bus events as SSE.
-func eventsHandler(bus *events.Bus, logger *zap.Logger, shutdownCh <-chan struct{}) http.HandlerFunc {
+func eventsHandler(bus *events.Bus, logger *zap.Logger, clk clock.Clock, shutdownCh <-chan struct{}) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)
 		if !ok {
@@ -108,10 +111,12 @@ func eventsHandler(bus *events.Bus, logger *zap.Logger, shutdownCh <-chan struct
 			case <-heartbeat.C:
 				// Lightweight heartbeat — lets clients detect a stale
 				// connection even when no real events are flowing.
-				logger.Debug("events: heartbeat sent")
+				// Trace, not debug: fires on a timer even on an idle
+				// server (the log-level policy's litmus test).
+				logger.Log(logging.TraceLevel, "events: heartbeat sent")
 				env := sseEnvelope{
 					Type:   "heartbeat",
-					Time:   time.Now().UTC().Format(time.RFC3339Nano),
+					Time:   clk.Now().UTC().Format(time.RFC3339Nano),
 					Source: "system",
 				}
 				data, _ := json.Marshal(env)
