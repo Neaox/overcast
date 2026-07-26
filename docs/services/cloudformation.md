@@ -161,7 +161,7 @@ with unsupported resources can still partially deploy.
 
 | Category             | ✅ Supported | ❌ Unsupported |
 | -------------------- | ------------ | -------------- |
-| Stacks               | 5            | 6              |
+| Stacks               | 6            | 6              |
 | Change sets          | 5            |                |
 | Resources and events | 3            |                |
 | Templates            | 3            | 1              |
@@ -177,19 +177,20 @@ with unsupported resources can still partially deploy.
 
 ### Stacks
 
-| Operation                | Status         | Notes                                                  | AWS Docs                                                                                                  |
-| ------------------------ | -------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| `CreateStack`            | ✅ Supported   | Async provisioner; JSON templates; intrinsic functions | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CreateStack.html)            |
-| `UpdateStack`            | ✅ Supported   | Re-provisions with updated template                    | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_UpdateStack.html)            |
-| `DeleteStack`            | ✅ Supported   | Async resource cleanup in reverse dependency order     | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DeleteStack.html)            |
-| `DescribeStacks`         | ✅ Supported   | Status, parameters, outputs, tags                      | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DescribeStacks.html)         |
-| `ListStacks`             | ✅ Supported   | Filter by status                                       | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ListStacks.html)             |
-| `ContinueUpdateRollback` | ❌ Unsupported | stub; returns 501                                      | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ContinueUpdateRollback.html) |
-| `CancelUpdateStack`      | ❌ Unsupported | stub; returns 501                                      | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CancelUpdateStack.html)      |
-| `SignalResource`         | ❌ Unsupported | stub; returns 501                                      | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_SignalResource.html)         |
-| `GetStackPolicy`         | ❌ Unsupported | stub; returns 501                                      | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_GetStackPolicy.html)         |
-| `SetStackPolicy`         | ❌ Unsupported | stub; returns 501                                      | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_SetStackPolicy.html)         |
-| `DescribeAccountLimits`  | ❌ Unsupported | stub; returns 501                                      | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DescribeAccountLimits.html)  |
+| Operation                | Status         | Notes                                                                                                   | AWS Docs                                                                                                  |
+| ------------------------ | -------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `CreateStack`            | ✅ Supported   | Async provisioner; JSON templates; intrinsic functions                                                  | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CreateStack.html)            |
+| `UpdateStack`            | ✅ Supported   | Re-provisions with updated template                                                                     | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_UpdateStack.html)            |
+| `RollbackStack`          | ✅ Supported   | Rolls a CREATE_FAILED, UPDATE_FAILED, or UPDATE_ROLLBACK_FAILED stack back to a terminal rollback state | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_RollbackStack.html)          |
+| `DeleteStack`            | ✅ Supported   | Async resource cleanup in reverse dependency order                                                      | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DeleteStack.html)            |
+| `DescribeStacks`         | ✅ Supported   | Status, parameters, outputs, tags                                                                       | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DescribeStacks.html)         |
+| `ListStacks`             | ✅ Supported   | Filter by status                                                                                        | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ListStacks.html)             |
+| `ContinueUpdateRollback` | ❌ Unsupported | stub; returns 501                                                                                       | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ContinueUpdateRollback.html) |
+| `CancelUpdateStack`      | ❌ Unsupported | stub; returns 501                                                                                       | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CancelUpdateStack.html)      |
+| `SignalResource`         | ❌ Unsupported | stub; returns 501                                                                                       | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_SignalResource.html)         |
+| `GetStackPolicy`         | ❌ Unsupported | stub; returns 501                                                                                       | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_GetStackPolicy.html)         |
+| `SetStackPolicy`         | ❌ Unsupported | stub; returns 501                                                                                       | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_SetStackPolicy.html)         |
+| `DescribeAccountLimits`  | ❌ Unsupported | stub; returns 501                                                                                       | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DescribeAccountLimits.html)  |
 
 ### Change sets
 

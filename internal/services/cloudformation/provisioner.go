@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -958,6 +959,164 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 		p.log.Warn("cfn: failed to flush update rollback state", zap.String("stack", stack.StackName), zap.Error(err))
 	}
 	p.publishStackEvent(ctx, events.CFNStackFailed, stack)
+}
+
+// ── Rollback stack (async) ─────────────────────────────────────────────────
+
+// rollbackStack services an operator-requested RollbackStack, mirroring the
+// async shape of createStack/updateStack so that a fast rollback is already
+// terminal by the time the caller's next DescribeStacks lands.
+//
+// createPath selects the CREATE_FAILED → ROLLBACK_COMPLETE flow (unwind
+// everything the failed create built) over the UPDATE_FAILED →
+// UPDATE_ROLLBACK_COMPLETE flow.
+func (p *provisioner) rollbackStack(stack *Stack, createPath bool) {
+	done := make(chan struct{})
+	p.wg.Add(1)
+	go func() {
+		defer p.wg.Done()
+		defer close(done)
+		p.rollbackStackResources(stack, createPath)
+	}()
+	p.awaitBriefly(done)
+}
+
+// rollbackStackResources is the synchronous core of an explicit rollback.
+func (p *provisioner) rollbackStackResources(stack *Stack, createPath bool) {
+	ctx := p.regionCtx(stack.Region)
+
+	// The stored template drives Ref/GetAtt resolution for any deletes. A
+	// stack that failed early may have no usable template; an empty one still
+	// yields a valid resolve context, and the resource list is the real source
+	// of truth for what has to be retired.
+	tmpl, err := parseTemplate(stack.TemplateBody)
+	if err != nil || tmpl == nil {
+		tmpl = &Template{Resources: map[string]TemplateResource{}}
+	}
+	rCtx := p.buildResolveContext(stack, tmpl)
+	for _, r := range stack.Resources {
+		if r.PhysicalID != "" {
+			rCtx.Resources[r.LogicalID] = r.PhysicalID
+		}
+	}
+
+	if createPath {
+		// A failed create unwinds exactly like an automatic create rollback.
+		p.rollbackCreate(ctx, stack, rCtx, "User Initiated")
+		return
+	}
+	p.rollbackToStable(ctx, stack, rCtx, "User Initiated")
+}
+
+// rollbackToStable services RollbackStack for a stack whose update failed, or
+// whose automatic update rollback failed and is being retried.
+//
+// Overcast keeps no snapshot of each resource's pre-update properties, so it
+// cannot literally restore prior configuration the way real CloudFormation
+// does. What it can do — and what unblocks a client stuck behind
+// UPDATE_FAILED — is retire the resources the failed attempt left in a failed
+// state and drive the stack to a terminal UPDATE_ROLLBACK_COMPLETE.
+func (p *provisioner) rollbackToStable(ctx context.Context, stack *Stack, rCtx *resolveContext, reason string) {
+	stack.Status = StatusUpdateRollbackInProgress
+	stack.StatusReason = reason
+	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusUpdateRollbackInProgress, reason)
+	p.publishStackEvent(ctx, events.CFNStackFailed, stack)
+
+	rollbackFailed := false
+	// Walk in reverse so deletes happen in reverse dependency order, then flip
+	// the survivors back to template order at the end.
+	kept := make([]StackResource, 0, len(stack.Resources))
+	for i := len(stack.Resources) - 1; i >= 0; i-- {
+		r := stack.Resources[i]
+		if ctx.Err() != nil {
+			rollbackFailed = true
+			kept = append(kept, r)
+			continue
+		}
+
+		switch r.Status {
+		case ResourceCreateFailed:
+			// The failed attempt half-created this resource. With no physical
+			// resource behind it there is nothing to retire and it simply
+			// leaves the stack; otherwise delete it.
+			if r.PhysicalID == "" {
+				continue
+			}
+			if err := p.deleteRollbackResource(ctx, stack, r, rCtx); err != nil {
+				r.Status = ResourceDeleteFailed
+				r.StatusReason = err.Error()
+				r.Timestamp = p.clk.Now()
+				kept = append(kept, r)
+				rollbackFailed = true
+			}
+		case ResourceDeleteFailed:
+			// Orphaned by an earlier automatic rollback that could not clean
+			// up. Retrying that delete is the point of an explicit rollback.
+			if err := p.deleteRollbackResource(ctx, stack, r, rCtx); err != nil {
+				r.StatusReason = err.Error()
+				r.Timestamp = p.clk.Now()
+				kept = append(kept, r)
+				rollbackFailed = true
+			}
+		case ResourceUpdateFailed:
+			// The physical resource keeps whatever the failed update left on
+			// it (see the method comment). Record the AWS-observable outcome —
+			// the resource is back under the stack's last known stable state —
+			// rather than leaving a failed status that blocks future updates.
+			r.Status = ResourceUpdateComplete
+			r.StatusReason = ""
+			r.Timestamp = p.clk.Now()
+			p.recordEvent(ctx, stack, r.LogicalID, r.PhysicalID, r.Type, ResourceUpdateComplete, "")
+			kept = append(kept, r)
+		default:
+			kept = append(kept, r)
+		}
+	}
+	slices.Reverse(kept)
+	stack.Resources = kept
+
+	if rollbackFailed {
+		stack.Status = StatusUpdateRollbackFailed
+	} else {
+		stack.Status = StatusUpdateRollbackComplete
+		stack.StatusReason = ""
+	}
+	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", stack.Status, stack.StatusReason)
+	if err := p.flushCriticalState(ctx); err != nil {
+		p.log.Warn("cfn: failed to flush rollback state", zap.String("stack", stack.StackName), zap.Error(err))
+	}
+	p.publishStackEvent(ctx, events.CFNStackFailed, stack)
+}
+
+// deleteRollbackResource deletes one resource as part of an explicit rollback,
+// emitting the DELETE_IN_PROGRESS / DELETE_COMPLETE / DELETE_FAILED events that
+// DescribeStackEvents surfaces. A resource type with no registered handler is
+// treated as already gone — the same allowance rollbackCreate makes.
+func (p *provisioner) deleteRollbackResource(ctx context.Context, stack *Stack, r StackResource, rCtx *resolveContext) error {
+	p.recordEvent(ctx, stack, r.LogicalID, r.PhysicalID, r.Type, ResourceDeleteInProgress, "")
+
+	handler, ok := p.resolveHandler(r.Type)
+	if !ok {
+		p.recordEvent(ctx, stack, r.LogicalID, r.PhysicalID, r.Type, ResourceDeleteComplete, "")
+		return nil
+	}
+
+	p.mu.Lock()
+	router := p.router
+	p.mu.Unlock()
+
+	if err := handler.Delete(ctx, router, p.cfg, r.PhysicalID, rCtx); err != nil {
+		p.log.Warn("cfn: rollback: failed to delete resource",
+			zap.String("logicalId", r.LogicalID),
+			zap.String("type", r.Type),
+			zap.Error(err))
+		p.recordEvent(ctx, stack, r.LogicalID, r.PhysicalID, r.Type, ResourceDeleteFailed, err.Error())
+		return err
+	}
+
+	p.recordEvent(ctx, stack, r.LogicalID, r.PhysicalID, r.Type, ResourceDeleteComplete, "")
+	p.publishResourceEvent(ctx, events.CFNResourceDeleted, stack.StackName, r.LogicalID, r.Type, r.PhysicalID)
+	return nil
 }
 
 func (p *provisioner) publishStackEvent(ctx context.Context, t events.Type, stack *Stack) {

@@ -9,6 +9,7 @@ func init() {
 		// Stacks
 		capabilities.Capability{Service: "cloudformation", Operation: "CreateStack", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Async provisioner; JSON templates; intrinsic functions"},
 		capabilities.Capability{Service: "cloudformation", Operation: "UpdateStack", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Re-provisions with updated template"},
+		capabilities.Capability{Service: "cloudformation", Operation: "RollbackStack", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Rolls a CREATE_FAILED, UPDATE_FAILED, or UPDATE_ROLLBACK_FAILED stack back to a terminal rollback state"},
 		capabilities.Capability{Service: "cloudformation", Operation: "DeleteStack", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Async resource cleanup in reverse dependency order"},
 		capabilities.Capability{Service: "cloudformation", Operation: "DescribeStacks", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Status, parameters, outputs, tags"},
 		capabilities.Capability{Service: "cloudformation", Operation: "ListStacks", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Filter by status"},

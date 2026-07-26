@@ -80,6 +80,34 @@ func (st *cfnStore) getStack(ctx context.Context, name string) (*Stack, *protoco
 	return &stack, nil
 }
 
+// getStackByNameOrARN resolves a stack by name, falling back to a scan for a
+// matching StackId when the caller passed an ARN.
+//
+// Stacks are keyed by name, so the ARN path costs a scan — it is only taken
+// when the direct lookup misses and the input actually looks like an ARN, so
+// the common name path is unaffected. Only RollbackStack uses this today; the
+// other CloudFormation actions resolve by name only. Unifying them is a
+// separate change with its own compatibility surface.
+func (st *cfnStore) getStackByNameOrARN(ctx context.Context, nameOrARN string) (*Stack, *protocol.AWSError) {
+	stack, aerr := st.getStack(ctx, nameOrARN)
+	if aerr != nil || stack != nil {
+		return stack, aerr
+	}
+	if !isARN(nameOrARN) {
+		return nil, nil
+	}
+	stacks, aerr := st.listStacks(ctx)
+	if aerr != nil {
+		return nil, aerr
+	}
+	for _, s := range stacks {
+		if s.StackID == nameOrARN {
+			return s, nil
+		}
+	}
+	return nil, nil
+}
+
 func (st *cfnStore) listStacks(ctx context.Context) ([]*Stack, *protocol.AWSError) {
 	items, err := st.s.Scan(ctx, nsStacks, serviceutil.RegionKey(st.region(ctx), ""))
 	if err != nil {
