@@ -1088,7 +1088,7 @@ function ESMFilterPanel({ esmId, patterns }: { esmId: string; patterns: string[]
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search keys, image values, sequence numbers..."
-                  className="w-full rounded-lg border border-border bg-bg py-2.5 pr-3 pl-9 text-sm text-fg placeholder:text-fg-subtle focus:border-amber-300 focus:outline-none"
+                  className="w-full rounded-lg border border-border bg-bg py-2.5 pr-3 pl-9 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-accent focus:border-accent focus:outline-none"
                 />
               </div>
             </div>

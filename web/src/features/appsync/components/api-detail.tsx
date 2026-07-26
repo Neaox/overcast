@@ -113,7 +113,7 @@ export function ApiDetail({ apiId }: Props) {
               "flex items-center gap-1.5 px-3 py-2 text-sm font-medium transition-colors",
               tab === key
                 ? "border-primary text-foreground border-b-2"
-                : "text-muted-foreground hover:text-foreground",
+                : "text-fg-muted hover:text-fg",
             )}
           >
             <Icon className="h-3.5 w-3.5" />

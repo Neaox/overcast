@@ -425,7 +425,7 @@ export function EventConsole({
                     width: "100%",
                     transform: `translateY(${vr.start}px)`,
                   }}
-                  className="cursor-pointer border-b border-white/5 px-3 py-1.5 hover:bg-white/5"
+                  className="cursor-pointer border-b border-border-muted px-3 py-1.5 transition-colors hover:bg-accent-muted"
                   onClick={() => setExpanded(isExpanded ? null : vr.index)}
                 >
                   <div className="flex min-w-0 items-baseline gap-2">

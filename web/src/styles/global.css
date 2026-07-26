@@ -57,6 +57,13 @@
   --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono:
     "JetBrains Mono", ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+
+  /* The design's `--oc-hover`: every state change an interactive surface makes
+     — hover, focus, press, selection — runs at 120ms ease-out. Set as
+     Tailwind's default so a bare `transition-colors` is already correct and no
+     call site has to remember a duration. */
+  --default-transition-duration: 120ms;
+  --default-transition-timing-function: ease-out;
 }
 
 /* ─── Prose typography (docs viewer) ──────────────────────────────────────
@@ -345,6 +352,26 @@
     outline-offset: 2px;
   }
 
+  /* ─── Cursor affordances ────────────────────────────────────────────── */
+  /* Neither the UA stylesheet nor Tailwind's preflight gives a button a
+     pointer cursor, so every hand-rolled <button> in the app reads as inert
+     unless it remembers `cursor-pointer`. Declare it once, here: these sit in
+     @layer base, so any utility (`cursor-default` on a busy control,
+     `cursor-not-allowed` on a disabled one) still wins. */
+  button,
+  summary,
+  select,
+  [role="button"] {
+    cursor: pointer;
+  }
+  button:disabled,
+  select:disabled,
+  input:disabled,
+  textarea:disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+
   /* ─── React Flow — crisp node rendering ────────────────────────────── */
   /*
    * React Flow positions nodes with CSS transforms at fractional zoom levels.
@@ -525,6 +552,38 @@
   .oc-loader line {
     animation: none;
     opacity: 1;
+  }
+}
+
+/* ─── Reduced motion ─────────────────────────────────────────────────────
+   Everything the app animates other than the caret is decoration: hover and
+   focus colour transitions, the dialog and toast entrances, the sidebar
+   collapse, the map's pulse rings. Collapse them all to a single frame rather
+   than removing them, so animation `forwards` fill modes still land on their
+   end state and `animationend` listeners still fire.
+
+   The caret rule above already ran: `animation: none` clears its name, so the
+   `!important` duration here cannot restart it, and it stays solid.
+   ──────────────────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+  }
+  html {
+    scroll-behavior: auto !important;
+  }
+  /* The view-transition pseudo-elements live outside the document tree, so the
+     universal selector above never reaches them. */
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation-duration: 1ms !important;
   }
 }
 

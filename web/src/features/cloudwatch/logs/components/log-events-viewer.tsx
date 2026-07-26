@@ -557,7 +557,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
             <button
               type="button"
               onClick={scrollToBottom}
-              className="absolute right-4 bottom-4 z-10 flex items-center gap-1 rounded-full border border-border bg-bg-elevated px-3 py-1.5 font-mono text-[10px] font-medium text-fg-muted shadow-lg hover:bg-bg-subtle"
+              className="absolute right-4 bottom-4 z-10 flex items-center gap-1 rounded-full border border-border bg-bg-elevated px-3 py-1.5 font-mono text-[10px] font-medium text-fg-muted shadow-lg transition-colors hover:border-accent hover:text-accent"
             >
               <ArrowDown className="h-3 w-3" />
               Latest

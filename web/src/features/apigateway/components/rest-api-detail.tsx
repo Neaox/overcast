@@ -548,7 +548,7 @@ export function RestApiDetail({ apiId }: Props) {
                 return (
                   <Fragment key={resource.id}>
                     <TableRow
-                      className="hover:bg-muted/50 cursor-pointer"
+                      className="cursor-pointer"
                       onClick={() => toggleResource(resource.id)}
                     >
                       <TableCell className="font-mono text-sm">

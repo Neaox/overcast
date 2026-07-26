@@ -73,17 +73,23 @@ interface RefreshActionProps extends Omit<ButtonProps, "children"> {
   isFetching?: boolean
 }
 
+/**
+ * Refreshing is a busy state, not a disabled one: 5b drops the icon, keeps the
+ * control at full strength and lets the caret carry the motion, so the button
+ * never dims mid-refetch.
+ */
 function RefreshAction({ isFetching, className, ...props }: RefreshActionProps) {
   return (
     <Button
       size="sm"
       variant="ghost"
       title="Refresh"
-      disabled={isFetching}
+      busy={isFetching}
+      busyLabel="Refreshing"
       className={className}
       {...props}
     >
-      <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
+      <RefreshCw className="h-3.5 w-3.5" />
       Refresh
     </Button>
   )
@@ -148,11 +154,15 @@ function RowActions({ className, ...props }: React.HTMLAttributes<HTMLSpanElemen
   return <span className={cn("flex items-center justify-end gap-0.5", className)} {...props} />
 }
 
-const rowActionVariants = cva("shrink-0", {
+// The hover guard matches `buttonVariants` exactly so tailwind-merge still sees
+// the two as the same utility and lets the tone win.
+const rowActionVariants = cva("shrink-0 text-fg-subtle", {
   variants: {
     tone: {
-      neutral: "text-fg-subtle hover:bg-bg-muted hover:text-fg",
-      danger: "text-fg-subtle hover:bg-danger-muted hover:text-danger",
+      neutral:
+        "not-disabled:not-aria-disabled:hover:bg-bg-muted not-disabled:not-aria-disabled:hover:text-fg",
+      danger:
+        "not-disabled:not-aria-disabled:hover:bg-danger-muted not-disabled:not-aria-disabled:hover:text-danger",
     },
   },
   defaultVariants: { tone: "neutral" },

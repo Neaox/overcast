@@ -247,7 +247,7 @@ export function UsagePlansPage({
               {plans.map((plan) => (
                 <TableRow
                   key={plan.id}
-                  className="hover:bg-muted/50 cursor-pointer"
+                  className="cursor-pointer"
                   onClick={() => togglePlan(plan.id)}
                 >
                   <TableCell className="w-8">

@@ -85,7 +85,7 @@ function DocsPage() {
                       "block rounded-md px-2 py-1.5 text-sm transition-colors",
                       doc.href === path
                         ? "bg-accent-muted text-fg"
-                        : "text-fg-muted hover:bg-bg-subtle hover:text-fg",
+                        : "text-fg-muted hover:bg-accent-muted hover:text-accent",
                     )}
                   >
                     {doc.title}
@@ -214,7 +214,7 @@ function DocsPage() {
                   key={`${heading.depth}:${heading.id}`}
                   href={`#${heading.id}`}
                   className={cn(
-                    "block rounded px-2 py-1 text-xs text-fg-muted hover:bg-bg-subtle hover:text-fg",
+                    "block rounded px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-accent-muted hover:text-accent",
                     heading.depth === 3 && "pl-4",
                   )}
                 >

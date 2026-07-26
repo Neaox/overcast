@@ -286,7 +286,7 @@ function CatalogChip({ entry, onSelect }: { entry: CatalogEntry; onSelect: () =>
       onClick={onSelect}
       className={cn(
         "group relative flex shrink-0 items-center gap-2 rounded-lg border border-border-muted bg-bg px-3 py-2",
-        "opacity-60 transition-colors hover:border-border hover:bg-bg-subtle hover:opacity-80",
+        "opacity-60 transition-colors hover:border-accent hover:opacity-100",
         "focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
       )}
     >
@@ -336,7 +336,7 @@ function ResultRow({
       }}
       className={cn(
         "flex w-full items-center gap-3 rounded-md px-3 py-2 text-left transition-colors",
-        isSelected ? "bg-accent-muted" : "hover:bg-bg-subtle",
+        isSelected ? "bg-accent-muted" : "hover:bg-accent-muted",
       )}
     >
       <Icon
@@ -457,9 +457,8 @@ function SearchResults({
                   className={cn(
                     "group relative flex shrink-0 items-center gap-2 rounded-lg border border-border bg-bg px-3 py-2",
                     "transition-colors focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
-                    enabled
-                      ? "hover:border-accent/50 hover:bg-bg-subtle"
-                      : "cursor-not-allowed opacity-60 hover:opacity-80",
+                    // Cards and chips hover on the border alone — no fill change.
+                    enabled ? "hover:border-accent" : "cursor-not-allowed opacity-60",
                   )}
                 >
                   <Icon className={cn("h-4 w-4 shrink-0", enabled ? s.color : "text-fg-muted")} />
@@ -696,7 +695,7 @@ export function GlobalSearchTrigger({ onClick }: { onClick: () => void }) {
       className={cn(
         "flex h-8 w-full max-w-[360px] min-w-0 items-center gap-2 rounded-md border border-border bg-bg px-2.5 font-mono text-xs text-fg-subtle",
         "md:max-w-[480px] xl:max-w-[640px]",
-        "transition-colors hover:border-accent/50 hover:bg-bg-subtle hover:text-fg",
+        "transition-colors hover:border-accent hover:text-fg",
         "focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
       )}
     >

@@ -183,7 +183,7 @@ export function InboxPage() {
                     "rounded-full px-2.5 py-0.5 font-mono text-xs font-medium capitalize transition-colors",
                     readFilter === filter
                       ? "bg-accent text-fg-on-accent"
-                      : "bg-surface-muted hover:bg-surface-hover text-fg-muted hover:text-fg",
+                      : "bg-bg-muted text-fg-muted hover:bg-accent-muted hover:text-accent",
                   )}
                 >
                   {filter === "all"
@@ -200,7 +200,7 @@ export function InboxPage() {
                     "rounded-full px-2.5 py-0.5 font-mono text-xs font-medium capitalize transition-colors",
                     kindFilter === k
                       ? "bg-accent text-fg-on-accent"
-                      : "bg-surface-muted hover:bg-surface-hover text-fg-muted hover:text-fg",
+                      : "bg-bg-muted text-fg-muted hover:bg-accent-muted hover:text-accent",
                   )}
                 >
                   {k === "all"

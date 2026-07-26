@@ -17,16 +17,36 @@ function TableBody({ className, ...props }: React.HTMLAttributes<HTMLTableSectio
   return <tbody className={cn("[&_tr:last-child]:border-0", className)} {...props} />
 }
 
-function TableRow({ className, onClick, ...props }: React.HTMLAttributes<HTMLTableRowElement>) {
+/**
+ * A row that navigates is a control, so it takes focus and answers Enter and
+ * Space like one. The handler only fires for keys pressed on the row itself —
+ * a button or link inside the row keeps its own Enter/Space behaviour.
+ */
+function TableRow({
+  className,
+  onClick,
+  tabIndex,
+  onKeyDown,
+  ...props
+}: React.HTMLAttributes<HTMLTableRowElement>) {
   return (
     <tr
       className={cn(
         "border-b border-border-muted transition-colors",
-        onClick && "cursor-pointer hover:bg-accent-muted",
+        onClick && "cursor-pointer hover:bg-accent-muted focus-visible:-outline-offset-2",
         "data-[selected=true]:bg-accent-muted",
         className,
       )}
       onClick={onClick}
+      tabIndex={onClick ? (tabIndex ?? 0) : tabIndex}
+      onKeyDown={(event) => {
+        onKeyDown?.(event)
+        if (!onClick || event.defaultPrevented) return
+        if (event.target !== event.currentTarget) return
+        if (event.key !== "Enter" && event.key !== " ") return
+        event.preventDefault()
+        event.currentTarget.click()
+      }}
       {...props}
     />
   )

@@ -863,11 +863,7 @@ function MessageRow({
   return (
     <>
       <TableRow
-        className={cn(
-          "cursor-pointer hover:bg-bg-muted/40",
-          msg.inflight && "opacity-50",
-          deleted && "opacity-40",
-        )}
+        className={cn(msg.inflight && "opacity-50", deleted && "opacity-40")}
         onClick={deleted ? undefined : onToggle}
       >
         <TableCell>

@@ -247,9 +247,7 @@ export function PutObject() {
           onDrop={onDrop}
           className={[
             "flex items-center justify-center rounded-lg border-2 border-dashed px-6 py-8 transition-colors",
-            dropActive
-              ? "border-accent bg-accent/5"
-              : "border-border hover:border-accent/50 hover:bg-bg-elevated",
+            dropActive ? "border-accent bg-accent/5" : "border-border hover:border-accent",
           ].join(" ")}
         >
           <div className="flex flex-col items-center gap-2 text-center">

@@ -98,9 +98,30 @@ describe("ResourceListPage", () => {
 })
 
 describe("RefreshAction", () => {
-  it("is disabled while a refetch is in flight", () => {
+  it("reads Refreshing while a refetch is in flight", () => {
     render(<RefreshAction isFetching onClick={() => {}} />)
-    expect(screen.getByRole("button", { name: "Refresh" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Refreshing" })).toHaveAttribute("aria-busy", "true")
+  })
+
+  it("does not dim itself while refetching — busy is not disabled", () => {
+    render(<RefreshAction isFetching onClick={() => {}} />)
+    const button = screen.getByRole("button", { name: "Refreshing" })
+    expect(button).toBeEnabled()
+    expect(button.className).toContain("aria-busy:opacity-100")
+  })
+
+  it("ignores clicks while a refetch is in flight", async () => {
+    const onClick = vi.fn()
+    const { user } = render(<RefreshAction isFetching onClick={onClick} />)
+    await user.click(screen.getByRole("button", { name: "Refreshing" }))
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
+  it("refetches on click once the previous refetch has settled", async () => {
+    const onClick = vi.fn()
+    const { user } = render(<RefreshAction onClick={onClick} />)
+    await user.click(screen.getByRole("button", { name: "Refresh" }))
+    expect(onClick).toHaveBeenCalledOnce()
   })
 })
 

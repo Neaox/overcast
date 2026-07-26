@@ -522,8 +522,8 @@ export function TableDetail({ tableName }: Props) {
                   className={cn(
                     "rounded-l-md px-3 py-1.5 transition-colors",
                     filterMode === "scan"
-                      ? "bg-accent font-medium text-white"
-                      : "hover:bg-bg-subtle",
+                      ? "bg-accent font-medium text-fg-on-accent"
+                      : "hover:bg-accent-muted hover:text-accent",
                   )}
                 >
                   Scan
@@ -533,8 +533,8 @@ export function TableDetail({ tableName }: Props) {
                   className={cn(
                     "rounded-r-md border-l border-border px-3 py-1.5 transition-colors",
                     filterMode === "query"
-                      ? "bg-accent font-medium text-white"
-                      : "hover:bg-bg-subtle",
+                      ? "bg-accent font-medium text-fg-on-accent"
+                      : "hover:bg-accent-muted hover:text-accent",
                   )}
                 >
                   <Filter className="mr-1 inline h-3 w-3" />

@@ -9,7 +9,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import { Spinner } from "@/components/ui/primitives"
 
 interface ConfirmDialogProps {
   open: boolean
@@ -85,8 +84,7 @@ export function ConfirmDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             {cancelLabel}
           </Button>
-          <Button variant={variant} disabled={isPending} onClick={onConfirm}>
-            {isPending && <Spinner className="mr-2" />}
+          <Button variant={variant} busy={isPending} onClick={onConfirm}>
             {confirmLabel}
           </Button>
         </DialogFooter>

@@ -40,6 +40,9 @@ import { Link } from "@tanstack/react-router"
 import { cn } from "@/lib/utils"
 import { endpointStore } from "@/services/endpoint-store"
 
+/** The design's link hover: accent at rest, the brighter accent-glow on hover. */
+const LINK_CLASS = "text-accent transition-colors hover:text-accent-hover hover:underline"
+
 // ─── ArnText ─────────────────────────────────────────────────────────────────
 
 interface ArnTextProps {
@@ -67,7 +70,10 @@ export function ArnText({ arn, className }: ArnTextProps) {
     <span className={cn("font-mono text-xs break-normal [overflow-wrap:anywhere]", className)}>
       {tokens.map((token, i) =>
         token === ":" || token === "/" ? (
-          <Fragment key={i}>{token}<wbr /></Fragment>
+          <Fragment key={i}>
+            {token}
+            <wbr />
+          </Fragment>
         ) : (
           <Fragment key={i}>{token}</Fragment>
         ),
@@ -235,8 +241,7 @@ function resolveArn(arn: string): ResolvedRoute | null {
           params: { instanceId: instanceMatch[1] },
         }
       const vpcMatch = parts.at(5)?.match(/^vpc\/(.+)/)
-      if (vpcMatch)
-        return { kind: "params", to: "/ec2/vpc/$vpcId", params: { vpcId: vpcMatch[1] } }
+      if (vpcMatch) return { kind: "params", to: "/ec2/vpc/$vpcId", params: { vpcId: vpcMatch[1] } }
       break
     }
     case "ecs": {
@@ -402,7 +407,7 @@ export function ArnLink({ arn, label, className }: ArnLinkProps) {
   const content = label != null ? <span>{label}</span> : <ArnText arn={arn} />
   if (!route) return <span className={base}>{content}</span>
   return (
-    <RouteLink route={route} className={cn(base, "text-accent hover:underline")}>
+    <RouteLink route={route} className={cn(base, LINK_CLASS)}>
       {content}
     </RouteLink>
   )
@@ -446,7 +451,7 @@ export function ResourceLink({
   onClick,
 }: ResourceLinkProps) {
   const display = label ?? arn ?? resourceId ?? ""
-  const linked = cn("text-accent hover:underline", className)
+  const linked = cn(LINK_CLASS, className)
 
   // Prefer ARN resolution; fall back to service+id resolution
   const route =

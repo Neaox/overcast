@@ -355,7 +355,7 @@ function TaskDefinitionsPanel() {
           {byFamily.map(({ family, revisions }) => (
             <div key={family} className="overflow-hidden rounded-md border border-border">
               <button
-                className="hover:bg-surface-hover flex w-full items-center justify-between px-4 py-2.5 text-left text-sm font-medium"
+                className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm font-medium transition-colors hover:bg-accent-muted"
                 onClick={() => setExpandedFamily(expandedFamily === family ? undefined : family)}
               >
                 <span>{family}</span>
@@ -408,7 +408,7 @@ function TaskDefinitionsPanel() {
           {ungrouped.length > 0 && (
             <div className="overflow-hidden rounded-md border border-border">
               <button
-                className="hover:bg-surface-hover flex w-full items-center justify-between px-4 py-2.5 text-left text-sm font-medium"
+                className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm font-medium transition-colors hover:bg-accent-muted"
                 onClick={() =>
                   setExpandedFamily(
                     expandedFamily === "__ungrouped__" ? undefined : "__ungrouped__",

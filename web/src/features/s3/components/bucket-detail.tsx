@@ -326,7 +326,7 @@ export function BucketDetail() {
                       data-index={vr.index}
                       ref={rowVirtualizer.measureElement}
                       className={cn(
-                        "cursor-pointer transition-colors hover:bg-bg-subtle",
+                        "cursor-pointer transition-colors hover:bg-accent-muted",
                         !isLastRow && "border-b border-border-muted",
                         item.type === "object" && selected === item.key && "bg-accent-muted",
                       )}

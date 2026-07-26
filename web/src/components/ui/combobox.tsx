@@ -317,8 +317,9 @@ function DropdownList<T>({
                     isDisabled
                       ? "cursor-not-allowed opacity-40"
                       : i === activeIdx
-                        ? "cursor-pointer bg-accent text-white *:text-white **:text-white!"
-                        : "cursor-pointer hover:bg-bg-muted",
+                        ? // Ink, not white: the dark theme's accent is a pale blue.
+                          "cursor-pointer bg-accent text-fg-on-accent *:text-fg-on-accent **:text-fg-on-accent!"
+                        : "cursor-pointer hover:bg-accent-muted",
                   )}
                 >
                   {renderItem(item, {
@@ -384,11 +385,11 @@ function SingleComboboxImpl<T>({
           placeholder="Loading…"
           className={cn(
             "flex h-8 w-full rounded-md border border-border bg-bg py-1 pr-8 pl-3",
-            "text-sm text-fg placeholder:text-fg-subtle opacity-60 cursor-not-allowed",
+            "cursor-not-allowed text-sm text-fg opacity-60 placeholder:text-fg-subtle",
             inputClassName,
           )}
         />
-        <Loader2 className="pointer-events-none absolute top-1/2 right-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle animate-spin" />
+        <Loader2 className="pointer-events-none absolute top-1/2 right-2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-fg-subtle" />
       </div>
     )
   }
@@ -412,7 +413,8 @@ function SingleComboboxImpl<T>({
             className={cn(
               "flex h-8 w-full rounded-md border border-border bg-bg py-1 pr-8 pl-3",
               "text-sm text-fg placeholder:text-fg-subtle",
-              "focus-visible::ring-inset focus-visible:border-accent focus-visible:ring-1 focus-visible:ring-accent focus-visible:outline-none",
+              "hover:border-accent",
+              "focus-visible:border-accent focus-visible:ring-1 focus-visible:ring-accent focus-visible:outline-none focus-visible:ring-inset",
               inputClassName,
             )}
           />
@@ -480,7 +482,12 @@ function MultiComboboxImpl<T>({
 
   if (isLoading) {
     return (
-      <div className={cn("relative flex min-h-8 w-full items-center rounded-md border border-border bg-bg px-3 py-1 opacity-60", className)}>
+      <div
+        className={cn(
+          "relative flex min-h-8 w-full items-center rounded-md border border-border bg-bg px-3 py-1 opacity-60",
+          className,
+        )}
+      >
         <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin text-fg-subtle" />
         <span className="text-sm text-fg-subtle">Loading…</span>
       </div>
@@ -492,7 +499,7 @@ function MultiComboboxImpl<T>({
       <PopoverPrimitive.Anchor asChild>
         <div ref={containerRef} className={cn("relative", className)} onBlur={handleContainerBlur}>
           <div
-            className="flex min-h-8 w-full cursor-text flex-wrap gap-1 rounded-md border border-border bg-bg px-2 py-1 focus-within:ring-1 focus-within:ring-accent focus-within:ring-inset"
+            className="flex min-h-8 w-full cursor-text flex-wrap gap-1 rounded-md border border-border bg-bg px-2 py-1 transition-colors focus-within:border-accent focus-within:ring-1 focus-within:ring-accent focus-within:ring-inset hover:border-accent"
             onClick={() => inputRef.current?.focus()}
           >
             {values.map((v) => (
@@ -611,7 +618,8 @@ export function ComboboxCompact<T>({
             onKeyDown={handleKeyDown}
             className={cn(
               "w-36 rounded-full border border-border bg-bg-muted py-0.5 pr-5 pl-2",
-              "cursor-pointer font-mono text-xs text-fg-muted",
+              "cursor-pointer font-mono text-xs text-fg-muted transition-colors",
+              "hover:border-accent hover:text-fg",
               "focus:text-fg focus:ring-1 focus:ring-accent focus:outline-none focus:ring-inset",
               inputClassName,
             )}

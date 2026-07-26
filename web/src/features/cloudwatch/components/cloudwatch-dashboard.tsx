@@ -228,7 +228,7 @@ export function CloudwatchDashboard() {
                       "w-full rounded-lg border px-3 py-2 text-left transition-colors",
                       isSelected
                         ? "border-accent bg-accent-muted/30"
-                        : "border-border bg-bg hover:border-accent/50 hover:bg-bg-muted/40",
+                        : "border-border bg-bg hover:border-accent",
                     )}
                   >
                     <div className="text-sm font-medium text-fg">{metric.MetricName}</div>

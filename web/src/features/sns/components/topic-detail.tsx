@@ -233,9 +233,9 @@ export function TopicDetail({ topicName }: Props) {
                     </TableCell>
                     <TableCell>
                       <Button
-                        variant="ghost"
+                        variant="danger-ghost"
                         size="sm"
-                        className="text-destructive hover:text-destructive"
+                        aria-label="Delete subscription"
                         onClick={() => setDeleteSubTarget(sub)}
                       >
                         <Trash2 className="h-4 w-4" />

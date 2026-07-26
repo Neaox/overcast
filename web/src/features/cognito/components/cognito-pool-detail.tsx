@@ -1555,7 +1555,7 @@ function ClientsTab({ poolId }: { poolId: string }) {
             <Card key={client.clientId}>
               <button
                 type="button"
-                className="hover:bg-muted/50 flex w-full items-center gap-3 p-4 text-left transition-colors"
+                className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-accent-muted"
                 onClick={() =>
                   setExpandedClient(
                     expandedClient === client.clientId ? undefined : client.clientId,

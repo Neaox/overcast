@@ -314,7 +314,7 @@ export function CodeBrowser({
         <div key={node.path}>
           <button
             onClick={() => toggleDir(node.path)}
-            className="flex w-full items-center gap-1 py-0.5 text-left font-mono text-xs transition-colors hover:bg-white/5"
+            className="flex w-full items-center gap-1 py-0.5 text-left font-mono text-xs transition-colors hover:bg-accent-muted"
             style={{ paddingLeft: indent + 4 }}
           >
             {isOpen ? (
@@ -341,7 +341,9 @@ export function CodeBrowser({
         onClick={() => openFile(node.path)}
         className={cn(
           "flex w-full items-center gap-1.5 py-0.5 text-left font-mono text-xs transition-colors",
-          isActive ? "bg-accent/15 text-fg" : "text-fg-muted hover:bg-white/5 hover:text-fg",
+          isActive
+            ? "bg-accent-muted text-fg"
+            : "text-fg-muted hover:bg-accent-muted hover:text-fg",
         )}
         style={{ paddingLeft: indent + 22 }}
         title={node.path}
@@ -416,7 +418,7 @@ export function CodeBrowser({
                 <span
                   onClick={(e) => closeTab(tab, e)}
                   className={cn(
-                    "ml-1 flex h-4 w-4 items-center justify-center rounded-sm transition-colors hover:bg-white/10",
+                    "ml-1 flex h-4 w-4 items-center justify-center rounded-sm transition-colors hover:bg-accent-muted hover:text-accent",
                     !isActive && "opacity-0 group-hover:opacity-100",
                   )}
                   role="button"

@@ -230,7 +230,7 @@ export function SecretsManagerPage() {
                   <FormRow>
                     <FormField label="Secret value" error={fieldError(field.state.meta.errors)}>
                       <textarea
-                        className="flex min-h-20 w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm placeholder:text-fg-subtle focus-visible:ring-1 focus-visible:outline-none"
+                        className="flex min-h-20 w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm placeholder:text-fg-subtle focus-visible:border-accent focus-visible:ring-1 focus-visible:ring-accent focus-visible:outline-none"
                         placeholder='{"username":"admin","password":"s3cret"}'
                         value={field.state.value}
                         onBlur={field.handleBlur}
