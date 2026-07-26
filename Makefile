@@ -20,6 +20,7 @@ ACTIONLINT_VERSION := v1.7.7
         build-slim-darwin-amd64 build-slim-darwin-arm64 \
         build-slim-windows-amd64 \
         run test test-unit test-integration test-coverage \
+        ci-local ci-local-web ci-local-go \
         bench bench-startup lint lint-go lint-web lint-actions fmt vet tidy check docker docker-slim docker-console docker-run clean \
         compat-build compat-serve compat-report \
 generate-caps check-caps docs docs-index docs-check supportmeta-check check-binary-symbols \
@@ -175,6 +176,18 @@ tidy:
 
 ## check: run all pre-PR checks (fmt + vet + lint + test)
 check: fmt vet lint test
+
+## ci-local: run the whole CI pipeline locally (Go via Docker — no host Go needed)
+ci-local:
+	bash scripts/ci-local.sh $(ARGS)
+
+## ci-local-web: web stages only (lint, typecheck, vitest, build)
+ci-local-web:
+	bash scripts/ci-local.sh --web-only
+
+## ci-local-go: Go stages only (docs index, vet, build, unit tests)
+ci-local-go:
+	bash scripts/ci-local.sh --go-only
 
 ## generate-caps: generate internal/capabilities/all.gen.go from per-service capabilities_dev.go files
 generate-caps:

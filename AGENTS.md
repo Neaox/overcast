@@ -190,7 +190,7 @@ go test -count=1 ./internal/services/foo/... ./tests/integration/foo/...
 
 Widen to `./...` only once before marking a task done. Avoid `go build ./cmd/overcast` during iteration — the `cmd/overcast` main package embeds the web UI, adding unnecessary overhead for backend-only changes. Use `./cmd/overcast -tags slim` or stay within `./internal/...` until the final check.
 
-For TypeScript changes, `npx tsc --noEmit` in `web/` is always scoped to that directory and is already incremental.
+For TypeScript changes, run `npm run typecheck` in `web/`. Do not use `npx tsc --noEmit`: it resolves `web/tsconfig.json`, a solution-style config with `"files": []` and only project references, so it compiles zero files and always passes.
 
 ### Iterating on a specific test
 
@@ -242,7 +242,7 @@ Agents must **not** start their own test instances of Overcast on port **4566** 
 - **Amend related mistakes instead of narrating them.** If you forgot a directly related file such as a changelog entry, generated doc, or focused test, amend or squash your own commit so the branch stays coherent. This is fine even after pushing when you own the branch, it is not shared, and you use `git push --force-with-lease` to avoid overwriting other people's work. Use a separate follow-up commit instead when the change is already merged, the branch is known to be shared, or unrelated commits now sit on top. Do not create noisy correction commits or give the user a running play-by-play of fixups unless the branch history is shared or the user asks for that detail.
 - **Never leave the workspace in a broken state.** After every change, check the workspace problem list (compiler errors, type errors, lint errors) - via the `get_errors` tool, and fix any problems you introduced before considering the task done. You are not finished while problems you caused remain open.
   - **`go build ./...` is necessary but not sufficient.** It only catches compile errors. Also run `go vet ./...` to catch lint/static-analysis warnings (unused params, unused funcs, unnecessary nil checks, etc.) that appear in the VS Code Problems panel but don't fail compilation. Fix every warning you introduced.
-  - **Sub-agents must do this too.** A sub-agent invoked by a parent agent is held to the same standard. Before returning a result, run `go build ./...` (for Go changes) and/or `npx tsc --noEmit` (for TypeScript changes) and fix every error you caused. If a linter or vet warning is introduced (e.g. `go vet ./...` reports a new issue), fix it. Do not offload verification to the parent — own it.
+  - **Sub-agents must do this too.** A sub-agent invoked by a parent agent is held to the same standard. Before returning a result, run `go build ./...` (for Go changes) and/or `npm run typecheck` in `web/` (for TypeScript changes — not `npx tsc --noEmit`, which typechecks nothing) and fix every error you caused. If a linter or vet warning is introduced (e.g. `go vet ./...` reports a new issue), fix it. Do not offload verification to the parent — own it.
 - Never implement a handler or fix a bug without a failing/reproducing test first
 - Never return bare `404` for unimplemented operations — always `501`
 - Never call `os.Getenv` in service code — use `*config.Config`

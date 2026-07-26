@@ -205,6 +205,21 @@ tasks:
     desc: Run all pre-PR checks (fmt + vet + lint + test)
     deps: [fmt, vet, lint, test]
 
+  ci-local:
+    desc: Run the whole CI pipeline locally (Go via Docker — no host Go needed)
+    cmds:
+      - bash scripts/ci-local.sh {{.CLI_ARGS}}
+
+  ci-local-web:
+    desc: CI pipeline, web stages only (lint, typecheck, vitest, build)
+    cmds:
+      - bash scripts/ci-local.sh --web-only
+
+  ci-local-go:
+    desc: CI pipeline, Go stages only (docs index, vet, build, unit tests)
+    cmds:
+      - bash scripts/ci-local.sh --go-only
+
   # ---- Docker ---------------------------------------------------------------
 
   docker:

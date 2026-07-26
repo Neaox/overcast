@@ -493,7 +493,7 @@ export function LinkifiedText({ text, className }: { text: string; className?: s
   const nodes: ReactNode[] = []
   let cursor = 0
   matches.forEach((m, i) => {
-    const start = m.index ?? 0
+    const start = m.index
     if (start > cursor) nodes.push(<Fragment key={`t${i}`}>{text.slice(cursor, start)}</Fragment>)
     nodes.push(<ArnLink key={`a${i}`} arn={m[0]} className={className} />)
     cursor = start + m[0].length

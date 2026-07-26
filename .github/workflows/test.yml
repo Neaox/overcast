@@ -150,13 +150,30 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
+      # web/src/docs-index.gen.ts is a gitignored build artifact (see
+      # .gitignore) produced by the Go-backed docs:index script, and
+      # src/routes/docs.tsx imports it. Lint (type-aware rules), typecheck,
+      # vitest and the build all resolve that import, so it must be generated
+      # before any of them run — not incidentally by `npm run build` later.
+      - name: Generate docs index
+        run: npm run docs:index
       - name: Lint
         run: npm run lint
+      # Not `npx tsc --noEmit`: that resolves web/tsconfig.json, a
+      # solution-style config with "files": [] and only project references, so
+      # it compiles zero files and always passes. `npm run typecheck` runs
+      # tsconfig.app.json and tsconfig.node.json explicitly.
       - name: Type check
-        run: npx tsc --noEmit
+        run: npm run typecheck
+      # Runs before the build so a test failure is attributable to this step
+      # rather than surfacing (or not) somewhere inside the build.
+      - name: Unit tests
+        run: npm run test
+      # `npm run build` re-runs docs:index and typecheck. That duplication is
+      # deliberate: the dedicated steps above give attributable failures, and
+      # invoking the published script keeps CI from drifting from what
+      # contributors run locally.
       - name: Build SPA
-        # npm run build's docs:index prestep needs Go — it regenerates
-        # web/src/docs-index.gen.ts, gitignored, see .gitignore.
         run: VITE_BUNDLED=true npm run build
       - name: Build BFF server
         run: npm run build:server
