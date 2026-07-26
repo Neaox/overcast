@@ -29,6 +29,22 @@ const TraceLevel = logging.TraceLevel
 // zapcore.ParseLevel with Overcast's "trace" level. See internal/logging.ParseLevel.
 func ParseLevel(s string) (zapcore.Level, error) { return logging.ParseLevel(s) }
 
+// ParseLevelOrDefault parses s as a log level, falling back to InfoLevel —
+// Overcast's default — when s is empty or invalid. ok reports whether s
+// parsed cleanly, so callers can warn about the fallback (naming the level
+// actually in effect) instead of either failing startup over an
+// observability typo or silently ignoring it.
+func ParseLevelOrDefault(s string) (level zapcore.Level, ok bool) {
+	if s == "" {
+		return zapcore.InfoLevel, true
+	}
+	lvl, err := logging.ParseLevel(s)
+	if err != nil {
+		return zapcore.InfoLevel, false
+	}
+	return lvl, true
+}
+
 // WrapLevelEncoder wraps a zapcore.LevelEncoder so TraceLevel renders as
 // label instead of the base encoder's zero-value fallback. See
 // internal/logging.WrapLevelEncoder.

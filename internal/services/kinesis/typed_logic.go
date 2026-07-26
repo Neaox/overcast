@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"go.uber.org/zap"
@@ -140,6 +141,19 @@ type listTagsForStreamRequest struct {
 type tagEntry struct {
 	Key   string `json:"Key"`
 	Value string `json:"Value"`
+}
+
+// sortedTagEntries flattens a stream's tag map into a Key-sorted slice.
+// Go map iteration order is randomized per process, so both wire paths
+// (the JSON1.1 handler and the CBOR typed dispatch) must serialize through
+// this helper to keep the Tags array order deterministic.
+func sortedTagEntries(tags map[string]string) []tagEntry {
+	entries := make([]tagEntry, 0, len(tags))
+	for k, v := range tags {
+		entries = append(entries, tagEntry{Key: k, Value: v})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Key < entries[j].Key })
+	return entries
 }
 
 type listTagsForStreamResponse struct {
@@ -584,11 +598,7 @@ func (h *Handler) listTagsForStreamTyped(ctx context.Context, req *listTagsForSt
 	if aerr != nil {
 		return nil, aerr
 	}
-	tags := make([]tagEntry, 0, len(st.Tags))
-	for k, v := range st.Tags {
-		tags = append(tags, tagEntry{Key: k, Value: v})
-	}
-	return &listTagsForStreamResponse{Tags: tags, HasMoreTags: false}, nil
+	return &listTagsForStreamResponse{Tags: sortedTagEntries(st.Tags), HasMoreTags: false}, nil
 }
 
 func (h *Handler) removeTagsFromStreamTyped(ctx context.Context, req *removeTagsFromStreamRequest) (*struct{}, *protocol.AWSError) {

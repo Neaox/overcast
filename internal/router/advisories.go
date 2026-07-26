@@ -227,16 +227,40 @@ func checkDataDirSlowFilesystem(m state.DebugMetrics) *Advisory {
 	if m.DataDirProbe == nil || !m.DataDirProbe.Slow {
 		return nil
 	}
+	var detail string
+	switch m.DataDirProbe.MountClass {
+	case "shared":
+		detail = fmt.Sprintf(
+			"A startup fsync probe against the data directory took %dms (median of 3). The data "+
+				"directory is on a Docker Desktop file-sharing mount (%s), which adds latency to "+
+				"every flush and read. Use a named Docker volume for the data directory instead.",
+			m.DataDirProbe.FsyncMillis, m.DataDirProbe.FsType,
+		)
+	case "native":
+		detail = fmt.Sprintf(
+			"A startup fsync probe against the data directory took %dms (median of 3). The data "+
+				"directory is already on a native filesystem (%s), so the mount type is not the "+
+				"problem — the underlying disk or Docker VM is under I/O pressure. Check host disk "+
+				"load, antivirus scanning of the Docker VM disk image, and VM CPU/memory resources. "+
+				"The probe runs once at startup, so a transient boot-time stall can also trigger "+
+				"this; restart to re-measure.",
+			m.DataDirProbe.FsyncMillis, m.DataDirProbe.FsType,
+		)
+	default:
+		detail = fmt.Sprintf(
+			"A startup fsync probe against the data directory took %dms (median of 3). If the data "+
+				"directory is a Docker Desktop bind mount on macOS/Windows, use a named Docker "+
+				"volume instead. If it is already on a native filesystem or named volume, the disk "+
+				"or VM is under I/O pressure — check host disk load, antivirus scanning of the "+
+				"Docker VM disk image, and VM resources.",
+			m.DataDirProbe.FsyncMillis,
+		)
+	}
 	return &Advisory{
 		Severity: advisorySeverityWarning,
 		Code:     advisoryCodeDataDirSlowFilesystem,
-		Title:    "Data directory is on a slow filesystem",
-		Detail: fmt.Sprintf(
-			"A startup fsync probe against the data directory took %dms. This is characteristic of "+
-				"a Docker Desktop bind mount on macOS/Windows, which adds latency to every flush and "+
-				"read. Use a named Docker volume for the data directory instead.",
-			m.DataDirProbe.FsyncMillis,
-		),
+		Title:    "Data directory filesystem is slow",
+		Detail:   detail,
 		DocsPath: dataDirDocsPath,
 	}
 }
