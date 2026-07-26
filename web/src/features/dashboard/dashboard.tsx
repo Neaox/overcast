@@ -49,7 +49,10 @@ export function Dashboard() {
   const tierOf = (name: string): EmulationTier => data?.serviceTiers?.[name] ?? "full"
   const isEnabled = (name: string) => data === undefined || data.services.includes(name)
 
-  // Recently visited services first (recentServices holds route paths), then A-Z.
+  // Disabled services sink to the bottom of whichever section they land in —
+  // they cannot be opened, so they should not sit between things that can.
+  // Within that: recently visited first (recentServices holds route paths),
+  // then A-Z.
   const recentRank = new Map(recentServices.map((key, index) => [key, index]))
   const entries: ServiceTierEntry[] = ALL_SERVICES.map((service) => ({
     service,
@@ -58,7 +61,11 @@ export function Dashboard() {
   })).sort((a, b) => {
     const rankA = recentRank.get(a.service.to) ?? Number.MAX_SAFE_INTEGER
     const rankB = recentRank.get(b.service.to) ?? Number.MAX_SAFE_INTEGER
-    return rankA - rankB || a.service.label.localeCompare(b.service.label)
+    return (
+      Number(b.enabled) - Number(a.enabled) ||
+      rankA - rankB ||
+      a.service.label.localeCompare(b.service.label)
+    )
   })
 
   const inSection = (section: SectionKey) =>
