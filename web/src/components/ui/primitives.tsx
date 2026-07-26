@@ -1,10 +1,38 @@
 import * as React from "react"
+import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 import { AlertTriangle, Loader2 } from "lucide-react"
+import { SkeletonCards, SkeletonRows } from "@/components/ui/skeleton"
 
 // ─── Spinner ──────────────────────────────────────────────────────────────
-function Spinner({ className }: { className?: string }) {
-  return <Loader2 className={cn("h-4 w-4 animate-spin", className)} />
+const spinnerSizeVariants = cva("", {
+  variants: {
+    size: {
+      /** 14px — inside a chip or an icon-sized control. */
+      sm: "h-3.5 w-3.5",
+      /** 16px — inside a button or a toast. */
+      md: "h-4 w-4",
+    },
+  },
+  defaultVariants: { size: "md" },
+})
+
+interface SpinnerProps extends VariantProps<typeof spinnerSizeVariants> {
+  className?: string
+}
+
+/**
+ * Inline busy indicator.
+ *
+ * The design system allows spinners at **14-16px only, and only inside a chip,
+ * button or toast** — a content area gets a skeleton instead (`SkeletonRows` /
+ * `SkeletonCards`). The size class is therefore appended *after* `className`
+ * so `tailwind-merge` lets it win: a caller cannot grow the spinner back into
+ * a content-area spinner. Spacing, colour and layout utilities passed in
+ * `className` are unaffected.
+ */
+function Spinner({ size, className }: SpinnerProps) {
+  return <Loader2 className={cn("animate-spin", className, spinnerSizeVariants({ size }))} />
 }
 
 // ─── Empty state ──────────────────────────────────────────────────────────
@@ -22,7 +50,7 @@ function EmptyState({ icon, title, description, action, className }: EmptyStateP
       className={cn("flex flex-col items-center justify-center gap-3 py-16 text-center", className)}
     >
       {icon && <div className="mb-1 text-fg-subtle">{icon}</div>}
-      <p className="text-sm font-medium text-fg">{title}</p>
+      <p className="font-mono text-sm font-medium text-fg">{title}</p>
       {description && <p className="max-w-xs text-sm text-fg-muted">{description}</p>}
       {action && <div className="mt-2">{action}</div>}
     </div>
@@ -41,6 +69,21 @@ interface QueryListStateProps {
   emptyAction?: React.ReactNode
   emptyClassName?: string
   loadingClassName?: string
+  /**
+   * Loading treatment. `"rows"` (default) is the table skeleton; `"cards"` is
+   * the 3-up dashboard grid.
+   */
+  loadingVariant?: "rows" | "cards"
+  /**
+   * Placeholder row/card count, following the design's `hint-placeholder-count`
+   * convention. Defaults to 5 rows / 3 cards.
+   */
+  loadingCount?: number
+  /**
+   * Lowercase plural resource noun for the skeleton footer — `"log groups"`
+   * renders `loading log groups`.
+   */
+  loadingNoun?: string
   errorTitle?: string
   errorDescription?: string
 }
@@ -62,14 +105,19 @@ function QueryListState({
   emptyAction,
   emptyClassName,
   loadingClassName,
+  loadingVariant = "rows",
+  loadingCount,
+  loadingNoun,
   errorTitle = "Unable to load data",
   errorDescription,
 }: QueryListStateProps) {
+  // Every list in the app inherits its loading treatment from here: a static
+  // skeleton, never a centred spinner (see components/ui/skeleton.tsx).
   if (isLoading) {
-    return (
-      <div className={cn("flex justify-center py-16", loadingClassName)}>
-        <Spinner className="h-6 w-6" />
-      </div>
+    return loadingVariant === "cards" ? (
+      <SkeletonCards cards={loadingCount} noun={loadingNoun} className={loadingClassName} />
+    ) : (
+      <SkeletonRows rows={loadingCount} noun={loadingNoun} className={loadingClassName} />
     )
   }
 
@@ -121,7 +169,7 @@ function PageHeader({ title, count, meta, description, actions, className }: Pag
             <span className="font-mono text-sm text-fg-subtle tabular-nums">{count}</span>
           )}
         </div>
-        {meta && <p className="text-xs text-fg-subtle">{meta}</p>}
+        {meta && <p className="font-mono text-xs text-fg-subtle">{meta}</p>}
         {description && <p className="text-sm text-fg-muted">{description}</p>}
       </div>
       {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}

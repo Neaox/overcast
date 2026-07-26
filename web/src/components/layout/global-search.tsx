@@ -355,14 +355,15 @@ function ResultRow({
           </div>
         }
       >
+        {/* Every result is a resource identifier — name and ARN alike are mono. */}
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-fg">{result.label}</div>
+          <div className="truncate font-mono text-sm font-medium text-fg">{result.label}</div>
           {result.sublabel && (
-            <div className="truncate text-xs text-fg-subtle">{result.sublabel}</div>
+            <div className="truncate font-mono text-xs text-fg-subtle">{result.sublabel}</div>
           )}
         </div>
       </Tooltip>
-      <span className="shrink-0 rounded bg-bg-muted px-1.5 py-0.5 text-xs text-fg-subtle">
+      <span className="shrink-0 rounded bg-bg-muted px-1.5 py-0.5 font-mono text-xs text-fg-subtle">
         {result.type}
       </span>
       {isSelected && <ChevronRight className="h-3.5 w-3.5 shrink-0 text-accent" />}
@@ -441,7 +442,7 @@ function SearchResults({
       {/* Matching services — horizontal scrollable strip */}
       {(matchedServices.length > 0 || matchedCatalog.length > 0) && (
         <div className="px-4 pb-3">
-          <div className="mb-1.5 text-xs font-medium text-fg-subtle">Services</div>
+          <div className="mb-1.5 font-mono text-xs font-medium text-fg-subtle">Services</div>
           <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {matchedServices.map((s) => {
               const Icon = s.icon
@@ -511,7 +512,7 @@ function SearchResults({
                 )}
               />
               {service?.label ?? (isDocsSection ? "Documentation" : serviceKey)}
-              <span className="ml-auto rounded-full bg-bg-muted px-1.5 text-fg-subtle">
+              <span className="ml-auto rounded-full bg-bg-muted px-1.5 font-mono text-fg-subtle">
                 {items.length}
               </span>
             </div>
@@ -528,8 +529,9 @@ function SearchResults({
         )
       })}
 
+      {/* A count and a key list — both machine text, both mono. */}
       {flat.length > 0 && (
-        <div className="border-t border-border px-4 pt-2 text-xs text-fg-subtle">
+        <div className="border-t border-border px-4 pt-2 font-mono text-xs text-fg-subtle">
           {flat.length} result{flat.length !== 1 ? "s" : ""}
           <span className="float-right hidden sm:block">
             ↑↓ Navigate · Enter Select · Esc Close

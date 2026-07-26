@@ -3,9 +3,8 @@ import { useRouterState } from "@tanstack/react-router"
 import { Sidebar } from "./sidebar/sidebar"
 import { Header } from "./header/header"
 import { OfflineBanner } from "./offline-banner"
-import { ConnectionDialog } from "./connection-dialog"
+import { ConnectionGate } from "./connection-gate"
 import { GlobalSearch, useGlobalSearchShortcut } from "./global-search"
-import { isConfigured } from "@/hooks/use-endpoint"
 import { ConnectionStatusProvider } from "@/hooks/use-connection-status"
 import { FavouritesProvider } from "@/hooks/use-favourites"
 import { useEventStreamSubscription } from "@/hooks/use-event-stream"
@@ -20,7 +19,11 @@ export function AppShell({ children }: AppShellProps) {
     <ConnectionStatusProvider>
       <FavouritesProvider>
         <SidebarCollapseProvider>
-          <AppShellInner>{children}</AppShellInner>
+          {/* Nothing behind the gate mounts — no SSE, no queries — until the
+              emulator has actually answered. */}
+          <ConnectionGate>
+            <AppShellInner>{children}</AppShellInner>
+          </ConnectionGate>
         </SidebarCollapseProvider>
       </FavouritesProvider>
     </ConnectionStatusProvider>
@@ -28,7 +31,6 @@ export function AppShell({ children }: AppShellProps) {
 }
 
 function AppShellInner({ children }: AppShellProps) {
-  const [connected, setConnected] = useState(() => isConfigured())
   const [searchOpen, setSearchOpen] = useState(false)
   const mainRef = useRef<HTMLElement>(null)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
@@ -46,10 +48,6 @@ function AppShellInner({ children }: AppShellProps) {
   useEffect(() => {
     mainRef.current?.scrollTo({ top: 0, behavior: "instant" })
   }, [pathname])
-
-  if (!connected) {
-    return <ConnectionDialog onConnected={() => setConnected(true)} />
-  }
 
   return (
     <div className="flex h-full overflow-hidden">
