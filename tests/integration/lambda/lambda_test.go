@@ -14,6 +14,7 @@ import (
 	"encoding/xml"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -5112,4 +5113,284 @@ func TestGetFunctionCodeSigningConfig_functionNotFound(t *testing.T) {
 	defer resp.Body.Close()
 
 	helpers.AssertStatus(t, resp, http.StatusNotFound)
+}
+
+// ─── Function URLs: CRUD ───────────────────────────────────────────────────
+
+// functionUrlConfigResp mirrors the CreateFunctionUrlConfig/GetFunctionUrlConfig/
+// UpdateFunctionUrlConfig response shape.
+type functionUrlConfigResp struct {
+	FunctionArn      string `json:"FunctionArn"`
+	FunctionUrl      string `json:"FunctionUrl"`
+	AuthType         string `json:"AuthType"`
+	InvokeMode       string `json:"InvokeMode"`
+	CreationTime     string `json:"CreationTime"`
+	LastModifiedTime string `json:"LastModifiedTime"`
+}
+
+// lambdaURLv2021 builds a URL under the 2021-10-31 API version, used by
+// function URL config endpoints (a different vintage than the 2015-03-31
+// functions API most other lambda_test.go helpers target).
+func lambdaURLv2021(srv *helpers.TestServer, path string) string {
+	return srv.URL + "/2021-10-31" + path
+}
+
+func TestCreateFunctionUrlConfig_success(t *testing.T) {
+	// Given an existing function
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "url-cfg-fn")
+
+	// When CreateFunctionUrlConfig is called
+	resp := doJSON(t, http.MethodPost, lambdaURLv2021(srv, "/functions/url-cfg-fn/url"), map[string]any{
+		"AuthType": "NONE",
+	})
+	defer resp.Body.Close()
+
+	// Then 201 with a FunctionUrl on the lambda-url host-route grammar
+	helpers.AssertStatus(t, resp, http.StatusCreated)
+	var cfg functionUrlConfigResp
+	decodeJSON(t, resp, &cfg)
+	if cfg.AuthType != "NONE" {
+		t.Errorf("AuthType = %q, want NONE", cfg.AuthType)
+	}
+	if cfg.InvokeMode != "BUFFERED" {
+		t.Errorf("InvokeMode = %q, want BUFFERED (default)", cfg.InvokeMode)
+	}
+	if !strings.Contains(cfg.FunctionUrl, ".lambda-url.") {
+		t.Errorf("FunctionUrl = %q, want it to contain %q", cfg.FunctionUrl, ".lambda-url.")
+	}
+	if cfg.FunctionArn == "" {
+		t.Error("FunctionArn is empty")
+	}
+}
+
+func TestCreateFunctionUrlConfig_defaultAuthType(t *testing.T) {
+	// Given an existing function
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "url-cfg-default-auth-fn")
+
+	// When CreateFunctionUrlConfig is called with no AuthType
+	resp := doJSON(t, http.MethodPost, lambdaURLv2021(srv, "/functions/url-cfg-default-auth-fn/url"), map[string]any{})
+	defer resp.Body.Close()
+
+	// Then it defaults to AWS_IAM, matching real AWS
+	helpers.AssertStatus(t, resp, http.StatusCreated)
+	var cfg functionUrlConfigResp
+	decodeJSON(t, resp, &cfg)
+	if cfg.AuthType != "AWS_IAM" {
+		t.Errorf("AuthType = %q, want AWS_IAM (default)", cfg.AuthType)
+	}
+}
+
+func TestCreateFunctionUrlConfig_functionNotFound(t *testing.T) {
+	// Given no function exists
+	srv := helpers.NewTestServer(t)
+
+	// When CreateFunctionUrlConfig targets a non-existent function
+	resp := doJSON(t, http.MethodPost, lambdaURLv2021(srv, "/functions/no-such-fn/url"), map[string]any{"AuthType": "NONE"})
+	defer resp.Body.Close()
+
+	// Then 404
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+}
+
+func TestCreateFunctionUrlConfig_duplicateConflict(t *testing.T) {
+	// Given a function with an existing (unqualified) function URL config
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "url-cfg-dup-fn")
+	doJSON(t, http.MethodPost, lambdaURLv2021(srv, "/functions/url-cfg-dup-fn/url"), map[string]any{"AuthType": "NONE"}).Body.Close()
+
+	// When CreateFunctionUrlConfig is called again for the same (unqualified) function
+	resp := doJSON(t, http.MethodPost, lambdaURLv2021(srv, "/functions/url-cfg-dup-fn/url"), map[string]any{"AuthType": "NONE"})
+	defer resp.Body.Close()
+
+	// Then 409 Conflict
+	helpers.AssertStatus(t, resp, http.StatusConflict)
+}
+
+func TestGetFunctionUrlConfig_success(t *testing.T) {
+	// Given a function with a function URL config
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "url-cfg-get-fn")
+	createResp := doJSON(t, http.MethodPost, lambdaURLv2021(srv, "/functions/url-cfg-get-fn/url"), map[string]any{"AuthType": "NONE"})
+	var created functionUrlConfigResp
+	decodeJSON(t, createResp, &created)
+
+	// When GetFunctionUrlConfig is called
+	resp := doJSON(t, http.MethodGet, lambdaURLv2021(srv, "/functions/url-cfg-get-fn/url"), nil)
+	defer resp.Body.Close()
+
+	// Then 200 with the same FunctionUrl
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var got functionUrlConfigResp
+	decodeJSON(t, resp, &got)
+	if got.FunctionUrl != created.FunctionUrl {
+		t.Errorf("FunctionUrl = %q, want %q (stable across Get)", got.FunctionUrl, created.FunctionUrl)
+	}
+}
+
+func TestGetFunctionUrlConfig_notFound(t *testing.T) {
+	// Given a function with no function URL config
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "url-cfg-noconfig-fn")
+
+	// When GetFunctionUrlConfig is called
+	resp := doJSON(t, http.MethodGet, lambdaURLv2021(srv, "/functions/url-cfg-noconfig-fn/url"), nil)
+	defer resp.Body.Close()
+
+	// Then 404
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+}
+
+func TestUpdateFunctionUrlConfig_success(t *testing.T) {
+	// Given a function with a NONE-auth function URL config
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "url-cfg-update-fn")
+	doJSON(t, http.MethodPost, lambdaURLv2021(srv, "/functions/url-cfg-update-fn/url"), map[string]any{"AuthType": "NONE"}).Body.Close()
+
+	// When UpdateFunctionUrlConfig changes AuthType to AWS_IAM
+	resp := doJSON(t, http.MethodPut, lambdaURLv2021(srv, "/functions/url-cfg-update-fn/url"), map[string]any{"AuthType": "AWS_IAM"})
+	defer resp.Body.Close()
+
+	// Then 200 with the updated AuthType
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var got functionUrlConfigResp
+	decodeJSON(t, resp, &got)
+	if got.AuthType != "AWS_IAM" {
+		t.Errorf("AuthType = %q, want AWS_IAM after update", got.AuthType)
+	}
+}
+
+func TestUpdateFunctionUrlConfig_notFound(t *testing.T) {
+	// Given a function with no function URL config
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "url-cfg-update-notfound-fn")
+
+	// When UpdateFunctionUrlConfig is called
+	resp := doJSON(t, http.MethodPut, lambdaURLv2021(srv, "/functions/url-cfg-update-notfound-fn/url"), map[string]any{"AuthType": "NONE"})
+	defer resp.Body.Close()
+
+	// Then 404
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+}
+
+func TestDeleteFunctionUrlConfig_success(t *testing.T) {
+	// Given a function with a function URL config
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "url-cfg-delete-fn")
+	doJSON(t, http.MethodPost, lambdaURLv2021(srv, "/functions/url-cfg-delete-fn/url"), map[string]any{"AuthType": "NONE"}).Body.Close()
+
+	// When DeleteFunctionUrlConfig is called
+	resp := doJSON(t, http.MethodDelete, lambdaURLv2021(srv, "/functions/url-cfg-delete-fn/url"), nil)
+	defer resp.Body.Close()
+
+	// Then 204, and a subsequent Get returns 404
+	helpers.AssertStatus(t, resp, http.StatusNoContent)
+	getResp := doJSON(t, http.MethodGet, lambdaURLv2021(srv, "/functions/url-cfg-delete-fn/url"), nil)
+	defer getResp.Body.Close()
+	helpers.AssertStatus(t, getResp, http.StatusNotFound)
+}
+
+func TestListFunctionUrlConfigs_success(t *testing.T) {
+	// Given a function with an unqualified and a qualified function URL config
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "url-cfg-list-fn")
+	doJSON(t, http.MethodPost, lambdaURLv2021(srv, "/functions/url-cfg-list-fn/url"), map[string]any{"AuthType": "NONE"}).Body.Close()
+	doJSON(t, http.MethodPost, lambdaURLv2021(srv, "/functions/url-cfg-list-fn/url?Qualifier=$LATEST"), map[string]any{"AuthType": "AWS_IAM"}).Body.Close()
+
+	// When ListFunctionUrlConfigs is called
+	resp := doJSON(t, http.MethodGet, lambdaURLv2021(srv, "/functions/url-cfg-list-fn/urls"), nil)
+	defer resp.Body.Close()
+
+	// Then both configs are returned
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		FunctionUrlConfigs []functionUrlConfigResp `json:"FunctionUrlConfigs"`
+	}
+	decodeJSON(t, resp, &result)
+	if len(result.FunctionUrlConfigs) != 2 {
+		t.Errorf("len(FunctionUrlConfigs) = %d, want 2", len(result.FunctionUrlConfigs))
+	}
+}
+
+// ─── Function URLs: Host-routed invocation ─────────────────────────────────
+
+func TestInvokeFunctionURL_unknownUrlIdReturnsForbidden(t *testing.T) {
+	// Given a server with no function URL configs at all
+	srv := helpers.NewTestServer(t)
+
+	// When a request hits a lambda-url Host with an unrecognised urlId
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Host = "nosuchurlid.lambda-url.us-east-1.amazonaws.com"
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then 403 Forbidden, not a 500 or a misrouted response
+	helpers.AssertStatus(t, resp, http.StatusForbidden)
+}
+
+// TestInvokeFunctionURL_hostRouted_success proves the full path: create a
+// function URL config, then invoke it via its Host-routed FunctionUrl and
+// confirm the request reaches the function through the same runtime
+// InvokeFunction uses. Requires Docker, like the other real-runtime
+// invocation tests in this file (skipIfNoDocker).
+func TestInvokeFunctionURL_hostRouted_success(t *testing.T) {
+	skipIfNoDocker(t)
+
+	// Given a Node.js function that echoes a structured function-URL response
+	srv := helpers.NewTestServer(t, helpers.WithLambdaDocker())
+	code := makeZip(t, "index.js", `
+exports.handler = async (event) => {
+  return { statusCode: 200, body: JSON.stringify({ rawPath: event.rawPath, method: event.requestContext.http.method }) };
+};
+`)
+	createFunctionWithCode(t, srv, "url-invoke-fn", "nodejs20.x", "index.handler", code)
+	waitForFunctionActive(t, srv, "url-invoke-fn")
+
+	createResp := doJSON(t, http.MethodPost, lambdaURLv2021(srv, "/functions/url-invoke-fn/url"), map[string]any{"AuthType": "NONE"})
+	helpers.AssertStatus(t, createResp, http.StatusCreated)
+	var cfg functionUrlConfigResp
+	decodeJSON(t, createResp, &cfg)
+
+	// FunctionUrl is http://{urlId}.lambda-url.{region}.{host}:{port}/ —
+	// extract the Host portion to invoke through the test server while
+	// presenting the real function-URL Host header.
+	u, err := url.Parse(cfg.FunctionUrl)
+	if err != nil {
+		t.Fatalf("parse FunctionUrl %q: %v", cfg.FunctionUrl, err)
+	}
+
+	// When we invoke via the Host-routed function URL, at a sub-path
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/hello", nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Host = u.Host
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then the function receives the request via the payload v2.0 event
+	// shape (rawPath, requestContext.http.method) and its structured
+	// response is honoured
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	body, _ := io.ReadAll(resp.Body)
+	var out map[string]any
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("unmarshal response: %v — body: %s", err, body)
+	}
+	if out["rawPath"] != "/hello" {
+		t.Errorf("rawPath = %v, want /hello", out["rawPath"])
+	}
+	if out["method"] != "GET" {
+		t.Errorf("method = %v, want GET", out["method"])
+	}
 }

@@ -3176,6 +3176,121 @@ func TestCreateStack_LambdaFunction_forwardsTags(t *testing.T) {
 	}
 }
 
+// ─── Lambda Function URL ──────────────────────────────────────────────────
+
+const lambdaUrlTemplate = `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "ExecRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "cfn-url-test-role",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]
+        }
+      }
+    },
+    "MyFunction": {
+      "Type": "AWS::Lambda::Function",
+      "DependsOn": ["ExecRole"],
+      "Properties": {
+        "FunctionName": "cfn-url-test-fn",
+        "Runtime": "python3.11",
+        "Handler": "index.handler",
+        "Role": { "Fn::GetAtt": ["ExecRole", "Arn"] },
+        "Code": { "ZipFile": "def handler(e, c): return {}" }
+      }
+    },
+    "MyFunctionUrl": {
+      "Type": "AWS::Lambda::Url",
+      "DependsOn": ["MyFunction"],
+      "Properties": {
+        "TargetFunctionArn": { "Fn::GetAtt": ["MyFunction", "Arn"] },
+        "AuthType": "NONE"
+      }
+    }
+  },
+  "Outputs": {
+    "FunctionUrl": { "Value": { "Fn::GetAtt": ["MyFunctionUrl", "FunctionUrl"] } }
+  }
+}`
+
+func TestCreateStack_LambdaUrl_createsFunctionUrlConfig(t *testing.T) {
+	// Given: a stack with a Lambda function and an AWS::Lambda::Url resource
+	// targeting it.
+	srv := helpers.NewTestServer(t)
+
+	// When: the stack is created.
+	cr := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"lambda-url-stack"},
+		"TemplateBody": []string{lambdaUrlTemplate},
+	})
+	defer cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	waitForStackStatus(t, srv, "lambda-url-stack", "CREATE_COMPLETE")
+
+	// Then: the stack output resolves a real lambda-url Host-routed URL
+	// (Fn::GetAtt MyFunctionUrl.FunctionUrl), not a stub value.
+	resp := cfnQuery(t, srv, "DescribeStacks", url.Values{
+		"StackName": []string{"lambda-url-stack"},
+	})
+	defer resp.Body.Close()
+	body := string(readBody(t, resp))
+	if !strings.Contains(body, ".lambda-url.") {
+		t.Errorf("expected a lambda-url FunctionUrl in stack outputs, got: %s", body)
+	}
+
+	// And: the function URL config is queryable directly via the Lambda API,
+	// with the AuthType from the template.
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/2021-10-31/functions/cfn-url-test-fn/url", nil)
+	getResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GetFunctionUrlConfig: %v", err)
+	}
+	defer getResp.Body.Close()
+	helpers.AssertStatus(t, getResp, http.StatusOK)
+
+	var cfg struct {
+		AuthType string `json:"AuthType"`
+	}
+	if err := json.NewDecoder(getResp.Body).Decode(&cfg); err != nil {
+		t.Fatalf("decode GetFunctionUrlConfig: %v", err)
+	}
+	if cfg.AuthType != "NONE" {
+		t.Errorf("AuthType = %q, want NONE", cfg.AuthType)
+	}
+}
+
+func TestDeleteStack_LambdaUrl_deletesFunctionUrlConfig(t *testing.T) {
+	// Given: a created stack with a Lambda function URL
+	srv := helpers.NewTestServer(t)
+	cr := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"lambda-url-delete-stack"},
+		"TemplateBody": []string{lambdaUrlTemplate},
+	})
+	defer cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	waitForStackStatus(t, srv, "lambda-url-delete-stack", "CREATE_COMPLETE")
+
+	// When: the stack is deleted
+	dr := cfnQuery(t, srv, "DeleteStack", url.Values{
+		"StackName": []string{"lambda-url-delete-stack"},
+	})
+	defer dr.Body.Close()
+	helpers.AssertStatus(t, dr, http.StatusOK)
+	waitForStackStatus(t, srv, "lambda-url-delete-stack", "DELETE_COMPLETE")
+
+	// Then: the function URL config no longer exists
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/2021-10-31/functions/cfn-url-test-fn/url", nil)
+	getResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GetFunctionUrlConfig: %v", err)
+	}
+	defer getResp.Body.Close()
+	helpers.AssertStatus(t, getResp, http.StatusNotFound)
+}
+
 const lambdaStackTagsTemplate = `{
   "AWSTemplateFormatVersion": "2010-09-09",
   "Resources": {

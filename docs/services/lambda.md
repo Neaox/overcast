@@ -398,6 +398,7 @@ cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
 | Function management         | 8            |                |
 | Invocation                  | 2            | 1              |
 | Aliases & versions          | 7            |                |
+| Function URLs               | 5            |                |
 | Event source mappings       | 5            |                |
 | Layers                      | 5            |                |
 | Concurrency & configuration | 5            |                |
@@ -438,6 +439,16 @@ cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
 | `DeleteAlias`            | ✅ Supported |                                                                                                | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteAlias.html)            |
 | `GetAlias`               | ✅ Supported |                                                                                                | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetAlias.html)               |
 | `ListAliases`            | ✅ Supported |                                                                                                | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListAliases.html)            |
+
+### Function URLs
+
+| Operation                 | Status       | Notes                                                                                                    | AWS Docs                                                                              |
+| ------------------------- | ------------ | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `CreateFunctionUrlConfig` | ✅ Supported | FunctionUrl always echoes the caller's Host (see docs/networking.md); AuthType stored but never enforced | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_CreateFunctionUrlConfig.html) |
+| `GetFunctionUrlConfig`    | ✅ Supported |                                                                                                          | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionUrlConfig.html)    |
+| `UpdateFunctionUrlConfig` | ✅ Supported |                                                                                                          | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionUrlConfig.html) |
+| `DeleteFunctionUrlConfig` | ✅ Supported |                                                                                                          | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunctionUrlConfig.html) |
+| `ListFunctionUrlConfigs`  | ✅ Supported |                                                                                                          | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListFunctionUrlConfigs.html)  |
 
 ### Event source mappings
 

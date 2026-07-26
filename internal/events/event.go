@@ -134,6 +134,12 @@ const (
 	LambdaFunctionDeleted Type = "lambda:FunctionDeleted"
 	// LambdaFunctionUpdated fires after a Lambda function's code or configuration is updated.
 	LambdaFunctionUpdated Type = "lambda:FunctionUpdated"
+	// LambdaFunctionUrlConfigCreated fires after a Lambda function URL config is created.
+	LambdaFunctionUrlConfigCreated Type = "lambda:FunctionUrlConfigCreated"
+	// LambdaFunctionUrlConfigUpdated fires after a Lambda function URL config is updated.
+	LambdaFunctionUrlConfigUpdated Type = "lambda:FunctionUrlConfigUpdated"
+	// LambdaFunctionUrlConfigDeleted fires after a Lambda function URL config is deleted.
+	LambdaFunctionUrlConfigDeleted Type = "lambda:FunctionUrlConfigDeleted"
 	// LambdaInstanceAcquired fires when a Lambda invocation starts (instance moves to running).
 	LambdaInstanceAcquired Type = "lambda:InstanceAcquired"
 	// LambdaInstanceReady fires when a Lambda container finishes starting and is

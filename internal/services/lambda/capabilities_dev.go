@@ -48,6 +48,18 @@ func init() {
 		capabilities.Capability{Service: "lambda", Operation: "ListAliases", Category: "Aliases & versions",
 			Status: capabilities.StatusSupported},
 
+		// Function URLs
+		capabilities.Capability{Service: "lambda", Operation: "CreateFunctionUrlConfig", Category: "Function URLs",
+			Status: capabilities.StatusSupported, Notes: "FunctionUrl always echoes the caller's Host (see docs/networking.md); AuthType stored but never enforced"},
+		capabilities.Capability{Service: "lambda", Operation: "GetFunctionUrlConfig", Category: "Function URLs",
+			Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "lambda", Operation: "UpdateFunctionUrlConfig", Category: "Function URLs",
+			Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "lambda", Operation: "DeleteFunctionUrlConfig", Category: "Function URLs",
+			Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "lambda", Operation: "ListFunctionUrlConfigs", Category: "Function URLs",
+			Status: capabilities.StatusSupported},
+
 		// Event source mappings
 		capabilities.Capability{Service: "lambda", Operation: "CreateEventSourceMapping", Category: "Event source mappings",
 			Status: capabilities.StatusSupported, Notes: "SQS→Lambda, DynamoDB Streams→Lambda"},

@@ -180,6 +180,53 @@ func requestPort(r *http.Request) int {
 	return n
 }
 
+// ClientIP returns the caller's IP address: the first entry of
+// X-Forwarded-For when present and valid, otherwise the host portion of
+// r.RemoteAddr. Used to populate AWS-shaped request contexts (API Gateway
+// "identity.sourceIp", Lambda function URL "requestContext.http.sourceIp").
+func ClientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if i := strings.IndexByte(xff, ','); i >= 0 {
+			xff = xff[:i]
+		}
+		if ip := strings.TrimSpace(xff); ip != "" && net.ParseIP(ip) != nil {
+			return ip
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	return host
+}
+
+// RequestProtocol returns r.Proto, falling back to "HTTP/1.1". Used to
+// populate AWS-shaped request contexts (API Gateway "identity.protocol",
+// Lambda function URL "requestContext.http.protocol").
+func RequestProtocol(r *http.Request) string {
+	if r.Proto != "" {
+		return r.Proto
+	}
+	return "HTTP/1.1"
+}
+
+// DomainPrefix returns the first label of host (e.g. "api" for
+// "api.example.com"), stripping any port first. Falls back to "localhost"
+// for an empty host. Used to populate AWS-shaped request contexts (API
+// Gateway v2 / Lambda function URL "requestContext.domainPrefix").
+func DomainPrefix(host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	if host == "" {
+		return "localhost"
+	}
+	if i := strings.IndexByte(host, '.'); i > 0 {
+		return host[:i]
+	}
+	return host
+}
+
 // ClampInt returns v clamped to [min, max].
 //
 //	maxMessages := serviceutil.ClampInt(req.MaxNumberOfMessages, 1, 10)
