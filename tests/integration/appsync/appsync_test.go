@@ -6404,3 +6404,71 @@ func eventsDelete(t *testing.T, srv *helpers.TestServer, path string) *http.Resp
 	}
 	return resp
 }
+
+// ─── Host-based routing (appsync-api Host header) ───────────────────────────
+
+// TestExecuteGraphQL_hostBasedInvoke mirrors TestExecuteGraphQL_basicQuery
+// but posts to "/graphql" against the real AWS Host-routed shape
+// ({apiId}.appsync-api.{region}.amazonaws.com/graphql) instead of the
+// path-style /_appsync/{apiId}/graphql URL, proving
+// middleware.HostDispatch's rewrite reaches the exact same execution logic.
+func TestExecuteGraphQL_hostBasedInvoke(t *testing.T) {
+	// Given: a GraphQL API with a resolver, same setup as the path-style test
+	srv := helpers.NewTestServer(t)
+	sdl := `type Query { hello: String }`
+	apiID, keyID := setupGraphQLAPI(t, srv, sdl)
+
+	appsyncPost(t, srv, "/v1/apis/"+apiID+"/datasources", map[string]any{
+		"name": "NoneDS",
+		"type": "NONE",
+	}).Body.Close()
+	appsyncPost(t, srv, "/v1/apis/"+apiID+"/types/Query/resolvers", map[string]any{
+		"fieldName":               "hello",
+		"dataSourceName":          "NoneDS",
+		"kind":                    "UNIT",
+		"requestMappingTemplate":  `{"version":"2018-05-29","payload":"world"}`,
+		"responseMappingTemplate": `$util.toJson($context.result)`,
+	}).Body.Close()
+
+	// When: the query is executed via the appsync-api Host header at the
+	// bare "/graphql" path instead of the path-style /_appsync/{apiId}/graphql
+	resp := appsyncPostWithHost(t, srv, "/graphql",
+		map[string]any{"query": `{ hello }`},
+		apiID+".appsync-api.us-east-1.amazonaws.com",
+		map[string]string{"x-api-key": keyID},
+	)
+	defer resp.Body.Close()
+
+	// Then: 200 with the same data the path-style invoke returns
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		Data struct {
+			Hello string `json:"hello"`
+		} `json:"data"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if result.Data.Hello != "world" {
+		t.Errorf("expected data.hello=%q, got %q", "world", result.Data.Hello)
+	}
+}
+
+// appsyncPostWithHost is appsyncPostWithHeaders but also sets an explicit
+// Host header, for exercising the Host-routed (appsync-api) GraphQL path.
+func appsyncPostWithHost(t *testing.T, srv *helpers.TestServer, path string, body map[string]any, host string, headers map[string]string) *http.Response {
+	t.Helper()
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+path, bytes.NewReader(b))
+	req.Host = host
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, doErr := http.DefaultClient.Do(req)
+	if doErr != nil {
+		t.Fatalf("appsyncPostWithHost %s: %v", path, doErr)
+	}
+	return resp
+}
