@@ -3,7 +3,7 @@ import { Clock } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { OvercastMark } from "@/components/brand/overcast-mark"
 import { OvercastWordmark } from "@/components/brand/overcast-wordmark"
-import { OvercastLoader } from "./overcast-loader"
+import { OvercastLoader } from "@/components/brand/overcast-loader"
 
 /** How long the attempt runs before the retry affordance offers a way out. */
 export const RETRY_AFTER_MS = 5000

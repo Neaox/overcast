@@ -2,7 +2,7 @@ import * as React from "react"
 import * as ToastPrimitive from "@radix-ui/react-toast"
 import { Check, CircleAlert, X } from "lucide-react"
 import { cva } from "class-variance-authority"
-import { OvercastLoader } from "@/components/layout/overcast-loader"
+import { OvercastLoader } from "@/components/brand/overcast-loader"
 import { createId } from "@/lib/id"
 import { cn } from "@/lib/utils"
 

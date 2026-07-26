@@ -512,11 +512,17 @@
     opacity: 0;
   }
 }
-.oc-cursor-blink {
+/* `.oc-loader line` is the brand mark's trailing prompt cursor. It is selected
+   structurally rather than by class because the element lives inside the mark's
+   SVG, which owns the brand geometry — but it animates from the same
+   declaration so the two can never drift out of sync. */
+.oc-cursor-blink,
+.oc-loader line {
   animation: oc-cursor-blink 1.1s steps(1, end) infinite;
 }
 @media (prefers-reduced-motion: reduce) {
-  .oc-cursor-blink {
+  .oc-cursor-blink,
+  .oc-loader line {
     animation: none;
     opacity: 1;
   }

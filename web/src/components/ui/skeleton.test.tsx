@@ -110,15 +110,23 @@ describe("prefers-reduced-motion", () => {
 
   it("declares the cursor blink as a stepped animation", () => {
     expect(css).toMatch(
-      /\.oc-cursor-blink\s*\{\s*animation:\s*oc-cursor-blink 1\.1s steps\(1, end\) infinite;/,
+      /\.oc-cursor-blink[^{]*\{\s*animation:\s*oc-cursor-blink 1\.1s steps\(1, end\) infinite;/,
     )
   })
 
+  // The loader's cursor is a <line> inside the brand SVG, so it cannot carry the
+  // class. It must animate from the same declaration rather than a copy, or the
+  // two drift and only one of them honours reduced motion.
+  it("animates the loader's cursor from the same declaration as the class", () => {
+    expect(css).toMatch(/\.oc-cursor-blink,\s*\.oc-loader line[^{]*\{/)
+    expect(reduceBlock).toMatch(/\.oc-loader line[^{]*\{[^}]*animation:\s*none;/)
+  })
+
   it("renders the cursor solid rather than hidden under reduce", () => {
-    expect(reduceBlock).toMatch(/\.oc-cursor-blink\s*\{[^}]*animation:\s*none;/)
-    expect(reduceBlock).toMatch(/\.oc-cursor-blink\s*\{[^}]*opacity:\s*1;/)
+    expect(reduceBlock).toMatch(/\.oc-cursor-blink[^{]*\{[^}]*animation:\s*none;/)
+    expect(reduceBlock).toMatch(/\.oc-cursor-blink[^{]*\{[^}]*opacity:\s*1;/)
     expect(reduceBlock).not.toMatch(
-      /\.oc-cursor-blink\s*\{[^}]*(display:\s*none|visibility:\s*hidden)/,
+      /\.oc-cursor-blink[^{]*\{[^}]*(display:\s*none|visibility:\s*hidden)/,
     )
   })
 })
