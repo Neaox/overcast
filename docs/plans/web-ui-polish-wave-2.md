@@ -69,6 +69,15 @@ The wave-1 sweep was walled off from files other agents held. Still outstanding:
 - List pages — identifier and numeric **value cells** (column headers and badges already inherit mono): `elasticache/cluster-list.tsx` (engine, version, node type, node count), `lambda/function-list.tsx` (runtime, memory), `cloudfront/distribution-list.tsx` (origin count), `dynamodb/table-list.tsx`, `ecr/repository-list.tsx`, `apigateway/api-list.tsx` (dates). Leave `comment`/`description` cells sans — they are prose. One raw `<label>` at `cloudfront/distribution-list.tsx:332` needs mono.
 - Maintain the two label specs: field and column labels 9px/`.14em`; section headings 10px/`.16em`. The wider tracking is what makes something read as a heading — do not let it leak into column headers. **Two known violations** use heading tracking at column-header size: `dashboard/components/not-emulated-chips.tsx:75` and `dashboard/components/service-list-view.tsx:55` are both `text-[9px] tracking-[0.16em]` and should be 10px.
 - **Extract a shared detail-field component.** `DetailRow`/`InfoRow` is hand-rolled 12 times — `cloudformation/stack-detail.tsx:576`, `cognito/cognito-pool-detail.tsx:2169`, `ec2/instance-detail.tsx:490`, `ec2/vpc-detail.tsx:806`, `ecs/task-detail.tsx:178`, `eventbridge/event-bus-detail.tsx:175`, `kms/kms-key-detail.tsx:181`, `rds/instance-detail.tsx:323`, `secretsmanager/components/secret-detail.tsx:274`, `ssm/ssm-parameter-detail.tsx:274`, `sts/sts-page.tsx:75`. They render a mono label over a **sans value**, so timestamps, counts and identifiers on every detail page are still sans (see `cloudwatch/logs/components/log-group-detail.tsx:202-213`). Fix it in one extracted component, not twelve edits — same lesson as the spinner rollout: the sweep reaches only what shares a component.
+- **Extract a generic table wrapper carrying the app-wide defaults.** `ResourceListCard` in
+  `components/ui/resource-list-page.tsx` already does this for *list pages* — card surface, header
+  strip, column-header treatment — but tables elsewhere (detail-page sub-tables, dialogs, the debug
+  and metrics views) bypass it and re-specify their own chrome, which is how they drift. A wrapper
+  that owns the surface, header treatment, body typography, row hover and empty/loading state would
+  make those defaults inheritable everywhere rather than only on list pages. Note the typography
+  pass is landing part of this (mono body cells on `TableCell` itself), so scope this to what
+  remains once that lands, and prefer extending `ResourceListCard` over introducing a second
+  wrapper that competes with it.
 - **Consider flipping `TableCell` to mono by default** as a deliberate change, not a side effect. It is the DRYest fix, but there are 463 `TableCell` sites across 57 files and ~20 prose cells that would silently flip; it needs its own pass with those exceptions identified first.
 
 ### Pages and features
