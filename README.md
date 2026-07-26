@@ -463,6 +463,7 @@ Full documentation lives in [`docs/`](./docs/README.md):
 | ------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | [Using AWS SDKs and CLI](./docs/sdk-cli.md)                         | Configure the AWS CLI, Node.js, Python, Go, Java, .NET, Rust, Terraform  |
 | [Using AWS CDK](./docs/cdk.md)                                      | `cdk bootstrap`, `cdk deploy`, supported resource types, troubleshooting |
+| [Networking and host-based addressing](./docs/networking.md)        | Host-routed endpoints (API Gateway, Lambda function URLs, AppSync), wildcard DNS |
 | [Service reference](./docs/services/)                               | Per-service endpoint coverage matrices                                   |
 | [Configuration reference](./docs/README.md#configuration-reference) | All environment variables                                                |
 | [Persistence](./docs/README.md#persistence)                         | Storage backends: memory, hybrid, persistent, WAL                        |

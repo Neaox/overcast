@@ -1,0 +1,148 @@
+---
+title: "Networking and host-based addressing"
+description: "Path-style vs Host-routed AWS endpoints, the *.localhost.overcast.sh wildcard DNS option, and what to use offline."
+section: "Getting Started"
+tags:
+  - docs
+  - guide
+  - networking
+  - dns
+---
+
+# Networking and host-based addressing
+
+Overcast listens on a single port (default `4566`) and dispatches every
+request — regardless of service — to the same emulator process. Real AWS
+services are split two ways depending on how a client addresses a resource:
+
+- **Path-style**: the resource ID is in the URL path
+  (`http://localhost:4566/restapis/{apiId}/{stage}/_user_request_/...`).
+  This always works against Overcast with zero configuration and is what
+  every AWS SDK falls back to when it isn't told a custom endpoint resolves
+  a Host-based URL.
+- **Host-routed (subdomain) style**: the resource ID (and often the region)
+  is encoded in the **Host header** instead —
+  `{apiId}.execute-api.{region}.amazonaws.com/{stage}/...`. Some AWS
+  features are *only* reachable this way on real AWS (Lambda function URLs
+  have no path-style equivalent at all).
+
+Overcast supports both. This page covers the Host-routed side: what's
+implemented, the DNS story that makes it work locally, and the tradeoffs.
+
+---
+
+## What works today
+
+| Service                 | Host pattern                                    | Notes                                                                 |
+| ------------------------ | ------------------------------------------------ | ---------------------------------------------------------------------- |
+| API Gateway (REST v1)     | `{apiId}.execute-api.{region}.{base}/{stage}/...` | Stage is always the first path segment, same as real AWS.             |
+| API Gateway (HTTP v2)     | `{apiId}.execute-api.{region}.{base}/...`         | `$default` stage: no stage segment. Named stages: `{stage}/...` prefix, resolved against your API's actual stages. |
+| Lambda function URLs      | `{urlId}.lambda-url.{region}.{base}/...`          | No path-style equivalent — this is the only way to invoke a function URL, on Overcast and on real AWS alike. See [Lambda function URLs](#lambda-function-urls) below. |
+| AppSync (GraphQL)         | `{apiId}.appsync-api.{region}.{base}/graphql`     | Also reachable at `/realtime` on the same host (Overcast colocates the GraphQL and realtime WebSocket endpoints; real AWS puts realtime on a separate `appsync-realtime-api` host). |
+| S3 (virtual-hosted style) | `{bucket}.s3[.{region}].{base}/...`               | Landing separately from the routing work described here — see the S3 section of [sdk-cli.md](./sdk-cli.md#s3-path-style-addressing) and [cdk.md](./cdk.md#s3-asset-upload-fails-on-windows) for current S3 virtual-hosted-style support. |
+
+Every Host-routed request is rewritten internally onto the same handlers
+path-style requests use, so behavior (authorizers, stage variables,
+integration dispatch, event publishing) is identical either way — pick
+whichever addressing style your client/SDK produces.
+
+`{base}` is whatever hostname the request actually arrived on — Overcast
+never hardcodes a domain. Point requests at `localhost`, an
+`OVERCAST_HOSTNAME`-configured wildcard domain (below), or a Docker service
+name; the response always echoes back the same base you called in.
+
+### Lambda function URLs
+
+`CreateFunctionUrlConfig` / `GetFunctionUrlConfig` / `UpdateFunctionUrlConfig`
+/ `DeleteFunctionUrlConfig` / `ListFunctionUrlConfigs` are implemented under
+the real API paths (`/2021-10-31/functions/{name}/url[s]`). The returned
+`FunctionUrl` always uses the Host you called Overcast on:
+
+```
+http://<url-id>.lambda-url.<region>.<host>:<port>/
+```
+
+A few things are intentionally simplified relative to real AWS, consistent
+with Overcast [not being a security boundary](../AGENTS.md#non-goals--decision-guide-for-agents):
+
+- **`AuthType` (`NONE` / `AWS_IAM`) is stored and returned but never
+  enforced.** Every Host-routed invocation runs as if `AuthType` were
+  `NONE`, regardless of what was configured.
+- **`Cors` is stored, returned, and reflected onto invoke responses**
+  (`Access-Control-Allow-*` headers) — this is the one piece of CORS
+  behavior actually applied, since it's cheap and matters for
+  browser-based testing against a function URL.
+- **`InvokeMode: RESPONSE_STREAM` is accepted but always behaves as
+  `BUFFERED`** — there is no streaming function-URL invocation path in this
+  emulator.
+- **`Qualifier` is stored for API-shape correctness but not enforced against
+  invocation** — Overcast's Lambda emulator already treats aliases/versions
+  as metadata rather than separate executable snapshots (see
+  `InvokeFunction`'s behavior), and function URLs follow the same rule.
+
+---
+
+## The `*.localhost.overcast.sh` wildcard DNS option
+
+Host-routed addressing needs the Host header's subdomain to actually resolve
+to wherever Overcast is listening. Three ways to get there, in order of
+convenience vs. offline-friendliness:
+
+1. **Plain `localhost` — offline-safe default.** `*.localhost` resolves to
+   `127.0.0.1` out of the box on Linux and macOS. **It does not on
+   Windows** — see the CDK S3 asset-upload troubleshooting in
+   [cdk.md](./cdk.md#s3-asset-upload-fails-on-windows) for the same
+   underlying issue affecting S3 virtual-hosted addressing. If you're on
+   Windows or need this to work with zero network dependency, use option 3.
+2. **A public wildcard-DNS domain**, e.g. `localhost.overcast.sh` or
+   `localhost.localstack.cloud` — both are public domains that
+   unconditionally resolve every `*.<domain>` subdomain to `127.0.0.1`. Set
+   `OVERCAST_HOSTNAME` to the domain and Overcast will echo it back in every
+   generated Host-routed URL (function URLs, and any future host-routed
+   feature). No hosts-file edits, works identically on every OS.
+3. **A hosts-file entry** for each specific subdomain you need, or a local
+   DNS resolver (`dnsmasq`, `*.test` via `/etc/hosts`) that wildcard-resolves
+   your own domain to `127.0.0.1`. More setup, but works fully offline and
+   under restrictive network policies.
+
+> **Caveat: public wildcard DNS needs internet access, and may be blocked.**
+>
+> - Options 2 above requires a DNS lookup to a public resolver — it will not
+>   work in an offline/air-gapped environment. Use option 1 or 3 there.
+> - Some routers, corporate networks, and DNS filtering software implement
+>   **DNS rebinding protection**, which blocks public hostnames from
+>   resolving to private/loopback addresses like `127.0.0.1` — exactly what
+>   `localhost.overcast.sh` and `localhost.localstack.cloud` do on purpose.
+>   If Host-routed requests time out or fail to resolve, this is the first
+>   thing to check (`nslookup localhost.overcast.sh` should return
+>   `127.0.0.1`; if it returns nothing or errors, your network is filtering
+>   it).
+> - Plain `localhost` has neither problem, which is why it remains the
+>   default and the right choice for CI and offline development.
+
+### Example: `docker compose` with a wildcard-DNS hostname
+
+```yaml
+services:
+  overcast:
+    image: ghcr.io/neaox/overcast
+    ports:
+      - "4566:4566" # AWS API endpoint
+      - "4567:4567" # web management console
+    environment:
+      OVERCAST_HOSTNAME: localhost.overcast.sh
+```
+
+With this configuration, `CreateFunctionUrlConfig` returns URLs like
+`http://a1b2c3....lambda-url.us-east-1.localhost.overcast.sh:4566/`, which
+resolve via public DNS to `127.0.0.1` and route straight back into this same
+container — see [performance.md](./performance.md#data-dir-placement--avoid-host-bind-mounts-on-docker-desktop)
+for the matching `docker compose` pattern for the `/data` volume.
+
+---
+
+## See also
+
+- [Using AWS SDKs and CLI](./sdk-cli.md) — endpoint configuration for every SDK
+- [Using AWS CDK](./cdk.md) — the S3-specific virtual-hosted-addressing / Windows DNS issue
+- [Lambda service reference](./services/lambda.md) — full endpoint coverage table

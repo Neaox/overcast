@@ -683,6 +683,70 @@ Also: always `defer ticker.Stop()`, always pass `r.Context()` to blocking calls.
 | Dependency injection | `router.New(cfg, store, logger, clk, [hookRunner])` | No globals; everything testable                      |
 | Functional options   | `tests/helpers.Option`                              | Flexible test server configuration                   |
 | Observer (planned)   | `internal/events/`                                  | SNS->SQS, SQS->Lambda event pipelines                |
+| Host-route table     | `internal/middleware/hostroute.go`                  | Host-subdomain (execute-api/lambda-url/appsync-api) → path-style route |
+
+---
+
+### Host-based (subdomain) routing
+
+Some AWS services address a resource via the request's **Host header**
+rather than its path — `{id}.execute-api.{region}.amazonaws.com`,
+`{urlId}.lambda-url.{region}.on.aws`, `{id}.appsync-api.{region}.amazonaws.com`,
+and (on a parallel track) S3 virtual-hosted buckets. Overcast recognises this
+grammar with one shared parser and dispatch table,
+[`internal/middleware/hostroute.go`](./internal/middleware/hostroute.go):
+
+```
+{id}.{label}[.{region}].{base}[:port]
+```
+
+`ParseHostRoute` matches a fixed `label` vocabulary (`hostRouteLabels`) and
+returns the `{id}` (everything before the label — dot-joined, so dotted IDs
+work) and `{region}` (only when the segment after the label looks like an AWS
+region). `HostRouteService` exposes the same label→service map to
+`internal/middleware/logger.go`'s `detectService`, so a request's log label
+can never drift from what it was actually routed to — there is exactly one
+place that knows the label vocabulary.
+
+The dispatch table itself (`[]middleware.HostRouteRow`, each a `Label` +
+`Rewrite func(r *http.Request, m HostRouteMatch)`) is **not** a package
+global — it's built once in `router.New()` (`internal/router/router.go`,
+"Host-based routing" section) after the owning services exist, because a
+`Rewrite` closure typically calls back into its service (e.g.
+`apigwSvc.HostRouteRewrite`). It's registered early via the same
+declare-a-pointer-populate-later pattern already used for `queryDispatchers`
+and the event `bus` (chi requires all `r.Use` calls before any route is
+registered, but the services those rows call into don't exist yet at that
+point in `New()`).
+
+**Adding a new host-routed service costs exactly one row:**
+
+1. Add its `"label"` → service-name entry to `hostRouteLabels` in
+   `internal/middleware/hostroute.go`.
+2. In `router.go`'s "Host-based routing" section, append one
+   `middleware.HostRouteRow{Label: "...", Rewrite: yourSvc.HostRouteRewrite}`
+   to `hostRoutes`.
+3. Implement `HostRouteRewrite(r *http.Request, m middleware.HostRouteMatch)`
+   on your service. Keep it thin — a path rewrite onto a route your service
+   already registers (see `appsync.Service.HostRouteRewrite` for the
+   simplest case: pure string rewrite, no store lookup) or, when Host alone
+   is genuinely ambiguous about which existing route applies (see
+   `apigateway.Service.HostRouteRewrite` / `ExecuteByHost`: a Host only
+   carries `{apiId}` + `{region}`, not whether that ID is a REST or HTTP API,
+   or where the stage boundary falls in the path), rewrite onto a small
+   marker route in your own package that resolves the ambiguity using your
+   package's own store and then re-enters your existing path-style handler
+   via a synthetic `chi.RouteContext` (see `handler_host_execute.go`) — never
+   duplicate protocol logic in the row itself.
+
+S3's virtual-hosted addressing (`internal/middleware/s3virtualhost.go`)
+already fits this grammar (label `s3`, region optional) but is deliberately
+**not** folded into the table yet — see the doc comment at the top of
+`hostroute.go` for why (a parallel branch is actively changing it) and treat
+migrating it in as a follow-up once both land.
+
+User-facing setup (wildcard DNS, `OVERCAST_HOSTNAME`, what's supported today)
+is documented in [docs/networking.md](./docs/networking.md).
 
 ---
 
