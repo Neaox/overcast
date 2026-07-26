@@ -10,7 +10,7 @@ import {
 } from "@/features/ec2/data"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
-import { Badge } from "@/components/ui/badge"
+import { InstanceStateBadge } from "./instance-state-badge"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
 import {
   Table,
@@ -494,18 +494,4 @@ function InfoRow({ label, value }: { label: string; value: string }) {
       <span className="text-sm text-fg">{value}</span>
     </div>
   )
-}
-
-function InstanceStateBadge({ state }: { state: string }) {
-  const variant =
-    state === "running"
-      ? "success"
-      : state === "pending" || state === "shutting-down"
-        ? "warning"
-        : state === "terminated"
-          ? "danger"
-          : state === "stopped"
-            ? "default"
-            : "default"
-  return <Badge variant={variant}>{state}</Badge>
 }

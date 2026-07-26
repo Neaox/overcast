@@ -50,6 +50,7 @@ import {
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { Badge } from "@/components/ui/badge"
+import { InstanceStateBadge } from "./instance-state-badge"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { useForm } from "@tanstack/react-form"
@@ -117,22 +118,6 @@ function NatGatewayStateBadge({ state }: { state: string }) {
         : state === "deleting" || state === "deleted"
           ? "default"
           : state === "failed"
-            ? "danger"
-            : "default"
-  return <Badge variant={variant}>{state}</Badge>
-}
-
-// ─── Instance state badge ─────────────────────────────────────────────────
-
-function InstanceStateBadge({ state }: { state: string }) {
-  const variant =
-    state === "running"
-      ? "success"
-      : state === "pending" || state === "stopping" || state === "shutting-down"
-        ? "warning"
-        : state === "terminated"
-          ? "default"
-          : state === "stopped"
             ? "danger"
             : "default"
   return <Badge variant={variant}>{state}</Badge>
