@@ -1,0 +1,7 @@
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/x-amz-json-1.1"
+  },
+  "body": "{\"StreamDescription\":{\"EnhancedMonitoring\":[],\"HasMoreShards\":false,\"RetentionPeriodHours\":24,\"Shards\":[{\"HashKeyRange\":{\"EndingHashKey\":\"340282366920938463463374607431768211455\",\"StartingHashKey\":\"0\"},\"SequenceNumberRange\":{\"StartingSequenceNumber\":\"490000000000000000000\"},\"ShardId\":\"shardId-000000000000\"}],\"StreamARN\":\"arn:aws:kinesis:us-east-1:000000000000:stream/golden-stream\",\"StreamCreationTimestamp\":0,\"StreamName\":\"golden-stream\",\"StreamStatus\":\"ACTIVE\"}}"
+}

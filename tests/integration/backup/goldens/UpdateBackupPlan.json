@@ -1,0 +1,7 @@
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/x-amz-json-1.0"
+  },
+  "body": "{\"BackupPlanArn\":\"arn:aws:backup:us-east-1:000000000000:backup-plan:plan-0\",\"BackupPlanId\":\"plan-0\",\"VersionId\":\"v2\"}"
+}

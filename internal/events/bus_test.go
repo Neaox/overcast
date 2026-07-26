@@ -11,6 +11,122 @@ import (
 
 type idPayload struct{ ID int }
 
+// TestBus_Publish_PopulatesResourceARNFromPayload verifies that Bus.Publish
+// derives Event.ResourceARN from a payload implementing arnCarrier (see
+// event.go) when the caller doesn't set ResourceARN explicitly. This is what
+// lets most publish call sites get resourceArn on the wire for free just by
+// populating the ARN field on their existing ResourcePayload/LambdaFunctionPayload.
+func TestBus_Publish_PopulatesResourceARNFromPayload(t *testing.T) {
+	bus := NewBus()
+	defer bus.Stop()
+
+	const wantARN = "arn:aws:sqs:us-east-1:000000000000:my-queue"
+	bus.Publish(context.Background(), Event{
+		Type:    SQSQueueCreated,
+		Source:  "sqs",
+		Payload: ResourcePayload{Name: "my-queue", ARN: wantARN},
+	})
+
+	snapshot, cancel := bus.SnapshotAndSubscribeAll(func(context.Context, Event) {})
+	defer cancel()
+	if len(snapshot) != 1 {
+		t.Fatalf("snapshot len = %d, want 1", len(snapshot))
+	}
+	if got := snapshot[0].ResourceARN; got != wantARN {
+		t.Errorf("ResourceARN = %q, want %q", got, wantARN)
+	}
+}
+
+// TestBus_Publish_LeavesResourceARNEmptyWithoutCarrier verifies that
+// ResourceARN stays empty (never a zero-value guess) when the payload type
+// doesn't implement arnCarrier, or the ARN is genuinely unknown.
+func TestBus_Publish_LeavesResourceARNEmptyWithoutCarrier(t *testing.T) {
+	bus := NewBus()
+	defer bus.Stop()
+
+	bus.Publish(context.Background(), Event{Type: S3ObjectCreated, Payload: idPayload{ID: 1}})
+	bus.Publish(context.Background(), Event{Type: SQSQueueCreated, Payload: ResourcePayload{Name: "no-arn-known"}})
+
+	snapshot, cancel := bus.SnapshotAndSubscribeAll(func(context.Context, Event) {})
+	defer cancel()
+	if len(snapshot) != 2 {
+		t.Fatalf("snapshot len = %d, want 2", len(snapshot))
+	}
+	for i, e := range snapshot {
+		if e.ResourceARN != "" {
+			t.Errorf("snapshot[%d].ResourceARN = %q, want empty", i, e.ResourceARN)
+		}
+	}
+}
+
+// TestBus_Publish_RespectsExplicitResourceARN verifies that a caller-supplied
+// ResourceARN is never overwritten by the payload-derived value.
+func TestBus_Publish_RespectsExplicitResourceARN(t *testing.T) {
+	bus := NewBus()
+	defer bus.Stop()
+
+	const explicit = "arn:aws:sqs:us-east-1:000000000000:explicit-override"
+	bus.Publish(context.Background(), Event{
+		Type:        SQSQueueCreated,
+		Payload:     ResourcePayload{Name: "q", ARN: "arn:aws:sqs:us-east-1:000000000000:q"},
+		ResourceARN: explicit,
+	})
+
+	snapshot, cancel := bus.SnapshotAndSubscribeAll(func(context.Context, Event) {})
+	defer cancel()
+	if len(snapshot) != 1 {
+		t.Fatalf("snapshot len = %d, want 1", len(snapshot))
+	}
+	if got := snapshot[0].ResourceARN; got != explicit {
+		t.Errorf("ResourceARN = %q, want %q (explicit value must win)", got, explicit)
+	}
+}
+
+// TestS3ObjectPayload_ArnFromPayload verifies the cheap-to-construct S3
+// object ARN derivation (no account/region component, per AWS's S3 ARN
+// format quirk — see protocol.ARN).
+func TestS3ObjectPayload_ArnFromPayload(t *testing.T) {
+	cases := []struct {
+		name string
+		p    S3ObjectPayload
+		want string
+	}{
+		{"bucket+key", S3ObjectPayload{Bucket: "my-bucket", Key: "path/to/obj.txt"}, "arn:aws:s3:::my-bucket/path/to/obj.txt"},
+		{"bucket only", S3ObjectPayload{Bucket: "my-bucket"}, "arn:aws:s3:::my-bucket"},
+		{"no bucket", S3ObjectPayload{Key: "x"}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.p.arnFromPayload(); got != tc.want {
+				t.Errorf("arnFromPayload() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCFNResourcePayload_ArnFromPayload verifies PhysicalID is only surfaced
+// as ResourceARN when it actually looks like an ARN — CloudFormation
+// physical IDs are frequently bare names (e.g. S3 bucket names), and
+// treating those as ARNs would be actively misleading downstream.
+func TestCFNResourcePayload_ArnFromPayload(t *testing.T) {
+	cases := []struct {
+		name string
+		p    CFNResourcePayload
+		want string
+	}{
+		{"arn physical id", CFNResourcePayload{PhysicalID: "arn:aws:sqs:us-east-1:000000000000:q"}, "arn:aws:sqs:us-east-1:000000000000:q"},
+		{"bare name physical id", CFNResourcePayload{PhysicalID: "my-bucket"}, ""},
+		{"empty", CFNResourcePayload{}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.p.arnFromPayload(); got != tc.want {
+				t.Errorf("arnFromPayload() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestBus_SnapshotAndSubscribeAll_Deterministic exercises the simple,
 // non-racy case: events published strictly before the call must appear in
 // the snapshot; events published strictly after must arrive only via the

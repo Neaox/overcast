@@ -1,0 +1,7 @@
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/x-amz-json-1.1"
+  },
+  "body": "{\"Parameters\":[{\"Name\":\"/golden/describe/a\",\"Type\":\"String\",\"Version\":1,\"LastModifiedDate\":0,\"Policies\":[],\"Tier\":\"Standard\"},{\"Name\":\"/golden/describe/b\",\"Type\":\"StringList\",\"Version\":1,\"LastModifiedDate\":0,\"Policies\":[],\"Tier\":\"Standard\"}]}"
+}

@@ -140,7 +140,7 @@ func (h *Handler) createQueueTyped(ctx context.Context, in *createQueueRequest) 
 			Type:    events.SQSQueueCreated,
 			Time:    h.clk.Now(),
 			Source:  "sqs",
-			Payload: events.ResourcePayload{Name: in.QueueName},
+			Payload: events.ResourcePayload{Name: in.QueueName, ARN: q.ARN},
 		})
 	}
 	return &createQueueResponse{QueueUrl: queueURL}, nil
@@ -224,11 +224,12 @@ func (h *Handler) deleteQueueTyped(ctx context.Context, in *deleteQueueRequest) 
 	}
 
 	if h.bus != nil {
+		arn := protocol.QueueARN(middleware.RegionFromContext(ctx, h.cfg.Region), h.cfg.AccountID, queueName)
 		h.bus.Publish(ctx, events.Event{
 			Type:    events.SQSQueueDeleted,
 			Time:    h.clk.Now(),
 			Source:  "sqs",
-			Payload: events.ResourcePayload{Name: queueName},
+			Payload: events.ResourcePayload{Name: queueName, ARN: arn},
 		})
 	}
 	return &struct{}{}, nil
@@ -276,10 +277,11 @@ func (h *Handler) purgeQueue(ctx context.Context, queueName string) *protocol.AW
 	}
 
 	if h.bus != nil {
+		arn := protocol.QueueARN(middleware.RegionFromContext(ctx, h.cfg.Region), h.cfg.AccountID, queueName)
 		h.bus.Publish(ctx, events.Event{
 			Type:    events.SQSQueuePurged,
 			Source:  "sqs",
-			Payload: events.ResourcePayload{Name: queueName},
+			Payload: events.ResourcePayload{Name: queueName, ARN: arn},
 		})
 	}
 
@@ -371,7 +373,7 @@ func (h *Handler) CreateQueue(w http.ResponseWriter, r *http.Request) {
 			Type:    events.SQSQueueCreated,
 			Time:    h.clk.Now(),
 			Source:  "sqs",
-			Payload: events.ResourcePayload{Name: req.QueueName},
+			Payload: events.ResourcePayload{Name: req.QueueName, ARN: q.ARN},
 		})
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, &createQueueResponse{QueueUrl: queueURL})
@@ -487,11 +489,12 @@ func (h *Handler) DeleteQueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.bus != nil {
+		arn := protocol.QueueARN(middleware.RegionFromContext(r.Context(), h.cfg.Region), h.cfg.AccountID, queueName)
 		h.bus.Publish(r.Context(), events.Event{
 			Type:    events.SQSQueueDeleted,
 			Time:    h.clk.Now(),
 			Source:  "sqs",
-			Payload: events.ResourcePayload{Name: queueName},
+			Payload: events.ResourcePayload{Name: queueName, ARN: arn},
 		})
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, struct{}{})

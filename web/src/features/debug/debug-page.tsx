@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual"
-import { ChevronRight, Copy, Database, ExternalLink, LinkIcon, RefreshCw, Search } from "lucide-react"
+import {
+  ChevronRight,
+  Copy,
+  Database,
+  ExternalLink,
+  LinkIcon,
+  RefreshCw,
+  Search,
+} from "lucide-react"
 import { PageHeader, QueryListState, Spinner } from "@/components/ui/primitives"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -99,10 +107,26 @@ export function DebugPage({
   initialService,
   initialNamespace,
   initialKey,
+  onNamespaceChange,
+  onKeyChange,
 }: {
   initialService?: string
   initialNamespace?: string
   initialKey?: string
+  /**
+   * Called whenever the user picks a namespace (directly, via the service
+   * breadcrumb, or by clearing back to "All"). The caller (the /debug route)
+   * write-throughs this to the URL with a *pushed* history entry — namespace
+   * changes are a deliberate navigation step worth going "back" to.
+   */
+  onNamespaceChange?: (next: { service: string; namespace: string }) => void
+  /**
+   * Called whenever the user picks (or clears) a key within the active
+   * namespace. The caller write-throughs this to the URL with a *replaced*
+   * entry so clicking through many keys doesn't fill up browser history —
+   * only the namespace-level navigation above does.
+   */
+  onKeyChange?: (key: string) => void
 }) {
   const { toast } = useToast()
   const [serviceFilter, setServiceFilter] = useState(initialService ?? "")
@@ -110,6 +134,21 @@ export function DebugPage({
   const [selectedKey, setSelectedKey] = useState(initialKey ?? "")
   const [filter, setFilter] = useState("")
   const [keyView, setKeyView] = useState<"flat" | "tree">("tree")
+
+  // Keeps the active key in sync when the URL's `key` param changes without a
+  // namespace change (e.g. browser back/forward landing on a different
+  // replaced history entry for the same namespace) — namespace changes are
+  // already handled by the parent remounting DebugPage (see debug.tsx's
+  // `key={service:namespace}` prop), so only the key needs this effect.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- responding to an external prop (URL) change, not deriving from this render's own state
+    setSelectedKey(initialKey ?? "")
+  }, [initialKey])
+
+  function selectKey(key: string) {
+    setSelectedKey(key)
+    onKeyChange?.(key)
+  }
 
   const summaryQuery = useQuery(debugStateQueryOptions())
   const availableNamespaces = useMemo(
@@ -224,6 +263,7 @@ export function DebugPage({
               setServiceFilter("")
               setNamespace("")
               setSelectedKey("")
+              onNamespaceChange?.({ service: "", namespace: "" })
             }}
             onService={() => {
               const first = activeService
@@ -232,8 +272,9 @@ export function DebugPage({
               setServiceFilter(activeService)
               setNamespace(first)
               setSelectedKey("")
+              onNamespaceChange?.({ service: activeService, namespace: first })
             }}
-            onNamespace={() => setSelectedKey("")}
+            onNamespace={() => selectKey("")}
           />
 
           <div className="grid min-h-0 gap-4 lg:grid-cols-[18rem_minmax(20rem,26rem)_1fr]">
@@ -255,6 +296,7 @@ export function DebugPage({
                         onClick={() => {
                           setNamespace(ns)
                           setSelectedKey("")
+                          onNamespaceChange?.({ service: serviceFilter, namespace: ns })
                         }}
                       >
                         <span className="truncate">{category}</span>
@@ -322,7 +364,7 @@ export function DebugPage({
                 <KeyTree
                   rows={rows}
                   activeKey={activeKey}
-                  onSelect={setSelectedKey}
+                  onSelect={selectKey}
                   searchActive={searchActive}
                   hasNextPage={namespaceQuery.hasNextPage}
                   isFetchingNextPage={namespaceQuery.isFetchingNextPage}
@@ -332,7 +374,7 @@ export function DebugPage({
                 <FlatKeyTable
                   rows={rows}
                   activeKey={activeKey}
-                  onSelect={setSelectedKey}
+                  onSelect={selectKey}
                   searchActive={searchActive}
                   hasNextPage={namespaceQuery.hasNextPage}
                   isFetchingNextPage={namespaceQuery.isFetchingNextPage}
@@ -468,7 +510,10 @@ function flattenVisibleTree(roots: KeyTreeNode[], collapsed: Set<string>): FlatT
     for (const node of nodes) {
       out.push({ node, depth })
       if (node.children.size > 0 && !collapsed.has(node.path)) {
-        walk(Array.from(node.children.values()).sort((a, b) => a.name.localeCompare(b.name)), depth + 1)
+        walk(
+          Array.from(node.children.values()).sort((a, b) => a.name.localeCompare(b.name)),
+          depth + 1,
+        )
       }
     }
   }
@@ -562,7 +607,10 @@ function KeyTree({
                 <span className="flex min-w-0 items-center gap-1 truncate">
                   {hasChildren ? (
                     <ChevronRight
-                      className={cn("h-3 w-3 shrink-0 transition-transform", !isCollapsed && "rotate-90")}
+                      className={cn(
+                        "h-3 w-3 shrink-0 transition-transform",
+                        !isCollapsed && "rotate-90",
+                      )}
                     />
                   ) : (
                     <span className="w-3 shrink-0" />
@@ -570,7 +618,9 @@ function KeyTree({
                   {node.name}
                 </span>
                 {isLeaf && node.value != null ? (
-                  <span className="shrink-0 text-fg-muted">{node.value.length.toLocaleString()} B</span>
+                  <span className="shrink-0 text-fg-muted">
+                    {node.value.length.toLocaleString()} B
+                  </span>
                 ) : null}
               </button>
             </div>

@@ -133,7 +133,7 @@ func (h *Handler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.publish(r, events.SecretCreated, events.ResourcePayload{Name: req.Name})
+	h.publish(r, events.SecretCreated, events.ResourcePayload{Name: req.Name, ARN: arn})
 
 	h.log.Info("secret created", zap.String("name", req.Name))
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
@@ -294,7 +294,7 @@ func (h *Handler) PutSecretValue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.publish(r, events.SecretUpdated, events.ResourcePayload{Name: sec.Name})
+	h.publish(r, events.SecretUpdated, events.ResourcePayload{Name: sec.Name, ARN: sec.ARN})
 
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"ARN":           sec.ARN,
@@ -356,7 +356,7 @@ func (h *Handler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.publish(r, events.SecretUpdated, events.ResourcePayload{Name: sec.Name})
+	h.publish(r, events.SecretUpdated, events.ResourcePayload{Name: sec.Name, ARN: sec.ARN})
 
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"ARN":       sec.ARN,
@@ -451,7 +451,7 @@ func (h *Handler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.publish(r, events.SecretDeleted, events.ResourcePayload{Name: sec.Name})
+	h.publish(r, events.SecretDeleted, events.ResourcePayload{Name: sec.Name, ARN: sec.ARN})
 
 	h.log.Info("secret deleted", zap.String("name", sec.Name))
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
@@ -535,7 +535,7 @@ func (h *Handler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.publish(r, events.SecretRotated, events.ResourcePayload{Name: sec.Name})
+	h.publish(r, events.SecretRotated, events.ResourcePayload{Name: sec.Name, ARN: sec.ARN})
 
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"ARN":       sec.ARN,

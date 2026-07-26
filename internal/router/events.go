@@ -12,7 +12,10 @@ package router
 // The stream stays open until the client disconnects or the server shuts down.
 // Each event — replayed or live — is sent in the same shape:
 //
-//	data: {"type":"s3:ObjectCreated:*","time":"...","source":"s3","payload":{...}}\n\n
+//	data: {"type":"s3:ObjectCreated:*","time":"...","source":"s3","resourceArn":"arn:aws:s3:::my-bucket","payload":{...}}\n\n
+//
+// resourceArn is omitted whenever the event has no known/cheap-to-construct
+// ARN for its primary resource (see events.Event.ResourceARN).
 //
 // An initial ": connected\n\n" comment is flushed immediately so the client
 // can distinguish "connected but no events yet" from "not connected at all".
@@ -41,10 +44,14 @@ import (
 
 // sseEnvelope is the JSON shape streamed to each SSE client.
 type sseEnvelope struct {
-	Type    string          `json:"type"`
-	Time    string          `json:"time"`
-	Source  string          `json:"source"`
-	Payload json.RawMessage `json:"payload"`
+	Type   string `json:"type"`
+	Time   string `json:"time"`
+	Source string `json:"source"`
+	// ResourceARN is the ARN of the event's primary resource, when known —
+	// see events.Event.ResourceARN. Omitted when empty so older/simpler
+	// consumers see no shape change.
+	ResourceARN string          `json:"resourceArn,omitempty"`
+	Payload     json.RawMessage `json:"payload"`
 }
 
 // eventsHandler returns an http.HandlerFunc that fans out all bus events as SSE.
@@ -147,10 +154,11 @@ func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, e events.Event, 
 	}
 
 	env := sseEnvelope{
-		Type:    string(e.Type),
-		Time:    e.Time.UTC().Format(time.RFC3339Nano),
-		Source:  e.Source,
-		Payload: payload,
+		Type:        string(e.Type),
+		Time:        e.Time.UTC().Format(time.RFC3339Nano),
+		Source:      e.Source,
+		ResourceARN: e.ResourceARN,
+		Payload:     payload,
 	}
 
 	data, err := json.Marshal(env)
