@@ -1,4 +1,10 @@
 @import "tailwindcss";
+/* JetBrains Mono (regular + bold) — self-hosted via @fontsource. Imported here
+   rather than main.tsx so all font-face rules live with the design tokens; CSS
+   @import rules must precede other statements, and Tailwind v4 tolerates
+   additional @imports after "tailwindcss" (Vite resolves the bare specifiers). */
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/700.css";
 @plugin "@tailwindcss/typography";
 
 /* ─── Semantic colour tokens ───────────────────────────────────────────────
@@ -39,8 +45,18 @@
   --color-sidebar-item-active: var(--sidebar-item-active);
   --color-sidebar-item-active-fg: var(--sidebar-item-active-fg);
 
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  /* Brand-mark colours (cloud logo SVG) + accent glow / cursor block */
+  --color-cloud: var(--cloud);
+  --color-cloud-stroke: var(--cloud-stroke);
+  --color-accent-glow: var(--accent-glow);
+
+  /* Design radii → rounded-card / rounded-control utilities */
+  --radius-card: 10px;
+  --radius-control: 6px;
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono:
+    "JetBrains Mono", ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
 }
 
 /* ─── Prose typography (docs viewer) ──────────────────────────────────────
@@ -85,72 +101,88 @@
   border: 1px solid var(--border);
 }
 
-/* ─── Light theme ─────────────────────────────────────────────────────── */
+/* ─── Light theme (Overcast brand palette) ────────────────────────────── */
 :root,
 [data-theme="light"] {
   color-scheme: light;
 
-  --bg: oklch(0.99 0 0);
-  --bg-subtle: oklch(0.97 0.003 240);
-  --bg-muted: oklch(0.94 0.005 240);
-  --bg-elevated: oklch(1 0 0);
-  --bg-overlay: oklch(1 0 0);
+  --bg: #f4f8fc; /* page bg */
+  /* --bg-subtle / --bg-muted: no direct design equivalent — derived steps
+     between page bg (#F4F8FC) and hairline border (#D5E2EE), same blue-gray hue. */
+  --bg-subtle: #ecf2f9;
+  --bg-muted: #e2ebf4;
+  --bg-elevated: #ffffff; /* card / elevated */
+  --bg-overlay: #ffffff; /* card / elevated */
 
-  --fg: oklch(0.15 0.01 240);
-  --fg-muted: oklch(0.45 0.01 240);
-  --fg-subtle: oklch(0.65 0.01 240);
-  --fg-on-accent: oklch(1 0 0);
+  --fg: #16222e; /* heading text */
+  --fg-muted: #33465a; /* body text */
+  --fg-subtle: #54718a; /* muted text */
+  --fg-on-accent: #ffffff;
 
-  --border: oklch(0.88 0.005 240);
-  --border-muted: oklch(0.92 0.003 240);
+  --border: #d5e2ee; /* hairline */
+  --border-muted: #e2ecf5; /* derived: one step lighter than --border, same hue */
 
-  --accent: oklch(0.55 0.19 250);
-  --accent-hover: oklch(0.48 0.19 250);
-  --accent-muted: oklch(0.93 0.04 250);
+  --accent: #1273c4;
+  --accent-hover: #3e97df; /* accent-glow */
+  --accent-muted: #e3f0fb; /* accent-soft */
+  --accent-glow: #3e97df; /* glow / cursor block */
 
-  --danger: oklch(0.55 0.2 25);
-  --danger-muted: oklch(0.95 0.04 25);
-  --warning: oklch(0.72 0.17 75);
-  --success: oklch(0.56 0.15 150);
+  --danger: #c9564a;
+  --danger-muted: #f9e9e7; /* derived: soft tint of --danger */
+  --warning: #c08a2d;
+  --success: #2e9e6b;
 
-  --sidebar-bg: oklch(0.96 0.006 240);
-  --sidebar-fg: oklch(0.42 0.012 240);
-  --sidebar-fg-strong: oklch(0.15 0.01 240);
-  --sidebar-item-hover: oklch(0.9 0.008 240);
-  --sidebar-item-active: oklch(0.55 0.19 250);
-  --sidebar-item-active-fg: oklch(1 0 0);
+  /* Brand mark (cloud logo) */
+  --cloud: #c4d8ea;
+  --cloud-stroke: #31536f;
+
+  /* Sidebar sits on the card surface in the new design */
+  --sidebar-bg: #ffffff; /* card */
+  --sidebar-fg: #33465a; /* body text */
+  --sidebar-fg-strong: #16222e; /* heading text */
+  --sidebar-item-hover: #eaf3fa; /* derived: whisper between accent-soft and page bg */
+  --sidebar-item-active: #e3f0fb; /* accent-soft — active nav is accent-on-accent-soft */
+  --sidebar-item-active-fg: #1273c4; /* accent */
 }
 
 /* ─── Dark palette — defined once, applied by both dark selectors below ── */
 :root {
-  --_dark-bg: oklch(0.12 0.008 240);
-  --_dark-bg-subtle: oklch(0.15 0.008 240);
-  --_dark-bg-muted: oklch(0.18 0.008 240);
-  --_dark-bg-elevated: oklch(0.17 0.008 240);
-  --_dark-bg-overlay: oklch(0.2 0.008 240);
+  --_dark-bg: #10161d; /* page bg */
+  /* --_dark-bg-subtle / --_dark-bg-muted: no direct design equivalent — derived
+     steps between page bg (#10161D) and hairline border (#24384C), same hue. */
+  --_dark-bg-subtle: #141d26;
+  --_dark-bg-muted: #1a2735;
+  --_dark-bg-elevated: #16222e; /* card / elevated */
+  --_dark-bg-overlay: #16222e; /* card / elevated */
 
-  --_dark-fg: oklch(0.93 0.005 240);
-  --_dark-fg-muted: oklch(0.65 0.008 240);
-  --_dark-fg-subtle: oklch(0.48 0.008 240);
+  --_dark-fg: #dcebf8; /* heading text */
+  --_dark-fg-muted: #a9c2d8; /* body text */
+  --_dark-fg-subtle: #7fa8c9; /* muted text */
 
-  --_dark-border: oklch(0.26 0.008 240);
-  --_dark-border-muted: oklch(0.22 0.008 240);
+  --_dark-border: #24384c; /* hairline */
+  --_dark-border-muted: #1c2c3d; /* derived: one step darker than --border, same hue */
 
-  --_dark-accent: oklch(0.65 0.19 250);
-  --_dark-accent-hover: oklch(0.72 0.19 250);
-  --_dark-accent-muted: oklch(0.22 0.06 250);
+  --_dark-accent: #5fb8ff;
+  --_dark-accent-hover: #8fd0ff; /* accent-glow */
+  --_dark-accent-muted: #1a2e42; /* accent-soft */
+  --_dark-accent-glow: #8fd0ff; /* glow / cursor block */
 
-  --_dark-danger: oklch(0.68 0.18 25);
-  --_dark-danger-muted: oklch(0.22 0.06 25);
-  --_dark-warning: oklch(0.8 0.16 75);
-  --_dark-success: oklch(0.68 0.15 150);
+  --_dark-danger: #c9564a;
+  --_dark-danger-muted: #34201e; /* derived: soft tint of --danger on dark */
+  --_dark-warning: #c08a2d;
+  --_dark-success: #2e9e6b;
 
-  --_dark-sidebar-bg: oklch(0.1 0.008 240);
-  --_dark-sidebar-fg: oklch(0.65 0.008 240);
-  --_dark-sidebar-fg-strong: oklch(0.93 0.005 240);
-  --_dark-sidebar-item-hover: oklch(0.16 0.008 240);
-  --_dark-sidebar-item-active: oklch(0.65 0.19 250);
-  --_dark-sidebar-item-active-fg: oklch(1 0 0);
+  /* Brand mark (cloud logo) */
+  --_dark-cloud: #33536f;
+  --_dark-cloud-stroke: #89bce2;
+
+  /* Sidebar sits on the card surface in the new design */
+  --_dark-sidebar-bg: #16222e; /* card */
+  --_dark-sidebar-fg: #a9c2d8; /* body text */
+  --_dark-sidebar-fg-strong: #dcebf8; /* heading text */
+  --_dark-sidebar-item-hover: #182838; /* derived: whisper between card and accent-soft */
+  --_dark-sidebar-item-active: #1a2e42; /* accent-soft — active nav is accent-on-accent-soft */
+  --_dark-sidebar-item-active-fg: #5fb8ff; /* accent */
 }
 
 /* Applied when OS prefers dark and the user hasn't explicitly chosen light. */
@@ -167,7 +199,9 @@
     --fg: var(--_dark-fg);
     --fg-muted: var(--_dark-fg-muted);
     --fg-subtle: var(--_dark-fg-subtle);
-    --fg-on-accent: oklch(1 0 0);
+    /* Dark accent (#5FB8FF) is a light blue — white text on it fails contrast,
+       so text on solid accent uses ink instead. */
+    --fg-on-accent: #0e1620;
 
     --border: var(--_dark-border);
     --border-muted: var(--_dark-border-muted);
@@ -175,11 +209,15 @@
     --accent: var(--_dark-accent);
     --accent-hover: var(--_dark-accent-hover);
     --accent-muted: var(--_dark-accent-muted);
+    --accent-glow: var(--_dark-accent-glow);
 
     --danger: var(--_dark-danger);
     --danger-muted: var(--_dark-danger-muted);
     --warning: var(--_dark-warning);
     --success: var(--_dark-success);
+
+    --cloud: var(--_dark-cloud);
+    --cloud-stroke: var(--_dark-cloud-stroke);
 
     --sidebar-bg: var(--_dark-sidebar-bg);
     --sidebar-fg: var(--_dark-sidebar-fg);
@@ -203,7 +241,9 @@
   --fg: var(--_dark-fg);
   --fg-muted: var(--_dark-fg-muted);
   --fg-subtle: var(--_dark-fg-subtle);
-  --fg-on-accent: oklch(1 0 0);
+  /* Dark accent (#5FB8FF) is a light blue — white text on it fails contrast,
+     so text on solid accent uses ink instead. */
+  --fg-on-accent: #0e1620;
 
   --border: var(--_dark-border);
   --border-muted: var(--_dark-border-muted);
@@ -211,11 +251,15 @@
   --accent: var(--_dark-accent);
   --accent-hover: var(--_dark-accent-hover);
   --accent-muted: var(--_dark-accent-muted);
+  --accent-glow: var(--_dark-accent-glow);
 
   --danger: var(--_dark-danger);
   --danger-muted: var(--_dark-danger-muted);
   --warning: var(--_dark-warning);
   --success: var(--_dark-success);
+
+  --cloud: var(--_dark-cloud);
+  --cloud-stroke: var(--_dark-cloud-stroke);
 
   --sidebar-bg: var(--_dark-sidebar-bg);
   --sidebar-fg: var(--_dark-sidebar-fg);
