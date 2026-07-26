@@ -69,6 +69,7 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Added
 
+- **Diagnostics** — `GET /_debug/metrics` and the Metrics & Health page's new "Storage Activity" card report cumulative storage-layer reads/writes since process start for every backend (memory, persistent, WAL, hybrid); a `hybrid`-mode store additionally breaks reads down by which tier actually served them (memory vs. a fall-through to SQLite) and shows how many accepted writes have been flushed to disk so far.
 - **Events** — resource lifecycle events (SQS queues, S3 buckets, DynamoDB tables, SNS topics/subscriptions, Lambda functions, and most other resource-create/delete/update events) now carry the resource's ARN on the event envelope (`resourceArn` in the SSE stream and MCP event feed); the web UI's Event Stream page auto-links any ARN it finds — the new field, or one embedded anywhere in a payload/error string — to that resource's page for every service that has one.
 
 ### Fixed

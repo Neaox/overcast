@@ -328,8 +328,50 @@ type DebugMetrics struct {
 	// HybridStore.degradeToMemoryOnly) — every write since is memory-only and
 	// will not survive a restart. Always false for backends that cannot
 	// degrade this way: SQLiteStore fails outright rather than falling back,
-	// and MemoryStore/WALStore don't implement DebugMetricsReporter at all.
+	// and MemoryStore/WALStore never persist at all.
 	Degraded bool `json:"degraded,omitempty"`
+
+	// Counters holds cumulative storage-layer read/write activity since
+	// process start (health/metrics "storage activity" — the answer to "how
+	// much is this backend actually doing"). Every implementation
+	// (MemoryStore, SQLiteStore, WALStore, HybridStore) populates at least
+	// Reads/Writes; see StoreCounters's doc comment for the hybrid-specific
+	// tier split.
+	Counters StoreCounters `json:"counters"`
+}
+
+// StoreCounters is a cheap, atomically-maintained tally of storage-layer
+// operations since process start — no locks and no per-op allocations on any
+// store's hot Get/Set path (sync/atomic only).
+//
+// Reads counts every Get/List/Scan/ScanPage/ListNamespaces call; Writes
+// counts every Set/Delete/DeletePrefix call. These two fields are populated
+// by all four store implementations.
+//
+// ReadsMemory/ReadsSQLite/WritesFlushedRows are populated only by
+// HybridStore, the only implementation that actually serves reads/writes
+// from two distinct tiers:
+//   - ReadsMemory is a read served from the in-memory tier — either a
+//     pending-overlay hit (an accepted-but-not-yet-flushed write, which
+//     lives only in RAM) or a plain MemoryStore read. ReadsSQLite is a read
+//     that fell through to a live SQLite query. ReadsMemory + ReadsSQLite
+//     always equals Reads.
+//   - WritesFlushedRows is the count of pending-op rows the background
+//     flush loop has actually committed to SQLite so far — necessarily a
+//     subset of Writes, since not every accepted write has been flushed
+//     yet. This reuses flushOnce's existing per-attempt entry count (see
+//     HybridStore.recordFlushHistory) rather than adding a second, separately
+//     maintained tally that could drift from it.
+//
+// Zero-valued (omitted from JSON) for every other backend, which has no
+// second tier to split against.
+type StoreCounters struct {
+	Reads  int64 `json:"reads"`
+	Writes int64 `json:"writes"`
+
+	ReadsMemory       int64 `json:"readsMemory,omitempty"`
+	ReadsSQLite       int64 `json:"readsSQLite,omitempty"`
+	WritesFlushedRows int64 `json:"writesFlushedRows,omitempty"`
 }
 
 // DataDirProbeResult is the outcome of the startup fsync micro-probe (see
@@ -363,18 +405,24 @@ type DataDirProbeResult struct {
 }
 
 // DebugMetricsReporter is an optional Store extension exposing the
-// diagnostics in DebugMetrics. Stores without an async write path or a
-// one-time startup seed (MemoryStore, WALStore) do not implement it; callers
-// must treat its absence as "nothing to report", the same convention
-// PersistentHealthReporter and NotReadyReporter use.
+// diagnostics in DebugMetrics. Every implementation in this package
+// (MemoryStore, SQLiteStore, WALStore, HybridStore) implements it, if only to
+// report StoreCounters — MemoryStore and WALStore have no async write path or
+// one-time startup seed, so every other DebugMetrics field stays at its zero
+// value for them. Callers must still treat a failed type assertion as
+// "nothing to report" for any future Store implementation that chooses not
+// to implement this interface, the same convention PersistentHealthReporter
+// and NotReadyReporter use.
 type DebugMetricsReporter interface {
 	DebugMetrics(ctx context.Context, opts DebugMetricsOptions) DebugMetrics
 }
 
 // DebugMetricsSnapshot returns one DebugMetrics entry per distinct
-// underlying store that implements DebugMetricsReporter. The returned bool
-// is false only when no underlying store reports anything (e.g. store is a
-// MemoryStore/WALStore, or a NamespacedStore wrapping only those).
+// underlying store that implements DebugMetricsReporter. Since every store
+// implementation in this package now implements it (see
+// DebugMetricsReporter's doc comment), the returned bool is false only for a
+// Store from outside this package that chooses not to implement the
+// interface.
 //
 // Deliberately does NOT follow PersistentHealthSnapshot's merge-into-one
 // approach for a *NamespacedStore: PersistentHealth's fields combine
