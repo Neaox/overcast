@@ -237,6 +237,103 @@ They also work from git worktrees, which the devcontainer cannot see (it
 mounts only the main checkout). See the header comment in
 [scripts/docker-go.sh](./scripts/docker-go.sh) for cache/performance details.
 
+### Dev container volumes on a fast disk
+
+**Opt-in, per developer. Skip this section unless the dev container feels slow.**
+
+The dev container keeps three things in Docker named volumes: the web
+`node_modules`, the Go module cache, and the `gh` CLI config. Docker Desktop
+stores every named volume inside one virtual disk, so if that disk sits on a
+spinning disk, the two many-small-file workloads (`node_modules`, the module
+cache) crawl — and Overcast's own `hybrid` backend starts logging
+`hybrid: data directory fsync is slow` / `hybrid flush slow`.
+
+If your fast disk has room for all of Docker, the simplest fix is to move
+Docker's disk image onto it (Docker Desktop → Settings → Resources → Advanced →
+*Disk image location*) and stop reading here.
+
+**If it doesn't**, set `OVERCAST_DEV_VOLUME_ROOT` to a directory on the fast
+disk. `.devcontainer/init-worktree.sh` (and the `.ps1`, which forwards the
+variable into WSL and delegates to it) then emits each named volume with
+`driver: local` + a `type=none,o=bind` bind to `<root>/<volume-name>`, creating
+the directories if they don't exist:
+
+```yaml
+volumes:
+  overcast-go-mod-cache:
+    name: overcast-go-mod-cache
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: "/mnt/wsl/overcast-volumes/overcast-go-mod-cache"
+```
+
+Leave it unset and the generated compose file is byte-for-byte what it has
+always been — plain named volumes. Nothing about this is required, and nothing
+in Overcast itself reads the variable; it is developer tooling only.
+
+#### Picking a path — the file-sharing trap
+
+> [!IMPORTANT]
+> The path must live inside the **Linux VM's own filesystem**. Docker resolves
+> the bind device inside the VM, and a path on a Windows or macOS host drive
+> (`/mnt/e/...`, `/Users/...`) reaches it through a file-sharing layer
+> (9p / virtiofs / gRPC-FUSE) whose `fsync` cost is frequently **worse** than
+> the spinning disk you are trying to escape. The init script warns loudly if it
+> spots such a path, and refuses a Windows-style `E:\...` value outright.
+
+On WSL2, either of these is fine:
+
+- a directory under `/mnt/wsl/` — this is the WSL VM's own tmpfs-rooted mount
+  namespace, not a shared drive:
+
+  ```bash
+  mkdir -p /mnt/wsl/overcast-volumes
+  ```
+
+- a second VHDX stored on the fast disk and attached to the VM:
+
+  ```powershell
+  wsl --mount --vhd D:\path\to\overcast-volumes.vhdx --bare
+  ```
+
+Same reasoning, user-facing form, in
+[docs/storage.md § Put the data directory on an SSD](./docs/storage.md#put-the-data-directory-on-an-ssd).
+
+> [!NOTE]
+> Docker refuses to reuse an existing named volume whose driver options have
+> changed. If you already have the old volumes, remove them first — they are
+> caches and rebuild themselves:
+> `docker volume rm overcast-go-mod-cache overcast-gh-config overcast-<worktree>-node-modules`
+
+#### Setting it persistently
+
+The variable has to be visible to whatever launches the dev container (VS Code,
+a terminal, an agent), so set it in your shell profile rather than one shell:
+
+```bash
+# ~/.bashrc or ~/.zshrc
+export OVERCAST_DEV_VOLUME_ROOT=/mnt/wsl/overcast-volumes
+```
+
+```powershell
+# $PROFILE (PowerShell) — or set it once for the user account:
+[Environment]::SetEnvironmentVariable('OVERCAST_DEV_VOLUME_ROOT', '/mnt/wsl/overcast-volumes', 'User')
+```
+
+Claude Code agents inherit the environment they are launched with, so an `env`
+block in your **user-level** `~/.claude/settings.json` applies it to every agent
+session on the machine without touching the repo:
+
+```json
+{
+  "env": {
+    "OVERCAST_DEV_VOLUME_ROOT": "/mnt/wsl/overcast-volumes"
+  }
+}
+```
+
 ### Step debugging
 
 Full step debugging is supported. Set a breakpoint (click left of line number),

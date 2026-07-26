@@ -117,6 +117,18 @@ git worktree remove ../worktree-<name>
 
 The generated `.devcontainer/.env` and `.devcontainer/docker-compose.yaml` are local machine files and are intentionally ignored by Git.
 
+### Slow dev container? Put its volumes on a fast disk
+
+The dev container's `node_modules`, Go module cache, and `gh` config live in
+Docker named volumes, which Docker Desktop keeps inside a single virtual disk.
+If that disk is on a spinning disk, everything that touches many small files
+crawls. Setting `OVERCAST_DEV_VOLUME_ROOT` to a directory on a fast disk makes
+`init-worktree.sh` bind those volumes there instead. It is opt-in per developer
+and changes nothing when unset — including the caveat that the path must be
+inside the Linux VM's filesystem, not on a host drive reached over 9p/virtiofs.
+
+See [CONTRIBUTING.md § Dev container volumes on a fast disk](../../CONTRIBUTING.md#dev-container-volumes-on-a-fast-disk).
+
 ---
 
 ## Option B: Native (Mac / Linux)

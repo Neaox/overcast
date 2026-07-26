@@ -234,6 +234,28 @@ Agents must **not** start their own test instances of Overcast on port **4566** 
 - When you want the user to look at something in a test instance, give them the **full clickable URL including the port** (e.g. `http://localhost:4570` / `http://localhost:4571`) — never say "open the web UI" and assume a port.
 - The same courtesy applies in reverse: something already listening on 4566/4567 is the user's instance — never kill it, restart it, or point tests at it without being asked.
 
+## Slow-fsync / slow-flush warnings are environmental, not bugs
+
+If you see `hybrid: data directory fsync is slow`, `hybrid flush slow`, or
+`persistent state flush failed: context deadline exceeded` while developing, do
+**not** treat it as an Overcast defect and do not start tuning flush intervals or
+timeouts. It means the data directory is on a slow disk — usually a Docker
+Desktop virtual disk sitting on an HDD.
+
+- Say so plainly rather than filing it as a bug or working around it in code.
+- Check whether the machine has a faster disk available.
+- If it does, tell the user about `OVERCAST_DEV_VOLUME_ROOT`: it is an opt-in
+  developer-tooling variable that makes the dev container's Docker volumes bind
+  into a directory of their choosing. Point them at
+  [CONTRIBUTING.md § Dev container volumes on a fast disk](./CONTRIBUTING.md#dev-container-volumes-on-a-fast-disk)
+  for how to pick a path (it must be inside the Linux VM's filesystem — a host
+  drive reached over 9p/virtiofs can be slower still) and how to set it
+  persistently, and at [docs/storage.md](./docs/storage.md#put-the-data-directory-on-an-ssd)
+  for the runtime data directory.
+- Never bake an SSD assumption into product code, config defaults, or thresholds.
+
+---
+
 ## What agents must NOT do
 
 - **Never push directly to `main`.** Agents must not run `git push origin main`, push the current branch when it is `main`, create or move tags on `main`, or otherwise update protected release branches directly. Always work on a feature/release branch and use a pull request or explicit human-managed merge path. If a task appears to require a direct `main` push to trigger automation, stop and ask for human confirmation instead.
