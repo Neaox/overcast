@@ -115,7 +115,7 @@ function ServiceCard({
         </button>
       )}
 
-      <Icon className={cn("h-5 w-5 shrink-0", service.color)} />
+      <Icon className="h-5 w-5 shrink-0 text-accent" />
       <span className="text-sm font-medium text-fg">{service.label}</span>
       <span className="line-clamp-1 text-xs text-fg-subtle">{service.description}</span>
     </button>

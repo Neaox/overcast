@@ -62,7 +62,7 @@ export function Sidebar() {
           <SidebarNavItem item={DASHBOARD_ITEM} collapsed={collapsed} pathname={pathname} />
         </SidebarSection>
 
-        <SidebarSection label="in use" collapsed={collapsed}>
+        <SidebarSection label="pinned" collapsed={collapsed}>
           {currentService && (
             <SidebarNavItem
               item={currentService}
