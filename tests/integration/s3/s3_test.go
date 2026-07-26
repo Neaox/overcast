@@ -2674,6 +2674,251 @@ func TestS3VirtualHostedStyle_WildcardDNS_S3SubdomainStyle(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusOK)
 }
 
+// ---- S3 Virtual-Hosted-Style: plain ".s3.localhost" suffix ----------------
+//
+// Browsers and OS resolvers (systemd-resolved on Linux, Windows since
+// version 20348) resolve "*.localhost" to loopback natively, with no
+// OVERCAST_HOSTNAME configuration and no /etc/hosts entry required. This is
+// therefore the most common real-world way users will reach the emulator via
+// virtual-hosted-style addressing (e.g. "mybucket.s3.localhost:4566"). These
+// tests prove the ".s3." match rule is suffix-agnostic — it fires the same
+// way whether or not a wildcard-DNS OVERCAST_HOSTNAME is configured.
+
+func TestS3VirtualHostedStyle_PlainDotLocalhostSuffix_PutAndGetObject(t *testing.T) {
+	// Given: a server with no OVERCAST_HOSTNAME configured
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "my-bucket")
+
+	// When: PUT via Host "my-bucket.s3.localhost" (no port-independent config needed)
+	body := []byte("hello from plain .s3.localhost")
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/greeting.txt", bytes.NewReader(body))
+	req.Host = "my-bucket.s3.localhost"
+	req.Header.Set("Content-Type", "text/plain")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: GET via the same Host returns the object
+	getReq, _ := http.NewRequest(http.MethodGet, srv.URL+"/greeting.txt", nil)
+	getReq.Host = "my-bucket.s3.localhost"
+	getResp, err := http.DefaultClient.Do(getReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer getResp.Body.Close()
+
+	helpers.AssertStatus(t, getResp, http.StatusOK)
+	got, _ := io.ReadAll(getResp.Body)
+	if string(got) != string(body) {
+		t.Errorf("expected %q, got %q", body, got)
+	}
+}
+
+// ---- S3 Virtual-Hosted-Style: error fidelity, dotted buckets, sub-resources -
+
+func TestS3VirtualHostedStyle_NonexistentBucketReturnsModeledXMLError(t *testing.T) {
+	// Given: no bucket has been created
+	srv := helpers.NewTestServer(t)
+
+	// When: GET an object via virtual-hosted-style Host for a bucket that
+	// was never created
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/some-key.txt", nil)
+	req.Host = "nosuchbucket.s3.localhost"
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: we get a modeled AWS XML error, not a bare 404. GetObject does
+	// not distinguish a missing bucket from a missing key (pre-existing,
+	// addressing-style-independent behavior — real AWS returns NoSuchBucket
+	// here; Overcast returns NoSuchKey for both cases). This test only pins
+	// that virtual-hosted-style routing reaches the real S3 error path
+	// instead of falling through to chi's bare 404.
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	helpers.AssertXMLError(t, resp, "NoSuchKey")
+	helpers.AssertRequestID(t, resp)
+}
+
+func TestS3VirtualHostedStyle_ExistingBucketNonexistentKeyReturnsNoSuchKey(t *testing.T) {
+	// Given: a bucket exists but the requested key does not
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "vhost-nsk-bucket")
+
+	// When: GET a nonexistent key via virtual-hosted-style Host
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/missing.txt", nil)
+	req.Host = "vhost-nsk-bucket.s3.localhost"
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: we get a modeled AWS NoSuchKey XML error
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	helpers.AssertXMLError(t, resp, "NoSuchKey")
+	helpers.AssertRequestID(t, resp)
+}
+
+func TestS3VirtualHostedStyle_DottedBucketNameHost_SplitsOnFirstDotS3(t *testing.T) {
+	// Given: real AWS bucket names may contain dots, but Overcast's own
+	// CreateBucket validation deliberately restricts bucket names to
+	// lowercase letters, numbers, and hyphens (see serviceutil.BucketName) —
+	// so a dotted bucket name can never actually exist here, and a full
+	// PUT+GET round trip is not achievable through Overcast's own API.
+	// This test instead pins the Host-header SPLIT behavior directly: the
+	// bucket must be everything before the FIRST ".s3." separator (matching
+	// extractS3BucketFromHost's unit-tested contract), not e.g. just the
+	// first label. We prove this by observing which "bucket" name PutObject
+	// reports as missing.
+	srv := helpers.NewTestServer(t)
+
+	// When: PUT via a Host whose bucket portion itself contains dots
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/key.txt", bytes.NewReader([]byte("x")))
+	req.Host = "my.dotted.bucket.s3.localhost"
+	req.Header.Set("Content-Type", "text/plain")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: PutObject's bucketExists check reaches the S3 handler with the
+	// FULL "my.dotted.bucket" string as the bucket name (a modeled
+	// NoSuchBucket XML error naming it), proving the split landed on the
+	// first ".s3." and did not truncate at the first dot.
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	body, _ := io.ReadAll(resp.Body)
+	var errResp struct {
+		Code    string `xml:"Code"`
+		Message string `xml:"Message"`
+	}
+	if err := xml.Unmarshal(body, &errResp); err != nil {
+		t.Fatalf("failed to decode XML error body %q: %v", body, err)
+	}
+	if errResp.Code != "NoSuchBucket" {
+		t.Errorf("expected error code %q, got %q (message: %s)", "NoSuchBucket", errResp.Code, errResp.Message)
+	}
+	if !strings.Contains(errResp.Message, "my.dotted.bucket") {
+		t.Errorf("expected error message to reference bucket %q, got %q", "my.dotted.bucket", errResp.Message)
+	}
+}
+
+func TestS3VirtualHostedStyle_SubResourceLocation(t *testing.T) {
+	// Given: a bucket exists
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "vhost-location-bucket")
+
+	// When: GET ?location via virtual-hosted-style Host
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/?location", nil)
+	req.Host = "vhost-location-bucket.s3.localhost"
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the sub-resource handler responds normally (bucket resolved from Host)
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	respBody, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(respBody), "LocationConstraint") {
+		t.Errorf("expected LocationConstraint in response, got %s", respBody)
+	}
+}
+
+func TestS3VirtualHostedStyle_BareS3HostStaysPathStyle(t *testing.T) {
+	// Given: a bucket created via path-style
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "pathstyle-bucket")
+	putObject(t, srv, "pathstyle-bucket", "key.txt", []byte("path style"), "text/plain")
+
+	// When: GET with Host "s3.localhost" (the bare S3 service endpoint, not
+	// a bucket subdomain) and the bucket already in the path
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/pathstyle-bucket/key.txt", nil)
+	req.Host = "s3.localhost"
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: no bucket prefix is added (no double-rewrite) — request succeeds as path-style
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	got, _ := io.ReadAll(resp.Body)
+	if string(got) != "path style" {
+		t.Errorf("expected %q, got %q", "path style", got)
+	}
+}
+
+func TestS3VirtualHostedStyle_NonS3HostDotNotInLabelPositionStaysPathStyle(t *testing.T) {
+	// Given: a bucket created via path-style
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "pathstyle-bucket2")
+	putObject(t, srv, "pathstyle-bucket2", "key.txt", []byte("path style 2"), "text/plain")
+
+	// When: GET with a Host containing ".s3x." — NOT the ".s3." separator in
+	// label position — and the bucket already in the path
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/pathstyle-bucket2/key.txt", nil)
+	req.Host = "weird.s3x.host"
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the Host is not mistaken for virtual-hosted-style — request
+	// resolves as path-style
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	got, _ := io.ReadAll(resp.Body)
+	if string(got) != "path style 2" {
+		t.Errorf("expected %q, got %q", "path style 2", got)
+	}
+}
+
+func TestS3VirtualHostedStyle_LegacyDashRegionDialect_PutAndGetObject(t *testing.T) {
+	// Given: a bucket exists
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "legacy-dash-bucket")
+
+	// When: PUT via the legacy dash-region dialect
+	// ({bucket}.s3-{region}.{base}, e.g. mybucket.s3-us-west-2.amazonaws.com)
+	body := []byte("legacy dash dialect content")
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/obj.txt", bytes.NewReader(body))
+	req.Host = "legacy-dash-bucket.s3-us-west-2.localhost"
+	req.Header.Set("Content-Type", "text/plain")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: the object can be retrieved via path-style
+	getResp, err := http.DefaultClient.Do(get(srv, "/legacy-dash-bucket/obj.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer getResp.Body.Close()
+
+	helpers.AssertStatus(t, getResp, http.StatusOK)
+	got, _ := io.ReadAll(getResp.Body)
+	if string(got) != string(body) {
+		t.Errorf("expected %q, got %q", body, got)
+	}
+}
+
 // ---- Test helpers ----------------------------------------------------------
 // These are local to this package, not exported to other test packages.
 
