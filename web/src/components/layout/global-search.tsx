@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { useNavigate } from "@tanstack/react-router"
+import { useNavigate, useRouterState } from "@tanstack/react-router"
 import {
   Search,
   Star,
@@ -19,9 +19,10 @@ import {
   ALL_SERVICES,
   CATEGORY_LABELS,
   CATEGORY_ORDER,
+  findServiceKeyForPathname,
   type ServiceDefinition,
 } from "@/lib/nav-services"
-import { matchesQuery, type SearchResult } from "@/lib/search"
+import { matchesQuery, orderGroupsByActiveService, type SearchResult } from "@/lib/search"
 import { CATALOG, type CatalogEntry } from "@/lib/unsupported-services"
 import { Tooltip } from "@/components/ui/tooltip"
 
@@ -284,20 +285,23 @@ function ResultRow({
 }
 
 function SearchResults({
-  grouped,
+  groups,
   flat,
   isLoading,
   query,
+  activeServiceKey,
   selectedIndex,
   onSelect,
   onSetSelectedIndex,
   onSelectService,
   onSelectCatalogEntry,
 }: {
-  grouped: Map<string, SearchResult[]>
+  /** Result groups in display order (active-service group already promoted). */
+  groups: [serviceKey: string, items: SearchResult[]][]
   flat: SearchResult[]
   isLoading: boolean
   query: string
+  activeServiceKey: string | undefined
   selectedIndex: number
   onSelect: (r: SearchResult) => void
   onSetSelectedIndex: (i: number) => void
@@ -306,9 +310,16 @@ function SearchResults({
 }) {
   const { isFavourite, toggleFavourite } = useFavourites()
 
+  // Matching services, with the current route's service promoted to the front.
   const matchedServices = ALL_SERVICES.filter((s) =>
     matchesQuery(query, s.label, s.key, s.description),
   )
+  const activeMatchIndex = activeServiceKey
+    ? matchedServices.findIndex((s) => s.key === activeServiceKey)
+    : -1
+  if (activeMatchIndex > 0) {
+    matchedServices.unshift(...matchedServices.splice(activeMatchIndex, 1))
+  }
 
   const matchedCatalog = CATALOG.filter((e) => matchesQuery(query, e.label, e.id, e.description))
 
@@ -329,10 +340,11 @@ function SearchResults({
     )
   }
 
-  // Build groups with running total index for keyboard selection
+  // Build sections with running total index for keyboard selection.
+  // `groups` is already in display order, so indices match the flat list.
   const sections: Array<{ serviceKey: string; items: SearchResult[]; startIndex: number }> = []
   let runningIndex = 0
-  for (const [serviceKey, items] of grouped) {
+  for (const [serviceKey, items] of groups) {
     sections.push({ serviceKey, items, startIndex: runningIndex })
     runningIndex += items.length
   }
@@ -438,16 +450,27 @@ function SearchResults({
 
 export function GlobalSearch({ open, onOpenChange }: GlobalSearchProps) {
   const navigate = useNavigate()
+  const pathname = useRouterState({ select: (s) => s.location.pathname })
   const { addRecentService } = useFavourites()
-  const { query, setQuery, grouped, flat, isLoading, clear } = useSearch()
+  const { query, setQuery, grouped, isLoading, clear } = useSearch()
   const [selectedIndex, setSelectedIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const isSearching = query.trim().length > 0
 
-  // Reset selection when results change (wrapped to avoid synchronous setState lint rule)
-  useEffect(() => {
-    queueMicrotask(() => setSelectedIndex(0))
-  }, [grouped])
+  // Context-aware ranking — promote the current route's service group to the
+  // front. The flat list for keyboard navigation is derived from the same
+  // ordered groups so arrow-key order always matches the rendered order.
+  const activeServiceKey = findServiceKeyForPathname(pathname)
+  const orderedGroups = orderGroupsByActiveService(grouped, activeServiceKey)
+  const flat = orderedGroups.flatMap(([, items]) => items)
+
+  // Reset selection at the event boundary that invalidates it (a query edit)
+  // instead of an effect keyed on result-map identity — see AGENTS.md on
+  // avoiding effects that synchronize state from other state.
+  function handleQueryChange(q: string) {
+    setQuery(q)
+    setSelectedIndex(0)
+  }
 
   // Focus input when opened
   useEffect(() => {
@@ -519,7 +542,7 @@ export function GlobalSearch({ open, onOpenChange }: GlobalSearchProps) {
               <input
                 ref={inputRef}
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => handleQueryChange(e.target.value)}
                 placeholder="Search services and resources…"
                 className="flex-1 bg-transparent text-sm text-fg placeholder:text-fg-subtle focus-visible:outline-none"
                 style={undefined}
@@ -528,7 +551,7 @@ export function GlobalSearch({ open, onOpenChange }: GlobalSearchProps) {
               />
               {query && (
                 <button
-                  onClick={() => setQuery("")}
+                  onClick={() => handleQueryChange("")}
                   className="shrink-0 rounded p-0.5 text-fg-subtle transition-colors hover:text-fg"
                 >
                   <X className="h-3.5 w-3.5" />
@@ -544,10 +567,11 @@ export function GlobalSearch({ open, onOpenChange }: GlobalSearchProps) {
           <div className="min-h-0 flex-1 overflow-y-auto">
             {isSearching ? (
               <SearchResults
-                grouped={grouped}
+                groups={orderedGroups}
                 flat={flat}
                 isLoading={isLoading}
                 query={query}
+                activeServiceKey={activeServiceKey}
                 selectedIndex={selectedIndex}
                 onSelect={handleSelectResult}
                 onSetSelectedIndex={setSelectedIndex}
@@ -575,14 +599,14 @@ export function GlobalSearchTrigger({ onClick }: { onClick: () => void }) {
     <button
       onClick={onClick}
       className={cn(
-        "flex h-8 w-64 items-center gap-2 rounded-md border border-border bg-bg-subtle px-2.5 text-sm text-fg-subtle",
-        "transition-colors hover:border-accent/50 hover:bg-bg-muted hover:text-fg",
+        "flex h-8 w-full max-w-[360px] min-w-0 items-center gap-2 rounded-md border border-border bg-bg px-2.5 font-mono text-xs text-fg-subtle",
+        "transition-colors hover:border-accent/50 hover:bg-bg-subtle hover:text-fg",
         "focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
       )}
     >
       <Search className="h-3.5 w-3.5 shrink-0" />
-      <span className="flex-1 text-left">Search…</span>
-      <kbd className="shrink-0 rounded border border-border bg-bg-muted px-1.5 py-0.5 text-xs">
+      <span className="min-w-0 flex-1 truncate text-left">Search resources, ARNs, keys…</span>
+      <kbd className="shrink-0 rounded border border-border bg-bg-subtle px-1.5 py-0.5 font-mono text-[10px]">
         ⌘K
       </kbd>
     </button>
