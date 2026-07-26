@@ -176,6 +176,33 @@ type HybridStore struct {
 	readRetryCount   atomic.Int64
 	readTimeoutCount atomic.Int64
 
+	// readsMemory/readsSQLite/writes/writesFlushedRows are storage-activity
+	// counters (health/metrics "storage activity" card — see DebugMetrics/
+	// StoreCounters) since process start. Atomic for the same reason as
+	// readRetryCount/readTimeoutCount above: the hot Get/Set path must never
+	// contend with flush/maintenance for s.mu just to bump a counter.
+	//
+	// readsMemory increments once per Get/List/Scan/ScanPage/ListNamespaces
+	// call actually served from the in-memory tier — a pending-overlay hit
+	// (dirty/flushing entries live only in RAM until flushed) or a plain
+	// MemoryStore read/fallback. readsSQLite increments once per call that
+	// fell through to a live SQLite query (sqliteGet/sqliteList/sqliteScan/
+	// sqliteScanPage/sqliteListNamespaces below) — hooked at the same call
+	// sites that already decide which tier serves each read, so this never
+	// duplicates or second-guesses that routing logic.
+	//
+	// writes increments once per accepted Set/Delete/DeletePrefix — every
+	// hybrid write lands in the in-memory overlay+mem synchronously, so
+	// there is no separate tier to split it against. writesFlushedRows
+	// counts pending-op rows the background flush loop has actually
+	// committed to SQLite, incremented alongside recordFlushHistory's
+	// existing per-attempt entry count in flushOnce rather than via a
+	// second, separately maintained tally that could drift from it.
+	readsMemory       atomic.Int64
+	readsSQLite       atomic.Int64
+	writes            atomic.Int64
+	writesFlushedRows atomic.Int64
+
 	// dataDirSlowFsyncThreshold and dataDirFsyncProbe configure the one-time
 	// startup fsync micro-probe (storage-pressure-handling item 3) — see
 	// runDataDirProbe. dataDirFsyncProbe is nil in production (the real
@@ -726,28 +753,35 @@ func (s *HybridStore) sqliteReadyNow() bool {
 func (s *HybridStore) Get(ctx context.Context, namespace, key string) (string, bool, error) {
 	if shouldReadHybridNamespaceFromSQLite(namespace) {
 		if entry, ok := s.pendingValue(namespace, key); ok {
+			s.readsMemory.Add(1)
 			if entry.deleted {
 				return "", false, nil
 			}
 			return entry.value, true, nil
 		}
 		if s.sqliteReadyNow() {
+			s.readsSQLite.Add(1)
 			return s.sqliteGet(ctx, namespace, key)
 		}
+		s.readsMemory.Add(1)
 		return s.mem.Get(ctx, namespace, key)
 	}
 	if s.isLoaded() {
+		s.readsMemory.Add(1)
 		return s.mem.Get(ctx, namespace, key)
 	}
 	if entry, ok := s.pendingValue(namespace, key); ok {
+		s.readsMemory.Add(1)
 		if entry.deleted {
 			return "", false, nil
 		}
 		return entry.value, true, nil
 	}
 	if s.sqliteReadyNow() {
+		s.readsSQLite.Add(1)
 		return s.sqliteGet(ctx, namespace, key)
 	}
+	s.readsMemory.Add(1)
 	return s.mem.Get(ctx, namespace, key)
 }
 
@@ -766,7 +800,11 @@ func (s *HybridStore) Set(ctx context.Context, namespace, key, value string) err
 	if trigger {
 		s.signalFlush()
 	}
-	return s.mem.Set(ctx, namespace, key, value)
+	err := s.mem.Set(ctx, namespace, key, value)
+	if err == nil {
+		s.writes.Add(1)
+	}
+	return err
 }
 
 // Delete publishes the tombstone before removing memory for the same reason as
@@ -784,7 +822,11 @@ func (s *HybridStore) Delete(ctx context.Context, namespace, key string) error {
 	if trigger {
 		s.signalFlush()
 	}
-	return s.mem.Delete(ctx, namespace, key)
+	err := s.mem.Delete(ctx, namespace, key)
+	if err == nil {
+		s.writes.Add(1)
+	}
+	return err
 }
 
 // DeletePrefix publishes a single ranged tombstone instead of enumerating and
@@ -807,10 +849,15 @@ func (s *HybridStore) DeletePrefix(ctx context.Context, namespace, prefix string
 		s.signalFlush()
 	}
 	if deleter, ok := any(s.mem).(PrefixDeleter); ok {
-		return deleter.DeletePrefix(ctx, namespace, prefix)
+		err := deleter.DeletePrefix(ctx, namespace, prefix)
+		if err == nil {
+			s.writes.Add(1)
+		}
+		return err
 	}
 	// MemoryStore always implements PrefixDeleter; this branch only guards
 	// against a future mem implementation that doesn't.
+	s.writes.Add(1)
 	return nil
 }
 
@@ -819,12 +866,14 @@ func (s *HybridStore) DeletePrefix(ctx context.Context, namespace, prefix string
 func (s *HybridStore) List(ctx context.Context, namespace, prefix string) ([]string, error) {
 	if shouldReadHybridNamespaceFromSQLite(namespace) {
 		if s.sqliteReadyNow() {
+			s.readsSQLite.Add(1)
 			keys, err := s.sqliteList(ctx, namespace, prefix)
 			if err != nil {
 				return nil, err
 			}
 			return s.mergePendingKeys(namespace, prefix, keys), nil
 		}
+		s.readsMemory.Add(1)
 		keys, err := s.mem.List(ctx, namespace, prefix)
 		if err != nil {
 			return nil, err
@@ -832,15 +881,18 @@ func (s *HybridStore) List(ctx context.Context, namespace, prefix string) ([]str
 		return s.mergePendingKeys(namespace, prefix, keys), nil
 	}
 	if s.isLoaded() {
+		s.readsMemory.Add(1)
 		return s.mem.List(ctx, namespace, prefix)
 	}
 	if s.sqliteReadyNow() {
+		s.readsSQLite.Add(1)
 		keys, err := s.sqliteList(ctx, namespace, prefix)
 		if err != nil {
 			return nil, err
 		}
 		return s.mergePendingKeys(namespace, prefix, keys), nil
 	}
+	s.readsMemory.Add(1)
 	keys, err := s.mem.List(ctx, namespace, prefix)
 	if err != nil {
 		return nil, err
@@ -865,6 +917,7 @@ func (s *HybridStore) ListNamespaces(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.readsMemory.Add(1)
 	add(memNamespaces)
 
 	if s.sqliteReadyNow() {
@@ -872,6 +925,7 @@ func (s *HybridStore) ListNamespaces(ctx context.Context) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
+		s.readsSQLite.Add(1)
 		add(sqliteNamespaces)
 	}
 	add(s.pendingNamespaces())
@@ -888,12 +942,14 @@ func (s *HybridStore) ListNamespaces(ctx context.Context) ([]string, error) {
 func (s *HybridStore) Scan(ctx context.Context, namespace, prefix string) ([]KV, error) {
 	if shouldReadHybridNamespaceFromSQLite(namespace) {
 		if s.sqliteReadyNow() {
+			s.readsSQLite.Add(1)
 			pairs, err := s.sqliteScan(ctx, namespace, prefix)
 			if err != nil {
 				return nil, err
 			}
 			return s.mergePendingPairs(namespace, prefix, pairs), nil
 		}
+		s.readsMemory.Add(1)
 		pairs, err := s.mem.Scan(ctx, namespace, prefix)
 		if err != nil {
 			return nil, err
@@ -901,15 +957,18 @@ func (s *HybridStore) Scan(ctx context.Context, namespace, prefix string) ([]KV,
 		return s.mergePendingPairs(namespace, prefix, pairs), nil
 	}
 	if s.isLoaded() {
+		s.readsMemory.Add(1)
 		return s.mem.Scan(ctx, namespace, prefix)
 	}
 	if s.sqliteReadyNow() {
+		s.readsSQLite.Add(1)
 		pairs, err := s.sqliteScan(ctx, namespace, prefix)
 		if err != nil {
 			return nil, err
 		}
 		return s.mergePendingPairs(namespace, prefix, pairs), nil
 	}
+	s.readsMemory.Add(1)
 	pairs, err := s.mem.Scan(ctx, namespace, prefix)
 	if err != nil {
 		return nil, err
@@ -931,16 +990,21 @@ func (s *HybridStore) Scan(ctx context.Context, namespace, prefix string) ([]KV,
 func (s *HybridStore) ScanPage(ctx context.Context, namespace, prefix, startAfter string, limit int) ([]KV, string, error) {
 	if shouldReadHybridNamespaceFromSQLite(namespace) {
 		if s.sqliteReadyNow() {
+			s.readsSQLite.Add(1)
 			return s.hybridScanPageMerged(ctx, namespace, prefix, startAfter, limit, s.sqliteScanPage)
 		}
+		s.readsMemory.Add(1)
 		return s.hybridScanPageMerged(ctx, namespace, prefix, startAfter, limit, s.mem.ScanPage)
 	}
 	if s.isLoaded() {
+		s.readsMemory.Add(1)
 		return s.mem.ScanPage(ctx, namespace, prefix, startAfter, limit)
 	}
 	if s.sqliteReadyNow() {
+		s.readsSQLite.Add(1)
 		return s.hybridScanPageMerged(ctx, namespace, prefix, startAfter, limit, s.sqliteScanPage)
 	}
+	s.readsMemory.Add(1)
 	return s.hybridScanPageMerged(ctx, namespace, prefix, startAfter, limit, s.mem.ScanPage)
 }
 
@@ -1285,6 +1349,8 @@ func (s *HybridStore) DebugMetrics(ctx context.Context, opts DebugMetricsOptions
 	}
 	s.mu.Unlock()
 
+	readsMemory := s.readsMemory.Load()
+	readsSQLite := s.readsSQLite.Load()
 	m := DebugMetrics{
 		Mode:               mode,
 		FlushHistory:       history,
@@ -1295,6 +1361,13 @@ func (s *HybridStore) DebugMetrics(ctx context.Context, opts DebugMetricsOptions
 		DataDirProbe:       s.getDataDirProbeResult(),
 		JournalMode:        journalMode,
 		Degraded:           s.sqliteDegraded.Load(),
+		Counters: StoreCounters{
+			Reads:             readsMemory + readsSQLite,
+			Writes:            s.writes.Load(),
+			ReadsMemory:       readsMemory,
+			ReadsSQLite:       readsSQLite,
+			WritesFlushedRows: s.writesFlushedRows.Load(),
+		},
 	}
 	if opts.IncludeNamespaceRowCounts {
 		namespaces, err := s.ListNamespaces(ctx)
@@ -1694,6 +1767,7 @@ func (s *HybridStore) flushOnce(ctx context.Context) error {
 		return err
 	}
 	committed = true
+	s.writesFlushedRows.Add(int64(len(toFlushOps)))
 	s.markPersistentSuccess()
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
 		s.logWarn("hybrid flush slow", zap.Int("ops", len(toFlushOps)), zap.Int("chunks", len(chunks)), zap.Duration("elapsed", elapsed))

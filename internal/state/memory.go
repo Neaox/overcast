@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/tidwall/btree"
 )
@@ -25,6 +26,20 @@ import (
 type MemoryStore struct {
 	mu   sync.RWMutex
 	data map[string]*btree.Map[string, string] // namespace → sorted key-value map
+
+	// reads/writes are cumulative storage-activity counters (health/metrics
+	// "storage activity" card — see DebugMetrics/StoreCounters) since process
+	// start. Atomic rather than mu-guarded so bumping them never contends
+	// with the RWMutex above on the hot Get/Set path; incremented outside
+	// the lock in every method below. reads counts Get/List/ListNamespaces/
+	// Scan/ScanPage; writes counts Set/Delete/DeletePrefix.
+	//
+	// WALStore embeds a *MemoryStore for all its reads and (indirectly, via
+	// Set/Delete/DeletePrefix) its writes, so its DebugMetrics reads these
+	// same fields directly rather than keeping a second, redundant tally —
+	// see WALStore.DebugMetrics.
+	reads  atomic.Int64
+	writes atomic.Int64
 }
 
 // NewMemoryStore returns an initialised MemoryStore.
@@ -35,6 +50,7 @@ func NewMemoryStore() *MemoryStore {
 }
 
 func (s *MemoryStore) Get(_ context.Context, namespace, key string) (string, bool, error) {
+	s.reads.Add(1)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -47,6 +63,7 @@ func (s *MemoryStore) Get(_ context.Context, namespace, key string) (string, boo
 }
 
 func (s *MemoryStore) Set(_ context.Context, namespace, key, value string) error {
+	s.writes.Add(1)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -60,6 +77,7 @@ func (s *MemoryStore) Set(_ context.Context, namespace, key, value string) error
 }
 
 func (s *MemoryStore) Delete(_ context.Context, namespace, key string) error {
+	s.writes.Add(1)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -71,6 +89,7 @@ func (s *MemoryStore) Delete(_ context.Context, namespace, key string) error {
 
 // DeletePrefix removes all keys with prefix under a single write lock.
 func (s *MemoryStore) DeletePrefix(_ context.Context, namespace, prefix string) error {
+	s.writes.Add(1)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -93,6 +112,7 @@ func (s *MemoryStore) DeletePrefix(_ context.Context, namespace, prefix string) 
 }
 
 func (s *MemoryStore) List(_ context.Context, namespace, prefix string) ([]string, error) {
+	s.reads.Add(1)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -116,6 +136,7 @@ func (s *MemoryStore) List(_ context.Context, namespace, prefix string) ([]strin
 }
 
 func (s *MemoryStore) ListNamespaces(_ context.Context) ([]string, error) {
+	s.reads.Add(1)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -136,6 +157,7 @@ func (s *MemoryStore) ListNamespaces(_ context.Context) ([]string, error) {
 // RLock. This is the preferred way to read a batch of items — it avoids N
 // individual Get calls each acquiring their own lock.
 func (s *MemoryStore) Scan(_ context.Context, namespace, prefix string) ([]KV, error) {
+	s.reads.Add(1)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -166,6 +188,7 @@ func (s *MemoryStore) Scan(_ context.Context, namespace, prefix string) ([]KV, e
 // of fetching limit+1 rows the way the SQL-backed implementations do — an
 // in-memory ordered seek makes that trick unnecessary here.
 func (s *MemoryStore) ScanPage(_ context.Context, namespace, prefix, startAfter string, limit int) ([]KV, string, error) {
+	s.reads.Add(1)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -207,6 +230,19 @@ func (s *MemoryStore) ScanPage(_ context.Context, namespace, prefix, startAfter 
 
 func (s *MemoryStore) Close() error {
 	return nil // nothing to release
+}
+
+// DebugMetrics implements state.DebugMetricsReporter. MemoryStore has no
+// async write path, background seed, or persistent backend to report on, so
+// every field besides Mode and Counters stays at its zero value.
+func (s *MemoryStore) DebugMetrics(_ context.Context, _ DebugMetricsOptions) DebugMetrics {
+	return DebugMetrics{
+		Mode: "memory",
+		Counters: StoreCounters{
+			Reads:  s.reads.Load(),
+			Writes: s.writes.Load(),
+		},
+	}
 }
 
 // Reset wipes all stored data atomically.

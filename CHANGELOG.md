@@ -67,6 +67,10 @@ need it than accidentally ship a breaking change as a patch.
      - Release section dates use UTC in YYYY-MM-DD format.
 -->
 
+### Added
+
+- **Diagnostics** — `GET /_debug/metrics` and the Metrics & Health page's new "Storage Activity" card report cumulative storage-layer reads/writes since process start for every backend (memory, persistent, WAL, hybrid); a `hybrid`-mode store additionally breaks reads down by which tier actually served them (memory vs. a fall-through to SQLite) and shows how many accepted writes have been flushed to disk so far.
+
 ### Fixed
 
 - **Diagnostics** — the slow-data-directory startup warning and Metrics & Health advisory no longer tell users already on a named Docker volume to "switch to a named volume": the fsync probe now looks up the data directory's actual filesystem type (`/proc/mounts`) and tailors the advice — bind/file-sharing mounts (9p, virtiofs, grpcfuse) still get the named-volume recommendation, while native filesystems (ext4 etc.) get host/VM I/O-pressure guidance instead. The probe also now takes the median of three fsync samples rather than a single boot-time sample, so one transient stall during container startup no longer raises a false alarm; `GET /_debug/metrics` reports the detected `fsType` and `mountClass` alongside the probe result.

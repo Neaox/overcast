@@ -87,6 +87,23 @@ export interface DataDirProbeResult {
 }
 
 /**
+ * Cumulative storage-layer read/write activity since process start
+ * (internal/state.StoreCounters), shown as the Metrics & Health page's
+ * "Storage activity" card. `reads`/`writes` are populated by every backend;
+ * `readsMemory`/`readsSQLite`/`writesFlushedRows` are populated only for a
+ * "hybrid" mode store, the only backend that actually serves reads/writes
+ * from two distinct tiers — see the Go type's doc comment for the exact
+ * semantics of each field.
+ */
+export interface StoreCounters {
+  reads: number
+  writes: number
+  readsMemory?: number
+  readsSQLite?: number
+  writesFlushedRows?: number
+}
+
+/**
  * One reporting store's storage diagnostics, as returned by
  * GET /_debug/metrics's `stores` array (internal/state.DebugMetrics). A
  * *state.NamespacedStore wrapping more than one distinct backend yields more
@@ -105,6 +122,13 @@ export interface DebugMetrics {
   journalMode?: string
   /** True once the backend has permanently fallen back to memory-only. */
   degraded?: boolean
+  /**
+   * Optional at this layer even though current servers always send it:
+   * older servers (dev-BFF proxying a stale binary) and existing test
+   * fixtures omit it, and the page must degrade gracefully rather than
+   * crash on `undefined.reads` — see storage-activity.tsx's guard.
+   */
+  counters?: StoreCounters
 }
 
 export type AdvisorySeverity = "info" | "warning" | "critical"
