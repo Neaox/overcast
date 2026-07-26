@@ -84,6 +84,11 @@
   --tw-prose-th-borders: var(--border);
   --tw-prose-td-borders: var(--border-muted);
 }
+/* Headings are brand-voiced everywhere in Overcast, including inside rendered
+   markdown — the plugin has no --tw-prose-* hook for font-family, so set it here. */
+.prose :is(h1, h2, h3, h4, h5, h6) {
+  font-family: var(--font-mono);
+}
 /* Inline `code` gets a subtle pill background; code inside <pre> keeps the
    plugin's default (transparent, since --tw-prose-pre-bg is the block bg). */
 .prose :not(pre) > code {

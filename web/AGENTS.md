@@ -170,7 +170,10 @@ Effects carry a high bar. Before adding `useEffect`, read and apply
 ## TypeScript
 
 - `strict: true` is enforced — no `any` unless unavoidable, document why.
-- Before committing or pushing web changes, run `npm run lint` and `npx tsc --noEmit` from `web/`.
+- Before committing or pushing web changes, run `npm run lint` and `npm run typecheck` from `web/`.
+  Do **not** use `npx tsc --noEmit`: it resolves `web/tsconfig.json`, a solution-style config with
+  `"files": []` and only project references, so it compiles zero files and always passes.
+  `npm run typecheck` checks `tsconfig.app.json` and `tsconfig.node.json` explicitly.
 - Type exports for API responses live in `web/src/services/api.ts` as `export interface` / `export type`.
 
 ---
@@ -443,4 +446,5 @@ Prefer the `describe("ComponentName > scenario")` → `it("does X")` structure s
 - Never call `fetch` directly from components — go through `web/src/services/api.ts`.
 - Never use a plain `<input>` or `<Input>` for an AWS ARN field — use `<ResourceArnCombobox>`.
 - Never add dependencies to `web/package.json` without justification.
-- Never commit or push code that fails `cd web && npm run lint` or `cd web && npx tsc --noEmit`.
+- Never commit or push code that fails `cd web && npm run lint`, `cd web && npm run typecheck`, or
+  `cd web && npm run test`. `make ci-local-web` runs all three plus the build, in CI's order.

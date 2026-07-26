@@ -17,7 +17,7 @@ function NotFoundPage() {
           <FileQuestion className="h-8 w-8 text-fg-subtle" />
         </div>
       </div>
-      <h1 className="text-2xl font-semibold text-fg">Page not found</h1>
+      <h1 className="font-mono text-2xl font-semibold text-fg">Page not found</h1>
       <p className="mt-2 text-sm text-fg-muted">
         <code className="rounded bg-bg-elevated px-1.5 py-0.5 font-mono text-xs">
           {location.pathname}
