@@ -578,3 +578,101 @@ func TestMergeShards(t *testing.T) {
 		t.Fatalf("expected OpenShardCount=1, got %d", summResp.StreamDescriptionSummary.OpenShardCount)
 	}
 }
+
+// ---- Tags ------------------------------------------------------------------
+
+// listTagsBody calls ListTagsForStream over the JSON1.1 wire and returns the
+// raw response body, so callers can compare responses byte-for-byte.
+func listTagsBody(t *testing.T, srv *helpers.TestServer, stream string) string {
+	t.Helper()
+	resp := kinesisCall(t, srv, "ListTagsForStream", map[string]any{"StreamName": stream})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	return helpers.ReadBody(t, resp)
+}
+
+func TestListTagsForStream_multipleTagsJSON(t *testing.T) {
+	// Given: a stream with three tags, added in non-alphabetical key order
+	srv := helpers.NewTestServer(t)
+	resp := kinesisCall(t, srv, "CreateStream", map[string]any{
+		"StreamName": "tag-order",
+		"ShardCount": 1,
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+	resp = kinesisCall(t, srv, "AddTagsToStream", map[string]any{
+		"StreamName": "tag-order",
+		"Tags":       map[string]string{"team": "data", "env": "test", "owner": "platform"},
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	// When: we list the tags
+	first := listTagsBody(t, srv, "tag-order")
+
+	// Then: the Tags array is sorted by Key
+	var out struct {
+		Tags []struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"Tags"`
+	}
+	if err := json.Unmarshal([]byte(first), &out); err != nil {
+		t.Fatalf("decode ListTagsForStream response: %v", err)
+	}
+	if len(out.Tags) != 3 {
+		t.Fatalf("expected 3 tags, got %d", len(out.Tags))
+	}
+	for i, want := range []string{"env", "owner", "team"} {
+		if out.Tags[i].Key != want {
+			t.Fatalf("Tags[%d].Key = %q, want %q (sorted by key)", i, out.Tags[i].Key, want)
+		}
+	}
+
+	// Then: repeated calls return byte-identical responses
+	for i := 0; i < 24; i++ {
+		if body := listTagsBody(t, srv, "tag-order"); body != first {
+			t.Fatalf("call %d returned different bytes\n got:   %s\n first: %s", i+2, body, first)
+		}
+	}
+}
+
+func TestListTagsForStream_multipleTagsCBOR(t *testing.T) {
+	// Given: a stream with three tags, added in non-alphabetical key order
+	srv := helpers.NewTestServer(t)
+	resp := kinesisCBORCall(t, srv, "CreateStream", map[string]any{
+		"StreamName": "cbor-tag-order",
+		"ShardCount": 1,
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+	resp = kinesisCBORCall(t, srv, "AddTagsToStream", map[string]any{
+		"StreamName": "cbor-tag-order",
+		"Tags":       map[string]string{"team": "data", "env": "test", "owner": "platform"},
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	// When: we list the tags repeatedly over the CBOR typed path
+	// Then: every response returns the Tags array sorted by Key
+	for i := 0; i < 25; i++ {
+		resp := kinesisCBORCall(t, srv, "ListTagsForStream", map[string]any{
+			"StreamName": "cbor-tag-order",
+		})
+		helpers.AssertStatus(t, resp, http.StatusOK)
+		var out struct {
+			Tags []struct {
+				Key   string `cbor:"Key"`
+				Value string `cbor:"Value"`
+			} `cbor:"Tags"`
+		}
+		decodeCBOR(t, resp, &out)
+		if len(out.Tags) != 3 {
+			t.Fatalf("call %d: expected 3 tags, got %d", i+1, len(out.Tags))
+		}
+		for j, want := range []string{"env", "owner", "team"} {
+			if out.Tags[j].Key != want {
+				t.Fatalf("call %d: Tags[%d].Key = %q, want %q (sorted by key)", i+1, j, out.Tags[j].Key, want)
+			}
+		}
+	}
+}
