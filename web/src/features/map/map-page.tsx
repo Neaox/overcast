@@ -780,7 +780,7 @@ export function MapPage({ focusRegion }: { focusRegion?: string }) {
         {/* Legend */}
         {!isLoading && hasRealResources && (
           <div className="absolute bottom-24 left-3 rounded-lg border border-border bg-bg-elevated/90 p-3 text-[11px] backdrop-blur-sm">
-            <p className="mb-2 text-[9px] font-semibold tracking-wide text-fg-muted uppercase">
+            <p className="mb-2 font-mono text-[9px] font-semibold tracking-wide text-fg-muted uppercase">
               Connection type
             </p>
             <div className="flex flex-col gap-1.5">

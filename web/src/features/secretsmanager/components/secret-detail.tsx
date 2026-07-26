@@ -180,7 +180,7 @@ export function SecretDetail({ secretName }: Props) {
       {/* Secret value */}
       <section className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-medium text-fg">Secret value</h2>
+          <h2 className="font-mono text-sm font-medium text-fg">Secret value</h2>
           <div className="flex items-center gap-2">
             {revealed && (
               <Button size="sm" variant="secondary" onClick={handleOpenEdit}>

@@ -314,7 +314,7 @@ export function CodeBrowser({
         <div key={node.path}>
           <button
             onClick={() => toggleDir(node.path)}
-            className="flex w-full items-center gap-1 py-0.5 text-left text-xs transition-colors hover:bg-white/5"
+            className="flex w-full items-center gap-1 py-0.5 text-left font-mono text-xs transition-colors hover:bg-white/5"
             style={{ paddingLeft: indent + 4 }}
           >
             {isOpen ? (
@@ -340,7 +340,7 @@ export function CodeBrowser({
         key={node.path}
         onClick={() => openFile(node.path)}
         className={cn(
-          "flex w-full items-center gap-1.5 py-0.5 text-left text-xs transition-colors",
+          "flex w-full items-center gap-1.5 py-0.5 text-left font-mono text-xs transition-colors",
           isActive ? "bg-accent/15 text-fg" : "text-fg-muted hover:bg-white/5 hover:text-fg",
         )}
         style={{ paddingLeft: indent + 22 }}
@@ -368,7 +368,7 @@ export function CodeBrowser({
         >
           {/* Sidebar header */}
           <div
-            className="flex items-center px-3 py-1.5 text-[10px] font-semibold tracking-widest uppercase"
+            className="flex items-center px-3 py-1.5 font-mono text-[10px] font-semibold tracking-widest uppercase"
             style={{ color: isDark ? "#888" : "var(--color-fg-muted)" }}
           >
             Explorer
@@ -396,7 +396,7 @@ export function CodeBrowser({
                 key={tab}
                 onClick={() => openFile(tab)}
                 className={cn(
-                  "group relative flex shrink-0 items-center gap-1.5 border-r border-white/5 px-3 py-1.5 text-xs transition-colors",
+                  "group relative flex shrink-0 items-center gap-1.5 border-r border-white/5 px-3 py-1.5 font-mono text-xs transition-colors",
                   isActive ? "text-fg" : "text-fg-muted hover:text-fg",
                 )}
                 style={{
@@ -432,7 +432,7 @@ export function CodeBrowser({
 
         {/* Breadcrumb bar */}
         <div
-          className="flex items-center gap-1 px-3 py-1 text-xs"
+          className="flex items-center gap-1 px-3 py-1 font-mono text-xs"
           style={{
             backgroundColor: isDark ? "#1e1e1e" : "#fff",
             color: isDark ? "#888" : "var(--color-fg-muted)",

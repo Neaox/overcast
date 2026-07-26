@@ -195,7 +195,7 @@ export function CloudwatchDashboard() {
         <section className="rounded-xl border border-border bg-bg-elevated p-4">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-sm font-semibold text-fg">Metrics</h2>
+              <h2 className="font-mono text-sm font-semibold text-fg">Metrics</h2>
               <p className="text-sm text-fg-muted">
                 {metrics.length} metric{metrics.length === 1 ? "" : "s"} discovered
               </p>
@@ -216,7 +216,9 @@ export function CloudwatchDashboard() {
             <div className="space-y-2">
               {metrics.map((metric) => {
                 const identity = metricIdentity(metric)
-                const isSelected = selectedMetric ? identity === metricIdentity(selectedMetric) : false
+                const isSelected = selectedMetric
+                  ? identity === metricIdentity(selectedMetric)
+                  : false
                 return (
                   <button
                     key={identity}
@@ -245,13 +247,15 @@ export function CloudwatchDashboard() {
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
-                    <h2 className="text-lg font-semibold text-fg">{selectedMetric.MetricName}</h2>
+                    <h2 className="font-mono text-lg font-semibold text-fg">
+                      {selectedMetric.MetricName}
+                    </h2>
                     <Badge variant="outline">{selectedMetric.Namespace}</Badge>
                   </div>
                   <p className="text-sm text-fg-muted">{formatDimensionList(selectedMetric)}</p>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
-                  <label className="space-y-1 text-xs font-medium tracking-wide text-fg-muted uppercase">
+                  <label className="space-y-1 font-mono text-xs font-medium tracking-wide text-fg-muted uppercase">
                     Statistic
                     <Select
                       value={selectedStat}
@@ -264,7 +268,7 @@ export function CloudwatchDashboard() {
                       ))}
                     </Select>
                   </label>
-                  <label className="space-y-1 text-xs font-medium tracking-wide text-fg-muted uppercase">
+                  <label className="space-y-1 font-mono text-xs font-medium tracking-wide text-fg-muted uppercase">
                     Time Range
                     <Select
                       value={String(rangeHours)}
@@ -289,7 +293,7 @@ export function CloudwatchDashboard() {
 
                   <div className="rounded-lg border border-border bg-bg p-4">
                     <div className="mb-3 flex items-center justify-between gap-2">
-                      <h3 className="text-sm font-semibold text-fg">Recent datapoints</h3>
+                      <h3 className="font-mono text-sm font-semibold text-fg">Recent datapoints</h3>
                       <span className="text-xs text-fg-muted">
                         {statisticsQuery.data?.datapoints.length ?? 0} returned
                       </span>
@@ -307,7 +311,7 @@ export function CloudwatchDashboard() {
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                           <thead>
-                            <tr className="border-b border-border text-left text-xs tracking-wide text-fg-muted uppercase">
+                            <tr className="border-b border-border text-left font-mono text-xs tracking-wide text-fg-muted uppercase">
                               <th className="py-2 pr-3 font-medium">Timestamp</th>
                               <th className="py-2 pr-3 font-medium">{selectedStat}</th>
                               <th className="py-2 font-medium">Unit</th>
@@ -337,7 +341,7 @@ export function CloudwatchDashboard() {
 
                 <div className="rounded-lg border border-border bg-bg p-4">
                   <div className="mb-3 flex items-center justify-between gap-2">
-                    <h3 className="text-sm font-semibold text-fg">Alarms</h3>
+                    <h3 className="font-mono text-sm font-semibold text-fg">Alarms</h3>
                     <span className="text-xs text-fg-muted">{selectedAlarms.length} matching</span>
                   </div>
 
@@ -374,25 +378,25 @@ export function CloudwatchDashboard() {
 
                           <dl className="grid gap-2 text-sm sm:grid-cols-2">
                             <div>
-                              <dt className="text-xs tracking-wide text-fg-muted uppercase">
+                              <dt className="font-mono text-xs tracking-wide text-fg-muted uppercase">
                                 Threshold
                               </dt>
                               <dd className="text-fg">{alarm.Threshold ?? "—"}</dd>
                             </div>
                             <div>
-                              <dt className="text-xs tracking-wide text-fg-muted uppercase">
+                              <dt className="font-mono text-xs tracking-wide text-fg-muted uppercase">
                                 Comparison
                               </dt>
                               <dd className="text-fg">{alarm.ComparisonOperator ?? "—"}</dd>
                             </div>
                             <div>
-                              <dt className="text-xs tracking-wide text-fg-muted uppercase">
+                              <dt className="font-mono text-xs tracking-wide text-fg-muted uppercase">
                                 Evaluation Periods
                               </dt>
                               <dd className="text-fg">{alarm.EvaluationPeriods ?? "—"}</dd>
                             </div>
                             <div>
-                              <dt className="text-xs tracking-wide text-fg-muted uppercase">
+                              <dt className="font-mono text-xs tracking-wide text-fg-muted uppercase">
                                 Last Transition
                               </dt>
                               <dd className="text-fg">

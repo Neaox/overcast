@@ -40,7 +40,8 @@ function humanizeRule(rule: unknown): string {
     if ("numeric" in obj) {
       const ops = obj.numeric as unknown[]
       if (ops.length === 2) return `${String(ops[0])} ${String(ops[1])}`
-      if (ops.length >= 4) return `${String(ops[0])} ${String(ops[1])} and ${String(ops[2])} ${String(ops[3])}`
+      if (ops.length >= 4)
+        return `${String(ops[0])} ${String(ops[1])} and ${String(ops[2])} ${String(ops[3])}`
     }
   }
   return JSON.stringify(rule)
@@ -179,7 +180,7 @@ export function TriggersTab({ name }: { name: string }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-fg">Event source mappings</h3>
+        <h3 className="font-mono text-sm font-medium text-fg">Event source mappings</h3>
         <Button size="sm" variant="ghost" onClick={() => setShowAdd((v) => !v)}>
           <PlusIcon className="mr-1 h-3.5 w-3.5" />
           Add trigger
@@ -189,7 +190,7 @@ export function TriggersTab({ name }: { name: string }) {
       {showAdd && (
         <div className="flex max-w-2xl flex-col gap-3 rounded-md border border-border bg-bg-elevated p-4">
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-fg-muted">Event source ARN</label>
+            <label className="font-mono text-xs font-medium text-fg-muted">Event source ARN</label>
             <ResourceArnCombobox
               resourceType="esm-source"
               value={newSourceArn}
@@ -200,7 +201,7 @@ export function TriggersTab({ name }: { name: string }) {
           {/* Row: batch size + batching window + starting position (streams only) */}
           <div className="flex flex-wrap gap-4">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-fg-muted">Batch size</label>
+              <label className="font-mono text-xs font-medium text-fg-muted">Batch size</label>
               <input
                 type="number"
                 min={1}
@@ -211,7 +212,9 @@ export function TriggersTab({ name }: { name: string }) {
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-fg-muted">Batching window (s)</label>
+              <label className="font-mono text-xs font-medium text-fg-muted">
+                Batching window (s)
+              </label>
               <input
                 type="number"
                 min={0}
@@ -223,7 +226,9 @@ export function TriggersTab({ name }: { name: string }) {
             </div>
             {isDynamoDBStream && (
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-fg-muted">Starting position</label>
+                <label className="font-mono text-xs font-medium text-fg-muted">
+                  Starting position
+                </label>
                 <select
                   className="rounded-md border border-border bg-bg px-3 py-1.5 text-xs text-fg focus:ring-1 focus:ring-accent focus:outline-none"
                   value={newStartingPosition}
@@ -237,7 +242,7 @@ export function TriggersTab({ name }: { name: string }) {
             {/* Max concurrency — SQS sources only */}
             {!isDynamoDBStream && (
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-fg-muted">
+                <label className="font-mono text-xs font-medium text-fg-muted">
                   Max concurrency <span className="font-normal text-fg-muted/70">(optional)</span>
                 </label>
                 <input
@@ -255,7 +260,7 @@ export function TriggersTab({ name }: { name: string }) {
 
           {/* Filter pattern — both source types */}
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-fg-muted">
+            <label className="font-mono text-xs font-medium text-fg-muted">
               Filter pattern <span className="font-normal text-fg-muted/70">(optional)</span>
             </label>
             <input
@@ -272,7 +277,7 @@ export function TriggersTab({ name }: { name: string }) {
             <>
               <div className="flex flex-wrap gap-4">
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-fg-muted">
+                  <label className="font-mono text-xs font-medium text-fg-muted">
                     Max record age (s){" "}
                     <span className="font-normal text-fg-muted/70">(-1 = unlimited)</span>
                   </label>
@@ -287,7 +292,7 @@ export function TriggersTab({ name }: { name: string }) {
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-fg-muted">
+                  <label className="font-mono text-xs font-medium text-fg-muted">
                     Max retry attempts{" "}
                     <span className="font-normal text-fg-muted/70">(-1 = unlimited)</span>
                   </label>
@@ -302,7 +307,9 @@ export function TriggersTab({ name }: { name: string }) {
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-fg-muted">Tumbling window (s)</label>
+                  <label className="font-mono text-xs font-medium text-fg-muted">
+                    Tumbling window (s)
+                  </label>
                   <input
                     type="number"
                     min={0}
@@ -313,7 +320,7 @@ export function TriggersTab({ name }: { name: string }) {
                   />
                 </div>
               </div>
-              <label className="flex items-center gap-2 text-xs text-fg">
+              <label className="flex items-center gap-2 font-mono text-xs text-fg">
                 <input
                   type="checkbox"
                   className="accent-accent"
@@ -353,7 +360,7 @@ export function TriggersTab({ name }: { name: string }) {
       ) : (
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-border text-left text-xs font-medium text-fg-muted">
+            <tr className="border-b border-border text-left font-mono text-xs font-medium text-fg-muted">
               <th className="pr-4 pb-2">Source</th>
               <th className="pr-4 pb-2">Batch size</th>
               <th className="pr-4 pb-2">Concurrency</th>

@@ -457,7 +457,7 @@ export function ItemEditorDialog({
           <div className="flex flex-col gap-2 py-1">
             {/* Format toggle */}
             <div className="flex items-center gap-2">
-              <span className="text-xs text-fg-muted">Format:</span>
+              <span className="font-mono text-xs text-fg-muted">Format:</span>
               <div className="flex items-center gap-1 rounded-md border border-border bg-bg-subtle p-0.5">
                 <button
                   onClick={() => changeJsonFormat("unmarshalled")}

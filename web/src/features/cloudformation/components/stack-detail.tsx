@@ -214,7 +214,7 @@ export function StackDetail({ stackName }: Props) {
           <Tab id="resources">
             Resources
             {resources.length > 0 && (
-              <span className="ml-1.5 rounded-full bg-bg-muted px-1.5 py-0.5 text-xs text-fg-muted">
+              <span className="ml-1.5 rounded-full bg-bg-muted px-1.5 py-0.5 font-mono text-xs text-fg-muted">
                 {resources.length}
               </span>
             )}
@@ -231,7 +231,7 @@ export function StackDetail({ stackName }: Props) {
               <DetailRow label="Stack ID" value={stack.StackId ?? ""} mono />
               {stack.ParentId && (
                 <div className="flex flex-col gap-0.5">
-                  <dt className="text-xs text-fg-muted">Parent stack</dt>
+                  <dt className="font-mono text-xs text-fg-muted">Parent stack</dt>
                   <dd>
                     <Link
                       to="/cloudformation/$stackName"
@@ -256,7 +256,7 @@ export function StackDetail({ stackName }: Props) {
           {/* Parameters */}
           {(stack.Parameters ?? []).length > 0 && (
             <section className="flex flex-col gap-2">
-              <h2 className="text-sm font-medium text-fg">Parameters</h2>
+              <h2 className="font-mono text-sm font-medium text-fg">Parameters</h2>
               <div className="rounded-md border border-border">
                 <Table>
                   <TableHeader>
@@ -281,7 +281,7 @@ export function StackDetail({ stackName }: Props) {
           {/* Outputs */}
           {(stack.Outputs ?? []).length > 0 && (
             <section className="flex flex-col gap-2">
-              <h2 className="text-sm font-medium text-fg">Outputs</h2>
+              <h2 className="font-mono text-sm font-medium text-fg">Outputs</h2>
               <div className="rounded-md border border-border">
                 <Table>
                   <TableHeader>
@@ -316,7 +316,7 @@ export function StackDetail({ stackName }: Props) {
           {/* Tags */}
           {(stack.Tags ?? []).length > 0 && (
             <section className="flex flex-col gap-2">
-              <h2 className="text-sm font-medium text-fg">Tags</h2>
+              <h2 className="font-mono text-sm font-medium text-fg">Tags</h2>
               <div className="rounded-md border border-border">
                 <Table>
                   <TableHeader>
@@ -342,7 +342,7 @@ export function StackDetail({ stackName }: Props) {
           {resources.length > 0 && (
             <section className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-medium text-fg">Resources</h2>
+                <h2 className="font-mono text-sm font-medium text-fg">Resources</h2>
                 <Button
                   size="sm"
                   variant="ghost"

@@ -490,7 +490,7 @@ export function TableDetail({ tableName }: Props) {
               {/* Index selector */}
               {indexOptions.length > 1 && (
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-fg-muted">Index</label>
+                  <label className="font-mono text-xs font-medium text-fg-muted">Index</label>
                   <select
                     className="rounded border border-border bg-bg px-2 py-1.5 text-sm text-fg"
                     value={selectedIndex}
@@ -561,7 +561,7 @@ export function TableDetail({ tableName }: Props) {
             {filterMode === "query" ? (
               <div className="flex items-end gap-3">
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-fg-muted">
+                  <label className="font-mono text-xs font-medium text-fg-muted">
                     {activeHashKey?.attributeName ?? "Partition key"} =
                   </label>
                   <Input
@@ -574,7 +574,7 @@ export function TableDetail({ tableName }: Props) {
                 </div>
                 {activeSortKey?.attributeName && (
                   <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-fg-muted">
+                    <label className="font-mono text-xs font-medium text-fg-muted">
                       {activeSortKey.attributeName}
                     </label>
                     <div className="flex items-center gap-1.5">
@@ -725,7 +725,7 @@ export function TableDetail({ tableName }: Props) {
       {activeTab === "schema" && (
         <div className="flex flex-col gap-6">
           <section>
-            <h3 className="mb-2 text-xs font-semibold tracking-wider text-fg-muted uppercase">
+            <h3 className="mb-2 font-mono text-xs font-semibold tracking-wider text-fg-muted uppercase">
               Key Schema
             </h3>
             <div className="rounded-md border border-border">
@@ -763,7 +763,7 @@ export function TableDetail({ tableName }: Props) {
 
           {table.globalSecondaryIndexes.length > 0 && (
             <section>
-              <h3 className="mb-2 text-xs font-semibold tracking-wider text-fg-muted uppercase">
+              <h3 className="mb-2 font-mono text-xs font-semibold tracking-wider text-fg-muted uppercase">
                 Global Secondary Indexes
               </h3>
               <div className="rounded-md border border-border">
@@ -782,7 +782,7 @@ export function TableDetail({ tableName }: Props) {
                         <TableCell className="text-sm text-fg-muted">
                           {gsi.keySchema.map((k) => k.attributeName).join(" / ")}
                         </TableCell>
-                        <TableCell className="text-right tabular-nums">
+                        <TableCell className="text-right font-mono tabular-nums">
                           {gsi.itemCount.toLocaleString()}
                         </TableCell>
                       </TableRow>
@@ -795,7 +795,7 @@ export function TableDetail({ tableName }: Props) {
 
           {table.localSecondaryIndexes.length > 0 && (
             <section>
-              <h3 className="mb-2 text-xs font-semibold tracking-wider text-fg-muted uppercase">
+              <h3 className="mb-2 font-mono text-xs font-semibold tracking-wider text-fg-muted uppercase">
                 Local Secondary Indexes
               </h3>
               <div className="rounded-md border border-border">
@@ -814,7 +814,7 @@ export function TableDetail({ tableName }: Props) {
                         <TableCell className="text-sm text-fg-muted">
                           {lsi.keySchema.map((k) => k.attributeName).join(" / ")}
                         </TableCell>
-                        <TableCell className="text-right tabular-nums">
+                        <TableCell className="text-right font-mono tabular-nums">
                           {lsi.itemCount.toLocaleString()}
                         </TableCell>
                       </TableRow>
@@ -826,7 +826,7 @@ export function TableDetail({ tableName }: Props) {
           )}
 
           <section>
-            <h3 className="mb-2 text-xs font-semibold tracking-wider text-fg-muted uppercase">
+            <h3 className="mb-2 font-mono text-xs font-semibold tracking-wider text-fg-muted uppercase">
               Table details
             </h3>
             <div className="grid grid-cols-2 gap-x-8 gap-y-2 rounded-md border border-border bg-bg-muted p-4 text-sm">
@@ -851,7 +851,7 @@ export function TableDetail({ tableName }: Props) {
 
           {/* Streams section */}
           <section>
-            <h3 className="mb-2 text-xs font-semibold tracking-wider text-fg-muted uppercase">
+            <h3 className="mb-2 font-mono text-xs font-semibold tracking-wider text-fg-muted uppercase">
               DynamoDB Streams
             </h3>
             <div className="rounded-md border border-border bg-bg-muted p-4">
@@ -859,7 +859,7 @@ export function TableDetail({ tableName }: Props) {
                 <div className="flex flex-col gap-3">
                   <div className="flex items-center justify-between">
                     <div className="flex flex-col gap-0.5">
-                      <span className="text-sm font-medium text-fg">Streams enabled</span>
+                      <span className="font-mono text-sm font-medium text-fg">Streams enabled</span>
                       <span className="text-xs text-fg-muted">
                         View type:{" "}
                         <span className="font-mono">
@@ -893,7 +893,7 @@ export function TableDetail({ tableName }: Props) {
                   </div>
                   {table.latestStreamArn && (
                     <div className="flex flex-col gap-0.5">
-                      <span className="text-xs text-fg-muted">Stream ARN</span>
+                      <span className="font-mono text-xs text-fg-muted">Stream ARN</span>
                       <span className="font-mono text-xs break-all text-fg">
                         {table.latestStreamArn}
                       </span>

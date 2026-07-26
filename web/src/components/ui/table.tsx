@@ -10,7 +10,7 @@ function Table({ className, ...props }: React.HTMLAttributes<HTMLTableElement>) 
 }
 
 function TableHeader({ className, ...props }: React.HTMLAttributes<HTMLTableSectionElement>) {
-  return <thead className={cn("border-b border-border", className)} {...props} />
+  return <thead className={cn("border-b border-border bg-bg", className)} {...props} />
 }
 
 function TableBody({ className, ...props }: React.HTMLAttributes<HTMLTableSectionElement>) {
@@ -22,7 +22,7 @@ function TableRow({ className, onClick, ...props }: React.HTMLAttributes<HTMLTab
     <tr
       className={cn(
         "border-b border-border-muted transition-colors",
-        onClick && "cursor-pointer hover:bg-bg-subtle",
+        onClick && "cursor-pointer hover:bg-accent-muted",
         "data-[selected=true]:bg-accent-muted",
         className,
       )}
@@ -36,8 +36,8 @@ function TableHead({ className, ...props }: React.ThHTMLAttributes<HTMLTableCell
   return (
     <th
       className={cn(
-        "h-9 px-3 text-left align-middle text-sm font-medium text-fg-muted",
-        "whitespace-nowrap",
+        "h-9 px-3 text-left align-middle font-mono text-[9px] font-medium text-fg-muted",
+        "tracking-[0.14em] whitespace-nowrap uppercase",
         className,
       )}
       {...props}

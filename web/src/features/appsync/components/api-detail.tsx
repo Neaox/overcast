@@ -255,7 +255,7 @@ function ResolverGroup({ apiId, typeName }: { apiId: string; typeName: string })
 
   return (
     <div>
-      <h3 className="mb-2 text-sm font-semibold">{typeName}</h3>
+      <h3 className="mb-2 font-mono text-sm font-semibold">{typeName}</h3>
       {isLoading ? (
         <div className="flex justify-center py-4">
           <Spinner className="h-4 w-4" />
@@ -464,7 +464,7 @@ function SchemaTab({ apiId }: { apiId: string }) {
     <div className="flex flex-col gap-4">
       {schemaStatus && (
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium">Schema Status:</span>
+          <span className="font-mono text-sm font-medium">Schema Status:</span>
           <Badge variant={schemaStatus.status === "ACTIVE" ? "default" : "outline"}>
             {schemaStatus.status}
           </Badge>

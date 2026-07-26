@@ -75,7 +75,7 @@ interface FormFieldProps {
 function FormField({ label, htmlFor, error, hint, required, children, className }: FormFieldProps) {
   return (
     <div className={cn("flex flex-col gap-1.5", className)}>
-      <label htmlFor={htmlFor} className="text-sm font-medium text-fg-muted">
+      <label htmlFor={htmlFor} className="font-mono text-sm font-medium text-fg-muted">
         {label}
         {required && <span className="ml-0.5 text-danger">*</span>}
       </label>

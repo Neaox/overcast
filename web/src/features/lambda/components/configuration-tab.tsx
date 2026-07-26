@@ -107,7 +107,7 @@ function GeneralConfigSection({ fn }: { fn: LambdaFunction }) {
   return (
     <div className="rounded-lg border border-border bg-bg-elevated p-4">
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-medium text-fg">General configuration</h3>
+        <h3 className="font-mono text-sm font-medium text-fg">General configuration</h3>
         {!editing ? (
           <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
             Edit
@@ -132,7 +132,7 @@ function GeneralConfigSection({ fn }: { fn: LambdaFunction }) {
       {editing ? (
         <div className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
           <div className="col-span-2 flex flex-col gap-1">
-            <label className="text-xs text-fg-muted">Description</label>
+            <label className="font-mono text-xs text-fg-muted">Description</label>
             <Input
               value={form.description}
               onChange={field("description")}
@@ -140,7 +140,7 @@ function GeneralConfigSection({ fn }: { fn: LambdaFunction }) {
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs text-fg-muted">Runtime</label>
+            <label className="font-mono text-xs text-fg-muted">Runtime</label>
             <select
               value={form.runtime}
               onChange={field("runtime")}
@@ -164,7 +164,7 @@ function GeneralConfigSection({ fn }: { fn: LambdaFunction }) {
             </select>
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs text-fg-muted">Handler</label>
+            <label className="font-mono text-xs text-fg-muted">Handler</label>
             <Input
               value={form.handler}
               onChange={field("handler")}
@@ -173,7 +173,7 @@ function GeneralConfigSection({ fn }: { fn: LambdaFunction }) {
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs text-fg-muted">Timeout (seconds, 1–900)</label>
+            <label className="font-mono text-xs text-fg-muted">Timeout (seconds, 1–900)</label>
             <Input
               type="number"
               min={1}
@@ -183,7 +183,7 @@ function GeneralConfigSection({ fn }: { fn: LambdaFunction }) {
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs text-fg-muted">Memory (MB, 128–10240)</label>
+            <label className="font-mono text-xs text-fg-muted">Memory (MB, 128–10240)</label>
             <Input
               type="number"
               min={128}
@@ -194,7 +194,7 @@ function GeneralConfigSection({ fn }: { fn: LambdaFunction }) {
             />
           </div>
           <div className="col-span-2 flex flex-col gap-1">
-            <label className="text-xs text-fg-muted">Role ARN</label>
+            <label className="font-mono text-xs text-fg-muted">Role ARN</label>
             <Input
               value={form.role}
               onChange={field("role")}
@@ -295,7 +295,7 @@ function VpcConfigSection({ fn }: { fn: LambdaFunction }) {
   return (
     <div className="rounded-lg border border-border bg-bg-elevated p-4">
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-medium text-fg">VPC configuration</h3>
+        <h3 className="font-mono text-sm font-medium text-fg">VPC configuration</h3>
         {!editing ? (
           <div className="flex gap-2">
             {hasVpc && (
@@ -335,7 +335,7 @@ function VpcConfigSection({ fn }: { fn: LambdaFunction }) {
           {/* Subnets */}
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-fg-muted">Subnets</label>
+              <label className="font-mono text-xs font-medium text-fg-muted">Subnets</label>
               <Button size="sm" variant="ghost" onClick={() => setAddingSubnet((v) => !v)}>
                 <PlusIcon className="mr-1 h-3.5 w-3.5" /> Add
               </Button>
@@ -407,7 +407,7 @@ function VpcConfigSection({ fn }: { fn: LambdaFunction }) {
           {/* Security Groups */}
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-fg-muted">Security Groups</label>
+              <label className="font-mono text-xs font-medium text-fg-muted">Security Groups</label>
               <Button size="sm" variant="ghost" onClick={() => setAddingSG((v) => !v)}>
                 <PlusIcon className="mr-1 h-3.5 w-3.5" /> Add
               </Button>
@@ -546,7 +546,7 @@ function EnvVarsSection({ fn }: { fn: LambdaFunction }) {
   return (
     <div className="rounded-lg border border-border bg-bg-elevated p-4">
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-medium text-fg">Environment variables</h3>
+        <h3 className="font-mono text-sm font-medium text-fg">Environment variables</h3>
         {!editing ? (
           <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
             Edit
@@ -691,7 +691,7 @@ function LayersSection({
   return (
     <div>
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-medium text-fg">Layers</h3>
+        <h3 className="font-mono text-sm font-medium text-fg">Layers</h3>
         <Button size="sm" variant="ghost" onClick={() => setShowAdd((v) => !v)}>
           <PlusIcon className="mr-1 h-3.5 w-3.5" />
           Add layer

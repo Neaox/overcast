@@ -102,16 +102,26 @@ function QueryListState({
 // ─── PageHeader ───────────────────────────────────────────────────────────
 interface PageHeaderProps {
   title: string
+  /** Resource count, rendered as a lighter number beside the title. */
+  count?: number
+  /** Secondary line beneath the title, e.g. "9 active · 15 resources". */
+  meta?: React.ReactNode
   description?: React.ReactNode
   actions?: React.ReactNode
   className?: string
 }
 
-function PageHeader({ title, description, actions, className }: PageHeaderProps) {
+function PageHeader({ title, count, meta, description, actions, className }: PageHeaderProps) {
   return (
     <div className={cn("flex items-start justify-between gap-4", className)}>
       <div className="flex flex-col gap-0.5">
-        <h1 className="text-base font-semibold text-fg">{title}</h1>
+        <div className="flex items-baseline gap-2">
+          <h1 className="font-mono text-[20px] font-bold tracking-[-0.02em] text-fg">{title}</h1>
+          {count !== undefined && (
+            <span className="font-mono text-sm text-fg-subtle tabular-nums">{count}</span>
+          )}
+        </div>
+        {meta && <p className="text-xs text-fg-subtle">{meta}</p>}
         {description && <p className="text-sm text-fg-muted">{description}</p>}
       </div>
       {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}

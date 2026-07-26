@@ -157,7 +157,7 @@ export function SsmParameterDetail({ name }: Props) {
           <DetailRow label="Name" value={param.Name} mono />
           <DetailRow label="ARN" value={<ArnText arn={param.ARN ?? ""} />} mono />
           <div className="flex flex-col gap-0.5">
-            <span className="text-xs text-fg-muted">Type</span>
+            <span className="font-mono text-xs text-fg-muted">Type</span>
             <Badge variant="outline">{param.Type}</Badge>
           </div>
           <DetailRow label="Version" value={`v${param.Version}`} />
@@ -169,7 +169,7 @@ export function SsmParameterDetail({ name }: Props) {
       {/* Parameter value */}
       <section className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-medium text-fg">Value</h2>
+          <h2 className="font-mono text-sm font-medium text-fg">Value</h2>
           {isSecure && (
             <Button size="sm" variant="ghost" onClick={() => setRevealed((v) => !v)}>
               {revealed ? (
@@ -190,7 +190,7 @@ export function SsmParameterDetail({ name }: Props) {
       {/* Version history */}
       {history.length > 0 && (
         <section className="flex flex-col gap-2">
-          <h2 className="text-sm font-medium text-fg">Version history</h2>
+          <h2 className="font-mono text-sm font-medium text-fg">Version history</h2>
           <Table>
             <TableHeader>
               <TableRow>

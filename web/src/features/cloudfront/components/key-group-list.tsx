@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
-import { Key, RefreshCw } from "lucide-react"
+import { Key } from "lucide-react"
 import { cloudfrontKeyGroupsQueryOptions } from "@/features/cloudfront/data"
-import { Button } from "@/components/ui/button"
 import {
   Table,
   TableBody,
@@ -10,8 +9,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
-import { cn } from "@/lib/utils"
+import { EmptyState, QueryListState } from "@/components/ui/primitives"
+import {
+  RefreshAction,
+  ResourceListCard,
+  ResourceListPage,
+  ResourceName,
+} from "@/components/ui/resource-list-page"
 
 export function KeyGroupList() {
   const {
@@ -19,55 +23,57 @@ export function KeyGroupList() {
     isLoading,
     isFetching,
     refetch,
+    error,
   } = useQuery(cloudfrontKeyGroupsQueryOptions())
 
   return (
-    <div className="flex w-full flex-col gap-4">
-      <PageHeader
-        title="Key Groups"
-        description={`${keyGroups.length} key group${keyGroups.length !== 1 ? "s" : ""}`}
-        actions={
-          <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-            <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-            Refresh
-          </Button>
-        }
-      />
-
-      {isLoading ? (
-        <div className="flex justify-center py-16">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : keyGroups.length === 0 ? (
-        <EmptyState
-          icon={<Key className="h-10 w-10" />}
-          title="No key groups"
-          description="Key groups contain public keys used to verify signed URLs and signed cookies."
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>ID</TableHead>
-              <TableHead>Name</TableHead>
-              <TableHead>Comment</TableHead>
-              <TableHead>Last Modified</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {keyGroups.map((kg) => (
-              <TableRow key={kg.id}>
-                <TableCell className="font-mono text-xs">{kg.id}</TableCell>
-                <TableCell className="font-medium">{kg.name}</TableCell>
-                <TableCell className="text-fg-muted">{kg.comment || "—"}</TableCell>
-                <TableCell className="text-fg-muted">
-                  {kg.lastModifiedTime ? new Date(kg.lastModifiedTime).toLocaleString() : "—"}
-                </TableCell>
+    <ResourceListPage
+      title="Key Groups"
+      count={keyGroups.length}
+      actions={<RefreshAction isFetching={isFetching} onClick={() => refetch()} />}
+    >
+      <ResourceListCard>
+        {isLoading || keyGroups.length === 0 ? (
+          <QueryListState
+            isLoading={isLoading}
+            isEmpty={keyGroups.length === 0}
+            error={error}
+            empty={
+              <EmptyState
+                icon={<Key className="h-10 w-10" />}
+                title="No key groups"
+                description="Key groups contain public keys used to verify signed URLs and signed cookies."
+              />
+            }
+            errorTitle="Failed to load key groups"
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>ID</TableHead>
+                <TableHead>Comment</TableHead>
+                <TableHead>Last modified</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
-    </div>
+            </TableHeader>
+            <TableBody>
+              {keyGroups.map((kg) => (
+                <TableRow key={kg.id}>
+                  <TableCell>
+                    <ResourceName icon={Key} name={kg.name} />
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-fg-muted">{kg.id}</TableCell>
+                  <TableCell className="text-fg-muted">{kg.comment || "—"}</TableCell>
+                  <TableCell className="text-fg-muted">
+                    {kg.lastModifiedTime ? new Date(kg.lastModifiedTime).toLocaleString() : "—"}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </ResourceListCard>
+    </ResourceListPage>
   )
 }

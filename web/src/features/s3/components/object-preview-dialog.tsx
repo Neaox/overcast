@@ -115,7 +115,7 @@ export function ObjectPreviewDialog({
             )}
             {Object.keys(metadata.metadata).length > 0 && (
               <div>
-                <p className="mb-1.5 text-sm font-medium text-fg-muted">User metadata</p>
+                <p className="mb-1.5 font-mono text-sm font-medium text-fg-muted">User metadata</p>
                 <CodeBlock>{JSON.stringify(metadata.metadata, null, 2)}</CodeBlock>
               </div>
             )}

@@ -246,7 +246,7 @@ function InstancesPanel() {
                   <Link
                     to="/ec2/$instanceId"
                     params={{ instanceId: i.instanceId }}
-                    className="text-fg-accent hover:underline"
+                    className="text-accent hover:underline"
                   >
                     {i.instanceId}
                   </Link>
@@ -395,7 +395,7 @@ function VpcsPanel() {
                   <Link
                     to="/ec2/vpc/$vpcId"
                     params={{ vpcId: v.vpcId }}
-                    className="text-fg-accent hover:underline"
+                    className="text-accent hover:underline"
                   >
                     {v.vpcId}
                   </Link>
@@ -727,7 +727,7 @@ function CreateVpcDialog({
         </DialogHeader>
         <DialogBody>
           <div>
-            <label className="mb-1 block text-sm font-medium text-fg">CIDR Block</label>
+            <label className="mb-1 block font-mono text-sm font-medium text-fg">CIDR Block</label>
             <Input
               placeholder="10.0.0.0/16"
               value={cidr}
@@ -1054,7 +1054,7 @@ function AssociateAddressDialog({
             instance.
           </p>
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-fg-muted">Instance</label>
+            <label className="font-mono text-xs font-medium text-fg-muted">Instance</label>
             <select
               value={instanceId}
               onChange={(e) => setInstanceId(e.target.value)}

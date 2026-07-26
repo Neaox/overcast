@@ -1,14 +1,13 @@
 import { useState } from "react"
 import { useNavigate } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
-import { Zap, Plus, Trash2, RefreshCw } from "lucide-react"
+import { Eye, Zap, Trash2 } from "lucide-react"
 import {
   lambdaFunctionsQueryOptions,
   lambdaKeys,
   deleteFunctionMutationOptions,
 } from "@/features/lambda/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
-import { Button } from "@/components/ui/button"
 import type { LambdaFunction } from "@/types"
 import {
   Table,
@@ -19,7 +18,16 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { QueryListState, EmptyState } from "@/components/ui/primitives"
+import {
+  CreateAction,
+  RefreshAction,
+  ResourceListCard,
+  ResourceListPage,
+  ResourceName,
+  RowAction,
+  RowActions,
+} from "@/components/ui/resource-list-page"
 import { CreateFunctionWizard } from "./create-wizard"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { cn } from "@/lib/utils"
@@ -36,6 +44,7 @@ export function FunctionList() {
     isLoading,
     isFetching,
     refetch,
+    error,
   } = useQuery(lambdaFunctionsQueryOptions())
 
   const deleteMut = useResourceMutation({
@@ -48,62 +57,66 @@ export function FunctionList() {
     onSuccess: () => setDeleteTarget(undefined),
   })
 
-  return (
-    <div className="flex w-full flex-col gap-4">
-      <PageHeader
-        title="Lambda Functions"
-        description="Manage Lambda function definitions."
-        actions={
-          <div className="flex gap-2">
-            <ServiceDocsButton
-              service="lambda"
-              label="Lambda"
-              open={docsOpen}
-              onOpen={openDocs}
-              onClose={closeDocs}
-            />
-            <Button size="sm" variant="ghost" disabled={isFetching} onClick={() => refetch()}>
-              <RefreshCw className={cn("mr-1 h-4 w-4", isFetching && "animate-spin")} />
-              Refresh
-            </Button>
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1 h-4 w-4" />
-              Create function
-            </Button>
-          </div>
-        }
-      />
+  const activeCount = functions.filter((fn) => fn.State === "Active").length
 
-      {isLoading ? (
-        <div className="flex justify-center py-24">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : functions.length === 0 ? (
-        <EmptyState
-          icon={<Zap className="h-8 w-8 opacity-40" />}
-          title="No functions"
-          description="Create a function to get started."
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Runtime</TableHead>
-              <TableHead>Handler</TableHead>
-              <TableHead>Memory</TableHead>
-              <TableHead>Timeout</TableHead>
-              <TableHead>State</TableHead>
-              <TableHead className="w-16" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {functions.map((fn) => (
-              <FunctionRow key={fn.FunctionArn} fn={fn} onDelete={setDeleteTarget} />
-            ))}
-          </TableBody>
-        </Table>
-      )}
+  return (
+    <ResourceListPage
+      title="Lambda Functions"
+      count={functions.length}
+      meta={functions.length > 0 ? `${activeCount} active` : undefined}
+      actions={
+        <>
+          <ServiceDocsButton
+            service="lambda"
+            label="Lambda"
+            open={docsOpen}
+            onOpen={openDocs}
+            onClose={closeDocs}
+          />
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create function</CreateAction>
+        </>
+      }
+    >
+      <ResourceListCard>
+        {isLoading || functions.length === 0 ? (
+          <QueryListState
+            isLoading={isLoading}
+            isEmpty={functions.length === 0}
+            error={error}
+            empty={
+              <EmptyState
+                icon={<Zap className="h-10 w-10" />}
+                title="No functions yet"
+                description="Create a function to get started."
+                action={
+                  <CreateAction onClick={() => setShowCreate(true)}>Create function</CreateAction>
+                }
+              />
+            }
+            errorTitle="Failed to load functions"
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Runtime</TableHead>
+                <TableHead>Handler</TableHead>
+                <TableHead>Memory</TableHead>
+                <TableHead>Timeout</TableHead>
+                <TableHead>State</TableHead>
+                <TableHead className="w-20 text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {functions.map((fn) => (
+                <FunctionRow key={fn.FunctionArn} fn={fn} onDelete={setDeleteTarget} />
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </ResourceListCard>
 
       <CreateFunctionWizard open={showCreate} onOpenChange={setShowCreate} />
 
@@ -121,7 +134,7 @@ export function FunctionList() {
         isPending={deleteMut.isPending}
         onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
       />
-    </div>
+    </ResourceListPage>
   )
 }
 
@@ -129,39 +142,39 @@ export function FunctionList() {
 
 function FunctionRow({ fn, onDelete }: { fn: LambdaFunction; onDelete: (name: string) => void }) {
   const navigate = useNavigate()
+  const name = fn.FunctionName ?? ""
 
   return (
-    <TableRow
-      className="cursor-pointer"
-      onClick={() => navigate({ to: "/lambda/$name", params: { name: fn.FunctionName ?? "" } })}
-    >
-      <TableCell className="font-mono font-medium">{fn.FunctionName}</TableCell>
-      <TableCell className="text-sm text-fg-muted">{fn.Runtime}</TableCell>
+    <TableRow onClick={() => navigate({ to: "/lambda/$name", params: { name } })}>
+      <TableCell>
+        <ResourceName icon={Zap} name={name} />
+      </TableCell>
+      <TableCell className="text-fg-muted">{fn.Runtime}</TableCell>
       <TableCell className="font-mono text-xs text-fg-muted">{fn.Handler}</TableCell>
-      <TableCell className="text-sm text-fg-muted">{fn.MemorySize ?? 128} MB</TableCell>
-      <TableCell className="text-sm text-fg-muted">{fn.Timeout ?? 3}s</TableCell>
+      <TableCell className="text-fg-muted">{fn.MemorySize ?? 128} MB</TableCell>
+      <TableCell className="text-fg-muted">{fn.Timeout ?? 3}s</TableCell>
       <TableCell>
         <span
           className={cn(
             "text-xs",
-            fn.State === "Active" ? "font-medium text-green-500" : "text-fg-muted",
+            fn.State === "Active" ? "font-medium text-success" : "text-fg-muted",
           )}
         >
           {fn.State}
         </span>
       </TableCell>
-      <TableCell>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-danger hover:text-danger"
-          onClick={(e) => {
-            e.stopPropagation()
-            onDelete(fn.FunctionName ?? "")
-          }}
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
+      <TableCell onClick={(e) => e.stopPropagation()}>
+        <RowActions>
+          <RowAction
+            label={`View ${name}`}
+            onClick={() => navigate({ to: "/lambda/$name", params: { name } })}
+          >
+            <Eye className="h-3.5 w-3.5" />
+          </RowAction>
+          <RowAction label={`Delete ${name}`} tone="danger" onClick={() => onDelete(name)}>
+            <Trash2 className="h-3.5 w-3.5" />
+          </RowAction>
+        </RowActions>
       </TableCell>
     </TableRow>
   )

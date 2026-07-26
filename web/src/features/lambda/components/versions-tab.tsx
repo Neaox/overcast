@@ -81,7 +81,7 @@ export function VersionsTab({ name }: { name: string }) {
       {/* ── Published versions ───────────────────────────── */}
       <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium text-fg">Published versions</h3>
+          <h3 className="font-mono text-sm font-medium text-fg">Published versions</h3>
           <Button variant="secondary" size="sm" onClick={() => setShowPublishForm((v) => !v)}>
             + Publish version
           </Button>
@@ -90,7 +90,7 @@ export function VersionsTab({ name }: { name: string }) {
         {showPublishForm && (
           <div className="flex items-end gap-2 rounded-md border border-border bg-bg-elevated p-3">
             <div className="flex flex-1 flex-col gap-1">
-              <label className="text-xs text-fg-muted">Description (optional)</label>
+              <label className="font-mono text-xs text-fg-muted">Description (optional)</label>
               <Input
                 value={publishDesc}
                 onChange={(e) => setPublishDesc(e.target.value)}
@@ -115,10 +115,10 @@ export function VersionsTab({ name }: { name: string }) {
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-border text-xs text-fg-muted">
+              <tr className="border-b border-border font-mono text-xs text-fg-muted">
                 <th className="pb-1 text-left font-medium">Version</th>
                 <th className="pb-1 text-left font-medium">Description</th>
-                <th className="pb-1 text-left font-mono font-medium">ARN</th>
+                <th className="pb-1 text-left font-medium">ARN</th>
                 <th className="pb-1 text-left font-medium">SHA-256</th>
               </tr>
             </thead>
@@ -145,12 +145,12 @@ export function VersionsTab({ name }: { name: string }) {
 
       {/* ── Aliases ──────────────────────────────────────── */}
       <div className="flex flex-col gap-3">
-        <h3 className="text-sm font-medium text-fg">Aliases</h3>
+        <h3 className="font-mono text-sm font-medium text-fg">Aliases</h3>
 
         {/* Create alias form */}
         <div className="flex items-end gap-2 rounded-md border border-border bg-bg-elevated p-3">
           <div className="flex flex-col gap-1">
-            <label className="text-xs text-fg-muted">Alias name</label>
+            <label className="font-mono text-xs text-fg-muted">Alias name</label>
             <Input
               value={aliasName}
               onChange={(e) => setAliasName(e.target.value)}
@@ -159,7 +159,7 @@ export function VersionsTab({ name }: { name: string }) {
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs text-fg-muted">Points to version</label>
+            <label className="font-mono text-xs text-fg-muted">Points to version</label>
             <Input
               value={aliasVersion}
               onChange={(e) => setAliasVersion(e.target.value)}
@@ -190,7 +190,7 @@ export function VersionsTab({ name }: { name: string }) {
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-border text-xs text-fg-muted">
+              <tr className="border-b border-border font-mono text-xs text-fg-muted">
                 <th className="pb-1 text-left font-medium">Name</th>
                 <th className="pb-1 text-left font-medium">Version</th>
                 <th className="pb-1 text-left font-medium">Description</th>

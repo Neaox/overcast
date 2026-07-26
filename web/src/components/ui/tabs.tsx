@@ -51,7 +51,7 @@ export function TabList({ children, className }: TabListProps) {
 // ─── Tab ──────────────────────────────────────────────────────────────────
 
 const tabBase =
-  "inline-flex items-center border-b-2 px-1 pb-2 text-sm font-medium transition-colors cursor-pointer"
+  "inline-flex items-center border-b-2 px-1 pb-2 font-mono text-sm font-medium transition-colors cursor-pointer"
 const activeCls = "border-accent text-accent"
 const inactiveCls = "border-transparent text-fg-muted hover:text-fg"
 

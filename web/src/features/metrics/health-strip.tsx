@@ -58,8 +58,8 @@ export function HealthStrip({ uptime }: { uptime?: string }) {
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <div className="bg-bg-card flex flex-col gap-0.5 rounded-md border border-border px-3 py-2">
-        <span className="text-[10px] font-medium tracking-wider text-fg-muted uppercase">
+      <div className="flex flex-col gap-0.5 rounded-md border border-border bg-bg-elevated px-3 py-2">
+        <span className="font-mono text-[10px] font-medium tracking-wider text-fg-muted uppercase">
           Storage
         </span>
         <div className="flex items-center gap-2">

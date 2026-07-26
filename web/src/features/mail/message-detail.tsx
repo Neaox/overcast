@@ -100,11 +100,11 @@ export function MessageDetail({ message, onDelete, deleting }: MessageDetailProp
       {/* Header */}
       <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-6 py-4">
         <div className="min-w-0 flex-1 space-y-1">
-          <h2 className="flex items-center gap-2 truncate text-base font-semibold text-fg">
+          <h2 className="flex items-center gap-2 truncate font-mono text-base font-semibold text-fg">
             {KindIcon && <KindIcon className="h-4 w-4 shrink-0 text-fg-muted" />}
             {kindTitle}
             {message.source && (
-              <span className="bg-surface-muted shrink-0 rounded px-1.5 py-0.5 text-xs font-normal text-fg-subtle">
+              <span className="bg-surface-muted shrink-0 rounded px-1.5 py-0.5 font-mono text-xs font-normal text-fg-subtle">
                 {message.source}
               </span>
             )}

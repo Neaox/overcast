@@ -186,7 +186,7 @@ function AddNotificationDialog({
         <div className="flex flex-col gap-5">
           {/* Destination */}
           <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg-subtle p-4">
-            <p className="text-xs font-semibold tracking-wider text-fg-muted uppercase">
+            <p className="font-mono text-xs font-semibold tracking-wider text-fg-muted uppercase">
               Destination
             </p>
 
@@ -250,7 +250,7 @@ function AddNotificationDialog({
                   <label
                     key={ev.value}
                     className={cn(
-                      "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-bg-muted",
+                      "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 font-mono text-sm hover:bg-bg-muted",
                       checked ? "text-fg" : "text-fg-muted",
                     )}
                   >
@@ -270,7 +270,7 @@ function AddNotificationDialog({
 
           {/* Filters (optional) */}
           <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg-subtle p-4">
-            <p className="text-xs font-semibold tracking-wider text-fg-muted uppercase">
+            <p className="font-mono text-xs font-semibold tracking-wider text-fg-muted uppercase">
               Filters <span className="font-normal text-fg-subtle normal-case">(optional)</span>
             </p>
             <div className="grid grid-cols-2 gap-3">
@@ -468,7 +468,7 @@ function ConfigSection({
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         {icon}
-        <h2 className="text-sm font-medium text-fg">{title}</h2>
+        <h2 className="font-mono text-sm font-medium text-fg">{title}</h2>
       </div>
       <div className="flex flex-col divide-y divide-border overflow-hidden rounded-lg border border-border bg-bg-elevated">
         {children}
@@ -490,7 +490,7 @@ function EventList({ events }: { events: string[] }) {
 }
 
 function FilterList({ rules }: { rules: NotificationFilterRule[] }) {
-  if (rules.length === 0) return <span className="text-xs text-fg-subtle">none</span>
+  if (rules.length === 0) return <span className="font-mono text-xs text-fg-subtle">none</span>
   return (
     <div className="flex flex-wrap gap-1">
       {rules.map((r, i) => (

@@ -250,7 +250,7 @@ export function TopicDetail({ topicName }: Props) {
       </Card>
 
       <div>
-        <h2 className="mb-2 text-sm font-semibold tracking-wide text-fg-muted uppercase">
+        <h2 className="mb-2 font-mono text-sm font-semibold tracking-wide text-fg-muted uppercase">
           Event stream
         </h2>
         <EventConsole events={topicEvents} connected={connected} onClear={clear} />

@@ -3,7 +3,7 @@ import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { HardDrive, Plus, Trash2, RefreshCw } from "lucide-react"
+import { Eye, HardDrive, Trash2 } from "lucide-react"
 import {
   s3BucketsQueryOptions,
   s3Keys,
@@ -20,7 +20,6 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableEmpty,
   TableHead,
   TableHeader,
   TableRow,
@@ -33,11 +32,19 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { EmptyState, PageHeader, QueryListState } from "@/components/ui/primitives"
+import { EmptyState, QueryListState } from "@/components/ui/primitives"
+import {
+  CreateAction,
+  RefreshAction,
+  ResourceListCard,
+  ResourceListPage,
+  ResourceName,
+  RowAction,
+  RowActions,
+} from "@/components/ui/resource-list-page"
 import { formatDate } from "@/lib/format"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { RawStateLink } from "@/features/debug/raw-state-link"
-import { cn } from "@/lib/utils"
 
 export function BucketList() {
   const endpoint = useEndpoint()
@@ -73,67 +80,39 @@ export function BucketList() {
   })
 
   return (
-    <div className="flex w-full flex-col gap-4">
-      <PageHeader
-        title="S3 Buckets"
-        description={`${buckets.length} bucket${buckets.length !== 1 ? "s" : ""}`}
-        actions={
-          <>
-            <ServiceDocsButton
-              service="s3"
-              label="S3"
-              open={docsOpen}
-              onOpen={openDocs}
-              onClose={closeDocs}
-            />
-            <RawStateLink service="s3" />
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => refetch()}
-              disabled={isFetching}
-              title="Refresh"
-            >
-              <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
-            </Button>
-            <Button size="md" onClick={() => setShowCreate(true)}>
-              <Plus className="h-4 w-4" /> New bucket
-            </Button>
-          </>
-        }
-      />
-
-      <div className="overflow-hidden rounded-lg border border-border bg-bg-elevated">
+    <ResourceListPage
+      title="S3 Buckets"
+      count={buckets.length}
+      actions={
+        <>
+          <ServiceDocsButton
+            service="s3"
+            label="S3"
+            open={docsOpen}
+            onOpen={openDocs}
+            onClose={closeDocs}
+          />
+          <RawStateLink service="s3" />
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create bucket</CreateAction>
+        </>
+      }
+    >
+      <ResourceListCard>
         {isLoading || buckets.length === 0 ? (
           <QueryListState
             isLoading={isLoading}
             isEmpty={buckets.length === 0}
             error={error}
             empty={
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead className="w-10" />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  <TableEmpty>
-                    <EmptyState
-                      icon={<HardDrive className="h-8 w-8" />}
-                      title="No buckets yet"
-                      description="Create a bucket to get started."
-                      action={
-                        <Button size="sm" onClick={() => setShowCreate(true)}>
-                          <Plus className="h-3.5 w-3.5" />
-                          New bucket
-                        </Button>
-                      }
-                    />
-                  </TableEmpty>
-                </TableBody>
-              </Table>
+              <EmptyState
+                icon={<HardDrive className="h-10 w-10" />}
+                title="No buckets yet"
+                description="Create a bucket to get started."
+                action={
+                  <CreateAction onClick={() => setShowCreate(true)}>Create bucket</CreateAction>
+                }
+              />
             }
             errorTitle="Failed to load buckets"
           />
@@ -143,43 +122,42 @@ export function BucketList() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Created</TableHead>
-                <TableHead className="w-10" />
+                <TableHead className="w-20 text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {buckets.map((b) => (
                 <TableRow
                   key={b.name}
-                  className="group"
                   onClick={() => navigate({ to: "/s3/$bucket", params: { bucket: b.name } })}
                 >
                   <TableCell>
-                    <div className="flex items-center gap-2">
-                      <HardDrive className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
-                      <span className="font-medium text-accent hover:underline">{b.name}</span>
-                    </div>
+                    <ResourceName icon={HardDrive} name={b.name} />
                   </TableCell>
                   <TableCell className="text-fg-muted">{formatDate(b.creationDate)}</TableCell>
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      className="text-fg-subtle opacity-0 group-hover:opacity-100 hover:text-danger"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setDeleteTarget(b.name)
-                      }}
-                      title="Delete bucket"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <RowActions>
+                      <RowAction
+                        label={`View ${b.name}`}
+                        onClick={() => navigate({ to: "/s3/$bucket", params: { bucket: b.name } })}
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                      </RowAction>
+                      <RowAction
+                        label={`Delete ${b.name}`}
+                        tone="danger"
+                        onClick={() => setDeleteTarget(b.name)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </RowAction>
+                    </RowActions>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         )}
-      </div>
+      </ResourceListCard>
 
       {/* Create dialog */}
       <CreateBucketDialog
@@ -204,7 +182,7 @@ export function BucketList() {
         isPending={deleteMutation.isPending}
         onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget)}
       />
-    </div>
+    </ResourceListPage>
   )
 }
 

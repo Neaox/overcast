@@ -134,11 +134,11 @@ function OverviewPanel({
       <div className="grid grid-cols-2 gap-x-8 gap-y-3">
         <InfoRow label="Instance ID" value={inst.instanceId} />
         <div className="flex flex-col gap-0.5">
-          <span className="text-xs text-fg-muted">State</span>
+          <span className="font-mono text-xs text-fg-muted">State</span>
           <InstanceStateBadge state={inst.state.name} />
         </div>
         <div className="flex flex-col gap-0.5">
-          <span className="text-xs text-fg-muted">Instance Type</span>
+          <span className="font-mono text-xs text-fg-muted">Instance Type</span>
           <div className="flex items-center gap-1.5">
             <span className="text-sm text-fg">{inst.instanceType}</span>
             {inst.state.name === "stopped" && (
@@ -158,7 +158,7 @@ function OverviewPanel({
         <InfoRow label="VPC ID" value={inst.vpcId ?? "—"} />
         <InfoRow label="Subnet ID" value={inst.subnetId ?? "—"} />
         <div className="flex flex-col gap-0.5">
-          <span className="text-xs text-fg-muted">Private IP</span>
+          <span className="font-mono text-xs text-fg-muted">Private IP</span>
           {inst.privateIpAddress ? (
             <div className="flex items-center gap-1.5">
               <code className="rounded bg-bg-muted px-2 py-0.5 font-mono text-sm">
@@ -230,7 +230,9 @@ function EditInstanceTypeDialog({
         <DialogBody className="space-y-4">
           <p className="text-sm text-fg-muted">Instance must be stopped to change its type.</p>
           <div>
-            <label className="mb-1 block text-sm font-medium text-fg">Instance Type</label>
+            <label className="mb-1 block font-mono text-sm font-medium text-fg">
+              Instance Type
+            </label>
             <Input
               placeholder="e.g. t3.medium"
               value={instanceType}
@@ -301,13 +303,13 @@ function SecurityPanel({
 function SGRulesSection({ sg }: { sg: Ec2SecurityGroup }) {
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-semibold">
+      <h3 className="font-mono text-sm font-semibold">
         {sg.groupName}{" "}
         <span className="font-mono text-xs font-normal text-fg-muted">({sg.groupId})</span>
       </h3>
 
       <div className="space-y-2">
-        <h4 className="text-xs font-medium text-fg-muted">Inbound Rules</h4>
+        <h4 className="font-mono text-xs font-medium text-fg-muted">Inbound Rules</h4>
         {sg.ipPermissions.length === 0 ? (
           <p className="text-xs text-fg-muted">No inbound rules.</p>
         ) : (
@@ -316,7 +318,7 @@ function SGRulesSection({ sg }: { sg: Ec2SecurityGroup }) {
       </div>
 
       <div className="space-y-2">
-        <h4 className="text-xs font-medium text-fg-muted">Outbound Rules</h4>
+        <h4 className="font-mono text-xs font-medium text-fg-muted">Outbound Rules</h4>
         {sg.ipPermissionsEgress.length === 0 ? (
           <p className="text-xs text-fg-muted">No outbound rules.</p>
         ) : (
@@ -392,7 +394,7 @@ function NetworkingPanel({
       <div className="grid grid-cols-2 gap-x-8 gap-y-3">
         {inst.vpcId ? (
           <div className="flex flex-col gap-0.5">
-            <span className="text-xs text-fg-muted">VPC ID</span>
+            <span className="font-mono text-xs text-fg-muted">VPC ID</span>
             <div className="flex items-center gap-1.5">
               <span className="text-sm text-fg">{inst.vpcId}</span>
               <Button
@@ -411,7 +413,7 @@ function NetworkingPanel({
 
         {inst.subnetId ? (
           <div className="flex flex-col gap-0.5">
-            <span className="text-xs text-fg-muted">Subnet ID</span>
+            <span className="font-mono text-xs text-fg-muted">Subnet ID</span>
             <div className="flex items-center gap-1.5">
               <span className="text-sm text-fg">{inst.subnetId}</span>
               <Button
@@ -430,7 +432,7 @@ function NetworkingPanel({
 
         {inst.privateIpAddress ? (
           <div className="flex flex-col gap-0.5">
-            <span className="text-xs text-fg-muted">Private IP Address</span>
+            <span className="font-mono text-xs text-fg-muted">Private IP Address</span>
             <div className="flex items-center gap-1.5">
               <code className="rounded bg-bg-muted px-2 py-0.5 font-mono text-sm">
                 {inst.privateIpAddress}

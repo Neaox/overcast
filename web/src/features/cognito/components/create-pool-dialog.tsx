@@ -167,7 +167,7 @@ export function CreatePoolDialog({ open, onOpenChange }: Props) {
 
           {/* Sign-in identifier */}
           <div className="flex flex-col gap-2">
-            <p className="text-sm font-medium text-fg-muted">Sign-in identifier</p>
+            <p className="font-mono text-sm font-medium text-fg-muted">Sign-in identifier</p>
             <div className="grid grid-cols-2 gap-2">
               {SIGN_IN_OPTIONS.map((opt) => (
                 <SignInCard
@@ -184,9 +184,9 @@ export function CreatePoolDialog({ open, onOpenChange }: Props) {
 
           {/* Password policy */}
           <div className="flex flex-col gap-3 rounded-lg border border-border p-3">
-            <p className="text-sm font-medium text-fg">Password policy</p>
+            <p className="font-mono text-sm font-medium text-fg">Password policy</p>
             <div className="flex items-center gap-3">
-              <label htmlFor="pool-min-length" className="shrink-0 text-sm text-fg-muted">
+              <label htmlFor="pool-min-length" className="shrink-0 font-mono text-sm text-fg-muted">
                 Minimum length
               </label>
               <Input
@@ -205,7 +205,7 @@ export function CreatePoolDialog({ open, onOpenChange }: Props) {
               {complexityOptions.map(({ label, checked, set }) => (
                 <label
                   key={label}
-                  className="flex cursor-pointer items-center gap-2 text-sm text-fg-muted"
+                  className="flex cursor-pointer items-center gap-2 font-mono text-sm text-fg-muted"
                 >
                   <Switch checked={checked} onCheckedChange={set} />
                   {label}
@@ -217,7 +217,7 @@ export function CreatePoolDialog({ open, onOpenChange }: Props) {
           {/* Admin-only creation */}
           <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-border p-3">
             <div>
-              <p className="text-sm font-medium text-fg">Admin-only creation</p>
+              <p className="font-mono text-sm font-medium text-fg">Admin-only creation</p>
               <p className="text-xs text-fg-muted">
                 Disable self-service sign-up — only admins can create users
               </p>

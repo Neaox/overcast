@@ -279,13 +279,13 @@ export function DebugPage({
 
           <div className="grid min-h-0 gap-4 lg:grid-cols-[18rem_minmax(20rem,26rem)_1fr]">
             <section className="flex max-h-[calc(100vh-14rem)] min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-bg-elevated">
-              <div className="border-b border-border px-3 py-2 text-sm font-medium text-fg">
+              <div className="border-b border-border px-3 py-2 font-mono text-sm font-medium text-fg">
                 Hierarchy
               </div>
               <div className="min-h-0 flex-1 overflow-auto p-2">
                 {groupDebugNamespaces(namespaces).map((group) => (
                   <div key={group.service} className="mb-3 last:mb-0">
-                    <div className="mb-1 px-2 text-xs font-medium tracking-wide text-fg-muted uppercase">
+                    <div className="mb-1 px-2 font-mono text-xs font-medium tracking-wide text-fg-muted uppercase">
                       {DEBUG_SERVICE_LABELS[group.service] ?? group.service}
                     </div>
                     {group.namespaces.map(({ namespace: ns, category }) => (

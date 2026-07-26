@@ -185,6 +185,7 @@ export function ResourceArnCombobox({
       placeholder={placeholder ?? config.placeholder}
       emptyMessage={emptyMessage}
       className={className}
+      inputClassName="font-mono"
       filterFn={(item, q) => {
         const lower = q.toLowerCase()
         return item.label.toLowerCase().includes(lower) || item.arn.toLowerCase().includes(lower)
@@ -208,7 +209,7 @@ export function ResourceArnCombobox({
               </div>
             )}
             <div className="flex min-w-0 flex-col gap-0.5">
-              <span className={cn(active || selected ? "font-medium text-white" : "text-fg-base")}>
+              <span className={cn(active || selected ? "font-medium text-white" : "text-fg")}>
                 {item.label}
               </span>
               <span

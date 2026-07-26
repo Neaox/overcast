@@ -163,14 +163,14 @@ function OverviewPanel({
       <InfoRow label="VPC ID" value={vpc.vpcId} />
       <InfoRow label="CIDR Block" value={vpc.cidrBlock} />
       <div className="flex flex-col gap-0.5">
-        <span className="text-xs text-fg-muted">State</span>
+        <span className="font-mono text-xs text-fg-muted">State</span>
         <div className="w-fit">
           <Badge variant={vpc.state === "available" ? "success" : "warning"}>{vpc.state}</Badge>
         </div>
       </div>
       <InfoRow label="Default VPC" value={vpc.isDefault ? "Yes" : "No"} />
       <div className="flex flex-col gap-0.5">
-        <span className="text-xs text-fg-muted">Network Status</span>
+        <span className="font-mono text-xs text-fg-muted">Network Status</span>
         <div className="w-fit" title={networkStatusTooltip[ns] ?? ns}>
           <Badge variant={networkStatusVariant[ns] ?? "default"}>{ns}</Badge>
         </div>
@@ -758,11 +758,13 @@ function CreatePeeringDialog({
         </DialogHeader>
         <DialogBody className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-fg">Requester VPC</label>
+            <label className="mb-1 block font-mono text-sm font-medium text-fg">
+              Requester VPC
+            </label>
             <Input value={vpcId} disabled />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-fg">Peer VPC</label>
+            <label className="mb-1 block font-mono text-sm font-medium text-fg">Peer VPC</label>
             {peerOptions.length > 0 ? (
               <Combobox<{ value: string; label: string }>
                 value={peerVpcId}
@@ -827,7 +829,7 @@ function VpcLink({ vpcId, currentVpcId }: { vpcId: string; currentVpcId: string 
     return <span>{vpcId}</span>
   }
   return (
-    <Link to="/ec2/vpc/$vpcId" params={{ vpcId }} className="text-fg-accent hover:underline">
+    <Link to="/ec2/vpc/$vpcId" params={{ vpcId }} className="text-accent hover:underline">
       {vpcId}
     </Link>
   )

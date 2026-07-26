@@ -143,11 +143,11 @@ export function LambdaInvocationsDrawer({
       queryEndMs,
       enabled: Boolean(
         selected &&
-          selectedLogGroup &&
-          selectedLogStream &&
-          Number.isFinite(selectedStartMs) &&
-          (queryEndMs == null || Number.isFinite(queryEndMs)) &&
-          open,
+        selectedLogGroup &&
+        selectedLogStream &&
+        Number.isFinite(selectedStartMs) &&
+        (queryEndMs == null || Number.isFinite(queryEndMs)) &&
+        open,
       ),
       refetchInterval: selectedRunning && open ? 1000 : false,
     }),
@@ -155,14 +155,14 @@ export function LambdaInvocationsDrawer({
 
   const logEvents = Number.isFinite(selectedStartMs)
     ? (logsQuery.data?.pages.flatMap((page) => page.events) ?? [])
-      .filter((event) => {
-        const ts = event.timestamp
-        if (ts == null) return false
-        if (ts < selectedStartMs) return false
-        if (selectedEndMs != null && ts > selectedEndMs) return false
-        return true
-      })
-      .sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0))
+        .filter((event) => {
+          const ts = event.timestamp
+          if (ts == null) return false
+          if (ts < selectedStartMs) return false
+          if (selectedEndMs != null && ts > selectedEndMs) return false
+          return true
+        })
+        .sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0))
     : []
 
   const selectedDurationMs = (() => {
@@ -198,11 +198,11 @@ export function LambdaInvocationsDrawer({
           {/* Header */}
           <div className="flex items-start justify-between border-b border-border bg-linear-to-r from-bg-elevated to-bg-elevated/80 px-4 py-4">
             <div>
-              <h2 className="font-semibold text-fg">{functionName}</h2>
+              <h2 className="font-mono font-semibold text-fg">{functionName}</h2>
               {instanceId && (
                 <p className="mt-1 font-mono text-[10px] text-fg-muted">{instanceId}</p>
               )}
-              <p className="mt-2 text-[10px] font-medium tracking-wide text-fg-muted uppercase">
+              <p className="mt-2 font-mono text-[10px] font-medium tracking-wide text-fg-muted uppercase">
                 {invocations.length} {invocations.length === 1 ? "Invocation" : "Invocations"}
               </p>
             </div>
@@ -256,7 +256,7 @@ export function LambdaInvocationsDrawer({
                             </div>
                             <div
                               className={cn(
-                                "text-[9px] font-medium tracking-wide uppercase",
+                                "font-mono text-[9px] font-medium tracking-wide uppercase",
                                 inv.durationMs
                                   ? inv.durationMs > 5000
                                     ? "text-yellow-400"
@@ -298,21 +298,21 @@ export function LambdaInvocationsDrawer({
               <div className="flex-1 overflow-y-auto border-l border-border bg-bg px-3 py-2">
                 <div className="space-y-3 text-[10px]">
                   <div>
-                    <div className="font-semibold text-fg-muted uppercase">Started</div>
+                    <div className="font-mono font-semibold text-fg-muted uppercase">Started</div>
                     <div className="mt-1 font-mono text-fg">{fmtTime(selected.acquiredAt)}</div>
                   </div>
                   <div>
-                    <div className="font-semibold text-fg-muted uppercase">Ended</div>
+                    <div className="font-mono font-semibold text-fg-muted uppercase">Ended</div>
                     <div className="mt-1 font-mono text-fg">
                       {selected.releasedAt ? fmtTime(selected.releasedAt) : "-"}
                     </div>
                   </div>
                   <div>
-                    <div className="font-semibold text-fg-muted uppercase">Duration</div>
+                    <div className="font-mono font-semibold text-fg-muted uppercase">Duration</div>
                     <div className="mt-1 font-mono text-fg">{fmtDuration(selectedDurationMs)}</div>
                   </div>
                   <div>
-                    <div className="font-semibold text-fg-muted uppercase">State</div>
+                    <div className="font-mono font-semibold text-fg-muted uppercase">State</div>
                     <div
                       className={cn(
                         "mt-1 font-mono",
@@ -336,14 +336,16 @@ export function LambdaInvocationsDrawer({
                   </div>
                   {selectedTriggerEvent && (
                     <div>
-                      <div className="font-semibold text-fg-muted uppercase">Trigger Event</div>
+                      <div className="font-mono font-semibold text-fg-muted uppercase">
+                        Trigger Event
+                      </div>
                       <div className="mt-1 max-h-96 overflow-auto rounded bg-bg-elevated p-2 font-mono text-[9px] text-fg-muted">
                         <TriggerEventViewer event={selectedTriggerEvent} />
                       </div>
                     </div>
                   )}
                   <div>
-                    <div className="font-semibold text-fg-muted uppercase">Logs</div>
+                    <div className="font-mono font-semibold text-fg-muted uppercase">Logs</div>
                     {Number.isFinite(selectedStartMs) && (
                       <>
                         <div className="mt-1 font-mono text-[9px] text-fg-muted">

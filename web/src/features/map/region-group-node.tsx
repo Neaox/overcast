@@ -122,7 +122,7 @@ export const RegionGroupNode = memo(function RegionGroupNode({
       {viewportEl &&
         createPortal(
           <div
-            className="pointer-events-auto absolute rounded-full border border-border bg-bg-elevated px-3 py-0.5 text-[10px] font-semibold tracking-wide whitespace-nowrap text-fg-muted uppercase shadow-sm transition-opacity duration-200"
+            className="pointer-events-auto absolute rounded-full border border-border bg-bg-elevated px-3 py-0.5 font-mono text-[10px] font-semibold tracking-wide whitespace-nowrap text-fg-muted uppercase shadow-sm transition-opacity duration-200"
             style={{
               left: badgeStyle.absX,
               top: badgeStyle.absY,

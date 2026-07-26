@@ -1,8 +1,12 @@
 import { useState } from "react"
 import { useNavigate } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
-import { Database, Plus, Trash2, RefreshCw, Play, Square, AlertCircle } from "lucide-react"
-import { ServiceDocsModal, ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
+import { Database, Eye, Trash2, Play, Square, AlertCircle } from "lucide-react"
+import {
+  ServiceDocsModal,
+  ServiceDocsButton,
+  useDocsFromHash,
+} from "@/features/docs/service-docs-modal"
 import {
   rdsInstancesQueryOptions,
   rdsKeys,
@@ -33,7 +37,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { QueryListState, Spinner, EmptyState } from "@/components/ui/primitives"
+import {
+  CreateAction,
+  RefreshAction,
+  ResourceListCard,
+  ResourceListPage,
+  ResourceName,
+  RowAction,
+  RowActions,
+} from "@/components/ui/resource-list-page"
 import { Badge } from "@/components/ui/badge"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
@@ -50,6 +63,7 @@ export function InstanceList() {
     isLoading,
     isFetching,
     refetch,
+    error,
   } = useQuery(rdsInstancesQueryOptions())
 
   const createMut = useResourceMutation({
@@ -86,135 +100,122 @@ export function InstanceList() {
   })
 
   return (
-    <div className="flex w-full flex-col gap-4">
-      <PageHeader
-        title="RDS Instances"
-        description={`${instances.length} instance${instances.length !== 1 ? "s" : ""}`}
-        actions={
-          <>
-            <ServiceDocsButton
-              service="rds"
-              label="RDS"
-              open={docsOpen}
-              onOpen={openDocs}
-              onClose={closeDocs}
-            />
-            <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-              Refresh
-            </Button>
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create DB Instance
-            </Button>
-          </>
-        }
-      />
-
-      {isLoading ? (
-        <div className="flex justify-center py-16">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : instances.length === 0 ? (
-        <EmptyState
-          icon={<Database className="h-10 w-10" />}
-          title="No DB instances"
-          description="Create a DB instance to get started."
-          action={
-            <Button onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create DB Instance
-            </Button>
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Instance ID</TableHead>
-              <TableHead>Engine</TableHead>
-              <TableHead>Version</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Class</TableHead>
-              <TableHead>Endpoint</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead className="w-24" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {instances.map((db) => (
-              <TableRow
-                key={db.DBInstanceIdentifier}
-                className="cursor-pointer"
-                onClick={() =>
-                  navigate({
-                    to: "/rds/$instance",
-                    params: { instance: db.DBInstanceIdentifier ?? "" },
-                  })
+    <ResourceListPage
+      title="RDS Instances"
+      count={instances.length}
+      actions={
+        <>
+          <ServiceDocsButton
+            service="rds"
+            label="RDS"
+            open={docsOpen}
+            onOpen={openDocs}
+            onClose={closeDocs}
+          />
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create DB instance</CreateAction>
+        </>
+      }
+    >
+      <ResourceListCard>
+        {isLoading || instances.length === 0 ? (
+          <QueryListState
+            isLoading={isLoading}
+            isEmpty={instances.length === 0}
+            error={error}
+            empty={
+              <EmptyState
+                icon={<Database className="h-10 w-10" />}
+                title="No DB instances"
+                description="Create a DB instance to get started."
+                action={
+                  <CreateAction onClick={() => setShowCreate(true)}>
+                    Create DB instance
+                  </CreateAction>
                 }
-              >
-                <TableCell className="font-medium">{db.DBInstanceIdentifier}</TableCell>
-                <TableCell>
-                  <EngineLabel engine={db.Engine ?? ""} />
-                </TableCell>
-                <TableCell className="text-sm text-fg-muted">{db.EngineVersion}</TableCell>
-                <TableCell>
-                  <RdsStatusBadge status={db.DBInstanceStatus ?? ""} />
-                </TableCell>
-                <TableCell className="text-sm text-fg-muted">{db.DBInstanceClass}</TableCell>
-                <TableCell className="font-mono text-xs text-fg-muted">
-                  {db.Endpoint ? `${db.Endpoint.Address}:${db.Endpoint.Port}` : "—"}
-                </TableCell>
-                <TableCell className="text-xs text-fg-muted">
-                  {db.InstanceCreateTime ? db.InstanceCreateTime.toLocaleString() : "—"}
-                </TableCell>
-                <TableCell>
-                  <div className="flex gap-1">
-                    {db.DBInstanceStatus === "stopped" && (
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        title="Start"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          startMut.mutate(db.DBInstanceIdentifier ?? "")
-                        }}
-                      >
-                        <Play className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-                    {db.DBInstanceStatus === "available" && (
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        title="Stop"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          stopMut.mutate(db.DBInstanceIdentifier ?? "")
-                        }}
-                      >
-                        <Square className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="text-fg-muted hover:text-danger"
-                      title="Delete"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setDeleteTarget(db.DBInstanceIdentifier ?? "")
-                      }}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </TableCell>
+              />
+            }
+            errorTitle="Failed to load DB instances"
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Instance ID</TableHead>
+                <TableHead>Engine</TableHead>
+                <TableHead>Version</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Class</TableHead>
+                <TableHead>Endpoint</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead className="w-32 text-right">Actions</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+            </TableHeader>
+            <TableBody>
+              {instances.map((db) => {
+                const instance = db.DBInstanceIdentifier ?? ""
+                return (
+                  <TableRow
+                    key={instance}
+                    onClick={() => navigate({ to: "/rds/$instance", params: { instance } })}
+                  >
+                    <TableCell>
+                      <ResourceName icon={Database} name={instance} />
+                    </TableCell>
+                    <TableCell>
+                      <EngineLabel engine={db.Engine ?? ""} />
+                    </TableCell>
+                    <TableCell className="text-fg-muted">{db.EngineVersion}</TableCell>
+                    <TableCell>
+                      <RdsStatusBadge status={db.DBInstanceStatus ?? ""} />
+                    </TableCell>
+                    <TableCell className="text-fg-muted">{db.DBInstanceClass}</TableCell>
+                    <TableCell className="font-mono text-xs text-fg-muted">
+                      {db.Endpoint ? `${db.Endpoint.Address}:${db.Endpoint.Port}` : "—"}
+                    </TableCell>
+                    <TableCell className="text-xs text-fg-muted">
+                      {db.InstanceCreateTime ? db.InstanceCreateTime.toLocaleString() : "—"}
+                    </TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <RowActions>
+                        {db.DBInstanceStatus === "stopped" && (
+                          <RowAction
+                            label={`Start ${instance}`}
+                            onClick={() => startMut.mutate(instance)}
+                          >
+                            <Play className="h-3.5 w-3.5" />
+                          </RowAction>
+                        )}
+                        {db.DBInstanceStatus === "available" && (
+                          <RowAction
+                            label={`Stop ${instance}`}
+                            onClick={() => stopMut.mutate(instance)}
+                          >
+                            <Square className="h-3.5 w-3.5" />
+                          </RowAction>
+                        )}
+                        <RowAction
+                          label={`View ${instance}`}
+                          onClick={() => navigate({ to: "/rds/$instance", params: { instance } })}
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                        </RowAction>
+                        <RowAction
+                          label={`Delete ${instance}`}
+                          tone="danger"
+                          onClick={() => setDeleteTarget(instance)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </RowAction>
+                      </RowActions>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        )}
+      </ResourceListCard>
 
       <CreateInstanceDialog
         open={showCreate}
@@ -235,7 +236,7 @@ export function InstanceList() {
         isPending={deleteMut.isPending}
         onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
       />
-    </div>
+    </ResourceListPage>
   )
 }
 

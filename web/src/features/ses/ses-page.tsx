@@ -126,7 +126,9 @@ export function SesPage() {
             {identities.map((id) => (
               <TableRow key={id.IdentityName}>
                 <TableCell className="font-mono font-medium">{id.IdentityName}</TableCell>
-                <TableCell className="text-xs text-fg-muted uppercase">{id.IdentityType}</TableCell>
+                <TableCell className="font-mono text-xs text-fg-muted uppercase">
+                  {id.IdentityType}
+                </TableCell>
                 <TableCell>
                   <Button
                     variant="ghost"

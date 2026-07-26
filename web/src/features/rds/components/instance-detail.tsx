@@ -220,7 +220,7 @@ function ConnectivityPanel({ db }: { db: RdsInstance }) {
     <div className="space-y-6">
       <div className="space-y-4">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-fg">Endpoint</span>
+          <span className="font-mono text-sm font-medium text-fg">Endpoint</span>
           <code className="rounded bg-bg-muted px-2 py-1 font-mono text-sm">{endpointStr}</code>
           <Button
             size="icon"
@@ -264,7 +264,7 @@ function ConnectionStrings({
 
   return (
     <div className="space-y-3">
-      <span className="text-sm font-medium text-fg">Connection Strings</span>
+      <span className="font-mono text-sm font-medium text-fg">Connection Strings</span>
       <div className="space-y-2">
         {strings.map((s) => (
           <div key={s.label} className="flex items-center gap-2">

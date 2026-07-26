@@ -193,7 +193,7 @@ function TasksPanel({ clusterName }: { clusterName: string }) {
                       <Link
                         to="/ecs/$cluster/tasks/$taskId"
                         params={{ cluster: clusterName, taskId: shortId }}
-                        className="text-fg-accent hover:underline"
+                        className="text-accent hover:underline"
                         onClick={(e) => e.stopPropagation()}
                       >
                         {shortId.slice(0, 12)}
@@ -263,7 +263,7 @@ function ContainersList({ containers }: { containers: EcsTask["containers"] }) {
   }
   return (
     <div className="space-y-2">
-      <p className="text-xs font-medium text-fg-muted">Containers</p>
+      <p className="font-mono text-xs font-medium text-fg-muted">Containers</p>
       {containers.map((c) => (
         <div
           key={c.name}
@@ -718,7 +718,9 @@ function RunTaskDialog({
         </DialogHeader>
         <DialogBody className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-fg">Task Definition</label>
+            <label className="mb-1 block font-mono text-sm font-medium text-fg">
+              Task Definition
+            </label>
             <select
               value={taskDef}
               onChange={(e) => setTaskDef(e.target.value)}
@@ -733,7 +735,7 @@ function RunTaskDialog({
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-fg">Count</label>
+            <label className="mb-1 block font-mono text-sm font-medium text-fg">Count</label>
             <Input
               type="number"
               min={1}
@@ -743,7 +745,7 @@ function RunTaskDialog({
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-fg">Launch Type</label>
+            <label className="mb-1 block font-mono text-sm font-medium text-fg">Launch Type</label>
             <select
               value={launchType}
               onChange={(e) => setLaunchType(e.target.value)}
@@ -870,7 +872,7 @@ function CreateServiceDialog({
         </DialogHeader>
         <DialogBody className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-fg">Service Name</label>
+            <label className="mb-1 block font-mono text-sm font-medium text-fg">Service Name</label>
             <Input
               value={serviceName}
               onChange={(e) => setServiceName(e.target.value)}
@@ -878,7 +880,9 @@ function CreateServiceDialog({
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-fg">Task Definition</label>
+            <label className="mb-1 block font-mono text-sm font-medium text-fg">
+              Task Definition
+            </label>
             <select
               value={taskDef}
               onChange={(e) => setTaskDef(e.target.value)}
@@ -893,7 +897,9 @@ function CreateServiceDialog({
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-fg">Desired Count</label>
+            <label className="mb-1 block font-mono text-sm font-medium text-fg">
+              Desired Count
+            </label>
             <Input
               type="number"
               min={0}
@@ -950,7 +956,9 @@ function UpdateServiceDialog({
         </DialogHeader>
         <DialogBody className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-fg">Desired Count</label>
+            <label className="mb-1 block font-mono text-sm font-medium text-fg">
+              Desired Count
+            </label>
             <Input
               type="number"
               min={0}

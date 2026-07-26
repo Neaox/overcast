@@ -227,7 +227,7 @@ export function MapMinimap() {
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2">
           <Network className="h-4 w-4 text-fg-muted" />
-          <span className="text-sm font-semibold text-fg">System Map</span>
+          <span className="font-mono text-sm font-semibold text-fg">System Map</span>
         </div>
         <button
           type="button"
@@ -262,7 +262,7 @@ export function MapMinimap() {
 
           {/* Connections */}
           {topologyEdges.length > 0 && (
-            <span className="rounded-full bg-accent/20 px-1.5 py-0.5 text-[10px] font-medium text-accent">
+            <span className="rounded-full bg-accent/20 px-1.5 py-0.5 font-mono text-[10px] font-medium text-accent">
               {topologyEdges.length} connection{topologyEdges.length !== 1 ? "s" : ""}
             </span>
           )}

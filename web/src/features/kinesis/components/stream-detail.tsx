@@ -159,17 +159,17 @@ export function StreamDetail({ streamName }: Props) {
       {/* Summary cards */}
       <div className="grid grid-cols-3 gap-3">
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="text-xs text-fg-muted">Status</div>
+          <div className="font-mono text-xs text-fg-muted">Status</div>
           <div className="mt-1">
             <Badge variant={statusVariant(stream.status)}>{stream.status}</Badge>
           </div>
         </div>
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="text-xs text-fg-muted">Open Shards</div>
+          <div className="font-mono text-xs text-fg-muted">Open Shards</div>
           <div className="mt-1 text-2xl font-semibold">{stream.shardCount}</div>
         </div>
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="text-xs text-fg-muted">Retention</div>
+          <div className="font-mono text-xs text-fg-muted">Retention</div>
           <div className="mt-1 text-2xl font-semibold">{stream.retentionHours}h</div>
         </div>
       </div>
@@ -265,11 +265,11 @@ export function StreamDetail({ streamName }: Props) {
       {tab === "configuration" && (
         <div className="flex flex-col gap-6">
           <div>
-            <h3 className="mb-3 text-sm font-medium">Stream ARN</h3>
+            <h3 className="mb-3 font-mono text-sm font-medium">Stream ARN</h3>
             <CodeBlock>{stream.arn}</CodeBlock>
           </div>
           <div>
-            <h3 className="mb-3 text-sm font-medium">Retention Period</h3>
+            <h3 className="mb-3 font-mono text-sm font-medium">Retention Period</h3>
             <form
               className="flex items-end gap-3"
               onSubmit={(e) => {

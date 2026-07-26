@@ -281,7 +281,7 @@ export function PutObject() {
           <div className="overflow-hidden rounded-lg border border-border">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-border bg-bg-elevated text-left">
+                <tr className="border-b border-border bg-bg-elevated text-left font-mono">
                   <th className="px-3 py-2 text-sm font-medium text-fg-muted">Object key</th>
                   <th className="px-3 py-2 text-sm font-medium text-fg-muted">Content-Type</th>
                   <th className="px-3 py-2 text-sm font-medium text-fg-muted">Size</th>
@@ -533,9 +533,9 @@ function Section({
   return (
     <div className="rounded-lg border border-border bg-bg-elevated">
       <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-        <h2 className="text-sm font-semibold text-fg">{title}</h2>
+        <h2 className="font-mono text-sm font-semibold text-fg">{title}</h2>
         {count !== undefined && (
-          <span className="rounded-full bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">
+          <span className="rounded-full bg-accent/10 px-2 py-0.5 font-mono text-xs font-medium text-accent">
             {count}
           </span>
         )}
@@ -557,11 +557,13 @@ function StatusBadge({ row }: { row: FileRow }) {
               style={{ width: `${row.progress}%` }}
             />
           </div>
-          <span className="w-8 text-right text-sm text-fg-muted tabular-nums">{row.progress}%</span>
+          <span className="w-8 text-right font-mono text-sm text-fg-muted tabular-nums">
+            {row.progress}%
+          </span>
         </div>
       )
     case "done":
-      return <span className="text-sm font-medium text-success">Done</span>
+      return <span className="font-mono text-sm font-medium text-success">Done</span>
     case "error":
       return (
         <span className="text-sm font-medium text-danger" title={row.errorMsg}>
@@ -569,6 +571,6 @@ function StatusBadge({ row }: { row: FileRow }) {
         </span>
       )
     default:
-      return <span className="text-sm text-fg-subtle">Pending</span>
+      return <span className="font-mono text-sm text-fg-subtle">Pending</span>
   }
 }

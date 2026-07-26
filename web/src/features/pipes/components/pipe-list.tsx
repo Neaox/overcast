@@ -2,7 +2,7 @@ import { useState, useEffect } from "react"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { GitBranch, Plus, Trash2, RefreshCw, ArrowRight, Check, AlertCircle } from "lucide-react"
+import { GitBranch, Trash2, ArrowRight, Check, AlertCircle } from "lucide-react"
 import { SERVICES } from "@/lib/service-registry"
 import {
   pipeListQueryOptions,
@@ -33,7 +33,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { QueryListState, Spinner, EmptyState } from "@/components/ui/primitives"
+import {
+  CreateAction,
+  RefreshAction,
+  ResourceListCard,
+  ResourceListPage,
+  ResourceName,
+  RowAction,
+  RowActions,
+} from "@/components/ui/resource-list-page"
 import { Badge } from "@/components/ui/badge"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { useToast } from "@/components/ui/toast"
@@ -206,7 +215,7 @@ export function CreatePipeDialog({
     <Dialog open={open} onOpenChange={(v) => !v && handleClose()}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Create Pipe</DialogTitle>
+          <DialogTitle>Create pipe</DialogTitle>
         </DialogHeader>
 
         <form
@@ -420,7 +429,7 @@ export function CreatePipeDialog({
                   {isSubmitting || createMut.isPending ? (
                     <Spinner className="mr-1.5 h-3.5 w-3.5" />
                   ) : null}
-                  Create Pipe
+                  Create pipe
                 </Button>
               )}
             </form.Subscribe>
@@ -495,7 +504,13 @@ export function PipeList() {
     }
   }
 
-  const { data: pipes = [], isLoading, isFetching, refetch } = useQuery(pipeListQueryOptions())
+  const {
+    data: pipes = [],
+    isLoading,
+    isFetching,
+    refetch,
+    error,
+  } = useQuery(pipeListQueryOptions())
 
   const deleteMut = useResourceMutation({
     options: deletePipeMutationOptions(),
@@ -507,90 +522,86 @@ export function PipeList() {
   })
 
   return (
-    <div className="flex w-full flex-col gap-4">
-      <PageHeader
-        title="EventBridge Pipes"
-        description={`${pipes.length} pipe${pipes.length !== 1 ? "s" : ""}`}
-        actions={
-          <>
-            <ServiceDocsButton
-              service="pipes"
-              label="Pipes"
-              open={docsOpen}
-              onOpen={openDocs}
-              onClose={closeDocs}
-            />
-            <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-              Refresh
-            </Button>
-            <Button size="sm" onClick={openCreate}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create Pipe
-            </Button>
-          </>
-        }
-      />
-
-      {isLoading ? (
-        <div className="flex justify-center py-16">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : pipes.length === 0 ? (
-        <EmptyState
-          icon={<GitBranch className="h-10 w-10" />}
-          title="No pipes yet"
-          description="Create a pipe to route DynamoDB stream events to an SQS queue."
-          action={
-            <Button onClick={openCreate}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create Pipe
-            </Button>
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Source → Target</TableHead>
-              <TableHead>State</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead className="w-10" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {pipes.map((p) => (
-              <TableRow key={p.Name}>
-                <TableCell className="font-medium">{p.Name}</TableCell>
-                <TableCell>
-                  <span className="flex items-center gap-1.5 font-mono text-xs">
-                    <span className="text-fg-default">{p.Source}</span>
-                    <ArrowRight className="h-3 w-3 text-fg-muted" />
-                    <span className="text-fg-default">{p.Target}</span>
-                  </span>
-                </TableCell>
-                <TableCell>
-                  <Badge variant={stateVariant(p.CurrentState ?? "")}>{p.CurrentState}</Badge>
-                </TableCell>
-                <TableCell className="text-sm text-fg-muted">
-                  {p.CreationTime?.toLocaleString()}
-                </TableCell>
-                <TableCell>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="text-fg-muted hover:text-danger"
-                    onClick={() => setDeleteTarget(p.Name)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TableCell>
+    <ResourceListPage
+      title="EventBridge Pipes"
+      count={pipes.length}
+      actions={
+        <>
+          <ServiceDocsButton
+            service="pipes"
+            label="Pipes"
+            open={docsOpen}
+            onOpen={openDocs}
+            onClose={closeDocs}
+          />
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={openCreate}>Create pipe</CreateAction>
+        </>
+      }
+    >
+      <ResourceListCard>
+        {isLoading || pipes.length === 0 ? (
+          <QueryListState
+            isLoading={isLoading}
+            isEmpty={pipes.length === 0}
+            error={error}
+            empty={
+              <EmptyState
+                icon={<GitBranch className="h-10 w-10" />}
+                title="No pipes yet"
+                description="Create a pipe to route DynamoDB stream events to an SQS queue."
+                action={<CreateAction onClick={openCreate}>Create pipe</CreateAction>}
+              />
+            }
+            errorTitle="Failed to load pipes"
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Source → target</TableHead>
+                <TableHead>State</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead className="w-20 text-right">Actions</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+            </TableHeader>
+            <TableBody>
+              {pipes.map((p) => (
+                <TableRow key={p.Name}>
+                  <TableCell>
+                    <ResourceName icon={GitBranch} name={p.Name} />
+                  </TableCell>
+                  <TableCell>
+                    <span className="flex items-center gap-1.5 font-mono text-xs">
+                      <span className="text-fg">{p.Source}</span>
+                      <ArrowRight className="h-3 w-3 text-fg-muted" />
+                      <span className="text-fg">{p.Target}</span>
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={stateVariant(p.CurrentState ?? "")}>{p.CurrentState}</Badge>
+                  </TableCell>
+                  <TableCell className="text-fg-muted">
+                    {p.CreationTime?.toLocaleString()}
+                  </TableCell>
+                  <TableCell>
+                    <RowActions>
+                      <RowAction
+                        label={`Delete ${p.Name ?? "pipe"}`}
+                        tone="danger"
+                        onClick={() => setDeleteTarget(p.Name)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </RowAction>
+                    </RowActions>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </ResourceListCard>
 
       {/* Create pipe dialog */}
       <CreatePipeDialog
@@ -614,6 +625,6 @@ export function PipeList() {
         isPending={deleteMut.isPending}
         onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
       />
-    </div>
+    </ResourceListPage>
   )
 }

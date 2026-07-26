@@ -369,7 +369,7 @@ export function EventConsole({
           ) : (
             <WifiOff className="h-3.5 w-3.5 text-fg-subtle" />
           )}
-          <span className="text-xs text-fg-muted">
+          <span className="font-mono text-xs text-fg-muted">
             {paused ? "Paused" : connected ? "Live" : "Disconnected"}
             {" · "}
             {events.length.toLocaleString()} event{events.length !== 1 ? "s" : ""}
@@ -429,7 +429,7 @@ export function EventConsole({
                   onClick={() => setExpanded(isExpanded ? null : vr.index)}
                 >
                   <div className="flex min-w-0 items-baseline gap-2">
-                    <span className="shrink-0 text-xs text-fg-subtle tabular-nums">
+                    <span className="shrink-0 font-mono text-xs text-fg-subtle tabular-nums">
                       {formatTime(ev.time)}
                     </span>
                     <span className={cn("shrink-0 text-xs font-semibold", sourceColor(ev.source))}>

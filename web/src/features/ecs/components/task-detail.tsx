@@ -58,7 +58,7 @@ export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskI
 
       {/* Overview */}
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-fg">Overview</h2>
+        <h2 className="font-mono text-sm font-semibold text-fg">Overview</h2>
         <div className="grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-3">
           <InfoRow label="Task ID" value={taskId} />
           <InfoRow label="Status" value={task.lastStatus} />
@@ -78,7 +78,7 @@ export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskI
 
       {/* Containers */}
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-fg">Containers</h2>
+        <h2 className="font-mono text-sm font-semibold text-fg">Containers</h2>
         {task.containers.length === 0 ? (
           <p className="text-sm text-fg-muted">No containers</p>
         ) : (
@@ -118,7 +118,7 @@ function ContainerCard({
       {/* Port mappings */}
       {container.networkBindings && container.networkBindings.length > 0 && (
         <div className="space-y-1">
-          <p className="text-xs font-medium text-fg-muted">Port Mappings</p>
+          <p className="font-mono text-xs font-medium text-fg-muted">Port Mappings</p>
           <div className="flex flex-wrap gap-2">
             {container.networkBindings.map((b, i) => {
               const label = `${b.hostPort ?? "—"}:${b.containerPort ?? "—"}`

@@ -328,7 +328,7 @@ export function UsagePlansPage({
             className="flex flex-col gap-4"
           >
             <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="plan-name">
+              <label className="mb-1 block font-mono text-sm font-medium" htmlFor="plan-name">
                 Name <span className="text-danger">*</span>
               </label>
               <input
@@ -342,7 +342,10 @@ export function UsagePlansPage({
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="plan-description">
+              <label
+                className="mb-1 block font-mono text-sm font-medium"
+                htmlFor="plan-description"
+              >
                 Description
               </label>
               <input

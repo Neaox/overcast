@@ -354,7 +354,7 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
           </span>
           <span
             className={cn(
-              "rounded px-1 py-0.5 text-[9px] font-semibold uppercase",
+              "rounded px-1 py-0.5 font-mono text-[9px] font-semibold uppercase",
               statusBadgeClass,
             )}
           >
@@ -463,7 +463,7 @@ function TriggerRow({
         )}
       </span>
       <span
-        className={cn("ml-auto shrink-0 tabular-nums", statusClass[status])}
+        className={cn("ml-auto shrink-0 font-mono tabular-nums", statusClass[status])}
         title={`Last invoke ${fmtAgo(now - lastUsed)} (${durationLabel})`}
       >
         {durationLabel}
@@ -486,7 +486,7 @@ function MetricBar({
   const frac = max > 0 ? Math.min(value / max, 1) : 0
   return (
     <div className="flex flex-1 items-center gap-1">
-      <span className="w-7 shrink-0 text-[9px] font-medium tracking-wider text-fg-muted/60 uppercase">
+      <span className="w-7 shrink-0 font-mono text-[9px] font-medium tracking-wider text-fg-muted/60 uppercase">
         {label}
       </span>
       <div className="h-1 flex-1 overflow-hidden rounded-full bg-fg-muted/15">

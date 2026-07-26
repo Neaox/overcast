@@ -74,7 +74,7 @@ export function ApplicationDetail({ applicationId }: Props) {
         </CardContent>
       </Card>
 
-      <h2 className="text-lg font-medium">Associated resources ({resources.length})</h2>
+      <h2 className="font-mono text-lg font-medium">Associated resources ({resources.length})</h2>
       {resources.length === 0 ? (
         <EmptyState
           title="No associated resources"

@@ -48,14 +48,14 @@ function AdvisoryCard({ advisory }: { advisory: Advisory }) {
   const style = SEVERITY_STYLES[advisory.severity] ?? DEFAULT_STYLE
   const Icon = style.icon
   return (
-    <div className="bg-bg-card flex gap-3 rounded-lg border border-border p-4">
+    <div className="flex gap-3 rounded-lg border border-border bg-bg-elevated p-4">
       <Icon className={cn("mt-0.5 h-4 w-4 shrink-0", style.iconClass)} />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-sm font-medium text-fg">{advisory.title}</p>
           <span
             className={cn(
-              "rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wide uppercase",
+              "rounded-full px-2 py-0.5 font-mono text-[10px] font-medium tracking-wide uppercase",
               style.badgeClass,
             )}
           >
@@ -93,7 +93,9 @@ export function AdvisoriesList({
   const list = advisories ?? []
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="text-sm font-medium tracking-wide text-fg-muted uppercase">Advisories</h2>
+      <h2 className="font-mono text-sm font-medium tracking-wide text-fg-muted uppercase">
+        Advisories
+      </h2>
       <QueryListState
         isLoading={isLoading}
         isEmpty={list.length === 0}

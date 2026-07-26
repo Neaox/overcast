@@ -181,7 +181,7 @@ export function ApiKeysPage() {
             className="flex flex-col gap-4"
           >
             <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="key-name">
+              <label className="mb-1 block font-mono text-sm font-medium" htmlFor="key-name">
                 Name <span className="text-danger">*</span>
               </label>
               <input
@@ -202,7 +202,7 @@ export function ApiKeysPage() {
                 checked={newKeyEnabled}
                 onChange={(e) => setNewKeyEnabled(e.target.checked)}
               />
-              <label className="text-sm font-medium" htmlFor="key-enabled">
+              <label className="font-mono text-sm font-medium" htmlFor="key-enabled">
                 Enabled
               </label>
             </div>

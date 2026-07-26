@@ -65,7 +65,7 @@ function StoreActivityCard({ store, index }: { store: DebugMetrics; index: numbe
   const hasTierSplit = counters.readsMemory !== undefined || counters.readsSQLite !== undefined
 
   return (
-    <div className="bg-bg-card flex flex-col gap-3 rounded-lg border border-border p-4">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg-elevated p-4">
       <div className="flex items-center justify-between">
         <span className="font-mono text-sm font-medium text-fg">
           {store.mode || `store ${index + 1}`}
@@ -75,14 +75,18 @@ function StoreActivityCard({ store, index }: { store: DebugMetrics; index: numbe
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <p className="text-[10px] font-medium tracking-wider text-fg-muted uppercase">Reads</p>
-          <p className="text-xl font-semibold text-fg tabular-nums">
+          <p className="font-mono text-[10px] font-medium tracking-wider text-fg-muted uppercase">
+            Reads
+          </p>
+          <p className="font-mono text-xl font-semibold text-fg tabular-nums">
             {formatCount(counters.reads)}
           </p>
         </div>
         <div>
-          <p className="text-[10px] font-medium tracking-wider text-fg-muted uppercase">Writes</p>
-          <p className="text-xl font-semibold text-fg tabular-nums">
+          <p className="font-mono text-[10px] font-medium tracking-wider text-fg-muted uppercase">
+            Writes
+          </p>
+          <p className="font-mono text-xl font-semibold text-fg tabular-nums">
             {formatCount(counters.writes)}
           </p>
         </div>
@@ -90,7 +94,7 @@ function StoreActivityCard({ store, index }: { store: DebugMetrics; index: numbe
 
       {hasTierSplit && (
         <div className="flex flex-col gap-2 border-t border-border pt-3">
-          <p className="text-[10px] font-medium tracking-wider text-fg-muted uppercase">
+          <p className="font-mono text-[10px] font-medium tracking-wider text-fg-muted uppercase">
             Memory vs disk (SQL)
           </p>
           <TierBar
@@ -131,7 +135,7 @@ export function StorageActivity({
 
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="text-sm font-medium tracking-wide text-fg-muted uppercase">
+      <h2 className="font-mono text-sm font-medium tracking-wide text-fg-muted uppercase">
         Storage Activity
       </h2>
       {isLoading ? (

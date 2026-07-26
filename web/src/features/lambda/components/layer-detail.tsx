@@ -101,7 +101,7 @@ export function LayerDetail() {
 
       {/* ── Versions table ─────────────────────────────────────────────── */}
       <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-semibold text-fg">Versions</h2>
+        <h2 className="font-mono text-sm font-semibold text-fg">Versions</h2>
         {isLoading ? (
           <div className="flex justify-center py-16">
             <Spinner className="h-5 w-5" />
@@ -141,7 +141,7 @@ export function LayerDetail() {
 
       {/* ── Attached functions ─────────────────────────────────────────── */}
       <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-semibold text-fg">Functions using this layer</h2>
+        <h2 className="font-mono text-sm font-semibold text-fg">Functions using this layer</h2>
         {attachedFunctions.length === 0 ? (
           <p className="text-sm text-fg-muted">No functions are currently using this layer.</p>
         ) : (

@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Radio, Plus, Trash2, RefreshCw } from "lucide-react"
+import { Radio, Trash2 } from "lucide-react"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import {
   mskClustersQueryOptions,
@@ -29,12 +29,20 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { QueryListState, Spinner, EmptyState } from "@/components/ui/primitives"
+import {
+  CreateAction,
+  RefreshAction,
+  ResourceListCard,
+  ResourceListPage,
+  ResourceName,
+  RowAction,
+  RowActions,
+} from "@/components/ui/resource-list-page"
 import { Badge } from "@/components/ui/badge"
 import { Combobox } from "@/components/ui/combobox"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
-import { cn } from "@/lib/utils"
 import type { ClusterInfo } from "@/services/api/msk"
 
 export function ClusterList() {
@@ -47,6 +55,7 @@ export function ClusterList() {
     isLoading,
     isFetching,
     refetch,
+    error,
   } = useQuery(mskClustersQueryOptions())
 
   const createMut = useResourceMutation({
@@ -68,83 +77,82 @@ export function ClusterList() {
   })
 
   return (
-    <div className="flex w-full flex-col gap-4">
-      <PageHeader
-        title="MSK Clusters"
-        description={`${clusters.length} cluster${clusters.length !== 1 ? "s" : ""}`}
-        actions={
-          <div className="flex gap-2">
-            <ServiceDocsButton
-              service="msk"
-              label="MSK"
-              open={docsOpen}
-              onOpen={openDocs}
-              onClose={closeDocs}
-            />
-            <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-              Refresh
-            </Button>
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create Cluster
-            </Button>
-          </div>
-        }
-      />
-
-      {isLoading ? (
-        <div className="flex justify-center py-16">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : clusters.length === 0 ? (
-        <EmptyState
-          icon={<Radio className="h-10 w-10" />}
-          title="No Kafka clusters"
-          description="Create a cluster to get started. Redpanda will be launched automatically."
-          action={
-            <Button onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create Cluster
-            </Button>
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Cluster Name</TableHead>
-              <TableHead>Kafka Version</TableHead>
-              <TableHead>Brokers</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="w-16" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {clusters.map((c) => (
-              <TableRow key={c.ClusterArn}>
-                <TableCell className="font-medium">{c.ClusterName}</TableCell>
-                <TableCell className="text-sm text-fg-muted">{c.CurrentBrokerSoftwareInfo?.KafkaVersion ?? "—"}</TableCell>
-                <TableCell className="text-sm text-fg-muted">{c.NumberOfBrokerNodes}</TableCell>
-                <TableCell>
-                  <ClusterStatusBadge status={c.State ?? ""} />
-                </TableCell>
-                <TableCell>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="text-fg-muted hover:text-danger"
-                    title="Delete"
-                    onClick={() => setDeleteTarget(c)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TableCell>
+    <ResourceListPage
+      title="MSK Clusters"
+      count={clusters.length}
+      actions={
+        <>
+          <ServiceDocsButton
+            service="msk"
+            label="MSK"
+            open={docsOpen}
+            onOpen={openDocs}
+            onClose={closeDocs}
+          />
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create cluster</CreateAction>
+        </>
+      }
+    >
+      <ResourceListCard>
+        {isLoading || clusters.length === 0 ? (
+          <QueryListState
+            isLoading={isLoading}
+            isEmpty={clusters.length === 0}
+            error={error}
+            empty={
+              <EmptyState
+                icon={<Radio className="h-10 w-10" />}
+                title="No Kafka clusters"
+                description="Create a cluster to get started. Redpanda will be launched automatically."
+                action={
+                  <CreateAction onClick={() => setShowCreate(true)}>Create cluster</CreateAction>
+                }
+              />
+            }
+            errorTitle="Failed to load clusters"
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Cluster name</TableHead>
+                <TableHead>Kafka version</TableHead>
+                <TableHead>Brokers</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="w-20 text-right">Actions</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+            </TableHeader>
+            <TableBody>
+              {clusters.map((c) => (
+                <TableRow key={c.ClusterArn}>
+                  <TableCell>
+                    <ResourceName icon={Radio} name={c.ClusterName} />
+                  </TableCell>
+                  <TableCell className="text-fg-muted">
+                    {c.CurrentBrokerSoftwareInfo?.KafkaVersion ?? "—"}
+                  </TableCell>
+                  <TableCell className="text-fg-muted">{c.NumberOfBrokerNodes}</TableCell>
+                  <TableCell>
+                    <ClusterStatusBadge status={c.State ?? ""} />
+                  </TableCell>
+                  <TableCell>
+                    <RowActions>
+                      <RowAction
+                        label={`Delete ${c.ClusterName ?? "cluster"}`}
+                        tone="danger"
+                        onClick={() => setDeleteTarget(c)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </RowAction>
+                    </RowActions>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </ResourceListCard>
 
       <CreateClusterDialog
         open={showCreate}
@@ -166,7 +174,7 @@ export function ClusterList() {
         isPending={deleteMut.isPending}
         onConfirm={() => deleteTarget?.ClusterArn && deleteMut.mutate(deleteTarget.ClusterArn)}
       />
-    </div>
+    </ResourceListPage>
   )
 }
 
@@ -213,7 +221,11 @@ function CreateClusterDialog({
   open: boolean
   onClose: () => void
   isPending: boolean
-  onSubmit: (opts: { clusterName: string; kafkaVersion: string; numberOfBrokerNodes: number }) => void
+  onSubmit: (opts: {
+    clusterName: string
+    kafkaVersion: string
+    numberOfBrokerNodes: number
+  }) => void
 }) {
   const form = useForm({
     validators: { onChange: createSchema },
@@ -237,7 +249,7 @@ function CreateClusterDialog({
     >
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Create Kafka Cluster</DialogTitle>
+          <DialogTitle>Create Kafka cluster</DialogTitle>
         </DialogHeader>
         <form
           onSubmit={(e) => {

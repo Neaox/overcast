@@ -54,7 +54,7 @@ export function StsPage() {
             <div className="flex items-center gap-3">
               <Fingerprint className="h-8 w-8 text-fg-muted" />
               <div>
-                <h2 className="text-sm font-medium text-fg">Caller Identity</h2>
+                <h2 className="font-mono text-sm font-medium text-fg">Caller Identity</h2>
                 <p className="text-xs text-fg-muted">
                   The identity returned by <code className="text-xs">GetCallerIdentity</code>
                 </p>

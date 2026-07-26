@@ -199,17 +199,17 @@ export function LogGroupDetail({ groupName }: Props) {
         <Card>
           <CardContent className="grid grid-cols-3 gap-4 py-4">
             <div>
-              <p className="text-xs font-medium text-fg-muted">Created</p>
+              <p className="font-mono text-xs font-medium text-fg-muted">Created</p>
               <p className="text-sm">{formatTimestamp(group.creationTime ?? 0)}</p>
             </div>
             <div>
-              <p className="text-xs font-medium text-fg-muted">Retention</p>
+              <p className="font-mono text-xs font-medium text-fg-muted">Retention</p>
               <p className="text-sm">
                 {group.retentionInDays ? `${group.retentionInDays} days` : "Never expire"}
               </p>
             </div>
             <div>
-              <p className="text-xs font-medium text-fg-muted">Log Streams</p>
+              <p className="font-mono text-xs font-medium text-fg-muted">Log Streams</p>
               <p className="text-sm">{streams.length}</p>
             </div>
           </CardContent>

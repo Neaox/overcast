@@ -294,7 +294,7 @@ export function BucketDetail() {
           <div ref={scrollRef} className="max-h-[calc(100vh-220px)] overflow-auto">
             <table className="w-full border-collapse text-sm">
               <thead className="sticky top-0 z-10 bg-bg-elevated">
-                <tr className="border-b border-border">
+                <tr className="border-b border-border font-mono">
                   <th className="h-9 w-full px-3 text-left text-sm font-medium text-fg-muted">
                     Name
                   </th>

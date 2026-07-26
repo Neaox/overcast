@@ -132,7 +132,7 @@ export function KmsKeyDetail({ keyId }: Props) {
           <DetailRow label="Key ID" value={key.metadata?.KeyId} mono />
           <DetailRow label="ARN" value={<ArnText arn={key.metadata?.Arn ?? ""} />} mono />
           <div className="flex flex-col gap-0.5">
-            <span className="text-xs text-fg-muted">State</span>
+            <span className="font-mono text-xs text-fg-muted">State</span>
             <Badge variant={stateVariant}>{key.metadata?.KeyState}</Badge>
           </div>
           <DetailRow label="Key spec" value={key.metadata?.KeySpec} />
@@ -148,7 +148,7 @@ export function KmsKeyDetail({ keyId }: Props) {
 
       {key.aliases.length > 0 && (
         <section className="flex flex-col gap-2">
-          <h2 className="text-sm font-medium text-fg">Aliases</h2>
+          <h2 className="font-mono text-sm font-medium text-fg">Aliases</h2>
           <div className="flex flex-wrap gap-2">
             {key.aliases.map((alias) => (
               <Badge key={alias} variant="outline">
