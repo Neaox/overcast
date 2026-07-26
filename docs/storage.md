@@ -121,6 +121,44 @@ condition. This is a rare, unusual-environment case, not something to expect in 
   with `persistent` only for the one service under test. See
   [docs/README.md § Per-service storage overrides](./README.md#per-service-storage-overrides).
 
+## Put the data directory on an SSD
+
+Every disk-backed backend (`hybrid`, `persistent`, `wal`) commits with `fsync`, and `fsync`
+latency — not throughput — is what determines how fast they are. On an SSD a flush costs
+single-digit milliseconds. On a spinning disk it routinely costs 100ms or more, because each
+commit waits for a physical seek. Overcast measures this at startup and warns when the median
+`fsync` exceeds 75ms; if you are seeing `hybrid: data directory fsync is slow` or
+`hybrid flush slow`, the data directory is the reason.
+
+**An SSD is recommended for `hybrid`, `persistent` and `wal`.** `memory` never touches the
+disk and is unaffected.
+
+Under Docker this is decided by where the Docker *volume* lives, not by where your project
+is checked out. Docker Desktop keeps all named volumes inside a single virtual disk, so if
+that disk sits on an HDD, every volume is slow no matter which drive you run from.
+
+If your SSD has room for everything, the simplest fix is to move Docker's disk image onto it
+— Docker Desktop → Settings → Resources → Advanced → *Disk image location*.
+
+**If your SSD is too small to hold every volume**, place just the Overcast volume there by
+creating a named volume bound to a specific path:
+
+```bash
+docker volume create --driver local \
+  --opt type=none --opt o=bind --opt device=/path/on/ssd/overcast-data \
+  overcast-data
+
+docker run --rm -p 4566:4566 -v overcast-data:/data ghcr.io/neaox/overcast:latest
+```
+
+One caveat on Windows and macOS: a path on a host drive reaches the container through a
+file-sharing layer (9p/virtiofs/gRPC-FUSE) whose `fsync` cost can be worse than the HDD you
+were trying to avoid, so binding to `/mnt/e/...` or `/Users/...` may not help. Keep the path
+inside the Linux VM's own filesystem instead — on WSL2, a directory under `/mnt/wsl/` or a
+second VHDX stored on the SSD and attached with `wsl --mount --vhd`. Overcast's startup probe
+reports the filesystem type it detected (`fsType`, `mountClass`) via `GET /_debug/metrics`,
+so you can confirm you landed on a native filesystem rather than a shared mount.
+
 Contributing to Overcast and need the implementation-level detail (WAL/overlay
 internals, flush/compaction mechanics, migration behavior)? See
 [docs/dev/storage-backends.md](./dev/storage-backends.md).
