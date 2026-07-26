@@ -1,10 +1,17 @@
-import { useCallback, useEffect, useState } from "react"
+import { createContext, useCallback, useContext, useEffect, useState } from "react"
 import { useLocalStorage } from "@/hooks/use-local-storage"
 
 export const SIDEBAR_COLLAPSED_NARROW_STORAGE_KEY = "overcast.sidebar.collapsed.narrow"
 export const SIDEBAR_COLLAPSED_WIDE_STORAGE_KEY = "overcast.sidebar.collapsed.wide"
 
 export const NARROW_SIDEBAR_QUERY = "(max-width: 900px)"
+
+interface SidebarCollapseContextValue {
+  collapsed: boolean
+  toggleCollapsed: () => void
+}
+
+const SidebarCollapseContext = createContext<SidebarCollapseContextValue | null>(null)
 
 function getIsNarrowViewport() {
   if (typeof window === "undefined") return false
@@ -15,7 +22,12 @@ function getIsNarrowViewport() {
   }
 }
 
-export function useSidebarCollapse() {
+/**
+ * Owns the sidebar collapse preference. Both the sidebar and the header read
+ * it — the header shows the brand block only while the sidebar is collapsed —
+ * so the state lives in context rather than in per-component storage state.
+ */
+export function SidebarCollapseProvider({ children }: { children: React.ReactNode }) {
   const [isNarrow, setIsNarrow] = useState(getIsNarrowViewport)
   const [narrowCollapsed, setNarrowCollapsed] = useLocalStorage(
     SIDEBAR_COLLAPSED_NARROW_STORAGE_KEY,
@@ -34,11 +46,24 @@ export function useSidebarCollapse() {
     return () => media.removeEventListener("change", update)
   }, [])
 
-  const collapsed = isNarrow ? narrowCollapsed : wideCollapsed
   const setCollapsed = isNarrow ? setNarrowCollapsed : setWideCollapsed
   const toggleCollapsed = useCallback(() => {
     setCollapsed((value) => !value)
   }, [setCollapsed])
 
-  return { collapsed, toggleCollapsed }
+  return (
+    <SidebarCollapseContext.Provider
+      value={{ collapsed: isNarrow ? narrowCollapsed : wideCollapsed, toggleCollapsed }}
+    >
+      {children}
+    </SidebarCollapseContext.Provider>
+  )
+}
+
+/** Returns the persisted sidebar collapse state. */
+// eslint-disable-next-line react-refresh/only-export-components
+export function useSidebarCollapse(): SidebarCollapseContextValue {
+  const value = useContext(SidebarCollapseContext)
+  if (!value) throw new Error("useSidebarCollapse must be used within a SidebarCollapseProvider")
+  return value
 }

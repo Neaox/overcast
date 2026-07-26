@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import { useRouterState } from "@tanstack/react-router"
-import { Sidebar } from "./sidebar"
-import { Header } from "./header"
+import { Sidebar } from "./sidebar/sidebar"
+import { Header } from "./header/header"
 import { OfflineBanner } from "./offline-banner"
 import { ConnectionDialog } from "./connection-dialog"
 import { GlobalSearch, useGlobalSearchShortcut } from "./global-search"
@@ -9,6 +9,7 @@ import { isConfigured } from "@/hooks/use-endpoint"
 import { ConnectionStatusProvider } from "@/hooks/use-connection-status"
 import { FavouritesProvider } from "@/hooks/use-favourites"
 import { useEventStreamSubscription } from "@/hooks/use-event-stream"
+import { SidebarCollapseProvider } from "./use-sidebar-collapse"
 
 interface AppShellProps {
   children: React.ReactNode
@@ -18,7 +19,9 @@ export function AppShell({ children }: AppShellProps) {
   return (
     <ConnectionStatusProvider>
       <FavouritesProvider>
-        <AppShellInner>{children}</AppShellInner>
+        <SidebarCollapseProvider>
+          <AppShellInner>{children}</AppShellInner>
+        </SidebarCollapseProvider>
       </FavouritesProvider>
     </ConnectionStatusProvider>
   )
