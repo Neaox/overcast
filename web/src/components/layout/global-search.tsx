@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useNavigate, useRouterState } from "@tanstack/react-router"
+import { queryOptions, useQuery } from "@tanstack/react-query"
 import {
   Search,
   Star,
@@ -22,37 +23,94 @@ import {
   findServiceKeyForPathname,
   type ServiceDefinition,
 } from "@/lib/nav-services"
+import { SERVICES, type ServiceEntry } from "@/lib/service-registry"
 import { matchesQuery, orderGroupsByActiveService, type SearchResult } from "@/lib/search"
 import { CATALOG, type CatalogEntry } from "@/lib/unsupported-services"
 import { Tooltip } from "@/components/ui/tooltip"
+import { health } from "@/services/api"
 
 // ─── Star toggle variants ──────────────────────────────────────────────────
 
-const starVariants = cva(
-  "absolute top-1 right-1 rounded p-1.5 transition-all opacity-0 group-hover:opacity-100",
+/**
+ * The star is always rendered so a glance tells you what is pinned — hover
+ * only shifts the colour, it never reveals the control.
+ */
+const starVariants = cva("rounded p-0.5 transition-colors", {
+  variants: {
+    active: {
+      true: "text-accent hover:text-accent/70",
+      false: "text-fg-subtle hover:text-fg-muted",
+    },
+    placement: {
+      /** Sits above the card's full-bleed click target. */
+      card: "relative z-10",
+      chip: "ml-0.5",
+    },
+  },
+  defaultVariants: { active: false, placement: "card" },
+})
+
+const iconTileVariants = cva(
+  "flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-control",
   {
     variants: {
-      active: {
-        true: "opacity-100 text-yellow-400 hover:text-yellow-500",
-        false: "text-fg-subtle hover:text-fg-muted",
+      enabled: {
+        true: "bg-accent-muted text-accent",
+        false: "bg-bg-muted text-fg-subtle",
       },
     },
-    defaultVariants: { active: false },
+    defaultVariants: { enabled: true },
   },
 )
 
-const starVariantsSmall = cva(
-  "ml-0.5 rounded p-0.5 transition-opacity opacity-0 group-hover:opacity-100",
-  {
-    variants: {
-      active: {
-        true: "opacity-100 text-yellow-400 hover:text-yellow-500",
-        false: "text-fg-subtle hover:text-fg",
-      },
-    },
-    defaultVariants: { active: false },
-  },
+// ─── Service availability ──────────────────────────────────────────────────
+
+const DISABLED_HINT = "Disabled in this emulator run."
+
+/** Registry key (the name the emulator reports in /_health) by route path. */
+const REGISTRY_NAME_BY_ROUTE = new Map<string, string>(
+  Object.entries(SERVICES as Record<string, ServiceEntry>).flatMap(([name, entry]) =>
+    entry.to ? [[entry.to, name] as const] : [],
+  ),
 )
+
+/** Shares the dashboard's cache entry so both surfaces agree on availability. */
+const healthQueryOptions = queryOptions({
+  queryKey: ["health"],
+  queryFn: () => health.check(),
+  staleTime: 30_000,
+  retry: 2,
+})
+
+/**
+ * Availability is the emulator's enabled/disabled list and nothing else.
+ * Emulation tier is deliberately ignored: a live service whose tier entry is
+ * missing reports "stub", and greying on that would hide working services.
+ */
+function useServiceEnabled(): (service: ServiceDefinition) => boolean {
+  const { data } = useQuery(healthQueryOptions)
+  return useCallback(
+    (service: ServiceDefinition) => {
+      if (!data) return true
+      const name = REGISTRY_NAME_BY_ROUTE.get(service.to)
+      return name === undefined || data.services.includes(name)
+    },
+    [data],
+  )
+}
+
+/** Sized to the description line it replaces so disabled cards stay the same height. */
+function DisabledPill() {
+  return (
+    <span className="self-start rounded-full bg-bg-muted px-1.5 font-mono text-[10px] leading-[14px] text-fg-subtle">
+      Disabled
+    </span>
+  )
+}
+
+function pinLabel(label: string, isFavourite: boolean) {
+  return isFavourite ? `Unpin ${label} from sidebar` : `Pin ${label} to sidebar`
+}
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -80,45 +138,71 @@ export function useGlobalSearchShortcut(onOpen: () => void) {
 
 function ServiceCard({
   service,
+  enabled,
   isFavourite,
   onToggleFavourite,
   onSelect,
 }: {
   service: ServiceDefinition
+  enabled: boolean
   isFavourite: boolean
   onToggleFavourite: (key: string, e: React.MouseEvent) => void
   onSelect: (service: ServiceDefinition) => void
 }) {
   const Icon = service.icon
+  const pin = pinLabel(service.label, isFavourite)
   return (
-    <button
-      onClick={() => onSelect(service)}
+    <div
+      role="group"
+      aria-label={service.label}
       className={cn(
-        "group relative flex flex-col items-start gap-1 rounded-lg border border-border bg-bg p-3",
-        "text-left transition-colors hover:border-accent/50 hover:bg-bg-subtle",
-        "focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
+        "relative flex flex-col gap-2 rounded-control border border-border bg-bg p-2 transition-colors",
+        enabled ? "hover:border-accent" : "opacity-60",
       )}
     >
-      {/* Star toggle — visible on hover or when already favourited; hidden for non-favouritable services */}
-      {service.favouritable !== false && (
-        <button
-          onClick={(e) => onToggleFavourite(service.key, e)}
-          className={starVariants({ active: isFavourite })}
-          title={isFavourite ? "Remove from sidebar" : "Pin to sidebar"}
-          aria-label={isFavourite ? "Remove from sidebar" : "Pin to sidebar"}
-        >
-          <Star
-            className="h-3.5 w-3.5"
-            fill={isFavourite ? "currentColor" : "none"}
-            strokeWidth={isFavourite ? 0 : 1.5}
-          />
-        </button>
-      )}
+      {/* Full-bleed click target keeps the star a sibling rather than a nested button. */}
+      <button
+        onClick={() => enabled && onSelect(service)}
+        aria-label={service.label}
+        aria-disabled={!enabled}
+        title={enabled ? undefined : DISABLED_HINT}
+        className={cn(
+          "absolute inset-0 rounded-control focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
+          enabled ? "cursor-pointer" : "cursor-not-allowed",
+        )}
+      />
 
-      <Icon className="h-5 w-5 shrink-0 text-accent" />
-      <span className="text-sm font-medium text-fg">{service.label}</span>
-      <span className="line-clamp-1 text-xs text-fg-subtle">{service.description}</span>
-    </button>
+      <div className="flex items-center justify-between">
+        <span className={iconTileVariants({ enabled })}>
+          <Icon className="h-[15px] w-[15px]" strokeWidth={1.75} />
+        </span>
+        {service.favouritable !== false && (
+          <button
+            onClick={(e) => onToggleFavourite(service.key, e)}
+            className={starVariants({ active: isFavourite })}
+            title={pin}
+            aria-label={pin}
+          >
+            <Star
+              className="h-[13px] w-[13px]"
+              fill={isFavourite ? "currentColor" : "none"}
+              strokeWidth={1.6}
+            />
+          </button>
+        )}
+      </div>
+
+      <div className="flex min-w-0 flex-col gap-px">
+        <span className="truncate font-mono text-[12px] font-bold text-fg">{service.label}</span>
+        {enabled ? (
+          <span className="truncate text-[10px] leading-[14px] text-fg-subtle">
+            {service.description}
+          </span>
+        ) : (
+          <DisabledPill />
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -126,10 +210,24 @@ function ServiceCard({
 
 function MegaMenu({ onSelectService }: { onSelectService: (service: ServiceDefinition) => void }) {
   const { isFavourite, recentServices, toggleFavourite } = useFavourites()
+  const isEnabled = useServiceEnabled()
 
   function handleToggleFavourite(key: string, e: React.MouseEvent) {
     e.stopPropagation()
     toggleFavourite(key)
+  }
+
+  function renderCard(s: ServiceDefinition) {
+    return (
+      <ServiceCard
+        key={s.key}
+        service={s}
+        enabled={isEnabled(s)}
+        isFavourite={isFavourite(s.key)}
+        onToggleFavourite={handleToggleFavourite}
+        onSelect={onSelectService}
+      />
+    )
   }
 
   // Recently used — limited to services in ALL_SERVICES
@@ -140,52 +238,40 @@ function MegaMenu({ onSelectService }: { onSelectService: (service: ServiceDefin
 
   return (
     <div>
-      {/* Recently used */}
-      {recentItems.length > 0 && (
-        <section className="px-4 py-3">
-          <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-fg-subtle">
-            <Clock className="h-3 w-3" />
-            Recently Used
-          </div>
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
-            {recentItems.map((s) => (
-              <ServiceCard
-                key={s.key}
-                service={s}
-                isFavourite={isFavourite(s.key)}
-                onToggleFavourite={handleToggleFavourite}
-                onSelect={onSelectService}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Services by category */}
-      {CATEGORY_ORDER.map((cat) => {
-        const services = ALL_SERVICES.filter((s) => s.category === cat)
-        if (services.length === 0) return null
-        return (
-          <section key={cat} className="px-4 py-3">
-            <div className="mb-2 text-xs font-medium text-fg-subtle">{CATEGORY_LABELS[cat]}</div>
-            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
-              {services.map((s) => (
-                <ServiceCard
-                  key={s.key}
-                  service={s}
-                  isFavourite={isFavourite(s.key)}
-                  onToggleFavourite={handleToggleFavourite}
-                  onSelect={onSelectService}
-                />
-              ))}
+      <div className="flex flex-col gap-6 p-4">
+        {/* Recently used */}
+        {recentItems.length > 0 && (
+          <section className="flex flex-col gap-2">
+            <p className="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.14em] text-fg-subtle uppercase">
+              <Clock className="h-3 w-3" strokeWidth={1.75} />
+              Recently Used
+            </p>
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
+              {recentItems.map(renderCard)}
             </div>
           </section>
-        )
-      })}
+        )}
+
+        {/* Services by category */}
+        {CATEGORY_ORDER.map((cat) => {
+          const services = ALL_SERVICES.filter((s) => s.category === cat)
+          if (services.length === 0) return null
+          return (
+            <section key={cat} className="flex flex-col gap-2">
+              <h3 className="font-mono text-[11px] font-bold text-fg-muted">
+                {CATEGORY_LABELS[cat]}
+              </h3>
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
+                {services.map(renderCard)}
+              </div>
+            </section>
+          )
+        })}
+      </div>
 
       {/* Hint */}
       <div className="border-t border-border px-4 py-3 text-xs text-fg-subtle">
-        <Star className="mr-1 inline h-3 w-3 text-yellow-400" fill="currentColor" strokeWidth={0} />
+        <Star className="mr-1 inline h-3 w-3 text-accent" fill="currentColor" strokeWidth={1.6} />
         Star a service to pin it to the sidebar
       </div>
     </div>
@@ -309,6 +395,7 @@ function SearchResults({
   onSelectCatalogEntry: (id: string) => void
 }) {
   const { isFavourite, toggleFavourite } = useFavourites()
+  const isEnabled = useServiceEnabled()
 
   // Matching services, with the current route's service promoted to the front.
   const matchedServices = ALL_SERVICES.filter((s) =>
@@ -359,32 +446,39 @@ function SearchResults({
             {matchedServices.map((s) => {
               const Icon = s.icon
               const isFav = isFavourite(s.key)
+              const enabled = isEnabled(s)
               return (
                 <button
                   key={s.key}
-                  onClick={() => onSelectService(s)}
+                  onClick={() => enabled && onSelectService(s)}
+                  aria-disabled={!enabled}
+                  title={enabled ? undefined : DISABLED_HINT}
                   className={cn(
                     "group relative flex shrink-0 items-center gap-2 rounded-lg border border-border bg-bg px-3 py-2",
-                    "transition-colors hover:border-accent/50 hover:bg-bg-subtle",
-                    "focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
+                    "transition-colors focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
+                    enabled
+                      ? "hover:border-accent/50 hover:bg-bg-subtle"
+                      : "cursor-not-allowed opacity-60 hover:opacity-80",
                   )}
                 >
-                  <Icon className={cn("h-4 w-4 shrink-0", s.color)} />
+                  <Icon className={cn("h-4 w-4 shrink-0", enabled ? s.color : "text-fg-muted")} />
                   <span className="text-sm font-medium whitespace-nowrap text-fg">{s.label}</span>
+                  {!enabled && <DisabledPill />}
                   {s.favouritable !== false && (
                     <span
                       role="button"
                       tabIndex={-1}
+                      aria-label={pinLabel(s.label, isFav)}
                       onClick={(e) => {
                         e.stopPropagation()
                         toggleFavourite(s.key)
                       }}
-                      className={starVariantsSmall({ active: isFav })}
+                      className={starVariants({ active: isFav, placement: "chip" })}
                     >
                       <Star
-                        className="h-3 w-3"
+                        className="h-[13px] w-[13px]"
                         fill={isFav ? "currentColor" : "none"}
-                        strokeWidth={isFav ? 0 : 1.5}
+                        strokeWidth={1.6}
                       />
                     </span>
                   )}
@@ -519,14 +613,15 @@ export function GlobalSearch({ open, onOpenChange }: GlobalSearchProps) {
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         {/* Backdrop */}
-        <DialogPrimitive.Overlay className="data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" />
+        {/* Shared design-system dialog scrim — rgba(9,16,22,0.62), drawn flat. */}
+        <DialogPrimitive.Overlay className="data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-[rgba(9,16,22,0.62)]" />
 
         {/* Panel — top-aligned, full palette style */}
         <DialogPrimitive.Content
           className={cn(
-            "fixed top-[10vh] left-1/2 z-50 w-full max-w-3xl -translate-x-1/2 overflow-hidden",
-            "rounded-xl border border-border bg-bg-elevated shadow-2xl",
-            "flex max-h-[75vh] flex-col",
+            "fixed top-16 left-1/2 z-50 w-[820px] max-w-[calc(100vw-2rem)] -translate-x-1/2 overflow-hidden",
+            "rounded-card border border-border bg-bg-elevated shadow-[0_32px_64px_rgba(0,0,0,0.45)]",
+            "flex max-h-[720px] flex-col",
             "data-[state=open]:animate-in data-[state=closed]:animate-out",
             "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
             "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
@@ -535,31 +630,29 @@ export function GlobalSearch({ open, onOpenChange }: GlobalSearchProps) {
         >
           <DialogPrimitive.Title className="sr-only">Global search</DialogPrimitive.Title>
 
-          {/* Search bar */}
-          <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-3">
-            <div className="flex flex-1 items-center gap-3 rounded-xl border border-transparent bg-bg px-3 py-1.5 transition-all focus-within:ring-2 focus-within:ring-accent">
-              <Search className="h-4 w-4 shrink-0 text-fg-muted" />
-              <input
-                ref={inputRef}
-                value={query}
-                onChange={(e) => handleQueryChange(e.target.value)}
-                placeholder="Search services and resources…"
-                className="flex-1 bg-transparent text-sm text-fg placeholder:text-fg-subtle focus-visible:outline-none"
-                style={undefined}
-                autoComplete="off"
-                spellCheck={false}
-              />
-              {query && (
-                <button
-                  onClick={() => handleQueryChange("")}
-                  className="shrink-0 rounded p-0.5 text-fg-subtle transition-colors hover:text-fg"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-            <kbd className="shrink-0 rounded border border-border bg-bg-muted px-1.5 py-0.5 text-xs text-fg-subtle">
-              Esc
+          {/* Search bar — one flat row: icon, field, esc. No recessed pill. */}
+          <div className="flex shrink-0 items-center gap-2.5 border-b border-border p-4">
+            <Search className="h-4 w-4 shrink-0 text-fg-muted" strokeWidth={1.75} />
+            <input
+              ref={inputRef}
+              value={query}
+              onChange={(e) => handleQueryChange(e.target.value)}
+              placeholder="Search services and resources…"
+              className="min-w-0 flex-1 bg-transparent font-mono text-sm text-fg placeholder:text-fg-muted focus-visible:outline-none"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            {query && (
+              <button
+                onClick={() => handleQueryChange("")}
+                aria-label="Clear search"
+                className="shrink-0 rounded p-0.5 text-fg-subtle transition-colors hover:text-fg"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+            <kbd className="shrink-0 rounded border border-border px-[7px] py-0.5 font-mono text-[10px] text-fg-subtle">
+              esc
             </kbd>
           </div>
 
@@ -600,6 +693,7 @@ export function GlobalSearchTrigger({ onClick }: { onClick: () => void }) {
       onClick={onClick}
       className={cn(
         "flex h-8 w-full max-w-[360px] min-w-0 items-center gap-2 rounded-md border border-border bg-bg px-2.5 font-mono text-xs text-fg-subtle",
+        "md:max-w-[480px] xl:max-w-[640px]",
         "transition-colors hover:border-accent/50 hover:bg-bg-subtle hover:text-fg",
         "focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
       )}

@@ -57,7 +57,7 @@ function AppShellInner({ children }: AppShellProps) {
       <div className="flex flex-1 flex-col overflow-hidden">
         <OfflineBanner />
         <Header onSearchOpen={() => setSearchOpen(true)} />
-        <main ref={mainRef} className="flex-1 overflow-auto bg-bg p-4">
+        <main ref={mainRef} className="flex-1 overflow-auto bg-bg p-6">
           {children}
         </main>
       </div>

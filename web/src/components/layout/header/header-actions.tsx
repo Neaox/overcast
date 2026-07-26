@@ -12,7 +12,14 @@ const iconButtonCls = cn(
   "focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
 )
 
-/** Region select, theme toggle, settings — plus the dev-tools toggle in dev builds. */
+/**
+ * Topbar action cluster.
+ *
+ * The tail — region select → theme toggle → settings — is identical on every
+ * page so muscle memory holds. Settings is always present and always last.
+ * Conditional or page-specific status controls (the dev-tools toggle here)
+ * sit to the LEFT of the region select and never break into that tail.
+ */
 export function HeaderActions() {
   const endpoint = useEndpoint()
   const { theme, setTheme } = useTheme()
@@ -23,10 +30,6 @@ export function HeaderActions() {
 
   return (
     <div className="flex shrink-0 items-center gap-2">
-      <RegionSelectCompact
-        value={endpoint.region}
-        onChange={(region) => endpointStore.set({ ...endpoint, region })}
-      />
       {import.meta.env.DEV && (
         <button
           onClick={toggleDevTools}
@@ -37,6 +40,10 @@ export function HeaderActions() {
           <Bug className="h-[15px] w-[15px]" />
         </button>
       )}
+      <RegionSelectCompact
+        value={endpoint.region}
+        onChange={(region) => endpointStore.set({ ...endpoint, region })}
+      />
       <button
         onClick={() => setTheme(nextTheme)}
         title={`Switch to ${nextTheme} mode`}
