@@ -130,7 +130,7 @@ func (h *Handler) PutBucketNotificationConfiguration(w http.ResponseWriter, r *h
 			Type:    events.S3NotificationConfigured,
 			Time:    h.clk.Now(),
 			Source:  "s3",
-			Payload: events.ResourcePayload{Name: bucket},
+			Payload: events.ResourcePayload{Name: bucket, ARN: protocol.ARN("", "", "s3", bucket)},
 		})
 	}
 	protocol.WriteEmpty(w, r, http.StatusOK)

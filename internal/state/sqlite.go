@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -65,6 +66,15 @@ type SQLiteStore struct {
 	// can stop it deterministically before closing db.
 	maintenanceCancel context.CancelFunc
 	maintenanceWG     sync.WaitGroup
+
+	// reads/writes are cumulative storage-activity counters (health/metrics
+	// "storage activity" card — see DebugMetrics/StoreCounters) since process
+	// start. Atomic so they never add lock contention on the request path;
+	// every op here already goes straight to SQLite, so there is no tier
+	// split to report — just totals. reads counts Get/List/ListNamespaces/
+	// Scan/ScanPage; writes counts Set/Delete/DeletePrefix.
+	reads  atomic.Int64
+	writes atomic.Int64
 }
 
 // NewSQLiteStore opens (or creates) the SQLite database at dataDir/overcast.db
@@ -292,7 +302,13 @@ func (s *SQLiteStore) NotReady() bool {
 // at their zero values — only NamespaceRowCounts (opt-in, see
 // DebugMetricsOptions) applies to this backend.
 func (s *SQLiteStore) DebugMetrics(ctx context.Context, opts DebugMetricsOptions) DebugMetrics {
-	m := DebugMetrics{Mode: "persistent"}
+	m := DebugMetrics{
+		Mode: "persistent",
+		Counters: StoreCounters{
+			Reads:  s.reads.Load(),
+			Writes: s.writes.Load(),
+		},
+	}
 	// Non-blocking readiness check (mirrors NotReady) rather than
 	// ensureReady: a debug endpoint call must not block on an in-flight
 	// migration just to read a diagnostics field. journalMode's
@@ -326,6 +342,7 @@ func (s *SQLiteStore) DebugMetrics(ctx context.Context, opts DebugMetricsOptions
 }
 
 func (s *SQLiteStore) Get(ctx context.Context, namespace, key string) (string, bool, error) {
+	s.reads.Add(1)
 	if err := s.ensureReady(ctx); err != nil {
 		return "", false, err
 	}
@@ -345,6 +362,7 @@ func (s *SQLiteStore) Get(ctx context.Context, namespace, key string) (string, b
 }
 
 func (s *SQLiteStore) Set(ctx context.Context, namespace, key, value string) error {
+	s.writes.Add(1)
 	if err := s.ensureReady(ctx); err != nil {
 		return err
 	}
@@ -360,6 +378,7 @@ func (s *SQLiteStore) Set(ctx context.Context, namespace, key, value string) err
 }
 
 func (s *SQLiteStore) Delete(ctx context.Context, namespace, key string) error {
+	s.writes.Add(1)
 	if err := s.ensureReady(ctx); err != nil {
 		return err
 	}
@@ -374,6 +393,7 @@ func (s *SQLiteStore) Delete(ctx context.Context, namespace, key string) error {
 }
 
 func (s *SQLiteStore) DeletePrefix(ctx context.Context, namespace, prefix string) error {
+	s.writes.Add(1)
 	if err := s.ensureReady(ctx); err != nil {
 		return err
 	}
@@ -404,6 +424,7 @@ func (s *SQLiteStore) DeletePrefix(ctx context.Context, namespace, prefix string
 }
 
 func (s *SQLiteStore) List(ctx context.Context, namespace, prefix string) ([]string, error) {
+	s.reads.Add(1)
 	if err := s.ensureReady(ctx); err != nil {
 		return nil, err
 	}
@@ -452,6 +473,7 @@ func (s *SQLiteStore) List(ctx context.Context, namespace, prefix string) ([]str
 }
 
 func (s *SQLiteStore) ListNamespaces(ctx context.Context) ([]string, error) {
+	s.reads.Add(1)
 	if err := s.ensureReady(ctx); err != nil {
 		return nil, err
 	}
@@ -481,6 +503,7 @@ func (s *SQLiteStore) ListNamespaces(ctx context.Context) ([]string, error) {
 // Scan returns all key-value pairs whose keys start with prefix in a single
 // query — prefer this over List+Get when you need both keys and values.
 func (s *SQLiteStore) Scan(ctx context.Context, namespace, prefix string) ([]KV, error) {
+	s.reads.Add(1)
 	if err := s.ensureReady(ctx); err != nil {
 		return nil, err
 	}
@@ -535,6 +558,7 @@ func (s *SQLiteStore) Scan(ctx context.Context, namespace, prefix string) ([]KV,
 // in hybrid.go, which run the identical query shape against a different
 // *sql.DB (the dedicated read pool) — see hybridSQLiteRawScanPage.
 func (s *SQLiteStore) ScanPage(ctx context.Context, namespace, prefix, startAfter string, limit int) ([]KV, string, error) {
+	s.reads.Add(1)
 	if err := s.ensureReady(ctx); err != nil {
 		return nil, "", err
 	}

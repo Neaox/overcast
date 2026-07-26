@@ -146,6 +146,66 @@ describe("MetricsPage", () => {
     expect(docsLink).toHaveAttribute("href", "/docs?path=performance.md")
   })
 
+  it("shows storage activity reads/writes and the memory-vs-SQL split for a hybrid store", async () => {
+    // Given: a hybrid store that has served some reads from memory and some
+    // from SQLite, plus a background flush that has persisted some writes.
+    mockCoreEndpoints()
+    server.use(
+      http.get("/api/health", () => HttpResponse.json(healthyPersistentHealth)),
+      http.get("/api/debug/metrics", () =>
+        HttpResponse.json({
+          stores: [
+            {
+              mode: "hybrid",
+              journalMode: "wal",
+              counters: {
+                reads: 120,
+                writes: 40,
+                readsMemory: 100,
+                readsSQLite: 20,
+                writesFlushedRows: 35,
+              },
+            },
+          ],
+          advisories: [],
+        }),
+      ),
+    )
+
+    // When: the page renders.
+    render(<MetricsPage />)
+
+    // Then: the storage activity card shows total reads/writes plus the
+    // hybrid-specific memory/SQLite tier breakdown.
+    expect(await screen.findByText("Storage Activity")).toBeInTheDocument()
+    expect(screen.getByText("120")).toBeInTheDocument()
+    expect(screen.getByText("40")).toBeInTheDocument()
+    expect(screen.getByText("Memory reads")).toBeInTheDocument()
+    expect(screen.getByText("SQLite reads")).toBeInTheDocument()
+    expect(screen.getByText("35 of 40 writes flushed to disk")).toBeInTheDocument()
+  })
+
+  it("omits the memory-vs-SQL split for a non-hybrid store", async () => {
+    // Given: a persistent (SQLite-only) store, which has no second tier.
+    mockCoreEndpoints()
+    server.use(
+      http.get("/api/health", () => HttpResponse.json(healthyPersistentHealth)),
+      http.get("/api/debug/metrics", () =>
+        HttpResponse.json({
+          stores: [{ mode: "persistent", counters: { reads: 10, writes: 5 } }],
+          advisories: [],
+        }),
+      ),
+    )
+
+    // When: the page renders.
+    render(<MetricsPage />)
+
+    // Then: totals show, but no memory/SQLite breakdown is rendered.
+    expect(await screen.findByText("Storage Activity")).toBeInTheDocument()
+    expect(screen.queryByText("Memory reads")).not.toBeInTheDocument()
+  })
+
   it("explains when storage diagnostics are unavailable because debug mode is off", async () => {
     // Given: OVERCAST_DEBUG is disabled, so /_debug/metrics 404s.
     mockCoreEndpoints()

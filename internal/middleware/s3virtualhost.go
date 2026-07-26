@@ -64,8 +64,18 @@ func extractS3BucketFromHost(host string, extraBase ...string) string {
 
 	// {bucket}.s3.{region}.{base} or {bucket}.s3.{base} — matches for any base
 	// (localhost, amazonaws.com, or any custom hostname) because .s3. is the
-	// canonical AWS virtual-hosted separator.
+	// canonical AWS virtual-hosted separator. The bucket is everything before
+	// the FIRST occurrence, since bucket names may themselves contain dots.
 	if idx := strings.Index(hostname, ".s3."); idx > 0 {
+		return hostname[:idx]
+	}
+
+	// {bucket}.s3-{region}.{base} — legacy dash dialect used by pre-2019 AWS
+	// regions (e.g. mybucket.s3-us-west-2.amazonaws.com,
+	// mybucket.s3-external-1.amazonaws.com). Same first-match rule as above.
+	// This does not misfire on the bare regional endpoint itself
+	// ("s3-us-west-2.amazonaws.com") because there is no leading dot there.
+	if idx := strings.Index(hostname, ".s3-"); idx > 0 {
 		return hostname[:idx]
 	}
 

@@ -21,6 +21,7 @@ import type { StreamEvent } from "@/hooks/use-event-stream"
 import { cn } from "@/lib/utils"
 import Prism from "@/lib/prism"
 import { defaultEventSummary } from "./event-summary"
+import { ArnLink, LinkifiedText } from "./arn-link"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -202,6 +203,24 @@ function JsonString({ value, path }: { value: string; path: string }) {
   const decoded = decodeBase64Value(value)
 
   if (!decoded) {
+    // ARN auto-linking: a whole-string ARN renders as ArnLink directly;
+    // an ARN embedded in a longer string (e.g. an error message) is
+    // linkified in place via LinkifiedText. Both fall back to plain text
+    // when the ARN's service has no mapped UI route — see arn-link.tsx.
+    if (value.startsWith("arn:")) {
+      return (
+        <span className="text-emerald-300">
+          "<ArnLink arn={value} />"
+        </span>
+      )
+    }
+    if (value.includes("arn:")) {
+      return (
+        <span className="text-emerald-300">
+          "<LinkifiedText text={value} />"
+        </span>
+      )
+    }
     return <span className="text-emerald-300">{jsonLiteral(value)}</span>
   }
 
@@ -286,7 +305,17 @@ function EventPayloadDetails({ event }: { event: StreamEvent }) {
   return (
     <div className="mt-1 rounded bg-white/5 p-2 text-xs break-all whitespace-pre-wrap text-fg-muted">
       <JsonValue
-        value={{ type: event.type, time: event.time, source: event.source, payload: event.payload }}
+        value={{
+          type: event.type,
+          time: event.time,
+          source: event.source,
+          // Rendered here (rather than only inside payload) so events whose
+          // resource ARN lives at the envelope level — see
+          // internal/events.Event.ResourceARN — still get an auto-linked
+          // ARN even when the payload itself has no ARN field.
+          ...(event.resourceArn ? { resourceArn: event.resourceArn } : {}),
+          payload: event.payload,
+        }}
         path="$"
       />
     </div>

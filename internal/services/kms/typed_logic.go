@@ -198,7 +198,7 @@ func (h *Handler) createKeyTyped(ctx context.Context, req *createKeyRequest) (*k
 	if err := h.store.PutKey(ctx, k); err != nil {
 		return nil, protocol.ErrInternalError
 	}
-	h.publishCtx(ctx, events.KMSKeyCreated, events.ResourcePayload{Name: k.KeyID})
+	h.publishCtx(ctx, events.KMSKeyCreated, events.ResourcePayload{Name: k.KeyID, ARN: k.ARN})
 	return &keyMetadataResponse{KeyMetadata: h.toMeta(k)}, nil
 }
 
@@ -267,7 +267,7 @@ func (h *Handler) scheduleKeyDeletionTyped(ctx context.Context, req *scheduleKey
 	if err := h.store.PutKey(ctx, k); err != nil {
 		return nil, protocol.ErrInternalError
 	}
-	h.publishCtx(ctx, events.KMSKeyDeleted, events.ResourcePayload{Name: k.KeyID})
+	h.publishCtx(ctx, events.KMSKeyDeleted, events.ResourcePayload{Name: k.KeyID, ARN: k.ARN})
 	return &scheduleKeyDeletionResponse{
 		KeyId:        k.KeyID,
 		KeyArn:       k.ARN,

@@ -23,6 +23,13 @@ func TestExtractS3BucketFromHost(t *testing.T) {
 		// Virtual-hosted: {bucket}.s3.localhost
 		{"mybucket.s3.localhost", "mybucket"},
 		{"mybucket.s3.localhost:4566", "mybucket"},
+		// Plain ".s3.localhost" suffix with no configured extra base — proves
+		// the ".s3." match rule is suffix-agnostic. Browsers and
+		// systemd-resolved/Windows resolve *.localhost to loopback natively,
+		// so "{bucket}.s3.localhost[:port]" is a common way real users hit
+		// the endpoint without any OVERCAST_HOSTNAME configuration.
+		{"my-bucket.s3.localhost", "my-bucket"},
+		{"my-bucket.s3.localhost:4566", "my-bucket"},
 
 		// Virtual-hosted: {bucket}.s3.{region}.localhost
 		{"mybucket.s3.us-east-1.localhost", "mybucket"},
@@ -38,6 +45,24 @@ func TestExtractS3BucketFromHost(t *testing.T) {
 		{"s3.localhost:4566", ""},
 		{"s3.us-east-1.localhost", ""},
 		{"s3.ap-southeast-2.localhost:4566", ""},
+
+		// Legacy dash dialect: {bucket}.s3-{region}.{base} (pre-2019 regions,
+		// e.g. mybucket.s3-us-west-2.amazonaws.com). The dash separator is
+		// used instead of a dot before the region label.
+		{"mybucket.s3-us-west-2.amazonaws.com", "mybucket"},
+		{"mybucket.s3-external-1.amazonaws.com", "mybucket"},
+		{"my.dotted.bucket.s3-us-west-2.amazonaws.com", "my.dotted.bucket"},
+		// The bare regional dash-style S3 endpoint itself (no bucket
+		// subdomain) must stay path-style.
+		{"s3-us-west-2.amazonaws.com", ""},
+
+		// Bucket names may contain dots — the bucket is everything before the
+		// FIRST ".s3." separator.
+		{"my.dotted.bucket.s3.localhost", "my.dotted.bucket"},
+
+		// A host containing ".s3x." (not ".s3.") must NOT be mistaken for the
+		// virtual-hosted separator — "s3x" is not "s3" in label position.
+		{"weird.s3x.host", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.host, func(t *testing.T) {
@@ -82,6 +107,9 @@ func TestExtractS3BucketFromHost_withExtraBase(t *testing.T) {
 		// {bucket}.s3.{region}.{base}
 		{"mybucket.s3.us-east-1." + base, "mybucket"},
 		{"mybucket.s3.ap-southeast-2." + base + ":4566", "mybucket"},
+
+		// {bucket}.s3-{region}.{base} — legacy dash dialect with a configured base.
+		{"mybucket.s3-us-west-2." + base, "mybucket"},
 
 		// Existing localhost patterns still work when an extra base is present.
 		{"mybucket.localhost", "mybucket"},

@@ -95,6 +95,40 @@ func TestDetectService(t *testing.T) {
 	}
 }
 
+// TestDetectService_virtualHostedS3StillLabelsS3 verifies that a
+// virtual-hosted-style S3 request (bucket in the Host header) is still
+// labelled "s3" by detectService after S3VirtualHostFor has rewritten the
+// URL path. detectService itself never looks at r.Host — it relies on
+// S3VirtualHostFor running earlier in the middleware chain (see router.go)
+// to turn "/key" with Host "mybucket.s3.localhost" into path-style
+// "/mybucket/key" before Logger (and therefore detectService) ever sees the
+// request. This test exercises that ordering explicitly so a future
+// middleware-chain reorder cannot silently mislabel virtual-hosted S3
+// traffic as some other service.
+func TestDetectService_virtualHostedS3StillLabelsS3(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/key.txt", nil)
+	r.Host = "mybucket.s3.localhost"
+
+	// Run the real S3VirtualHostFor middleware to perform the rewrite, then
+	// inspect the (possibly mutated) request that reaches the next handler —
+	// exactly as Logger would.
+	var rewritten *http.Request
+	handler := S3VirtualHostFor("")(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		rewritten = req
+	}))
+	handler.ServeHTTP(httptest.NewRecorder(), r)
+
+	if rewritten == nil {
+		t.Fatal("expected inner handler to be invoked")
+	}
+	if rewritten.URL.Path != "/mybucket/key.txt" {
+		t.Fatalf("expected rewritten path %q, got %q", "/mybucket/key.txt", rewritten.URL.Path)
+	}
+	if got := detectService(rewritten); got != "s3" {
+		t.Errorf("detectService after virtual-host rewrite = %q, want %q", got, "s3")
+	}
+}
+
 func TestDetectOperation(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -174,6 +174,18 @@ func ErrInvalidArgument(msg string) *AWSError {
 	return &AWSError{Code: "InvalidArgument", Message: msg, HTTPStatus: http.StatusBadRequest}
 }
 
+// ErrSerialization returns the 400 error real AWS JSON-protocol services
+// use for a request body that cannot be parsed at all — DynamoDB and other
+// coral-framework services return __type
+// com.amazon.coral.service#SerializationException, and Smithy's
+// malformed-request protocol tests pin 400 + x-amzn-errortype:
+// SerializationException. Use this for parse-level failures only; semantic
+// validation of a successfully parsed request stays ValidationException /
+// InvalidArgument / service-specific codes.
+func ErrSerialization(msg string) *AWSError {
+	return &AWSError{Code: "SerializationException", Message: msg, HTTPStatus: http.StatusBadRequest}
+}
+
 // ErrMissingParameter returns a 400 error for a missing required parameter.
 func ErrMissingParameter(param string) *AWSError {
 	return &AWSError{

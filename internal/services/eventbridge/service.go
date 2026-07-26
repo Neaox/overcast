@@ -222,7 +222,7 @@ func (s *Service) createEventBus(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	s.publish(r, events.EventBridgeBusCreated, events.ResourcePayload{Name: req.Name})
+	s.publish(r, events.EventBridgeBusCreated, events.ResourcePayload{Name: req.Name, ARN: arn})
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"EventBusArn": arn})
 }
 
@@ -319,7 +319,8 @@ func (s *Service) deleteEventBus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.Delete(r.Context(), nsBuses, serviceutil.RegionKey(s.region(r.Context()), req.Name)) //nolint:errcheck
-	s.publish(r, events.EventBridgeBusDeleted, events.ResourcePayload{Name: req.Name})
+	arn := protocol.ARN(s.region(r.Context()), s.cfg.AccountID, "events", "event-bus/"+req.Name)
+	s.publish(r, events.EventBridgeBusDeleted, events.ResourcePayload{Name: req.Name, ARN: arn})
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
 }
 
@@ -370,7 +371,7 @@ func (s *Service) putRule(w http.ResponseWriter, r *http.Request) {
 		s.setLastFire(r.Context(), key, now)
 		s.setNextFire(r.Context(), key, req.ScheduleExpr, now, now)
 	}
-	s.publish(r, events.EventBridgeRuleCreated, events.ResourcePayload{Name: req.Name})
+	s.publish(r, events.EventBridgeRuleCreated, events.ResourcePayload{Name: req.Name, ARN: arn})
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"RuleArn": arn})
 }
 
@@ -564,7 +565,8 @@ func (s *Service) deleteRule(w http.ResponseWriter, r *http.Request) {
 	s.store.Delete(r.Context(), nsTargets, key)  //nolint:errcheck
 	s.store.Delete(r.Context(), nsLastFire, key) //nolint:errcheck
 	s.store.Delete(r.Context(), nsNextFire, key) //nolint:errcheck
-	s.publish(r, events.EventBridgeRuleDeleted, events.ResourcePayload{Name: req.Name})
+	arn := protocol.ARN(s.region(r.Context()), s.cfg.AccountID, "events", "rule/"+req.EventBusName+"/"+req.Name)
+	s.publish(r, events.EventBridgeRuleDeleted, events.ResourcePayload{Name: req.Name, ARN: arn})
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
 }
 

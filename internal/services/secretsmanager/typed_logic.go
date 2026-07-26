@@ -220,7 +220,7 @@ func (h *Handler) createSecretTyped(ctx context.Context, req *createSecretReques
 		return nil, aerr
 	}
 
-	h.publishCtx(ctx, events.SecretCreated, events.ResourcePayload{Name: req.Name})
+	h.publishCtx(ctx, events.SecretCreated, events.ResourcePayload{Name: req.Name, ARN: arn})
 	h.log.Info("secret created", zap.String("name", req.Name))
 	return &createSecretResponse{ARN: arn, Name: req.Name, VersionId: versionId}, nil
 }
@@ -270,7 +270,7 @@ func (h *Handler) putSecretValueTyped(ctx context.Context, req *putSecretValueRe
 	if aerr := h.store.putSecret(ctx, sec); aerr != nil {
 		return nil, aerr
 	}
-	h.publishCtx(ctx, events.SecretUpdated, events.ResourcePayload{Name: sec.Name})
+	h.publishCtx(ctx, events.SecretUpdated, events.ResourcePayload{Name: sec.Name, ARN: sec.ARN})
 	return &putSecretValueResponse{
 		ARN:           sec.ARN,
 		Name:          sec.Name,
@@ -296,7 +296,7 @@ func (h *Handler) updateSecretTyped(ctx context.Context, req *updateSecretReques
 	if aerr := h.store.putSecret(ctx, sec); aerr != nil {
 		return nil, aerr
 	}
-	h.publishCtx(ctx, events.SecretUpdated, events.ResourcePayload{Name: sec.Name})
+	h.publishCtx(ctx, events.SecretUpdated, events.ResourcePayload{Name: sec.Name, ARN: sec.ARN})
 	return &updateSecretResponse{ARN: sec.ARN, Name: sec.Name, VersionId: versionId}, nil
 }
 
@@ -343,7 +343,7 @@ func (h *Handler) deleteSecretTyped(ctx context.Context, req *deleteSecretReques
 	if aerr := h.store.deleteSecret(ctx, sec.Name); aerr != nil {
 		return nil, aerr
 	}
-	h.publishCtx(ctx, events.SecretDeleted, events.ResourcePayload{Name: sec.Name})
+	h.publishCtx(ctx, events.SecretDeleted, events.ResourcePayload{Name: sec.Name, ARN: sec.ARN})
 	h.log.Info("secret deleted", zap.String("name", sec.Name))
 	return &deleteSecretResponse{
 		ARN:          sec.ARN,
@@ -392,7 +392,7 @@ func (h *Handler) rotateSecretTyped(ctx context.Context, req *rotateSecretReques
 	if aerr := h.store.putSecret(ctx, sec); aerr != nil {
 		return nil, aerr
 	}
-	h.publishCtx(ctx, events.SecretRotated, events.ResourcePayload{Name: sec.Name})
+	h.publishCtx(ctx, events.SecretRotated, events.ResourcePayload{Name: sec.Name, ARN: sec.ARN})
 	return &rotateSecretResponse{ARN: sec.ARN, Name: sec.Name, VersionId: sec.CurrentVersionId}, nil
 }
 

@@ -148,7 +148,7 @@ func (h *Handler) CreateBucket(w http.ResponseWriter, r *http.Request) {
 			Type:    events.S3BucketCreated,
 			Time:    h.clk.Now(),
 			Source:  "s3",
-			Payload: events.ResourcePayload{Name: bucket},
+			Payload: events.ResourcePayload{Name: bucket, ARN: protocol.ARN("", "", "s3", bucket)},
 		})
 	}
 	protocol.WriteEmpty(w, r, http.StatusOK)
@@ -208,7 +208,7 @@ func (h *Handler) DeleteBucket(w http.ResponseWriter, r *http.Request) {
 			Type:    events.S3BucketDeleted,
 			Time:    h.clk.Now(),
 			Source:  "s3",
-			Payload: events.ResourcePayload{Name: bucket},
+			Payload: events.ResourcePayload{Name: bucket, ARN: protocol.ARN("", "", "s3", bucket)},
 		})
 	}
 	protocol.WriteEmpty(w, r, http.StatusNoContent)

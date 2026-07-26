@@ -15,7 +15,12 @@
 // No service package imports another service package.
 package events
 
-import "time"
+import (
+	"strings"
+	"time"
+
+	"github.com/Neaox/overcast/internal/protocol"
+)
 
 // Type identifies the kind of event. Values follow the AWS event name
 // convention so they can be stored in notification filter rules verbatim.
@@ -737,6 +742,58 @@ type Event struct {
 	Time    time.Time
 	Source  string // service name: "s3", "sqs", "sns", …
 	Payload any
+
+	// ResourceARN is the ARN of this event's primary resource, when known
+	// and cheap to determine. Bus.Publish populates it automatically from
+	// Payload (see arnCarrier) whenever the caller leaves it unset, so most
+	// publish sites never need to set it directly — they only need their
+	// Payload type to implement arnCarrier and carry a real ARN.
+	//
+	// Best-effort, not universal: delivery/telemetry events with no single
+	// resource, and resources that don't have an ARN in this emulator's
+	// model, leave this empty. Consumers (e.g. the web Events page's
+	// ARN auto-linking) must treat it as optional.
+	ResourceARN string `json:"resourceArn,omitempty"`
+}
+
+// arnCarrier is implemented by payload types that know their own resource
+// ARN. Bus.Publish uses it to populate Event.ResourceARN automatically so
+// individual publish call sites don't need to duplicate that plumbing —
+// they just need to populate the ARN field on their existing payload struct.
+type arnCarrier interface {
+	arnFromPayload() string
+}
+
+// arnFromPayload implements arnCarrier for ResourcePayload, the payload used
+// by the majority of resource lifecycle events (SQS, S3, DynamoDB, SNS,
+// EventBridge, Kinesis, SES, Cognito, ElastiCache, CloudFront, AppSync, …).
+func (p ResourcePayload) arnFromPayload() string { return p.ARN }
+
+// arnFromPayload implements arnCarrier for LambdaFunctionPayload.
+func (p LambdaFunctionPayload) arnFromPayload() string { return p.ARN }
+
+// arnFromPayload implements arnCarrier for CFNResourcePayload. PhysicalID is
+// not always an ARN (e.g. an S3 bucket name), so this is deliberately
+// conservative rather than guessing a format that might be wrong.
+func (p CFNResourcePayload) arnFromPayload() string {
+	if strings.HasPrefix(p.PhysicalID, "arn:") {
+		return p.PhysicalID
+	}
+	return ""
+}
+
+// arnFromPayload implements arnCarrier for S3ObjectPayload. S3 object ARNs
+// are cheap to construct (no account/region component), so this is
+// populated even though the S3 handlers only ever pass Bucket/Key.
+func (p S3ObjectPayload) arnFromPayload() string {
+	if p.Bucket == "" {
+		return ""
+	}
+	resource := p.Bucket
+	if p.Key != "" {
+		resource += "/" + p.Key
+	}
+	return protocol.ARN("", "", "s3", resource)
 }
 
 // CFNStackPayload carries the details of a CloudFormation stack lifecycle event.

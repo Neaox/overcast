@@ -333,6 +333,22 @@ func (s *WALStore) ScanPage(ctx context.Context, namespace, prefix, startAfter s
 	return s.mem.ScanPage(ctx, namespace, prefix, startAfter, limit)
 }
 
+// DebugMetrics implements state.DebugMetricsReporter. WALStore always reads
+// and (indirectly, through Set/Delete/DeletePrefix) writes via its embedded
+// *MemoryStore, so Counters simply reads that store's existing atomic
+// reads/writes tallies rather than maintaining a second, redundant pair that
+// could drift from it. WALStore has no async flush loop or SQLite tier, so
+// every other DebugMetrics field stays at its zero value.
+func (s *WALStore) DebugMetrics(_ context.Context, _ DebugMetricsOptions) DebugMetrics {
+	return DebugMetrics{
+		Mode: "wal",
+		Counters: StoreCounters{
+			Reads:  s.mem.reads.Load(),
+			Writes: s.mem.writes.Load(),
+		},
+	}
+}
+
 func (s *WALStore) Close() error {
 	s.mu.Lock()
 	if s.closed {

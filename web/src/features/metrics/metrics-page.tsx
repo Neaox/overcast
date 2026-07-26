@@ -28,6 +28,7 @@ import { StartupCard } from "./startup-timeline"
 import { StatPill } from "./stat-pill"
 import { HealthStrip } from "./health-strip"
 import { AdvisoriesList } from "./advisories"
+import { StorageActivity } from "./storage-activity"
 import { debugMetricsQueryOptions } from "./data"
 
 // ─── Formatters ────────────────────────────────────────────────────────────
@@ -134,6 +135,9 @@ export function MetricsPage() {
         isLoading={debugMetricsQuery.isLoading}
         error={debugMetricsQuery.error}
       />
+
+      {/* ── Storage activity (reads/writes, memory vs SQL for hybrid) ───── */}
+      <StorageActivity stores={debugMetricsQuery.data?.stores} isLoading={debugMetricsQuery.isLoading} />
 
       {/* ── Runtime section ───────────────────────────────────────────── */}
       {/* Uptime lives in the HealthStrip above; goroutines have their own

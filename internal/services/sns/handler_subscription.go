@@ -139,7 +139,7 @@ func (h *Handler) Subscribe(w http.ResponseWriter, r *http.Request) {
 			Type:    events.SNSSubscriptionCreated,
 			Time:    h.clk.Now(),
 			Source:  "sns",
-			Payload: events.ResourcePayload{Name: subARN},
+			Payload: events.ResourcePayload{Name: subARN, ARN: subARN},
 		})
 	}
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlSubscribeResponse{
@@ -164,7 +164,7 @@ func (h *Handler) Unsubscribe(w http.ResponseWriter, r *http.Request) {
 			Type:    events.SNSSubscriptionDeleted,
 			Time:    h.clk.Now(),
 			Source:  "sns",
-			Payload: events.ResourcePayload{Name: subArn},
+			Payload: events.ResourcePayload{Name: subArn, ARN: subArn},
 		})
 	}
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlUnsubscribeResponse{

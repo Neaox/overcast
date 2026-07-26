@@ -274,7 +274,7 @@ func (h *Handler) createTableTyped(ctx context.Context, req *createTableRequest)
 			Type:    events.DynamoDBTableCreated,
 			Time:    h.clk.Now(),
 			Source:  "dynamodb",
-			Payload: events.ResourcePayload{Name: req.TableName},
+			Payload: events.ResourcePayload{Name: req.TableName, ARN: table.TableARN},
 		})
 	}
 	return &createTableResponse{TableDescription: table}, nil
@@ -854,7 +854,7 @@ func (h *Handler) deleteTableTyped(ctx context.Context, req *deleteTableRequest)
 			Type:    events.DynamoDBTableDeleted,
 			Time:    h.clk.Now(),
 			Source:  "dynamodb",
-			Payload: events.ResourcePayload{Name: req.TableName},
+			Payload: events.ResourcePayload{Name: req.TableName, ARN: table.TableARN},
 		})
 	}
 	return &describeTableResponse{Table: table}, nil
@@ -1258,7 +1258,7 @@ func (h *Handler) updateTableTyped(ctx context.Context, req *updateTableRequest)
 				Type:    events.DynamoDBStreamUpdated,
 				Time:    h.clk.Now(),
 				Source:  "dynamodb",
-				Payload: events.ResourcePayload{Name: req.TableName},
+				Payload: events.ResourcePayload{Name: req.TableName, ARN: table.TableARN},
 			})
 		}
 	}
