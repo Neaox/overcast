@@ -9,9 +9,14 @@
  * Shows cumulative reads/writes since process start for each reporting
  * store (internal/state.StoreCounters). A "hybrid" mode store additionally
  * breaks reads down by which tier actually served them — memory vs a
- * fall-through to SQLite — and shows how many accepted writes have been
- * flushed to disk so far, since hybrid is the only backend that serves from
+ * fall-through to SQLite — since hybrid is the only backend that serves from
  * two distinct tiers at all.
+ *
+ * Flushed op-rows are reported on their own rather than as a fraction of
+ * Writes: the two count different units (pending-op rows committed by the
+ * background flusher vs logical write calls), and rows replayed from a
+ * previous process's journal are flushed by this one, so flushed can exceed
+ * writes and is not a subset of it.
  */
 import type { DebugMetrics } from "@/types"
 import { Spinner } from "@/components/ui/primitives"
@@ -41,7 +46,7 @@ function TierBar({
           {formatCount(value)} ({pct}%)
         </span>
       </div>
-      <div className="bg-bg-muted h-1.5 w-full overflow-hidden rounded-full">
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-bg-muted">
         <div className={cn("h-full rounded-full", colorClass)} style={{ width: `${pct}%` }} />
       </div>
     </div>
@@ -71,11 +76,15 @@ function StoreActivityCard({ store, index }: { store: DebugMetrics; index: numbe
       <div className="grid grid-cols-2 gap-3">
         <div>
           <p className="text-[10px] font-medium tracking-wider text-fg-muted uppercase">Reads</p>
-          <p className="text-xl font-semibold text-fg tabular-nums">{formatCount(counters.reads)}</p>
+          <p className="text-xl font-semibold text-fg tabular-nums">
+            {formatCount(counters.reads)}
+          </p>
         </div>
         <div>
           <p className="text-[10px] font-medium tracking-wider text-fg-muted uppercase">Writes</p>
-          <p className="text-xl font-semibold text-fg tabular-nums">{formatCount(counters.writes)}</p>
+          <p className="text-xl font-semibold text-fg tabular-nums">
+            {formatCount(counters.writes)}
+          </p>
         </div>
       </div>
 
@@ -98,8 +107,7 @@ function StoreActivityCard({ store, index }: { store: DebugMetrics; index: numbe
           />
           {counters.writesFlushedRows !== undefined && (
             <p className="text-xs text-fg-muted">
-              {formatCount(counters.writesFlushedRows)} of {formatCount(counters.writes)} writes
-              flushed to disk
+              {formatCount(counters.writesFlushedRows)} op-rows flushed to disk
             </p>
           )}
         </div>
