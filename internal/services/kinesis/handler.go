@@ -455,16 +455,8 @@ func (h *Handler) ListTagsForStream(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	type tagEntry struct {
-		Key   string `json:"Key"`
-		Value string `json:"Value"`
-	}
-	tags := make([]tagEntry, 0, len(st.Tags))
-	for k, v := range st.Tags {
-		tags = append(tags, tagEntry{Key: k, Value: v})
-	}
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
-		"Tags":        tags,
+		"Tags":        sortedTagEntries(st.Tags),
 		"HasMoreTags": false,
 	}, "application/x-amz-json-1.1")
 }

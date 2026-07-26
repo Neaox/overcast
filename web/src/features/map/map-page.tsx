@@ -34,16 +34,16 @@ import {
   NODE_WIDTH,
   IGW_NODE_WIDTH,
   IGW_NODE_HEIGHT,
+  lambdaGroupHeight,
 } from "./map-layout"
 import {
   ServiceNode,
   LambdaGroupNode,
-  LAMBDA_GROUP_HEADER_H,
   SQS_NODE_EXPANDED_H,
   LOGS_NODE_EXPANDED_H,
 } from "./topology-nodes"
-import { LambdaInstanceNode, LAMBDA_INSTANCE_H } from "./lambda-instance-node"
 import { TopologyEdge } from "./topology-edges"
+import { LAMBDA_GHOST_TTL } from "./lambda-instance-node"
 import { useLambdaInstances, type InstancesByFunction } from "@/hooks/use-lambda-instances"
 import { useGhostTracker, type Ghost } from "@/hooks/use-ghost-tracker"
 import { LogStreamPeek } from "./log-stream-peek"
@@ -59,13 +59,9 @@ import { SERVICE_THEME, EDGE_THEME, DEFAULT_EDGE_COLOR } from "./map-theme"
 import { useEndpoint } from "@/hooks/use-endpoint"
 import type { LambdaInstance, TopologyNode } from "@/types"
 
-const LAMBDA_INSTANCE_W = NODE_WIDTH - 16 // 8px padding each side
-const LAMBDA_INSTANCE_PADDING = 8 // padding above first instance
-
 const NODE_TYPES = {
   serviceNode: ServiceNode,
   lambdaGroup: LambdaGroupNode,
-  lambdaInstance: LambdaInstanceNode,
   regionGroup: RegionGroupNode,
   stackGroup: StackGroupNode,
   collapsedStack: CollapsedStackNode,
@@ -241,9 +237,7 @@ function computeSizeOverrides(
       ).length
       const totalCount = liveInsts.length + ghostCount
       if (totalCount > 0) {
-        const groupH =
-          LAMBDA_GROUP_HEADER_H + LAMBDA_INSTANCE_PADDING + totalCount * LAMBDA_INSTANCE_H + 8
-        overrides[n.id] = { width: NODE_WIDTH, height: groupH }
+        overrides[n.id] = { width: NODE_WIDTH, height: lambdaGroupHeight(totalCount) }
       }
     } else if (
       n.service === "sqs" &&
@@ -272,7 +266,6 @@ function expandFlowNodes(
     nodeWriteBurstCounts: Record<string, number>
     isInitialLoad: boolean
     seenNodeIds: Set<string>
-    ghostTtl: number
     onPeek: (target: LogStreamTarget) => void
     onPeekStream: (target: LogStreamTarget) => void
   },
@@ -310,11 +303,10 @@ function expandFlowNodes(
     const isNew = !ctx.isInitialLoad && !ctx.seenNodeIds.has(n.id)
 
     if (isLambda && allInstances.length > 0) {
-      const groupH =
-        LAMBDA_GROUP_HEADER_H +
-        LAMBDA_INSTANCE_PADDING +
-        allInstances.length * LAMBDA_INSTANCE_H +
-        8
+      // Instance rendering itself lives inside LambdaGroupNode (it fetches its
+      // own instances/ghosts) — this only needs the identical capped height
+      // formula so dagre reserves the exact space the node will render at.
+      const groupH = lambdaGroupHeight(allInstances.length)
       result.push({
         ...n,
         type: "lambdaGroup",
@@ -327,39 +319,9 @@ function expandFlowNodes(
         },
         data: {
           ...n.data,
-          instanceCount: liveInstances.length,
           eventCount,
           onPeek: ctx.onPeek,
         },
-      })
-      allInstances.forEach(({ instance: inst, isGhost, deletedAt }, i) => {
-        const ghostAge = isGhost ? Date.now() - deletedAt : 0
-        const ghostOpacity = isGhost ? Math.max(0.2, 1 - ghostAge / ctx.ghostTtl) : 1
-        result.push({
-          id: `${n.id}::instance::${inst.instanceId}`,
-          type: "lambdaInstance",
-          parentId: n.id,
-          extent: "parent" as const,
-          position: {
-            x: 8,
-            y: LAMBDA_GROUP_HEADER_H + LAMBDA_INSTANCE_PADDING + i * LAMBDA_INSTANCE_H,
-          },
-          width: LAMBDA_INSTANCE_W,
-          height: LAMBDA_INSTANCE_H - 4,
-          style: {
-            width: LAMBDA_INSTANCE_W,
-            height: LAMBDA_INSTANCE_H - 4,
-            opacity: ghostOpacity,
-            transition: "opacity 1s linear",
-          },
-          data: {
-            instance: inst,
-            onPeek: isGhost ? undefined : ctx.onPeek,
-            isGhost,
-          },
-          draggable: false,
-          selectable: false,
-        })
       })
     } else {
       result.push({
@@ -398,16 +360,13 @@ function CustomMiniMap() {
   const containerH = useStore((s) => s.height)
   const dragging = useRef(false)
 
-  // Show service/resource nodes only — exclude region groups (containers)
-  // and lambda child instances.
+  // Show service/resource nodes only — exclude region/stack/VPC group containers.
+  // (Lambda instances are no longer separate React Flow nodes — see
+  // LambdaGroupNode, which renders its own instance list internally.)
   const topNodes = useMemo(
     () =>
       nodes.filter(
-        (n) =>
-          n.type !== "regionGroup" &&
-          n.type !== "stackGroup" &&
-          n.type !== "vpcGroup" &&
-          n.type !== "lambdaInstance",
+        (n) => n.type !== "regionGroup" && n.type !== "stackGroup" && n.type !== "vpcGroup",
       ),
     [nodes],
   )
@@ -626,8 +585,9 @@ export function MapPage({ focusRegion }: { focusRegion?: string }) {
   // ── Ghost lambda instances ───────────────────────────────────────────────
   // When a running instance disappears from the live list it lingers as a
   // ghost for LAMBDA_GHOST_TTL ms so the developer can still see it on the
-  // map before it fades out.
-  const LAMBDA_GHOST_TTL = 10_000
+  // map before it fades out. This must use the same TTL LambdaGroupNode uses
+  // for its own (independent) ghost tracking, so the box height computed
+  // here for dagre matches what the node actually renders.
   const allInstances = useMemo(
     () => Object.values(instancesByFunction).flatMap((arr) => arr ?? []),
     [instancesByFunction],
@@ -669,7 +629,14 @@ export function MapPage({ focusRegion }: { focusRegion?: string }) {
     if (topologyNodes.length === 0) return
     const sizes = computeSizeOverrides(topologyNodes, instancesByFunction, ghostInstances)
     requestLayoutAsync(topologyNodes, topologyEdges, sizes, effectiveRegion, collapsedStacks)
-  }, [topologyNodes, topologyEdges, instancesByFunction, ghostInstances, effectiveRegion, collapsedStacks])
+  }, [
+    topologyNodes,
+    topologyEdges,
+    instancesByFunction,
+    ghostInstances,
+    effectiveRegion,
+    collapsedStacks,
+  ])
 
   const { glowingEdges, nodeCounts, nodeWriteCounts, edgeBurstCounts, nodeWriteBurstCounts } =
     useEventAnimations(topologyNodes, topologyEdges)
@@ -689,7 +656,6 @@ export function MapPage({ focusRegion }: { focusRegion?: string }) {
       nodeWriteBurstCounts,
       isInitialLoad: seenNodeIds.current.size === 0,
       seenNodeIds: seenNodeIds.current,
-      ghostTtl: LAMBDA_GHOST_TTL,
       onPeek,
       onPeekStream: onPeek,
     })
