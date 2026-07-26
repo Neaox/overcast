@@ -237,6 +237,11 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.HandleFunc("/@connections/{apiId}/{stageName}/*", func(w http.ResponseWriter, req *http.Request) {
 		stub.ServeHTTP(w, req)
 	})
+
+	// ---- Host-based invoke (execute-api Host header) ----------------------
+	// See handler_host_execute.go: middleware.HostDispatch rewrites
+	// {apiId}.execute-api.{region}.{base} requests onto this marker route.
+	r.HandleFunc("/_apigateway/execute-api/{apiId}/{region}/*", h.ExecuteByHost)
 }
 
 // V2APIRouter returns a chi.Router for the API Gateway v2 /v2/apis management
