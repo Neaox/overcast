@@ -116,6 +116,13 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	r.Use(middleware.CORS)
 	r.Use(middleware.DrainBody)
 	r.Use(middleware.S3VirtualHostFor(cfg.Hostname))
+	// hostRoutes is populated further down, once the services it dispatches
+	// to (API Gateway, Lambda, AppSync) are constructed — see "Host-based
+	// routing" below. The pointer is read at request time (same pattern as
+	// queryDispatchers just below), so it only needs to be fully populated
+	// before Serve starts, not before this Use call.
+	var hostRoutes []middleware.HostRouteRow
+	r.Use(middleware.HostDispatch(&hostRoutes))
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Recovery(logger))
 	r.Use(middleware.Logger(logger, clk))
@@ -786,6 +793,22 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 			// No explicit goal: goal == current tier (already where we want to be)
 			enabledGoalTiers[name] = current
 		}
+	}
+
+	// ---- Host-based routing (execute-api / lambda-url / appsync-api) ------
+	// Populates the hostRoutes slice declared with the middleware chain
+	// above (middleware.HostDispatch reads it via pointer at request time).
+	// Adding a new host-routed service costs exactly one row here plus one
+	// label in internal/middleware/hostroute.go's hostRouteLabels — see that
+	// file's doc comment for the full recipe.
+	if cfg.Services["apigateway"] {
+		hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: "execute-api", Rewrite: apigwSvc.HostRouteRewrite})
+	}
+	if cfg.Services["lambda"] {
+		hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: "lambda-url", Rewrite: lambdaSvc.HostRouteRewrite})
+	}
+	if cfg.Services["appsync"] {
+		hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: "appsync-api", Rewrite: appsyncSvc.HostRouteRewrite})
 	}
 
 	// ---- /v2/apis service dispatch ----------------------------------------

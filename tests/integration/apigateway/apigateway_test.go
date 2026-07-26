@@ -3160,3 +3160,157 @@ func TestExecuteRestAPI_crossRegionInvoke(t *testing.T) {
 		t.Errorf("expected pong response, got %q", body)
 	}
 }
+
+// ---- Execution: Host-based invoke (execute-api Host header) --------------
+
+// TestExecuteRestAPI_hostBasedInvoke mirrors TestExecuteRestAPI_mockIntegration
+// but invokes via the real AWS Host-routed shape
+// ({apiId}.execute-api.{region}.amazonaws.com/{stage}/{path}) instead of the
+// path-style /restapis/... URL, proving middleware.HostDispatch's rewrite
+// reaches the exact same execution logic.
+func TestExecuteRestAPI_hostBasedInvoke(t *testing.T) {
+	// Given a REST API with a resource, method, MOCK integration, and responses
+	srv := helpers.NewTestServer(t)
+	apiID, rootID := createRestAPIWithRoot(t, srv, "host-exec-mock")
+	resID := createResource(t, srv, apiID, rootID, "hello")
+	putMethod(t, srv, apiID, resID, "GET")
+	putIntegration(t, srv, apiID, resID, "GET", "MOCK", "")
+	putMethodResponse(t, srv, apiID, resID, "GET", "200")
+	putIntegrationResponse(t, srv, apiID, resID, "GET", "200", `{"message":"hello world"}`)
+	depID := createDeployment(t, srv, apiID)
+	createStage(t, srv, apiID, depID, "test")
+
+	// When we invoke via the execute-api Host header instead of the
+	// path-style /restapis/{id}/... URL
+	resp := apiCallWithHost(t, srv, http.MethodGet, "/test/hello",
+		apiID+".execute-api.us-east-1.amazonaws.com", nil)
+
+	// Then it returns the same mock response as the path-style invoke
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	body := helpers.ReadBody(t, resp)
+	if body != `{"message":"hello world"}` {
+		t.Errorf("expected mock body %q, got %q", `{"message":"hello world"}`, body)
+	}
+}
+
+// TestExecuteV2API_hostBasedInvokeDefaultStage proves a $default HTTP API
+// stage is reachable through its Host-routed invoke URL with NO stage
+// segment in the path — matching real AWS's $default semantics — via the
+// same execute-api Host grammar used for REST v1 above.
+func TestExecuteV2API_hostBasedInvokeDefaultStage(t *testing.T) {
+	// Given an HTTP API v2 with an HTTP_PROXY integration deployed to $default
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-V2-Upstream", "yes")
+		fmt.Fprintf(w, `{"v2":"proxy","path":"%s"}`, r.URL.Path)
+	}))
+	defer upstream.Close()
+
+	srv := helpers.NewTestServer(t)
+	apiID := createV2API(t, srv, "v2-host-default")
+
+	integResp := apiCall(t, srv, http.MethodPost, "/v2/apis/"+apiID+"/integrations", map[string]any{
+		"integrationType":   "HTTP_PROXY",
+		"integrationUri":    upstream.URL,
+		"integrationMethod": "GET",
+	})
+	helpers.AssertStatus(t, integResp, http.StatusCreated)
+	var integResult map[string]any
+	helpers.DecodeJSON(t, integResp, &integResult)
+	integID := integResult["integrationId"].(string)
+
+	createV2RouteWithTarget(t, srv, apiID, "GET /v2proxy", "integrations/"+integID)
+	createV2Stage(t, srv, apiID, "$default")
+
+	// When we invoke via the execute-api Host header with NO stage segment
+	// in the path — the $default stage shape
+	resp := apiCallWithHost(t, srv, http.MethodGet, "/v2proxy",
+		apiID+".execute-api.us-east-1.amazonaws.com", nil)
+
+	// Then it reaches the $default stage's integration
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	helpers.AssertHeader(t, resp, "X-V2-Upstream", "yes")
+	body := helpers.ReadBody(t, resp)
+	if !strings.Contains(body, `"v2":"proxy"`) {
+		t.Errorf("expected upstream v2 body, got %q", body)
+	}
+}
+
+// TestExecuteV2API_hostBasedInvokeNamedStage proves a non-default, named v2
+// stage is reachable through its Host-routed invoke URL WITH a stage segment
+// in the path, and that the segment is stripped before reaching the route.
+func TestExecuteV2API_hostBasedInvokeNamedStage(t *testing.T) {
+	// Given an HTTP API v2 deployed to a named ("prod") stage, not $default
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"v2":"named-stage"}`)
+	}))
+	defer upstream.Close()
+
+	srv := helpers.NewTestServer(t)
+	apiID := createV2API(t, srv, "v2-host-named")
+
+	integResp := apiCall(t, srv, http.MethodPost, "/v2/apis/"+apiID+"/integrations", map[string]any{
+		"integrationType":   "HTTP_PROXY",
+		"integrationUri":    upstream.URL,
+		"integrationMethod": "GET",
+	})
+	helpers.AssertStatus(t, integResp, http.StatusCreated)
+	var integResult map[string]any
+	helpers.DecodeJSON(t, integResp, &integResult)
+	integID := integResult["integrationId"].(string)
+
+	createV2RouteWithTarget(t, srv, apiID, "GET /v2proxy", "integrations/"+integID)
+	createV2Stage(t, srv, apiID, "prod")
+
+	// When we invoke via the execute-api Host header WITH the "prod" stage
+	// segment in the path
+	resp := apiCallWithHost(t, srv, http.MethodGet, "/prod/v2proxy",
+		apiID+".execute-api.us-east-1.amazonaws.com", nil)
+
+	// Then it reaches the named stage's integration
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	body := helpers.ReadBody(t, resp)
+	if !strings.Contains(body, `"v2":"named-stage"`) {
+		t.Errorf("expected named-stage upstream body, got %q", body)
+	}
+}
+
+// TestExecuteByHost_unknownApiIDReturnsForbidden proves an unresolvable
+// apiId under the execute-api Host grammar gets a real API-Gateway-shaped
+// error (matching a real custom domain with no base path mapping) instead of
+// silently falling through to some other service's handler.
+func TestExecuteByHost_unknownApiIDReturnsForbidden(t *testing.T) {
+	// Given a server with no APIs created at all
+	srv := helpers.NewTestServer(t)
+
+	// When we invoke via a Host that matches the grammar but names an
+	// apiId that doesn't exist
+	resp := apiCallWithHost(t, srv, http.MethodGet, "/prod/anything",
+		"nosuchapi.execute-api.us-east-1.amazonaws.com", nil)
+
+	// Then we get 403 Forbidden, not a 500 or a misrouted response
+	helpers.AssertStatus(t, resp, http.StatusForbidden)
+}
+
+// apiCallWithHost is apiCall but sets an explicit Host header, for exercising
+// Host-routed (execute-api) invoke paths.
+func apiCallWithHost(t *testing.T, srv *helpers.TestServer, method, path, host string, body any) *http.Response {
+	t.Helper()
+	var req *http.Request
+	var err error
+	if body != nil {
+		b, _ := json.Marshal(body)
+		req, err = http.NewRequest(method, srv.URL+path, bytes.NewReader(b))
+	} else {
+		req, err = http.NewRequest(method, srv.URL+path, nil)
+	}
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	req.Host = host
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	return resp
+}

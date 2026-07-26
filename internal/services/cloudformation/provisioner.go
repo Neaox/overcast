@@ -1349,6 +1349,7 @@ var resourceHandlers = map[string]resourceHandler{
 	// Lambda
 	"AWS::Lambda::Function":           &lambdaFunctionHandler{},
 	"AWS::Lambda::Alias":              &lambdaAliasHandler{},
+	"AWS::Lambda::Url":                &lambdaUrlHandler{},
 	"AWS::Lambda::EventSourceMapping": &lambdaEventSourceMappingHandler{},
 	"AWS::Lambda::Permission":         &stubResourceHandler{},
 	"AWS::Lambda::LayerVersion":       &lambdaLayerVersionHandler{},
@@ -2226,6 +2227,69 @@ func (h *lambdaAliasHandler) Delete(ctx context.Context, router http.Handler, _ 
 		return nil
 	}
 	path := "/2015-03-31/functions/" + url.PathEscape(parts[0]) + "/aliases/" + url.PathEscape(parts[1])
+	_, _ = internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return nil
+}
+
+// ── Lambda Function URL handler ───────────────────────────────────────────
+//
+// Thin translation to the internal CreateFunctionUrlConfig/DeleteFunctionUrlConfig
+// REST endpoints (internal/services/lambda/handler_url.go) — no protocol
+// logic duplicated here, per CONTRIBUTING's CloudFormation integration
+// guidance.
+
+type lambdaUrlHandler struct{}
+
+func (h *lambdaUrlHandler) Create(ctx context.Context, router http.Handler, _ *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	targetArn, _ := props["TargetFunctionArn"].(string)
+	authType, _ := props["AuthType"].(string)
+	if targetArn == "" || authType == "" {
+		return "", nil, fmt.Errorf("Lambda Url: TargetFunctionArn and AuthType are required")
+	}
+	functionName := cfnLambdaFunctionName(targetArn)
+	qualifier, _ := props["Qualifier"].(string)
+
+	body := map[string]any{"AuthType": authType}
+	if cors, ok := props["Cors"]; ok {
+		body["Cors"] = cors
+	}
+	if invokeMode, ok := props["InvokeMode"].(string); ok && invokeMode != "" {
+		body["InvokeMode"] = invokeMode
+	}
+	data, _ := json.Marshal(body)
+	path := "/2021-10-31/functions/" + url.PathEscape(functionName) + "/url"
+	if qualifier != "" {
+		path += "?Qualifier=" + url.QueryEscape(qualifier)
+	}
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPost, path, "application/json", data)
+	if err != nil {
+		return "", nil, fmt.Errorf("lambda CreateFunctionUrlConfig: %w", err)
+	}
+	attrs := map[string]string{}
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err == nil {
+		if functionArn, ok := resp["FunctionArn"].(string); ok {
+			attrs["FunctionArn"] = functionArn
+		}
+		if functionURL, ok := resp["FunctionUrl"].(string); ok {
+			// Real AWS templates consume this via Fn::GetAtt ... FunctionUrl;
+			// used as Ref too since it's the only value most callers want.
+			attrs["Ref"] = functionURL
+			attrs["FunctionUrl"] = functionURL
+		}
+	}
+	return functionName + ":" + qualifier, attrs, nil
+}
+
+func (h *lambdaUrlHandler) Delete(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, rCtx *resolveContext) error {
+	functionName, qualifier, _ := strings.Cut(physicalID, ":")
+	if functionName == "" {
+		return nil
+	}
+	path := "/2021-10-31/functions/" + url.PathEscape(functionName) + "/url"
+	if qualifier != "" {
+		path += "?Qualifier=" + url.QueryEscape(qualifier)
+	}
 	_, _ = internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
 	return nil
 }

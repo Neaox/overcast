@@ -685,12 +685,26 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Get(layerBase+"/layers/{layerName}/versions/{versionNumber}", s.handler.GetLayerVersion)
 	r.Delete(layerBase+"/layers/{layerName}/versions/{versionNumber}", s.handler.DeleteLayerVersion)
 
+	// Function URLs — introduced 2021-10-31, same API vintage as
+	// response-streaming invocations above.
+	const urlBase = "/2021-10-31"
+	r.Post(urlBase+"/functions/{name}/url", s.handler.CreateFunctionUrlConfig)
+	r.Get(urlBase+"/functions/{name}/url", s.handler.GetFunctionUrlConfig)
+	r.Put(urlBase+"/functions/{name}/url", s.handler.UpdateFunctionUrlConfig)
+	r.Delete(urlBase+"/functions/{name}/url", s.handler.DeleteFunctionUrlConfig)
+	r.Get(urlBase+"/functions/{name}/urls", s.handler.ListFunctionUrlConfigs)
+
 	// Emulator-specific: list warm/running instances for the topology map UI.
 	r.Get("/_lambda/instances", s.handler.ListInstances)
 	// Emulator-specific: runtime catalog for the web UI.
 	r.Get("/_lambda/runtimes", s.handler.ListRuntimes)
 	// Emulator-specific: layer zip metadata for the web UI.
 	r.Get("/_lambda/layers/{layerName}/versions/{versionNumber}/metadata", s.handler.GetLayerVersionMetadata)
+
+	// Host-based invoke (lambda-url Host header) — see handler_url.go's
+	// Service.HostRouteRewrite. Matches any HTTP method: real Lambda
+	// function URLs accept arbitrary methods and let the function decide.
+	r.HandleFunc("/_lambda/url-invoke/{urlId}/*", s.handler.InvokeFunctionURL)
 }
 
 // runtimeAPIContainerAddr determines the host:port that Lambda containers use

@@ -22,6 +22,7 @@ func TestDetectService(t *testing.T) {
 		method string
 		path   string
 		header map[string]string // optional headers
+		host   string            // optional Host header (host-routed cases)
 		want   string
 	}{
 		// X-Amz-Target — JSON-protocol services
@@ -57,6 +58,20 @@ func TestDetectService(t *testing.T) {
 		{name: "secretsmanager internal", method: "GET", path: "/_overcast/secretsmanager/secrets", want: "secretsmanager"},
 		{name: "mail internal", method: "GET", path: "/_overcast/inbox/messages", want: "ses"},
 
+		// Host-routed AWS-style addresses (execute-api / lambda-url /
+		// appsync-api Host subdomains) — see hostroute.go. Labelled from
+		// HostRouteService regardless of what internal path convention the
+		// (already-applied) rewrite used for the path.
+		{name: "host-routed execute-api", method: "GET", path: "/_apigateway/execute-api/abc123/us-east-1/prod/pets", host: "abc123.execute-api.us-east-1.amazonaws.com", want: "apigateway"},
+		{name: "host-routed execute-api no region", method: "GET", path: "/_apigateway/execute-api/abc123/-/prod/pets", host: "abc123.execute-api.localhost", want: "apigateway"},
+		{name: "host-routed lambda-url", method: "POST", path: "/_lambda/url-invoke/deadbeef/", host: "deadbeefdeadbeefdeadbeefdeadbeef.lambda-url.us-east-1.amazonaws.com", want: "lambda"},
+		{name: "host-routed appsync-api", method: "POST", path: "/_appsync/api-id/graphql", host: "api-id.appsync-api.us-east-1.amazonaws.com", want: "appsync"},
+
+		// Unrecognised Host label — must NOT be claimed by the host-route
+		// table; falls through to whatever the path/other signals say
+		// (here, plain S3 fallback per AGENTS.md "Routing fallthrough is S3").
+		{name: "unrecognised host label falls through to s3", method: "GET", path: "/my-bucket/key", host: "something.made-up-label.us-east-1.example.com", want: "s3"},
+
 		// S3 fallback — plain paths without distinguishing signals
 		{name: "s3 list buckets", method: "GET", path: "/", want: "s3"},
 		{name: "s3 get object", method: "GET", path: "/my-bucket/key", want: "s3"},
@@ -68,6 +83,9 @@ func TestDetectService(t *testing.T) {
 			r := httptest.NewRequest(tt.method, tt.path, nil)
 			for k, v := range tt.header {
 				r.Header.Set(k, v)
+			}
+			if tt.host != "" {
+				r.Host = tt.host
 			}
 			got := detectService(r)
 			if got != tt.want {

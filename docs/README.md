@@ -20,6 +20,7 @@ see the [root README](../README.md).
 - [Using AWS CDK](./cdk.md) — `cdk bootstrap`, `cdk deploy`, supported resource types, troubleshooting
 - [CDK guides](./cdk/) — focused CDK workflow guides
 - [Local VPCs for CDK](./cdk/local-vpc.md) — stable local VPC bootstrap, CDK context cache behavior, VPC provider pattern
+- [Networking and host-based addressing](./networking.md) — path-style vs. Host-routed endpoints (API Gateway, Lambda function URLs, AppSync), wildcard DNS setup
 - [Migrating from LocalStack](./migration-from-localstack.md) — drop-in replacement guide
 
 ### Reference
@@ -97,7 +98,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | S3               | [s3.md](./services/s3.md)                           | 47  | Comprehensive / broad support |
 | SQS              | [sqs.md](./services/sqs.md)                         | 21  | Comprehensive / broad support |
 | DynamoDB         | [dynamodb.md](./services/dynamodb.md)               | 19  | Comprehensive / broad support |
-| Lambda           | [lambda.md](./services/lambda.md)                   | 33  | Comprehensive / broad support |
+| Lambda           | [lambda.md](./services/lambda.md)                   | 38  | Comprehensive / broad support |
 | API Gateway      | [apigateway.md](./services/apigateway.md)           | 105 | Comprehensive / broad support |
 | AppSync          | [appsync.md](./services/appsync.md)                 | 82  | Comprehensive / broad support |
 | CloudFront       | [cloudfront.md](./services/cloudfront.md)           | 89  | Comprehensive / broad support |

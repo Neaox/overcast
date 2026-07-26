@@ -58,6 +58,7 @@ func detectService(r *http.Request) string {
 	switch {
 	case strings.HasPrefix(r.URL.Path, "/2015-03-31/"),
 		strings.HasPrefix(r.URL.Path, "/2018-10-31/"),
+		strings.HasPrefix(r.URL.Path, "/2021-10-31/"),
 		strings.HasPrefix(r.URL.Path, "/2021-11-15/"):
 		return "lambda"
 	case strings.HasPrefix(r.URL.Path, "/v1/pipes"):
@@ -89,7 +90,17 @@ func detectService(r *http.Request) string {
 		return "metrics"
 	}
 
-	// 2b. Emulator-internal /_-prefixed paths — S3 bucket names cannot start
+	// 2b. Host-routed AWS-style addresses (execute-api / lambda-url /
+	// appsync-api Host subdomains — see hostroute.go). Checked against the
+	// exact same label table HostDispatch uses to rewrite these requests,
+	// so this label can never drift from what the request was actually
+	// routed to, regardless of which internal path convention the rewrite
+	// used.
+	if svc, ok := HostRouteService(r.Host); ok {
+		return svc
+	}
+
+	// 2c. Emulator-internal /_-prefixed paths — S3 bucket names cannot start
 	// with '_', so any /_* path is definitively not S3. Map known service
 	// prefixes to their owner; everything else is "internal".
 	if strings.HasPrefix(r.URL.Path, "/_") {
