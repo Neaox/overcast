@@ -367,11 +367,38 @@ func TestBuildDirectLambdaResolverEvent_defaultDomainAndHeaders(t *testing.T) {
 		t.Fatalf("expected default domainName to be nil, got %#v", request["domainName"])
 	}
 	headers := request["headers"].(map[string]string)
-	if _, ok := headers["Cookie"]; ok {
-		t.Fatalf("expected Cookie header to be omitted, got %#v", headers)
+	if _, ok := headers["cookie"]; ok {
+		t.Fatalf("expected cookie header to be omitted, got %#v", headers)
 	}
-	if headers["X-Custom"] != "visible" {
-		t.Fatalf("expected X-Custom header to be preserved, got %#v", headers)
+	if headers["x-custom"] != "visible" {
+		t.Fatalf("expected x-custom header to be preserved, got %#v", headers)
+	}
+}
+
+func TestFlattenHeaders_lowercasesHeaderNames(t *testing.T) {
+	// Given: a request whose headers Go has canonicalised (x-api-key -> X-Api-Key).
+	req := httptest.NewRequest(http.MethodPost, "/graphql", nil)
+	req.Header.Set("x-api-key", "da2-examplekey")
+	req.Header.Set("custom", "nadia")
+	req.Header.Set("Cookie", "session=secret")
+
+	// When: AppSync flattens them for $context.request.headers.
+	flat := flattenHeaders(req.Header)
+
+	// Then: names are lowercased, matching AWS AppSync's documented
+	// $context.request.headers / ctx.request.headers shape, so resolvers can
+	// read ctx.request.headers['x-api-key'] as the AWS docs show.
+	if got := flat["x-api-key"]; got != "da2-examplekey" {
+		t.Fatalf("expected x-api-key to be readable in lowercase, got %#v", flat)
+	}
+	if _, ok := flat["X-Api-Key"]; ok {
+		t.Fatalf("Go-canonical header name leaked into resolver context: %#v", flat)
+	}
+	if got := flat["custom"]; got != "nadia" {
+		t.Fatalf("expected custom header, got %#v", flat)
+	}
+	if _, ok := flat["cookie"]; ok {
+		t.Fatalf("AppSync must not expose the cookie header: %#v", flat)
 	}
 }
 

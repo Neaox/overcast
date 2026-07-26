@@ -179,10 +179,15 @@ func (h *Handler) executeRestLambdaProxy(
 		return
 	}
 
+	// REST proxy events carry the LAST value of a repeated name in `headers` /
+	// `queryStringParameters` and every value in the multiValue* maps — see the
+	// documented input format, where `-H 'header2: value1' -H 'header2: value2'`
+	// yields `"header2": "value2"` alongside `["value1","value2"]`.
+	// https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-lambda-proxy-integrations.html
 	headers := make(map[string]string, len(r.Header))
 	multiValueHeaders := make(map[string][]string, len(r.Header))
 	for k, vals := range r.Header {
-		headers[k] = vals[0]
+		headers[k] = vals[len(vals)-1]
 		multiValueHeaders[k] = vals
 	}
 
@@ -192,7 +197,7 @@ func (h *Handler) executeRestLambdaProxy(
 		queryParams = make(map[string]string, len(rawQuery))
 		multiValueQueryParams = make(map[string][]string, len(rawQuery))
 		for k, vals := range rawQuery {
-			queryParams[k] = vals[0]
+			queryParams[k] = vals[len(vals)-1]
 			multiValueQueryParams[k] = vals
 		}
 	}
@@ -456,22 +461,36 @@ func (h *Handler) executeV2LambdaProxy(
 		}
 		payload, err = json.Marshal(event)
 	} else {
-		// Default to 1.0 format (same shape as REST v1 proxy event).
+		// Default to 1.0 format (same shape as REST v1 proxy event). HTTP APIs
+		// lowercase header names in BOTH payload formats ("All headernames are
+		// lowercased" — http-api-develop-integrations-lambda.html), and format
+		// 1.0 puts a single value in `headers`/`queryStringParameters` with the
+		// full list in the multiValue* maps, rather than the comma-joined form
+		// that format 2.0 uses.
 		queryParamsMulti := make(map[string][]string)
+		queryParamsV1 := make(map[string]string)
 		for k, vals := range r.URL.Query() {
 			queryParamsMulti[k] = vals
+			queryParamsV1[k] = vals[len(vals)-1]
+		}
+		if len(queryParamsV1) == 0 {
+			queryParamsV1 = nil
+			queryParamsMulti = nil
 		}
 		headersMulti := make(map[string][]string, len(r.Header))
+		headersV1 := make(map[string]string, len(r.Header))
 		for k, vals := range r.Header {
-			headersMulti[k] = vals
+			lower := strings.ToLower(k)
+			headersMulti[lower] = vals
+			headersV1[lower] = vals[len(vals)-1]
 		}
 		event := lambdaV1ProxyEvent{
 			Resource:                        route.RouteKey,
 			Path:                            requestPath,
 			HTTPMethod:                      r.Method,
-			Headers:                         headers,
+			Headers:                         headersV1,
 			MultiValueHeaders:               headersMulti,
-			QueryStringParameters:           queryParams,
+			QueryStringParameters:           queryParamsV1,
 			MultiValueQueryStringParameters: queryParamsMulti,
 			PathParameters:                  pathParams,
 			StageVariables:                  stageVars,
