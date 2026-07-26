@@ -1,9 +1,9 @@
 import { useState } from "react"
-import { Link } from "@tanstack/react-router"
 import { BookOpen } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ServiceDocsModal } from "@/features/docs/service-docs-modal"
 import type { ServiceTierEntry } from "../service-defs"
+import { ServiceTile } from "./service-tile"
 import { TierBadge } from "./tier-badge"
 
 export function ServiceCard({
@@ -19,10 +19,11 @@ export function ServiceCard({
 
   return (
     <>
-      <Link
-        to={service.to}
-        onClick={() => onNavigate(service.to)}
-        className="group flex flex-col gap-3 rounded-card border border-border bg-bg-elevated p-3 transition-colors hover:border-accent focus-visible:outline-accent"
+      <ServiceTile
+        entry={entry}
+        onNavigate={onNavigate}
+        className="group flex flex-col gap-3 rounded-card border border-border bg-bg-elevated p-3"
+        enabledClassName="transition-colors hover:border-accent focus-visible:outline-accent"
       >
         <div className="relative flex h-[30px] items-center justify-between">
           <span className="flex h-[30px] w-[30px] items-center justify-center rounded-control bg-accent-muted text-accent">
@@ -51,7 +52,7 @@ export function ServiceCard({
           <span className="truncate font-mono text-[13px] font-bold text-fg">{service.label}</span>
           <span className="line-clamp-2 text-[11px] text-fg-subtle">{service.description}</span>
         </div>
-      </Link>
+      </ServiceTile>
       {service.docKey && (
         <ServiceDocsModal
           service={service.docKey}

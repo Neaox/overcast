@@ -1,5 +1,5 @@
-import { Link } from "@tanstack/react-router"
 import type { ServiceTierEntry } from "../service-defs"
+import { ServiceTile } from "./service-tile"
 import { TierMeta } from "./tier-badge"
 
 export function AvailableServiceCard({
@@ -13,10 +13,11 @@ export function AvailableServiceCard({
   const Icon = service.icon
 
   return (
-    <Link
-      to={service.to}
-      onClick={() => onNavigate(service.to)}
-      className="flex items-center gap-2.5 rounded-card border border-border p-3 transition-colors hover:border-accent hover:bg-bg-elevated focus-visible:outline-accent"
+    <ServiceTile
+      entry={entry}
+      onNavigate={onNavigate}
+      className="flex items-center gap-2.5 rounded-card border border-border p-3"
+      enabledClassName="transition-colors hover:border-accent hover:bg-bg-elevated focus-visible:outline-accent"
     >
       <span className="flex h-[26px] w-[26px] flex-none items-center justify-center rounded-control border border-border text-fg-subtle">
         <Icon className="h-[15px] w-[15px]" strokeWidth={1.75} />
@@ -25,6 +26,6 @@ export function AvailableServiceCard({
         <span className="truncate font-mono text-xs font-bold text-fg-muted">{service.label}</span>
         <TierMeta tier={tier} />
       </span>
-    </Link>
+    </ServiceTile>
   )
 }

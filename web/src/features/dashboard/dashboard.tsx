@@ -15,6 +15,23 @@ import { ServiceListView } from "./components/service-list-view"
 
 export const DASHBOARD_VIEW_STORAGE_KEY = "overcast.dashboard.view"
 
+/**
+ * Sections group services by how completely they are emulated, and by nothing
+ * else. Whether the emulator has a service switched on is an independent axis
+ * — carried on each entry and rendered as the status dot in the list view and
+ * as dimmed, inert tiles in the grid. Mixing the two used to file a live,
+ * enabled service under "not emulated".
+ */
+const SECTION_BY_TIER = {
+  full: "fully",
+  partial: "partially",
+  inert: "partially",
+  stub: "not",
+  unsupported: "not",
+} satisfies Record<EmulationTier, "fully" | "partially" | "not">
+
+type SectionKey = (typeof SECTION_BY_TIER)[EmulationTier]
+
 const healthQueryOptions = queryOptions({
   queryKey: ["health"],
   queryFn: () => health.check(),
@@ -44,12 +61,12 @@ export function Dashboard() {
     return rankA - rankB || a.service.label.localeCompare(b.service.label)
   })
 
-  const isAvailableTier = (tier: EmulationTier) => tier === "partial" || tier === "inert"
-  const inUse = entries.filter((e) => e.enabled && e.tier === "full")
-  const available = entries.filter((e) => e.enabled && isAvailableTier(e.tier))
-  const notEmulated = entries.filter(
-    (e) => !e.enabled || (e.tier !== "full" && !isAvailableTier(e.tier)),
-  )
+  const inSection = (section: SectionKey) =>
+    entries.filter((e) => SECTION_BY_TIER[e.tier] === section)
+  const fullyEmulated = inSection("fully")
+  const partiallyEmulated = inSection("partially")
+  const notEmulated = inSection("not")
+  const enabledCount = entries.filter((e) => e.enabled).length
 
   if (isLoading) {
     return (
@@ -60,9 +77,9 @@ export function Dashboard() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl py-6">
+    <div className="mx-auto max-w-7xl">
       <DashboardHeader
-        activeCount={inUse.length + available.length}
+        activeCount={enabledCount}
         totalCount={ALL_SERVICES.length}
         view={view}
         onViewChange={setView}
@@ -72,24 +89,28 @@ export function Dashboard() {
         <ServiceListView
           onNavigate={addRecentService}
           groups={[
-            { title: "in use", tone: "strong", entries: inUse },
-            { title: "available", tone: "muted", entries: available },
+            { title: "fully emulated", tone: "strong", entries: fullyEmulated },
+            { title: "partially emulated", tone: "muted", entries: partiallyEmulated },
             { title: "not emulated", tone: "subtle", entries: notEmulated },
           ]}
         />
       ) : (
         <div className="flex flex-col gap-6">
-          <DashboardSection title="in use" count={inUse.length} tone="strong">
+          <DashboardSection title="fully emulated" count={fullyEmulated.length} tone="strong">
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-              {inUse.map((entry) => (
+              {fullyEmulated.map((entry) => (
                 <ServiceCard key={entry.service.name} entry={entry} onNavigate={addRecentService} />
               ))}
             </div>
           </DashboardSection>
 
-          <DashboardSection title="available" count={available.length} tone="muted">
+          <DashboardSection
+            title="partially emulated"
+            count={partiallyEmulated.length}
+            tone="muted"
+          >
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-              {available.map((entry) => (
+              {partiallyEmulated.map((entry) => (
                 <AvailableServiceCard
                   key={entry.service.name}
                   entry={entry}
@@ -103,14 +124,14 @@ export function Dashboard() {
             title="not emulated"
             count={notEmulated.length}
             tone="subtle"
-            note="registered · returns 501"
+            note="no operations implemented"
           >
             <NotEmulatedChips entries={notEmulated} />
           </DashboardSection>
         </div>
       )}
 
-      {data && <DashboardFooter data={data} enabledCount={inUse.length + available.length} />}
+      {data && <DashboardFooter data={data} enabledCount={enabledCount} />}
     </div>
   )
 }

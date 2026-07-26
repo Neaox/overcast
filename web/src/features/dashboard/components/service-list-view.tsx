@@ -1,9 +1,8 @@
-import type { ReactNode } from "react"
-import { Link } from "@tanstack/react-router"
 import { cn } from "@/lib/utils"
 import type { ServiceTierEntry } from "../service-defs"
 import { TIER_BADGE } from "../tiers"
 import type { SectionTone } from "./dashboard-section"
+import { ServiceTile } from "./service-tile"
 
 const GRID = "grid grid-cols-[26px_200px_1fr_120px_96px] gap-3 items-center"
 
@@ -79,13 +78,20 @@ function ServiceListRow({
 }) {
   const { service, tier, enabled } = entry
   const Icon = service.icon
-  const active = enabled && tier !== "stub" && tier !== "unsupported"
-
-  const cells: ReactNode = (
-    <>
+  // Emphasis tracks whether the service is switched on, nothing else. The tier
+  // is already carried by the section, the tier column, and the badge — also
+  // demoting a live row for it just reads as broken.
+  return (
+    <ServiceTile
+      entry={entry}
+      onNavigate={onNavigate}
+      role="row"
+      className={cn(GRID, "border-b border-border px-4 py-2 last:border-b-0")}
+      enabledClassName="transition-colors hover:bg-accent-muted focus-visible:outline-accent"
+    >
       <span role="cell">
         <Icon
-          className={cn("h-4 w-4", active ? "text-accent" : "text-fg-subtle")}
+          className={cn("h-4 w-4", enabled ? "text-accent" : "text-fg-subtle")}
           strokeWidth={1.75}
         />
       </span>
@@ -93,7 +99,7 @@ function ServiceListRow({
         role="cell"
         className={cn(
           "truncate font-mono text-[13px]",
-          active ? "font-bold text-fg" : "text-fg-muted",
+          enabled ? "font-bold text-fg" : "text-fg-muted",
         )}
       >
         {service.label}
@@ -103,7 +109,7 @@ function ServiceListRow({
       </span>
       <span
         role="cell"
-        className={cn("font-mono text-xs", active ? "text-accent" : "text-fg-subtle")}
+        className={cn("font-mono text-xs", enabled ? "text-accent" : "text-fg-subtle")}
       >
         {TIER_BADGE[tier]?.label ?? "Full"}
       </span>
@@ -116,26 +122,6 @@ function ServiceListRow({
           {enabled ? "active" : "off"}
         </span>
       </span>
-    </>
-  )
-
-  const className = cn(GRID, "border-b border-border px-4 py-2 last:border-b-0")
-
-  return enabled ? (
-    <Link
-      role="row"
-      to={service.to}
-      onClick={() => onNavigate(service.to)}
-      className={cn(
-        className,
-        "transition-colors hover:bg-accent-muted focus-visible:outline-accent",
-      )}
-    >
-      {cells}
-    </Link>
-  ) : (
-    <div role="row" className={cn(className, "opacity-60")}>
-      {cells}
-    </div>
+    </ServiceTile>
   )
 }

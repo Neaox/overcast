@@ -9,8 +9,17 @@ const HEALTH: HealthResponse = {
   status: "ok",
   timestamp: "2026-07-26T00:00:00Z",
   version: "0.1.0-test",
-  services: ["s3", "sqs"],
-  serviceTiers: { s3: "full", sqs: "full", lambda: "unsupported" },
+  services: ["s3", "sqs", "ecr", "sns"],
+  serviceTiers: {
+    s3: "full",
+    sqs: "full",
+    // Implemented but switched off — emulated, just not running.
+    dynamodb: "full",
+    ecr: "partial",
+    // Switched on but unimplemented — not emulated, but still reachable.
+    sns: "stub",
+    lambda: "unsupported",
+  },
   storage: { default: "memory" },
 }
 
@@ -30,8 +39,8 @@ function renderDashboard() {
   return renderWithRouter(DashboardOnly, { queryClient })
 }
 
-function findInUseSection() {
-  return screen.findByRole("region", { name: "in use" })
+function findSection(name: string) {
+  return screen.findByRole("region", { name })
 }
 
 describe("Dashboard", () => {
@@ -39,10 +48,10 @@ describe("Dashboard", () => {
     localStorage.clear()
   })
 
-  it("lists a fully emulated, enabled service in the in-use section", async () => {
+  it("lists a fully emulated service in the fully-emulated section", async () => {
     renderDashboard()
 
-    expect(within(await findInUseSection()).getByText("S3")).toBeInTheDocument()
+    expect(within(await findSection("fully emulated")).getByText("S3")).toBeInTheDocument()
   })
 
   it("renders the services table once the list view is selected", async () => {
@@ -53,9 +62,48 @@ describe("Dashboard", () => {
     expect(screen.getByRole("table", { name: "Services" })).toBeInTheDocument()
   })
 
-  it("keeps a service the emulator has not enabled out of the in-use section", async () => {
+  it("groups a partially emulated service by its tier, not by being switched on", async () => {
     renderDashboard()
 
-    expect(within(await findInUseSection()).queryByText("Lambda")).not.toBeInTheDocument()
+    expect(within(await findSection("partially emulated")).getByText("ECR")).toBeInTheDocument()
+    expect(within(await findSection("not emulated")).queryByText("ECR")).not.toBeInTheDocument()
+  })
+
+  it("keeps a disabled but emulated service out of the not-emulated section", async () => {
+    renderDashboard()
+
+    expect(within(await findSection("fully emulated")).getByText("DynamoDB")).toBeInTheDocument()
+    expect(
+      within(await findSection("not emulated")).queryByText("DynamoDB"),
+    ).not.toBeInTheDocument()
+  })
+
+  it("renders a disabled service as inert rather than a link", async () => {
+    renderDashboard()
+
+    const section = await findSection("fully emulated")
+    expect(within(section).getByText("DynamoDB").closest("a")).toBeNull()
+    expect(within(section).getByText("S3").closest("a")).not.toBeNull()
+  })
+
+  it("files an unimplemented service under not emulated", async () => {
+    renderDashboard()
+
+    expect(within(await findSection("not emulated")).getByText("Lambda")).toBeInTheDocument()
+  })
+
+  it("keeps an enabled not-emulated service reachable from both views", async () => {
+    const { user } = renderDashboard()
+
+    expect(
+      within(await findSection("not emulated"))
+        .getByText("SNS")
+        .closest("a"),
+    ).not.toBeNull()
+
+    await user.click(await screen.findByRole("button", { name: "List view" }))
+
+    const table = screen.getByRole("table", { name: "Services" })
+    expect(within(table).getByText("SNS").closest("a")).not.toBeNull()
   })
 })

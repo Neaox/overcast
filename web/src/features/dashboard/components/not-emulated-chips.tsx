@@ -1,14 +1,17 @@
 import { useState } from "react"
 import { Link } from "@tanstack/react-router"
 import { ChevronDown } from "lucide-react"
-import { Tooltip } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import { CATALOG, CATALOG_CATEGORY_LABELS, type CatalogEntry } from "@/lib/unsupported-services"
 import type { ServiceTierEntry } from "../service-defs"
 import { TIER_DESCRIPTIONS } from "../tiers"
+import { ServiceTile } from "./service-tile"
 
+// Unfilled by design: fill and border weight both fall off as emulation
+// coverage does — filled + solid (fully emulated), unfilled + solid
+// (partially), unfilled + dashed (not emulated).
 const CHIP_CLASS =
-  "flex items-center gap-[7px] rounded-control border border-dashed border-border bg-bg-elevated px-2.5 py-1.5 font-mono text-[11px] text-fg-subtle"
+  "flex items-center gap-[7px] rounded-control border border-dashed border-border px-2.5 py-1.5 font-mono text-[11px] text-fg-subtle"
 
 export function NotEmulatedChips({ entries }: { entries: ServiceTierEntry[] }) {
   return (
@@ -24,31 +27,19 @@ export function NotEmulatedChips({ entries }: { entries: ServiceTierEntry[] }) {
 }
 
 function ServiceChip({ entry }: { entry: ServiceTierEntry }) {
-  const { service, tier, enabled } = entry
+  const { service, tier } = entry
   const Icon = service.icon
-  const content = (
-    <>
-      <Icon className="h-3.5 w-3.5" strokeWidth={1.75} />
-      {service.label}
-    </>
-  )
 
   return (
-    <Tooltip content={enabled ? TIER_DESCRIPTIONS[tier] : "Disabled in this emulator run."}>
-      {enabled ? (
-        <Link
-          to={service.to}
-          className={cn(
-            CHIP_CLASS,
-            "transition-colors hover:border-solid hover:border-accent hover:text-accent focus-visible:outline-accent",
-          )}
-        >
-          {content}
-        </Link>
-      ) : (
-        <span className={cn(CHIP_CLASS, "cursor-not-allowed opacity-60")}>{content}</span>
-      )}
-    </Tooltip>
+    <ServiceTile
+      entry={entry}
+      className={CHIP_CLASS}
+      enabledClassName="transition-colors hover:border-solid hover:border-accent hover:text-accent focus-visible:outline-accent"
+      tooltip={TIER_DESCRIPTIONS[tier]}
+    >
+      <Icon className="h-3.5 w-3.5" strokeWidth={1.75} />
+      {service.label}
+    </ServiceTile>
   )
 }
 
