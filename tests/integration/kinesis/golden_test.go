@@ -31,15 +31,6 @@
 //     doc comments in handler.go) — a golden here would only pin the status
 //     code, which existing integration tests already assert more directly.
 //
-// Known pre-existing non-determinism (not papered over by this harness):
-// ListTagsForStream serializes internal/services/kinesis Stream.Tags — a Go
-// map — by ranging over it directly (handler.go), so with two or more tags
-// the JSON array order is randomized per process and this golden would be
-// flaky. The golden test below therefore uses exactly one tag, where map
-// iteration order is moot. A real fix (sort tags by key before
-// serialization) is out of scope for this harness and has been flagged
-// separately.
-//
 // Record: go test ./tests/integration/kinesis/ -run TestGolden -record
 // Assert: go test ./tests/integration/kinesis/ -run TestGolden
 package kinesis_test
@@ -118,11 +109,11 @@ func TestGolden_AddTagsToStream(t *testing.T) {
 func TestGolden_ListTagsForStream(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 	createStreamGolden(t, srv, "golden-stream", 1)
-	// Exactly one tag — see the file-level doc comment on the pre-existing
-	// map-ordering non-determinism in ListTagsForStream's handler.
+	// Three tags, added in non-alphabetical key order — ListTagsForStream
+	// sorts tags by key (PR #307), so a multi-tag golden is deterministic.
 	tagResp := kinesisCall(t, srv, "AddTagsToStream", map[string]any{
 		"StreamName": "golden-stream",
-		"Tags":       map[string]string{"env": "test"},
+		"Tags":       map[string]string{"team": "data", "env": "test", "owner": "platform"},
 	})
 	tagResp.Body.Close()
 	helpers.AssertStatus(t, tagResp, http.StatusOK)
