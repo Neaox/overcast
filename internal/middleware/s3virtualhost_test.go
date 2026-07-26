@@ -74,6 +74,102 @@ func TestExtractS3BucketFromHost(t *testing.T) {
 	}
 }
 
+// TestExtractS3BucketFromHost_builtInDefaultBases covers the wildcard-DNS
+// domains recognised out of the box, with no OVERCAST_HOSTNAME configured:
+// "localhost.overcast.sh" (our own domain) and "localhost.localstack.cloud"
+// (what a user migrating from LocalStack already has in their config). Both
+// resolve to 127.0.0.1 for every subdomain, so CDK/SDK-generated bucket
+// hostnames reach the emulator without any hosts-file changes.
+func TestExtractS3BucketFromHost_builtInDefaultBases(t *testing.T) {
+	tests := []struct {
+		host string
+		want string
+	}{
+		// The base domains themselves are not buckets.
+		{"localhost.overcast.sh", ""},
+		{"localhost.overcast.sh:4566", ""},
+		{"localhost.localstack.cloud", ""},
+		{"localhost.localstack.cloud:4566", ""},
+
+		// {bucket}.localhost.overcast.sh
+		{"mybucket.localhost.overcast.sh", "mybucket"},
+		{"mybucket.localhost.overcast.sh:4566", "mybucket"},
+
+		// {bucket}.localhost.localstack.cloud — the reported CDK failure.
+		{"mybucket.localhost.localstack.cloud", "mybucket"},
+		{"cdk-hnb659fds-assets-000000000000-ap-southeast-2.localhost.localstack.cloud:4566", "cdk-hnb659fds-assets-000000000000-ap-southeast-2"},
+		{"cdk-hnb659fds-assets-000000000000-ap-southeast-2.localhost.overcast.sh:4566", "cdk-hnb659fds-assets-000000000000-ap-southeast-2"},
+
+		// Bucket names may contain dots — the whole prefix before the base is
+		// the bucket.
+		{"my.dotted.bucket.localhost.overcast.sh", "my.dotted.bucket"},
+		{"my.dotted.bucket.localhost.localstack.cloud:4566", "my.dotted.bucket"},
+
+		// Bare S3 service endpoints on the default bases are NOT buckets.
+		{"s3.localhost.overcast.sh", ""},
+		{"s3.localhost.localstack.cloud:4566", ""},
+		{"s3.us-east-1.localhost.overcast.sh", ""},
+
+		// The pre-existing "localhost" default must not be displaced.
+		{"mybucket.localhost", "mybucket"},
+		{"mybucket.localhost:4566", "mybucket"},
+		{"s3.localhost", ""},
+
+		// IPs still pass through untouched.
+		{"127.0.0.1:4566", ""},
+		{"[::1]:4566", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.host, func(t *testing.T) {
+			got := extractS3BucketFromHost(tt.host)
+			if got != tt.want {
+				t.Errorf("extractS3BucketFromHost(%q) = %q, want %q", tt.host, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestExtractS3BucketFromHost_configuredHostnameAddsToDefaults proves a
+// configured OVERCAST_HOSTNAME is additive: the built-in defaults keep working
+// alongside it, and configuring a hostname that is already a default does not
+// break (duplicate) handling.
+func TestExtractS3BucketFromHost_configuredHostnameAddsToDefaults(t *testing.T) {
+	tests := []struct {
+		name      string
+		extraBase string
+		host      string
+		want      string
+	}{
+		{"custom base recognised", "dev.example.test", "mybucket.dev.example.test", "mybucket"},
+		{"custom base with port", "dev.example.test", "mybucket.dev.example.test:4566", "mybucket"},
+		{"custom base itself is not a bucket", "dev.example.test", "dev.example.test:4566", ""},
+		{"custom base s3 endpoint is not a bucket", "dev.example.test", "s3.dev.example.test", ""},
+
+		// Defaults still recognised while a custom base is configured.
+		{"localhost default survives custom base", "dev.example.test", "mybucket.localhost", "mybucket"},
+		{"overcast.sh default survives custom base", "dev.example.test", "mybucket.localhost.overcast.sh", "mybucket"},
+		{"localstack.cloud default survives custom base", "dev.example.test", "mybucket.localhost.localstack.cloud", "mybucket"},
+
+		// Configuring a hostname that is already a built-in default must be a
+		// no-op, not a duplicate-entry bug.
+		{"configured hostname duplicates a default", "localhost.overcast.sh", "mybucket.localhost.overcast.sh", "mybucket"},
+		{"configured hostname duplicates localhost", "localhost", "mybucket.localhost", "mybucket"},
+		{"configured hostname duplicates localstack default", "localhost.localstack.cloud", "mybucket.localhost.localstack.cloud:4566", "mybucket"},
+
+		// A configured parent domain must not shadow a longer default that also
+		// matches — "x.localhost.overcast.sh" is bucket "x", not "x.localhost".
+		{"longer default wins over configured parent domain", "overcast.sh", "mybucket.localhost.overcast.sh", "mybucket"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractS3BucketFromHost(tt.host, tt.extraBase)
+			if got != tt.want {
+				t.Errorf("extractS3BucketFromHost(%q, %q) = %q, want %q", tt.host, tt.extraBase, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestExtractS3BucketFromHost_withExtraBase covers wildcard-DNS hostnames set
 // via OVERCAST_HOSTNAME (e.g. "localhost.localstack.cloud"). CDK's asset
 // publisher constructs URLs like:
