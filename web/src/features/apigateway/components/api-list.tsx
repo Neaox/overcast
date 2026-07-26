@@ -175,7 +175,9 @@ export function ApiGatewayList() {
                     <TableCell>
                       <Badge variant="default">REST</Badge>
                     </TableCell>
-                    <TableCell className="text-fg-muted">{formatDate(api.createdDate)}</TableCell>
+                    <TableCell className="font-mono text-xs text-fg-muted">
+                      {formatDate(api.createdDate)}
+                    </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <RowActions>
                         <RowAction
@@ -257,7 +259,9 @@ export function ApiGatewayList() {
                     <TableCell>
                       <Badge variant="success">{api.protocolType}</Badge>
                     </TableCell>
-                    <TableCell className="text-fg-muted">{formatDate(api.createdDate)}</TableCell>
+                    <TableCell className="font-mono text-xs text-fg-muted">
+                      {formatDate(api.createdDate)}
+                    </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <RowActions>
                         <RowAction

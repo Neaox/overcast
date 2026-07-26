@@ -220,7 +220,9 @@ export function QueueList() {
                       {q.approximateNumberOfMessagesNotVisible}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-fg-muted">{q.visibilityTimeout}s</TableCell>
+                  <TableCell className="font-mono text-xs text-fg-muted">
+                    {q.visibilityTimeout}s
+                  </TableCell>
                   <TableCell className="max-w-xs truncate font-mono text-xs text-fg-muted">
                     {q.arn}
                   </TableCell>
@@ -439,7 +441,7 @@ function CreateQueueDialog({
               isFifo ? (
                 <form.Field name="contentBasedDeduplication">
                   {(field) => (
-                    <label className="flex items-center gap-2 text-sm">
+                    <label className="flex items-center gap-2 font-mono text-sm">
                       <input
                         type="checkbox"
                         checked={field.state.value}
@@ -447,7 +449,7 @@ function CreateQueueDialog({
                         className="rounded border-border"
                       />
                       <span>Content-based deduplication</span>
-                      <span className="text-fg-muted">(uses message body MD5)</span>
+                      <span className="font-sans text-fg-muted">(uses message body MD5)</span>
                     </label>
                   )}
                 </form.Field>

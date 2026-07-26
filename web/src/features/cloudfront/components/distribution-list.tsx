@@ -163,7 +163,9 @@ export function DistributionList() {
                       {d.enabled ? "Yes" : "No"}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-fg-muted">{d.origins.length}</TableCell>
+                  <TableCell className="font-mono text-xs text-fg-muted">
+                    {d.origins.length}
+                  </TableCell>
                   <TableCell className="max-w-xs truncate text-fg-muted">{d.comment}</TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <RowActions>
@@ -329,7 +331,7 @@ function CreateDistributionDialog({
             <FormRow>
               <form.Field name="enabled">
                 {(field) => (
-                  <label className="flex items-center gap-2 text-sm">
+                  <label className="flex items-center gap-2 font-mono text-sm">
                     <input
                       type="checkbox"
                       className="accent-primary h-4 w-4 rounded"

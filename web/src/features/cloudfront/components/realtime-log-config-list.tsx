@@ -66,7 +66,7 @@ export function RealtimeLogConfigList() {
                   <TableCell className="text-fg-muted">
                     <ArnText arn={c.arn} />
                   </TableCell>
-                  <TableCell>{c.samplingRate}%</TableCell>
+                  <TableCell className="font-mono text-xs">{c.samplingRate}%</TableCell>
                 </TableRow>
               ))}
             </TableBody>

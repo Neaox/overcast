@@ -165,15 +165,19 @@ export function InstanceList() {
                     <TableCell>
                       <EngineLabel engine={db.Engine ?? ""} />
                     </TableCell>
-                    <TableCell className="text-fg-muted">{db.EngineVersion}</TableCell>
+                    <TableCell className="font-mono text-xs text-fg-muted">
+                      {db.EngineVersion}
+                    </TableCell>
                     <TableCell>
                       <RdsStatusBadge status={db.DBInstanceStatus ?? ""} />
                     </TableCell>
-                    <TableCell className="text-fg-muted">{db.DBInstanceClass}</TableCell>
+                    <TableCell className="font-mono text-xs text-fg-muted">
+                      {db.DBInstanceClass}
+                    </TableCell>
                     <TableCell className="font-mono text-xs text-fg-muted">
                       {db.Endpoint ? `${db.Endpoint.Address}:${db.Endpoint.Port}` : "—"}
                     </TableCell>
-                    <TableCell className="text-xs text-fg-muted">
+                    <TableCell className="font-mono text-xs text-fg-muted">
                       {db.InstanceCreateTime ? db.InstanceCreateTime.toLocaleString() : "—"}
                     </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
@@ -251,7 +255,7 @@ function EngineLabel({ engine }: { engine: string }) {
         : engine === "mariadb"
           ? "MariaDB"
           : engine
-  return <span className="text-sm font-medium">{label}</span>
+  return <span className="font-mono text-sm font-medium">{label}</span>
 }
 
 function RdsStatusBadge({ status }: { status: string }) {

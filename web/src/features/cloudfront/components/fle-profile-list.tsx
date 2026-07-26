@@ -65,7 +65,7 @@ export function FLEProfileList() {
                   </TableCell>
                   <TableCell className="font-mono text-xs text-fg-muted">{p.id}</TableCell>
                   <TableCell className="text-fg-muted">{p.comment || "—"}</TableCell>
-                  <TableCell className="text-fg-muted">
+                  <TableCell className="font-mono text-xs text-fg-muted">
                     {p.lastModifiedTime ? new Date(p.lastModifiedTime).toLocaleString() : "—"}
                   </TableCell>
                 </TableRow>

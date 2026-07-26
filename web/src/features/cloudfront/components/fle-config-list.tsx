@@ -64,8 +64,8 @@ export function FLEConfigList() {
                     <ResourceName icon={Lock} name={c.id} />
                   </TableCell>
                   <TableCell className="text-fg-muted">{c.comment || "—"}</TableCell>
-                  <TableCell>{c.contentTypeProfileConfig}</TableCell>
-                  <TableCell className="text-fg-muted">
+                  <TableCell className="font-mono text-xs">{c.contentTypeProfileConfig}</TableCell>
+                  <TableCell className="font-mono text-xs text-fg-muted">
                     {c.lastModifiedTime ? new Date(c.lastModifiedTime).toLocaleString() : "—"}
                   </TableCell>
                 </TableRow>

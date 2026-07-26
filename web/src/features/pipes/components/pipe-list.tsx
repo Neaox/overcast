@@ -582,7 +582,7 @@ export function PipeList() {
                   <TableCell>
                     <Badge variant={stateVariant(p.CurrentState ?? "")}>{p.CurrentState}</Badge>
                   </TableCell>
-                  <TableCell className="text-fg-muted">
+                  <TableCell className="font-mono text-xs text-fg-muted">
                     {p.CreationTime?.toLocaleString()}
                   </TableCell>
                   <TableCell>

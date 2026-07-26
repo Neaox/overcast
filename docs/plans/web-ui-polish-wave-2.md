@@ -30,6 +30,21 @@ These were settled during wave 1 — do not re-litigate them while implementing:
 - Honour the design's `hint-placeholder-count` attribute for skeleton row counts rather than hardcoding.
 - Implement artboard 5a, the cold-boot / unreachable state. This is a **missing third state**, not a restyle: `app-shell.tsx` gates on `isConfigured()` (configuration, not liveness) and `connection-dialog.tsx` probes `/_health` then discards the result in a `catch {}`. So "configured but unreachable" currently renders nothing. Bare centred column on `--oc-bg`, 16px gaps, no card; hero is `OvercastBranding.Loader` at 72px with `aria-label="Connecting"` (not the Mark); copy `connecting to localhost:4566` (mono 13, `--oc-text`) over `Reading emulator state — first boot can take a few seconds.` (sans 12, muted). After 5s a retry affordance appears reading `still working after 5s · retry`, 7×12px padding, 13px clock icon, all one muted colour — the artboard does not style `retry` as a control, so make the whole chip the button. Topbar while disconnected shows brand + amber dot + host only: no breadcrumb, search, region select or theme toggle.
 - Add `prefers-reduced-motion` support. Nothing in the app respects it today.
+- **Finish the loading-affordance rollout — audited 2026-07-27, three gaps remain.** The skeleton
+  work reached list pages because they share `QueryListState`; these did not:
+  - **Detail pages still use content-area spinners.** 208 `<Spinner>` usages remain, concentrated
+    in `cognito/cognito-pool-detail.tsx` (15), `ecs/cluster-detail.tsx` (11), `ec2/ec2-dashboard.tsx`
+    (11), `sqs/queue-detail.tsx` (10), `apigateway/rest-api-detail.tsx` (9). 5b restricts spinners to
+    14-16px in chips and toasts, never a content area. Detail pages each hand-roll their loading
+    branch, so the fix is a shared wrapper analogous to `QueryListState` — one component, pages
+    inherit — not 208 edits.
+  - **Busy buttons use a spinner where the design uses a blinking cursor.** The prevailing pattern is
+    `{isPending && <Spinner className="mr-2 h-3.5 w-3.5" />}`; 5b specifies label + cursor
+    (`Creating ▍`, `Refreshing ▍`), solid accent fill, `cursor: default`, and **no dimming**. Apply it
+    in `Button`/`CreateAction`/`RefreshAction` so call sites inherit it.
+  - **Four sites bypass the `Spinner` component**, importing lucide's `Loader2` directly and so
+    escaping its size clamp: `layout/global-search.tsx:417`, `ui/combobox.tsx:391` and `:484`,
+    `cloudformation/stack-detail.tsx:380` and `:438`. Route them through `Spinner`.
 
 ### Dialogs and toasts
 
@@ -52,7 +67,9 @@ The wave-1 sweep was walled off from files other agents held. Still outstanding:
 - `components/layout/global-search.tsx` — result `label`/`sublabel`, the two count/shortcut chips, and the "Services" group label.
 - `features/dashboard/**` — check `tier-badge.tsx`, `not-emulated-chips.tsx`, `dashboard-section.tsx` headings and `service-list-view.tsx`'s value cell.
 - List pages — identifier and numeric **value cells** (column headers and badges already inherit mono): `elasticache/cluster-list.tsx` (engine, version, node type, node count), `lambda/function-list.tsx` (runtime, memory), `cloudfront/distribution-list.tsx` (origin count), `dynamodb/table-list.tsx`, `ecr/repository-list.tsx`, `apigateway/api-list.tsx` (dates). Leave `comment`/`description` cells sans — they are prose. One raw `<label>` at `cloudfront/distribution-list.tsx:332` needs mono.
-- Maintain the two label specs: field and column labels 9px/`.14em`; section headings 10px/`.16em`. The wider tracking is what makes something read as a heading — do not let it leak into column headers.
+- Maintain the two label specs: field and column labels 9px/`.14em`; section headings 10px/`.16em`. The wider tracking is what makes something read as a heading — do not let it leak into column headers. **Two known violations** use heading tracking at column-header size: `dashboard/components/not-emulated-chips.tsx:75` and `dashboard/components/service-list-view.tsx:55` are both `text-[9px] tracking-[0.16em]` and should be 10px.
+- **Extract a shared detail-field component.** `DetailRow`/`InfoRow` is hand-rolled 12 times — `cloudformation/stack-detail.tsx:576`, `cognito/cognito-pool-detail.tsx:2169`, `ec2/instance-detail.tsx:490`, `ec2/vpc-detail.tsx:806`, `ecs/task-detail.tsx:178`, `eventbridge/event-bus-detail.tsx:175`, `kms/kms-key-detail.tsx:181`, `rds/instance-detail.tsx:323`, `secretsmanager/components/secret-detail.tsx:274`, `ssm/ssm-parameter-detail.tsx:274`, `sts/sts-page.tsx:75`. They render a mono label over a **sans value**, so timestamps, counts and identifiers on every detail page are still sans (see `cloudwatch/logs/components/log-group-detail.tsx:202-213`). Fix it in one extracted component, not twelve edits — same lesson as the spinner rollout: the sweep reaches only what shares a component.
+- **Consider flipping `TableCell` to mono by default** as a deliberate change, not a side effect. It is the DRYest fix, but there are 463 `TableCell` sites across 57 files and ~20 prose cells that would silently flip; it needs its own pass with those exceptions identified first.
 
 ### Pages and features
 

@@ -132,15 +132,13 @@ export function TableList() {
                         {table.tableStatus}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-fg-muted">
-                      <span className="font-mono">
-                        {hashKey?.attributeName ?? "—"}
-                        {sortKey && (
-                          <span className="text-fg-subtle"> / {sortKey.attributeName}</span>
-                        )}
-                      </span>
+                    <TableCell className="font-mono text-xs text-fg-muted">
+                      {hashKey?.attributeName ?? "—"}
+                      {sortKey && (
+                        <span className="text-fg-subtle"> / {sortKey.attributeName}</span>
+                      )}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">
+                    <TableCell className="text-right font-mono text-xs tabular-nums">
                       {table.itemCount.toLocaleString()}
                     </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>

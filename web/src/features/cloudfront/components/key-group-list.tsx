@@ -65,7 +65,7 @@ export function KeyGroupList() {
                   </TableCell>
                   <TableCell className="font-mono text-xs text-fg-muted">{kg.id}</TableCell>
                   <TableCell className="text-fg-muted">{kg.comment || "—"}</TableCell>
-                  <TableCell className="text-fg-muted">
+                  <TableCell className="font-mono text-xs text-fg-muted">
                     {kg.lastModifiedTime ? new Date(kg.lastModifiedTime).toLocaleString() : "—"}
                   </TableCell>
                 </TableRow>

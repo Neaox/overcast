@@ -338,7 +338,7 @@ function EngineLabel({ engine }: { engine: string }) {
         : engine === "mariadb"
           ? "MariaDB"
           : engine
-  return <span className="text-sm font-medium">{label}</span>
+  return <span className="font-mono text-sm font-medium">{label}</span>
 }
 
 function RdsStatusBadge({ status }: { status: string }) {

@@ -134,8 +134,8 @@ export function StreamList() {
                   <TableCell>
                     <Badge variant={statusVariant(stream.status)}>{stream.status}</Badge>
                   </TableCell>
-                  <TableCell>{stream.shardCount}</TableCell>
-                  <TableCell>{stream.retentionHours}h</TableCell>
+                  <TableCell className="font-mono text-xs">{stream.shardCount}</TableCell>
+                  <TableCell className="font-mono text-xs">{stream.retentionHours}h</TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <RowActions>
                       <RowAction

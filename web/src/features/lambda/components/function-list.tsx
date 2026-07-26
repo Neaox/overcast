@@ -149,14 +149,14 @@ function FunctionRow({ fn, onDelete }: { fn: LambdaFunction; onDelete: (name: st
       <TableCell>
         <ResourceName icon={Zap} name={name} />
       </TableCell>
-      <TableCell className="text-fg-muted">{fn.Runtime}</TableCell>
+      <TableCell className="font-mono text-xs text-fg-muted">{fn.Runtime}</TableCell>
       <TableCell className="font-mono text-xs text-fg-muted">{fn.Handler}</TableCell>
-      <TableCell className="text-fg-muted">{fn.MemorySize ?? 128} MB</TableCell>
-      <TableCell className="text-fg-muted">{fn.Timeout ?? 3}s</TableCell>
+      <TableCell className="font-mono text-xs text-fg-muted">{fn.MemorySize ?? 128} MB</TableCell>
+      <TableCell className="font-mono text-xs text-fg-muted">{fn.Timeout ?? 3}s</TableCell>
       <TableCell>
         <span
           className={cn(
-            "text-xs",
+            "font-mono text-xs",
             fn.State === "Active" ? "font-medium text-success" : "text-fg-muted",
           )}
         >
