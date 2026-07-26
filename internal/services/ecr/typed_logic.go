@@ -267,7 +267,7 @@ func (s *Service) createRepositoryTyped(ctx context.Context, req *createReposito
 	if len(req.Tags) > 0 {
 		_ = s.saveTags(ctx, repo.RepositoryArn, req.Tags)
 	}
-	s.publish(ctx, events.ECRRepositoryCreated, events.ResourcePayload{Name: req.RepositoryName})
+	s.publish(ctx, events.ECRRepositoryCreated, events.ResourcePayload{Name: req.RepositoryName, ARN: repo.RepositoryArn})
 	return &createRepositoryResponse{Repository: *repo}, nil
 }
 
@@ -324,7 +324,7 @@ func (s *Service) deleteRepositoryTyped(ctx context.Context, req *deleteReposito
 	}
 	_ = s.store.Delete(ctx, policyNamespace, key)
 	_ = s.store.Delete(ctx, lifecycleNS, key)
-	s.publish(ctx, events.ECRRepositoryDeleted, events.ResourcePayload{Name: req.RepositoryName})
+	s.publish(ctx, events.ECRRepositoryDeleted, events.ResourcePayload{Name: req.RepositoryName, ARN: repo.RepositoryArn})
 	return &deleteRepositoryResponse{Repository: *repo}, nil
 }
 
@@ -467,7 +467,7 @@ func (s *Service) putImageTyped(ctx context.Context, req *putImageRequest) (*put
 	if err := s.store.Set(ctx, imageNamespace, imageKey(region, req.RepositoryName, digest), string(raw)); err != nil {
 		return nil, protocol.ErrInternalError
 	}
-	s.publish(ctx, events.ECRImagePushed, events.ResourcePayload{Name: req.RepositoryName})
+	s.publish(ctx, events.ECRImagePushed, events.ResourcePayload{Name: req.RepositoryName, ARN: s.repoARN(region, req.RepositoryName)})
 	return &putImageResponse{Image: img}, nil
 }
 

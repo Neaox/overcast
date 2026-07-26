@@ -115,7 +115,7 @@ func (h *Handler) CreateTopic(w http.ResponseWriter, r *http.Request) {
 			Type:    events.SNSTopicCreated,
 			Time:    h.clk.Now(),
 			Source:  "sns",
-			Payload: events.ResourcePayload{Name: name},
+			Payload: events.ResourcePayload{Name: name, ARN: arn},
 		})
 	}
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateTopicResponse{
@@ -146,7 +146,7 @@ func (h *Handler) DeleteTopic(w http.ResponseWriter, r *http.Request) {
 			Type:    events.SNSTopicDeleted,
 			Time:    h.clk.Now(),
 			Source:  "sns",
-			Payload: events.ResourcePayload{Name: topic.Name},
+			Payload: events.ResourcePayload{Name: topic.Name, ARN: topic.ARN},
 		})
 	}
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDeleteTopicResponse{

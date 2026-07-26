@@ -181,7 +181,7 @@ func (h *Handler) createStreamTyped(ctx context.Context, req *createStreamReques
 	if aerr := h.store.putStream(ctx, st); aerr != nil {
 		return nil, aerr
 	}
-	h.publishCtx(ctx, events.KinesisStreamCreated, events.ResourcePayload{Name: req.StreamName})
+	h.publishCtx(ctx, events.KinesisStreamCreated, events.ResourcePayload{Name: req.StreamName, ARN: st.StreamARN})
 	h.log.Debug("stream created", zap.String("stream", req.StreamName), zap.Int("shards", shardCount))
 	return &struct{}{}, nil
 }
@@ -196,7 +196,7 @@ func (h *Handler) deleteStreamTyped(ctx context.Context, req *deleteStreamReques
 	if aerr := h.store.deleteStream(ctx, req.StreamName); aerr != nil {
 		return nil, aerr
 	}
-	h.publishCtx(ctx, events.KinesisStreamDeleted, events.ResourcePayload{Name: req.StreamName})
+	h.publishCtx(ctx, events.KinesisStreamDeleted, events.ResourcePayload{Name: req.StreamName, ARN: streamARN(h.cfg.AccountID, h.cfg.Region, req.StreamName)})
 	return &struct{}{}, nil
 }
 

@@ -3,6 +3,13 @@ export interface StreamEvent {
   type: string
   time: string // ISO-8601
   source: string // "s3", "sqs", "dynamodb", …
+  /**
+   * ARN of the event's primary resource, when known (mirrors
+   * internal/events.Event.ResourceARN on the Go side). Best-effort — many
+   * events have no single resource or concern a resource type without an
+   * ARN in this emulator's model, and omit this field entirely.
+   */
+  resourceArn?: string
   payload: unknown
 }
 

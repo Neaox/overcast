@@ -397,7 +397,7 @@ func (h *Handler) publishCtx(ctx context.Context, t events.Type, name string) {
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
 			Type: t, Time: h.clk.Now(), Source: "ssm",
-			Payload: events.ResourcePayload{Name: name},
+			Payload: events.ResourcePayload{Name: name, ARN: h.paramARN(name)},
 		})
 	}
 }

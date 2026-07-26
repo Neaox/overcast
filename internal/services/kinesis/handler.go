@@ -123,7 +123,7 @@ func (h *Handler) CreateStream(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	h.publish(r, events.KinesisStreamCreated, events.ResourcePayload{Name: req.StreamName})
+	h.publish(r, events.KinesisStreamCreated, events.ResourcePayload{Name: req.StreamName, ARN: st.StreamARN})
 	h.log.Debug("stream created", zap.String("stream", req.StreamName), zap.Int("shards", shardCount))
 	w.WriteHeader(http.StatusOK)
 }
@@ -149,7 +149,8 @@ func (h *Handler) DeleteStream(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	h.publish(r, events.KinesisStreamDeleted, events.ResourcePayload{Name: req.StreamName})
+	arn := streamARN(h.cfg.AccountID, middleware.RegionFromContext(r.Context(), h.cfg.Region), req.StreamName)
+	h.publish(r, events.KinesisStreamDeleted, events.ResourcePayload{Name: req.StreamName, ARN: arn})
 	w.WriteHeader(http.StatusOK)
 }
 

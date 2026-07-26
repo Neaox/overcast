@@ -187,7 +187,7 @@ func (h *Handler) CreateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.publish(r, events.KMSKeyCreated, events.ResourcePayload{Name: k.KeyID})
+	h.publish(r, events.KMSKeyCreated, events.ResourcePayload{Name: k.KeyID, ARN: k.ARN})
 
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"KeyMetadata": h.toMeta(k),
@@ -318,7 +318,7 @@ func (h *Handler) ScheduleKeyDeletion(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	h.publish(r, events.KMSKeyDeleted, events.ResourcePayload{Name: k.KeyID})
+	h.publish(r, events.KMSKeyDeleted, events.ResourcePayload{Name: k.KeyID, ARN: k.ARN})
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"KeyId":        k.KeyID,
 		"KeyArn":       k.ARN,

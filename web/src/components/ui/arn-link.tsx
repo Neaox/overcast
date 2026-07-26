@@ -23,11 +23,19 @@
  *   cognito      / AWS::Cognito::UserPool     → /cognito/$poolId
  *   appsync      / AWS::AppSync::GraphQLApi   → /appsync/$apiId
  *   eventbridge  / AWS::Events::EventBus      → /eventbridge/$busName
+ *   kms          / AWS::KMS::Key              → /kms/$keyId
+ *   ecr          / AWS::ECR::Repository       → /ecr/$repositoryName
+ *   cloudfront   / AWS::CloudFront::Distribution → /cloudfront/$distributionId
+ *   ec2 (instance) / AWS::EC2::Instance       → /ec2/$instanceId
+ *   ec2 (vpc)    / AWS::EC2::VPC              → /ec2/vpc/$vpcId
+ *   ecs          / AWS::ECS::Cluster          → /ecs/$cluster
+ *   apigateway (rest) / AWS::ApiGateway::RestApi → /apigateway/rest/$apiId
+ *   apigateway (http) / AWS::ApiGatewayV2::Api   → /apigateway/http/$apiId
  *
  * Unrecognised services render as plain text — no link, no error.
  */
 import { Fragment } from "react"
-import type { MouseEventHandler } from "react"
+import type { MouseEventHandler, ReactNode } from "react"
 import { Link } from "@tanstack/react-router"
 import { cn } from "@/lib/utils"
 import { endpointStore } from "@/services/endpoint-store"
@@ -187,6 +195,65 @@ function resolveArn(arn: string): ResolvedRoute | null {
       const busMatch = parts.at(5)?.match(/^event-bus\/(.+)/)
       if (busMatch)
         return { kind: "params", to: "/eventbridge/$busName", params: { busName: busMatch[1] } }
+      break
+    }
+    case "kms": {
+      // arn:aws:kms:region:account:key/key-id
+      const keyMatch = parts.at(5)?.match(/^key\/(.+)/)
+      if (keyMatch) return { kind: "params", to: "/kms/$keyId", params: { keyId: keyMatch[1] } }
+      break
+    }
+    case "ecr": {
+      // arn:aws:ecr:region:account:repository/name
+      const repoMatch = parts.at(5)?.match(/^repository\/(.+)/)
+      if (repoMatch)
+        return {
+          kind: "params",
+          to: "/ecr/$repositoryName",
+          params: { repositoryName: repoMatch[1] },
+        }
+      break
+    }
+    case "cloudfront": {
+      // arn:aws:cloudfront::account:distribution/id
+      const distMatch = parts.at(5)?.match(/^distribution\/(.+)/)
+      if (distMatch)
+        return {
+          kind: "params",
+          to: "/cloudfront/$distributionId",
+          params: { distributionId: distMatch[1] },
+        }
+      break
+    }
+    case "ec2": {
+      // arn:aws:ec2:region:account:instance/id or vpc/id
+      const instanceMatch = parts.at(5)?.match(/^instance\/(.+)/)
+      if (instanceMatch)
+        return {
+          kind: "params",
+          to: "/ec2/$instanceId",
+          params: { instanceId: instanceMatch[1] },
+        }
+      const vpcMatch = parts.at(5)?.match(/^vpc\/(.+)/)
+      if (vpcMatch)
+        return { kind: "params", to: "/ec2/vpc/$vpcId", params: { vpcId: vpcMatch[1] } }
+      break
+    }
+    case "ecs": {
+      // arn:aws:ecs:region:account:cluster/name
+      const clusterMatch = parts.at(5)?.match(/^cluster\/([^/]+)/)
+      if (clusterMatch)
+        return { kind: "params", to: "/ecs/$cluster", params: { cluster: clusterMatch[1] } }
+      break
+    }
+    case "apigateway": {
+      // arn:aws:apigateway:region::/restapis/id or /apis/id (account segment is empty)
+      const restMatch = parts.at(5)?.match(/^\/restapis\/([^/]+)/)
+      if (restMatch)
+        return { kind: "params", to: "/apigateway/rest/$apiId", params: { apiId: restMatch[1] } }
+      const httpMatch = parts.at(5)?.match(/^\/apis\/([^/]+)/)
+      if (httpMatch)
+        return { kind: "params", to: "/apigateway/http/$apiId", params: { apiId: httpMatch[1] } }
       break
     }
   }
@@ -395,4 +462,43 @@ export function ResourceLink({
       {display}
     </RouteLink>
   )
+}
+
+// ─── LinkifiedText ─────────────────────────────────────────────────────────────
+
+// Matches ARN-shaped substrings anywhere within a larger string — e.g. an
+// error message like "failed to invoke arn:aws:lambda:...:function:foo".
+// The resource segment can contain colons/slashes, so this greedily
+// consumes everything up to the first character that would never appear
+// unescaped in one of this emulator's ARNs (whitespace or a JSON/text
+// delimiter).
+const EMBEDDED_ARN_PATTERN = /arn:[a-z0-9-]+:[a-z0-9-]+:[a-z0-9-]*:\d*:[^\s"'<>,;]+/gi
+
+/**
+ * Renders `text` verbatim, except any embedded `arn:...` substrings are
+ * replaced with ArnLink (linked when the service is recognised, plain
+ * monospace text otherwise). Everything else is rendered as a plain text
+ * node — this only ever splits on a regex match, never
+ * dangerouslySetInnerHTML, so it's safe to use on untrusted event payloads.
+ *
+ * Used by the Events page to auto-link ARNs that appear inside free-form
+ * fields (error messages, log lines) rather than as a dedicated ARN field.
+ */
+export function LinkifiedText({ text, className }: { text: string; className?: string }) {
+  if (!text.includes("arn:")) return <>{text}</>
+
+  const matches = [...text.matchAll(EMBEDDED_ARN_PATTERN)]
+  if (matches.length === 0) return <>{text}</>
+
+  const nodes: ReactNode[] = []
+  let cursor = 0
+  matches.forEach((m, i) => {
+    const start = m.index ?? 0
+    if (start > cursor) nodes.push(<Fragment key={`t${i}`}>{text.slice(cursor, start)}</Fragment>)
+    nodes.push(<ArnLink key={`a${i}`} arn={m[0]} className={className} />)
+    cursor = start + m[0].length
+  })
+  if (cursor < text.length) nodes.push(<Fragment key="tail">{text.slice(cursor)}</Fragment>)
+
+  return <>{nodes}</>
 }

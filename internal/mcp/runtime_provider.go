@@ -120,6 +120,9 @@ func (p *RuntimeProvider) recordRecentEvent(e events.Event) {
 		"source":  e.Source,
 		"payload": payload,
 	}
+	if e.ResourceARN != "" {
+		record["resourceArn"] = e.ResourceARN
+	}
 
 	p.recentEventsMu.Lock()
 	p.recentEvents = append(p.recentEvents, record)

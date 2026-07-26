@@ -152,7 +152,7 @@ func (h *Handler) PutParameter(w http.ResponseWriter, r *http.Request) {
 		}
 		h.bus.Publish(ctx, events.Event{
 			Type: evType, Time: h.clk.Now(), Source: "ssm",
-			Payload: events.ResourcePayload{Name: req.Name},
+			Payload: events.ResourcePayload{Name: req.Name, ARN: h.paramARN(req.Name)},
 		})
 	}
 
@@ -523,7 +523,7 @@ func (h *Handler) DeleteParameter(w http.ResponseWriter, r *http.Request) {
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
 			Type: events.SSMParameterDeleted, Time: h.clk.Now(), Source: "ssm",
-			Payload: events.ResourcePayload{Name: req.Name},
+			Payload: events.ResourcePayload{Name: req.Name, ARN: h.paramARN(req.Name)},
 		})
 	}
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{}, "application/x-amz-json-1.1")
@@ -556,7 +556,7 @@ func (h *Handler) DeleteParameters(w http.ResponseWriter, r *http.Request) {
 		for _, name := range deleted {
 			h.bus.Publish(ctx, events.Event{
 				Type: events.SSMParameterDeleted, Time: h.clk.Now(), Source: "ssm",
-				Payload: events.ResourcePayload{Name: name},
+				Payload: events.ResourcePayload{Name: name, ARN: h.paramARN(name)},
 			})
 		}
 	}

@@ -67,6 +67,10 @@ need it than accidentally ship a breaking change as a patch.
      - Release section dates use UTC in YYYY-MM-DD format.
 -->
 
+### Added
+
+- **Events** — resource lifecycle events (SQS queues, S3 buckets, DynamoDB tables, SNS topics/subscriptions, Lambda functions, and most other resource-create/delete/update events) now carry the resource's ARN on the event envelope (`resourceArn` in the SSE stream and MCP event feed); the web UI's Event Stream page auto-links any ARN it finds — the new field, or one embedded anywhere in a payload/error string — to that resource's page for every service that has one.
+
 ### Fixed
 
 - **DynamoDB** — GSI `Query` and `Scan` now read from a real per-index ordered structure instead of scanning the entire table on every call (Query on a GSI is now partition-scoped like base-table Query; costs are flat in table size). This also closes a projection-fidelity gap: `KEYS_ONLY` and `INCLUDE` GSIs previously returned base-table attributes that real AWS refuses to project — they now return exactly the projected attribute set. `TransactWriteItems` now maintains GSI index entries like every other write path. LSI queries and parallel (`TotalSegments`) scans intentionally keep the previous behavior.
