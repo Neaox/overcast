@@ -147,7 +147,7 @@ func (s *Service) createEventBusTyped(ctx context.Context, req *createEventBusRe
 	if err := s.store.Set(ctx, nsBuses, serviceutil.RegionKey(s.region(ctx), req.Name), string(b)); err != nil {
 		return nil, protocol.ErrInternalError
 	}
-	s.publishCtx(ctx, events.EventBridgeBusCreated, events.ResourcePayload{Name: req.Name})
+	s.publishCtx(ctx, events.EventBridgeBusCreated, events.ResourcePayload{Name: req.Name, ARN: arn})
 	return &createEventBusResponse{EventBusArn: arn}, nil
 }
 
@@ -210,7 +210,8 @@ func (s *Service) listTagsForResourceTyped(ctx context.Context, req *listTagsFor
 
 func (s *Service) deleteEventBusTyped(ctx context.Context, req *deleteEventBusRequest) (*struct{}, *protocol.AWSError) {
 	s.store.Delete(ctx, nsBuses, serviceutil.RegionKey(s.region(ctx), req.Name)) //nolint:errcheck
-	s.publishCtx(ctx, events.EventBridgeBusDeleted, events.ResourcePayload{Name: req.Name})
+	arn := protocol.ARN(s.region(ctx), s.cfg.AccountID, "events", "event-bus/"+req.Name)
+	s.publishCtx(ctx, events.EventBridgeBusDeleted, events.ResourcePayload{Name: req.Name, ARN: arn})
 	return &struct{}{}, nil
 }
 
@@ -247,7 +248,7 @@ func (s *Service) putRuleTyped(ctx context.Context, req *putRuleRequest) (*putRu
 		s.setLastFire(ctx, key, now)
 		s.setNextFire(ctx, key, req.ScheduleExpr, now, now)
 	}
-	s.publishCtx(ctx, events.EventBridgeRuleCreated, events.ResourcePayload{Name: req.Name})
+	s.publishCtx(ctx, events.EventBridgeRuleCreated, events.ResourcePayload{Name: req.Name, ARN: arn})
 	return &putRuleResponse{RuleArn: arn}, nil
 }
 
@@ -379,7 +380,8 @@ func (s *Service) deleteRuleTyped(ctx context.Context, req *deleteRuleRequest) (
 	s.store.Delete(ctx, nsTargets, key)  //nolint:errcheck
 	s.store.Delete(ctx, nsLastFire, key) //nolint:errcheck
 	s.store.Delete(ctx, nsNextFire, key) //nolint:errcheck
-	s.publishCtx(ctx, events.EventBridgeRuleDeleted, events.ResourcePayload{Name: req.Name})
+	arn := protocol.ARN(s.cfg.Region, s.cfg.AccountID, "events", "rule/"+req.EventBusName+"/"+req.Name)
+	s.publishCtx(ctx, events.EventBridgeRuleDeleted, events.ResourcePayload{Name: req.Name, ARN: arn})
 	return &struct{}{}, nil
 }
 

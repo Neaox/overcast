@@ -337,7 +337,7 @@ func (s *Service) createRepository(w http.ResponseWriter, r *http.Request) {
 		_ = s.saveTags(r.Context(), repo.RepositoryArn, req.Tags)
 	}
 
-	s.publish(r.Context(), events.ECRRepositoryCreated, events.ResourcePayload{Name: req.RepositoryName})
+	s.publish(r.Context(), events.ECRRepositoryCreated, events.ResourcePayload{Name: req.RepositoryName, ARN: repo.RepositoryArn})
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"repository": repo})
 }
 
@@ -426,7 +426,7 @@ func (s *Service) deleteRepository(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.Delete(ctx, policyNamespace, key)
 	_ = s.store.Delete(ctx, lifecycleNS, key)
 
-	s.publish(r.Context(), events.ECRRepositoryDeleted, events.ResourcePayload{Name: req.RepositoryName})
+	s.publish(r.Context(), events.ECRRepositoryDeleted, events.ResourcePayload{Name: req.RepositoryName, ARN: repo.RepositoryArn})
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"repository": repo})
 }
 
@@ -739,7 +739,7 @@ func (s *Service) putImage(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	s.publish(r.Context(), events.ECRImagePushed, events.ResourcePayload{Name: req.RepositoryName})
+	s.publish(r.Context(), events.ECRImagePushed, events.ResourcePayload{Name: req.RepositoryName, ARN: s.repoARN(region, req.RepositoryName)})
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"image": img})
 }
 

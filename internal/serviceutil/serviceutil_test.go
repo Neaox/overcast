@@ -60,8 +60,14 @@ func TestDecodeJSON_invalidJSON_writesError(t *testing.T) {
 		Type string `json:"__type"`
 	}
 	json.NewDecoder(w.Body).Decode(&errResp)
-	if errResp.Type != "InvalidArgument" {
-		t.Errorf("expected InvalidArgument error, got %q", errResp.Type)
+	// Real AWS JSON-protocol services reject an unparseable body with
+	// SerializationException, not a validation-class error: DynamoDB et al.
+	// return __type com.amazon.coral.service#SerializationException, and
+	// Smithy's malformed-request protocol tests pin 400 +
+	// x-amzn-errortype: SerializationException. ValidationException /
+	// InvalidArgument are for semantic validation AFTER a successful parse.
+	if errResp.Type != "SerializationException" {
+		t.Errorf("expected SerializationException error, got %q", errResp.Type)
 	}
 }
 

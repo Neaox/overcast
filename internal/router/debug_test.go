@@ -691,9 +691,22 @@ func fetchDebugStateNamespacePage(t *testing.T, store state.Store, providers []D
 
 // ---- 3.6: /_debug/metrics ----------------------------------------------------
 
-func TestDebugMetrics_zeroValueForMemoryStore(t *testing.T) {
-	// Given: a store backend that does not implement state.DebugMetricsReporter.
+// TestDebugMetrics_reportsCountersForMemoryStore proves MemoryStore — which
+// has no async write path, background seed, or persistent backend — still
+// shows up in the endpoint's store list, now that every Store implementation
+// reports at least its storage-activity counters (see
+// state.DebugMetricsReporter's doc comment). Every other DebugMetrics field
+// stays at its zero value.
+func TestDebugMetrics_reportsCountersForMemoryStore(t *testing.T) {
+	// Given: a MemoryStore that has served one write and one read.
 	store := state.NewMemoryStore()
+	ctx := context.Background()
+	if err := store.Set(ctx, "s3", "bucket-1", "v"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if _, _, err := store.Get(ctx, "s3", "bucket-1"); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
 	cfg := &config.Config{State: config.StateBackendMemory}
 
 	// When: the metrics endpoint is requested.
@@ -701,7 +714,7 @@ func TestDebugMetrics_zeroValueForMemoryStore(t *testing.T) {
 	rec := httptest.NewRecorder()
 	debugMetrics(cfg, store).ServeHTTP(rec, req)
 
-	// Then: it responds 200 with an empty (never null) store list, not an error.
+	// Then: it responds 200 with one "memory" mode entry reporting counters.
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -709,11 +722,17 @@ func TestDebugMetrics_zeroValueForMemoryStore(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.Stores == nil {
-		t.Fatal("expected a non-nil (possibly empty) stores list")
+	if len(resp.Stores) != 1 {
+		t.Fatalf("expected one reporting store for MemoryStore, got %+v", resp.Stores)
 	}
-	if len(resp.Stores) != 0 {
-		t.Fatalf("expected no reporting stores for MemoryStore, got %+v", resp.Stores)
+	if resp.Stores[0].Mode != "memory" {
+		t.Errorf("expected mode %q, got %q", "memory", resp.Stores[0].Mode)
+	}
+	if resp.Stores[0].Counters.Writes != 1 {
+		t.Errorf("expected 1 write, got %d", resp.Stores[0].Counters.Writes)
+	}
+	if resp.Stores[0].Counters.Reads != 1 {
+		t.Errorf("expected 1 read, got %d", resp.Stores[0].Counters.Reads)
 	}
 }
 

@@ -7,24 +7,46 @@ import (
 	"github.com/Neaox/overcast/internal/state"
 )
 
-// TestDebugMetricsSnapshot_falseForMemoryStore proves MemoryStore (which
-// doesn't implement state.DebugMetricsReporter) produces the documented
-// "nothing to report" zero-value result instead of an error.
-func TestDebugMetricsSnapshot_falseForMemoryStore(t *testing.T) {
+// TestDebugMetricsSnapshot_memoryStoreReportsCounters proves MemoryStore
+// implements state.DebugMetricsReporter to surface storage-activity counters
+// (health/metrics "storage activity" card) even though it has no async
+// write path or startup seed — every other DebugMetrics field stays at its
+// zero value.
+func TestDebugMetricsSnapshot_memoryStoreReportsCounters(t *testing.T) {
+	ctx := context.Background()
 	store := state.NewMemoryStore()
-	snapshots, ok := state.DebugMetricsSnapshot(context.Background(), store, state.DebugMetricsOptions{})
-	if ok {
-		t.Fatalf("expected ok=false for MemoryStore, got ok=true snapshots=%+v", snapshots)
+
+	if err := store.Set(ctx, "s3", "bucket-1", "v"); err != nil {
+		t.Fatalf("Set: %v", err)
 	}
-	if len(snapshots) != 0 {
-		t.Fatalf("expected no snapshots for MemoryStore, got %+v", snapshots)
+	if _, _, err := store.Get(ctx, "s3", "bucket-1"); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	snapshots, ok := state.DebugMetricsSnapshot(ctx, store, state.DebugMetricsOptions{})
+	if !ok {
+		t.Fatal("expected ok=true for MemoryStore")
+	}
+	if len(snapshots) != 1 {
+		t.Fatalf("expected one snapshot, got %+v", snapshots)
+	}
+	m := snapshots[0]
+	if m.Mode != "memory" {
+		t.Errorf("expected mode %q, got %q", "memory", m.Mode)
+	}
+	if m.Counters.Writes != 1 {
+		t.Errorf("expected 1 write, got %d", m.Counters.Writes)
+	}
+	if m.Counters.Reads != 1 {
+		t.Errorf("expected 1 read, got %d", m.Counters.Reads)
 	}
 }
 
-// TestDebugMetricsSnapshot_falseForWALStore mirrors the MemoryStore case for
-// WALStore — neither backend has an async batched-flush/seed lifecycle, so
-// neither implements DebugMetricsReporter.
-func TestDebugMetricsSnapshot_falseForWALStore(t *testing.T) {
+// TestDebugMetricsSnapshot_walStoreReportsCounters mirrors the MemoryStore
+// case for WALStore, which proxies its counters from its embedded
+// MemoryStore (see WALStore.DebugMetrics) rather than keeping a second,
+// redundant tally.
+func TestDebugMetricsSnapshot_walStoreReportsCounters(t *testing.T) {
 	dir := t.TempDir()
 	store, err := state.NewWALStore(dir, state.WALOptions{})
 	if err != nil {
@@ -32,11 +54,29 @@ func TestDebugMetricsSnapshot_falseForWALStore(t *testing.T) {
 	}
 	defer store.Close()
 
-	snapshots, ok := state.DebugMetricsSnapshot(context.Background(), store, state.DebugMetricsOptions{})
-	if ok {
-		t.Fatalf("expected ok=false for WALStore, got ok=true snapshots=%+v", snapshots)
+	ctx := context.Background()
+	if err := store.Set(ctx, "s3", "bucket-1", "v"); err != nil {
+		t.Fatalf("Set: %v", err)
 	}
-	if len(snapshots) != 0 {
-		t.Fatalf("expected no snapshots for WALStore, got %+v", snapshots)
+	if _, _, err := store.Get(ctx, "s3", "bucket-1"); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	snapshots, ok := state.DebugMetricsSnapshot(ctx, store, state.DebugMetricsOptions{})
+	if !ok {
+		t.Fatal("expected ok=true for WALStore")
+	}
+	if len(snapshots) != 1 {
+		t.Fatalf("expected one snapshot, got %+v", snapshots)
+	}
+	m := snapshots[0]
+	if m.Mode != "wal" {
+		t.Errorf("expected mode %q, got %q", "wal", m.Mode)
+	}
+	if m.Counters.Writes != 1 {
+		t.Errorf("expected 1 write, got %d", m.Counters.Writes)
+	}
+	if m.Counters.Reads != 1 {
+		t.Errorf("expected 1 read, got %d", m.Counters.Reads)
 	}
 }

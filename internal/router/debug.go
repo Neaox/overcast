@@ -517,8 +517,10 @@ func debugProvidersForServicePrefix(providers []DebugStateProvider, prefix strin
 // (storage-plan.md item 3.6). Stores is one entry per distinct underlying
 // store that implements state.DebugMetricsReporter — see
 // state.DebugMetricsSnapshot's doc comment for why a *state.NamespacedStore
-// yields a list here instead of one merged entry. Empty (never null) for
-// backends that don't implement it at all (MemoryStore, WALStore).
+// yields a list here instead of one merged entry. Every store implementation
+// in this codebase implements the interface (if only to report
+// state.StoreCounters — see that type's doc comment), so this is empty
+// (never null) only for a hypothetical future Store that doesn't.
 //
 // Advisories is the server-computed diagnostics list the web UI's Metrics &
 // Health page renders generically (see advisories.go's computeAdvisories) —
