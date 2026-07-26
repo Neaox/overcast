@@ -183,6 +183,17 @@ func (b *Bus) Publish(ctx context.Context, e Event) {
 	if e.Time.IsZero() {
 		e.Time = b.clk.Now()
 	}
+	// Best-effort ResourceARN guard: mirrors the zero-Time stamping above —
+	// if the caller didn't set ResourceARN explicitly, derive it from the
+	// payload when the payload type knows how (see arnCarrier). This lets
+	// individual publish call sites populate an ARN field on their existing
+	// payload struct (e.g. ResourcePayload.ARN) without also having to
+	// thread it through to the Event envelope by hand.
+	if e.ResourceARN == "" {
+		if carrier, ok := e.Payload.(arnCarrier); ok {
+			e.ResourceARN = carrier.arnFromPayload()
+		}
+	}
 	b.mu.RLock()
 	b.history.Append(e)
 	typed := make([]HandlerFunc, len(b.subscribers[e.Type]))

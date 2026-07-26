@@ -278,7 +278,7 @@ func (h *Handler) createTopicTyped(ctx context.Context, req *createTopicReq) (*c
 			Type:    events.SNSTopicCreated,
 			Time:    h.clk.Now(),
 			Source:  "sns",
-			Payload: events.ResourcePayload{Name: req.Name},
+			Payload: events.ResourcePayload{Name: req.Name, ARN: arn},
 		})
 	}
 	return &createTopicResp{
@@ -305,7 +305,7 @@ func (h *Handler) deleteTopicTyped(ctx context.Context, req *deleteTopicReq) (*d
 			Type:    events.SNSTopicDeleted,
 			Time:    h.clk.Now(),
 			Source:  "sns",
-			Payload: events.ResourcePayload{Name: topic.Name},
+			Payload: events.ResourcePayload{Name: topic.Name, ARN: topic.ARN},
 		})
 	}
 	return &deleteTopicResp{
@@ -434,7 +434,7 @@ func (h *Handler) subscribeTyped(ctx context.Context, req *subscribeReq) (*subsc
 			Type:    events.SNSSubscriptionCreated,
 			Time:    h.clk.Now(),
 			Source:  "sns",
-			Payload: events.ResourcePayload{Name: subARN},
+			Payload: events.ResourcePayload{Name: subARN, ARN: subARN},
 		})
 	}
 	return &subscribeResp{
@@ -456,7 +456,7 @@ func (h *Handler) unsubscribeTyped(ctx context.Context, req *unsubscribeReq) (*u
 			Type:    events.SNSSubscriptionDeleted,
 			Time:    h.clk.Now(),
 			Source:  "sns",
-			Payload: events.ResourcePayload{Name: req.SubscriptionArn},
+			Payload: events.ResourcePayload{Name: req.SubscriptionArn, ARN: req.SubscriptionArn},
 		})
 	}
 	return &unsubscribeResp{

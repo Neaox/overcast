@@ -67,6 +67,10 @@ need it than accidentally ship a breaking change as a patch.
      - Release section dates use UTC in YYYY-MM-DD format.
 -->
 
+### Added
+
+- **Events** — resource lifecycle events (SQS queues, S3 buckets, DynamoDB tables, SNS topics/subscriptions, Lambda functions, and most other resource-create/delete/update events) now carry the resource's ARN on the event envelope (`resourceArn` in the SSE stream and MCP event feed); the web UI's Event Stream page auto-links any ARN it finds — the new field, or one embedded anywhere in a payload/error string — to that resource's page for every service that has one.
+
 ### Fixed
 
 - **Web UI** — the system map no longer overlaps nodes when a Lambda function has many concurrent instances: Lambda group nodes now cap at four visible instance rows and scroll internally, matching the existing SQS/CloudWatch Logs node pattern. The Raw State Debugger's selection is now URL-backed — reloading or sharing the URL reproduces the exact view, picking a namespace pushes a history entry while clicking through keys replaces it (so back/forward steps through namespaces, not every key ever clicked).
