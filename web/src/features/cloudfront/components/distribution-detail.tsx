@@ -17,6 +17,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableCellProse,
   TableHead,
   TableHeader,
   TableRow,
@@ -113,25 +114,23 @@ export function DistributionDetail() {
               <TableBody>
                 <TableRow>
                   <TableCell className="w-48 font-medium">Distribution ID</TableCell>
-                  <TableCell className="font-mono text-sm">{dist.id}</TableCell>
+                  <TableCell>{dist.id}</TableCell>
                 </TableRow>
                 <TableRow>
                   <TableCell className="font-medium">ARN</TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">{dist.arn}</TableCell>
+                  <TableCell className="text-fg-muted">{dist.arn}</TableCell>
                 </TableRow>
                 <TableRow>
                   <TableCell className="font-medium">Domain Name</TableCell>
-                  <TableCell className="font-mono text-sm">{dist.domainName}</TableCell>
+                  <TableCell>{dist.domainName}</TableCell>
                 </TableRow>
                 <TableRow>
                   <TableCell className="font-medium">Comment</TableCell>
-                  <TableCell>{dist.comment || "—"}</TableCell>
+                  <TableCellProse>{dist.comment || "—"}</TableCellProse>
                 </TableRow>
                 <TableRow>
                   <TableCell className="font-medium">Default Root Object</TableCell>
-                  <TableCell className="font-mono text-sm">
-                    {dist.defaultRootObject || "—"}
-                  </TableCell>
+                  <TableCell>{dist.defaultRootObject || "—"}</TableCell>
                 </TableRow>
                 {dist.aliases.length > 0 && (
                   <TableRow>
@@ -172,16 +171,14 @@ export function DistributionDetail() {
             <TableBody>
               {dist.origins.map((origin) => (
                 <TableRow key={origin.id}>
-                  <TableCell className="font-mono text-xs">{origin.id}</TableCell>
-                  <TableCell className="font-mono text-xs">{origin.domainName}</TableCell>
+                  <TableCell>{origin.id}</TableCell>
+                  <TableCell>{origin.domainName}</TableCell>
                   <TableCell>
                     <Badge variant={origin.s3OriginConfig ? "info" : "default"}>
                       {origin.s3OriginConfig ? "S3" : "Custom"}
                     </Badge>
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">
-                    {origin.originPath || "/"}
-                  </TableCell>
+                  <TableCell className="text-fg-muted">{origin.originPath || "/"}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -214,7 +211,7 @@ export function DistributionDetail() {
               <TableBody>
                 {invalidations.map((inv) => (
                   <TableRow key={inv.id}>
-                    <TableCell className="font-mono text-xs">{inv.id}</TableCell>
+                    <TableCell>{inv.id}</TableCell>
                     <TableCell>
                       <Badge variant={inv.status === "Completed" ? "success" : "warning"}>
                         {inv.status}

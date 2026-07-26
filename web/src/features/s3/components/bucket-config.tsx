@@ -49,6 +49,7 @@ import type {
   BucketNotificationConfig,
   SQSQueue,
 } from "@/types"
+import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 // ─── S3 event options ─────────────────────────────────────────────────────────
@@ -186,9 +187,7 @@ function AddNotificationDialog({
         <div className="flex flex-col gap-5">
           {/* Destination */}
           <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg-subtle p-4">
-            <p className="font-mono text-xs font-semibold tracking-wider text-fg-muted uppercase">
-              Destination
-            </p>
+            <p className={cn(sectionLabel, "text-fg-muted")}>Destination</p>
 
             {/* Destination type — SQS only for now */}
             <div className="flex items-center gap-2 rounded-lg border border-accent bg-accent/10 px-3 py-2 text-sm font-medium text-fg">
@@ -270,7 +269,7 @@ function AddNotificationDialog({
 
           {/* Filters (optional) */}
           <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg-subtle p-4">
-            <p className="font-mono text-xs font-semibold tracking-wider text-fg-muted uppercase">
+            <p className={cn(sectionLabel, "text-fg-muted")}>
               Filters <span className="font-normal text-fg-subtle normal-case">(optional)</span>
             </p>
             <div className="grid grid-cols-2 gap-3">

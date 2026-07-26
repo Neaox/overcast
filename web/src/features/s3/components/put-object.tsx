@@ -7,6 +7,8 @@
  * Nothing is uploaded until the user clicks "Upload".
  */
 import { useState, useRef } from "react"
+import { fieldLabel } from "@/lib/typography"
+import { cn } from "@/lib/utils"
 import { useNavigate } from "@tanstack/react-router"
 import { Upload, X, Plus, Trash2, FolderOpen } from "lucide-react"
 import { Route } from "@/routes/s3/$bucket/upload"
@@ -277,13 +279,18 @@ export function PutObject() {
         {/* File table */}
         {rows.length > 0 && (
           <div className="overflow-hidden rounded-lg border border-border">
-            <table className="w-full text-sm">
+            <table className="w-full font-mono text-xs">
               <thead>
-                <tr className="border-b border-border bg-bg-elevated text-left font-mono">
-                  <th className="px-3 py-2 text-sm font-medium text-fg-muted">Object key</th>
-                  <th className="px-3 py-2 text-sm font-medium text-fg-muted">Content-Type</th>
-                  <th className="px-3 py-2 text-sm font-medium text-fg-muted">Size</th>
-                  <th className="w-48 px-3 py-2 text-sm font-medium text-fg-muted">Status</th>
+                <tr
+                  className={cn(
+                    fieldLabel,
+                    "border-b border-border bg-bg text-left text-fg-subtle",
+                  )}
+                >
+                  <th className="px-3 py-2">Object key</th>
+                  <th className="px-3 py-2">Content-Type</th>
+                  <th className="px-3 py-2">Size</th>
+                  <th className="w-48 px-3 py-2">Status</th>
                   <th className="w-8 px-3 py-2" />
                 </tr>
               </thead>
@@ -295,7 +302,7 @@ export function PutObject() {
                         value={row.key}
                         onChange={(e) => updateRow(row.id, { key: e.target.value })}
                         disabled={uploading || row.status === "done"}
-                        className="h-7 font-mono text-sm"
+                        className="h-7"
                       />
                     </td>
                     <td className="px-3 py-2">
@@ -303,10 +310,10 @@ export function PutObject() {
                         value={row.contentType}
                         onChange={(e) => updateRow(row.id, { contentType: e.target.value })}
                         disabled={uploading || row.status === "done"}
-                        className="h-7 text-sm"
+                        className="h-7"
                       />
                     </td>
-                    <td className="px-3 py-2 text-sm whitespace-nowrap text-fg-muted">
+                    <td className="px-3 py-2 whitespace-nowrap text-fg-muted">
                       {formatBytes(row.file.size)}
                     </td>
                     <td className="px-3 py-2">

@@ -42,7 +42,7 @@ export const StackGroupNode = memo(function StackGroupNode({ data, width, height
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") handleClick()
         }}
-        className="pointer-events-auto absolute -top-3 left-3 z-10 flex cursor-pointer items-center gap-1 rounded-full border border-indigo-400/30 bg-bg-elevated px-2 py-0.5 font-mono text-[10px] font-semibold tracking-wide text-indigo-400 shadow-sm transition-colors hover:border-indigo-400/60 hover:bg-indigo-400/10"
+        className="pointer-events-auto absolute -top-3 left-3 z-10 flex cursor-pointer items-center gap-1 rounded-full border border-indigo-400/30 bg-bg-elevated px-2 py-0.5 font-mono text-[10px] tracking-[0.12em] text-indigo-400 shadow-sm transition-colors hover:border-indigo-400/60 hover:bg-indigo-400/10"
       >
         <Layers className="h-3 w-3" />
         {stackName}

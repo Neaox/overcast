@@ -45,6 +45,7 @@ import { useToast } from "@/components/ui/toast"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { PublishMessageDialog } from "@/features/sns/components/publish-dialog"
 import type { SNSSubscription } from "@/types"
+import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 interface Props {
@@ -225,10 +226,10 @@ export function TopicDetail({ topicName }: Props) {
                     <TableCell>
                       <Badge variant="default">{sub.Protocol}</Badge>
                     </TableCell>
-                    <TableCell className="font-mono text-xs">
+                    <TableCell>
                       <ArnLink arn={sub.Endpoint ?? ""} />
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-fg-muted">
+                    <TableCell className="text-fg-muted">
                       <ArnLink arn={sub.SubscriptionArn ?? ""} className="text-fg-muted" />
                     </TableCell>
                     <TableCell>
@@ -250,9 +251,7 @@ export function TopicDetail({ topicName }: Props) {
       </Card>
 
       <div>
-        <h2 className="mb-2 font-mono text-sm font-semibold tracking-wide text-fg-muted uppercase">
-          Event stream
-        </h2>
+        <h2 className={cn(sectionLabel, "mb-2 text-fg-muted")}>Event stream</h2>
         <EventConsole events={topicEvents} connected={connected} onClear={clear} />
       </div>
 

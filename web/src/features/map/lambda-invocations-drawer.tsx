@@ -7,6 +7,7 @@ import * as Dialog from "@radix-ui/react-dialog"
 import { infiniteQueryOptions, useInfiniteQuery } from "@tanstack/react-query"
 import { X } from "lucide-react"
 import { LogViewer } from "@/components/logs/log-viewer"
+import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import { logs } from "@/services/api/logs"
 import { TriggerEventViewer } from "./trigger-event-viewer"
@@ -202,7 +203,7 @@ export function LambdaInvocationsDrawer({
               {instanceId && (
                 <p className="mt-1 font-mono text-[10px] text-fg-muted">{instanceId}</p>
               )}
-              <p className="mt-2 font-mono text-[10px] font-medium tracking-wide text-fg-muted uppercase">
+              <p className={cn(sectionLabel, "mt-2 text-fg-muted")}>
                 {invocations.length} {invocations.length === 1 ? "Invocation" : "Invocations"}
               </p>
             </div>
@@ -256,7 +257,7 @@ export function LambdaInvocationsDrawer({
                             </div>
                             <div
                               className={cn(
-                                "font-mono text-[9px] font-medium tracking-wide uppercase",
+                                "font-mono text-[10px] tracking-[0.12em] uppercase",
                                 inv.durationMs
                                   ? inv.durationMs > 5000
                                     ? "text-yellow-400"

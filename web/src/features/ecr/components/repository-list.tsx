@@ -142,10 +142,8 @@ export function RepositoryList() {
                   <TableCell>
                     <ResourceName icon={Boxes} name={repository.name} />
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">
-                    {repository.uri}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">
+                  <TableCell className="text-fg-muted">{repository.uri}</TableCell>
+                  <TableCell className="text-fg-muted">
                     {formatDate(repository.createdAt)}
                   </TableCell>
                   <TableCell onClick={(event) => event.stopPropagation()}>

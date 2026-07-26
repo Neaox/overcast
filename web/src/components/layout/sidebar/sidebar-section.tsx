@@ -1,3 +1,4 @@
+import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 interface SidebarSectionProps {
@@ -18,12 +19,7 @@ export function SidebarSection({ label, collapsed, first, children }: SidebarSec
       {collapsed ? (
         !first && <div className="my-2 h-px w-6 bg-border" />
       ) : (
-        <div
-          className={cn(
-            "px-2 pb-1 font-mono text-[9px] tracking-[0.16em] text-fg-subtle uppercase",
-            first ? "pt-2" : "pt-4",
-          )}
-        >
+        <div className={cn(sectionLabel, "px-2 pb-1 text-fg-subtle", first ? "pt-2" : "pt-4")}>
           {label}
         </div>
       )}

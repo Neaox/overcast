@@ -19,6 +19,7 @@ import { LambdaInvocationsDrawer, type Invocation } from "./lambda-invocations-d
 import type { LogStreamTarget } from "./log-stream-peek"
 import { logsStreamsQueryOptions } from "@/features/cloudwatch/logs/data"
 import type { LogStream, StreamEvent } from "@/types"
+import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import { SERVICES } from "@/lib/service-registry"
 import { sqs } from "@/services/api"
@@ -701,9 +702,7 @@ function SqsMessageModal({
               ) : (
                 <>
                   <section>
-                    <p className="mb-1 font-mono text-[10px] font-semibold tracking-wider text-fg-muted uppercase">
-                      Body
-                    </p>
+                    <p className={cn(sectionLabel, "mb-1 text-fg-muted")}>Body</p>
                     <pre className="max-h-48 overflow-x-auto rounded bg-bg p-2 text-xs break-all whitespace-pre-wrap text-fg">
                       {displayMsg.body || "(empty)"}
                     </pre>
@@ -711,9 +710,7 @@ function SqsMessageModal({
 
                   {Object.keys(displayMsg.messageAttributes).length > 0 && (
                     <section>
-                      <p className="mb-1 font-mono text-[10px] font-semibold tracking-wider text-fg-muted uppercase">
-                        Message Attributes
-                      </p>
+                      <p className={cn(sectionLabel, "mb-1 text-fg-muted")}>Message Attributes</p>
                       <table className="w-full text-xs">
                         <tbody>
                           {Object.entries(displayMsg.messageAttributes).map(([k, v]) => (
@@ -731,9 +728,7 @@ function SqsMessageModal({
 
                   {Object.keys(displayMsg.attributes).length > 0 && (
                     <section>
-                      <p className="mb-1 font-mono text-[10px] font-semibold tracking-wider text-fg-muted uppercase">
-                        System Attributes
-                      </p>
+                      <p className={cn(sectionLabel, "mb-1 text-fg-muted")}>System Attributes</p>
                       <table className="w-full text-xs">
                         <tbody>
                           {Object.entries(displayMsg.attributes).map(([k, v]) => (
@@ -916,7 +911,7 @@ function ESMRecordDetails({ event, query }: { event: ESMDecisionEvent; query: st
       <div className="grid gap-3 @lg:grid-cols-2">
         {sections.map(([label, value]) => (
           <div key={label} className="min-w-0 rounded border border-border bg-bg">
-            <div className="border-b border-border px-3 py-2 font-mono text-[10px] font-bold tracking-wide text-fg-muted uppercase">
+            <div className={cn(sectionLabel, "border-b border-border px-3 py-2 text-fg-muted")}>
               {label}
             </div>
             <pre className="max-h-56 overflow-auto p-3 text-xs leading-relaxed whitespace-pre-wrap text-fg">
@@ -1021,23 +1016,17 @@ function ESMFilterPanel({ esmId, patterns }: { esmId: string; patterns: string[]
 
             <div className="grid shrink-0 grid-cols-3 gap-2 border-b border-border px-5 py-3">
               <div className="rounded-lg border border-border bg-bg px-3 py-2">
-                <div className="font-mono text-[10px] font-bold tracking-wide text-fg-subtle uppercase">
-                  Received
-                </div>
+                <div className={cn(fieldLabel, "text-fg-subtle")}>Received</div>
                 <div className="font-mono text-xl font-semibold text-fg tabular-nums">{total}</div>
               </div>
               <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/8 px-3 py-2">
-                <div className="font-mono text-[10px] font-bold tracking-wide text-emerald-300 uppercase">
-                  Filtered in
-                </div>
+                <div className={cn(fieldLabel, "text-emerald-300")}>Filtered in</div>
                 <div className="font-mono text-xl font-semibold text-emerald-200 tabular-nums">
                   {matched}
                 </div>
               </div>
               <div className="rounded-lg border border-red-400/20 bg-red-400/8 px-3 py-2">
-                <div className="font-mono text-[10px] font-bold tracking-wide text-red-300 uppercase">
-                  Filtered out
-                </div>
+                <div className={cn(fieldLabel, "text-red-300")}>Filtered out</div>
                 <div className="font-mono text-xl font-semibold text-red-200 tabular-nums">
                   {filtered}
                 </div>
@@ -1127,7 +1116,7 @@ function ESMFilterPanel({ esmId, patterns }: { esmId: string; patterns: string[]
                             </span>
                             <span
                               className={cn(
-                                "rounded-md px-2 py-1 font-mono text-[10px] font-black tracking-wide uppercase",
+                                "rounded-md px-2 py-1 font-mono text-[10px] tracking-[0.12em] uppercase",
                                 didMatch
                                   ? "bg-emerald-400/15 text-emerald-300"
                                   : "bg-red-400/15 text-red-300",

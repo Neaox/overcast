@@ -51,6 +51,7 @@ import { useToast } from "@/components/ui/toast"
 import { ItemEditorDialog } from "./item-editor"
 import { FilterBuilder, matchesFilters, type FilterCondition } from "./filter-builder"
 import type { DynamoItem, DynamoAttrValue, DynamoTable, DynamoKeySchema } from "@/types"
+import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -490,7 +491,7 @@ export function TableDetail({ tableName }: Props) {
               {/* Index selector */}
               {indexOptions.length > 1 && (
                 <div className="flex flex-col gap-1">
-                  <label className="font-mono text-xs font-medium text-fg-muted">Index</label>
+                  <label className={cn(fieldLabel, "text-fg-muted")}>Index</label>
                   <select
                     className="rounded border border-border bg-bg px-2 py-1.5 text-sm text-fg"
                     value={selectedIndex}
@@ -561,7 +562,7 @@ export function TableDetail({ tableName }: Props) {
             {filterMode === "query" ? (
               <div className="flex items-end gap-3">
                 <div className="flex flex-col gap-1">
-                  <label className="font-mono text-xs font-medium text-fg-muted">
+                  <label className={cn(fieldLabel, "text-fg-muted")}>
                     {activeHashKey?.attributeName ?? "Partition key"} =
                   </label>
                   <Input
@@ -574,7 +575,7 @@ export function TableDetail({ tableName }: Props) {
                 </div>
                 {activeSortKey?.attributeName && (
                   <div className="flex flex-col gap-1">
-                    <label className="font-mono text-xs font-medium text-fg-muted">
+                    <label className={cn(fieldLabel, "text-fg-muted")}>
                       {activeSortKey.attributeName}
                     </label>
                     <div className="flex items-center gap-1.5">
@@ -725,9 +726,7 @@ export function TableDetail({ tableName }: Props) {
       {activeTab === "schema" && (
         <div className="flex flex-col gap-6">
           <section>
-            <h3 className="mb-2 font-mono text-xs font-semibold tracking-wider text-fg-muted uppercase">
-              Key Schema
-            </h3>
+            <h3 className={cn(sectionLabel, "mb-2 text-fg-muted")}>Key Schema</h3>
             <div className="rounded-md border border-border">
               <Table>
                 <TableHeader>
@@ -744,15 +743,13 @@ export function TableDetail({ tableName }: Props) {
                     )
                     return (
                       <TableRow key={k.attributeName}>
-                        <TableCell className="font-mono text-sm">{k.attributeName}</TableCell>
+                        <TableCell>{k.attributeName}</TableCell>
                         <TableCell>
                           <Badge variant={k.keyType === "HASH" ? "accent" : "default"}>
                             {k.keyType}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-sm text-fg-muted">
-                          {def?.attributeType ?? "—"}
-                        </TableCell>
+                        <TableCell className="text-fg-muted">{def?.attributeType ?? "—"}</TableCell>
                       </TableRow>
                     )
                   })}
@@ -763,9 +760,7 @@ export function TableDetail({ tableName }: Props) {
 
           {table.globalSecondaryIndexes.length > 0 && (
             <section>
-              <h3 className="mb-2 font-mono text-xs font-semibold tracking-wider text-fg-muted uppercase">
-                Global Secondary Indexes
-              </h3>
+              <h3 className={cn(sectionLabel, "mb-2 text-fg-muted")}>Global Secondary Indexes</h3>
               <div className="rounded-md border border-border">
                 <Table>
                   <TableHeader>
@@ -778,11 +773,11 @@ export function TableDetail({ tableName }: Props) {
                   <TableBody>
                     {table.globalSecondaryIndexes.map((gsi) => (
                       <TableRow key={gsi.indexName}>
-                        <TableCell className="font-mono text-sm">{gsi.indexName}</TableCell>
-                        <TableCell className="text-sm text-fg-muted">
+                        <TableCell>{gsi.indexName}</TableCell>
+                        <TableCell className="text-fg-muted">
                           {gsi.keySchema.map((k) => k.attributeName).join(" / ")}
                         </TableCell>
-                        <TableCell className="text-right font-mono tabular-nums">
+                        <TableCell className="text-right tabular-nums">
                           {gsi.itemCount.toLocaleString()}
                         </TableCell>
                       </TableRow>
@@ -795,9 +790,7 @@ export function TableDetail({ tableName }: Props) {
 
           {table.localSecondaryIndexes.length > 0 && (
             <section>
-              <h3 className="mb-2 font-mono text-xs font-semibold tracking-wider text-fg-muted uppercase">
-                Local Secondary Indexes
-              </h3>
+              <h3 className={cn(sectionLabel, "mb-2 text-fg-muted")}>Local Secondary Indexes</h3>
               <div className="rounded-md border border-border">
                 <Table>
                   <TableHeader>
@@ -810,11 +803,11 @@ export function TableDetail({ tableName }: Props) {
                   <TableBody>
                     {table.localSecondaryIndexes.map((lsi) => (
                       <TableRow key={lsi.indexName}>
-                        <TableCell className="font-mono text-sm">{lsi.indexName}</TableCell>
-                        <TableCell className="text-sm text-fg-muted">
+                        <TableCell>{lsi.indexName}</TableCell>
+                        <TableCell className="text-fg-muted">
                           {lsi.keySchema.map((k) => k.attributeName).join(" / ")}
                         </TableCell>
-                        <TableCell className="text-right font-mono tabular-nums">
+                        <TableCell className="text-right tabular-nums">
                           {lsi.itemCount.toLocaleString()}
                         </TableCell>
                       </TableRow>
@@ -826,9 +819,7 @@ export function TableDetail({ tableName }: Props) {
           )}
 
           <section>
-            <h3 className="mb-2 font-mono text-xs font-semibold tracking-wider text-fg-muted uppercase">
-              Table details
-            </h3>
+            <h3 className={cn(sectionLabel, "mb-2 text-fg-muted")}>Table details</h3>
             <div className="grid grid-cols-2 gap-x-8 gap-y-2 rounded-md border border-border bg-bg-muted p-4 text-sm">
               {[
                 ["ARN", table.tableArn],
@@ -851,9 +842,7 @@ export function TableDetail({ tableName }: Props) {
 
           {/* Streams section */}
           <section>
-            <h3 className="mb-2 font-mono text-xs font-semibold tracking-wider text-fg-muted uppercase">
-              DynamoDB Streams
-            </h3>
+            <h3 className={cn(sectionLabel, "mb-2 text-fg-muted")}>DynamoDB Streams</h3>
             <div className="rounded-md border border-border bg-bg-muted p-4">
               {table.streamSpecification?.streamEnabled ? (
                 <div className="flex flex-col gap-3">
@@ -1072,7 +1061,7 @@ function ItemsTable({
               <label className="flex cursor-pointer items-center justify-center">
                 <input
                   type="checkbox"
-                  className="accent-primary h-4 w-4 rounded"
+                  className="h-4 w-4 rounded accent-accent"
                   checked={allSelected}
                   ref={(el) => {
                     if (el) el.indeterminate = someSelected && !allSelected
@@ -1111,7 +1100,7 @@ function ItemsTable({
                   >
                     <input
                       type="checkbox"
-                      className="accent-primary h-4 w-4 rounded"
+                      className="h-4 w-4 rounded accent-accent"
                       checked={selectedKeys.has(getItemKey(item))}
                       onChange={() => onToggleSelect(item)}
                     />
@@ -1129,7 +1118,7 @@ function ItemsTable({
                 {visibleCols.map((col) => (
                   <TableCell
                     key={col}
-                    className="relative font-mono text-xs"
+                    className="relative"
                     onMouseEnter={() =>
                       keyAttrNames.has(col) ? setHoveredKey(`${i}:${col}`) : undefined
                     }

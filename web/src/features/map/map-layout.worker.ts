@@ -1,9 +1,10 @@
 /// <reference lib="webworker" />
 
-import { buildLayoutNodes } from './map-layout'
+import { buildLayoutNodes } from "./map-layout"
 
 self.onmessage = (e: MessageEvent) => {
-  const { id, topologyNodes, topologyEdges, nodeSizeOverrides, activeRegion, collapsedStacks } = e.data
+  const { id, topologyNodes, topologyEdges, nodeSizeOverrides, activeRegion, collapsedStacks } =
+    e.data
   try {
     const result = buildLayoutNodes(
       topologyNodes,

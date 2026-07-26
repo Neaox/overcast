@@ -1,3 +1,4 @@
+import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import type { ServiceTierEntry } from "../service-defs"
 import { TIER_BADGE } from "../tiers"
@@ -37,7 +38,8 @@ export function ServiceListView({
         role="row"
         className={cn(
           GRID,
-          "border-b border-border bg-bg px-4 py-[7px] font-mono text-[9px] tracking-[0.14em] text-fg-subtle uppercase",
+          fieldLabel,
+          "border-b border-border bg-bg px-4 py-[7px] text-fg-subtle",
         )}
       >
         {COLUMNS.map((column, i) => (
@@ -52,7 +54,8 @@ export function ServiceListView({
             role="row"
             className={cn(
               GRID,
-              "border-b border-border bg-bg px-4 py-1.5 font-mono text-[9px] tracking-[0.16em] uppercase",
+              sectionLabel,
+              "border-b border-border bg-bg px-4 py-1.5",
               TONE_CLASS[group.tone],
             )}
           >
@@ -115,7 +118,7 @@ function ServiceListRow({
       </span>
       <span
         role="cell"
-        className="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.1em] uppercase"
+        className="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.12em] uppercase"
       >
         {enabled && <span className="h-1.5 w-1.5 rounded-full bg-success" />}
         <span className={cn(enabled ? "text-fg-muted" : "text-fg-subtle")}>

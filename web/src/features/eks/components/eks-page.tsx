@@ -123,9 +123,7 @@ export function EksPage() {
                   </Badge>
                 </TableCell>
                 <TableCell className="text-fg-muted">{c.version || "-"}</TableCell>
-                <TableCell className="font-mono text-xs text-fg-muted">
-                  {c.endpoint || "-"}
-                </TableCell>
+                <TableCell className="text-fg-muted">{c.endpoint || "-"}</TableCell>
               </TableRow>
             ))}
           </TableBody>

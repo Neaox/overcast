@@ -25,7 +25,13 @@ import {
   type NetworkMode,
   type LaunchType,
 } from "@aws-sdk/client-ecs"
-import type { EcsCluster, EcsTaskDefinition, EcsTask, EcsService, EcsContainerInstance } from "@/types"
+import type {
+  EcsCluster,
+  EcsTaskDefinition,
+  EcsTask,
+  EcsService,
+  EcsContainerInstance,
+} from "@/types"
 
 export const ecs = {
   listClusters: async (): Promise<EcsCluster[]> => {

@@ -18,6 +18,7 @@ import { useState, useCallback, useMemo, useRef, useEffect } from "react"
 import Editor, { type OnMount } from "@monaco-editor/react"
 import type * as Monaco from "monaco-editor"
 import { ChevronRight, ChevronDown, FileCode, FolderOpen, Folder, X } from "lucide-react"
+import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 // ─── Public types ──────────────────────────────────────────────────────────
@@ -370,7 +371,7 @@ export function CodeBrowser({
         >
           {/* Sidebar header */}
           <div
-            className="flex items-center px-3 py-1.5 font-mono text-[10px] font-semibold tracking-widest uppercase"
+            className={cn(sectionLabel, "flex items-center px-3 py-1.5")}
             style={{ color: isDark ? "#888" : "var(--color-fg-muted)" }}
           >
             Explorer

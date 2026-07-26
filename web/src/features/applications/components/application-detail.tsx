@@ -92,7 +92,7 @@ export function ApplicationDetail({ applicationId }: Props) {
             {resources.map((r) => (
               <TableRow key={r.arn}>
                 <TableCell>{r.resourceType}</TableCell>
-                <TableCell className="font-mono text-xs">{r.arn}</TableCell>
+                <TableCell>{r.arn}</TableCell>
               </TableRow>
             ))}
           </TableBody>

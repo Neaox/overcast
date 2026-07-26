@@ -5,6 +5,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableCellProse,
   TableHead,
   TableHeader,
   TableRow,
@@ -63,9 +64,9 @@ export function FLEConfigList() {
                   <TableCell>
                     <ResourceName icon={Lock} name={c.id} />
                   </TableCell>
-                  <TableCell className="text-fg-muted">{c.comment || "—"}</TableCell>
-                  <TableCell className="font-mono text-xs">{c.contentTypeProfileConfig}</TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">
+                  <TableCellProse>{c.comment || "—"}</TableCellProse>
+                  <TableCell>{c.contentTypeProfileConfig}</TableCell>
+                  <TableCell className="text-fg-muted">
                     {c.lastModifiedTime ? new Date(c.lastModifiedTime).toLocaleString() : "—"}
                   </TableCell>
                 </TableRow>

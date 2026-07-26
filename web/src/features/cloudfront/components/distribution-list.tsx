@@ -19,6 +19,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableCellProse,
   TableHead,
   TableHeader,
   TableRow,
@@ -152,7 +153,7 @@ export function DistributionList() {
                   <TableCell>
                     <ResourceName icon={Globe} name={d.id} />
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">{d.domainName}</TableCell>
+                  <TableCell className="text-fg-muted">{d.domainName}</TableCell>
                   <TableCell>
                     <Badge variant={d.status === "Deployed" ? "success" : "warning"}>
                       {d.status}
@@ -163,10 +164,8 @@ export function DistributionList() {
                       {d.enabled ? "Yes" : "No"}
                     </Badge>
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">
-                    {d.origins.length}
-                  </TableCell>
-                  <TableCell className="max-w-xs truncate text-fg-muted">{d.comment}</TableCell>
+                  <TableCell className="text-fg-muted">{d.origins.length}</TableCell>
+                  <TableCellProse className="max-w-xs truncate">{d.comment}</TableCellProse>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <RowActions>
                       <RowAction
@@ -331,10 +330,10 @@ function CreateDistributionDialog({
             <FormRow>
               <form.Field name="enabled">
                 {(field) => (
-                  <label className="flex items-center gap-2 font-mono text-sm">
+                  <label className="flex items-center gap-2 text-xs">
                     <input
                       type="checkbox"
-                      className="accent-primary h-4 w-4 rounded"
+                      className="h-4 w-4 rounded accent-accent"
                       checked={field.state.value}
                       onChange={(e) => field.handleChange(e.target.checked)}
                     />

@@ -10,6 +10,7 @@
  */
 import { memo, useEffect, useRef, useState } from "react"
 import { FileText } from "lucide-react"
+import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import { ArnLink } from "@/components/ui/arn-link"
 import { SERVICES } from "@/lib/service-registry"
@@ -486,9 +487,7 @@ function MetricBar({
   const frac = max > 0 ? Math.min(value / max, 1) : 0
   return (
     <div className="flex flex-1 items-center gap-1">
-      <span className="w-7 shrink-0 font-mono text-[9px] font-medium tracking-wider text-fg-muted/60 uppercase">
-        {label}
-      </span>
+      <span className={cn(fieldLabel, "w-7 shrink-0 text-fg-muted/60")}>{label}</span>
       <div className="h-1 flex-1 overflow-hidden rounded-full bg-fg-muted/15">
         <div
           className="h-full rounded-full bg-purple-400/60"

@@ -130,19 +130,13 @@ export function ClusterList() {
                   <TableCell>
                     <ResourceName icon={DatabaseZap} name={c.CacheClusterId} />
                   </TableCell>
-                  <TableCell className="font-mono text-xs capitalize">{c.Engine}</TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">
-                    {c.EngineVersion ?? "—"}
-                  </TableCell>
+                  <TableCell className="capitalize">{c.Engine}</TableCell>
+                  <TableCell className="text-fg-muted">{c.EngineVersion ?? "—"}</TableCell>
                   <TableCell>
                     <ClusterStatusBadge status={c.CacheClusterStatus ?? ""} />
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">
-                    {c.CacheNodeType}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">
-                    {c.NumCacheNodes}
-                  </TableCell>
+                  <TableCell className="text-fg-muted">{c.CacheNodeType}</TableCell>
+                  <TableCell className="text-fg-muted">{c.NumCacheNodes}</TableCell>
                   <TableCell>
                     <RowActions>
                       <RowAction

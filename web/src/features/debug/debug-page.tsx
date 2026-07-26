@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import { useToast } from "@/components/ui/toast"
 import { debugClipboard } from "./clipboard"
@@ -285,7 +286,7 @@ export function DebugPage({
               <div className="min-h-0 flex-1 overflow-auto p-2">
                 {groupDebugNamespaces(namespaces).map((group) => (
                   <div key={group.service} className="mb-3 last:mb-0">
-                    <div className="mb-1 px-2 font-mono text-xs font-medium tracking-wide text-fg-muted uppercase">
+                    <div className={cn(sectionLabel, "mb-1 px-2 text-fg-muted")}>
                       {DEBUG_SERVICE_LABELS[group.service] ?? group.service}
                     </div>
                     {group.namespaces.map(({ namespace: ns, category }) => (

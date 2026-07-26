@@ -1,4 +1,3 @@
- 
 /**
  * Route for /ecs/$cluster/tasks/$taskId.
  * Displays detailed information about a single ECS task.

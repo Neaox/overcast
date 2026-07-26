@@ -212,10 +212,7 @@ export function LogGroupList() {
                     <TableCell className="text-fg-muted">
                       {g.retentionInDays ? `${g.retentionInDays} days` : "Never expire"}
                     </TableCell>
-                    <TableCell
-                      className="max-w-xs truncate font-mono text-xs text-fg-muted"
-                      title={g.arn}
-                    >
+                    <TableCell className="max-w-xs truncate text-fg-muted" title={g.arn}>
                       {g.arn}
                     </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>

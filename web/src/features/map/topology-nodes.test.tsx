@@ -2,10 +2,7 @@ import type { ComponentProps } from "react"
 import { fireEvent, render, screen } from "@/test/render"
 import type { SQSMessage } from "@/types"
 import { EventType } from "@/services/event-types"
-import {
-  ServiceNode,
-  type ServiceNodeData,
-} from "./topology-nodes"
+import { ServiceNode, type ServiceNodeData } from "./topology-nodes"
 import {
   computeSqsVisualMessages,
   createSqsVisualMessagesState,

@@ -7,6 +7,7 @@
 import * as React from "react"
 import { useRef, useState, useEffect, useCallback } from "react"
 import type { StartupPhase } from "@/types"
+import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import {
   Dialog,
@@ -541,9 +542,7 @@ function FlameGraph({ phases, totalMs }: FlameGraphProps) {
 
       {/* Controls row */}
       <div className="flex items-center justify-between">
-        <p className="font-mono text-[10px] font-medium tracking-wider text-fg-muted uppercase">
-          Per-phase timeline
-        </p>
+        <p className={cn(fieldLabel, "text-fg-muted")}>Per-phase timeline</p>
         <div className="flex items-center gap-2">
           {isZoomed && (
             <span className="font-mono text-[10px] text-fg-muted tabular-nums">
@@ -804,9 +803,7 @@ export function StartupCard({ totalMs, preInitMs, phases }: StartupCardProps) {
       tabIndex={0}
       aria-label="Click to view startup timeline"
     >
-      <span className="font-mono text-[10px] font-medium tracking-wider text-fg-muted uppercase">
-        Startup
-      </span>
+      <span className={cn(fieldLabel, "text-fg-muted")}>Startup</span>
       <span className="font-mono text-sm font-medium text-fg tabular-nums">
         {totalMs.toFixed(0)} ms
       </span>
@@ -827,9 +824,7 @@ export function StartupCard({ totalMs, preInitMs, phases }: StartupCardProps) {
     // No phase data yet — render plain pill without dialog trigger.
     return (
       <div className="flex flex-col gap-0.5 rounded-md border border-border bg-bg-elevated px-3 py-2">
-        <span className="font-mono text-[10px] font-medium tracking-wider text-fg-muted uppercase">
-          Startup
-        </span>
+        <span className={cn(fieldLabel, "text-fg-muted")}>Startup</span>
         <span className="font-mono text-sm font-medium text-fg tabular-nums">
           {totalMs.toFixed(0)} ms
         </span>
@@ -875,9 +870,7 @@ export function StartupCard({ totalMs, preInitMs, phases }: StartupCardProps) {
         {/* Only the data table scrolls */}
         <DialogBody className="border-t border-border/30">
           <div className="space-y-1 pt-4">
-            <p className="font-mono text-[10px] font-medium tracking-wider text-fg-muted uppercase">
-              Phase data
-            </p>
+            <p className={cn(fieldLabel, "text-fg-muted")}>Phase data</p>
             <PhaseTable phases={visiblePhases} />
           </div>
         </DialogBody>

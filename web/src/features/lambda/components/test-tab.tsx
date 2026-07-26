@@ -16,6 +16,7 @@ import { eventTemplates, templateCategories } from "@/features/lambda/event-temp
 import { lambda } from "@/services/api"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import type { InvokeResult } from "@/types"
+import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 export function TestTab({ name }: { name: string }) {
@@ -135,9 +136,7 @@ export function TestTab({ name }: { name: string }) {
         {/* Saved events */}
         <div className="flex flex-col gap-1">
           <div className="flex items-center justify-between">
-            <span className="font-mono text-xs font-semibold tracking-wider text-fg-muted uppercase">
-              Saved events
-            </span>
+            <span className={cn(sectionLabel, "text-fg-muted")}>Saved events</span>
             <button
               onClick={handleNewEvent}
               className="text-xs text-accent hover:underline"
@@ -183,9 +182,7 @@ export function TestTab({ name }: { name: string }) {
 
         {/* Event templates */}
         <div className="flex flex-col gap-1">
-          <span className="font-mono text-xs font-semibold tracking-wider text-fg-muted uppercase">
-            Event templates
-          </span>
+          <span className={cn(sectionLabel, "text-fg-muted")}>Event templates</span>
           {templateCategories.map((cat) => (
             <div key={cat} className="flex flex-col">
               <span className="mt-1 text-xs font-medium text-fg-muted">{cat}</span>
@@ -210,7 +207,7 @@ export function TestTab({ name }: { name: string }) {
         {/* Event header: name + actions */}
         <div className="flex items-end gap-3">
           <div className="flex flex-1 flex-col gap-1">
-            <label htmlFor="event-name" className="font-mono text-xs font-medium text-fg-muted">
+            <label htmlFor="event-name" className={cn(fieldLabel, "text-fg-muted")}>
               Event name
             </label>
             <Input

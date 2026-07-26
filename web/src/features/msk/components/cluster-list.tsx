@@ -129,12 +129,10 @@ export function ClusterList() {
                   <TableCell>
                     <ResourceName icon={Radio} name={c.ClusterName} />
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">
+                  <TableCell className="text-fg-muted">
                     {c.CurrentBrokerSoftwareInfo?.KafkaVersion ?? "—"}
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">
-                    {c.NumberOfBrokerNodes}
-                  </TableCell>
+                  <TableCell className="text-fg-muted">{c.NumberOfBrokerNodes}</TableCell>
                   <TableCell>
                     <ClusterStatusBadge status={c.State ?? ""} />
                   </TableCell>

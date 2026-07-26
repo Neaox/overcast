@@ -85,11 +85,12 @@ export function TabList({ children, className }: TabListProps) {
 
 // ─── Tab ──────────────────────────────────────────────────────────────────
 
+// 3b/4b: mono 12, the selected tab bold and accent, over a 2px accent underline.
 const tabBase = cn(
-  "inline-flex items-center border-b-2 px-1 pb-2 font-mono text-sm font-medium transition-colors",
+  "inline-flex items-center border-b-2 px-1 pb-2 font-mono text-xs transition-colors",
   "cursor-pointer disabled:cursor-not-allowed disabled:opacity-50",
 )
-const activeCls = "border-accent text-accent"
+const activeCls = "border-accent font-bold text-accent"
 const inactiveCls = "border-transparent text-fg-muted not-disabled:hover:text-fg"
 
 interface TabProps {

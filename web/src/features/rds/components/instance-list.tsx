@@ -50,6 +50,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
+import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 export function InstanceList() {
@@ -165,19 +166,15 @@ export function InstanceList() {
                     <TableCell>
                       <EngineLabel engine={db.Engine ?? ""} />
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-fg-muted">
-                      {db.EngineVersion}
-                    </TableCell>
+                    <TableCell className="text-fg-muted">{db.EngineVersion}</TableCell>
                     <TableCell>
                       <RdsStatusBadge status={db.DBInstanceStatus ?? ""} />
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-fg-muted">
-                      {db.DBInstanceClass}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-fg-muted">
+                    <TableCell className="text-fg-muted">{db.DBInstanceClass}</TableCell>
+                    <TableCell className="text-fg-muted">
                       {db.Endpoint ? `${db.Endpoint.Address}:${db.Endpoint.Port}` : "—"}
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-fg-muted">
+                    <TableCell className="text-fg-muted">
                       {db.InstanceCreateTime ? db.InstanceCreateTime.toLocaleString() : "—"}
                     </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
@@ -542,7 +539,7 @@ function CreateInstanceDialog({
                         }
                         renderSeparator={(item, prev) =>
                           prev === null || item.group !== prev.group ? (
-                            <li className="px-3 pt-2 pb-0.5 text-xs font-semibold tracking-wide text-fg-muted uppercase">
+                            <li className={cn(sectionLabel, "px-3 pt-2 pb-0.5 text-fg-muted")}>
                               {item.group}
                             </li>
                           ) : null

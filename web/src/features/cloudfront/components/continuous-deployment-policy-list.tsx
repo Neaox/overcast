@@ -68,7 +68,7 @@ export function ContinuousDeploymentPolicyList() {
                       {p.enabled ? "Enabled" : "Disabled"}
                     </Badge>
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">
+                  <TableCell className="text-fg-muted">
                     {p.lastModifiedTime ? new Date(p.lastModifiedTime).toLocaleString() : "—"}
                   </TableCell>
                 </TableRow>

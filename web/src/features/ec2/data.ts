@@ -266,8 +266,7 @@ export function releaseAddressMutationOptions() {
 export function associateAddressMutationOptions() {
   return mutationOptions({
     mutationKey: [...ec2Keys.elasticIps(), "associate"] as const,
-    mutationFn: (opts: { allocationId: string; instanceId?: string }) =>
-      ec2.associateAddress(opts),
+    mutationFn: (opts: { allocationId: string; instanceId?: string }) => ec2.associateAddress(opts),
   })
 }
 
@@ -321,4 +320,3 @@ export function modifyInstanceTypeMutationOptions() {
       ec2.modifyInstanceType(opts.instanceId, opts.instanceType),
   })
 }
-

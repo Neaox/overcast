@@ -1,9 +1,27 @@
 import { readFileSync, readdirSync, statSync } from "node:fs"
 import { join } from "node:path"
 
-/** Colour utilities Tailwind resolves via `--color-*` in the `@theme` block. */
+/**
+ * Colour utilities Tailwind resolves via `--color-*` in the `@theme` block.
+ *
+ * Two things widen this beyond the obvious `bg-`/`text-`/`border-` on our own
+ * roots, both because the narrow version failed open on real bugs:
+ *
+ * - **Every colour-taking prefix**, not three. `hover:bg-surface-hover`,
+ *   `focus-within:ring-ring` and `accent-primary` all rendered as nothing and
+ *   all sailed past the old pattern; the lookbehind is what lets a variant
+ *   prefix (`hover:`, `data-[…]:`) sit in front of the utility.
+ * - **Roots that only *look* like ours** — the shadcn vocabulary this codebase
+ *   was scaffolded from (`muted-foreground`, `primary`, `surface`, `input`,
+ *   `card`). None are declared, so each is an invisible element, and none of
+ *   them can ever become valid: they are not the names we chose.
+ *
+ * Tailwind's own palette (`text-blue-400`, `bg-amber-500/15`) is deliberately
+ * still out of scope — that is the separate palette-collapse task, and those
+ * utilities do render.
+ */
 const COLOUR_UTILITY =
-  /\b(?:bg|text|border)-(bg|fg|accent|danger|warning|success|border|sidebar|cloud)[a-z-]*\b/g
+  /(?<![\w-])(?:bg|text|border|ring|outline|accent|fill|stroke|caret|placeholder|divide|from|via|to)-(bg|fg|accent|danger|warning|success|border|sidebar|cloud|muted|primary|secondary|surface|card|popover|destructive|input|foreground|background|ring)[a-z0-9-]*\b/g
 
 /** Names declared as `--color-<name>` inside global.css's `@theme { … }` block. */
 function declaredThemeColours(css: string): Set<string> {
@@ -93,5 +111,19 @@ describe("semantic colour tokens", () => {
     expect(declared.has("bg-card")).toBe(false)
     expect([..."bg-bg-card".matchAll(COLOUR_UTILITY)].map((m) => m[0])).toEqual(["bg-bg-card"])
     expect(declared.has("bg-elevated")).toBe(true)
+  })
+
+  it.each([
+    ["hover:bg-surface-hover", "bg-surface-hover"],
+    ["focus-within:ring-ring", "ring-ring"],
+    ["accent-primary", "accent-primary"],
+    ["text-muted-foreground", "text-muted-foreground"],
+    ["data-[selected=true]:bg-card", "bg-card"],
+  ])("flags %s, which the narrower pattern let through", (source, utility) => {
+    expect([...source.matchAll(COLOUR_UTILITY)].map((m) => m[0])).toEqual([utility])
+  })
+
+  it("leaves Tailwind's own palette alone — those utilities do render", () => {
+    expect([..."bg-amber-500/15 dark:text-blue-400".matchAll(COLOUR_UTILITY)]).toEqual([])
   })
 })

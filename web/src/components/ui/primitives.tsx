@@ -1,8 +1,28 @@
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
+import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import { AlertTriangle, Loader2 } from "lucide-react"
 import { SkeletonCards, SkeletonRows } from "@/components/ui/skeleton"
+
+// ─── Labels ───────────────────────────────────────────────────────────────
+/**
+ * Names one field or one column: mono 9px / .14em / uppercase. The same spec
+ * `TableHead` uses, so a detail-page label and a column header read as the
+ * same kind of thing. See `@/lib/typography` for why the two specs exist.
+ */
+function FieldLabel({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) {
+  return <span className={cn(fieldLabel, "text-fg-subtle", className)} {...props} />
+}
+
+/**
+ * Names a group of things: mono 10px / .16em / uppercase. The wider tracking is
+ * what makes it read as a heading, so it must never appear at 9px. Colour is
+ * left to the caller — dashboard sections carry their tier's colour.
+ */
+function SectionLabel({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
+  return <h3 className={cn(sectionLabel, "text-fg-subtle", className)} {...props} />
+}
 
 // ─── Spinner ──────────────────────────────────────────────────────────────
 const spinnerSizeVariants = cva("", {
@@ -50,8 +70,9 @@ function EmptyState({ icon, title, description, action, className }: EmptyStateP
       className={cn("flex flex-col items-center justify-center gap-3 py-16 text-center", className)}
     >
       {icon && <div className="mb-1 text-fg-subtle">{icon}</div>}
-      <p className="font-mono text-sm font-medium text-fg">{title}</p>
-      {description && <p className="max-w-xs text-sm text-fg-muted">{description}</p>}
+      {/* Title is mono — it names a thing; the description is prose and stays sans. */}
+      <p className="font-mono text-sm font-bold text-fg">{title}</p>
+      {description && <p className="max-w-xs text-[13px] text-fg-muted">{description}</p>}
       {action && <div className="mt-2">{action}</div>}
     </div>
   )
@@ -169,8 +190,9 @@ function PageHeader({ title, count, meta, description, actions, className }: Pag
             <span className="font-mono text-sm text-fg-subtle tabular-nums">{count}</span>
           )}
         </div>
-        {meta && <p className="font-mono text-xs text-fg-subtle">{meta}</p>}
-        {description && <p className="text-sm text-fg-muted">{description}</p>}
+        {/* 3b's meta line — `4 objects · 28.2 KB · created 25 Jul 2026` — is mono 11. */}
+        {meta && <p className="font-mono text-[11px] text-fg-subtle">{meta}</p>}
+        {description && <p className="text-[13px] text-fg-muted">{description}</p>}
       </div>
       {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
     </div>
@@ -218,4 +240,14 @@ function CodeBlock({ children, className }: { children: string; className?: stri
   )
 }
 
-export { Spinner, EmptyState, QueryListState, PageHeader, Separator, Code, CodeBlock }
+export {
+  Spinner,
+  EmptyState,
+  FieldLabel,
+  SectionLabel,
+  QueryListState,
+  PageHeader,
+  Separator,
+  Code,
+  CodeBlock,
+}

@@ -139,12 +139,10 @@ export function ClusterList() {
                   <TableCell>
                     <StatusBadge status={c.status} />
                   </TableCell>
-                  <TableCell className="font-mono text-xs">{c.runningTasksCount}</TableCell>
-                  <TableCell className="font-mono text-xs">{c.activeServicesCount}</TableCell>
-                  <TableCell className="font-mono text-xs">{c.pendingTasksCount}</TableCell>
-                  <TableCell className="font-mono text-xs">
-                    {c.registeredContainerInstancesCount}
-                  </TableCell>
+                  <TableCell>{c.runningTasksCount}</TableCell>
+                  <TableCell>{c.activeServicesCount}</TableCell>
+                  <TableCell>{c.pendingTasksCount}</TableCell>
+                  <TableCell>{c.registeredContainerInstancesCount}</TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <RowActions>
                       <RowAction

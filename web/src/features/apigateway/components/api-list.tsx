@@ -171,13 +171,11 @@ export function ApiGatewayList() {
                     <TableCell>
                       <ResourceName icon={Globe} name={api.name} />
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-fg-muted">{api.id}</TableCell>
+                    <TableCell className="text-fg-muted">{api.id}</TableCell>
                     <TableCell>
                       <Badge variant="default">REST</Badge>
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-fg-muted">
-                      {formatDate(api.createdDate)}
-                    </TableCell>
+                    <TableCell className="text-fg-muted">{formatDate(api.createdDate)}</TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <RowActions>
                         <RowAction
@@ -255,13 +253,11 @@ export function ApiGatewayList() {
                     <TableCell>
                       <ResourceName icon={Globe} name={api.name} />
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-fg-muted">{api.apiId}</TableCell>
+                    <TableCell className="text-fg-muted">{api.apiId}</TableCell>
                     <TableCell>
                       <Badge variant="success">{api.protocolType}</Badge>
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-fg-muted">
-                      {formatDate(api.createdDate)}
-                    </TableCell>
+                    <TableCell className="text-fg-muted">{formatDate(api.createdDate)}</TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <RowActions>
                         <RowAction

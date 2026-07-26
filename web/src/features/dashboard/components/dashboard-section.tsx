@@ -1,4 +1,5 @@
 import type { ReactNode } from "react"
+import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 export type SectionTone = "strong" | "muted" | "subtle"
@@ -25,9 +26,7 @@ export function DashboardSection({
   return (
     <section aria-label={title} className="flex flex-col gap-3">
       <div className="flex items-center gap-3">
-        <span className={cn("font-mono text-[10px] tracking-[0.16em] uppercase", TONE_CLASS[tone])}>
-          {title}
-        </span>
+        <span className={cn(sectionLabel, TONE_CLASS[tone])}>{title}</span>
         <span className="font-mono text-[10px] text-fg-subtle">{count}</span>
         <span className="h-px flex-1 bg-border" />
         {note && <span className="font-mono text-[10px] text-fg-subtle">{note}</span>}

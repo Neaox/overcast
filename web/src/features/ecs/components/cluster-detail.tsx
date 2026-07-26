@@ -44,6 +44,7 @@ import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { Link } from "@tanstack/react-router"
 import type { EcsTask, EcsTaskDefinition, EcsService, EcsContainerInstance } from "@/types"
+import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 export function ClusterDetail({ clusterName }: { clusterName: string }) {
@@ -189,7 +190,7 @@ function TasksPanel({ clusterName }: { clusterName: string }) {
                     className="cursor-pointer"
                     onClick={() => setExpandedTask(isExpanded ? undefined : t.taskArn)}
                   >
-                    <TableCell className="font-mono text-xs">
+                    <TableCell>
                       <Link
                         to="/ecs/$cluster/tasks/$taskId"
                         params={{ cluster: clusterName, taskId: shortId }}
@@ -202,11 +203,11 @@ function TasksPanel({ clusterName }: { clusterName: string }) {
                     <TableCell>
                       <TaskStatusBadge status={t.lastStatus} />
                     </TableCell>
-                    <TableCell className="max-w-xs truncate text-xs text-fg-muted">
+                    <TableCell className="max-w-xs truncate text-fg-muted">
                       {shortTaskDef(t.taskDefinitionArn)}
                     </TableCell>
-                    <TableCell className="text-sm">{t.launchType ?? "—"}</TableCell>
-                    <TableCell className="text-xs text-fg-muted">
+                    <TableCell>{t.launchType ?? "—"}</TableCell>
+                    <TableCell className="text-fg-muted">
                       {t.createdAt ? new Date(t.createdAt).toLocaleString() : "—"}
                     </TableCell>
                     <TableCell>
@@ -381,7 +382,7 @@ function TaskDefinitionsPanel() {
                   <TableBody>
                     {revisions.map((td) => (
                       <TableRow key={td.taskDefinitionArn}>
-                        <TableCell className="font-mono text-xs">{td.revision}</TableCell>
+                        <TableCell>{td.revision}</TableCell>
                         <TableCell>
                           <TaskStatusBadge status={td.status} />
                         </TableCell>
@@ -566,11 +567,11 @@ function ServicesPanel({ clusterName }: { clusterName: string }) {
                     <span className="ml-1 text-xs text-fg-muted">({svc.pendingCount} pending)</span>
                   )}
                 </TableCell>
-                <TableCell className="max-w-xs truncate text-xs text-fg-muted">
+                <TableCell className="max-w-xs truncate text-fg-muted">
                   {shortTaskDef(svc.taskDefinition)}
                 </TableCell>
-                <TableCell className="text-sm">{svc.launchType || "—"}</TableCell>
-                <TableCell className="text-xs text-fg-muted">
+                <TableCell>{svc.launchType || "—"}</TableCell>
+                <TableCell className="text-fg-muted">
                   {svc.createdAt ? new Date(svc.createdAt).toLocaleString() : "—"}
                 </TableCell>
                 <TableCell>
@@ -718,9 +719,7 @@ function RunTaskDialog({
         </DialogHeader>
         <DialogBody className="space-y-4">
           <div>
-            <label className="mb-1 block font-mono text-sm font-medium text-fg">
-              Task Definition
-            </label>
+            <label className={cn(fieldLabel, "mb-1 block text-fg")}>Task Definition</label>
             <select
               value={taskDef}
               onChange={(e) => setTaskDef(e.target.value)}
@@ -735,7 +734,7 @@ function RunTaskDialog({
             </select>
           </div>
           <div>
-            <label className="mb-1 block font-mono text-sm font-medium text-fg">Count</label>
+            <label className={cn(fieldLabel, "mb-1 block text-fg")}>Count</label>
             <Input
               type="number"
               min={1}
@@ -745,7 +744,7 @@ function RunTaskDialog({
             />
           </div>
           <div>
-            <label className="mb-1 block font-mono text-sm font-medium text-fg">Launch Type</label>
+            <label className={cn(fieldLabel, "mb-1 block text-fg")}>Launch Type</label>
             <select
               value={launchType}
               onChange={(e) => setLaunchType(e.target.value)}
@@ -872,7 +871,7 @@ function CreateServiceDialog({
         </DialogHeader>
         <DialogBody className="space-y-4">
           <div>
-            <label className="mb-1 block font-mono text-sm font-medium text-fg">Service Name</label>
+            <label className={cn(fieldLabel, "mb-1 block text-fg")}>Service Name</label>
             <Input
               value={serviceName}
               onChange={(e) => setServiceName(e.target.value)}
@@ -880,9 +879,7 @@ function CreateServiceDialog({
             />
           </div>
           <div>
-            <label className="mb-1 block font-mono text-sm font-medium text-fg">
-              Task Definition
-            </label>
+            <label className={cn(fieldLabel, "mb-1 block text-fg")}>Task Definition</label>
             <select
               value={taskDef}
               onChange={(e) => setTaskDef(e.target.value)}
@@ -897,9 +894,7 @@ function CreateServiceDialog({
             </select>
           </div>
           <div>
-            <label className="mb-1 block font-mono text-sm font-medium text-fg">
-              Desired Count
-            </label>
+            <label className={cn(fieldLabel, "mb-1 block text-fg")}>Desired Count</label>
             <Input
               type="number"
               min={0}
@@ -956,9 +951,7 @@ function UpdateServiceDialog({
         </DialogHeader>
         <DialogBody className="space-y-4">
           <div>
-            <label className="mb-1 block font-mono text-sm font-medium text-fg">
-              Desired Count
-            </label>
+            <label className={cn(fieldLabel, "mb-1 block text-fg")}>Desired Count</label>
             <Input
               type="number"
               min={0}
@@ -1032,10 +1025,8 @@ function ContainerInstanceRow({ ci }: { ci: EcsContainerInstance }) {
   const shortArn = ci.containerInstanceArn.split("/").pop() ?? ci.containerInstanceArn
   return (
     <TableRow>
-      <TableCell className="font-mono text-xs" title={ci.containerInstanceArn}>
-        {shortArn.slice(0, 12)}…
-      </TableCell>
-      <TableCell className="font-mono text-xs text-fg-muted">{ci.ec2InstanceId ?? "—"}</TableCell>
+      <TableCell title={ci.containerInstanceArn}>{shortArn.slice(0, 12)}…</TableCell>
+      <TableCell className="text-fg-muted">{ci.ec2InstanceId ?? "—"}</TableCell>
       <TableCell>
         <TaskStatusBadge status={ci.status} />
       </TableCell>
@@ -1046,7 +1037,7 @@ function ContainerInstanceRow({ ci }: { ci: EcsContainerInstance }) {
       </TableCell>
       <TableCell>{ci.runningTasksCount}</TableCell>
       <TableCell>{ci.pendingTasksCount}</TableCell>
-      <TableCell className="text-xs text-fg-muted">
+      <TableCell className="text-fg-muted">
         {ci.registeredAt ? new Date(ci.registeredAt).toLocaleString() : "—"}
       </TableCell>
     </TableRow>
@@ -1081,8 +1072,8 @@ function ClusterTagsPanel({ clusterArn }: { clusterArn: string }) {
       <TableBody>
         {tags.map((tag, i) => (
           <TableRow key={i}>
-            <TableCell className="font-mono text-xs">{tag.key}</TableCell>
-            <TableCell className="font-mono text-xs text-fg-muted">{tag.value}</TableCell>
+            <TableCell>{tag.key}</TableCell>
+            <TableCell className="text-fg-muted">{tag.value}</TableCell>
           </TableRow>
         ))}
       </TableBody>

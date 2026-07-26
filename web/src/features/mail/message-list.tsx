@@ -150,7 +150,7 @@ export function MessageList({ messages, selectedId, onSelect }: MessageListProps
                     "shrink-0 rounded-full px-1.5 py-0.5 text-xs tabular-nums",
                     containsSelected && !expanded
                       ? "bg-sidebar-item-active-fg/20 text-sidebar-item-active-fg/80"
-                      : "bg-surface-muted text-fg-subtle",
+                      : "bg-bg-muted text-fg-subtle",
                   )}
                 >
                   {item.messages.length}
@@ -240,7 +240,7 @@ function MessageRow({ message, selected, onSelect, indent }: MessageRowProps) {
                   "shrink-0 rounded px-1 py-0.5 text-xs leading-none",
                   selected
                     ? "bg-sidebar-item-active-fg/15 text-sidebar-item-active-fg/70"
-                    : "bg-surface-muted text-fg-subtle",
+                    : "bg-bg-muted text-fg-subtle",
                 )}
               >
                 {message.source}

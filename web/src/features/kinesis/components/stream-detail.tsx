@@ -205,14 +205,10 @@ export function StreamDetail({ streamName }: Props) {
           <TableBody>
             {stream.shards.map((shard) => (
               <TableRow key={shard.shardId}>
-                <TableCell className="font-mono text-xs">{shard.shardId}</TableCell>
-                <TableCell className="max-w-30 truncate font-mono text-xs">
-                  {shard.startingHashKey}
-                </TableCell>
-                <TableCell className="max-w-30 truncate font-mono text-xs">
-                  {shard.endingHashKey}
-                </TableCell>
-                <TableCell className="font-mono text-xs">{shard.startingSeqNo}</TableCell>
+                <TableCell>{shard.shardId}</TableCell>
+                <TableCell className="max-w-30 truncate">{shard.startingHashKey}</TableCell>
+                <TableCell className="max-w-30 truncate">{shard.endingHashKey}</TableCell>
+                <TableCell>{shard.startingSeqNo}</TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -241,8 +237,8 @@ export function StreamDetail({ streamName }: Props) {
               <TableBody>
                 {tags.map(([key, value]) => (
                   <TableRow key={key}>
-                    <TableCell className="font-mono text-sm">{key}</TableCell>
-                    <TableCell className="font-mono text-sm">{value}</TableCell>
+                    <TableCell>{key}</TableCell>
+                    <TableCell>{value}</TableCell>
                     <TableCell className="text-right">
                       <Button
                         size="sm"

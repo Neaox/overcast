@@ -5,6 +5,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableCellProse,
   TableHead,
   TableHeader,
   TableRow,
@@ -63,9 +64,9 @@ export function KeyGroupList() {
                   <TableCell>
                     <ResourceName icon={Key} name={kg.name} />
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">{kg.id}</TableCell>
-                  <TableCell className="text-fg-muted">{kg.comment || "—"}</TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">
+                  <TableCell className="text-fg-muted">{kg.id}</TableCell>
+                  <TableCellProse>{kg.comment || "—"}</TableCellProse>
+                  <TableCell className="text-fg-muted">
                     {kg.lastModifiedTime ? new Date(kg.lastModifiedTime).toLocaleString() : "—"}
                   </TableCell>
                 </TableRow>

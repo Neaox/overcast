@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { QueryListState, PageHeader } from "@/components/ui/primitives"
 import { Select } from "@/components/ui/select"
+import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 const STAT_OPTIONS: Statistic[] = ["Average", "Sum", "SampleCount", "Minimum", "Maximum"]
@@ -255,7 +256,7 @@ export function CloudwatchDashboard() {
                   <p className="text-sm text-fg-muted">{formatDimensionList(selectedMetric)}</p>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
-                  <label className="space-y-1 font-mono text-xs font-medium tracking-wide text-fg-muted uppercase">
+                  <label className={cn(fieldLabel, "space-y-1 text-fg-muted")}>
                     Statistic
                     <Select
                       value={selectedStat}
@@ -268,7 +269,7 @@ export function CloudwatchDashboard() {
                       ))}
                     </Select>
                   </label>
-                  <label className="space-y-1 font-mono text-xs font-medium tracking-wide text-fg-muted uppercase">
+                  <label className={cn(fieldLabel, "space-y-1 text-fg-muted")}>
                     Time Range
                     <Select
                       value={String(rangeHours)}
@@ -309,12 +310,17 @@ export function CloudwatchDashboard() {
 
                     {(statisticsQuery.data?.datapoints.length ?? 0) > 0 && (
                       <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
+                        <table className="w-full font-mono text-xs">
                           <thead>
-                            <tr className="border-b border-border text-left font-mono text-xs tracking-wide text-fg-muted uppercase">
-                              <th className="py-2 pr-3 font-medium">Timestamp</th>
-                              <th className="py-2 pr-3 font-medium">{selectedStat}</th>
-                              <th className="py-2 font-medium">Unit</th>
+                            <tr
+                              className={cn(
+                                fieldLabel,
+                                "border-b border-border text-left text-fg-muted",
+                              )}
+                            >
+                              <th className="py-2 pr-3">Timestamp</th>
+                              <th className="py-2 pr-3">{selectedStat}</th>
+                              <th className="py-2">Unit</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -326,7 +332,7 @@ export function CloudwatchDashboard() {
                                 <td className="py-2 pr-3 text-fg-muted">
                                   {formatTimestamp(datapoint.Timestamp)}
                                 </td>
-                                <td className="py-2 pr-3 font-medium text-fg">
+                                <td className="py-2 pr-3 text-fg">
                                   {formatDatapointValue(datapoint, selectedStat)}
                                 </td>
                                 <td className="py-2 text-fg-muted">{datapoint.Unit ?? "—"}</td>
@@ -378,27 +384,21 @@ export function CloudwatchDashboard() {
 
                           <dl className="grid gap-2 text-sm sm:grid-cols-2">
                             <div>
-                              <dt className="font-mono text-xs tracking-wide text-fg-muted uppercase">
-                                Threshold
-                              </dt>
+                              <dt className={cn(fieldLabel, "text-fg-muted")}>Threshold</dt>
                               <dd className="text-fg">{alarm.Threshold ?? "—"}</dd>
                             </div>
                             <div>
-                              <dt className="font-mono text-xs tracking-wide text-fg-muted uppercase">
-                                Comparison
-                              </dt>
+                              <dt className={cn(fieldLabel, "text-fg-muted")}>Comparison</dt>
                               <dd className="text-fg">{alarm.ComparisonOperator ?? "—"}</dd>
                             </div>
                             <div>
-                              <dt className="font-mono text-xs tracking-wide text-fg-muted uppercase">
+                              <dt className={cn(fieldLabel, "text-fg-muted")}>
                                 Evaluation Periods
                               </dt>
                               <dd className="text-fg">{alarm.EvaluationPeriods ?? "—"}</dd>
                             </div>
                             <div>
-                              <dt className="font-mono text-xs tracking-wide text-fg-muted uppercase">
-                                Last Transition
-                              </dt>
+                              <dt className={cn(fieldLabel, "text-fg-muted")}>Last Transition</dt>
                               <dd className="text-fg">
                                 {formatTimestamp(alarm.StateUpdatedTimestamp)}
                               </dd>

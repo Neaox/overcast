@@ -220,12 +220,8 @@ export function QueueList() {
                       {q.approximateNumberOfMessagesNotVisible}
                     </Badge>
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">
-                    {q.visibilityTimeout}s
-                  </TableCell>
-                  <TableCell className="max-w-xs truncate font-mono text-xs text-fg-muted">
-                    {q.arn}
-                  </TableCell>
+                  <TableCell className="text-fg-muted">{q.visibilityTimeout}s</TableCell>
+                  <TableCell className="max-w-xs truncate text-fg-muted">{q.arn}</TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <RowActions>
                       <RowAction
@@ -424,7 +420,7 @@ function CreateQueueDialog({
                         autoFocus
                       />
                       {isFifo && (
-                        <span className="bg-surface-2 pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 rounded px-1.5 py-0.5 font-mono text-xs text-fg-muted">
+                        <span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 rounded bg-bg-muted px-1.5 py-0.5 font-mono text-xs text-fg-muted">
                           .fifo
                         </span>
                       )}
@@ -441,7 +437,7 @@ function CreateQueueDialog({
               isFifo ? (
                 <form.Field name="contentBasedDeduplication">
                   {(field) => (
-                    <label className="flex items-center gap-2 font-mono text-sm">
+                    <label className="flex items-center gap-2 text-xs">
                       <input
                         type="checkbox"
                         checked={field.state.value}

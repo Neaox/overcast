@@ -5,6 +5,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableCellProse,
   TableHead,
   TableHeader,
   TableRow,
@@ -63,9 +64,9 @@ export function FLEProfileList() {
                   <TableCell>
                     <ResourceName icon={ShieldCheck} name={p.name} />
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">{p.id}</TableCell>
-                  <TableCell className="text-fg-muted">{p.comment || "—"}</TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">
+                  <TableCell className="text-fg-muted">{p.id}</TableCell>
+                  <TableCellProse>{p.comment || "—"}</TableCellProse>
+                  <TableCell className="text-fg-muted">
                     {p.lastModifiedTime ? new Date(p.lastModifiedTime).toLocaleString() : "—"}
                   </TableCell>
                 </TableRow>

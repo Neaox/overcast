@@ -20,6 +20,7 @@
  */
 import type { DebugMetrics } from "@/types"
 import { Spinner } from "@/components/ui/primitives"
+import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 function formatCount(n: number): string {
@@ -75,17 +76,13 @@ function StoreActivityCard({ store, index }: { store: DebugMetrics; index: numbe
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <p className="font-mono text-[10px] font-medium tracking-wider text-fg-muted uppercase">
-            Reads
-          </p>
+          <p className={cn(fieldLabel, "text-fg-muted")}>Reads</p>
           <p className="font-mono text-xl font-semibold text-fg tabular-nums">
             {formatCount(counters.reads)}
           </p>
         </div>
         <div>
-          <p className="font-mono text-[10px] font-medium tracking-wider text-fg-muted uppercase">
-            Writes
-          </p>
+          <p className={cn(fieldLabel, "text-fg-muted")}>Writes</p>
           <p className="font-mono text-xl font-semibold text-fg tabular-nums">
             {formatCount(counters.writes)}
           </p>
@@ -94,9 +91,7 @@ function StoreActivityCard({ store, index }: { store: DebugMetrics; index: numbe
 
       {hasTierSplit && (
         <div className="flex flex-col gap-2 border-t border-border pt-3">
-          <p className="font-mono text-[10px] font-medium tracking-wider text-fg-muted uppercase">
-            Memory vs disk (SQL)
-          </p>
+          <p className={cn(fieldLabel, "text-fg-muted")}>Memory vs disk (SQL)</p>
           <TierBar
             label="Memory reads"
             value={counters.readsMemory ?? 0}
@@ -135,9 +130,7 @@ export function StorageActivity({
 
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="font-mono text-sm font-medium tracking-wide text-fg-muted uppercase">
-        Storage Activity
-      </h2>
+      <h2 className={cn(sectionLabel, "text-fg-muted")}>Storage Activity</h2>
       {isLoading ? (
         <div className="flex justify-center py-10">
           <Spinner className="h-5 w-5" />

@@ -203,14 +203,12 @@ export function SsmParameterDetail({ name }: Props) {
             <TableBody>
               {history.map((entry) => (
                 <TableRow key={entry.Version}>
-                  <TableCell className="text-sm">v{entry.Version}</TableCell>
+                  <TableCell>v{entry.Version}</TableCell>
                   <TableCell>
                     <Badge variant="outline">{entry.Type}</Badge>
                   </TableCell>
-                  <TableCell className="max-w-xs truncate font-mono text-xs">
-                    {entry.Value}
-                  </TableCell>
-                  <TableCell className="text-sm text-fg-muted">
+                  <TableCell className="max-w-xs truncate">{entry.Value}</TableCell>
+                  <TableCell className="text-fg-muted">
                     {formatDate(entry.LastModifiedDate)}
                   </TableCell>
                 </TableRow>

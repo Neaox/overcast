@@ -13,6 +13,7 @@ import {
 } from "lucide-react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { cva } from "class-variance-authority"
+import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import { useFavourites } from "@/hooks/use-favourites"
 import { useSearch } from "@/hooks/use-search"
@@ -242,7 +243,7 @@ function MegaMenu({ onSelectService }: { onSelectService: (service: ServiceDefin
         {/* Recently used */}
         {recentItems.length > 0 && (
           <section className="flex flex-col gap-2">
-            <p className="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.14em] text-fg-subtle uppercase">
+            <p className={cn(sectionLabel, "flex items-center gap-1.5 text-fg-subtle")}>
               <Clock className="h-3 w-3" strokeWidth={1.75} />
               Recently Used
             </p>

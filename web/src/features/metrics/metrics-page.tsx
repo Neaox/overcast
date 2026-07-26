@@ -17,6 +17,8 @@
  * Static info cards show: uptime, Go version, CPU count, GC count, start time.
  */
 import { useQuery } from "@tanstack/react-query"
+import { cn } from "@/lib/utils"
+import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { BarChart2, AlertCircle, Info } from "lucide-react"
 import { useMetrics } from "@/hooks/use-metrics"
 import type { MetricsSnapshot } from "@/types"
@@ -62,9 +64,7 @@ function MetricCard({ title, value, sub, info, sparkData, color }: MetricCardPro
     <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg-elevated p-4">
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-1">
-          <p className="font-mono text-xs font-medium tracking-wider text-fg-muted uppercase">
-            {title}
-          </p>
+          <p className={cn(fieldLabel, "text-fg-muted")}>{title}</p>
           {info && (
             <Tooltip content={info}>
               <button type="button" className="text-fg-muted transition-colors hover:text-fg">
@@ -149,9 +149,7 @@ export function MetricsPage() {
           sparkline card below — neither is repeated here as a pill. */}
       {latest && (
         <div className="flex flex-col gap-2">
-          <h2 className="font-mono text-sm font-medium tracking-wide text-fg-muted uppercase">
-            Runtime
-          </h2>
+          <h2 className={cn(sectionLabel, "text-fg-muted")}>Runtime</h2>
           <div className="flex flex-wrap gap-2">
             <StartupCard
               totalMs={latest.startup_duration_ms}

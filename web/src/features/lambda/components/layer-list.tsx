@@ -173,13 +173,11 @@ function LayerRow({ layer, onDelete }: { layer: LambdaLayer; onDelete: () => voi
       <TableCell>
         <ResourceName icon={Layers} name={layerName} />
       </TableCell>
-      <TableCell className="font-mono text-xs">{lv?.Version}</TableCell>
-      <TableCell className="font-mono text-xs">
+      <TableCell>{lv?.Version}</TableCell>
+      <TableCell>
         {(lv?.CompatibleRuntimes?.length ?? 0) > 0 ? lv!.CompatibleRuntimes!.join(", ") : "—"}
       </TableCell>
-      <TableCell className="font-mono text-xs text-fg-muted">
-        {formatDate(lv?.CreatedDate ?? "")}
-      </TableCell>
+      <TableCell className="text-fg-muted">{formatDate(lv?.CreatedDate ?? "")}</TableCell>
       <TableCell onClick={(e) => e.stopPropagation()}>
         <RowActions>
           <RowAction

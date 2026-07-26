@@ -134,9 +134,7 @@ export function BucketList() {
                   <TableCell>
                     <ResourceName icon={HardDrive} name={b.name} />
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">
-                    {formatDate(b.creationDate)}
-                  </TableCell>
+                  <TableCell className="text-fg-muted">{formatDate(b.creationDate)}</TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <RowActions>
                       <RowAction

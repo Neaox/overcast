@@ -11,6 +11,8 @@
  * the sparkline cards — no reason to fetch it a second time here.
  */
 import { useQuery } from "@tanstack/react-query"
+import { cn } from "@/lib/utils"
+import { fieldLabel } from "@/lib/typography"
 import { Badge, type BadgeProps } from "@/components/ui/badge"
 import type { DebugMetricsResponse, HealthResponse } from "@/types"
 import { StatPill } from "./stat-pill"
@@ -59,9 +61,7 @@ export function HealthStrip({ uptime }: { uptime?: string }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
       <div className="flex flex-col gap-0.5 rounded-md border border-border bg-bg-elevated px-3 py-2">
-        <span className="font-mono text-[10px] font-medium tracking-wider text-fg-muted uppercase">
-          Storage
-        </span>
+        <span className={cn(fieldLabel, "text-fg-muted")}>Storage</span>
         <div className="flex items-center gap-2">
           <span className="font-mono text-sm font-medium text-fg">{storageMode}</span>
           <Badge variant={status.variant}>{status.label}</Badge>

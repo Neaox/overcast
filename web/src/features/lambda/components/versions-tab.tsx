@@ -1,4 +1,6 @@
 import { useState } from "react"
+import { fieldLabel } from "@/lib/typography"
+import { cn } from "@/lib/utils"
 import { useQuery } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/primitives"
@@ -90,7 +92,7 @@ export function VersionsTab({ name }: { name: string }) {
         {showPublishForm && (
           <div className="flex items-end gap-2 rounded-md border border-border bg-bg-elevated p-3">
             <div className="flex flex-1 flex-col gap-1">
-              <label className="font-mono text-xs text-fg-muted">Description (optional)</label>
+              <label className={cn(fieldLabel, "text-fg-muted")}>Description (optional)</label>
               <Input
                 value={publishDesc}
                 onChange={(e) => setPublishDesc(e.target.value)}
@@ -113,20 +115,22 @@ export function VersionsTab({ name }: { name: string }) {
         ) : publishedVersions.length === 0 ? (
           <p className="text-sm text-fg-muted">No published versions yet.</p>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full font-mono text-xs">
             <thead>
-              <tr className="border-b border-border font-mono text-xs text-fg-muted">
-                <th className="pb-1 text-left font-medium">Version</th>
-                <th className="pb-1 text-left font-medium">Description</th>
-                <th className="pb-1 text-left font-medium">ARN</th>
-                <th className="pb-1 text-left font-medium">SHA-256</th>
+              <tr className={cn(fieldLabel, "border-b border-border text-fg-subtle")}>
+                <th className="pb-1 text-left">Version</th>
+                <th className="pb-1 text-left">Description</th>
+                <th className="pb-1 text-left">ARN</th>
+                <th className="pb-1 text-left">SHA-256</th>
               </tr>
             </thead>
             <tbody>
               {publishedVersions.map((v) => (
                 <tr key={v.Version} className="border-b border-border/50 last:border-0">
                   <td className="py-1.5 pr-4 font-mono">{v.Version}</td>
-                  <td className="py-1.5 pr-4 text-fg-muted">{v.Description || "—"}</td>
+                  <td className="py-1.5 pr-4 font-sans text-[13px] text-fg-muted">
+                    {v.Description || "—"}
+                  </td>
                   <td
                     className="max-w-[22ch] truncate py-1.5 pr-4 font-mono text-xs"
                     title={v.FunctionArn}
@@ -150,7 +154,7 @@ export function VersionsTab({ name }: { name: string }) {
         {/* Create alias form */}
         <div className="flex items-end gap-2 rounded-md border border-border bg-bg-elevated p-3">
           <div className="flex flex-col gap-1">
-            <label className="font-mono text-xs text-fg-muted">Alias name</label>
+            <label className={cn(fieldLabel, "text-fg-muted")}>Alias name</label>
             <Input
               value={aliasName}
               onChange={(e) => setAliasName(e.target.value)}
@@ -159,7 +163,7 @@ export function VersionsTab({ name }: { name: string }) {
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="font-mono text-xs text-fg-muted">Points to version</label>
+            <label className={cn(fieldLabel, "text-fg-muted")}>Points to version</label>
             <Input
               value={aliasVersion}
               onChange={(e) => setAliasVersion(e.target.value)}
@@ -188,12 +192,12 @@ export function VersionsTab({ name }: { name: string }) {
         ) : aliases.length === 0 ? (
           <p className="text-sm text-fg-muted">No aliases yet.</p>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full font-mono text-xs">
             <thead>
-              <tr className="border-b border-border font-mono text-xs text-fg-muted">
-                <th className="pb-1 text-left font-medium">Name</th>
-                <th className="pb-1 text-left font-medium">Version</th>
-                <th className="pb-1 text-left font-medium">Description</th>
+              <tr className={cn(fieldLabel, "border-b border-border text-fg-subtle")}>
+                <th className="pb-1 text-left">Name</th>
+                <th className="pb-1 text-left">Version</th>
+                <th className="pb-1 text-left">Description</th>
                 <th className="pb-1" />
               </tr>
             </thead>
@@ -237,7 +241,9 @@ export function VersionsTab({ name }: { name: string }) {
                       </button>
                     )}
                   </td>
-                  <td className="py-1.5 pr-4 text-fg-muted">{a.Description || "—"}</td>
+                  <td className="py-1.5 pr-4 font-sans text-[13px] text-fg-muted">
+                    {a.Description || "—"}
+                  </td>
                   <td className="py-1.5 text-right">
                     <button
                       className="text-xs text-fg-muted hover:text-danger"

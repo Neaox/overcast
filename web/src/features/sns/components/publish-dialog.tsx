@@ -140,7 +140,7 @@ export function PublishMessageDialog({ topicName, open, onOpenChange }: Props) {
           </FormField>
 
           <div className="flex flex-wrap items-center gap-5">
-            <label className="flex items-center gap-2 font-mono text-sm text-fg-muted">
+            <label className="flex items-center gap-2 text-xs text-fg-muted">
               <input
                 type="checkbox"
                 checked={messageStructureJson}

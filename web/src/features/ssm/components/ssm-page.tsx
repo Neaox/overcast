@@ -126,7 +126,7 @@ export function SsmPage() {
 
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
-          <Search className="text-muted-foreground absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2" />
+          <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
           <Input
             placeholder="Filter parameters…"
             className="pl-8"
@@ -173,12 +173,12 @@ export function SsmPage() {
                 className="cursor-pointer"
                 onClick={() => navigate({ to: "/ssm/$name", params: { name: param.Name ?? "" } })}
               >
-                <TableCell className="font-mono text-sm font-medium">{param.Name}</TableCell>
+                <TableCell className="font-medium">{param.Name}</TableCell>
                 <TableCell>
                   <Badge variant="outline">{param.Type}</Badge>
                 </TableCell>
-                <TableCell className="text-sm text-fg-muted">v{param.Version}</TableCell>
-                <TableCell className="text-sm text-fg-muted">
+                <TableCell className="text-fg-muted">v{param.Version}</TableCell>
+                <TableCell className="text-fg-muted">
                   {formatDate(param.LastModifiedDate)}
                 </TableCell>
                 <TableCell>
@@ -264,7 +264,7 @@ export function SsmPage() {
                     <FormField label="Type" htmlFor="param-type">
                       <select
                         id="param-type"
-                        className="bg-surface w-full rounded border border-border px-3 py-2 text-sm"
+                        className="w-full rounded border border-border bg-bg-elevated px-3 py-2 text-sm"
                         value={field.state.value}
                         onChange={(e) => field.handleChange(e.target.value)}
                       >

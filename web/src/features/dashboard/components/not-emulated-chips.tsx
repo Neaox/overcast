@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { Link } from "@tanstack/react-router"
 import { ChevronDown } from "lucide-react"
+import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import { CATALOG, CATALOG_CATEGORY_LABELS, type CatalogEntry } from "@/lib/unsupported-services"
 import type { ServiceTierEntry } from "../service-defs"
@@ -72,7 +73,7 @@ function OtherServicesExpander() {
         <div className="flex flex-col gap-5 border-t border-border px-3 py-4">
           {Object.entries(byCategory).map(([category, catalogEntries]) => (
             <div key={category}>
-              <p className="mb-2 font-mono text-[9px] tracking-[0.16em] text-fg-subtle uppercase">
+              <p className={cn(sectionLabel, "mb-2 text-fg-subtle")}>
                 {CATALOG_CATEGORY_LABELS[category as keyof typeof CATALOG_CATEGORY_LABELS]}
               </p>
               <div className="flex flex-wrap gap-2">

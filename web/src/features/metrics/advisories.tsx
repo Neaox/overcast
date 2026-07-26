@@ -9,6 +9,7 @@ import { AlertTriangle, CheckCircle2, Info, ShieldAlert, ExternalLink } from "lu
 import { Link } from "@tanstack/react-router"
 import type { Advisory, AdvisorySeverity } from "@/types"
 import { EmptyState, QueryListState } from "@/components/ui/primitives"
+import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 type SeverityStyle = { icon: typeof Info; iconClass: string; badgeClass: string; label: string }
@@ -55,7 +56,7 @@ function AdvisoryCard({ advisory }: { advisory: Advisory }) {
           <p className="text-sm font-medium text-fg">{advisory.title}</p>
           <span
             className={cn(
-              "rounded-full px-2 py-0.5 font-mono text-[10px] font-medium tracking-wide uppercase",
+              "rounded-control px-1.5 py-0.5 font-mono text-[10px] tracking-[0.12em] uppercase",
               style.badgeClass,
             )}
           >
@@ -93,9 +94,7 @@ export function AdvisoriesList({
   const list = advisories ?? []
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="font-mono text-sm font-medium tracking-wide text-fg-muted uppercase">
-        Advisories
-      </h2>
+      <h2 className={cn(sectionLabel, "text-fg-muted")}>Advisories</h2>
       <QueryListState
         isLoading={isLoading}
         isEmpty={list.length === 0}

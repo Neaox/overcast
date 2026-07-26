@@ -91,7 +91,9 @@ describe("DebugPage", () => {
     render(<DebugPage />)
 
     // Then: the bucket-like prefix and object leaf are shown separately.
-    expect(await screen.findByText("cdk-hnb659fds-assets-000000000000-us-east-1")).toBeInTheDocument()
+    expect(
+      await screen.findByText("cdk-hnb659fds-assets-000000000000-us-east-1"),
+    ).toBeInTheDocument()
     expect(
       screen.getByText("0f677178c635e11d325450ded55a9c7dea158330a1e7cfdeba69cbf7bdfd96ac.json"),
     ).toBeInTheDocument()
@@ -101,7 +103,7 @@ describe("DebugPage", () => {
     // Given: a stored record contains an escaped JSON document inside a string field.
     server.use(
       http.get("/api/debug/state", () =>
-        HttpResponse.json({ "appsync": ["us-east-1:resolver:api-id:Query:namespaces"] }),
+        HttpResponse.json({ appsync: ["us-east-1:resolver:api-id:Query:namespaces"] }),
       ),
       http.get("/api/debug/state/appsync", () =>
         namespacePage({
@@ -186,8 +188,14 @@ describe("DebugPage", () => {
       ),
       http.get("/api/debug/state/sqs%3Aqueues", () =>
         namespacePage({
-          "us-east-1/orders": JSON.stringify({ name: "orders", attributes: { FifoQueue: "false" } }),
-          "us-east-1/orders-dlq": JSON.stringify({ name: "orders-dlq", attributes: { FifoQueue: "true" } }),
+          "us-east-1/orders": JSON.stringify({
+            name: "orders",
+            attributes: { FifoQueue: "false" },
+          }),
+          "us-east-1/orders-dlq": JSON.stringify({
+            name: "orders-dlq",
+            attributes: { FifoQueue: "true" },
+          }),
         }),
       ),
     )

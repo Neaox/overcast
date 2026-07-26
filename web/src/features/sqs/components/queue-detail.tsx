@@ -649,13 +649,13 @@ export function QueueDetail({ queueName }: Props) {
                 <TableBody>
                   {subscriptions.map((sub) => (
                     <TableRow key={sub.SubscriptionArn}>
-                      <TableCell className="font-mono text-xs">
+                      <TableCell>
                         <ArnLink arn={sub.TopicArn ?? ""} />
                       </TableCell>
                       <TableCell>
                         <Badge variant="default">{sub.Protocol}</Badge>
                       </TableCell>
-                      <TableCell className="max-w-xs truncate font-mono text-xs text-fg-muted">
+                      <TableCell className="max-w-xs truncate text-fg-muted">
                         <ArnLink arn={sub.SubscriptionArn ?? ""} className="text-fg-muted" />
                       </TableCell>
                       <TableCell>

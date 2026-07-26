@@ -15,6 +15,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableCellProse,
   TableHead,
   TableHeader,
   TableRow,
@@ -88,8 +89,8 @@ export function ApplicationList() {
                   <TableCell>
                     <ResourceName icon={Boxes} name={app.name} />
                   </TableCell>
-                  <TableCell className="text-fg-muted">{app.description ?? "—"}</TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">{app.id}</TableCell>
+                  <TableCellProse>{app.description ?? "—"}</TableCellProse>
+                  <TableCell className="text-fg-muted">{app.id}</TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <RowActions>
                       <RowAction

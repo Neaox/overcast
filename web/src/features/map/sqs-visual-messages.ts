@@ -183,10 +183,7 @@ function pruneGhostPhaseSeed(
   return nextGhostPhaseSeed
 }
 
-function ghostVisualPhase(
-  seed: SqsGhostPhaseSeedEntry,
-  nowMs: number,
-): SqsMessagePhase | "done" {
+function ghostVisualPhase(seed: SqsGhostPhaseSeedEntry, nowMs: number): SqsMessagePhase | "done" {
   const elapsedSinceDelete = nowMs - seed.deletedAt
   const visibleLeft =
     seed.prevPhase === "visible"

@@ -3,6 +3,7 @@ import { createPortal } from "react-dom"
 import { Clock, ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -257,9 +258,7 @@ function DropdownPanel({
         ) : (
           <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-1">
-              <label className="font-mono text-xs font-medium text-fg-muted">
-                Start date and time
-              </label>
+              <label className={cn(fieldLabel, "text-fg-muted")}>Start date and time</label>
               <Input
                 type="datetime-local"
                 className="h-8 text-sm"
@@ -268,9 +267,7 @@ function DropdownPanel({
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="font-mono text-xs font-medium text-fg-muted">
-                End date and time
-              </label>
+              <label className={cn(fieldLabel, "text-fg-muted")}>End date and time</label>
               <Input
                 type="datetime-local"
                 className="h-8 text-sm"

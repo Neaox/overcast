@@ -65,7 +65,11 @@ export const debugState = {
    * eagerly — the whole point of the paginated contract is that a caller
    * only fetches as many pages as it actually renders.
    */
-  namespacePage: (namespace: string, after?: string, limit?: number): Promise<DebugNamespacePage> => {
+  namespacePage: (
+    namespace: string,
+    after?: string,
+    limit?: number,
+  ): Promise<DebugNamespacePage> => {
     const params = new URLSearchParams()
     if (after) params.set("after", after)
     if (limit) params.set("limit", String(limit))

@@ -8,6 +8,7 @@ import { BookOpen, ExternalLink } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/primitives"
+import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 // ─── Service name → UI route map ─────────────────────────────────────────────
@@ -223,7 +224,7 @@ export function ServiceDocsModal({ service, label, open, onClose }: ServiceDocsM
                     if (className === "markdown-alert-title") {
                       return (
                         <p
-                          className="mb-1.5 flex items-center gap-1.5 font-mono text-xs font-semibold tracking-wide uppercase"
+                          className={cn(sectionLabel, "mb-1.5 flex items-center gap-1.5")}
                           style={{ color: "var(--alert-title-color)" }}
                           {...props}
                         >

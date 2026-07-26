@@ -27,8 +27,6 @@ export const elasticache = {
   },
 
   deleteCluster: async (id: string) => {
-    await awsClients
-      .elasticache()
-      .send(new DeleteCacheClusterCommand({ CacheClusterId: id }))
+    await awsClients.elasticache().send(new DeleteCacheClusterCommand({ CacheClusterId: id }))
   },
 }

@@ -76,7 +76,7 @@ export function AppSyncPage() {
         }
       />
       <div className="relative">
-        <Search className="text-muted-foreground absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2" />
+        <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
         <Input
           placeholder="Filter APIs…"
           className="pl-8"
@@ -123,10 +123,8 @@ export function AppSyncPage() {
                   navigate({ to: "/appsync/$apiId", params: { apiId: api.apiId ?? "" } })
                 }
               >
-                <TableCell className="font-mono text-sm">{api.name}</TableCell>
-                <TableCell className="text-muted-foreground font-mono text-xs">
-                  {api.apiId}
-                </TableCell>
+                <TableCell>{api.name}</TableCell>
+                <TableCell className="text-fg-muted">{api.apiId}</TableCell>
                 <TableCell>
                   <Badge variant="default">{api.authenticationType}</Badge>
                 </TableCell>

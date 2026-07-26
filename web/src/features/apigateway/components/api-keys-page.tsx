@@ -28,6 +28,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { PageHeader, QueryListState, Spinner } from "@/components/ui/primitives"
 import { useToast } from "@/components/ui/toast"
 import { formatDate } from "@/lib/format"
+import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import { ApiKeyValue } from "@/features/apigateway/components/api-key-value"
 import type { ApiKey } from "@/features/apigateway/data"
@@ -116,7 +117,7 @@ export function ApiKeysPage() {
             {apiKeys.map((key) => (
               <TableRow key={key.id}>
                 <TableCell className="font-medium">{key.name}</TableCell>
-                <TableCell className="font-mono text-xs text-fg-muted">{key.id}</TableCell>
+                <TableCell className="text-fg-muted">{key.id}</TableCell>
                 <TableCell>
                   <ApiKeyValue value={key.value} />
                 </TableCell>
@@ -125,7 +126,7 @@ export function ApiKeysPage() {
                     {key.enabled ? "Enabled" : "Disabled"}
                   </Badge>
                 </TableCell>
-                <TableCell className="text-sm text-fg-muted">
+                <TableCell className="text-fg-muted">
                   {formatDate(new Date(key.createdDate))}
                 </TableCell>
                 <TableCell className="text-right">
@@ -181,7 +182,7 @@ export function ApiKeysPage() {
             className="flex flex-col gap-4"
           >
             <div>
-              <label className="mb-1 block font-mono text-sm font-medium" htmlFor="key-name">
+              <label className={cn(fieldLabel, "mb-1 block")} htmlFor="key-name">
                 Name <span className="text-danger">*</span>
               </label>
               <input
@@ -202,7 +203,7 @@ export function ApiKeysPage() {
                 checked={newKeyEnabled}
                 onChange={(e) => setNewKeyEnabled(e.target.checked)}
               />
-              <label className="font-mono text-sm font-medium" htmlFor="key-enabled">
+              <label className={fieldLabel} htmlFor="key-enabled">
                 Enabled
               </label>
             </div>

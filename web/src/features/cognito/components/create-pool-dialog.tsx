@@ -24,6 +24,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Spinner } from "@/components/ui/primitives"
+import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -186,7 +187,7 @@ export function CreatePoolDialog({ open, onOpenChange }: Props) {
           <div className="flex flex-col gap-3 rounded-lg border border-border p-3">
             <p className="font-mono text-sm font-medium text-fg">Password policy</p>
             <div className="flex items-center gap-3">
-              <label htmlFor="pool-min-length" className="shrink-0 font-mono text-sm text-fg-muted">
+              <label htmlFor="pool-min-length" className={cn(fieldLabel, "shrink-0 text-fg-muted")}>
                 Minimum length
               </label>
               <Input
@@ -205,7 +206,7 @@ export function CreatePoolDialog({ open, onOpenChange }: Props) {
               {complexityOptions.map(({ label, checked, set }) => (
                 <label
                   key={label}
-                  className="flex cursor-pointer items-center gap-2 font-mono text-sm text-fg-muted"
+                  className="flex cursor-pointer items-center gap-2 text-xs text-fg-muted"
                 >
                   <Switch checked={checked} onCheckedChange={set} />
                   {label}

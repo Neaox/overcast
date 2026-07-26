@@ -89,6 +89,7 @@ import { ApplicationOwnershipBanner } from "@/components/application-ownership-b
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
 import { useToast } from "@/components/ui/toast"
 import { formatDate } from "@/lib/format"
+import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import { ArnText } from "@/components/ui/arn-link"
 import type { CognitoClient } from "@/services/api/cognito"
@@ -402,7 +403,7 @@ function PasswordPolicyCard({ pool, poolId }: { pool: PoolSummary; poolId: strin
             }}
           >
             <div className="flex items-center gap-3">
-              <label className="w-48 shrink-0 font-mono text-sm text-fg-muted">
+              <label className={cn(fieldLabel, "w-48 shrink-0 text-fg-muted")}>
                 Minimum length
               </label>
               <Input
@@ -415,18 +416,18 @@ function PasswordPolicyCard({ pool, poolId }: { pool: PoolSummary; poolId: strin
               />
             </div>
             {requirementRows.map(({ key, label }) => (
-              <label key={key} className="flex cursor-pointer items-center gap-3 font-mono">
+              <label key={key} className="flex cursor-pointer items-center gap-3 text-xs">
                 <input
                   type="checkbox"
                   checked={draft[key] as boolean}
                   onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.checked }))}
-                  className="accent-primary h-4 w-4 rounded"
+                  className="h-4 w-4 rounded accent-accent"
                 />
                 <span className="text-sm">{label}</span>
               </label>
             ))}
             <div className="flex items-center gap-3">
-              <label className="w-48 shrink-0 font-mono text-sm text-fg-muted">
+              <label className={cn(fieldLabel, "w-48 shrink-0 text-fg-muted")}>
                 Temp password validity (days)
               </label>
               <Input
@@ -610,7 +611,7 @@ function ManagedLoginTestPanel({ poolId, onClose }: { poolId: string; onClose: (
               ] as const
             ).map(({ key, label, placeholder }) => (
               <div key={key} className="flex flex-col gap-1">
-                <label className="font-mono text-xs font-medium text-fg-muted">{label}</label>
+                <label className={cn(fieldLabel, "text-fg-muted")}>{label}</label>
                 <div className="flex items-center gap-2">
                   {(key === "BackgroundColor" || key === "PrimaryColor") && (
                     <input
@@ -631,7 +632,7 @@ function ManagedLoginTestPanel({ poolId, onClose }: { poolId: string; onClose: (
             ))}
 
             <div className="flex flex-col gap-1">
-              <label className="font-mono text-xs font-medium text-fg-muted">Custom CSS</label>
+              <label className={cn(fieldLabel, "text-fg-muted")}>Custom CSS</label>
               <textarea
                 value={draft.CustomCSS}
                 onChange={(e) => setDraft((d) => ({ ...d, CustomCSS: e.target.value }))}
@@ -738,14 +739,14 @@ function SelfRegistrationCard({ pool, poolId }: { pool: PoolSummary; poolId: str
               updateMut.mutate({ poolId, config: draft })
             }}
           >
-            <label className="flex cursor-pointer items-center gap-3 font-mono">
+            <label className="flex cursor-pointer items-center gap-3 text-xs">
               <input
                 type="checkbox"
                 checked={!draft.allowAdminCreateUserOnly}
                 onChange={(e) =>
                   setDraft((d) => ({ ...d, allowAdminCreateUserOnly: !e.target.checked }))
                 }
-                className="accent-primary h-4 w-4 rounded"
+                className="h-4 w-4 rounded accent-accent"
               />
               <div className="flex flex-col">
                 <span className="text-sm">Allow users to sign themselves up</span>
@@ -755,7 +756,7 @@ function SelfRegistrationCard({ pool, poolId }: { pool: PoolSummary; poolId: str
               </div>
             </label>
             <div className="flex items-center gap-3">
-              <label className="w-64 shrink-0 font-mono text-sm text-fg-muted">
+              <label className={cn(fieldLabel, "w-64 shrink-0 text-fg-muted")}>
                 Unused account expiry (days)
               </label>
               <Input
@@ -877,7 +878,7 @@ function EmailConfigCard({ pool, poolId }: { pool: PoolSummary; poolId: string }
           >
             {emailFields.map(({ key, label, placeholder }) => (
               <div key={key} className="flex items-center gap-3">
-                <label className="w-44 shrink-0 font-mono text-sm text-fg-muted">{label}</label>
+                <label className={cn(fieldLabel, "w-44 shrink-0 text-fg-muted")}>{label}</label>
                 <Input
                   value={draft[key]}
                   onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
@@ -971,7 +972,7 @@ function VerificationMessagesCard({ pool, poolId }: { pool: PoolSummary; poolId:
             }}
           >
             <div className="flex items-center gap-3">
-              <label className="w-44 shrink-0 font-mono text-sm text-fg-muted">
+              <label className={cn(fieldLabel, "w-44 shrink-0 text-fg-muted")}>
                 Verification type
               </label>
               <select
@@ -984,7 +985,7 @@ function VerificationMessagesCard({ pool, poolId }: { pool: PoolSummary; poolId:
               </select>
             </div>
             <div className="flex items-center gap-3">
-              <label className="w-44 shrink-0 font-mono text-sm text-fg-muted">Email subject</label>
+              <label className={cn(fieldLabel, "w-44 shrink-0 text-fg-muted")}>Email subject</label>
               <Input
                 value={draft.emailSubject}
                 onChange={(e) => setDraft((d) => ({ ...d, emailSubject: e.target.value }))}
@@ -993,7 +994,7 @@ function VerificationMessagesCard({ pool, poolId }: { pool: PoolSummary; poolId:
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="font-mono text-sm text-fg-muted">Email message</label>
+              <label className={cn(fieldLabel, "text-fg-muted")}>Email message</label>
               <textarea
                 value={draft.emailMessage}
                 onChange={(e) => setDraft((d) => ({ ...d, emailMessage: e.target.value }))}
@@ -1006,7 +1007,7 @@ function VerificationMessagesCard({ pool, poolId }: { pool: PoolSummary; poolId:
               </p>
             </div>
             <div className="flex flex-col gap-1">
-              <label className="font-mono text-sm text-fg-muted">SMS message</label>
+              <label className={cn(fieldLabel, "text-fg-muted")}>SMS message</label>
               <textarea
                 value={draft.smsMessage}
                 onChange={(e) => setDraft((d) => ({ ...d, smsMessage: e.target.value }))}
@@ -1115,7 +1116,7 @@ function UsersTab({
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
-          <Search className="text-muted-foreground absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2" />
+          <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
           <Input
             placeholder="Filter by username or email…"
             className="pl-8"
@@ -1177,9 +1178,7 @@ function UsersTab({
                     {user.username}
                   </button>
                 </TableCell>
-                <TableCell className="text-sm text-fg-muted">
-                  {user.attributes["email"] ?? "—"}
-                </TableCell>
+                <TableCell className="text-fg-muted">{user.attributes["email"] ?? "—"}</TableCell>
                 <TableCell>
                   <UserStatusBadge status={user.userStatus} />
                 </TableCell>
@@ -1188,9 +1187,7 @@ function UsersTab({
                     {user.enabled ? "Enabled" : "Disabled"}
                   </Badge>
                 </TableCell>
-                <TableCell className="text-sm text-fg-muted">
-                  {formatDate(user.userCreateDate)}
-                </TableCell>
+                <TableCell className="text-fg-muted">{formatDate(user.userCreateDate)}</TableCell>
                 <TableCell>
                   <div className="flex items-center justify-end gap-1">
                     <Button
@@ -1451,7 +1448,7 @@ function GroupRow({
               <TableBody>
                 {members.map((member) => (
                   <TableRow key={member.username}>
-                    <TableCell className="font-mono text-sm">{member.username}</TableCell>
+                    <TableCell>{member.username}</TableCell>
                     <TableCell>
                       <UserStatusBadge status={member.userStatus} />
                     </TableCell>
@@ -1888,7 +1885,7 @@ function ClientDetailPanel({ poolId, clientId }: { poolId: string; clientId: str
           <div className="flex flex-col gap-4">
             {/* Callback URLs */}
             <div className="flex flex-col gap-1.5">
-              <label className="font-mono text-xs font-medium text-fg-muted">Callback URLs</label>
+              <label className={cn(fieldLabel, "text-fg-muted")}>Callback URLs</label>
               <div className="flex flex-col gap-1">
                 {form.callbackUrls.map((url) => (
                   <div key={url} className="flex items-center gap-1.5">
@@ -1944,7 +1941,7 @@ function ClientDetailPanel({ poolId, clientId }: { poolId: string; clientId: str
 
             {/* Logout URLs */}
             <div className="flex flex-col gap-1.5">
-              <label className="font-mono text-xs font-medium text-fg-muted">Sign-out URLs</label>
+              <label className={cn(fieldLabel, "text-fg-muted")}>Sign-out URLs</label>
               <div className="flex flex-col gap-1">
                 {form.logoutUrls.map((url) => (
                   <div key={url} className="flex items-center gap-1.5">
@@ -2000,15 +1997,10 @@ function ClientDetailPanel({ poolId, clientId }: { poolId: string; clientId: str
 
             {/* OAuth flows */}
             <div className="flex flex-col gap-1.5">
-              <label className="font-mono text-xs font-medium text-fg-muted">
-                Allowed OAuth flows
-              </label>
+              <label className={cn(fieldLabel, "text-fg-muted")}>Allowed OAuth flows</label>
               <div className="flex flex-wrap gap-3">
                 {OAUTH_FLOWS.map((flow) => (
-                  <label
-                    key={flow}
-                    className="flex cursor-pointer items-center gap-1.5 font-mono text-xs"
-                  >
+                  <label key={flow} className="flex cursor-pointer items-center gap-1.5 text-xs">
                     <input
                       type="checkbox"
                       checked={form.allowedOAuthFlows.includes(flow)}
@@ -2025,7 +2017,7 @@ function ClientDetailPanel({ poolId, clientId }: { poolId: string; clientId: str
                   </label>
                 ))}
               </div>
-              <label className="flex cursor-pointer items-center gap-1.5 font-mono text-xs">
+              <label className="flex cursor-pointer items-center gap-1.5 text-xs">
                 <input
                   type="checkbox"
                   checked={form.allowedOAuthFlowsUserPoolClient}
@@ -2039,15 +2031,10 @@ function ClientDetailPanel({ poolId, clientId }: { poolId: string; clientId: str
 
             {/* OAuth scopes */}
             <div className="flex flex-col gap-1.5">
-              <label className="font-mono text-xs font-medium text-fg-muted">
-                Allowed OAuth scopes
-              </label>
+              <label className={cn(fieldLabel, "text-fg-muted")}>Allowed OAuth scopes</label>
               <div className="flex flex-wrap gap-3">
                 {OAUTH_SCOPES.map((scope) => (
-                  <label
-                    key={scope}
-                    className="flex cursor-pointer items-center gap-1.5 font-mono text-xs"
-                  >
+                  <label key={scope} className="flex cursor-pointer items-center gap-1.5 text-xs">
                     <input
                       type="checkbox"
                       checked={form.allowedOAuthScopes.includes(scope)}
@@ -2132,7 +2119,7 @@ function TokenValidityField({
 }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <label className="font-mono text-xs font-medium text-fg-muted">{label}</label>
+      <label className={cn(fieldLabel, "text-fg-muted")}>{label}</label>
       <div className="flex gap-2">
         <Input
           type="number"
@@ -2142,7 +2129,7 @@ function TokenValidityField({
           onChange={(e) => onValueChange(Math.max(1, Number(e.target.value)))}
         />
         <select
-          className="border-input rounded-md border bg-bg-elevated px-2.5 py-1.5 text-sm text-fg"
+          className="rounded-md border border-border bg-bg-elevated px-2.5 py-1.5 text-sm text-fg"
           value={unit}
           onChange={(e) => onUnitChange(e.target.value)}
         >
@@ -2399,9 +2386,7 @@ function UserDetailDialog({
             {/* ── Attributes table ────────────────────────────── */}
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
-                <span className="font-mono text-xs font-medium tracking-wider text-fg-muted uppercase">
-                  Attributes
-                </span>
+                <span className={cn(sectionLabel, "text-fg-muted")}>Attributes</span>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -2425,7 +2410,7 @@ function UserDetailDialog({
                 <TableBody>
                   {sortedAttrs.map(([name, value]) => (
                     <TableRow key={name}>
-                      <TableCell className="font-mono text-xs">{name}</TableCell>
+                      <TableCell>{name}</TableCell>
                       <TableCell>
                         {editingAttr?.name === name ? (
                           <form
@@ -2676,7 +2661,7 @@ function CreateUserDialog({
         >
           {usesPlainUsername && (
             <div className="flex flex-col gap-1.5">
-              <label className="font-mono text-sm font-medium text-fg" htmlFor="new-username">
+              <label className={cn(fieldLabel, "text-fg")} htmlFor="new-username">
                 Username
               </label>
               <Input
@@ -2690,7 +2675,7 @@ function CreateUserDialog({
           )}
           {usesEmail && (
             <div className="flex flex-col gap-1.5">
-              <label className="font-mono text-sm font-medium text-fg" htmlFor="new-email">
+              <label className={cn(fieldLabel, "text-fg")} htmlFor="new-email">
                 Email address{" "}
                 {usesPhone && (
                   <span className="font-normal text-fg-muted">(or use phone below)</span>
@@ -2714,7 +2699,7 @@ function CreateUserDialog({
           )}
           {usesPhone && (
             <div className="flex flex-col gap-1.5">
-              <label className="font-mono text-sm font-medium text-fg" htmlFor="new-phone">
+              <label className={cn(fieldLabel, "text-fg")} htmlFor="new-phone">
                 Phone number{" "}
                 {usesEmail && (
                   <span className="font-normal text-fg-muted">(or use email above)</span>
@@ -2739,7 +2724,7 @@ function CreateUserDialog({
           {/* Show optional email for plain-username pools that don't already have it */}
           {usesPlainUsername && (
             <div className="flex flex-col gap-1.5">
-              <label className="font-mono text-sm font-medium text-fg" htmlFor="new-email">
+              <label className={cn(fieldLabel, "text-fg")} htmlFor="new-email">
                 Email <span className="font-normal text-fg-muted">(recommended)</span>
               </label>
               <Input
@@ -2755,7 +2740,7 @@ function CreateUserDialog({
             </div>
           )}
           <div className="flex flex-col gap-1.5">
-            <label className="font-mono text-sm font-medium text-fg" htmlFor="new-temp-password">
+            <label className={cn(fieldLabel, "text-fg")} htmlFor="new-temp-password">
               Temporary password <span className="font-normal text-fg-muted">(optional)</span>
             </label>
             <div className="relative">
@@ -2777,7 +2762,7 @@ function CreateUserDialog({
               </button>
             </div>
           </div>
-          <label className="flex cursor-pointer items-center gap-2 font-mono text-sm">
+          <label className="flex cursor-pointer items-center gap-2 text-xs">
             <input
               type="checkbox"
               checked={suppressEmail}
@@ -2848,7 +2833,7 @@ function SetPasswordDialog({
           className="flex flex-col gap-4"
         >
           <div className="flex flex-col gap-1.5">
-            <label className="font-mono text-sm font-medium text-fg" htmlFor="new-password">
+            <label className={cn(fieldLabel, "text-fg")} htmlFor="new-password">
               New password
             </label>
             <div className="relative">
@@ -2871,7 +2856,7 @@ function SetPasswordDialog({
               </button>
             </div>
           </div>
-          <label className="flex cursor-pointer items-center gap-2 font-mono text-sm">
+          <label className="flex cursor-pointer items-center gap-2 text-xs">
             <input
               type="checkbox"
               checked={permanent}
@@ -2930,7 +2915,7 @@ function CreateGroupDialog({
           className="flex flex-col gap-4"
         >
           <div className="flex flex-col gap-1.5">
-            <label className="font-mono text-sm font-medium text-fg" htmlFor="group-name">
+            <label className={cn(fieldLabel, "text-fg")} htmlFor="group-name">
               Group name
             </label>
             <Input
@@ -2942,7 +2927,7 @@ function CreateGroupDialog({
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="font-mono text-sm font-medium text-fg" htmlFor="group-desc">
+            <label className={cn(fieldLabel, "text-fg")} htmlFor="group-desc">
               Description <span className="font-normal text-fg-muted">(optional)</span>
             </label>
             <Input
@@ -3001,7 +2986,7 @@ function CreateClientDialog({
           className="flex flex-col gap-4"
         >
           <div className="flex flex-col gap-1.5">
-            <label className="font-mono text-sm font-medium text-fg" htmlFor="client-name">
+            <label className={cn(fieldLabel, "text-fg")} htmlFor="client-name">
               Client name
             </label>
             <Input
@@ -3012,7 +2997,7 @@ function CreateClientDialog({
               autoFocus
             />
           </div>
-          <label className="flex cursor-pointer items-center gap-2 font-mono text-sm">
+          <label className="flex cursor-pointer items-center gap-2 text-xs">
             <input
               type="checkbox"
               checked={generateSecret}

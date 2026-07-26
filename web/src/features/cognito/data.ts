@@ -380,12 +380,7 @@ export function updatePoolEmailConfigMutationOptions() {
 export function updatePoolVerificationMessagesMutationOptions() {
   return mutationOptions({
     mutationKey: [...cognitoKeys.all(), "updatePoolVerificationMessages"] as const,
-    mutationFn: ({
-      poolId,
-      template,
-    }: {
-      poolId: string
-      template: VerificationMessageTemplate
-    }) => cognito.updatePoolVerificationMessages(poolId, template),
+    mutationFn: ({ poolId, template }: { poolId: string; template: VerificationMessageTemplate }) =>
+      cognito.updatePoolVerificationMessages(poolId, template),
   })
 }

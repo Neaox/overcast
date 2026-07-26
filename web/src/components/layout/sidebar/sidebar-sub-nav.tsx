@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router"
+import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import type { SubNavChild, SubNavItem } from "@/lib/nav-services"
 import { flatChildren, isGroup } from "./nav-children"
@@ -36,12 +37,7 @@ export function SidebarSubNav({ items, pathname }: SidebarSubNavProps) {
       {items.map((child, index) =>
         isGroup(child) ? (
           <div key={child.group} className="flex flex-col gap-px">
-            <p
-              className={cn(
-                "px-2.5 pb-0.5 font-mono text-[9px] tracking-[0.16em] text-fg-subtle uppercase",
-                index > 0 && "mt-2",
-              )}
-            >
+            <p className={cn(sectionLabel, "px-2.5 pb-0.5 text-fg-subtle", index > 0 && "mt-2")}>
               {child.group}
             </p>
             {child.items.map(renderItem)}

@@ -104,7 +104,7 @@ export function MessageDetail({ message, onDelete, deleting }: MessageDetailProp
             {KindIcon && <KindIcon className="h-4 w-4 shrink-0 text-fg-muted" />}
             {kindTitle}
             {message.source && (
-              <span className="bg-surface-muted shrink-0 rounded px-1.5 py-0.5 font-mono text-xs font-normal text-fg-subtle">
+              <span className="shrink-0 rounded bg-bg-muted px-1.5 py-0.5 font-mono text-xs font-normal text-fg-subtle">
                 {message.source}
               </span>
             )}

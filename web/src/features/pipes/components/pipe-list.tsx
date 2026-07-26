@@ -47,6 +47,7 @@ import { Badge } from "@/components/ui/badge"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { useToast } from "@/components/ui/toast"
 import type { DynamoTable, SQSQueue } from "@/types"
+import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 
@@ -247,7 +248,7 @@ export function CreatePipeDialog({
 
           {/* Source */}
           <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg-subtle p-4">
-            <p className="text-xs font-semibold tracking-wider text-fg-muted uppercase">Source</p>
+            <p className={cn(fieldLabel, "text-fg-muted")}>Source</p>
 
             <FormField label="Service">
               <ServiceTypeSelector
@@ -348,7 +349,7 @@ export function CreatePipeDialog({
 
           {/* Target */}
           <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg-subtle p-4">
-            <p className="text-xs font-semibold tracking-wider text-fg-muted uppercase">Target</p>
+            <p className={cn(fieldLabel, "text-fg-muted")}>Target</p>
 
             <FormField label="Service">
               <ServiceTypeSelector
@@ -582,7 +583,7 @@ export function PipeList() {
                   <TableCell>
                     <Badge variant={stateVariant(p.CurrentState ?? "")}>{p.CurrentState}</Badge>
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">
+                  <TableCell className="text-fg-muted">
                     {p.CreationTime?.toLocaleString()}
                   </TableCell>
                   <TableCell>

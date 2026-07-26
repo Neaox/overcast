@@ -1,4 +1,6 @@
 import { useState } from "react"
+import { fieldLabel } from "@/lib/typography"
+import { cn } from "@/lib/utils"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import {
   ec2InstanceDetailQueryOptions,
@@ -230,9 +232,7 @@ function EditInstanceTypeDialog({
         <DialogBody className="space-y-4">
           <p className="text-sm text-fg-muted">Instance must be stopped to change its type.</p>
           <div>
-            <label className="mb-1 block font-mono text-sm font-medium text-fg">
-              Instance Type
-            </label>
+            <label className={cn(fieldLabel, "mb-1 block text-fg")}>Instance Type</label>
             <Input
               placeholder="e.g. t3.medium"
               value={instanceType}
@@ -360,9 +360,9 @@ function RulesTable({
 
           return (
             <TableRow key={idx}>
-              <TableCell className="text-xs">{protocol}</TableCell>
-              <TableCell className="font-mono text-xs">{portRange}</TableCell>
-              <TableCell className="font-mono text-xs">{source}</TableCell>
+              <TableCell>{protocol}</TableCell>
+              <TableCell>{portRange}</TableCell>
+              <TableCell>{source}</TableCell>
             </TableRow>
           )
         })}
@@ -476,8 +476,8 @@ function TagsPanel({ tags }: { tags?: Array<{ key: string; value: string }> }) {
       <TableBody>
         {tags.map((tag) => (
           <TableRow key={tag.key}>
-            <TableCell className="font-mono text-sm">{tag.key}</TableCell>
-            <TableCell className="text-sm">{tag.value}</TableCell>
+            <TableCell>{tag.key}</TableCell>
+            <TableCell>{tag.value}</TableCell>
           </TableRow>
         ))}
       </TableBody>

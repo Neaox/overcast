@@ -146,10 +146,10 @@ export function StackList() {
                         </Badge>
                       </span>
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-fg-muted">
+                    <TableCell className="text-fg-muted">
                       {stack.CreationTime ? stack.CreationTime.toLocaleString() : "—"}
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-fg-muted">
+                    <TableCell className="text-fg-muted">
                       {stack.LastUpdatedTime ? stack.LastUpdatedTime.toLocaleString() : "—"}
                     </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>

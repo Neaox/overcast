@@ -127,7 +127,7 @@ export function CognitoPage() {
                   <TableCell>
                     <ResourceName icon={UserCheck} name={pool.name} />
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">{pool.id}</TableCell>
+                  <TableCell className="text-fg-muted">{pool.id}</TableCell>
                   <TableCell className="text-fg-muted">{formatDate(pool.creationDate)}</TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <RowActions>

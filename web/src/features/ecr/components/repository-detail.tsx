@@ -136,13 +136,9 @@ export function RepositoryDetail({ repositoryName }: { repositoryName: string })
             <TableBody>
               {data.images.map((image) => (
                 <TableRow key={`${image.digest}:${image.tags.join(",")}`}>
-                  <TableCell className="font-mono text-xs">
-                    {image.tags.join(", ") || "—"}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">{image.digest}</TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">
-                    {image.mediaType ?? "—"}
-                  </TableCell>
+                  <TableCell>{image.tags.join(", ") || "—"}</TableCell>
+                  <TableCell className="text-fg-muted">{image.digest}</TableCell>
+                  <TableCell className="text-fg-muted">{image.mediaType ?? "—"}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

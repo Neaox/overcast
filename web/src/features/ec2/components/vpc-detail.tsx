@@ -1,4 +1,6 @@
 import { useState } from "react"
+import { fieldLabel } from "@/lib/typography"
+import { cn } from "@/lib/utils"
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import {
@@ -28,6 +30,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableCellProse,
   TableHead,
   TableHeader,
   TableRow,
@@ -209,9 +212,9 @@ function SubnetsPanel({ vpcId }: { vpcId: string }) {
       <TableBody>
         {subnets.map((s) => (
           <TableRow key={s.subnetId}>
-            <TableCell className="font-mono text-xs">{s.subnetId}</TableCell>
-            <TableCell className="font-mono text-xs">{s.cidrBlock}</TableCell>
-            <TableCell className="text-sm">{s.availabilityZone}</TableCell>
+            <TableCell>{s.subnetId}</TableCell>
+            <TableCell>{s.cidrBlock}</TableCell>
+            <TableCell>{s.availabilityZone}</TableCell>
           </TableRow>
         ))}
       </TableBody>
@@ -256,9 +259,9 @@ function RouteTablesPanel({ vpcId }: { vpcId: string }) {
             <TableBody>
               {rt.routes.map((route, idx) => (
                 <TableRow key={idx}>
-                  <TableCell className="font-mono text-xs">{route.destinationCidrBlock}</TableCell>
-                  <TableCell className="font-mono text-xs">{route.gatewayId || "local"}</TableCell>
-                  <TableCell className="text-xs text-fg-muted">{route.origin}</TableCell>
+                  <TableCell>{route.destinationCidrBlock}</TableCell>
+                  <TableCell>{route.gatewayId || "local"}</TableCell>
+                  <TableCell className="text-fg-muted">{route.origin}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -417,7 +420,7 @@ function InternetGatewaysPanel({ vpcId }: { vpcId: string }) {
               const att = igw.attachments.find((a) => a.vpcId === vpcId)
               return (
                 <TableRow key={igw.internetGatewayId}>
-                  <TableCell className="font-mono text-xs">{igw.internetGatewayId}</TableCell>
+                  <TableCell>{igw.internetGatewayId}</TableCell>
                   <TableCell>
                     <Badge variant={att?.state === "available" ? "success" : "default"}>
                       {att?.state ?? "unknown"}
@@ -563,12 +566,12 @@ function PeeringPanel({ vpcId }: { vpcId: string }) {
           <TableBody>
             {peerings.map((pcx) => (
               <TableRow key={pcx.vpcPeeringConnectionId}>
-                <TableCell className="font-mono text-xs">{pcx.vpcPeeringConnectionId}</TableCell>
-                <TableCell className="font-mono text-xs">
+                <TableCell>{pcx.vpcPeeringConnectionId}</TableCell>
+                <TableCell>
                   <VpcLink vpcId={pcx.requesterVpcInfo.vpcId} currentVpcId={vpcId} />
                   <span className="ml-1 text-fg-muted">({pcx.requesterVpcInfo.cidrBlock})</span>
                 </TableCell>
-                <TableCell className="font-mono text-xs">
+                <TableCell>
                   <VpcLink vpcId={pcx.accepterVpcInfo.vpcId} currentVpcId={vpcId} />
                   <span className="ml-1 text-fg-muted">({pcx.accepterVpcInfo.cidrBlock})</span>
                 </TableCell>
@@ -660,9 +663,9 @@ function EndpointsPanel({ vpcId }: { vpcId: string }) {
       <TableBody>
         {endpoints.map((ep) => (
           <TableRow key={ep.vpcEndpointId}>
-            <TableCell className="font-mono text-xs">{ep.vpcEndpointId}</TableCell>
-            <TableCell className="font-mono text-xs text-fg-muted">{ep.serviceName}</TableCell>
-            <TableCell className="text-sm">{ep.vpcEndpointType}</TableCell>
+            <TableCell>{ep.vpcEndpointId}</TableCell>
+            <TableCell className="text-fg-muted">{ep.serviceName}</TableCell>
+            <TableCell>{ep.vpcEndpointType}</TableCell>
             <TableCell>
               <Badge variant={ep.state === "available" ? "success" : "default"}>{ep.state}</Badge>
             </TableCell>
@@ -705,11 +708,9 @@ function SecurityGroupsPanel({ vpcId }: { vpcId: string }) {
       <TableBody>
         {groups.map((sg) => (
           <TableRow key={sg.groupId}>
-            <TableCell className="font-mono text-xs">{sg.groupId}</TableCell>
+            <TableCell>{sg.groupId}</TableCell>
             <TableCell className="font-medium">{sg.groupName}</TableCell>
-            <TableCell className="max-w-xs truncate text-sm text-fg-muted">
-              {sg.description}
-            </TableCell>
+            <TableCellProse className="max-w-xs truncate">{sg.description}</TableCellProse>
             <TableCell>
               <Badge variant="default">{sg.ipPermissions.length}</Badge>
             </TableCell>
@@ -758,13 +759,11 @@ function CreatePeeringDialog({
         </DialogHeader>
         <DialogBody className="space-y-4">
           <div>
-            <label className="mb-1 block font-mono text-sm font-medium text-fg">
-              Requester VPC
-            </label>
+            <label className={cn(fieldLabel, "mb-1 block text-fg")}>Requester VPC</label>
             <Input value={vpcId} disabled />
           </div>
           <div>
-            <label className="mb-1 block font-mono text-sm font-medium text-fg">Peer VPC</label>
+            <label className={cn(fieldLabel, "mb-1 block text-fg")}>Peer VPC</label>
             {peerOptions.length > 0 ? (
               <Combobox<{ value: string; label: string }>
                 value={peerVpcId}
@@ -853,8 +852,8 @@ function TagsPanel({ tags }: { tags?: Array<{ key: string; value: string }> }) {
       <TableBody>
         {tags.map((tag, i) => (
           <TableRow key={i}>
-            <TableCell className="font-mono text-xs">{tag.key}</TableCell>
-            <TableCell className="font-mono text-xs text-fg-muted">{tag.value}</TableCell>
+            <TableCell>{tag.key}</TableCell>
+            <TableCell className="text-fg-muted">{tag.value}</TableCell>
           </TableRow>
         ))}
       </TableBody>

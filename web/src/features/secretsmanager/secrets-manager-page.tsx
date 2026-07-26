@@ -18,6 +18,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableCellProse,
   TableHead,
   TableHeader,
   TableRow,
@@ -149,11 +150,9 @@ export function SecretsManagerPage() {
                   })
                 }
               >
-                <TableCell className="font-mono font-medium">{sec.Name}</TableCell>
-                <TableCell className="text-sm text-fg-muted">{sec.Description || "—"}</TableCell>
-                <TableCell className="text-sm text-fg-muted">
-                  {formatDate(sec.LastChangedDate)}
-                </TableCell>
+                <TableCell className="font-medium">{sec.Name}</TableCell>
+                <TableCellProse>{sec.Description || "—"}</TableCellProse>
+                <TableCell className="text-fg-muted">{formatDate(sec.LastChangedDate)}</TableCell>
                 <TableCell>
                   <Button
                     variant="ghost"

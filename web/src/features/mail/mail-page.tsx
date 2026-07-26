@@ -156,7 +156,7 @@ export function InboxPage() {
       />
 
       {/* Two-panel layout */}
-      <div className="bg-surface flex h-[calc(100vh-10rem)] overflow-hidden rounded-lg border border-border">
+      <div className="flex h-[calc(100vh-10rem)] overflow-hidden rounded-lg border border-border bg-bg-elevated">
         {/* Left: search + filter + message list */}
         <div className="flex w-80 shrink-0 flex-col border-r border-border">
           {/* Toolbar */}
@@ -169,7 +169,7 @@ export function InboxPage() {
                 placeholder="Search messages…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="bg-surface-muted w-full rounded-md border border-border py-1.5 pr-3 pl-8 text-sm text-fg placeholder:text-fg-subtle focus:border-accent focus:outline-none"
+                className="w-full rounded-md border border-border bg-bg-muted py-1.5 pr-3 pl-8 text-sm text-fg placeholder:text-fg-subtle focus:border-accent focus:outline-none"
               />
             </div>
 

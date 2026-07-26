@@ -21,6 +21,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableCellProse,
   TableHead,
   TableHeader,
   TableRow,
@@ -226,8 +227,8 @@ function VersionRow({
       <TableCell>
         <Badge variant="default">{v.Version}</Badge>
       </TableCell>
-      <TableCell className="font-mono text-xs text-fg-muted">{v.LayerVersionArn}</TableCell>
-      <TableCell>{v.Description || "—"}</TableCell>
+      <TableCell className="text-fg-muted">{v.LayerVersionArn}</TableCell>
+      <TableCellProse>{v.Description || "—"}</TableCellProse>
       <TableCell>
         {(v.CompatibleRuntimes?.length ?? 0) > 0 ? (
           <div className="flex flex-wrap gap-1">
@@ -259,7 +260,7 @@ function VersionRow({
           <span className="text-sm text-fg-muted">—</span>
         )}
       </TableCell>
-      <TableCell className="text-sm text-fg-muted">
+      <TableCell className="text-fg-muted">
         {v.CreatedDate ? new Date(v.CreatedDate).toLocaleString() : "—"}
       </TableCell>
       <TableCell>
@@ -292,7 +293,7 @@ function AttachedFunctionRow({ fn, layerName }: { fn: LambdaFunction; layerName:
       onClick={() => navigate({ to: "/lambda/$name", params: { name: fn.FunctionName ?? "" } })}
     >
       <TableCell className="font-medium">{fn.FunctionName}</TableCell>
-      <TableCell className="font-mono text-xs text-fg-muted">{matchingLayer?.Arn ?? "—"}</TableCell>
+      <TableCell className="text-fg-muted">{matchingLayer?.Arn ?? "—"}</TableCell>
     </TableRow>
   )
 }

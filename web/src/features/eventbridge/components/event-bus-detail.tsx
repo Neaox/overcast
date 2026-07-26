@@ -9,6 +9,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableCellProse,
   TableHead,
   TableHeader,
   TableRow,
@@ -95,7 +96,7 @@ export function EventBusDetail({ busName }: Props) {
         <h2 className="font-mono text-sm font-medium text-fg">Rules</h2>
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
-            <Search className="text-muted-foreground absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2" />
+            <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
             <Input
               placeholder="Filter rules…"
               className="pl-8"
@@ -128,13 +129,13 @@ export function EventBusDetail({ busName }: Props) {
             <TableBody>
               {filtered.map((rule) => (
                 <TableRow key={rule.Name}>
-                  <TableCell className="font-mono text-sm">{rule.Name}</TableCell>
+                  <TableCell>{rule.Name}</TableCell>
                   <TableCell>
                     <Badge variant={rule.State === "ENABLED" ? "default" : "outline"}>
                       {rule.State}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-sm text-fg-muted">{rule.Description || "—"}</TableCell>
+                  <TableCellProse>{rule.Description || "—"}</TableCellProse>
                   <TableCell>
                     <Button
                       variant="ghost"

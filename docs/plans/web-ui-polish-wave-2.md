@@ -60,25 +60,32 @@ These were settled during wave 1 — do not re-litigate them while implementing:
 
 ### Typography follow-ups
 
-The wave-1 sweep was walled off from files other agents held. Still outstanding:
+The correctness pass of 2026-07-27 landed the systemic half: `lib/typography.ts` now owns the two
+label specs (`fieldLabel` 9px/`.14em`, `sectionLabel` 10px/`.16em`) and every shared primitive reads
+from it; `TableCell` is mono by default with `TableCellProse` as the sans exception; `Badge`,
+`Button`, `Tabs`, `Input`/`Select`/`Textarea`, `Label`, `FormField`, `EmptyState` and `PageHeader`
+were brought to the canvas's sizes and weights. Still outstanding:
 
-- `components/ui/primitives.tsx` — `EmptyState`'s title should be mono; its description stays sans.
 - `components/layout/connection-dialog.tsx` — endpoint URL and region field labels, and the endpoint value itself.
-- `components/layout/global-search.tsx` — result `label`/`sublabel`, the two count/shortcut chips, and the "Services" group label.
-- `features/dashboard/**` — check `tier-badge.tsx`, `not-emulated-chips.tsx`, `dashboard-section.tsx` headings and `service-list-view.tsx`'s value cell.
-- List pages — identifier and numeric **value cells** (column headers and badges already inherit mono): `elasticache/cluster-list.tsx` (engine, version, node type, node count), `lambda/function-list.tsx` (runtime, memory), `cloudfront/distribution-list.tsx` (origin count), `dynamodb/table-list.tsx`, `ecr/repository-list.tsx`, `apigateway/api-list.tsx` (dates). Leave `comment`/`description` cells sans — they are prose. One raw `<label>` at `cloudfront/distribution-list.tsx:332` needs mono.
-- Maintain the two label specs: field and column labels 9px/`.14em`; section headings 10px/`.16em`. The wider tracking is what makes something read as a heading — do not let it leak into column headers. **Two known violations** use heading tracking at column-header size: `dashboard/components/not-emulated-chips.tsx:75` and `dashboard/components/service-list-view.tsx:55` are both `text-[9px] tracking-[0.16em]` and should be 10px.
-- **Extract a shared detail-field component.** `DetailRow`/`InfoRow` is hand-rolled 12 times — `cloudformation/stack-detail.tsx:576`, `cognito/cognito-pool-detail.tsx:2169`, `ec2/instance-detail.tsx:490`, `ec2/vpc-detail.tsx:806`, `ecs/task-detail.tsx:178`, `eventbridge/event-bus-detail.tsx:175`, `kms/kms-key-detail.tsx:181`, `rds/instance-detail.tsx:323`, `secretsmanager/components/secret-detail.tsx:274`, `ssm/ssm-parameter-detail.tsx:274`, `sts/sts-page.tsx:75`. They render a mono label over a **sans value**, so timestamps, counts and identifiers on every detail page are still sans (see `cloudwatch/logs/components/log-group-detail.tsx:202-213`). Fix it in one extracted component, not twelve edits — same lesson as the spinner rollout: the sweep reaches only what shares a component.
+- **Extract a shared detail-field component.** `DetailRow`/`InfoRow` is hand-rolled 12 times — `cloudformation/stack-detail.tsx:576`, `cognito/cognito-pool-detail.tsx:2169`, `ec2/instance-detail.tsx:490`, `ec2/vpc-detail.tsx:806`, `ecs/task-detail.tsx:178`, `eventbridge/event-bus-detail.tsx:175`, `kms/kms-key-detail.tsx:181`, `rds/instance-detail.tsx:323`, `secretsmanager/components/secret-detail.tsx:274`, `ssm/ssm-parameter-detail.tsx:274`, `sts/sts-page.tsx:75`. They render a mono label over a **sans value**, so timestamps, counts and identifiers on every detail page are still sans (see `cloudwatch/logs/components/log-group-detail.tsx:202-213`). Fix it in one extracted component, not twelve edits — same lesson as the spinner rollout: the sweep reaches only what shares a component. Have the label use `fieldLabel`.
 - **Extract a generic table wrapper carrying the app-wide defaults.** `ResourceListCard` in
   `components/ui/resource-list-page.tsx` already does this for *list pages* — card surface, header
   strip, column-header treatment — but tables elsewhere (detail-page sub-tables, dialogs, the debug
   and metrics views) bypass it and re-specify their own chrome, which is how they drift. A wrapper
   that owns the surface, header treatment, body typography, row hover and empty/loading state would
-  make those defaults inheritable everywhere rather than only on list pages. Note the typography
-  pass is landing part of this (mono body cells on `TableCell` itself), so scope this to what
-  remains once that lands, and prefer extending `ResourceListCard` over introducing a second
-  wrapper that competes with it.
-- **Consider flipping `TableCell` to mono by default** as a deliberate change, not a side effect. It is the DRYest fix, but there are 463 `TableCell` sites across 57 files and ~20 prose cells that would silently flip; it needs its own pass with those exceptions identified first.
+  make those defaults inheritable everywhere rather than only on list pages. Body typography is now
+  inheritable via `TableCell`, so scope this to surface, hover and empty/loading state, and prefer
+  extending `ResourceListCard` over introducing a second wrapper that competes with it.
+- **Migrate the remaining hand-rolled `<table>`s onto the primitives.** `s3/bucket-detail.tsx` and
+  `s3/put-object.tsx` were brought to spec in place, and `lambda/versions-tab.tsx`,
+  `lambda/triggers-tab.tsx` and `cloudwatch/cloudwatch-dashboard.tsx` had the specs applied to their
+  raw `<th>`/`<td>`, but none of them use `TableHead`/`TableCell`, so they will drift again. The
+  markdown tables in `routes/docs.tsx` and `docs/service-docs-modal.tsx` are prose and must stay
+  sans — exclude them.
+- **The map's micro-labels are still off-spec.** `map/topology-nodes.tsx`, `map/lambda-instance-node.tsx`
+  and `logs/log-viewer.tsx` carry ~20 uppercase mono chips and node labels at `tracking-wide`/`widest`
+  and 7–10px, constrained by node geometry rather than by the label specs. Decide whether the map gets
+  an explicit third spec or is brought onto the existing two, alongside the palette-collapse work.
 
 ### Pages and features
 

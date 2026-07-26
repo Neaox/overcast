@@ -31,7 +31,7 @@ export function TierMeta({ tier, className }: { tier: EmulationTier; className?:
     <Tooltip content={TIER_DESCRIPTIONS[tier]} side="top">
       <span
         className={cn(
-          "cursor-default font-mono text-[9px] tracking-[0.1em] text-fg-subtle uppercase",
+          "cursor-default font-mono text-[10px] tracking-[0.12em] text-fg-subtle uppercase",
           className,
         )}
       >

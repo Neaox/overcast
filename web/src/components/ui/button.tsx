@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils"
 const buttonVariants = cva(
   cn(
     "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md",
-    "font-mono text-sm font-medium transition-colors cursor-pointer select-none",
+    "font-mono transition-colors cursor-pointer select-none",
     "disabled:cursor-not-allowed disabled:opacity-50",
     // A busy control keeps its full fill — it is working, not unavailable —
     // and only its cursor says "nothing to click here".
@@ -22,14 +22,19 @@ const buttonVariants = cva(
   ),
   {
     variants: {
+      // A filled control is bold, an outlined or bare one is not: the appendix
+      // pairs every primary with `/700` (`Create log group`, `Delete`) and
+      // leaves every ghost and outline at the regular weight.
       variant: {
-        default: "bg-accent text-fg-on-accent not-disabled:not-aria-disabled:hover:bg-accent-hover",
+        default:
+          "bg-accent font-bold text-fg-on-accent not-disabled:not-aria-disabled:hover:bg-accent-hover",
         secondary:
           "bg-bg-muted text-fg border border-border not-disabled:not-aria-disabled:hover:bg-bg-elevated",
         outline:
           "border border-border bg-transparent text-fg not-disabled:not-aria-disabled:hover:bg-bg-muted",
         ghost: "text-fg not-disabled:not-aria-disabled:hover:bg-bg-muted",
-        danger: "bg-danger text-fg-on-accent not-disabled:not-aria-disabled:hover:opacity-90",
+        danger:
+          "bg-danger font-bold text-fg-on-accent not-disabled:not-aria-disabled:hover:opacity-90",
         "danger-ghost": "text-danger not-disabled:not-aria-disabled:hover:bg-danger-muted",
         link: cn(
           "text-accent underline-offset-4 p-0 h-auto",
@@ -37,10 +42,12 @@ const buttonVariants = cva(
           "not-disabled:not-aria-disabled:hover:text-accent-hover",
         ),
       },
+      // Toolbar controls are 30px/mono-11, dialog controls 32px/mono-12 — the
+      // two button sizes the design actually draws.
       size: {
-        sm: "h-7 px-2.5 text-xs",
-        md: "h-8 px-3.5",
-        lg: "h-10 px-5 text-base",
+        sm: "h-7 px-2.5 text-[11px]",
+        md: "h-8 px-3.5 text-xs",
+        lg: "h-10 px-5 text-sm",
         icon: "h-8 w-8 p-0",
         "icon-sm": "h-6 w-6 p-0",
       },
