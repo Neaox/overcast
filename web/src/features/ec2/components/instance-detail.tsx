@@ -1,13 +1,12 @@
 import { useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { useNavigate } from "@tanstack/react-router"
 import {
   ec2InstanceDetailQueryOptions,
   ec2SecurityGroupsQueryOptions,
   ec2Keys,
   modifyInstanceTypeMutationOptions,
 } from "@/features/ec2/data"
-import { PageHeader, Spinner, Breadcrumb } from "@/components/ui/primitives"
+import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
@@ -34,7 +33,6 @@ import { useToast } from "@/components/ui/toast"
 import type { Ec2SecurityGroup, Ec2IpPermission } from "@/types"
 
 export function InstanceDetail({ instanceId }: { instanceId: string }) {
-  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState("overview")
 
   const { data: inst, isLoading } = useQuery(ec2InstanceDetailQueryOptions(instanceId))
@@ -58,15 +56,6 @@ export function InstanceDetail({ instanceId }: { instanceId: string }) {
             <span className="text-sm text-fg-muted">{inst.instanceType}</span>
             <InstanceStateBadge state={inst.state.name} />
           </span>
-        }
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "EC2 / VPC", onClick: () => navigate({ to: "/ec2" }) },
-              { label: "Instances", onClick: () => navigate({ to: "/ec2" }) },
-              { label: inst.instanceId },
-            ]}
-          />
         }
       />
 

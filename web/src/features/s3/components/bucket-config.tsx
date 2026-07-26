@@ -27,7 +27,7 @@ import {
 import { sqsQueuesQueryOptions } from "@/features/sqs/data"
 import { Badge } from "@/components/ui/badge"
 import { ArnLink } from "@/components/ui/arn-link"
-import { PageHeader, Breadcrumb, Spinner, EmptyState } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormField } from "@/components/ui/form"
@@ -360,15 +360,6 @@ export function BucketConfig() {
     <div className="flex w-full flex-col gap-4">
       <PageHeader
         title={bucket}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "S3", onClick: () => navigate({ to: "/s3" }) },
-              { label: bucket, onClick: () => navigate({ to: "/s3/$bucket", params: { bucket } }) },
-              { label: "Configuration" },
-            ]}
-          />
-        }
         actions={
           <>
             <Button variant="secondary" size="md" onClick={() => navigate({ to: "/s3" })}>

@@ -1,6 +1,5 @@
 import { useState, useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { useNavigate } from "@tanstack/react-router"
 import { CalendarClock, Trash2, RefreshCw, Search } from "lucide-react"
 import { ebRulesQueryOptions, ebKeys, deleteRuleMutationOptions } from "@/features/eventbridge/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
@@ -17,7 +16,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { Card, CardContent } from "@/components/ui/card"
-import { PageHeader, Breadcrumb, Spinner, EmptyState } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { cn } from "@/lib/utils"
 
@@ -26,7 +25,6 @@ interface Props {
 }
 
 export function EventBusDetail({ busName }: Props) {
-  const navigate = useNavigate()
   const [deleteTarget, setDeleteTarget] = useState<string>()
   const [filter, setFilter] = useState("")
 
@@ -66,14 +64,6 @@ export function EventBusDetail({ busName }: Props) {
     <div className="flex w-full flex-col gap-4">
       <PageHeader
         title={busName}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "EventBridge", onClick: () => navigate({ to: "/eventbridge" }) },
-              { label: busName },
-            ]}
-          />
-        }
         description="Event bus rules and configuration"
         actions={
           <div className="flex items-center gap-2">

@@ -25,7 +25,7 @@ import { ApplicationOwnershipBanner } from "@/components/application-ownership-b
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { PageHeader, Breadcrumb, Spinner, EmptyState, CodeBlock } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState, CodeBlock } from "@/components/ui/primitives"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
 import {
   Table,
@@ -146,12 +146,6 @@ export function StackDetail({ stackName }: Props) {
   if (!stack) {
     return (
       <div className="flex w-full flex-col gap-4">
-        <Breadcrumb
-          items={[
-            { label: "CloudFormation", onClick: () => navigate({ to: "/cloudformation" }) },
-            { label: stackName },
-          ]}
-        />
         <EmptyState title="Stack not found" description={`No stack named "${stackName}" exists.`} />
       </div>
     )
@@ -162,14 +156,6 @@ export function StackDetail({ stackName }: Props) {
       {/* Header */}
       <PageHeader
         title={stackName}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "CloudFormation", onClick: () => navigate({ to: "/cloudformation" }) },
-              { label: stackName },
-            ]}
-          />
-        }
         actions={
           <div className="flex items-center gap-2">
             <Badge variant={stackStatusVariant(stack.StackStatus ?? "")}>

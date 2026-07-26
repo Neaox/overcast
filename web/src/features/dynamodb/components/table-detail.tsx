@@ -44,7 +44,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { PageHeader, Spinner, EmptyState, Breadcrumb, CodeBlock } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState, CodeBlock } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { RawStateLink } from "@/features/debug/raw-state-link"
 import { useToast } from "@/components/ui/toast"
@@ -449,14 +449,6 @@ export function TableDetail({ tableName }: Props) {
       <PageHeader
         title={tableName}
         description={`${table.tableStatus} · ${table.itemCount.toLocaleString()} items`}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "DynamoDB", onClick: () => navigate({ to: "/dynamodb" }) },
-              { label: tableName },
-            ]}
-          />
-        }
         actions={
           <>
             <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>

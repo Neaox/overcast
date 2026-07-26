@@ -1,9 +1,8 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Copy, ChevronDown, ChevronRight } from "lucide-react"
-import { useNavigate } from "@tanstack/react-router"
 import { ecsTasksQueryOptions } from "@/features/ecs/data"
-import { PageHeader, Spinner, Breadcrumb } from "@/components/ui/primitives"
+import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -11,7 +10,6 @@ import { useToast } from "@/components/ui/toast"
 import type { EcsContainer } from "@/types"
 
 export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskId: string }) {
-  const navigate = useNavigate()
   const { toast } = useToast()
 
   const { data: tasks = [], isLoading } = useQuery(ecsTasksQueryOptions(clusterName))
@@ -54,19 +52,6 @@ export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskI
             <span className="text-fg-muted">{shortTaskDef(task.taskDefinitionArn)}</span>
           </span>
         }
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "ECS Clusters", onClick: () => navigate({ to: "/ecs" }) },
-              {
-                label: clusterName,
-                onClick: () => navigate({ to: "/ecs/$cluster", params: { cluster: clusterName } }),
-              },
-              { label: "Tasks" },
-              { label: shortId },
-            ]}
-          />
-        }
       />
 
       <ApplicationOwnershipBanner candidates={[task.taskArn, task.taskDefinitionArn]} />
@@ -80,7 +65,10 @@ export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskI
           <InfoRow label="Desired Status" value={task.desiredStatus} />
           <InfoRow label="Task Definition" value={shortTaskDef(task.taskDefinitionArn)} />
           <InfoRow label="Launch Type" value={task.launchType ?? "—"} />
-          <InfoRow label="Started At" value={task.startedAt ? new Date(task.startedAt).toLocaleString() : "—"} />
+          <InfoRow
+            label="Started At"
+            value={task.startedAt ? new Date(task.startedAt).toLocaleString() : "—"}
+          />
           {task.stoppedAt && (
             <InfoRow label="Stopped At" value={new Date(task.stoppedAt).toLocaleString()} />
           )}
@@ -115,9 +103,9 @@ function ContainerCard({
   const [envExpanded, setEnvExpanded] = useState(false)
 
   return (
-    <div className="rounded border border-border bg-bg p-4 space-y-3">
+    <div className="space-y-3 rounded border border-border bg-bg p-4">
       <div className="flex items-center gap-3">
-        <span className="font-medium text-sm">{container.name}</span>
+        <span className="text-sm font-medium">{container.name}</span>
         <span className="text-xs text-fg-muted">{container.image ?? "—"}</span>
         <StatusBadge status={container.lastStatus} />
         {container.exitCode != null && (
@@ -163,15 +151,11 @@ function ContainerCard({
         className="flex items-center gap-1 text-xs text-fg-muted hover:text-fg"
         onClick={() => setEnvExpanded(!envExpanded)}
       >
-        {envExpanded ? (
-          <ChevronDown className="h-3 w-3" />
-        ) : (
-          <ChevronRight className="h-3 w-3" />
-        )}
+        {envExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
         Environment
       </button>
       {envExpanded && (
-        <p className="text-xs text-fg-muted pl-4">
+        <p className="pl-4 text-xs text-fg-muted">
           Environment variables are defined in the task definition.
         </p>
       )}

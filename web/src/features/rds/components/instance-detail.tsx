@@ -9,7 +9,7 @@ import {
   deleteInstanceMutationOptions,
 } from "@/features/rds/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
-import { PageHeader, Spinner, Breadcrumb } from "@/components/ui/primitives"
+import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
@@ -74,14 +74,6 @@ export function InstanceDetail({ instanceId }: { instanceId: string }) {
             <span className="text-fg-muted">{db.EngineVersion}</span>
             <RdsStatusBadge status={db.DBInstanceStatus ?? ""} />
           </span>
-        }
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "RDS Instances", onClick: () => navigate({ to: "/rds" }) },
-              { label: db.DBInstanceIdentifier ?? "" },
-            ]}
-          />
         }
         actions={
           <div className="flex gap-1">

@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { useNavigate, Link } from "@tanstack/react-router"
+import { Link } from "@tanstack/react-router"
 import {
   ec2VpcDetailQueryOptions,
   ec2SubnetsQueryOptions,
@@ -20,7 +20,7 @@ import {
   detachInternetGatewayMutationOptions,
 } from "@/features/ec2/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
-import { PageHeader, Spinner, EmptyState, Breadcrumb } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
@@ -47,7 +47,6 @@ import { Plus, Trash2, Check, Unlink } from "lucide-react"
 import { Combobox } from "@/components/ui/combobox"
 
 export function VpcDetail({ vpcId }: { vpcId: string }) {
-  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState("overview")
 
   const { data: vpc, isLoading } = useQuery(ec2VpcDetailQueryOptions(vpcId))
@@ -72,15 +71,6 @@ export function VpcDetail({ vpcId }: { vpcId: string }) {
             <Badge variant={vpc.state === "available" ? "success" : "warning"}>{vpc.state}</Badge>
             {vpc.isDefault && <Badge variant="default">default</Badge>}
           </span>
-        }
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "EC2 / VPC", onClick: () => navigate({ to: "/ec2" }) },
-              { label: "VPCs", onClick: () => navigate({ to: "/ec2" }) },
-              { label: vpc.vpcId },
-            ]}
-          />
         }
       />
 

@@ -37,17 +37,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { PageHeader, Spinner, EmptyState, Breadcrumb } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import { Link, useNavigate } from "@tanstack/react-router"
+import { Link } from "@tanstack/react-router"
 import type { EcsTask, EcsTaskDefinition, EcsService, EcsContainerInstance } from "@/types"
 import { cn } from "@/lib/utils"
 
 export function ClusterDetail({ clusterName }: { clusterName: string }) {
-  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState("tasks")
 
   const { data: cluster, isLoading } = useQuery(ecsClusterDetailQueryOptions(clusterName))
@@ -74,14 +73,6 @@ export function ClusterDetail({ clusterName }: { clusterName: string }) {
               {cluster.pendingTasksCount} pending
             </span>
           </span>
-        }
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "ECS Clusters", onClick: () => navigate({ to: "/ecs" }) },
-              { label: cluster.clusterName },
-            ]}
-          />
         }
       />
 

@@ -33,7 +33,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import { PageHeader, Breadcrumb, Spinner, EmptyState } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { useToast } from "@/components/ui/toast"
 import { RawStateLink } from "@/features/debug/raw-state-link"
@@ -228,11 +228,6 @@ export function BucketDetail() {
       )}
       <PageHeader
         title={bucket}
-        breadcrumb={
-          <Breadcrumb
-            items={[{ label: "S3", onClick: () => navigate({ to: "/s3" }) }, ...crumbs.slice(1)]}
-          />
-        }
         actions={
           <>
             <Button

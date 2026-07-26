@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { FormField } from "@/components/ui/form"
-import { PageHeader, Breadcrumb, Spinner } from "@/components/ui/primitives"
+import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { useToast } from "@/components/ui/toast"
 import { formatBytes } from "@/lib/format"
 
@@ -234,18 +234,7 @@ export function PutObject() {
 
   return (
     <div className="flex max-w-4xl flex-col gap-6">
-      <PageHeader
-        title="Upload"
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "S3", onClick: () => navigate({ to: "/s3" }) },
-              { label: bucket, onClick: () => navigate({ to: "/s3/$bucket", params: { bucket } }) },
-              { label: "Upload" },
-            ]}
-          />
-        }
-      />
+      <PageHeader title="Upload" />
 
       {/* ── Files section ──────────────────────────────────────────────── */}
       <Section title="Files" count={rows.length}>

@@ -30,7 +30,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { PageHeader, Breadcrumb, Spinner, EmptyState, CodeBlock } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState, CodeBlock } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { useToast } from "@/components/ui/toast"
 import { formatDate } from "@/lib/format"
@@ -103,12 +103,6 @@ export function SsmParameterDetail({ name }: Props) {
   if (!param) {
     return (
       <div className="flex w-full flex-col gap-4">
-        <Breadcrumb
-          items={[
-            { label: "SSM Parameter Store", onClick: () => navigate({ to: "/ssm" }) },
-            { label: name },
-          ]}
-        />
         <EmptyState
           icon={<Settings className="h-8 w-8 opacity-40" />}
           title="Parameter not found"
@@ -125,14 +119,6 @@ export function SsmParameterDetail({ name }: Props) {
     <div className="flex w-full flex-col gap-4">
       <PageHeader
         title={param.Name ?? name}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "SSM Parameter Store", onClick: () => navigate({ to: "/ssm" }) },
-              { label: param.Name ?? name },
-            ]}
-          />
-        }
         actions={
           <div className="flex items-center gap-2">
             <Button

@@ -33,7 +33,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import { PageHeader, Breadcrumb, Spinner, EmptyState } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { useToast } from "@/components/ui/toast"
 import { PublishLayerDialog } from "./layer-list"
 import type { LayerVersion, LambdaFunction } from "@/types"
@@ -42,7 +42,6 @@ import type { LayerVersion, LambdaFunction } from "@/types"
 
 export function LayerDetail() {
   const { layerName } = Route.useParams()
-  const navigate = useNavigate()
   const qc = useQueryClient()
   const { toast } = useToast()
 
@@ -92,15 +91,6 @@ export function LayerDetail() {
       <PageHeader
         title={layerName}
         description={layerArn}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "Lambda", onClick: () => navigate({ to: "/lambda" }) },
-              { label: "Layers", onClick: () => navigate({ to: "/lambda/layers" }) },
-              { label: layerName },
-            ]}
-          />
-        }
         actions={
           <Button size="sm" onClick={() => setShowPublish(true)}>
             <Plus className="mr-1 h-4 w-4" />
@@ -225,9 +215,11 @@ function VersionRow({
   onDelete: () => void
 }) {
   const versionNumber = v.Version ?? 0
-  const { data: metadata, isLoading: metadataLoading, isError: metadataError } = useQuery(
-    layerVersionMetadataQueryOptions(layerName, versionNumber),
-  )
+  const {
+    data: metadata,
+    isLoading: metadataLoading,
+    isError: metadataError,
+  } = useQuery(layerVersionMetadataQueryOptions(layerName, versionNumber))
 
   return (
     <TableRow>

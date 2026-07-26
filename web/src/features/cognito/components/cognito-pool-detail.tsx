@@ -1,6 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { useNavigate } from "@tanstack/react-router"
 import {
   UserCheck,
   Plus,
@@ -85,7 +84,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { PageHeader, Breadcrumb, Spinner, EmptyState } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
 import { useToast } from "@/components/ui/toast"
@@ -102,7 +101,6 @@ interface Props {
 // ─── Pool Detail (root) ────────────────────────────────────────────────────
 
 export function CognitoPoolDetail({ poolId }: Props) {
-  const navigate = useNavigate()
   const [tab, setTab] = useState("overview")
 
   const {
@@ -123,12 +121,6 @@ export function CognitoPoolDetail({ poolId }: Props) {
   if (!pool) {
     return (
       <div className="flex w-full flex-col gap-4">
-        <Breadcrumb
-          items={[
-            { label: "Cognito", onClick: () => navigate({ to: "/cognito" }) },
-            { label: poolId },
-          ]}
-        />
         <EmptyState
           icon={<UserCheck className="h-8 w-8 opacity-40" />}
           title="User pool not found"
@@ -142,14 +134,6 @@ export function CognitoPoolDetail({ poolId }: Props) {
     <div className="flex w-full flex-col gap-4">
       <PageHeader
         title={pool.name}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "Cognito", onClick: () => navigate({ to: "/cognito" }) },
-              { label: pool.name },
-            ]}
-          />
-        }
         actions={
           <Button
             variant="ghost"

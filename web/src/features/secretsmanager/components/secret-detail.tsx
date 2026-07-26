@@ -12,7 +12,7 @@ import {
 } from "@/features/secretsmanager/data"
 import { useToast } from "@/components/ui/toast"
 import { Button } from "@/components/ui/button"
-import { PageHeader, Breadcrumb, Spinner, EmptyState, CodeBlock } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState, CodeBlock } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { Card, CardContent } from "@/components/ui/card"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
@@ -123,12 +123,6 @@ export function SecretDetail({ secretName }: Props) {
   if (!secret) {
     return (
       <div className="flex w-full flex-col gap-4">
-        <Breadcrumb
-          items={[
-            { label: "Secrets Manager", onClick: () => navigate({ to: "/secretsmanager" }) },
-            { label: secretName },
-          ]}
-        />
         <EmptyState
           icon={<KeyRound className="h-8 w-8 opacity-40" />}
           title="Secret not found"
@@ -142,14 +136,6 @@ export function SecretDetail({ secretName }: Props) {
     <div className="flex w-full flex-col gap-4">
       <PageHeader
         title={secret.Name ?? secretName}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "Secrets Manager", onClick: () => navigate({ to: "/secretsmanager" }) },
-              { label: secret.Name ?? secretName },
-            ]}
-          />
-        }
         description={secret.Description}
         actions={
           <div className="flex items-center gap-2">

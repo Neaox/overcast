@@ -14,7 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { Breadcrumb, CodeBlock, EmptyState, PageHeader, Spinner } from "@/components/ui/primitives"
+import { CodeBlock, EmptyState, PageHeader, Spinner } from "@/components/ui/primitives"
 import { formatDate } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
@@ -58,14 +58,6 @@ export function RepositoryDetail({ repositoryName }: { repositoryName: string })
     <div className="flex w-full flex-col gap-4">
       <PageHeader
         title={data.name}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "ECR", onClick: () => navigate({ to: "/ecr" }) },
-              { label: data.name },
-            ]}
-          />
-        }
         description={data.uri}
         actions={
           <>

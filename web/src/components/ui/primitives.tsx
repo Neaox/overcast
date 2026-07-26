@@ -104,47 +104,18 @@ interface PageHeaderProps {
   title: string
   description?: React.ReactNode
   actions?: React.ReactNode
-  breadcrumb?: React.ReactNode
   className?: string
 }
 
-function PageHeader({ title, description, actions, breadcrumb, className }: PageHeaderProps) {
+function PageHeader({ title, description, actions, className }: PageHeaderProps) {
   return (
     <div className={cn("flex items-start justify-between gap-4", className)}>
       <div className="flex flex-col gap-0.5">
-        {breadcrumb && <div className="mb-1">{breadcrumb}</div>}
         <h1 className="text-base font-semibold text-fg">{title}</h1>
         {description && <p className="text-sm text-fg-muted">{description}</p>}
       </div>
       {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
     </div>
-  )
-}
-
-// ─── Breadcrumb ───────────────────────────────────────────────────────────
-interface BreadcrumbItem {
-  label: string
-  onClick?: () => void
-}
-
-function Breadcrumb({ items }: { items: BreadcrumbItem[] }) {
-  return (
-    <nav className="flex items-center gap-1 text-sm text-fg-muted">
-      {items.map((item, i) => (
-        <React.Fragment key={i}>
-          {i > 0 && <span className="text-fg-subtle">/</span>}
-          {item.onClick ? (
-            <button onClick={item.onClick} className="transition-colors hover:text-fg">
-              {item.label}
-            </button>
-          ) : (
-            <span className={cn(i === items.length - 1 && "font-medium text-fg")}>
-              {item.label}
-            </span>
-          )}
-        </React.Fragment>
-      ))}
-    </nav>
   )
 }
 
@@ -189,4 +160,4 @@ function CodeBlock({ children, className }: { children: string; className?: stri
   )
 }
 
-export { Spinner, EmptyState, QueryListState, PageHeader, Breadcrumb, Separator, Code, CodeBlock }
+export { Spinner, EmptyState, QueryListState, PageHeader, Separator, Code, CodeBlock }

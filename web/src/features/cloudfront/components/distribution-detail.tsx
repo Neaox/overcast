@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { useParams, useNavigate } from "@tanstack/react-router"
+import { useParams } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
 import { RefreshCw, RotateCcw } from "lucide-react"
 import {
@@ -29,14 +29,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { PageHeader, Breadcrumb, Spinner } from "@/components/ui/primitives"
+import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 
 export function DistributionDetail() {
   const { distributionId } = useParams({ strict: false }) as unknown as { distributionId: string }
-  const navigate = useNavigate()
   const [showInvalidate, setShowInvalidate] = useState(false)
   const [selectedTab, setSelectedTab] = useState("config")
 
@@ -73,14 +72,6 @@ export function DistributionDetail() {
       <PageHeader
         title={dist.id}
         description={dist.domainName}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "CloudFront", onClick: () => void navigate({ to: "/cloudfront" }) },
-              { label: dist.id },
-            ]}
-          />
-        }
         actions={
           <>
             <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>

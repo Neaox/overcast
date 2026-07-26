@@ -1,12 +1,11 @@
 import { useQuery } from "@tanstack/react-query"
-import { useNavigate } from "@tanstack/react-router"
 import { RefreshCw } from "lucide-react"
 import {
   applicationQueryOptions,
   applicationResourcesQueryOptions,
 } from "@/features/applications/data"
 import { Button } from "@/components/ui/button"
-import { PageHeader, Breadcrumb, Spinner, EmptyState } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import {
   Table,
   TableBody,
@@ -23,8 +22,6 @@ interface Props {
 }
 
 export function ApplicationDetail({ applicationId }: Props) {
-  const navigate = useNavigate()
-
   const {
     data: app,
     isLoading,
@@ -41,14 +38,6 @@ export function ApplicationDetail({ applicationId }: Props) {
     <div className="flex w-full flex-col gap-4">
       <PageHeader
         title={app.name}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "Applications", onClick: () => navigate({ to: "/applications" }) },
-              { label: app.name },
-            ]}
-          />
-        }
         actions={
           <Button
             variant="ghost"
