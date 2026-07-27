@@ -33,9 +33,14 @@ to call back into the emulator:
 
 - **`AWS_ENDPOINT_URL`** is set to an address the task can actually dial —
   Overcast's own IP on the ECS network when Overcast itself runs in a
-  container, otherwise a routable host interface. `host.docker.internal` is
-  used only as a last resort, because it exists on Docker Desktop but does not
-  resolve on native Linux.
+  container, otherwise the host address on the interface carrying the default
+  route. A development machine usually has several interfaces, and picking the
+  wrong one is a silent failure, so link-local (`169.254.0.0/16`) addresses and
+  interfaces with no route out are skipped rather than offered to the task.
+  `host.docker.internal` is used only as a last resort; because Docker Desktop
+  synthesises that name and native Linux does not, it is paired with a
+  `host.docker.internal:host-gateway` entry in the container's `/etc/hosts` so
+  the fallback resolves on both.
 
 - **Loopback URLs in the task environment are rewritten.** AWS SDKs resolve the
   SQS endpoint from the `QueueUrl` rather than from `AWS_ENDPOINT_URL`, so a

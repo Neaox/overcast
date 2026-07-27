@@ -125,6 +125,23 @@ func TestExtraHosts_usesHostGatewayWhenOvercastRunsOnHost(t *testing.T) {
 	}
 }
 
+func TestExtraHosts_mapsTheEndpointHostnameWhenItIsNotAnIP(t *testing.T) {
+	// Given: resolution fell back to Docker Desktop's host alias, a name native
+	// Linux does not resolve on its own.
+	m := New(&config.Config{Port: 4566}, "http://host.docker.internal:4566")
+
+	// When: the container's /etc/hosts entries are computed.
+	got := m.ExtraHosts()
+
+	// Then: the alias itself maps to the host gateway, so the endpoint just
+	// handed to the container is dialable there. Without this entry the
+	// fallback resolves nowhere off Docker Desktop — the exact failure this
+	// package exists to remove.
+	if !slices.Contains(got, "host.docker.internal:host-gateway") {
+		t.Errorf("ExtraHosts() = %v, want it to contain host.docker.internal:host-gateway", got)
+	}
+}
+
 func TestExtraHosts_includesConfiguredHostnameAndOverrides(t *testing.T) {
 	// Given: a deployment with its own external hostname and an extra
 	// split-horizon domain configured.

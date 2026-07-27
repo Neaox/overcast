@@ -3,6 +3,7 @@ package containerendpoint
 import (
 	"context"
 	"errors"
+	"net"
 	"testing"
 
 	"github.com/Neaox/overcast/internal/docker"
@@ -84,6 +85,100 @@ func TestNetworkIP_emptyWhenInspectFails(t *testing.T) {
 	if got != "" {
 		t.Errorf("networkIP() = %q, want empty", got)
 	}
+}
+
+func TestScanInterfaceIP_skipsLinkLocalAutoconfiguredAddresses(t *testing.T) {
+	// Given: a host whose interface list leads with a 169.254/16 APIPA address —
+	// what Windows and Linux assign to an adapter that failed DHCP, and what a
+	// disconnected Ethernet port leaves behind. Measured on a real Docker
+	// Desktop host: containers cannot route to 169.254/16 at all.
+	addrs := []net.Addr{
+		ipNet("169.254.119.185"),
+		ipNet("169.254.101.17"),
+		ipNet("192.168.8.19"),
+	}
+
+	// When: the host address is scanned for.
+	got := scanInterfaceIP(addrs)
+
+	// Then: the routable address is chosen, not the dead autoconfigured one.
+	if got != "192.168.8.19" {
+		t.Errorf("scanInterfaceIP() = %q, want %q", got, "192.168.8.19")
+	}
+}
+
+func TestScanInterfaceIP_skipsLoopbackAndIPv6(t *testing.T) {
+	// Given: an interface list of addresses no sibling container can use.
+	addrs := []net.Addr{ipNet("127.0.0.1"), ipNet("::1"), ipNet("fe80::1")}
+
+	// When: the host address is scanned for.
+	got := scanInterfaceIP(addrs)
+
+	// Then: nothing is claimed, so the caller falls back.
+	if got != "" {
+		t.Errorf("scanInterfaceIP() = %q, want empty", got)
+	}
+}
+
+func TestResolve_containerModeWithoutASharedNetwork(t *testing.T) {
+	// Given: Overcast is containerised but cannot find its address on the task
+	// network — a custom --hostname makes InspectContainer miss.
+	dc := &fakeNetworkClient{inspectErr: errors.New("no such container")}
+
+	// When: the container-reachable address is resolved.
+	got := resolve(context.Background(), dc, "overcast_ecs", 4566, nil,
+		func() bool { return true },
+		func() string { return "172.17.0.2" }) // our own IP on an unrelated network
+
+	// Then: the host alias is used rather than our own container IP, which a
+	// sibling on a different network cannot route to.
+	want := "http://host.docker.internal:4566"
+	if got != want {
+		t.Errorf("resolve() = %q, want %q", got, want)
+	}
+}
+
+func TestResolve_hostMode(t *testing.T) {
+	// Given: Overcast runs on the host, which has a routable address.
+	dc := &fakeNetworkClient{inspectErr: errors.New("not a container")}
+
+	// When: the container-reachable address is resolved.
+	got := resolve(context.Background(), dc, "overcast_ecs", 4566, nil,
+		func() bool { return false },
+		func() string { return "192.168.8.19" })
+
+	// Then: the host address is used.
+	want := "http://192.168.8.19:4566"
+	if got != want {
+		t.Errorf("resolve() = %q, want %q", got, want)
+	}
+}
+
+func TestResolve_hostModeWithoutARoutableAddress(t *testing.T) {
+	// Given: Overcast runs on a host with no usable interface address.
+	dc := &fakeNetworkClient{inspectErr: errors.New("not a container")}
+
+	// When: the container-reachable address is resolved.
+	got := resolve(context.Background(), dc, "overcast_ecs", 4566, nil,
+		func() bool { return false },
+		func() string { return "" })
+
+	// Then: the host alias is the last resort — paired with an /etc/hosts entry
+	// by Mapper.ExtraHosts so it resolves off Docker Desktop too.
+	want := "http://host.docker.internal:4566"
+	if got != want {
+		t.Errorf("resolve() = %q, want %q", got, want)
+	}
+}
+
+// ipNet builds a net.Addr for an address string, as net.InterfaceAddrs returns.
+func ipNet(ip string) net.Addr {
+	parsed := net.ParseIP(ip)
+	mask := net.CIDRMask(24, 32)
+	if parsed.To4() == nil {
+		mask = net.CIDRMask(64, 128)
+	}
+	return &net.IPNet{IP: parsed, Mask: mask}
 }
 
 func TestEndpointURL_buildsAnHTTPOrigin(t *testing.T) {

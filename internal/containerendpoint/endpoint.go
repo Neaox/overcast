@@ -103,6 +103,13 @@ func (m *Mapper) ExtraHosts() []string {
 		names = append(names, m.cfg.SplitHorizonHosts...)
 		names = append(names, m.cfg.Hostname)
 	}
+	// The endpoint's own hostname, when it is a name rather than an IP. That
+	// only happens on the host.docker.internal fallback, and the entry is what
+	// makes the fallback work at all off Docker Desktop: Docker Desktop
+	// synthesises the name, native Linux does not resolve it without this.
+	if u, err := url.Parse(m.endpoint); err == nil {
+		names = append(names, u.Hostname())
+	}
 
 	out := make([]string, 0, len(names))
 	seen := make(map[string]struct{}, len(names))
