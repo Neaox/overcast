@@ -40,6 +40,10 @@ need it than accidentally ship a breaking change as a patch.
 
 ## [Unreleased]
 
+### Changed
+
+- **Build from source** — `git clone && go build ./...` now works with only the Go toolchain: the docs search index (`internal/docssearch/index.gen.go`, `web/src/docs-index.gen.ts`) is committed rather than generated on every build, and a committed `web/dist/.gitkeep` keeps `//go:embed all:web/dist` resolving before the SPA is built. A binary compiled without the SPA serves the API normally and returns an explanatory 503 (naming `make build-web`) on the web UI port instead of a bare 500; Docker and release builds are unaffected and still assert a real SPA.
+
 ### Fixed
 
 - **Web UI** — expanded sidebar rows are clickable across their whole height and width. The row element carried the padding and the hover highlight while the link inside it only filled the content box, leaving a 10px horizontal / 7px vertical ring that highlighted on hover but swallowed the click; every row in the expanded sidebar was affected — nav links, pinned favourites, and the expand/collapse toggle on services with sub-pages — and the drag grip on a pinned favourite no longer blocks clicks on the row's left edge. Row dimensions and styling are unchanged. An object's name in the S3 bucket listing is now a link that opens the same object inspector the row's eye action does, instead of being inert text. Object rows also no longer show a pointer cursor or the interactive hover tint: those advertised a whole-row click that did nothing but toggle a selection highlight nothing else read. Folder rows, which do navigate on click, keep both.

@@ -369,7 +369,13 @@ var indexHeadClose = regexp.MustCompile(`(?i)</head>`)
 func serveIndexHTML(w http.ResponseWriter, r *http.Request, staticFS fs.FS, cfg UIConfig) {
 	raw, err := fs.ReadFile(staticFS, "index.html")
 	if err != nil {
-		http.Error(w, "index.html not found", http.StatusInternalServerError)
+		// web/dist holds only its committed .gitkeep placeholder, so this
+		// binary embeds no SPA. That is a build-step omission, not a runtime
+		// fault — say so rather than returning a bare 500. Release builds and
+		// `make ci-local` both assert a real index.html, so this should only
+		// ever be reachable from a local `go build` that skipped the SPA.
+		http.Error(w, "web UI not built into this binary — run `make build-web`, then rebuild. "+
+			"The API is unaffected and still served on the API port.", http.StatusServiceUnavailable)
 		return
 	}
 

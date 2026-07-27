@@ -8,12 +8,15 @@
 #   docs-index → web lint → typecheck → vitest → SPA build → BFF build
 #              → go vet → go build → go test
 #
-# Two hard dependencies drive that order:
-#   - web/src/docs-index.gen.ts and internal/docssearch/index.gen.go are
-#     gitignored build artifacts; the web typecheck and the Go build both
-#     import them, so the docs index goes first.
+# One hard dependency drives that order:
 #   - embed.go has `//go:embed all:web/dist`, so every non-slim Go build, vet
 #     and test needs a built SPA. The web stages run before the Go stages.
+#
+# The docs index (web/src/docs-index.gen.ts, internal/docssearch/index.gen.go)
+# is generated but committed, so nothing has to be generated before a build.
+# The docs-index stage below regenerates it anyway and the docs-check stage
+# diffs the result, which is what catches a docs/ edit committed without a
+# regenerated index.
 #
 # Every Go command goes through scripts/docker-go.sh, so this works on a
 # machine with Docker but no Go installed (e.g. Windows outside the
@@ -200,14 +203,23 @@ if [ "$scope" != "go" ]; then
     echo "node: $(node --version)"
 fi
 
-# --go-only skips the SPA build, but embed.go still needs its output.
-if [ "$scope" = "go" ] && [ ! -d "$ROOT/web/dist" ]; then
-    die "web/dist is missing and --go-only skips the SPA build.
-  embed.go has '//go:embed all:web/dist', so go vet/build/test cannot run
-  without it. Run 'make ci-local-web' (or 'make build-web') first."
+# --go-only skips the SPA build, but the Go stages must still exercise a real
+# SPA. Checking for index.html rather than the directory is deliberate:
+# web/dist/.gitkeep is committed so the go:embed pattern always resolves, so a
+# directory test would pass on a checkout that has never built the UI and let
+# a blank-UI binary through.
+if [ "$scope" = "go" ] && [ ! -f "$ROOT/web/dist/index.html" ]; then
+    die "web/dist/index.html is missing and --go-only skips the SPA build.
+  The committed web/dist/.gitkeep satisfies '//go:embed all:web/dist', so the
+  Go stages would compile but produce a binary with no web UI.
+  Run 'make ci-local-web' (or 'make build-web') first."
 fi
 
-# ─── docs index (must precede every other stage) ─────────────────────────────
+# ─── docs index ──────────────────────────────────────────────────────────────
+#
+# The index is committed, so this stage is not a build prerequisite; it exists
+# so the docs-check stage below can diff a freshly generated index against the
+# committed one.
 
 stage "docs-index"
 go_cmd run ./scripts/docs-index.go --write-index --write-go-index || fail
@@ -227,10 +239,9 @@ if [ "$scope" != "go" ]; then
     stage "web-test"
     web_cmd npm run test || fail
 
-    # `npm run build` is deliberately not used here: its docs:index prestep
-    # shells out to a host `go`, which this script exists to avoid. The
-    # docs-index stage above already produced those artifacts through
-    # docker-go.sh, and typecheck already ran as its own stage.
+    # `npx vite build` rather than `npm run build`: the published script
+    # re-runs typecheck, which already ran as its own stage above with an
+    # attributable failure.
     stage "web-build"
     web_cmd env VITE_BUNDLED=true npx vite build || fail
 
@@ -270,7 +281,15 @@ if [ "$scope" != "web" ]; then
     go_cmd run -tags dev ./cmd/capgen --generate || fail
     go_cmd run -tags dev ./cmd/capgen --write-docs || fail
     go_cmd run ./scripts/docs-index.go --check || fail
-    git -C "$ROOT" diff --exit-code --         internal/capabilities/all.gen.go README.md STATUS.md         docs/README.md docs/services/ docs/generated/service-support.json         || { echo "  generated docs are stale — commit the regenerated files above" >&2; fail; }
+    # The docs-index stage already regenerated both index files, so a docs/
+    # edit committed without a regenerated index shows up here as a dirty
+    # tree. (docs-index.go --check compares content too, but it can only fire
+    # in flows that did not just regenerate — e.g. a bare `make docs-check`.)
+    git -C "$ROOT" diff --exit-code -- \
+        internal/capabilities/all.gen.go README.md STATUS.md \
+        docs/README.md docs/services/ docs/generated/service-support.json \
+        internal/docssearch/index.gen.go web/src/docs-index.gen.ts \
+        || { echo "  generated files are stale — commit the regenerated files above" >&2; fail; }
 fi
 
 # ─── done ────────────────────────────────────────────────────────────────────

@@ -231,11 +231,18 @@ docs index → web lint → typecheck → vitest → SPA build → BFF build
            → go vet → go build → go test
 ```
 
-Two dependencies fix that order: the docs index (`web/src/docs-index.gen.ts`,
-`internal/docssearch/index.gen.go`) is a gitignored artifact that both the web
-typecheck and the Go build import, and `embed.go` has
-`//go:embed all:web/dist`, so the Go stages need a built SPA — which is why the
-CI Go jobs declare `needs: web` and download the `web-dist` artifact.
+One dependency fixes that order: `embed.go` has `//go:embed all:web/dist`, so
+the Go stages need a built SPA — which is why the CI Go jobs declare
+`needs: web` and download the `web-dist` artifact. (A committed
+`web/dist/.gitkeep` keeps the embed pattern resolving on a bare checkout, so
+`go build ./...` always compiles; the resulting binary just has no UI, and the
+Go stages here assert a real `index.html` rather than accepting that.)
+
+The docs index (`web/src/docs-index.gen.ts`, `internal/docssearch/index.gen.go`)
+is generated but committed, so it is not a build prerequisite. The docs-index
+stage still runs first so the docs-check stage can diff a freshly generated
+index against the committed one — that is what catches a `docs/` edit pushed
+without running `make docs-index`.
 
 The script stops at the first failure and names the stage that failed. Every Go
 command goes through [`scripts/docker-go.sh`](./scripts/docker-go.sh), so **no

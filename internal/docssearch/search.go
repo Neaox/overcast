@@ -1,8 +1,10 @@
 // Package docssearch serves search over the published docs/ tree.
 //
-// index.gen.go (the postings table searched below) is a generated build
-// artifact, not checked into git — run `go generate` here, or
-// `make docs-index` / `task docs-index`, to produce it locally.
+// docs and postings (the tables searched below) are declared in index.gen.go,
+// which is generated from docs/ and committed — this package cannot compile
+// without it, and a bare checkout has to build. After editing anything under
+// docs/, regenerate with `make docs-index` (or `task docs-index`, or
+// `go generate` here) and commit the result; CI fails on a stale index.
 //
 //go:generate go run ../../scripts/docs-index.go --write-go-index
 package docssearch

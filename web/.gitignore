@@ -6,9 +6,16 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-dist
-dist-server
+# `dist/*`, not `dist`: git does not descend into an ignored directory, so
+# ignoring `dist` itself would make the .gitkeep negation below dead. The
+# placeholder is committed so `//go:embed all:web/dist` in embed.go always
+# resolves — a binary built without an SPA then serves an explanatory 503
+# instead of failing to compile. Vite empties dist/ on every build, so the
+# committed copy is sourced from public/.gitkeep, which vite copies back into
+# dist/ — keeping `git status` clean after builds. See AGENTS.md.
+dist/*
 !dist/.gitkeep
+dist-server
 dist-ssr
 *.local
 *.tsbuildinfo
