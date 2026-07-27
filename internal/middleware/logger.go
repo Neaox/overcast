@@ -58,6 +58,7 @@ func detectService(r *http.Request) string {
 	switch {
 	case strings.HasPrefix(r.URL.Path, "/2015-03-31/"),
 		strings.HasPrefix(r.URL.Path, "/2018-10-31/"),
+		strings.HasPrefix(r.URL.Path, "/2019-09-30/"),
 		strings.HasPrefix(r.URL.Path, "/2021-10-31/"),
 		strings.HasPrefix(r.URL.Path, "/2021-11-15/"):
 		return "lambda"

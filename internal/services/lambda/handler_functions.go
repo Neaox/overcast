@@ -686,6 +686,8 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	previousIdentity := functionInstanceIdentity(fn)
+
 	var req updateFunctionCodeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument("invalid request body"))
@@ -731,6 +733,8 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.retireExecutionEnvironment(fn, previousIdentity)
+
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
 			Type:    events.LambdaFunctionUpdated,
@@ -764,6 +768,8 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		})
 		return
 	}
+
+	previousIdentity := functionInstanceIdentity(fn)
 
 	var req updateFunctionConfigurationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -856,6 +862,8 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	h.retireExecutionEnvironment(fn, previousIdentity)
+
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
 			Type:    events.LambdaFunctionUpdated,
@@ -868,6 +876,33 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(functionToConfig(fn))
+}
+
+// retireExecutionEnvironment retires the warm execution environment for fn
+// after its code or configuration changed, so the next invocation cold starts
+// with the new values instead of reusing a container that was exec'd with the
+// old ones.
+//
+// An idle instance is destroyed immediately; one that is serving an invocation
+// is left to finish and destroyed on release, matching AWS, which never
+// interrupts an in-flight invocation to apply an update. Nothing is started in
+// its place — Overcast does not emulate provisioned concurrency, the only case
+// where AWS pre-warms an environment before an invocation arrives.
+//
+// previousIdentity is fn's identity before the update was applied; when the
+// update changes nothing the container can observe (e.g. only the description),
+// the warm instance is left in place.
+func (h *Handler) retireExecutionEnvironment(fn *Function, previousIdentity string) {
+	if functionInstanceIdentity(fn) == previousIdentity {
+		return
+	}
+	if pool := h.pool(); pool != nil {
+		if retired := pool.InvalidateFunction(fn); retired > 0 {
+			h.log.Debug("retired idle lambda instances after update",
+				zap.String("function", fn.Name), zap.Int("count", retired))
+		}
+	}
+	h.tracker.Invalidate(fn.Name)
 }
 
 // DeleteFunction handles DELETE /2015-03-31/functions/{name}.
@@ -895,12 +930,11 @@ func (h *Handler) DeleteFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Evict the warm instance so the container is stopped immediately.
-	for _, rt := range h.runtimes.get() {
-		if pool, ok := rt.(*InstancePool); ok {
-			pool.EvictFunction(name)
-		}
+	// Evict the warm instances so the containers stop immediately.
+	if pool := h.pool(); pool != nil {
+		pool.EvictFunction(name)
 	}
+	h.tracker.Evict(name)
 
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
@@ -1006,6 +1040,10 @@ func (h *Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	logType := r.Header.Get("X-Amz-Log-Type") // "Tail" or ""
 
 	result := h.invokeSync(ctx, fn, rt, payload, name)
+	if result.throttle != nil {
+		writeThrottleError(w, r, result.throttle)
+		return
+	}
 
 	// result.LogResult is populated by containerInstance.Invoke from the tail
 	// buffer maintained by the streamLogs goroutine. Only expose it when the
@@ -1162,15 +1200,18 @@ func writeInvokeError(w http.ResponseWriter, layerARN, errorType string) {
 // invokeSync acquires a runtime instance, invokes the function, and returns the
 // result, writing an error response and returning nil on failure.
 func (h *Handler) invokeSync(ctx context.Context, fn *Function, rt Runtime, payload []byte, name string) *InvokeResult {
-	if h.tracker != nil {
-		h.tracker.Acquire(name, payload)
-	}
+	inv := h.tracker.Begin(name, payload)
 	releaseSuccess := false
 	releaseReason := ""
+	throttled := false
 	defer func() {
-		if h.tracker != nil {
-			h.tracker.Release(name, releaseSuccess, releaseReason)
+		if throttled {
+			// The invocation never got an execution environment, so there is no
+			// instance to report as idle — drop the record instead.
+			inv.Abandon(releaseReason)
+			return
 		}
+		inv.Finish(releaseSuccess, releaseReason)
 	}()
 
 	// Cold starts can fail transiently due to Docker infrastructure issues
@@ -1186,7 +1227,14 @@ func (h *Handler) invokeSync(ctx context.Context, fn *Function, rt Runtime, payl
 		maxAttempts = 1
 	}
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		result := h.invokeSyncOnce(ctx, fn, rt, payload, name)
+		result := h.invokeSyncOnce(ctx, fn, rt, payload, name, inv)
+		if result.throttle != nil {
+			// A concurrency limit refused the invocation. Never retry — the
+			// caller decides whether to back off, exactly as against AWS.
+			throttled = true
+			releaseReason = result.throttle.Error()
+			return result
+		}
 		if result.FunctionError == "" {
 			releaseSuccess = true
 			releaseReason = ""
@@ -1238,6 +1286,16 @@ type runtimeReadyInstance interface {
 	AwaitReady(context.Context) error
 }
 
+// functionTimeout is fn's configured timeout, defaulting to AWS's 3 seconds.
+// Bounds every invocation so an overrunning container is killed, and is also
+// the budget an invocation may spend queued for capacity (see queueBudget).
+func functionTimeout(fn *Function) time.Duration {
+	if fn == nil || fn.Timeout <= 0 {
+		return defaultFunctionTimeout
+	}
+	return time.Duration(fn.Timeout) * time.Second
+}
+
 func lambdaInitTimeout(cfg *config.Config) time.Duration {
 	if cfg != nil && cfg.LambdaInitTimeout > 0 {
 		return cfg.LambdaInitTimeout
@@ -1263,7 +1321,7 @@ func (h *Handler) awaitRuntimeReady(ctx context.Context, fn *Function, rt Runtim
 }
 
 // invokeSyncOnce performs a single acquire → invoke → release cycle.
-func (h *Handler) invokeSyncOnce(ctx context.Context, fn *Function, rt Runtime, payload []byte, name string) *InvokeResult {
+func (h *Handler) invokeSyncOnce(ctx context.Context, fn *Function, rt Runtime, payload []byte, name string, inv *trackedInvocation) *InvokeResult {
 	acquireTimeout := 30 * time.Second
 	// For very short function timeouts, keep acquire tighter.
 	if fn.Timeout > 0 && fn.Timeout <= 5 {
@@ -1274,6 +1332,9 @@ func (h *Handler) invokeSyncOnce(ctx context.Context, fn *Function, rt Runtime, 
 
 	inst, err := rt.Acquire(acquireCtx, fn)
 	if err != nil {
+		if t, ok := asThrottle(err); ok {
+			return &InvokeResult{StatusCode: 429, throttle: t}
+		}
 		h.log.Error("invoke: acquire instance", zap.String("function", name), zap.Error(err))
 		return &InvokeResult{
 			StatusCode:    200,
@@ -1282,6 +1343,8 @@ func (h *Handler) invokeSyncOnce(ctx context.Context, fn *Function, rt Runtime, 
 			acquireFailed: true,
 		}
 	}
+	inv.Bind(inst)
+	inv.Ready()
 	if err := h.awaitRuntimeReady(ctx, fn, rt, inst); err != nil {
 		rt.Release(ctx, inst, false)
 		h.log.Error("invoke: runtime init", zap.String("function", name), zap.Error(err))
@@ -1293,15 +1356,11 @@ func (h *Handler) invokeSyncOnce(ctx context.Context, fn *Function, rt Runtime, 
 		}
 	}
 
-	if h.tracker != nil {
-		h.tracker.Ready(name)
-	}
+	inv.Running()
 
 	// Capture the log stream name before invoking so it can be attached to the result.
 	logStreamName := inst.LogStreamName()
-	if h.tracker != nil {
-		h.tracker.SetLogRefs(name, fn.logGroupName(), logStreamName)
-	}
+	inv.SetLogRefs(fn.logGroupName(), logStreamName)
 
 	// Ensure the log stream exists (idempotent — cheap on warm reuse).
 	// Use the function's own region (from its ARN) so the log stream is
@@ -1321,11 +1380,7 @@ func (h *Handler) invokeSyncOnce(ctx context.Context, fn *Function, rt Runtime, 
 	// Bound the invocation by the function's configured timeout so that
 	// context.getRemainingTimeInMillis() inside the function reflects the
 	// real deadline, and so we kill the container if it overruns.
-	timeoutSec := fn.Timeout
-	if timeoutSec <= 0 {
-		timeoutSec = 3 // sensible default matching AWS
-	}
-	invokeCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+	invokeCtx, cancel := context.WithTimeout(ctx, functionTimeout(fn))
 	defer cancel()
 
 	h.log.Debug("invoke function: dispatching", zap.String("function", name), zap.Int("payload_bytes", len(payload)))
@@ -1348,6 +1403,42 @@ func (h *Handler) invokeSyncOnce(ctx context.Context, fn *Function, rt Runtime, 
 	return result
 }
 
+// asyncThrottleRetries and asyncThrottleBackoff shape how an Event-type
+// invocation waits out a throttle. AWS never returns 429 to an asynchronous
+// caller — it already answered 202 and queued the event — so it retries
+// internally instead. Overcast does the same on a much shorter budget: an
+// emulator holding events for AWS's six hours would just look broken.
+const (
+	asyncThrottleRetries = 5
+	asyncThrottleBackoff = 2 * time.Second
+)
+
+// acquireForAsync acquires an instance for an Event-type invocation, retrying
+// while the function is throttled rather than dropping the event on the first
+// refusal.
+func (h *Handler) acquireForAsync(ctx context.Context, fn *Function, rt Runtime) (RuntimeInstance, error) {
+	var err error
+	for attempt := 0; ; attempt++ {
+		var inst RuntimeInstance
+		inst, err = rt.Acquire(ctx, fn)
+		if err == nil {
+			return inst, nil
+		}
+		if _, throttled := asThrottle(err); !throttled || attempt >= asyncThrottleRetries {
+			return nil, err
+		}
+		h.log.Debug("invokeAsync: throttled, retrying",
+			zap.String("function", fn.Name),
+			zap.Int("attempt", attempt+1),
+		)
+		select {
+		case <-h.clk.After(asyncThrottleBackoff):
+		case <-ctx.Done():
+			return nil, err
+		}
+	}
+}
+
 // invokeAsync fires a function invocation in a goroutine, discarding the result.
 // Used for Event-type invocations (HTTP 202, fire-and-forget).
 func (h *Handler) invokeAsync(fn *Function, rt Runtime, payload []byte) {
@@ -1355,10 +1446,6 @@ func (h *Handler) invokeAsync(fn *Function, rt Runtime, payload []byte) {
 	// Still bound by the function timeout so the container is killed on overrun.
 	// Inject the function's region so EnsureLogStream writes to the correct
 	// regional log group (background contexts have no region otherwise).
-	timeoutSec := fn.Timeout
-	if timeoutSec <= 0 {
-		timeoutSec = 3
-	}
 	region := regionFromFunctionARN(fn.ARN)
 	if region == "" {
 		region = h.cfg.Region
@@ -1366,50 +1453,36 @@ func (h *Handler) invokeAsync(fn *Function, rt Runtime, payload []byte) {
 	bgCtx := middleware.ContextWithRegion(context.Background(), region)
 	ctx := bgCtx
 
-	if h.tracker != nil {
-		h.tracker.Acquire(fn.Name, payload)
-	}
-	inst, err := rt.Acquire(ctx, fn)
+	inv := h.tracker.Begin(fn.Name, payload)
+	inst, err := h.acquireForAsync(ctx, fn, rt)
 	if err != nil {
-		if h.tracker != nil {
-			h.tracker.Release(fn.Name, false, err.Error())
-		}
+		inv.Abandon(err.Error())
 		h.log.Error("invokeAsync: acquire instance", zap.String("function", fn.Name), zap.Error(err))
 		return
 	}
+	inv.Bind(inst)
+	inv.Ready()
 	if err := h.awaitRuntimeReady(ctx, fn, rt, inst); err != nil {
 		rt.Release(ctx, inst, false)
-		if h.tracker != nil {
-			h.tracker.Release(fn.Name, false, err.Error())
-		}
+		inv.Abandon(err.Error())
 		h.log.Error("invokeAsync: runtime init", zap.String("function", fn.Name), zap.Error(err))
 		return
 	}
+	inv.Running()
 
 	// Ensure the log stream exists so container logs are captured.
 	if h.logWriter != nil {
-		if h.tracker != nil {
-			h.tracker.SetLogRefs(fn.Name, fn.logGroupName(), inst.LogStreamName())
-		}
+		inv.SetLogRefs(fn.logGroupName(), inst.LogStreamName())
 		if lsErr := h.logWriter.EnsureLogStream(ctx, fn.logGroupName(), inst.LogStreamName()); lsErr != nil {
 			h.log.Debug("invokeAsync: ensure log stream", zap.String("function", fn.Name), zap.Error(lsErr))
 		}
 	}
 
-	invokeCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+	invokeCtx, cancel := context.WithTimeout(ctx, functionTimeout(fn))
 	defer cancel()
 	result, invokeErr := inst.Invoke(invokeCtx, payload)
 	rt.Release(invokeCtx, inst, invokeErr == nil)
-	if h.tracker != nil {
-		success := invokeErr == nil && result != nil && result.FunctionError == ""
-		reason := ""
-		if invokeErr != nil {
-			reason = invokeErr.Error()
-		} else if result != nil && result.FunctionError != "" {
-			reason = result.FunctionError
-		}
-		h.tracker.Release(fn.Name, success, reason)
-	}
+	inv.Finish(invocationOutcome(invokeErr, result))
 	if invokeErr != nil {
 		h.log.Error("invokeAsync: execution error", zap.String("function", fn.Name), zap.Error(invokeErr))
 		return
@@ -1492,9 +1565,7 @@ func (h *Handler) InvokeFunctionSSE(w http.ResponseWriter, r *http.Request) {
 	// Acquire instance — use progress-aware path if the runtime supports it.
 	sendEvent("progress", "Acquiring runtime instance")
 
-	if h.tracker != nil {
-		h.tracker.Acquire(name, payload)
-	}
+	inv := h.tracker.Begin(name, payload)
 
 	var inst RuntimeInstance
 	var err error
@@ -1510,28 +1581,25 @@ func (h *Handler) InvokeFunctionSSE(w http.ResponseWriter, r *http.Request) {
 		inst, err = rt.Acquire(ctx, fn)
 	}
 	if err != nil {
-		if h.tracker != nil {
-			h.tracker.Release(name, false, err.Error())
-		}
+		inv.Abandon(err.Error())
 		h.log.Error("invoke-sse: acquire instance", zap.String("function", name), zap.Error(err))
 		sendEvent("error", err.Error())
 		return
 	}
+	inv.Bind(inst)
+	inv.Ready()
 	if err := h.awaitRuntimeReady(ctx, fn, rt, inst); err != nil {
 		rt.Release(ctx, inst, false)
-		if h.tracker != nil {
-			h.tracker.Release(name, false, err.Error())
-		}
+		inv.Abandon(err.Error())
 		h.log.Error("invoke-sse: runtime init", zap.String("function", name), zap.Error(err))
 		sendEvent("error", err.Error())
 		return
 	}
+	inv.Running()
 
 	// Capture the log stream name before invoking so it can be attached to the result.
 	logStreamName := inst.LogStreamName()
-	if h.tracker != nil {
-		h.tracker.SetLogRefs(name, fn.logGroupName(), logStreamName)
-	}
+	inv.SetLogRefs(fn.logGroupName(), logStreamName)
 
 	// Ensure log stream using the function's own region.
 	if h.logWriter != nil {
@@ -1546,11 +1614,7 @@ func (h *Handler) InvokeFunctionSSE(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Invoke with timeout.
-	timeoutSec := fn.Timeout
-	if timeoutSec <= 0 {
-		timeoutSec = 3
-	}
-	invokeCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+	invokeCtx, cancel := context.WithTimeout(ctx, functionTimeout(fn))
 	defer cancel()
 
 	sendEvent("progress", "Invoking function handler")
@@ -1558,16 +1622,7 @@ func (h *Handler) InvokeFunctionSSE(w http.ResponseWriter, r *http.Request) {
 	result, invokeErr := inst.Invoke(invokeCtx, payload)
 	healthy := invokeErr == nil
 	rt.Release(invokeCtx, inst, healthy)
-	if h.tracker != nil {
-		success := invokeErr == nil && result != nil && result.FunctionError == ""
-		reason := ""
-		if invokeErr != nil {
-			reason = invokeErr.Error()
-		} else if result != nil && result.FunctionError != "" {
-			reason = result.FunctionError
-		}
-		h.tracker.Release(name, success, reason)
-	}
+	inv.Finish(invocationOutcome(invokeErr, result))
 
 	if invokeErr != nil {
 		h.log.Error("invoke-sse: execution error", zap.String("function", name), zap.Error(invokeErr))

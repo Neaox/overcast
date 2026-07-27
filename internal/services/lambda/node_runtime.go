@@ -15,6 +15,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/clock"
@@ -58,6 +59,7 @@ func (rt *NodeRuntime) Acquire(_ context.Context, fn *Function) (RuntimeInstance
 		logStream:    rt.lambdaLogStreamName(),
 		logger:       rt.logger,
 		functionName: fn.Name,
+		instanceID:   uuid.NewString(),
 	}, nil
 }
 
@@ -68,6 +70,7 @@ func (rt *NodeRuntime) Release(_ context.Context, _ RuntimeInstance, _ bool) {}
 // nodeRuntimeInstance is the stub RuntimeInstance returned by NodeRuntime.Acquire.
 type nodeRuntimeInstance struct {
 	logStream    string
+	instanceID   string
 	healthy      bool
 	logger       *zap.Logger
 	functionName string
@@ -79,8 +82,16 @@ func (i *nodeRuntimeInstance) LogStreamName() string { return i.logStream }
 // FunctionName returns the Lambda function name for this stub instance.
 func (i *nodeRuntimeInstance) FunctionName() string { return i.functionName }
 
-// CodeHash returns empty string — the stub runtime has no real code.
-func (i *nodeRuntimeInstance) CodeHash() string { return "" }
+// ConfigIdentity returns empty string — the stub runtime has no real container,
+// so it never matches a function's identity and is never reused.
+func (i *nodeRuntimeInstance) ConfigIdentity() string { return "" }
+
+// ContainerID returns empty string — the stub runtime is not container-backed.
+func (i *nodeRuntimeInstance) ContainerID() string { return "" }
+
+// InstanceID returns the stub instance's own identifier so the tracker can
+// still show one environment per stubbed invocation.
+func (i *nodeRuntimeInstance) InstanceID() string { return i.instanceID }
 
 // Invoke returns an error payload indicating that Docker is required for real
 // Lambda execution. The ContainerRuntime handles actual invocations when Docker

@@ -29,11 +29,11 @@ func TestInstanceTracker_releasePublishesSucceededOutcome(t *testing.T) {
 	})
 	t.Cleanup(cancel)
 
-	tracker.Acquire("my-fn", []byte(`{"hello":"world"}`))
+	inv := trackedFor(tracker, "my-fn", []byte(`{"hello":"world"}`))
 
 	// When: the invocation is released as succeeded
 	clk.Add(1 * time.Second)
-	tracker.Release("my-fn", true, "")
+	inv.Finish(true, "")
 
 	// Then: the release payload contains the explicit succeeded outcome
 	select {
@@ -67,11 +67,11 @@ func TestInstanceTracker_releasePublishesFailedOutcome(t *testing.T) {
 	})
 	t.Cleanup(cancel)
 
-	tracker.Acquire("my-fn", []byte(`{"hello":"world"}`))
+	inv := trackedFor(tracker, "my-fn", []byte(`{"hello":"world"}`))
 
 	// When: the invocation is released as failed
 	clk.Add(1 * time.Second)
-	tracker.Release("my-fn", false, "task timed out")
+	inv.Finish(false, "task timed out")
 
 	// Then: the release payload contains failed status and failure reason
 	select {
@@ -105,10 +105,10 @@ func TestInstanceTracker_readyTransitionsToInitializing(t *testing.T) {
 	})
 	t.Cleanup(cancel)
 
-	tracker.Acquire("my-fn", nil)
+	inv := trackedFor(tracker, "my-fn", nil)
 
 	// When: Ready is called (container is up, RIC not yet connected).
-	tracker.Ready("my-fn")
+	inv.Ready()
 
 	// Then: status transitions to "initializing", not "running".
 	select {
@@ -148,11 +148,11 @@ func TestInstanceTracker_runtimeConnectedTransitionsToRunning(t *testing.T) {
 	})
 	t.Cleanup(cancel)
 
-	tracker.Acquire("my-fn", nil)
-	tracker.Ready("my-fn") // → initializing
+	inv := trackedFor(tracker, "my-fn", nil)
+	inv.Ready() // → initializing
 
 	// When: RuntimeConnected is called (RIC polled first /next).
-	tracker.RuntimeConnected("my-fn")
+	inv.Running()
 
 	// Then: status transitions to "running".
 	select {
@@ -171,27 +171,35 @@ func TestInstanceTracker_fullColdStartLifecycle(t *testing.T) {
 	tracker := newInstanceTracker(clk, zap.NewNop())
 	t.Cleanup(tracker.Stop)
 
-	tracker.Acquire("my-fn", nil) // → starting
+	inv := trackedFor(tracker, "my-fn", nil) // → starting
 	snap := tracker.Instances()
 	if snap[0].Status != "starting" {
 		t.Fatalf("after Acquire: expected starting, got %q", snap[0].Status)
 	}
 
-	tracker.Ready("my-fn") // → initializing
+	inv.Ready() // → initializing
 	snap = tracker.Instances()
 	if snap[0].Status != "initializing" {
 		t.Fatalf("after Ready: expected initializing, got %q", snap[0].Status)
 	}
 
-	tracker.RuntimeConnected("my-fn") // → running
+	inv.Running() // → running
 	snap = tracker.Instances()
 	if snap[0].Status != "running" {
 		t.Fatalf("after RuntimeConnected: expected running, got %q", snap[0].Status)
 	}
 
-	tracker.Release("my-fn", true, "") // → idle
+	inv.Finish(true, "") // → idle
 	snap = tracker.Instances()
 	if snap[0].Status != "idle" {
 		t.Fatalf("after Release: expected idle, got %q", snap[0].Status)
 	}
+}
+
+// trackedFor opens a tracker record for one invocation and binds it to a stub
+// execution environment, mirroring what the invoke paths do.
+func trackedFor(t *instanceTracker, functionName string, payload []byte) *trackedInvocation {
+	inv := t.Begin(functionName, payload)
+	inv.Bind(newPoolTestInstance(functionName))
+	return inv
 }

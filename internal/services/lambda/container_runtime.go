@@ -31,6 +31,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/clock"
@@ -264,10 +265,24 @@ func (cr *ContainerRuntime) PrewarmFunction(fn *Function, onReady func(err error
 	}()
 }
 
+// Lambda's AWS_LAMBDA_INITIALIZATION_TYPE values. Observability libraries
+// (Powertools among them) read this to classify cold starts.
+const (
+	initTypeOnDemand    = "on-demand"
+	initTypeProvisioned = "provisioned-concurrency"
+)
+
 // Acquire creates and starts a Docker container for fn, then returns a
 // containerInstance that can invoke the function via the Runtime API.
 func (cr *ContainerRuntime) Acquire(ctx context.Context, fn *Function) (RuntimeInstance, error) {
-	return cr.acquireContainer(ctx, fn, func(string) {})
+	return cr.acquireContainer(ctx, fn, func(string) {}, initTypeOnDemand)
+}
+
+// AcquireProvisioned creates an environment for a provisioned concurrency
+// reservation. Identical to Acquire except that the container reports
+// AWS_LAMBDA_INITIALIZATION_TYPE=provisioned-concurrency, as it would on AWS.
+func (cr *ContainerRuntime) AcquireProvisioned(ctx context.Context, fn *Function) (RuntimeInstance, error) {
+	return cr.acquireContainer(ctx, fn, func(string) {}, initTypeProvisioned)
 }
 
 // Release is a no-op for ContainerRuntime itself — InstancePool wraps it and
@@ -277,13 +292,13 @@ func (cr *ContainerRuntime) Release(_ context.Context, _ RuntimeInstance, _ bool
 // AcquireWithProgress is like Acquire but calls progress at each lifecycle step
 // so callers (e.g. the SSE invoke endpoint) can stream status to the UI.
 func (cr *ContainerRuntime) AcquireWithProgress(ctx context.Context, fn *Function, progress ProgressFunc) (RuntimeInstance, error) {
-	return cr.acquireContainer(ctx, fn, progress)
+	return cr.acquireContainer(ctx, fn, progress, initTypeOnDemand)
 }
 
 // acquireContainer is the single implementation behind Acquire and
 // AcquireWithProgress. The progress callback is called at each lifecycle step;
 // callers that don't need progress pass a no-op.
-func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, progress ProgressFunc) (RuntimeInstance, error) {
+func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, progress ProgressFunc, initType string) (RuntimeInstance, error) {
 	isImage := fn.PackageType == "Image"
 
 	image, err := imageForFunction(fn)
@@ -332,7 +347,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	}
 
 	logStream := lambdaLogStreamName(cr.clk)
-	env := cr.buildEnv(fn, logStream)
+	env := cr.buildEnv(fn, logStream, initType)
 	containerName := fmt.Sprintf("overcast-lambda-%s-%d", sanitizeName(fn.Name), cr.clk.Now().UnixNano())
 
 	progress("Creating container")
@@ -555,10 +570,11 @@ func (cr *ContainerRuntime) newContainerInstance(id, containerIP string, fn *Fun
 
 	ci := &containerInstance{
 		id:             id,
+		instanceID:     uuid.NewString(),
 		containerIP:    containerIP,
 		functionName:   fn.Name,
 		functionARN:    fn.ARN,
-		codeHash:       functionCodeIdentity(fn),
+		configIdentity: functionInstanceIdentity(fn),
 		memorySize:     fn.MemorySize,
 		logStream:      logStream,
 		logGroupName:   fn.logGroupName(),
@@ -721,7 +737,7 @@ func (cr *ContainerRuntime) ensureImage(ctx context.Context, image, platform str
 
 // ─── Environment variables ─────────────────────────────────────────────────
 
-func (cr *ContainerRuntime) buildEnv(fn *Function, logStream string) []string {
+func (cr *ContainerRuntime) buildEnv(fn *Function, logStream, initType string) []string {
 	// AWS_REGION must reflect the function's actual region (encoded in its
 	// ARN), not the emulator's global default. SDKs sign requests with this
 	// region; if we used the default (e.g. us-east-1) for a function deployed
@@ -748,7 +764,7 @@ func (cr *ContainerRuntime) buildEnv(fn *Function, logStream string) []string {
 		"AWS_LAMBDA_LOG_STREAM_NAME":      logStream,
 		// Real Lambda always sets this; Powertools and other observability
 		// libraries use it for cold-start classification.
-		"AWS_LAMBDA_INITIALIZATION_TYPE": "on-demand",
+		"AWS_LAMBDA_INITIALIZATION_TYPE": initType,
 		"AWS_REGION":                     region,
 		"AWS_DEFAULT_REGION":             region,
 		"AWS_ACCOUNT_ID":                 cr.cfg.AccountID,
@@ -807,7 +823,8 @@ type containerInstance struct {
 	containerIP    string // IP on the Lambda Docker network
 	functionName   string
 	functionARN    string
-	codeHash       string // SHA-256 of the CodeZip at creation time
+	instanceID     string // stable execution-environment ID, survives warm reuse
+	configIdentity string // fingerprint of the code + config baked in at creation time
 	memorySize     int    // configured memory in MB
 	logStream      string
 	logGroupName   string
@@ -873,8 +890,15 @@ func (ci *containerInstance) LogStreamName() string { return ci.logStream }
 // FunctionName returns the name of the Lambda function this container runs.
 func (ci *containerInstance) FunctionName() string { return ci.functionName }
 
-// CodeHash returns the SHA-256 hex of the deployment zip this instance was built from.
-func (ci *containerInstance) CodeHash() string { return ci.codeHash }
+// ConfigIdentity returns the fingerprint of the code and configuration this
+// container was created with.
+func (ci *containerInstance) ConfigIdentity() string { return ci.configIdentity }
+
+// ContainerID returns the Docker container ID backing this instance.
+func (ci *containerInstance) ContainerID() string { return ci.id }
+
+// InstanceID returns the stable execution-environment ID for this container.
+func (ci *containerInstance) InstanceID() string { return ci.instanceID }
 
 // Invoke sends the event to the container via the Runtime API and waits for
 // the result. The container's RIC picks up the event from GET /next, runs the

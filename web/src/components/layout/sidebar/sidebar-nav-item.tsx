@@ -30,7 +30,8 @@ const rowVariants = cva(
     variants: {
       collapsed: {
         true: "h-8 w-9 justify-center",
-        false: "gap-2.5 px-2.5 py-[7px] text-[13px]",
+        // Padding lives on the interactive child instead — see `rowHitArea`.
+        false: "text-[13px]",
       },
       active: { true: "bg-accent-muted text-accent", false: "" },
       tone: { default: "text-fg-muted", muted: "text-fg-subtle" },
@@ -44,6 +45,12 @@ const rowVariants = cva(
     defaultVariants: { collapsed: false, active: false, tone: "default" },
   },
 )
+
+/**
+ * The link or button inside an expanded row. It carries the row padding and
+ * stretches to fill the row so the clickable area matches the hovered area.
+ */
+const rowHitArea = "flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-[7px]"
 
 interface SidebarNavItemProps {
   item: SidebarNavEntry
@@ -102,7 +109,7 @@ export function SidebarNavItem({
               event.stopPropagation()
               onToggleExpand?.(to)
             }}
-            className="flex flex-1 items-center gap-2.5 text-left"
+            className={cn(rowHitArea, "text-left")}
             aria-expanded={expanded}
           >
             <Icon className={iconCls} />
@@ -126,7 +133,7 @@ export function SidebarNavItem({
       {...sortable?.listeners}
     >
       {sortable && <SidebarGrip />}
-      <Link to={to} className="flex min-w-0 flex-1 items-center gap-2.5" draggable={false}>
+      <Link to={to} className={rowHitArea} draggable={false}>
         <Icon className={iconCls} />
         <span className="truncate">{label}</span>
         {badgeNode}
@@ -135,9 +142,12 @@ export function SidebarNavItem({
   )
 }
 
-/** Drag affordance — absolutely positioned so it never shifts icon alignment. */
+/**
+ * Drag affordance — absolutely positioned so it never shifts icon alignment, and
+ * click-through so it does not punch a hole in the link it overlaps.
+ */
 function SidebarGrip() {
   return (
-    <GripVertical className="absolute top-1/2 left-0.5 h-3 w-3 -translate-y-1/2 text-fg-subtle/40 opacity-0 transition-opacity group-hover:opacity-100" />
+    <GripVertical className="pointer-events-none absolute top-1/2 left-0.5 h-3 w-3 -translate-y-1/2 text-fg-subtle/40 opacity-0 transition-opacity group-hover:opacity-100" />
   )
 }

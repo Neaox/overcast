@@ -222,6 +222,7 @@ function areLambdaInstanceCardPropsEqual(
     pi.startedAt === ni.startedAt &&
     pi.expiresAt === ni.expiresAt &&
     pi.functionName === ni.functionName &&
+    pi.provisioned === ni.provisioned &&
     prev.isGhost === next.isGhost &&
     prev.deletedAt === next.deletedAt &&
     prev.onPeek === next.onPeek
@@ -248,10 +249,13 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
 
   // eslint-disable-next-line react-hooks/purity
   const now = Date.now()
+  // A provisioned environment is held open by its reservation, so it has no
+  // idle TTL to count down — the server sends expiresAt: 0 for those.
+  const isProvisioned = Boolean(instance.provisioned)
   const totalMs = instance.expiresAt - instance.startedAt
   const remainingMs = Math.max(0, instance.expiresAt - now)
   const frac = totalMs > 0 ? remainingMs / totalMs : 0
-  const isExpired = instance.expiresAt <= now
+  const isExpired = !isProvisioned && instance.expiresAt <= now
 
   useEffect(() => {
     if (lambdaEvents.length < eventCursorRef.current) {
@@ -353,6 +357,14 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
           <span className="flex-1 truncate font-mono text-fg-subtle" title={instance.instanceId}>
             {shortId}
           </span>
+          {isProvisioned && (
+            <span
+              className="rounded bg-purple-400/20 px-1 py-0.5 font-mono text-[9px] font-semibold text-purple-300 uppercase"
+              title="Provisioned concurrency — kept warm, exempt from the idle timeout"
+            >
+              prov
+            </span>
+          )}
           <span
             className={cn(
               "rounded px-1 py-0.5 font-mono text-[9px] font-semibold uppercase",
@@ -398,25 +410,30 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
           <MetricBar label="CPU" value={Math.round(instance.cpuPercent)} max={100} unit="%" />
         </div>
 
-        {/* TTL countdown — 15 minute-pills fused to the bottom border */}
+        {/* TTL countdown — 15 minute-pills fused to the bottom border. A
+            provisioned environment never expires on idleness, so it shows a
+            solid reserved bar instead of a draining countdown. */}
         <div className="absolute right-0 bottom-0 left-0 overflow-hidden rounded-b">
           {/* label above pills */}
           <div className="flex items-center justify-center pt-0.5">
             <span className="font-mono text-[7px] font-normal tracking-widest text-fg-muted/50">
-              {fmtRemaining(remainingMs)}
+              {isProvisioned ? "reserved" : fmtRemaining(remainingMs)}
             </span>
           </div>
           {/* pill row */}
           <div className="flex gap-px px-1 pb-px">
             {Array.from({ length: 15 }, (_, i) => {
-              const f = pillFrac(i, 15, remainingMs, totalMs || 15 * 60 * 1000)
+              const f = isProvisioned ? 1 : pillFrac(i, 15, remainingMs, totalMs || 15 * 60 * 1000)
               return (
                 <div
                   key={i}
                   className="relative h-1.5 flex-1 overflow-hidden rounded-sm bg-fg-muted/15"
                 >
                   <div
-                    className={cn("absolute inset-y-0 left-0", barColor(frac))}
+                    className={cn(
+                      "absolute inset-y-0 left-0",
+                      isProvisioned ? "bg-purple-400" : barColor(frac),
+                    )}
                     style={{ width: `${f * 100}%`, opacity: 0.7 }}
                   />
                 </div>

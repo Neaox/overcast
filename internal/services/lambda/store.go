@@ -571,6 +571,61 @@ func (s *lambdaStore) getProvisionedConcurrencyConfig(ctx context.Context, funct
 	return &cfg, nil
 }
 
+// deleteProvisionedConcurrencyConfig removes a provisioned concurrency config.
+func (s *lambdaStore) deleteProvisionedConcurrencyConfig(ctx context.Context, functionName, qualifier string) *protocol.AWSError {
+	key := serviceutil.RegionKey(s.region(ctx), provisionedConcurrencyKey(functionName, qualifier))
+	if err := s.store.Delete(ctx, nsProvisionedConcurrency, key); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+// listProvisionedConcurrencyConfigs returns every config for functionName in
+// the request's region. A malformed record is skipped rather than failing the
+// whole listing.
+func (s *lambdaStore) listProvisionedConcurrencyConfigs(ctx context.Context, functionName string) ([]*ProvisionedConcurrencyConfig, *protocol.AWSError) {
+	kvs, err := s.store.Scan(ctx, nsProvisionedConcurrency, serviceutil.RegionKey(s.region(ctx), functionName+":"))
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	out := make([]*ProvisionedConcurrencyConfig, 0, len(kvs))
+	for _, kv := range kvs {
+		var cfg ProvisionedConcurrencyConfig
+		if err := json.Unmarshal([]byte(kv.Value), &cfg); err != nil {
+			continue
+		}
+		out = append(out, &cfg)
+	}
+	return out, nil
+}
+
+// regionalProvisionedConfig pairs a reservation with the region it was created
+// in, which the config record itself does not carry.
+type regionalProvisionedConfig struct {
+	Region string
+	Config *ProvisionedConcurrencyConfig
+}
+
+// listAllProvisionedConcurrencyConfigs returns every config across all regions,
+// each tagged with its region. Used at startup to rebuild reservations after a
+// restart.
+func (s *lambdaStore) listAllProvisionedConcurrencyConfigs(ctx context.Context) ([]regionalProvisionedConfig, *protocol.AWSError) {
+	kvs, err := s.store.Scan(ctx, nsProvisionedConcurrency, "")
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	out := make([]regionalProvisionedConfig, 0, len(kvs))
+	for _, kv := range kvs {
+		var cfg ProvisionedConcurrencyConfig
+		if err := json.Unmarshal([]byte(kv.Value), &cfg); err != nil {
+			continue
+		}
+		region, _ := serviceutil.SplitRegionKey(kv.Key)
+		out = append(out, regionalProvisionedConfig{Region: region, Config: &cfg})
+	}
+	return out, nil
+}
+
 // getLayerVersionByARN parses a layer version ARN of the form
 // arn:aws:lambda:{region}:{account}:layer:{name}:{version} and delegates to
 // getLayerVersion. Returns nil, nil when the ARN has an unexpected shape or the

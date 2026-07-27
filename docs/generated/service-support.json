@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1262,
+  "total_ops": 1264,
   "services": [
     {
       "service": "s3",
@@ -520,8 +520,8 @@
     {
       "service": "lambda",
       "display_name": "Lambda",
-      "total_ops": 38,
-      "implemented_ops": 37,
+      "total_ops": 40,
+      "implemented_ops": 39,
       "operations": [
         {
           "operation": "ListFunctions",
@@ -712,7 +712,7 @@
           "operation": "PutFunctionConcurrency",
           "category": "Concurrency \u0026 configuration",
           "status": "✅ Supported",
-          "notes": "Stores reserved concurrency limit; 0 = throttled"
+          "notes": "Enforced: over-limit invokes get 429 TooManyRequestsException; 0 throttles the function entirely"
         },
         {
           "operation": "GetFunctionConcurrency",
@@ -730,13 +730,25 @@
           "operation": "PutProvisionedConcurrencyConfig",
           "category": "Concurrency \u0026 configuration",
           "status": "✅ Supported",
-          "notes": "Stores config per qualifier; immediately reports Status=READY (no actual provisioning)"
+          "notes": "Pre-warms the requested execution environments in the background (IN_PROGRESS then READY); FAILED when Docker is unavailable"
         },
         {
           "operation": "GetProvisionedConcurrencyConfig",
           "category": "Concurrency \u0026 configuration",
           "status": "✅ Supported",
-          "notes": "Returns ProvisionedConcurrencyConfigNotFoundException if not set"
+          "notes": "Reports live Allocated/Available; ProvisionedConcurrencyConfigNotFoundException if not set"
+        },
+        {
+          "operation": "DeleteProvisionedConcurrencyConfig",
+          "category": "Concurrency \u0026 configuration",
+          "status": "✅ Supported",
+          "notes": "Releases the reservation; the environments age out on the idle TTL rather than being killed"
+        },
+        {
+          "operation": "ListProvisionedConcurrencyConfigs",
+          "category": "Concurrency \u0026 configuration",
+          "status": "✅ Supported",
+          "notes": "Single page; NextMarker is always null"
         }
       ]
     },

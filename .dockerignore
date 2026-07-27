@@ -1,11 +1,9 @@
 # Ignore everything, then allowlist only what the build needs.
 *
 
-# ---- Docs index generation (stage 1) ---------------------------------------
-!scripts/
-!scripts/docs-index.go
-
-# ---- Go builder (stage 3) ---------------------------------------------------
+# ---- Go builder (stage 2) ---------------------------------------------------
+# The docs index is committed, so it arrives with !internal/ and !web/ below —
+# scripts/docs-index.go no longer needs to be in the build context.
 !go.mod
 !go.sum
 !embed.go
@@ -19,7 +17,7 @@
 !docs/services/
 !docs/services/**
 
-# ---- Web builder (stage 2) --------------------------------------------------
+# ---- Web builder (stage 1) --------------------------------------------------
 !web/
 # npm ci runs inside the container — host node_modules are dead weight (~800 MB).
 web/node_modules/
@@ -28,5 +26,5 @@ web/api/node_modules/
 web/dist/
 web/dist-server/
 
-# ---- Console stage (stage 4) ------------------------------------------------
+# ---- Console stage (stage 5) ------------------------------------------------
 !docker/

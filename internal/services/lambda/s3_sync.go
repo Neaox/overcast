@@ -23,14 +23,17 @@ type S3FetchFunc func(ctx context.Context, bucket, key string) ([]byte, error)
 //
 // This mirrors the Reactive S3 Sync pattern: code lives in S3 and any
 // PutObject to the function's code bucket/key triggers an automatic refresh.
-// The warm-pool entry for the affected function becomes stale automatically
-// because functionCodeIdentity hashes CodeZip bytes, and the new bytes produce
-// a different hash.
+// The warm instance running the previous code is retired as soon as the new
+// bytes land, exactly as it would be after an explicit UpdateFunctionCode.
 type s3SyncWatcher struct {
 	ls    *lambdaStore
 	fetch S3FetchFunc
 	log   *zap.Logger
 	clk   clock.Clock
+	// retire destroys the warm execution environment for a function whose code
+	// just changed. Wired by Service.InitS3Sync; nil in tests that only assert
+	// on stored state.
+	retire func(fn *Function, previousIdentity string)
 }
 
 func newS3SyncWatcher(ls *lambdaStore, fetch S3FetchFunc, log *zap.Logger, clk clock.Clock) *s3SyncWatcher {
@@ -64,10 +67,10 @@ func (w *s3SyncWatcher) onS3ObjectCreated(ctx context.Context, e events.Event) {
 }
 
 // syncFunctionCode fetches the zip from S3, stores it in the function record,
-// and bumps the revision. The warm-pool entry for this function becomes stale
-// on the next Acquire call because functionCodeIdentity returns a different
-// hash once CodeZip changes.
+// bumps the revision, and retires the warm instance still running the old code.
 func (w *s3SyncWatcher) syncFunctionCode(ctx context.Context, fn *Function) {
+	previousIdentity := functionInstanceIdentity(fn)
+
 	zip, err := w.fetch(ctx, fn.CodeS3Bucket, fn.CodeS3Key)
 	if err != nil {
 		w.log.Warn("s3 sync: fetch zip failed",
@@ -90,6 +93,10 @@ func (w *s3SyncWatcher) syncFunctionCode(ctx context.Context, fn *Function) {
 			zap.Error(aerr),
 		)
 		return
+	}
+
+	if w.retire != nil {
+		w.retire(fn, previousIdentity)
 	}
 
 	w.log.Info("s3 sync: refreshed function code from S3",

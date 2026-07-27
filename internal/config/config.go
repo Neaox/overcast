@@ -229,6 +229,28 @@ type Config struct {
 	// LAMBDA_DOCKER_MAX_CONCURRENT_STARTS. Default 4.
 	LambdaDockerMaxConcurrentStarts int
 
+	// LambdaMaxInstances bounds how many Lambda containers Overcast runs at
+	// once across all functions — warm and executing combined. When the limit
+	// is reached, a new invocation first reclaims the least-recently-used idle
+	// container; if none can be reclaimed it queues until the function's
+	// timeout and is then throttled. This protects the host, it is not an
+	// emulation of the AWS account concurrency quota. Corresponds to env var
+	// LAMBDA_MAX_INSTANCES. Default 25.
+	LambdaMaxInstances int
+
+	// LambdaMaxInstancesPerFunction bounds concurrent containers for a single
+	// function, independent of any AWS reserved concurrency the function has.
+	// Clamped to LambdaMaxInstances. Corresponds to env var
+	// LAMBDA_MAX_INSTANCES_PER_FUNCTION. Default 10.
+	LambdaMaxInstancesPerFunction int
+
+	// LambdaMaxWarmInstances bounds how many idle containers one function keeps
+	// after a concurrency burst. Surplus instances are destroyed on release
+	// rather than waiting out the 15-minute idle sweep. A provisioned
+	// concurrency allocation raises this floor for that function. Corresponds
+	// to env var LAMBDA_MAX_WARM_INSTANCES. Default 10.
+	LambdaMaxWarmInstances int
+
 	// LambdaSeedRuntimeImages controls whether Overcast pre-pulls every known
 	// managed Lambda runtime image when the Docker runtime starts. Disabled by
 	// default to avoid Docker Desktop/containerd pressure during frequent restarts;
@@ -837,6 +859,18 @@ func Load() (*Config, error) {
 	cfg.LambdaDockerMaxConcurrentStarts = envInt("LAMBDA_DOCKER_MAX_CONCURRENT_STARTS", 4)
 	if cfg.LambdaDockerMaxConcurrentStarts < 1 {
 		cfg.LambdaDockerMaxConcurrentStarts = 1
+	}
+	cfg.LambdaMaxInstances = envInt("LAMBDA_MAX_INSTANCES", 25)
+	if cfg.LambdaMaxInstances < 1 {
+		cfg.LambdaMaxInstances = 1
+	}
+	cfg.LambdaMaxInstancesPerFunction = envInt("LAMBDA_MAX_INSTANCES_PER_FUNCTION", 10)
+	if cfg.LambdaMaxInstancesPerFunction < 1 {
+		cfg.LambdaMaxInstancesPerFunction = 1
+	}
+	cfg.LambdaMaxWarmInstances = envInt("LAMBDA_MAX_WARM_INSTANCES", 10)
+	if cfg.LambdaMaxWarmInstances < 1 {
+		cfg.LambdaMaxWarmInstances = 1
 	}
 	cfg.LambdaSeedRuntimeImages = envBool("LAMBDA_SEED_RUNTIME_IMAGES", false)
 	cfg.LambdaInitTimeout = time.Duration(envInt("LAMBDA_INIT_TIMEOUT_SECONDS", 10)) * time.Second

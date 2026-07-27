@@ -40,7 +40,7 @@ setup:
 	$(GO) run ./scripts/check-tools.go
 
 ## build: compile the overcast binary for the current platform (includes embedded web UI)
-build: docs-index
+build:
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) ./cmd/overcast
 
@@ -50,7 +50,7 @@ build-mcp:
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/overcast-mcp ./cmd/overcast-mcp
 
 ## build-web: build the web UI (run before build if assets are stale)
-build-web: docs-index
+build-web:
 	cd web && VITE_BUNDLED=true npm run build
 
 ## build-slim: compile the slim binary (no web UI, no SQLite) for the current platform
@@ -59,7 +59,7 @@ build-slim:
 	$(GO) build $(GOFLAGS) -tags slim,nosqlite -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/overcastd ./cmd/overcast
 
 ## build-cross: compile release binaries for all supported platforms
-build-cross: docs-index build-linux-amd64 build-linux-arm64 build-darwin-amd64 build-darwin-arm64 build-windows-amd64 \
+build-cross: build-linux-amd64 build-linux-arm64 build-darwin-amd64 build-darwin-arm64 build-windows-amd64 \
              build-slim-linux-amd64 build-slim-linux-arm64 build-slim-darwin-amd64 build-slim-darwin-arm64 build-slim-windows-amd64
 
 ## build-linux-amd64: compile overcast for Linux x86-64
@@ -113,19 +113,19 @@ build-slim-windows-amd64:
 	GOOS=windows GOARCH=amd64 $(GO) build $(GOFLAGS) -tags slim,nosqlite -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/overcastd-windows-amd64.exe ./cmd/overcast
 
 ## run: build and run with dev defaults (uses cross-platform Go script)
-run: docs-index
+run:
 	OVERCAST_SERVICES= $(GO) run ./scripts/run.go
 
 ## dev-server: watch Go sources and hot-reload the server (requires air)
-dev-server: docs-index
+dev-server:
 	air
 
 ## test: run all tests (unit + integration, with race detector where supported)
-test: docs-index
+test:
 	$(GO) test -race -count=1 -timeout=1200s ./...
 
 ## test-unit: run unit tests only (fast — no server startup)
-test-unit: docs-index
+test-unit:
 	$(GO) test -race -count=1 -timeout=900s ./internal/...
 
 ## test-integration: run integration tests only
@@ -133,13 +133,13 @@ test-integration:
 	$(GO) test -race -count=1 -timeout=600s ./tests/...
 
 ## test-coverage: run tests and generate HTML coverage report
-test-coverage: docs-index
+test-coverage:
 	$(GO) test -race -count=1 -coverprofile=coverage.out ./...
 	$(GO) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report written to coverage.html"
 
 ## bench: run benchmarks with memory allocation reporting
-bench: docs-index
+bench:
 	$(GO) test -bench=. -benchmem -count=3 ./...
 
 ## bench-startup: measure cold-start time across all storage backends (pre-release gate)
@@ -197,7 +197,7 @@ generate-caps:
 check-caps:
 	$(GO) run -tags dev ./cmd/capgen --check
 
-## docs-index: generate the web docs search/navigation manifest
+## docs-index: regenerate the committed docs search/navigation index (run after editing docs/, then commit)
 docs-index:
 	$(GO) run ./scripts/docs-index.go --write-index --write-go-index
 

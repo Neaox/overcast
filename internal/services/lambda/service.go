@@ -80,9 +80,22 @@ type RuntimeInstance interface {
 	// Used by InstancePool.Release to key the pool without requiring *Function.
 	FunctionName() string
 
-	// CodeHash returns the SHA-256 of the deployment package this instance was
-	// built from. Used by InstancePool to detect stale instances after code updates.
-	CodeHash() string
+	// ConfigIdentity returns the fingerprint of the code and configuration this
+	// instance was built from (see functionInstanceIdentity). Used by
+	// InstancePool to detect instances made stale by a code or configuration
+	// update.
+	ConfigIdentity() string
+
+	// ContainerID returns the Docker container backing this instance, or "" for
+	// runtimes that are not container-backed. Used by InstancePool to drop a
+	// pooled instance when the Docker watcher reports its container died.
+	ContainerID() string
+
+	// InstanceID returns a stable identifier for this execution environment,
+	// assigned when it is created and preserved across warm reuse. It is what
+	// the instance tracker keys its records by, so a function serving several
+	// concurrent invocations reports one instance per environment.
+	InstanceID() string
 
 	// Close shuts down and removes the underlying container or process.
 	Close() error
@@ -109,6 +122,11 @@ type InvokeResult struct {
 	// invokeSync to retry once. Never set for errors from inside a running
 	// container (timeouts, init errors, handler crashes).
 	acquireFailed bool
+
+	// throttle is set when a concurrency limit refused the invocation. The
+	// handler turns it into AWS's 429 TooManyRequestsException rather than a
+	// 200 with a function error.
+	throttle *throttleError
 }
 
 // LayerVersionLink is a reference to a specific layer version attached to a function.
@@ -231,6 +249,9 @@ type Service struct {
 	docker           *docker.Client    // nil until Docker init completes
 	containerRuntime *ContainerRuntime // nil until Docker init completes
 	pool             *InstancePool     // nil until Docker init completes
+	// dockerEventsSubscribed guards subscribeDockerEvents, which InitBus and
+	// initDockerRuntime both call because either may complete first.
+	dockerEventsSubscribed bool
 }
 
 // WaitReady blocks until the background Docker runtime initialisation has
@@ -273,11 +294,83 @@ func (s *Service) InitBus(b *events.Bus) {
 	if cr != nil {
 		cr.SetBus(b)
 	}
+	// Docker init runs on a background goroutine and may have finished before
+	// the bus existed, in which case it could not subscribe. Do it now.
+	s.subscribeDockerEvents(b)
+}
+
+// reloadProvisionedConcurrency re-applies every stored provisioned concurrency
+// reservation to the pool, so allocations survive a restart. Runs in the
+// background; a function whose config cannot be read is skipped and logged
+// rather than blocking the others.
+func (s *Service) reloadProvisionedConcurrency(ctx context.Context, pool *InstancePool) {
+	if w, ok := s.store.(state.ReadyAwaiter); ok {
+		if err := w.WaitReady(ctx); err != nil {
+			s.log.Warn("lambda: provisioned concurrency reload: store not ready", zap.Error(err))
+			return
+		}
+	}
+	cfgs, aerr := s.ls.listAllProvisionedConcurrencyConfigs(ctx)
+	if aerr != nil {
+		s.log.Warn("lambda: provisioned concurrency reload failed", zap.String("error", aerr.Message))
+		return
+	}
+	for _, rc := range cfgs {
+		cfg := rc.Config
+		if cfg.RequestedProvisionedConcurrentExecutions < 1 {
+			continue
+		}
+		region := rc.Region
+		if region == "" {
+			region = s.cfg.Region
+		}
+		fnCtx := middleware.ContextWithRegion(ctx, region)
+		fn, aerr := s.ls.getFunction(fnCtx, cfg.FunctionName)
+		if aerr != nil || fn == nil {
+			continue
+		}
+		pool.SetProvisionedConcurrency(fn, cfg.RequestedProvisionedConcurrentExecutions)
+		s.log.Info("lambda: restored provisioned concurrency",
+			zap.String("function", cfg.FunctionName),
+			zap.String("region", region),
+			zap.Int("provisioned", cfg.RequestedProvisionedConcurrentExecutions))
+	}
+}
+
+// subscribeDockerEvents wires the Docker watcher's container-died events to the
+// two consumers that need them, once the container runtime exists:
+//
+//   - exitNotifier — fails an in-flight invocation immediately when its
+//     container dies, instead of waiting out the function timeout.
+//   - InstancePool — drops a warm instance whose container died while idle, so
+//     the next invocation cold starts rather than submitting to a container
+//     that will never poll for it.
+//
+// The Docker event watcher itself is owned by the router (started once for all
+// services); Lambda only subscribes. Safe to call repeatedly and from either
+// InitBus or initDockerRuntime, whichever completes second — it subscribes at
+// most once and is a no-op until the container runtime is up.
+func (s *Service) subscribeDockerEvents(b *events.Bus) {
+	if b == nil {
+		return
+	}
+	s.mu.Lock()
+	cr, pool := s.containerRuntime, s.pool
+	if cr == nil || pool == nil || s.dockerEventsSubscribed {
+		s.mu.Unlock()
+		return
+	}
+	s.dockerEventsSubscribed = true
+	s.mu.Unlock()
+
+	b.Subscribe(events.DockerContainerDied, cr.exitNotify.handleContainerDied)
+	b.Subscribe(events.DockerContainerDied, pool.handleContainerDied)
 }
 
 // InitS3Sync wires S3-reactive code sync. When an S3 object that matches a
 // function's CodeS3Bucket/CodeS3Key is uploaded, the function's CodeZip is
-// refreshed automatically and the warm pool is invalidated on the next invoke.
+// refreshed automatically and the warm instance running the old code is
+// retired.
 //
 // Must be called after InitBus; if the bus has not been set this is a no-op.
 func (s *Service) InitS3Sync(fetch S3FetchFunc) {
@@ -294,6 +387,7 @@ func (s *Service) InitS3Sync(fetch S3FetchFunc) {
 		return
 	}
 	w := newS3SyncWatcher(s.ls, fetch, s.log.Logger(), s.clk)
+	w.retire = s.handler.retireExecutionEnvironment
 	w.register(bus)
 }
 
@@ -402,12 +496,12 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 
 	containerRuntime := NewContainerRuntime(cfg, clk, dc, s.gc, runtimeAPI, log)
 
-	// When a container's RIC issues its first GET /next, transition the
-	// instance tracker from "initializing" to "running" and throttle the
-	// INIT-burst CPU down to the steady-state proportional allocation.
+	// When a container's RIC issues its first GET /next, throttle the
+	// INIT-burst CPU down to the steady-state proportional allocation. The
+	// instance tracker's "running" transition is driven from the invocation
+	// path instead (awaitRuntimeReady returns at the same moment, and only the
+	// invocation knows which of a function's environments this is).
 	runtimeAPI.OnFirstNext = func(functionARN string) {
-		name := functionNameFromARN(functionARN)
-		s.tracker.RuntimeConnected(name)
 		containerRuntime.ThrottleInitBurst(functionARN)
 	}
 
@@ -450,19 +544,19 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 		containerRuntime.SetVPCResolver(r)
 	}
 
-	// Subscribe the exit notifier so per-invocation WaitContainer goroutines
-	// are replaced by a single event stream. The Docker event watcher is owned
-	// by the router (started once for all services); Lambda just subscribes.
-	s.mu.Lock()
-	bus := s.bus
-	s.mu.Unlock()
-	if bus != nil {
-		bus.Subscribe(events.DockerContainerDied, containerRuntime.exitNotify.handleContainerDied)
-		containerRuntime.SetBus(bus)
-	}
-
 	// Atomically upgrade to ContainerRuntime. NodeRuntime stays as fallback.
-	pool := NewInstancePool(containerRuntime, log, clk)
+	pool := NewInstancePool(containerRuntime, log, clk, PoolLimits{
+		MaxWarmPerFunction:      cfg.LambdaMaxWarmInstances,
+		MaxInstances:            cfg.LambdaMaxInstances,
+		MaxInstancesPerFunction: cfg.LambdaMaxInstancesPerFunction,
+	})
+	// Keep the instance tracker in step with the containers that actually exist.
+	pool.observer = s.tracker
+	// Rebuild provisioned concurrency reservations from the store — an
+	// allocation must survive a restart, or a function configured for
+	// provisioned concurrency would silently cold start until someone
+	// reconfigured it.
+	go s.reloadProvisionedConcurrency(context.Background(), pool)
 	rr.set([]Runtime{pool, newNodeRuntime(clk, log)})
 
 	// Wire the image prewarmer so CreateFunction can kick off image pulls
@@ -475,7 +569,19 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 	s.runtimeAPI = runtimeAPI
 	s.containerRuntime = containerRuntime
 	s.pool = pool
+	// Read the bus only after publishing those references. InitBus runs
+	// concurrently with this goroutine and bails out while they are still nil;
+	// reading the bus earlier would let both sides skip the wiring below and
+	// silently leave the process with no Docker event handling at all.
+	bus := s.bus
 	s.mu.Unlock()
+
+	if bus != nil {
+		containerRuntime.SetBus(bus)
+	}
+	// Whichever of InitBus / initDockerRuntime finishes second performs the
+	// subscription; subscribeDockerEvents is idempotent and nil-safe.
+	s.subscribeDockerEvents(bus)
 
 	// Optionally pre-pull all active runtime images. This is disabled by default
 	// because pulling every runtime on each restart can overload Docker Desktop;
@@ -631,6 +737,9 @@ func (s *Service) SyncInvoker() events.FunctionSyncInvoker { return s.invoker }
 // Lambda uses versioned REST paths, not a single-dispatch target header.
 func (s *Service) RegisterRoutes(r chi.Router) {
 	const apiBase = "/2015-03-31"
+	// Provisioned concurrency is the one Lambda operation family AWS serves
+	// under a different API version.
+	const provisionedConcurrencyBase = "/2019-09-30"
 
 	r.Post(apiBase+"/functions", s.handler.CreateFunction)
 	r.Post(apiBase+"/functions/", s.handler.CreateFunction)
@@ -652,8 +761,12 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Put(apiBase+"/functions/{name}/concurrency", s.handler.PutFunctionConcurrency)
 	r.Get(apiBase+"/functions/{name}/concurrency", s.handler.GetFunctionConcurrency)
 	r.Delete(apiBase+"/functions/{name}/concurrency", s.handler.DeleteFunctionConcurrency)
-	r.Put(apiBase+"/functions/{name}/provisioned-concurrency", s.handler.PutProvisionedConcurrencyConfig)
-	r.Get(apiBase+"/functions/{name}/provisioned-concurrency", s.handler.GetProvisionedConcurrencyConfig)
+	// Provisioned concurrency lives under the 2019-09-30 API version, not the
+	// 2015-03-31 base the rest of Lambda uses — that is the path the AWS SDKs
+	// call. GET is overloaded: ?List=ALL lists, otherwise it gets one config.
+	r.Put(provisionedConcurrencyBase+"/functions/{name}/provisioned-concurrency", s.handler.PutProvisionedConcurrencyConfig)
+	r.Get(provisionedConcurrencyBase+"/functions/{name}/provisioned-concurrency", s.handler.GetOrListProvisionedConcurrency)
+	r.Delete(provisionedConcurrencyBase+"/functions/{name}/provisioned-concurrency", s.handler.DeleteProvisionedConcurrencyConfig)
 	r.Post(apiBase+"/functions/{name}/invocations", s.handler.InvokeFunction)
 	// InvokeWithResponseStream uses a different API version path.
 	const streamBase = "/2021-11-15"

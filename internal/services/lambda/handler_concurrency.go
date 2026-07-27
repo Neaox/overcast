@@ -12,6 +12,7 @@ package lambda
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -34,12 +35,95 @@ type putProvisionedConcurrencyRequest struct {
 	ProvisionedConcurrentExecutions int `json:"ProvisionedConcurrentExecutions"`
 }
 
+// provisionedConcurrencyConfigResponse is the Put/Get response shape. It
+// deliberately has no FunctionArn: AWS carries that only on the list item
+// (ProvisionedConcurrencyConfigListItem), not on Get or Put.
 type provisionedConcurrencyConfigResponse struct {
 	AllocatedProvisionedConcurrentExecutions int    `json:"AllocatedProvisionedConcurrentExecutions"`
-	RequestedProvisionedConcurrentExecutions int    `json:"RequestedProvisionedConcurrentExecutions"`
 	AvailableProvisionedConcurrentExecutions int    `json:"AvailableProvisionedConcurrentExecutions"`
-	Status                                   string `json:"Status"`
 	LastModified                             string `json:"LastModified"`
+	RequestedProvisionedConcurrentExecutions int    `json:"RequestedProvisionedConcurrentExecutions"`
+	Status                                   string `json:"Status"`
+	StatusReason                             string `json:"StatusReason,omitempty"`
+}
+
+// provisionedConcurrencyListItem is AWS's ProvisionedConcurrencyConfigListItem:
+// the Get/Put shape plus the qualified function ARN, flat on the wire.
+type provisionedConcurrencyListItem struct {
+	AllocatedProvisionedConcurrentExecutions int    `json:"AllocatedProvisionedConcurrentExecutions"`
+	AvailableProvisionedConcurrentExecutions int    `json:"AvailableProvisionedConcurrentExecutions"`
+	FunctionArn                              string `json:"FunctionArn"`
+	LastModified                             string `json:"LastModified"`
+	RequestedProvisionedConcurrentExecutions int    `json:"RequestedProvisionedConcurrentExecutions"`
+	Status                                   string `json:"Status"`
+	StatusReason                             string `json:"StatusReason,omitempty"`
+}
+
+func newProvisionedListItem(cfg provisionedConcurrencyConfigResponse, functionArn string) provisionedConcurrencyListItem {
+	return provisionedConcurrencyListItem{
+		AllocatedProvisionedConcurrentExecutions: cfg.AllocatedProvisionedConcurrentExecutions,
+		AvailableProvisionedConcurrentExecutions: cfg.AvailableProvisionedConcurrentExecutions,
+		FunctionArn:                              functionArn,
+		LastModified:                             cfg.LastModified,
+		RequestedProvisionedConcurrentExecutions: cfg.RequestedProvisionedConcurrentExecutions,
+		Status:                                   cfg.Status,
+		StatusReason:                             cfg.StatusReason,
+	}
+}
+
+type listProvisionedConcurrencyConfigsResponse struct {
+	NextMarker                    *string                          `json:"NextMarker"`
+	ProvisionedConcurrencyConfigs []provisionedConcurrencyListItem `json:"ProvisionedConcurrencyConfigs"`
+}
+
+// pool returns the InstancePool backing this handler, or nil when Docker is
+// not available (the stub runtime cannot pre-warm anything).
+func (h *Handler) pool() *InstancePool {
+	for _, rt := range h.runtimes.get() {
+		if pool, ok := rt.(*InstancePool); ok {
+			return pool
+		}
+	}
+	return nil
+}
+
+// provisionedResponseFor builds the AWS response for one reservation, reading
+// the live allocation from the pool so Allocated/Available reflect the
+// environments that actually exist rather than echoing the request back.
+func (h *Handler) provisionedResponseFor(fn *Function, cfg *ProvisionedConcurrencyConfig) provisionedConcurrencyConfigResponse {
+	resp := provisionedConcurrencyConfigResponse{
+		RequestedProvisionedConcurrentExecutions: cfg.RequestedProvisionedConcurrentExecutions,
+		LastModified:                             cfg.LastModified,
+		Status:                                   provisionedStatusInProgress,
+	}
+	pool := h.pool()
+	if pool == nil {
+		// No container runtime, so the allocation can never succeed. FAILED
+		// with a reason is an AWS-valid status and the truth; READY would claim
+		// capacity that does not exist and IN_PROGRESS would imply it is still
+		// on its way.
+		resp.Status = provisionedStatusFailed
+		resp.StatusReason = "Docker is not available, so no execution environments can be allocated."
+		return resp
+	}
+	_, allocated, available, ok := pool.ProvisionedStatus(fn.Name)
+	if !ok {
+		return resp
+	}
+	resp.AllocatedProvisionedConcurrentExecutions = allocated
+	resp.AvailableProvisionedConcurrentExecutions = available
+	if allocated >= cfg.RequestedProvisionedConcurrentExecutions {
+		resp.Status = provisionedStatusReady
+	} else {
+		resp.StatusReason = "Provisioned environments are still starting."
+	}
+	return resp
+}
+
+// qualifiedFunctionARN is the ARN form AWS puts on a provisioned concurrency
+// list item: the function ARN suffixed with the version or alias.
+func qualifiedFunctionARN(fn *Function, qualifier string) string {
+	return fn.ARN + ":" + qualifier
 }
 
 // ─── Reserved concurrency ─────────────────────────────────────────────────────
@@ -144,6 +228,13 @@ func (h *Handler) DeleteFunctionConcurrency(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// AWS's ProvisionedConcurrencyStatusEnum.
+const (
+	provisionedStatusInProgress = "IN_PROGRESS"
+	provisionedStatusReady      = "READY"
+	provisionedStatusFailed     = "FAILED"
+)
+
 // ─── Provisioned concurrency ─────────────────────────────────────────────────
 
 // PutProvisionedConcurrencyConfig handles PUT /2015-03-31/functions/{name}/provisioned-concurrency.
@@ -179,6 +270,22 @@ func (h *Handler) PutProvisionedConcurrencyConfig(w http.ResponseWriter, r *http
 		return
 	}
 
+	if req.ProvisionedConcurrentExecutions < 1 {
+		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument(
+			"ProvisionedConcurrentExecutions must be greater than 0.",
+		))
+		return
+	}
+	// "You can't allocate more provisioned concurrency than reserved
+	// concurrency for a function." — Lambda developer guide, Understanding
+	// Lambda function scaling.
+	if reserved := reservedConcurrencyOf(fn); reserved >= 0 && req.ProvisionedConcurrentExecutions > reserved {
+		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument(
+			"'provisionedConcurrentExecutions' must be less than or equal to the function's reserved concurrency.",
+		))
+		return
+	}
+
 	cfg := &ProvisionedConcurrencyConfig{
 		FunctionName:                             name,
 		Qualifier:                                qualifier,
@@ -190,14 +297,109 @@ func (h *Handler) PutProvisionedConcurrencyConfig(w http.ResponseWriter, r *http
 		return
 	}
 
+	// Actually reserve the environments. They are created in the background,
+	// so the response reports IN_PROGRESS until they are up — exactly as AWS
+	// does while it allocates.
+	if pool := h.pool(); pool != nil {
+		pool.SetProvisionedConcurrency(fn, req.ProvisionedConcurrentExecutions)
+	} else {
+		h.log.Warn("provisioned concurrency configured but Docker is unavailable — no environments will be allocated",
+			zap.String("function", name))
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(provisionedConcurrencyConfigResponse{
-		AllocatedProvisionedConcurrentExecutions: req.ProvisionedConcurrentExecutions,
-		RequestedProvisionedConcurrentExecutions: req.ProvisionedConcurrentExecutions,
-		AvailableProvisionedConcurrentExecutions: req.ProvisionedConcurrentExecutions,
-		Status:                                   "READY",
-		LastModified:                             cfg.LastModified,
+	_ = json.NewEncoder(w).Encode(h.provisionedResponseFor(fn, cfg))
+}
+
+// DeleteProvisionedConcurrencyConfig handles DELETE /2015-03-31/functions/{name}/provisioned-concurrency.
+func (h *Handler) DeleteProvisionedConcurrencyConfig(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	qualifier := r.URL.Query().Get("Qualifier")
+	h.log.Debug("delete provisioned concurrency", zap.String("function", name), zap.String("qualifier", qualifier))
+	ctx := r.Context()
+
+	if qualifier == "" {
+		protocol.WriteJSONError(w, r, protocol.ErrMissingParameter("Qualifier"))
+		return
+	}
+
+	cfg, aerr := h.ls.getProvisionedConcurrencyConfig(ctx, name, qualifier)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if cfg == nil {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code:       "ProvisionedConcurrencyConfigNotFoundException",
+			Message:    "No provisioned concurrency configured for function: " + name + ":" + qualifier,
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+	if aerr := h.ls.deleteProvisionedConcurrencyConfig(ctx, name, qualifier); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	// The environments are not torn down on the spot; they lose their
+	// exemption from the idle sweep and age out like any warm instance.
+	if pool := h.pool(); pool != nil {
+		pool.ClearProvisionedConcurrency(name)
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GetOrListProvisionedConcurrency handles
+// GET /2019-09-30/functions/{name}/provisioned-concurrency. AWS overloads one
+// path and method for two operations, told apart by the List query parameter,
+// so the dispatch happens here rather than in the router.
+func (h *Handler) GetOrListProvisionedConcurrency(w http.ResponseWriter, r *http.Request) {
+	if strings.EqualFold(r.URL.Query().Get("List"), "ALL") {
+		h.ListProvisionedConcurrencyConfigs(w, r)
+		return
+	}
+	h.GetProvisionedConcurrencyConfig(w, r)
+}
+
+// ListProvisionedConcurrencyConfigs handles
+// GET /2019-09-30/functions/{name}/provisioned-concurrency?List=ALL.
+func (h *Handler) ListProvisionedConcurrencyConfigs(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	h.log.Debug("list provisioned concurrency", zap.String("function", name))
+	ctx := r.Context()
+
+	fn, aerr := h.ls.getFunction(ctx, name)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if fn == nil {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code:       "ResourceNotFoundException",
+			Message:    "Function not found: " + name,
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+
+	cfgs, aerr := h.ls.listProvisionedConcurrencyConfigs(ctx, name)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	out := make([]provisionedConcurrencyListItem, 0, len(cfgs))
+	for _, cfg := range cfgs {
+		out = append(out, newProvisionedListItem(
+			h.provisionedResponseFor(fn, cfg),
+			qualifiedFunctionARN(fn, cfg.Qualifier),
+		))
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(listProvisionedConcurrencyConfigsResponse{
+		ProvisionedConcurrencyConfigs: out,
 	})
 }
 
@@ -243,11 +445,5 @@ func (h *Handler) GetProvisionedConcurrencyConfig(w http.ResponseWriter, r *http
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(provisionedConcurrencyConfigResponse{
-		AllocatedProvisionedConcurrentExecutions: cfg.RequestedProvisionedConcurrentExecutions,
-		RequestedProvisionedConcurrentExecutions: cfg.RequestedProvisionedConcurrentExecutions,
-		AvailableProvisionedConcurrentExecutions: cfg.RequestedProvisionedConcurrentExecutions,
-		Status:                                   "READY",
-		LastModified:                             cfg.LastModified,
-	})
+	_ = json.NewEncoder(w).Encode(h.provisionedResponseFor(fn, cfg))
 }

@@ -46,7 +46,11 @@ Before implementing anything, check these constraints. If a request conflicts, p
 
 - **Not a staging environment.** No 100% API parity. Do not base production go/no-go decisions on Overcast tests.
 - **Not a security boundary.** Credentials accepted but not validated. Never expose on a public network.
-- **Not a performance testing tool.** No latency emulation, no throttling, no quotas.
+- **Not a performance testing tool.** No latency emulation, no request-rate limits, no per-service quotas. Lambda concurrency is the one place Overcast does refuse work, in two forms:
+  - **Reserved concurrency** — set explicitly per function. Exceeding it throttles immediately with AWS's 429 `TooManyRequestsException` (`Reason: ReservedFunctionConcurrentInvocationLimitExceeded`), because that is behaviour applications are written against: retry policies, DLQs, ESM back-off, and the "set it to 0 to disable a function" idiom.
+  - **Instance limits** (`LAMBDA_MAX_INSTANCES`, `LAMBDA_MAX_INSTANCES_PER_FUNCTION`) — host protection, not quota emulation. An invocation that cannot get a container first reclaims an idle one, then queues; **if it is still queued when the function's timeout expires it is throttled** with `Reason: ConcurrentInvocationLimitExceeded`, the same reason AWS gives when the account pool is exhausted. Raise the limits if you are hitting this rather than treating it as an AWS behaviour.
+
+  Asynchronous invocations are never throttled back to the caller: they were already answered 202, so a throttle is retried internally, as on AWS. Do not add account-wide concurrency pools or request-per-second limits.
 - **CloudFormation/IAM are partial.** Both services are implemented at a partial level. CloudFormation supports `CreateStack`/`DeleteStack`/`DescribeStacks`/`ListStacks` and provisions ~50 resource types (EC2/VPC, API Gateway, ECS, IAM, EventBridge, KMS, Lambda, S3, SQS, SNS, DynamoDB, Logs, SSM, SecretsManager, Step Functions) via internal dispatch to the emulated services. IAM supports roles, policies, users, groups, and instance profiles. `cdk deploy` works for stacks using supported resource types. Coverage is not exhaustive — continue ensuring all service implementations remain compatible with CloudFormation (standard ARN formats, required response fields, etc.).
 - **Not a production dependency, ever.** Local dev and CI only. No durability guarantees, no security model.
 - **Not a perfect replica.** We emulate the most-used 20% with high fidelity. Edge cases may differ.
@@ -138,7 +142,7 @@ The full checklists are in CONTRIBUTING.md:
 3. Run **`make docs`** if you changed capabilities or service behavior
 4. Verify **no custom endpoints** were introduced — everything must match real AWS wire format
 5. Verify **CloudFormation handlers** are registered for any new resource types (or stubbed)
-6. Widen to `go build ./...` and `go vet ./...` for final check
+6. Widen to `go build ./...` and `go vet ./...` for final check — these work on a bare checkout; see [Generated files](#generated-files) for the one thing they don't cover (a real `web/dist`)
 
 ---
 
@@ -156,6 +160,30 @@ Agents most often trip on these — check before finishing:
 - **Returning bare `404`** — unimplemented operations must return `501`
 - **Using subfolders as sub-packages inside a service** — all service files live in one flat package
 - **Testing only with raw HTTP** — prefer AWS SDK clients for management-plane validation where possible
+- **Forgetting `make docs-index`** after editing `docs/` — the committed docs search index goes stale and CI fails
+
+---
+
+## Generated files
+
+Two Go/TS files are generated from `docs/` and **committed**, exactly like `internal/capabilities/all.gen.go`:
+
+| File | Regenerate with |
+| --- | --- |
+| `internal/docssearch/index.gen.go` | `make docs-index` |
+| `web/src/docs-index.gen.ts` | `make docs-index` |
+
+- **After editing anything under `docs/`, run `make docs-index` and commit the result.** CI fails otherwise: `make docs-check` compares both files against what `docs/` would produce.
+- **Never hand-edit them** (they carry `DO NOT EDIT`) and **never hand-merge them** — resolve any conflict by re-running `make docs-index`. `.gitattributes` marks them `linguist-generated`, so GitHub review collapses them.
+- A bare `git clone` builds: `go build ./...` and `go vet ./...` need no generation step.
+
+### `web/dist` — the one thing you may still have to build
+
+`embed.go` has `//go:embed all:web/dist`, and the SPA is build output, so it is *not* committed — only a `web/dist/.gitkeep` placeholder is, which keeps the embed pattern resolving. Consequences:
+
+- Go builds always compile. A binary built without an SPA serves the API normally and returns a 503 naming `make build-web` on the web UI port — that response is the symptom, not a bug to investigate.
+- Anything that must actually serve the UI needs `make build-web` first. `make ci-local-go`, the Docker build, and release builds all assert a real `web/dist/index.html` and fail loudly without one.
+- Backend-only work never needs it: `go vet -tags slim ./...` skips the UI entirely.
 
 ---
 
@@ -189,6 +217,8 @@ go test -count=1 ./internal/services/foo/... ./tests/integration/foo/...
 ```
 
 Widen to `./...` only once before marking a task done. Avoid `go build ./cmd/overcast` during iteration — the `cmd/overcast` main package embeds the web UI, adding unnecessary overhead for backend-only changes. Use `./cmd/overcast -tags slim` or stay within `./internal/...` until the final check.
+
+`-tags slim` also drops the embedded SPA, so backend-only verification never needs `make build-web` — see [Generated files](#generated-files).
 
 For TypeScript changes, run `npm run typecheck` in `web/`. Do not use `npx tsc --noEmit`: it resolves `web/tsconfig.json`, a solution-style config with `"files": []` and only project references, so it compiles zero files and always passes.
 
