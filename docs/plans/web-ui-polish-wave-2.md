@@ -81,7 +81,7 @@ These were settled during wave 1 — do not re-litigate them while implementing:
   confirmed rather than assumed. The z-index ladder (40/50/60) also wants a look while someone is
   in there.
 
-- Unify the three renderings of the advisory component (health drawer, Metrics & Health card, and the 1b variant) into one `<Advisory density="compact" | "full">`. Sentence case always; use the external-link icon, never a `→`.
+- Unify the renderings of the advisory component (health drawer, Metrics & Health card, the 1b variant, the inline warning in `pipes/components/pipe-list.tsx:280`, and `PlaceholderSourceNotice` in `lambda/components/code-tab.tsx`) into one `<Advisory density="compact" | "full">`. Sentence case always; use the external-link icon, never a `→`. The last two deliberately copy the existing inline-warning classes rather than adding another variant, so they should fall out of this sweep for free.
 - Fix five viewport-height calculations that assume the old 16px page padding and are now 16px short, so they can overflow: `mail/mail-page.tsx:159` `h-[calc(100vh-10rem)]`, `debug/debug-page.tsx:281,311,738` `max-h-[calc(100vh-14rem)]`, `s3/components/bucket-detail.tsx:294` `max-h-[calc(100vh-220px)]`.
 
 ### Typography follow-ups

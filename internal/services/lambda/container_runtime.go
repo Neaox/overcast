@@ -327,7 +327,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		progress("Preparing function code")
 		codeTar, err = zipToTar(fn.CodeZip)
 		if err != nil {
-			return nil, fmt.Errorf("build code tar: %w", err)
+			return nil, fmt.Errorf("build code tar: %w", explainUnreadablePackage(fn, err))
 		}
 	}
 
