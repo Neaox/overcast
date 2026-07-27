@@ -11,7 +11,7 @@
  */
 import React, { useEffect, useRef, useState } from "react"
 import * as PopoverPrimitive from "@radix-ui/react-popover"
-import { ChevronsUpDown, Loader2 } from "lucide-react"
+import { ChevronDown, ChevronsUpDown, Loader2, type LucideIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -570,8 +570,18 @@ export function Combobox<T>(props: ComboboxProps<T>) {
   return <SingleComboboxImpl<T> {...props} />
 }
 
-// ─── Compact pill-shaped variant (e.g. header toolbar) ───────────────────────
+// ─── Compact split-control variant (e.g. header toolbar) ─────────────────────
 
+/**
+ * The topbar's control shape: a 32px bordered rounded-rect split into a
+ * value cell (optional leading icon + mono text) and a 26px chevron cell.
+ * Hover and focus move the *border* to accent — the fill never changes.
+ *
+ * It is still a combobox: the value cell is a real, typeable input driving the
+ * same filter/keyboard machinery as the full-size variant. Everything outside
+ * the input — the icon, the padding, the chevron cell — swallows its own
+ * mousedown so the click lands as "focus the input and open", never as a blur.
+ */
 export function ComboboxCompact<T>({
   value,
   onChange,
@@ -581,9 +591,13 @@ export function ComboboxCompact<T>({
   renderItem,
   renderCustomFooter,
   allowCustom = false,
+  leadingIcon: LeadingIcon,
   inputClassName,
   popoverWidth = "w-64",
-}: Omit<ComboboxPropsSingle<T>, "id" | "placeholder" | "className">) {
+}: Omit<ComboboxPropsSingle<T>, "id" | "placeholder" | "className"> & {
+  /** Rendered muted at the head of the value cell. */
+  leadingIcon?: LucideIcon
+}) {
   const {
     open,
     query,
@@ -603,7 +617,24 @@ export function ComboboxCompact<T>({
   return (
     <PopoverPrimitive.Root open={open} modal={false}>
       <PopoverPrimitive.Anchor asChild>
-        <div ref={containerRef} className="relative" onBlur={handleContainerBlur}>
+        <div
+          ref={containerRef}
+          onBlur={handleContainerBlur}
+          onMouseDown={(e) => {
+            if (e.target === inputRef.current) return
+            e.preventDefault()
+            inputRef.current?.focus()
+            if (!open) handleOpen()
+          }}
+          className={cn(
+            "group flex h-8 w-44 cursor-pointer items-center rounded-control border border-border bg-bg",
+            "transition-colors hover:border-accent",
+            "focus-within:border-accent focus-within:ring-1 focus-within:ring-accent focus-within:ring-inset",
+          )}
+        >
+          {LeadingIcon && (
+            <LeadingIcon aria-hidden className="ml-2 h-3.5 w-3.5 shrink-0 text-fg-subtle" />
+          )}
           <input
             ref={inputRef}
             role="combobox"
@@ -617,14 +648,18 @@ export function ComboboxCompact<T>({
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             className={cn(
-              "w-36 rounded-full border border-border bg-bg-muted py-0.5 pr-5 pl-2",
-              "cursor-pointer font-mono text-xs text-fg-muted transition-colors",
-              "hover:border-accent hover:text-fg",
-              "focus:text-fg focus:ring-1 focus:ring-accent focus:outline-none focus:ring-inset",
+              "min-w-0 flex-1 cursor-pointer bg-transparent px-2 font-mono text-xs",
+              "text-fg-muted transition-colors outline-none placeholder:text-fg-subtle",
+              "group-focus-within:text-fg group-hover:text-fg",
               inputClassName,
             )}
           />
-          <ChevronsUpDown className="pointer-events-none absolute top-1/2 right-1.5 h-3 w-3 -translate-y-1/2 text-fg-subtle" />
+          <span
+            aria-hidden
+            className="flex h-full w-[26px] shrink-0 items-center justify-center border-l border-border text-fg-subtle"
+          >
+            <ChevronDown className="h-3 w-3" />
+          </span>
         </div>
       </PopoverPrimitive.Anchor>
       {open && (

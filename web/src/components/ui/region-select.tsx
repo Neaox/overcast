@@ -7,7 +7,7 @@
  *   <RegionSelect value={region} onChange={setRegion} />
  *   <RegionSelectCompact value={region} onChange={setRegion} />
  */
-import { Check } from "lucide-react"
+import { Check, Globe } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Combobox, ComboboxCompact, type ComboboxRenderContext } from "./combobox"
 
@@ -134,6 +134,7 @@ export function RegionSelectCompact({
       renderItem={renderRegion}
       renderCustomFooter={renderCustomFooter}
       allowCustom
+      leadingIcon={Globe}
       popoverWidth="w-72"
     />
   )

@@ -4,6 +4,7 @@ import { useEndpoint } from "@/hooks/use-endpoint"
 import { useTheme } from "@/hooks/use-theme"
 import { useDevTools } from "@/hooks/use-dev-tools"
 import { endpointStore } from "@/services/endpoint-store"
+import { isEndpointConfigurable } from "@/services/discovery"
 import { RegionSelectCompact } from "@/components/ui/region-select"
 
 const iconButtonCls = cn(
@@ -16,9 +17,13 @@ const iconButtonCls = cn(
  * Topbar action cluster.
  *
  * The tail — region select → theme toggle → settings — is identical on every
- * page so muscle memory holds. Settings is always present and always last.
+ * page so muscle memory holds, and settings is always last within it.
  * Conditional or page-specific status controls (the dev-tools toggle here)
  * sit to the LEFT of the region select and never break into that tail.
+ *
+ * Settings only exists to reopen the connection dialog, so it is dropped
+ * entirely where the endpoint is not the user's to choose — a bundled build
+ * derives it from `window.location` and `reset()` there is a no-op.
  */
 export function HeaderActions() {
   const endpoint = useEndpoint()
@@ -52,14 +57,16 @@ export function HeaderActions() {
       >
         <ThemeIcon className="h-[15px] w-[15px]" />
       </button>
-      <button
-        onClick={() => endpointStore.reset()}
-        title="Change connection"
-        aria-label="Change connection"
-        className={iconButtonCls}
-      >
-        <Settings className="h-[15px] w-[15px]" />
-      </button>
+      {isEndpointConfigurable() && (
+        <button
+          onClick={() => endpointStore.reset()}
+          title="Change connection"
+          aria-label="Change connection"
+          className={iconButtonCls}
+        >
+          <Settings className="h-[15px] w-[15px]" />
+        </button>
+      )}
     </div>
   )
 }
