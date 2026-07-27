@@ -16,6 +16,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/containerendpoint"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/lifecycle"
@@ -41,6 +42,11 @@ type Handler struct {
 	gc          *docker.GC
 	vpcResolver VPCNetworkResolver
 	seedOnce    sync.Once // guards ensureBuiltinProviders
+
+	// endpoint maps AWS resource URLs and hostnames onto an address task
+	// containers can dial. Resolved on first task start — see containerEndpoint.
+	endpoint     *containerendpoint.Mapper
+	endpointOnce sync.Once
 }
 
 // VPCNetworkResolver resolves subnet-backed ECS awsvpc placement against EC2.
