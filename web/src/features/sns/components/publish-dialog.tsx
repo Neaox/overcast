@@ -140,7 +140,7 @@ export function PublishMessageDialog({ topicName, open, onOpenChange }: Props) {
           </FormField>
 
           <div className="flex flex-wrap items-center gap-5">
-            <label className="flex items-center gap-2 text-sm text-fg-muted">
+            <label className="flex items-center gap-2 text-xs text-fg-muted">
               <input
                 type="checkbox"
                 checked={messageStructureJson}
@@ -186,7 +186,9 @@ export function PublishMessageDialog({ topicName, open, onOpenChange }: Props) {
 
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-fg-muted">Message Attributes</span>
+              <span className="font-mono text-sm font-medium text-fg-muted">
+                Message Attributes
+              </span>
               <Button size="sm" variant="ghost" type="button" onClick={addAttr}>
                 <Plus className="mr-1 h-3 w-3" />
                 Add attribute

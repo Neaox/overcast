@@ -95,7 +95,7 @@ function BusesTab() {
     <div className="flex flex-col gap-3 pt-4">
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
-          <Search className="text-muted-foreground absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2" />
+          <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
           <Input
             placeholder="Filter buses…"
             className="pl-8"
@@ -148,8 +148,8 @@ function BusesTab() {
                   navigate({ to: "/eventbridge/$busName", params: { busName: bus.Name ?? "" } })
                 }
               >
-                <TableCell className="font-mono text-sm">{bus.Name}</TableCell>
-                <TableCell className="text-muted-foreground font-mono text-xs">{bus.Arn}</TableCell>
+                <TableCell>{bus.Name}</TableCell>
+                <TableCell className="text-fg-muted">{bus.Arn}</TableCell>
                 <TableCell className="text-right">
                   <Button
                     size="sm"
@@ -223,7 +223,7 @@ function RulesTab() {
     <div className="flex flex-col gap-3 pt-4">
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
-          <Search className="text-muted-foreground absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2" />
+          <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
           <Input
             placeholder="Filter rules…"
             className="pl-8"
@@ -271,8 +271,8 @@ function RulesTab() {
           <TableBody>
             {filtered.map((rule) => (
               <TableRow key={rule.Name}>
-                <TableCell className="font-mono text-sm">{rule.Name}</TableCell>
-                <TableCell className="text-muted-foreground">{rule.EventBusName}</TableCell>
+                <TableCell>{rule.Name}</TableCell>
+                <TableCell className="text-fg-muted">{rule.EventBusName}</TableCell>
                 <TableCell>
                   <Badge variant={rule.State === "ENABLED" ? "success" : "default"}>
                     {rule.State}

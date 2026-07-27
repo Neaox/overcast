@@ -21,6 +21,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableCellProse,
   TableHead,
   TableHeader,
   TableRow,
@@ -33,7 +34,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import { PageHeader, Breadcrumb, Spinner, EmptyState } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { useToast } from "@/components/ui/toast"
 import { PublishLayerDialog } from "./layer-list"
 import type { LayerVersion, LambdaFunction } from "@/types"
@@ -42,7 +43,6 @@ import type { LayerVersion, LambdaFunction } from "@/types"
 
 export function LayerDetail() {
   const { layerName } = Route.useParams()
-  const navigate = useNavigate()
   const qc = useQueryClient()
   const { toast } = useToast()
 
@@ -92,15 +92,6 @@ export function LayerDetail() {
       <PageHeader
         title={layerName}
         description={layerArn}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "Lambda", onClick: () => navigate({ to: "/lambda" }) },
-              { label: "Layers", onClick: () => navigate({ to: "/lambda/layers" }) },
-              { label: layerName },
-            ]}
-          />
-        }
         actions={
           <Button size="sm" onClick={() => setShowPublish(true)}>
             <Plus className="mr-1 h-4 w-4" />
@@ -111,7 +102,7 @@ export function LayerDetail() {
 
       {/* ── Versions table ─────────────────────────────────────────────── */}
       <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-semibold text-fg">Versions</h2>
+        <h2 className="font-mono text-sm font-semibold text-fg">Versions</h2>
         {isLoading ? (
           <div className="flex justify-center py-16">
             <Spinner className="h-5 w-5" />
@@ -151,7 +142,7 @@ export function LayerDetail() {
 
       {/* ── Attached functions ─────────────────────────────────────────── */}
       <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-semibold text-fg">Functions using this layer</h2>
+        <h2 className="font-mono text-sm font-semibold text-fg">Functions using this layer</h2>
         {attachedFunctions.length === 0 ? (
           <p className="text-sm text-fg-muted">No functions are currently using this layer.</p>
         ) : (
@@ -225,17 +216,19 @@ function VersionRow({
   onDelete: () => void
 }) {
   const versionNumber = v.Version ?? 0
-  const { data: metadata, isLoading: metadataLoading, isError: metadataError } = useQuery(
-    layerVersionMetadataQueryOptions(layerName, versionNumber),
-  )
+  const {
+    data: metadata,
+    isLoading: metadataLoading,
+    isError: metadataError,
+  } = useQuery(layerVersionMetadataQueryOptions(layerName, versionNumber))
 
   return (
     <TableRow>
       <TableCell>
         <Badge variant="default">{v.Version}</Badge>
       </TableCell>
-      <TableCell className="font-mono text-xs text-fg-muted">{v.LayerVersionArn}</TableCell>
-      <TableCell>{v.Description || "—"}</TableCell>
+      <TableCell className="text-fg-muted">{v.LayerVersionArn}</TableCell>
+      <TableCellProse>{v.Description || "—"}</TableCellProse>
       <TableCell>
         {(v.CompatibleRuntimes?.length ?? 0) > 0 ? (
           <div className="flex flex-wrap gap-1">
@@ -267,7 +260,7 @@ function VersionRow({
           <span className="text-sm text-fg-muted">—</span>
         )}
       </TableCell>
-      <TableCell className="text-sm text-fg-muted">
+      <TableCell className="text-fg-muted">
         {v.CreatedDate ? new Date(v.CreatedDate).toLocaleString() : "—"}
       </TableCell>
       <TableCell>
@@ -300,7 +293,7 @@ function AttachedFunctionRow({ fn, layerName }: { fn: LambdaFunction; layerName:
       onClick={() => navigate({ to: "/lambda/$name", params: { name: fn.FunctionName ?? "" } })}
     >
       <TableCell className="font-medium">{fn.FunctionName}</TableCell>
-      <TableCell className="font-mono text-xs text-fg-muted">{matchingLayer?.Arn ?? "—"}</TableCell>
+      <TableCell className="text-fg-muted">{matchingLayer?.Arn ?? "—"}</TableCell>
     </TableRow>
   )
 }

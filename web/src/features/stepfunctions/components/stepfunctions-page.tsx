@@ -83,7 +83,7 @@ export function StepFunctionsPage() {
       <InertBanner serviceName="Step Functions" />
 
       <div className="relative">
-        <Search className="text-muted-foreground absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2" />
+        <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
         <Input
           placeholder="Filter state machines…"
           className="pl-8"
@@ -126,11 +126,11 @@ export function StepFunctionsPage() {
           <TableBody>
             {filtered.map((sm) => (
               <TableRow key={sm.stateMachineArn}>
-                <TableCell className="font-mono text-sm">{sm.name}</TableCell>
+                <TableCell>{sm.name}</TableCell>
                 <TableCell>
                   <Badge variant="default">{sm.type}</Badge>
                 </TableCell>
-                <TableCell className="text-muted-foreground">
+                <TableCell className="text-fg-muted">
                   <ArnText arn={sm.stateMachineArn ?? ""} />
                 </TableCell>
                 <TableCell className="text-right">

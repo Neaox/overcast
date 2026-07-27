@@ -77,6 +77,19 @@ export const ALL_SERVICES: ServiceDefinition[] = Object.values(
     return def
   })
 
+/**
+ * Resolve the service that owns `pathname`, using longest-prefix matching
+ * against each service's `to` so nested routes resolve to the most specific
+ * service (same idea as the sidebar's currentService logic). Returns the
+ * matching serviceKey, or `undefined` when no service route is active.
+ */
+export function findServiceKeyForPathname(pathname: string): string | undefined {
+  if (pathname === "/") return undefined
+  return ALL_SERVICES.filter((s) => pathname === s.to || pathname.startsWith(s.to + "/")).sort(
+    (a, b) => b.to.length - a.to.length,
+  )[0]?.key
+}
+
 /** Dashboard item — always shown at the top of the sidebar. */
 export const DASHBOARD_ITEM = {
   key: "/",
@@ -97,7 +110,14 @@ export const BOTTOM_ITEMS: BottomNavItem[] = [
     icon: BarChart2,
     color: "text-sky-400",
   },
-  { key: "/debug", to: "/debug", label: "Debug", icon: Bug, color: "text-rose-400", debugOnly: true },
+  {
+    key: "/debug",
+    to: "/debug",
+    label: "Debug",
+    icon: Bug,
+    color: "text-rose-400",
+    debugOnly: true,
+  },
   { key: "/inbox", to: "/inbox", label: "Inbox", icon: Inbox, color: "text-amber-400" },
   { key: "/docs", to: "/docs", label: "Docs", icon: BookOpen, color: "text-violet-400" },
 ]

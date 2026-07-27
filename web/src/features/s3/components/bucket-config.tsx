@@ -27,7 +27,7 @@ import {
 import { sqsQueuesQueryOptions } from "@/features/sqs/data"
 import { Badge } from "@/components/ui/badge"
 import { ArnLink } from "@/components/ui/arn-link"
-import { PageHeader, Breadcrumb, Spinner, EmptyState } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormField } from "@/components/ui/form"
@@ -49,6 +49,7 @@ import type {
   BucketNotificationConfig,
   SQSQueue,
 } from "@/types"
+import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 // ─── S3 event options ─────────────────────────────────────────────────────────
@@ -186,9 +187,7 @@ function AddNotificationDialog({
         <div className="flex flex-col gap-5">
           {/* Destination */}
           <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg-subtle p-4">
-            <p className="text-xs font-semibold tracking-wider text-fg-muted uppercase">
-              Destination
-            </p>
+            <p className={cn(sectionLabel, "text-fg-muted")}>Destination</p>
 
             {/* Destination type — SQS only for now */}
             <div className="flex items-center gap-2 rounded-lg border border-accent bg-accent/10 px-3 py-2 text-sm font-medium text-fg">
@@ -250,7 +249,7 @@ function AddNotificationDialog({
                   <label
                     key={ev.value}
                     className={cn(
-                      "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-bg-muted",
+                      "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 font-mono text-sm hover:bg-bg-muted",
                       checked ? "text-fg" : "text-fg-muted",
                     )}
                   >
@@ -270,7 +269,7 @@ function AddNotificationDialog({
 
           {/* Filters (optional) */}
           <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg-subtle p-4">
-            <p className="text-xs font-semibold tracking-wider text-fg-muted uppercase">
+            <p className={cn(sectionLabel, "text-fg-muted")}>
               Filters <span className="font-normal text-fg-subtle normal-case">(optional)</span>
             </p>
             <div className="grid grid-cols-2 gap-3">
@@ -360,15 +359,6 @@ export function BucketConfig() {
     <div className="flex w-full flex-col gap-4">
       <PageHeader
         title={bucket}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "S3", onClick: () => navigate({ to: "/s3" }) },
-              { label: bucket, onClick: () => navigate({ to: "/s3/$bucket", params: { bucket } }) },
-              { label: "Configuration" },
-            ]}
-          />
-        }
         actions={
           <>
             <Button variant="secondary" size="md" onClick={() => navigate({ to: "/s3" })}>
@@ -477,7 +467,7 @@ function ConfigSection({
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         {icon}
-        <h2 className="text-sm font-medium text-fg">{title}</h2>
+        <h2 className="font-mono text-sm font-medium text-fg">{title}</h2>
       </div>
       <div className="flex flex-col divide-y divide-border overflow-hidden rounded-lg border border-border bg-bg-elevated">
         {children}
@@ -499,7 +489,7 @@ function EventList({ events }: { events: string[] }) {
 }
 
 function FilterList({ rules }: { rules: NotificationFilterRule[] }) {
-  if (rules.length === 0) return <span className="text-xs text-fg-subtle">none</span>
+  if (rules.length === 0) return <span className="font-mono text-xs text-fg-subtle">none</span>
   return (
     <div className="flex flex-wrap gap-1">
       {rules.map((r, i) => (

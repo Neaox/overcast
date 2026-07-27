@@ -124,6 +124,76 @@ func TestExecuteV2LambdaProxy_payloadFormatOneEmptyRequestBodyIsNull(t *testing.
 	}
 }
 
+func TestExecuteRestLambdaProxy_duplicateHeaderUsesLastValue(t *testing.T) {
+	// Given: a REST Lambda proxy request repeating a header, as in the AWS docs
+	// example (curl -H 'header2: value1' -H 'header2: value2').
+	invoker := &capturingLambdaInvoker{}
+	h := &Handler{invoker: invoker, clk: clock.NewMock()}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "http://example.test/hello", nil)
+	req.Header.Add("header2", "value1")
+	req.Header.Add("header2", "value2")
+	api := &RestAPI{ID: "api123"}
+	resource := &Resource{ID: "res123", Path: "/hello"}
+	integration := &Integration{URI: "arn:aws:lambda:us-east-1:000000000000:function:handler"}
+
+	// When: API Gateway invokes the Lambda proxy integration.
+	h.executeRestLambdaProxy(rec, req, api, resource, nil, integration, nil, "/hello")
+
+	// Then: `headers` carries the last value and `multiValueHeaders` carries
+	// both, matching the documented REST proxy input format.
+	event := capturedProxyEvent(t, rec, invoker)
+	headers := event["headers"].(map[string]any)
+	if headers["Header2"] != "value2" {
+		t.Fatalf("expected headers.Header2 to be the last value, got %#v", headers)
+	}
+	multi := event["multiValueHeaders"].(map[string]any)
+	vals := multi["Header2"].([]any)
+	if len(vals) != 2 || vals[0] != "value1" || vals[1] != "value2" {
+		t.Fatalf("expected multiValueHeaders.Header2 to keep both values, got %#v", multi)
+	}
+}
+
+func TestExecuteV2LambdaProxy_payloadFormatOneLowercasesHeaderNames(t *testing.T) {
+	// Given: an HTTP API Lambda proxy integration using payload format 1.0.
+	invoker := &capturingLambdaInvoker{}
+	h := &Handler{invoker: invoker, clk: clock.NewMock()}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "http://example.test/hello?Param=a&Param=b", nil)
+	req.Header.Add("header2", "value1")
+	req.Header.Add("header2", "value2")
+	api := &APIV2{ApiID: "api123"}
+	route := &RouteV2{RouteKey: "GET /hello"}
+	integration := &IntegrationV2{
+		IntegrationURI:       "arn:aws:lambda:us-east-1:000000000000:function:handler",
+		PayloadFormatVersion: "1.0",
+	}
+
+	// When: API Gateway invokes the Lambda proxy integration.
+	h.executeV2LambdaProxy(rec, req, api, route, integration, nil, "/hello")
+
+	// Then: every header name is lowercased ("All headernames are lowercased"
+	// applies to both HTTP API payload formats), `headers` carries the last
+	// value, and `multiValueHeaders` carries both.
+	event := capturedProxyEvent(t, rec, invoker)
+	headers := event["headers"].(map[string]any)
+	if headers["header2"] != "value2" {
+		t.Fatalf("expected headers.header2 to be the last value, got %#v", headers)
+	}
+	multi := event["multiValueHeaders"].(map[string]any)
+	if _, canonical := multi["Header2"]; canonical {
+		t.Fatalf("Go-canonical name leaked into multiValueHeaders: %#v", multi)
+	}
+	vals, ok := multi["header2"].([]any)
+	if !ok || len(vals) != 2 || vals[0] != "value1" || vals[1] != "value2" {
+		t.Fatalf("expected multiValueHeaders.header2 to keep both values, got %#v", multi)
+	}
+	query := event["queryStringParameters"].(map[string]any)
+	if query["Param"] != "b" {
+		t.Fatalf("expected queryStringParameters.Param to be the last value, got %#v", query)
+	}
+}
+
 func capturedProxyEvent(t *testing.T, rec *httptest.ResponseRecorder, invoker *capturingLambdaInvoker) map[string]any {
 	t.Helper()
 	if rec.Code != http.StatusNoContent {

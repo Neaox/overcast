@@ -424,7 +424,7 @@ export function QueueDetail({ queueName }: Props) {
       {/* ── Dead Letter Queue ── */}
       {queue.redrivePolicy && (
         <div className="rounded-lg border border-border bg-bg-muted p-4">
-          <p className="mb-2 text-xs font-medium text-fg-muted">Dead Letter Queue</p>
+          <p className="mb-2 font-mono text-xs font-medium text-fg-muted">Dead Letter Queue</p>
           <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
             <AttrRow
               label="DLQ ARN"
@@ -443,7 +443,7 @@ export function QueueDetail({ queueName }: Props) {
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-fg">Dead Letter Queue</p>
+              <p className="font-mono text-sm font-medium text-fg">Dead Letter Queue</p>
               <p className="text-xs text-fg-muted">
                 This queue receives failed messages from{" "}
                 {dlqSourceUrls.length === 1
@@ -649,13 +649,13 @@ export function QueueDetail({ queueName }: Props) {
                 <TableBody>
                   {subscriptions.map((sub) => (
                     <TableRow key={sub.SubscriptionArn}>
-                      <TableCell className="font-mono text-xs">
+                      <TableCell>
                         <ArnLink arn={sub.TopicArn ?? ""} />
                       </TableCell>
                       <TableCell>
                         <Badge variant="default">{sub.Protocol}</Badge>
                       </TableCell>
-                      <TableCell className="max-w-xs truncate font-mono text-xs text-fg-muted">
+                      <TableCell className="max-w-xs truncate text-fg-muted">
                         <ArnLink arn={sub.SubscriptionArn ?? ""} className="text-fg-muted" />
                       </TableCell>
                       <TableCell>
@@ -863,11 +863,7 @@ function MessageRow({
   return (
     <>
       <TableRow
-        className={cn(
-          "cursor-pointer hover:bg-bg-muted/40",
-          msg.inflight && "opacity-50",
-          deleted && "opacity-40",
-        )}
+        className={cn(msg.inflight && "opacity-50", deleted && "opacity-40")}
         onClick={deleted ? undefined : onToggle}
       >
         <TableCell>
@@ -924,22 +920,22 @@ function MessageRow({
           <TableCell colSpan={6} className="bg-bg-muted/30 px-4 py-3">
             <div className="flex flex-col gap-3">
               <div className="flex flex-col gap-1">
-                <span className="text-xs font-medium text-fg-muted">Message ID</span>
+                <span className="font-mono text-xs font-medium text-fg-muted">Message ID</span>
                 <span className="font-mono text-xs text-fg">{msg.messageId}</span>
               </div>
               <div className="flex flex-col gap-1">
-                <span className="text-xs font-medium text-fg-muted">Receipt Handle</span>
+                <span className="font-mono text-xs font-medium text-fg-muted">Receipt Handle</span>
                 <span className="max-w-full truncate font-mono text-xs text-fg-muted">
                   {msg.receiptHandle}
                 </span>
               </div>
               <div className="flex flex-col gap-1">
-                <span className="text-xs font-medium text-fg-muted">Body</span>
+                <span className="font-mono text-xs font-medium text-fg-muted">Body</span>
                 <CodeBlock>{msg.body}</CodeBlock>
               </div>
               {msg.attributes.SentTimestamp && (
                 <div className="flex flex-col gap-1">
-                  <span className="text-xs font-medium text-fg-muted">Sent</span>
+                  <span className="font-mono text-xs font-medium text-fg-muted">Sent</span>
                   <span className="text-xs text-fg">
                     {new Date(parseInt(msg.attributes.SentTimestamp, 10)).toISOString()}
                   </span>
@@ -947,7 +943,9 @@ function MessageRow({
               )}
               {hasAttrs && (
                 <div className="flex flex-col gap-1.5">
-                  <span className="text-xs font-medium text-fg-muted">Message Attributes</span>
+                  <span className="font-mono text-xs font-medium text-fg-muted">
+                    Message Attributes
+                  </span>
                   <div className="grid grid-cols-[auto_auto_1fr] gap-x-4 gap-y-1 text-xs">
                     <span className="font-medium text-fg-subtle">Name</span>
                     <span className="font-medium text-fg-subtle">Type</span>
@@ -992,7 +990,7 @@ function StatCard({
       <p className="text-xs font-medium text-fg-muted">{label}</p>
       <p
         className={cn(
-          "mt-1 text-2xl font-semibold tabular-nums",
+          "mt-1 font-mono text-2xl font-semibold tabular-nums",
           value === "…"
             ? "animate-pulse text-fg-muted"
             : variant === "accent"

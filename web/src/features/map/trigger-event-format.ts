@@ -2,9 +2,7 @@ export type FormattedTriggerEvent =
   | { language: "json"; text: string }
   | { language: "plain"; text: string }
 
-type ParsedJSON =
-  | { ok: true; value: unknown }
-  | { ok: false }
+type ParsedJSON = { ok: true; value: unknown } | { ok: false }
 
 function tryParseJSON(value: string): ParsedJSON {
   try {
@@ -27,7 +25,7 @@ function decodeBase64(value: string): string | null {
   try {
     const normalized = value.trim().padEnd(Math.ceil(value.trim().length / 4) * 4, "=")
     const binary = atob(normalized)
-    const bytes = Uint8Array.from(binary, char => char.charCodeAt(0))
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
     return new TextDecoder().decode(bytes)
   } catch {
     return null

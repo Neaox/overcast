@@ -146,7 +146,7 @@ export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: Lo
             canvas (e.g. a different log stream) reaches that node instead of being
             swallowed here. Outside-click-to-close is still handled below via
             onInteractOutside. */}
-        <Dialog.Overlay className="fixed inset-0 z-60 pointer-events-none" />
+        <Dialog.Overlay className="pointer-events-none fixed inset-0 z-60" />
 
         {/* Slide-in panel */}
         <Dialog.Content
@@ -408,7 +408,7 @@ function LogsPane({
             key={`${e.timestamp ?? i}-${(e.message ?? "").slice(0, 16)}-${i}`}
             className="flex gap-2 hover:bg-fg-muted/5"
           >
-            <span className="shrink-0 text-fg-muted tabular-nums">
+            <span className="shrink-0 font-mono text-fg-muted tabular-nums">
               {fmtTimestamp(e.timestamp ?? 0)}
             </span>
             <span className="min-w-0 wrap-break-word text-fg">{e.message}</span>
@@ -421,7 +421,7 @@ function LogsPane({
         <button
           type="button"
           onClick={() => scrollToBottom("smooth")}
-          className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-purple-500 px-3 py-1 text-[11px] font-medium text-white shadow-lg hover:bg-purple-400"
+          className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-purple-500 px-3 py-1 font-mono text-[11px] font-medium text-white shadow-lg hover:bg-purple-400"
         >
           ↓ New logs
         </button>

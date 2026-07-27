@@ -87,7 +87,11 @@ export function FilterBuilder({
     <div className="flex flex-col gap-2">
       {conditions.map((cond, i) => (
         <div key={cond.id} className="flex items-center gap-2">
-          {i > 0 && <span className="w-10 text-center text-xs font-medium text-fg-muted">AND</span>}
+          {i > 0 && (
+            <span className="w-10 text-center font-mono text-xs font-medium text-fg-muted">
+              AND
+            </span>
+          )}
           {i === 0 && conditions.length > 1 && <span className="w-10" />}
 
           {/* Attribute name — input with datalist for suggestions */}

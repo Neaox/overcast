@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useNavigate } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
-import { Boxes, Plus, Trash2, RefreshCw } from "lucide-react"
+import { Boxes, Eye, Trash2 } from "lucide-react"
 import {
   ecsClustersQueryOptions,
   ecsKeys,
@@ -29,11 +29,19 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { QueryListState, Spinner, EmptyState } from "@/components/ui/primitives"
+import {
+  CreateAction,
+  RefreshAction,
+  ResourceListCard,
+  ResourceListPage,
+  ResourceName,
+  RowAction,
+  RowActions,
+} from "@/components/ui/resource-list-page"
 import { Badge } from "@/components/ui/badge"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
-import { cn } from "@/lib/utils"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 
 export function ClusterList() {
@@ -47,6 +55,7 @@ export function ClusterList() {
     isLoading,
     isFetching,
     refetch,
+    error,
   } = useQuery(ecsClustersQueryOptions())
 
   const createMut = useResourceMutation({
@@ -68,95 +77,97 @@ export function ClusterList() {
   })
 
   return (
-    <div className="flex w-full flex-col gap-4">
-      <PageHeader
-        title="ECS Clusters"
-        description={`${clusters.length} cluster${clusters.length !== 1 ? "s" : ""}`}
-        actions={
-          <>
-            <ServiceDocsButton
-              service="ecs"
-              label="ECS"
-              open={docsOpen}
-              onOpen={openDocs}
-              onClose={closeDocs}
-            />
-            <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-              Refresh
-            </Button>
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create Cluster
-            </Button>
-          </>
-        }
-      />
-
-      {isLoading ? (
-        <div className="flex justify-center py-16">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : clusters.length === 0 ? (
-        <EmptyState
-          icon={<Boxes className="h-10 w-10" />}
-          title="No clusters yet"
-          description="Create a cluster to start running containers."
-          action={
-            <Button onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create Cluster
-            </Button>
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Cluster Name</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Running Tasks</TableHead>
-              <TableHead>Active Services</TableHead>
-              <TableHead>Pending Tasks</TableHead>
-              <TableHead>Container Instances</TableHead>
-              <TableHead className="w-10" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {clusters.map((c) => (
-              <TableRow
-                key={c.clusterArn}
-                className="cursor-pointer"
-                onClick={() =>
-                  navigate({ to: "/ecs/$cluster", params: { cluster: c.clusterName } })
+    <ResourceListPage
+      title="ECS Clusters"
+      count={clusters.length}
+      actions={
+        <>
+          <ServiceDocsButton
+            service="ecs"
+            label="ECS"
+            open={docsOpen}
+            onOpen={openDocs}
+            onClose={closeDocs}
+          />
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create cluster</CreateAction>
+        </>
+      }
+    >
+      <ResourceListCard>
+        {isLoading || clusters.length === 0 ? (
+          <QueryListState
+            isLoading={isLoading}
+            isEmpty={clusters.length === 0}
+            error={error}
+            empty={
+              <EmptyState
+                icon={<Boxes className="h-10 w-10" />}
+                title="No clusters yet"
+                description="Create a cluster to start running containers."
+                action={
+                  <CreateAction onClick={() => setShowCreate(true)}>Create cluster</CreateAction>
                 }
-              >
-                <TableCell className="font-medium">{c.clusterName}</TableCell>
-                <TableCell>
-                  <StatusBadge status={c.status} />
-                </TableCell>
-                <TableCell>{c.runningTasksCount}</TableCell>
-                <TableCell>{c.activeServicesCount}</TableCell>
-                <TableCell>{c.pendingTasksCount}</TableCell>
-                <TableCell>{c.registeredContainerInstancesCount}</TableCell>
-                <TableCell>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="text-fg-muted hover:text-danger"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setDeleteTarget(c.clusterName)
-                    }}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TableCell>
+              />
+            }
+            errorTitle="Failed to load clusters"
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Cluster name</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Running tasks</TableHead>
+                <TableHead>Active services</TableHead>
+                <TableHead>Pending tasks</TableHead>
+                <TableHead>Container instances</TableHead>
+                <TableHead className="w-20 text-right">Actions</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+            </TableHeader>
+            <TableBody>
+              {clusters.map((c) => (
+                <TableRow
+                  key={c.clusterArn}
+                  onClick={() =>
+                    navigate({ to: "/ecs/$cluster", params: { cluster: c.clusterName } })
+                  }
+                >
+                  <TableCell>
+                    <ResourceName icon={Boxes} name={c.clusterName} />
+                  </TableCell>
+                  <TableCell>
+                    <StatusBadge status={c.status} />
+                  </TableCell>
+                  <TableCell>{c.runningTasksCount}</TableCell>
+                  <TableCell>{c.activeServicesCount}</TableCell>
+                  <TableCell>{c.pendingTasksCount}</TableCell>
+                  <TableCell>{c.registeredContainerInstancesCount}</TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <RowActions>
+                      <RowAction
+                        label={`View ${c.clusterName}`}
+                        onClick={() =>
+                          navigate({ to: "/ecs/$cluster", params: { cluster: c.clusterName } })
+                        }
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                      </RowAction>
+                      <RowAction
+                        label={`Delete ${c.clusterName}`}
+                        tone="danger"
+                        onClick={() => setDeleteTarget(c.clusterName)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </RowAction>
+                    </RowActions>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </ResourceListCard>
 
       <CreateClusterDialog
         open={showCreate}
@@ -177,7 +188,7 @@ export function ClusterList() {
         isPending={deleteMut.isPending}
         onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
       />
-    </div>
+    </ResourceListPage>
   )
 }
 
@@ -233,7 +244,7 @@ function CreateClusterDialog({
     >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Create Cluster</DialogTitle>
+          <DialogTitle>Create cluster</DialogTitle>
         </DialogHeader>
         <form
           onSubmit={(e) => {

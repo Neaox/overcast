@@ -34,6 +34,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableCellProse,
   TableHead,
   TableHeader,
   TableRow,
@@ -49,10 +50,12 @@ import {
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { Badge } from "@/components/ui/badge"
+import { InstanceStateBadge } from "./instance-state-badge"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
+import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 export function Ec2Dashboard() {
@@ -115,22 +118,6 @@ function NatGatewayStateBadge({ state }: { state: string }) {
         : state === "deleting" || state === "deleted"
           ? "default"
           : state === "failed"
-            ? "danger"
-            : "default"
-  return <Badge variant={variant}>{state}</Badge>
-}
-
-// ─── Instance state badge ─────────────────────────────────────────────────
-
-function InstanceStateBadge({ state }: { state: string }) {
-  const variant =
-    state === "running"
-      ? "success"
-      : state === "pending" || state === "stopping" || state === "shutting-down"
-        ? "warning"
-        : state === "terminated"
-          ? "default"
-          : state === "stopped"
             ? "danger"
             : "default"
   return <Badge variant={variant}>{state}</Badge>
@@ -242,11 +229,11 @@ function InstancesPanel() {
           <TableBody>
             {filtered.map((i) => (
               <TableRow key={i.instanceId}>
-                <TableCell className="font-mono text-xs">
+                <TableCell>
                   <Link
                     to="/ec2/$instanceId"
                     params={{ instanceId: i.instanceId }}
-                    className="text-fg-accent hover:underline"
+                    className="text-accent hover:underline"
                   >
                     {i.instanceId}
                   </Link>
@@ -254,12 +241,10 @@ function InstancesPanel() {
                 <TableCell>
                   <InstanceStateBadge state={i.state.name} />
                 </TableCell>
-                <TableCell className="text-sm">{i.instanceType}</TableCell>
-                <TableCell className="font-mono text-xs text-fg-muted">
-                  {i.privateIpAddress ?? "—"}
-                </TableCell>
-                <TableCell className="text-xs text-fg-muted">{i.vpcId ?? "—"}</TableCell>
-                <TableCell className="text-xs text-fg-muted">
+                <TableCell>{i.instanceType}</TableCell>
+                <TableCell className="text-fg-muted">{i.privateIpAddress ?? "—"}</TableCell>
+                <TableCell className="text-fg-muted">{i.vpcId ?? "—"}</TableCell>
+                <TableCell className="text-fg-muted">
                   {i.launchTime ? new Date(i.launchTime).toLocaleString() : "—"}
                 </TableCell>
                 <TableCell>
@@ -391,16 +376,16 @@ function VpcsPanel() {
           <TableBody>
             {vpcs.map((v) => (
               <TableRow key={v.vpcId}>
-                <TableCell className="font-mono text-xs">
+                <TableCell>
                   <Link
                     to="/ec2/vpc/$vpcId"
                     params={{ vpcId: v.vpcId }}
-                    className="text-fg-accent hover:underline"
+                    className="text-accent hover:underline"
                   >
                     {v.vpcId}
                   </Link>
                 </TableCell>
-                <TableCell className="font-mono text-xs">{v.cidrBlock}</TableCell>
+                <TableCell>{v.cidrBlock}</TableCell>
                 <TableCell>
                   <Badge variant={v.state === "available" ? "success" : "warning"}>{v.state}</Badge>
                 </TableCell>
@@ -518,12 +503,10 @@ function SecurityGroupsPanel() {
           <TableBody>
             {groups.map((sg) => (
               <TableRow key={sg.groupId}>
-                <TableCell className="font-mono text-xs">{sg.groupId}</TableCell>
+                <TableCell>{sg.groupId}</TableCell>
                 <TableCell className="font-medium">{sg.groupName}</TableCell>
-                <TableCell className="max-w-xs truncate text-sm text-fg-muted">
-                  {sg.description}
-                </TableCell>
-                <TableCell className="text-xs text-fg-muted">{sg.vpcId ?? "—"}</TableCell>
+                <TableCellProse className="max-w-xs truncate">{sg.description}</TableCellProse>
+                <TableCell className="text-fg-muted">{sg.vpcId ?? "—"}</TableCell>
                 <TableCell>
                   <Badge variant="default">{sg.ipPermissions.length}</Badge>
                 </TableCell>
@@ -727,7 +710,7 @@ function CreateVpcDialog({
         </DialogHeader>
         <DialogBody>
           <div>
-            <label className="mb-1 block text-sm font-medium text-fg">CIDR Block</label>
+            <label className={cn(fieldLabel, "mb-1 block text-fg")}>CIDR Block</label>
             <Input
               placeholder="10.0.0.0/16"
               value={cidr}
@@ -950,17 +933,13 @@ function ElasticIpsPanel() {
           <TableBody>
             {eips.map((eip) => (
               <TableRow key={eip.allocationId}>
-                <TableCell className="font-mono text-xs">{eip.allocationId}</TableCell>
-                <TableCell className="font-mono text-xs">{eip.publicIp}</TableCell>
+                <TableCell>{eip.allocationId}</TableCell>
+                <TableCell>{eip.publicIp}</TableCell>
                 <TableCell>
                   <Badge variant="default">{eip.domain}</Badge>
                 </TableCell>
-                <TableCell className="font-mono text-xs text-fg-muted">
-                  {eip.instanceId ?? "—"}
-                </TableCell>
-                <TableCell className="font-mono text-xs text-fg-muted">
-                  {eip.privateIpAddress ?? "—"}
-                </TableCell>
+                <TableCell className="text-fg-muted">{eip.instanceId ?? "—"}</TableCell>
+                <TableCell className="text-fg-muted">{eip.privateIpAddress ?? "—"}</TableCell>
                 <TableCell>
                   <div className="flex items-center gap-1">
                     {eip.associationId ? (
@@ -1054,7 +1033,7 @@ function AssociateAddressDialog({
             instance.
           </p>
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-fg-muted">Instance</label>
+            <label className={cn(fieldLabel, "text-fg-muted")}>Instance</label>
             <select
               value={instanceId}
               onChange={(e) => setInstanceId(e.target.value)}
@@ -1158,16 +1137,14 @@ function NatGatewaysPanel() {
           <TableBody>
             {natGateways.map((ngw) => (
               <TableRow key={ngw.natGatewayId}>
-                <TableCell className="font-mono text-xs">{ngw.natGatewayId}</TableCell>
+                <TableCell>{ngw.natGatewayId}</TableCell>
                 <TableCell>
                   <NatGatewayStateBadge state={ngw.state} />
                 </TableCell>
-                <TableCell className="font-mono text-xs text-fg-muted">{ngw.vpcId}</TableCell>
-                <TableCell className="font-mono text-xs text-fg-muted">{ngw.subnetId}</TableCell>
-                <TableCell className="font-mono text-xs text-fg-muted">
-                  {ngw.publicIp ?? "—"}
-                </TableCell>
-                <TableCell className="text-xs text-fg-muted">
+                <TableCell className="text-fg-muted">{ngw.vpcId}</TableCell>
+                <TableCell className="text-fg-muted">{ngw.subnetId}</TableCell>
+                <TableCell className="text-fg-muted">{ngw.publicIp ?? "—"}</TableCell>
+                <TableCell className="text-fg-muted">
                   {ngw.createTime ? new Date(ngw.createTime).toLocaleString() : "—"}
                 </TableCell>
                 <TableCell>

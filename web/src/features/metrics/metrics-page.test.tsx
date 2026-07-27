@@ -182,7 +182,7 @@ describe("MetricsPage", () => {
     expect(screen.getByText("40")).toBeInTheDocument()
     expect(screen.getByText("Memory reads")).toBeInTheDocument()
     expect(screen.getByText("SQLite reads")).toBeInTheDocument()
-    expect(screen.getByText("35 of 40 writes flushed to disk")).toBeInTheDocument()
+    expect(screen.getByText("35 op-rows flushed to disk")).toBeInTheDocument()
   })
 
   it("omits the memory-vs-SQL split for a non-hybrid store", async () => {
@@ -228,7 +228,9 @@ describe("MetricsPage", () => {
     // Then: the advisories section explains why, instead of a bare error.
     await waitFor(() =>
       expect(
-        screen.getByText("OVERCAST_DEBUG must be enabled to inspect raw state or storage diagnostics."),
+        screen.getByText(
+          "OVERCAST_DEBUG must be enabled to inspect raw state or storage diagnostics.",
+        ),
       ).toBeInTheDocument(),
     )
   })

@@ -25,12 +25,13 @@ import { ApplicationOwnershipBanner } from "@/components/application-ownership-b
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { PageHeader, Breadcrumb, Spinner, EmptyState, CodeBlock } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState, CodeBlock } from "@/components/ui/primitives"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
 import {
   Table,
   TableBody,
   TableCell,
+  TableCellProse,
   TableHead,
   TableHeader,
   TableRow,
@@ -146,12 +147,6 @@ export function StackDetail({ stackName }: Props) {
   if (!stack) {
     return (
       <div className="flex w-full flex-col gap-4">
-        <Breadcrumb
-          items={[
-            { label: "CloudFormation", onClick: () => navigate({ to: "/cloudformation" }) },
-            { label: stackName },
-          ]}
-        />
         <EmptyState title="Stack not found" description={`No stack named "${stackName}" exists.`} />
       </div>
     )
@@ -162,14 +157,6 @@ export function StackDetail({ stackName }: Props) {
       {/* Header */}
       <PageHeader
         title={stackName}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "CloudFormation", onClick: () => navigate({ to: "/cloudformation" }) },
-              { label: stackName },
-            ]}
-          />
-        }
         actions={
           <div className="flex items-center gap-2">
             <Badge variant={stackStatusVariant(stack.StackStatus ?? "")}>
@@ -228,7 +215,7 @@ export function StackDetail({ stackName }: Props) {
           <Tab id="resources">
             Resources
             {resources.length > 0 && (
-              <span className="ml-1.5 rounded-full bg-bg-muted px-1.5 py-0.5 text-xs text-fg-muted">
+              <span className="ml-1.5 rounded-full bg-bg-muted px-1.5 py-0.5 font-mono text-xs text-fg-muted">
                 {resources.length}
               </span>
             )}
@@ -245,7 +232,7 @@ export function StackDetail({ stackName }: Props) {
               <DetailRow label="Stack ID" value={stack.StackId ?? ""} mono />
               {stack.ParentId && (
                 <div className="flex flex-col gap-0.5">
-                  <dt className="text-xs text-fg-muted">Parent stack</dt>
+                  <dt className="font-mono text-xs text-fg-muted">Parent stack</dt>
                   <dd>
                     <Link
                       to="/cloudformation/$stackName"
@@ -270,7 +257,7 @@ export function StackDetail({ stackName }: Props) {
           {/* Parameters */}
           {(stack.Parameters ?? []).length > 0 && (
             <section className="flex flex-col gap-2">
-              <h2 className="text-sm font-medium text-fg">Parameters</h2>
+              <h2 className="font-mono text-sm font-medium text-fg">Parameters</h2>
               <div className="rounded-md border border-border">
                 <Table>
                   <TableHeader>
@@ -282,8 +269,8 @@ export function StackDetail({ stackName }: Props) {
                   <TableBody>
                     {(stack.Parameters ?? []).map((p) => (
                       <TableRow key={p.ParameterKey}>
-                        <TableCell className="font-mono text-xs">{p.ParameterKey}</TableCell>
-                        <TableCell className="font-mono text-xs">{p.ParameterValue}</TableCell>
+                        <TableCell>{p.ParameterKey}</TableCell>
+                        <TableCell>{p.ParameterValue}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -295,7 +282,7 @@ export function StackDetail({ stackName }: Props) {
           {/* Outputs */}
           {(stack.Outputs ?? []).length > 0 && (
             <section className="flex flex-col gap-2">
-              <h2 className="text-sm font-medium text-fg">Outputs</h2>
+              <h2 className="font-mono text-sm font-medium text-fg">Outputs</h2>
               <div className="rounded-md border border-border">
                 <Table>
                   <TableHeader>
@@ -309,16 +296,10 @@ export function StackDetail({ stackName }: Props) {
                   <TableBody>
                     {(stack.Outputs ?? []).map((o) => (
                       <TableRow key={o.OutputKey}>
-                        <TableCell className="font-mono text-xs font-medium">
-                          {o.OutputKey}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">{o.OutputValue}</TableCell>
-                        <TableCell className="text-sm text-fg-muted">
-                          {o.Description ?? "—"}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs text-fg-muted">
-                          {o.ExportName ?? "—"}
-                        </TableCell>
+                        <TableCell className="font-medium">{o.OutputKey}</TableCell>
+                        <TableCell>{o.OutputValue}</TableCell>
+                        <TableCellProse>{o.Description ?? "—"}</TableCellProse>
+                        <TableCell className="text-fg-muted">{o.ExportName ?? "—"}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -330,7 +311,7 @@ export function StackDetail({ stackName }: Props) {
           {/* Tags */}
           {(stack.Tags ?? []).length > 0 && (
             <section className="flex flex-col gap-2">
-              <h2 className="text-sm font-medium text-fg">Tags</h2>
+              <h2 className="font-mono text-sm font-medium text-fg">Tags</h2>
               <div className="rounded-md border border-border">
                 <Table>
                   <TableHeader>
@@ -342,8 +323,8 @@ export function StackDetail({ stackName }: Props) {
                   <TableBody>
                     {(stack.Tags ?? []).map((t) => (
                       <TableRow key={t.Key}>
-                        <TableCell className="font-mono text-xs">{t.Key}</TableCell>
-                        <TableCell className="font-mono text-xs">{t.Value}</TableCell>
+                        <TableCell>{t.Key}</TableCell>
+                        <TableCell>{t.Value}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -356,7 +337,7 @@ export function StackDetail({ stackName }: Props) {
           {resources.length > 0 && (
             <section className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-medium text-fg">Resources</h2>
+                <h2 className="font-mono text-sm font-medium text-fg">Resources</h2>
                 <Button
                   size="sm"
                   variant="ghost"
@@ -378,16 +359,14 @@ export function StackDetail({ stackName }: Props) {
                   <TableBody>
                     {resources.slice(0, 5).map((r) => (
                       <TableRow key={r.LogicalResourceId}>
-                        <TableCell className="font-mono text-xs font-medium">
+                        <TableCell className="font-medium">
                           <ResourceLink
                             logicalId={r.LogicalResourceId ?? ""}
                             resourceType={r.ResourceType ?? ""}
                             physicalId={r.PhysicalResourceId}
                           />
                         </TableCell>
-                        <TableCell className="font-mono text-xs text-fg-muted">
-                          {r.ResourceType}
-                        </TableCell>
+                        <TableCell className="text-fg-muted">{r.ResourceType}</TableCell>
                         <TableCell>
                           <span className="flex items-center gap-1.5">
                             {isStackInProgress(r.ResourceStatus ?? "") && (
@@ -398,7 +377,9 @@ export function StackDetail({ stackName }: Props) {
                             </Badge>
                           </span>
                           {r.ResourceStatusReason && (
-                            <p className="mt-0.5 text-xs text-danger">{r.ResourceStatusReason}</p>
+                            <p className="mt-0.5 font-sans text-[13px] text-danger">
+                              {r.ResourceStatusReason}
+                            </p>
                           )}
                         </TableCell>
                       </TableRow>
@@ -432,19 +413,17 @@ export function StackDetail({ stackName }: Props) {
                 <TableBody>
                   {resources.map((r) => (
                     <TableRow key={r.LogicalResourceId}>
-                      <TableCell className="font-mono text-xs font-medium">
+                      <TableCell className="font-medium">
                         <ResourceLink
                           logicalId={r.LogicalResourceId ?? ""}
                           resourceType={r.ResourceType ?? ""}
                           physicalId={r.PhysicalResourceId}
                         />
                       </TableCell>
-                      <TableCell className="max-w-xs truncate font-mono text-xs text-fg-muted">
+                      <TableCell className="max-w-xs truncate text-fg-muted">
                         {r.PhysicalResourceId ?? "—"}
                       </TableCell>
-                      <TableCell className="font-mono text-xs text-fg-muted">
-                        {r.ResourceType}
-                      </TableCell>
+                      <TableCell className="text-fg-muted">{r.ResourceType}</TableCell>
                       <TableCell>
                         <div className="flex flex-col gap-1">
                           <span className="flex items-center gap-1.5">
@@ -456,11 +435,13 @@ export function StackDetail({ stackName }: Props) {
                             </Badge>
                           </span>
                           {r.ResourceStatusReason && (
-                            <span className="text-xs text-danger">{r.ResourceStatusReason}</span>
+                            <span className="font-sans text-[13px] text-danger">
+                              {r.ResourceStatusReason}
+                            </span>
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="text-sm text-fg-muted">
+                      <TableCell className="text-fg-muted">
                         {r.LastUpdatedTimestamp ? r.LastUpdatedTimestamp.toLocaleString() : "—"}
                       </TableCell>
                     </TableRow>
@@ -496,32 +477,25 @@ export function StackDetail({ stackName }: Props) {
                       const isFailed = (e.ResourceStatus ?? "").endsWith("_FAILED")
                       return (
                         <TableRow key={e.EventId}>
-                          <TableCell className="w-40 text-xs whitespace-nowrap text-fg-muted">
+                          <TableCell className="w-40 whitespace-nowrap text-fg-muted">
                             {e.Timestamp ? e.Timestamp.toLocaleString() : ""}
                           </TableCell>
-                          <TableCell className="font-mono text-xs font-medium">
+                          <TableCell className="font-medium">
                             <ResourceLink
                               logicalId={e.LogicalResourceId ?? ""}
                               resourceType={e.ResourceType ?? ""}
                               physicalId={e.PhysicalResourceId}
                             />
                           </TableCell>
-                          <TableCell className="font-mono text-xs text-fg-muted">
-                            {e.ResourceType}
-                          </TableCell>
+                          <TableCell className="text-fg-muted">{e.ResourceType}</TableCell>
                           <TableCell>
                             <Badge variant={resourceStatusVariant(e.ResourceStatus ?? "")}>
                               {formatStatus(e.ResourceStatus ?? "")}
                             </Badge>
                           </TableCell>
-                          <TableCell
-                            className={cn(
-                              "max-w-sm text-xs",
-                              isFailed ? "text-danger" : "text-fg-muted",
-                            )}
-                          >
+                          <TableCellProse className={cn("max-w-sm", isFailed && "text-danger")}>
                             {e.ResourceStatusReason ?? ""}
-                          </TableCell>
+                          </TableCellProse>
                         </TableRow>
                       )
                     })}

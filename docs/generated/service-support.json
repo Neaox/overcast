@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1261,
+  "total_ops": 1262,
   "services": [
     {
       "service": "s3",
@@ -4607,8 +4607,8 @@
     {
       "service": "cloudformation",
       "display_name": "CloudFormation",
-      "total_ops": 47,
-      "implemented_ops": 19,
+      "total_ops": 48,
+      "implemented_ops": 20,
       "operations": [
         {
           "operation": "CreateStack",
@@ -4621,6 +4621,12 @@
           "category": "Stacks",
           "status": "✅ Supported",
           "notes": "Re-provisions with updated template"
+        },
+        {
+          "operation": "RollbackStack",
+          "category": "Stacks",
+          "status": "✅ Supported",
+          "notes": "Rolls a CREATE_FAILED, UPDATE_FAILED, or UPDATE_ROLLBACK_FAILED stack back to a terminal rollback state"
         },
         {
           "operation": "DeleteStack",

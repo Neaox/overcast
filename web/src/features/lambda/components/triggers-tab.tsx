@@ -1,4 +1,6 @@
 import { useState } from "react"
+import { fieldLabel } from "@/lib/typography"
+import { cn } from "@/lib/utils"
 import { useQuery } from "@tanstack/react-query"
 import { ArnLink } from "@/components/ui/arn-link"
 import { ResourceArnCombobox } from "@/components/ui/resource-arn-combobox"
@@ -40,7 +42,8 @@ function humanizeRule(rule: unknown): string {
     if ("numeric" in obj) {
       const ops = obj.numeric as unknown[]
       if (ops.length === 2) return `${String(ops[0])} ${String(ops[1])}`
-      if (ops.length >= 4) return `${String(ops[0])} ${String(ops[1])} and ${String(ops[2])} ${String(ops[3])}`
+      if (ops.length >= 4)
+        return `${String(ops[0])} ${String(ops[1])} and ${String(ops[2])} ${String(ops[3])}`
     }
   }
   return JSON.stringify(rule)
@@ -179,7 +182,7 @@ export function TriggersTab({ name }: { name: string }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-fg">Event source mappings</h3>
+        <h3 className="font-mono text-sm font-medium text-fg">Event source mappings</h3>
         <Button size="sm" variant="ghost" onClick={() => setShowAdd((v) => !v)}>
           <PlusIcon className="mr-1 h-3.5 w-3.5" />
           Add trigger
@@ -189,7 +192,7 @@ export function TriggersTab({ name }: { name: string }) {
       {showAdd && (
         <div className="flex max-w-2xl flex-col gap-3 rounded-md border border-border bg-bg-elevated p-4">
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-fg-muted">Event source ARN</label>
+            <label className={cn(fieldLabel, "text-fg-muted")}>Event source ARN</label>
             <ResourceArnCombobox
               resourceType="esm-source"
               value={newSourceArn}
@@ -200,7 +203,7 @@ export function TriggersTab({ name }: { name: string }) {
           {/* Row: batch size + batching window + starting position (streams only) */}
           <div className="flex flex-wrap gap-4">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-fg-muted">Batch size</label>
+              <label className={cn(fieldLabel, "text-fg-muted")}>Batch size</label>
               <input
                 type="number"
                 min={1}
@@ -211,7 +214,7 @@ export function TriggersTab({ name }: { name: string }) {
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-fg-muted">Batching window (s)</label>
+              <label className={cn(fieldLabel, "text-fg-muted")}>Batching window (s)</label>
               <input
                 type="number"
                 min={0}
@@ -223,7 +226,7 @@ export function TriggersTab({ name }: { name: string }) {
             </div>
             {isDynamoDBStream && (
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-fg-muted">Starting position</label>
+                <label className={cn(fieldLabel, "text-fg-muted")}>Starting position</label>
                 <select
                   className="rounded-md border border-border bg-bg px-3 py-1.5 text-xs text-fg focus:ring-1 focus:ring-accent focus:outline-none"
                   value={newStartingPosition}
@@ -237,7 +240,7 @@ export function TriggersTab({ name }: { name: string }) {
             {/* Max concurrency — SQS sources only */}
             {!isDynamoDBStream && (
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-fg-muted">
+                <label className={cn(fieldLabel, "text-fg-muted")}>
                   Max concurrency <span className="font-normal text-fg-muted/70">(optional)</span>
                 </label>
                 <input
@@ -255,7 +258,7 @@ export function TriggersTab({ name }: { name: string }) {
 
           {/* Filter pattern — both source types */}
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-fg-muted">
+            <label className={cn(fieldLabel, "text-fg-muted")}>
               Filter pattern <span className="font-normal text-fg-muted/70">(optional)</span>
             </label>
             <input
@@ -272,7 +275,7 @@ export function TriggersTab({ name }: { name: string }) {
             <>
               <div className="flex flex-wrap gap-4">
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-fg-muted">
+                  <label className={cn(fieldLabel, "text-fg-muted")}>
                     Max record age (s){" "}
                     <span className="font-normal text-fg-muted/70">(-1 = unlimited)</span>
                   </label>
@@ -287,7 +290,7 @@ export function TriggersTab({ name }: { name: string }) {
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-fg-muted">
+                  <label className={cn(fieldLabel, "text-fg-muted")}>
                     Max retry attempts{" "}
                     <span className="font-normal text-fg-muted/70">(-1 = unlimited)</span>
                   </label>
@@ -302,7 +305,7 @@ export function TriggersTab({ name }: { name: string }) {
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-fg-muted">Tumbling window (s)</label>
+                  <label className={cn(fieldLabel, "text-fg-muted")}>Tumbling window (s)</label>
                   <input
                     type="number"
                     min={0}
@@ -351,76 +354,80 @@ export function TriggersTab({ name }: { name: string }) {
           <p className="text-xs text-fg-muted">Add an SQS queue or DynamoDB stream as a trigger.</p>
         </div>
       ) : (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border text-left text-xs font-medium text-fg-muted">
-              <th className="pr-4 pb-2">Source</th>
-              <th className="pr-4 pb-2">Batch size</th>
-              <th className="pr-4 pb-2">Concurrency</th>
-              <th className="pr-4 pb-2">Filter</th>
-              <th className="pr-4 pb-2">State</th>
-              <th className="pr-4 pb-2">Last result</th>
-              <th className="pb-2" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {esms.map((esm: EventSourceMapping) => {
-              const filterDesc = describeFilterCriteria(esm.FilterCriteria)
-              const filterRaw = rawFilterJson(esm.FilterCriteria)
-              return (
-                <tr key={esm.UUID}>
-                  <td className="py-2 pr-4 font-mono text-xs text-fg">
-                    <ArnLink arn={esm.EventSourceArn ?? ""} />
-                  </td>
-                  <td className="py-2 pr-4 text-fg">{esm.BatchSize}</td>
-                  <td className="py-2 pr-4 text-fg">
-                    {esm.ScalingConfig?.MaximumConcurrency ? (
-                      esm.ScalingConfig.MaximumConcurrency
-                    ) : (
-                      <span className="text-fg-muted">—</span>
-                    )}
-                  </td>
-                  <td className="max-w-[220px] py-2 pr-4">
-                    {filterDesc ? (
-                      <span
-                        className="block truncate font-mono text-xs text-fg-muted"
-                        title={filterRaw}
+        // Seven columns of mono, one of them an ARN: let the table scroll
+        // rather than push the tab panel wide.
+        <div className="w-full overflow-x-auto">
+          <table className="w-full font-mono text-xs">
+            <thead>
+              <tr className={cn(fieldLabel, "border-b border-border text-left text-fg-subtle")}>
+                <th className="pr-4 pb-2">Source</th>
+                <th className="pr-4 pb-2">Batch size</th>
+                <th className="pr-4 pb-2">Concurrency</th>
+                <th className="pr-4 pb-2">Filter</th>
+                <th className="pr-4 pb-2">State</th>
+                <th className="pr-4 pb-2">Last result</th>
+                <th className="pb-2" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {esms.map((esm: EventSourceMapping) => {
+                const filterDesc = describeFilterCriteria(esm.FilterCriteria)
+                const filterRaw = rawFilterJson(esm.FilterCriteria)
+                return (
+                  <tr key={esm.UUID}>
+                    <td className="py-2 pr-4 font-mono text-xs text-fg">
+                      <ArnLink arn={esm.EventSourceArn ?? ""} />
+                    </td>
+                    <td className="py-2 pr-4 text-fg">{esm.BatchSize}</td>
+                    <td className="py-2 pr-4 text-fg">
+                      {esm.ScalingConfig?.MaximumConcurrency ? (
+                        esm.ScalingConfig.MaximumConcurrency
+                      ) : (
+                        <span className="text-fg-muted">—</span>
+                      )}
+                    </td>
+                    <td className="max-w-[220px] py-2 pr-4">
+                      {filterDesc ? (
+                        <span
+                          className="block truncate font-mono text-xs text-fg-muted"
+                          title={filterRaw}
+                        >
+                          {filterDesc}
+                        </span>
+                      ) : (
+                        <span className="text-fg-muted">—</span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-4">
+                      <Badge variant={esm.State === "Enabled" ? "success" : "default"}>
+                        {esm.State}
+                      </Badge>
+                    </td>
+                    <td className="py-2 pr-4">
+                      {esm.LastProcessingResult === "Throttled" ? (
+                        <Badge variant="warning">Throttled</Badge>
+                      ) : (
+                        <span className="text-xs text-fg-muted">
+                          {esm.LastProcessingResult ?? "—"}
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 text-right">
+                      <button
+                        className="text-xs text-fg-muted hover:text-danger"
+                        disabled={deleteMut.isPending}
+                        onClick={() => deleteMut.mutate(esm.UUID ?? "")}
+                        title="Remove trigger"
                       >
-                        {filterDesc}
-                      </span>
-                    ) : (
-                      <span className="text-fg-muted">—</span>
-                    )}
-                  </td>
-                  <td className="py-2 pr-4">
-                    <Badge variant={esm.State === "Enabled" ? "success" : "default"}>
-                      {esm.State}
-                    </Badge>
-                  </td>
-                  <td className="py-2 pr-4">
-                    {esm.LastProcessingResult === "Throttled" ? (
-                      <Badge variant="warning">Throttled</Badge>
-                    ) : (
-                      <span className="text-xs text-fg-muted">
-                        {esm.LastProcessingResult ?? "—"}
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-2 text-right">
-                    <button
-                      className="text-xs text-fg-muted hover:text-danger"
-                      disabled={deleteMut.isPending}
-                      onClick={() => deleteMut.mutate(esm.UUID ?? "")}
-                      title="Remove trigger"
-                    >
-                      Remove
-                    </button>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   )

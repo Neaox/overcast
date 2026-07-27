@@ -32,7 +32,7 @@ The release workflow:
 - verifies `[Unreleased]` is empty before publishing
 - runs `go vet ./...`
 - runs `go test -race -count=1 -coverprofile=coverage.out -timeout=600s ./...`
-- runs `npx tsc --noEmit` for the web UI
+- runs `npm run typecheck` for the web UI (both `tsconfig.app.json` and `tsconfig.node.json`)
 - builds the web UI
 - uploads native binaries for Linux, macOS, and Windows
 - uploads `SHA256SUMS`

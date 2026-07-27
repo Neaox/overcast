@@ -979,7 +979,7 @@ function CollapsibleSection({
       <button
         type="button"
         onClick={onToggle}
-        className="hover:bg-surface-raised flex w-full items-center gap-2 px-3 py-2.5 text-sm transition-colors"
+        className="flex w-full items-center gap-2 px-3 py-2.5 text-sm transition-colors hover:bg-accent-muted"
       >
         {icon}
         <span className="font-medium">{label}</span>

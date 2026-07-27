@@ -20,6 +20,10 @@ const (
 // ServiceTiers maps the canonical service name (as returned by Service.Name())
 // to its current emulation tier. Update this whenever a service graduates
 // from stub → partial → full.
+//
+// Every registered service must appear here: New falls back to TierStub for
+// anything missing, so an omission silently reports a working service as
+// "stub" in /_health. TestServiceTiers_coverEveryRegisteredService enforces it.
 var ServiceTiers = map[string]EmulationTier{
 	// Full — P1+P2 complete
 	"s3":     TierFull,
@@ -40,11 +44,14 @@ var ServiceTiers = map[string]EmulationTier{
 	"ssm":             TierPartial,
 	"ec2":             TierPartial,
 	"ecs":             TierPartial,
+	"ecr":             TierPartial,
 	"eks":             TierPartial,
 	"rds":             TierPartial,
 	"cloudformation":  TierPartial,
 	"apigateway":      TierPartial,
 	"cognito":         TierPartial,
+	"scheduler":       TierPartial,
+	"appconfigdata":   TierPartial,
 
 	// Inert — full CRUD, resources stored, but no enforcement / side-effects
 	"iam":           TierInert,
@@ -53,9 +60,12 @@ var ServiceTiers = map[string]EmulationTier{
 	"appsync":       TierInert,
 	"cloudfront":    TierInert,
 
-	// Stub — all 501
+	// Stub — all 501, bar the odd hardcoded response that unblocks a bootstrap
 	"waf":    TierStub,
 	"shield": TierStub,
+	// organizations answers exactly one op — DescribeOrganization, from a
+	// hardcoded org with no stored state — so that CDK bootstrap gets past it.
+	"organizations": TierStub,
 
 	// Inert stubs — CRUD works for core resources, but no side-effects
 	"cloudwatch":  TierInert,

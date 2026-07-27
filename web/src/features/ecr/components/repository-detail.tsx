@@ -14,7 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { Breadcrumb, CodeBlock, EmptyState, PageHeader, Spinner } from "@/components/ui/primitives"
+import { CodeBlock, EmptyState, PageHeader, Spinner } from "@/components/ui/primitives"
 import { formatDate } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
@@ -58,14 +58,6 @@ export function RepositoryDetail({ repositoryName }: { repositoryName: string })
     <div className="flex w-full flex-col gap-4">
       <PageHeader
         title={data.name}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "ECR", onClick: () => navigate({ to: "/ecr" }) },
-              { label: data.name },
-            ]}
-          />
-        }
         description={data.uri}
         actions={
           <>
@@ -87,15 +79,15 @@ export function RepositoryDetail({ repositoryName }: { repositoryName: string })
 
       <div className="grid gap-3 md:grid-cols-3">
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="text-xs text-fg-muted">Registry ID</div>
+          <div className="font-mono text-xs text-fg-muted">Registry ID</div>
           <div className="mt-1 font-mono text-sm text-fg">{data.registryId}</div>
         </div>
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="text-xs text-fg-muted">Created</div>
+          <div className="font-mono text-xs text-fg-muted">Created</div>
           <div className="mt-1 text-sm text-fg">{formatDate(data.createdAt)}</div>
         </div>
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="text-xs text-fg-muted">Tag mutability</div>
+          <div className="font-mono text-xs text-fg-muted">Tag mutability</div>
           <div className="mt-1">
             <Badge variant="default">{data.imageTagMutability ?? "MUTABLE"}</Badge>
           </div>
@@ -118,7 +110,7 @@ export function RepositoryDetail({ repositoryName }: { repositoryName: string })
       <section className="rounded-lg border bg-bg-elevated p-4">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-sm font-medium text-fg">Images</h2>
+            <h2 className="font-mono text-sm font-medium text-fg">Images</h2>
             <p className="text-sm text-fg-muted">
               {data.images.length} image entr{data.images.length === 1 ? "y" : "ies"} tracked for
               this repository.
@@ -144,13 +136,9 @@ export function RepositoryDetail({ repositoryName }: { repositoryName: string })
             <TableBody>
               {data.images.map((image) => (
                 <TableRow key={`${image.digest}:${image.tags.join(",")}`}>
-                  <TableCell className="font-mono text-xs">
-                    {image.tags.join(", ") || "—"}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">{image.digest}</TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">
-                    {image.mediaType ?? "—"}
-                  </TableCell>
+                  <TableCell>{image.tags.join(", ") || "—"}</TableCell>
+                  <TableCell className="text-fg-muted">{image.digest}</TableCell>
+                  <TableCell className="text-fg-muted">{image.mediaType ?? "—"}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

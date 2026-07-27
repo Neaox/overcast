@@ -14,6 +14,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableCellProse,
   TableHead,
   TableHeader,
   TableRow,
@@ -28,6 +29,7 @@ import {
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { PageHeader, QueryListState, Spinner } from "@/components/ui/primitives"
 import { useToast } from "@/components/ui/toast"
+import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import { ApiKeyValue } from "@/features/apigateway/components/api-key-value"
 import type { UsagePlan, UsagePlanKey } from "@/features/apigateway/data"
@@ -89,11 +91,11 @@ function PlanKeys({ planId, planName }: { planId: string; planName: string }) {
             {keys.map((key) => (
               <TableRow key={key.id}>
                 <TableCell className="font-medium">{key.name}</TableCell>
-                <TableCell className="font-mono text-xs text-fg-muted">{key.id}</TableCell>
+                <TableCell className="text-fg-muted">{key.id}</TableCell>
                 <TableCell>
                   <ApiKeyValue value={key.value} />
                 </TableCell>
-                <TableCell className="text-sm text-fg-muted">{key.type}</TableCell>
+                <TableCell className="text-fg-muted">{key.type}</TableCell>
                 <TableCell className="text-right">
                   <Button
                     size="sm"
@@ -247,7 +249,7 @@ export function UsagePlansPage({
               {plans.map((plan) => (
                 <TableRow
                   key={plan.id}
-                  className="hover:bg-muted/50 cursor-pointer"
+                  className="cursor-pointer"
                   onClick={() => togglePlan(plan.id)}
                 >
                   <TableCell className="w-8">
@@ -259,8 +261,8 @@ export function UsagePlansPage({
                     />
                   </TableCell>
                   <TableCell className="font-medium">{plan.name}</TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">{plan.id}</TableCell>
-                  <TableCell className="text-sm text-fg-muted">{plan.description || "—"}</TableCell>
+                  <TableCell className="text-fg-muted">{plan.id}</TableCell>
+                  <TableCellProse>{plan.description || "—"}</TableCellProse>
                   <TableCell className="text-right">
                     <Button
                       size="sm"
@@ -328,7 +330,7 @@ export function UsagePlansPage({
             className="flex flex-col gap-4"
           >
             <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="plan-name">
+              <label className={cn(fieldLabel, "mb-1 block")} htmlFor="plan-name">
                 Name <span className="text-danger">*</span>
               </label>
               <input
@@ -342,7 +344,7 @@ export function UsagePlansPage({
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="plan-description">
+              <label className={cn(fieldLabel, "mb-1 block")} htmlFor="plan-description">
                 Description
               </label>
               <input

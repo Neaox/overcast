@@ -31,6 +31,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableCellProse,
   TableHead,
   TableHeader,
   TableRow,
@@ -99,7 +100,7 @@ export function ApiDetail({ apiId }: Props) {
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="default">{api.authenticationType}</Badge>
         {api.uris?.GRAPHQL && (
-          <span className="text-muted-foreground font-mono text-xs">{api.uris.GRAPHQL}</span>
+          <span className="font-mono text-xs text-fg-subtle">{api.uris.GRAPHQL}</span>
         )}
       </div>
 
@@ -111,9 +112,7 @@ export function ApiDetail({ apiId }: Props) {
             onClick={() => setTab(key)}
             className={cn(
               "flex items-center gap-1.5 px-3 py-2 text-sm font-medium transition-colors",
-              tab === key
-                ? "border-primary text-foreground border-b-2"
-                : "text-muted-foreground hover:text-foreground",
+              tab === key ? "border-b-2 border-accent text-fg" : "text-fg-muted hover:text-fg",
             )}
           >
             <Icon className="h-3.5 w-3.5" />
@@ -197,11 +196,11 @@ function DataSourcesTab({ apiId }: { apiId: string }) {
       <TableBody>
         {dataSources.map((ds) => (
           <TableRow key={ds.name}>
-            <TableCell className="font-mono text-sm">{ds.name}</TableCell>
+            <TableCell>{ds.name}</TableCell>
             <TableCell>
               <Badge variant="outline">{ds.type}</Badge>
             </TableCell>
-            <TableCell className="text-muted-foreground text-sm">{ds.description || "—"}</TableCell>
+            <TableCellProse>{ds.description || "—"}</TableCellProse>
           </TableRow>
         ))}
       </TableBody>
@@ -255,13 +254,13 @@ function ResolverGroup({ apiId, typeName }: { apiId: string; typeName: string })
 
   return (
     <div>
-      <h3 className="mb-2 text-sm font-semibold">{typeName}</h3>
+      <h3 className="mb-2 font-mono text-sm font-semibold">{typeName}</h3>
       {isLoading ? (
         <div className="flex justify-center py-4">
           <Spinner className="h-4 w-4" />
         </div>
       ) : resolvers.length === 0 ? (
-        <p className="text-muted-foreground text-sm">No resolvers for {typeName}.</p>
+        <p className="text-sm text-fg-subtle">No resolvers for {typeName}.</p>
       ) : (
         <Table>
           <TableHeader>
@@ -274,10 +273,8 @@ function ResolverGroup({ apiId, typeName }: { apiId: string; typeName: string })
           <TableBody>
             {resolvers.map((r) => (
               <TableRow key={`${r.typeName}.${r.fieldName}`}>
-                <TableCell className="font-mono text-sm">{r.fieldName}</TableCell>
-                <TableCell className="text-muted-foreground text-sm">
-                  {r.dataSourceName || "—"}
-                </TableCell>
+                <TableCell>{r.fieldName}</TableCell>
+                <TableCell className="text-fg-muted">{r.dataSourceName || "—"}</TableCell>
                 <TableCell>
                   <Badge variant="outline">{r.kind}</Badge>
                 </TableCell>
@@ -325,11 +322,9 @@ function FunctionsTab({ apiId }: { apiId: string }) {
       <TableBody>
         {functions.map((fn) => (
           <TableRow key={fn.functionId}>
-            <TableCell className="font-mono text-sm">{fn.name}</TableCell>
-            <TableCell className="text-muted-foreground text-sm">
-              {fn.dataSourceName || "—"}
-            </TableCell>
-            <TableCell className="text-muted-foreground text-sm">{fn.description || "—"}</TableCell>
+            <TableCell>{fn.name}</TableCell>
+            <TableCell className="text-fg-muted">{fn.dataSourceName || "—"}</TableCell>
+            <TableCellProse>{fn.description || "—"}</TableCellProse>
           </TableRow>
         ))}
       </TableBody>
@@ -403,11 +398,9 @@ function ApiKeysTab({
           <TableBody>
             {apiKeys.map((k) => (
               <TableRow key={k.id}>
-                <TableCell className="font-mono text-xs">{k.id}</TableCell>
-                <TableCell className="text-muted-foreground text-sm">
-                  {k.description || "—"}
-                </TableCell>
-                <TableCell className="text-muted-foreground text-xs">
+                <TableCell>{k.id}</TableCell>
+                <TableCellProse>{k.description || "—"}</TableCellProse>
+                <TableCell className="text-fg-muted">
                   {k.expires ? new Date(k.expires * 1000).toLocaleDateString() : "—"}
                 </TableCell>
                 <TableCell className="text-right">
@@ -464,12 +457,12 @@ function SchemaTab({ apiId }: { apiId: string }) {
     <div className="flex flex-col gap-4">
       {schemaStatus && (
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium">Schema Status:</span>
+          <span className="font-mono text-sm font-medium">Schema Status:</span>
           <Badge variant={schemaStatus.status === "ACTIVE" ? "default" : "outline"}>
             {schemaStatus.status}
           </Badge>
           {schemaStatus.details && (
-            <span className="text-muted-foreground text-xs">{schemaStatus.details}</span>
+            <span className="text-xs text-fg-subtle">{schemaStatus.details}</span>
           )}
         </div>
       )}
@@ -492,12 +485,12 @@ function SchemaTab({ apiId }: { apiId: string }) {
           <TableBody>
             {types.map((t) => (
               <TableRow key={t.name}>
-                <TableCell className="font-mono text-sm font-semibold">{t.name}</TableCell>
+                <TableCell className="font-semibold">{t.name}</TableCell>
                 <TableCell>
                   <Badge variant="outline">{t.format}</Badge>
                 </TableCell>
                 <TableCell>
-                  <pre className="text-muted-foreground max-w-lg truncate font-mono text-xs">
+                  <pre className="max-w-lg truncate font-mono text-xs text-fg-subtle">
                     {t.definition}
                   </pre>
                 </TableCell>

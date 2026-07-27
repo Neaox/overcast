@@ -40,6 +40,7 @@ import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { useToast } from "@/components/ui/toast"
 import { formatDate } from "@/lib/format"
+import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 interface Props {
@@ -239,21 +240,21 @@ export function HttpApiDetail({ apiId }: Props) {
       {/* Summary cards */}
       <div className="grid grid-cols-4 gap-3">
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="text-xs text-fg-muted">API ID</div>
+          <div className="font-mono text-xs text-fg-muted">API ID</div>
           <div className="mt-1 font-mono text-sm">{api.apiId}</div>
         </div>
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="text-xs text-fg-muted">Protocol</div>
+          <div className="font-mono text-xs text-fg-muted">Protocol</div>
           <div className="mt-1">
             <Badge variant="success">{api.protocolType}</Badge>
           </div>
         </div>
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="text-xs text-fg-muted">Routes</div>
+          <div className="font-mono text-xs text-fg-muted">Routes</div>
           <div className="mt-1 text-2xl font-semibold">{routes.length}</div>
         </div>
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="text-xs text-fg-muted">Created</div>
+          <div className="font-mono text-xs text-fg-muted">Created</div>
           <div className="mt-1 text-sm">{formatDate(api.createdDate)}</div>
         </div>
       </div>
@@ -261,7 +262,7 @@ export function HttpApiDetail({ apiId }: Props) {
       {/* CORS info if configured */}
       {api.corsConfiguration && (
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="mb-2 text-xs font-medium text-fg-muted">CORS Configuration</div>
+          <div className="mb-2 font-mono text-xs font-medium text-fg-muted">CORS Configuration</div>
           <div className="flex gap-6 text-sm">
             {api.corsConfiguration.allowOrigins && (
               <div>
@@ -321,15 +322,9 @@ export function HttpApiDetail({ apiId }: Props) {
               <TableBody>
                 {routes.map((route) => (
                   <TableRow key={route.routeId}>
-                    <TableCell className="font-mono text-sm font-medium">
-                      {route.routeKey}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-fg-muted">
-                      {route.routeId}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-fg-muted">
-                      {route.target || "—"}
-                    </TableCell>
+                    <TableCell className="font-medium">{route.routeKey}</TableCell>
+                    <TableCell className="text-fg-muted">{route.routeId}</TableCell>
+                    <TableCell className="text-fg-muted">{route.target || "—"}</TableCell>
                     <TableCell className="text-right">
                       <Button
                         size="sm"
@@ -377,14 +372,14 @@ export function HttpApiDetail({ apiId }: Props) {
               <TableBody>
                 {integrations.map((int) => (
                   <TableRow key={int.integrationId}>
-                    <TableCell className="font-mono text-xs">{int.integrationId}</TableCell>
+                    <TableCell>{int.integrationId}</TableCell>
                     <TableCell>
                       <Badge variant="default">{int.integrationType}</Badge>
                     </TableCell>
-                    <TableCell className="max-w-60 truncate font-mono text-xs text-fg-muted">
+                    <TableCell className="max-w-60 truncate text-fg-muted">
                       {int.integrationUri || "—"}
                     </TableCell>
-                    <TableCell className="text-sm text-fg-muted">
+                    <TableCell className="text-fg-muted">
                       {int.payloadFormatVersion || "1.0"}
                     </TableCell>
                   </TableRow>
@@ -425,9 +420,7 @@ export function HttpApiDetail({ apiId }: Props) {
                         {stage.autoDeploy ? "Yes" : "No"}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-sm text-fg-muted">
-                      {formatDate(stage.createdDate)}
-                    </TableCell>
+                    <TableCell className="text-fg-muted">{formatDate(stage.createdDate)}</TableCell>
                     <TableCell className="text-right">
                       <Button
                         size="sm"
@@ -474,9 +467,7 @@ export function HttpApiDetail({ apiId }: Props) {
                     <TableCell>
                       <Badge variant="default">{auth.authorizerType}</Badge>
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-fg-muted">
-                      {auth.identitySource || "—"}
-                    </TableCell>
+                    <TableCell className="text-fg-muted">{auth.identitySource || "—"}</TableCell>
                     <TableCell className="text-right">
                       <Button
                         size="sm"
@@ -570,7 +561,7 @@ export function HttpApiDetail({ apiId }: Props) {
             className="flex flex-col gap-4"
           >
             <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="route-key">
+              <label className={cn(fieldLabel, "mb-1 block")} htmlFor="route-key">
                 Route Key
               </label>
               <input
@@ -624,7 +615,7 @@ export function HttpApiDetail({ apiId }: Props) {
             className="flex flex-col gap-4"
           >
             <div>
-              <label className="mb-1 block text-sm font-medium">Integration Type</label>
+              <label className={cn(fieldLabel, "mb-1 block")}>Integration Type</label>
               <select
                 className="w-full rounded-md border bg-bg-elevated px-3 py-2 text-sm"
                 value={newIntType}
@@ -638,7 +629,7 @@ export function HttpApiDetail({ apiId }: Props) {
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="int-uri">
+              <label className={cn(fieldLabel, "mb-1 block")} htmlFor="int-uri">
                 Integration URI
               </label>
               <input
@@ -684,7 +675,7 @@ export function HttpApiDetail({ apiId }: Props) {
             className="flex flex-col gap-4"
           >
             <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="http-stage-name">
+              <label className={cn(fieldLabel, "mb-1 block")} htmlFor="http-stage-name">
                 Stage Name
               </label>
               <input
@@ -769,7 +760,7 @@ export function HttpApiDetail({ apiId }: Props) {
             className="flex flex-col gap-4"
           >
             <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="v2-auth-name">
+              <label className={cn(fieldLabel, "mb-1 block")} htmlFor="v2-auth-name">
                 Name <span className="text-danger">*</span>
               </label>
               <input
@@ -783,7 +774,7 @@ export function HttpApiDetail({ apiId }: Props) {
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium">Type</label>
+              <label className={cn(fieldLabel, "mb-1 block")}>Type</label>
               <select
                 className="w-full rounded-md border bg-bg-elevated px-3 py-2 text-sm"
                 value={newV2AuthType}
@@ -797,7 +788,7 @@ export function HttpApiDetail({ apiId }: Props) {
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="v2-auth-identity-source">
+              <label className={cn(fieldLabel, "mb-1 block")} htmlFor="v2-auth-identity-source">
                 Identity Source
               </label>
               <input
@@ -811,7 +802,7 @@ export function HttpApiDetail({ apiId }: Props) {
             {newV2AuthType === "JWT" && (
               <>
                 <div>
-                  <label className="mb-1 block text-sm font-medium" htmlFor="v2-auth-jwt-issuer">
+                  <label className={cn(fieldLabel, "mb-1 block")} htmlFor="v2-auth-jwt-issuer">
                     JWT Issuer
                   </label>
                   <input
@@ -823,10 +814,7 @@ export function HttpApiDetail({ apiId }: Props) {
                   />
                 </div>
                 <div>
-                  <label
-                    className="mb-1 block text-sm font-medium"
-                    htmlFor="v2-auth-jwt-audience"
-                  >
+                  <label className={cn(fieldLabel, "mb-1 block")} htmlFor="v2-auth-jwt-audience">
                     Audience (comma-separated)
                   </label>
                   <input

@@ -35,6 +35,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableCellProse,
   TableHead,
   TableHeader,
   TableRow,
@@ -52,6 +53,7 @@ import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { useToast } from "@/components/ui/toast"
 import { formatDate } from "@/lib/format"
+import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import { useEndpoint } from "@/hooks/use-endpoint"
 import { cognito } from "@/services/api/cognito"
@@ -478,19 +480,19 @@ export function RestApiDetail({ apiId }: Props) {
       {/* Summary cards */}
       <div className="grid grid-cols-4 gap-3">
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="text-xs text-fg-muted">API ID</div>
+          <div className="font-mono text-xs text-fg-muted">API ID</div>
           <div className="mt-1 font-mono text-sm">{api.id}</div>
         </div>
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="text-xs text-fg-muted">Resources</div>
+          <div className="font-mono text-xs text-fg-muted">Resources</div>
           <div className="mt-1 text-2xl font-semibold">{resources.length}</div>
         </div>
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="text-xs text-fg-muted">Stages</div>
+          <div className="font-mono text-xs text-fg-muted">Stages</div>
           <div className="mt-1 text-2xl font-semibold">{stages.length}</div>
         </div>
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="text-xs text-fg-muted">Created</div>
+          <div className="font-mono text-xs text-fg-muted">Created</div>
           <div className="mt-1 text-sm">{formatDate(api.createdDate)}</div>
         </div>
       </div>
@@ -548,10 +550,10 @@ export function RestApiDetail({ apiId }: Props) {
                 return (
                   <Fragment key={resource.id}>
                     <TableRow
-                      className="hover:bg-muted/50 cursor-pointer"
+                      className="cursor-pointer"
                       onClick={() => toggleResource(resource.id)}
                     >
-                      <TableCell className="font-mono text-sm">
+                      <TableCell>
                         <span className="inline-flex items-center gap-1">
                           <ChevronRight
                             className={cn(
@@ -562,9 +564,7 @@ export function RestApiDetail({ apiId }: Props) {
                           {resource.path}
                         </span>
                       </TableCell>
-                      <TableCell className="font-mono text-xs text-fg-muted">
-                        {resource.id}
-                      </TableCell>
+                      <TableCell className="text-fg-muted">{resource.id}</TableCell>
                       <TableCell>
                         <div className="flex gap-1">
                           {methods.map((m) => {
@@ -733,7 +733,7 @@ export function RestApiDetail({ apiId }: Props) {
                 {/* Request headers & body */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-fg-muted">Headers</label>
+                    <label className={cn(fieldLabel, "mb-1 block text-fg-muted")}>Headers</label>
                     <textarea
                       className="w-full rounded-md border bg-bg px-3 py-2 font-mono text-xs text-fg"
                       rows={3}
@@ -744,7 +744,7 @@ export function RestApiDetail({ apiId }: Props) {
                   </div>
                   {!["GET", "HEAD", "OPTIONS"].includes(testTarget.method) && (
                     <div>
-                      <label className="mb-1 block text-xs font-medium text-fg-muted">Body</label>
+                      <label className={cn(fieldLabel, "mb-1 block text-fg-muted")}>Body</label>
                       <textarea
                         className="w-full rounded-md border bg-bg px-3 py-2 font-mono text-xs text-fg"
                         rows={3}
@@ -790,7 +790,9 @@ export function RestApiDetail({ apiId }: Props) {
 
                     {/* Response body */}
                     <div>
-                      <div className="mb-1 text-xs font-medium text-fg-muted">Response Body</div>
+                      <div className="mb-1 font-mono text-xs font-medium text-fg-muted">
+                        Response Body
+                      </div>
                       <pre className="max-h-64 overflow-auto rounded-md bg-bg p-3 font-mono text-xs text-fg">
                         {tryFormatJson(testResponse.body)}
                       </pre>
@@ -834,15 +836,9 @@ export function RestApiDetail({ apiId }: Props) {
                 {stages.map((stage) => (
                   <TableRow key={stage.stageName}>
                     <TableCell className="font-medium">{stage.stageName}</TableCell>
-                    <TableCell className="font-mono text-xs text-fg-muted">
-                      {stage.deploymentId}
-                    </TableCell>
-                    <TableCell className="text-sm text-fg-muted">
-                      {stage.description || "—"}
-                    </TableCell>
-                    <TableCell className="text-sm text-fg-muted">
-                      {formatDate(stage.createdDate)}
-                    </TableCell>
+                    <TableCell className="text-fg-muted">{stage.deploymentId}</TableCell>
+                    <TableCellProse>{stage.description || "—"}</TableCellProse>
+                    <TableCell className="text-fg-muted">{formatDate(stage.createdDate)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -878,13 +874,9 @@ export function RestApiDetail({ apiId }: Props) {
               <TableBody>
                 {deployments.map((dep) => (
                   <TableRow key={dep.id}>
-                    <TableCell className="font-mono text-sm">{dep.id}</TableCell>
-                    <TableCell className="text-sm text-fg-muted">
-                      {dep.description || "—"}
-                    </TableCell>
-                    <TableCell className="text-sm text-fg-muted">
-                      {formatDate(dep.createdDate)}
-                    </TableCell>
+                    <TableCell>{dep.id}</TableCell>
+                    <TableCellProse>{dep.description || "—"}</TableCellProse>
+                    <TableCell className="text-fg-muted">{formatDate(dep.createdDate)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -921,9 +913,7 @@ export function RestApiDetail({ apiId }: Props) {
                     <TableCell>
                       <Badge variant="default">{auth.type}</Badge>
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-fg-muted">
-                      {auth.identitySource || "—"}
-                    </TableCell>
+                    <TableCell className="text-fg-muted">{auth.identitySource || "—"}</TableCell>
                     <TableCell className="text-right">
                       <Button
                         size="sm"
@@ -1006,7 +996,7 @@ export function RestApiDetail({ apiId }: Props) {
             className="flex flex-col gap-4"
           >
             <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="auth-name">
+              <label className={cn(fieldLabel, "mb-1 block")} htmlFor="auth-name">
                 Name <span className="text-danger">*</span>
               </label>
               <input
@@ -1020,7 +1010,7 @@ export function RestApiDetail({ apiId }: Props) {
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium">Type</label>
+              <label className={cn(fieldLabel, "mb-1 block")}>Type</label>
               <select
                 className="w-full rounded-md border bg-bg-elevated px-3 py-2 text-sm"
                 value={newAuthType}
@@ -1034,7 +1024,7 @@ export function RestApiDetail({ apiId }: Props) {
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="auth-identity-source">
+              <label className={cn(fieldLabel, "mb-1 block")} htmlFor="auth-identity-source">
                 Identity Source
               </label>
               <input
@@ -1046,7 +1036,7 @@ export function RestApiDetail({ apiId }: Props) {
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="auth-uri">
+              <label className={cn(fieldLabel, "mb-1 block")} htmlFor="auth-uri">
                 Authorizer URI
               </label>
               <input
@@ -1096,7 +1086,7 @@ export function RestApiDetail({ apiId }: Props) {
             className="flex flex-col gap-4"
           >
             <div>
-              <label className="mb-1 block text-sm font-medium">Parent Resource</label>
+              <label className={cn(fieldLabel, "mb-1 block")}>Parent Resource</label>
               <select
                 className="w-full rounded-md border bg-bg-elevated px-3 py-2 text-sm"
                 value={parentResourceId}
@@ -1110,7 +1100,7 @@ export function RestApiDetail({ apiId }: Props) {
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="path-part">
+              <label className={cn(fieldLabel, "mb-1 block")} htmlFor="path-part">
                 Path Part
               </label>
               <input
@@ -1161,7 +1151,7 @@ export function RestApiDetail({ apiId }: Props) {
             className="flex flex-col gap-4"
           >
             <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="stage-name">
+              <label className={cn(fieldLabel, "mb-1 block")} htmlFor="stage-name">
                 Stage Name
               </label>
               <input
@@ -1174,7 +1164,7 @@ export function RestApiDetail({ apiId }: Props) {
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium">Deployment</label>
+              <label className={cn(fieldLabel, "mb-1 block")}>Deployment</label>
               <select
                 className="w-full rounded-md border bg-bg-elevated px-3 py-2 text-sm"
                 value={selectedDeploymentId}
@@ -1237,7 +1227,7 @@ export function RestApiDetail({ apiId }: Props) {
             className="flex flex-col gap-4"
           >
             <div>
-              <label className="mb-1 block text-sm font-medium">HTTP Method</label>
+              <label className={cn(fieldLabel, "mb-1 block")}>HTTP Method</label>
               <select
                 className="w-full rounded-md border bg-bg-elevated px-3 py-2 text-sm"
                 value={newMethodVerb}
@@ -1251,7 +1241,7 @@ export function RestApiDetail({ apiId }: Props) {
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium">Integration Type</label>
+              <label className={cn(fieldLabel, "mb-1 block")}>Integration Type</label>
               <select
                 className="w-full rounded-md border bg-bg-elevated px-3 py-2 text-sm"
                 value={newIntegrationType}
@@ -1318,9 +1308,9 @@ function MethodDetails({
   if (methods.length === 0) {
     return (
       <TableRow className="bg-bg-elevated/50">
-        <TableCell colSpan={4} className="pl-10 text-xs text-fg-muted">
+        <TableCellProse colSpan={4} className="pl-10">
           No methods defined. Click + to add one.
-        </TableCell>
+        </TableCellProse>
       </TableRow>
     )
   }
@@ -1353,7 +1343,7 @@ function MethodDetails({
                             search: { apiId },
                           })
                         }}
-                        className="inline-flex items-center gap-1 rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-xs text-warning hover:bg-warning/20"
+                        className="inline-flex items-center gap-1 rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 font-mono text-xs text-warning hover:bg-warning/20"
                       >
                         <KeyRound className="h-3 w-3" />
                         API key required
@@ -1503,7 +1493,7 @@ function CognitoAuthPanel({
             </Button>
           ) : (
             <div className="flex items-center gap-2">
-              <span className="text-xs text-fg-muted">User Pool:</span>
+              <span className="font-mono text-xs text-fg-muted">User Pool:</span>
               {poolIds.map((pid) => (
                 <Button
                   key={pid}
@@ -1583,7 +1573,7 @@ function CognitoAuthPanel({
           <div className="grid grid-cols-2 gap-2">
             {/* Client picker */}
             <div>
-              <label className="mb-1 block text-xs text-fg-muted">App Client</label>
+              <label className={cn(fieldLabel, "mb-1 block text-fg-muted")}>App Client</label>
               {cognitoClients.length > 0 ? (
                 <select
                   className="w-full rounded-md border bg-bg-elevated px-2 py-1.5 text-xs"
@@ -1603,7 +1593,7 @@ function CognitoAuthPanel({
 
             {/* User picker */}
             <div>
-              <label className="mb-1 block text-xs text-fg-muted">User</label>
+              <label className={cn(fieldLabel, "mb-1 block text-fg-muted")}>User</label>
               {cognitoUsers.length > 0 ? (
                 <select
                   className="w-full rounded-md border bg-bg-elevated px-2 py-1.5 text-xs"
@@ -1625,7 +1615,7 @@ function CognitoAuthPanel({
           {/* Password + authenticate */}
           <div className="flex items-end gap-2">
             <div className="flex-1">
-              <label className="mb-1 block text-xs text-fg-muted">Password</label>
+              <label className={cn(fieldLabel, "mb-1 block text-fg-muted")}>Password</label>
               <input
                 type="password"
                 className="w-full rounded-md border bg-bg-elevated px-2 py-1.5 text-xs"
@@ -1677,7 +1667,7 @@ function ManualPoolIdInput({ onLoadPool }: { onLoadPool: (poolId: string) => voi
   return (
     <div className="flex items-end gap-2">
       <div className="flex-1">
-        <label className="mb-1 block text-xs text-fg-muted">Pool ID</label>
+        <label className={cn(fieldLabel, "mb-1 block text-fg-muted")}>Pool ID</label>
         <input
           className="w-full rounded-md border bg-bg-elevated px-2 py-1.5 font-mono text-xs"
           value={manualPoolId}

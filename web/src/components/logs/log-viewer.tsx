@@ -132,7 +132,7 @@ export function LogViewer({
             type="button"
             onClick={() => setMode("plain")}
             className={cn(
-              "rounded border px-2 py-1 text-[10px] font-medium uppercase",
+              "rounded border px-2 py-1 font-mono text-[10px] font-medium uppercase",
               mode === "plain"
                 ? "border-accent/50 bg-accent/15 text-fg"
                 : "border-border text-fg-muted hover:bg-fg-muted/10",
@@ -144,7 +144,7 @@ export function LogViewer({
             type="button"
             onClick={() => setMode("table")}
             className={cn(
-              "rounded border px-2 py-1 text-[10px] font-medium uppercase",
+              "rounded border px-2 py-1 font-mono text-[10px] font-medium uppercase",
               mode === "table"
                 ? "border-accent/50 bg-accent/15 text-fg"
                 : "border-border text-fg-muted hover:bg-fg-muted/10",
@@ -152,7 +152,7 @@ export function LogViewer({
           >
             Table
           </button>
-          <label className="flex cursor-pointer items-center gap-1 rounded border border-border px-2 py-1 text-[10px] font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10">
+          <label className="flex cursor-pointer items-center gap-1 rounded border border-border px-2 py-1 font-mono text-[10px] font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10">
             <input
               type="checkbox"
               checked={formatted}
@@ -203,7 +203,7 @@ export function LogViewer({
                 >
                   {mode === "plain" ? (
                     <div className="flex gap-2 py-0.5 font-mono text-[10px] text-fg-subtle">
-                      <span className="shrink-0 text-fg-muted tabular-nums">
+                      <span className="shrink-0 font-mono text-fg-muted tabular-nums">
                         {formatTimestamp(event.timestamp)}
                       </span>
                       {showHighlighted ? (

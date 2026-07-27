@@ -106,7 +106,7 @@ function UsersTab() {
     <div className="flex flex-col gap-3 pt-4">
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
-          <Search className="text-muted-foreground absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2" />
+          <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
           <Input
             placeholder="Filter users…"
             className="pl-8"
@@ -153,8 +153,8 @@ function UsersTab() {
           <TableBody>
             {filtered.map((u) => (
               <TableRow key={u.UserName}>
-                <TableCell className="font-mono text-sm">{u.UserName}</TableCell>
-                <TableCell className="text-muted-foreground font-mono text-xs">{u.Arn}</TableCell>
+                <TableCell>{u.UserName}</TableCell>
+                <TableCell className="text-fg-muted">{u.Arn}</TableCell>
                 <TableCell>{u.Path}</TableCell>
                 <TableCell className="text-right">
                   <Button
@@ -228,7 +228,7 @@ function RolesTab() {
     <div className="flex flex-col gap-3 pt-4">
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
-          <Search className="text-muted-foreground absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2" />
+          <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
           <Input
             placeholder="Filter roles…"
             className="pl-8"
@@ -274,8 +274,8 @@ function RolesTab() {
           <TableBody>
             {filtered.map((r) => (
               <TableRow key={r.RoleName}>
-                <TableCell className="font-mono text-sm">{r.RoleName}</TableCell>
-                <TableCell className="text-muted-foreground font-mono text-xs">{r.Arn}</TableCell>
+                <TableCell>{r.RoleName}</TableCell>
+                <TableCell className="text-fg-muted">{r.Arn}</TableCell>
                 <TableCell>{r.Path}</TableCell>
                 <TableCell className="text-right">
                   <Button
@@ -354,7 +354,7 @@ function PoliciesTab() {
     <div className="flex flex-col gap-3 pt-4">
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
-          <Search className="text-muted-foreground absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2" />
+          <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
           <Input
             placeholder="Filter policies…"
             className="pl-8"
@@ -402,8 +402,8 @@ function PoliciesTab() {
           <TableBody>
             {filtered.map((p) => (
               <TableRow key={p.PolicyName}>
-                <TableCell className="font-mono text-sm">{p.PolicyName}</TableCell>
-                <TableCell className="text-muted-foreground font-mono text-xs">{p.Arn}</TableCell>
+                <TableCell>{p.PolicyName}</TableCell>
+                <TableCell className="text-fg-muted">{p.Arn}</TableCell>
                 <TableCell>{p.AttachmentCount}</TableCell>
                 <TableCell className="text-right">
                   <Button
@@ -477,7 +477,7 @@ function GroupsTab() {
     <div className="flex flex-col gap-3 pt-4">
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
-          <Search className="text-muted-foreground absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2" />
+          <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
           <Input
             placeholder="Filter groups…"
             className="pl-8"
@@ -525,8 +525,8 @@ function GroupsTab() {
           <TableBody>
             {filtered.map((g) => (
               <TableRow key={g.GroupName}>
-                <TableCell className="font-mono text-sm">{g.GroupName}</TableCell>
-                <TableCell className="text-muted-foreground font-mono text-xs">{g.Arn}</TableCell>
+                <TableCell>{g.GroupName}</TableCell>
+                <TableCell className="text-fg-muted">{g.Arn}</TableCell>
                 <TableCell>{g.Path}</TableCell>
                 <TableCell className="text-right">
                   <Button

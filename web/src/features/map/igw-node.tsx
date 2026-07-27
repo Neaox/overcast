@@ -93,7 +93,7 @@ export const IgwNode = memo(function IgwNode({ data }: NodeProps) {
 
       {/* Event counter badge */}
       {(eventCount ?? 0) > 0 && (
-        <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[9px] font-bold text-fg-on-accent tabular-nums">
+        <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 font-mono text-[9px] font-bold text-fg-on-accent tabular-nums">
           {(eventCount ?? 0) > 99 ? "99+" : eventCount}
         </span>
       )}

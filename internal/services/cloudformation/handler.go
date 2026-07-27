@@ -46,6 +46,7 @@ func (h *Handler) initOps() {
 		// Implemented
 		"CreateStack":            h.CreateStack,
 		"UpdateStack":            h.UpdateStack,
+		"RollbackStack":          h.RollbackStack,
 		"DeleteStack":            h.DeleteStack,
 		"DescribeStacks":         h.DescribeStacks,
 		"ListStacks":             h.ListStacks,
@@ -253,6 +254,83 @@ func (h *Handler) UpdateStack(w http.ResponseWriter, r *http.Request) {
 	h.prov.updateStack(stack, tmpl, nil)
 
 	writeCFNResponse(w, r, "UpdateStackResponse", "UpdateStackResult", stackIdResult{StackId: stack.StackID})
+}
+
+// ── RollbackStack ──────────────────────────────────────────────────────────
+
+// rollbackPathFor reports whether a stack in the given status can be rolled
+// back, and which of the two rollback flows applies.
+//
+// Real CloudFormation accepts RollbackStack only for a stack that failed but
+// still has a last known stable state to return to. A create that failed
+// unwinds to ROLLBACK_COMPLETE; a failed update (or a failed automatic update
+// rollback, which RollbackStack retries) unwinds to UPDATE_ROLLBACK_COMPLETE.
+// Every other status — including the in-progress and already-stable ones — is
+// rejected.
+func rollbackPathFor(status string) (createPath bool, ok bool) {
+	switch status {
+	case StatusCreateFailed:
+		return true, true
+	case StatusUpdateFailed, StatusUpdateRollbackFailed:
+		return false, true
+	}
+	return false, false
+}
+
+// RollbackStack rolls a failed stack back to its last known stable state.
+// This is what `cdk rollback` calls to recover a stack stuck in UPDATE_FAILED,
+// which otherwise blocks every subsequent deploy.
+func (h *Handler) RollbackStack(w http.ResponseWriter, r *http.Request) {
+	stackName := r.FormValue("StackName")
+	if stackName == "" {
+		writeCFNError(w, r, "ValidationError", "StackName is required", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	stack, aerr := h.store.getStackByNameOrARN(ctx, stackName)
+	if aerr != nil || stack == nil {
+		writeCFNError(w, r, "ValidationError",
+			fmt.Sprintf("Stack [%s] does not exist", stackName), http.StatusBadRequest)
+		return
+	}
+
+	createPath, ok := rollbackPathFor(stack.Status)
+	if !ok {
+		writeCFNError(w, r, "ValidationError",
+			fmt.Sprintf("Stack [%s] is in %s state and can not be rolled back.", stack.StackName, stack.Status),
+			http.StatusBadRequest)
+		return
+	}
+
+	// RoleARN is accepted per the AWS API and recorded on the stack, but
+	// Overcast does not validate or assume roles.
+	if roleARN := r.FormValue("RoleARN"); roleARN != "" {
+		stack.RoleARN = roleARN
+	}
+
+	// ClientRequestToken and RetainExceptOnCreate are accepted and ignored.
+	// The former only tags events for idempotent retries; the latter controls
+	// whether resources marked DeletionPolicy: Retain are still deleted when a
+	// create rolls back — which is already what rollbackCreate does.
+
+	if createPath {
+		stack.Status = StatusRollbackInProgress
+	} else {
+		stack.Status = StatusUpdateRollbackInProgress
+	}
+	stack.StatusReason = "User Initiated"
+	now := h.clk.Now()
+	stack.UpdatedAt = &now
+
+	if err := h.store.putStack(ctx, stack); err != nil {
+		writeCFNError(w, r, "InternalFailure", "failed to persist stack", http.StatusInternalServerError)
+		return
+	}
+
+	h.prov.rollbackStack(stack, createPath)
+
+	writeCFNResponse(w, r, "RollbackStackResponse", "RollbackStackResult", stackIdResult{StackId: stack.StackID})
 }
 
 // ── DeleteStack ────────────────────────────────────────────────────────────

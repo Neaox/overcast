@@ -1,12 +1,11 @@
 import { useQuery } from "@tanstack/react-query"
-import { useNavigate } from "@tanstack/react-router"
 import { RefreshCw } from "lucide-react"
 import {
   applicationQueryOptions,
   applicationResourcesQueryOptions,
 } from "@/features/applications/data"
 import { Button } from "@/components/ui/button"
-import { PageHeader, Breadcrumb, Spinner, EmptyState } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import {
   Table,
   TableBody,
@@ -23,8 +22,6 @@ interface Props {
 }
 
 export function ApplicationDetail({ applicationId }: Props) {
-  const navigate = useNavigate()
-
   const {
     data: app,
     isLoading,
@@ -41,14 +38,6 @@ export function ApplicationDetail({ applicationId }: Props) {
     <div className="flex w-full flex-col gap-4">
       <PageHeader
         title={app.name}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "Applications", onClick: () => navigate({ to: "/applications" }) },
-              { label: app.name },
-            ]}
-          />
-        }
         actions={
           <Button
             variant="ghost"
@@ -85,7 +74,7 @@ export function ApplicationDetail({ applicationId }: Props) {
         </CardContent>
       </Card>
 
-      <h2 className="text-lg font-medium">Associated resources ({resources.length})</h2>
+      <h2 className="font-mono text-lg font-medium">Associated resources ({resources.length})</h2>
       {resources.length === 0 ? (
         <EmptyState
           title="No associated resources"
@@ -103,7 +92,7 @@ export function ApplicationDetail({ applicationId }: Props) {
             {resources.map((r) => (
               <TableRow key={r.arn}>
                 <TableCell>{r.resourceType}</TableCell>
-                <TableCell className="font-mono text-xs">{r.arn}</TableCell>
+                <TableCell>{r.arn}</TableCell>
               </TableRow>
             ))}
           </TableBody>

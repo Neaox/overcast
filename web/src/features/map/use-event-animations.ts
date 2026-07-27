@@ -285,42 +285,58 @@ interface AnimState {
 }
 
 type AnimAction =
-  | { type: 'glow'; edgeIds: string[] }
-  | { type: 'fade'; edgeIds: string[] }
-  | { type: 'incNode'; nodeId: string }
-  | { type: 'incNodeWrite'; nodeId: string }
-  | { type: 'incEdgeBurst'; edgeIds: string[] }
-  | { type: 'drainBursts' }
-  | { type: 'reset' }
+  | { type: "glow"; edgeIds: string[] }
+  | { type: "fade"; edgeIds: string[] }
+  | { type: "incNode"; nodeId: string }
+  | { type: "incNodeWrite"; nodeId: string }
+  | { type: "incEdgeBurst"; edgeIds: string[] }
+  | { type: "drainBursts" }
+  | { type: "reset" }
 
 function animReducer(state: AnimState, action: AnimAction): AnimState {
   switch (action.type) {
-    case 'glow': {
+    case "glow": {
       const next = new Set(state.glowingEdges)
       for (const id of action.edgeIds) next.add(id)
       return { ...state, glowingEdges: next }
     }
-    case 'fade': {
+    case "fade": {
       const next = new Set(state.glowingEdges)
       for (const id of action.edgeIds) next.delete(id)
       return { ...state, glowingEdges: next }
     }
-    case 'incNode':
-      return { ...state, nodeCounts: { ...state.nodeCounts, [action.nodeId]: (state.nodeCounts[action.nodeId] ?? 0) + 1 } }
-    case 'incNodeWrite':
+    case "incNode":
       return {
         ...state,
-        nodeWriteCounts: { ...state.nodeWriteCounts, [action.nodeId]: (state.nodeWriteCounts[action.nodeId] ?? 0) + 1 },
-        nodeWriteBurstCounts: { ...state.nodeWriteBurstCounts, [action.nodeId]: (state.nodeWriteBurstCounts[action.nodeId] ?? 0) + 1 },
+        nodeCounts: {
+          ...state.nodeCounts,
+          [action.nodeId]: (state.nodeCounts[action.nodeId] ?? 0) + 1,
+        },
       }
-    case 'incEdgeBurst': {
+    case "incNodeWrite":
+      return {
+        ...state,
+        nodeWriteCounts: {
+          ...state.nodeWriteCounts,
+          [action.nodeId]: (state.nodeWriteCounts[action.nodeId] ?? 0) + 1,
+        },
+        nodeWriteBurstCounts: {
+          ...state.nodeWriteBurstCounts,
+          [action.nodeId]: (state.nodeWriteBurstCounts[action.nodeId] ?? 0) + 1,
+        },
+      }
+    case "incEdgeBurst": {
       const next = { ...state.edgeBurstCounts }
       for (const id of action.edgeIds) next[id] = (next[id] ?? 0) + 1
       return { ...state, edgeBurstCounts: next }
     }
-    case 'drainBursts':
-      return { ...state, edgeBurstCounts: drainCounts(state.edgeBurstCounts), nodeWriteBurstCounts: drainCounts(state.nodeWriteBurstCounts) }
-    case 'reset':
+    case "drainBursts":
+      return {
+        ...state,
+        edgeBurstCounts: drainCounts(state.edgeBurstCounts),
+        nodeWriteBurstCounts: drainCounts(state.nodeWriteBurstCounts),
+      }
+    case "reset":
       return { ...state, nodeCounts: {}, nodeWriteCounts: {} }
   }
 }
@@ -347,9 +363,9 @@ export function useEventAnimations(nodes: TopologyNode[], edges: TopologyEdge[])
 
   const glow = useCallback((edgeIds: string[]) => {
     if (edgeIds.length === 0) return
-    dispatch({ type: 'glow', edgeIds })
+    dispatch({ type: "glow", edgeIds })
     const t = setTimeout(() => {
-      dispatch({ type: 'fade', edgeIds })
+      dispatch({ type: "fade", edgeIds })
       timers.current.delete(t)
     }, GLOW_TTL)
     timers.current.add(t)
@@ -385,7 +401,7 @@ export function useEventAnimations(nodes: TopologyNode[], edges: TopologyEdge[])
 
       // Increment burst counter on every matched edge
       if (matchedEdges.length > 0) {
-        dispatch({ type: 'incEdgeBurst', edgeIds: matchedEdges })
+        dispatch({ type: "incEdgeBurst", edgeIds: matchedEdges })
       }
 
       // If this is an edge-dependent event and no edge matched yet, queue for retry
@@ -397,9 +413,9 @@ export function useEventAnimations(nodes: TopologyNode[], edges: TopologyEdge[])
       const suffix = sourceNodeSuffix(latest.type, latest.payload)
       const nodeId = suffix ? resolveNodeId(suffix, nodes) : null
       if (nodeId) {
-        dispatch({ type: 'incNode', nodeId })
+        dispatch({ type: "incNode", nodeId })
         if (isWriteEvent(latest.type)) {
-          dispatch({ type: 'incNodeWrite', nodeId })
+          dispatch({ type: "incNodeWrite", nodeId })
         }
       }
     }
@@ -416,7 +432,7 @@ export function useEventAnimations(nodes: TopologyNode[], edges: TopologyEdge[])
       const retryEdges = edgesForEvent(pending.event.type, pending.event.payload, edges)
       if (retryEdges.length > 0) {
         glow(retryEdges)
-        dispatch({ type: 'incEdgeBurst', edgeIds: retryEdges })
+        dispatch({ type: "incEdgeBurst", edgeIds: retryEdges })
         pendingRetries.current.delete(k)
       }
     }
@@ -426,7 +442,7 @@ export function useEventAnimations(nodes: TopologyNode[], edges: TopologyEdge[])
 
   // Reset counts when node list changes (topology refresh with new resources)
   useEffect(() => {
-    dispatch({ type: 'reset' })
+    dispatch({ type: "reset" })
     seenIds.current.clear()
     pendingRetries.current.clear()
   }, [nodes.length])
@@ -434,7 +450,7 @@ export function useEventAnimations(nodes: TopologyNode[], edges: TopologyEdge[])
   // Drain burst counts (edges + node writes) by 1 every BURST_DRAIN_INTERVAL ms
   useEffect(() => {
     const id = setInterval(() => {
-      dispatch({ type: 'drainBursts' })
+      dispatch({ type: "drainBursts" })
     }, BURST_DRAIN_INTERVAL)
     return () => clearInterval(id)
   }, [])

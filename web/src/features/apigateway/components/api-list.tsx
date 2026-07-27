@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { Globe, Plus, Trash2, RefreshCw } from "lucide-react"
+import { Eye, Globe, Trash2 } from "lucide-react"
 import {
   restApisQueryOptions,
   httpApisQueryOptions,
@@ -10,7 +10,6 @@ import {
   deleteHttpApiMutationOptions,
 } from "@/features/apigateway/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
-import { Button } from "@/components/ui/button"
 import {
   Table,
   TableBody,
@@ -20,7 +19,16 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { PageHeader, EmptyState, QueryListState } from "@/components/ui/primitives"
+import { EmptyState, QueryListState } from "@/components/ui/primitives"
+import {
+  CreateAction,
+  RefreshAction,
+  ResourceListCard,
+  ResourceListPage,
+  ResourceName,
+  RowAction,
+  RowActions,
+} from "@/components/ui/resource-list-page"
 import { Badge } from "@/components/ui/badge"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { formatDate } from "@/lib/format"
@@ -76,38 +84,28 @@ export function ApiGatewayList() {
   const totalCount = restApis.length + httpApis.length
 
   return (
-    <div className="flex w-full flex-col gap-4">
-      <PageHeader
-        title="API Gateway"
-        description={`${totalCount} API${totalCount !== 1 ? "s" : ""}`}
-        actions={
-          <>
-            <ServiceDocsButton
-              service="apigateway"
-              label="API Gateway"
-              open={docsOpen}
-              onOpen={openDocs}
-              onClose={closeDocs}
-            />
-            <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-              Refresh
-            </Button>
-            {tab === "rest" ? (
-              <Button size="sm" onClick={() => setShowCreateRest(true)}>
-                <Plus className="mr-1.5 h-3.5 w-3.5" />
-                Create REST API
-              </Button>
-            ) : (
-              <Button size="sm" onClick={() => setShowCreateHttp(true)}>
-                <Plus className="mr-1.5 h-3.5 w-3.5" />
-                Create HTTP API
-              </Button>
-            )}
-          </>
-        }
-      />
-
+    <ResourceListPage
+      title="API Gateway"
+      count={totalCount}
+      meta={`${restApis.length} REST · ${httpApis.length} HTTP`}
+      actions={
+        <>
+          <ServiceDocsButton
+            service="apigateway"
+            label="API Gateway"
+            open={docsOpen}
+            onOpen={openDocs}
+            onClose={closeDocs}
+          />
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          {tab === "rest" ? (
+            <CreateAction onClick={() => setShowCreateRest(true)}>Create REST API</CreateAction>
+          ) : (
+            <CreateAction onClick={() => setShowCreateHttp(true)}>Create HTTP API</CreateAction>
+          )}
+        </>
+      }
+    >
       {/* Tab bar */}
       <div className="flex gap-1 border-b">
         {(["rest", "http"] as Tab[]).map((t) => (
@@ -128,7 +126,7 @@ export function ApiGatewayList() {
 
       {/* REST APIs tab */}
       {tab === "rest" && (
-        <>
+        <ResourceListCard>
           {restLoading || restApis.length === 0 ? (
             <QueryListState
               isLoading={restLoading}
@@ -136,14 +134,13 @@ export function ApiGatewayList() {
               error={restError}
               empty={
                 <EmptyState
-                  icon={<Globe className="h-6 w-6" />}
+                  icon={<Globe className="h-10 w-10" />}
                   title="No REST APIs"
                   description="Create a REST API to get started."
                   action={
-                    <Button size="sm" onClick={() => setShowCreateRest(true)}>
-                      <Plus className="mr-1.5 h-3.5 w-3.5" />
+                    <CreateAction onClick={() => setShowCreateRest(true)}>
                       Create REST API
-                    </Button>
+                    </CreateAction>
                   }
                 />
               }
@@ -157,14 +154,13 @@ export function ApiGatewayList() {
                   <TableHead>ID</TableHead>
                   <TableHead>Protocol</TableHead>
                   <TableHead>Created</TableHead>
-                  <TableHead />
+                  <TableHead className="w-20 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {restApis.map((api) => (
                   <TableRow
                     key={api.id}
-                    className="hover:bg-muted/50 cursor-pointer"
                     onClick={() =>
                       navigate({
                         to: "/apigateway/rest/$apiId",
@@ -172,38 +168,47 @@ export function ApiGatewayList() {
                       })
                     }
                   >
-                    <TableCell className="font-medium">{api.name}</TableCell>
-                    <TableCell className="font-mono text-xs text-fg-muted">{api.id}</TableCell>
+                    <TableCell>
+                      <ResourceName icon={Globe} name={api.name} />
+                    </TableCell>
+                    <TableCell className="text-fg-muted">{api.id}</TableCell>
                     <TableCell>
                       <Badge variant="default">REST</Badge>
                     </TableCell>
-                    <TableCell className="text-sm text-fg-muted">
-                      {formatDate(api.createdDate)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-danger hover:text-danger"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setDeleteRestTarget({ id: api.id, name: api.name })
-                        }}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                    <TableCell className="text-fg-muted">{formatDate(api.createdDate)}</TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <RowActions>
+                        <RowAction
+                          label={`View ${api.name}`}
+                          onClick={() =>
+                            navigate({
+                              to: "/apigateway/rest/$apiId",
+                              params: { apiId: api.id },
+                            })
+                          }
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                        </RowAction>
+                        <RowAction
+                          label={`Delete ${api.name}`}
+                          tone="danger"
+                          onClick={() => setDeleteRestTarget({ id: api.id, name: api.name })}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </RowAction>
+                      </RowActions>
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           )}
-        </>
+        </ResourceListCard>
       )}
 
       {/* HTTP APIs tab */}
       {tab === "http" && (
-        <>
+        <ResourceListCard>
           {httpLoading || httpApis.length === 0 ? (
             <QueryListState
               isLoading={httpLoading}
@@ -211,14 +216,13 @@ export function ApiGatewayList() {
               error={httpError}
               empty={
                 <EmptyState
-                  icon={<Globe className="h-6 w-6" />}
+                  icon={<Globe className="h-10 w-10" />}
                   title="No HTTP APIs"
                   description="Create an HTTP API to get started."
                   action={
-                    <Button size="sm" onClick={() => setShowCreateHttp(true)}>
-                      <Plus className="mr-1.5 h-3.5 w-3.5" />
+                    <CreateAction onClick={() => setShowCreateHttp(true)}>
                       Create HTTP API
-                    </Button>
+                    </CreateAction>
                   }
                 />
               }
@@ -232,14 +236,13 @@ export function ApiGatewayList() {
                   <TableHead>API ID</TableHead>
                   <TableHead>Protocol</TableHead>
                   <TableHead>Created</TableHead>
-                  <TableHead />
+                  <TableHead className="w-20 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {httpApis.map((api) => (
                   <TableRow
                     key={api.apiId}
-                    className="hover:bg-muted/50 cursor-pointer"
                     onClick={() =>
                       navigate({
                         to: "/apigateway/http/$apiId",
@@ -247,33 +250,42 @@ export function ApiGatewayList() {
                       })
                     }
                   >
-                    <TableCell className="font-medium">{api.name}</TableCell>
-                    <TableCell className="font-mono text-xs text-fg-muted">{api.apiId}</TableCell>
+                    <TableCell>
+                      <ResourceName icon={Globe} name={api.name} />
+                    </TableCell>
+                    <TableCell className="text-fg-muted">{api.apiId}</TableCell>
                     <TableCell>
                       <Badge variant="success">{api.protocolType}</Badge>
                     </TableCell>
-                    <TableCell className="text-sm text-fg-muted">
-                      {formatDate(api.createdDate)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-danger hover:text-danger"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setDeleteHttpTarget({ id: api.apiId, name: api.name })
-                        }}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                    <TableCell className="text-fg-muted">{formatDate(api.createdDate)}</TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <RowActions>
+                        <RowAction
+                          label={`View ${api.name}`}
+                          onClick={() =>
+                            navigate({
+                              to: "/apigateway/http/$apiId",
+                              params: { apiId: api.apiId },
+                            })
+                          }
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                        </RowAction>
+                        <RowAction
+                          label={`Delete ${api.name}`}
+                          tone="danger"
+                          onClick={() => setDeleteHttpTarget({ id: api.apiId, name: api.name })}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </RowAction>
+                      </RowActions>
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           )}
-        </>
+        </ResourceListCard>
       )}
 
       {/* Create dialogs */}
@@ -309,6 +321,6 @@ export function ApiGatewayList() {
         isPending={deleteHttpMut.isPending}
         onConfirm={() => deleteHttpTarget && deleteHttpMut.mutate(deleteHttpTarget.id)}
       />
-    </div>
+    </ResourceListPage>
   )
 }

@@ -1,14 +1,13 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { Database, Plus, Trash2, RefreshCw } from "lucide-react"
+import { Database, Eye, Trash2 } from "lucide-react"
 import {
   dynamoTablesQueryOptions,
   dynamoKeys,
   deleteTableMutationOptions,
 } from "@/features/dynamodb/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
-import { Button } from "@/components/ui/button"
 import {
   Table,
   TableBody,
@@ -18,12 +17,20 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { EmptyState, PageHeader, QueryListState } from "@/components/ui/primitives"
+import { EmptyState, QueryListState } from "@/components/ui/primitives"
+import {
+  CreateAction,
+  RefreshAction,
+  ResourceListCard,
+  ResourceListPage,
+  ResourceName,
+  RowAction,
+  RowActions,
+} from "@/components/ui/resource-list-page"
 import { Badge } from "@/components/ui/badge"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { RawStateLink } from "@/features/debug/raw-state-link"
 import { CreateTableDialog } from "./create-table-dialog"
-import { cn } from "@/lib/utils"
 
 export function TableList() {
   const navigate = useNavigate()
@@ -49,55 +56,47 @@ export function TableList() {
     onSuccess: () => setDeleteTarget(undefined),
   })
 
-  return (
-    <div className="flex w-full flex-col gap-4">
-      <PageHeader
-        title="DynamoDB Tables"
-        description={`${tables.length} table${tables.length !== 1 ? "s" : ""}`}
-        actions={
-          <>
-            <ServiceDocsButton
-              service="dynamodb"
-              label="DynamoDB"
-              open={docsOpen}
-              onOpen={openDocs}
-              onClose={closeDocs}
-            />
-            <RawStateLink service="dynamodb" />
-            <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-              Refresh
-            </Button>
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create Table
-            </Button>
-          </>
-        }
-      />
+  const totalItems = tables.reduce((n, t) => n + t.itemCount, 0)
 
-      {isLoading || tables.length === 0 ? (
-        <QueryListState
-          isLoading={isLoading}
-          isEmpty={tables.length === 0}
-          error={error}
-          empty={
-            <EmptyState
-              icon={<Database className="h-10 w-10" />}
-              title="No tables yet"
-              description="Create a table to start storing DynamoDB items."
-              action={
-                <Button size="sm" onClick={() => setShowCreate(true)}>
-                  <Plus className="mr-1.5 h-3.5 w-3.5" />
-                  Create Table
-                </Button>
-              }
-            />
-          }
-          errorTitle="Failed to load tables"
-        />
-      ) : (
-        <div className="rounded-md border border-border">
+  return (
+    <ResourceListPage
+      title="DynamoDB Tables"
+      count={tables.length}
+      meta={tables.length > 0 ? `${totalItems.toLocaleString()} items` : undefined}
+      actions={
+        <>
+          <ServiceDocsButton
+            service="dynamodb"
+            label="DynamoDB"
+            open={docsOpen}
+            onOpen={openDocs}
+            onClose={closeDocs}
+          />
+          <RawStateLink service="dynamodb" />
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create table</CreateAction>
+        </>
+      }
+    >
+      <ResourceListCard>
+        {isLoading || tables.length === 0 ? (
+          <QueryListState
+            isLoading={isLoading}
+            isEmpty={tables.length === 0}
+            error={error}
+            empty={
+              <EmptyState
+                icon={<Database className="h-10 w-10" />}
+                title="No tables yet"
+                description="Create a table to start storing DynamoDB items."
+                action={
+                  <CreateAction onClick={() => setShowCreate(true)}>Create table</CreateAction>
+                }
+              />
+            }
+            errorTitle="Failed to load tables"
+          />
+        ) : (
           <Table>
             <TableHeader>
               <TableRow>
@@ -105,7 +104,7 @@ export function TableList() {
                 <TableHead>Status</TableHead>
                 <TableHead>Key schema</TableHead>
                 <TableHead className="text-right">Items</TableHead>
-                <TableHead />
+                <TableHead className="w-20 text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -115,7 +114,6 @@ export function TableList() {
                 return (
                   <TableRow
                     key={table.tableName}
-                    className="cursor-pointer"
                     onClick={() =>
                       navigate({
                         to: "/dynamodb/$tableName",
@@ -123,8 +121,8 @@ export function TableList() {
                       })
                     }
                   >
-                    <TableCell className="font-mono text-sm font-medium">
-                      {table.tableName}
+                    <TableCell>
+                      <ResourceName icon={Database} name={table.tableName} />
                     </TableCell>
                     <TableCell>
                       <Badge
@@ -134,37 +132,44 @@ export function TableList() {
                         {table.tableStatus}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-sm text-fg-muted">
-                      <span className="font-mono">
-                        {hashKey?.attributeName ?? "—"}
-                        {sortKey && (
-                          <span className="text-fg-subtle"> / {sortKey.attributeName}</span>
-                        )}
-                      </span>
+                    <TableCell className="text-fg-muted">
+                      {hashKey?.attributeName ?? "—"}
+                      {sortKey && (
+                        <span className="text-fg-subtle"> / {sortKey.attributeName}</span>
+                      )}
                     </TableCell>
-                    <TableCell className="text-right text-sm tabular-nums">
+                    <TableCell className="text-right tabular-nums">
                       {table.itemCount.toLocaleString()}
                     </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 w-7 p-0 text-fg-muted hover:text-danger"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setDeleteTarget(table.tableName)
-                        }}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <RowActions>
+                        <RowAction
+                          label={`View ${table.tableName}`}
+                          onClick={() =>
+                            navigate({
+                              to: "/dynamodb/$tableName",
+                              params: { tableName: table.tableName },
+                            })
+                          }
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                        </RowAction>
+                        <RowAction
+                          label={`Delete ${table.tableName}`}
+                          tone="danger"
+                          onClick={() => setDeleteTarget(table.tableName)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </RowAction>
+                      </RowActions>
                     </TableCell>
                   </TableRow>
                 )
               })}
             </TableBody>
           </Table>
-        </div>
-      )}
+        )}
+      </ResourceListCard>
 
       <CreateTableDialog open={showCreate} onOpenChange={setShowCreate} />
 
@@ -179,6 +184,6 @@ export function TableList() {
         isPending={deleteMut.isPending}
         onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
       />
-    </div>
+    </ResourceListPage>
   )
 }

@@ -100,6 +100,31 @@ export async function runSearch(
   return grouped
 }
 
+// ─── Ranking ──────────────────────────────────────────────────────────────
+
+/**
+ * Order result groups for display, promoting the group belonging to the
+ * active service (the current route) to the front. All other groups keep
+ * their existing relative order. Pure — the input map is not mutated.
+ *
+ * `activeServiceKey` is the already-resolved serviceKey for the current
+ * pathname (e.g. "/s3"), or `undefined` when no service route is active —
+ * resolving pathname → serviceKey is the caller's concern so this module
+ * stays free of UI imports.
+ */
+export function orderGroupsByActiveService(
+  grouped: Map<string, SearchResult[]>,
+  activeServiceKey: string | undefined,
+): [serviceKey: string, items: SearchResult[]][] {
+  const entries = [...grouped.entries()]
+  if (!activeServiceKey) return entries
+  const idx = entries.findIndex(([serviceKey]) => serviceKey === activeServiceKey)
+  if (idx <= 0) return entries
+  const [active] = entries.splice(idx, 1)
+  entries.unshift(active)
+  return entries
+}
+
 // ─── Helpers (shared across contributors) ─────────────────────────────────
 
 /** Case-insensitive substring match against one or more string fields. */

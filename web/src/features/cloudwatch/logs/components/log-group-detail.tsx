@@ -199,17 +199,17 @@ export function LogGroupDetail({ groupName }: Props) {
         <Card>
           <CardContent className="grid grid-cols-3 gap-4 py-4">
             <div>
-              <p className="text-xs font-medium text-fg-muted">Created</p>
+              <p className="font-mono text-xs font-medium text-fg-muted">Created</p>
               <p className="text-sm">{formatTimestamp(group.creationTime ?? 0)}</p>
             </div>
             <div>
-              <p className="text-xs font-medium text-fg-muted">Retention</p>
+              <p className="font-mono text-xs font-medium text-fg-muted">Retention</p>
               <p className="text-sm">
                 {group.retentionInDays ? `${group.retentionInDays} days` : "Never expire"}
               </p>
             </div>
             <div>
-              <p className="text-xs font-medium text-fg-muted">Log Streams</p>
+              <p className="font-mono text-xs font-medium text-fg-muted">Log Streams</p>
               <p className="text-sm">{streams.length}</p>
             </div>
           </CardContent>
@@ -297,10 +297,10 @@ export function LogGroupDetail({ groupName }: Props) {
                       })
                     }
                   >
-                    <TableCell className="font-mono text-xs whitespace-nowrap text-fg-muted">
+                    <TableCell className="whitespace-nowrap text-fg-muted">
                       {formatTimestamp(evt.timestamp ?? 0)}
                     </TableCell>
-                    <TableCell className="text-xs text-fg-muted" title={evt.logStreamName}>
+                    <TableCell className="text-fg-muted" title={evt.logStreamName}>
                       {evt.logStreamName}
                     </TableCell>
                     <TableCell>
@@ -355,7 +355,7 @@ export function LogGroupDetail({ groupName }: Props) {
                 <TableHead className="w-10">
                   <input
                     type="checkbox"
-                    className="accent-primary h-4 w-4 rounded"
+                    className="h-4 w-4 rounded accent-accent"
                     checked={
                       sortedStreams.length > 0 && selectedStreams.size === sortedStreams.length
                     }
@@ -399,7 +399,7 @@ export function LogGroupDetail({ groupName }: Props) {
                     >
                       <input
                         type="checkbox"
-                        className="accent-primary h-4 w-4 rounded"
+                        className="h-4 w-4 rounded accent-accent"
                         checked={selectedStreams.has(s.logStreamName ?? "")}
                         onChange={(e) => {
                           const next = new Set(selectedStreams)

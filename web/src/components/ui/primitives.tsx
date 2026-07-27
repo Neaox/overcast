@@ -1,10 +1,58 @@
 import * as React from "react"
+import { cva, type VariantProps } from "class-variance-authority"
+import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import { AlertTriangle, Loader2 } from "lucide-react"
+import { SkeletonCards, SkeletonRows } from "@/components/ui/skeleton"
+
+// ─── Labels ───────────────────────────────────────────────────────────────
+/**
+ * Names one field or one column: mono 9px / .14em / uppercase. The same spec
+ * `TableHead` uses, so a detail-page label and a column header read as the
+ * same kind of thing. See `@/lib/typography` for why the two specs exist.
+ */
+function FieldLabel({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) {
+  return <span className={cn(fieldLabel, "text-fg-subtle", className)} {...props} />
+}
+
+/**
+ * Names a group of things: mono 10px / .16em / uppercase. The wider tracking is
+ * what makes it read as a heading, so it must never appear at 9px. Colour is
+ * left to the caller — dashboard sections carry their tier's colour.
+ */
+function SectionLabel({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
+  return <h3 className={cn(sectionLabel, "text-fg-subtle", className)} {...props} />
+}
 
 // ─── Spinner ──────────────────────────────────────────────────────────────
-function Spinner({ className }: { className?: string }) {
-  return <Loader2 className={cn("h-4 w-4 animate-spin", className)} />
+const spinnerSizeVariants = cva("", {
+  variants: {
+    size: {
+      /** 14px — inside a chip or an icon-sized control. */
+      sm: "h-3.5 w-3.5",
+      /** 16px — inside a button or a toast. */
+      md: "h-4 w-4",
+    },
+  },
+  defaultVariants: { size: "md" },
+})
+
+interface SpinnerProps extends VariantProps<typeof spinnerSizeVariants> {
+  className?: string
+}
+
+/**
+ * Inline busy indicator.
+ *
+ * The design system allows spinners at **14-16px only, and only inside a chip,
+ * button or toast** — a content area gets a skeleton instead (`SkeletonRows` /
+ * `SkeletonCards`). The size class is therefore appended *after* `className`
+ * so `tailwind-merge` lets it win: a caller cannot grow the spinner back into
+ * a content-area spinner. Spacing, colour and layout utilities passed in
+ * `className` are unaffected.
+ */
+function Spinner({ size, className }: SpinnerProps) {
+  return <Loader2 className={cn("animate-spin", className, spinnerSizeVariants({ size }))} />
 }
 
 // ─── Empty state ──────────────────────────────────────────────────────────
@@ -22,8 +70,9 @@ function EmptyState({ icon, title, description, action, className }: EmptyStateP
       className={cn("flex flex-col items-center justify-center gap-3 py-16 text-center", className)}
     >
       {icon && <div className="mb-1 text-fg-subtle">{icon}</div>}
-      <p className="text-sm font-medium text-fg">{title}</p>
-      {description && <p className="max-w-xs text-sm text-fg-muted">{description}</p>}
+      {/* Title is mono — it names a thing; the description is prose and stays sans. */}
+      <p className="font-mono text-sm font-bold text-fg">{title}</p>
+      {description && <p className="max-w-xs text-[13px] text-fg-muted">{description}</p>}
       {action && <div className="mt-2">{action}</div>}
     </div>
   )
@@ -41,6 +90,21 @@ interface QueryListStateProps {
   emptyAction?: React.ReactNode
   emptyClassName?: string
   loadingClassName?: string
+  /**
+   * Loading treatment. `"rows"` (default) is the table skeleton; `"cards"` is
+   * the 3-up dashboard grid.
+   */
+  loadingVariant?: "rows" | "cards"
+  /**
+   * Placeholder row/card count, following the design's `hint-placeholder-count`
+   * convention. Defaults to 5 rows / 3 cards.
+   */
+  loadingCount?: number
+  /**
+   * Lowercase plural resource noun for the skeleton footer — `"log groups"`
+   * renders `loading log groups`.
+   */
+  loadingNoun?: string
   errorTitle?: string
   errorDescription?: string
 }
@@ -62,14 +126,19 @@ function QueryListState({
   emptyAction,
   emptyClassName,
   loadingClassName,
+  loadingVariant = "rows",
+  loadingCount,
+  loadingNoun,
   errorTitle = "Unable to load data",
   errorDescription,
 }: QueryListStateProps) {
+  // Every list in the app inherits its loading treatment from here: a static
+  // skeleton, never a centred spinner (see components/ui/skeleton.tsx).
   if (isLoading) {
-    return (
-      <div className={cn("flex justify-center py-16", loadingClassName)}>
-        <Spinner className="h-6 w-6" />
-      </div>
+    return loadingVariant === "cards" ? (
+      <SkeletonCards cards={loadingCount} noun={loadingNoun} className={loadingClassName} />
+    ) : (
+      <SkeletonRows rows={loadingCount} noun={loadingNoun} className={loadingClassName} />
     )
   }
 
@@ -102,49 +171,31 @@ function QueryListState({
 // ─── PageHeader ───────────────────────────────────────────────────────────
 interface PageHeaderProps {
   title: string
+  /** Resource count, rendered as a lighter number beside the title. */
+  count?: number
+  /** Secondary line beneath the title, e.g. "9 active · 15 resources". */
+  meta?: React.ReactNode
   description?: React.ReactNode
   actions?: React.ReactNode
-  breadcrumb?: React.ReactNode
   className?: string
 }
 
-function PageHeader({ title, description, actions, breadcrumb, className }: PageHeaderProps) {
+function PageHeader({ title, count, meta, description, actions, className }: PageHeaderProps) {
   return (
     <div className={cn("flex items-start justify-between gap-4", className)}>
       <div className="flex flex-col gap-0.5">
-        {breadcrumb && <div className="mb-1">{breadcrumb}</div>}
-        <h1 className="text-base font-semibold text-fg">{title}</h1>
-        {description && <p className="text-sm text-fg-muted">{description}</p>}
+        <div className="flex items-baseline gap-2">
+          <h1 className="font-mono text-[20px] font-bold tracking-[-0.02em] text-fg">{title}</h1>
+          {count !== undefined && (
+            <span className="font-mono text-sm text-fg-subtle tabular-nums">{count}</span>
+          )}
+        </div>
+        {/* 3b's meta line — `4 objects · 28.2 KB · created 25 Jul 2026` — is mono 11. */}
+        {meta && <p className="font-mono text-[11px] text-fg-subtle">{meta}</p>}
+        {description && <p className="text-[13px] text-fg-muted">{description}</p>}
       </div>
       {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
     </div>
-  )
-}
-
-// ─── Breadcrumb ───────────────────────────────────────────────────────────
-interface BreadcrumbItem {
-  label: string
-  onClick?: () => void
-}
-
-function Breadcrumb({ items }: { items: BreadcrumbItem[] }) {
-  return (
-    <nav className="flex items-center gap-1 text-sm text-fg-muted">
-      {items.map((item, i) => (
-        <React.Fragment key={i}>
-          {i > 0 && <span className="text-fg-subtle">/</span>}
-          {item.onClick ? (
-            <button onClick={item.onClick} className="transition-colors hover:text-fg">
-              {item.label}
-            </button>
-          ) : (
-            <span className={cn(i === items.length - 1 && "font-medium text-fg")}>
-              {item.label}
-            </span>
-          )}
-        </React.Fragment>
-      ))}
-    </nav>
   )
 }
 
@@ -189,4 +240,14 @@ function CodeBlock({ children, className }: { children: string; className?: stri
   )
 }
 
-export { Spinner, EmptyState, QueryListState, PageHeader, Breadcrumb, Separator, Code, CodeBlock }
+export {
+  Spinner,
+  EmptyState,
+  FieldLabel,
+  SectionLabel,
+  QueryListState,
+  PageHeader,
+  Separator,
+  Code,
+  CodeBlock,
+}

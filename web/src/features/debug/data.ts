@@ -5,7 +5,8 @@ export const debugKeys = {
   all: ["debug"] as const,
   state: () => [...debugKeys.all, "state"] as const,
   namespace: (namespace: string) => [...debugKeys.state(), namespace] as const,
-  value: (namespace: string, key: string) => [...debugKeys.namespace(namespace), "value", key] as const,
+  value: (namespace: string, key: string) =>
+    [...debugKeys.namespace(namespace), "value", key] as const,
 }
 
 /**

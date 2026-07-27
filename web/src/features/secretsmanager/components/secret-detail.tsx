@@ -12,7 +12,7 @@ import {
 } from "@/features/secretsmanager/data"
 import { useToast } from "@/components/ui/toast"
 import { Button } from "@/components/ui/button"
-import { PageHeader, Breadcrumb, Spinner, EmptyState, CodeBlock } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState, CodeBlock } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { Card, CardContent } from "@/components/ui/card"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
@@ -123,12 +123,6 @@ export function SecretDetail({ secretName }: Props) {
   if (!secret) {
     return (
       <div className="flex w-full flex-col gap-4">
-        <Breadcrumb
-          items={[
-            { label: "Secrets Manager", onClick: () => navigate({ to: "/secretsmanager" }) },
-            { label: secretName },
-          ]}
-        />
         <EmptyState
           icon={<KeyRound className="h-8 w-8 opacity-40" />}
           title="Secret not found"
@@ -142,14 +136,6 @@ export function SecretDetail({ secretName }: Props) {
     <div className="flex w-full flex-col gap-4">
       <PageHeader
         title={secret.Name ?? secretName}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "Secrets Manager", onClick: () => navigate({ to: "/secretsmanager" }) },
-              { label: secret.Name ?? secretName },
-            ]}
-          />
-        }
         description={secret.Description}
         actions={
           <div className="flex items-center gap-2">
@@ -194,7 +180,7 @@ export function SecretDetail({ secretName }: Props) {
       {/* Secret value */}
       <section className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-medium text-fg">Secret value</h2>
+          <h2 className="font-mono text-sm font-medium text-fg">Secret value</h2>
           <div className="flex items-center gap-2">
             {revealed && (
               <Button size="sm" variant="secondary" onClick={handleOpenEdit}>
@@ -245,7 +231,7 @@ export function SecretDetail({ secretName }: Props) {
             </DialogTitle>
           </DialogHeader>
           <textarea
-            className="flex min-h-40 w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm placeholder:text-fg-subtle focus-visible:ring-1 focus-visible:outline-none"
+            className="flex min-h-40 w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm placeholder:text-fg-subtle focus-visible:border-accent focus-visible:ring-1 focus-visible:ring-accent focus-visible:outline-none"
             placeholder='{"username":"admin","password":"s3cret"}'
             value={editValue}
             onChange={(e) => setEditValue(e.target.value)}

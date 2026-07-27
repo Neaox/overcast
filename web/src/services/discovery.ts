@@ -38,6 +38,15 @@ export interface ServerInfo {
   debug?: boolean
 }
 
+/**
+ * True when the UI is embedded into the overcast binary — both the native
+ * `overcast serve` build and the Docker console image set `VITE_BUNDLED`.
+ * In that mode the endpoint is derived from `window.location`, not the user.
+ */
+function isBundled(): boolean {
+  return import.meta.env.VITE_BUNDLED === "true"
+}
+
 function resolveBundledDefault(): EmulatorEndpoint {
   if (typeof window !== "undefined" && window.__OVERCAST__?.apiBaseUrl) {
     const { apiBaseUrl, region } = window.__OVERCAST__
@@ -55,10 +64,9 @@ function resolveBundledDefault(): EmulatorEndpoint {
   return { baseUrl: "http://localhost:4566", region: "us-east-1", label: "Local (4566)" }
 }
 
-export const DEFAULT_ENDPOINT: EmulatorEndpoint =
-  import.meta.env.VITE_BUNDLED === "true"
-    ? resolveBundledDefault()
-    : { baseUrl: "http://localhost:4566", region: "us-east-1", label: "Local (4566)" }
+export const DEFAULT_ENDPOINT: EmulatorEndpoint = isBundled()
+  ? resolveBundledDefault()
+  : { baseUrl: "http://localhost:4566", region: "us-east-1", label: "Local (4566)" }
 
 const STORAGE_KEY = "overcast:endpoint"
 const REGION_SESSION_KEY = "overcast:region"
@@ -78,8 +86,7 @@ class LocalStorageResolver implements Resolver {
       // Bundled mode: the baseUrl is always derived from window.location so the
       // UI works out of the box wherever overcast is reached from. Stored
       // baseUrls from a prior dev session would be wrong here.
-      const bundled = import.meta.env.VITE_BUNDLED === "true"
-      const raw = bundled ? null : localStorage.getItem(STORAGE_KEY)
+      const raw = isBundled() ? null : localStorage.getItem(STORAGE_KEY)
       const stored = raw ? (JSON.parse(raw) as EmulatorEndpoint) : DEFAULT_ENDPOINT
       // Priority: per-tab session → last known (localStorage) → static default.
       // Server default (tier 3) is seeded into localStorage at startup in main.tsx
@@ -149,10 +156,19 @@ export async function fetchServerInfo(baseUrl: string): Promise<ServerInfo | nul
   }
 }
 
+/**
+ * True when the user can choose the endpoint at all.
+ *
+ * Bundled builds derive the baseUrl from `window.location`, so there is nothing
+ * to configure and no way to unconfigure: `isConfigured()` is unconditionally
+ * true and clearing storage changes nothing. Controls that exist to reopen the
+ * connection dialog must be hidden rather than left as no-ops.
+ */
+export function isEndpointConfigurable(): boolean {
+  return !isBundled()
+}
+
 export function isConfigured(): boolean {
-  // VITE_BUNDLED is set when the UI is embedded into the overcast binary (both
-  // the native `overcast serve` build and the Docker console image). In that
-  // mode the endpoint is derived from window.location, so skip the dialog.
-  if (import.meta.env.VITE_BUNDLED === "true") return true
+  if (isBundled()) return true
   return localStorage.getItem(STORAGE_KEY) !== null
 }

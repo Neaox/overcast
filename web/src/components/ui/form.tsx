@@ -1,5 +1,6 @@
 import * as React from "react"
 import type { AnyFieldMeta } from "@tanstack/form-core"
+import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 // ─── fieldError — extract the first error message from a TanStack Form field ─
@@ -75,13 +76,14 @@ interface FormFieldProps {
 function FormField({ label, htmlFor, error, hint, required, children, className }: FormFieldProps) {
   return (
     <div className={cn("flex flex-col gap-1.5", className)}>
-      <label htmlFor={htmlFor} className="text-sm font-medium text-fg-muted">
+      <label htmlFor={htmlFor} className={cn(fieldLabel, "text-fg-subtle")}>
         {label}
         {required && <span className="ml-0.5 text-danger">*</span>}
       </label>
       {children}
-      {hint && !error && <p className="text-sm text-fg-subtle">{hint}</p>}
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {/* 4a sets the field hint in sans 11 muted — prose under a mono label. */}
+      {hint && !error && <p className="text-[11px] text-fg-subtle">{hint}</p>}
+      {error && <p className="text-[11px] text-danger">{error}</p>}
     </div>
   )
 }

@@ -40,7 +40,7 @@ export function JsonEditor({
         className={cn(
           "json-editor-wrap overflow-auto rounded-md border font-mono text-xs",
           error ? "border-danger" : "border-border",
-          "focus-within:ring-ring bg-bg focus-within:ring-1",
+          "bg-bg focus-within:ring-1 focus-within:ring-accent",
         )}
         style={{ minHeight }}
       >

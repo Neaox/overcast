@@ -7,7 +7,7 @@
  *   <RegionSelect value={region} onChange={setRegion} />
  *   <RegionSelectCompact value={region} onChange={setRegion} />
  */
-import { Check } from "lucide-react"
+import { Check, Globe } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Combobox, ComboboxCompact, type ComboboxRenderContext } from "./combobox"
 
@@ -68,7 +68,7 @@ function renderRegion(region: Region, { selected, active }: ComboboxRenderContex
     <span className="flex items-center gap-2">
       <Check className={cn("h-3.5 w-3.5 shrink-0", selected ? "opacity-100" : "opacity-0")} />
       <span className="font-mono text-sm">{region.code}</span>
-      <span className={cn("ml-auto text-sm", active ? "text-white/70" : "text-fg-muted")}>
+      <span className={cn("ml-auto text-sm", active ? "text-fg-on-accent/70" : "text-fg-muted")}>
         {region.name}
       </span>
     </span>
@@ -134,6 +134,7 @@ export function RegionSelectCompact({
       renderItem={renderRegion}
       renderCustomFooter={renderCustomFooter}
       allowCustom
+      leadingIcon={Globe}
       popoverWidth="w-72"
     />
   )

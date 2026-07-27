@@ -20,7 +20,9 @@ export const msk = {
   },
 
   describeCluster: async (clusterArn: string): Promise<ClusterInfo> => {
-    const res = await awsClients.kafka().send(new DescribeClusterCommand({ ClusterArn: clusterArn }))
+    const res = await awsClients
+      .kafka()
+      .send(new DescribeClusterCommand({ ClusterArn: clusterArn }))
     if (!res.ClusterInfo) throw new Error(`Cluster "${clusterArn}" not found`)
     return res.ClusterInfo
   },

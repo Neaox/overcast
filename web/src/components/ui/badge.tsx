@@ -2,8 +2,16 @@ import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
+/**
+ * Status pill, 2b:1239 — `padding: 4px 9px; --oc-radius-control; mono 10;
+ * letter-spacing .12em; uppercase`. Uppercasing in CSS rather than in the copy
+ * keeps `Standard` / `ACTIVE` / `available` readable in the DOM and in tests.
+ */
 const badgeVariants = cva(
-  "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium transition-colors",
+  cn(
+    "inline-flex items-center rounded-control px-1.5 py-0.5 transition-colors",
+    "font-mono text-[10px] tracking-[0.12em] whitespace-nowrap uppercase",
+  ),
   {
     variants: {
       variant: {

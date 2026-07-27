@@ -1,6 +1,5 @@
 import { useState, useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { useNavigate } from "@tanstack/react-router"
 import { CalendarClock, Trash2, RefreshCw, Search } from "lucide-react"
 import { ebRulesQueryOptions, ebKeys, deleteRuleMutationOptions } from "@/features/eventbridge/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
@@ -10,6 +9,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableCellProse,
   TableHead,
   TableHeader,
   TableRow,
@@ -17,7 +17,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { Card, CardContent } from "@/components/ui/card"
-import { PageHeader, Breadcrumb, Spinner, EmptyState } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { cn } from "@/lib/utils"
 
@@ -26,7 +26,6 @@ interface Props {
 }
 
 export function EventBusDetail({ busName }: Props) {
-  const navigate = useNavigate()
   const [deleteTarget, setDeleteTarget] = useState<string>()
   const [filter, setFilter] = useState("")
 
@@ -66,14 +65,6 @@ export function EventBusDetail({ busName }: Props) {
     <div className="flex w-full flex-col gap-4">
       <PageHeader
         title={busName}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "EventBridge", onClick: () => navigate({ to: "/eventbridge" }) },
-              { label: busName },
-            ]}
-          />
-        }
         description="Event bus rules and configuration"
         actions={
           <div className="flex items-center gap-2">
@@ -102,10 +93,10 @@ export function EventBusDetail({ busName }: Props) {
 
       {/* Rules section */}
       <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium text-fg">Rules</h2>
+        <h2 className="font-mono text-sm font-medium text-fg">Rules</h2>
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
-            <Search className="text-muted-foreground absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2" />
+            <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
             <Input
               placeholder="Filter rules…"
               className="pl-8"
@@ -138,13 +129,13 @@ export function EventBusDetail({ busName }: Props) {
             <TableBody>
               {filtered.map((rule) => (
                 <TableRow key={rule.Name}>
-                  <TableCell className="font-mono text-sm">{rule.Name}</TableCell>
+                  <TableCell>{rule.Name}</TableCell>
                   <TableCell>
                     <Badge variant={rule.State === "ENABLED" ? "default" : "outline"}>
                       {rule.State}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-sm text-fg-muted">{rule.Description || "—"}</TableCell>
+                  <TableCellProse>{rule.Description || "—"}</TableCellProse>
                   <TableCell>
                     <Button
                       variant="ghost"

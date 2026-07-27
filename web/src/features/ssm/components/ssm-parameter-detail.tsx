@@ -30,7 +30,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { PageHeader, Breadcrumb, Spinner, EmptyState, CodeBlock } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState, CodeBlock } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { useToast } from "@/components/ui/toast"
 import { formatDate } from "@/lib/format"
@@ -103,12 +103,6 @@ export function SsmParameterDetail({ name }: Props) {
   if (!param) {
     return (
       <div className="flex w-full flex-col gap-4">
-        <Breadcrumb
-          items={[
-            { label: "SSM Parameter Store", onClick: () => navigate({ to: "/ssm" }) },
-            { label: name },
-          ]}
-        />
         <EmptyState
           icon={<Settings className="h-8 w-8 opacity-40" />}
           title="Parameter not found"
@@ -125,14 +119,6 @@ export function SsmParameterDetail({ name }: Props) {
     <div className="flex w-full flex-col gap-4">
       <PageHeader
         title={param.Name ?? name}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "SSM Parameter Store", onClick: () => navigate({ to: "/ssm" }) },
-              { label: param.Name ?? name },
-            ]}
-          />
-        }
         actions={
           <div className="flex items-center gap-2">
             <Button
@@ -171,7 +157,7 @@ export function SsmParameterDetail({ name }: Props) {
           <DetailRow label="Name" value={param.Name} mono />
           <DetailRow label="ARN" value={<ArnText arn={param.ARN ?? ""} />} mono />
           <div className="flex flex-col gap-0.5">
-            <span className="text-xs text-fg-muted">Type</span>
+            <span className="font-mono text-xs text-fg-muted">Type</span>
             <Badge variant="outline">{param.Type}</Badge>
           </div>
           <DetailRow label="Version" value={`v${param.Version}`} />
@@ -183,7 +169,7 @@ export function SsmParameterDetail({ name }: Props) {
       {/* Parameter value */}
       <section className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-medium text-fg">Value</h2>
+          <h2 className="font-mono text-sm font-medium text-fg">Value</h2>
           {isSecure && (
             <Button size="sm" variant="ghost" onClick={() => setRevealed((v) => !v)}>
               {revealed ? (
@@ -204,7 +190,7 @@ export function SsmParameterDetail({ name }: Props) {
       {/* Version history */}
       {history.length > 0 && (
         <section className="flex flex-col gap-2">
-          <h2 className="text-sm font-medium text-fg">Version history</h2>
+          <h2 className="font-mono text-sm font-medium text-fg">Version history</h2>
           <Table>
             <TableHeader>
               <TableRow>
@@ -217,14 +203,12 @@ export function SsmParameterDetail({ name }: Props) {
             <TableBody>
               {history.map((entry) => (
                 <TableRow key={entry.Version}>
-                  <TableCell className="text-sm">v{entry.Version}</TableCell>
+                  <TableCell>v{entry.Version}</TableCell>
                   <TableCell>
                     <Badge variant="outline">{entry.Type}</Badge>
                   </TableCell>
-                  <TableCell className="max-w-xs truncate font-mono text-xs">
-                    {entry.Value}
-                  </TableCell>
-                  <TableCell className="text-sm text-fg-muted">
+                  <TableCell className="max-w-xs truncate">{entry.Value}</TableCell>
+                  <TableCell className="text-fg-muted">
                     {formatDate(entry.LastModifiedDate)}
                   </TableCell>
                 </TableRow>

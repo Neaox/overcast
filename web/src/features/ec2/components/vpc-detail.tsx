@@ -1,6 +1,8 @@
 import { useState } from "react"
+import { fieldLabel } from "@/lib/typography"
+import { cn } from "@/lib/utils"
 import { useQuery } from "@tanstack/react-query"
-import { useNavigate, Link } from "@tanstack/react-router"
+import { Link } from "@tanstack/react-router"
 import {
   ec2VpcDetailQueryOptions,
   ec2SubnetsQueryOptions,
@@ -20,7 +22,7 @@ import {
   detachInternetGatewayMutationOptions,
 } from "@/features/ec2/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
-import { PageHeader, Spinner, EmptyState, Breadcrumb } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
@@ -28,6 +30,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableCellProse,
   TableHead,
   TableHeader,
   TableRow,
@@ -47,7 +50,6 @@ import { Plus, Trash2, Check, Unlink } from "lucide-react"
 import { Combobox } from "@/components/ui/combobox"
 
 export function VpcDetail({ vpcId }: { vpcId: string }) {
-  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState("overview")
 
   const { data: vpc, isLoading } = useQuery(ec2VpcDetailQueryOptions(vpcId))
@@ -72,15 +74,6 @@ export function VpcDetail({ vpcId }: { vpcId: string }) {
             <Badge variant={vpc.state === "available" ? "success" : "warning"}>{vpc.state}</Badge>
             {vpc.isDefault && <Badge variant="default">default</Badge>}
           </span>
-        }
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "EC2 / VPC", onClick: () => navigate({ to: "/ec2" }) },
-              { label: "VPCs", onClick: () => navigate({ to: "/ec2" }) },
-              { label: vpc.vpcId },
-            ]}
-          />
         }
       />
 
@@ -173,14 +166,14 @@ function OverviewPanel({
       <InfoRow label="VPC ID" value={vpc.vpcId} />
       <InfoRow label="CIDR Block" value={vpc.cidrBlock} />
       <div className="flex flex-col gap-0.5">
-        <span className="text-xs text-fg-muted">State</span>
+        <span className="font-mono text-xs text-fg-muted">State</span>
         <div className="w-fit">
           <Badge variant={vpc.state === "available" ? "success" : "warning"}>{vpc.state}</Badge>
         </div>
       </div>
       <InfoRow label="Default VPC" value={vpc.isDefault ? "Yes" : "No"} />
       <div className="flex flex-col gap-0.5">
-        <span className="text-xs text-fg-muted">Network Status</span>
+        <span className="font-mono text-xs text-fg-muted">Network Status</span>
         <div className="w-fit" title={networkStatusTooltip[ns] ?? ns}>
           <Badge variant={networkStatusVariant[ns] ?? "default"}>{ns}</Badge>
         </div>
@@ -219,9 +212,9 @@ function SubnetsPanel({ vpcId }: { vpcId: string }) {
       <TableBody>
         {subnets.map((s) => (
           <TableRow key={s.subnetId}>
-            <TableCell className="font-mono text-xs">{s.subnetId}</TableCell>
-            <TableCell className="font-mono text-xs">{s.cidrBlock}</TableCell>
-            <TableCell className="text-sm">{s.availabilityZone}</TableCell>
+            <TableCell>{s.subnetId}</TableCell>
+            <TableCell>{s.cidrBlock}</TableCell>
+            <TableCell>{s.availabilityZone}</TableCell>
           </TableRow>
         ))}
       </TableBody>
@@ -266,9 +259,9 @@ function RouteTablesPanel({ vpcId }: { vpcId: string }) {
             <TableBody>
               {rt.routes.map((route, idx) => (
                 <TableRow key={idx}>
-                  <TableCell className="font-mono text-xs">{route.destinationCidrBlock}</TableCell>
-                  <TableCell className="font-mono text-xs">{route.gatewayId || "local"}</TableCell>
-                  <TableCell className="text-xs text-fg-muted">{route.origin}</TableCell>
+                  <TableCell>{route.destinationCidrBlock}</TableCell>
+                  <TableCell>{route.gatewayId || "local"}</TableCell>
+                  <TableCell className="text-fg-muted">{route.origin}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -427,7 +420,7 @@ function InternetGatewaysPanel({ vpcId }: { vpcId: string }) {
               const att = igw.attachments.find((a) => a.vpcId === vpcId)
               return (
                 <TableRow key={igw.internetGatewayId}>
-                  <TableCell className="font-mono text-xs">{igw.internetGatewayId}</TableCell>
+                  <TableCell>{igw.internetGatewayId}</TableCell>
                   <TableCell>
                     <Badge variant={att?.state === "available" ? "success" : "default"}>
                       {att?.state ?? "unknown"}
@@ -573,12 +566,12 @@ function PeeringPanel({ vpcId }: { vpcId: string }) {
           <TableBody>
             {peerings.map((pcx) => (
               <TableRow key={pcx.vpcPeeringConnectionId}>
-                <TableCell className="font-mono text-xs">{pcx.vpcPeeringConnectionId}</TableCell>
-                <TableCell className="font-mono text-xs">
+                <TableCell>{pcx.vpcPeeringConnectionId}</TableCell>
+                <TableCell>
                   <VpcLink vpcId={pcx.requesterVpcInfo.vpcId} currentVpcId={vpcId} />
                   <span className="ml-1 text-fg-muted">({pcx.requesterVpcInfo.cidrBlock})</span>
                 </TableCell>
-                <TableCell className="font-mono text-xs">
+                <TableCell>
                   <VpcLink vpcId={pcx.accepterVpcInfo.vpcId} currentVpcId={vpcId} />
                   <span className="ml-1 text-fg-muted">({pcx.accepterVpcInfo.cidrBlock})</span>
                 </TableCell>
@@ -670,9 +663,9 @@ function EndpointsPanel({ vpcId }: { vpcId: string }) {
       <TableBody>
         {endpoints.map((ep) => (
           <TableRow key={ep.vpcEndpointId}>
-            <TableCell className="font-mono text-xs">{ep.vpcEndpointId}</TableCell>
-            <TableCell className="font-mono text-xs text-fg-muted">{ep.serviceName}</TableCell>
-            <TableCell className="text-sm">{ep.vpcEndpointType}</TableCell>
+            <TableCell>{ep.vpcEndpointId}</TableCell>
+            <TableCell className="text-fg-muted">{ep.serviceName}</TableCell>
+            <TableCell>{ep.vpcEndpointType}</TableCell>
             <TableCell>
               <Badge variant={ep.state === "available" ? "success" : "default"}>{ep.state}</Badge>
             </TableCell>
@@ -715,11 +708,9 @@ function SecurityGroupsPanel({ vpcId }: { vpcId: string }) {
       <TableBody>
         {groups.map((sg) => (
           <TableRow key={sg.groupId}>
-            <TableCell className="font-mono text-xs">{sg.groupId}</TableCell>
+            <TableCell>{sg.groupId}</TableCell>
             <TableCell className="font-medium">{sg.groupName}</TableCell>
-            <TableCell className="max-w-xs truncate text-sm text-fg-muted">
-              {sg.description}
-            </TableCell>
+            <TableCellProse className="max-w-xs truncate">{sg.description}</TableCellProse>
             <TableCell>
               <Badge variant="default">{sg.ipPermissions.length}</Badge>
             </TableCell>
@@ -768,11 +759,11 @@ function CreatePeeringDialog({
         </DialogHeader>
         <DialogBody className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-fg">Requester VPC</label>
+            <label className={cn(fieldLabel, "mb-1 block text-fg")}>Requester VPC</label>
             <Input value={vpcId} disabled />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-fg">Peer VPC</label>
+            <label className={cn(fieldLabel, "mb-1 block text-fg")}>Peer VPC</label>
             {peerOptions.length > 0 ? (
               <Combobox<{ value: string; label: string }>
                 value={peerVpcId}
@@ -837,7 +828,7 @@ function VpcLink({ vpcId, currentVpcId }: { vpcId: string; currentVpcId: string 
     return <span>{vpcId}</span>
   }
   return (
-    <Link to="/ec2/vpc/$vpcId" params={{ vpcId }} className="text-fg-accent hover:underline">
+    <Link to="/ec2/vpc/$vpcId" params={{ vpcId }} className="text-accent hover:underline">
       {vpcId}
     </Link>
   )
@@ -861,8 +852,8 @@ function TagsPanel({ tags }: { tags?: Array<{ key: string; value: string }> }) {
       <TableBody>
         {tags.map((tag, i) => (
           <TableRow key={i}>
-            <TableCell className="font-mono text-xs">{tag.key}</TableCell>
-            <TableCell className="font-mono text-xs text-fg-muted">{tag.value}</TableCell>
+            <TableCell>{tag.key}</TableCell>
+            <TableCell className="text-fg-muted">{tag.value}</TableCell>
           </TableRow>
         ))}
       </TableBody>

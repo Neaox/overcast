@@ -23,7 +23,12 @@ export const healthHandlers = [
     }),
   ),
   http.get("http://localhost:4566/_/info", () =>
-    HttpResponse.json({ region: "us-east-1", account_id: "000000000000", version: "test", debug: false }),
+    HttpResponse.json({
+      region: "us-east-1",
+      account_id: "000000000000",
+      version: "test",
+      debug: false,
+    }),
   ),
 ]
 

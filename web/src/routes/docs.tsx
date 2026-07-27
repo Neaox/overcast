@@ -85,7 +85,7 @@ function DocsPage() {
                       "block rounded-md px-2 py-1.5 text-sm transition-colors",
                       doc.href === path
                         ? "bg-accent-muted text-fg"
-                        : "text-fg-muted hover:bg-bg-subtle hover:text-fg",
+                        : "text-fg-muted hover:bg-accent-muted hover:text-accent",
                     )}
                   >
                     {doc.title}
@@ -117,7 +117,7 @@ function DocsPage() {
               <BookOpen className="h-4 w-4" />
               {currentDoc.section}
             </div>
-            <h1 className="mt-1 text-2xl font-semibold text-fg">{currentDoc.title}</h1>
+            <h1 className="mt-1 font-mono text-2xl font-semibold text-fg">{currentDoc.title}</h1>
             <p className="mt-1 text-sm text-fg-subtle">{currentDoc.description}</p>
           </div>
           <Button variant="outline" size="sm" asChild>
@@ -182,7 +182,7 @@ function DocsPage() {
                   ),
                   th: ({ node: _node, children, ...props }) => (
                     <th
-                      className="border border-border bg-bg-muted px-3 py-1.5 text-left font-semibold text-fg"
+                      className="border border-border bg-bg-muted px-3 py-1.5 text-left font-mono font-semibold text-fg"
                       {...props}
                     >
                       {children}
@@ -204,7 +204,7 @@ function DocsPage() {
 
       <aside className="hidden xl:block">
         <div className="sticky top-6 rounded-xl border border-border bg-bg-elevated p-3">
-          <div className="mb-2 text-xs font-medium text-fg-subtle">On this page</div>
+          <div className="mb-2 font-mono text-xs font-medium text-fg-subtle">On this page</div>
           <div className="space-y-1">
             {currentDoc.headings
               .filter((heading) => heading.depth > 1 && heading.depth <= 3)
@@ -214,7 +214,7 @@ function DocsPage() {
                   key={`${heading.depth}:${heading.id}`}
                   href={`#${heading.id}`}
                   className={cn(
-                    "block rounded px-2 py-1 text-xs text-fg-muted hover:bg-bg-subtle hover:text-fg",
+                    "block rounded px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-accent-muted hover:text-accent",
                     heading.depth === 3 && "pl-4",
                   )}
                 >

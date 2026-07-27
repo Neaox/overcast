@@ -3,7 +3,7 @@ import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { MessagesSquare, Plus, Trash2, RefreshCw } from "lucide-react"
+import { Eye, MessagesSquare, Trash2 } from "lucide-react"
 import {
   sqsQueuesQueryOptions,
   sqsKeys,
@@ -33,7 +33,17 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { EmptyState, PageHeader, QueryListState, Spinner } from "@/components/ui/primitives"
+import { EmptyState, QueryListState, Spinner } from "@/components/ui/primitives"
+import {
+  CreateAction,
+  RefreshAction,
+  ResourceListCard,
+  ResourceListPage,
+  ResourceName,
+  RowAction,
+  RowActions,
+  SelectCheckbox,
+} from "@/components/ui/resource-list-page"
 import { Badge } from "@/components/ui/badge"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { RawStateLink } from "@/features/debug/raw-state-link"
@@ -97,134 +107,106 @@ export function QueueList() {
     setShowCreate(true)
   }
 
-  return (
-    <div className="flex w-full flex-col gap-4">
-      <PageHeader
-        title="SQS Queues"
-        description={`${queues.length} queue${queues.length !== 1 ? "s" : ""}`}
-        actions={
-          <>
-            <ServiceDocsButton
-              service="sqs"
-              label="SQS"
-              open={docsOpen}
-              onOpen={openDocs}
-              onClose={closeDocs}
-            />
-            <RawStateLink service="sqs" />
-            <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-              Refresh
-            </Button>
-            <Button size="sm" onClick={openCreate}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create Queue
-            </Button>
-          </>
-        }
-      />
+  const visibleMessages = queues.reduce((n, q) => n + q.approximateNumberOfMessages, 0)
+  const inFlightMessages = queues.reduce((n, q) => n + q.approximateNumberOfMessagesNotVisible, 0)
 
-      {isLoading || queues.length === 0 ? (
-        <QueryListState
-          isLoading={isLoading}
-          isEmpty={queues.length === 0}
-          error={error}
-          empty={
-            <EmptyState
-              icon={<MessagesSquare className="h-10 w-10" />}
-              title="No queues yet"
-              description="Create a queue to start sending and receiving messages."
-              action={
-                <Button onClick={openCreate}>
-                  <Plus className="mr-1.5 h-3.5 w-3.5" />
-                  Create Queue
-                </Button>
-              }
-            />
-          }
-          errorTitle="Failed to load queues"
-        />
-      ) : (
+  return (
+    <ResourceListPage
+      title="SQS Queues"
+      count={queues.length}
+      meta={
+        queues.length > 0 ? `${visibleMessages} visible · ${inFlightMessages} in-flight` : undefined
+      }
+      actions={
         <>
-          {selectedQueues.size > 0 && (
-            <div className="flex items-center gap-3 rounded-md border border-border bg-bg-muted px-3 py-2">
-              <span className="text-sm font-medium">
-                {selectedQueues.size} queue{selectedQueues.size !== 1 ? "s" : ""} selected
-              </span>
-              <Button size="sm" variant="danger" onClick={() => setShowBulkDelete(true)}>
-                <Trash2 className="mr-1 h-3.5 w-3.5" />
-                Delete Selected
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setSelectedQueues(new Set())}>
-                Clear
-              </Button>
-            </div>
-          )}
+          <ServiceDocsButton
+            service="sqs"
+            label="SQS"
+            open={docsOpen}
+            onOpen={openDocs}
+            onClose={closeDocs}
+          />
+          <RawStateLink service="sqs" />
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={openCreate}>Create queue</CreateAction>
+        </>
+      }
+    >
+      {selectedQueues.size > 0 && (
+        <div className="flex items-center gap-3 rounded-card border border-border bg-bg-muted px-3 py-2">
+          <span className="text-sm font-medium">
+            {selectedQueues.size} queue{selectedQueues.size !== 1 ? "s" : ""} selected
+          </span>
+          <Button size="sm" variant="danger" onClick={() => setShowBulkDelete(true)}>
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete selected
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSelectedQueues(new Set())}>
+            Clear
+          </Button>
+        </div>
+      )}
+
+      <ResourceListCard>
+        {isLoading || queues.length === 0 ? (
+          <QueryListState
+            isLoading={isLoading}
+            isEmpty={queues.length === 0}
+            error={error}
+            empty={
+              <EmptyState
+                icon={<MessagesSquare className="h-10 w-10" />}
+                title="No queues yet"
+                description="Create a queue to start sending and receiving messages."
+                action={<CreateAction onClick={openCreate}>Create queue</CreateAction>}
+              />
+            }
+            errorTitle="Failed to load queues"
+          />
+        ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-10">
-                  <input
-                    type="checkbox"
-                    className="accent-primary h-4 w-4 rounded"
-                    checked={queues.length > 0 && selectedQueues.size === queues.length}
-                    ref={(el) => {
-                      if (el)
-                        el.indeterminate =
-                          selectedQueues.size > 0 && selectedQueues.size < queues.length
-                    }}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setSelectedQueues(new Set(queues.map((q) => q.name)))
-                      } else {
-                        setSelectedQueues(new Set())
-                      }
-                    }}
+                <TableHead className="w-10 pr-0">
+                  <SelectCheckbox
+                    label="Select all queues"
+                    checked={selectedQueues.size === queues.length}
+                    indeterminate={selectedQueues.size > 0 && selectedQueues.size < queues.length}
+                    onCheckedChange={(checked) =>
+                      setSelectedQueues(checked ? new Set(queues.map((q) => q.name)) : new Set())
+                    }
                   />
                 </TableHead>
-                <TableHead>Queue Name</TableHead>
+                <TableHead>Queue name</TableHead>
                 <TableHead>Visible</TableHead>
                 <TableHead>In-flight</TableHead>
-                <TableHead>Visibility Timeout</TableHead>
+                <TableHead>Visibility timeout</TableHead>
                 <TableHead>ARN</TableHead>
-                <TableHead className="w-10" />
+                <TableHead className="w-20 text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {queues.map((q) => (
                 <TableRow
                   key={q.name}
-                  className="cursor-pointer"
                   onClick={() => navigate({ to: "/sqs/$queue", params: { queue: q.name } })}
                 >
-                  <TableCell className="p-0">
-                    <label
-                      className="flex cursor-pointer items-center justify-center p-3"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <input
-                        type="checkbox"
-                        className="accent-primary h-4 w-4 rounded"
-                        checked={selectedQueues.has(q.name)}
-                        onChange={(e) => {
-                          const next = new Set(selectedQueues)
-                          if (e.target.checked) {
-                            next.add(q.name)
-                          } else {
-                            next.delete(q.name)
-                          }
-                          setSelectedQueues(next)
-                        }}
-                      />
-                    </label>
+                  <TableCell className="pr-0" onClick={(e) => e.stopPropagation()}>
+                    <SelectCheckbox
+                      label={`Select ${q.name}`}
+                      checked={selectedQueues.has(q.name)}
+                      onCheckedChange={(checked) => {
+                        const next = new Set(selectedQueues)
+                        if (checked) next.add(q.name)
+                        else next.delete(q.name)
+                        setSelectedQueues(next)
+                      }}
+                    />
                   </TableCell>
-                  <TableCell className="font-medium">
-                    {q.name}
-                    {q.name.endsWith(".fifo") && (
-                      <Badge variant="info" className="ml-2">
-                        FIFO
-                      </Badge>
-                    )}
+                  <TableCell>
+                    <ResourceName icon={MessagesSquare} name={q.name}>
+                      {q.name.endsWith(".fifo") && <Badge variant="info">FIFO</Badge>}
+                    </ResourceName>
                   </TableCell>
                   <TableCell>
                     <Badge variant={q.approximateNumberOfMessages > 0 ? "accent" : "default"}>
@@ -239,28 +221,30 @@ export function QueueList() {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-fg-muted">{q.visibilityTimeout}s</TableCell>
-                  <TableCell className="max-w-xs truncate font-mono text-xs text-fg-muted">
-                    {q.arn}
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="text-fg-muted hover:text-danger"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setDeleteTarget(q.name)
-                      }}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                  <TableCell className="max-w-xs truncate text-fg-muted">{q.arn}</TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <RowActions>
+                      <RowAction
+                        label={`View ${q.name}`}
+                        onClick={() => navigate({ to: "/sqs/$queue", params: { queue: q.name } })}
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                      </RowAction>
+                      <RowAction
+                        label={`Delete ${q.name}`}
+                        tone="danger"
+                        onClick={() => setDeleteTarget(q.name)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </RowAction>
+                    </RowActions>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
-        </>
-      )}
+        )}
+      </ResourceListCard>
 
       {/* ── Create queue dialog ── */}
       <CreateQueueDialog
@@ -319,7 +303,7 @@ export function QueueList() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </ResourceListPage>
   )
 }
 
@@ -373,7 +357,7 @@ function CreateQueueDialog({
     <Dialog open={open} onOpenChange={(v) => !v && handleClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Create Queue</DialogTitle>
+          <DialogTitle>Create queue</DialogTitle>
         </DialogHeader>
         <form
           className="flex flex-col gap-4"
@@ -436,7 +420,7 @@ function CreateQueueDialog({
                         autoFocus
                       />
                       {isFifo && (
-                        <span className="bg-surface-2 pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 rounded px-1.5 py-0.5 font-mono text-xs text-fg-muted">
+                        <span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 rounded bg-bg-muted px-1.5 py-0.5 font-mono text-xs text-fg-muted">
                           .fifo
                         </span>
                       )}
@@ -453,7 +437,7 @@ function CreateQueueDialog({
               isFifo ? (
                 <form.Field name="contentBasedDeduplication">
                   {(field) => (
-                    <label className="flex items-center gap-2 text-sm">
+                    <label className="flex items-center gap-2 text-xs">
                       <input
                         type="checkbox"
                         checked={field.state.value}
@@ -461,7 +445,7 @@ function CreateQueueDialog({
                         className="rounded border-border"
                       />
                       <span>Content-based deduplication</span>
-                      <span className="text-fg-muted">(uses message body MD5)</span>
+                      <span className="font-sans text-fg-muted">(uses message body MD5)</span>
                     </label>
                   )}
                 </form.Field>
@@ -525,7 +509,7 @@ function CreateQueueDialog({
               {([canSubmit, isSubmitting]) => (
                 <Button type="submit" disabled={!canSubmit || isPending}>
                   {(isSubmitting || isPending) && <Spinner className="mr-2" />}
-                  Create Queue
+                  Create queue
                 </Button>
               )}
             </form.Subscribe>

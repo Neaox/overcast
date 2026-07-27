@@ -8,6 +8,7 @@ import { BookOpen, ExternalLink } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/primitives"
+import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 // ─── Service name → UI route map ─────────────────────────────────────────────
@@ -113,7 +114,7 @@ export function ServiceDocsModal({ service, label, open, onClose }: ServiceDocsM
             </p>
           )}
           {markdown && (
-            <div className="prose prose-sm prose-invert max-w-none px-1 pb-4">
+            <div className="prose prose-sm max-w-none px-1 pb-4 prose-invert">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm, remarkGithubAlerts, remarkRemoveComments]}
                 urlTransform={(url) => serviceDocHref(url) ?? url}
@@ -161,7 +162,7 @@ export function ServiceDocsModal({ service, label, open, onClose }: ServiceDocsM
                   ),
                   th: ({ node: _n, children, ...props }) => (
                     <th
-                      className="border border-border bg-bg-muted px-3 py-1.5 text-left font-semibold text-fg"
+                      className="border border-border bg-bg-muted px-3 py-1.5 text-left font-mono font-semibold text-fg"
                       {...props}
                     >
                       {children}
@@ -223,7 +224,7 @@ export function ServiceDocsModal({ service, label, open, onClose }: ServiceDocsM
                     if (className === "markdown-alert-title") {
                       return (
                         <p
-                          className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide"
+                          className={cn(sectionLabel, "mb-1.5 flex items-center gap-1.5")}
                           style={{ color: "var(--alert-title-color)" }}
                           {...props}
                         >
@@ -258,14 +259,20 @@ export function ServiceDocsModal({ service, label, open, onClose }: ServiceDocsM
                       const styles: Record<string, { border: string; titleColor: string }> = {
                         note: { border: "border-blue-400/60", titleColor: "oklch(0.67 0.19 240)" },
                         tip: { border: "border-green-400/60", titleColor: "oklch(0.67 0.16 145)" },
-                        important: { border: "border-purple-400/60", titleColor: "oklch(0.67 0.19 290)" },
-                        warning: { border: "border-amber-400/60", titleColor: "oklch(0.78 0.16 75)" },
+                        important: {
+                          border: "border-purple-400/60",
+                          titleColor: "oklch(0.67 0.19 290)",
+                        },
+                        warning: {
+                          border: "border-amber-400/60",
+                          titleColor: "oklch(0.78 0.16 75)",
+                        },
                         caution: { border: "border-red-400/60", titleColor: "oklch(0.67 0.19 25)" },
                       }
                       const s = styles[type ?? ""] ?? { border: "border-accent/40", titleColor: "" }
                       return (
                         <div
-                          className={cn("mb-3 border-l-[3px] py-1 pl-3 pr-1", s.border)}
+                          className={cn("mb-3 border-l-[3px] py-1 pr-1 pl-3", s.border)}
                           style={{ "--alert-title-color": s.titleColor } as React.CSSProperties}
                           {...props}
                         >

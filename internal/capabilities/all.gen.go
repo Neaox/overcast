@@ -317,6 +317,7 @@ var AllCapabilities = []Capability{
 	{Service: "cloudformation", Operation: "ListTypeRegistrations", Category: "Type registry", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "cloudformation", Operation: "ListTypes", Category: "Type registry", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "cloudformation", Operation: "RegisterType", Category: "Type registry", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "cloudformation", Operation: "RollbackStack", Category: "Stacks", Status: StatusSupported, Notes: "Rolls a CREATE_FAILED, UPDATE_FAILED, or UPDATE_ROLLBACK_FAILED stack back to a terminal rollback state", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "cloudformation", Operation: "SetStackPolicy", Category: "Stacks", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "cloudformation", Operation: "SetTypeDefaultVersion", Category: "Type registry", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "cloudformation", Operation: "SignalResource", Category: "Stacks", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},

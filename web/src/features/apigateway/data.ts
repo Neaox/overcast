@@ -22,7 +22,13 @@
 
 import { queryOptions, mutationOptions } from "@tanstack/react-query"
 import { apigateway } from "@/services/api"
-import type { Authorizer, ApiKey, UsagePlan, UsagePlanKey, AuthorizerV2 } from "@/services/api/apigateway"
+import type {
+  Authorizer,
+  ApiKey,
+  UsagePlan,
+  UsagePlanKey,
+  AuthorizerV2,
+} from "@/services/api/apigateway"
 import { endpointStore } from "@/services/endpoint-store"
 
 // ─── Key factory ───────────────────────────────────────────────────────────
@@ -49,8 +55,7 @@ export const apigwKeys = {
   // Global resources
   apiKeys: () => [...apigwKeys.all(), "api-keys"] as const,
   usagePlans: () => [...apigwKeys.all(), "usage-plans"] as const,
-  usagePlanKeys: (planId: string) =>
-    [...apigwKeys.all(), "usage-plan", planId, "keys"] as const,
+  usagePlanKeys: (planId: string) => [...apigwKeys.all(), "usage-plan", planId, "keys"] as const,
 }
 
 // ─── REST API queries ──────────────────────────────────────────────────────
@@ -341,8 +346,7 @@ export function usagePlansQueryOptions() {
 export function createUsagePlanMutationOptions() {
   return mutationOptions({
     mutationKey: [...apigwKeys.usagePlans(), "create"] as const,
-    mutationFn: (opts: { name: string; description?: string }) =>
-      apigateway.createUsagePlan(opts),
+    mutationFn: (opts: { name: string; description?: string }) => apigateway.createUsagePlan(opts),
   })
 }
 

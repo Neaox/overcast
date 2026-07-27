@@ -221,6 +221,45 @@ make run               # build and run on :4566
 docker compose up      # run in Docker (rebuilds image)
 ```
 
+### Reproducing CI locally
+
+`make ci-local` (or `task ci-local`, or `bash scripts/ci-local.sh`) runs the
+same pipeline as `.github/workflows/test.yml`, in the same dependency order:
+
+```
+docs index → web lint → typecheck → vitest → SPA build → BFF build
+           → go vet → go build → go test
+```
+
+Two dependencies fix that order: the docs index (`web/src/docs-index.gen.ts`,
+`internal/docssearch/index.gen.go`) is a gitignored artifact that both the web
+typecheck and the Go build import, and `embed.go` has
+`//go:embed all:web/dist`, so the Go stages need a built SPA — which is why the
+CI Go jobs declare `needs: web` and download the `web-dist` artifact.
+
+The script stops at the first failure and names the stage that failed. Every Go
+command goes through [`scripts/docker-go.sh`](./scripts/docker-go.sh), so **no
+host Go toolchain is required** — only Docker and Node. It runs from Git Bash
+on Windows as well as Linux/macOS.
+
+```bash
+make ci-local                        # everything
+make ci-local-web                    # web stages only — iterating on the UI
+make ci-local-go                     # Go stages only (needs an existing web/dist)
+bash scripts/ci-local.sh --full      # Go tests: -race across ./... (slow)
+bash scripts/ci-local.sh --host-go   # use a host `go` instead of Docker
+bash scripts/ci-local.sh --help      # all flags and env equivalents
+```
+
+Node dependencies are never installed for you: run `npm ci` in `web/` once
+before the first web run.
+
+> [!NOTE]
+> On Windows/macOS the Go stages run against a bind-mounted repo, so they are
+> much slower than native — a full `make ci-local` takes ~35 min cold
+> (`internal/state` alone can take 10 min). Use `make ci-local-web` while
+> iterating on the UI, and save the full run for pre-push.
+
 ### No local Go toolchain? (e.g. Windows outside the devcontainer)
 
 `scripts/docker-go.sh` (Git Bash/macOS/Linux) and `scripts/docker-go.ps1`

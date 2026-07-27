@@ -2833,8 +2833,25 @@ func (h *Handler) deniesField(api *GraphqlAPI, identity map[string]any, typeName
 	return false
 }
 
-// flattenHeaders converts http.Header (multi-valued) to a single-valued map.
-// AppSync sends only the first value for each header.
+// flattenHeaders converts http.Header (multi-valued) to a single-valued map
+// keyed by lowercased header name.
+//
+// Go's net/http canonicalises incoming header names via
+// textproto.CanonicalMIMEHeaderKey, so a client's "x-api-key" arrives in
+// r.Header as "X-Api-Key". AWS AppSync does not do that: the documented shape
+// of $context.request.headers / ctx.request.headers uses the lowercase name
+// (the docs' examples read ctx.request.headers.custom for a "custom:nadia"
+// header, and x-api-key is likewise addressed in lowercase). Leaking Go's
+// canonical casing would break resolvers written against the AWS docs, so we
+// lowercase on the way out.
+//
+// The cookie header is stripped: "AWS AppSync doesn't expose the cookie header
+// in $context.request.headers" (same reference).
+//
+// Known divergence: for a repeated header we keep only the first value. The AWS
+// docs instead describe an array ("You could then access these as an array,
+// such as ctx.request.headers.custom[1]"), which would need this map to become
+// map[string]any. See docs/dev/header-casing-audit.md.
 func flattenHeaders(h http.Header) map[string]string {
 	if h == nil {
 		return nil
@@ -2845,7 +2862,7 @@ func flattenHeaders(h http.Header) map[string]string {
 			continue
 		}
 		if len(vs) > 0 {
-			flat[k] = vs[0]
+			flat[strings.ToLower(k)] = vs[0]
 		}
 	}
 	return flat

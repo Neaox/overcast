@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { DatabaseZap, Plus, Trash2, RefreshCw } from "lucide-react"
+import { DatabaseZap, Trash2 } from "lucide-react"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import {
   elasticacheClustersQueryOptions,
@@ -29,12 +29,20 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { QueryListState, Spinner, EmptyState } from "@/components/ui/primitives"
+import {
+  CreateAction,
+  RefreshAction,
+  ResourceListCard,
+  ResourceListPage,
+  ResourceName,
+  RowAction,
+  RowActions,
+} from "@/components/ui/resource-list-page"
 import { Badge } from "@/components/ui/badge"
 import { Combobox } from "@/components/ui/combobox"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
-import { cn } from "@/lib/utils"
 
 export function ClusterList() {
   const [showCreate, setShowCreate] = useState(false)
@@ -46,6 +54,7 @@ export function ClusterList() {
     isLoading,
     isFetching,
     refetch,
+    error,
   } = useQuery(elasticacheClustersQueryOptions())
 
   const createMut = useResourceMutation({
@@ -67,87 +76,84 @@ export function ClusterList() {
   })
 
   return (
-    <div className="flex w-full flex-col gap-4">
-      <PageHeader
-        title="ElastiCache Clusters"
-        description={`${clusters.length} cluster${clusters.length !== 1 ? "s" : ""}`}
-        actions={
-          <div className="flex gap-2">
-            <ServiceDocsButton
-              service="elasticache"
-              label="ElastiCache"
-              open={docsOpen}
-              onOpen={openDocs}
-              onClose={closeDocs}
-            />
-            <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-              Refresh
-            </Button>
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create Cluster
-            </Button>
-          </div>
-        }
-      />
-
-      {isLoading ? (
-        <div className="flex justify-center py-16">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : clusters.length === 0 ? (
-        <EmptyState
-          icon={<DatabaseZap className="h-10 w-10" />}
-          title="No cache clusters"
-          description="Create a cache cluster to get started."
-          action={
-            <Button onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create Cluster
-            </Button>
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Cluster ID</TableHead>
-              <TableHead>Engine</TableHead>
-              <TableHead>Version</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Node Type</TableHead>
-              <TableHead>Nodes</TableHead>
-              <TableHead className="w-16" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {clusters.map((c) => (
-              <TableRow key={c.CacheClusterId}>
-                <TableCell className="font-medium">{c.CacheClusterId}</TableCell>
-                <TableCell className="capitalize">{c.Engine}</TableCell>
-                <TableCell className="text-sm text-fg-muted">{c.EngineVersion ?? "—"}</TableCell>
-                <TableCell>
-                  <ClusterStatusBadge status={c.CacheClusterStatus ?? ""} />
-                </TableCell>
-                <TableCell className="text-sm text-fg-muted">{c.CacheNodeType}</TableCell>
-                <TableCell className="text-sm text-fg-muted">{c.NumCacheNodes}</TableCell>
-                <TableCell>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="text-fg-muted hover:text-danger"
-                    title="Delete"
-                    onClick={() => setDeleteTarget(c.CacheClusterId ?? "")}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TableCell>
+    <ResourceListPage
+      title="ElastiCache Clusters"
+      count={clusters.length}
+      actions={
+        <>
+          <ServiceDocsButton
+            service="elasticache"
+            label="ElastiCache"
+            open={docsOpen}
+            onOpen={openDocs}
+            onClose={closeDocs}
+          />
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create cluster</CreateAction>
+        </>
+      }
+    >
+      <ResourceListCard>
+        {isLoading || clusters.length === 0 ? (
+          <QueryListState
+            isLoading={isLoading}
+            isEmpty={clusters.length === 0}
+            error={error}
+            empty={
+              <EmptyState
+                icon={<DatabaseZap className="h-10 w-10" />}
+                title="No cache clusters"
+                description="Create a cache cluster to get started."
+                action={
+                  <CreateAction onClick={() => setShowCreate(true)}>Create cluster</CreateAction>
+                }
+              />
+            }
+            errorTitle="Failed to load cache clusters"
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Cluster ID</TableHead>
+                <TableHead>Engine</TableHead>
+                <TableHead>Version</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Node type</TableHead>
+                <TableHead>Nodes</TableHead>
+                <TableHead className="w-20 text-right">Actions</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+            </TableHeader>
+            <TableBody>
+              {clusters.map((c) => (
+                <TableRow key={c.CacheClusterId}>
+                  <TableCell>
+                    <ResourceName icon={DatabaseZap} name={c.CacheClusterId} />
+                  </TableCell>
+                  <TableCell className="capitalize">{c.Engine}</TableCell>
+                  <TableCell className="text-fg-muted">{c.EngineVersion ?? "—"}</TableCell>
+                  <TableCell>
+                    <ClusterStatusBadge status={c.CacheClusterStatus ?? ""} />
+                  </TableCell>
+                  <TableCell className="text-fg-muted">{c.CacheNodeType}</TableCell>
+                  <TableCell className="text-fg-muted">{c.NumCacheNodes}</TableCell>
+                  <TableCell>
+                    <RowActions>
+                      <RowAction
+                        label={`Delete ${c.CacheClusterId ?? "cluster"}`}
+                        tone="danger"
+                        onClick={() => setDeleteTarget(c.CacheClusterId ?? "")}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </RowAction>
+                    </RowActions>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </ResourceListCard>
 
       <CreateClusterDialog
         open={showCreate}
@@ -168,7 +174,7 @@ export function ClusterList() {
         isPending={deleteMut.isPending}
         onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
       />
-    </div>
+    </ResourceListPage>
   )
 }
 
@@ -245,7 +251,7 @@ function CreateClusterDialog({
     >
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Create Cache Cluster</DialogTitle>
+          <DialogTitle>Create cache cluster</DialogTitle>
         </DialogHeader>
         <form
           onSubmit={(e) => {

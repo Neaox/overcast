@@ -3,7 +3,7 @@ import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { Boxes, Plus, RefreshCw, Trash2 } from "lucide-react"
+import { Boxes, Eye, Trash2 } from "lucide-react"
 import {
   createRepositoryMutationOptions,
   deleteRepositoryMutationOptions,
@@ -27,14 +27,21 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableEmpty,
   TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { EmptyState, PageHeader, QueryListState } from "@/components/ui/primitives"
+import { EmptyState, QueryListState } from "@/components/ui/primitives"
+import {
+  CreateAction,
+  RefreshAction,
+  ResourceListCard,
+  ResourceListPage,
+  ResourceName,
+  RowAction,
+  RowActions,
+} from "@/components/ui/resource-list-page"
 import { formatDate } from "@/lib/format"
-import { cn } from "@/lib/utils"
 
 const schema = z.object({
   name: z
@@ -76,30 +83,24 @@ export function RepositoryList() {
   })
 
   return (
-    <div className="flex w-full flex-col gap-4">
-      <PageHeader
-        title="ECR Repositories"
-        description={`${repositories.length} repositor${repositories.length === 1 ? "y" : "ies"}`}
-        actions={
-          <>
-            <ServiceDocsButton
-              service="ecr"
-              label="ECR"
-              open={docsOpen}
-              onOpen={openDocs}
-              onClose={closeDocs}
-            />
-            <Button variant="ghost" size="icon" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
-            </Button>
-            <Button size="md" onClick={() => setShowCreate(true)}>
-              <Plus className="h-4 w-4" /> New repository
-            </Button>
-          </>
-        }
-      />
-
-      <div className="overflow-hidden rounded-lg border border-border bg-bg-elevated">
+    <ResourceListPage
+      title="ECR Repositories"
+      count={repositories.length}
+      actions={
+        <>
+          <ServiceDocsButton
+            service="ecr"
+            label="ECR"
+            open={docsOpen}
+            onOpen={openDocs}
+            onClose={closeDocs}
+          />
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create repository</CreateAction>
+        </>
+      }
+    >
+      <ResourceListCard>
         {isLoading || repositories.length === 0 ? (
           <QueryListState
             isLoading={isLoading}
@@ -107,31 +108,14 @@ export function RepositoryList() {
             error={error}
             errorTitle="Failed to load repositories"
             empty={
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>URI</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead className="w-10" />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  <TableEmpty>
-                    <EmptyState
-                      icon={<Boxes className="h-8 w-8" />}
-                      title="No repositories yet"
-                      description="Create a repository, then push a local image to populate tags and digests."
-                      action={
-                        <Button size="sm" onClick={() => setShowCreate(true)}>
-                          <Plus className="h-3.5 w-3.5" />
-                          New repository
-                        </Button>
-                      }
-                    />
-                  </TableEmpty>
-                </TableBody>
-              </Table>
+              <EmptyState
+                icon={<Boxes className="h-10 w-10" />}
+                title="No repositories yet"
+                description="Create a repository, then push a local image to populate tags and digests."
+                action={
+                  <CreateAction onClick={() => setShowCreate(true)}>Create repository</CreateAction>
+                }
+              />
             }
           />
         ) : (
@@ -141,14 +125,13 @@ export function RepositoryList() {
                 <TableHead>Name</TableHead>
                 <TableHead>URI</TableHead>
                 <TableHead>Created</TableHead>
-                <TableHead className="w-10" />
+                <TableHead className="w-20 text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {repositories.map((repository) => (
                 <TableRow
                   key={repository.name}
-                  className="group cursor-pointer"
                   onClick={() =>
                     navigate({
                       to: "/ecr/$repositoryName",
@@ -156,35 +139,41 @@ export function RepositoryList() {
                     })
                   }
                 >
-                  <TableCell className="font-medium text-accent hover:underline">
-                    {repository.name}
+                  <TableCell>
+                    <ResourceName icon={Boxes} name={repository.name} />
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">
-                    {repository.uri}
-                  </TableCell>
+                  <TableCell className="text-fg-muted">{repository.uri}</TableCell>
                   <TableCell className="text-fg-muted">
                     {formatDate(repository.createdAt)}
                   </TableCell>
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      className="text-fg-subtle opacity-0 group-hover:opacity-100 hover:text-danger"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        setDeleteTarget(repository.name)
-                      }}
-                      title="Delete repository"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                  <TableCell onClick={(event) => event.stopPropagation()}>
+                    <RowActions>
+                      <RowAction
+                        label={`View ${repository.name}`}
+                        onClick={() =>
+                          navigate({
+                            to: "/ecr/$repositoryName",
+                            params: { repositoryName: repository.name },
+                          })
+                        }
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                      </RowAction>
+                      <RowAction
+                        label={`Delete ${repository.name}`}
+                        tone="danger"
+                        onClick={() => setDeleteTarget(repository.name)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </RowAction>
+                    </RowActions>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         )}
-      </div>
+      </ResourceListCard>
 
       <CreateRepositoryDialog
         open={showCreate}
@@ -206,7 +195,7 @@ export function RepositoryList() {
         isPending={deleteMutation.isPending}
         onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget)}
       />
-    </div>
+    </ResourceListPage>
   )
 }
 

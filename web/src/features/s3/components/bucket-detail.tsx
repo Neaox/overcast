@@ -33,7 +33,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import { PageHeader, Breadcrumb, Spinner, EmptyState } from "@/components/ui/primitives"
+import { TableCell, TableHead } from "@/components/ui/table"
+import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { useToast } from "@/components/ui/toast"
 import { RawStateLink } from "@/features/debug/raw-state-link"
@@ -228,11 +229,6 @@ export function BucketDetail() {
       )}
       <PageHeader
         title={bucket}
-        breadcrumb={
-          <Breadcrumb
-            items={[{ label: "S3", onClick: () => navigate({ to: "/s3" }) }, ...crumbs.slice(1)]}
-          />
-        }
         actions={
           <>
             <Button
@@ -297,22 +293,14 @@ export function BucketDetail() {
           </div>
         ) : (
           <div ref={scrollRef} className="max-h-[calc(100vh-220px)] overflow-auto">
-            <table className="w-full border-collapse text-sm">
-              <thead className="sticky top-0 z-10 bg-bg-elevated">
+            <table className="w-full border-collapse">
+              <thead className="sticky top-0 z-10 bg-bg">
                 <tr className="border-b border-border">
-                  <th className="h-9 w-full px-3 text-left text-sm font-medium text-fg-muted">
-                    Name
-                  </th>
-                  <th className="h-9 w-[1%] px-3 text-left text-sm font-medium whitespace-nowrap text-fg-muted">
-                    Size
-                  </th>
-                  <th className="h-9 w-[1%] px-3 text-left text-sm font-medium whitespace-nowrap text-fg-muted">
-                    Last modified
-                  </th>
-                  <th className="h-9 w-[1%] px-3 text-left text-sm font-medium whitespace-nowrap text-fg-muted">
-                    Storage class
-                  </th>
-                  <th className="h-9 w-[1%] px-1 whitespace-nowrap" />
+                  <TableHead className="w-full">Name</TableHead>
+                  <TableHead className="w-[1%]">Size</TableHead>
+                  <TableHead className="w-[1%]">Last modified</TableHead>
+                  <TableHead className="w-[1%]">Storage class</TableHead>
+                  <TableHead className="w-[1%] px-1" />
                 </tr>
               </thead>
               <tbody>
@@ -331,7 +319,7 @@ export function BucketDetail() {
                       data-index={vr.index}
                       ref={rowVirtualizer.measureElement}
                       className={cn(
-                        "cursor-pointer transition-colors hover:bg-bg-subtle",
+                        "cursor-pointer transition-colors hover:bg-accent-muted",
                         !isLastRow && "border-b border-border-muted",
                         item.type === "object" && selected === item.key && "bg-accent-muted",
                       )}
@@ -342,18 +330,18 @@ export function BucketDetail() {
                     >
                       {item.type === "prefix" ? (
                         <>
-                          <td colSpan={3} className="px-3 py-2">
-                            <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
+                          <TableCell colSpan={3}>
+                            <div className="flex min-w-0 items-center gap-2">
                               <Folder className="h-3.5 w-3.5 shrink-0 text-yellow-400" />
                               <span className="truncate text-accent hover:underline">
                                 {item.prefix.slice(prefix.length)}
                               </span>
                             </div>
-                          </td>
-                          <td className="px-3 py-2 text-sm">
+                          </TableCell>
+                          <TableCell>
                             <Badge>Folder</Badge>
-                          </td>
-                          <td className="px-1 py-2">
+                          </TableCell>
+                          <TableCell className="px-1">
                             <div className="flex items-center gap-0.5">
                               <Button
                                 variant="ghost"
@@ -368,26 +356,26 @@ export function BucketDetail() {
                                 <Trash2 className="h-3.5 w-3.5" />
                               </Button>
                             </div>
-                          </td>
+                          </TableCell>
                         </>
                       ) : (
                         <>
-                          <td className="max-w-0 px-3 py-2">
-                            <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
+                          <TableCell className="max-w-0">
+                            <div className="flex min-w-0 items-center gap-2">
                               <File className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
                               <span className="truncate">{item.key.slice(prefix.length)}</span>
                             </div>
-                          </td>
-                          <td className="px-3 py-2 text-sm whitespace-nowrap text-fg-muted">
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-fg-muted">
                             {formatBytes(item.size)}
-                          </td>
-                          <td className="px-3 py-2 text-sm whitespace-nowrap text-fg-muted">
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-fg-muted">
                             {formatDate(item.lastModified)}
-                          </td>
-                          <td className="px-3 py-2 text-sm whitespace-nowrap">
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap">
                             <Badge variant="default">{formatStorageClass(item.storageClass)}</Badge>
-                          </td>
-                          <td className="px-1 py-2">
+                          </TableCell>
+                          <TableCell className="px-1">
                             <div className="flex items-center gap-0.5">
                               <Button
                                 variant="ghost"
@@ -424,7 +412,7 @@ export function BucketDetail() {
                                 <Trash2 className="h-3.5 w-3.5" />
                               </Button>
                             </div>
-                          </td>
+                          </TableCell>
                         </>
                       )}
                     </tr>

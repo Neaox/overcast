@@ -18,6 +18,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableCellProse,
   TableHead,
   TableHeader,
   TableRow,
@@ -149,11 +150,9 @@ export function SecretsManagerPage() {
                   })
                 }
               >
-                <TableCell className="font-mono font-medium">{sec.Name}</TableCell>
-                <TableCell className="text-sm text-fg-muted">{sec.Description || "—"}</TableCell>
-                <TableCell className="text-sm text-fg-muted">
-                  {formatDate(sec.LastChangedDate)}
-                </TableCell>
+                <TableCell className="font-medium">{sec.Name}</TableCell>
+                <TableCellProse>{sec.Description || "—"}</TableCellProse>
+                <TableCell className="text-fg-muted">{formatDate(sec.LastChangedDate)}</TableCell>
                 <TableCell>
                   <Button
                     variant="ghost"
@@ -230,7 +229,7 @@ export function SecretsManagerPage() {
                   <FormRow>
                     <FormField label="Secret value" error={fieldError(field.state.meta.errors)}>
                       <textarea
-                        className="flex min-h-20 w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm placeholder:text-fg-subtle focus-visible:ring-1 focus-visible:outline-none"
+                        className="flex min-h-20 w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm placeholder:text-fg-subtle focus-visible:border-accent focus-visible:ring-1 focus-visible:ring-accent focus-visible:outline-none"
                         placeholder='{"username":"admin","password":"s3cret"}'
                         value={field.state.value}
                         onBlur={field.handleBlur}

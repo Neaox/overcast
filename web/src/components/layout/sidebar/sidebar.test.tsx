@@ -12,7 +12,8 @@ import {
   NARROW_SIDEBAR_QUERY,
   SIDEBAR_COLLAPSED_NARROW_STORAGE_KEY,
   SIDEBAR_COLLAPSED_WIDE_STORAGE_KEY,
-} from "./use-sidebar-collapse"
+  SidebarCollapseProvider,
+} from "../use-sidebar-collapse"
 import type { CapturedMessage } from "@/types"
 
 const messages: CapturedMessage[] = [
@@ -60,7 +61,9 @@ function SidebarOnly() {
   return (
     <TooltipProvider>
       <FavouritesProvider>
-        <Sidebar />
+        <SidebarCollapseProvider>
+          <Sidebar />
+        </SidebarCollapseProvider>
       </FavouritesProvider>
     </TooltipProvider>
   )
@@ -71,10 +74,12 @@ function SidebarWithInbox() {
     <ToastContextProvider>
       <TooltipProvider>
         <FavouritesProvider>
-          <div className="flex">
-            <Sidebar />
-            <InboxPage />
-          </div>
+          <SidebarCollapseProvider>
+            <div className="flex">
+              <Sidebar />
+              <InboxPage />
+            </div>
+          </SidebarCollapseProvider>
         </FavouritesProvider>
       </TooltipProvider>
     </ToastContextProvider>

@@ -9,7 +9,7 @@ import {
   deleteInstanceMutationOptions,
 } from "@/features/rds/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
-import { PageHeader, Spinner, Breadcrumb } from "@/components/ui/primitives"
+import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
@@ -74,14 +74,6 @@ export function InstanceDetail({ instanceId }: { instanceId: string }) {
             <span className="text-fg-muted">{db.EngineVersion}</span>
             <RdsStatusBadge status={db.DBInstanceStatus ?? ""} />
           </span>
-        }
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "RDS Instances", onClick: () => navigate({ to: "/rds" }) },
-              { label: db.DBInstanceIdentifier ?? "" },
-            ]}
-          />
         }
         actions={
           <div className="flex gap-1">
@@ -228,7 +220,7 @@ function ConnectivityPanel({ db }: { db: RdsInstance }) {
     <div className="space-y-6">
       <div className="space-y-4">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-fg">Endpoint</span>
+          <span className="font-mono text-sm font-medium text-fg">Endpoint</span>
           <code className="rounded bg-bg-muted px-2 py-1 font-mono text-sm">{endpointStr}</code>
           <Button
             size="icon"
@@ -272,7 +264,7 @@ function ConnectionStrings({
 
   return (
     <div className="space-y-3">
-      <span className="text-sm font-medium text-fg">Connection Strings</span>
+      <span className="font-mono text-sm font-medium text-fg">Connection Strings</span>
       <div className="space-y-2">
         {strings.map((s) => (
           <div key={s.label} className="flex items-center gap-2">
@@ -346,7 +338,7 @@ function EngineLabel({ engine }: { engine: string }) {
         : engine === "mariadb"
           ? "MariaDB"
           : engine
-  return <span className="text-sm font-medium">{label}</span>
+  return <span className="font-mono text-sm font-medium">{label}</span>
 }
 
 function RdsStatusBadge({ status }: { status: string }) {

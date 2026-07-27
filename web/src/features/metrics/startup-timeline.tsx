@@ -7,6 +7,7 @@
 import * as React from "react"
 import { useRef, useState, useEffect, useCallback } from "react"
 import type { StartupPhase } from "@/types"
+import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import {
   Dialog,
@@ -152,12 +153,13 @@ function Legend({ phases, totalMs }: StartupBarProps) {
         <div key={g.label} className="flex items-center gap-1.5">
           <span className={cn("h-2.5 w-2.5 shrink-0 rounded-sm", g.color)} />
           <span className="text-xs text-fg-muted">
-            {g.label} <span className="text-fg tabular-nums">{g.totalMs.toFixed(1)} ms</span>
+            {g.label}{" "}
+            <span className="font-mono text-fg tabular-nums">{g.totalMs.toFixed(1)} ms</span>
           </span>
         </div>
       ))}
       <div className="flex items-center gap-1.5">
-        <span className="text-xs font-medium text-fg tabular-nums">
+        <span className="font-mono text-xs font-medium text-fg tabular-nums">
           = {totalMs.toFixed(0)} ms total
         </span>
       </div>
@@ -219,7 +221,7 @@ function TimeAxis({ viewStart, viewEnd }: { viewStart: number; viewEnd: number }
             className="absolute bottom-0 flex flex-col items-center"
             style={{ left: `${pct}%`, transform: "translateX(-50%)" }}
           >
-            <span className="tabular-nums">{t.toFixed(0)}ms</span>
+            <span className="font-mono tabular-nums">{t.toFixed(0)}ms</span>
             <div className="mt-px h-1.5 w-px bg-border/50" />
           </div>
         )
@@ -289,18 +291,22 @@ function MiniMap({ phases, totalMs, viewStart, viewEnd, onSeek }: MiniMapProps) 
       <StartupBar phases={phases} totalMs={totalMs} />
       {isZoomed && (
         <>
-          {/* Dim regions outside the viewport */}
+          {/* Dim regions outside the viewport. This overlay sits inside a card,
+              not over the whole viewport, so it can't be fixed ink the way the
+              dialog scrim is: --scrim-dim washes out on light and darkens on
+              dark, and "dimmed" reads correctly either way. */}
           <div
-            className="pointer-events-none absolute inset-y-0 left-0 rounded-l-sm bg-black/50"
+            className="pointer-events-none absolute inset-y-0 left-0 rounded-l-sm bg-scrim-dim"
             style={{ width: `${(viewStart / totalMs) * 100}%` }}
           />
           <div
-            className="pointer-events-none absolute inset-y-0 right-0 rounded-r-sm bg-black/50"
+            className="pointer-events-none absolute inset-y-0 right-0 rounded-r-sm bg-scrim-dim"
             style={{ width: `${((totalMs - viewEnd) / totalMs) * 100}%` }}
           />
-          {/* Viewport window border */}
+          {/* Viewport window border. Same reason: a white hairline vanishes
+              against the light theme's washed-out bar, so track --fg. */}
           <div
-            className="pointer-events-none absolute inset-y-0 rounded-sm border-2 border-white/70"
+            className="pointer-events-none absolute inset-y-0 rounded-sm border-2 border-fg/70"
             style={{
               left: `${(viewStart / totalMs) * 100}%`,
               width: `${((viewEnd - viewStart) / totalMs) * 100}%`,
@@ -540,19 +546,17 @@ function FlameGraph({ phases, totalMs }: FlameGraphProps) {
 
       {/* Controls row */}
       <div className="flex items-center justify-between">
-        <p className="text-[10px] font-medium tracking-wider text-fg-muted uppercase">
-          Per-phase timeline
-        </p>
+        <p className={cn(fieldLabel, "text-fg-muted")}>Per-phase timeline</p>
         <div className="flex items-center gap-2">
           {isZoomed && (
-            <span className="text-[10px] text-fg-muted tabular-nums">
+            <span className="font-mono text-[10px] text-fg-muted tabular-nums">
               {viewStart.toFixed(1)}–{viewEnd.toFixed(1)} ms · {zoomLevel.toFixed(1)}×
             </span>
           )}
           <div className="flex items-center gap-1">
             <button
               onClick={() => zoomAtCursor(0.5, 1 / 2)}
-              className="hover:bg-bg-card flex h-5 w-5 items-center justify-center rounded border border-border text-[12px] leading-none text-fg-muted hover:text-fg"
+              className="flex h-5 w-5 items-center justify-center rounded border border-border text-[12px] leading-none text-fg-muted hover:bg-bg-muted hover:text-fg"
               title="Zoom in (scroll wheel also works)"
             >
               +
@@ -560,7 +564,7 @@ function FlameGraph({ phases, totalMs }: FlameGraphProps) {
             <button
               onClick={() => zoomAtCursor(0.5, 2)}
               disabled={!isZoomed}
-              className="hover:bg-bg-card flex h-5 w-5 items-center justify-center rounded border border-border text-[12px] leading-none text-fg-muted hover:text-fg disabled:cursor-not-allowed disabled:opacity-30"
+              className="flex h-5 w-5 items-center justify-center rounded border border-border text-[12px] leading-none text-fg-muted hover:bg-bg-muted hover:text-fg disabled:cursor-not-allowed disabled:opacity-30"
               title="Zoom out"
             >
               −
@@ -568,7 +572,7 @@ function FlameGraph({ phases, totalMs }: FlameGraphProps) {
             {isZoomed && (
               <button
                 onClick={resetZoom}
-                className="hover:bg-bg-card flex h-5 items-center rounded border border-border px-1.5 text-[10px] text-fg-muted hover:text-fg"
+                className="flex h-5 items-center rounded border border-border px-1.5 text-[10px] text-fg-muted hover:bg-bg-muted hover:text-fg"
                 title="Reset zoom (Esc)"
               >
                 Reset
@@ -581,7 +585,7 @@ function FlameGraph({ phases, totalMs }: FlameGraphProps) {
       {/* Flamegraph area — fixed height, no scroll; zoom handles navigation */}
       <div
         ref={containerRef}
-        className="bg-bg-card relative w-full overflow-hidden rounded border border-border/40 select-none"
+        className="relative w-full overflow-hidden rounded border border-border/40 bg-bg-subtle select-none"
         style={{ height: containerH, cursor: dragMoved ? "grabbing" : "crosshair" }}
         onMouseDown={onMouseDown}
       >
@@ -611,10 +615,10 @@ function FlameGraph({ phases, totalMs }: FlameGraphProps) {
               const tooltipContent = (
                 <div className="space-y-1.5">
                   <div className="font-medium">{p.name.trim()}</div>
-                  <div className="text-fg-muted tabular-nums">
+                  <div className="font-mono text-fg-muted tabular-nums">
                     {p.duration_ms.toFixed(2)} ms &nbsp;·&nbsp; {pct.toFixed(1)}% of total
                   </div>
-                  <div className="text-fg-muted tabular-nums">
+                  <div className="font-mono text-fg-muted tabular-nums">
                     starts at {p.start_ms.toFixed(2)} ms
                   </div>
                   {desc && (
@@ -647,7 +651,12 @@ function FlameGraph({ phases, totalMs }: FlameGraphProps) {
                     }}
                   >
                     <div
-                      className={cn("group relative flex h-full cursor-zoom-in items-center overflow-hidden px-1 transition-opacity", p.group.color, isClippedLeft ? "rounded-r-sm" : "rounded-sm", "opacity-70 hover:opacity-100")}
+                      className={cn(
+                        "group relative flex h-full cursor-zoom-in items-center overflow-hidden px-1 transition-opacity",
+                        p.group.color,
+                        isClippedLeft ? "rounded-r-sm" : "rounded-sm",
+                        "opacity-70 hover:opacity-100",
+                      )}
                     >
                       {widthPct > 3 && (
                         <span className="truncate text-[10px] leading-none font-medium text-white/90 select-none">
@@ -695,7 +704,7 @@ function SortHeader({ col, active, dir, onClick }: SortHeaderProps) {
     <th
       onClick={onClick}
       className={cn(
-        "cursor-pointer select-none pb-1 pr-3 font-medium tabular-nums transition-colors hover:text-fg",
+        "cursor-pointer pr-3 pb-1 font-mono font-medium tabular-nums transition-colors select-none hover:text-fg",
         active && "text-fg",
         col.align === "right" && "text-right",
       )}
@@ -704,10 +713,7 @@ function SortHeader({ col, active, dir, onClick }: SortHeaderProps) {
       <span className="inline-flex items-center gap-0.5">
         {col.label}
         <span
-          className={cn(
-            "text-[9px] leading-none",
-            active ? "opacity-100" : "opacity-0",
-          )}
+          className={cn("text-[9px] leading-none", active ? "opacity-100" : "opacity-0")}
           aria-hidden
         >
           {dir === "asc" ? "▲" : "▼"}
@@ -764,10 +770,12 @@ function PhaseTable({ phases }: { phases: StartupPhase[] }) {
         {sorted.map((p, i) => (
           <tr key={i} className="border-b border-border/40 last:border-0">
             <td className="py-0.5 pr-3 font-mono text-fg">{p.name}</td>
-            <td className="py-0.5 pr-3 text-right text-fg-muted tabular-nums">
+            <td className="py-0.5 pr-3 text-right font-mono text-fg-muted tabular-nums">
               {p.start_ms.toFixed(1)}
             </td>
-            <td className="py-0.5 text-right text-fg tabular-nums">{p.duration_ms.toFixed(2)}</td>
+            <td className="py-0.5 text-right font-mono text-fg tabular-nums">
+              {p.duration_ms.toFixed(2)}
+            </td>
           </tr>
         ))}
       </tbody>
@@ -794,19 +802,17 @@ export function StartupCard({ totalMs, preInitMs, phases }: StartupCardProps) {
 
   const pill = (
     <div
-      className="bg-bg-card flex cursor-pointer flex-col gap-1 rounded-md border border-border px-3 py-2 transition-colors hover:border-border-muted hover:bg-bg-elevated"
+      className="flex cursor-pointer flex-col gap-1 rounded-md border border-border bg-bg-elevated px-3 py-2 transition-colors hover:border-border-muted hover:bg-bg-muted"
       role="button"
       tabIndex={0}
       aria-label="Click to view startup timeline"
     >
-      <span className="text-[10px] font-medium tracking-wider text-fg-muted uppercase">
-        Startup
-      </span>
+      <span className={cn(fieldLabel, "text-fg-muted")}>Startup</span>
       <span className="font-mono text-sm font-medium text-fg tabular-nums">
         {totalMs.toFixed(0)} ms
       </span>
       {environmentMs !== undefined && environmentMs > 0 && (
-        <span className="text-[10px] text-fg-muted tabular-nums">
+        <span className="font-mono text-[10px] text-fg-muted tabular-nums">
           + {environmentMs.toFixed(0)} ms pre-Go
         </span>
       )}
@@ -821,15 +827,13 @@ export function StartupCard({ totalMs, preInitMs, phases }: StartupCardProps) {
   if (!hasPhases) {
     // No phase data yet — render plain pill without dialog trigger.
     return (
-      <div className="bg-bg-card flex flex-col gap-0.5 rounded-md border border-border px-3 py-2">
-        <span className="text-[10px] font-medium tracking-wider text-fg-muted uppercase">
-          Startup
-        </span>
+      <div className="flex flex-col gap-0.5 rounded-md border border-border bg-bg-elevated px-3 py-2">
+        <span className={cn(fieldLabel, "text-fg-muted")}>Startup</span>
         <span className="font-mono text-sm font-medium text-fg tabular-nums">
           {totalMs.toFixed(0)} ms
         </span>
         {environmentMs !== undefined && environmentMs > 0 && (
-          <span className="text-[10px] text-fg-muted tabular-nums">
+          <span className="font-mono text-[10px] text-fg-muted tabular-nums">
             + {environmentMs.toFixed(0)} ms pre-Go
           </span>
         )}
@@ -848,13 +852,13 @@ export function StartupCard({ totalMs, preInitMs, phases }: StartupCardProps) {
         <div className="shrink-0 space-y-4 pb-2">
           <p id="startup-timeline-desc" className="text-xs text-fg-muted">
             Time from Go startup to the server accepting requests, broken down by phase. Pre-Go
-            environment time is shown separately so OS loader, antivirus, container init, entrypoint,
-            and exec costs do not inflate the Go startup total. Hover any bar for details ·
-            Ctrl+scroll to zoom · drag to pan · click or drag the minimap to seek.
+            environment time is shown separately so OS loader, antivirus, container init,
+            entrypoint, and exec costs do not inflate the Go startup total. Hover any bar for
+            details · Ctrl+scroll to zoom · drag to pan · click or drag the minimap to seek.
           </p>
 
           {environmentMs !== undefined && (
-            <div className="rounded border border-border/50 bg-bg-card/60 px-3 py-2 text-xs text-fg-muted">
+            <div className="rounded border border-border/50 bg-bg-subtle/60 px-3 py-2 text-xs text-fg-muted">
               <span className="font-medium text-fg">Pre-Go environment:</span>{" "}
               <span className="font-mono tabular-nums">{environmentMs.toFixed(1)} ms</span>
             </div>
@@ -870,9 +874,7 @@ export function StartupCard({ totalMs, preInitMs, phases }: StartupCardProps) {
         {/* Only the data table scrolls */}
         <DialogBody className="border-t border-border/30">
           <div className="space-y-1 pt-4">
-            <p className="text-[10px] font-medium tracking-wider text-fg-muted uppercase">
-              Phase data
-            </p>
+            <p className={cn(fieldLabel, "text-fg-muted")}>Phase data</p>
             <PhaseTable phases={visiblePhases} />
           </div>
         </DialogBody>

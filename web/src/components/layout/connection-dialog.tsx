@@ -8,10 +8,12 @@ import { Input } from "@/components/ui/input"
 import { FormField, fieldError } from "@/components/ui/form"
 import { RegionSelect } from "@/components/ui/region-select"
 
-interface ConnectionDialogProps {
-  /** Called once the user has saved a valid endpoint. */
-  onConnected: () => void
-}
+/**
+ * Configuration only — this dialog is the sole way to enter a host and it says
+ * nothing about whether that host is alive. Liveness belongs to
+ * `ConnectionGate`, which probes after this resolves and renders the cold-boot
+ * screen until the emulator answers.
+ */
 
 const connectionSchema = z.object({
   baseUrl: z
@@ -29,7 +31,7 @@ const connectionSchema = z.object({
   label: z.string(),
 })
 
-export function ConnectionDialog({ onConnected }: ConnectionDialogProps) {
+export function ConnectionDialog() {
   const form = useForm({
     validators: { onChange: connectionSchema },
     defaultValues: {
@@ -37,22 +39,13 @@ export function ConnectionDialog({ onConnected }: ConnectionDialogProps) {
       region: DEFAULT_ENDPOINT.region,
       label: DEFAULT_ENDPOINT.label ?? "",
     },
-    onSubmit: async ({ value }) => {
-      // Quick health-check — emulator exposes /_health
+    onSubmit: ({ value }) => {
       const url = new URL(value.baseUrl)
-      try {
-        const res = await fetch(`${url.origin}/_health`, { signal: AbortSignal.timeout(3000) })
-        if (!res.ok) throw new Error(`Status ${res.status}`)
-      } catch {
-        // Don't block — emulator may not have a health endpoint configured yet
-      }
-
       endpointStore.set({
         baseUrl: url.origin,
         region: value.region.trim() || "us-east-1",
         label: value.label.trim() || undefined,
       })
-      onConnected()
     },
   })
 
@@ -65,7 +58,7 @@ export function ConnectionDialog({ onConnected }: ConnectionDialogProps) {
             <Server className="h-5 w-5 text-accent" />
           </div>
           <div>
-            <h1 className="text-base font-semibold text-fg">Connect to Overcast</h1>
+            <h1 className="font-mono text-base font-semibold text-fg">Connect to Overcast</h1>
             <p className="text-sm text-fg-muted">Configure your emulator endpoint</p>
           </div>
         </div>
@@ -87,8 +80,10 @@ export function ConnectionDialog({ onConnected }: ConnectionDialogProps) {
                 hint="The host and port your emulator is running on."
                 error={fieldError(field.state.meta.errors, field.state.meta.isTouched)}
               >
+                {/* The endpoint is an identifier, not prose — mono. */}
                 <Input
                   id="baseUrl"
+                  className="font-mono"
                   value={field.state.value}
                   onChange={(e) => field.handleChange(e.target.value)}
                   onBlur={field.handleBlur}

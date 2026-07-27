@@ -18,6 +18,7 @@ import { useState, useCallback, useMemo, useRef, useEffect } from "react"
 import Editor, { type OnMount } from "@monaco-editor/react"
 import type * as Monaco from "monaco-editor"
 import { ChevronRight, ChevronDown, FileCode, FolderOpen, Folder, X } from "lucide-react"
+import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 // ─── Public types ──────────────────────────────────────────────────────────
@@ -314,7 +315,7 @@ export function CodeBrowser({
         <div key={node.path}>
           <button
             onClick={() => toggleDir(node.path)}
-            className="flex w-full items-center gap-1 py-0.5 text-left text-xs transition-colors hover:bg-white/5"
+            className="flex w-full items-center gap-1 py-0.5 text-left font-mono text-xs transition-colors hover:bg-accent-muted"
             style={{ paddingLeft: indent + 4 }}
           >
             {isOpen ? (
@@ -340,8 +341,10 @@ export function CodeBrowser({
         key={node.path}
         onClick={() => openFile(node.path)}
         className={cn(
-          "flex w-full items-center gap-1.5 py-0.5 text-left text-xs transition-colors",
-          isActive ? "bg-accent/15 text-fg" : "text-fg-muted hover:bg-white/5 hover:text-fg",
+          "flex w-full items-center gap-1.5 py-0.5 text-left font-mono text-xs transition-colors",
+          isActive
+            ? "bg-accent-muted text-fg"
+            : "text-fg-muted hover:bg-accent-muted hover:text-fg",
         )}
         style={{ paddingLeft: indent + 22 }}
         title={node.path}
@@ -368,7 +371,7 @@ export function CodeBrowser({
         >
           {/* Sidebar header */}
           <div
-            className="flex items-center px-3 py-1.5 text-[10px] font-semibold tracking-widest uppercase"
+            className={cn(sectionLabel, "flex items-center px-3 py-1.5")}
             style={{ color: isDark ? "#888" : "var(--color-fg-muted)" }}
           >
             Explorer
@@ -396,7 +399,7 @@ export function CodeBrowser({
                 key={tab}
                 onClick={() => openFile(tab)}
                 className={cn(
-                  "group relative flex shrink-0 items-center gap-1.5 border-r border-white/5 px-3 py-1.5 text-xs transition-colors",
+                  "group relative flex shrink-0 items-center gap-1.5 border-r border-white/5 px-3 py-1.5 font-mono text-xs transition-colors",
                   isActive ? "text-fg" : "text-fg-muted hover:text-fg",
                 )}
                 style={{
@@ -416,7 +419,7 @@ export function CodeBrowser({
                 <span
                   onClick={(e) => closeTab(tab, e)}
                   className={cn(
-                    "ml-1 flex h-4 w-4 items-center justify-center rounded-sm transition-colors hover:bg-white/10",
+                    "ml-1 flex h-4 w-4 items-center justify-center rounded-sm transition-colors hover:bg-accent-muted hover:text-accent",
                     !isActive && "opacity-0 group-hover:opacity-100",
                   )}
                   role="button"
@@ -432,7 +435,7 @@ export function CodeBrowser({
 
         {/* Breadcrumb bar */}
         <div
-          className="flex items-center gap-1 px-3 py-1 text-xs"
+          className="flex items-center gap-1 px-3 py-1 font-mono text-xs"
           style={{
             backgroundColor: isDark ? "#1e1e1e" : "#fff",
             color: isDark ? "#888" : "var(--color-fg-muted)",

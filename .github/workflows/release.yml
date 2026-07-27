@@ -180,9 +180,16 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
-      - run: npx tsc --noEmit
-      # npm run build's docs:index prestep needs Go — it regenerates
-      # web/src/docs-index.gen.ts, gitignored, see .gitignore.
+      # Generate the docs index first: web/src/docs-index.gen.ts is a
+      # gitignored build artifact imported by src/routes/docs.tsx, so the
+      # typecheck below cannot resolve it on a fresh checkout.
+      - name: Generate docs index
+        run: npm run docs:index
+      # Not `npx tsc --noEmit`: that resolves web/tsconfig.json, a
+      # solution-style config with "files": [] and only project references, so
+      # it compiles zero files and always passes. See .github/workflows/test.yml.
+      - name: Type check
+        run: npm run typecheck
       - run: VITE_BUNDLED=true npm run build
       - run: npm run build:server
       - name: Upload web assets

@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { PageHeader, Breadcrumb, Spinner, EmptyState } from "@/components/ui/primitives"
+import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { formatDate } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -63,9 +63,6 @@ export function KmsKeyDetail({ keyId }: Props) {
   if (!key) {
     return (
       <div className="flex w-full flex-col gap-4">
-        <Breadcrumb
-          items={[{ label: "KMS", onClick: () => navigate({ to: "/kms" }) }, { label: keyId }]}
-        />
         <EmptyState
           icon={<Key className="h-8 w-8 opacity-40" />}
           title="Key not found"
@@ -86,14 +83,6 @@ export function KmsKeyDetail({ keyId }: Props) {
     <div className="flex w-full flex-col gap-4">
       <PageHeader
         title={key.metadata?.KeyId ?? keyId}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "KMS", onClick: () => navigate({ to: "/kms" }) },
-              { label: key.metadata?.KeyId ?? keyId },
-            ]}
-          />
-        }
         description={key.metadata?.Description || undefined}
         actions={
           <div className="flex items-center gap-2">
@@ -143,7 +132,7 @@ export function KmsKeyDetail({ keyId }: Props) {
           <DetailRow label="Key ID" value={key.metadata?.KeyId} mono />
           <DetailRow label="ARN" value={<ArnText arn={key.metadata?.Arn ?? ""} />} mono />
           <div className="flex flex-col gap-0.5">
-            <span className="text-xs text-fg-muted">State</span>
+            <span className="font-mono text-xs text-fg-muted">State</span>
             <Badge variant={stateVariant}>{key.metadata?.KeyState}</Badge>
           </div>
           <DetailRow label="Key spec" value={key.metadata?.KeySpec} />
@@ -159,7 +148,7 @@ export function KmsKeyDetail({ keyId }: Props) {
 
       {key.aliases.length > 0 && (
         <section className="flex flex-col gap-2">
-          <h2 className="text-sm font-medium text-fg">Aliases</h2>
+          <h2 className="font-mono text-sm font-medium text-fg">Aliases</h2>
           <div className="flex flex-wrap gap-2">
             {key.aliases.map((alias) => (
               <Badge key={alias} variant="outline">

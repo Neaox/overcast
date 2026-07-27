@@ -17,6 +17,8 @@
  * Static info cards show: uptime, Go version, CPU count, GC count, start time.
  */
 import { useQuery } from "@tanstack/react-query"
+import { cn } from "@/lib/utils"
+import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { BarChart2, AlertCircle, Info } from "lucide-react"
 import { useMetrics } from "@/hooks/use-metrics"
 import type { MetricsSnapshot } from "@/types"
@@ -59,10 +61,10 @@ interface MetricCardProps {
 
 function MetricCard({ title, value, sub, info, sparkData, color }: MetricCardProps) {
   return (
-    <div className="bg-bg-card flex flex-col gap-3 rounded-lg border border-border p-4">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg-elevated p-4">
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-1">
-          <p className="text-xs font-medium tracking-wider text-fg-muted uppercase">{title}</p>
+          <p className={cn(fieldLabel, "text-fg-muted")}>{title}</p>
           {info && (
             <Tooltip content={info}>
               <button type="button" className="text-fg-muted transition-colors hover:text-fg">
@@ -75,7 +77,7 @@ function MetricCard({ title, value, sub, info, sparkData, color }: MetricCardPro
 
       <div className="flex items-end justify-between gap-2">
         <div>
-          <p className="text-2xl font-semibold text-fg tabular-nums">{value}</p>
+          <p className="font-mono text-2xl font-semibold text-fg tabular-nums">{value}</p>
           {sub && <p className="mt-0.5 text-xs text-fg-muted">{sub}</p>}
         </div>
         <div className={color} style={{ minWidth: 100 }}>
@@ -101,12 +103,12 @@ export function MetricsPage() {
         description="Storage health, advisories, and live Go runtime statistics — sampled every 3 seconds."
         actions={
           latest ? (
-            <div className="flex items-center gap-1.5 rounded-full bg-green-500/10 px-2.5 py-1 text-xs font-medium text-green-400">
+            <div className="flex items-center gap-1.5 rounded-full bg-green-500/10 px-2.5 py-1 font-mono text-xs font-medium text-green-400">
               <span className="h-1.5 w-1.5 rounded-full bg-green-400" />
               Live
             </div>
           ) : error ? (
-            <div className="flex items-center gap-1.5 rounded-full bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-400">
+            <div className="flex items-center gap-1.5 rounded-full bg-red-500/10 px-2.5 py-1 font-mono text-xs font-medium text-red-400">
               <AlertCircle className="h-3 w-3" />
               Disconnected
             </div>
@@ -137,14 +139,17 @@ export function MetricsPage() {
       />
 
       {/* ── Storage activity (reads/writes, memory vs SQL for hybrid) ───── */}
-      <StorageActivity stores={debugMetricsQuery.data?.stores} isLoading={debugMetricsQuery.isLoading} />
+      <StorageActivity
+        stores={debugMetricsQuery.data?.stores}
+        isLoading={debugMetricsQuery.isLoading}
+      />
 
       {/* ── Runtime section ───────────────────────────────────────────── */}
       {/* Uptime lives in the HealthStrip above; goroutines have their own
           sparkline card below — neither is repeated here as a pill. */}
       {latest && (
         <div className="flex flex-col gap-2">
-          <h2 className="text-sm font-medium tracking-wide text-fg-muted uppercase">Runtime</h2>
+          <h2 className={cn(sectionLabel, "text-fg-muted")}>Runtime</h2>
           <div className="flex flex-wrap gap-2">
             <StartupCard
               totalMs={latest.startup_duration_ms}

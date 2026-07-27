@@ -150,7 +150,9 @@ export function SendMessageDialog({ queueName, isFifo, open, onClose }: Props) {
           {/* Message attributes */}
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-fg-muted">Message Attributes</span>
+              <span className="font-mono text-sm font-medium text-fg-muted">
+                Message Attributes
+              </span>
               <Button size="sm" variant="ghost" onClick={addAttr}>
                 <Plus className="mr-1 h-3 w-3" />
                 Add attribute

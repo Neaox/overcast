@@ -5,17 +5,19 @@ import { searchDocsInWorker } from "./docs-worker-client"
 import "./docs"
 
 vi.mock("./docs-worker-client", () => ({
-  searchDocsInWorker: vi.fn(() => Promise.resolve([
-    {
-      id: "docs:local-vpc",
-      label: "Local VPCs for CDK",
-      sublabel: "Stable local VPC bootstrap and provider pattern.",
-      service: "Documentation",
-      serviceKey: "/docs",
-      type: "CDK",
-      href: "/docs?path=cdk%2Flocal-vpc.md",
-    },
-  ])),
+  searchDocsInWorker: vi.fn(() =>
+    Promise.resolve([
+      {
+        id: "docs:local-vpc",
+        label: "Local VPCs for CDK",
+        sublabel: "Stable local VPC bootstrap and provider pattern.",
+        service: "Documentation",
+        serviceKey: "/docs",
+        type: "CDK",
+        href: "/docs?path=cdk%2Flocal-vpc.md",
+      },
+    ]),
+  ),
 }))
 
 describe("docs search contributor", () => {

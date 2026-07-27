@@ -1,4 +1,10 @@
 @import "tailwindcss";
+/* JetBrains Mono (regular + bold) — self-hosted via @fontsource. Imported here
+   rather than main.tsx so all font-face rules live with the design tokens; CSS
+   @import rules must precede other statements, and Tailwind v4 tolerates
+   additional @imports after "tailwindcss" (Vite resolves the bare specifiers). */
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/700.css";
 @plugin "@tailwindcss/typography";
 
 /* ─── Semantic colour tokens ───────────────────────────────────────────────
@@ -39,8 +45,45 @@
   --color-sidebar-item-active: var(--sidebar-item-active);
   --color-sidebar-item-active-fg: var(--sidebar-item-active-fg);
 
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  /* Brand-mark colours (cloud logo SVG) + accent glow / cursor block */
+  --color-cloud: var(--cloud);
+  --color-cloud-stroke: var(--cloud-stroke);
+  --color-accent-glow: var(--accent-glow);
+
+  /* Categorical identity ramp. These encode *which thing* something is (which
+     service produced an event, which node type a map shows) — not state, which
+     belongs on --success / --warning / --danger. Ten slots, deliberately shared
+     by more than one identity; see the --cat-* declarations below. */
+  --color-cat-1: var(--cat-1);
+  --color-cat-2: var(--cat-2);
+  --color-cat-3: var(--cat-3);
+  --color-cat-4: var(--cat-4);
+  --color-cat-5: var(--cat-5);
+  --color-cat-6: var(--cat-6);
+  --color-cat-7: var(--cat-7);
+  --color-cat-8: var(--cat-8);
+  --color-cat-9: var(--cat-9);
+  --color-cat-10: var(--cat-10);
+
+  /* Wash that dims an out-of-view region of an overlay drawn *inside* a card.
+     Distinct from the dialog scrim, which is deliberately the same ink in both
+     themes (see dialog.tsx) because it covers the whole viewport. */
+  --color-scrim-dim: var(--scrim-dim);
+
+  /* Design radii → rounded-card / rounded-control utilities */
+  --radius-card: 10px;
+  --radius-control: 6px;
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono:
+    "JetBrains Mono", ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+
+  /* The design's `--oc-hover`: every state change an interactive surface makes
+     — hover, focus, press, selection — runs at 120ms ease-out. Set as
+     Tailwind's default so a bare `transition-colors` is already correct and no
+     call site has to remember a duration. */
+  --default-transition-duration: 120ms;
+  --default-transition-timing-function: ease-out;
 }
 
 /* ─── Prose typography (docs viewer) ──────────────────────────────────────
@@ -68,6 +111,11 @@
   --tw-prose-th-borders: var(--border);
   --tw-prose-td-borders: var(--border-muted);
 }
+/* Headings are brand-voiced everywhere in Overcast, including inside rendered
+   markdown — the plugin has no --tw-prose-* hook for font-family, so set it here. */
+.prose :is(h1, h2, h3, h4, h5, h6) {
+  font-family: var(--font-mono);
+}
 /* Inline `code` gets a subtle pill background; code inside <pre> keeps the
    plugin's default (transparent, since --tw-prose-pre-bg is the block bg). */
 .prose :not(pre) > code {
@@ -85,72 +133,128 @@
   border: 1px solid var(--border);
 }
 
-/* ─── Light theme ─────────────────────────────────────────────────────── */
+/* ─── Light theme (Overcast brand palette) ────────────────────────────── */
 :root,
 [data-theme="light"] {
   color-scheme: light;
 
-  --bg: oklch(0.99 0 0);
-  --bg-subtle: oklch(0.97 0.003 240);
-  --bg-muted: oklch(0.94 0.005 240);
-  --bg-elevated: oklch(1 0 0);
-  --bg-overlay: oklch(1 0 0);
+  --bg: #f4f8fc; /* page bg */
+  /* --bg-subtle / --bg-muted: no direct design equivalent — derived steps
+     between page bg (#F4F8FC) and hairline border (#D5E2EE), same blue-gray hue. */
+  --bg-subtle: #ecf2f9;
+  --bg-muted: #e2ebf4;
+  --bg-elevated: #ffffff; /* card / elevated */
+  --bg-overlay: #ffffff; /* card / elevated */
 
-  --fg: oklch(0.15 0.01 240);
-  --fg-muted: oklch(0.45 0.01 240);
-  --fg-subtle: oklch(0.65 0.01 240);
-  --fg-on-accent: oklch(1 0 0);
+  --fg: #16222e; /* heading text */
+  --fg-muted: #33465a; /* body text */
+  --fg-subtle: #54718a; /* muted text */
+  --fg-on-accent: #ffffff;
 
-  --border: oklch(0.88 0.005 240);
-  --border-muted: oklch(0.92 0.003 240);
+  --border: #d5e2ee; /* hairline */
+  --border-muted: #e2ecf5; /* derived: one step lighter than --border, same hue */
 
-  --accent: oklch(0.55 0.19 250);
-  --accent-hover: oklch(0.48 0.19 250);
-  --accent-muted: oklch(0.93 0.04 250);
+  --accent: #1273c4;
+  --accent-hover: #3e97df; /* accent-glow */
+  --accent-muted: #e3f0fb; /* accent-soft */
+  --accent-glow: #3e97df; /* glow / cursor block */
 
-  --danger: oklch(0.55 0.2 25);
-  --danger-muted: oklch(0.95 0.04 25);
-  --warning: oklch(0.72 0.17 75);
-  --success: oklch(0.56 0.15 150);
+  --danger: #c9564a;
+  --danger-muted: #f9e9e7; /* derived: soft tint of --danger */
+  --warning: #c08a2d;
+  --success: #2e9e6b;
 
-  --sidebar-bg: oklch(0.96 0.006 240);
-  --sidebar-fg: oklch(0.42 0.012 240);
-  --sidebar-fg-strong: oklch(0.15 0.01 240);
-  --sidebar-item-hover: oklch(0.9 0.008 240);
-  --sidebar-item-active: oklch(0.55 0.19 250);
-  --sidebar-item-active-fg: oklch(1 0 0);
+  /* Brand mark (cloud logo) */
+  --cloud: #c4d8ea;
+  --cloud-stroke: #31536f;
+
+  /* Sidebar sits on the card surface in the new design */
+  --sidebar-bg: #ffffff; /* card */
+  --sidebar-fg: #33465a; /* body text */
+  --sidebar-fg-strong: #16222e; /* heading text */
+  --sidebar-item-hover: #eaf3fa; /* derived: whisper between accent-soft and page bg */
+  --sidebar-item-active: #e3f0fb; /* accent-soft — active nav is accent-on-accent-soft */
+  --sidebar-item-active-fg: #1273c4; /* accent */
+
+  /* Categorical identity ramp — one hue per slot, all at the same OKLCH
+     lightness so no slot is quietly weaker than its neighbours. At L=0.5 every
+     slot clears WCAG AA for normal text on each surface it is used on:
+     #FFFFFF card 4.70–6.53, --accent-muted row hover 4.88–5.63, page bg
+     5.30–6.12. Chroma is the sRGB maximum at that lightness, which is why the
+     yellow-through-cyan slots are duller; the hue spacing is widened across
+     that same 95°–218° stretch to compensate, leaving the closest pair
+     (orange/amber) at ~3.4x the Oklab just-noticeable difference. */
+  --cat-1: oklch(0.5 0.149 25); /* red */
+  --cat-2: oklch(0.5 0.117 60); /* orange */
+  --cat-3: oklch(0.5 0.102 95); /* amber */
+  --cat-4: oklch(0.5 0.149 140); /* green */
+  --cat-5: oklch(0.5 0.099 170); /* teal */
+  --cat-6: oklch(0.5 0.089 218); /* cyan */
+  --cat-7: oklch(0.5 0.149 252); /* blue */
+  --cat-8: oklch(0.5 0.149 288); /* violet */
+  --cat-9: oklch(0.5 0.149 320); /* magenta */
+  --cat-10: oklch(0.5 0.149 355); /* rose */
+
+  /* Dimming on a light surface means washing out, not blacking over. */
+  --scrim-dim: rgb(255 255 255 / 0.62);
 }
 
 /* ─── Dark palette — defined once, applied by both dark selectors below ── */
 :root {
-  --_dark-bg: oklch(0.12 0.008 240);
-  --_dark-bg-subtle: oklch(0.15 0.008 240);
-  --_dark-bg-muted: oklch(0.18 0.008 240);
-  --_dark-bg-elevated: oklch(0.17 0.008 240);
-  --_dark-bg-overlay: oklch(0.2 0.008 240);
+  --_dark-bg: #10161d; /* page bg */
+  /* --_dark-bg-subtle / --_dark-bg-muted: no direct design equivalent — derived
+     steps between page bg (#10161D) and hairline border (#24384C), same hue. */
+  --_dark-bg-subtle: #141d26;
+  --_dark-bg-muted: #1a2735;
+  --_dark-bg-elevated: #16222e; /* card / elevated */
+  --_dark-bg-overlay: #16222e; /* card / elevated */
 
-  --_dark-fg: oklch(0.93 0.005 240);
-  --_dark-fg-muted: oklch(0.65 0.008 240);
-  --_dark-fg-subtle: oklch(0.48 0.008 240);
+  --_dark-fg: #dcebf8; /* heading text */
+  --_dark-fg-muted: #a9c2d8; /* body text */
+  --_dark-fg-subtle: #7fa8c9; /* muted text */
 
-  --_dark-border: oklch(0.26 0.008 240);
-  --_dark-border-muted: oklch(0.22 0.008 240);
+  --_dark-border: #24384c; /* hairline */
+  --_dark-border-muted: #1c2c3d; /* derived: one step darker than --border, same hue */
 
-  --_dark-accent: oklch(0.65 0.19 250);
-  --_dark-accent-hover: oklch(0.72 0.19 250);
-  --_dark-accent-muted: oklch(0.22 0.06 250);
+  --_dark-accent: #5fb8ff;
+  --_dark-accent-hover: #8fd0ff; /* accent-glow */
+  --_dark-accent-muted: #1a2e42; /* accent-soft */
+  --_dark-accent-glow: #8fd0ff; /* glow / cursor block */
 
-  --_dark-danger: oklch(0.68 0.18 25);
-  --_dark-danger-muted: oklch(0.22 0.06 25);
-  --_dark-warning: oklch(0.8 0.16 75);
-  --_dark-success: oklch(0.68 0.15 150);
+  --_dark-danger: #c9564a;
+  --_dark-danger-muted: #34201e; /* derived: soft tint of --danger on dark */
+  --_dark-warning: #c08a2d;
+  --_dark-success: #2e9e6b;
 
-  --_dark-sidebar-bg: oklch(0.1 0.008 240);
-  --_dark-sidebar-fg: oklch(0.65 0.008 240);
-  --_dark-sidebar-fg-strong: oklch(0.93 0.005 240);
-  --_dark-sidebar-item-hover: oklch(0.16 0.008 240);
-  --_dark-sidebar-item-active: oklch(0.65 0.19 250);
-  --_dark-sidebar-item-active-fg: oklch(1 0 0);
+  /* Brand mark (cloud logo) */
+  --_dark-cloud: #33536f;
+  --_dark-cloud-stroke: #89bce2;
+
+  /* Sidebar sits on the card surface in the new design */
+  --_dark-sidebar-bg: #16222e; /* card */
+  --_dark-sidebar-fg: #a9c2d8; /* body text */
+  --_dark-sidebar-fg-strong: #dcebf8; /* heading text */
+  --_dark-sidebar-item-hover: #182838; /* derived: whisper between card and accent-soft */
+  --_dark-sidebar-item-active: #1a2e42; /* accent-soft — active nav is accent-on-accent-soft */
+  --_dark-sidebar-item-active-fg: #5fb8ff; /* accent */
+
+  /* Categorical identity ramp — the same ten hues lifted to L=0.75 for the dark
+     surfaces: 6.77–7.72 on the card, 5.83–6.65 on row hover, 7.64–8.71 on the
+     page bg. A slot keeps its hue across themes, so a service keeps its colour
+     identity when the theme flips. */
+  --_dark-cat-1: oklch(0.75 0.144 25); /* red */
+  --_dark-cat-2: oklch(0.75 0.144 60); /* orange */
+  --_dark-cat-3: oklch(0.75 0.144 95); /* amber */
+  --_dark-cat-4: oklch(0.75 0.144 140); /* green */
+  --_dark-cat-5: oklch(0.75 0.144 170); /* teal */
+  --_dark-cat-6: oklch(0.75 0.134 218); /* cyan */
+  --_dark-cat-7: oklch(0.75 0.132 252); /* blue */
+  --_dark-cat-8: oklch(0.75 0.136 288); /* violet */
+  --_dark-cat-9: oklch(0.75 0.144 320); /* magenta */
+  --_dark-cat-10: oklch(0.75 0.144 355); /* rose */
+
+  /* Dimming on a dark surface means darkening. */
+  --_dark-scrim-dim: rgb(0 0 0 / 0.5);
 }
 
 /* Applied when OS prefers dark and the user hasn't explicitly chosen light. */
@@ -167,7 +271,9 @@
     --fg: var(--_dark-fg);
     --fg-muted: var(--_dark-fg-muted);
     --fg-subtle: var(--_dark-fg-subtle);
-    --fg-on-accent: oklch(1 0 0);
+    /* Dark accent (#5FB8FF) is a light blue — white text on it fails contrast,
+       so text on solid accent uses ink instead. */
+    --fg-on-accent: #0e1620;
 
     --border: var(--_dark-border);
     --border-muted: var(--_dark-border-muted);
@@ -175,11 +281,15 @@
     --accent: var(--_dark-accent);
     --accent-hover: var(--_dark-accent-hover);
     --accent-muted: var(--_dark-accent-muted);
+    --accent-glow: var(--_dark-accent-glow);
 
     --danger: var(--_dark-danger);
     --danger-muted: var(--_dark-danger-muted);
     --warning: var(--_dark-warning);
     --success: var(--_dark-success);
+
+    --cloud: var(--_dark-cloud);
+    --cloud-stroke: var(--_dark-cloud-stroke);
 
     --sidebar-bg: var(--_dark-sidebar-bg);
     --sidebar-fg: var(--_dark-sidebar-fg);
@@ -187,6 +297,19 @@
     --sidebar-item-hover: var(--_dark-sidebar-item-hover);
     --sidebar-item-active: var(--_dark-sidebar-item-active);
     --sidebar-item-active-fg: var(--_dark-sidebar-item-active-fg);
+
+    --cat-1: var(--_dark-cat-1);
+    --cat-2: var(--_dark-cat-2);
+    --cat-3: var(--_dark-cat-3);
+    --cat-4: var(--_dark-cat-4);
+    --cat-5: var(--_dark-cat-5);
+    --cat-6: var(--_dark-cat-6);
+    --cat-7: var(--_dark-cat-7);
+    --cat-8: var(--_dark-cat-8);
+    --cat-9: var(--_dark-cat-9);
+    --cat-10: var(--_dark-cat-10);
+
+    --scrim-dim: var(--_dark-scrim-dim);
   }
 }
 
@@ -203,7 +326,9 @@
   --fg: var(--_dark-fg);
   --fg-muted: var(--_dark-fg-muted);
   --fg-subtle: var(--_dark-fg-subtle);
-  --fg-on-accent: oklch(1 0 0);
+  /* Dark accent (#5FB8FF) is a light blue — white text on it fails contrast,
+     so text on solid accent uses ink instead. */
+  --fg-on-accent: #0e1620;
 
   --border: var(--_dark-border);
   --border-muted: var(--_dark-border-muted);
@@ -211,11 +336,15 @@
   --accent: var(--_dark-accent);
   --accent-hover: var(--_dark-accent-hover);
   --accent-muted: var(--_dark-accent-muted);
+  --accent-glow: var(--_dark-accent-glow);
 
   --danger: var(--_dark-danger);
   --danger-muted: var(--_dark-danger-muted);
   --warning: var(--_dark-warning);
   --success: var(--_dark-success);
+
+  --cloud: var(--_dark-cloud);
+  --cloud-stroke: var(--_dark-cloud-stroke);
 
   --sidebar-bg: var(--_dark-sidebar-bg);
   --sidebar-fg: var(--_dark-sidebar-fg);
@@ -223,6 +352,19 @@
   --sidebar-item-hover: var(--_dark-sidebar-item-hover);
   --sidebar-item-active: var(--_dark-sidebar-item-active);
   --sidebar-item-active-fg: var(--_dark-sidebar-item-active-fg);
+
+  --cat-1: var(--_dark-cat-1);
+  --cat-2: var(--_dark-cat-2);
+  --cat-3: var(--_dark-cat-3);
+  --cat-4: var(--_dark-cat-4);
+  --cat-5: var(--_dark-cat-5);
+  --cat-6: var(--_dark-cat-6);
+  --cat-7: var(--_dark-cat-7);
+  --cat-8: var(--_dark-cat-8);
+  --cat-9: var(--_dark-cat-9);
+  --cat-10: var(--_dark-cat-10);
+
+  --scrim-dim: var(--_dark-scrim-dim);
 }
 
 @layer base {
@@ -296,6 +438,26 @@
     outline-offset: 2px;
   }
 
+  /* ─── Cursor affordances ────────────────────────────────────────────── */
+  /* Neither the UA stylesheet nor Tailwind's preflight gives a button a
+     pointer cursor, so every hand-rolled <button> in the app reads as inert
+     unless it remembers `cursor-pointer`. Declare it once, here: these sit in
+     @layer base, so any utility (`cursor-default` on a busy control,
+     `cursor-not-allowed` on a disabled one) still wins. */
+  button,
+  summary,
+  select,
+  [role="button"] {
+    cursor: pointer;
+  }
+  button:disabled,
+  select:disabled,
+  input:disabled,
+  textarea:disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+
   /* ─── React Flow — crisp node rendering ────────────────────────────── */
   /*
    * React Flow positions nodes with CSS transforms at fractional zoom levels.
@@ -326,7 +488,11 @@
     pointer-events: none;
     user-select: none;
   }
-  /* Prism token colours — designed for both light and dark modes via CSS vars */
+  /* Prism token colours — designed for both light and dark modes via CSS vars.
+     Deliberately unscoped: the event console's hand-rolled JSON tree applies
+     these same class names (see event-console.tsx) so a string, key or number
+     looks identical whether Prism produced the markup or React did. Keep them
+     out of a `.json-editor-wrap` selector. */
   .token.punctuation {
     color: var(--fg-muted);
   }
@@ -439,6 +605,76 @@
 }
 .react-flow__controls-button svg {
   fill: var(--fg);
+}
+
+/* ─── Blinking cursor — the only sanctioned motion in loading states ─────
+   Design turn 5: "Blinking cursor is the only motion; skeletons are static.
+   Nothing shimmers." A hard square wave, not a fade — this is a terminal
+   caret, so it steps rather than eases.
+
+   Under prefers-reduced-motion the cursor must stay VISIBLE AND SOLID, never
+   hidden: it is a 6-7px-wide layout element sitting inside a sentence
+   ("loading log groups▍"), so hiding it reflows the line and removes meaning.
+
+   Kept outside @layer base so it is not out-ranked by unlayered third-party
+   CSS, and so a caller's Tailwind `bg-*` utility can still recolour the block.
+   ──────────────────────────────────────────────────────────────────────── */
+@keyframes oc-cursor-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+/* `.oc-loader line` is the brand mark's trailing prompt cursor. It is selected
+   structurally rather than by class because the element lives inside the mark's
+   SVG, which owns the brand geometry — but it animates from the same
+   declaration so the two can never drift out of sync. */
+.oc-cursor-blink,
+.oc-loader line {
+  animation: oc-cursor-blink 1.1s steps(1, end) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .oc-cursor-blink,
+  .oc-loader line {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* ─── Reduced motion ─────────────────────────────────────────────────────
+   Everything the app animates other than the caret is decoration: hover and
+   focus colour transitions, the dialog and toast entrances, the sidebar
+   collapse, the map's pulse rings. Collapse them all to a single frame rather
+   than removing them, so animation `forwards` fill modes still land on their
+   end state and `animationend` listeners still fire.
+
+   The caret rule above already ran: `animation: none` clears its name, so the
+   `!important` duration here cannot restart it, and it stays solid.
+   ──────────────────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+  }
+  html {
+    scroll-behavior: auto !important;
+  }
+  /* The view-transition pseudo-elements live outside the document tree, so the
+     universal selector above never reaches them. */
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation-duration: 1ms !important;
+  }
 }
 
 /* ─── View Transitions — dashboard minimap ↔ full map morph ──────────── */

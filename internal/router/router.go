@@ -115,7 +115,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	r.Use(chimiddleware.RealIP)
 	r.Use(middleware.CORS)
 	r.Use(middleware.DrainBody)
-	r.Use(middleware.S3VirtualHostFor(cfg.Hostname))
+	r.Use(middleware.S3VirtualHostFor(cfg.Hostname, logger))
 	// hostRoutes is populated further down, once the services it dispatches
 	// to (API Gateway, Lambda, AppSync) are constructed — see "Host-based
 	// routing" below. The pointer is read at request time (same pattern as

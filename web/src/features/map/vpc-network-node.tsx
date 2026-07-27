@@ -124,7 +124,7 @@ export const VpcNetworkNode = memo(function VpcNetworkNode({ data }: NodeProps) 
       <div className="relative mt-1.5 flex items-center gap-2 text-xs">
         <span
           className={cn(
-            "rounded px-1.5 py-0.5 font-medium tabular-nums",
+            "rounded px-1.5 py-0.5 font-mono font-medium tabular-nums",
             subnetCount > 0 ? "bg-teal-400/10 text-teal-400" : "bg-fg-muted/10 text-fg-muted",
           )}
         >
@@ -139,7 +139,7 @@ export const VpcNetworkNode = memo(function VpcNetworkNode({ data }: NodeProps) 
 
       {/* Event counter badge */}
       {(eventCount ?? 0) > 0 && (
-        <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[9px] font-bold text-fg-on-accent tabular-nums">
+        <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 font-mono text-[9px] font-bold text-fg-on-accent tabular-nums">
           {(eventCount ?? 0) > 99 ? "99+" : eventCount}
         </span>
       )}

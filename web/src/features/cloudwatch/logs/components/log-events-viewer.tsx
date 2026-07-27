@@ -392,7 +392,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
           >
             Plaintext
           </Button>
-          <label className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 text-[10px] font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10">
+          <label className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 font-mono text-[10px] font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10">
             <input
               type="checkbox"
               checked={formatted}
@@ -401,7 +401,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
             />
             Format
           </label>
-          <label className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 text-[10px] font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10">
+          <label className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 font-mono text-[10px] font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10">
             <input
               type="checkbox"
               checked={syntaxHighlight}
@@ -410,7 +410,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
             />
             Syntax
           </label>
-          <label className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 text-[10px] font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10">
+          <label className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 font-mono text-[10px] font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10">
             <input
               type="checkbox"
               checked={wrapLines}
@@ -440,7 +440,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
             <ArrowDownUp className="mr-1 h-3 w-3" />
             {sortAsc ? "Oldest" : "Newest"}
           </Button>
-          <span className="ml-1 text-[10px] text-fg-muted tabular-nums">
+          <span className="ml-1 font-mono text-[10px] text-fg-muted tabular-nums">
             {events.length.toLocaleString()} event{events.length !== 1 ? "s" : ""}
           </span>
         </div>
@@ -506,7 +506,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
                   >
                     {displayMode === "table" ? (
                       <>
-                        <div className="flex w-10 shrink-0 items-start justify-center pt-1.5 text-[9px] text-fg-muted/40 tabular-nums select-none">
+                        <div className="flex w-10 shrink-0 items-start justify-center pt-1.5 font-mono text-[9px] text-fg-muted/40 tabular-nums select-none">
                           {virtualRow.index + 1}
                         </div>
                         <div className="flex w-20 shrink-0 items-start px-1 pt-1.5 font-mono text-[10px] text-fg-muted tabular-nums">
@@ -557,7 +557,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
             <button
               type="button"
               onClick={scrollToBottom}
-              className="absolute right-4 bottom-4 z-10 flex items-center gap-1 rounded-full border border-border bg-bg-elevated px-3 py-1.5 text-[10px] font-medium text-fg-muted shadow-lg hover:bg-bg-subtle"
+              className="absolute right-4 bottom-4 z-10 flex items-center gap-1 rounded-full border border-border bg-bg-elevated px-3 py-1.5 font-mono text-[10px] font-medium text-fg-muted shadow-lg transition-colors hover:border-accent hover:text-accent"
             >
               <ArrowDown className="h-3 w-3" />
               Latest
@@ -605,7 +605,7 @@ function LogMessage({
         {level && !hideLevel && (
           <span
             className={cn(
-              "mt-0.5 shrink-0 rounded px-1 py-0.5 text-[8px] font-bold uppercase",
+              "mt-0.5 shrink-0 rounded px-1 py-0.5 font-mono text-[8px] font-bold uppercase",
               levelBadge[level],
             )}
           >
@@ -634,7 +634,7 @@ function LogMessage({
       {level && formatted && !hideLevel && (
         <span
           className={cn(
-            "mt-0.5 shrink-0 rounded px-1 py-0.5 text-[8px] font-bold uppercase",
+            "mt-0.5 shrink-0 rounded px-1 py-0.5 font-mono text-[8px] font-bold uppercase",
             levelBadge[level],
           )}
         >

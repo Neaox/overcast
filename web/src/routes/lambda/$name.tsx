@@ -6,7 +6,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Button } from "@/components/ui/button"
-import { Spinner, PageHeader, Breadcrumb } from "@/components/ui/primitives"
+import { Spinner, PageHeader } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import {
   lambdaFunctionsQueryOptions,
@@ -117,14 +117,6 @@ function FunctionDetail() {
       <PageHeader
         title={fn.FunctionName ?? ""}
         description={fn.Description || undefined}
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "Lambda", onClick: () => navigate({ to: "/lambda" }) },
-              { label: fn.FunctionName ?? "" },
-            ]}
-          />
-        }
         actions={
           activeTab === "code" ? (
             <Button onClick={handleDeploy} disabled={isDeploying || sourceLoading} size="md">

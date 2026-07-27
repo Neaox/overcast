@@ -16,6 +16,7 @@ import { eventTemplates, templateCategories } from "@/features/lambda/event-temp
 import { lambda } from "@/services/api"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import type { InvokeResult } from "@/types"
+import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 export function TestTab({ name }: { name: string }) {
@@ -135,9 +136,7 @@ export function TestTab({ name }: { name: string }) {
         {/* Saved events */}
         <div className="flex flex-col gap-1">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold tracking-wider text-fg-muted uppercase">
-              Saved events
-            </span>
+            <span className={cn(sectionLabel, "text-fg-muted")}>Saved events</span>
             <button
               onClick={handleNewEvent}
               className="text-xs text-accent hover:underline"
@@ -183,9 +182,7 @@ export function TestTab({ name }: { name: string }) {
 
         {/* Event templates */}
         <div className="flex flex-col gap-1">
-          <span className="text-xs font-semibold tracking-wider text-fg-muted uppercase">
-            Event templates
-          </span>
+          <span className={cn(sectionLabel, "text-fg-muted")}>Event templates</span>
           {templateCategories.map((cat) => (
             <div key={cat} className="flex flex-col">
               <span className="mt-1 text-xs font-medium text-fg-muted">{cat}</span>
@@ -210,7 +207,7 @@ export function TestTab({ name }: { name: string }) {
         {/* Event header: name + actions */}
         <div className="flex items-end gap-3">
           <div className="flex flex-1 flex-col gap-1">
-            <label htmlFor="event-name" className="text-xs font-medium text-fg-muted">
+            <label htmlFor="event-name" className={cn(fieldLabel, "text-fg-muted")}>
               Event name
             </label>
             <Input
@@ -262,7 +259,7 @@ export function TestTab({ name }: { name: string }) {
 
         {!isPending && invokeError && (
           <div className="flex flex-col gap-2 rounded-lg border border-danger/30 bg-danger/5 p-4">
-            <p className="text-sm font-medium text-danger">Invocation failed</p>
+            <p className="font-mono text-sm font-medium text-danger">Invocation failed</p>
             <pre className="max-h-48 overflow-auto rounded-md border border-danger/20 bg-bg-elevated p-3 font-mono text-xs text-fg">
               {invokeError}
             </pre>
@@ -281,7 +278,7 @@ export function TestTab({ name }: { name: string }) {
             <div className="flex items-center gap-2">
               <h3
                 className={cn(
-                  "text-sm font-medium",
+                  "font-mono text-sm font-medium",
                   result.functionError ? "text-danger" : "text-success",
                 )}
               >
@@ -295,7 +292,7 @@ export function TestTab({ name }: { name: string }) {
             </div>
 
             <div className="flex flex-col gap-1">
-              <span className="text-xs font-medium text-fg-muted">Response</span>
+              <span className="font-mono text-xs font-medium text-fg-muted">Response</span>
               <pre className="max-h-64 overflow-auto rounded-md border border-border bg-bg-elevated p-3 font-mono text-xs text-fg">
                 {parsedPayload ?? "null"}
               </pre>
@@ -304,7 +301,7 @@ export function TestTab({ name }: { name: string }) {
             {result.logResult && (
               <div className="flex flex-col gap-1">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-fg-muted">Log output</span>
+                  <span className="font-mono text-xs font-medium text-fg-muted">Log output</span>
                   {result.logGroupName && result.logStreamName && (
                     <Link
                       to="/cloudwatch/logs/stream"

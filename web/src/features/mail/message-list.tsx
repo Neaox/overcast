@@ -114,35 +114,45 @@ export function MessageList({ messages, selectedId, onSelect }: MessageListProps
                   ? "border-accent/40"
                   : containsSelected
                     ? "border-accent bg-sidebar-item-active text-sidebar-item-active-fg"
-                    : "hover:bg-surface-hover border-transparent hover:border-border",
+                    : "border-transparent hover:bg-accent-muted",
               )}
             >
               <div className="flex items-center gap-1.5">
                 <ChevronRight
                   className={cn(
                     "h-3.5 w-3.5 shrink-0 transition-transform",
-                    containsSelected && !expanded ? "text-sidebar-item-active-fg/70" : "text-fg-muted",
+                    containsSelected && !expanded
+                      ? "text-sidebar-item-active-fg/70"
+                      : "text-fg-muted",
                     expanded && "rotate-90",
                   )}
                 />
-                <span className={cn(
-                  "flex-1 truncate text-sm font-semibold",
-                  containsSelected && !expanded ? "text-sidebar-item-active-fg" : "text-fg",
-                )}>
+                <span
+                  className={cn(
+                    "flex-1 truncate text-sm font-semibold",
+                    containsSelected && !expanded ? "text-sidebar-item-active-fg" : "text-fg",
+                  )}
+                >
                   {item.groupTopic}
                 </span>
-                <span className={cn(
-                  "shrink-0 text-xs",
-                  containsSelected && !expanded ? "text-sidebar-item-active-fg/70" : "text-fg-subtle",
-                )}>
+                <span
+                  className={cn(
+                    "shrink-0 text-xs",
+                    containsSelected && !expanded
+                      ? "text-sidebar-item-active-fg/70"
+                      : "text-fg-subtle",
+                  )}
+                >
                   {formatDistanceToNow(new Date(item.messages[0].receivedAt), { addSuffix: true })}
                 </span>
-                <span className={cn(
-                  "shrink-0 rounded-full px-1.5 py-0.5 text-xs tabular-nums",
-                  containsSelected && !expanded
-                    ? "bg-sidebar-item-active-fg/20 text-sidebar-item-active-fg/80"
-                    : "bg-surface-muted text-fg-subtle",
-                )}>
+                <span
+                  className={cn(
+                    "shrink-0 rounded-full px-1.5 py-0.5 text-xs tabular-nums",
+                    containsSelected && !expanded
+                      ? "bg-sidebar-item-active-fg/20 text-sidebar-item-active-fg/80"
+                      : "bg-bg-muted text-fg-subtle",
+                  )}
+                >
                   {item.messages.length}
                 </span>
               </div>
@@ -211,9 +221,7 @@ function MessageRow({ message, selected, onSelect, indent }: MessageRowProps) {
         className={cn(
           "w-full text-left transition-colors",
           indent ? "px-3 py-2" : "px-4 py-3",
-          selected
-            ? "bg-sidebar-item-active text-sidebar-item-active-fg"
-            : "hover:bg-surface-hover",
+          selected ? "bg-sidebar-item-active text-sidebar-item-active-fg" : "hover:bg-accent-muted",
         )}
       >
         {/* Primary identifier + source badge + timestamp */}
@@ -232,7 +240,7 @@ function MessageRow({ message, selected, onSelect, indent }: MessageRowProps) {
                   "shrink-0 rounded px-1 py-0.5 text-xs leading-none",
                   selected
                     ? "bg-sidebar-item-active-fg/15 text-sidebar-item-active-fg/70"
-                    : "bg-surface-muted text-fg-subtle",
+                    : "bg-bg-muted text-fg-subtle",
                 )}
               >
                 {message.source}

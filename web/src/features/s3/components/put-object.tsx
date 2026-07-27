@@ -7,6 +7,8 @@
  * Nothing is uploaded until the user clicks "Upload".
  */
 import { useState, useRef } from "react"
+import { fieldLabel } from "@/lib/typography"
+import { cn } from "@/lib/utils"
 import { useNavigate } from "@tanstack/react-router"
 import { Upload, X, Plus, Trash2, FolderOpen } from "lucide-react"
 import { Route } from "@/routes/s3/$bucket/upload"
@@ -17,7 +19,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { FormField } from "@/components/ui/form"
-import { PageHeader, Breadcrumb, Spinner } from "@/components/ui/primitives"
+import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { useToast } from "@/components/ui/toast"
 import { formatBytes } from "@/lib/format"
 
@@ -234,18 +236,7 @@ export function PutObject() {
 
   return (
     <div className="flex max-w-4xl flex-col gap-6">
-      <PageHeader
-        title="Upload"
-        breadcrumb={
-          <Breadcrumb
-            items={[
-              { label: "S3", onClick: () => navigate({ to: "/s3" }) },
-              { label: bucket, onClick: () => navigate({ to: "/s3/$bucket", params: { bucket } }) },
-              { label: "Upload" },
-            ]}
-          />
-        }
-      />
+      <PageHeader title="Upload" />
 
       {/* ── Files section ──────────────────────────────────────────────── */}
       <Section title="Files" count={rows.length}>
@@ -258,9 +249,7 @@ export function PutObject() {
           onDrop={onDrop}
           className={[
             "flex items-center justify-center rounded-lg border-2 border-dashed px-6 py-8 transition-colors",
-            dropActive
-              ? "border-accent bg-accent/5"
-              : "border-border hover:border-accent/50 hover:bg-bg-elevated",
+            dropActive ? "border-accent bg-accent/5" : "border-border hover:border-accent",
           ].join(" ")}
         >
           <div className="flex flex-col items-center gap-2 text-center">
@@ -290,13 +279,18 @@ export function PutObject() {
         {/* File table */}
         {rows.length > 0 && (
           <div className="overflow-hidden rounded-lg border border-border">
-            <table className="w-full text-sm">
+            <table className="w-full font-mono text-xs">
               <thead>
-                <tr className="border-b border-border bg-bg-elevated text-left">
-                  <th className="px-3 py-2 text-sm font-medium text-fg-muted">Object key</th>
-                  <th className="px-3 py-2 text-sm font-medium text-fg-muted">Content-Type</th>
-                  <th className="px-3 py-2 text-sm font-medium text-fg-muted">Size</th>
-                  <th className="w-48 px-3 py-2 text-sm font-medium text-fg-muted">Status</th>
+                <tr
+                  className={cn(
+                    fieldLabel,
+                    "border-b border-border bg-bg text-left text-fg-subtle",
+                  )}
+                >
+                  <th className="px-3 py-2">Object key</th>
+                  <th className="px-3 py-2">Content-Type</th>
+                  <th className="px-3 py-2">Size</th>
+                  <th className="w-48 px-3 py-2">Status</th>
                   <th className="w-8 px-3 py-2" />
                 </tr>
               </thead>
@@ -308,7 +302,7 @@ export function PutObject() {
                         value={row.key}
                         onChange={(e) => updateRow(row.id, { key: e.target.value })}
                         disabled={uploading || row.status === "done"}
-                        className="h-7 font-mono text-sm"
+                        className="h-7"
                       />
                     </td>
                     <td className="px-3 py-2">
@@ -316,10 +310,10 @@ export function PutObject() {
                         value={row.contentType}
                         onChange={(e) => updateRow(row.id, { contentType: e.target.value })}
                         disabled={uploading || row.status === "done"}
-                        className="h-7 text-sm"
+                        className="h-7"
                       />
                     </td>
-                    <td className="px-3 py-2 text-sm whitespace-nowrap text-fg-muted">
+                    <td className="px-3 py-2 whitespace-nowrap text-fg-muted">
                       {formatBytes(row.file.size)}
                     </td>
                     <td className="px-3 py-2">
@@ -544,9 +538,9 @@ function Section({
   return (
     <div className="rounded-lg border border-border bg-bg-elevated">
       <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-        <h2 className="text-sm font-semibold text-fg">{title}</h2>
+        <h2 className="font-mono text-sm font-semibold text-fg">{title}</h2>
         {count !== undefined && (
-          <span className="rounded-full bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">
+          <span className="rounded-full bg-accent/10 px-2 py-0.5 font-mono text-xs font-medium text-accent">
             {count}
           </span>
         )}
@@ -568,11 +562,13 @@ function StatusBadge({ row }: { row: FileRow }) {
               style={{ width: `${row.progress}%` }}
             />
           </div>
-          <span className="w-8 text-right text-sm text-fg-muted tabular-nums">{row.progress}%</span>
+          <span className="w-8 text-right font-mono text-sm text-fg-muted tabular-nums">
+            {row.progress}%
+          </span>
         </div>
       )
     case "done":
-      return <span className="text-sm font-medium text-success">Done</span>
+      return <span className="font-mono text-sm font-medium text-success">Done</span>
     case "error":
       return (
         <span className="text-sm font-medium text-danger" title={row.errorMsg}>
@@ -580,6 +576,6 @@ function StatusBadge({ row }: { row: FileRow }) {
         </span>
       )
     default:
-      return <span className="text-sm text-fg-subtle">Pending</span>
+      return <span className="font-mono text-sm text-fg-subtle">Pending</span>
   }
 }

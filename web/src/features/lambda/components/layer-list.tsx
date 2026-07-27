@@ -5,17 +5,7 @@
 import { useState, useCallback } from "react"
 import { useNavigate } from "@tanstack/react-router"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import {
-  Archive,
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  Cloud,
-  Layers,
-  Plus,
-  RefreshCw,
-  Trash2,
-} from "lucide-react"
+import { Archive, Check, ChevronLeft, ChevronRight, Cloud, Eye, Layers, Trash2 } from "lucide-react"
 import {
   layersQueryOptions,
   publishLayerVersionMutationOptions,
@@ -43,7 +33,16 @@ import {
 } from "@/components/ui/dialog"
 import { FormField } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { QueryListState, Spinner, EmptyState } from "@/components/ui/primitives"
+import {
+  CreateAction,
+  RefreshAction,
+  ResourceListCard,
+  ResourceListPage,
+  ResourceName,
+  RowAction,
+  RowActions,
+} from "@/components/ui/resource-list-page"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { useToast } from "@/components/ui/toast"
 import type { LambdaLayer, LambdaRuntimeInfo } from "@/types"
@@ -63,7 +62,13 @@ export function LayerList() {
   const navigate = useNavigate()
   const [showCreate, setShowCreate] = useState(false)
 
-  const { data: layers = [], isLoading, isFetching, refetch } = useQuery(layersQueryOptions())
+  const {
+    data: layers = [],
+    isLoading,
+    isFetching,
+    refetch,
+    error,
+  } = useQuery(layersQueryOptions())
 
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
@@ -83,56 +88,57 @@ export function LayerList() {
   })
 
   return (
-    <div className="flex w-full flex-col gap-4">
-      <PageHeader
-        title="Lambda Layers"
-        description="Manage reusable code libraries attached to Lambda functions."
-        actions={
-          <div className="flex gap-2">
-            <Button size="sm" variant="ghost" disabled={isFetching} onClick={() => refetch()}>
-              <RefreshCw className={cn("mr-1 h-4 w-4", isFetching && "animate-spin")} />
-              Refresh
-            </Button>
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1 h-4 w-4" />
-              Publish version
-            </Button>
-          </div>
-        }
-      />
-
-      {isLoading ? (
-        <div className="flex justify-center py-24">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : layers.length === 0 ? (
-        <EmptyState
-          icon={<Layers className="h-8 w-8 opacity-40" />}
-          title="No layers"
-          description="Publish a layer version to get started."
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Latest version</TableHead>
-              <TableHead>Compatible runtimes</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead className="w-16" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {layers.map((layer) => (
-              <LayerRow
-                key={layer.LayerArn}
-                layer={layer}
-                onDelete={() => setDeleteTarget(layer.LayerName ?? "")}
+    <ResourceListPage
+      title="Lambda Layers"
+      count={layers.length}
+      actions={
+        <>
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Publish version</CreateAction>
+        </>
+      }
+    >
+      <ResourceListCard>
+        {isLoading || layers.length === 0 ? (
+          <QueryListState
+            isLoading={isLoading}
+            isEmpty={layers.length === 0}
+            error={error}
+            empty={
+              <EmptyState
+                icon={<Layers className="h-10 w-10" />}
+                title="No layers yet"
+                description="Publish a layer version to get started."
+                action={
+                  <CreateAction onClick={() => setShowCreate(true)}>Publish version</CreateAction>
+                }
               />
-            ))}
-          </TableBody>
-        </Table>
-      )}
+            }
+            errorTitle="Failed to load layers"
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Latest version</TableHead>
+                <TableHead>Compatible runtimes</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead className="w-20 text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {layers.map((layer) => (
+                <LayerRow
+                  key={layer.LayerArn}
+                  layer={layer}
+                  onDelete={() => setDeleteTarget(layer.LayerName ?? "")}
+                />
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </ResourceListCard>
 
       {showCreate && (
         <PublishLayerDialog
@@ -151,7 +157,7 @@ export function LayerList() {
           }}
         />
       )}
-    </div>
+    </ResourceListPage>
   )
 }
 
@@ -160,32 +166,30 @@ export function LayerList() {
 function LayerRow({ layer, onDelete }: { layer: LambdaLayer; onDelete: () => void }) {
   const navigate = useNavigate()
   const lv = layer.LatestMatchingVersion
+  const layerName = layer.LayerName ?? ""
 
   return (
-    <TableRow
-      className="cursor-pointer"
-      onClick={() =>
-        navigate({ to: "/lambda/layers/$layerName", params: { layerName: layer.LayerName ?? "" } })
-      }
-    >
-      <TableCell className="font-medium">{layer.LayerName}</TableCell>
+    <TableRow onClick={() => navigate({ to: "/lambda/layers/$layerName", params: { layerName } })}>
+      <TableCell>
+        <ResourceName icon={Layers} name={layerName} />
+      </TableCell>
       <TableCell>{lv?.Version}</TableCell>
       <TableCell>
         {(lv?.CompatibleRuntimes?.length ?? 0) > 0 ? lv!.CompatibleRuntimes!.join(", ") : "—"}
       </TableCell>
-      <TableCell className="text-sm text-fg-muted">{formatDate(lv?.CreatedDate ?? "")}</TableCell>
-      <TableCell>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="text-danger hover:text-danger"
-          onClick={(e) => {
-            e.stopPropagation()
-            onDelete()
-          }}
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
+      <TableCell className="text-fg-muted">{formatDate(lv?.CreatedDate ?? "")}</TableCell>
+      <TableCell onClick={(e) => e.stopPropagation()}>
+        <RowActions>
+          <RowAction
+            label={`View ${layerName}`}
+            onClick={() => navigate({ to: "/lambda/layers/$layerName", params: { layerName } })}
+          >
+            <Eye className="h-3.5 w-3.5" />
+          </RowAction>
+          <RowAction label={`Delete ${layerName}`} tone="danger" onClick={onDelete}>
+            <Trash2 className="h-3.5 w-3.5" />
+          </RowAction>
+        </RowActions>
       </TableCell>
     </TableRow>
   )
@@ -228,7 +232,9 @@ function PublishLayerDialog({
   const [s3Key, setS3Key] = useState("")
   const [s3ObjectVersion, setS3ObjectVersion] = useState("")
 
-  const { data: runtimesList = [], isLoading: runtimesLoading } = useQuery(lambdaRuntimesQueryOptions())
+  const { data: runtimesList = [], isLoading: runtimesLoading } = useQuery(
+    lambdaRuntimesQueryOptions(),
+  )
   const runtimeItems: LambdaRuntimeInfo[] = runtimesList.filter((rt) => !rt.deprecated)
 
   const handlePublish = useCallback(async () => {

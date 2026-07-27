@@ -87,41 +87,71 @@ function eventColor(type: string): "default" | "success" | "danger" | "warning" 
   return "default"
 }
 
-/** Tailwind color class for the source badge. */
+/**
+ * Source → categorical ramp slot.
+ *
+ * The colour encodes *identity* — which service emitted the event — so it can't
+ * collapse onto one accent. It resolves through the `--cat-1…10` tokens
+ * (src/styles/global.css) rather than a fixed Tailwind hue, because a single
+ * shade cannot be legible on both the light card and the dark one: each slot
+ * carries a light value and a dark value at the same hue, so a service keeps
+ * its colour identity when the theme flips.
+ *
+ * Twenty-eight sources share ten slots. Sharing is deliberate, not incidental:
+ * services grouped onto one slot are ones that rarely stream side by side, and
+ * the two pairs that were literally indistinguishable before (ecr/eventbridge
+ * both `rose-400`, kinesis/cloudformation both `cyan-300`) were split apart.
+ * Colour is never the sole carrier of meaning here — the source name is printed
+ * as text immediately beside it.
+ */
+const SOURCE_COLOR: Record<string, string> = {
+  // red
+  secretsmanager: "text-cat-1",
+  ecr: "text-cat-1",
+  // orange
+  s3: "text-cat-2",
+  ssm: "text-cat-2",
+  ses: "text-cat-2",
+  // amber
+  sqs: "text-cat-3",
+  kms: "text-cat-3",
+  iam: "text-cat-3",
+  // green
+  ecs: "text-cat-4",
+  apigateway: "text-cat-4",
+  elasticache: "text-cat-4",
+  // teal
+  logs: "text-cat-5",
+  stepfunctions: "text-cat-5",
+  // cyan
+  request: "text-cat-6",
+  pipes: "text-cat-6",
+  kinesis: "text-cat-6",
+  cloudformation: "text-cat-6",
+  // blue
+  dynamodb: "text-cat-7",
+  ec2: "text-cat-7",
+  docker: "text-cat-7",
+  msk: "text-cat-7",
+  // violet
+  lambda: "text-cat-8",
+  rds: "text-cat-8",
+  cognito: "text-cat-8",
+  // magenta
+  cloudfront: "text-cat-9",
+  eventbridge: "text-cat-9",
+  // rose
+  sns: "text-cat-10",
+  appsync: "text-cat-10",
+  // Uncoloured on purpose: STS signs for other services rather than having an
+  // identity of its own in a stream, and `inbox` is the local mail sink.
+  sts: "text-fg-subtle",
+  inbox: "text-fg-muted",
+}
+
+/** Categorical ramp token for the source badge. */
 function sourceColor(source: string): string {
-  const map: Record<string, string> = {
-    request: "text-cyan-400",
-    s3: "text-orange-400",
-    sqs: "text-yellow-400",
-    sns: "text-pink-400",
-    dynamodb: "text-blue-400",
-    lambda: "text-purple-400",
-    kinesis: "text-cyan-300",
-    pipes: "text-cyan-400",
-    logs: "text-teal-400",
-    ec2: "text-sky-400",
-    ecs: "text-emerald-400",
-    rds: "text-violet-400",
-    iam: "text-yellow-300",
-    sts: "text-slate-300",
-    ssm: "text-orange-300",
-    kms: "text-amber-400",
-    secretsmanager: "text-red-400",
-    ses: "text-amber-500",
-    cloudformation: "text-cyan-300",
-    cloudfront: "text-purple-300",
-    apigateway: "text-green-300",
-    appsync: "text-pink-300",
-    cognito: "text-indigo-400",
-    eventbridge: "text-rose-400",
-    stepfunctions: "text-teal-300",
-    elasticache: "text-green-500",
-    ecr: "text-rose-400",
-    msk: "text-sky-500",
-    docker: "text-blue-300",
-    inbox: "text-fg-muted",
-  }
-  return map[source.toLowerCase()] ?? "text-fg-muted"
+  return SOURCE_COLOR[source.toLowerCase()] ?? "text-fg-muted"
 }
 
 function formatTime(iso: string): string {
@@ -198,6 +228,28 @@ function jsonLiteral(value: string | number | boolean | null): string {
   return JSON.stringify(value)
 }
 
+/**
+ * Prism token classes, borrowed for the hand-rolled JSON tree below.
+ *
+ * `src/styles/global.css` already themes `.token.string`, `.token.property`,
+ * `.token.number`, `.token.boolean` and friends for both light and dark, and
+ * the JSON editor renders through them via Prism. Reusing the class names
+ * instead of picking hues here means the expanded payload agrees with the
+ * editor about what a string looks like, adapts to the theme for free, and —
+ * because a decoded base64 payload in the very same view *is* rendered by
+ * Prism — the two halves of one expanded event can't disagree.
+ *
+ * The class names are the exact ones Prism's JSON grammar emits (see
+ * src/lib/prism.ts), so the mapping stays honest.
+ */
+const TOKEN_STRING = "token string"
+const TOKEN_PROPERTY = "token property"
+const TOKEN_NUMBER = "token number"
+const TOKEN_BOOLEAN = "token boolean"
+const TOKEN_NULL = "token null keyword"
+const TOKEN_PUNCTUATION = "token punctuation"
+const TOKEN_OPERATOR = "token operator"
+
 function JsonString({ value, path }: { value: string; path: string }) {
   const [showRaw, setShowRaw] = useState(false)
   const decoded = decodeBase64Value(value)
@@ -209,19 +261,19 @@ function JsonString({ value, path }: { value: string; path: string }) {
     // when the ARN's service has no mapped UI route — see arn-link.tsx.
     if (value.startsWith("arn:")) {
       return (
-        <span className="text-emerald-300">
+        <span className={TOKEN_STRING}>
           "<ArnLink arn={value} />"
         </span>
       )
     }
     if (value.includes("arn:")) {
       return (
-        <span className="text-emerald-300">
+        <span className={TOKEN_STRING}>
           "<LinkifiedText text={value} />"
         </span>
       )
     }
-    return <span className="text-emerald-300">{jsonLiteral(value)}</span>
+    return <span className={TOKEN_STRING}>{jsonLiteral(value)}</span>
   }
 
   const visible = showRaw ? jsonLiteral(value) : decoded.formatted
@@ -232,8 +284,12 @@ function JsonString({ value, path }: { value: string; path: string }) {
         aria-label={showRaw ? `Show decoded value at ${path}` : `Show raw value at ${path}`}
         title={showRaw ? "Show decoded value" : "Show raw value"}
         className={cn(
-          "mt-0.5 inline-flex h-4 w-4 items-center justify-center rounded border border-cyan-400/30 text-cyan-300 hover:bg-cyan-400/10",
-          !showRaw && "bg-cyan-400/10",
+          "mt-0.5 inline-flex h-4 w-4 items-center justify-center rounded",
+          // A tint of --accent rather than --accent-muted: the row underneath
+          // turns --accent-muted on hover, and the "showing decoded" fill has
+          // to stay visible against both surfaces.
+          "border border-accent/40 text-accent hover:bg-accent/25",
+          !showRaw && "bg-accent/15",
         )}
         onClick={(event) => {
           event.stopPropagation()
@@ -242,7 +298,7 @@ function JsonString({ value, path }: { value: string; path: string }) {
       >
         <Code2 className="h-3 w-3" aria-hidden="true" />
       </button>
-      <span className="text-cyan-300">
+      <span className="text-accent">
         {showRaw ? "raw" : decoded.json ? "decoded JSON" : "decoded"}
       </span>
       {decoded.json && !showRaw ? (
@@ -251,59 +307,62 @@ function JsonString({ value, path }: { value: string; path: string }) {
           dangerouslySetInnerHTML={highlightedJSON(visible)}
         />
       ) : (
-        <span className={cn(showRaw ? "text-emerald-300" : "text-fg-muted")}>{visible}</span>
+        <span className={cn(showRaw ? TOKEN_STRING : "text-fg-muted")}>{visible}</span>
       )}
     </span>
   )
 }
 
 function JsonValue({ value, path }: { value: unknown; path: string }) {
-  if (value === null) return <span className="text-fg-subtle">null</span>
+  if (value === null) return <span className={TOKEN_NULL}>null</span>
 
   if (Array.isArray(value)) {
-    if (value.length === 0) return <span>[]</span>
+    if (value.length === 0) return <span className={TOKEN_PUNCTUATION}>[]</span>
     return (
       <span>
-        [
+        <span className={TOKEN_PUNCTUATION}>[</span>
         {value.map((item, index) => (
           <span key={`${path}.${index}`} className="block pl-4">
             <JsonValue value={item} path={`${path}[${index}]`} />
-            {index < value.length - 1 ? <span>,</span> : null}
+            {index < value.length - 1 ? <span className={TOKEN_PUNCTUATION}>,</span> : null}
           </span>
         ))}
-        <span className="block">]</span>
+        <span className={cn("block", TOKEN_PUNCTUATION)}>]</span>
       </span>
     )
   }
 
   if (typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>)
-    if (entries.length === 0) return <span>{"{}"}</span>
+    if (entries.length === 0) return <span className={TOKEN_PUNCTUATION}>{"{}"}</span>
     return (
       <span>
-        {"{"}
+        <span className={TOKEN_PUNCTUATION}>{"{"}</span>
         {entries.map(([key, item], index) => (
           <span key={`${path}.${key}`} className="block pl-4">
-            <span className="text-sky-300">{jsonLiteral(key)}</span>:{" "}
+            <span className={TOKEN_PROPERTY}>{jsonLiteral(key)}</span>
+            <span className={TOKEN_OPERATOR}>:</span>{" "}
             <JsonValue value={item} path={`${path}.${key}`} />
-            {index < entries.length - 1 ? <span>,</span> : null}
+            {index < entries.length - 1 ? <span className={TOKEN_PUNCTUATION}>,</span> : null}
           </span>
         ))}
-        <span className="block">{"}"}</span>
+        <span className={cn("block", TOKEN_PUNCTUATION)}>{"}"}</span>
       </span>
     )
   }
 
   if (typeof value === "string") return <JsonString value={value} path={path} />
-  if (typeof value === "number") return <span className="text-amber-300">{jsonLiteral(value)}</span>
-  if (typeof value === "boolean")
-    return <span className="text-purple-300">{jsonLiteral(value)}</span>
+  if (typeof value === "number") return <span className={TOKEN_NUMBER}>{jsonLiteral(value)}</span>
+  if (typeof value === "boolean") return <span className={TOKEN_BOOLEAN}>{jsonLiteral(value)}</span>
   return <span className="text-fg-muted">{jsonLiteral(String(value))}</span>
 }
 
 function EventPayloadDetails({ event }: { event: StreamEvent }) {
   return (
-    <div className="mt-1 rounded bg-white/5 p-2 text-xs break-all whitespace-pre-wrap text-fg-muted">
+    // bg-bg-muted rather than the console's own surface: the expanded payload
+    // has to read as a nested block in both themes, so it steps *away* from
+    // --bg-elevated in whichever direction the theme has room for.
+    <div className="mt-1 rounded bg-bg-muted p-2 text-xs break-all whitespace-pre-wrap text-fg-muted">
       <JsonValue
         value={{
           type: event.type,
@@ -365,11 +424,11 @@ export function EventConsole({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           {connected ? (
-            <Wifi className="h-3.5 w-3.5 text-green-400" />
+            <Wifi className="h-3.5 w-3.5 text-success" />
           ) : (
             <WifiOff className="h-3.5 w-3.5 text-fg-subtle" />
           )}
-          <span className="text-xs text-fg-muted">
+          <span className="font-mono text-xs text-fg-muted">
             {paused ? "Paused" : connected ? "Live" : "Disconnected"}
             {" · "}
             {events.length.toLocaleString()} event{events.length !== 1 ? "s" : ""}
@@ -393,11 +452,14 @@ export function EventConsole({
         </Button>
       </div>
 
-      {/* Console window */}
+      {/* Console window. A log view, not a terminal emulator: the surface is the
+          same card token every other panel in the app sits on, so it reads as
+          light on light and dark on dark. Density and the mono face carry the
+          console character, not a hardcoded near-black slab. */}
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="overflow-auto rounded-lg border border-border bg-[#0d0d0d] font-mono text-xs"
+        className="overflow-auto rounded-lg border border-border bg-bg-elevated font-mono text-xs"
         style={{ height: "calc(100vh - 220px)", minHeight: 300 }}
       >
         {events.length === 0 ? (
@@ -425,11 +487,11 @@ export function EventConsole({
                     width: "100%",
                     transform: `translateY(${vr.start}px)`,
                   }}
-                  className="cursor-pointer border-b border-white/5 px-3 py-1.5 hover:bg-white/5"
+                  className="cursor-pointer border-b border-border-muted px-3 py-1.5 transition-colors hover:bg-accent-muted"
                   onClick={() => setExpanded(isExpanded ? null : vr.index)}
                 >
                   <div className="flex min-w-0 items-baseline gap-2">
-                    <span className="shrink-0 text-xs text-fg-subtle tabular-nums">
+                    <span className="shrink-0 font-mono text-xs text-fg-subtle tabular-nums">
                       {formatTime(ev.time)}
                     </span>
                     <span className={cn("shrink-0 text-xs font-semibold", sourceColor(ev.source))}>

@@ -1,14 +1,14 @@
 import { useState, useEffect, useRef } from "react"
 import { useRouterState } from "@tanstack/react-router"
-import { Sidebar } from "./sidebar"
-import { Header } from "./header"
+import { Sidebar } from "./sidebar/sidebar"
+import { Header } from "./header/header"
 import { OfflineBanner } from "./offline-banner"
-import { ConnectionDialog } from "./connection-dialog"
+import { ConnectionGate } from "./connection-gate"
 import { GlobalSearch, useGlobalSearchShortcut } from "./global-search"
-import { isConfigured } from "@/hooks/use-endpoint"
 import { ConnectionStatusProvider } from "@/hooks/use-connection-status"
 import { FavouritesProvider } from "@/hooks/use-favourites"
 import { useEventStreamSubscription } from "@/hooks/use-event-stream"
+import { SidebarCollapseProvider } from "./use-sidebar-collapse"
 
 interface AppShellProps {
   children: React.ReactNode
@@ -18,14 +18,19 @@ export function AppShell({ children }: AppShellProps) {
   return (
     <ConnectionStatusProvider>
       <FavouritesProvider>
-        <AppShellInner>{children}</AppShellInner>
+        <SidebarCollapseProvider>
+          {/* Nothing behind the gate mounts — no SSE, no queries — until the
+              emulator has actually answered. */}
+          <ConnectionGate>
+            <AppShellInner>{children}</AppShellInner>
+          </ConnectionGate>
+        </SidebarCollapseProvider>
       </FavouritesProvider>
     </ConnectionStatusProvider>
   )
 }
 
 function AppShellInner({ children }: AppShellProps) {
-  const [connected, setConnected] = useState(() => isConfigured())
   const [searchOpen, setSearchOpen] = useState(false)
   const mainRef = useRef<HTMLElement>(null)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
@@ -44,17 +49,13 @@ function AppShellInner({ children }: AppShellProps) {
     mainRef.current?.scrollTo({ top: 0, behavior: "instant" })
   }, [pathname])
 
-  if (!connected) {
-    return <ConnectionDialog onConnected={() => setConnected(true)} />
-  }
-
   return (
     <div className="flex h-full overflow-hidden">
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
         <OfflineBanner />
         <Header onSearchOpen={() => setSearchOpen(true)} />
-        <main ref={mainRef} className="flex-1 overflow-auto bg-bg p-4">
+        <main ref={mainRef} className="flex-1 overflow-auto bg-bg p-6">
           {children}
         </main>
       </div>

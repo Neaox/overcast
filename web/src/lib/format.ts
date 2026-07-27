@@ -15,7 +15,9 @@ export function formatDate(date: string | Date | number | undefined): string {
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
-    }).format(typeof date === "number" ? new Date(date) : typeof date === "string" ? new Date(date) : date)
+    }).format(
+      typeof date === "number" ? new Date(date) : typeof date === "string" ? new Date(date) : date,
+    )
   } catch {
     return String(date)
   }
@@ -39,7 +41,5 @@ export function wordsFromIdentifier(value: string): string[] {
 export function toTitleCase(value: string): string {
   const words = wordsFromIdentifier(value)
   if (words.length === 0) return value
-  return words
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-    .join(" ")
+  return words.map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()).join(" ")
 }

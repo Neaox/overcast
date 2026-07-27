@@ -19,6 +19,7 @@ import { LambdaInvocationsDrawer, type Invocation } from "./lambda-invocations-d
 import type { LogStreamTarget } from "./log-stream-peek"
 import { logsStreamsQueryOptions } from "@/features/cloudwatch/logs/data"
 import type { LogStream, StreamEvent } from "@/types"
+import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import { SERVICES } from "@/lib/service-registry"
 import { sqs } from "@/services/api"
@@ -280,7 +281,7 @@ const SqsStatsBar = memo(function SqsStatsBar({
     : undefined
 
   return (
-    <div className="mt-2 flex items-center gap-2 text-xs font-semibold tabular-nums">
+    <div className="mt-2 flex items-center gap-2 font-mono text-xs font-semibold tabular-nums">
       {/* Visible pill */}
       <span
         className={cn(
@@ -448,7 +449,7 @@ const SqsMessageList = memo(function SqsMessageList({
               {/* Receive count badge — shown first so it's immediately visible */}
               <span
                 className={cn(
-                  "shrink-0 rounded bg-fg-muted/20 px-1 py-px text-[9px] font-bold text-fg-muted tabular-nums",
+                  "shrink-0 rounded bg-fg-muted/20 px-1 py-px font-mono text-[9px] font-bold text-fg-muted tabular-nums",
                   isDone && "line-through",
                 )}
                 title={`Received ${msg.approximateReceiveCount} time(s)`}
@@ -458,7 +459,7 @@ const SqsMessageList = memo(function SqsMessageList({
               {/* Status badge */}
               <span
                 className={cn(
-                  "inline-flex shrink-0 items-center rounded px-1 py-px text-[9px] leading-none font-bold uppercase",
+                  "inline-flex shrink-0 items-center rounded px-1 py-px font-mono text-[9px] leading-none font-bold uppercase",
                   visualPhase === "done"
                     ? "bg-red-700/70 text-white"
                     : visualPhase === "delayed"
@@ -619,7 +620,7 @@ const RdsStatusBadge = memo(function RdsStatusBadge({ status }: { status: string
   return (
     <span
       className={cn(
-        "mt-0.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
+        "mt-0.5 inline-flex items-center rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase",
         colourClass,
       )}
     >
@@ -680,7 +681,7 @@ function SqsMessageModal({
             <div className="mb-3 flex flex-wrap gap-2 text-xs">
               <span
                 className={cn(
-                  "rounded px-1.5 py-0.5 text-[10px] font-bold text-white uppercase",
+                  "rounded px-1.5 py-0.5 font-mono text-[10px] font-bold text-white uppercase",
                   isInflight(displayMsg) ? "bg-orange-600" : "bg-emerald-600",
                 )}
               >
@@ -701,9 +702,7 @@ function SqsMessageModal({
               ) : (
                 <>
                   <section>
-                    <p className="mb-1 text-[10px] font-semibold tracking-wider text-fg-muted uppercase">
-                      Body
-                    </p>
+                    <p className={cn(sectionLabel, "mb-1 text-fg-muted")}>Body</p>
                     <pre className="max-h-48 overflow-x-auto rounded bg-bg p-2 text-xs break-all whitespace-pre-wrap text-fg">
                       {displayMsg.body || "(empty)"}
                     </pre>
@@ -711,9 +710,7 @@ function SqsMessageModal({
 
                   {Object.keys(displayMsg.messageAttributes).length > 0 && (
                     <section>
-                      <p className="mb-1 text-[10px] font-semibold tracking-wider text-fg-muted uppercase">
-                        Message Attributes
-                      </p>
+                      <p className={cn(sectionLabel, "mb-1 text-fg-muted")}>Message Attributes</p>
                       <table className="w-full text-xs">
                         <tbody>
                           {Object.entries(displayMsg.messageAttributes).map(([k, v]) => (
@@ -731,9 +728,7 @@ function SqsMessageModal({
 
                   {Object.keys(displayMsg.attributes).length > 0 && (
                     <section>
-                      <p className="mb-1 text-[10px] font-semibold tracking-wider text-fg-muted uppercase">
-                        System Attributes
-                      </p>
+                      <p className={cn(sectionLabel, "mb-1 text-fg-muted")}>System Attributes</p>
                       <table className="w-full text-xs">
                         <tbody>
                           {Object.entries(displayMsg.attributes).map(([k, v]) => (
@@ -882,7 +877,7 @@ function ESMRecordDetails({ event, query }: { event: ESMDecisionEvent; query: st
       <div className="grid grid-cols-2 gap-2 text-xs text-fg-muted @md:grid-cols-4">
         {typeof record.eventID === "string" && (
           <div className="rounded bg-bg px-2 py-1">
-            <span className="block text-[10px] font-semibold text-fg-subtle uppercase">
+            <span className="block font-mono text-[10px] font-semibold text-fg-subtle uppercase">
               Event ID
             </span>
             <span className="break-all text-fg">{record.eventID}</span>
@@ -890,7 +885,7 @@ function ESMRecordDetails({ event, query }: { event: ESMDecisionEvent; query: st
         )}
         {typeof record.eventVersion === "string" && (
           <div className="rounded bg-bg px-2 py-1">
-            <span className="block text-[10px] font-semibold text-fg-subtle uppercase">
+            <span className="block font-mono text-[10px] font-semibold text-fg-subtle uppercase">
               Version
             </span>
             <span className="text-fg">{record.eventVersion}</span>
@@ -898,13 +893,15 @@ function ESMRecordDetails({ event, query }: { event: ESMDecisionEvent; query: st
         )}
         {typeof record.awsRegion === "string" && (
           <div className="rounded bg-bg px-2 py-1">
-            <span className="block text-[10px] font-semibold text-fg-subtle uppercase">Region</span>
+            <span className="block font-mono text-[10px] font-semibold text-fg-subtle uppercase">
+              Region
+            </span>
             <span className="text-fg">{record.awsRegion}</span>
           </div>
         )}
         {typeof dynamodb?.SequenceNumber === "string" && (
           <div className="rounded bg-bg px-2 py-1">
-            <span className="block text-[10px] font-semibold text-fg-subtle uppercase">
+            <span className="block font-mono text-[10px] font-semibold text-fg-subtle uppercase">
               Sequence
             </span>
             <span className="break-all text-fg">{dynamodb.SequenceNumber}</span>
@@ -914,7 +911,7 @@ function ESMRecordDetails({ event, query }: { event: ESMDecisionEvent; query: st
       <div className="grid gap-3 @lg:grid-cols-2">
         {sections.map(([label, value]) => (
           <div key={label} className="min-w-0 rounded border border-border bg-bg">
-            <div className="border-b border-border px-3 py-2 text-[10px] font-bold tracking-wide text-fg-muted uppercase">
+            <div className={cn(sectionLabel, "border-b border-border px-3 py-2 text-fg-muted")}>
               {label}
             </div>
             <pre className="max-h-56 overflow-auto p-3 text-xs leading-relaxed whitespace-pre-wrap text-fg">
@@ -977,7 +974,7 @@ function ESMFilterPanel({ esmId, patterns }: { esmId: string; patterns: string[]
       >
         <Filter className="h-7 w-7 transition-transform group-hover:rotate-12" />
         {total > 0 && (
-          <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-300 px-1 text-[10px] font-black text-black tabular-nums shadow">
+          <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-300 px-1 font-mono text-[10px] font-black text-black tabular-nums shadow">
             {total > 99 ? "99+" : total}
           </span>
         )}
@@ -1019,28 +1016,26 @@ function ESMFilterPanel({ esmId, patterns }: { esmId: string; patterns: string[]
 
             <div className="grid shrink-0 grid-cols-3 gap-2 border-b border-border px-5 py-3">
               <div className="rounded-lg border border-border bg-bg px-3 py-2">
-                <div className="text-[10px] font-bold tracking-wide text-fg-subtle uppercase">
-                  Received
-                </div>
-                <div className="text-xl font-semibold text-fg tabular-nums">{total}</div>
+                <div className={cn(fieldLabel, "text-fg-subtle")}>Received</div>
+                <div className="font-mono text-xl font-semibold text-fg tabular-nums">{total}</div>
               </div>
               <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/8 px-3 py-2">
-                <div className="text-[10px] font-bold tracking-wide text-emerald-300 uppercase">
-                  Filtered in
+                <div className={cn(fieldLabel, "text-emerald-300")}>Filtered in</div>
+                <div className="font-mono text-xl font-semibold text-emerald-200 tabular-nums">
+                  {matched}
                 </div>
-                <div className="text-xl font-semibold text-emerald-200 tabular-nums">{matched}</div>
               </div>
               <div className="rounded-lg border border-red-400/20 bg-red-400/8 px-3 py-2">
-                <div className="text-[10px] font-bold tracking-wide text-red-300 uppercase">
-                  Filtered out
+                <div className={cn(fieldLabel, "text-red-300")}>Filtered out</div>
+                <div className="font-mono text-xl font-semibold text-red-200 tabular-nums">
+                  {filtered}
                 </div>
-                <div className="text-xl font-semibold text-red-200 tabular-nums">{filtered}</div>
               </div>
             </div>
 
             <div className="shrink-0 border-b border-border px-5 py-4">
               <div className="mb-2 flex items-center justify-between gap-3">
-                <h3 className="text-sm font-semibold text-fg">Filter pattern</h3>
+                <h3 className="font-mono text-sm font-semibold text-fg">Filter pattern</h3>
                 {patterns.length > 1 && (
                   <span className="text-xs text-fg-muted">{patterns.length} patterns</span>
                 )}
@@ -1053,7 +1048,7 @@ function ESMFilterPanel({ esmId, patterns }: { esmId: string; patterns: string[]
             <div className="shrink-0 border-b border-border px-5 py-4">
               <div className="mb-3 flex flex-col gap-3 @md:flex-row @md:items-center @md:justify-between">
                 <div>
-                  <h3 className="text-sm font-semibold text-fg">Record history</h3>
+                  <h3 className="font-mono text-sm font-semibold text-fg">Record history</h3>
                   <p className="text-xs text-fg-subtle">
                     Showing {visibleDecisions.length} matching records from the local event cache.
                   </p>
@@ -1082,7 +1077,7 @@ function ESMFilterPanel({ esmId, patterns }: { esmId: string; patterns: string[]
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search keys, image values, sequence numbers..."
-                  className="w-full rounded-lg border border-border bg-bg py-2.5 pr-3 pl-9 text-sm text-fg placeholder:text-fg-subtle focus:border-amber-300 focus:outline-none"
+                  className="w-full rounded-lg border border-border bg-bg py-2.5 pr-3 pl-9 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-accent focus:border-accent focus:outline-none"
                 />
               </div>
             </div>
@@ -1116,12 +1111,12 @@ function ESMFilterPanel({ esmId, patterns }: { esmId: string; patterns: string[]
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-bg/60 px-4 py-3">
                           <div className="flex items-center gap-2">
-                            <span className="rounded-md bg-bg-elevated px-2 py-1 text-[10px] font-bold text-fg-muted tabular-nums">
+                            <span className="rounded-md bg-bg-elevated px-2 py-1 font-mono text-[10px] font-bold text-fg-muted tabular-nums">
                               #{receipt}
                             </span>
                             <span
                               className={cn(
-                                "rounded-md px-2 py-1 text-[10px] font-black tracking-wide uppercase",
+                                "rounded-md px-2 py-1 font-mono text-[10px] tracking-[0.12em] uppercase",
                                 didMatch
                                   ? "bg-emerald-400/15 text-emerald-300"
                                   : "bg-red-400/15 text-red-300",
@@ -1364,7 +1359,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
             <RdsStatusBadge status={status} />
           ) : service === "apigateway" ? (
             <div className="flex items-center gap-1.5">
-              <span className="rounded bg-fg-muted/15 px-1.5 py-0.5 text-[10px] font-semibold text-fg-muted uppercase">
+              <span className="rounded bg-fg-muted/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-fg-muted uppercase">
                 {protocolType ?? "API"}
               </span>
               {routeCount != null && (
@@ -1380,7 +1375,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
             </div>
           ) : service === "appsync" ? (
             <div className="flex items-center gap-1.5">
-              <span className="rounded bg-fg-muted/15 px-1.5 py-0.5 text-[10px] font-semibold text-fg-muted uppercase">
+              <span className="rounded bg-fg-muted/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-fg-muted uppercase">
                 {authenticationType ?? "GraphQL"}
               </span>
               {dataSourceCount != null && (
@@ -1395,7 +1390,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
               )}
             </div>
           ) : service === "esm-filter" ? (
-            <p className="text-sm leading-tight text-amber-300">DynamoDB stream filter</p>
+            <p className="font-mono text-sm leading-tight text-amber-300">DynamoDB stream filter</p>
           ) : (
             <p className="text-sm leading-tight text-fg-subtle capitalize">{service}</p>
           )}
@@ -1472,7 +1467,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
       {(eventCount ?? 0) > 0 && (
         <span
           className={cn(
-            "absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-bold tabular-nums",
+            "absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-mono text-[9px] font-bold tabular-nums",
             "bg-accent text-fg-on-accent",
           )}
         >
@@ -1484,7 +1479,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
       {(writeBurstCount ?? 0) > 1 && (
         <span
           className={cn(
-            "absolute -right-1.5 -bottom-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-bold tabular-nums",
+            "absolute -right-1.5 -bottom-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-mono text-[9px] font-bold tabular-nums",
             meta.color.replace("text-", "bg-").replace("-400", "-600"),
             "text-white",
           )}
@@ -1725,7 +1720,7 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
               {label}
             </button>
           </Tooltip>
-          <p className="text-sm leading-tight text-fg-subtle capitalize">lambda</p>
+          <p className="font-mono text-sm leading-tight text-fg-subtle capitalize">lambda</p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <button
@@ -1778,7 +1773,7 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
       {(eventCount ?? 0) > 0 && (
         <span
           className={cn(
-            "absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-bold tabular-nums",
+            "absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-mono text-[9px] font-bold tabular-nums",
             "bg-accent text-fg-on-accent",
           )}
         >

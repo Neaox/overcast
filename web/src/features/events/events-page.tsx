@@ -17,16 +17,7 @@
  * the server's history buffer uses to decide what to evict first.
  */
 import { useState, useCallback, useMemo, useRef, useEffect } from "react"
-import {
-  Activity,
-  Check,
-  ChevronDown,
-  Heart,
-  Pause,
-  Play,
-  Search,
-  X,
-} from "lucide-react"
+import { Activity, Check, ChevronDown, Heart, Pause, Play, Search, X } from "lucide-react"
 import { useEventStream, type StreamEvent } from "@/hooks/use-event-stream"
 import { EventConsole } from "@/components/ui/event-console"
 import { PageHeader } from "@/components/ui/primitives"
@@ -112,18 +103,33 @@ function eventMatchesText(ev: StreamEvent, lower: string): boolean {
     const p = ev.payload as Record<string, unknown> | null
     if (p) {
       for (const f of ["method", "path", "service", "operation", "requestId"]) {
-        if (String(p[f] ?? "").toLowerCase().includes(lower)) return true
+        if (
+          String(p[f] ?? "")
+            .toLowerCase()
+            .includes(lower)
+        )
+          return true
       }
-      if (String(p.status ?? "").toLowerCase().includes(lower)) return true
+      if (
+        String(p.status ?? "")
+          .toLowerCase()
+          .includes(lower)
+      )
+        return true
     }
   }
   try {
     if (JSON.stringify(ev.payload).toLowerCase().includes(lower)) return true
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return false
 }
 
-function topSources(events: readonly StreamEvent[], n: number): { id: string; label: string; count: number }[] {
+function topSources(
+  events: readonly StreamEvent[],
+  n: number,
+): { id: string; label: string; count: number }[] {
   const counts = new Map<string, number>()
   for (const e of events) counts.set(e.source, (counts.get(e.source) ?? 0) + 1)
   return Array.from(counts.entries())
@@ -135,7 +141,9 @@ function topSources(events: readonly StreamEvent[], n: number): { id: string; la
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function EventsPage() {
-  const [hiddenSources, setHiddenSources] = useState<Set<string>>(() => new Set(DEFAULT_HIDDEN_SOURCES))
+  const [hiddenSources, setHiddenSources] = useState<Set<string>>(
+    () => new Set(DEFAULT_HIDDEN_SOURCES),
+  )
   const [showHeartbeats, setShowHeartbeats] = useState(false)
   const [paused, setPaused] = useState(false)
   const [frozenEvents, setFrozenEvents] = useState<StreamEvent[]>([])
@@ -147,7 +155,11 @@ export function EventsPage() {
   const searchRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
-  const { events: rawEvents, connected, clear: streamClear } = useEventStream({
+  const {
+    events: rawEvents,
+    connected,
+    clear: streamClear,
+  } = useEventStream({
     includeHeartbeats: showHeartbeats,
   })
 
@@ -241,7 +253,11 @@ export function EventsPage() {
   // Filter sources in the dropdown by search text.
   const filteredSources = useMemo(() => {
     const q = sourceSearch.toLowerCase()
-    return q ? allSources.filter(s => s.id.toLowerCase().includes(q) || s.label.toLowerCase().includes(q)) : allSources
+    return q
+      ? allSources.filter(
+          (s) => s.id.toLowerCase().includes(q) || s.label.toLowerCase().includes(q),
+        )
+      : allSources
   }, [sourceSearch, allSources])
 
   return (
@@ -249,23 +265,24 @@ export function EventsPage() {
       <PageHeader
         title="Event Stream"
         description={
-          connected
-            ? top5.length > 0
-              ? (
-                <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
-                  <span>
-                    {rawEvents.length.toLocaleString()} event{rawEvents.length !== 1 ? "s" : ""}
-                  </span>
-                  {top5.map(s => (
-                    <span key={s.id} className="text-fg-subtle">
-                      <span className="font-medium text-fg-muted">{s.count}</span>{" "}
-                      {s.label}
-                    </span>
-                  ))}
+          connected ? (
+            top5.length > 0 ? (
+              <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                <span>
+                  {rawEvents.length.toLocaleString()} event{rawEvents.length !== 1 ? "s" : ""}
                 </span>
-              )
-              : "Waiting for events…"
-            : "Not connected"
+                {top5.map((s) => (
+                  <span key={s.id} className="text-fg-subtle">
+                    <span className="font-medium text-fg-muted">{s.count}</span> {s.label}
+                  </span>
+                ))}
+              </span>
+            ) : (
+              "Waiting for events…"
+            )
+          ) : (
+            "Not connected"
+          )
         }
       />
 
@@ -273,17 +290,17 @@ export function EventsPage() {
       <div className="flex flex-wrap items-center gap-2">
         {/* Free text search */}
         <div className="relative">
-          <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
+          <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
           <Input
             ref={searchRef}
             placeholder={hasFilter ? "Filtered…" : "Filter events…"}
             value={textFilter}
             onChange={(e) => setTextFilter(e.target.value)}
-            className="h-8 w-52 pl-7 pr-7 text-xs"
+            className="h-8 w-52 pr-7 pl-7 text-xs"
           />
           {textFilter && (
             <button
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-subtle hover:text-fg"
+              className="absolute top-1/2 right-2 -translate-y-1/2 text-fg-subtle hover:text-fg"
               onClick={() => setTextFilter("")}
               aria-label="Clear text filter"
             >
@@ -298,7 +315,7 @@ export function EventsPage() {
             variant="ghost"
             size="sm"
             className={cn("h-8 gap-1 text-xs", hasSourceFilter && "bg-fg/5 font-medium")}
-            onClick={() => setSourceMenuOpen(o => !o)}
+            onClick={() => setSourceMenuOpen((o) => !o)}
           >
             {(() => {
               if (visibleSourceCount <= 0) return "No sources"
@@ -309,11 +326,11 @@ export function EventsPage() {
           </Button>
 
           {sourceMenuOpen && (
-            <div className="absolute left-0 top-full z-50 mt-1 w-56 rounded-lg border border-border bg-bg-elevated shadow-lg">
+            <div className="absolute top-full left-0 z-50 mt-1 w-56 rounded-lg border border-border bg-bg-elevated shadow-lg">
               {visibleSourceCount > 0 ? (
                 <button
                   className="flex w-full items-center gap-2 rounded-t-lg px-3 py-1.5 text-xs text-fg-muted hover:bg-fg/5"
-                  onClick={() => setHiddenSources(new Set(allSources.map(s => s.id)))}
+                  onClick={() => setHiddenSources(new Set(allSources.map((s) => s.id)))}
                 >
                   Hide all
                 </button>
@@ -342,9 +359,11 @@ export function EventsPage() {
               {/* Source list */}
               <div className="max-h-64 overflow-y-auto">
                 {filteredSources.length === 0 ? (
-                  <div className="px-3 py-4 text-center text-xs text-fg-subtle">No sources match</div>
+                  <div className="px-3 py-4 text-center text-xs text-fg-subtle">
+                    No sources match
+                  </div>
                 ) : (
-                  filteredSources.map(s => {
+                  filteredSources.map((s) => {
                     const checked = !hiddenSources.has(s.id)
                     return (
                       <button
@@ -354,12 +373,12 @@ export function EventsPage() {
                         className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-fg/5"
                         onClick={() => toggleSource(s.id)}
                       >
-                        <span className={cn(
-                          "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
-                          checked
-                            ? "border-accent bg-accent text-bg"
-                            : "border-border",
-                        )}>
+                        <span
+                          className={cn(
+                            "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                            checked ? "border-accent bg-accent text-bg" : "border-border",
+                          )}
+                        >
                           {checked && <Check className="h-3 w-3" />}
                         </span>
                         <span className="flex-1 text-left">{s.label}</span>
@@ -400,7 +419,11 @@ export function EventsPage() {
             setPaused((v) => !v)
           }}
         >
-          {paused ? <Play className="h-3.5 w-3.5 text-green-400" /> : <Pause className="h-3.5 w-3.5" />}
+          {paused ? (
+            <Play className="h-3.5 w-3.5 text-green-400" />
+          ) : (
+            <Pause className="h-3.5 w-3.5" />
+          )}
           {paused ? "Resume" : "Pause"}
         </Button>
 
@@ -411,7 +434,7 @@ export function EventsPage() {
             variant="ghost"
             size="sm"
             className="h-8 text-xs"
-            onClick={() => setShowHeartbeats(v => !v)}
+            onClick={() => setShowHeartbeats((v) => !v)}
             aria-label={showHeartbeats ? "Hide heartbeat pings" : "Show heartbeat pings"}
             aria-pressed={showHeartbeats}
           >

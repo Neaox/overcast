@@ -97,7 +97,7 @@ export function KmsPage() {
 
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
-          <Search className="text-muted-foreground absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2" />
+          <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
           <Input
             placeholder="Filter keys…"
             className="pl-8"
@@ -139,7 +139,7 @@ export function KmsPage() {
                 className="cursor-pointer"
                 onClick={() => navigate({ to: "/kms/$keyId", params: { keyId: key.KeyId ?? "" } })}
               >
-                <TableCell className="font-mono text-sm font-medium">{key.KeyId}</TableCell>
+                <TableCell className="font-medium">{key.KeyId}</TableCell>
                 <TableCell className="text-fg-muted">
                   <ArnText arn={key.KeyArn ?? ""} />
                 </TableCell>

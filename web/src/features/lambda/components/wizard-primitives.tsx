@@ -26,7 +26,7 @@ export function StepDot({
     <div className="flex items-center gap-1.5">
       <div
         className={cn(
-          "flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold",
+          "flex h-5 w-5 items-center justify-center rounded-full font-mono text-[10px] font-bold",
           done
             ? "bg-accent text-fg-on-accent"
             : active

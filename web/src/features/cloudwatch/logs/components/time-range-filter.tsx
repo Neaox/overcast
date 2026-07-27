@@ -3,6 +3,7 @@ import { createPortal } from "react-dom"
 import { Clock, ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -186,7 +187,7 @@ function DropdownPanel({
   )
 
   return (
-    <div className="bg-bg-surface w-72 overflow-hidden rounded-lg border border-border shadow-lg">
+    <div className="w-72 overflow-hidden rounded-lg border border-border bg-bg-elevated shadow-lg">
       {/* Tab bar */}
       <div className="flex border-b border-border">
         <button
@@ -238,7 +239,7 @@ function DropdownPanel({
                       <button
                         key={p.shortLabel}
                         className={cn(
-                          "rounded-md px-2.5 py-1 text-xs font-medium tabular-nums transition-colors",
+                          "rounded-md px-2.5 py-1 font-mono text-xs font-medium tabular-nums transition-colors",
                           active
                             ? "bg-fg text-bg"
                             : "bg-bg-muted text-fg-muted hover:bg-border hover:text-fg",
@@ -257,7 +258,7 @@ function DropdownPanel({
         ) : (
           <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-fg-muted">Start date and time</label>
+              <label className={cn(fieldLabel, "text-fg-muted")}>Start date and time</label>
               <Input
                 type="datetime-local"
                 className="h-8 text-sm"
@@ -266,7 +267,7 @@ function DropdownPanel({
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-fg-muted">End date and time</label>
+              <label className={cn(fieldLabel, "text-fg-muted")}>End date and time</label>
               <Input
                 type="datetime-local"
                 className="h-8 text-sm"

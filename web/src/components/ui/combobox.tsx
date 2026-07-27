@@ -11,7 +11,7 @@
  */
 import React, { useEffect, useRef, useState } from "react"
 import * as PopoverPrimitive from "@radix-ui/react-popover"
-import { ChevronsUpDown, Loader2 } from "lucide-react"
+import { ChevronDown, ChevronsUpDown, Loader2, type LucideIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -317,8 +317,9 @@ function DropdownList<T>({
                     isDisabled
                       ? "cursor-not-allowed opacity-40"
                       : i === activeIdx
-                        ? "cursor-pointer bg-accent text-white *:text-white **:text-white!"
-                        : "cursor-pointer hover:bg-bg-muted",
+                        ? // Ink, not white: the dark theme's accent is a pale blue.
+                          "cursor-pointer bg-accent text-fg-on-accent *:text-fg-on-accent **:text-fg-on-accent!"
+                        : "cursor-pointer hover:bg-accent-muted",
                   )}
                 >
                   {renderItem(item, {
@@ -384,11 +385,11 @@ function SingleComboboxImpl<T>({
           placeholder="Loading…"
           className={cn(
             "flex h-8 w-full rounded-md border border-border bg-bg py-1 pr-8 pl-3",
-            "text-sm text-fg placeholder:text-fg-subtle opacity-60 cursor-not-allowed",
+            "cursor-not-allowed text-sm text-fg opacity-60 placeholder:text-fg-subtle",
             inputClassName,
           )}
         />
-        <Loader2 className="pointer-events-none absolute top-1/2 right-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle animate-spin" />
+        <Loader2 className="pointer-events-none absolute top-1/2 right-2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-fg-subtle" />
       </div>
     )
   }
@@ -412,7 +413,8 @@ function SingleComboboxImpl<T>({
             className={cn(
               "flex h-8 w-full rounded-md border border-border bg-bg py-1 pr-8 pl-3",
               "text-sm text-fg placeholder:text-fg-subtle",
-              "focus-visible::ring-inset focus-visible:border-accent focus-visible:ring-1 focus-visible:ring-accent focus-visible:outline-none",
+              "hover:border-accent",
+              "focus-visible:border-accent focus-visible:ring-1 focus-visible:ring-accent focus-visible:outline-none focus-visible:ring-inset",
               inputClassName,
             )}
           />
@@ -480,7 +482,12 @@ function MultiComboboxImpl<T>({
 
   if (isLoading) {
     return (
-      <div className={cn("relative flex min-h-8 w-full items-center rounded-md border border-border bg-bg px-3 py-1 opacity-60", className)}>
+      <div
+        className={cn(
+          "relative flex min-h-8 w-full items-center rounded-md border border-border bg-bg px-3 py-1 opacity-60",
+          className,
+        )}
+      >
         <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin text-fg-subtle" />
         <span className="text-sm text-fg-subtle">Loading…</span>
       </div>
@@ -492,7 +499,7 @@ function MultiComboboxImpl<T>({
       <PopoverPrimitive.Anchor asChild>
         <div ref={containerRef} className={cn("relative", className)} onBlur={handleContainerBlur}>
           <div
-            className="flex min-h-8 w-full cursor-text flex-wrap gap-1 rounded-md border border-border bg-bg px-2 py-1 focus-within:ring-1 focus-within:ring-accent focus-within:ring-inset"
+            className="flex min-h-8 w-full cursor-text flex-wrap gap-1 rounded-md border border-border bg-bg px-2 py-1 transition-colors focus-within:border-accent focus-within:ring-1 focus-within:ring-accent focus-within:ring-inset hover:border-accent"
             onClick={() => inputRef.current?.focus()}
           >
             {values.map((v) => (
@@ -563,8 +570,18 @@ export function Combobox<T>(props: ComboboxProps<T>) {
   return <SingleComboboxImpl<T> {...props} />
 }
 
-// ─── Compact pill-shaped variant (e.g. header toolbar) ───────────────────────
+// ─── Compact split-control variant (e.g. header toolbar) ─────────────────────
 
+/**
+ * The topbar's control shape: a 32px bordered rounded-rect split into a
+ * value cell (optional leading icon + mono text) and a 26px chevron cell.
+ * Hover and focus move the *border* to accent — the fill never changes.
+ *
+ * It is still a combobox: the value cell is a real, typeable input driving the
+ * same filter/keyboard machinery as the full-size variant. Everything outside
+ * the input — the icon, the padding, the chevron cell — swallows its own
+ * mousedown so the click lands as "focus the input and open", never as a blur.
+ */
 export function ComboboxCompact<T>({
   value,
   onChange,
@@ -574,9 +591,13 @@ export function ComboboxCompact<T>({
   renderItem,
   renderCustomFooter,
   allowCustom = false,
+  leadingIcon: LeadingIcon,
   inputClassName,
   popoverWidth = "w-64",
-}: Omit<ComboboxPropsSingle<T>, "id" | "placeholder" | "className">) {
+}: Omit<ComboboxPropsSingle<T>, "id" | "placeholder" | "className"> & {
+  /** Rendered muted at the head of the value cell. */
+  leadingIcon?: LucideIcon
+}) {
   const {
     open,
     query,
@@ -596,7 +617,24 @@ export function ComboboxCompact<T>({
   return (
     <PopoverPrimitive.Root open={open} modal={false}>
       <PopoverPrimitive.Anchor asChild>
-        <div ref={containerRef} className="relative" onBlur={handleContainerBlur}>
+        <div
+          ref={containerRef}
+          onBlur={handleContainerBlur}
+          onMouseDown={(e) => {
+            if (e.target === inputRef.current) return
+            e.preventDefault()
+            inputRef.current?.focus()
+            if (!open) handleOpen()
+          }}
+          className={cn(
+            "group flex h-8 w-44 cursor-pointer items-center rounded-control border border-border bg-bg",
+            "transition-colors hover:border-accent",
+            "focus-within:border-accent focus-within:ring-1 focus-within:ring-accent focus-within:ring-inset",
+          )}
+        >
+          {LeadingIcon && (
+            <LeadingIcon aria-hidden className="ml-2 h-3.5 w-3.5 shrink-0 text-fg-subtle" />
+          )}
           <input
             ref={inputRef}
             role="combobox"
@@ -610,13 +648,18 @@ export function ComboboxCompact<T>({
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             className={cn(
-              "w-36 rounded-full border border-border bg-bg-muted py-0.5 pr-5 pl-2",
-              "cursor-pointer font-mono text-xs text-fg-muted",
-              "focus:text-fg focus:ring-1 focus:ring-accent focus:outline-none focus:ring-inset",
+              "min-w-0 flex-1 cursor-pointer bg-transparent px-2 font-mono text-xs",
+              "text-fg-muted transition-colors outline-none placeholder:text-fg-subtle",
+              "group-focus-within:text-fg group-hover:text-fg",
               inputClassName,
             )}
           />
-          <ChevronsUpDown className="pointer-events-none absolute top-1/2 right-1.5 h-3 w-3 -translate-y-1/2 text-fg-subtle" />
+          <span
+            aria-hidden
+            className="flex h-full w-[26px] shrink-0 items-center justify-center border-l border-border text-fg-subtle"
+          >
+            <ChevronDown className="h-3 w-3" />
+          </span>
         </div>
       </PopoverPrimitive.Anchor>
       {open && (

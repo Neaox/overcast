@@ -9,12 +9,18 @@
  * Shows cumulative reads/writes since process start for each reporting
  * store (internal/state.StoreCounters). A "hybrid" mode store additionally
  * breaks reads down by which tier actually served them — memory vs a
- * fall-through to SQLite — and shows how many accepted writes have been
- * flushed to disk so far, since hybrid is the only backend that serves from
+ * fall-through to SQLite — since hybrid is the only backend that serves from
  * two distinct tiers at all.
+ *
+ * Flushed op-rows are reported on their own rather than as a fraction of
+ * Writes: the two count different units (pending-op rows committed by the
+ * background flusher vs logical write calls), and rows replayed from a
+ * previous process's journal are flushed by this one, so flushed can exceed
+ * writes and is not a subset of it.
  */
 import type { DebugMetrics } from "@/types"
 import { Spinner } from "@/components/ui/primitives"
+import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 function formatCount(n: number): string {
@@ -41,7 +47,7 @@ function TierBar({
           {formatCount(value)} ({pct}%)
         </span>
       </div>
-      <div className="bg-bg-muted h-1.5 w-full overflow-hidden rounded-full">
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-bg-muted">
         <div className={cn("h-full rounded-full", colorClass)} style={{ width: `${pct}%` }} />
       </div>
     </div>
@@ -60,7 +66,7 @@ function StoreActivityCard({ store, index }: { store: DebugMetrics; index: numbe
   const hasTierSplit = counters.readsMemory !== undefined || counters.readsSQLite !== undefined
 
   return (
-    <div className="bg-bg-card flex flex-col gap-3 rounded-lg border border-border p-4">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg-elevated p-4">
       <div className="flex items-center justify-between">
         <span className="font-mono text-sm font-medium text-fg">
           {store.mode || `store ${index + 1}`}
@@ -70,20 +76,22 @@ function StoreActivityCard({ store, index }: { store: DebugMetrics; index: numbe
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <p className="text-[10px] font-medium tracking-wider text-fg-muted uppercase">Reads</p>
-          <p className="text-xl font-semibold text-fg tabular-nums">{formatCount(counters.reads)}</p>
+          <p className={cn(fieldLabel, "text-fg-muted")}>Reads</p>
+          <p className="font-mono text-xl font-semibold text-fg tabular-nums">
+            {formatCount(counters.reads)}
+          </p>
         </div>
         <div>
-          <p className="text-[10px] font-medium tracking-wider text-fg-muted uppercase">Writes</p>
-          <p className="text-xl font-semibold text-fg tabular-nums">{formatCount(counters.writes)}</p>
+          <p className={cn(fieldLabel, "text-fg-muted")}>Writes</p>
+          <p className="font-mono text-xl font-semibold text-fg tabular-nums">
+            {formatCount(counters.writes)}
+          </p>
         </div>
       </div>
 
       {hasTierSplit && (
         <div className="flex flex-col gap-2 border-t border-border pt-3">
-          <p className="text-[10px] font-medium tracking-wider text-fg-muted uppercase">
-            Memory vs disk (SQL)
-          </p>
+          <p className={cn(fieldLabel, "text-fg-muted")}>Memory vs disk (SQL)</p>
           <TierBar
             label="Memory reads"
             value={counters.readsMemory ?? 0}
@@ -98,8 +106,7 @@ function StoreActivityCard({ store, index }: { store: DebugMetrics; index: numbe
           />
           {counters.writesFlushedRows !== undefined && (
             <p className="text-xs text-fg-muted">
-              {formatCount(counters.writesFlushedRows)} of {formatCount(counters.writes)} writes
-              flushed to disk
+              {formatCount(counters.writesFlushedRows)} op-rows flushed to disk
             </p>
           )}
         </div>
@@ -123,9 +130,7 @@ export function StorageActivity({
 
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="text-sm font-medium tracking-wide text-fg-muted uppercase">
-        Storage Activity
-      </h2>
+      <h2 className={cn(sectionLabel, "text-fg-muted")}>Storage Activity</h2>
       {isLoading ? (
         <div className="flex justify-center py-10">
           <Spinner className="h-5 w-5" />
