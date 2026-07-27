@@ -728,7 +728,7 @@ The `cacheKey` **must** include `ep.baseUrl` and `ep.region` as the first two el
 ### Step 5.5 — TypeScript Check
 
 ```bash
-npx tsc --noEmit -p web/
+(cd web && pnpm run typecheck)
 ```
 
 ---
@@ -764,8 +764,8 @@ make check-caps
 make docs-check
 
 # Web UI build
-npx tsc --noEmit -p web/
-npm run build -w web
+(cd web && pnpm run typecheck)
+(cd web && pnpm run build)
 ```
 
 ---
@@ -828,7 +828,7 @@ go test -count=1 -run TestNewOp ./tests/integration/<service>/   # fail
 # ... implement ...
 go test -count=1 ./internal/services/<service>/... ./tests/integration/<service>/...  # pass
 make generate-caps && make docs && make check-caps                 # update capabilities
-npx tsc --noEmit -p web/                                           # UI check
+(cd web && pnpm run typecheck)                                     # UI check
 
 # Final gate
 go build ./... && go vet ./...
