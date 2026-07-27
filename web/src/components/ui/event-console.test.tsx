@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import { describe, expect, it, vi } from "vitest"
 import { render, screen, within } from "@/test/render"
 import { EventConsole } from "./event-console"
@@ -100,5 +101,85 @@ describe("EventConsole", () => {
     expect(
       within(screen.getByText("raw").parentElement!).getByText(JSON.stringify(encoded)),
     ).toBeInTheDocument()
+  })
+})
+
+/**
+ * The console used to paint itself on a hardcoded `bg-[#0d0d0d]` with pale text
+ * picked to sit on that slab, which made it a black rectangle in an otherwise
+ * light page. Every colour it uses now has to resolve through a token, so the
+ * regression is a test failure rather than a screenshot someone notices later.
+ */
+describe("EventConsole > theming", () => {
+  const source = readFileSync("src/components/ui/event-console.tsx", "utf8")
+
+  function renderOne(eventSource: string) {
+    render(
+      <EventConsole
+        connected
+        onClear={() => {}}
+        events={[
+          {
+            type: `${eventSource}:Something`,
+            source: eventSource,
+            time: "2026-07-14T12:00:00Z",
+            payload: {},
+          },
+        ]}
+      />,
+    )
+  }
+
+  it("paints the console surface with a theme token", () => {
+    expect(source).toContain("bg-bg-elevated")
+  })
+
+  it("declares no literal colour value anywhere in the component", () => {
+    // Tailwind arbitrary values: bg-[#0d0d0d], text-[rgb(…)], border-[hsl(…)]
+    expect(source).not.toMatch(/-\[(?:#|rgba?\(|hsla?\(|oklch\()/)
+  })
+
+  it("declares no raw Tailwind palette hue anywhere in the component", () => {
+    const RAW_HUE =
+      /(?<![\w-])(?:bg|text|border|ring|fill|stroke|from|via|to)-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|white|black)\b/g
+    expect([...source.matchAll(RAW_HUE)].map((m) => m[0])).toEqual([])
+  })
+
+  it("colours a known source with a categorical ramp slot", () => {
+    renderOne("lambda")
+    expect(screen.getByText("lambda")).toHaveClass("text-cat-8")
+  })
+
+  it("gives two services that share a hue family different ramp slots", () => {
+    // ecr and eventbridge were both text-rose-400 — indistinguishable.
+    renderOne("ecr")
+    renderOne("eventbridge")
+    expect(screen.getByText("ecr").className).not.toEqual(screen.getByText("eventbridge").className)
+  })
+
+  it("falls back to a muted token for an unmapped source", () => {
+    renderOne("some-unknown-service")
+    expect(screen.getByText("some-unknown-service")).toHaveClass("text-fg-muted")
+  })
+
+  it("renders JSON strings through the shared Prism token class", async () => {
+    const { user } = render(
+      <EventConsole
+        connected
+        onClear={() => {}}
+        events={[
+          {
+            type: "s3:BucketCreated",
+            source: "s3",
+            time: "2026-07-14T12:00:00Z",
+            payload: { name: "assets-bucket" },
+          },
+        ]}
+      />,
+    )
+
+    await user.click(screen.getByText("BucketCreated"))
+
+    expect(screen.getByText('"assets-bucket"')).toHaveClass("token", "string")
   })
 })

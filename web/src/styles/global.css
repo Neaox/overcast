@@ -50,6 +50,26 @@
   --color-cloud-stroke: var(--cloud-stroke);
   --color-accent-glow: var(--accent-glow);
 
+  /* Categorical identity ramp. These encode *which thing* something is (which
+     service produced an event, which node type a map shows) — not state, which
+     belongs on --success / --warning / --danger. Ten slots, deliberately shared
+     by more than one identity; see the --cat-* declarations below. */
+  --color-cat-1: var(--cat-1);
+  --color-cat-2: var(--cat-2);
+  --color-cat-3: var(--cat-3);
+  --color-cat-4: var(--cat-4);
+  --color-cat-5: var(--cat-5);
+  --color-cat-6: var(--cat-6);
+  --color-cat-7: var(--cat-7);
+  --color-cat-8: var(--cat-8);
+  --color-cat-9: var(--cat-9);
+  --color-cat-10: var(--cat-10);
+
+  /* Wash that dims an out-of-view region of an overlay drawn *inside* a card.
+     Distinct from the dialog scrim, which is deliberately the same ink in both
+     themes (see dialog.tsx) because it covers the whole viewport. */
+  --color-scrim-dim: var(--scrim-dim);
+
   /* Design radii → rounded-card / rounded-control utilities */
   --radius-card: 10px;
   --radius-control: 6px;
@@ -155,6 +175,28 @@
   --sidebar-item-hover: #eaf3fa; /* derived: whisper between accent-soft and page bg */
   --sidebar-item-active: #e3f0fb; /* accent-soft — active nav is accent-on-accent-soft */
   --sidebar-item-active-fg: #1273c4; /* accent */
+
+  /* Categorical identity ramp — one hue per slot, all at the same OKLCH
+     lightness so no slot is quietly weaker than its neighbours. At L=0.5 every
+     slot clears WCAG AA for normal text on each surface it is used on:
+     #FFFFFF card 4.70–6.53, --accent-muted row hover 4.88–5.63, page bg
+     5.30–6.12. Chroma is the sRGB maximum at that lightness, which is why the
+     yellow-through-cyan slots are duller; the hue spacing is widened across
+     that same 95°–218° stretch to compensate, leaving the closest pair
+     (orange/amber) at ~3.4x the Oklab just-noticeable difference. */
+  --cat-1: oklch(0.5 0.149 25); /* red */
+  --cat-2: oklch(0.5 0.117 60); /* orange */
+  --cat-3: oklch(0.5 0.102 95); /* amber */
+  --cat-4: oklch(0.5 0.149 140); /* green */
+  --cat-5: oklch(0.5 0.099 170); /* teal */
+  --cat-6: oklch(0.5 0.089 218); /* cyan */
+  --cat-7: oklch(0.5 0.149 252); /* blue */
+  --cat-8: oklch(0.5 0.149 288); /* violet */
+  --cat-9: oklch(0.5 0.149 320); /* magenta */
+  --cat-10: oklch(0.5 0.149 355); /* rose */
+
+  /* Dimming on a light surface means washing out, not blacking over. */
+  --scrim-dim: rgb(255 255 255 / 0.62);
 }
 
 /* ─── Dark palette — defined once, applied by both dark selectors below ── */
@@ -195,6 +237,24 @@
   --_dark-sidebar-item-hover: #182838; /* derived: whisper between card and accent-soft */
   --_dark-sidebar-item-active: #1a2e42; /* accent-soft — active nav is accent-on-accent-soft */
   --_dark-sidebar-item-active-fg: #5fb8ff; /* accent */
+
+  /* Categorical identity ramp — the same ten hues lifted to L=0.75 for the dark
+     surfaces: 6.77–7.72 on the card, 5.83–6.65 on row hover, 7.64–8.71 on the
+     page bg. A slot keeps its hue across themes, so a service keeps its colour
+     identity when the theme flips. */
+  --_dark-cat-1: oklch(0.75 0.144 25); /* red */
+  --_dark-cat-2: oklch(0.75 0.144 60); /* orange */
+  --_dark-cat-3: oklch(0.75 0.144 95); /* amber */
+  --_dark-cat-4: oklch(0.75 0.144 140); /* green */
+  --_dark-cat-5: oklch(0.75 0.144 170); /* teal */
+  --_dark-cat-6: oklch(0.75 0.134 218); /* cyan */
+  --_dark-cat-7: oklch(0.75 0.132 252); /* blue */
+  --_dark-cat-8: oklch(0.75 0.136 288); /* violet */
+  --_dark-cat-9: oklch(0.75 0.144 320); /* magenta */
+  --_dark-cat-10: oklch(0.75 0.144 355); /* rose */
+
+  /* Dimming on a dark surface means darkening. */
+  --_dark-scrim-dim: rgb(0 0 0 / 0.5);
 }
 
 /* Applied when OS prefers dark and the user hasn't explicitly chosen light. */
@@ -237,6 +297,19 @@
     --sidebar-item-hover: var(--_dark-sidebar-item-hover);
     --sidebar-item-active: var(--_dark-sidebar-item-active);
     --sidebar-item-active-fg: var(--_dark-sidebar-item-active-fg);
+
+    --cat-1: var(--_dark-cat-1);
+    --cat-2: var(--_dark-cat-2);
+    --cat-3: var(--_dark-cat-3);
+    --cat-4: var(--_dark-cat-4);
+    --cat-5: var(--_dark-cat-5);
+    --cat-6: var(--_dark-cat-6);
+    --cat-7: var(--_dark-cat-7);
+    --cat-8: var(--_dark-cat-8);
+    --cat-9: var(--_dark-cat-9);
+    --cat-10: var(--_dark-cat-10);
+
+    --scrim-dim: var(--_dark-scrim-dim);
   }
 }
 
@@ -279,6 +352,19 @@
   --sidebar-item-hover: var(--_dark-sidebar-item-hover);
   --sidebar-item-active: var(--_dark-sidebar-item-active);
   --sidebar-item-active-fg: var(--_dark-sidebar-item-active-fg);
+
+  --cat-1: var(--_dark-cat-1);
+  --cat-2: var(--_dark-cat-2);
+  --cat-3: var(--_dark-cat-3);
+  --cat-4: var(--_dark-cat-4);
+  --cat-5: var(--_dark-cat-5);
+  --cat-6: var(--_dark-cat-6);
+  --cat-7: var(--_dark-cat-7);
+  --cat-8: var(--_dark-cat-8);
+  --cat-9: var(--_dark-cat-9);
+  --cat-10: var(--_dark-cat-10);
+
+  --scrim-dim: var(--_dark-scrim-dim);
 }
 
 @layer base {
@@ -402,7 +488,11 @@
     pointer-events: none;
     user-select: none;
   }
-  /* Prism token colours — designed for both light and dark modes via CSS vars */
+  /* Prism token colours — designed for both light and dark modes via CSS vars.
+     Deliberately unscoped: the event console's hand-rolled JSON tree applies
+     these same class names (see event-console.tsx) so a string, key or number
+     looks identical whether Prism produced the markup or React did. Keep them
+     out of a `.json-editor-wrap` selector. */
   .token.punctuation {
     color: var(--fg-muted);
   }

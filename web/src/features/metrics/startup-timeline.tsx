@@ -291,18 +291,22 @@ function MiniMap({ phases, totalMs, viewStart, viewEnd, onSeek }: MiniMapProps) 
       <StartupBar phases={phases} totalMs={totalMs} />
       {isZoomed && (
         <>
-          {/* Dim regions outside the viewport */}
+          {/* Dim regions outside the viewport. This overlay sits inside a card,
+              not over the whole viewport, so it can't be fixed ink the way the
+              dialog scrim is: --scrim-dim washes out on light and darkens on
+              dark, and "dimmed" reads correctly either way. */}
           <div
-            className="pointer-events-none absolute inset-y-0 left-0 rounded-l-sm bg-black/50"
+            className="pointer-events-none absolute inset-y-0 left-0 rounded-l-sm bg-scrim-dim"
             style={{ width: `${(viewStart / totalMs) * 100}%` }}
           />
           <div
-            className="pointer-events-none absolute inset-y-0 right-0 rounded-r-sm bg-black/50"
+            className="pointer-events-none absolute inset-y-0 right-0 rounded-r-sm bg-scrim-dim"
             style={{ width: `${((totalMs - viewEnd) / totalMs) * 100}%` }}
           />
-          {/* Viewport window border */}
+          {/* Viewport window border. Same reason: a white hairline vanishes
+              against the light theme's washed-out bar, so track --fg. */}
           <div
-            className="pointer-events-none absolute inset-y-0 rounded-sm border-2 border-white/70"
+            className="pointer-events-none absolute inset-y-0 rounded-sm border-2 border-fg/70"
             style={{
               left: `${(viewStart / totalMs) * 100}%`,
               width: `${((viewEnd - viewStart) / totalMs) * 100}%`,

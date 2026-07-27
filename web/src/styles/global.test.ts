@@ -19,9 +19,14 @@ import { join } from "node:path"
  * Tailwind's own palette (`text-blue-400`, `bg-amber-500/15`) is deliberately
  * still out of scope — that is the separate palette-collapse task, and those
  * utilities do render.
+ *
+ * `cat` and `scrim` are ours: the categorical identity ramp (`text-cat-7`) and
+ * the in-card dim wash (`bg-scrim-dim`). They are listed so that a slot outside
+ * the declared ramp — `text-cat-11`, say — fails here instead of rendering as
+ * inherited text.
  */
 const COLOUR_UTILITY =
-  /(?<![\w-])(?:bg|text|border|ring|outline|accent|fill|stroke|caret|placeholder|divide|from|via|to)-(bg|fg|accent|danger|warning|success|border|sidebar|cloud|muted|primary|secondary|surface|card|popover|destructive|input|foreground|background|ring)[a-z0-9-]*\b/g
+  /(?<![\w-])(?:bg|text|border|ring|outline|accent|fill|stroke|caret|placeholder|divide|from|via|to)-(bg|fg|accent|danger|warning|success|border|sidebar|cloud|cat|scrim|muted|primary|secondary|surface|card|popover|destructive|input|foreground|background|ring)[a-z0-9-]*\b/g
 
 /** Names declared as `--color-<name>` inside global.css's `@theme { … }` block. */
 function declaredThemeColours(css: string): Set<string> {
@@ -73,6 +78,37 @@ describe("Prism token theme", () => {
     expect(css).not.toMatch(
       /\[data-theme="dark"\] \.token\.number,[^{]+\{\s*color: oklch\(0\.72 0\.15 290\);/,
     )
+  })
+})
+
+/* A categorical slot declared in only one theme is the exact failure the ramp
+   exists to prevent: it renders as a fixed hue tuned for whichever theme got the
+   value, which is what `text-emerald-300` on a near-black console already was. */
+describe("categorical identity ramp", () => {
+  const css = readFileSync("src/styles/global.css", "utf8")
+  const slots = [...css.matchAll(/--color-(cat-\d+)\s*:/g)].map((m) => m[1])
+
+  it("exposes ten slots as Tailwind utilities", () => {
+    expect(slots).toEqual(Array.from({ length: 10 }, (_, i) => `cat-${i + 1}`))
+  })
+
+  // A `var(…)` alias in the dark selectors is not a value; only the literal in
+  // the light block and the one in the --_dark-* palette block count.
+  it.each([
+    ["light", "--"],
+    ["dark", "--_dark-"],
+  ])("gives every slot its own %s value", (_theme, prefix) => {
+    const missing = slots.filter((slot) => !css.includes(`${prefix}${slot}: oklch(`))
+    expect(missing).toEqual([])
+  })
+
+  it("gives the in-card dim wash a value in both themes", () => {
+    expect(css).toContain("--scrim-dim: rgb(")
+    expect(css).toContain("--_dark-scrim-dim: rgb(")
+  })
+
+  it("wires each dark selector to the dark palette", () => {
+    expect([...css.matchAll(/--cat-1: var\(--_dark-cat-1\);/g)]).toHaveLength(2)
   })
 })
 
