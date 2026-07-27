@@ -195,3 +195,62 @@ func TestExtraHosts_emptyWhenEndpointIsUnusable(t *testing.T) {
 		t.Errorf("ExtraHosts() = %v, want none", got)
 	}
 }
+
+// TestRewriteURLs_recognisesThePublishedPort covers Overcast running in a
+// container whose API port is remapped — `docker run -p 4580:4566`. Overcast
+// listens on 4566, so a host-side deploy mints queue URLs on 4580 and bakes
+// them into function/task environment. Matching only cfg.Port leaves those
+// URLs alone and the container's SQS client dials its own loopback on a port
+// nothing is listening on.
+func TestRewriteURLs_recognisesThePublishedPort(t *testing.T) {
+	// Given: Overcast listens on 4566 but host callers reach it on 4580.
+	m := New(&config.Config{Port: 4566}, "http://172.18.0.2:4566").WithPublishedPort(4580)
+
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{
+			"queue URL minted on the published port",
+			"http://localhost:4580/000000000000/jobs",
+			"http://172.18.0.2:4566/000000000000/jobs",
+		},
+		{
+			"the listen port still works",
+			"http://localhost:4566/000000000000/jobs",
+			"http://172.18.0.2:4566/000000000000/jobs",
+		},
+		{
+			"other loopback spellings on the published port",
+			"http://127.0.0.1:4580/000000000000/jobs",
+			"http://172.18.0.2:4566/000000000000/jobs",
+		},
+		{
+			"an unrelated port is left alone",
+			"http://localhost:9999/000000000000/jobs",
+			"http://localhost:9999/000000000000/jobs",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := m.RewriteURLs(tc.value); got != tc.want {
+				t.Errorf("RewriteURLs(%q) = %q, want %q", tc.value, got, tc.want)
+			}
+		})
+	}
+}
+
+// A published port equal to the listen port is the ordinary 1:1 mapping and
+// must not change behaviour; zero means "not known" (native binary, no Docker
+// socket) and must leave the previous matching intact.
+func TestRewriteURLs_publishedPortSameOrUnknown(t *testing.T) {
+	for _, publishedPort := range []int{0, 4566} {
+		m := New(&config.Config{Port: 4566}, "http://172.18.0.1:4566").WithPublishedPort(publishedPort)
+		if got, want := m.RewriteURLs("http://localhost:4566/q"), "http://172.18.0.1:4566/q"; got != want {
+			t.Errorf("publishedPort=%d: RewriteURLs = %q, want %q", publishedPort, got, want)
+		}
+		if got := m.RewriteURLs("http://localhost:4580/q"); got != "http://localhost:4580/q" {
+			t.Errorf("publishedPort=%d: rewrote an unrelated port: %q", publishedPort, got)
+		}
+	}
+}

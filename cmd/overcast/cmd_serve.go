@@ -175,6 +175,12 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 		prof.mark("buildStore: per-svc overrides")
 	}
 
+	// Recover the host port our API is published on before building the router:
+	// both the web UI and the container-endpoint mapper need it, and a container
+	// cannot see its own port mapping from the inside.
+	resolvePublishedPort(cfg, logger)
+	prof.mark("resolvePublishedPort")
+
 	// ---- HTTP server -------------------------------------------------------
 	handler, preShutdown, cleanup, _ := router.New(cfg, store, logger, clock.New(), hookRunner)
 	prof.mark("router.New (full)")
@@ -217,7 +223,7 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	}
 	var uiLn net.Listener
 	if uiPort != 0 {
-		uiHandler, err := newUIHandler(cfg.Port, browserAPIPort(cfg, logger), cfg.Region, cfg.Debug)
+		uiHandler, err := newUIHandler(cfg.Port, browserAPIPort(cfg), cfg.Region, cfg.Debug)
 		if err != nil {
 			logger.Warn("web UI unavailable", zap.Error(err))
 		} else {
@@ -591,17 +597,24 @@ func buildHookEnv(cfg *config.Config) []string {
 // container's bindings instead; when that cannot be answered — native binary,
 // no Docker socket, port not published — keep cfg.Port, so the non-container
 // path is unchanged.
-func browserAPIPort(cfg *config.Config, logger *zap.Logger) int {
+func resolvePublishedPort(cfg *config.Config, logger *zap.Logger) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	dc := docker.NewClient(cfg.LambdaDockerSocket, logger)
-	if p := containerendpoint.PublishedPort(ctx, dc, cfg.Port, logger); p != 0 {
-		if p != cfg.Port {
-			logger.Info("web UI: API published on a different host port; SPA will use it",
-				zap.Int("listen_port", cfg.Port), zap.Int("published_port", p))
-		}
-		return p
+	p := containerendpoint.PublishedPort(ctx, dc, cfg.Port, logger)
+	if p == 0 || p == cfg.Port {
+		return
+	}
+	cfg.PublishedPort = p
+	logger.Info("API is published on a different host port than it listens on",
+		zap.Int("listen_port", cfg.Port), zap.Int("published_port", p))
+}
+
+// browserAPIPort is the port the web UI hands the browser.
+func browserAPIPort(cfg *config.Config) int {
+	if cfg.PublishedPort > 0 {
+		return cfg.PublishedPort
 	}
 	return cfg.Port
 }

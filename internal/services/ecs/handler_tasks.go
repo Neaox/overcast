@@ -317,7 +317,7 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 func (h *Handler) containerEndpoint(ctx context.Context) *containerendpoint.Mapper {
 	h.endpointOnce.Do(func() {
 		addr := containerendpoint.Resolve(ctx, h.docker, h.cfg.ECSNetwork, h.cfg.Port, h.log.ZapLogger())
-		h.endpoint = containerendpoint.New(h.cfg, addr)
+		h.endpoint = containerendpoint.New(h.cfg, addr).WithPublishedPort(h.cfg.PublishedPort)
 	})
 	return h.endpoint
 }

@@ -170,7 +170,7 @@ func NewContainerRuntime(
 		// The Runtime API address is already an address Lambda containers can
 		// route to, so it is used directly rather than re-resolved. The mapper
 		// applies the shared rewriting and /etc/hosts rules on top of it.
-		endpoint:     containerendpoint.New(cfg, overcastEndpoint),
+		endpoint:     containerendpoint.New(cfg, overcastEndpoint).WithPublishedPort(cfg.PublishedPort),
 		exitNotify:   newExitNotifier(),
 		coldStartSem: make(chan struct{}, limit),
 	}

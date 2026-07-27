@@ -65,6 +65,9 @@ var loopbackHostnames = []string{"localhost", "127.0.0.1", "0.0.0.0", "::1", "[:
 type Mapper struct {
 	cfg      *config.Config
 	endpoint string
+	// publishedPort is the host port Overcast's API is reachable on when that
+	// differs from cfg.Port. Zero when they are the same or it is unknown.
+	publishedPort int
 }
 
 // New returns a Mapper for containers that reach Overcast at endpoint (an
@@ -74,6 +77,35 @@ type Mapper struct {
 // address still starts containers with the user's environment intact.
 func New(cfg *config.Config, endpoint string) *Mapper {
 	return &Mapper{cfg: cfg, endpoint: endpoint}
+}
+
+// WithPublishedPort records the host port Overcast's API is published on, so
+// RewriteURLs also recognises URLs a host-side caller minted against it.
+//
+// Needed because the two ports differ whenever Overcast's container remaps its
+// API port (`docker run -p 4580:4566`): Overcast listens on 4566, but a
+// host-side `cdk deploy` reaches it on 4580 and bakes queue URLs carrying that
+// port into function and task environment. Matching only cfg.Port leaves those
+// untouched and the container dials its own loopback on a dead port.
+//
+// Pass 0 when the mapping is unknown — a native binary, or a container with no
+// Docker socket to ask — and matching is unchanged. See PublishedPort.
+func (m *Mapper) WithPublishedPort(port int) *Mapper {
+	if m == nil {
+		return nil
+	}
+	m.publishedPort = port
+	return m
+}
+
+// rewritePorts returns the ports whose loopback origins belong to Overcast:
+// the port it listens on, plus the published port when that differs.
+func (m *Mapper) rewritePorts() []int {
+	ports := []int{m.cfg.Port}
+	if m.publishedPort > 0 && m.publishedPort != m.cfg.Port {
+		ports = append(ports, m.publishedPort)
+	}
+	return ports
 }
 
 // Endpoint returns the origin containers use to reach Overcast, suitable for
@@ -152,8 +184,9 @@ func overcastHostAddress(endpoint string) string {
 // deploy tools pass URLs inside JSON blobs and comma-separated lists as often
 // as they pass them bare.
 //
-// Only loopback origins on Overcast's own port are rewritten. Anything else is
-// left as the user set it.
+// Only loopback origins on a port that is Overcast's own — the port it listens
+// on, or the host port it is published on (see WithPublishedPort) — are
+// rewritten. Anything else is left as the user set it.
 func (m *Mapper) RewriteURLs(value string) string {
 	if m == nil || value == "" || m.cfg == nil || m.cfg.Port <= 0 || m.endpoint == "" {
 		return value
@@ -161,12 +194,14 @@ func (m *Mapper) RewriteURLs(value string) string {
 	if !strings.Contains(value, "//") {
 		return value
 	}
-	port := strconv.Itoa(m.cfg.Port)
-	for _, scheme := range []string{"http", "https"} {
-		for _, host := range loopbackHostnames {
-			origin := fmt.Sprintf("%s://%s:%s", scheme, host, port)
-			if strings.Contains(value, origin) {
-				value = strings.ReplaceAll(value, origin, m.endpoint)
+	for _, p := range m.rewritePorts() {
+		port := strconv.Itoa(p)
+		for _, scheme := range []string{"http", "https"} {
+			for _, host := range loopbackHostnames {
+				origin := fmt.Sprintf("%s://%s:%s", scheme, host, port)
+				if strings.Contains(value, origin) {
+					value = strings.ReplaceAll(value, origin, m.endpoint)
+				}
 			}
 		}
 	}
