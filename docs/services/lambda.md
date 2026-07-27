@@ -497,9 +497,6 @@ cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
 \* Resolves to `{OVERCAST_DATA_DIR}/layers`. In the standard Docker image
 `OVERCAST_DATA_DIR=/data`, so layers are read from `/data/layers`.
 
-
-
-
 <!-- BEGIN overcast:capabilities -->
 
 ## Summary
