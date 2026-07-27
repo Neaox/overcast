@@ -145,6 +145,11 @@ type HostConfig struct {
 	PortBindings map[string][]PortBinding `json:"PortBindings,omitempty"`
 	Privileged   bool                     `json:"Privileged,omitempty"` // required by k3s
 	Tmpfs        map[string]string        `json:"Tmpfs,omitempty"`      // tmpfs mounts (path → options)
+	// ExtraHosts are "hostname:target" entries written into the container's
+	// /etc/hosts, where target is an IP or Docker's "host-gateway". /etc/hosts
+	// wins over DNS in glibc and musl, so an entry here shadows a public record
+	// for the same name inside this container only.
+	ExtraHosts []string `json:"ExtraHosts,omitempty"`
 }
 
 // PortBinding represents a host-to-container port mapping.

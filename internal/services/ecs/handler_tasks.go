@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/containerendpoint"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/protocol"
@@ -183,6 +184,10 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 		return fmt.Errorf("ecs: create network %s: %w", h.cfg.ECSNetwork, err)
 	}
 
+	// Resolve how task containers reach Overcast. Deferred until here because
+	// it may attach Overcast to the ECS network, which must exist first.
+	endpoint := h.containerEndpoint(ctx)
+
 	// Build an override index by container name.
 	overrides := make(map[string]*ContainerOverride)
 	if task.Overrides != nil {
@@ -205,18 +210,7 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 		}
 
 		// Build environment variables.
-		env := make([]string, 0, len(cd.Environment)+2)
-		for _, kv := range cd.Environment {
-			env = append(env, kv.Name+"="+kv.Value)
-		}
-		// Apply container overrides.
-		if co, ok := overrides[cd.Name]; ok {
-			for _, kv := range co.Environment {
-				env = append(env, kv.Name+"="+kv.Value)
-			}
-		}
-		// Add the Overcast endpoint so containers can call back into the emulator.
-		env = append(env, fmt.Sprintf("AWS_ENDPOINT_URL=http://host.docker.internal:%d", h.cfg.Port))
+		env := buildContainerEnv(cd, overrides[cd.Name], endpoint)
 
 		// Build command.
 		var cmd []string
@@ -260,6 +254,7 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 			HostConfig: &docker.HostConfig{AutoRemove: true,
 				NetworkMode:  h.cfg.ECSNetwork,
 				PortBindings: portBindings,
+				ExtraHosts:   endpoint.ExtraHosts(),
 			},
 			NetworkingConfig: &docker.NetworkingConfig{
 				EndpointsConfig: map[string]*docker.EndpointSettings{
@@ -312,6 +307,47 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 	})
 
 	return nil
+}
+
+// containerEndpoint returns the endpoint mapper for ECS task containers,
+// resolving Overcast's container-reachable address once on first use. Resolving
+// lazily rather than at SetDocker time keeps the ordering honest: the address
+// may be Overcast's own IP on the ECS network, which only exists once the
+// network has been created.
+func (h *Handler) containerEndpoint(ctx context.Context) *containerendpoint.Mapper {
+	h.endpointOnce.Do(func() {
+		addr := containerendpoint.Resolve(ctx, h.docker, h.cfg.ECSNetwork, h.cfg.Port, h.log.ZapLogger())
+		h.endpoint = containerendpoint.New(h.cfg, addr)
+	})
+	return h.endpoint
+}
+
+// buildContainerEnv builds the Docker environment for one task container:
+// task-definition environment, then any RunTask container override (applied
+// last so it wins, as in ECS), then Overcast's endpoint.
+//
+// Values are passed through the endpoint mapper because AWS SDKs resolve the
+// SQS endpoint from the QueueUrl rather than from AWS_ENDPOINT_URL, so a queue
+// URL baked in by a host-side deploy would otherwise point the task's SQS
+// client at the task's own loopback. See internal/containerendpoint.
+func buildContainerEnv(cd ContainerDefinition, co *ContainerOverride, endpoint *containerendpoint.Mapper) []string {
+	env := make([]string, 0, len(cd.Environment)+2)
+	appendKV := func(kvs []KeyValuePair) {
+		for _, kv := range kvs {
+			env = append(env, kv.Name+"="+endpoint.RewriteURLs(kv.Value))
+		}
+	}
+
+	appendKV(cd.Environment)
+	if co != nil {
+		appendKV(co.Environment)
+	}
+
+	// Add the Overcast endpoint so containers can call back into the emulator.
+	if addr := endpoint.Endpoint(); addr != "" {
+		env = append(env, "AWS_ENDPOINT_URL="+addr)
+	}
+	return env
 }
 
 // scheduleMetadataTransition sets up the PROVISIONING → RUNNING transition for

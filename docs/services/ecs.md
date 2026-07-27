@@ -24,6 +24,42 @@ the Smithy RPC path (`POST /service/ecs/operation/{Operation}`).
 
 ---
 
+## Task container networking
+
+When Docker is available, `RunTask` starts real containers on the
+`overcast_ecs` network (`ECS_NETWORK`). Those containers are siblings of
+Overcast, not children of it, so Overcast takes three steps to keep them able
+to call back into the emulator:
+
+- **`AWS_ENDPOINT_URL`** is set to an address the task can actually dial —
+  Overcast's own IP on the ECS network when Overcast itself runs in a
+  container, otherwise the host address on the interface carrying the default
+  route. A development machine usually has several interfaces, and picking the
+  wrong one is a silent failure, so link-local (`169.254.0.0/16`) addresses and
+  interfaces with no route out are skipped rather than offered to the task.
+  `host.docker.internal` is used only as a last resort; because Docker Desktop
+  synthesises that name and native Linux does not, it is paired with a
+  `host.docker.internal:host-gateway` entry in the container's `/etc/hosts` so
+  the fallback resolves on both.
+
+- **Loopback URLs in the task environment are rewritten.** AWS SDKs resolve the
+  SQS endpoint from the `QueueUrl` rather than from `AWS_ENDPOINT_URL`, so a
+  queue URL written into a task definition by a host-side `cdk deploy` would
+  otherwise point the task's SQS client at its own loopback. Values in
+  `containerDefinitions[].environment` and in `RunTask` container overrides have
+  `http://localhost:<port>` and `http://127.0.0.1:<port>` origins on Overcast's
+  port replaced with the endpoint above. URLs on any other host or port are left
+  alone.
+
+- **Split-horizon hostnames are mapped in the container's `/etc/hosts`.**
+  `localhost.overcast.sh`, `localhost.localstack.cloud`, and
+  `localhost.floci.io` resolve to `127.0.0.1` in public DNS, so a URL built on
+  one of them works from the host; inside the task the same names are pointed at
+  Overcast, so a single URL is dialable from both sides. `OVERCAST_HOSTNAME` and
+  the comma-separated `OVERCAST_SPLIT_HORIZON_HOSTS` are added to that set.
+
+---
+
 <!-- BEGIN overcast:capabilities -->
 
 ## Summary

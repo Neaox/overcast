@@ -161,6 +161,7 @@ All configuration is via environment variables. No config file required.
 | -------------------------------- | ---------------------- | ------------------------------------------------------------------------------------ |
 | `OVERCAST_HOST`                  | `0.0.0.0`              | Hostname or IP to bind to                                                            |
 | `OVERCAST_HOSTNAME`              | `localhost`            | Hostname used in client-facing URLs (e.g. SQS queue URLs, SNS unsubscribe links)     |
+| `OVERCAST_SPLIT_HORIZON_HOSTS`   | _(none)_               | Extra comma-separated hostnames remapped to Overcast inside containers it starts (ECS tasks), so one URL is dialable from both host and container. Added to the built-in `localhost.overcast.sh`, `localhost.localstack.cloud`, `localhost.floci.io` |
 | `OVERCAST_PORT`                  | `4566`                 | TCP port                                                                             |
 | `OVERCAST_SERVICES`              | all                    | Comma-separated list of services to enable, e.g. `s3,sqs,dynamodb`                   |
 | `OVERCAST_STATE`                 | `auto`                 | Storage backend: `auto` (default when unset), `memory`, `hybrid`, `persistent`, or `wal`. `auto` resolves to `hybrid` when a volume/bind mount or existing database is found at `OVERCAST_DATA_DIR` (or the dir was explicitly set), otherwise `memory` — see [storage.md § The auto default](./storage.md#the-auto-default) |

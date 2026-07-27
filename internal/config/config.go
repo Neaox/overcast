@@ -65,6 +65,14 @@ type Config struct {
 	// app containers that need to reach it by its service name.
 	Hostname string
 
+	// SplitHorizonHosts are extra hostnames that resolve to 127.0.0.1 in public
+	// DNS and are remapped to Overcast's address inside containers Overcast
+	// starts, so one URL is dialable from both the host and a sibling container.
+	// Appended to the built-in set (localhost.overcast.sh,
+	// localhost.localstack.cloud, localhost.floci.io) — see
+	// internal/containerendpoint.
+	SplitHorizonHosts []string
+
 	// Services is the set of AWS services to enable.
 	// Map key is the lowercase service name, e.g. "s3", "sqs".
 	Services map[string]bool
@@ -587,6 +595,8 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //
 //	OVERCAST_HOST                      0.0.0.0
 //	OVERCAST_HOSTNAME                  (empty — defaults to localhost in URLs)
+//	OVERCAST_SPLIT_HORIZON_HOSTS       (empty — extra names remapped to Overcast
+//	                                           inside containers, comma-separated)
 //	OVERCAST_PORT                      4566
 //	OVERCAST_SERVICES                  s3,sqs,sns,ses,dynamodb,dynamodbstreams,lambda
 //	OVERCAST_STATE                     auto    (auto | memory | persistent | hybrid | wal)
@@ -667,6 +677,13 @@ func Load() (*Config, error) {
 
 	// Hostname (external — for client-facing URLs)
 	cfg.Hostname = os.Getenv("OVERCAST_HOSTNAME")
+
+	// Split-horizon hostnames (extra names remapped to Overcast inside containers)
+	for _, host := range strings.Split(os.Getenv("OVERCAST_SPLIT_HORIZON_HOSTS"), ",") {
+		if host = strings.TrimSpace(host); host != "" {
+			cfg.SplitHorizonHosts = append(cfg.SplitHorizonHosts, host)
+		}
+	}
 
 	// Port
 	portStr := envOr("OVERCAST_PORT", "4566")

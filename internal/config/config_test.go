@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -796,6 +797,36 @@ func TestLoad_hostname(t *testing.T) {
 	}
 }
 
+// TestLoad_splitHorizonHosts verifies OVERCAST_SPLIT_HORIZON_HOSTS is parsed as
+// a comma-separated list, since it is written by hand in compose files.
+func TestLoad_splitHorizonHosts(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_SPLIT_HORIZON_HOSTS", "localhost.example.test, aws.internal ,")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"localhost.example.test", "aws.internal"}
+	if !slices.Equal(cfg.SplitHorizonHosts, want) {
+		t.Errorf("SplitHorizonHosts: expected %v, got %v", want, cfg.SplitHorizonHosts)
+	}
+}
+
+// TestLoad_splitHorizonHostsUnset verifies the default is empty rather than a
+// single blank entry, which would produce a malformed /etc/hosts line.
+func TestLoad_splitHorizonHostsUnset(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.SplitHorizonHosts) != 0 {
+		t.Errorf("SplitHorizonHosts: expected none, got %v", cfg.SplitHorizonHosts)
+	}
+}
+
 // TestLoad_hostnameWithTLS verifies ExternalBaseURL uses https when TLS is enabled.
 func TestLoad_hostnameWithTLS(t *testing.T) {
 	clearEnv(t)
@@ -1053,7 +1084,7 @@ func clearEnv(t *testing.T) {
 		"OVERCAST_SIGV4_VALIDATE", "OVERCAST_ENFORCE_IAM", "OVERCAST_PROTOCOL_STRICT", "OVERCAST_LOG_LEVEL", "OVERCAST_SHUTDOWN_TIMEOUT",
 		"OVERCAST_LAMBDA_HOT_RELOAD",
 		"OVERCAST_LAMBDA_NODE_BIN", "OVERCAST_DEBUG", "OVERCAST_TLS_CERT", "OVERCAST_TLS_KEY",
-		"OVERCAST_HOSTNAME", "OVERCAST_EKS_MODE", "OVERCAST_EC2_VPC_STRATEGY",
+		"OVERCAST_HOSTNAME", "OVERCAST_SPLIT_HORIZON_HOSTS", "OVERCAST_EKS_MODE", "OVERCAST_EC2_VPC_STRATEGY",
 		"OVERCAST_MCP_REPLAY_LIMIT", "OVERCAST_MCP_REMOTE_EXPOSURE", "OVERCAST_MCP_AUTH_TOKEN",
 		"EKS_DOCKER_SOCKET", "EKS_NETWORK",
 	}
