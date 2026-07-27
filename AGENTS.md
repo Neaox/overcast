@@ -46,7 +46,11 @@ Before implementing anything, check these constraints. If a request conflicts, p
 
 - **Not a staging environment.** No 100% API parity. Do not base production go/no-go decisions on Overcast tests.
 - **Not a security boundary.** Credentials accepted but not validated. Never expose on a public network.
-- **Not a performance testing tool.** No latency emulation, no throttling, no quotas.
+- **Not a performance testing tool.** No latency emulation, no request-rate limits, no per-service quotas. Lambda concurrency is the one place Overcast does refuse work, in two forms:
+  - **Reserved concurrency** — set explicitly per function. Exceeding it throttles immediately with AWS's 429 `TooManyRequestsException` (`Reason: ReservedFunctionConcurrentInvocationLimitExceeded`), because that is behaviour applications are written against: retry policies, DLQs, ESM back-off, and the "set it to 0 to disable a function" idiom.
+  - **Instance limits** (`LAMBDA_MAX_INSTANCES`, `LAMBDA_MAX_INSTANCES_PER_FUNCTION`) — host protection, not quota emulation. An invocation that cannot get a container first reclaims an idle one, then queues; **if it is still queued when the function's timeout expires it is throttled** with `Reason: ConcurrentInvocationLimitExceeded`, the same reason AWS gives when the account pool is exhausted. Raise the limits if you are hitting this rather than treating it as an AWS behaviour.
+
+  Asynchronous invocations are never throttled back to the caller: they were already answered 202, so a throttle is retried internally, as on AWS. Do not add account-wide concurrency pools or request-per-second limits.
 - **CloudFormation/IAM are partial.** Both services are implemented at a partial level. CloudFormation supports `CreateStack`/`DeleteStack`/`DescribeStacks`/`ListStacks` and provisions ~50 resource types (EC2/VPC, API Gateway, ECS, IAM, EventBridge, KMS, Lambda, S3, SQS, SNS, DynamoDB, Logs, SSM, SecretsManager, Step Functions) via internal dispatch to the emulated services. IAM supports roles, policies, users, groups, and instance profiles. `cdk deploy` works for stacks using supported resource types. Coverage is not exhaustive — continue ensuring all service implementations remain compatible with CloudFormation (standard ARN formats, required response fields, etc.).
 - **Not a production dependency, ever.** Local dev and CI only. No durability guarantees, no security model.
 - **Not a perfect replica.** We emulate the most-used 20% with high fidelity. Edge cases may differ.
