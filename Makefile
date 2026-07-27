@@ -51,7 +51,7 @@ build-mcp:
 
 ## build-web: build the web UI (run before build if assets are stale)
 build-web:
-	cd web && VITE_BUNDLED=true npm run build
+	cd web && VITE_BUNDLED=true pnpm run build
 
 ## build-slim: compile the slim binary (no web UI, no SQLite) for the current platform
 build-slim:
@@ -155,7 +155,7 @@ lint-go:
 
 ## lint-web: run web UI linting
 lint-web:
-	cd web && npm run lint
+	cd web && pnpm run lint
 
 ## lint-actions: lint GitHub Actions workflows
 lint-actions:

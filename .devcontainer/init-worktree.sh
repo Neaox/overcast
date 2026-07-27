@@ -53,6 +53,9 @@ services:
         source: overcast-$safe_name-node-modules
         target: /workspace/web/node_modules
       - type: volume
+        source: overcast-pnpm-store
+        target: /home/vscode/.local/share/pnpm/store
+      - type: volume
         source: overcast-go-mod-cache
         target: /home/vscode/go/pkg/mod
       - type: volume
@@ -78,6 +81,8 @@ cat >> .devcontainer/docker-compose.yaml <<EOF
 volumes:
   overcast-$safe_name-node-modules:
     name: overcast-$safe_name-node-modules
+  overcast-pnpm-store:
+    name: overcast-pnpm-store
   overcast-go-mod-cache:
     name: overcast-go-mod-cache
   overcast-gh-config:

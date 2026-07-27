@@ -8,7 +8,7 @@ package overcast
 import "embed"
 
 // WebDistFS contains the pre-built SPA static files (web/dist/).
-// Build the web UI before compiling: cd web && npm run build
+// Build the web UI before compiling: cd web && pnpm run build
 //
 //go:embed all:web/dist
 var WebDistFS embed.FS

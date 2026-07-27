@@ -19,7 +19,7 @@
 
 # ---- Web builder (stage 1) --------------------------------------------------
 !web/
-# npm ci runs inside the container — host node_modules are dead weight (~800 MB).
+# pnpm install runs inside the container — host node_modules are dead weight (~800 MB).
 web/node_modules/
 web/api/node_modules/
 # Build outputs that may exist locally.

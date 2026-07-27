@@ -1046,7 +1046,7 @@ func (p *RepoProvider) toolChangeImpact(_ context.Context, params json.RawMessag
 			hasGoValidation = true
 		}
 		if strings.HasPrefix(path, "web/") {
-			recommendedCommands["cd web && npm run build"] = struct{}{}
+			recommendedCommands["cd web && pnpm run build"] = struct{}{}
 		}
 	}
 	if len(recommendedTests) > 0 {
@@ -1114,8 +1114,8 @@ func (p *RepoProvider) toolTestTargets(_ context.Context, params json.RawMessage
 				integrationPackages[fmt.Sprintf("./tests/integration/%s/...", svc)] = struct{}{}
 			}
 		case strings.HasPrefix(path, "web/"):
-			recommended["cd web && npm run build"] = struct{}{}
-			recommended["cd web && npm run lint"] = struct{}{}
+			recommended["cd web && pnpm run build"] = struct{}{}
+			recommended["cd web && pnpm run lint"] = struct{}{}
 		}
 	}
 	for pkg := range unitPackages {

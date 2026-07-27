@@ -511,7 +511,7 @@ func TestRepoTestTargetsMapsPackages(t *testing.T) {
 	commands := got["recommended_commands"].([]string)
 	haveWebBuild := false
 	for _, cmd := range commands {
-		if cmd == "cd web && npm run build" {
+		if cmd == "cd web && pnpm run build" {
 			haveWebBuild = true
 			break
 		}

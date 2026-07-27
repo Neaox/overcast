@@ -67,6 +67,13 @@ var tools = []tool{
 		hint:     "Only needed for Lambda work. Install from https://nodejs.org",
 	},
 	{
+		name:     "pnpm",
+		cmd:      "pnpm",
+		args:     []string{"--version"},
+		required: false,
+		hint:     "Only needed for web UI work. Install from https://pnpm.io/installation",
+	},
+	{
 		name:     "air",
 		cmd:      "air",
 		args:     []string{"-v"},

@@ -205,7 +205,7 @@ Examples:
 - `go test -count=1 ./internal/services/sqs/... ./tests/integration/sqs/...`
 - `gofmt -w ./internal/services/sqs ./tests/integration/sqs`
 - `go vet ./internal/services/sqs/... ./tests/integration/sqs/...`
-- `npx tsc --noEmit` from `web/` for TypeScript changes.
+- `pnpm run typecheck` from `web/` for TypeScript changes.
 - `make docs` when capability tables or generated service docs changed.
 
 ---

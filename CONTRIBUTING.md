@@ -258,7 +258,7 @@ bash scripts/ci-local.sh --host-go   # use a host `go` instead of Docker
 bash scripts/ci-local.sh --help      # all flags and env equivalents
 ```
 
-Node dependencies are never installed for you: run `npm ci` in `web/` once
+Node dependencies are never installed for you: run `pnpm install` in `web/` once
 before the first web run.
 
 > [!NOTE]
@@ -1209,7 +1209,7 @@ The web UI uses **Tailwind CSS v4**. When writing or editing component styles:
    - Bad: `translate-y-[2px]`, `gap-[8px]`, `p-[16px]`, `text-[14px]`
 2. **Arbitrary values are a last resort** — only use square-bracket syntax when there is genuinely no canonical class available (e.g. a one-off brand colour or a value outside the default scale).
 3. **Use Tailwind v4 syntax** — Tailwind 4 changed some conventions. Prefer `*:` (universal child selector variant) over `[&>…]` when targeting children. Consult the [Tailwind v4 docs](https://tailwindcss.com/docs) when unsure.
-4. **Run the canonical upgrade** if you notice non-canonical classes: `npx @tailwindcss/upgrade`.
+4. **Run the canonical upgrade** if you notice non-canonical classes: `pnpm dlx @tailwindcss/upgrade`.
 
 ### Topology map methodology
 

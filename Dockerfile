@@ -27,14 +27,18 @@ FROM --platform=$BUILDPLATFORM node:22-alpine AS web-builder
 
 WORKDIR /web
 
+# corepack resolves the pnpm version pinned in package.json's packageManager field.
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable pnpm
+
 # Install dependencies first for layer caching.
-COPY web/package.json web/package-lock.json* ./
-RUN npm ci --ignore-scripts
+COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # src/docs-index.gen.ts is committed, so it arrives with this COPY — no Go
 # toolchain or preliminary generation stage is needed to build the SPA.
 COPY web/ .
-RUN VITE_BUNDLED=true npm run build
+RUN VITE_BUNDLED=true pnpm run build
 
 # ---- Stage 2: Go build (conditional — NOSQLITE arg controls slim vs full) --
 FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS go-builder

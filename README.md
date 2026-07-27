@@ -253,7 +253,7 @@ Download `overcast-windows-amd64.exe` from the releases page and place it anywhe
 ```bash
 git clone https://github.com/Neaox/overcast.git && cd overcast
 # Full binary (builds web UI first)
-cd web && npm ci && npm run build && cd ..
+cd web && pnpm install --frozen-lockfile && pnpm run build && cd ..
 go build -trimpath -o overcast ./cmd/overcast
 
 # Slim binary (no Node.js needed)

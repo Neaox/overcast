@@ -37,6 +37,11 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
   && apt-get install -y --no-install-recommends nodejs \
   && rm -rf /var/lib/apt/lists/*
 
+# Install pnpm — the package manager for web/ (see web/package.json's
+# packageManager field; keep this version in sync with it).
+ENV PNPM_VERSION=10.30.1
+RUN npm install -g pnpm@${PNPM_VERSION}
+
 # Install golangci-lint — pinned version for reproducibility.
 # Check for updates at: https://github.com/golangci/golangci-lint/releases
 ENV GOLANGCI_LINT_VERSION=v1.62.2

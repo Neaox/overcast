@@ -41,7 +41,7 @@
 #   OVERCAST_CI_HOST_GO=1          same as --host-go
 #   OVERCAST_CI_NO_LOCK=1          same as --no-lock
 #
-# Node dependencies are never installed for you: run `npm ci` in web/ once.
+# Node dependencies are never installed for you: run `pnpm install` in web/ once.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -197,9 +197,9 @@ else
 fi
 
 if [ "$scope" != "go" ]; then
-    command -v npm >/dev/null 2>&1 || die "npm is required for the web stages (or pass --go-only)"
+    command -v pnpm >/dev/null 2>&1 || die "pnpm is required for the web stages (or pass --go-only)"
     [ -d "$ROOT/web/node_modules" ] ||
-        die "web/node_modules is missing — run 'npm ci' in web/ first"
+        die "web/node_modules is missing — run 'pnpm install' in web/ first"
     echo "node: $(node --version)"
 fi
 
@@ -228,25 +228,25 @@ go_cmd run ./scripts/docs-index.go --write-index --write-go-index || fail
 
 if [ "$scope" != "go" ]; then
     stage "web-lint"
-    web_cmd npm run lint || fail
+    web_cmd pnpm run lint || fail
 
-    # Not `npx tsc --noEmit`: web/tsconfig.json is a solution-style config with
+    # Not `tsc --noEmit`: web/tsconfig.json is a solution-style config with
     # "files": [] and only project references, so it compiles zero files and
-    # always passes. npm run typecheck covers app + node projects explicitly.
+    # always passes. pnpm run typecheck covers app + node projects explicitly.
     stage "web-typecheck"
-    web_cmd npm run typecheck || fail
+    web_cmd pnpm run typecheck || fail
 
     stage "web-test"
-    web_cmd npm run test || fail
+    web_cmd pnpm run test || fail
 
-    # `npx vite build` rather than `npm run build`: the published script
+    # `pnpm exec vite build` rather than `pnpm run build`: the published script
     # re-runs typecheck, which already ran as its own stage above with an
     # attributable failure.
     stage "web-build"
-    web_cmd env VITE_BUNDLED=true npx vite build || fail
+    web_cmd env VITE_BUNDLED=true pnpm exec vite build || fail
 
     stage "web-build-server"
-    web_cmd npm run build:server || fail
+    web_cmd pnpm run build:server || fail
 fi
 
 # ─── Go ──────────────────────────────────────────────────────────────────────

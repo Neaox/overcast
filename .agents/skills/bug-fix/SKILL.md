@@ -275,7 +275,7 @@ Web UI must not be an afterthought. A bug fix may affect it:
 - **Does the fix change resource lifecycle?** If create/delete timings or state transitions changed, update topology nodes in `internal/router/topology.go` and SSE cache invalidation in `web/src/hooks/use-event-stream.ts`.
 - **Does the fix affect a service's home screen?** Every service list page must include `ServiceDocsButton` in its `PageHeader` actions. Confirm the page is not broken.
 - **Does the fix affect global search?** If resource identifiers or fetch logic changed, update the search contributor in `web/src/lib/search-contributors/<service>.ts`.
-- Run `npx tsc --noEmit` in `web/` to confirm no TypeScript regressions.
+- Run `pnpm run typecheck` in `web/` to confirm no TypeScript regressions.
 
 ### Phase 7 — Final Verification
 
@@ -372,7 +372,7 @@ go vet ./internal/services/<service>/...
 make generate-caps && make docs && make check-caps
 
 # Web UI typecheck (if UI touched)
-npx tsc --noEmit -p web/
+(cd web && pnpm run typecheck)
 
 # Final verification
 make test

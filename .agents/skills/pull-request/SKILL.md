@@ -251,7 +251,7 @@ Before creating the PR:
 3. Confirm commits are coherent and readable.
 4. Confirm `CHANGELOG.md` is updated or intentionally skipped.
 5. Run scoped tests and required docs generation for changed areas.
-6. Run final verification appropriate to the change (`go build`, `go vet`, `npx tsc --noEmit`, or targeted equivalents).
+6. Run final verification appropriate to the change (`go build`, `go vet`, `pnpm run typecheck` from `web/`, or targeted equivalents).
 7. Ensure no secrets, local config, or throwaway debug output are included.
 
 When creating a PR with `gh pr create`, use a heredoc for the body so markdown stays readable.
