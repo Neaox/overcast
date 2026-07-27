@@ -1,15 +1,5 @@
 ---
 title: "Lambda"
-description: "Lambda"
-section: "Service Reference"
-tags:
-  - docs
-  - lambda
-  - services
----
-
----
-title: "Lambda"
 description: "Lambda emulation has two distinct concerns:"
 section: "Service Reference"
 tags:
@@ -300,6 +290,45 @@ and `extension` log types. Function stdout/stderr is delivered as `function`
 records; synthesized START/END/REPORT lines are delivered as `platform`
 records. Delivery is best-effort and does not yet implement the full Lambda
 buffering/retry contract.
+
+### Reaching Overcast from function code
+
+Lambda containers are siblings of Overcast, not children of it, so `localhost`
+inside a function is the function's own container. Overcast sets
+`AWS_ENDPOINT_URL` to an address the container can reach, which is enough for
+SDK calls that address resources by name.
+
+It is **not** enough for SQS. AWS SDKs resolve the SQS endpoint from the
+`QueueUrl` rather than from client configuration, and `AWS_ENDPOINT_URL` loses
+to it — see [SQS: queue URLs and endpoint resolution](sqs.md#queue-urls-and-endpoint-resolution).
+A queue URL minted on the host and passed into a function (a CDK stack writing
+`queue.queueUrl` into function environment) would send the function's SQS client
+to its own loopback. Three things keep that working:
+
+1. **URLs the function requests itself** — `CreateQueue`, `GetQueueUrl`,
+   `ListQueues` — come back on the origin the function called in on, so they are
+   dialable by definition.
+2. **Loopback URLs in function environment** are rewritten at container start:
+   any `http://localhost:<overcast-port>` or `http://127.0.0.1:<overcast-port>`
+   origin in an environment value is re-pointed at the container-reachable
+   endpoint. Other hosts and other ports are left alone.
+3. **Split-horizon hostnames** resolve to `127.0.0.1` in public DNS, so they work
+   from the host, and are remapped to Overcast's address in each container's
+   `/etc/hosts`, so the same URL works from inside. Built in:
+   `localhost.overcast.sh`, `localhost.localstack.cloud`, and
+   `localhost.floci.io`. Add more with `OVERCAST_SPLIT_HORIZON_HOSTS`
+   (comma-separated); `OVERCAST_HOSTNAME` is mapped too when it is a DNS name.
+
+Setting `OVERCAST_HOSTNAME=localhost.overcast.sh` gives every service one URL
+form that is valid on both sides of the container boundary, which is the
+simplest configuration when resource URLs are handed between host and functions.
+
+If your function constructs its own SQS client, passing the endpoint explicitly
+is always safe:
+
+```js
+new SQSClient({ endpoint: process.env.AWS_ENDPOINT_URL });
+```
 
 ### Extensions that call AWS
 

@@ -181,6 +181,23 @@ s3 = boto3.client('s3', config=Config(s3={'addressing_style': 'path'}))
 > [CDK S3 asset upload troubleshooting](./cdk.md#s3-asset-upload-fails-on-windows)
 > section for the `OVERCAST_HOSTNAME` workaround.
 
+### SQS: queue URLs follow the caller
+
+LocalStack has `SQS_ENDPOINT_STRATEGY` for choosing the host in returned queue
+URLs. overcast has no equivalent setting: it mints each queue URL on the origin
+the caller reached it on, so a host CLI gets `localhost:4566` and a Lambda
+container gets an address it can dial. This matters because AWS SDKs resolve the
+SQS endpoint from the `QueueUrl` and ignore `AWS_ENDPOINT_URL` when doing so —
+see [SQS: queue URLs and endpoint resolution](./services/sqs.md#queue-urls-and-endpoint-resolution).
+
+`localhost.localstack.cloud` keeps working: it is recognised for S3
+virtual-hosted addressing, and it is mapped to overcast's address inside Lambda
+containers, so queue URLs carried over from a LocalStack setup resolve on both
+sides of the container boundary.
+
+**Impact:** none for most setups. If you pinned queue URLs to a specific host,
+drop `SQS_ENDPOINT_STRATEGY` and let the default apply.
+
 ### Lambda: Docker-based execution
 
 Overcast executes Lambda functions inside Docker containers using the official

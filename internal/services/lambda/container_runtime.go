@@ -36,6 +36,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/containerendpoint"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
@@ -52,6 +53,7 @@ type ContainerRuntime struct {
 	logger           *zap.Logger
 	network          string                             // Docker network name
 	overcastEndpoint string                             // http://host:port — AWS_ENDPOINT_URL for containers
+	endpoint         *containerendpoint.Mapper          // rewrites resource URLs and /etc/hosts for sibling containers
 	pullOnce         sync.Map                           // image name → *sync.Once — ensures each image is pulled only once
 	logWriter        events.LogWriter                   // nil until InitLogWriter is called
 	bus              atomic.Pointer[events.Bus]         // nil until SetBus is called
@@ -165,8 +167,12 @@ func NewContainerRuntime(
 		logger:           logger,
 		network:          cfg.LambdaNetwork,
 		overcastEndpoint: overcastEndpoint,
-		exitNotify:       newExitNotifier(),
-		coldStartSem:     make(chan struct{}, limit),
+		// The Runtime API address is already an address Lambda containers can
+		// route to, so it is used directly rather than re-resolved. The mapper
+		// applies the shared rewriting and /etc/hosts rules on top of it.
+		endpoint:     containerendpoint.New(cfg, overcastEndpoint),
+		exitNotify:   newExitNotifier(),
+		coldStartSem: make(chan struct{}, limit),
 	}
 }
 
@@ -378,6 +384,10 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 			Memory:      int64(fn.MemorySize) * 1024 * 1024,
 			MemorySwap:  int64(fn.MemorySize) * 1024 * 1024, // disable swap
 			NanoCPUs:    int64(initBurstCPUs * 1e9),
+			// Split-horizon hostnames resolve to 127.0.0.1 in public DNS for
+			// host-side callers; inside the container they must point at
+			// Overcast instead. See internal/containerendpoint.
+			ExtraHosts: cr.endpoint.ExtraHosts(),
 		},
 	}
 
@@ -748,8 +758,12 @@ func (cr *ContainerRuntime) buildEnv(fn *Function, logStream, initType string) [
 		region = cr.cfg.Region
 	}
 	env := make(map[string]string, len(fn.Environment)+32)
+	// User environment values are rewritten on the way in: a deploy performed
+	// from the host bakes host-side URLs (a CDK stack passing queue.queueUrl)
+	// into function env, and AWS SDKs resolve endpoints from those URLs rather
+	// than from AWS_ENDPOINT_URL. See internal/containerendpoint.
 	for k, v := range fn.Environment {
-		env[k] = v
+		env[k] = cr.endpoint.RewriteURLs(v)
 	}
 
 	// Runtime-provided variables are applied after user variables. This matches

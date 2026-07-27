@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -140,15 +141,6 @@ func awsJSONCall(t *testing.T, srv *helpers.TestServer, targetPrefix, action, co
 		t.Fatalf("%s: %v", action, err)
 	}
 	return resp
-}
-
-func contains(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
 }
 
 type createdChangeSet struct {
@@ -1323,8 +1315,13 @@ func TestCreateStack_SQSQueueRefOutputIsUsableQueueURL(t *testing.T) {
 		QueueUrls []string `json:"QueueUrls"`
 	}
 	helpers.DecodeJSON(t, list, &queues)
-	if !contains(queues.QueueUrls, queueURL) {
-		t.Fatalf("expected ListQueues to include %q, got %#v", queueURL, queues.QueueUrls)
+	// Queue URLs are minted on the origin each caller reached Overcast on, so
+	// ListQueues answers this test client with its own origin rather than the
+	// configured hostname the stack output carries. Both address the same queue —
+	// the ReceiveMessage call above proves the stack-output form still works.
+	queuePath := "/000000000000/sqs-output-stack-Queue"
+	if !slices.ContainsFunc(queues.QueueUrls, func(u string) bool { return strings.HasSuffix(u, queuePath) }) {
+		t.Fatalf("expected ListQueues to include a URL ending %q, got %#v", queuePath, queues.QueueUrls)
 	}
 	helpers.AssertStatus(t, receive, http.StatusOK)
 	var received map[string]json.RawMessage
