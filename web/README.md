@@ -26,22 +26,22 @@ make run
 
 # In a separate terminal — start the web UI
 cd web
-npm install
-npm run dev
+pnpm install
+pnpm run dev
 ```
 
 The UI is served at `http://localhost:5173`. The BFF proxy runs on port 5174 and forwards requests to the emulator at `http://localhost:4566`.
 
 ## Available scripts
 
-| Command                | Description                          |
-| ---------------------- | ------------------------------------ |
-| `npm run dev`          | Start Vite dev server with HMR       |
-| `npm run build`        | Type-check and build for production  |
-| `npm run lint`         | Run ESLint                           |
-| `npm run format`       | Format all files with Prettier       |
-| `npm run format:check` | Check formatting without writing     |
-| `npm run preview`      | Preview the production build locally |
+| Command                 | Description                          |
+| ----------------------- | ------------------------------------ |
+| `pnpm run dev`          | Start Vite dev server with HMR       |
+| `pnpm run build`        | Type-check and build for production  |
+| `pnpm run lint`         | Run ESLint                           |
+| `pnpm run format`       | Format all files with Prettier       |
+| `pnpm run format:check` | Check formatting without writing     |
+| `pnpm run preview`      | Preview the production build locally |
 
 ## Directory layout
 

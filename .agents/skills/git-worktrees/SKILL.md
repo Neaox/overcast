@@ -74,10 +74,11 @@ Node dependencies are gitignored and must be installed per worktree:
 ```bash
 cd ../worktree-<name>
 
-# Only if your work touches the web UI
-cd web && npm install && cd ..
+# Only if your work touches the web UI (pnpm reuses its shared store,
+# so this is cheap even in a fresh worktree)
+cd web && pnpm install && cd ..
 
-# Only if your work touches compat test suites
+# Only if your work touches compat test suites (still npm)
 cd compat && npm install && cd ..
 ```
 
@@ -213,7 +214,7 @@ This is rarely needed — the default shared cache handles concurrent reads well
 | Creating worktree inside the repo                   | `go test ./...` picks up nested Go files                                  | Create as siblings: `../worktree-<name>`                              |
 | Creating a worktree from a container-local checkout | The new checkout is not host-visible and may disappear with the container | Use the worktree-aware devcontainer or ask the user to reopen with it |
 | Two worktrees on the same branch                    | Git forbids this                                                          | Use unique branch names per agent                                     |
-| Forgetting `npm install` in `web/`                  | TypeScript/Vite builds fail                                               | Run it after creating the worktree                                    |
+| Forgetting `pnpm install` in `web/`                 | TypeScript/Vite builds fail                                               | Run it after creating the worktree                                    |
 | Running two dev servers on port 4566                | Port already in use                                                       | Set `OVERCAST_PORT` to a unique value                                 |
 | Editing shared SQLite data dir                      | Corrupt or conflicting state                                              | Use `OVERCAST_STATE=memory` or unique `OVERCAST_DATA_DIR`             |
 | Deleting a worktree with uncommitted work           | Work is lost                                                              | Always commit or stash before removing                                |
@@ -239,5 +240,5 @@ go test -count=1 ./tests/integration/<service>/
 OVERCAST_PORT=<unique> OVERCAST_STATE=memory go run ./cmd/overcast -- serve
 
 # Install Node deps (only if needed)
-cd web && npm install
+cd web && pnpm install
 ```

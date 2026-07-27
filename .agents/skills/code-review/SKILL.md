@@ -272,8 +272,8 @@ Spaghetti code lacks clear structure: control flow jumps around unpredictably, c
 - [ ] No unnecessary type assertions (`as X` where the type is already correct)
 - [ ] No unnecessary conditions (always-true / always-false checks)
 - [ ] `no-explicit-any` — prefer `unknown` / proper types; `any` infects callers
-- [ ] Build produces zero errors: `npm run build` must succeed with no type or bundle errors
-- [ ] ESLint produces zero errors: `npm run lint` must pass (warnings tracked, errors block)
+- [ ] Build produces zero errors: `pnpm run build` must succeed with no type or bundle errors
+- [ ] ESLint produces zero errors: `pnpm run lint` must pass (warnings tracked, errors block)
 - [ ] Fix type errors, don't silence them.
 - [ ] Prefer type guards and control flow analysis over type assertions. If you find yourself writing `as any` or `as unknown as X`, consider if a type guard function or discriminated union could achieve the same result with better safety.
 

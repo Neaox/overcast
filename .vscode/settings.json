@@ -124,8 +124,8 @@
 
   "chat.tools.terminal.autoApprove": {
     "go": true,
-    "npx tsc": true,
-    "npx eslint": true,
+    "pnpm exec tsc": true,
+    "pnpm exec eslint": true,
     "strings": true
   }
 }

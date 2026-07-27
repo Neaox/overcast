@@ -58,7 +58,7 @@ tasks:
     env:
       VITE_BUNDLED: "true"
     cmds:
-      - npm run build
+      - pnpm run build
 
   build-slim:
     desc: Compile the slim binary (no web UI) for the current platform
@@ -170,7 +170,7 @@ tasks:
     desc: Run web UI linting
     dir: web
     cmds:
-      - npm run lint
+      - pnpm run lint
 
   lint-actions:
     desc: Lint GitHub Actions workflows
