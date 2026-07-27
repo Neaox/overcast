@@ -138,6 +138,12 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	r.Use(middleware.SigV4(cfg.SigV4Validate, middleware.NewSecretResolver(store), logger, clk))
 	r.Use(middleware.IAMEnforce(cfg.EnforceIAM, store, logger))
 	r.Use(middleware.Region)
+	// ClientEndpoint stamps the origin the caller dialled, so services that
+	// hand back resource URLs (SQS queue URLs above all) mint them on an
+	// origin that caller can reach. See internal/middleware/clientendpoint.go
+	// for why a single server-wide hostname cannot serve host CLIs and sibling
+	// containers at once.
+	r.Use(middleware.ClientEndpoint)
 	// Protocol-detection middleware (Smithy alignment, see
 	// docs/plans/smithy.md). Always-on as of Phase 6 completion.
 	r.Use(middleware.Protocol(codec.DefaultIdentifiers()))

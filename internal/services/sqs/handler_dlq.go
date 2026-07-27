@@ -245,7 +245,7 @@ func (h *Handler) ListDeadLetterSourceQueues(w http.ResponseWriter, r *http.Requ
 			continue
 		}
 		if rp.DeadLetterTargetArn == dlq.ARN {
-			sourceURLs = append(sourceURLs, q.URL)
+			sourceURLs = append(sourceURLs, h.queueURL(r.Context(), q.Name))
 		}
 	}
 	if sourceURLs == nil {
@@ -280,7 +280,7 @@ func (h *Handler) listDeadLetterSourceQueuesTyped(ctx context.Context, in *listD
 			continue
 		}
 		if rp.DeadLetterTargetArn == dlq.ARN {
-			sourceURLs = append(sourceURLs, q.URL)
+			sourceURLs = append(sourceURLs, h.queueURL(ctx, q.Name))
 		}
 	}
 	if sourceURLs == nil {

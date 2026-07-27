@@ -8,6 +8,7 @@ package sqs
 //                        SendMessageBatch, DeleteMessageBatch
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"net/http"
@@ -20,6 +21,7 @@ import (
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol/op"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
@@ -82,9 +84,34 @@ func (h *Handler) initOps() {
 
 // ---- Shared helpers --------------------------------------------------------
 
-// queueURL builds the SQS queue URL for a given queue name.
+// queueURL builds the SQS queue URL for a given queue name, on the origin the
+// calling client reached Overcast on.
 // Format matches LocalStack: http://<host>:<port>/<accountID>/<queueName>
-func (h *Handler) queueURL(queueName string) string {
+//
+// The origin is per-request rather than server-wide because AWS SDKs resolve
+// the SQS endpoint from the QueueUrl, not from client configuration — see
+// internal/middleware/clientendpoint.go. A queue URL is only usable by a caller
+// that can dial its origin, and "localhost" is right for a host CLI while a
+// sibling Lambda container needs Overcast's container address. Requests with no
+// usable origin (internal callers, background work, real AWS hostnames) fall
+// back to the configured external origin.
+func (h *Handler) queueURL(ctx context.Context, queueName string) string {
+	return fmt.Sprintf("%s/%s/%s",
+		h.queueURLBase(ctx), h.cfg.AccountID, queueName)
+}
+
+// queueURLBase returns the origin queue URLs should carry for this request.
+func (h *Handler) queueURLBase(ctx context.Context) string {
+	if origin := middleware.ClientEndpointFromContext(ctx); origin != "" {
+		return origin
+	}
+	return h.cfg.ExternalBaseURL()
+}
+
+// canonicalQueueURL is the stored form of a queue URL: always the configured
+// external origin, so persisted state stays portable across the callers that
+// happen to create and read a queue. Wire responses re-render through queueURL.
+func (h *Handler) canonicalQueueURL(queueName string) string {
 	return fmt.Sprintf("%s/%s/%s",
 		h.cfg.ExternalBaseURL(), h.cfg.AccountID, queueName)
 }

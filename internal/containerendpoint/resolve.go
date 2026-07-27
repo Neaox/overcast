@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"time"
 
@@ -37,6 +38,17 @@ type networkClient interface {
 // better than an unset one.
 func Resolve(ctx context.Context, dc networkClient, network string, port int, logger *zap.Logger) string {
 	return resolve(ctx, dc, network, port, logger, runningInContainer, hostReachableIP)
+}
+
+// ResolveHost is Resolve without the scheme and port, for callers that pair the
+// host with a port of their own — Lambda reaches its Runtime API on one port
+// and the emulator API on another, but both live at the same host.
+func ResolveHost(ctx context.Context, dc networkClient, network string, logger *zap.Logger) string {
+	u, err := url.Parse(Resolve(ctx, dc, network, 0, logger))
+	if err != nil {
+		return dockerInternalHost
+	}
+	return u.Hostname()
 }
 
 // resolve is Resolve with its environment probes injected, so mode selection is

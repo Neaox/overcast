@@ -3605,25 +3605,29 @@ func receiveAll2(t *testing.T, srv *helpers.TestServer, queueURL string) []map[s
 
 // ---- Hostname override -----------------------------------------------------
 
+// TestCreateQueue_honorsHostname pins the two halves of queue-URL origin
+// selection. OVERCAST_HOSTNAME is the fallback, not an override: a caller that
+// reached Overcast on a dialable origin gets that origin back, because AWS SDKs
+// resolve the SQS endpoint from the QueueUrl and would otherwise be sent to a
+// name only some callers can resolve. See endpoint_addressing_test.go.
 func TestCreateQueue_honorsHostname(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithHostname("overcast.local"))
 
-	resp := sqsCall(t, srv, "CreateQueue", map[string]any{
-		"QueueName": "hostname-q",
-	})
-	defer resp.Body.Close()
-	helpers.AssertStatus(t, resp, http.StatusOK)
-
-	var result struct {
-		QueueUrl string `json:"QueueUrl"`
+	// A request with no dialable origin (real AWS host-based addressing) falls
+	// back to OVERCAST_HOSTNAME.
+	fallback := createQueueFromHost(t, srv, "sqs.us-east-1.amazonaws.com", "hostname-q")
+	if !containsString(fallback, "overcast.local") {
+		t.Errorf("expected fallback QueueUrl to contain 'overcast.local', got %q", fallback)
 	}
-	helpers.DecodeJSON(t, resp, &result)
-
-	if !containsString(result.QueueUrl, "overcast.local") {
-		t.Errorf("expected QueueUrl to contain 'overcast.local', got %q", result.QueueUrl)
+	if containsString(fallback, "localhost") {
+		t.Errorf("expected fallback QueueUrl NOT to contain 'localhost', got %q", fallback)
 	}
-	if containsString(result.QueueUrl, "localhost") {
-		t.Errorf("expected QueueUrl NOT to contain 'localhost', got %q", result.QueueUrl)
+
+	// A caller that dialled a reachable origin keeps it — a host CLI must not
+	// be handed a compose-internal hostname it cannot resolve.
+	direct := createQueueFromHost(t, srv, "127.0.0.1:4566", "hostname-q-direct")
+	if want := "http://127.0.0.1:4566/000000000000/hostname-q-direct"; direct != want {
+		t.Errorf("QueueUrl = %q, want %q", direct, want)
 	}
 }
 

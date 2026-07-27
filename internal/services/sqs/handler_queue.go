@@ -95,10 +95,10 @@ func (h *Handler) createQueueTyped(ctx context.Context, in *createQueueRequest) 
 				return nil, errQueueNameExists(k)
 			}
 		}
-		return &createQueueResponse{QueueUrl: existing.URL}, nil
+		return &createQueueResponse{QueueUrl: h.queueURL(ctx, existing.Name)}, nil
 	}
 
-	queueURL := h.queueURL(in.QueueName)
+	canonicalURL := h.canonicalQueueURL(in.QueueName)
 	attrs := defaultQueueAttributes()
 	for k, v := range in.Attributes {
 		attrs[k] = v
@@ -124,7 +124,7 @@ func (h *Handler) createQueueTyped(ctx context.Context, in *createQueueRequest) 
 
 	q := &Queue{
 		Name:             in.QueueName,
-		URL:              queueURL,
+		URL:              canonicalURL,
 		ARN:              protocol.QueueARN(middleware.RegionFromContext(ctx, h.cfg.Region), h.cfg.AccountID, in.QueueName),
 		Attributes:       attrs,
 		CreatedTimestamp: h.clk.Now().Unix(),
@@ -143,7 +143,7 @@ func (h *Handler) createQueueTyped(ctx context.Context, in *createQueueRequest) 
 			Payload: events.ResourcePayload{Name: in.QueueName, ARN: q.ARN},
 		})
 	}
-	return &createQueueResponse{QueueUrl: queueURL}, nil
+	return &createQueueResponse{QueueUrl: h.queueURL(ctx, in.QueueName)}, nil
 }
 
 func (h *Handler) getQueueURLTyped(ctx context.Context, in *getQueueURLRequest) (*getQueueURLResponse, *protocol.AWSError) {
@@ -154,7 +154,7 @@ func (h *Handler) getQueueURLTyped(ctx context.Context, in *getQueueURLRequest) 
 	if aerr != nil {
 		return nil, aerr
 	}
-	return &getQueueURLResponse{QueueUrl: q.URL}, nil
+	return &getQueueURLResponse{QueueUrl: h.queueURL(ctx, q.Name)}, nil
 }
 
 func (h *Handler) getQueueAttributesTyped(ctx context.Context, in *getQueueAttributesRequest) (*getQueueAttributesResponse, *protocol.AWSError) {
@@ -245,7 +245,7 @@ func (h *Handler) listQueuesTyped(ctx context.Context, in *listQueuesRequest) (*
 	}
 	urls := make([]string, len(queues))
 	for i, q := range queues {
-		urls[i] = q.URL
+		urls[i] = h.queueURL(ctx, q.Name)
 	}
 	return &listQueuesResponse{QueueUrls: urls}, nil
 }
@@ -320,11 +320,11 @@ func (h *Handler) CreateQueue(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		protocol.WriteJSON(w, r, http.StatusOK, &createQueueResponse{QueueUrl: existing.URL})
+		protocol.WriteJSON(w, r, http.StatusOK, &createQueueResponse{QueueUrl: h.queueURL(r.Context(), existing.Name)})
 		return
 	}
 
-	queueURL := h.queueURL(req.QueueName)
+	canonicalURL := h.canonicalQueueURL(req.QueueName)
 	attrs := defaultQueueAttributes()
 	for k, v := range req.Attributes {
 		attrs[k] = v
@@ -356,7 +356,7 @@ func (h *Handler) CreateQueue(w http.ResponseWriter, r *http.Request) {
 
 	q := &Queue{
 		Name:             req.QueueName,
-		URL:              queueURL,
+		URL:              canonicalURL,
 		ARN:              protocol.QueueARN(middleware.RegionFromContext(r.Context(), h.cfg.Region), h.cfg.AccountID, req.QueueName),
 		Attributes:       attrs,
 		CreatedTimestamp: h.clk.Now().Unix(),
@@ -376,7 +376,7 @@ func (h *Handler) CreateQueue(w http.ResponseWriter, r *http.Request) {
 			Payload: events.ResourcePayload{Name: req.QueueName, ARN: q.ARN},
 		})
 	}
-	protocol.WriteJSON(w, r, http.StatusOK, &createQueueResponse{QueueUrl: queueURL})
+	protocol.WriteJSON(w, r, http.StatusOK, &createQueueResponse{QueueUrl: h.queueURL(r.Context(), req.QueueName)})
 }
 
 func (h *Handler) GetQueueURL(w http.ResponseWriter, r *http.Request) {
@@ -394,7 +394,7 @@ func (h *Handler) GetQueueURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	protocol.WriteJSON(w, r, http.StatusOK, &getQueueURLResponse{QueueUrl: q.URL})
+	protocol.WriteJSON(w, r, http.StatusOK, &getQueueURLResponse{QueueUrl: h.queueURL(r.Context(), q.Name)})
 }
 
 func (h *Handler) GetQueueAttributes(w http.ResponseWriter, r *http.Request) {
@@ -514,7 +514,7 @@ func (h *Handler) ListQueues(w http.ResponseWriter, r *http.Request) {
 
 	urls := make([]string, len(queues))
 	for i, q := range queues {
-		urls[i] = q.URL
+		urls[i] = h.queueURL(r.Context(), q.Name)
 	}
 
 	protocol.WriteJSON(w, r, http.StatusOK, &listQueuesResponse{QueueUrls: urls})
