@@ -5030,20 +5030,25 @@ func TestPutProvisionedConcurrencyConfig_success(t *testing.T) {
 	createFunction(t, srv, "prov-concurrency-fn")
 
 	// When PutProvisionedConcurrencyConfig is called with Qualifier
-	resp := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/prov-concurrency-fn/provisioned-concurrency?Qualifier=1"), map[string]any{
+	resp := doJSON(t, http.MethodPut, srv.URL+"/2019-09-30/functions/prov-concurrency-fn/provisioned-concurrency?Qualifier=1", map[string]any{
 		"ProvisionedConcurrentExecutions": 5,
 	})
 	defer resp.Body.Close()
 
-	// Then 202 Accepted with READY status
+	// Then 202 Accepted, echoing the request. The test server has no Docker,
+	// so nothing is allocated and the status stays IN_PROGRESS with a reason —
+	// reporting READY here would claim capacity that does not exist.
 	helpers.AssertStatus(t, resp, http.StatusAccepted)
 	var out provisionedConcurrencyResponse
 	decodeJSON(t, resp, &out)
 	if out.RequestedProvisionedConcurrentExecutions != 5 {
 		t.Errorf("RequestedProvisionedConcurrentExecutions = %d, want 5", out.RequestedProvisionedConcurrentExecutions)
 	}
-	if out.Status != "READY" {
-		t.Errorf("Status = %q, want READY", out.Status)
+	if out.Status != "FAILED" {
+		t.Errorf("Status = %q, want FAILED", out.Status)
+	}
+	if out.AllocatedProvisionedConcurrentExecutions != 0 {
+		t.Errorf("AllocatedProvisionedConcurrentExecutions = %d, want 0", out.AllocatedProvisionedConcurrentExecutions)
 	}
 }
 
@@ -5051,25 +5056,26 @@ func TestGetProvisionedConcurrencyConfig_success(t *testing.T) {
 	// Given a provisioned concurrency config exists
 	srv := helpers.NewTestServer(t)
 	createFunction(t, srv, "prov-concurrency-get-fn")
-	resp := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/prov-concurrency-get-fn/provisioned-concurrency?Qualifier=prod"), map[string]any{
+	resp := doJSON(t, http.MethodPut, srv.URL+"/2019-09-30/functions/prov-concurrency-get-fn/provisioned-concurrency?Qualifier=prod", map[string]any{
 		"ProvisionedConcurrentExecutions": 8,
 	})
 	helpers.AssertStatus(t, resp, http.StatusAccepted)
 	resp.Body.Close()
 
 	// When GetProvisionedConcurrencyConfig is called
-	resp2 := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/prov-concurrency-get-fn/provisioned-concurrency?Qualifier=prod"), nil)
+	resp2 := doJSON(t, http.MethodGet, srv.URL+"/2019-09-30/functions/prov-concurrency-get-fn/provisioned-concurrency?Qualifier=prod", nil)
 	defer resp2.Body.Close()
 
-	// Then 200 with stored values
+	// Then 200 with the stored request. Without Docker nothing is allocated,
+	// so the status reflects that rather than claiming READY.
 	helpers.AssertStatus(t, resp2, http.StatusOK)
 	var out provisionedConcurrencyResponse
 	decodeJSON(t, resp2, &out)
 	if out.RequestedProvisionedConcurrentExecutions != 8 {
 		t.Errorf("RequestedProvisionedConcurrentExecutions = %d, want 8", out.RequestedProvisionedConcurrentExecutions)
 	}
-	if out.Status != "READY" {
-		t.Errorf("Status = %q, want READY", out.Status)
+	if out.Status != "FAILED" {
+		t.Errorf("Status = %q, want FAILED", out.Status)
 	}
 }
 
@@ -5079,7 +5085,7 @@ func TestGetProvisionedConcurrencyConfig_notFound(t *testing.T) {
 	createFunction(t, srv, "prov-concurrency-notfound-fn")
 
 	// When GetProvisionedConcurrencyConfig is called
-	resp := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/prov-concurrency-notfound-fn/provisioned-concurrency?Qualifier=1"), nil)
+	resp := doJSON(t, http.MethodGet, srv.URL+"/2019-09-30/functions/prov-concurrency-notfound-fn/provisioned-concurrency?Qualifier=1", nil)
 	defer resp.Body.Close()
 
 	// Then 404

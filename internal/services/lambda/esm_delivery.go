@@ -329,6 +329,17 @@ func (m *esmDeliveryManager) pollSQS(ctx context.Context, esm *EventSourceMappin
 
 			outcome, err := m.invoker.Invoke(ctx, funcName, batchPayload)
 			if err != nil {
+				if _, throttled := asThrottle(err); throttled {
+					// The function is at its concurrency limit. Leave the
+					// messages in flight so they return to the queue on the
+					// visibility timeout, exactly as AWS does when a poller is
+					// throttled.
+					m.log.Logger().Debug("lambda: esm sqs: throttled",
+						zap.String("function", funcName),
+						zap.Error(err))
+					m.updateLastResult(ctx, esmCopy.UUID, "Throttled")
+					return
+				}
 				m.log.Logger().Error("lambda: esm sqs: invoke error",
 					zap.String("function", funcName),
 					zap.Error(err))
@@ -619,6 +630,17 @@ func (m *esmDeliveryManager) deliverStreamBatch(ctx context.Context, esm *EventS
 		outcome, err := m.invoker.Invoke(ctx, funcName, lambdaPayload)
 		if err != nil {
 			lastErr = err.Error()
+			if _, throttled := asThrottle(err); throttled {
+				// Throttling is transient — the next attempt waits a second
+				// first, so the batch backs off instead of spinning. It still
+				// consumes a retry attempt, which keeps a permanently
+				// throttled function from retrying forever.
+				m.log.Logger().Debug("lambda: esm dynamodb: throttled",
+					zap.String("function", funcName),
+					zap.Error(err))
+				m.updateLastResult(ctx, esm.UUID, "Throttled")
+				continue
+			}
 			m.log.Logger().Error("lambda: esm dynamodb: invoke error",
 				zap.String("function", funcName),
 				zap.Int("attempt", attempt),

@@ -130,13 +130,14 @@ func (inv *ServiceInvoker) InvokeAsync(ctx context.Context, functionARN string, 
 	}
 
 	// Acquire a warm instance, execute the invocation, then release it.
-	if inv.tracker != nil {
-		inv.tracker.Acquire(name, payload)
-	}
+	tracked := inv.tracker.Begin(name, payload)
 	inst, err := rt.Acquire(ctx, fn)
 	if err != nil {
-		if inv.tracker != nil {
-			inv.tracker.Release(name, false, err.Error())
+		tracked.Abandon(err.Error())
+		if _, throttled := asThrottle(err); throttled {
+			inv.logger.Warn("lambda: invokeAsync: throttled",
+				zap.String("function", name), zap.Error(err))
+			return nil
 		}
 		inv.logger.Error("lambda: invokeAsync: acquire instance failed",
 			zap.String("function", name),
@@ -144,21 +145,18 @@ func (inv *ServiceInvoker) InvokeAsync(ctx context.Context, functionARN string, 
 		)
 		return nil
 	}
+	tracked.Bind(inst)
+	tracked.Ready()
 	if err := awaitRuntimeReady(ctx, inv.cfg, inst); err != nil {
 		rt.Release(ctx, inst, false)
-		if inv.tracker != nil {
-			inv.tracker.Release(name, false, err.Error())
-		}
+		tracked.Abandon(err.Error())
 		inv.logger.Error("lambda: invokeAsync: runtime init failed",
 			zap.String("function", name),
 			zap.Error(err),
 		)
 		return nil
 	}
-
-	if inv.tracker != nil {
-		inv.tracker.Ready(name)
-	}
+	tracked.Running()
 
 	// Ensure the log stream exists so container logs are captured.
 	// Use the function's own region (from its ARN) so the log stream is
@@ -169,9 +167,7 @@ func (inv *ServiceInvoker) InvokeAsync(ctx context.Context, functionARN string, 
 			fnRegion = inv.cfg.Region
 		}
 		fnCtx := middleware.ContextWithRegion(ctx, fnRegion)
-		if inv.tracker != nil {
-			inv.tracker.SetLogRefs(name, fn.logGroupName(), inst.LogStreamName())
-		}
+		tracked.SetLogRefs(fn.logGroupName(), inst.LogStreamName())
 		if lsErr := inv.logWriter.EnsureLogStream(fnCtx, fn.logGroupName(), inst.LogStreamName()); lsErr != nil {
 			inv.logger.Debug("lambda: invokeAsync: ensure log stream", zap.String("function", name), zap.Error(lsErr))
 		}
@@ -180,16 +176,7 @@ func (inv *ServiceInvoker) InvokeAsync(ctx context.Context, functionARN string, 
 	result, err := inst.Invoke(ctx, payload)
 	healthy := err == nil
 	rt.Release(ctx, inst, healthy)
-	if inv.tracker != nil {
-		success := err == nil && result != nil && result.FunctionError == ""
-		reason := ""
-		if err != nil {
-			reason = err.Error()
-		} else if result != nil && result.FunctionError != "" {
-			reason = result.FunctionError
-		}
-		inv.tracker.Release(name, success, reason)
-	}
+	tracked.Finish(invocationOutcome(err, result))
 
 	if err != nil {
 		inv.logger.Error("lambda: invokeAsync: invocation error",
@@ -259,13 +246,14 @@ func (inv *ServiceInvoker) Invoke(ctx context.Context, functionName string, payl
 		return nil, nil
 	}
 
-	if inv.tracker != nil {
-		inv.tracker.Acquire(functionName, payload)
-	}
+	tracked := inv.tracker.Begin(functionName, payload)
 	inst, err := rt.Acquire(ctx, fn)
 	if err != nil {
-		if inv.tracker != nil {
-			inv.tracker.Release(functionName, false, err.Error())
+		tracked.Abandon(err.Error())
+		if _, throttled := asThrottle(err); throttled {
+			inv.logger.Warn("lambda: invoke: throttled",
+				zap.String("function", functionName), zap.Error(err))
+			return nil, err
 		}
 		inv.logger.Error("lambda: invoke: acquire instance failed",
 			zap.String("function", functionName),
@@ -273,21 +261,18 @@ func (inv *ServiceInvoker) Invoke(ctx context.Context, functionName string, payl
 		)
 		return nil, err
 	}
+	tracked.Bind(inst)
+	tracked.Ready()
 	if err := awaitRuntimeReady(ctx, inv.cfg, inst); err != nil {
 		rt.Release(ctx, inst, false)
-		if inv.tracker != nil {
-			inv.tracker.Release(functionName, false, err.Error())
-		}
+		tracked.Abandon(err.Error())
 		inv.logger.Error("lambda: invoke: runtime init failed",
 			zap.String("function", functionName),
 			zap.Error(err),
 		)
 		return nil, err
 	}
-
-	if inv.tracker != nil {
-		inv.tracker.Ready(functionName)
-	}
+	tracked.Running()
 
 	// Ensure the log stream exists so container logs are captured.
 	// Use the function's own region (from its ARN) so the log stream is
@@ -298,9 +283,7 @@ func (inv *ServiceInvoker) Invoke(ctx context.Context, functionName string, payl
 			fnRegion = inv.cfg.Region
 		}
 		fnCtx := middleware.ContextWithRegion(ctx, fnRegion)
-		if inv.tracker != nil {
-			inv.tracker.SetLogRefs(functionName, fn.logGroupName(), inst.LogStreamName())
-		}
+		tracked.SetLogRefs(fn.logGroupName(), inst.LogStreamName())
 		if lsErr := inv.logWriter.EnsureLogStream(fnCtx, fn.logGroupName(), inst.LogStreamName()); lsErr != nil {
 			inv.logger.Debug("lambda: invoke: ensure log stream", zap.String("function", functionName), zap.Error(lsErr))
 		}
@@ -309,16 +292,7 @@ func (inv *ServiceInvoker) Invoke(ctx context.Context, functionName string, payl
 	result, err := inst.Invoke(ctx, payload)
 	healthy := err == nil
 	rt.Release(ctx, inst, healthy)
-	if inv.tracker != nil {
-		success := err == nil && result != nil && result.FunctionError == ""
-		reason := ""
-		if err != nil {
-			reason = err.Error()
-		} else if result != nil && result.FunctionError != "" {
-			reason = result.FunctionError
-		}
-		inv.tracker.Release(functionName, success, reason)
-	}
+	tracked.Finish(invocationOutcome(err, result))
 	if err != nil {
 		return nil, err
 	}

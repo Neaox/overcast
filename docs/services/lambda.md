@@ -1,5 +1,15 @@
 ---
 title: "Lambda"
+description: "Lambda"
+section: "Service Reference"
+tags:
+  - docs
+  - lambda
+  - services
+---
+
+---
+title: "Lambda"
 description: "Lambda emulation has two distinct concerns:"
 section: "Service Reference"
 tags:
@@ -35,11 +45,109 @@ containers, communicate with the Lambda Runtime API, and return real response pa
 
 - Async invocation (`InvocationType: Event`) is not yet implemented.
 - Cold-start latency simulation is not implemented.
+- Account-wide concurrency quotas and requests-per-second limits are not
+  emulated; only per-function reserved concurrency is enforced.
 - Runtime-specific environment validation is minimal.
 - Lambda extensions support currently covers Docker-backed zip functions. Image
   function extension startup is not yet wrapped.
 - Extension Logs API support is limited to HTTP destinations and best-effort
   delivery. Telemetry API subscriptions are not yet implemented.
+
+---
+
+## Concurrency and execution environments
+
+Overcast reuses containers for sequential invocations and scales out to one
+container per concurrent invocation, the same way Lambda reuses and scales
+execution environments. After a burst, the surplus stays warm for reuse until
+the 15-minute idle sweep.
+
+### Limits
+
+| Limit | Env var | Default | Behaviour when reached |
+| --- | --- | --- | --- |
+| Containers across all functions | `LAMBDA_MAX_INSTANCES` | 25 | Reclaim an idle container → queue → throttle |
+| Containers for one function | `LAMBDA_MAX_INSTANCES_PER_FUNCTION` | 10 | Queue → throttle |
+| Idle containers kept per function | `LAMBDA_MAX_WARM_INSTANCES` | 10 | Surplus destroyed on release |
+| `ReservedConcurrentExecutions` | (per function, AWS API) | unset | Throttle immediately |
+
+The instance limits protect your machine; they are not an emulation of AWS's
+account quota. An invocation that cannot get a container first reclaims the
+least-recently-used idle one (never a provisioned one), then waits — and **if it
+is still waiting when the function's timeout expires it is throttled**, with
+AWS's 429 `TooManyRequestsException` and `Reason: ConcurrentInvocationLimitExceeded`.
+If you hit this in normal use, raise the limit rather than treating it as AWS
+behaviour.
+
+`ReservedConcurrentExecutions` is enforced with AWS's semantics instead: no
+queueing, an immediate 429 with
+`Reason: ReservedFunctionConcurrentInvocationLimitExceeded`. Setting it to 0
+disables the function, the same idiom that works on AWS. Overcast does not
+emulate the account-wide unreserved pool.
+
+Asynchronous invocations (`InvocationType: Event`) are never throttled back to
+the caller — they were already answered 202. A throttled async invocation is
+retried internally, as on AWS, though on a much shorter budget than AWS's six
+hours. Event source mappings behave the same way: a throttled batch is left in
+flight so the messages return to the queue on the visibility timeout.
+
+### Provisioned concurrency
+
+`PutProvisionedConcurrencyConfig` really does pre-initialize environments.
+They are created in the background (`Status: IN_PROGRESS`, then `READY`), held
+open regardless of the idle sweep, replenished when one is lost, and rebuilt
+against the new configuration after a code or config update. Containers report
+`AWS_LAMBDA_INITIALIZATION_TYPE=provisioned-concurrency`, which is what
+Powertools and similar libraries read to classify a cold start.
+
+Provisioned concurrency is a **floor, not a ceiling**: when all reserved
+environments are busy, further invocations spill over into on-demand capacity
+with a cold start rather than being throttled — matching AWS, where only
+reserved concurrency caps a function. A reservation is never reclaimed to make
+room for another function, and `Allocated`/`Available` are reported from the
+environments that actually exist.
+
+These operations live under the `/2019-09-30/` API path, as on AWS.
+
+Without Docker, nothing can be allocated, so the config is stored and reported
+as `Status: FAILED` with a `StatusReason` rather than claiming `READY`.
+
+### Environment lifecycle
+
+Overcast keeps warm containers per function and reuses them for sequential
+invocations, the same way Lambda reuses execution environments.
+
+A container is created with the function's code, environment variables, memory
+limit, timeout, handler, layers and VPC attachment fixed at start — a running
+container can never observe a change to any of them. So when `UpdateFunctionCode`
+or `UpdateFunctionConfiguration` changes any of those, the environment is
+**retired immediately**:
+
+- An **idle** container is destroyed as soon as the update is stored.
+- A container **serving an invocation** finishes that invocation in the old
+  environment and is destroyed on completion. In-flight invocations are never
+  interrupted.
+- **No replacement is started** for an on-demand environment: the next
+  invocation cold starts one. A provisioned concurrency reservation *is* rebuilt
+  in the background, against the new configuration.
+
+Updates that change nothing the container can observe — the description or the
+role, for example — leave the warm container in place, so cosmetic edits do not
+cost a cold start.
+
+Deleting a function destroys its containers immediately. Otherwise, a container
+left idle for 15 minutes is reaped by the background sweeper — unless it holds a
+provisioned concurrency reservation, which is exempt.
+
+If a warm container disappears without Overcast asking — you removed it with
+`docker rm -f`, it was OOM-killed, or Docker restarted — the Docker event stream
+reports it and the environment is dropped from the warm set right away, so the
+next invocation is an ordinary cold start.
+
+The web UI's system map and the `GET /_lambda/instances` endpoint report one
+entry per execution environment, so a function serving five concurrent
+invocations shows five instances. A retired environment stops being listed at
+the moment it is retired rather than lingering until the idle timeout.
 
 ---
 
@@ -389,6 +497,9 @@ cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
 \* Resolves to `{OVERCAST_DATA_DIR}/layers`. In the standard Docker image
 `OVERCAST_DATA_DIR=/data`, so layers are read from `/data/layers`.
 
+
+
+
 <!-- BEGIN overcast:capabilities -->
 
 ## Summary
@@ -401,7 +512,7 @@ cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
 | Function URLs               | 5            |                |
 | Event source mappings       | 5            |                |
 | Layers                      | 5            |                |
-| Concurrency & configuration | 5            |                |
+| Concurrency & configuration | 7            |                |
 
 ---
 
@@ -472,12 +583,14 @@ cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
 
 ### Concurrency & configuration
 
-| Operation                         | Status       | Notes                                                                                  | AWS Docs                                                                                      |
-| --------------------------------- | ------------ | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `PutFunctionConcurrency`          | ✅ Supported | Stores reserved concurrency limit; 0 = throttled                                       | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_PutFunctionConcurrency.html)          |
-| `GetFunctionConcurrency`          | ✅ Supported | Returns 404 if no concurrency limit is set                                             | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionConcurrency.html)          |
-| `DeleteFunctionConcurrency`       | ✅ Supported | Clears reserved concurrency limit; returns 204                                         | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunctionConcurrency.html)       |
-| `PutProvisionedConcurrencyConfig` | ✅ Supported | Stores config per qualifier; immediately reports Status=READY (no actual provisioning) | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_PutProvisionedConcurrencyConfig.html) |
-| `GetProvisionedConcurrencyConfig` | ✅ Supported | Returns ProvisionedConcurrencyConfigNotFoundException if not set                       | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetProvisionedConcurrencyConfig.html) |
+| Operation                            | Status       | Notes                                                                                                                        | AWS Docs                                                                                         |
+| ------------------------------------ | ------------ | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `PutFunctionConcurrency`             | ✅ Supported | Enforced: over-limit invokes get 429 TooManyRequestsException; 0 throttles the function entirely                             | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_PutFunctionConcurrency.html)             |
+| `GetFunctionConcurrency`             | ✅ Supported | Returns 404 if no concurrency limit is set                                                                                   | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionConcurrency.html)             |
+| `DeleteFunctionConcurrency`          | ✅ Supported | Clears reserved concurrency limit; returns 204                                                                               | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunctionConcurrency.html)          |
+| `PutProvisionedConcurrencyConfig`    | ✅ Supported | Pre-warms the requested execution environments in the background (IN_PROGRESS then READY); FAILED when Docker is unavailable | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_PutProvisionedConcurrencyConfig.html)    |
+| `GetProvisionedConcurrencyConfig`    | ✅ Supported | Reports live Allocated/Available; ProvisionedConcurrencyConfigNotFoundException if not set                                   | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetProvisionedConcurrencyConfig.html)    |
+| `DeleteProvisionedConcurrencyConfig` | ✅ Supported | Releases the reservation; the environments age out on the idle TTL rather than being killed                                  | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteProvisionedConcurrencyConfig.html) |
+| `ListProvisionedConcurrencyConfigs`  | ✅ Supported | Single page; NextMarker is always null                                                                                       | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListProvisionedConcurrencyConfigs.html)  |
 
 <!-- END overcast:capabilities -->

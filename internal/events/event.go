@@ -706,6 +706,10 @@ type LambdaInstancePayload struct {
 	LastInvocationError string `json:"lastInvocationError,omitempty"`
 	// TriggerEvent holds the full JSON payload that last triggered this instance.
 	TriggerEvent []byte `json:"triggerEvent,omitempty"`
+	// Provisioned reports whether this environment was pre-warmed by a
+	// provisioned concurrency reservation rather than created on demand.
+	// Provisioned environments are exempt from the idle TTL.
+	Provisioned bool `json:"provisioned,omitempty"`
 	// MemoryUsedMB and CPUPercent are reserved for future real metrics collection.
 	MemoryUsedMB int     `json:"memoryUsedMB"`
 	CPUPercent   float64 `json:"cpuPercent"`
