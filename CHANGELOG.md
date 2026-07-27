@@ -67,6 +67,8 @@ need it than accidentally ship a breaking change as a patch.
      - Release section dates use UTC in YYYY-MM-DD format.
 -->
 
+## [0.0.1-alpha.25] - 2026-07-27
+
 ### Added
 
 - **Networking** — real AWS Host-routed (subdomain) addressing now works alongside path-style URLs, via a shared host-route dispatch table (`internal/middleware/hostroute.go`): API Gateway invoke (`{apiId}.execute-api.{region}.<base>`, both REST v1 stage-prefixed and HTTP v2 `$default`/named-stage forms), a brand-new **Lambda function URLs** feature (`CreateFunctionUrlConfig`/`Get`/`Update`/`Delete`/`ListFunctionUrlConfigs` plus Host-routed invocation mapping the request to the payload-v2.0 event shape; `AuthType` is stored but not enforced, matching Overcast's non-security-boundary stance), and AppSync GraphQL (`{apiId}.appsync-api.{region}.<base>/graphql`, also covering the colocated `/realtime` endpoint). See docs/networking.md for the wildcard-DNS (`*.localhost.overcast.sh`) setup story and its offline caveats.
