@@ -451,6 +451,21 @@ type Config struct {
 	// Not loaded from environment — set by the caller after Load().
 	Version string
 
+	// PublishedPort is the host port the API is actually reachable on, which
+	// differs from Port only when Overcast runs in a container that remaps it
+	// (`docker run -p 4580:4566`). A container cannot see its own port mapping
+	// from the inside, so this is recovered by asking Docker about our own
+	// container; it is 0 when there is nothing to recover — a native binary, no
+	// Docker socket, or a 1:1 mapping.
+	//
+	// Consumers use it wherever an address has to make sense *outside* the
+	// container: the port the web UI hands the browser, and the origins
+	// containerendpoint recognises as Overcast's own when rewriting URLs a
+	// host-side deploy minted.
+	//
+	// Not loaded from environment — set by the caller after Load().
+	PublishedPort int
+
 	// MCPReplayLimit bounds in-memory MCP notification replay history for
 	// Last-Event-ID reconnect support. A value of 0 disables replay retention.
 	// Default: 256.
