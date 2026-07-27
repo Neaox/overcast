@@ -20,9 +20,9 @@ export const health = {
  * Health page (GET /_debug/metrics, proxied at /api/debug/metrics). Only
  * available when the emulator has OVERCAST_DEBUG=true — a disabled debug
  * namespace responds 404 with `{"error":"DebugDisabled", ...}`, which
- * apiFetch turns into a rejected promise (see debugMetricsQueryOptions in
- * web/src/features/metrics/data.ts for how callers treat that as an
- * expected, non-error "unavailable" state rather than a real fetch failure).
+ * apiFetch turns into a rejected promise. debugMetricsQueryOptions in
+ * web/src/features/metrics/data.ts catches that and resolves it as an
+ * expected "unavailable" result rather than letting the query fail.
  */
 export const debugMetrics = {
   get: () => apiFetch<DebugMetricsResponse>("/debug/metrics"),
