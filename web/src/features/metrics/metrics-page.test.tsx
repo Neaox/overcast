@@ -1,7 +1,8 @@
 import { http, HttpResponse } from "msw"
-import { render, renderWithRouter, screen, waitFor } from "@/test/render"
+import { act, render, renderWithRouter, screen, waitFor } from "@/test/render"
 import { server } from "@/test/server"
 import { MetricsPage } from "./metrics-page"
+import { metricsHealthKeys } from "./data"
 
 /** Minimal realistic GET /_metrics fixture — enough for MetricsPage to render past its loading state. */
 const metricsSnapshot = {
@@ -38,6 +39,18 @@ const healthyPersistentHealth = {
 
 function mockCoreEndpoints() {
   server.use(http.get("/api/metrics", () => HttpResponse.json(metricsSnapshot)))
+}
+
+/** The message a debug-disabled emulator returns from every debug endpoint. */
+const DEBUG_DISABLED_MESSAGE =
+  "OVERCAST_DEBUG must be enabled to inspect raw state or storage diagnostics."
+
+/** GET /_debug/metrics as it responds when OVERCAST_DEBUG is off. */
+function debugDisabled() {
+  return HttpResponse.json(
+    { error: "DebugDisabled", message: DEBUG_DISABLED_MESSAGE },
+    { status: 404 },
+  )
 }
 
 describe("MetricsPage", () => {
@@ -84,6 +97,29 @@ describe("MetricsPage", () => {
     expect(await screen.findByText("hybrid")).toBeInTheDocument()
     expect(await screen.findByText("Healthy")).toBeInTheDocument()
     expect(await screen.findByText("wal")).toBeInTheDocument()
+  })
+
+  it("says a memory-only store has no journal mode, rather than blaming debug mode", async () => {
+    // Given: debug mode is on — the diagnostics arrive — but the backend is
+    // memory-only, so there is no SQLite journal for it to report.
+    mockCoreEndpoints()
+    server.use(
+      http.get("/api/health", () =>
+        HttpResponse.json({ ...healthyPersistentHealth, storage: { default: "memory" } }),
+      ),
+      http.get("/api/debug/metrics", () =>
+        HttpResponse.json({ stores: [{ mode: "memory" }], advisories: [] }),
+      ),
+    )
+
+    // When: the page renders.
+    render(<MetricsPage />)
+
+    // Then: the journal mode pill says the setting doesn't apply. Claiming
+    // "Debug mode required" here would be plainly wrong — debug mode is on,
+    // and turning anything else on would not produce a journal mode.
+    expect(await screen.findByText("Not applicable")).toBeInTheDocument()
+    expect(screen.queryByText("Debug mode required")).not.toBeInTheDocument()
   })
 
   it("shows a quiet empty state when there are no advisories", async () => {
@@ -211,27 +247,56 @@ describe("MetricsPage", () => {
     mockCoreEndpoints()
     server.use(
       http.get("/api/health", () => HttpResponse.json(healthyPersistentHealth)),
-      http.get("/api/debug/metrics", () =>
-        HttpResponse.json(
-          {
-            error: "DebugDisabled",
-            message: "OVERCAST_DEBUG must be enabled to inspect raw state or storage diagnostics.",
-          },
-          { status: 404 },
-        ),
-      ),
+      http.get("/api/debug/metrics", () => debugDisabled()),
     )
 
     // When: the page renders.
     render(<MetricsPage />)
 
     // Then: the advisories section explains why, instead of a bare error.
-    await waitFor(() =>
-      expect(
-        screen.getByText(
-          "OVERCAST_DEBUG must be enabled to inspect raw state or storage diagnostics.",
-        ),
-      ).toBeInTheDocument(),
+    await waitFor(() => expect(screen.getByText(DEBUG_DISABLED_MESSAGE)).toBeInTheDocument())
+  })
+
+  it("keeps the advisories section still while a background poll is in flight", async () => {
+    // Given: debug mode is off, so every 3-second poll of /_debug/metrics
+    // fails and the query never holds a payload. Polls after the first park
+    // until the test releases them — the in-flight window is held open by an
+    // explicit signal rather than a duration, so nothing here races.
+    mockCoreEndpoints()
+    let polls = 0
+    let releasePoll = () => {}
+    const parked = new Promise<void>((resolve) => {
+      releasePoll = resolve
+    })
+    server.use(
+      http.get("/api/health", () => HttpResponse.json(healthyPersistentHealth)),
+      http.get("/api/debug/metrics", async () => {
+        polls += 1
+        if (polls > 1) await parked
+        return debugDisabled()
+      }),
     )
+    const { queryClient } = render(<MetricsPage />)
+    expect(await screen.findByText(DEBUG_DISABLED_MESSAGE)).toBeInTheDocument()
+
+    // When: the next poll is in flight. Refetching directly, rather than
+    // waiting out the interval, keeps this about the refetch itself: TanStack
+    // Query reverts a data-less query to `pending` for the duration of one.
+    const poll = queryClient.refetchQueries({ queryKey: metricsHealthKeys.debugMetrics() })
+    await waitFor(() => expect(polls).toBe(2))
+    await act(async () => {})
+
+    // Then: the section holds its explanation instead of collapsing back to
+    // the loading skeleton and shifting everything below it.
+    expect(screen.queryByText("loading data")).not.toBeInTheDocument()
+    expect(screen.getByText(DEBUG_DISABLED_MESSAGE)).toBeInTheDocument()
+
+    // And: it still does once the poll has failed again.
+    releasePoll()
+    await act(async () => {
+      await poll
+    })
+    expect(screen.queryByText("loading data")).not.toBeInTheDocument()
+    expect(screen.getByText(DEBUG_DISABLED_MESSAGE)).toBeInTheDocument()
   })
 })

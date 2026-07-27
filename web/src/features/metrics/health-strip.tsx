@@ -16,7 +16,7 @@ import { fieldLabel } from "@/lib/typography"
 import { Badge, type BadgeProps } from "@/components/ui/badge"
 import type { DebugMetricsResponse, HealthResponse } from "@/types"
 import { StatPill } from "./stat-pill"
-import { healthQueryOptions, debugMetricsQueryOptions } from "./data"
+import { healthQueryOptions, debugMetricsQueryOptions, type DebugMetricsResult } from "./data"
 
 type StorageStatus = {
   label: string
@@ -40,6 +40,26 @@ function storageStatus(
   return { label: "Memory-only", variant: "default" }
 }
 
+/**
+ * The live `PRAGMA journal_mode` readback, or a reason there isn't one to
+ * show. The three no-value cases are genuinely different and were previously
+ * collapsed into a single "Debug mode required": only a *missing* diagnostics
+ * payload is about debug mode. A memory-only backend has no SQLite to have a
+ * journal mode at all, and no setting the reader could turn on would give it
+ * one — telling them to enable debug mode there sends them nowhere.
+ */
+function journalModeValue(result: DebugMetricsResult | undefined): string {
+  if (!result) return "—" // first poll still in flight
+  if (!result.available) return "Debug mode required"
+  const reported = result.metrics.stores.find((s) => s.journalMode)?.journalMode
+  if (reported) return reported
+  // No store reported one: "not applicable" only if none of them is
+  // SQLite-backed, otherwise this is a gap in what the server sent (an older
+  // binary behind the dev BFF) and claiming otherwise would be a guess.
+  const stores = result.metrics.stores
+  return stores.length > 0 && stores.every((s) => s.mode === "memory") ? "Not applicable" : "—"
+}
+
 /** Most recent flush timestamp across every reporting store, or undefined if none. */
 function lastFlushAt(debug: DebugMetricsResponse | undefined): string | undefined {
   const timestamps = (debug?.stores ?? [])
@@ -52,11 +72,13 @@ function lastFlushAt(debug: DebugMetricsResponse | undefined): string | undefine
 export function HealthStrip({ uptime }: { uptime?: string }) {
   const healthQuery = useQuery(healthQueryOptions())
   const debugQuery = useQuery(debugMetricsQueryOptions())
+  // Undefined covers both "not fetched yet" and "debug mode is off"; every
+  // field below already falls back for the debug-gated half.
+  const debug = debugQuery.data?.available ? debugQuery.data.metrics : undefined
 
-  const status = storageStatus(healthQuery.data, debugQuery.data)
-  const storageMode = healthQuery.data?.storage.default ?? debugQuery.data?.stores[0]?.mode ?? "—"
-  const journalMode = debugQuery.data?.stores.find((s) => s.journalMode)?.journalMode
-  const lastFlush = lastFlushAt(debugQuery.data)
+  const status = storageStatus(healthQuery.data, debug)
+  const storageMode = healthQuery.data?.storage.default ?? debug?.stores[0]?.mode ?? "—"
+  const lastFlush = lastFlushAt(debug)
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -67,7 +89,7 @@ export function HealthStrip({ uptime }: { uptime?: string }) {
           <Badge variant={status.variant}>{status.label}</Badge>
         </div>
       </div>
-      <StatPill label="Journal Mode" value={journalMode ?? "Debug mode required"} />
+      <StatPill label="Journal Mode" value={journalModeValue(debugQuery.data)} />
       <StatPill
         label="Last Flush"
         value={lastFlush ? new Date(lastFlush).toLocaleTimeString() : "No flushes yet"}

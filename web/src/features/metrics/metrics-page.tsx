@@ -93,6 +93,12 @@ function MetricCard({ title, value, sub, info, sparkData, color }: MetricCardPro
 export function MetricsPage() {
   const { snapshots, latest, error } = useMetrics()
   const debugMetricsQuery = useQuery(debugMetricsQueryOptions())
+  // Both halves of the result are rendered: the diagnostics when they're
+  // there, and otherwise the reason they aren't (see debugMetricsQueryOptions
+  // for why unavailability arrives as data rather than as a query error).
+  const debug = debugMetricsQuery.data
+  const diagnostics = debug?.available ? debug.metrics : undefined
+  const unavailable = debug && !debug.available ? debug.reason : undefined
 
   const extract = (fn: (s: MetricsSnapshot) => number) => snapshots.map(fn)
 
@@ -133,16 +139,13 @@ export function MetricsPage() {
 
       {/* ── Advisories ────────────────────────────────────────────────── */}
       <AdvisoriesList
-        advisories={debugMetricsQuery.data?.advisories}
+        advisories={diagnostics?.advisories}
         isLoading={debugMetricsQuery.isLoading}
-        error={debugMetricsQuery.error}
+        error={unavailable}
       />
 
       {/* ── Storage activity (reads/writes, memory vs SQL for hybrid) ───── */}
-      <StorageActivity
-        stores={debugMetricsQuery.data?.stores}
-        isLoading={debugMetricsQuery.isLoading}
-      />
+      <StorageActivity stores={diagnostics?.stores} isLoading={debugMetricsQuery.isLoading} />
 
       {/* ── Runtime section ───────────────────────────────────────────── */}
       {/* Uptime lives in the HealthStrip above; goroutines have their own
