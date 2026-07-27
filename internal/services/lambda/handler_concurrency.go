@@ -3,9 +3,9 @@ package lambda
 // handler_concurrency.go — concurrency and provisioned concurrency handlers.
 //
 // Implemented:
-//   - PutFunctionConcurrency          PUT    /2015-03-31/functions/{name}/concurrency
-//   - GetFunctionConcurrency          GET    /2015-03-31/functions/{name}/concurrency
-//   - DeleteFunctionConcurrency       DELETE /2015-03-31/functions/{name}/concurrency
+//   - PutFunctionConcurrency          PUT    /2017-10-31/functions/{name}/concurrency
+//   - GetFunctionConcurrency          GET    /2019-09-30/functions/{name}/concurrency
+//   - DeleteFunctionConcurrency       DELETE /2017-10-31/functions/{name}/concurrency
 //   - PutProvisionedConcurrencyConfig PUT    /2015-03-31/functions/{name}/provisioned-concurrency
 //   - GetProvisionedConcurrencyConfig GET    /2015-03-31/functions/{name}/provisioned-concurrency
 
@@ -128,7 +128,7 @@ func qualifiedFunctionARN(fn *Function, qualifier string) string {
 
 // ─── Reserved concurrency ─────────────────────────────────────────────────────
 
-// PutFunctionConcurrency handles PUT /2015-03-31/functions/{name}/concurrency.
+// PutFunctionConcurrency handles PUT /2017-10-31/functions/{name}/concurrency.
 func (h *Handler) PutFunctionConcurrency(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	h.log.Debug("put function concurrency", zap.String("function", name))
@@ -165,7 +165,7 @@ func (h *Handler) PutFunctionConcurrency(w http.ResponseWriter, r *http.Request)
 	_ = json.NewEncoder(w).Encode(functionConcurrencyResponse(req))
 }
 
-// GetFunctionConcurrency handles GET /2015-03-31/functions/{name}/concurrency.
+// GetFunctionConcurrency handles GET /2019-09-30/functions/{name}/concurrency.
 func (h *Handler) GetFunctionConcurrency(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	h.log.Debug("get function concurrency", zap.String("function", name))
@@ -199,7 +199,7 @@ func (h *Handler) GetFunctionConcurrency(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// DeleteFunctionConcurrency handles DELETE /2015-03-31/functions/{name}/concurrency.
+// DeleteFunctionConcurrency handles DELETE /2017-10-31/functions/{name}/concurrency.
 func (h *Handler) DeleteFunctionConcurrency(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	h.log.Debug("delete function concurrency", zap.String("function", name))

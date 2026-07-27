@@ -721,7 +721,12 @@ func (s *Service) Name() string { return "lambda" }
 // PathPrefixes implements router.PathPrefixService. When Lambda is disabled,
 // the router registers a 503 ServiceDisabled handler at this prefix so requests
 // don't fall through to S3's /{bucket}/* wildcard and return XML errors.
-func (s *Service) PathPrefixes() []string { return []string{"/2015-03-31"} }
+// PathPrefixes lists every API version Lambda serves, so a disabled Lambda
+// reports "service disabled" on all of them rather than letting the ones off
+// the 2015-03-31 base fall through to the S3 catch-all.
+func (s *Service) PathPrefixes() []string {
+	return []string{"/2015-03-31", "/2017-10-31", "/2018-10-31", "/2019-09-30", "/2020-06-30", "/2021-10-31", "/2021-11-15"}
+}
 
 // Invoker returns the FunctionInvoker for this Lambda service.
 // Used by other services (e.g. S3 notifications) to invoke Lambda functions
@@ -737,9 +742,13 @@ func (s *Service) SyncInvoker() events.FunctionSyncInvoker { return s.invoker }
 // Lambda uses versioned REST paths, not a single-dispatch target header.
 func (s *Service) RegisterRoutes(r chi.Router) {
 	const apiBase = "/2015-03-31"
-	// Provisioned concurrency is the one Lambda operation family AWS serves
-	// under a different API version.
+	// The concurrency operation families are the ones AWS serves under API
+	// versions other than the 2015-03-31 base. Registering them on the base
+	// makes every SDK call miss the handler and fall through to the S3
+	// catch-all, which parses the version segment as a bucket name.
+	const reservedConcurrencyBase = "/2017-10-31"
 	const provisionedConcurrencyBase = "/2019-09-30"
+	const codeSigningBase = "/2020-06-30"
 
 	r.Post(apiBase+"/functions", s.handler.CreateFunction)
 	r.Post(apiBase+"/functions/", s.handler.CreateFunction)
@@ -753,14 +762,16 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Put(apiBase+"/event-source-mappings/{uuid}", s.handler.UpdateEventSourceMapping)
 	r.Delete(apiBase+"/event-source-mappings/{uuid}", s.handler.DeleteEventSourceMapping)
 	r.Get(apiBase+"/functions/{name}", s.handler.GetFunction)
-	r.Get(apiBase+"/functions/{name}/code-signing-config", s.handler.GetFunctionCodeSigningConfig)
+	r.Get(codeSigningBase+"/functions/{name}/code-signing-config", s.handler.GetFunctionCodeSigningConfig)
 	r.Delete(apiBase+"/functions/{name}", s.handler.DeleteFunction)
 	r.Put(apiBase+"/functions/{name}/code", s.handler.UpdateFunctionCode)
 	r.Get(apiBase+"/functions/{name}/configuration", s.handler.GetFunctionConfiguration)
 	r.Put(apiBase+"/functions/{name}/configuration", s.handler.UpdateFunctionConfiguration)
-	r.Put(apiBase+"/functions/{name}/concurrency", s.handler.PutFunctionConcurrency)
-	r.Get(apiBase+"/functions/{name}/concurrency", s.handler.GetFunctionConcurrency)
-	r.Delete(apiBase+"/functions/{name}/concurrency", s.handler.DeleteFunctionConcurrency)
+	// Reserved concurrency: Put/Delete on 2017-10-31, Get on 2019-09-30 — the
+	// three are split across two API versions, which is what AWS serves.
+	r.Put(reservedConcurrencyBase+"/functions/{name}/concurrency", s.handler.PutFunctionConcurrency)
+	r.Delete(reservedConcurrencyBase+"/functions/{name}/concurrency", s.handler.DeleteFunctionConcurrency)
+	r.Get(provisionedConcurrencyBase+"/functions/{name}/concurrency", s.handler.GetFunctionConcurrency)
 	// Provisioned concurrency lives under the 2019-09-30 API version, not the
 	// 2015-03-31 base the rest of Lambda uses — that is the path the AWS SDKs
 	// call. GET is overloaded: ?List=ALL lists, otherwise it gets one config.

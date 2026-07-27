@@ -4937,6 +4937,24 @@ type concurrencyResponse struct {
 	ReservedConcurrentExecutions int `json:"ReservedConcurrentExecutions"`
 }
 
+// Reserved concurrency is served on two API versions that are not Lambda's
+// 2015-03-31 base — these are the paths the AWS SDKs and CLI actually call:
+//
+//	PutFunctionConcurrency     PUT    /2017-10-31/functions/{name}/concurrency
+//	DeleteFunctionConcurrency  DELETE /2017-10-31/functions/{name}/concurrency
+//	GetFunctionConcurrency     GET    /2019-09-30/functions/{name}/concurrency
+func putConcurrencyURL(srv *helpers.TestServer, name string) string {
+	return srv.URL + "/2017-10-31/functions/" + name + "/concurrency"
+}
+
+func deleteConcurrencyURL(srv *helpers.TestServer, name string) string {
+	return srv.URL + "/2017-10-31/functions/" + name + "/concurrency"
+}
+
+func getConcurrencyURL(srv *helpers.TestServer, name string) string {
+	return srv.URL + "/2019-09-30/functions/" + name + "/concurrency"
+}
+
 type provisionedConcurrencyResponse struct {
 	AllocatedProvisionedConcurrentExecutions int    `json:"AllocatedProvisionedConcurrentExecutions"`
 	RequestedProvisionedConcurrentExecutions int    `json:"RequestedProvisionedConcurrentExecutions"`
@@ -4950,8 +4968,8 @@ func TestPutFunctionConcurrency_success(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	createFunction(t, srv, "concurrency-fn")
 
-	// When PutFunctionConcurrency is called
-	resp := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/concurrency-fn/concurrency"), map[string]any{
+	// When PutFunctionConcurrency is called on the AWS API path
+	resp := doJSON(t, http.MethodPut, putConcurrencyURL(srv, "concurrency-fn"), map[string]any{
 		"ReservedConcurrentExecutions": 50,
 	})
 	defer resp.Body.Close()
@@ -4969,14 +4987,14 @@ func TestGetFunctionConcurrency_success(t *testing.T) {
 	// Given a function with reserved concurrency set
 	srv := helpers.NewTestServer(t)
 	createFunction(t, srv, "concurrency-get-fn")
-	resp := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/concurrency-get-fn/concurrency"), map[string]any{
+	resp := doJSON(t, http.MethodPut, putConcurrencyURL(srv, "concurrency-get-fn"), map[string]any{
 		"ReservedConcurrentExecutions": 25,
 	})
 	helpers.AssertStatus(t, resp, http.StatusOK)
 	resp.Body.Close()
 
-	// When GetFunctionConcurrency is called
-	resp2 := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/concurrency-get-fn/concurrency"), nil)
+	// When GetFunctionConcurrency is called on the AWS API path
+	resp2 := doJSON(t, http.MethodGet, getConcurrencyURL(srv, "concurrency-get-fn"), nil)
 	defer resp2.Body.Close()
 
 	// Then 200 with the stored value
@@ -4993,8 +5011,8 @@ func TestGetFunctionConcurrency_notSet_returns404(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	createFunction(t, srv, "concurrency-notset-fn")
 
-	// When GetFunctionConcurrency is called
-	resp := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/concurrency-notset-fn/concurrency"), nil)
+	// When GetFunctionConcurrency is called on the AWS API path
+	resp := doJSON(t, http.MethodGet, getConcurrencyURL(srv, "concurrency-notset-fn"), nil)
 	defer resp.Body.Close()
 
 	// Then 404 ResourceNotFoundException
@@ -5005,23 +5023,66 @@ func TestDeleteFunctionConcurrency_success(t *testing.T) {
 	// Given a function with reserved concurrency set
 	srv := helpers.NewTestServer(t)
 	createFunction(t, srv, "concurrency-del-fn")
-	resp := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/concurrency-del-fn/concurrency"), map[string]any{
+	resp := doJSON(t, http.MethodPut, putConcurrencyURL(srv, "concurrency-del-fn"), map[string]any{
 		"ReservedConcurrentExecutions": 10,
 	})
 	helpers.AssertStatus(t, resp, http.StatusOK)
 	resp.Body.Close()
 
-	// When DeleteFunctionConcurrency is called
-	resp2 := doJSON(t, http.MethodDelete, lambdaURL(srv, "/functions/concurrency-del-fn/concurrency"), nil)
+	// When DeleteFunctionConcurrency is called on the AWS API path
+	resp2 := doJSON(t, http.MethodDelete, deleteConcurrencyURL(srv, "concurrency-del-fn"), nil)
 	defer resp2.Body.Close()
 
 	// Then 204 No Content
 	helpers.AssertStatus(t, resp2, http.StatusNoContent)
 
 	// And GetFunctionConcurrency now returns 404
-	resp3 := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/concurrency-del-fn/concurrency"), nil)
+	resp3 := doJSON(t, http.MethodGet, getConcurrencyURL(srv, "concurrency-del-fn"), nil)
 	defer resp3.Body.Close()
 	helpers.AssertStatus(t, resp3, http.StatusNotFound)
+}
+
+// TestReservedConcurrency_awsPaths_doNotFallThroughToS3 pins the routing
+// contract for the reserved-concurrency family. These three operations are
+// served on API versions other than Lambda's 2015-03-31 base, so registering
+// them on the base silently sends every AWS SDK call to the S3 catch-all,
+// where the version segment is parsed as a bucket name and the caller gets
+// 404 NoSuchBucket instead of reaching Lambda at all.
+func TestReservedConcurrency_awsPaths_doNotFallThroughToS3(t *testing.T) {
+	// Given a function exists
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "concurrency-routing-fn")
+
+	cases := []struct {
+		name   string
+		method string
+		url    string
+		body   any
+		want   int
+	}{
+		{"PutFunctionConcurrency", http.MethodPut, putConcurrencyURL(srv, "concurrency-routing-fn"),
+			map[string]any{"ReservedConcurrentExecutions": 7}, http.StatusOK},
+		{"GetFunctionConcurrency", http.MethodGet, getConcurrencyURL(srv, "concurrency-routing-fn"),
+			nil, http.StatusOK},
+		{"DeleteFunctionConcurrency", http.MethodDelete, deleteConcurrencyURL(srv, "concurrency-routing-fn"),
+			nil, http.StatusNoContent},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// When the operation is called on the path AWS serves it on
+			resp := doJSON(t, tc.method, tc.url, tc.body)
+			defer resp.Body.Close()
+
+			// Then it reaches the Lambda handler
+			helpers.AssertStatus(t, resp, tc.want)
+
+			// And the response is not an S3 XML error — the fallthrough symptom
+			if ct := resp.Header.Get("Content-Type"); strings.Contains(ct, "xml") {
+				t.Errorf("Content-Type = %q, want JSON: request fell through to the S3 catch-all", ct)
+			}
+		})
+	}
 }
 
 func TestPutProvisionedConcurrencyConfig_success(t *testing.T) {
@@ -5094,13 +5155,18 @@ func TestGetProvisionedConcurrencyConfig_notFound(t *testing.T) {
 
 // ─── GetFunctionCodeSigningConfig ─────────────────────────────────────────────
 
+// AWS serves this one on 2020-06-30, not Lambda's 2015-03-31 base.
+func codeSigningConfigURL(srv *helpers.TestServer, name string) string {
+	return srv.URL + "/2020-06-30/functions/" + name + "/code-signing-config"
+}
+
 func TestGetFunctionCodeSigningConfig_noConfigAssociated(t *testing.T) {
 	// Given a function with no code signing config
 	srv := helpers.NewTestServer(t)
 	createFunction(t, srv, "codesign-fn")
 
-	// When GetFunctionCodeSigningConfig is called
-	resp := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/codesign-fn/code-signing-config"), nil)
+	// When GetFunctionCodeSigningConfig is called on the AWS API path
+	resp := doJSON(t, http.MethodGet, codeSigningConfigURL(srv, "codesign-fn"), nil)
 	defer resp.Body.Close()
 
 	// Then 404 ResourceNotFoundException (not a 501 — the function exists, it just has no config)
@@ -5115,7 +5181,7 @@ func TestGetFunctionCodeSigningConfig_noConfigAssociated(t *testing.T) {
 func TestGetFunctionCodeSigningConfig_functionNotFound(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
-	resp := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/no-such-codesign-fn/code-signing-config"), nil)
+	resp := doJSON(t, http.MethodGet, codeSigningConfigURL(srv, "no-such-codesign-fn"), nil)
 	defer resp.Body.Close()
 
 	helpers.AssertStatus(t, resp, http.StatusNotFound)
