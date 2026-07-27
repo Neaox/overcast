@@ -137,17 +137,13 @@ func TestHybridStore_FlushCrash_PartialChunkCommitReplaysSafely(t *testing.T) {
 	if err := s.WaitReady(ctx); err != nil {
 		t.Fatalf("WaitReady: %v", err)
 	}
-	waitForHybridSeedLoaded(t, s)
-	// seedFromSQLite closes s.loaded (what waitForHybridSeedLoaded polls) and
-	// THEN calls signalFlush() as a one-time nudge — those two steps are not
-	// atomic, so without this pause the nudge can still be in flight when
-	// the Set loop below starts, race in, and steal (and compact away) the
-	// first handful of pending ops before this test ever installs its
-	// chunk-1-fails hook, throwing off the exact row count the assertions
-	// below depend on. The nudge is a harmless no-op once there's nothing
-	// pending (see flushOnce's early return), so a short pause is enough to
-	// let it settle deterministically before writes begin.
-	time.Sleep(100 * time.Millisecond)
+	// Stop the background flusher, not merely wait for the seed: the seed's
+	// one-time flush nudge (and the dirty-threshold nudges the 1200 Sets below
+	// fire on their own) would otherwise let run() steal and compact away part
+	// of the batch before this test installs its chunk-1-fails hook, throwing
+	// off the exact row counts the assertions depend on. See
+	// waitForHybridSeedThenStopBackground for the full ordering explanation.
+	waitForHybridSeedThenStopBackground(t, s)
 
 	const ns = "s3:objects"
 	const rows = 1200 // hybridFlushChunkMaxOps=500 -> chunks of 500, 500, 200
