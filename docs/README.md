@@ -250,7 +250,7 @@ For state that persists across restarts, just mount a volume — `auto` does the
 docker run --rm \
   -p 4566:4566 \
   -v $(pwd)/overcast-data:/data \
-  ghcr.io/neaox/overcast:latest
+  ghcr.io/neaox/overcast:alpha
 ```
 
 This resolves to `hybrid` automatically because a volume is mounted at `/data`. Set
@@ -276,7 +276,7 @@ docker run --rm -p 4566:4566 \
   -e OVERCAST_STATE_DYNAMODB=persistent \
   -e OVERCAST_STATE_S3=hybrid \
   -v $(pwd)/data:/data \
-  ghcr.io/neaox/overcast:latest
+  ghcr.io/neaox/overcast:alpha
 ```
 
 > **Note:** a few services accept an override that can have no effect, and log a startup
@@ -310,7 +310,7 @@ docker run --rm \
   -e OVERCAST_TLS_CERT=/certs/cert.pem \
   -e OVERCAST_TLS_KEY=/certs/key.pem \
   -v $(pwd):/certs \
-  ghcr.io/neaox/overcast:latest
+  ghcr.io/neaox/overcast:alpha
 ```
 
 ```bash
@@ -332,7 +332,7 @@ are reachable across the network:
 ```yaml
 services:
   overcast:
-    image: ghcr.io/neaox/overcast:latest
+    image: ghcr.io/neaox/overcast:alpha
     environment:
       OVERCAST_HOSTNAME: overcast # SQS QueueUrl → http://overcast:4566/...
     ports:

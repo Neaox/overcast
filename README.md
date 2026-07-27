@@ -21,7 +21,7 @@ the CDK, and the Go, JavaScript, Python, Java, .NET, and Rust SDKs — via the
 1. **Works with the official AWS CLI** — `aws s3 mb s3://my-bucket --endpoint-url http://localhost:4566` just works.
 2. **Works with all official AWS SDK clients** — Go, JavaScript/TypeScript, Python, Java, .NET without code changes.
 3. **Drop-in replacement for LocalStack** — same port (4566), same env vars mapped, same path conventions. Switching requires changing one line.
-4. **Zero configuration** — `docker run -p 4566:4566 ghcr.io/neaox/overcast` is the full getting-started guide.
+4. **Zero configuration** — `docker run -p 4566:4566 ghcr.io/neaox/overcast:alpha` is the full getting-started guide.
 5. **Fast** — sub-200ms startup, <15 MiB idle memory, tiny Docker image. CI pipelines should not wait for the emulator.
 6. **Honest about gaps** — unimplemented endpoints return `501 Not Implemented` with a clear message and a link to the support matrix. Silent failures are worse than loud ones.
 7. **Fully open** — MIT licensed, no auth tokens, no telemetry, no usage limits, no feature gates. Free forever for every use case including CI/CD.
@@ -71,12 +71,17 @@ Two images are published to GHCR:
 | `ghcr.io/neaox/overcast`      | Full image with web management console (ports 4566 + 4567) | ~50 MB |
 | `ghcr.io/neaox/overcast-slim` | Headless — Go binary only, no UI (port 4566)               | ~20 MB |
 
+Overcast is pre-1.0, so every build publishes to the `:alpha` channel tag and to
+an exact version tag such as `:0.0.1-alpha.25`. There is no `:latest` tag yet —
+it starts publishing with the first stable release. Pin the exact version in CI;
+use `:alpha` to track the newest build.
+
 ```bash
 # Full image (with web UI on :4567)
-docker run --rm -p 4566:4566 -p 4567:4567 ghcr.io/neaox/overcast:latest
+docker run --rm -p 4566:4566 -p 4567:4567 ghcr.io/neaox/overcast:alpha
 
 # Slim image (CI pipelines, no UI)
-docker run --rm -p 4566:4566 ghcr.io/neaox/overcast-slim:latest
+docker run --rm -p 4566:4566 ghcr.io/neaox/overcast-slim:alpha
 ```
 
 Point any AWS SDK or the AWS CLI at it:
@@ -121,7 +126,7 @@ docker run --rm \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -e OVERCAST_SERVICES=s3,sqs,dynamodb,lambda \
   -e OVERCAST_LOG_LEVEL=debug \
-  ghcr.io/neaox/overcast:latest
+  ghcr.io/neaox/overcast:alpha
 
 # With persistent data (survives container restarts) — mounting a volume at
 # /data is enough; OVERCAST_STATE defaults to "auto", which resolves to
@@ -132,14 +137,14 @@ docker run --rm \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v ~/.overcast:/data \
   -e OVERCAST_SERVICES=s3,sqs,dynamodb,lambda \
-  ghcr.io/neaox/overcast:latest
+  ghcr.io/neaox/overcast:alpha
 
 # Slim image (no web UI) — no Docker socket needed when only using
 # non-container services (S3, SQS, DynamoDB, SNS, etc.)
 docker run --rm \
   -p 4566:4566 \
   -e OVERCAST_SERVICES=s3,sqs,dynamodb \
-  ghcr.io/neaox/overcast-slim:latest
+  ghcr.io/neaox/overcast-slim:alpha
 ```
 
 ### docker compose (recommended for local dev)
@@ -148,7 +153,7 @@ docker run --rm \
 # docker-compose.yml
 services:
   overcast:
-    image: ghcr.io/neaox/overcast:latest
+    image: ghcr.io/neaox/overcast:alpha
     ports:
       - "4566:4566"
       - "4567:4567"
@@ -200,7 +205,7 @@ docker compose up
 >     environment:
 >       DOCKER_TLS_CERTDIR: "" # disable TLS for simplicity
 >   overcast:
->     image: ghcr.io/neaox/overcast:latest
+>     image: ghcr.io/neaox/overcast:alpha
 >     ports:
 >       - "4566:4566"
 >     environment:

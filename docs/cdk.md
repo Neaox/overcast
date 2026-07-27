@@ -26,7 +26,7 @@ the VPC provider pattern for keeping local-specific logic out of stacks.
 ### 1. Start Overcast
 
 ```bash
-docker run --rm -p 4566:4566 ghcr.io/neaox/overcast:latest
+docker run --rm -p 4566:4566 ghcr.io/neaox/overcast:alpha
 ```
 
 ### 2. Configure environment
@@ -234,7 +234,7 @@ hosts-file edits required:
 # Start Overcast with the wildcard-DNS hostname
 docker run --rm -p 4566:4566 \
   -e OVERCAST_HOSTNAME=localhost.localstack.cloud \
-  ghcr.io/neaox/overcast:latest
+  ghcr.io/neaox/overcast:alpha
 
 # Point CDK at that hostname
 export AWS_ENDPOINT_URL=http://localhost.localstack.cloud:4566

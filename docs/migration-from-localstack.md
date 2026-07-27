@@ -44,7 +44,7 @@ services:
 # After
 services:
   overcast:
-    image: ghcr.io/neaox/overcast:latest
+    image: ghcr.io/neaox/overcast:alpha
     ports: ["4566:4566"]
     environment:
       OVERCAST_SERVICES: s3,sqs,dynamodb
@@ -136,7 +136,7 @@ in a `boot.d` hook or use a custom Dockerfile layer.
 ```yaml
 services:
   overcast:
-    image: ghcr.io/neaox/overcast:latest
+    image: ghcr.io/neaox/overcast:alpha
     ports: ["4566:4566"]
     volumes:
       - "./init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh"
