@@ -8,11 +8,6 @@ import { Input } from "@/components/ui/input"
 import { FormField, fieldError } from "@/components/ui/form"
 import { RegionSelect } from "@/components/ui/region-select"
 
-interface ConnectionDialogProps {
-  /** Called once the user has saved a valid endpoint. */
-  onConnected: () => void
-}
-
 /**
  * Configuration only — this dialog is the sole way to enter a host and it says
  * nothing about whether that host is alive. Liveness belongs to
@@ -36,7 +31,7 @@ const connectionSchema = z.object({
   label: z.string(),
 })
 
-export function ConnectionDialog({ onConnected }: ConnectionDialogProps) {
+export function ConnectionDialog() {
   const form = useForm({
     validators: { onChange: connectionSchema },
     defaultValues: {
@@ -51,7 +46,6 @@ export function ConnectionDialog({ onConnected }: ConnectionDialogProps) {
         region: value.region.trim() || "us-east-1",
         label: value.label.trim() || undefined,
       })
-      onConnected()
     },
   })
 

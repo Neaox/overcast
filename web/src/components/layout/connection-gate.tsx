@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { queryOptions, useQuery } from "@tanstack/react-query"
-import { isConfigured, useEndpoint } from "@/hooks/use-endpoint"
+import { useEndpoint, useIsConfigured } from "@/hooks/use-endpoint"
 import type { EmulatorEndpoint } from "@/services/discovery"
 import { health } from "@/services/api"
 import { ConnectionDialog } from "./connection-dialog"
@@ -50,10 +50,10 @@ function endpointHost(endpoint: EmulatorEndpoint): string {
 
 /** Renders `children` only once the configured emulator has answered. */
 export function ConnectionGate({ children }: { children: React.ReactNode }) {
-  const [configured, setConfigured] = useState(isConfigured)
+  const configured = useIsConfigured()
 
   // Split so the probe is never mounted for a user who has no host to probe.
-  if (!configured) return <ConnectionDialog onConnected={() => setConfigured(true)} />
+  if (!configured) return <ConnectionDialog />
   return <LivenessGate>{children}</LivenessGate>
 }
 
