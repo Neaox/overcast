@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1257,
+  "total_ops": 1262,
   "services": [
     {
       "service": "s3",
@@ -520,8 +520,8 @@
     {
       "service": "lambda",
       "display_name": "Lambda",
-      "total_ops": 33,
-      "implemented_ops": 32,
+      "total_ops": 38,
+      "implemented_ops": 37,
       "operations": [
         {
           "operation": "ListFunctions",
@@ -623,6 +623,32 @@
         {
           "operation": "ListAliases",
           "category": "Aliases \u0026 versions",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "CreateFunctionUrlConfig",
+          "category": "Function URLs",
+          "status": "✅ Supported",
+          "notes": "FunctionUrl always echoes the caller's Host (see docs/networking.md); AuthType stored but never enforced"
+        },
+        {
+          "operation": "GetFunctionUrlConfig",
+          "category": "Function URLs",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "UpdateFunctionUrlConfig",
+          "category": "Function URLs",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "DeleteFunctionUrlConfig",
+          "category": "Function URLs",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "ListFunctionUrlConfigs",
+          "category": "Function URLs",
           "status": "✅ Supported"
         },
         {

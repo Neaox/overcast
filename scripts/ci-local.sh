@@ -256,6 +256,23 @@ if [ "$scope" != "web" ]; then
     fi
 fi
 
+# ─── docs and capability registry ────────────────────────────────────────────
+#
+# Mirrors the workflow's `make docs-check`. Kept as its own stage because the
+# generated artefacts are easy to leave stale: `capgen --generate` writes only
+# all.gen.go, while the docs and service-support.json come from --write-docs,
+# so regenerating after a merge conflict with the wrong flag looks clean
+# locally and fails in CI.
+
+if [ "$scope" != "web" ]; then
+    stage "docs-check"
+    go_cmd run -tags dev ./cmd/capgen --check || fail
+    go_cmd run -tags dev ./cmd/capgen --generate || fail
+    go_cmd run -tags dev ./cmd/capgen --write-docs || fail
+    go_cmd run ./scripts/docs-index.go --check || fail
+    git -C "$ROOT" diff --exit-code --         internal/capabilities/all.gen.go README.md STATUS.md         docs/README.md docs/services/ docs/generated/service-support.json         || { echo "  generated docs are stale — commit the regenerated files above" >&2; fail; }
+fi
+
 # ─── done ────────────────────────────────────────────────────────────────────
 
 elapsed=$(($(date +%s) - started_at))
