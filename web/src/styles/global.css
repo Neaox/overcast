@@ -415,19 +415,36 @@
   }
 
   /* ─── Scrollbar styling ─────────────────────────────────────────────── */
-  ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-  ::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  ::-webkit-scrollbar-thumb {
-    background: var(--border);
-    border-radius: 3px;
-  }
-  ::-webkit-scrollbar-thumb:hover {
-    background: var(--fg-subtle);
+  /*
+   * Keep this global so tables, log viewers, code blocks, and every other
+   * scroll container share one treatment. Browsers still decide whether their
+   * scrollbars overlay content; CSS only makes the native control unobtrusive.
+   * The forced-colors guard preserves the user's system scrollbar treatment.
+   */
+  @media (forced-colors: none) {
+    * {
+      /* Firefox */
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    /* Chromium and Safari */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border: 2px solid transparent;
+      border-radius: 9999px;
+      background-clip: content-box;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--fg-subtle);
+    }
   }
 
   /* ─── Focus ring ────────────────────────────────────────────────────── */
