@@ -138,19 +138,30 @@ For an alpha release:
    ## [x.y.z-alpha.n] - YYYY-MM-DD
    ```
 4. Leave the `[Unreleased]` section present and empty.
-5. Commit the release-prep changes on the release branch and open a PR.
-6. Merge the release-prep PR to `main`.
-7. Watch the `Release` workflow until all jobs pass.
-8. Verify the GitHub release `v<VERSION>` exists and contains native
+5. Update the compare links at the bottom of `CHANGELOG.md` — add a
+   `[x.y.z-alpha.n]` reference and repoint `[Unreleased]` at the new tag:
+   ```markdown
+   [Unreleased]: https://github.com/Neaox/overcast/compare/vx.y.z-alpha.n...HEAD
+   [x.y.z-alpha.n]: https://github.com/Neaox/overcast/compare/v<previous>...vx.y.z-alpha.n
+   ```
+   Then confirm steps 2-5 with the same validator the `Release` workflow runs,
+   rather than discovering a missing link reference in CI:
+   ```sh
+   python3 scripts/check-release-changelog.py x.y.z-alpha.n
+   ```
+6. Commit the release-prep changes on the release branch and open a PR.
+7. Merge the release-prep PR to `main`.
+8. Watch the `Release` workflow until all jobs pass.
+9. Verify the GitHub release `v<VERSION>` exists and contains native
    binaries plus `SHA256SUMS`.
-9. Verify the Docker images exist:
+10. Verify the Docker images exist:
    ```sh
    docker pull ghcr.io/neaox/overcast:<version>
    docker pull ghcr.io/neaox/overcast:alpha
    docker pull ghcr.io/neaox/overcast-slim:<version>
    docker pull ghcr.io/neaox/overcast-slim:alpha
    ```
-10. Smoke test the slim image:
+11. Smoke test the slim image:
    ```sh
    docker run --rm -d --name overcast-smoke -p 4566:4566 ghcr.io/neaox/overcast-slim:<version>
    curl -sf http://localhost:4566/_health
