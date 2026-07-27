@@ -41,6 +41,12 @@ const (
 // emulator listens on a non-standard port.
 var defaultAPIURL = "http://localhost:4566"
 
+// publishedAPIPort is the host port the API is reachable on from outside the
+// container, when that differs from the port this process listens on. Zero
+// means they are the same and no endpoint rewriting is needed. Set from
+// UIConfig in NewHandler.
+var publishedAPIPort int
+
 var bffHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 // bffStreamingClient is used for long-lived streaming requests (SSE) where a
@@ -51,11 +57,30 @@ var bffStreamingClient = &http.Client{}
 // where to reach the emulator API without any client-side guessing.
 type UIConfig struct {
 	// APIPort is the port the emulator API is listening on (default 4566).
+	// This is the port the BFF itself dials, so it must stay the port we
+	// actually listen on even when host callers reach us on another one.
 	APIPort int
+	// BrowserAPIPort is the port a browser on the host must dial to reach the
+	// API, which differs from APIPort when Overcast runs in a container
+	// published on a different host port (`-p 4580:4566`). Zero means "same as
+	// APIPort" — the case for a native binary and for a 1:1 port mapping.
+	//
+	// The distinction matters because the two ports are used from opposite
+	// sides of the container boundary: BrowserAPIPort goes into the SPA's
+	// apiBaseUrl, while APIPort is what this process dials on localhost.
+	BrowserAPIPort int
 	// Region is the default AWS region the emulator advertises.
 	Region string
 	// Debug indicates whether OVERCAST_DEBUG is enabled for the emulator.
 	Debug bool
+}
+
+// browserPort returns the port the SPA should be told to use.
+func (c UIConfig) browserPort() int {
+	if c.BrowserAPIPort > 0 {
+		return c.BrowserAPIPort
+	}
+	return c.APIPort
 }
 
 // NewHandler returns an http.Handler that mounts all BFF routes under /api/
@@ -71,6 +96,12 @@ type UIConfig struct {
 func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	if cfg.APIPort > 0 {
 		defaultAPIURL = fmt.Sprintf("http://localhost:%d", cfg.APIPort)
+	}
+	// Only meaningful when the two differ; equal ports need no rewriting.
+	if cfg.BrowserAPIPort > 0 && cfg.BrowserAPIPort != cfg.APIPort {
+		publishedAPIPort = cfg.BrowserAPIPort
+	} else {
+		publishedAPIPort = 0
 	}
 
 	r := chi.NewRouter()
@@ -158,9 +189,44 @@ func corsMiddleware(next http.Handler) http.Handler {
 // URL (default http://localhost:4566, overridden from UIConfig.APIPort).
 func resolveEndpoint(r *http.Request) string {
 	if ep := r.Header.Get(endpointHeader); ep != "" {
-		return strings.TrimRight(ep, "/")
+		return normalizeEndpoint(strings.TrimRight(ep, "/"))
 	}
 	return defaultAPIURL
+}
+
+// normalizeEndpoint maps an endpoint the browser derived from its own origin
+// back to one this process can dial.
+//
+// In a container published as `-p 4580:4566` the SPA is correctly told the API
+// is on 4580 and echoes that back in the x-overcast-endpoint header, but 4580
+// exists only on the host: from inside the container the very same API is on
+// 4566. Without this the browser reaches the API directly but every /api/*
+// proxy call fails.
+//
+// Only loopback hosts on our own published port are rewritten, so pointing the
+// console at a genuinely different emulator still works — that endpoint names
+// another host.
+func normalizeEndpoint(ep string) string {
+	if publishedAPIPort == 0 {
+		return ep
+	}
+	u, err := url.Parse(ep)
+	if err != nil || u.Host == "" {
+		return ep
+	}
+	if u.Port() != strconv.Itoa(publishedAPIPort) || !isLoopbackHost(u.Hostname()) {
+		return ep
+	}
+	return defaultAPIURL
+}
+
+// isLoopbackHost reports whether hostname refers to this machine.
+func isLoopbackHost(hostname string) bool {
+	if strings.EqualFold(hostname, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(hostname)
+	return ip != nil && ip.IsLoopback()
 }
 
 // resolveEndpointQP is like resolveEndpoint but also checks query parameters.
@@ -169,13 +235,13 @@ func resolveEndpoint(r *http.Request) string {
 // EventSource connections (which don't support custom headers).
 func resolveEndpointQP(r *http.Request) string {
 	if ep := r.Header.Get(endpointHeader); ep != "" {
-		return strings.TrimRight(ep, "/")
+		return normalizeEndpoint(strings.TrimRight(ep, "/"))
 	}
 	if ep := r.URL.Query().Get(endpointHeader); ep != "" {
-		return strings.TrimRight(ep, "/")
+		return normalizeEndpoint(strings.TrimRight(ep, "/"))
 	}
 	if ep := r.URL.Query().Get("ep"); ep != "" {
-		return strings.TrimRight(ep, "/")
+		return normalizeEndpoint(strings.TrimRight(ep, "/"))
 	}
 	return defaultAPIURL
 }
@@ -436,7 +502,7 @@ func deriveAPIBaseURL(r *http.Request, cfg UIConfig) string {
 		// assume the paired API is also reachable on the same host at port 80.
 		return scheme + "://" + hostname
 	}
-	apiPort := cfg.APIPort
+	apiPort := cfg.browserPort()
 	if apiPort == 0 {
 		apiPort = 4566
 	}
