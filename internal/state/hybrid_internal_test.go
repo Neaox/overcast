@@ -188,7 +188,7 @@ func TestHybridStore_DeletePrefixDoesNotEnumerateKeys(t *testing.T) {
 	if err := s.WaitReady(ctx); err != nil {
 		t.Fatalf("WaitReady: %v", err)
 	}
-	waitForHybridSeedLoaded(t, s)
+	waitForHybridSeedThenStopBackground(t, s)
 
 	const n = 1000
 	for i := 0; i < n; i++ {
@@ -237,7 +237,7 @@ func TestHybridStore_ResolvePendingLocked_TombstoneOrdering(t *testing.T) {
 	if err := s.WaitReady(ctx); err != nil {
 		t.Fatalf("WaitReady: %v", err)
 	}
-	waitForHybridSeedLoaded(t, s)
+	waitForHybridSeedThenStopBackground(t, s)
 
 	if err := s.Set(ctx, "svc", "p/k1", "v1"); err != nil {
 		t.Fatalf("Set k1: %v", err)
@@ -287,7 +287,7 @@ func TestHybridStore_FlushFailure_RetainsEntriesAndRetriesSuccessfully(t *testin
 	if err := s.WaitReady(ctx); err != nil {
 		t.Fatalf("WaitReady: %v", err)
 	}
-	waitForHybridSeedLoaded(t, s)
+	waitForHybridSeedThenStopBackground(t, s)
 
 	if err := s.Set(ctx, "svc", "k1", "v1"); err != nil {
 		t.Fatalf("Set: %v", err)
@@ -356,7 +356,7 @@ func TestHybridStore_FlushFailure_PendingLogSurvivesForReplay(t *testing.T) {
 	if err := s.WaitReady(ctx); err != nil {
 		t.Fatalf("WaitReady: %v", err)
 	}
-	waitForHybridSeedLoaded(t, s)
+	waitForHybridSeedThenStopBackground(t, s)
 
 	if err := s.Set(ctx, "svc", "k1", "v1"); err != nil {
 		t.Fatalf("Set: %v", err)
@@ -368,6 +368,17 @@ func TestHybridStore_FlushFailure_PendingLogSurvivesForReplay(t *testing.T) {
 	}
 	if len(before) == 0 {
 		t.Fatal("expected the pending log to contain the accepted write before any flush attempt")
+	}
+	// Assert the precondition the flush below actually depends on: the write
+	// must still be pending, so flushOnce reaches SQLite rather than returning
+	// nil at its len(pendingOps)==0 early return. Checked explicitly so that if
+	// anything ever drains the batch again the failure names that cause,
+	// instead of surfacing as the misleading "flush should have failed" below.
+	s.mu.Lock()
+	pendingBeforeFlush := len(s.pendingOps)
+	s.mu.Unlock()
+	if pendingBeforeFlush != 1 {
+		t.Fatalf("pendingOps before the flush attempt = %d, want 1 (the accepted write, still unflushed)", pendingBeforeFlush)
 	}
 
 	if err := s.sqlite.db.Close(); err != nil {
@@ -387,20 +398,23 @@ func TestHybridStore_FlushFailure_PendingLogSurvivesForReplay(t *testing.T) {
 
 	// Manual cleanup instead of s.Close(): the writer connection is
 	// permanently broken in this test, and Close()'s own final flush would
-	// hit the same failure again. Stop the background goroutines directly and
-	// close only what's still usable.
-	s.cancel()
-	s.wg.Wait()
+	// hit the same failure again. The background goroutines are already
+	// stopped (waitForHybridSeedThenStopBackground), so only the pending log
+	// file is left to close.
 	_ = s.closePendingFile()
 }
 
 // waitForHybridSeedLoaded blocks until the background TierHot seed has
 // finished (s.loaded closed). WaitReady only waits for the SQLite connection
-// itself (s.sqliteReady) — tests that assert exact pendingOps/dirty-cache
-// contents must also wait past seed completion, because seedFromSQLite sends
-// a one-time signalFlush() nudge when it finishes (1.4's fix for a threshold
-// crossed while still seeding), which would otherwise race an assertion made
-// immediately after a handful of writes.
+// itself (s.sqliteReady), so tests that read state the seed populates need
+// this too.
+//
+// It is NOT enough on its own for a test that asserts exact
+// pendingOps/dirty-cache contents or pending-log bytes: the background flusher
+// is still running, and the seed's one-time signalFlush() nudge (1.4's fix for
+// a threshold crossed while still seeding) is sent just *after* s.loaded
+// closes, so it can still land mid-test. Those tests must use
+// waitForHybridSeedThenStopBackground instead.
 func waitForHybridSeedLoaded(t *testing.T, s *HybridStore) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -410,6 +424,39 @@ func waitForHybridSeedLoaded(t *testing.T, s *HybridStore) {
 		}
 		time.Sleep(time.Millisecond)
 	}
+}
+
+// waitForHybridSeedThenStopBackground waits for the seed and then shuts the
+// background goroutines down, leaving the test goroutine as the only possible
+// caller of flush(). Every test that drives flush()/Flush() by hand and then
+// asserts on exact pendingOps/dirty/tombstone counts or on the pending log's
+// byte contents must use this instead of waitForHybridSeedLoaded alone.
+//
+// Why waiting for the seed is not sufficient on its own: seedFromSQLite closes
+// s.loaded (what waitForHybridSeedLoaded polls) and only THEN sends its
+// one-time signalFlush() nudge — deliberately in that order, see the comment
+// at that call site. The two steps are not atomic, so when
+// waitForHybridSeedLoaded returns, that nudge may not have been sent yet, let
+// alone picked up by run(). The resulting background flush can therefore land
+// at an arbitrary point in the rest of the test — including after a write and
+// before the test's own flush() call, where it commits the op and compacts the
+// pending log, so the test's flush() finds an empty batch and returns nil at
+// flushOnce's len(pendingOps)==0 early return. In
+// TestHybridStore_FlushFailure_PendingLogSurvivesForReplay that surfaced as a
+// nil error from a flush over a deliberately-closed writer connection (~2% of
+// runs under whole-suite CPU contention).
+//
+// Cancelling and waiting is what makes this deterministic rather than merely
+// likely: once wg.Wait() returns, run() has exited, so no flush can originate
+// anywhere but the test goroutine — no matter how the scheduler behaves. This
+// also covers threshold-triggered nudges from the test's own writes, not just
+// the seed's. A deferred s.Close() afterwards stays safe: its cancel() and
+// wg.Wait() are both idempotent.
+func waitForHybridSeedThenStopBackground(t *testing.T, s *HybridStore) {
+	t.Helper()
+	waitForHybridSeedLoaded(t, s)
+	s.cancel()
+	s.wg.Wait()
 }
 
 // ---- 1.11 degraded-mode pending log growth cap -------------------------
