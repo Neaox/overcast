@@ -5155,13 +5155,18 @@ func TestGetProvisionedConcurrencyConfig_notFound(t *testing.T) {
 
 // ─── GetFunctionCodeSigningConfig ─────────────────────────────────────────────
 
+// AWS serves this one on 2020-06-30, not Lambda's 2015-03-31 base.
+func codeSigningConfigURL(srv *helpers.TestServer, name string) string {
+	return srv.URL + "/2020-06-30/functions/" + name + "/code-signing-config"
+}
+
 func TestGetFunctionCodeSigningConfig_noConfigAssociated(t *testing.T) {
 	// Given a function with no code signing config
 	srv := helpers.NewTestServer(t)
 	createFunction(t, srv, "codesign-fn")
 
-	// When GetFunctionCodeSigningConfig is called
-	resp := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/codesign-fn/code-signing-config"), nil)
+	// When GetFunctionCodeSigningConfig is called on the AWS API path
+	resp := doJSON(t, http.MethodGet, codeSigningConfigURL(srv, "codesign-fn"), nil)
 	defer resp.Body.Close()
 
 	// Then 404 ResourceNotFoundException (not a 501 — the function exists, it just has no config)
@@ -5176,7 +5181,7 @@ func TestGetFunctionCodeSigningConfig_noConfigAssociated(t *testing.T) {
 func TestGetFunctionCodeSigningConfig_functionNotFound(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
-	resp := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/no-such-codesign-fn/code-signing-config"), nil)
+	resp := doJSON(t, http.MethodGet, codeSigningConfigURL(srv, "no-such-codesign-fn"), nil)
 	defer resp.Body.Close()
 
 	helpers.AssertStatus(t, resp, http.StatusNotFound)

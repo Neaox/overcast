@@ -725,7 +725,7 @@ func (s *Service) Name() string { return "lambda" }
 // reports "service disabled" on all of them rather than letting the ones off
 // the 2015-03-31 base fall through to the S3 catch-all.
 func (s *Service) PathPrefixes() []string {
-	return []string{"/2015-03-31", "/2017-10-31", "/2018-10-31", "/2019-09-30", "/2021-10-31", "/2021-11-15"}
+	return []string{"/2015-03-31", "/2017-10-31", "/2018-10-31", "/2019-09-30", "/2020-06-30", "/2021-10-31", "/2021-11-15"}
 }
 
 // Invoker returns the FunctionInvoker for this Lambda service.
@@ -748,6 +748,7 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	// catch-all, which parses the version segment as a bucket name.
 	const reservedConcurrencyBase = "/2017-10-31"
 	const provisionedConcurrencyBase = "/2019-09-30"
+	const codeSigningBase = "/2020-06-30"
 
 	r.Post(apiBase+"/functions", s.handler.CreateFunction)
 	r.Post(apiBase+"/functions/", s.handler.CreateFunction)
@@ -761,7 +762,7 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Put(apiBase+"/event-source-mappings/{uuid}", s.handler.UpdateEventSourceMapping)
 	r.Delete(apiBase+"/event-source-mappings/{uuid}", s.handler.DeleteEventSourceMapping)
 	r.Get(apiBase+"/functions/{name}", s.handler.GetFunction)
-	r.Get(apiBase+"/functions/{name}/code-signing-config", s.handler.GetFunctionCodeSigningConfig)
+	r.Get(codeSigningBase+"/functions/{name}/code-signing-config", s.handler.GetFunctionCodeSigningConfig)
 	r.Delete(apiBase+"/functions/{name}", s.handler.DeleteFunction)
 	r.Put(apiBase+"/functions/{name}/code", s.handler.UpdateFunctionCode)
 	r.Get(apiBase+"/functions/{name}/configuration", s.handler.GetFunctionConfiguration)
