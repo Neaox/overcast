@@ -73,6 +73,12 @@ export interface LambdaInstance {
   triggerEvent: string
   memoryUsedMB: number
   cpuPercent: number
+  /**
+   * True when this environment was pre-warmed by a provisioned concurrency
+   * reservation. Provisioned environments are exempt from the 15-minute idle
+   * TTL, so `expiresAt` is 0 for them.
+   */
+  provisioned?: boolean
 }
 
 export interface LambdaLayerVersionMetadata {

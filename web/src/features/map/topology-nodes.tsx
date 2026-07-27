@@ -23,13 +23,13 @@ import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import { SERVICES } from "@/lib/service-registry"
 import { sqs } from "@/services/api"
-import type { SQSMessage } from "@/types"
+import type { LambdaInstance, SQSMessage } from "@/types"
 import { useGhostTracker } from "@/hooks/use-ghost-tracker"
 import { useLambdaInstances } from "@/hooks/use-lambda-instances"
 import { useEventStream } from "@/hooks/use-event-stream"
 import { EventType } from "@/services/event-types"
 import { LambdaInstanceCard, LAMBDA_GHOST_TTL } from "./lambda-instance-node"
-import { LAMBDA_GROUP_HEADER_H } from "./map-layout"
+import { LAMBDA_GROUP_HEADER_H, LAMBDA_GROUP_MAX_VISIBLE } from "./map-layout"
 import { useSqsEventMessages } from "./use-sqs-event-messages"
 import {
   computeSqsVisualMessages,
@@ -1559,6 +1559,77 @@ function normalizeTriggerEvent(value: unknown): string | undefined {
   }
 }
 
+/** Ordering rank for the instance list: busy environments first. */
+function instanceSortRank(instance: LambdaInstance): number {
+  switch (instance.status) {
+    case "running":
+      return 0
+    case "initializing":
+      return 1
+    case "starting":
+      return 2
+    default:
+      // Idle. Provisioned capacity sorts last — it is always there, so it is
+      // the least interesting thing to look at.
+      return instance.provisioned ? 4 : 3
+  }
+}
+
+export interface LambdaInstanceSummary {
+  total: number
+  active: number
+  idle: number
+  provisioned: number
+}
+
+function summarizeInstances(instances: LambdaInstance[]): LambdaInstanceSummary {
+  let active = 0
+  let idle = 0
+  let provisioned = 0
+  for (const i of instances) {
+    if (i.status === "idle") idle++
+    else active++
+    if (i.provisioned) provisioned++
+  }
+  return { total: instances.length, active, idle, provisioned }
+}
+
+/**
+ * Concurrency summary shown under the function name. Replaces a static
+ * "lambda" label that said nothing — with several environments running, the
+ * useful information is how many there are and what they are doing.
+ */
+function LambdaConcurrencySummary({ summary }: { summary: LambdaInstanceSummary }) {
+  if (summary.total === 0) {
+    return <p className="font-mono text-sm leading-tight text-fg-subtle">no instances</p>
+  }
+  return (
+    <p className="flex items-center gap-1.5 font-mono text-sm leading-tight text-fg-subtle">
+      <span title={`${summary.total} execution environment${summary.total === 1 ? "" : "s"}`}>
+        {summary.total}&times;
+      </span>
+      {summary.active > 0 && (
+        <span className="flex items-center gap-1 text-emerald-400" title="running or starting">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+          {summary.active}
+        </span>
+      )}
+      {summary.idle > 0 && (
+        <span className="flex items-center gap-1 text-fg-muted" title="idle and reusable">
+          <span className="h-1.5 w-1.5 rounded-full bg-fg-muted/50" />
+          {summary.idle}
+        </span>
+      )}
+      {summary.provisioned > 0 && (
+        <span className="flex items-center gap-1 text-purple-300" title="provisioned concurrency">
+          <span className="h-1.5 w-1.5 rounded-full bg-purple-400" />
+          {summary.provisioned}
+        </span>
+      )}
+    </p>
+  )
+}
+
 /**
  * LambdaGroupNode — container node that renders its function's live +
  * ghost instances as a bounded, internally-scrollable list.
@@ -1600,11 +1671,20 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
     const ghosts = [...ghostInstances.values()]
       .filter((g) => !liveInstances.some((li) => li.instanceId === g.item.instanceId))
       .sort((a, b) => a.deletedAt - b.deletedAt)
+    // Only LAMBDA_GROUP_MAX_VISIBLE rows fit before the list scrolls, so order
+    // by what someone watching the map wants to see first: environments doing
+    // work, then ones warming up, then idle capacity, then fading ghosts.
+    const live = [...liveInstances].sort(
+      (a, b) =>
+        instanceSortRank(a) - instanceSortRank(b) ||
+        a.instanceId.localeCompare(b.instanceId),
+    )
     return [
-      ...liveInstances.map((i) => ({ instance: i, isGhost: false, deletedAt: 0 })),
+      ...live.map((i) => ({ instance: i, isGhost: false, deletedAt: 0 })),
       ...ghosts.map((g) => ({ instance: g.item, isGhost: true, deletedAt: g.deletedAt })),
     ]
   }, [liveInstances, ghostInstances])
+  const instanceSummary = useMemo(() => summarizeInstances(liveInstances), [liveInstances])
 
   const eventCursorRef = useRef(0)
   const activeByInstanceRef = useRef<Map<string, string[]>>(new Map())
@@ -1720,7 +1800,7 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
               {label}
             </button>
           </Tooltip>
-          <p className="font-mono text-sm leading-tight text-fg-subtle capitalize">lambda</p>
+          <LambdaConcurrencySummary summary={instanceSummary} />
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <button
@@ -1768,6 +1848,11 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
           />
         ))}
       </div>
+      {allInstances.length > LAMBDA_GROUP_MAX_VISIBLE && (
+        <div className="pointer-events-none absolute right-2 bottom-1 rounded bg-bg-elevated/90 px-1 font-mono text-[9px] text-fg-muted">
+          +{allInstances.length - LAMBDA_GROUP_MAX_VISIBLE} more · scroll
+        </div>
+      )}
 
       {/* Event counter badge */}
       {(eventCount ?? 0) > 0 && (
