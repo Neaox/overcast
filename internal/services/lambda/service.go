@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -31,6 +30,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/containerendpoint"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
@@ -821,55 +821,24 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 }
 
 // runtimeAPIContainerAddr determines the host:port that Lambda containers use
-// to reach the Runtime API server. The strategy depends on whether Overcast
-// itself is running inside a Docker container.
+// to reach the Runtime API server.
+//
+// Resolution — attach to the Lambda network and use our IP there when Overcast
+// is itself containerised, otherwise a routable host address — is shared with
+// ECS task containers in internal/containerendpoint, so the two cannot drift.
+// This function had its own copy, which took whatever non-loopback IPv4 address
+// net.InterfaceAddrs listed first; on a multi-homed host that is as likely to
+// be a 169.254/16 address left by an adapter that failed DHCP, or a hypervisor
+// switch no container can route to, as it is the right one.
+//
+// The host serves both the Runtime API and the emulator API on different ports,
+// which is why only the host is resolved here.
 func runtimeAPIContainerAddr(cfg *config.Config, dc *docker.Client, logger *zap.Logger, port int) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	// If running inside a Docker container (/.dockerenv exists), find our IP
-	// on the Lambda network so sibling containers can reach us.
-	if _, err := os.Stat("/.dockerenv"); err == nil {
-		// We're inside a container. Get our hostname (= container ID).
-		hostname, _ := os.Hostname()
-		if hostname != "" {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			// Attach ourselves to the Lambda network if not already.
-			_ = dc.ConnectNetwork(ctx, cfg.LambdaNetwork, hostname)
-
-			// Inspect the container to get our IP on the Lambda network.
-			info, err := dc.InspectContainer(ctx, hostname)
-			if err == nil {
-				if net, ok := info.NetworkSettings.Networks[cfg.LambdaNetwork]; ok && net.IPAddress != "" {
-					addr := fmt.Sprintf("%s:%d", net.IPAddress, port)
-					logger.Info("lambda: Runtime API address (container mode)", zap.String("addr", addr))
-					return addr
-				}
-			}
-		}
-	}
-
-	// Running on the host — use host.docker.internal (Docker Desktop) or
-	// the first non-loopback IP.
-	if ip := hostReachableIP(); ip != "" {
-		addr := fmt.Sprintf("%s:%d", ip, port)
-		logger.Info("lambda: Runtime API address (host mode)", zap.String("addr", addr))
-		return addr
-	}
-
-	// Last resort.
-	return fmt.Sprintf("host.docker.internal:%d", port)
-}
-
-// hostReachableIP returns the first non-loopback IPv4 address on the host.
-func hostReachableIP() string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return ""
-	}
-	for _, addr := range addrs {
-		if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() && ipNet.IP.To4() != nil {
-			return ipNet.IP.String()
-		}
-	}
-	return ""
+	host := containerendpoint.ResolveHost(ctx, dc, cfg.LambdaNetwork, logger)
+	addr := fmt.Sprintf("%s:%d", host, port)
+	logger.Info("lambda: Runtime API address", zap.String("addr", addr))
+	return addr
 }
