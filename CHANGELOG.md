@@ -42,6 +42,7 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
+- **Web UI** — an object's name in the S3 bucket listing is now a link that opens the same object inspector the row's eye action does, instead of being inert text. Object rows also no longer show a pointer cursor or the interactive hover tint: those advertised a whole-row click that did nothing but toggle a selection highlight nothing else read. Folder rows, which do navigate on click, keep both.
 - **CloudFormation / Lambda** — functions declared with inline code (`Code.ZipFile`) are now packaged into a real deployment archive, so they can actually be invoked. A template's `Code.ZipFile` is source text while the Lambda API's is a base64 zip; the source was passed straight through, so every inline-code function created cleanly and then failed at invoke with `build code tar: open zip: zip: not a valid zip file`. Affects `AWS::Lambda::Function` on both stack create and update, and therefore any CDK construct that injects an inline handler — including `BucketNotificationsHandler`, which CDK adds automatically to any stack whose bucket has notifications, so stacks that declared no Lambda of their own were affected too. The console also no longer presents its example "Hello from Lambda!" stub as a function's real code: unreadable packages are labelled as examples, and code stored unpackaged by earlier versions is now shown as-is. Existing broken functions are repaired by redeploying the stack.
 
 <!-- AGENT INSTRUCTIONS — updating this section between releases
