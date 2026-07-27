@@ -51,7 +51,6 @@ export function BucketDetail() {
   const { toast } = useToast()
 
   const [prefix, setPrefix] = useState("")
-  const [selected, setSelected] = useState<string>()
   const [metaTarget, setMetaTarget] = useState<string>()
   const [deleteTarget, setDeleteTarget] = useState<string>()
   const [deletePrefixTarget, setDeletePrefixTarget] = useState<string>()
@@ -118,7 +117,6 @@ export function BucketDetail() {
     onSuccess: (_, key) => {
       void qc.invalidateQueries({ queryKey: s3Keys.objects() })
       setDeleteTarget(undefined)
-      if (selected === key) setSelected(undefined)
       toast({ title: "Object deleted", description: key })
     },
     onError: (err: Error) =>
@@ -143,27 +141,16 @@ export function BucketDetail() {
   const crumbs = [
     {
       label: bucket,
-      onClick: () => {
-        setPrefix("")
-        setSelected(undefined)
-      },
+      onClick: () => setPrefix(""),
     },
     ...prefix
       .split("/")
       .filter(Boolean)
       .map((seg, i, arr) => ({
         label: seg,
-        onClick: () => {
-          setPrefix(arr.slice(0, i + 1).join("/") + "/")
-          setSelected(undefined)
-        },
+        onClick: () => setPrefix(arr.slice(0, i + 1).join("/") + "/"),
       })),
   ]
-
-  function navigateInto(folderPrefix: string) {
-    setPrefix(folderPrefix)
-    setSelected(undefined)
-  }
 
   const prefixes = data?.pages.flatMap((p) => p.prefixes) ?? []
   const objects = data?.pages.flatMap((p) => p.objects) ?? []
@@ -319,14 +306,14 @@ export function BucketDetail() {
                       data-index={vr.index}
                       ref={rowVirtualizer.measureElement}
                       className={cn(
-                        "cursor-pointer transition-colors hover:bg-accent-muted",
+                        "transition-colors",
                         !isLastRow && "border-b border-border-muted",
-                        item.type === "object" && selected === item.key && "bg-accent-muted",
+                        // Only folder rows navigate as a whole. On object rows the name
+                        // and the action buttons are the click targets, so the row itself
+                        // gets neither the pointer nor the interactive hover tint.
+                        item.type === "prefix" && "cursor-pointer hover:bg-accent-muted",
                       )}
-                      onClick={() => {
-                        if (item.type === "prefix") navigateInto(item.prefix)
-                        else setSelected(selected === item.key ? undefined : item.key)
-                      }}
+                      onClick={item.type === "prefix" ? () => setPrefix(item.prefix) : undefined}
                     >
                       {item.type === "prefix" ? (
                         <>
@@ -363,7 +350,16 @@ export function BucketDetail() {
                           <TableCell className="max-w-0">
                             <div className="flex min-w-0 items-center gap-2">
                               <File className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
-                              <span className="truncate">{item.key.slice(prefix.length)}</span>
+                              <button
+                                className="truncate text-left text-accent hover:underline"
+                                title="Inspect"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setMetaTarget(item.key)
+                                }}
+                              >
+                                {item.key.slice(prefix.length)}
+                              </button>
                             </div>
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-fg-muted">
