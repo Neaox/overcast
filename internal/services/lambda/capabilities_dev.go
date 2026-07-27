@@ -86,14 +86,18 @@ func init() {
 
 		// Concurrency & configuration
 		capabilities.Capability{Service: "lambda", Operation: "PutFunctionConcurrency", Category: "Concurrency & configuration",
-			Status: capabilities.StatusSupported, Notes: "Stores reserved concurrency limit; 0 = throttled"},
+			Status: capabilities.StatusSupported, Notes: "Enforced: over-limit invokes get 429 TooManyRequestsException; 0 throttles the function entirely"},
 		capabilities.Capability{Service: "lambda", Operation: "GetFunctionConcurrency", Category: "Concurrency & configuration",
 			Status: capabilities.StatusSupported, Notes: "Returns 404 if no concurrency limit is set"},
 		capabilities.Capability{Service: "lambda", Operation: "DeleteFunctionConcurrency", Category: "Concurrency & configuration",
 			Status: capabilities.StatusSupported, Notes: "Clears reserved concurrency limit; returns 204"},
 		capabilities.Capability{Service: "lambda", Operation: "PutProvisionedConcurrencyConfig", Category: "Concurrency & configuration",
-			Status: capabilities.StatusSupported, Notes: "Stores config per qualifier; immediately reports Status=READY (no actual provisioning)"},
+			Status: capabilities.StatusSupported, Notes: "Pre-warms the requested execution environments in the background (IN_PROGRESS then READY); FAILED when Docker is unavailable"},
 		capabilities.Capability{Service: "lambda", Operation: "GetProvisionedConcurrencyConfig", Category: "Concurrency & configuration",
-			Status: capabilities.StatusSupported, Notes: "Returns ProvisionedConcurrencyConfigNotFoundException if not set"},
+			Status: capabilities.StatusSupported, Notes: "Reports live Allocated/Available; ProvisionedConcurrencyConfigNotFoundException if not set"},
+		capabilities.Capability{Service: "lambda", Operation: "DeleteProvisionedConcurrencyConfig", Category: "Concurrency & configuration",
+			Status: capabilities.StatusSupported, Notes: "Releases the reservation; the environments age out on the idle TTL rather than being killed"},
+		capabilities.Capability{Service: "lambda", Operation: "ListProvisionedConcurrencyConfigs", Category: "Concurrency & configuration",
+			Status: capabilities.StatusSupported, Notes: "Single page; NextMarker is always null"},
 	)
 }

@@ -94,6 +94,10 @@ func (h *Handler) InvokeWithResponseStream(w http.ResponseWriter, r *http.Reques
 	}
 
 	result := h.invokeSync(ctx, fn, rt, payload, name)
+	if result.throttle != nil {
+		writeThrottleError(w, r, result.throttle)
+		return
+	}
 
 	// Begin streaming response.
 	w.Header().Set("Content-Type", eventstream.ContentType)

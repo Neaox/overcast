@@ -142,6 +142,10 @@ func (h *Handler) InvokeFunctionURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := h.invokeSync(ctx, fn, rt, payload, fn.Name)
+	if result.throttle != nil {
+		writeThrottleError(w, r, result.throttle)
+		return
+	}
 	writeFunctionURLResponse(w, cfg, result)
 }
 
