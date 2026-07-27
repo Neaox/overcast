@@ -55,6 +55,32 @@ These were settled during wave 1 — do not re-litigate them while implementing:
 ### Visual consistency
 
 - Collapse raw Tailwind palette usage to the semantic roles. 266 raw hues across the app: `topology-nodes.tsx` 69, `event-console.tsx` 41, `metrics-page.tsx` 14. The design uses five roles, and all six sparklines are `--oc-accent`. Excludes the map's message-state colours — see Non-goals.
+- **Unify the modal scrims.** Five overlays, four different treatments, and the shared one is the
+  odd man out. Audited 2026-07-27:
+
+  | site | ink | blur | z |
+  | --- | --- | --- | --- |
+  | `components/ui/dialog.tsx:32` (the shared `DialogOverlay`) | `rgba(9,16,22,0.62)` | `backdrop-blur-sm` | 50 |
+  | `components/layout/global-search.tsx:619` (command palette) | `rgba(9,16,22,0.62)` | none | 50 |
+  | `features/map/lambda-invocations-drawer.tsx:188` | `bg-black/30` | none | 40 |
+  | `features/map/topology-nodes.tsx:985` | `bg-black/20` | `backdrop-blur-[1px]` | 60 |
+  | `features/map/log-stream-peek.tsx:149` | none (transparent, `pointer-events-none`) | none | 60 |
+
+  Two things to settle rather than just aligning the values. First, **artboard 4a specifies the
+  scrim with no blur**, so the shared `DialogOverlay` having `backdrop-blur-sm` is the actual
+  deviation — the command palette, which hardcodes the same ink without blur, is the one matching
+  the design. Decide whether the blur goes or the design note is wrong, then make the survivor the
+  single definition. Second, the palette duplicates the ink literal instead of using
+  `DialogOverlay`; once the treatment is settled every consumer should reuse the component so a
+  sixth variant cannot appear.
+
+  Keep the scrim **theme-fixed** — a dark wash over a light page is correct, and the design fixes it
+  across both themes deliberately. This is a consistency job, not a light-mode legibility one; the
+  two map scrims were left alone during the event-console fix for exactly that reason. The
+  transparent `log-stream-peek` overlay is likely intentional (a peek, not a modal) but should be
+  confirmed rather than assumed. The z-index ladder (40/50/60) also wants a look while someone is
+  in there.
+
 - Unify the three renderings of the advisory component (health drawer, Metrics & Health card, and the 1b variant) into one `<Advisory density="compact" | "full">`. Sentence case always; use the external-link icon, never a `→`.
 - Fix five viewport-height calculations that assume the old 16px page padding and are now 16px short, so they can overflow: `mail/mail-page.tsx:159` `h-[calc(100vh-10rem)]`, `debug/debug-page.tsx:281,311,738` `max-h-[calc(100vh-14rem)]`, `s3/components/bucket-detail.tsx:294` `max-h-[calc(100vh-220px)]`.
 
