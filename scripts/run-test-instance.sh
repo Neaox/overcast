@@ -15,13 +15,13 @@
 #                                                      # everything after -- is
 #                                                      # passed to `docker run`
 #
-# The instance runs ghcr.io/neaox/overcast:latest by default — pass --image to
+# The instance runs ghcr.io/neaox/overcast:alpha by default — pass --image to
 # test a locally built one. Prints the container id, API endpoint, and web UI
 # URL, then follows logs until Ctrl-C (the container keeps running; stop with
 # `docker stop <id>`).
 set -eu
 
-IMAGE="ghcr.io/neaox/overcast:latest"
+IMAGE="ghcr.io/neaox/overcast:alpha"
 BASE_PORT=4570
 
 while [ "$#" -gt 0 ]; do
