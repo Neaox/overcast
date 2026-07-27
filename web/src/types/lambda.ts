@@ -37,6 +37,12 @@ export interface LambdaFunctionSource {
   filename: string
   language: string
   files: LambdaSourceFile[] | null
+  /**
+   * The source is an illustrative example, not the function's own code — the
+   * emulator could not read a deployment package for it. Show it as a sample
+   * rather than as what will run.
+   */
+  placeholder?: boolean
 }
 
 export interface LambdaSourceFile {

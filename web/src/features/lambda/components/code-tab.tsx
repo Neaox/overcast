@@ -1,4 +1,5 @@
 import { useCallback } from "react"
+import { AlertCircle } from "lucide-react"
 import { Spinner } from "@/components/ui/primitives"
 import { CodeBrowser } from "@/components/ui/code-browser"
 import { lambda } from "@/services/api"
@@ -41,15 +42,35 @@ export function CodeTab({
   }
 
   return (
-    <CodeBrowser
-      files={(source?.files ?? []).map((f) => ({ name: f.name, size: f.size }))}
-      initialFile={source?.filename}
-      initialValue={currentEditorValue}
-      language={source?.language}
-      loadFile={loadFile}
-      onChange={(path, value) => setEditedFiles((prev) => ({ ...prev, [path]: value }))}
-      onActiveFileChange={setActiveFilePath}
-      height="65vh"
-    />
+    <div className="flex flex-col gap-3">
+      {source?.placeholder && <PlaceholderSourceNotice />}
+      <CodeBrowser
+        files={(source?.files ?? []).map((f) => ({ name: f.name, size: f.size }))}
+        initialFile={source?.filename}
+        initialValue={currentEditorValue}
+        language={source?.language}
+        loadFile={loadFile}
+        onChange={(path, value) => setEditedFiles((prev) => ({ ...prev, [path]: value }))}
+        onActiveFileChange={setActiveFilePath}
+        height="65vh"
+      />
+    </div>
+  )
+}
+
+/**
+ * Shown when the emulator could not read a deployment package and is falling
+ * back to an example. Without it the editor presents a stub as though it were
+ * the deployed code, which makes a function that cannot run look perfectly fine.
+ */
+function PlaceholderSourceNotice() {
+  return (
+    <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-fg-muted">
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+      <span>
+        This is an example, not this function&rsquo;s code. No readable deployment package is stored
+        for it, so the emulator cannot show what would run.
+      </span>
+    </div>
   )
 }

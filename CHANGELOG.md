@@ -40,6 +40,10 @@ need it than accidentally ship a breaking change as a patch.
 
 ## [Unreleased]
 
+### Fixed
+
+- **CloudFormation / Lambda** — functions declared with inline code (`Code.ZipFile`) are now packaged into a real deployment archive, so they can actually be invoked. A template's `Code.ZipFile` is source text while the Lambda API's is a base64 zip; the source was passed straight through, so every inline-code function created cleanly and then failed at invoke with `build code tar: open zip: zip: not a valid zip file`. Affects `AWS::Lambda::Function` on both stack create and update, and therefore any CDK construct that injects an inline handler — including `BucketNotificationsHandler`, which CDK adds automatically to any stack whose bucket has notifications, so stacks that declared no Lambda of their own were affected too. The console also no longer presents its example "Hello from Lambda!" stub as a function's real code: unreadable packages are labelled as examples, and code stored unpackaged by earlier versions is now shown as-is. Existing broken functions are repaired by redeploying the stack.
+
 <!-- AGENT INSTRUCTIONS — updating this section between releases
      - Do NOT add a new bullet for every small change.
      - This file is used as release-note input. Only include shipped/runtime or

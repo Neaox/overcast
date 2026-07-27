@@ -17,10 +17,12 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -42,6 +44,10 @@ type sourceResponse struct {
 	Filename string       `json:"filename"`
 	Language string       `json:"language"`
 	Files    []sourceFile `json:"files"` // all files in the deployment zip
+	// Placeholder marks Source as an illustrative example rather than the
+	// function's own code, so the console can say so instead of passing a stub
+	// off as the real thing.
+	Placeholder bool `json:"placeholder,omitempty"`
 }
 
 // sourceFile describes a single file inside the deployment zip.
@@ -230,6 +236,90 @@ func patchZipFile(existingZip []byte, filename, content string) ([]byte, error) 
 	return buf.Bytes(), nil
 }
 
+// resolveSource picks the source text to show for a function, and reports
+// whether that text is an illustrative placeholder rather than the function's
+// own code.
+//
+// The console used to fall back to a stub silently, so a function whose stored
+// package could not be read still rendered a tidy "Hello from Lambda!". That
+// made a broken deployment look healthy and hid the real fault — the displayed
+// code was not the code that would run. Real code is always preferred, and when
+// there is none the caller is told, so the UI can label what it is showing.
+func resolveSource(fn *Function, files []sourceFile) (source, filename string, placeholder bool) {
+	if fn.SourceCode != "" {
+		return fn.SourceCode, fn.SourceFilename, false
+	}
+
+	if len(fn.CodeZip) > 0 {
+		// Normal case: a real deployment package.
+		if entry := guessEntryFile(files, fn.Handler, fn.Runtime); entry != "" {
+			if content, ok := readZipFile(fn.CodeZip, entry); ok {
+				return content, entry, false
+			}
+		}
+		// Not a readable archive. Functions deployed by CloudFormation before
+		// inline code was packaged correctly hold their source verbatim here,
+		// so show it — it is the truth about what was deployed, and it is what
+		// the user is trying to look at.
+		if text, ok := asSourceText(fn.CodeZip); ok {
+			return text, handlerFilename(fn.Handler, sourceExtension(fn.Runtime)), false
+		}
+	}
+
+	source, filename = defaultSourceForRuntime(fn.Runtime, fn.Handler)
+	return source, filename, true
+}
+
+// explainUnreadablePackage turns an opaque zip-parsing failure into something a
+// user can act on when the stored package is plainly source text rather than an
+// archive.
+//
+// Overcast versions before the inline-code fix stored a CloudFormation
+// template's `Code.ZipFile` source verbatim, so functions deployed by them fail
+// here with nothing but "zip: not a valid zip file" — a dead end that says
+// nothing about the cause or the cure. State persists across upgrades, so
+// installing the fix does not repair a function that was already deployed.
+func explainUnreadablePackage(fn *Function, err error) error {
+	text, ok := asSourceText(fn.CodeZip)
+	if !ok || strings.TrimSpace(text) == "" {
+		return err
+	}
+	return fmt.Errorf(
+		"%w — the stored package for %q is source text, not an archive, "+
+			"which means it was deployed by a version of Overcast that did not package "+
+			"CloudFormation inline code (Code.ZipFile). Redeploy the stack to repair it",
+		err, fn.Name,
+	)
+}
+
+// asSourceText reports whether a deployment payload is plain text that can be
+// shown in the editor. Binary rubble is not worth rendering; an unreadable
+// package is better reported as such.
+func asSourceText(code []byte) (string, bool) {
+	if !utf8.Valid(code) {
+		return "", false
+	}
+	if bytes.IndexByte(code, 0) >= 0 {
+		return "", false
+	}
+	return string(code), true
+}
+
+// sourceExtension is the source-file extension for a runtime, used when naming
+// code that was never packaged and so has no filename of its own.
+func sourceExtension(runtime string) string {
+	switch {
+	case strings.HasPrefix(runtime, "nodejs"):
+		return ".js"
+	case strings.HasPrefix(runtime, "python"):
+		return ".py"
+	case strings.HasPrefix(runtime, "ruby"):
+		return ".rb"
+	default:
+		return ""
+	}
+}
+
 // listZipFiles returns metadata for every file in a zip archive.
 func listZipFiles(zipBytes []byte) []sourceFile {
 	zr, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
@@ -369,33 +459,16 @@ func (h *Handler) GetFunctionSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	source := fn.SourceCode
-	filename := fn.SourceFilename
-
-	// When SourceCode is empty (function created via CLI/SDK), try to
-	// extract the handler file from the deployment zip.
-	if source == "" && len(fn.CodeZip) > 0 {
-		entry := guessEntryFile(files, fn.Handler, fn.Runtime)
-		if entry != "" {
-			if content, ok := readZipFile(fn.CodeZip, entry); ok {
-				source = content
-				filename = entry
-			}
-		}
-	}
-
-	// Final fallback: show a default stub.
-	if source == "" {
-		source, filename = defaultSourceForRuntime(fn.Runtime, fn.Handler)
-	}
+	source, filename, placeholder := resolveSource(fn, files)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(sourceResponse{
-		Source:   source,
-		Filename: filename,
-		Language: runtimeLanguage(fn.Runtime),
-		Files:    files,
+		Source:      source,
+		Filename:    filename,
+		Language:    runtimeLanguage(fn.Runtime),
+		Files:       files,
+		Placeholder: placeholder,
 	})
 }
 

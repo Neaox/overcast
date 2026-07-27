@@ -2196,11 +2196,18 @@ func (h *lambdaFunctionHandler) Create(ctx context.Context, router http.Handler,
 		funcName = fmt.Sprintf("%s-Function", rCtx.StackName)
 	}
 
-	// The Lambda handler expects Code.ZipFile as base64-encoded bytes ([]byte).
-	// CFN templates provide it as a plain string, so we must encode it.
+	// A template's Code.ZipFile is inline source text; the Lambda API's is
+	// base64 of a zip archive. Package it rather than just encoding it — see
+	// inlineCodeZip.
+	runtime, _ := props["Runtime"].(string)
+	handler, _ := props["Handler"].(string)
 	code, _ := props["Code"].(map[string]any)
 	if zf, ok := code["ZipFile"].(string); ok {
-		code["ZipFile"] = base64.StdEncoding.EncodeToString([]byte(zf))
+		packaged, err := inlineCodeZip(zf, runtime, handler)
+		if err != nil {
+			return "", nil, fmt.Errorf("package inline function code: %w", err)
+		}
+		code["ZipFile"] = base64.StdEncoding.EncodeToString(packaged)
 	}
 
 	body := map[string]any{
@@ -2275,12 +2282,18 @@ func (h *lambdaFunctionHandler) Update(ctx context.Context, router http.Handler,
 		return "", nil, errReplacementRequired
 	}
 
-	// 1. Update code if present. CFN templates supply ZipFile as a plain string;
-	//    UpdateFunctionCode expects base64-encoded bytes (matches Create).
+	// 1. Update code if present. CFN templates supply ZipFile as inline source;
+	//    UpdateFunctionCode expects a base64 zip archive (matches Create).
 	if code, ok := props["Code"].(map[string]any); ok && len(code) > 0 {
 		body := map[string]any{}
 		if zf, ok := code["ZipFile"].(string); ok {
-			body["ZipFile"] = base64.StdEncoding.EncodeToString([]byte(zf))
+			runtime, _ := props["Runtime"].(string)
+			handler, _ := props["Handler"].(string)
+			packaged, err := inlineCodeZip(zf, runtime, handler)
+			if err != nil {
+				return "", nil, fmt.Errorf("package inline function code: %w", err)
+			}
+			body["ZipFile"] = base64.StdEncoding.EncodeToString(packaged)
 		}
 		if v, ok := code["S3Bucket"]; ok {
 			body["S3Bucket"] = v
