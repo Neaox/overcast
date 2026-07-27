@@ -163,3 +163,13 @@ describe("semantic colour tokens", () => {
     expect([..."bg-amber-500/15 dark:text-blue-400".matchAll(COLOUR_UTILITY)]).toEqual([])
   })
 })
+
+describe("Scrollbar styling", () => {
+  it("uses progressive enhancement for subtle scrollbars", () => {
+    const css = readFileSync("src/styles/global.css", "utf8")
+
+    expect(css).toMatch(/scrollbar-width:\s*thin/)
+    expect(css).toMatch(/scrollbar-color:\s*var\(--border\) transparent/)
+    expect(css).toMatch(/::-webkit-scrollbar-track\s*\{\s*background:\s*transparent/)
+  })
+})
