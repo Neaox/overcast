@@ -20,6 +20,8 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/containerendpoint"
+	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/inithooks"
 	"github.com/Neaox/overcast/internal/router"
 	"github.com/Neaox/overcast/internal/serviceutil"
@@ -215,7 +217,7 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	}
 	var uiLn net.Listener
 	if uiPort != 0 {
-		uiHandler, err := newUIHandler(cfg.Port, cfg.Region, cfg.Debug)
+		uiHandler, err := newUIHandler(cfg.Port, browserAPIPort(cfg, logger), cfg.Region, cfg.Debug)
 		if err != nil {
 			logger.Warn("web UI unavailable", zap.Error(err))
 		} else {
@@ -576,4 +578,30 @@ func buildHookEnv(cfg *config.Config) []string {
 		"LOCALSTACK_HOSTNAME=localhost",
 		fmt.Sprintf("EDGE_PORT=%d", cfg.Port),
 	}
+}
+
+// browserAPIPort returns the API port a browser on the host must dial, which
+// is what the web UI bakes into the SPA it serves.
+//
+// It is cfg.Port everywhere except inside a container published on a different
+// host port: `-p 4580:4566` leaves the process listening on 4566 while host
+// callers arrive on 4580, and nothing inside the container records that. The
+// SPA served on the remapped UI port would then be told the API is on 4566,
+// which is closed, and every request from it fails. Ask Docker for our own
+// container's bindings instead; when that cannot be answered — native binary,
+// no Docker socket, port not published — keep cfg.Port, so the non-container
+// path is unchanged.
+func browserAPIPort(cfg *config.Config, logger *zap.Logger) int {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	dc := docker.NewClient(cfg.LambdaDockerSocket, logger)
+	if p := containerendpoint.PublishedPort(ctx, dc, cfg.Port, logger); p != 0 {
+		if p != cfg.Port {
+			logger.Info("web UI: API published on a different host port; SPA will use it",
+				zap.Int("listen_port", cfg.Port), zap.Int("published_port", p))
+		}
+		return p
+	}
+	return cfg.Port
 }
