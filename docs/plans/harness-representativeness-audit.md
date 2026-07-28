@@ -8,7 +8,8 @@
 > round-trip test passed against an IP base that matches no virtual-host rule.
 >
 > Scope: `tests/helpers/server.go` defaults, and the client-facing URL and ARN
-> minting they fail to exercise. Four findings, three real; six tests, all green.
+> minting they fail to exercise. Four candidates, four real gaps — one of them
+> found only while fixing another; seven tests, all green.
 >
 > Each finding below records the evidence as it stood *before* the fix — the
 > failing output is what justifies the change, so it is kept rather than rewritten
@@ -23,6 +24,7 @@
 | 1 | `Host: "127.0.0.1"` | **No gap** — nothing client-facing derives from it | — | none needed |
 | 2 | `Port: 0` makes `Config.ExternalBaseURL()` return `http://localhost:0` | **Real gap** — harness | `TestQueueURL_awsHostFallbackIsDialable` | bind listener first, write real port into `cfg.Port` |
 | 3 | Cognito mints `iss` from `r.Host` and a hardcoded `http://` | **Real gap** — product, 2 axes | 3 tests (below) | both sites via `serviceutil.ClientBaseURL` |
+| 3b | Cognito's typed (CBOR) path mints a bare, hostless `iss` | **Real gap** — product | `TestIssuer_sameAcrossWireProtocols` | `issuerBase(ctx)`, same precedence |
 | 4 | Invoke-event / ARN account IDs hardcoded, not read from config | **Real gap** — product, 7 sites | 2 tests (below) | `accountID()` helper per service |
 
 TLS (the brief's candidate 2) is not a finding on its own — it is the mechanism
@@ -200,11 +202,49 @@ the issuer with `poolIDFromIssuer`, which takes the trailing path segment
 issuer against a recomputed value, so changing the origin cannot invalidate a
 token.
 
-Out of scope but noted: `issuerURLTyped`
-([typed_logic.go:714](../../internal/services/cognito/typed_logic.go)) returns a
-bare `region + "/" + poolID` — no scheme, no host — so a device-auth token
-carries a structurally different `iss` from a password-auth one. A third
-spelling of the same value, worth folding into the same fix.
+### 3b. The same defect on the typed dispatch path
+
+Initially recorded as out of scope, then investigated and fixed — the reason it
+was worth chasing is that the first reading of it was wrong.
+
+`issuerURLTyped` ([typed_logic.go:714](../../internal/services/cognito/typed_logic.go))
+returned a bare `region + "/" + poolID` — no scheme, no host. The note here first
+described that as producing a different `iss` for *device auth*, inferred from
+one call site. That was wrong: it has **12** call sites, and the real split is by
+**wire protocol**, not by auth flow.
+
+Cognito dispatches twice ([service.go:140-166](../../internal/services/cognito/service.go)).
+JSON goes through `dispatchLegacy` and the request-based `issuerURL`; Smithy
+RPC v2 CBOR goes through the typed operation table, where the handler signature is
+`func(ctx, req)` and there is no `*http.Request` to build an origin from. So the
+same user, in the same pool, on the same server, got:
+
+```
+JSON  iss = "http://localhost:37461/us-east-1/us-east-1_76DE54F2"
+CBOR  iss = "us-east-1/us-east-1_76DE54F2"
+```
+
+This is why the earlier tests in §3 did not catch it — they all use
+`Content-Type: application/x-amz-json-1.1`, so every one of them took the legacy
+path. AWS SDKs are actively migrating to RPCv2 CBOR, so this is a live path.
+
+A relative `iss` is unusable rather than merely inconsistent: an API Gateway JWT
+authorizer compares it to the configured issuer exactly
+([apigateway/handler_auth.go](../../internal/services/apigateway/handler_auth.go)),
+and an OIDC client resolves keys from `{iss}/.well-known/jwks.json`.
+
+**Fix.** `issuerURLTyped` now composes `issuerBase(ctx)` with the same region and
+pool, where `issuerBase` mirrors `serviceutil.ClientBaseURL`'s precedence from a
+context: a configured hostname is authoritative, and the origin stamped by the
+`ClientEndpoint` middleware fills in when none is configured. That middleware
+deliberately leaves the origin unset for real AWS hostnames, so those are never
+echoed back — the same shape, and the same reasoning, as SQS's `queueURLBase`.
+
+**Reproducing test:** `TestIssuer_sameAcrossWireProtocols`
+([tests/integration/cognito/cognito_issuer_test.go](../../tests/integration/cognito/cognito_issuer_test.go)).
+It asserts protocol-against-protocol rather than against a literal, so the
+invariant it pins — the wire protocol must not change the issuer — survives any
+future revision of the issuer format itself.
 
 ## 4. Hardcoded account IDs in invoke events and ARNs
 

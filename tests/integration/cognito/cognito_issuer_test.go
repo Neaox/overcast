@@ -22,6 +22,8 @@ import (
 	"strings"
 	"testing"
 
+	cborlib "github.com/fxamacker/cbor/v2"
+
 	"github.com/Neaox/overcast/tests/helpers"
 )
 
@@ -134,5 +136,83 @@ func TestOIDCDiscovery_usesConfiguredHostname(t *testing.T) {
 		if !strings.HasPrefix(got, base+"/") {
 			t.Errorf("%s = %q, want prefix %q", key, got, base+"/")
 		}
+	}
+}
+
+// TestIssuer_sameAcrossWireProtocols asserts a CBOR client and a JSON client are
+// told the same issuer for the same pool.
+//
+// Cognito has two dispatch paths. JSON goes through dispatchLegacy and the
+// request-based issuerURL; Smithy RPC v2 CBOR goes through the typed operation
+// table (service.go, Dispatch), where issuerURLTyped has only a context and no
+// *http.Request. That function returned a bare "{region}/{poolId}" — no scheme,
+// no host — so the same user authenticating with the same pool got a
+// structurally different "iss" depending only on which wire protocol their SDK
+// speaks. AWS SDKs are migrating to RPCv2 CBOR, so this is a live path, not a
+// hypothetical one.
+//
+// A bare issuer is not merely cosmetic. An API Gateway JWT authorizer compares
+// the claim to its configured issuer exactly (see apigateway/handler_auth.go),
+// and an OIDC client resolves signing keys from "{iss}/.well-known/jwks.json" —
+// neither works with a relative string.
+//
+// The assertion is protocol-to-protocol rather than against a literal, so it
+// keeps holding if the issuer format itself is ever revised: the invariant is
+// that the wire protocol must not change the answer.
+func TestIssuer_sameAcrossWireProtocols(t *testing.T) {
+	// Given: a pool with a confirmed user, set up over JSON.
+	srv := helpers.NewTestServer(t)
+	poolID := createPool(t, srv, "cbor-issuer-pool")
+	clientID := createClient(t, srv, poolID, "cbor-issuer-app")
+	cognitoCall(t, srv, "AdminCreateUser", map[string]any{
+		"UserPoolId": poolID, "Username": "cboruser",
+		"UserAttributes": []map[string]string{{"Name": "email", "Value": "cbor@example.com"}},
+	}).Body.Close()
+	cognitoCall(t, srv, "AdminSetUserPassword", map[string]any{
+		"UserPoolId": poolID, "Username": "cboruser",
+		"Password": "CborTest1!", "Permanent": true,
+	}).Body.Close()
+
+	authParams := map[string]string{"USERNAME": "cboruser", "PASSWORD": "CborTest1!"}
+
+	// When: the same user authenticates over JSON.
+	jsonResp := cognitoCall(t, srv, "InitiateAuth", map[string]any{
+		"ClientId": clientID, "AuthFlow": "USER_PASSWORD_AUTH", "AuthParameters": authParams,
+	})
+	defer jsonResp.Body.Close()
+	helpers.AssertStatus(t, jsonResp, http.StatusOK)
+	var jsonOut struct {
+		AuthenticationResult struct{ IdToken string } `json:"AuthenticationResult"`
+	}
+	helpers.DecodeJSON(t, jsonResp, &jsonOut)
+
+	// And: over Smithy RPC v2 CBOR.
+	cborResp := cognitoCBORCall(t, srv, "InitiateAuth", map[string]any{
+		"ClientId": clientID, "AuthFlow": "USER_PASSWORD_AUTH", "AuthParameters": authParams,
+	})
+	defer cborResp.Body.Close()
+	helpers.AssertStatus(t, cborResp, http.StatusOK)
+	var cborOut struct {
+		AuthenticationResult struct {
+			IdToken string `cbor:"IdToken"`
+		} `cbor:"AuthenticationResult"`
+	}
+	if err := cborlib.NewDecoder(cborResp.Body).Decode(&cborOut); err != nil {
+		t.Fatalf("decode CBOR response: %v", err)
+	}
+	if cborOut.AuthenticationResult.IdToken == "" {
+		t.Fatal("CBOR InitiateAuth returned no IdToken")
+	}
+
+	// Then: both tokens carry the same issuer, on the configured external origin.
+	jsonIss, _ := decodeJWTPayload(t, jsonOut.AuthenticationResult.IdToken)["iss"].(string)
+	cborIss, _ := decodeJWTPayload(t, cborOut.AuthenticationResult.IdToken)["iss"].(string)
+
+	if cborIss != jsonIss {
+		t.Errorf("issuer differs by wire protocol:\n  JSON = %q\n  CBOR = %q", jsonIss, cborIss)
+	}
+	want := srv.ExternalBase() + "/us-east-1/" + poolID
+	if cborIss != want {
+		t.Errorf("CBOR iss = %q, want %q", cborIss, want)
 	}
 }
