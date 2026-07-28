@@ -450,7 +450,11 @@ func (h *eventsEventBusHandler) Create(ctx context.Context, router http.Handler,
 		"Arn":  arn,
 		"Name": name,
 	}
-	return arn, attrs, nil
+	// The physical ID is the bus *name*: AWS documents Ref on
+	// AWS::Events::EventBus as returning the name, and every consumer builds an
+	// ARN as "…:event-bus/" + name. Returning the ARN here fed it back into that
+	// concatenation and produced a doubled ARN.
+	return name, attrs, nil
 }
 
 func (h *eventsEventBusHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
