@@ -13,6 +13,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
+
+	"github.com/Neaox/overcast/internal/middleware"
 )
 
 // proxyClient is the HTTP client used for origin requests.
@@ -488,14 +490,14 @@ func (h *Handler) resolveStagingTarget(ctx context.Context, cfg *DistributionCon
 	}
 
 	// Find the staging distribution ID from the policy's StagingDistributionDnsNames.
-	// The staging distribution's DomainName will be "{id}.cloudfront.net" — extract the ID.
+	// The ID is the first label of the DomainName — which holds for AWS's
+	// "{id}.cloudfront.net" and for the "{id}.cloudfront.{host}" Overcast mints.
 	stagingDNS := pol.ContinuousDeploymentPolicyConfig.StagingDistributionDnsNames
 	if len(stagingDNS.Items) == 0 {
 		return ""
 	}
-	// DNS name format: "{distId}.cloudfront.net"
 	dnsName := stagingDNS.Items[0]
-	stagingDistID := strings.TrimSuffix(dnsName, ".cloudfront.net")
+	stagingDistID := distributionIDFromDomainName(dnsName)
 	if stagingDistID == dnsName {
 		return "" // doesn't match expected format
 	}
@@ -518,4 +520,23 @@ func (h *Handler) resolveStagingTarget(ctx context.Context, cfg *DistributionCon
 		}
 	}
 	return ""
+}
+
+// HostRouteRewrite adapts a request on a distribution's real CloudFront
+// hostname ({distributionId}.cloudfront.net) to the internal proxy route this
+// file serves.
+//
+// Unlike the other host-routed services the region is absent from the grammar:
+// CloudFront is global, so the address is {id}.cloudfront.net with no region
+// segment. middleware.ParseHostRoute already tolerates that — Region is
+// optional — so "cloudfront" needs no special parsing, only this rewrite.
+func (s *Service) HostRouteRewrite(r *http.Request, m middleware.HostRouteMatch) {
+	path := r.URL.Path
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	r.URL.Path = "/_cloudfront/" + m.ID + path
+	if r.URL.RawPath != "" {
+		r.URL.RawPath = r.URL.Path
+	}
 }

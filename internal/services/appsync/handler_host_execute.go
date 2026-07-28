@@ -26,6 +26,23 @@ import (
 // ({apiId}.appsync-api.{region}.{base}/graphql) to the emulator's existing
 // /_appsync/{apiId}/graphql path-style route.
 func (s *Service) HostRouteRewrite(r *http.Request, m middleware.HostRouteMatch) {
+	// The realtime host serves exactly one endpoint. Real AWS puts
+	// subscriptions on {apiId}.appsync-realtime-api.{region}.{base}/graphql,
+	// and Amplify derives that host by substituting into the GraphQL URL
+	// rather than reading dns.REALTIME — so the hostname has to route
+	// regardless of the path the client asks for. Overcast serves it at
+	// /_appsync/{apiId}/realtime.
+	//
+	// Only Path is rewritten: AppSync carries connection auth in the query
+	// string (?header=...&payload=...), which must survive untouched.
+	if m.Label == middleware.LabelAppSyncRealtimeAPI {
+		r.URL.Path = "/_appsync/" + m.ID + "/realtime"
+		if r.URL.RawPath != "" {
+			r.URL.RawPath = r.URL.Path
+		}
+		return
+	}
+
 	path := r.URL.Path
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path

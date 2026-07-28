@@ -485,6 +485,28 @@ func (c *Config) Addr() string {
 	return fmt.Sprintf("%s:%d", c.Host, c.Port)
 }
 
+// WildcardDNSDomains are the public domains whose every subdomain resolves to
+// 127.0.0.1, so an SDK-generated hostname reaches Overcast with no hosts-file
+// edit. They are "split horizon": inside containers Overcast starts, the same
+// names are remapped to its container address via /etc/hosts, so one URL is
+// dialable from both sides of the container boundary.
+//
+// This is the single source of truth for the set.
+// internal/middleware reads it for S3 virtual-hosted addressing — adding plain
+// "localhost", which is not a public domain and so belongs only there — and
+// internal/containerendpoint reads it for the /etc/hosts mapping. They were
+// previously two hand-maintained lists and they drifted: containerendpoint
+// knew localhost.floci.io while the S3 matcher did not, so a bucket was
+// unreachable on a domain Overcast itself advertises.
+//
+// Extend per-deployment with OVERCAST_SPLIT_HORIZON_HOSTS rather than editing
+// this list.
+var WildcardDNSDomains = []string{
+	"localhost.overcast.sh",
+	"localhost.localstack.cloud",
+	"localhost.floci.io",
+}
+
 // ExternalHostname returns the hostname that should appear in client-facing
 // URLs. Returns Hostname if set, otherwise "localhost".
 func (c *Config) ExternalHostname() string {

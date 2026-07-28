@@ -529,7 +529,8 @@ mechanical URL-minting changes above.
 
 ## 10. Phases
 
-> **Progress:** H0-H3 complete and green. Outstanding: H4 (AWS::URLSuffix audit), H6 (documentation sweep, §10.1). H5 is blocked on an api-models-aws checkout.
+> **Progress:** H7 (realtime + CloudFront labels, wildcard-domain DRY) complete.
+> Previously: H0-H3 complete and green. Outstanding: H4 (AWS::URLSuffix audit), H6 (documentation sweep, §10.1). H5 is blocked on an api-models-aws checkout.
 
 Each phase begins with failing tests and leaves `main` internally consistent,
 per the shipping rule in [aws-api-operation-coverage.md](./aws-api-operation-coverage.md).
