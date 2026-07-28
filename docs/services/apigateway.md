@@ -28,6 +28,24 @@ REST API v1 is mounted at `/restapis`, HTTP API v2 at `/v2/apis`.
 - **No request validation.** Request validators are stored but not enforced at request time.
 - **No WebSocket execution.** WEBSOCKET protocol type is accepted on creation but execution is not implemented.
 
+## Invoke URLs
+
+REST v1 and HTTP v2 APIs are reachable two ways, with identical behaviour:
+
+- **Path-style** — `http://localhost:4566/restapis/{apiId}/{stage}/_user_request_/...`
+- **Host-routed** — `http://{apiId}.execute-api.{region}.{base}/{stage}/...`,
+  the shape real AWS uses. `{base}` is whatever hostname you reached Overcast
+  on; set `OVERCAST_HOSTNAME=localhost.overcast.sh` so it resolves on every OS.
+
+HTTP v2 APIs report the host-routed form in `apiEndpoint`, minted on the
+hostname you called Overcast on rather than `amazonaws.com`, so
+CloudFormation's `Fn::GetAtt ApiEndpoint` returns a URL you can dial. REST v1
+has no such field, matching AWS — the console composes it client-side.
+
+Stack outputs that compose an invoke URL in the template (as CDK does) are also
+re-hosted onto a reachable origin when returned by `DescribeStacks`. See
+[networking.md](../networking.md).
+
 <!-- BEGIN overcast:capabilities -->
 
 ## Summary

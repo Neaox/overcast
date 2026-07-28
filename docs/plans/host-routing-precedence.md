@@ -617,7 +617,7 @@ per the shipping rule in [aws-api-operation-coverage.md](./aws-api-operation-cov
 | H3 | Canonical URL minting per §8: `serviceutil.HostRoutedURL`, API Gateway v2 `apiEndpoint`, AppSync `uris`/`dns`, `buildFunctionURL` collapsed onto the helper. | A minted URL, fed back as a `Host` header, reaches its own service — asserted end-to-end, not by string comparison. |
 | H4 | `AWS::URLSuffix` audit and scoped substitution per §8's hazard. | Every `AWS::URLSuffix` use site in synthesised CDK templates classified as URL-host or not; IAM service principals provably unaffected. |
 | H5 | *(follow-on PR)* Manifest-derived label validation per §6. | Requires an `api-models-aws` checkout at revision `66e973ca…`. |
-| H6 | Documentation sweep per §10.1 — every doc that states which hostnames, URL shapes or bucket names Overcast supports. | No doc contradicts §4's precedence rule, §8's minted URLs, or §9.4's bucket-name rules. `make docs-index` regenerated. |
+| H6 | ✅ done | Documentation sweep per §10.1 — every doc that states which hostnames, URL shapes or bucket names Overcast supports. | No doc contradicts §4's precedence rule, §8's minted URLs, or §9.4's bucket-name rules. `make docs-index` regenerated. |
 
 H3's gate is deliberately behavioural rather than textual: asserting the minted
 string equals an expected literal would pass even if the routing grammar and
@@ -626,11 +626,13 @@ the only assertion that proves they agree.
 
 ### 10.1 H6 — documentation sweep
 
-This branch changed what Overcast accepts and what it hands back, and only
-`docs/networking.md` was brought in line (H2). Several other docs still state
-the old picture, and at least two of them are now actively wrong rather than
-merely incomplete. **No review has been done yet** — the list below is a survey
-of files that mention the affected claims, not a set of findings.
+**Done.** Every file below was reviewed and corrected. Two were actively wrong
+rather than merely incomplete: `cdk.md` recommended another project's domain in
+the canonical Windows fix, and `migration-from-localstack.md` claimed
+virtual-hosted style "doesn't work without extra configuration". `sdk-cli.md`
+also carried a broken anchor
+(`#s3-asset-upload-fails-on-windows-or-macos`; the heading is
+`#s3-asset-upload-fails-on-windows`).
 
 | File | Why it is in scope |
 | --- | --- |
