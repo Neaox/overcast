@@ -173,7 +173,7 @@ pattern, and `internal/router/procstart_*.go` for the process-start-time files.
 | ------------- | ------- | --------------------------------------------------------- |
 | Go            | 1.24+   | https://go.dev/dl/                                        |
 | Docker        | 24+     | https://docs.docker.com/get-docker/                       |
-| golangci-lint | v1.64.8 | `brew install golangci-lint` or https://golangci-lint.run |
+| golangci-lint | v2.8.0  | `make lint-go` uses pinned `go run` automatically          |
 | actionlint    | v1.7.7  | `make lint-actions` uses pinned `go run` automatically         |
 | Node.js       | 18+     | For web UI builds and Lambda work — https://nodejs.org    |
 
@@ -312,7 +312,7 @@ See [tests/AGENTS.md](./tests/AGENTS.md) for test conventions.
 ## Code standards
 
 - **Format:** `gofmt`. Run `make fmt` before committing. Non-formatted code fails CI.
-- **Lint:** `golangci-lint`. Run `make lint`. Config in `.golangci.yml`.
+- **Lint:** `golangci-lint` v2.x (pinned in the Makefile, fetched via `go run` — no install needed). Run `make lint`. Config in `.golangci.yml`, which uses the v2 schema.
 - **Naming:** Exported types get doc comments. Error sentinels: `ErrBucketNotFound`. Constructors: `NewHandler(...)`.
 - **Comments:** Exported symbols require doc comments (linter enforced). Mark deferred work with `// TODO(priority:Pn):`.
 - **HTTP errors:** Use `protocol.WriteXMLError` (S3) or `protocol.WriteJSONError` (JSON services) — never raw `http.Error`.

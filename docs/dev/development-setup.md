@@ -129,13 +129,16 @@ Go installed.
 ```bash
 # Mac (Homebrew)
 brew install go         # 1.24+
-brew install golangci-lint
 brew install go-task    # optional — make works on Mac/Linux
 
 # Ubuntu/Debian
 sudo apt-get install golang-go
-# golangci-lint: https://golangci-lint.run/usage/install/
 ```
+
+`golangci-lint` does not need to be installed: `make lint-go` runs a pinned
+v2.8.0 via `go run`. Install it only if you want to invoke it directly or via an
+editor integration — and install v2.x, since `.golangci.yml` uses the v2 config
+schema that v1 cannot parse.
 
 ### Setup
 
@@ -194,7 +197,7 @@ use `task` instead.
 
 1. [Go 1.24+](https://go.dev/dl/)
 2. [Task](https://taskfile.dev/installation/) — `scoop install task` or `winget install Task.Task`
-3. [golangci-lint](https://golangci-lint.run/usage/install/) — `scoop install golangci-lint`
+3. [golangci-lint](https://golangci-lint.run/usage/install/) — optional, `task lint-go` runs a pinned v2.8.0 via `go run` (install v2.x only)
 4. [Git for Windows](https://git-scm.com/download/win) — with "Use Unix-style line endings" (LF)
 
 ### Setup
@@ -285,7 +288,7 @@ All three tools produce identical results:
 | Test           | `make test`             | `task test`             | `go test -race ./...`                                    |
 | Unit test      | `make test-unit`        | `task test-unit`        | `go test -race ./internal/...`                           |
 | Integration    | `make test-integration` | `task test-integration` | `go test -race ./tests/...`                              |
-| Lint           | `make lint`             | `task lint`             | `golangci-lint run ./...`                                |
+| Lint           | `make lint`             | `task lint`             | `golangci-lint run ./...` (v2.x)                         |
 | Format         | `make fmt`              | `task fmt`              | `go fmt ./...`                                           |
 | Pre-PR check   | `make check`            | `task check`            | run fmt + vet + lint + test manually                     |
 | Container test | `make container-test`   | `task container-test`   | `docker compose -f docker-compose.dev.yml run --rm test` |
