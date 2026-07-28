@@ -143,6 +143,11 @@ function FunctionDetail() {
           <Tab id="triggers">Triggers</Tab>
         </TabList>
 
+        {/*
+          Only the code panel sits flush: its editor is a full-width bordered
+          slab whose top edge continues the tab rule. Every other panel opens
+          with bare text or a narrower card, which needs the rule to breathe.
+        */}
         <TabPanel id="code">
           <CodeTab
             source={source}
@@ -154,19 +159,19 @@ function FunctionDetail() {
             name={name}
           />
         </TabPanel>
-        <TabPanel id="test">
+        <TabPanel id="test" className="pt-4">
           <TestTab name={name} />
         </TabPanel>
-        <TabPanel id="versions">
+        <TabPanel id="versions" className="pt-4">
           <VersionsTab name={name} />
         </TabPanel>
-        <TabPanel id="monitor">
+        <TabPanel id="monitor" className="pt-4">
           <MonitorTab fn={fn} />
         </TabPanel>
-        <TabPanel id="configuration">
+        <TabPanel id="configuration" className="pt-4">
           <ConfigurationTab fn={fn} />
         </TabPanel>
-        <TabPanel id="triggers">
+        <TabPanel id="triggers" className="pt-4">
           <TriggersTab name={name} />
         </TabPanel>
       </Tabs>
