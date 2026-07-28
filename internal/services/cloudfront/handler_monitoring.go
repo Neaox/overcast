@@ -142,7 +142,7 @@ func (h *Handler) CreateRealtimeLogConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	arn := fmt.Sprintf("arn:aws:cloudfront::000000000000:realtime-log-config/%s", input.Name)
+	arn := fmt.Sprintf("arn:aws:cloudfront::%s:realtime-log-config/%s", h.accountID(), input.Name)
 	rlc := &RealtimeLogConfig{
 		ARN:          arn,
 		Name:         input.Name,

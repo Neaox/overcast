@@ -304,8 +304,20 @@ func (s *Service) resendConfirmationCode(w http.ResponseWriter, r *http.Request)
 
 // issuerURL constructs the Cognito issuer URL embedded in JWTs.
 // Clients that validate tokens must configure their JWT library to use this URL.
+//
+// The origin comes from serviceutil.ClientBaseURL, which resolves hostname, port
+// and scheme together from config (OVERCAST_HOSTNAME, OVERCAST_PORT, TLS), and
+// falls back to the request's own Host when no external hostname is configured.
+// It must not be built from r.Host directly: "iss" is not decoration — an OIDC
+// client validates it and fetches "{iss}/.well-known/jwks.json" for signing
+// keys, so a token minted on the address one caller happened to dial is
+// unverifiable by anyone who reaches Overcast under a different name (a sibling
+// container handed 127.0.0.1, a host CLI handed a compose service name). The
+// scheme matters for the same reason: with TLS enabled the JWKS endpoint is
+// served over https, and an http issuer sends clients to a scheme the server
+// does not answer. See docs/plans/harness-representativeness-audit.md.
 func (s *Service) issuerURL(r *http.Request, poolID string) string {
-	return "http://" + r.Host + "/" + s.region(r.Context()) + "/" + poolID
+	return serviceutil.ClientBaseURL(s.cfg, r) + "/" + s.region(r.Context()) + "/" + poolID
 }
 
 // initiateAuth — InitiateAuth (USER_PASSWORD_AUTH + REFRESH_TOKEN_AUTH).

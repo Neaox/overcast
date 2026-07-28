@@ -39,6 +39,18 @@ func newHandler(cfg *config.Config, store *Store, log *serviceutil.ServiceLogger
 	}
 }
 
+// accountID returns the configured AWS account ID, falling back to the standard
+// emulator account when no config is attached (unit-constructed handlers).
+// Distribution ARNs already read config via protocol.DistributionARN; this gives
+// the function and realtime-log-config ARNs the same behaviour, so every ARN one
+// server hands out names the same account.
+func (h *Handler) accountID() string {
+	if h.cfg != nil && h.cfg.AccountID != "" {
+		return h.cfg.AccountID
+	}
+	return "000000000000"
+}
+
 // ─── CreateDistribution ─────────────────────────────────────────────────────
 
 // CreateDistribution handles POST /2020-05-31/distribution.

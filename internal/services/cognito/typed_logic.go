@@ -14,6 +14,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 )
 
@@ -711,8 +712,39 @@ func (s *Service) validateAccessTokenTyped(ctx context.Context, tokenStr string)
 	}, nil
 }
 
+// issuerURLTyped is issuerURL for the typed (Smithy RPC v2 CBOR) dispatch path,
+// which is handed a context rather than an *http.Request. It must produce the
+// same string issuerURL does: a caller's wire protocol is not allowed to change
+// the issuer their token carries, and it used to — this returned a bare
+// "{region}/{poolId}" with no scheme or host, so a CBOR client's "iss" was a
+// relative string that no OIDC key discovery and no API Gateway JWT authorizer
+// could use. See docs/plans/harness-representativeness-audit.md.
 func (s *Service) issuerURLTyped(ctx context.Context, poolID string) string {
-	return s.region(ctx) + "/" + poolID
+	return s.issuerBase(ctx) + "/" + s.region(ctx) + "/" + poolID
+}
+
+// issuerBase mirrors serviceutil.ClientBaseURL's precedence — a configured
+// external hostname is authoritative, the caller's own origin fills in when none
+// is configured — for callers that have only a context. The origin comes from
+// the ClientEndpoint middleware, which stamps it per request and deliberately
+// leaves it unset for real AWS hostnames so those are never echoed back. Same
+// shape as SQS's queueURLBase, for the same reason.
+//
+// ClientBaseURL additionally recovers the port from the request when cfg.Port is
+// unset; there is no request here to recover it from. That only diverges on a
+// server configured with a hostname but no port, which neither the runtime
+// default (4566) nor the test harness produces.
+func (s *Service) issuerBase(ctx context.Context) string {
+	if s.cfg != nil && s.cfg.Hostname != "" {
+		return s.cfg.ExternalBaseURL()
+	}
+	if origin := middleware.ClientEndpointFromContext(ctx); origin != "" {
+		return origin
+	}
+	if s.cfg != nil {
+		return s.cfg.ExternalBaseURL()
+	}
+	return "http://localhost:4566"
 }
 
 // ─── typed auth challenge handlers ────────────────────────────────────────────

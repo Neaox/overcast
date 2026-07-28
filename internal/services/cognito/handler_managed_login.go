@@ -1331,8 +1331,12 @@ func (s *Service) HandleOIDCDiscovery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	issuer := "http://" + r.Host + "/" + region + "/" + poolID
-	base := "http://" + r.Host + "/_cognito/" + poolID
+	// Same origin resolution as issuerURL — see the rationale there. This
+	// document is the surface an OIDC library actually reads, so every endpoint
+	// it advertises has to be one the discovering client can dial.
+	origin := serviceutil.ClientBaseURL(s.cfg, r)
+	issuer := origin + "/" + region + "/" + poolID
+	base := origin + "/_cognito/" + poolID
 
 	doc := map[string]any{
 		"issuer":                                issuer,

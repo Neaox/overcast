@@ -2831,8 +2831,12 @@ func setupV2APIWithJWTAuthorizer(t *testing.T, srv *helpers.TestServer, poolID, 
 	helpers.DecodeJSON(t, r1, &apiResult)
 	apiID = apiResult["apiId"].(string)
 
-	// Issuer format: http://{host}/{region}/{poolId}
-	issuer = "http://" + strings.TrimPrefix(srv.URL, "http://") + "/" + region + "/" + poolID
+	// Issuer format: http://{host}/{region}/{poolId}, on the origin Cognito
+	// advertises rather than the one this test happens to dial. A JWT authorizer
+	// compares the token's "iss" claim to this string exactly (as real AWS does,
+	// see handler_auth.go), so it has to be the issuer Cognito actually mints —
+	// ExternalBase(), not srv.URL. See docs/plans/harness-representativeness-audit.md.
+	issuer = srv.ExternalBase() + "/" + region + "/" + poolID
 
 	// Create a JWT authorizer.
 	r2 := apiCall(t, srv, http.MethodPost, "/v2/apis/"+apiID+"/authorizers", map[string]any{

@@ -1290,11 +1290,7 @@ func (h *Handler) isForeignAccountLayerARN(arn string) bool {
 	if err != nil {
 		return false
 	}
-	accountID := "000000000000"
-	if h.cfg != nil && h.cfg.AccountID != "" {
-		accountID = h.cfg.AccountID
-	}
-	return parsed.Account != "" && parsed.Account != accountID
+	return parsed.Account != "" && parsed.Account != h.accountID()
 }
 
 func (h *Handler) cachedExternalLayerVersion(ctx context.Context, arn string) *LayerVersion {
