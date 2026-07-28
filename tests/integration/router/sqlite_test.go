@@ -5,7 +5,7 @@
 // always return "not compiled with SQLite support" (see
 // internal/state/sqlite_hybrid_nosqlite.go), so these tests cannot run there.
 // Guarding the file mirrors internal/router/debug_hybrid_test.go and
-// internal/services/dynamodb/item_store_test.go.
+// internal/services/dynamodb/index_store_sqlite_test.go.
 package router_test
 
 import (

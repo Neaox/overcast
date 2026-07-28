@@ -122,9 +122,10 @@ Guard the **whole file**, not the individual assertion — put the affected test
 their own file with the constraint at the top. Precedents:
 `internal/router/mcp_routes_test.go` and `internal/bff/docs_search_test.go`
 (`!slim`); `internal/router/debug_hybrid_test.go`,
-`internal/services/dynamodb/item_store_test.go`,
-`internal/services/cloudwatch/metric_retention_sqlite_test.go` and
-`internal/services/cloudwatch/logs/event_backend_sqlite_test.go` (`!nosqlite`);
+`internal/services/cloudwatch/metric_retention_sqlite_test.go`,
+`internal/services/cloudwatch/logs/event_backend_sqlite_test.go`,
+`internal/services/sqs/message_backend_sqlite_test.go` and
+`internal/services/dynamodb/index_store_sqlite_test.go` (`!nosqlite`);
 `tests/integration/router/mcp_test.go` (`!slim`) and
 `tests/integration/router/sqlite_test.go` (`!nosqlite`). Leave a one-line pointer
 in the file the tests moved out of.
@@ -161,11 +162,20 @@ for name, b := range newTestBackends(t) {
 ```
 
 Under `nosqlite` the suite then runs the `memory` subtest and skips `sql`, rather
-than failing or vanishing. `internal/services/cloudwatch/logs/event_backend_test.go`
-(`newTestBackends`) and `retention_test.go` (`newTestLogsStores`) are the
-worked examples. Tests that are *wholly* about SQLite — "does this select
-`sqlEventBackend`?", "does the hybrid backend physically delete the row?" — still
-belong in their own `!nosqlite` file; there is no memory half to preserve.
+than failing or vanishing. The worked examples are
+`internal/services/cloudwatch/logs/event_backend_test.go` (`newTestBackends`),
+`internal/services/sqs/message_backend_test.go` (`newTestMessageBackends`) and
+`internal/services/dynamodb/item_store_test.go` (`newTestItemBackends`, shared
+with `index_store_test.go`) — plus two fixtures that do the same one layer up,
+returning whole stores rather than bare backends:
+`internal/services/cloudwatch/logs/retention_test.go` (`newTestLogsStores`) and
+`internal/services/dynamodb/handler_transact_index_test.go`
+(`newTestDynamoStores`).
+
+Tests that are *wholly* about SQLite — "does this select `sqlEventBackend`?",
+"does the hybrid backend physically delete the row?", "does `*sql.Tx` roll the
+write back?" — still belong in their own `!nosqlite` file; there is no memory
+half to preserve.
 
 When you add a build-tagged file or a backend-map fixture, verify all three ways
 before finishing:

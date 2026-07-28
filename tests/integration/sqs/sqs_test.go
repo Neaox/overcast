@@ -990,7 +990,7 @@ func TestPurgeQueue_clearsAllMessages(t *testing.T) {
 // message_json can't be decoded) is now covered where it can actually occur
 // — the SQL backend — by
 // TestSQLMessageBackend_ToleratesCorruptRows in
-// internal/services/sqs/message_backend_test.go. This test is kept, adjusted
+// internal/services/sqs/message_backend_sqlite_test.go. This test is kept, adjusted
 // to verify what's still true and observable from the public HTTP surface:
 // PurgeQueue succeeds and clears real messages even when an unrelated,
 // unreadable legacy value happens to be sitting in the now-dead

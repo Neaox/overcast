@@ -1,5 +1,3 @@
-//go:build !nosqlite
-
 // Tests for TransactWriteItems' GSI index-row maintenance
 // (docs/plans/dynamodb-gsi-design.md §3, phase 3 work item 1). PutItem,
 // UpdateItem, DeleteItem, and BatchWriteItem all route through
@@ -15,26 +13,36 @@
 // wiring diffIndexMutations through costs zero extra reads — these tests
 // assert the effect (index rows appear/move/disappear), not the read count.
 //
-// Run against both backends (newTestDynamoStores) so a fix to one can't
-// silently diverge from the other, matching index_store_test.go's
-// convention.
+// Run against every backend this build provides (newTestDynamoStores) so a
+// fix to one can't silently diverge from the other, matching
+// index_store_test.go's convention.
 package dynamodb
 
 import (
 	"context"
 	"testing"
 
+	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/state"
 )
 
-// newTestDynamoStores returns one dynamoStore per backend pairing
-// (memory, sql), wired the same way service.go wires production stores
+// newTestDynamoStores returns one dynamoStore per backend pairing available
+// in this build, wired the same way service.go wires production stores
 // (newItemBackendFor/newStreamBackendFor keyed off the same underlying
 // state.Store) — see item_store_test.go's newTestItemBackends for the
-// itemBackend-only analogue this generalizes.
+// itemBackend-only analogue this generalizes, including its nosqlite
+// behavior: "sql" is only present when SQLite is compiled in, and the map
+// degrades to memory-only otherwise.
 func newTestDynamoStores(t *testing.T) map[string]*dynamoStore {
 	t.Helper()
+
+	stores := map[string]*dynamoStore{
+		"memory": newDynamoStore(state.NewMemoryStore(), newMemItemBackend(), newMemStreamBackend(), "us-east-1"),
+	}
+	if !config.SQLiteSupported() {
+		return stores
+	}
 
 	dir := t.TempDir()
 	sqlStore, err := state.NewSQLiteStore(dir)
@@ -46,11 +54,9 @@ func newTestDynamoStores(t *testing.T) map[string]*dynamoStore {
 			t.Logf("sqlStore.Close: %v", err)
 		}
 	})
+	stores["sql"] = newDynamoStore(sqlStore, newItemBackendFor(sqlStore), newStreamBackendFor(sqlStore), "us-east-1")
 
-	return map[string]*dynamoStore{
-		"memory": newDynamoStore(state.NewMemoryStore(), newMemItemBackend(), newMemStreamBackend(), "us-east-1"),
-		"sql":    newDynamoStore(sqlStore, newItemBackendFor(sqlStore), newStreamBackendFor(sqlStore), "us-east-1"),
-	}
+	return stores
 }
 
 // ordersTableWithStatusGSI is a minimal single-GSI fixture for the tests
