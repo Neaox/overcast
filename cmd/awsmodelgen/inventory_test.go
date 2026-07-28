@@ -84,12 +84,12 @@ func TestBuildModelInventory_excludesS3FromFallbackCollisions(t *testing.T) {
 
 func TestUpdateModelVersion_preservesProvenanceAndUpdatesPin(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "VERSION")
-	const original = "source=https://github.com/aws/api-models-aws\nrevision=old\nmodel-date=2026-01-01\nlicense=Apache-2.0\n"
+	const original = "source=https://github.com/aws/api-models-aws\nrevision=old\nmodel-date=2026-01-01\nmanifest-sha256=old-digest\nlicense=Apache-2.0\n"
 	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := updateModelVersion(path, "new", "2026-07-28"); err != nil {
+	if err := updateModelVersion(path, "new", "2026-07-28", "new-digest"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -102,6 +102,7 @@ func TestUpdateModelVersion_preservesProvenanceAndUpdatesPin(t *testing.T) {
 		"source=https://github.com/aws/api-models-aws",
 		"revision=new",
 		"model-date=2026-07-28",
+		"manifest-sha256=new-digest",
 		"license=Apache-2.0",
 	} {
 		if !strings.Contains(got, want) {
