@@ -268,6 +268,93 @@ func TestRouter_unclaimedModeledJSONTarget_returnsNotImplemented(t *testing.T) {
 	helpers.AssertJSONError(t, resp, "NotImplemented")
 }
 
+func TestRouter_unclaimedModeledRESTPath_returnsNotImplemented(t *testing.T) {
+	// Given: a modeled REST JSON operation for a service Overcast does not yet
+	// implement, alongside S3's deliberately broad bucket routes.
+	srv := helpers.NewTestServer(t)
+
+	// When: the Access Analyzer ListAnalyzers wire path is requested.
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/analyzer", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// AWS SDK, CLI, and CDK requests carry their service in the SigV4 scope.
+	// This disambiguates the REST operation from S3's valid bucket name space.
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=test/20260728/us-east-1/access-analyzer/aws4_request, SignedHeaders=host, Signature=test")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the modeled AWS operation owns the exact method/path binding and
+	// returns a JSON 501 instead of S3 interpreting "analyzer" as a bucket.
+	helpers.AssertStatus(t, resp, http.StatusNotImplemented)
+	helpers.AssertHeader(t, resp, "x-emulator-unsupported", "true")
+	helpers.AssertRequestID(t, resp)
+	helpers.AssertJSONError(t, resp, "NotImplemented")
+}
+
+func TestRouter_signedRESTRootPath_returnsNotImplemented(t *testing.T) {
+	// Given: a modeled REST root operation alongside S3's ListBuckets route.
+	srv := helpers.NewTestServer(t)
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=test/20260728/us-east-1/mediastore/aws4_request, SignedHeaders=host, Signature=test")
+
+	// When: a MediaStore Data SDK-shaped request reaches the shared root path.
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: SigV4 service identity prevents a fallthrough to S3 ListBuckets.
+	helpers.AssertStatus(t, resp, http.StatusNotImplemented)
+	helpers.AssertHeader(t, resp, "x-emulator-unsupported", "true")
+	helpers.AssertJSONError(t, resp, "NotImplemented")
+}
+
+func TestRouter_unsignedS3PathMatchingAmbiguousRESTBinding_remainsReachable(t *testing.T) {
+	// Given: an unsigned S3 bucket whose name is also an ambiguous REST literal.
+	srv := helpers.NewTestServer(t, helpers.WithServices("s3"))
+	create, err := http.NewRequest(http.MethodPut, srv.URL+"/tags", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createResp, err := http.DefaultClient.Do(create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+	put, err := http.NewRequest(http.MethodPut, srv.URL+"/tags/obj.txt", bytes.NewBufferString("contents"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	putResp, err := http.DefaultClient.Do(put)
+	if err != nil {
+		t.Fatal(err)
+	}
+	putResp.Body.Close()
+	helpers.AssertStatus(t, putResp, http.StatusOK)
+
+	// When: an unsigned request reads the object through the ambiguous path.
+	resp, err := http.Get(srv.URL + "/tags/obj.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: no empty signing name can claim it; S3 remains the safe fallback.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	if got := helpers.ReadBody(t, resp); got != "contents" {
+		t.Errorf("object body = %q, want contents", got)
+	}
+}
+
 // ---- Debug endpoints (guarded by cfg.Debug) --------------------------------
 
 func TestDebugHealth_returnsOK(t *testing.T) {

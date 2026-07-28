@@ -32,6 +32,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/Neaox/overcast/internal/awsapi"
 )
 
 // CapabilityDecl is a capability entry parsed from a capabilities_dev.go file.
@@ -55,17 +57,18 @@ type Operation struct {
 
 func main() {
 	var (
-		workspace = flag.String("workspace", ".", "workspace root (directory with go.mod)")
-		check     = flag.Bool("check", false, "check capabilities against handler ops; exit 1 on mismatch")
-		generate  = flag.Bool("generate", false, "generate internal/capabilities/all.gen.go")
-		initCaps  = flag.Bool("init", false, "generate missing capabilities_dev.go files from detected handler ops")
-		writeDocs = flag.Bool("write-docs", false, "regenerate sentinel-bracketed tables in docs/services/*.md")
-		initDocs  = flag.Bool("init-docs", false, "add sentinel markers to docs that don't have them yet")
-		service   = flag.String("service", "", "limit to one service (all if empty)")
+		workspace  = flag.String("workspace", ".", "workspace root (directory with go.mod)")
+		check      = flag.Bool("check", false, "check capabilities against handler ops; exit 1 on mismatch")
+		checkModel = flag.Bool("check-model", false, "check capabilities against the generated AWS operation corpus")
+		generate   = flag.Bool("generate", false, "generate internal/capabilities/all.gen.go")
+		initCaps   = flag.Bool("init", false, "generate missing capabilities_dev.go files from detected handler ops")
+		writeDocs  = flag.Bool("write-docs", false, "regenerate sentinel-bracketed tables in docs/services/*.md")
+		initDocs   = flag.Bool("init-docs", false, "add sentinel markers to docs that don't have them yet")
+		service    = flag.String("service", "", "limit to one service (all if empty)")
 	)
 	flag.Parse()
 
-	if !*check && !*generate && !*writeDocs && !*initCaps && !*initDocs {
+	if !*check && !*checkModel && !*generate && !*writeDocs && !*initCaps && !*initDocs {
 		flag.Usage()
 		fmt.Fprintln(os.Stderr, "\ncapgen: no action specified; use --check, --generate, --write-docs, --init, or --init-docs")
 		os.Exit(1)
@@ -100,6 +103,10 @@ func main() {
 			}
 		}
 		allCaps = append(allCaps, caps...)
+
+		if *checkModel {
+			failures += checkCapabilitiesInManifest(caps)
+		}
 
 		if *check {
 			ops, comprehensive, opsErr := parseHandlerOps(svcDir)
@@ -212,6 +219,69 @@ func main() {
 	if failures > 0 {
 		os.Exit(1)
 	}
+}
+
+// checkCapabilitiesInManifest keeps the implementation/status inventory tied
+// to the same generated AWS operation universe used by the router. DocOnly
+// entries are intentionally descriptive and may refer to synthetic rows.
+func checkCapabilitiesInManifest(caps []CapabilityDecl) int {
+	violations := 0
+	for _, cap := range caps {
+		if cap.DocOnly || capabilityManifestExemption(cap) != "" {
+			continue
+		}
+		operation := modeledOperationName(cap)
+		if awsapi.HasOperation(cap.Service, operation) {
+			continue
+		}
+		fmt.Printf("UNKNOWN_MODEL_OPERATION %s/%s  (mark DocOnly, add an explicit exemption, or correct the AWS operation name)\n", cap.Service, cap.Operation)
+		violations++
+	}
+	return violations
+}
+
+// modeledOperationName records the one legacy naming convention that differs
+// mechanically from Smithy: API Gateway v2 operations are exposed by
+// api-gateway-v2 as CreateApi et al., while Overcast's established capability
+// names include V2 (CreateV2Api) to distinguish them from REST API operations.
+func modeledOperationName(cap CapabilityDecl) string {
+	if cap.Service == "apigateway" {
+		return strings.Replace(cap.Operation, "V2", "", 1)
+	}
+	if alias, ok := capabilityOperationAliases[cap.Service+"/"+cap.Operation]; ok {
+		return alias
+	}
+	return cap.Operation
+}
+
+var capabilityOperationAliases = map[string]string{
+	"cloudfront/DeleteFieldLevelEncryption": "DeleteFieldLevelEncryptionConfig",
+}
+
+// capabilityManifestExemptions is deliberately small and names only
+// emulator-internal operations or legacy operations that AWS no longer models.
+// Keep an explicit reason here rather than silently weakening the model gate.
+var capabilityManifestExemptions = map[string]string{
+	"apigateway/ExecuteRestAPI":        "emulator invoke-route helper, not an AWS control-plane operation",
+	"apigateway/ExecuteV2API":          "emulator invoke-route helper, not an AWS control-plane operation",
+	"apigateway/GetV2Integration":      "legacy local operation name; API Gateway v2 has no GetIntegration operation",
+	"apigateway/DeleteV2Integration":   "legacy local operation name; API Gateway v2 has no DeleteIntegration operation",
+	"apigateway/GetV2Authorizer":       "legacy local operation name; API Gateway v2 has no GetAuthorizer operation",
+	"apigateway/GetV2Authorizers":      "legacy local operation name; API Gateway v2 has no GetAuthorizers operation",
+	"apigateway/DeleteV2Authorizer":    "legacy local operation name; API Gateway v2 has no DeleteAuthorizer operation",
+	"apigateway/GetV2DomainNames":      "legacy local operation name; API Gateway v2 has no GetDomainNames operation",
+	"apigateway/DeleteV2DomainName":    "legacy local operation name; API Gateway v2 has no DeleteDomainName operation",
+	"apigateway/GetV2VpcLinks":         "legacy local operation name; API Gateway v2 has no GetVpcLinks operation",
+	"apigateway/DeleteV2VpcLink":       "legacy local operation name; API Gateway v2 has no DeleteVpcLink operation",
+	"appsync/ExecuteGraphQL":           "emulator GraphQL execution helper, not an AWS SDK operation",
+	"cloudfront/ProxyRequest":          "emulator proxy helper, not an AWS control-plane operation",
+	"eks/DescribeAccessPolicy":         "legacy local name; no corresponding EKS operation",
+	"eks/UpdateIdentityProviderConfig": "legacy local name; EKS models associate/disassociate instead",
+	"eks/UpdateKubeconfig":             "emulator convenience helper, not an AWS SDK operation",
+}
+
+func capabilityManifestExemption(cap CapabilityDecl) string {
+	return capabilityManifestExemptions[cap.Service+"/"+cap.Operation]
 }
 
 func fatalf(format string, args ...any) {

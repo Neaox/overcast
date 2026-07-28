@@ -118,3 +118,15 @@ func TestFindWorkspaceRoot_WalksUpToGoMod(t *testing.T) {
 		t.Errorf("findWorkspaceRoot(%q) = %q, want %q", nested, got, wantAbs)
 	}
 }
+
+func TestModeledOperationCounts_readsGeneratedCorpus(t *testing.T) {
+	// Given: the pinned generated AWS operation corpus.
+
+	// When: stub-report builds its coverage baseline.
+	counts := modeledOperationCounts()
+
+	// Then: it includes model-only services and Overcast aliases.
+	if counts["accessanalyzer"] == 0 || counts["secretsmanager"] == 0 {
+		t.Errorf("modeledOperationCounts() missing generated services: %+v", counts)
+	}
+}

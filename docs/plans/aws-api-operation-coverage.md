@@ -114,7 +114,12 @@ It does not decode bodies, persist data, implement business logic, or replace se
 3. AWS Query `Version`/`Action`, with SigV4 credential service as a tiebreaker; and
 4. REST method plus generated URI-template match, using SigV4 service for genuinely ambiguous roots.
 
-The registry never claims `s3` or `/_*`. If evidence is insufficient to distinguish a request from S3, preserve S3 behavior. An exact known non-S3 REST binding is sufficient for unsigned local test traffic.
+The registry never claims `s3` or `/_*`. REST paths overlap S3's legal bucket
+and object namespace, including generic Smithy labels. A REST fallback therefore
+requires both an unambiguous modeled method/path binding and the modeled
+`aws.auth#sigv4` service name from the request credential scope. AWS SDK, CLI, and CDK calls
+provide that scope; unsigned or S3-scoped traffic preserves S3 behavior. This
+also safely disambiguates the rare modeled REST root binding from ListBuckets.
 
 ### 4.3 Router fallback
 

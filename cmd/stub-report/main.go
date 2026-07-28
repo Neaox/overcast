@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/Neaox/overcast/internal/awsapi"
 )
 
 type serviceOps struct {
@@ -57,13 +59,14 @@ func main() {
 	sort.Slice(svcs, func(i, j int) bool { return svcs[i].name < svcs[j].name })
 
 	total := 0
+	modeled := modeledOperationCounts()
 	fmt.Println("# Overcast Operation Manifest")
 	fmt.Println()
 	for _, s := range svcs {
 		total += len(s.ops)
-		pstr := ""
+		pstr := fmt.Sprintf(", modeled: %d", modeled[s.name])
 		if len(s.protos) > 0 {
-			pstr = fmt.Sprintf(", protocols: %s", strings.Join(s.protos, ", "))
+			pstr += fmt.Sprintf(", protocols: %s", strings.Join(s.protos, ", "))
 		}
 		fmt.Printf("## %s — %d ops%s\n", s.name, len(s.ops), pstr)
 		for _, op := range s.ops {
@@ -71,7 +74,23 @@ func main() {
 		}
 		fmt.Println()
 	}
-	fmt.Printf("---\nTotal: %d operations across %d services\n", total, len(svcs))
+	modeledTotal := 0
+	for _, count := range modeled {
+		modeledTotal += count
+	}
+	fmt.Printf("---\nModel corpus: %d operations across %d services; typed registrations: %d across %d services\n", modeledTotal, len(modeled), total, len(svcs))
+}
+
+// modeledOperationCounts reads the generated AWS corpus rather than treating
+// typed_ops.go as the operation universe. Typed source remains a registration
+// signal only; every other modeled operation is owned by the router fallback.
+func modeledOperationCounts() map[string]int {
+	counts := make(map[string]int)
+	awsapi.WalkOperations(func(op awsapi.Operation) bool {
+		counts[awsapi.ServiceKey(op.Service)]++
+		return true
+	})
+	return counts
 }
 
 // scanServices walks internal/services, one level deep, plus the known

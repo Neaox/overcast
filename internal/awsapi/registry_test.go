@@ -50,6 +50,51 @@ func TestRegistryClaimQuery_unknownOperation(t *testing.T) {
 	}
 }
 
+func TestRegistryClaimREST_modeledOperation(t *testing.T) {
+	// Given: the immutable REST trie generated from the pinned model corpus.
+	registry := NewRegistry()
+
+	// When: a modeled Access Analyzer operation is looked up by its HTTP binding.
+	claim, ok := registry.ClaimREST("GET", "/analyzer")
+
+	// Then: it selects the REST JSON 501 envelope without S3 participation.
+	if !ok {
+		t.Fatal("ClaimREST() did not recognize Access Analyzer ListAnalyzers")
+	}
+	if claim.ModelService != "accessanalyzer" || claim.Operation != "ListAnalyzers" {
+		t.Errorf("ClaimREST() = %+v, want accessanalyzer ListAnalyzers", claim)
+	}
+	if claim.ErrorProfile != ErrorProfileJSON {
+		t.Errorf("ClaimREST() error profile = %v, want JSON", claim.ErrorProfile)
+	}
+}
+
+func TestRegistryClaimREST_greedyLabelWithSuffix(t *testing.T) {
+	// Given: a modeled REST URI whose greedy label is followed by a literal.
+	registry := NewRegistry()
+
+	// When: its label spans multiple path segments.
+	claim, ok := registry.ClaimREST("GET", "/v20180820/mrap/instances/one/two/policy")
+
+	// Then: matching reaches the modeled operation rather than S3.
+	if !ok || claim.Operation != "GetMultiRegionAccessPointPolicy" {
+		t.Errorf("ClaimREST() = %+v, %v; want GetMultiRegionAccessPointPolicy", claim, ok)
+	}
+}
+
+func TestRegistryClaimREST_rootBinding(t *testing.T) {
+	// Given: a modeled REST operation bound to the HTTP root.
+	registry := NewRegistry()
+
+	// When: MediaStore Data's root GET binding is classified.
+	claim, ok := registry.ClaimREST("GET", "/")
+
+	// Then: the registry retains the signing name needed to distinguish it from S3.
+	if !ok || claim.Operation != "ListItems" || claim.SigningName != "mediastore" {
+		t.Errorf("ClaimREST() = %+v, %v; want MediaStore Data ListItems", claim, ok)
+	}
+}
+
 func TestRegistryClaimTarget_collidingService(t *testing.T) {
 	// Given: a modeled target shared by CloudWatch Events and EventBridge.
 	registry := NewRegistry()
@@ -96,6 +141,36 @@ func TestOvercastService_alias(t *testing.T) {
 	}
 }
 
+func TestHasOperation_usesOvercastServiceAlias(t *testing.T) {
+	// Given: a capability uses Overcast's established service key.
+
+	// When: capgen validates it against the modeled operation corpus.
+	got := HasOperation("secretsmanager", "ListSecrets")
+
+	// Then: the model's secrets-manager identity resolves through the alias.
+	if !got {
+		t.Fatal("HasOperation() did not resolve secretsmanager/ListSecrets")
+	}
+}
+
+func TestHasOperation_resolvesLegacyServiceFamilies(t *testing.T) {
+	// Given: Overcast service keys that cover a separately modeled AWS family.
+	tests := []struct {
+		service   string
+		operation string
+	}{
+		{service: "bedrock", operation: "InvokeModel"},
+		{service: "cognito", operation: "ListUsers"},
+	}
+
+	// When: build tooling validates their capabilities against the corpus.
+	for _, test := range tests {
+		if !HasOperation(test.service, test.operation) {
+			t.Errorf("HasOperation(%q, %q) = false, want true", test.service, test.operation)
+		}
+	}
+}
+
 func TestRegistryLookup_hasNoAllocations(t *testing.T) {
 	// Given: the immutable generated registry.
 	registry := NewRegistry()
@@ -107,10 +182,13 @@ func TestRegistryLookup_hasNoAllocations(t *testing.T) {
 	queryAllocs := testing.AllocsPerRun(1_000, func() {
 		_, _ = registry.ClaimQuery("2016-11-15", "DescribeInstances")
 	})
+	restAllocs := testing.AllocsPerRun(1_000, func() {
+		_, _ = registry.ClaimREST("GET", "/analyzer")
+	})
 
 	// Then: lookup does not allocate model-sized data or request-local state.
-	if targetAllocs != 0 || queryAllocs != 0 {
-		t.Errorf("lookup allocations = target %.1f, query %.1f; want zero", targetAllocs, queryAllocs)
+	if targetAllocs != 0 || queryAllocs != 0 || restAllocs != 0 {
+		t.Errorf("lookup allocations = target %.1f, query %.1f, REST %.1f; want zero", targetAllocs, queryAllocs, restAllocs)
 	}
 }
 
@@ -151,5 +229,13 @@ func BenchmarkRegistryClaimQuery(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		_, _ = registry.ClaimQuery("2016-11-15", "DescribeInstances")
+	}
+}
+
+func BenchmarkRegistryClaimREST(b *testing.B) {
+	registry := NewRegistry()
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _ = registry.ClaimREST("GET", "/analyzer")
 	}
 }

@@ -67,14 +67,18 @@ type serviceTrait struct {
 	SDKID string `json:"sdkId"`
 }
 
+type sigV4Trait struct {
+	Name string `json:"name"`
+}
+
 type httpTrait struct {
 	Method string `json:"method"`
 	URI    string `json:"uri"`
 }
 
 type operation struct {
-	Service, SDKID, APIVersion, Name, Protocol, TargetPrefix, HTTPMethod, URI string
-	Protocols                                                                 []string
+	Service, SDKID, APIVersion, Name, Protocol, TargetPrefix, SigningName, HTTPMethod, URI string
+	Protocols                                                                              []string
 }
 
 func generateManifest(modelsDir, revision string) ([]byte, error) {
@@ -124,17 +128,22 @@ func generateManifest(modelsDir, revision string) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// writeRegistryIndexes emits the two unambiguous A2 lookup indexes. REST and
-// RPC paths require structural matching and are emitted as a trie in A3.
+// writeRegistryIndexes emits the immutable lookup indexes used by the router.
+// REST bindings are compiled into a segment trie at generation time so runtime
+// matching remains independent of the total modeled operation count.
 func writeRegistryIndexes(out *bytes.Buffer, operations []operation) {
 	targets := make([]operation, 0, len(operations))
 	queries := make([]operation, 0, len(operations))
+	rest := make([]operation, 0, len(operations))
 	for _, op := range operations {
 		if op.TargetPrefix != "" && (op.Protocol == "AWSJSON10" || op.Protocol == "AWSJSON11") {
 			targets = append(targets, op)
 		}
 		if op.Protocol == "AWSQuery" || op.Protocol == "EC2Query" {
 			queries = append(queries, op)
+		}
+		if (op.Protocol == "RESTJSON" || op.Protocol == "RESTXML") && op.HTTPMethod != "" && op.URI != "" && op.Service != "s3" {
+			rest = append(rest, op)
 		}
 	}
 	sort.Slice(targets, func(i, j int) bool {
@@ -155,6 +164,7 @@ func writeRegistryIndexes(out *bytes.Buffer, operations []operation) {
 	})
 	writeTargetIndex(out, targets)
 	writeQueryIndex(out, queries)
+	writeRESTTrie(out, rest)
 }
 
 func writeTargetIndex(out *bytes.Buffer, operations []operation) {
@@ -228,6 +238,160 @@ func writeCollisionIndex(out *bytes.Buffer, name string, collisions []registryCo
 	out.WriteString("}\n")
 }
 
+type restTrieBuildNode struct {
+	literals   map[string]*restTrieBuildNode
+	parameter  *restTrieBuildNode
+	greedy     *restTrieBuildNode
+	operations []operation
+}
+
+type restIndexOperation struct {
+	Method       string
+	ModelService string
+	SigningName  string
+	Operation    string
+	Protocol     string
+	Ambiguous    bool
+}
+
+func writeRESTTrie(out *bytes.Buffer, operations []operation) {
+	root := &restTrieBuildNode{}
+	for _, op := range operations {
+		node := root
+		trimmedURI := strings.TrimPrefix(op.URI, "/")
+		var segments []string
+		if trimmedURI != "" {
+			segments = strings.Split(trimmedURI, "/")
+		}
+		for _, segment := range segments {
+			if isGreedyLabel(segment) {
+				if node.greedy == nil {
+					node.greedy = &restTrieBuildNode{}
+				}
+				node = node.greedy
+				continue
+			}
+			if isLabel(segment) {
+				if node.parameter == nil {
+					node.parameter = &restTrieBuildNode{}
+				}
+				node = node.parameter
+				continue
+			}
+			if node.literals == nil {
+				node.literals = make(map[string]*restTrieBuildNode)
+			}
+			if node.literals[segment] == nil {
+				node.literals[segment] = &restTrieBuildNode{}
+			}
+			node = node.literals[segment]
+		}
+		node.operations = append(node.operations, op)
+	}
+
+	type flattenedNode struct {
+		node  *restTrieBuildNode
+		index int
+	}
+	flattened := []flattenedNode{{node: root, index: 0}}
+	for i := 0; i < len(flattened); i++ {
+		node := flattened[i].node
+		keys := sortedKeys(node.literals)
+		for _, key := range keys {
+			flattened = append(flattened, flattenedNode{node: node.literals[key], index: len(flattened)})
+		}
+		if node.parameter != nil {
+			flattened = append(flattened, flattenedNode{node: node.parameter, index: len(flattened)})
+		}
+		if node.greedy != nil {
+			flattened = append(flattened, flattenedNode{node: node.greedy, index: len(flattened)})
+		}
+	}
+	indexes := make(map[*restTrieBuildNode]int, len(flattened))
+	for _, entry := range flattened {
+		indexes[entry.node] = entry.index
+	}
+
+	var edges []struct {
+		segment string
+		node    int
+	}
+	var indexedOperations []restIndexOperation
+	out.WriteString("\nvar restTrieNodes = []restTrieNode{\n")
+	for _, entry := range flattened {
+		node := entry.node
+		literalStart := len(edges)
+		for _, key := range sortedKeys(node.literals) {
+			edges = append(edges, struct {
+				segment string
+				node    int
+			}{key, indexes[node.literals[key]]})
+		}
+		literalEnd := len(edges)
+		parameter, greedy := -1, -1
+		if node.parameter != nil {
+			parameter = indexes[node.parameter]
+		}
+		if node.greedy != nil {
+			greedy = indexes[node.greedy]
+		}
+		operationStart := len(indexedOperations)
+		sort.Slice(node.operations, func(i, j int) bool {
+			if node.operations[i].HTTPMethod != node.operations[j].HTTPMethod {
+				return node.operations[i].HTTPMethod < node.operations[j].HTTPMethod
+			}
+			if node.operations[i].Service != node.operations[j].Service {
+				return node.operations[i].Service < node.operations[j].Service
+			}
+			return node.operations[i].Name < node.operations[j].Name
+		})
+		for start := 0; start < len(node.operations); {
+			end := start + 1
+			for end < len(node.operations) && node.operations[end].HTTPMethod == node.operations[start].HTTPMethod {
+				end++
+			}
+			op, services := node.operations[start], collisionServices(node.operations[start:end])
+			ambiguous := len(services) > 1
+			if ambiguous {
+				op.Service = ""
+				op.SigningName = ""
+			}
+			indexedOperations = append(indexedOperations, restIndexOperation{Method: op.HTTPMethod, ModelService: op.Service, SigningName: op.SigningName, Operation: op.Name, Protocol: protocolConstant(op.Protocol), Ambiguous: ambiguous})
+			start = end
+		}
+		fmt.Fprintf(out, "\t{LiteralStart: %d, LiteralEnd: %d, Parameter: %d, Greedy: %d, OperationStart: %d, OperationEnd: %d},\n", literalStart, literalEnd, parameter, greedy, operationStart, len(indexedOperations))
+	}
+	out.WriteString("}\n\nvar restTrieEdges = []restTrieEdge{\n")
+	for _, edge := range edges {
+		fmt.Fprintf(out, "\t{Segment: %q, Node: %d},\n", edge.segment, edge.node)
+	}
+	out.WriteString("}\n\nvar restOperations = []restOperation{\n")
+	for _, op := range indexedOperations {
+		if op.Ambiguous {
+			fmt.Fprintf(out, "\t{Method: %q, ModelService: %q, SigningName: %q, Operation: %q, Protocol: %s, Ambiguous: true},\n", op.Method, op.ModelService, op.SigningName, op.Operation, op.Protocol)
+		} else {
+			fmt.Fprintf(out, "\t{Method: %q, ModelService: %q, SigningName: %q, Operation: %q, Protocol: %s},\n", op.Method, op.ModelService, op.SigningName, op.Operation, op.Protocol)
+		}
+	}
+	out.WriteString("}\n")
+}
+
+func isLabel(segment string) bool {
+	return strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}")
+}
+func isGreedyLabel(segment string) bool { return isLabel(segment) && strings.HasSuffix(segment, "+}") }
+
+func sortedKeys(values map[string]*restTrieBuildNode) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func protocolConstant(protocol string) string { return "Protocol" + protocol }
+
 func quotedStrings(values []string) string {
 	quoted := make([]string, len(values))
 	for i, value := range values {
@@ -261,6 +425,7 @@ func parseModel(path string) ([]operation, error) {
 		protocols := modelProtocols(svc.Traits)
 		protocol := modelProtocol(svc.Traits)
 		targetPrefix := targetPrefixForService(shapeID, protocols)
+		signingName := signingNameForService(svc.Traits)
 		refs, err := serviceOperationReferences(parsed.Shapes, shapeID, svc)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
@@ -279,11 +444,23 @@ func parseModel(path string) ([]operation, error) {
 			out = append(out, operation{
 				Service: strings.ToLower(strings.ReplaceAll(trait.SDKID, " ", "-")), SDKID: trait.SDKID,
 				APIVersion: svc.Version, Name: shapeName(ref.Target), Protocol: protocol, Protocols: protocols,
-				TargetPrefix: targetPrefix, HTTPMethod: http.Method, URI: http.URI,
+				TargetPrefix: targetPrefix, SigningName: signingName, HTTPMethod: http.Method, URI: http.URI,
 			})
 		}
 	}
 	return out, nil
+}
+
+func signingNameForService(traits map[string]json.RawMessage) string {
+	raw, ok := traits["aws.auth#sigv4"]
+	if !ok {
+		return ""
+	}
+	var trait sigV4Trait
+	if err := json.Unmarshal(raw, &trait); err != nil {
+		return ""
+	}
+	return trait.Name
 }
 
 func serviceOperationReferences(shapes map[string]shape, serviceID string, service shape) ([]reference, error) {
