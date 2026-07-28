@@ -1115,8 +1115,10 @@ func queryGetMiddleware(queryDispatchers *[]QueryDispatcher) func(http.Handler) 
 					return
 				}
 			}
-			// No dispatcher claimed this action — fall through to chi's normal routing.
-			next.ServeHTTP(w, r)
+			// A root GET carrying Action is AWS Query traffic, not S3. Returning
+			// Query XML keeps an unimplemented AWS command from becoming S3's
+			// ListBuckets response.
+			protocol.NotImplementedQueryXML(w, r)
 		})
 	}
 }

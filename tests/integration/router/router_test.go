@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"net/http"
 	"testing"
 
@@ -124,6 +125,69 @@ func TestNotFound_returns404(t *testing.T) {
 	defer resp.Body.Close()
 
 	helpers.AssertStatus(t, resp, http.StatusNotFound)
+}
+
+func TestRouter_unimplementedLambdaRESTPath_doesNotFallThroughToS3(t *testing.T) {
+	// Given: Lambda and S3 are enabled.
+	srv := helpers.NewTestServer(t)
+
+	// When: a caller uses a real Lambda API version with an operation that
+	// Overcast does not route yet.
+	resp, err := http.Get(srv.URL + "/2019-09-30/functions/example/unknown-operation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the request receives Lambda's JSON NotImplemented response, rather
+	// than S3 interpreting the version segment as a bucket name.
+	helpers.AssertStatus(t, resp, http.StatusNotImplemented)
+	helpers.AssertHeader(t, resp, "x-emulator-unsupported", "true")
+	helpers.AssertJSONError(t, resp, "NotImplemented")
+}
+
+func TestRouter_disabledLambdaAlternateAPIVersion_returnsServiceDisabled(t *testing.T) {
+	// Given: S3 is enabled but Lambda is disabled.
+	srv := helpers.NewTestServer(t, helpers.WithServices("s3"))
+
+	// When: a caller uses Lambda's provisioned-concurrency API version.
+	resp, err := http.Get(srv.URL + "/2019-09-30/functions/example/provisioned-concurrency")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: Lambda owns the versioned path and reports its disabled state
+	// instead of letting S3 interpret the path as a bucket and key.
+	helpers.AssertStatus(t, resp, http.StatusServiceUnavailable)
+	helpers.AssertJSONError(t, resp, "ServiceDisabled")
+}
+
+func TestRouter_unclaimedQueryGET_doesNotFallThroughToS3(t *testing.T) {
+	// Given: an emulator with S3 enabled.
+	srv := helpers.NewTestServer(t)
+
+	// When: a caller makes an AWS Query-style GET that no service owns.
+	resp, err := http.Get(srv.URL + "/?Action=FutureQueryOperation&Version=2099-01-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: it receives an AWS Query NotImplemented error, rather than S3's
+	// successful ListBuckets XML response.
+	helpers.AssertStatus(t, resp, http.StatusNotImplemented)
+	helpers.AssertHeader(t, resp, "x-emulator-unsupported", "true")
+	var result struct {
+		XMLName xml.Name `xml:"ErrorResponse"`
+		Error   struct {
+			Code string `xml:"Code"`
+		} `xml:"Error"`
+	}
+	helpers.DecodeXML(t, resp, &result)
+	if result.Error.Code != "NotImplemented" {
+		t.Errorf("expected Query error code %q, got %q", "NotImplemented", result.Error.Code)
+	}
 }
 
 // ---- Debug endpoints (guarded by cfg.Debug) --------------------------------
