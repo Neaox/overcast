@@ -105,6 +105,11 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	smtpCtx, smtpCancel := context.WithCancel(context.Background())
 	cleanups = append(cleanups, smtpCancel)
 
+	// ---- Container-facing DNS resolver -------------------------------------
+	if stopDNS := startContainerDNS(cfg, logger); stopDNS != nil {
+		cleanups = append(cleanups, stopDNS)
+	}
+
 	// ---- Event bus (declared early so middleware can reference it) ----------
 	// The bus pointer is set below, after middleware registration.
 	// middleware.RequestEvents dereferences it at request time (always after bus

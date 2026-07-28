@@ -108,23 +108,26 @@ They resolve to `127.0.0.1` in public DNS and to Overcast inside a container, so
 from both sides — that is what makes them the right value for `OVERCAST_HOSTNAME`. `OVERCAST_HOSTNAME`
 and `OVERCAST_SPLIT_HORIZON_HOSTS` are added to the same list.
 
-### Only the exact names — subdomains do not resolve inside a container
+### Subdomains need the resolver, not `/etc/hosts`
 
-`/etc/hosts` is an exact-match table with no wildcard syntax, so **only the names above** point at
-Overcast from inside a container. A subdomain misses the table, falls through to public DNS, and
-resolves to `127.0.0.1` — the container itself:
+`/etc/hosts` is an exact-match table with no wildcard syntax, so those entries cover **only the apex
+names**. Subdomains — which is what SDKs actually build — are served by Overcast's own resolver
+(`internal/dns`), which containers are pointed at via Docker's `--dns`:
 
-| From inside a Lambda | |
+| From inside a Lambda | Answered by |
 | --- | --- |
-| `localhost.overcast.sh` | ✅ Overcast |
-| `mybucket.s3.localhost.overcast.sh` | ❌ `127.0.0.1`, the container |
-| `abc123.execute-api.us-east-1.localhost.overcast.sh` | ❌ `127.0.0.1`, the container |
+| `localhost.overcast.sh` | `/etc/hosts` **and** the resolver |
+| `mybucket.s3.localhost.overcast.sh` | the resolver only |
+| `abc123.execute-api.us-east-1.localhost.overcast.sh` | the resolver only |
+| a container name, `example.com` | Docker's embedded DNS / upstream, unchanged |
 
-It **succeeds** rather than failing with `ENOTFOUND`, so it looks like a connection problem rather
-than a resolution one. Virtual-hosted S3 addressing and API Gateway invoke URLs are therefore
-unusable from function code today; the host side is unaffected, because public wildcard DNS gives
-the host the right answer. Use `forcePathStyle` from inside a function until this is fixed — see
-[docs/plans/container-dns-resolution.md](../plans/container-dns-resolution.md).
+Why this matters when testing: with `OVERCAST_DNS=false`, or when port 53 could not be bound (it
+needs privilege outside a container), the apex still resolves and every subdomain silently falls
+back to public DNS — which answers `127.0.0.1`, the container itself. The lookup **succeeds**, so it
+presents as a connection failure rather than a resolution one. Check the startup log for
+`dns resolver listening` before concluding that a virtual-hosted URL is broken for some other
+reason, and check `/etc/resolv.conf` inside the container is still `127.0.0.11` (Docker keeps its
+own resolver in front and uses Overcast's as an upstream).
 
 Bare **`localhost` is deliberately not hijacked** and cannot be: a container needs its own loopback.
 So `OVERCAST_HOSTNAME=localhost` tells Overcast to advertise itself under a name meaning "me" to
