@@ -29,6 +29,11 @@ const (
 	// maxAcceptBackoff caps the retry delay after a transient accept failure,
 	// which stops a persistent error from becoming a spin loop.
 	maxAcceptBackoff = 500 * time.Millisecond
+
+	// ephemeralBindAttempts bounds the search for a port free on both UDP and
+	// TCP when the caller asked for any port. Collisions are rare, so a handful
+	// of tries is plenty and failing loudly beats looping.
+	ephemeralBindAttempts = 10
 )
 
 // Server answers A queries for a Zone and relays everything else to a
@@ -117,23 +122,33 @@ func (s *Server) Listen() error {
 	if err != nil {
 		return fmt.Errorf("dns: resolve %s: %w", s.addr, err)
 	}
-	udp, err := net.ListenUDP("udp", udpAddr)
-	if err != nil {
-		return fmt.Errorf("dns: listen udp %s: %w", s.addr, err)
+	// The same port is needed on both protocols. When the caller named one that
+	// is all there is to it, but for an ephemeral port the two must be acquired
+	// together — UDP and TCP port spaces are independent, so a port the kernel
+	// hands out for UDP may already be taken for TCP. Retry instead of failing,
+	// which is what makes ":0" dependable.
+	attempts := 1
+	if udpAddr.Port == 0 {
+		attempts = ephemeralBindAttempts
 	}
-	// Bind TCP to the port UDP actually got, which matters when addr asked for
-	// port 0 and the two would otherwise diverge.
-	bound := udp.LocalAddr().(*net.UDPAddr)
-	tcp, err := net.Listen("tcp", net.JoinHostPort(bound.IP.String(), fmt.Sprint(bound.Port)))
-	if err != nil {
+	var lastErr error
+	for range attempts {
+		udp, err := net.ListenUDP("udp", udpAddr)
+		if err != nil {
+			return fmt.Errorf("dns: listen udp %s: %w", s.addr, err)
+		}
+		bound := udp.LocalAddr().(*net.UDPAddr)
+		tcp, err := net.Listen("tcp", net.JoinHostPort(bound.IP.String(), fmt.Sprint(bound.Port)))
+		if err == nil {
+			s.mu.Lock()
+			s.udp, s.tcp = udp, tcp
+			s.mu.Unlock()
+			return nil
+		}
 		_ = udp.Close()
-		return fmt.Errorf("dns: listen tcp %s: %w", s.addr, err)
+		lastErr = err
 	}
-
-	s.mu.Lock()
-	s.udp, s.tcp = udp, tcp
-	s.mu.Unlock()
-	return nil
+	return fmt.Errorf("dns: listen tcp %s: %w", s.addr, lastErr)
 }
 
 // UDPAddr and TCPAddr report the bound addresses, or "" before Listen.

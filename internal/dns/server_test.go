@@ -93,8 +93,14 @@ func TestServer_AAAAForOwnedNameIsNodataNotForwarded(t *testing.T) {
 	if err != nil && !errors.As(err, &dnsErr) {
 		t.Errorf("LookupIP(ip6) error = %v, want a DNS not-found error", err)
 	}
-	if n := fwd.calls(); n != 0 {
-		t.Errorf("forwarder consulted %d times for a name we own; want 0", n)
+	// Asserting on the names forwarded, not the call count: a resolver with
+	// search domains configured also asks for
+	// "…localhost.overcast.sh.<search>", which we genuinely do not own and
+	// must forward. The contract is that no name we *do* own is ever forwarded.
+	for _, name := range fwd.forwardedNames(t) {
+		if srv.zone.Owns(name) {
+			t.Errorf("forwarded %q, a name we own; its public AAAA is ::1, which is the caller's own loopback", name)
+		}
 	}
 
 	// The A record for the same name still resolves, so NODATA is scoped to the
@@ -355,11 +361,12 @@ func (f fixedLocator) AddrFor(netip.Addr) netip.Addr { return f.addr }
 
 // recordingForwarder is a Forwarder test double.
 type recordingForwarder struct {
-	mu    sync.Mutex
-	n     int
-	last  []byte
-	reply []byte
-	err   error
+	mu      sync.Mutex
+	n       int
+	last    []byte
+	queries [][]byte
+	reply   []byte
+	err     error
 }
 
 func (f *recordingForwarder) Forward(_ context.Context, query []byte) ([]byte, error) {
@@ -367,6 +374,7 @@ func (f *recordingForwarder) Forward(_ context.Context, query []byte) ([]byte, e
 	defer f.mu.Unlock()
 	f.n++
 	f.last = append([]byte(nil), query...)
+	f.queries = append(f.queries, append([]byte(nil), query...))
 	return f.reply, f.err
 }
 
@@ -374,6 +382,23 @@ func (f *recordingForwarder) calls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.n
+}
+
+// forwardedNames decodes the question name out of every relayed query.
+func (f *recordingForwarder) forwardedNames(t *testing.T) []string {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	names := make([]string, 0, len(f.queries))
+	for _, q := range f.queries {
+		var scratch [maxNameLen]byte
+		parsed, ok := parseQuestion(q, scratch[:])
+		if !ok {
+			t.Fatalf("forwarded a query that is not a parseable question: %v", q)
+		}
+		names = append(names, string(parsed.name))
+	}
+	return names
 }
 
 func (f *recordingForwarder) lastQuery() []byte {
