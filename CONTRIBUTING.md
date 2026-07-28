@@ -1015,7 +1015,18 @@ Add your entry under `[Unreleased]`:
    make generate-caps   # regenerates internal/capabilities/all.gen.go
    make docs            # rewrites the capabilities table in docs/services/<service>.md
    make check-caps      # verifies all dispatcher entries have a matching capability
+   make aws-models-check # verifies capabilities against the pinned AWS operation corpus
    ```
+   `aws-models-check` reports `UNKNOWN_MODEL_OPERATION` when the service or
+   operation name does not resolve through the generated AWS manifest. Correct
+   a typo or add the appropriate modeled-name alias first. Use `DocOnly: true`
+   only for documentation metadata that is not a dispatched AWS operation. For
+   a deliberate emulator-internal helper or a legacy operation that AWS no
+   longer models, add a narrowly scoped entry with a reason to
+   `capabilityManifestExemptions` in `cmd/capgen/main.go`; do not weaken the
+   global gate or mark an implemented AWS endpoint `DocOnly` merely to silence
+   the check.
+
    > **Do not manually edit the table in `docs/services/<service>.md`.** Everything between the `<!-- BEGIN overcast:capabilities -->` and `<!-- END overcast:capabilities -->` markers is overwritten by `make docs`. Edit `capabilities_dev.go` and re-run `make docs` instead.
    >
    > **AWS Docs links** are auto-generated from the `serviceDocsBaseMap` in `cmd/capgen/main.go` — no per-operation `DocsURL` is needed for most operations. If a service is missing from that map, add it. Use the `DocsURL` field on a `Capability` entry only to override the link for a specific operation (e.g. when the URL pattern differs from the service base).

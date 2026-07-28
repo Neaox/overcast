@@ -105,10 +105,10 @@ All coding standards are in [CONTRIBUTING.md](./CONTRIBUTING.md). This section i
 - **Clock:** `clock.Clock` only — never `time.Now()`. See [CONTRIBUTING § Clock](./CONTRIBUTING.md#time--clock-injection).
 - **Shared helpers:** use `serviceutil` — see [CONTRIBUTING § Utilities](./CONTRIBUTING.md#shared-utilities--use-serviceutil-never-duplicate).
 - **CloudFormation handlers stay thin:** translate CloudFormation properties to the underlying service API, return AWS-shaped physical IDs/`Ref`/`GetAtt`, and encode replacement/delete semantics. Do not duplicate service validation, defaulting, persistence, lifecycle, or execution behavior; dispatch through the emulator router whenever possible. Add CloudFormation-specific validation or error translation only when it makes observable behavior closer to real AWS. See [CONTRIBUTING § CloudFormation integration](./CONTRIBUTING.md#cloudformation-integration).
-- **Routing fallthrough is S3.** Both the chi router and the logger's `detectService` treat S3 as the catch-all: any request that doesn't match a registered route or a known path prefix is dispatched to the S3 handler and labelled `service=s3` in logs. This is deliberate — S3 has no distinguishing header or path prefix. Consequences:
+- **S3 is the final routing fallback, after generated AWS operation ownership.** S3's broad bucket/object routes live on a private router rather than the main chi router. Explicit service routes run first; then the generated AWS operation registry may claim a modeled non-S3 request and return a protocol-correct `501`; only traffic without sufficient non-S3 ownership evidence delegates to S3. The explicit Smithy RPC v2 route similarly delegates to S3 only when `Smithy-Protocol` is absent. This ordering is deliberate because S3 has no distinguishing header or path prefix. Consequences:
   - When you add a service that uses **versioned REST paths** (e.g. `/2018-10-31/...`, `/v3/foo`) or any non-S3 root path, you must (a) register the routes in `RegisterRoutes`, and (b) add the path prefix to `detectService` in [internal/middleware/logger.go](./internal/middleware/logger.go). Otherwise every request to that service will appear in logs as `service=s3` and bypass IAM/region/SigV4 middleware that branches on service name.
-  - If you see `service=s3` in logs for a request that clearly isn't S3 (e.g. `POST /2018-10-31/layers/.../versions`), that's the symptom — fix `detectService`, don't ignore it.
-  - **Bugs cause fallthrough too.** A typo in a route path, a missing `RegisterRoutes` entry, a misnamed `chi.URLParam`, or a middleware that mutates the URL can all cause an otherwise-correct request to miss its service handler and land in S3 with a 404/501. When debugging an unexpected `service=s3` log line, don't just patch `detectService` — confirm the request was actually routed to the right handler. The `detectService` label and the chi route match are independent: a request can be labelled correctly but still fall through to S3 due to a routing bug, or vice versa.
+  - If you see `service=s3` in logs for a request that clearly isn't S3 (e.g. `POST /2018-10-31/layers/.../versions`), verify both `detectService` and the actual route. The label alone no longer proves the request reached S3.
+  - **Bugs cause fallback too.** A typo in a route path, a missing `RegisterRoutes` entry, a misnamed `chi.URLParam`, or middleware that mutates the URL can make a supported request miss its service handler. Depending on its method, path, and SigV4 scope, the symptom may now be either an S3 response or a generated non-S3 `501`. Confirm the explicit route matched before changing `detectService` or the generated registry. Logging classification, chi route matching, and generated fallback ownership are separate decisions.
   - 501s under `service=s3` for paths like `/<bucket>/?encryption=` or `/<bucket>/?policy=` are real S3 sub-resource calls and belong to S3.
 
 ---
@@ -140,9 +140,10 @@ The full checklists are in CONTRIBUTING.md:
 1. Run **scoped tests** (`go test -count=1 ./internal/services/x/... ./tests/integration/x/...`)
 2. Run **`gofmt -w`** then **`go vet`** over changed packages
 3. Run **`make docs`** if you changed capabilities or service behavior
-4. Verify **no custom endpoints** were introduced — everything must match real AWS wire format
-5. Verify **CloudFormation handlers** are registered for any new resource types (or stubbed)
-6. Widen to `go build ./...` and `go vet ./...` for final check — these work on a bare checkout; see [Generated files](#generated-files) for the one thing they don't cover (a real `web/dist`)
+4. Run **`make aws-models-check`** if you changed capabilities, protocol dispatch, generated AWS ownership, or operation routing
+5. Verify **no custom endpoints** were introduced — everything must match real AWS wire format
+6. Verify **CloudFormation handlers** are registered for any new resource types (or stubbed)
+7. Widen to `go build ./...` and `go vet ./...` for final check — these work on a bare checkout; see [Generated files](#generated-files) for the one thing they don't cover (a real `web/dist`)
 
 ---
 
@@ -153,6 +154,7 @@ Agents most often trip on these — check before finishing:
 - **Creating non-AWS endpoints or custom response fields** — the AWS SDK must work unmodified
 - **Changing wire formats without tests** — request/response shapes are the compatibility contract
 - **Forgetting `make docs`** after capability changes — generated tables will drift
+- **Forgetting `make aws-models-check`** after capability or operation-routing changes — the AWS operation coverage CI job will fail
 - **Updating only one store implementation** — `MemoryStore` and `SQLiteStore` must stay in sync
 - **Forgetting CloudFormation resource handlers** — every resource-creating endpoint needs an entry in `provisioner.go`
 - **Using `time.Now()` instead of `clock.Clock`** — makes tests untestable
@@ -166,17 +168,21 @@ Agents most often trip on these — check before finishing:
 
 ## Generated files
 
-Two Go/TS files are generated from `docs/` and **committed**, exactly like `internal/capabilities/all.gen.go`:
+These generated sources are **committed** and must be regenerated through their owning command:
 
 | File | Regenerate with |
 | --- | --- |
+| `internal/capabilities/all.gen.go` | `make generate-caps` |
 | `internal/docssearch/index.gen.go` | `make docs-index` |
 | `web/src/docs-index.gen.ts` | `make docs-index` |
+| `internal/awsapi/manifest.gen.go` | `make generate-aws-operations` |
 
 - **After editing a published doc under `docs/`, run `make docs-index` and commit the result.** CI fails otherwise: `make docs-check` compares both files against what `docs/` would produce.
 - **`docs/plans/` and `docs/dev/` are NOT indexed — skip `make docs-index` for them.** [scripts/docs-index.go](./scripts/docs-index.go) skips both directories outright (`filepath.SkipDir`) and `isPublishedDocPath` excludes them, so regenerating after a plan or dev-doc edit produces an identical file and only costs you a minute. They are working documents, not user-facing pages.
 - **A Markdown-only change needs no test run.** Editing a plan, a dev doc, or prose in a published doc cannot change Go behaviour, so `go test` proves nothing. Run tests when code, generated files, or test fixtures change. (Published docs still need `make docs-index`; the index is generated output, not a test.)
-- **Never hand-edit them** (they carry `DO NOT EDIT`) and **never hand-merge them** — resolve any conflict by re-running `make docs-index`. `.gitattributes` marks them `linguist-generated`, so GitHub review collapses them.
+- **Never hand-edit or hand-merge generated files.** Resolve docs-index conflicts with `make docs-index`. Regenerate `internal/awsapi/manifest.gen.go` with `make generate-aws-operations`, using an `api-models-aws` checkout at the revision pinned in `models/aws/VERSION` and setting the `AWS_MODELS_DIR` and `AWS_MODELS_REVISION` variables required by the target.
+- **Reproduce the AWS operation coverage CI job with `make aws-models-check`.** It validates the committed manifest, runtime ownership indexes, protocol identifiers, router coverage, and capability-to-model alignment without network access.
+- `.gitattributes` marks generated sources `linguist-generated`, so GitHub review collapses them.
 - A bare `git clone` builds: `go build ./...` and `go vet ./...` need no generation step.
 
 ### `web/dist` — the one thing you may still have to build
