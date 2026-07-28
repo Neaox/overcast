@@ -83,76 +83,9 @@ func TestSweepMetricDataOnce_MemoryBackend_DeletesStaleKeepsRecent(t *testing.T)
 	}
 }
 
-// ---- sweepMetricDataOnce: hybrid backend — proves the old backend-mode gate
-// (removed) is actually gone, not just untested. ----------------------------
-
-func TestSweepMetricDataOnce_HybridBackend_DeletesStalePoints(t *testing.T) {
-	dir := t.TempDir()
-	hybrid, err := state.NewHybridStore(dir, 20*time.Millisecond)
-	if err != nil {
-		t.Fatalf("NewHybridStore: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := hybrid.Close(); err != nil {
-			t.Logf("hybrid.Close: %v", err)
-		}
-	})
-
-	mock := clock.NewMock()
-	s := newCloudwatchStore(hybrid, mock)
-	ctx := context.Background()
-
-	dp := freshDataPoint("TestNS", "CPUUtilization", mock.Now().UTC(), 42)
-	if err := s.putMetricDataPoint(ctx, dp); err != nil {
-		t.Fatalf("putMetricDataPoint: %v", err)
-	}
-	if got := countMetricDataRows(t, ctx, s); got != 1 {
-		t.Fatalf("expected 1 raw row before advancing clock, got %d", got)
-	}
-
-	// Advance well past the retention window with no further reads/writes to
-	// this metric, then sweep directly — no ticker involved.
-	mock.Add(memoryMetricDataRetention + time.Minute)
-	s.sweepMetricDataOnce(ctx)
-
-	if got := countMetricDataRows(t, ctx, s); got != 0 {
-		t.Fatalf("expected background sweep to physically delete the stale row in hybrid mode, got %d remaining", got)
-	}
-}
-
-// ---- sweepMetricDataOnce: persistent (SQLite) backend ----------------------
-
-func TestSweepMetricDataOnce_PersistentBackend_DeletesStalePoints(t *testing.T) {
-	dir := t.TempDir()
-	sqliteStore, err := state.NewSQLiteStore(dir)
-	if err != nil {
-		t.Fatalf("NewSQLiteStore: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := sqliteStore.Close(); err != nil {
-			t.Logf("sqliteStore.Close: %v", err)
-		}
-	})
-
-	mock := clock.NewMock()
-	s := newCloudwatchStore(sqliteStore, mock)
-	ctx := context.Background()
-
-	dp := freshDataPoint("TestNS", "CPUUtilization", mock.Now().UTC(), 42)
-	if err := s.putMetricDataPoint(ctx, dp); err != nil {
-		t.Fatalf("putMetricDataPoint: %v", err)
-	}
-	if got := countMetricDataRows(t, ctx, s); got != 1 {
-		t.Fatalf("expected 1 raw row before advancing clock, got %d", got)
-	}
-
-	mock.Add(memoryMetricDataRetention + time.Minute)
-	s.sweepMetricDataOnce(ctx)
-
-	if got := countMetricDataRows(t, ctx, s); got != 0 {
-		t.Fatalf("expected background sweep to physically delete the stale row in persistent mode, got %d remaining", got)
-	}
-}
+// The hybrid- and persistent-backend counterparts to the test above live in
+// metric_retention_sqlite_test.go, which carries //go:build !nosqlite because
+// both need a real SQLite-backed store.
 
 // ---- Service lifecycle: ticker-driven sweeper starts and stops cleanly ----
 
