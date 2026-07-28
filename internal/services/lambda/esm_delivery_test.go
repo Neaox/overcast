@@ -169,13 +169,13 @@ func TestDynamoDBESM_StreamRecordsAreDeliveredSequentiallyPerMapping(t *testing.
 		case <-invoker.entered:
 		case <-deadline:
 			close(invoker.release)
-			mgr.StopAll()
+			stopAll(t, mgr)
 			return
 		}
 	}
 
 	close(invoker.release)
-	mgr.StopAll()
+	stopAll(t, mgr)
 	t.Fatalf("DynamoDB stream ESM invoked concurrently for one mapping; max concurrency = %d, want 1", atomic.LoadInt32(&invoker.max))
 }
 
@@ -208,7 +208,7 @@ func TestDynamoDBESM_StreamRecordsAreBatchedByBatchSize(t *testing.T) {
 		context.Background(),
 	)
 	mgr.Start(esmInst)
-	defer mgr.StopAll()
+	defer stopAll(t, mgr)
 
 	// When: exactly one full batch of records is published quickly.
 	for n := 0; n < 5; n++ {
@@ -275,7 +275,7 @@ func TestDynamoDBESM_PartialBatchFlushesAfterBatchingWindow(t *testing.T) {
 		context.Background(),
 	)
 	mgr.Start(esmInst)
-	defer mgr.StopAll()
+	defer stopAll(t, mgr)
 
 	// When: fewer records than BatchSize are published.
 	for n := 0; n < 2; n++ {
@@ -357,7 +357,7 @@ func TestDynamoDBESM_BatchedStreamFilteringIncludesOnlyMatchingRecords(t *testin
 		context.Background(),
 	)
 	mgr.Start(esmInst)
-	defer mgr.StopAll()
+	defer stopAll(t, mgr)
 
 	// When: a full batch contains both matching INSERT and non-matching MODIFY records.
 	eventsToPublish := []struct {
@@ -504,7 +504,7 @@ func TestReloadAll_WaitsForStoreReady(t *testing.T) {
 		t.Errorf("after store ready: got %d running poller(s), want 1", n)
 	}
 
-	mgr.StopAll()
+	stopAll(t, mgr)
 }
 
 func TestTableNameFromStreamARN(t *testing.T) {
@@ -660,7 +660,7 @@ func TestPollSQS_UsesRegionFromESMArn(t *testing.T) {
 		t.Fatal("ReceiveMessages was never called: poller exited because getESM returned nil (wrong region context)")
 	}
 
-	mgr.StopAll()
+	stopAll(t, mgr)
 }
 
 // transientGetStore wraps MemoryStore and returns an error for the first
@@ -752,7 +752,7 @@ func TestPollSQS_TransientStoreErrorDoesNotKillPoller(t *testing.T) {
 		t.Fatal("ReceiveMessages was never called: poller was killed by a transient store error")
 	}
 
-	mgr.StopAll()
+	stopAll(t, mgr)
 }
 
 // ─── Filter criteria delivery tests ──────────────────────────────────────────
@@ -948,7 +948,7 @@ func TestDynamoDBESM_FilterCriteria_nonMatchingDropped(t *testing.T) {
 
 	// StopAll waits for m.wg to drain so all delivery goroutines have
 	// completed before we inspect store state.
-	mgr.StopAll()
+	stopAll(t, mgr)
 
 	// Then: LastProcessingResult must still be empty — no invoke was attempted.
 	updated, aerr := es.getESM(ctx, esmInst.UUID)
@@ -958,5 +958,142 @@ func TestDynamoDBESM_FilterCriteria_nonMatchingDropped(t *testing.T) {
 	if updated.LastProcessingResult != "" {
 		t.Errorf("filtered MODIFY record should not update LastProcessingResult; got %q",
 			updated.LastProcessingResult)
+	}
+}
+
+// ---- Shutdown drain (StopAll) ---------------------------------------------
+
+// stopAll drains mgr under a bounded context. Tests use it instead of calling
+// StopAll with context.Background() so a delivery goroutine that misses the
+// stop signal fails the test in seconds rather than hanging the whole package
+// until `go test`'s timeout — the failure mode that made the original
+// StopAll hang expensive to diagnose (it surfaced as an unrelated test timing
+// out 30 minutes into a whole-repo run).
+func stopAll(t *testing.T, mgr *esmDeliveryManager) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	mgr.StopAll(ctx)
+	if ctx.Err() != nil {
+		t.Errorf("StopAll did not drain within 30s: %v", ctx.Err())
+	}
+}
+
+// shutdownTestESM is the enabled SQS mapping the shutdown tests below use.
+func shutdownTestESM() *EventSourceMapping {
+	return &EventSourceMapping{
+		UUID:           "shutdown-uuid",
+		FunctionArn:    "arn:aws:lambda:us-east-1:000000000000:function:fn",
+		EventSourceArn: "arn:aws:sqs:us-east-1:000000000000:my-queue",
+		State:          esmStateEnabled,
+		BatchSize:      1,
+	}
+}
+
+// newShutdownTestManager returns a manager holding one enabled SQS ESM in a
+// store that withholds Scan results (and blocks ReadyAwaiter.WaitReady) until
+// signalled — the shape InitESMDelivery creates in production, where
+// ReloadAll runs asynchronously and is tracked by mgr.wg so StopAll's drain
+// waits for it.
+func newShutdownTestManager(t *testing.T) *esmDeliveryManager {
+	t.Helper()
+	ls := newLambdaStore(newReadyGatedStore(), "us-east-1", clock.New())
+	es := newESMStore(ls)
+
+	ctx := middleware.ContextWithRegion(context.Background(), "us-east-1")
+	if aerr := es.putESM(ctx, shutdownTestESM()); aerr != nil {
+		t.Fatal(aerr)
+	}
+
+	return newESMDeliveryManager(
+		es,
+		nil, // invoker — no delivery happens in these tests
+		noopReceiver{},
+		nil, // enqueuer
+		nil, // bus
+		serviceutil.NewServiceLogger(zap.NewNop(), "lambda"),
+		clock.New(),
+		&config.Config{Region: "us-east-1"},
+		context.Background(),
+	)
+}
+
+// TestStopAll_ReturnsWhenReloadAllIsBlockedOnStoreReady covers the delivery
+// goroutine that StopAll cannot reach through m.stop: InitESMDelivery tracks
+// ReloadAll in mgr.wg, but ReloadAll parks in state.ReadyAwaiter.WaitReady on
+// the manager's base context. While that context was context.Background(),
+// cancelling every entry in m.stop left the WaitGroup counter above zero with
+// nothing able to bring it down, so Service.Stop blocked forever.
+func TestStopAll_ReturnsWhenReloadAllIsBlockedOnStoreReady(t *testing.T) {
+	// Given: ReloadAll running exactly as InitESMDelivery starts it, parked
+	// on a store that never becomes ready.
+	mgr := newShutdownTestManager(t)
+	mgr.wg.Add(1)
+	go func() {
+		defer mgr.wg.Done()
+		mgr.ReloadAll(mgr.baseCtx)
+	}()
+
+	// When: the service shuts down.
+	// Then: StopAll returns instead of waiting on a goroutine that has no
+	// stop signal to observe.
+	stopAll(t, mgr)
+}
+
+// TestStopAll_RefusesDeliveryStartedDuringShutdown covers the other half of
+// the same hang: a delivery goroutine that calls Start *during* shutdown, as
+// a ReloadAll waking up mid-teardown does. StopAll had already cancelled and
+// cleared m.stop, so the new delivery was registered against a base context
+// nothing would ever cancel and counted into a WaitGroup already being
+// drained.
+//
+// A DynamoDB stream mapping is used rather than an SQS one because it makes
+// the leak visible: Start subscribes three bus handlers and records the
+// unsubscribes in m.stop, and — unlike the SQS branch — nothing removes that
+// entry when the worker exits. A late Start therefore leaves live
+// subscriptions and a stale registration behind for the lifetime of the
+// process, where the SQS branch merely leaks briefly.
+func TestStopAll_RefusesDeliveryStartedDuringShutdown(t *testing.T) {
+	// Given: a Start that runs only once shutdown has begun. The sentinel is
+	// cancelled inside StopAll's own locked teardown section, so Start is
+	// guaranteed to land after StopAll committed to shutting down — the
+	// ordering that used to strand the delivery — and the goroutine is
+	// tracked by mgr.wg exactly as InitESMDelivery tracks ReloadAll, so the
+	// drain is already waiting on it.
+	mgr := newShutdownTestManager(t)
+	bus := events.NewBus()
+	defer bus.Stop()
+	mgr.bus = bus
+
+	shutdownBegun := make(chan struct{})
+	mgr.mu.Lock()
+	mgr.stop["release-on-shutdown"] = func() { close(shutdownBegun) }
+	mgr.mu.Unlock()
+
+	mgr.wg.Add(1)
+	go func() {
+		defer mgr.wg.Done()
+		<-shutdownBegun
+		mgr.Start(&EventSourceMapping{
+			UUID:           "late-stream-uuid",
+			FunctionArn:    "arn:aws:lambda:us-east-1:000000000000:function:fn",
+			EventSourceArn: "arn:aws:dynamodb:us-east-1:000000000000:table/T/stream/2024-01-01T00:00:00.000",
+			State:          esmStateEnabled,
+			BatchSize:      10,
+		})
+	}()
+
+	// When: the service shuts down.
+	// Then: StopAll returns rather than draining delivery it can no longer
+	// reach through m.stop.
+	stopAll(t, mgr)
+
+	// And: the late Start registered nothing at all — no stream worker, and
+	// no bus subscriptions outliving the manager.
+	mgr.mu.Lock()
+	running := len(mgr.stop)
+	mgr.mu.Unlock()
+	if running != 0 {
+		t.Errorf("after StopAll: %d delivery registration(s) left running, want 0", running)
 	}
 }

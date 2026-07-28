@@ -684,8 +684,9 @@ func (s *Service) InitESMDelivery(receiver events.MessageReceiver, enqueuer even
 	// Resume delivery for any ESMs that were Enabled before restart.
 	// Run asynchronously: with the hybrid store this would block startup
 	// until the SQLite seed completes. Tracked via mgr.wg so Stop()'s
-	// StopAll drain waits for it; uses mgr.baseCtx so shutdown is
-	// observable should that ever be wired to a real cancel.
+	// StopAll drain waits for it, and given mgr.baseCtx so StopAll can
+	// actually cancel it — this goroutine has no m.stop entry, so baseCtx is
+	// its only stop signal.
 	mgr.wg.Add(1)
 	go func() {
 		defer mgr.wg.Done()
@@ -696,7 +697,7 @@ func (s *Service) InitESMDelivery(receiver events.MessageReceiver, enqueuer even
 // Stop shuts down the Runtime API server and any background resources.
 func (s *Service) Stop(ctx context.Context) {
 	if s.esmDelivery != nil {
-		s.esmDelivery.StopAll()
+		s.esmDelivery.StopAll(ctx)
 	}
 	// Wait for in-flight async invocations to finish.
 	s.handler.StopAsync(ctx)
