@@ -1,71 +1,144 @@
-# golangci-lint configuration (v1 format — golangci-lint v1.x)
+# golangci-lint configuration (v2 format — golangci-lint v2.x)
 # Run: make lint  (or: golangci-lint run ./...)
 # Docs: https://golangci-lint.run/usage/configuration/
-# yaml-language-server: $schema=https://golangci-lint.run/jsonschema/golangci.v1.jsonschema.json
+# yaml-language-server: $schema=https://golangci-lint.run/jsonschema/golangci.v2.jsonschema.json
+#
+# Migrated from the v1 format with `golangci-lint migrate`, then made explicit
+# by hand. The v1 gate pinned golangci-lint v1.64.8, which bundles staticcheck
+# ~v0.5.x — too old to report SA4011 (ineffective break inside a select in a
+# for loop), which is how that bug reached main in internal/smtp/server.go.
+# golangci-lint v2.x ships staticcheck v0.6.x, which does report it.
+version: "2"
 
 run:
-  timeout: 5m
   tests: true
 
 linters:
+  # `default: none` so the enabled set is what this file says it is. v2 would
+  # otherwise silently enable its own standard set, which is how the v1 config
+  # obscured which checks were actually running.
+  default: none
   enable:
     - errcheck # check that errors are handled
     - govet # go vet checks
-    - staticcheck # staticcheck suite (SA, S, ST lints)
+    - staticcheck # staticcheck suite (SA + S checks — see settings below)
     - unused # report unused code
-    - gosimple # simplification suggestions
     - ineffassign # detect ineffectual assignments
-    - typecheck # type checking
     - godot # check that comments end with a period
-    - gofmt # check formatting
-    - goimports # check import ordering
     - misspell # spelling mistakes in comments
     - revive # fast, configurable replacement for golint
     - exhaustive # check exhaustiveness of enum switches
     - noctx # http.Request without context
     - bodyclose # http response body not closed
+    # gosimple was folded into staticcheck in v2 — its S1* checks still run.
+    # typecheck is no longer a listable linter in v2; it is always on.
+    # gofmt/goimports moved to the `formatters` section below.
     # exportloopref removed — deprecated since v1.60.2, replaced by copyloopvar in Go 1.22+
 
-linters-settings:
-  revive:
-    rules:
-      - name: exported
-        arguments:
-          - "checkPrivateReceivers"
-          - "sayRepetitiveInsteadOfStutters"
-  godot:
-    scope: declarations # only check exported declaration comments
-    capital: false
+  settings:
+    staticcheck:
+      # v2 folded gosimple (S1*) and stylecheck (ST*) into staticcheck. The v1
+      # gate ran staticcheck (SA*) and gosimple (S1*) but never enabled
+      # stylecheck, so ST* stays off to preserve the existing gate. Measured
+      # with `checks: [all]` on this tree: 1260 ST1003, 29 ST1000, 8 ST1005,
+      # 5 ST1023, 4 ST1020, 1 ST1022, plus 19 QF* — none of them in scope for a
+      # linter version bump. (Standalone staticcheck reports only the 8 ST1005
+      # because its own default check list already omits ST1003/ST1000; running
+      # under golangci-lint with `all` does not.) QF* (quickfix refactoring
+      # suggestions) was likewise never part of the v1 gate. Adopting either is
+      # a deliberate team decision, not a side effect of the version bump.
+      # TODO(priority:P3): decide whether to adopt ST1005 (error string style)
+      # on its own — it is the only ST family with a small, tractable footprint.
+      checks:
+        - all
+        - -ST*
+        - -QF*
 
-  errcheck:
-    # ResponseWriter.Write errors are not actionable in HTTP handlers.
-    # tx.Rollback errors are not actionable when already returning an error.
-    exclude-functions:
-      - (net/http.ResponseWriter).Write
-      - (*encoding/json.Encoder).Encode
-      - (*encoding/json.Decoder).Decode
-      - (*database/sql.Tx).Rollback
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - checkPrivateReceivers
+            - sayRepetitiveInsteadOfStutters
+
+    godot:
+      scope: declarations # only check exported declaration comments
+      capital: false
+
+    errcheck:
+      # ResponseWriter.Write errors are not actionable in HTTP handlers.
+      # tx.Rollback errors are not actionable when already returning an error.
+      exclude-functions:
+        - (net/http.ResponseWriter).Write
+        - (*encoding/json.Encoder).Encode
+        - (*encoding/json.Decoder).Decode
+        - (*database/sql.Tx).Rollback
+
+  exclusions:
+    generated: lax
+    # These presets reproduce v1's `issues.exclude-use-default: true`, which was
+    # on by default under v1 and is off by default under v2 — with one
+    # deliberate omission.
+    #
+    # The `legacy` preset is NOT enabled. It carries EXC0005, which excludes
+    # staticcheck SA4011 outright ("Developers tend to write in C-style with an
+    # explicit 'break' in a 'switch', so it's ok to ignore"). That exclusion —
+    # active under v1 by default — is the second reason the SA4011 accept-loop
+    # bug in internal/smtp/server.go reached main, and bumping the linter
+    # version alone would not have caught it. The preset's other three rules are
+    # EXC0004 (govet unsafe.Pointer / "should have signature") and EXC0008 /
+    # EXC0009 (gosec G104, G301/G302/G307); gosec is not enabled here, so
+    # dropping the preset costs only EXC0004, which the tree does not trip.
+    presets:
+      - comments
+      - common-false-positives
+      - std-error-handling
+    rules:
+      # noctx went v0.1.0 (golangci-lint v1.64.8) -> v0.4.0 (v2.x), which added
+      # checks for net.Listen / net.Dial / net.DialTimeout / os/exec.Command on
+      # top of the net/http ones. Those 16 pre-existing call sites are out of
+      # scope for this lint-gate migration: threading a context through each one
+      # changes cancellation behaviour and needs its own review. The net/http
+      # checks — noctx's entire v1 scope — remain enforced.
+      # TODO(priority:P3): adopt the net/exec checks and fix the call sites.
+      - linters:
+          - noctx
+        text: (net\.Listen|net\.Dial|net\.DialTimeout|os/exec\.Command) must not be called
+      # Test files are exempt from some doc-comment and style requirements.
+      - path: _test.go
+        linters:
+          - godot
+          - revive
+          - errcheck
+          - noctx
+          - bodyclose
+      # The main package entry point doesn't need godot.
+      - path: cmd/
+        linters:
+          - godot
+          - errcheck
+      # Exhaustive switch is not useful for string-typed enums with a default case.
+      - path: cmd/
+        linters:
+          - exhaustive
+    paths:
+      - ^web
+      - third_party$
+      - builtin$
+      - examples$
 
 issues:
-  exclude-dirs:
-    - ^web
-  exclude-rules:
-    # Test files are exempt from some doc-comment and style requirements.
-    - path: "_test.go"
-      linters:
-        - godot
-        - revive
-        - errcheck
-        - noctx
-        - bodyclose
-    # The main package entry point doesn't need godot.
-    - path: "cmd/"
-      linters:
-        - godot
-        - errcheck
-    # Exhaustive switch is not useful for string-typed enums with a default case.
-    - path: "cmd/"
-      linters:
-        - exhaustive
   max-issues-per-linter: 0
   max-same-issues: 0
+
+formatters:
+  enable:
+    - gofmt # check formatting
+    - goimports # check import ordering
+  exclusions:
+    generated: lax
+    paths:
+      - ^web
+      - third_party$
+      - builtin$
+      - examples$

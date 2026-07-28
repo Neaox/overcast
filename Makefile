@@ -12,6 +12,11 @@ GOFLAGS   := -trimpath
 VERSION   := $(shell cat VERSION)
 LDFLAGS   := -w -s -X main.version=$(VERSION)
 ACTIONLINT_VERSION := v1.7.7
+# golangci-lint v2.x — v2 config schema (.golangci.yml declares `version: "2"`).
+# v2.8.0 is the newest release that still builds with the Go 1.24 toolchain in
+# go.mod; v2.10.0+ requires Go 1.25. Keep in sync with .devcontainer/Dockerfile
+# and CONTRIBUTING.md.
+GOLANGCI_LINT_VERSION := v2.8.0
 
 .PHONY: help setup build build-web build-slim build-cross \
         build-linux-amd64 build-linux-arm64 \
@@ -150,9 +155,9 @@ bench-startup:
 ## lint: run all linters (Go/emulation, web UI, GitHub Actions)
 lint: lint-go lint-web lint-actions
 
-## lint-go: run golangci-lint for Go/emulation code
+## lint-go: run golangci-lint for Go/emulation code (pinned via go run — no install needed)
 lint-go:
-	golangci-lint run ./...
+	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...
 
 ## lint-web: run web UI linting
 lint-web:

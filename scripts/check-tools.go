@@ -42,8 +42,8 @@ var tools = []tool{
 		name:     "golangci-lint",
 		cmd:      "golangci-lint",
 		args:     []string{"version"},
-		required: false, // required for lint, not for build/test
-		hint:     "Install golangci-lint v1.64.8 from https://golangci-lint.run/usage/install/",
+		required: false, // optional: `make lint-go` runs a pinned version via `go run`
+		hint:     "Optional — `make lint-go` runs a pinned v2.8.0 via `go run`. To install: https://golangci-lint.run/usage/install/ (v2.x required)",
 	},
 	{
 		name:     "Docker",

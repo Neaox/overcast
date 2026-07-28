@@ -115,11 +115,11 @@
   "claude.projectInstructions": "See AGENTS.md and CLAUDE.md at the project root.",
 
   // ---- YAML schema overrides ----------------------------------------------
-  // The Red Hat YAML extension auto-detects .golangci.yml as golangci-lint v2
-  // config from SchemaStore, but this project uses golangci-lint v1 which has
-  // a different config format. Disable the auto schema for this file.
+  // This project is on golangci-lint v2, which matches what the Red Hat YAML
+  // extension auto-detects for .golangci.yml from SchemaStore, so the schema is
+  // pinned explicitly rather than suppressed.
   "yaml.schemas": {
-    "https://json.schemastore.org/golangci-lint": "!.golangci.yml"
+    "https://golangci-lint.run/jsonschema/golangci.v2.jsonschema.json": ".golangci.yml"
   },
 
   "chat.tools.terminal.autoApprove": {

@@ -102,8 +102,9 @@ jobs:
         with:
           name: web-dist
           path: web/dist
-      - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+      # No install step: `make lint-go` runs golangci-lint via a pinned
+      # `go run`, so CI and local runs cannot drift onto different versions.
+      # The pin lives in the Makefile (GOLANGCI_LINT_VERSION).
       - name: Run Go lint
         run: make lint-go
 
