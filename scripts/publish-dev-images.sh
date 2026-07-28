@@ -9,8 +9,15 @@
 #   gh auth login
 # or:
 #   GHCR_USERNAME=<github-user> GHCR_TOKEN=<classic-or-fine-grained-pat> bash scripts/publish-dev-images.sh
+#
+# Requirements: docker, git, and either gh or GHCR_USERNAME/GHCR_TOKEN.
+# make is optional — see the image build helpers below.
 
 set -euo pipefail
+
+# Run from the repo root regardless of where the script was invoked from, so
+# `make` finds the Makefile and `docker build .` gets the right context.
+cd -- "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 
 log() { printf '[publish-dev-images] %s\n' "$*"; }
 die() { printf '[publish-dev-images] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -94,9 +101,43 @@ github_owner_from_remote() {
   esac
 }
 
+# Image builds go through `make` when it is available, and fall back to the
+# `docker build` lines those targets wrap (Makefile: docker-console/docker-slim)
+# when it is not — as on Windows outside the devcontainer.
+#
+# No host Go or Node toolchain is needed either way: the Dockerfile builds the
+# SPA and compiles the binary in its own stages. scripts/docker-go.sh is
+# deliberately NOT used here — it runs go subcommands in a golang container that
+# has no Docker CLI or socket, so it cannot build images.
+build_console_image() {
+  if [ "$HAVE_MAKE" -eq 1 ]; then
+    log "Building console image with make docker-console"
+    make docker-console
+  else
+    log "Building console image with docker build"
+    docker build -t overcast:dev .
+  fi
+}
+
+build_slim_image() {
+  if [ "$HAVE_MAKE" -eq 1 ]; then
+    log "Building slim image with make docker-slim"
+    make docker-slim
+  else
+    log "Building slim image with docker build"
+    docker build --target slim --build-arg NOSQLITE=1 -t overcast-slim:dev .
+  fi
+}
+
 need docker
 need git
-need make
+
+if command -v make >/dev/null 2>&1; then
+  HAVE_MAKE=1
+else
+  HAVE_MAKE=0
+  log "make not found — building images with docker build directly"
+fi
 
 GHCR_OWNER="${GHCR_OWNER:-$(github_owner_from_remote || true)}"
 GHCR_OWNER="${GHCR_OWNER,,}"
@@ -125,8 +166,7 @@ else
   gh auth token | docker login "$REGISTRY" -u "$GHCR_USERNAME" --password-stdin >/dev/null
 fi
 
-log "Building console image with make docker-console"
-make docker-console
+build_console_image
 
 log "Tagging overcast:dev as $CONSOLE_IMAGE:$TAG"
 docker tag overcast:dev "$CONSOLE_IMAGE:$TAG"
@@ -136,8 +176,7 @@ docker push "$CONSOLE_IMAGE:$TAG"
 success "Published $CONSOLE_IMAGE:$TAG"
 success "Registry page: $(github_package_url "$CONSOLE_IMAGE")"
 
-log "Building slim image with make docker-slim"
-make docker-slim
+build_slim_image
 
 log "Tagging overcast-slim:dev as $SLIM_IMAGE:$TAG"
 docker tag overcast-slim:dev "$SLIM_IMAGE:$TAG"
