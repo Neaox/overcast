@@ -3,6 +3,7 @@ package codec
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -319,6 +320,31 @@ func TestRPCv2CBOR_WriteError(t *testing.T) {
 		t.Fatalf("decode cbor error: %v", err)
 	}
 	if body["__type"] != "InvalidParameterValue" || body["message"] != "bad" {
+		t.Fatalf("unexpected error body: %#v", body)
+	}
+}
+
+func TestRPCv2JSON_WriteNotImplemented(t *testing.T) {
+	w := httptest.NewRecorder()
+	RPCv2JSON.WriteError(w, httptest.NewRequest(http.MethodPost, "/", nil), protocol.ErrNotImplemented)
+
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("status = %d, want 501", w.Code)
+	}
+	if got := w.Header().Get("Content-Type"); got != contentTypeRPCv2JSON {
+		t.Errorf("content-type = %q, want %q", got, contentTypeRPCv2JSON)
+	}
+	if got := w.Header().Get("Smithy-Protocol"); got != smithyProtocolRPCv2JSON {
+		t.Errorf("Smithy-Protocol = %q, want %q", got, smithyProtocolRPCv2JSON)
+	}
+	if got := w.Header().Get("x-emulator-unsupported"); got != "true" {
+		t.Errorf("x-emulator-unsupported = %q, want true", got)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode JSON error: %v", err)
+	}
+	if body["__type"] != "NotImplemented" {
 		t.Fatalf("unexpected error body: %#v", body)
 	}
 }

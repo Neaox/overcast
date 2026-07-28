@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"go/format"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,8 +78,8 @@ type httpTrait struct {
 }
 
 type operation struct {
-	Service, SDKID, APIVersion, Name, Protocol, TargetPrefix, SigningName, HTTPMethod, URI string
-	Protocols                                                                              []string
+	Service, ServiceShape, SDKID, APIVersion, Name, Protocol, TargetPrefix, SigningName, HTTPMethod, URI string
+	Protocols                                                                                            []string
 }
 
 func generateManifest(modelsDir, revision string) ([]byte, error) {
@@ -121,11 +122,15 @@ func generateManifest(modelsDir, revision string) ([]byte, error) {
 	fmt.Fprintf(&out, "const SourceRevision = %q\n\n", revision)
 	out.WriteString("var manifest = []Operation{\n")
 	for _, op := range operations {
-		fmt.Fprintf(&out, "\t{Service: %q, SDKID: %q, APIVersion: %q, Name: %q, Protocol: Protocol%s, Protocols: %s, TargetPrefix: %q, HTTPMethod: %q, URI: %q},\n", op.Service, op.SDKID, op.APIVersion, op.Name, op.Protocol, protocolSetExpression(op.Protocols), op.TargetPrefix, op.HTTPMethod, op.URI)
+		fmt.Fprintf(&out, "\t{Service: %q, ServiceShape: %q, SDKID: %q, APIVersion: %q, Name: %q, Protocol: Protocol%s, Protocols: %s, TargetPrefix: %q, HTTPMethod: %q, URI: %q},\n", op.Service, op.ServiceShape, op.SDKID, op.APIVersion, op.Name, op.Protocol, protocolSetExpression(op.Protocols), op.TargetPrefix, op.HTTPMethod, op.URI)
 	}
 	out.WriteString("}\n")
 	writeRegistryIndexes(&out, operations)
-	return out.Bytes(), nil
+	formatted, err := format.Source(out.Bytes())
+	if err != nil {
+		return nil, fmt.Errorf("format generated manifest: %w", err)
+	}
+	return formatted, nil
 }
 
 // writeRegistryIndexes emits the immutable lookup indexes used by the router.
@@ -135,6 +140,7 @@ func writeRegistryIndexes(out *bytes.Buffer, operations []operation) {
 	targets := make([]operation, 0, len(operations))
 	queries := make([]operation, 0, len(operations))
 	rest := make([]operation, 0, len(operations))
+	var rpc []rpcIndexInput
 	for _, op := range operations {
 		if op.TargetPrefix != "" && (op.Protocol == "AWSJSON10" || op.Protocol == "AWSJSON11") {
 			targets = append(targets, op)
@@ -144,6 +150,11 @@ func writeRegistryIndexes(out *bytes.Buffer, operations []operation) {
 		}
 		if (op.Protocol == "RESTJSON" || op.Protocol == "RESTXML") && op.HTTPMethod != "" && op.URI != "" && op.Service != "s3" {
 			rest = append(rest, op)
+		}
+		for _, protocol := range []string{"RPCV2CBOR", "RPCV2JSON"} {
+			if slices.Contains(op.Protocols, protocol) {
+				rpc = append(rpc, rpcIndexInput{operation: op, protocol: protocol})
+			}
 		}
 	}
 	sort.Slice(targets, func(i, j int) bool {
@@ -165,6 +176,7 @@ func writeRegistryIndexes(out *bytes.Buffer, operations []operation) {
 	writeTargetIndex(out, targets)
 	writeQueryIndex(out, queries)
 	writeRESTTrie(out, rest)
+	writeRPCIndex(out, rpc)
 }
 
 func writeTargetIndex(out *bytes.Buffer, operations []operation) {
@@ -238,6 +250,73 @@ func writeCollisionIndex(out *bytes.Buffer, name string, collisions []registryCo
 	out.WriteString("}\n")
 }
 
+type rpcIndexInput struct {
+	operation
+	protocol string
+}
+
+func writeRPCIndex(out *bytes.Buffer, operations []rpcIndexInput) {
+	sort.Slice(operations, func(i, j int) bool {
+		if operations[i].protocol != operations[j].protocol {
+			return operations[i].protocol < operations[j].protocol
+		}
+		if operations[i].ServiceShape != operations[j].ServiceShape {
+			return operations[i].ServiceShape < operations[j].ServiceShape
+		}
+		if operations[i].Name != operations[j].Name {
+			return operations[i].Name < operations[j].Name
+		}
+		return operations[i].Service < operations[j].Service
+	})
+
+	out.WriteString("\nvar rpcOperations = []rpcOperation{\n")
+	var collisions []registryCollision
+	for start := 0; start < len(operations); {
+		end := start + 1
+		for end < len(operations) &&
+			operations[end].protocol == operations[start].protocol &&
+			operations[end].ServiceShape == operations[start].ServiceShape &&
+			operations[end].Name == operations[start].Name {
+			end++
+		}
+		op := operations[start]
+		services := rpcCollisionServices(operations[start:end])
+		ambiguous := len(services) > 1
+		if ambiguous {
+			op.Service = ""
+			key := rpcProtocolValue(op.protocol) + "\x00" + op.ServiceShape + "\x00" + op.Name
+			collisions = append(collisions, registryCollision{Key: key, Services: services})
+			fmt.Fprintf(out, "\t{Protocol: Protocol%s, ServiceShape: %q, Operation: %q, ModelService: %q, Ambiguous: true},\n", op.protocol, op.ServiceShape, op.Name, op.Service)
+		} else {
+			fmt.Fprintf(out, "\t{Protocol: Protocol%s, ServiceShape: %q, Operation: %q, ModelService: %q},\n", op.protocol, op.ServiceShape, op.Name, op.Service)
+		}
+		start = end
+	}
+	out.WriteString("}\n")
+	writeCollisionIndex(out, "rpcCollisions", collisions)
+}
+
+func rpcCollisionServices(operations []rpcIndexInput) []string {
+	services := make([]string, 0, len(operations))
+	for _, op := range operations {
+		if len(services) == 0 || services[len(services)-1] != op.Service {
+			services = append(services, op.Service)
+		}
+	}
+	return services
+}
+
+func rpcProtocolValue(protocol string) string {
+	switch protocol {
+	case "RPCV2CBOR":
+		return "rpcv2Cbor"
+	case "RPCV2JSON":
+		return "rpcv2Json"
+	default:
+		return ""
+	}
+}
+
 type restTrieBuildNode struct {
 	literals   map[string]*restTrieBuildNode
 	parameter  *restTrieBuildNode
@@ -247,6 +326,7 @@ type restTrieBuildNode struct {
 
 type restIndexOperation struct {
 	Method       string
+	Query        string
 	ModelService string
 	SigningName  string
 	Operation    string
@@ -258,7 +338,11 @@ func writeRESTTrie(out *bytes.Buffer, operations []operation) {
 	root := &restTrieBuildNode{}
 	for _, op := range operations {
 		node := root
-		trimmedURI := strings.TrimPrefix(op.URI, "/")
+		path, _ := splitRESTURI(op.URI)
+		if len(path) > 1 {
+			path = strings.TrimSuffix(path, "/")
+		}
+		trimmedURI := strings.TrimPrefix(path, "/")
 		var segments []string
 		if trimmedURI != "" {
 			segments = strings.Split(trimmedURI, "/")
@@ -317,6 +401,7 @@ func writeRESTTrie(out *bytes.Buffer, operations []operation) {
 		node    int
 	}
 	var indexedOperations []restIndexOperation
+	var collisions []registryCollision
 	out.WriteString("\nvar restTrieNodes = []restTrieNode{\n")
 	for _, entry := range flattened {
 		node := entry.node
@@ -340,6 +425,13 @@ func writeRESTTrie(out *bytes.Buffer, operations []operation) {
 			if node.operations[i].HTTPMethod != node.operations[j].HTTPMethod {
 				return node.operations[i].HTTPMethod < node.operations[j].HTTPMethod
 			}
+			_, leftQuery := splitRESTURI(node.operations[i].URI)
+			_, rightQuery := splitRESTURI(node.operations[j].URI)
+			if leftQuery != rightQuery {
+				// A literal query binding is more specific than the same path
+				// and method without one, so emit it first.
+				return leftQuery > rightQuery
+			}
 			if node.operations[i].Service != node.operations[j].Service {
 				return node.operations[i].Service < node.operations[j].Service
 			}
@@ -347,7 +439,8 @@ func writeRESTTrie(out *bytes.Buffer, operations []operation) {
 		})
 		for start := 0; start < len(node.operations); {
 			end := start + 1
-			for end < len(node.operations) && node.operations[end].HTTPMethod == node.operations[start].HTTPMethod {
+			_, query := splitRESTURI(node.operations[start].URI)
+			for end < len(node.operations) && sameRESTBinding(node.operations[start], node.operations[end]) {
 				end++
 			}
 			op, services := node.operations[start], collisionServices(node.operations[start:end])
@@ -355,8 +448,9 @@ func writeRESTTrie(out *bytes.Buffer, operations []operation) {
 			if ambiguous {
 				op.Service = ""
 				op.SigningName = ""
+				collisions = append(collisions, registryCollision{Key: normalizedRESTBinding(op), Services: services})
 			}
-			indexedOperations = append(indexedOperations, restIndexOperation{Method: op.HTTPMethod, ModelService: op.Service, SigningName: op.SigningName, Operation: op.Name, Protocol: protocolConstant(op.Protocol), Ambiguous: ambiguous})
+			indexedOperations = append(indexedOperations, restIndexOperation{Method: op.HTTPMethod, Query: query, ModelService: op.Service, SigningName: op.SigningName, Operation: op.Name, Protocol: protocolConstant(op.Protocol), Ambiguous: ambiguous})
 			start = end
 		}
 		fmt.Fprintf(out, "\t{LiteralStart: %d, LiteralEnd: %d, Parameter: %d, Greedy: %d, OperationStart: %d, OperationEnd: %d},\n", literalStart, literalEnd, parameter, greedy, operationStart, len(indexedOperations))
@@ -368,12 +462,44 @@ func writeRESTTrie(out *bytes.Buffer, operations []operation) {
 	out.WriteString("}\n\nvar restOperations = []restOperation{\n")
 	for _, op := range indexedOperations {
 		if op.Ambiguous {
-			fmt.Fprintf(out, "\t{Method: %q, ModelService: %q, SigningName: %q, Operation: %q, Protocol: %s, Ambiguous: true},\n", op.Method, op.ModelService, op.SigningName, op.Operation, op.Protocol)
+			fmt.Fprintf(out, "\t{Method: %q, Query: %q, ModelService: %q, SigningName: %q, Operation: %q, Protocol: %s, Ambiguous: true},\n", op.Method, op.Query, op.ModelService, op.SigningName, op.Operation, op.Protocol)
 		} else {
-			fmt.Fprintf(out, "\t{Method: %q, ModelService: %q, SigningName: %q, Operation: %q, Protocol: %s},\n", op.Method, op.ModelService, op.SigningName, op.Operation, op.Protocol)
+			fmt.Fprintf(out, "\t{Method: %q, Query: %q, ModelService: %q, SigningName: %q, Operation: %q, Protocol: %s},\n", op.Method, op.Query, op.ModelService, op.SigningName, op.Operation, op.Protocol)
 		}
 	}
 	out.WriteString("}\n")
+	writeCollisionIndex(out, "restCollisions", collisions)
+}
+
+func splitRESTURI(uri string) (path, query string) {
+	if i := strings.IndexByte(uri, '?'); i >= 0 {
+		return uri[:i], uri[i+1:]
+	}
+	return uri, ""
+}
+
+func sameRESTBinding(left, right operation) bool {
+	_, leftQuery := splitRESTURI(left.URI)
+	_, rightQuery := splitRESTURI(right.URI)
+	return left.HTTPMethod == right.HTTPMethod && leftQuery == rightQuery
+}
+
+func normalizedRESTBinding(op operation) string {
+	path, query := splitRESTURI(op.URI)
+	segments := strings.Split(path, "/")
+	for i, segment := range segments {
+		switch {
+		case isGreedyLabel(segment):
+			segments[i] = "{+}"
+		case isLabel(segment):
+			segments[i] = "{}"
+		}
+	}
+	key := op.HTTPMethod + " " + strings.Join(segments, "/")
+	if query != "" {
+		key += "?" + query
+	}
+	return key
 }
 
 func isLabel(segment string) bool {
@@ -442,7 +568,7 @@ func parseModel(path string) ([]operation, error) {
 				}
 			}
 			out = append(out, operation{
-				Service: strings.ToLower(strings.ReplaceAll(trait.SDKID, " ", "-")), SDKID: trait.SDKID,
+				Service: strings.ToLower(strings.ReplaceAll(trait.SDKID, " ", "-")), ServiceShape: shapeName(shapeID), SDKID: trait.SDKID,
 				APIVersion: svc.Version, Name: shapeName(ref.Target), Protocol: protocol, Protocols: protocols,
 				TargetPrefix: targetPrefix, SigningName: signingName, HTTPMethod: http.Method, URI: http.URI,
 			})

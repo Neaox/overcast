@@ -39,10 +39,19 @@ type restTrieEdge struct {
 
 type restOperation struct {
 	Method       string
+	Query        string
 	ModelService string
 	SigningName  string
 	Operation    string
 	Protocol     Protocol
+	Ambiguous    bool
+}
+
+type rpcOperation struct {
+	Protocol     Protocol
+	ServiceShape string
+	Operation    string
+	ModelService string
 	Ambiguous    bool
 }
 

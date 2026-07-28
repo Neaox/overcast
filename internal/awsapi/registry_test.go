@@ -1,6 +1,9 @@
 package awsapi
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestRegistryClaimTarget_modeledJSONOperation(t *testing.T) {
 	// Given: the immutable registry generated from the pinned model corpus.
@@ -95,6 +98,39 @@ func TestRegistryClaimREST_rootBinding(t *testing.T) {
 	}
 }
 
+func TestRegistryClaimREST_literalQueryBinding(t *testing.T) {
+	// Given: two modeled operations share a path and method but use distinct
+	// literal query bindings.
+	registry := NewRegistry()
+
+	// When: the TagResource query discriminator is present.
+	claim, ok := registry.ClaimRESTQuery("POST", "/tags", "operation=tag-resource")
+
+	// Then: the query-aware trie selects that binding instead of collapsing it
+	// into another operation on POST /tags.
+	if !ok || claim.Operation != "TagResource" {
+		t.Errorf("ClaimRESTQuery() = %+v, %v; want TagResource", claim, ok)
+	}
+}
+
+func TestRegistryClaimRPC_additiveCBORProtocol(t *testing.T) {
+	// Given: GameLift's canonical AWS JSON service model also advertises
+	// Smithy RPC v2 CBOR as an additive protocol.
+	registry := NewRegistry()
+
+	// When: its Smithy RPC route is classified by service shape and operation.
+	claim, ok := registry.ClaimRPC(ProtocolRPCV2CBOR, "GameLift", "ListBuilds")
+
+	// Then: the generated RPC index owns the route independently of the
+	// service's canonical protocol.
+	if !ok || claim.ModelService != "gamelift" || claim.Operation != "ListBuilds" {
+		t.Errorf("ClaimRPC() = %+v, %v; want gamelift ListBuilds", claim, ok)
+	}
+	if claim.ErrorProfile != ErrorProfileRPCV2CBOR {
+		t.Errorf("ClaimRPC() error profile = %v, want RPC v2 CBOR", claim.ErrorProfile)
+	}
+}
+
 func TestRegistryClaimTarget_collidingService(t *testing.T) {
 	// Given: a modeled target shared by CloudWatch Events and EventBridge.
 	registry := NewRegistry()
@@ -127,6 +163,109 @@ func TestRegistryClaimQuery_collidingService(t *testing.T) {
 	if !claim.Ambiguous || claim.ModelService != "" || claim.Service != "" {
 		t.Errorf("ClaimQuery() = %+v, want an unassigned ambiguous claim", claim)
 	}
+}
+
+func TestGeneratedRESTCollisions_areReported(t *testing.T) {
+	// Given: the generated REST collision index.
+
+	// When: its entries are inspected.
+	if len(restCollisions) == 0 {
+		t.Fatal("generated REST collision index is empty")
+	}
+	for _, collision := range restCollisions {
+		// Then: every collision retains a readable key and all competing services.
+		if collision.Key == "" || len(collision.Services) < 2 {
+			t.Errorf("invalid REST collision: %+v", collision)
+		}
+	}
+}
+
+func TestGeneratedRPCCollisions_areWellFormed(t *testing.T) {
+	for _, collision := range rpcCollisions {
+		if collision.Key == "" || len(collision.Services) < 2 {
+			t.Errorf("invalid RPC collision: %+v", collision)
+		}
+	}
+}
+
+func TestGeneratedCorpus_everyNonS3OperationHasRouteOwnership(t *testing.T) {
+	// Given: every operation in the pinned Smithy corpus and the immutable
+	// indexes generated from that same input.
+	registry := NewRegistry()
+	var uncovered []string
+
+	// When: each operation is reduced to its safe wire discriminator.
+	for _, op := range manifest {
+		if op.Service == "s3" {
+			continue
+		}
+		owned := false
+		switch op.Protocol {
+		case ProtocolUnknown:
+			// Unknown protocols deliberately remain uncovered so the assertion
+			// below detects them.
+		case ProtocolAWSJSON10, ProtocolAWSJSON11:
+			if op.TargetPrefix != "" {
+				_, owned = registry.ClaimTarget(op.TargetPrefix + op.Name)
+			}
+		case ProtocolAWSQuery, ProtocolEC2Query:
+			_, owned = registry.ClaimQuery(op.APIVersion, op.Name)
+		case ProtocolRESTJSON, ProtocolRESTXML:
+			path, query := corpusRESTRequest(op.URI)
+			_, owned = registry.ClaimRESTQuery(op.HTTPMethod, path, query)
+		case ProtocolRPCV2CBOR, ProtocolRPCV2JSON:
+			// RPC traits, including additive traits, are checked uniformly
+			// below rather than only when RPC is canonical.
+		}
+		if op.Protocols&ProtocolsRPCV2CBOR != 0 {
+			_, rpcOwned := registry.ClaimRPC(ProtocolRPCV2CBOR, op.ServiceShape, op.Name)
+			owned = owned || rpcOwned
+		}
+		if op.Protocols&ProtocolsRPCV2JSON != 0 {
+			_, rpcOwned := registry.ClaimRPC(ProtocolRPCV2JSON, op.ServiceShape, op.Name)
+			owned = owned || rpcOwned
+		}
+		if !owned && len(uncovered) < 50 {
+			uncovered = append(uncovered, op.Service+"/"+op.Name+" ("+string(op.Protocol)+")")
+		}
+	}
+
+	// Then: no modeled non-S3 operation can rely on S3 as its owner.
+	if len(uncovered) > 0 {
+		t.Fatalf("generated corpus contains operations without route ownership (first %d):\n%s", len(uncovered), strings.Join(uncovered, "\n"))
+	}
+}
+
+func corpusRESTRequest(uri string) (path, query string) {
+	if i := strings.IndexByte(uri, '?'); i >= 0 {
+		path, query = uri[:i], uri[i+1:]
+	} else {
+		path = uri
+	}
+	var out strings.Builder
+	out.Grow(len(path))
+	for start := 0; start < len(path); {
+		open := strings.IndexByte(path[start:], '{')
+		if open < 0 {
+			out.WriteString(path[start:])
+			break
+		}
+		open += start
+		out.WriteString(path[start:open])
+		close := strings.IndexByte(path[open:], '}')
+		if close < 0 {
+			out.WriteString(path[open:])
+			break
+		}
+		close += open
+		if path[close-1] == '+' {
+			out.WriteString("value/part")
+		} else {
+			out.WriteString("value")
+		}
+		start = close + 1
+	}
+	return out.String(), query
 }
 
 func TestOvercastService_alias(t *testing.T) {
@@ -185,10 +324,13 @@ func TestRegistryLookup_hasNoAllocations(t *testing.T) {
 	restAllocs := testing.AllocsPerRun(1_000, func() {
 		_, _ = registry.ClaimREST("GET", "/analyzer")
 	})
+	rpcAllocs := testing.AllocsPerRun(1_000, func() {
+		_, _ = registry.ClaimRPC(ProtocolRPCV2CBOR, "GameLift", "ListBuilds")
+	})
 
 	// Then: lookup does not allocate model-sized data or request-local state.
-	if targetAllocs != 0 || queryAllocs != 0 || restAllocs != 0 {
-		t.Errorf("lookup allocations = target %.1f, query %.1f, REST %.1f; want zero", targetAllocs, queryAllocs, restAllocs)
+	if targetAllocs != 0 || queryAllocs != 0 || restAllocs != 0 || rpcAllocs != 0 {
+		t.Errorf("lookup allocations = target %.1f, query %.1f, REST %.1f, RPC %.1f; want zero", targetAllocs, queryAllocs, restAllocs, rpcAllocs)
 	}
 }
 
@@ -205,6 +347,12 @@ func TestGeneratedIndexes_areStrictlySorted(t *testing.T) {
 		previous, current := queryOperations[i-1], queryOperations[i]
 		if previous.Version > current.Version || (previous.Version == current.Version && previous.Operation >= current.Operation) {
 			t.Fatalf("Query index is not strictly sorted at %d: (%q, %q) >= (%q, %q)", i, previous.Version, previous.Operation, current.Version, current.Operation)
+		}
+	}
+	for i := 1; i < len(rpcOperations); i++ {
+		previous, current := rpcOperations[i-1], rpcOperations[i]
+		if compareRPCOperation(previous, current) >= 0 {
+			t.Fatalf("RPC index is not strictly sorted at %d: %+v >= %+v", i, previous, current)
 		}
 	}
 	for i := 1; i < len(serviceAliases); i++ {
@@ -237,5 +385,13 @@ func BenchmarkRegistryClaimREST(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		_, _ = registry.ClaimREST("GET", "/analyzer")
+	}
+}
+
+func BenchmarkRegistryClaimRPC(b *testing.B) {
+	registry := NewRegistry()
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _ = registry.ClaimRPC(ProtocolRPCV2CBOR, "GameLift", "ListBuilds")
 	}
 }

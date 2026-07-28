@@ -1,6 +1,6 @@
 # AWS API operation coverage and S3 fallthrough prevention
 
-> Status: A2 in progress, 2026-07-28. Owner: TBD.
+> Status: A4 implemented, pending review, 2026-07-28. Owner: TBD.
 > Related: [Level 2 codegen](./level2-codegen.md) Track 3, [Smithy wire protocols](../dev/smithy.md), and [wire-byte goldens](./wire-byte-goldens.md).
 
 ## 1. Objective
@@ -44,7 +44,7 @@ This covers public AWS management-plane/service API operations used by SDKs, CLI
 
 `cmd/awsmodelgen` reads the pinned JSON AST and generates checked-in `internal/awsapi/manifest.gen.go`. Regenerate it with `make generate-aws-operations AWS_MODELS_DIR=/path/to/api-models-aws/models`; it reads the expected revision from `models/aws/VERSION` and validates the local checkout. Generate routing metadata only:
 
-- canonical service name, SDK ID, API version, and source provenance;
+- canonical service name, Smithy service shape name, SDK ID, API version, and source provenance;
 - operation name and protocol traits;
 - AWS JSON target-prefix data;
 - AWS Query API-version/action ownership;
@@ -107,6 +107,37 @@ both reported `0 B/op` and `0 allocs/op`. This is a focused lookup measurement,
 not a router construction or end-to-end request benchmark; A4 retains the full
 startup and request-path guardrail.
 
+### A3/A4 implementation boundary
+
+A3 compiles REST JSON/XML bindings into immutable generated trie tables and
+consults them only after every explicit non-S3 route declines the request. A4
+completes the generated ownership surface:
+
+- Smithy literal query components are stored separately from the REST path and
+  matched without allocation; trailing-slash templates normalize to the same
+  trie leaf as the request path;
+- REST collisions use normalized, human-readable method/template/query keys
+  and ambiguous bindings remain explicit S3-preserving exclusions;
+- RPC v2 CBOR and RPC v2 JSON get a sorted immutable
+  `(protocol, service shape, operation)` index. It includes additive protocol
+  traits, so the 575 operations that advertise CBOR alongside another
+  canonical protocol are not omitted (593 total CBOR-capable operations,
+  including 18 whose canonical protocol is CBOR);
+- the explicit `/service/{service}/operation/{operation}` route consults that
+  index after implemented service operations. A modeled gap gets its native
+  501 envelope, a disabled modeled service gets `ServiceDisabled`, and a truly
+  unknown operation preserves the existing unsupported/unknown behavior.
+  The Smithy protocol header is required evidence: a headerless S3 multipart
+  request with the same legal path grammar delegates to S3; and
+- generated corpus tests require every non-S3 operation and every additive RPC
+  trait to resolve through a target, Query, REST, or RPC ownership index.
+
+Runtime request paths never read or scan `manifest`. Target, Query, and RPC
+lookups binary-search static generated slices, while REST walks static trie
+tables. The RPC dispatcher builds only a service's small implemented-operation
+set, lazily on its first RPC request, using `sync.Once`; router construction
+does not allocate a model-sized map.
+
 It does not decode bodies, persist data, implement business logic, or replace service routers. It follows Smithy protocol precision:
 
 1. RPC v2 CBOR marker and request path;
@@ -156,6 +187,33 @@ Models are fetched, parsed, and generated at build/update time only. The binary 
 - Implemented calls retain existing handlers; S3 incurs only a cheap non-S3 claim check.
 
 Before landing, benchmark router construction and representative S3, AWS JSON, Query, and REST-fallback requests. Do not materially move the startup budget or <=1 ms handler-overhead target. Record command, environment, operation, and before/after figures for every published claim.
+
+### A4 measured guardrail
+
+Measurements below used Linux/amd64 Docker containers on an AMD Ryzen 9 5900X,
+the `golang:1.25.6` image, Go's default benchmark duration, `-benchmem`, and
+three runs per benchmark on 2026-07-28. The exact commands were:
+
+```sh
+go test -run '^$' -bench BenchmarkRegistryClaim -benchmem -count=3 ./internal/awsapi
+go test -run '^$' -bench 'Benchmark(RouterConstruction|OperationCoverageRoutes)' -benchmem -count=3 ./internal/router
+```
+
+The exact A3 parent (`290f484b`) measured target lookup at 83–93 ns/op, Query
+at 112–120 ns/op, and REST at 90–103 ns/op. A4 measured target at 79–82 ns/op,
+Query at 101–114 ns/op, REST at 106–109 ns/op, and RPC at 160–217 ns/op; every
+registry lookup remained `0 B/op` and `0 allocs/op`. The small REST increase is
+the literal-query discriminator and remains independent of corpus size.
+
+With the final lazy RPC implementation index, router construction measured
+2.75–3.28 ms/op and 1.68 MB/op. Representative in-process requests measured
+13–61 µs/op across two runs for S3 ListBuckets, modeled AWS JSON, Query, and signed REST
+fallbacks, including request construction, middleware, response recording, and
+request-ID generation. These are development-machine microbenchmarks, not
+network latency claims; the request paths remain well below the plan's 1 ms
+handler-overhead guardrail. CI enforces zero-allocation generated lookups, while
+the committed router benchmarks preserve the broader startup/request baseline
+without relying on a noisy wall-clock threshold.
 
 ## 6. Delivery phases
 
@@ -230,7 +288,13 @@ Add a scheduled GitHub Actions workflow, weekly by default and manually dispatch
 
 Use a stable branch such as `automation/aws-api-models`. If an open PR exists from that branch, update it rather than creating a duplicate. Use a workflow concurrency group and permit force-with-lease only for this dedicated automation branch. Never update contributor branches or merge automatically.
 
-Every normal PR runs a no-network `aws-models-check` target verifying the snapshot, generated diff, model validity, capability alignment, route collisions, and generated no-S3-fallthrough suite.
+Starting in A4, every normal PR runs a no-network `aws-models-check` target
+that validates the committed generator fixtures, immutable indexes, collision
+metadata, capability alignment, protocol envelopes, router regressions, and
+generated no-S3-ownership-gap corpus. It deliberately does not fetch models.
+A5 adds the verified upstream snapshot/cache needed to extend that same target
+with full regeneration-and-diff validation; until then, regeneration remains
+the explicit pinned-checkout operation described in §3.
 
 ## 9. Relationship to Level 2 codegen
 

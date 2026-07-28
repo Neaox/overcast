@@ -27,10 +27,9 @@ GOLANGCI_LINT_VERSION := v2.8.0
         build-slim-windows-amd64 \
         run test test-unit test-integration test-coverage \
         ci-local ci-local-web ci-local-go \
-        bench bench-startup lint lint-go lint-web lint-actions fmt vet tidy check docker docker-slim docker-console docker-run clean \
+        bench bench-startup lint lint-go lint-web lint-actions fmt vet tidy check aws-models-check docker docker-slim docker-console docker-run clean \
         compat-build compat-serve compat-report \
-generate-caps check-caps generate-aws-operations docs docs-index docs-check supportmeta-check check-binary-symbols \
-	generate-caps check-caps generate-aws-operations docs docs-index docs-check supportmeta-check check-binary-symbols
+        generate-caps check-caps generate-aws-operations aws-models-check docs docs-index docs-check supportmeta-check check-binary-symbols
 
 ## help: print this help message
 help:
@@ -209,6 +208,11 @@ generate-aws-operations:
 	@test -n "$(AWS_MODELS_DIR)" || (echo "ERROR: set AWS_MODELS_DIR to api-models-aws/models" && exit 1)
 	@test -n "$(AWS_MODELS_REVISION)" || (echo "ERROR: set AWS_MODELS_REVISION to the api-models-aws commit" && exit 1)
 	$(GO) run ./cmd/awsmodelgen -models "$(AWS_MODELS_DIR)" -output internal/awsapi/manifest.gen.go -source-revision "$(AWS_MODELS_REVISION)"
+
+## aws-models-check: validate the committed AWS operation corpus and generated runtime ownership indexes without network access
+aws-models-check:
+	$(GO) test -count=1 ./cmd/awsmodelgen ./internal/awsapi ./internal/protocol/codec ./tests/integration/router
+	$(GO) run -tags dev ./cmd/capgen --check-model
 
 ## docs-index: regenerate the committed docs search/navigation index (run after editing docs/, then commit)
 docs-index:

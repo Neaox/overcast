@@ -175,23 +175,36 @@ func TestIdentifyRPCv2CBOR_WrongPath(t *testing.T) {
 	}
 }
 
+func TestIdentifyRPCv2JSON_Match(t *testing.T) {
+	r := req("POST", "/service/Example/operation/GetThing", "", map[string]string{
+		"Smithy-Protocol": "rpc-v2-json",
+	})
+	c, op, ok := (identifyRPCv2JSON{}).Claim(r)
+	if !ok || c != RPCv2JSON || op != "GetThing" {
+		t.Fatalf("got (%v, %q, %v)", c, op, ok)
+	}
+}
+
 func TestDefaultIdentifiers_PrecisionOrder(t *testing.T) {
 	ids := DefaultIdentifiers()
-	if len(ids) != 4 {
-		t.Fatalf("len = %d, want 4", len(ids))
+	if len(ids) != 5 {
+		t.Fatalf("len = %d, want 5", len(ids))
 	}
-	// Order: RPCv2 CBOR, JSON10, JSON11, Query
+	// Order: explicit RPC protocols, AWS JSON targets, then Query.
 	if _, ok := ids[0].(identifyRPCv2CBOR); !ok {
 		t.Errorf("ids[0] is %T, want identifyRPCv2CBOR", ids[0])
 	}
-	if _, ok := ids[1].(identifyJSON10); !ok {
-		t.Errorf("ids[1] is %T, want identifyJSON10", ids[1])
+	if _, ok := ids[1].(identifyRPCv2JSON); !ok {
+		t.Errorf("ids[1] is %T, want identifyRPCv2JSON", ids[1])
 	}
-	if _, ok := ids[2].(identifyJSON11); !ok {
-		t.Errorf("ids[2] is %T, want identifyJSON11", ids[2])
+	if _, ok := ids[2].(identifyJSON10); !ok {
+		t.Errorf("ids[2] is %T, want identifyJSON10", ids[2])
 	}
-	if _, ok := ids[3].(identifyQuery); !ok {
-		t.Errorf("ids[3] is %T, want identifyQuery", ids[3])
+	if _, ok := ids[3].(identifyJSON11); !ok {
+		t.Errorf("ids[3] is %T, want identifyJSON11", ids[3])
+	}
+	if _, ok := ids[4].(identifyQuery); !ok {
+		t.Errorf("ids[4] is %T, want identifyQuery", ids[4])
 	}
 }
 

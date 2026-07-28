@@ -229,6 +229,74 @@ func TestRouter_unclaimedModeledJSONTarget_returnsNotImplemented(t *testing.T) {
 	helpers.AssertJSONError(t, resp, "NotImplemented")
 }
 
+func TestRouter_unclaimedModeledRPCv2CBOROperation_returnsNotImplemented(t *testing.T) {
+	// Given: a modeled additive RPC v2 CBOR operation for a service without an
+	// Overcast dispatcher.
+	srv := helpers.NewTestServer(t)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/service/GameLift/operation/ListBuilds", bytes.NewReader([]byte{0xa0}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Smithy-Protocol", "rpc-v2-cbor")
+
+	// When: the explicit Smithy RPC route reaches the operation registry.
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the modeled operation receives a protocol-shaped 501 rather than
+	// an unsupported-protocol error or S3 fallback.
+	helpers.AssertStatus(t, resp, http.StatusNotImplemented)
+	helpers.AssertHeader(t, resp, "Smithy-Protocol", "rpc-v2-cbor")
+	helpers.AssertHeader(t, resp, "x-emulator-unsupported", "true")
+	helpers.AssertRequestID(t, resp)
+}
+
+func TestRouter_enabledServiceUnimplementedRPCv2CBOROperation_returnsNotImplemented(t *testing.T) {
+	// Given: CloudWatch is enabled, but its modeled additive CBOR operations
+	// have no RPC dispatcher implementation.
+	srv := helpers.NewTestServer(t)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/service/GraniteServiceVersion20100801/operation/AssociateDatasetKmsKey", bytes.NewReader([]byte{0xa0}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Smithy-Protocol", "rpc-v2-cbor")
+
+	// When: the modeled operation reaches the central RPC dispatcher.
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the service's unknown-operation branch cannot turn it into a 400.
+	helpers.AssertStatus(t, resp, http.StatusNotImplemented)
+	helpers.AssertHeader(t, resp, "x-emulator-unsupported", "true")
+}
+
+func TestRouter_disabledServiceModeledRPCv2CBOROperation_returnsServiceDisabled(t *testing.T) {
+	// Given: CloudWatch is modeled for RPC v2 CBOR but disabled.
+	srv := helpers.NewTestServer(t, helpers.WithServices("s3"))
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/service/GraniteServiceVersion20100801/operation/AssociateDatasetKmsKey", bytes.NewReader([]byte{0xa0}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Smithy-Protocol", "rpc-v2-cbor")
+
+	// When: its explicit RPC route is requested.
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: configuration state takes precedence over the generic 501 fallback.
+	helpers.AssertStatus(t, resp, http.StatusServiceUnavailable)
+	helpers.AssertHeader(t, resp, "Smithy-Protocol", "rpc-v2-cbor")
+}
+
 func TestRouter_unclaimedModeledRESTPath_returnsNotImplemented(t *testing.T) {
 	// Given: a modeled REST JSON operation for a service Overcast does not yet
 	// implement, alongside S3's deliberately broad bucket routes.
@@ -313,6 +381,40 @@ func TestRouter_unsignedS3PathMatchingAmbiguousRESTBinding_remainsReachable(t *t
 	helpers.AssertStatus(t, resp, http.StatusOK)
 	if got := helpers.ReadBody(t, resp); got != "contents" {
 		t.Errorf("object body = %q, want contents", got)
+	}
+}
+
+func TestRouter_headerlessS3MultipartPathMatchingRPCGrammar_remainsReachable(t *testing.T) {
+	// Given: a legitimate S3 bucket and key whose path has Smithy RPC's
+	// /service/{service}/operation/{operation} shape.
+	srv := helpers.NewTestServer(t, helpers.WithServices("s3"))
+	create, err := http.NewRequest(http.MethodPut, srv.URL+"/service", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createResp, err := http.DefaultClient.Do(create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+
+	// When: S3 initiates a multipart upload on that exact four-segment path.
+	initiate, err := http.NewRequest(http.MethodPost, srv.URL+"/service/example/operation/upload?uploads", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(initiate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the absence of Smithy-Protocol leaves the request with S3 instead
+	// of the RPC route returning its generic 404.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	if got := resp.Header.Get("Content-Type"); got != "application/xml" {
+		t.Errorf("Content-Type = %q, want application/xml", got)
 	}
 }
 

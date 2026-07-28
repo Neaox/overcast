@@ -34,9 +34,9 @@ type Identifier interface {
 	Claim(r *http.Request) (Codec, string, bool)
 }
 
-// DefaultIdentifiers returns the built-in identifiers in precision
-// order. CBOR is intentionally omitted in Phase 1 (introduced in
-// Phase 4 with the cbor codec).
+// DefaultIdentifiers returns the built-in identifiers in precision order.
+// Explicit Smithy RPC protocol markers take precedence over the AWS JSON and
+// Query heuristics.
 //
 // REST-XML has no reliable header/path-only identification heuristic
 // — services using it (S3, CloudFront) are routed by their own router
@@ -45,10 +45,24 @@ type Identifier interface {
 func DefaultIdentifiers() []Identifier {
 	return []Identifier{
 		identifyRPCv2CBOR{},
+		identifyRPCv2JSON{},
 		identifyJSON10{},
 		identifyJSON11{},
 		identifyQuery{},
 	}
+}
+
+type identifyRPCv2JSON struct{}
+
+func (identifyRPCv2JSON) Claim(r *http.Request) (Codec, string, bool) {
+	if !strings.EqualFold(strings.TrimSpace(r.Header.Get("Smithy-Protocol")), smithyProtocolRPCv2JSON) {
+		return nil, "", false
+	}
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) != 4 || parts[0] != "service" || parts[1] == "" || parts[2] != "operation" || parts[3] == "" {
+		return nil, "", false
+	}
+	return RPCv2JSON, parts[3], true
 }
 
 // --- Smithy RPC v2 CBOR -----------------------------------------------

@@ -210,10 +210,10 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	r.Get("/_/info", newInfoHandler(cfg))
 	prof.mark("bus + SSE + internal routes")
 
-	// Smithy RPC v2 CBOR requests use /service/{Service}/operation/{Operation}.
-	// Register this before service routes so S3's wildcard cannot steal the path.
-	smithyDispatchers := make(map[string]TargetDispatcher)
-	r.Post("/service/{service}/operation/{operation}", smithyRPCDispatch(smithyDispatchers))
+	// Smithy RPC v2 requests use /service/{Service}/operation/{Operation}.
+	// The route is registered after the private S3 router is populated so a
+	// headerless S3 request with the same legal path can delegate to S3.
+	smithyDispatchers := make(map[string]*smithyRPCService)
 
 	// MCP runtime routes are mounted through a build-tag-aware hook.
 	// Slim builds intentionally do not expose MCP endpoints.
@@ -418,6 +418,13 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	s3Router := chi.NewRouter()
 
 	for _, svc := range allServices {
+		if td, ok := svc.(TargetDispatcher); ok {
+			rpcService := newSmithyRPCService(td, svc, cfg.Services[svc.Name()])
+			smithyDispatchers[strings.ToLower(svc.Name())] = rpcService
+			if prefix := strings.TrimSuffix(td.TargetPrefix(), "."); prefix != "" {
+				smithyDispatchers[strings.ToLower(prefix)] = rpcService
+			}
+		}
 		if !cfg.Services[svc.Name()] {
 			logger.Debug("service disabled", zap.String("service", svc.Name()))
 			if pp, ok := svc.(PathPrefixService); ok {
@@ -445,14 +452,6 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		prof.mark("  routes: " + svc.Name())
 		if td, ok := svc.(TargetDispatcher); ok {
 			dispatchers = append(dispatchers, td)
-		}
-		if _, ok := svc.(ProtocolService); ok {
-			if td, ok := svc.(TargetDispatcher); ok {
-				smithyDispatchers[strings.ToLower(svc.Name())] = td
-				if prefix := strings.TrimSuffix(td.TargetPrefix(), "."); prefix != "" {
-					smithyDispatchers[strings.ToLower(prefix)] = td
-				}
-			}
 		}
 		if qd, ok := svc.(QueryDispatcher); ok {
 			queryDispatchers = append(queryDispatchers, qd)
@@ -901,6 +900,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// generated registry also owns modeled operations when no configured service
 	// dispatcher does, so this route is present even in a minimal S3-only setup.
 	r.Post("/", targetDispatch(dispatchers, queryDispatchers, disabledQueryDispatchers, disabledTargetPrefixes, operationRegistry))
+	r.Post("/service/{service}/operation/{operation}", smithyRPCDispatch(smithyDispatchers, operationRegistry, s3Router))
 	// SigV4's service scope disambiguates the small number of modeled REST root
 	// bindings from S3 ListBuckets; unsigned and S3-signed root requests retain
 	// the established S3 behavior.
@@ -1071,21 +1071,96 @@ func targetDispatch(dispatchers []TargetDispatcher, queryDispatchers, disabledQu
 	}
 }
 
-func smithyRPCDispatch(dispatchers map[string]TargetDispatcher) http.HandlerFunc {
+type smithyRPCService struct {
+	dispatcher      TargetDispatcher
+	protocolService ProtocolService
+	operations      map[string]struct{}
+	protocols       map[string]struct{}
+	indexOnce       sync.Once
+	enabled         bool
+}
+
+func newSmithyRPCService(dispatcher TargetDispatcher, service Service, enabled bool) *smithyRPCService {
+	entry := &smithyRPCService{
+		dispatcher: dispatcher,
+		enabled:    enabled,
+	}
+	if protocolService, ok := service.(ProtocolService); ok {
+		entry.protocolService = protocolService
+	}
+	return entry
+}
+
+func (s *smithyRPCService) supports(operation, protocolName string) bool {
+	if s.protocolService == nil {
+		return false
+	}
+	s.indexOnce.Do(func() {
+		operations := s.protocolService.Operations()
+		protocols := s.protocolService.SupportedProtocols()
+		s.operations = make(map[string]struct{}, len(operations))
+		s.protocols = make(map[string]struct{}, len(protocols))
+		for _, implemented := range operations {
+			s.operations[implemented.Name()] = struct{}{}
+		}
+		for _, protocolCodec := range protocols {
+			s.protocols[protocolCodec.Name()] = struct{}{}
+		}
+	})
+	_, operationImplemented := s.operations[operation]
+	_, protocolImplemented := s.protocols[protocolName]
+	return operationImplemented && protocolImplemented
+}
+
+func smithyRPCDispatch(dispatchers map[string]*smithyRPCService, operationRegistry *awsapi.Registry, s3Router http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !strings.EqualFold(strings.TrimSpace(r.Header.Get("Smithy-Protocol")), "rpc-v2-cbor") {
+		protocolHeader := strings.TrimSpace(r.Header.Get("Smithy-Protocol"))
+		if protocolHeader == "" {
+			s3Router.ServeHTTP(w, r)
+			return
+		}
+		var wireProtocol awsapi.Protocol
+		var wireCodec codec.Codec
+		switch {
+		case strings.EqualFold(protocolHeader, "rpc-v2-cbor"):
+			wireProtocol, wireCodec = awsapi.ProtocolRPCV2CBOR, codec.RPCv2CBOR
+		case strings.EqualFold(protocolHeader, "rpc-v2-json"):
+			wireProtocol, wireCodec = awsapi.ProtocolRPCV2JSON, codec.RPCv2JSON
+		default:
 			notFoundHandler(w, r)
 			return
 		}
-		service := strings.ToLower(chi.URLParam(r, "service"))
-		if td, ok := dispatchers[service]; ok {
-			td.Dispatch(w, r)
+		serviceShape := chi.URLParam(r, "service")
+		operation := chi.URLParam(r, "operation")
+		claim, modeled := operationRegistry.ClaimRPC(wireProtocol, serviceShape, operation)
+		service := dispatchers[strings.ToLower(serviceShape)]
+		if service == nil && modeled {
+			service = dispatchers[claim.Service]
+		}
+		if service != nil && modeled {
+			if !service.enabled {
+				wireCodec.WriteError(w, r, protocol.ErrServiceDisabled)
+				return
+			}
+			if service.supports(operation, wireCodec.Name()) {
+				service.dispatcher.Dispatch(w, r)
+				return
+			}
+			writeNotImplemented(w, r, claim)
 			return
 		}
-		w.Header().Set("x-emulator-unsupported-protocol", codec.NameRPCv2CBOR)
-		codec.RPCv2CBOR.WriteError(w, r, &protocol.AWSError{
+		if service != nil && service.enabled {
+			service.dispatcher.Dispatch(w, r)
+			return
+		}
+		if modeled {
+			writeNotImplemented(w, r, claim)
+			return
+		}
+		w.Header().Set("x-emulator-unsupported-protocol", wireCodec.Name())
+		wireCodec.WriteError(w, r, &protocol.AWSError{
 			Code:       "UnsupportedProtocol",
-			Message:    "This service does not support wire protocol " + codec.NameRPCv2CBOR + ".",
+			Message:    "This service does not support wire protocol " + wireCodec.Name() + ".",
 			HTTPStatus: http.StatusUnsupportedMediaType,
 		})
 	}
@@ -1155,6 +1230,10 @@ func writeNotImplemented(w http.ResponseWriter, r *http.Request, claim awsapi.Cl
 		protocol.NotImplementedQueryXML(w, r)
 	case awsapi.ErrorProfileXML:
 		protocol.NotImplementedXML(w, r)
+	case awsapi.ErrorProfileRPCV2CBOR:
+		codec.RPCv2CBOR.WriteError(w, r, protocol.ErrNotImplemented)
+	case awsapi.ErrorProfileRPCV2JSON:
+		codec.RPCv2JSON.WriteError(w, r, protocol.ErrNotImplemented)
 	default:
 		// Keep a JSON fallback for a malformed zero-value Claim while every
 		// declared ErrorProfile remains explicit for exhaustive checking.
@@ -1168,7 +1247,7 @@ func writeNotImplemented(w http.ResponseWriter, r *http.Request, claim awsapi.Cl
 // then the sole remaining legitimate catch-all.
 func restFallback(operationRegistry *awsapi.Registry, s3Router http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if claim, ok := operationRegistry.ClaimREST(r.Method, r.URL.Path); ok && !claim.Ambiguous && claim.SigningName != "" && strings.EqualFold(middleware.ServiceFromCredential(r), claim.SigningName) {
+		if claim, ok := operationRegistry.ClaimRESTQuery(r.Method, r.URL.Path, r.URL.RawQuery); ok && !claim.Ambiguous && claim.SigningName != "" && strings.EqualFold(middleware.ServiceFromCredential(r), claim.SigningName) {
 			writeNotImplemented(w, r, claim)
 			return
 		}

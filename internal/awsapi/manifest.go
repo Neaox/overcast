@@ -35,12 +35,13 @@ const (
 // responsible for implemented behavior. The generated corpus is private so it
 // cannot be mutated outside this package.
 type Operation struct {
-	Service    string
-	SDKID      string
-	APIVersion string
-	Name       string
-	Protocol   Protocol
-	Protocols  ProtocolSet
+	Service      string
+	ServiceShape string
+	SDKID        string
+	APIVersion   string
+	Name         string
+	Protocol     Protocol
+	Protocols    ProtocolSet
 	// TargetPrefix is the X-Amz-Target service shape name, including its trailing
 	// dot (for example "DynamoDB_20120810."). It is empty for non-AWS JSON APIs.
 	TargetPrefix string
