@@ -1,10 +1,8 @@
 package middleware
 
 import (
-	"net"
 	"net/http"
 	"regexp"
-	"strings"
 )
 
 // hostroute.go implements ONE general grammar + dispatch table for AWS
@@ -27,39 +25,46 @@ import (
 // segment is just the start of {base}).
 //
 // hostRouteLabels is the single source of truth mapping a label token to the
-// AWS service that owns it. Both HostDispatch (the rewrite middleware,
-// instantiated per-router in internal/router/router.go because its rows
-// close over service instances) and HostRouteService (the pure lookup used
-// by detectService in logger.go) read this same map, so a request's log
-// label can never drift from what it was actually dispatched to.
+// AWS service that owns it. HostAddressing (hostaddressing.go) reads it to
+// classify requests, and detectService (logger.go) resolves the log label from
+// the claim that classification produced, so a request's log label can never
+// drift from what it was actually dispatched to.
 //
 // ---- Adding a new host-routed service ----
 //
-//  1. Add its "label" -> service-name entry to hostRouteLabels below.
-//  2. In router.go, append one middleware.HostRouteRow{Label: "...", Rewrite: ...}
-//     to the rows slice passed to middleware.HostDispatch. Keep Rewrite thin:
+//  1. Check the label cannot plausibly end a bucket name. See the guardrail
+//     below — this is a correctness requirement, not style.
+//  2. Add its "label" -> service-name entry to hostRouteLabels below.
+//  3. In router.go, append one middleware.HostRouteRow{Label: "...", Rewrite: ...}
+//     to the rows slice passed to middleware.HostAddressing. Keep Rewrite thin:
 //     string manipulation of r.URL.Path (and maybe a region context stamp)
 //     only, or a call into one small exported method on the owning service
 //     (e.g. apigwSvc.HostRouteRewrite) — never protocol/business logic here.
 //
-// That's the whole cost of a new row: one label + one table entry.
+// ---- Guardrail: labels must not be plausible bucket-name segments ----
 //
-// ---- Deliberately NOT folded into this table yet (follow-ups) ----
+// A bucket named "my.execute-api" is not addressable in the bare
+// virtual-hosted form, because "my.execute-api.localhost" parses as an API
+// Gateway invoke. That collision surface stays negligible only because every
+// registered label is a hyphenated, AWS-specific data-plane token that nobody
+// ends a bucket name with. Registering a bare common word ("logs", "events",
+// "data") would widen it immediately.
 //
-//   - S3 virtual-hosted addressing (internal/middleware/s3virtualhost.go):
-//     `{bucket}.s3[.{region}].{base}` and the bucket-with-no-label form
-//     (`{bucket}.{OVERCAST_HOSTNAME}`). It predates this table and is under
-//     active development on a parallel branch
-//     (feat/s3-virtual-hosted-addressing); folding it in here now would
-//     collide with that work. It already fits the grammar (S3 is a fourth
-//     row: label "s3", region optional) — migrating it in is a follow-up
-//     once both branches have landed.
+// Prefer the AWS data-plane hostname verbatim — "appsync-realtime-api", not
+// "realtime". TestReservedHostLabels_areNotPlausibleBucketSuffixes enforces
+// the hyphenation rule; docs/plans/host-routing-precedence.md §6 tracks making
+// this evidence-based against the generated AWS operation manifest, so the set
+// can only grow when AWS itself adds a service or hostname.
+//
+// ---- Deliberately NOT folded into this table yet (follow-up) ----
+//
 //   - internal/middleware/region.go's regionFromHost: extracts only the
 //     region hint from this same grammar, for SigV4-less requests, and
-//     predates this file. It could delegate to ParseHostRoute, but region.go
-//     is also touched by the S3 branch (it lists "s3" as a recognised
-//     label); merging the two is deferred to the same follow-up pass so
-//     this branch's diff stays out of that file.
+//     predates this file. It carries a third divergent label list that
+//     already disagrees with this one (it knows "sqs"/"sns"/"dynamodb" but
+//     not "appsync-api"/"lambda-url"). Folding it in is tracked as H5 in
+//     docs/plans/host-routing-precedence.md, alongside the manifest work,
+//     so both label lists are replaced in one pass rather than two.
 var hostRouteLabels = map[string]string{
 	"execute-api": "apigateway",
 	"lambda-url":  "lambda",
@@ -88,48 +93,23 @@ type HostRouteMatch struct {
 // `{id}.{label}[.{region}].{base}` grammar using the labels registered in
 // hostRouteLabels. Returns ok=false for path-style requests, IP literals, or
 // hosts that don't contain a registered label.
+// It considers the grammar in isolation. Callers that must also account for S3
+// virtual-hosted addressing — i.e. anything on the request path — should use
+// HostClassifier.Classify instead, which applies the full precedence rule.
 func ParseHostRoute(host string) (HostRouteMatch, bool) {
-	hostname := host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		hostname = h
-	}
-	if hostname == "" {
+	hostname := hostWithoutPort(host)
+	if hostname == "" || isIPLiteral(hostname) {
 		return HostRouteMatch{}, false
 	}
-	// IP literals never carry a host-routed subdomain.
-	if net.ParseIP(hostname) != nil {
-		return HostRouteMatch{}, false
-	}
-
-	parts := strings.Split(hostname, ".")
-	for i, p := range parts {
-		// The label can't be the very first segment — {id} must be
-		// non-empty, matching every real AWS host-routed shape.
-		if i == 0 {
-			continue
-		}
-		if _, ok := hostRouteLabels[p]; !ok {
-			continue
-		}
-		region := ""
-		if i+1 < len(parts) && awsRegionPattern.MatchString(parts[i+1]) {
-			region = parts[i+1]
-		}
-		return HostRouteMatch{Label: p, ID: strings.Join(parts[:i], "."), Region: region}, true
-	}
-	return HostRouteMatch{}, false
+	return parseHostRouteName(hostname)
 }
 
-// HostRouteService reports the detectService() label for a Host header that
-// matches the host-route grammar (see ParseHostRoute) — e.g. "apigateway"
-// for an execute-api Host. detectService (logger.go) calls this so a
-// request's log label always matches what HostDispatch actually routed it
-// to; there is no separate/parallel suffix list to keep in sync.
-func HostRouteService(host string) (service string, ok bool) {
-	m, matched := ParseHostRoute(host)
-	if !matched {
-		return "", false
-	}
+// HostRouteServiceFor reports the detectService() label owning a parsed
+// host-route match — e.g. "apigateway" for an execute-api Host. detectService
+// resolves it from the claim HostAddressing stamped on the request, so a
+// request's log label is what actually routed it rather than a re-derivation
+// that could disagree.
+func HostRouteServiceFor(m HostRouteMatch) (service string, ok bool) {
 	service, ok = hostRouteLabels[m.Label]
 	return service, ok
 }
@@ -152,30 +132,8 @@ type HostRouteRow struct {
 	Rewrite func(r *http.Request, m HostRouteMatch)
 }
 
-// HostDispatch returns middleware that recognises Host-routed AWS-style
-// addresses (see ParseHostRoute) and applies the matching row's Rewrite,
-// before chi's router runs. rows is read on every request via the pointer,
-// so callers can declare it early in the middleware chain (chi requires all
-// r.Use calls before any route registration) and populate it later once the
-// owning services exist — the same pattern already used for this router's
-// query-dispatcher and event-bus wiring.
-//
-// Hosts that don't match any row — including S3's own virtual-hosted forms,
-// handled separately by S3VirtualHostFor — pass through unchanged, which is
-// what lets unknown/foreign hosts fall through to the S3 catch-all per
-// AGENTS.md "Routing fallthrough is S3" instead of 404ing here.
-func HostDispatch(rows *[]HostRouteRow) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if m, ok := ParseHostRoute(r.Host); ok {
-				for _, row := range *rows {
-					if row.Label == m.Label {
-						row.Rewrite(r, m)
-						break
-					}
-				}
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
-}
+// The middleware that applies these rows is HostAddressing in
+// hostaddressing.go. It is not in this file because dispatching a host-routed
+// request cannot be decided independently of S3 virtual-hosted addressing —
+// attempting that is what produced the double-claim bug documented in
+// docs/plans/host-routing-precedence.md.

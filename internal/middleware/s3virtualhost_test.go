@@ -101,7 +101,9 @@ func TestExtractS3BucketFromHost_builtInDefaultBases(t *testing.T) {
 		{"cdk-hnb659fds-assets-000000000000-ap-southeast-2.localhost.overcast.sh:4566", "cdk-hnb659fds-assets-000000000000-ap-southeast-2"},
 
 		// Bucket names may contain dots — the whole prefix before the base is
-		// the bucket.
+		// the bucket. A prefix carrying a reserved host label at segment index
+		// >= 1 ("abc.execute-api.us-east-1") is the one exception: that is a
+		// host-routed address, not a bucket. See hostaddressing.go tier B.
 		{"my.dotted.bucket.localhost.overcast.sh", "my.dotted.bucket"},
 		{"my.dotted.bucket.localhost.localstack.cloud:4566", "my.dotted.bucket"},
 

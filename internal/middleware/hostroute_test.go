@@ -1,8 +1,6 @@
 package middleware
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"testing"
 )
 
@@ -56,7 +54,7 @@ func TestParseHostRoute(t *testing.T) {
 	}
 }
 
-func TestHostRouteService(t *testing.T) {
+func TestHostRouteServiceFor(t *testing.T) {
 	// Given: hosts that do and don't match the host-route grammar
 	cases := []struct {
 		host    string
@@ -66,82 +64,31 @@ func TestHostRouteService(t *testing.T) {
 		{host: "abc123.execute-api.us-east-1.amazonaws.com", wantSvc: "apigateway", wantOK: true},
 		{host: "xyz.lambda-url.us-east-1.on.aws", wantSvc: "lambda", wantOK: true},
 		{host: "api1.appsync-api.us-east-1.amazonaws.com", wantSvc: "appsync", wantOK: true},
-		{host: "mybucket.s3.us-east-1.amazonaws.com", wantOK: false}, // S3 is not in this table (parallel branch)
+		{host: "mybucket.s3.us-east-1.amazonaws.com", wantOK: false}, // S3 is not a host-route label
 		{host: "localhost:4566", wantOK: false},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.host, func(t *testing.T) {
-			// When: the label->service lookup runs
-			svc, ok := HostRouteService(tc.host)
+			// When: the grammar is parsed and its owner looked up
+			m, matched := ParseHostRoute(tc.host)
+			svc, ok := "", false
+			if matched {
+				svc, ok = HostRouteServiceFor(m)
+			}
 
 			// Then: it matches ParseHostRoute's positive/negative verdict
 			if ok != tc.wantOK {
-				t.Fatalf("HostRouteService(%q) ok = %v, want %v", tc.host, ok, tc.wantOK)
+				t.Fatalf("HostRouteServiceFor(%q) ok = %v, want %v", tc.host, ok, tc.wantOK)
 			}
 			if ok && svc != tc.wantSvc {
-				t.Errorf("HostRouteService(%q) = %q, want %q", tc.host, svc, tc.wantSvc)
+				t.Errorf("HostRouteServiceFor(%q) = %q, want %q", tc.host, svc, tc.wantSvc)
 			}
 		})
 	}
 }
 
-func TestHostDispatch_rewritesMatchingRow(t *testing.T) {
-	// Given: a single registered row for "execute-api" that records the
-	// match it received and stamps a marker path
-	var gotMatch HostRouteMatch
-	rows := []HostRouteRow{
-		{Label: "execute-api", Rewrite: func(r *http.Request, m HostRouteMatch) {
-			gotMatch = m
-			r.URL.Path = "/_rewritten/" + m.ID
-		}},
-	}
-	var finalPath string
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		finalPath = r.URL.Path
-		w.WriteHeader(http.StatusOK)
-	})
-	mw := HostDispatch(&rows)(next)
-
-	// When: a request with a matching Host reaches the middleware
-	r := httptest.NewRequest(http.MethodGet, "/pets/1", nil)
-	r.Host = "abc123.execute-api.us-east-1.amazonaws.com"
-	w := httptest.NewRecorder()
-	mw.ServeHTTP(w, r)
-
-	// Then: the row's Rewrite ran with the parsed match, and the downstream
-	// handler saw the rewritten path
-	if gotMatch.ID != "abc123" || gotMatch.Region != "us-east-1" {
-		t.Errorf("Rewrite received match %+v, want ID=abc123 Region=us-east-1", gotMatch)
-	}
-	if finalPath != "/_rewritten/abc123" {
-		t.Errorf("downstream path = %q, want /_rewritten/abc123", finalPath)
-	}
-}
-
-func TestHostDispatch_passesThroughUnmatchedHost(t *testing.T) {
-	// Given: a row for "execute-api" only
-	rows := []HostRouteRow{
-		{Label: "execute-api", Rewrite: func(r *http.Request, m HostRouteMatch) {
-			t.Fatalf("Rewrite should not run for a non-matching host")
-		}},
-	}
-	var finalPath string
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		finalPath = r.URL.Path
-		w.WriteHeader(http.StatusOK)
-	})
-	mw := HostDispatch(&rows)(next)
-
-	// When: a request with an unrelated Host (e.g. a plain S3-style request)
-	// reaches the middleware
-	r := httptest.NewRequest(http.MethodGet, "/my-bucket/key", nil)
-	r.Host = "localhost:4566"
-	w := httptest.NewRecorder()
-	mw.ServeHTTP(w, r)
-
-	// Then: the path is untouched — the request falls through unchanged
-	if finalPath != "/my-bucket/key" {
-		t.Errorf("path = %q, want unchanged /my-bucket/key", finalPath)
-	}
-}
+// The middleware that applies HostRouteRows is HostAddressing; its dispatch
+// and pass-through behaviour is specified in hostaddressing_test.go, where it
+// is tested together with S3 virtual-hosted addressing because the two share
+// one precedence decision.

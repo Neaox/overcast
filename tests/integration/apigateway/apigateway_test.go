@@ -3291,6 +3291,95 @@ func TestExecuteByHost_unknownApiIDReturnsForbidden(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusForbidden)
 }
 
+// TestExecuteRestAPI_hostBasedInvokeAcrossResolvableBases is the regression
+// test for the addressing-precedence bug: every host-routed invoke URL on a
+// base Overcast can actually resolve used to return 403, because S3
+// virtual-hosted addressing claimed the Host first and prepended a bogus
+// bucket segment to the path. Only ".amazonaws.com" worked — the one base that
+// does not resolve to the emulator without a hosts-file entry, and the only
+// one the other tests in this file use.
+//
+// See docs/plans/host-routing-precedence.md.
+func TestExecuteRestAPI_hostBasedInvokeAcrossResolvableBases(t *testing.T) {
+	// Given: a REST API with a MOCK integration deployed to stage "test"
+	srv := helpers.NewTestServer(t)
+	apiID, rootID := createRestAPIWithRoot(t, srv, "host-exec-bases")
+	resID := createResource(t, srv, apiID, rootID, "hello")
+	putMethod(t, srv, apiID, resID, "GET")
+	putIntegration(t, srv, apiID, resID, "GET", "MOCK", "")
+	putMethodResponse(t, srv, apiID, resID, "GET", "200")
+	putIntegrationResponse(t, srv, apiID, resID, "GET", "200", `{"message":"hello world"}`)
+	depID := createDeployment(t, srv, apiID)
+	createStage(t, srv, apiID, depID, "test")
+
+	// Every base a client can actually reach the emulator on, with and
+	// without the optional region segment.
+	bases := []struct{ name, host string }{
+		{"amazonaws.com with region", apiID + ".execute-api.us-east-1.amazonaws.com"},
+		{"localhost with region", apiID + ".execute-api.us-east-1.localhost:4566"},
+		{"localhost without region", apiID + ".execute-api.localhost:4566"},
+		{"overcast.sh wildcard with region", apiID + ".execute-api.us-east-1.localhost.overcast.sh:4566"},
+		{"overcast.sh wildcard without region", apiID + ".execute-api.localhost.overcast.sh:4566"},
+		{"localstack.cloud wildcard with region", apiID + ".execute-api.us-east-1.localhost.localstack.cloud:4566"},
+	}
+
+	for _, b := range bases {
+		t.Run(b.name, func(t *testing.T) {
+			// When: we invoke via the execute-api Host header on that base
+			resp := apiCallWithHost(t, srv, http.MethodGet, "/test/hello", b.host, nil)
+
+			// Then: it reaches the same mock integration as every other base
+			helpers.AssertStatus(t, resp, http.StatusOK)
+			if body := helpers.ReadBody(t, resp); body != `{"message":"hello world"}` {
+				t.Errorf("Host %q: expected mock body %q, got %q", b.host, `{"message":"hello world"}`, body)
+			}
+		})
+	}
+}
+
+// TestExecuteRestAPI_hostBasedInvokeOnConfiguredHostname proves the same for a
+// custom OVERCAST_HOSTNAME, which is the deployment shape docs/networking.md
+// recommends for Windows and for sibling containers.
+func TestExecuteRestAPI_hostBasedInvokeOnConfiguredHostname(t *testing.T) {
+	// Given: a server configured with a custom external hostname
+	const hostname = "dev.example.test"
+	srv := helpers.NewTestServer(t, helpers.WithHostname(hostname))
+	apiID, rootID := createRestAPIWithRoot(t, srv, "host-exec-configured")
+	resID := createResource(t, srv, apiID, rootID, "hello")
+	putMethod(t, srv, apiID, resID, "GET")
+	putIntegration(t, srv, apiID, resID, "GET", "MOCK", "")
+	putMethodResponse(t, srv, apiID, resID, "GET", "200")
+	putIntegrationResponse(t, srv, apiID, resID, "GET", "200", `{"message":"hello world"}`)
+	depID := createDeployment(t, srv, apiID)
+	createStage(t, srv, apiID, depID, "test")
+
+	// When: we invoke on the configured base
+	resp := apiCallWithHost(t, srv, http.MethodGet, "/test/hello",
+		apiID+".execute-api.us-east-1."+hostname+":4566", nil)
+
+	// Then: it reaches the integration
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	if body := helpers.ReadBody(t, resp); body != `{"message":"hello world"}` {
+		t.Errorf("expected mock body, got %q", body)
+	}
+}
+
+// TestExecuteRestAPI_bucketNamedLikeServiceIsNotClaimed proves the collision
+// boundary: a bucket named exactly like a host-route label is NOT a host
+// route, because {id} must be non-empty in every real AWS host-routed shape.
+func TestExecuteRestAPI_bucketNamedLikeServiceIsNotClaimed(t *testing.T) {
+	// Given: a server with a bucket named "execute-api" and no APIs at all
+	srv := helpers.NewTestServer(t)
+	putResp := apiCallWithHost(t, srv, http.MethodPut, "/", "execute-api.localhost:4566", nil)
+	helpers.AssertStatus(t, putResp, http.StatusOK)
+
+	// When: we address that bucket virtual-hosted style
+	resp := apiCallWithHost(t, srv, http.MethodGet, "/", "execute-api.localhost:4566", nil)
+
+	// Then: S3 answers (a bucket listing), not API Gateway's 403 Forbidden
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
 // apiCallWithHost is apiCall but sets an explicit Host header, for exercising
 // Host-routed (execute-api) invoke paths.
 func apiCallWithHost(t *testing.T, srv *helpers.TestServer, method, path, host string, body any) *http.Response {
