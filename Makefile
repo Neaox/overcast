@@ -209,10 +209,14 @@ generate-aws-operations:
 	@test -n "$(AWS_MODELS_REVISION)" || (echo "ERROR: set AWS_MODELS_REVISION to the api-models-aws commit" && exit 1)
 	$(GO) run ./cmd/awsmodelgen -models "$(AWS_MODELS_DIR)" -output internal/awsapi/manifest.gen.go -source-revision "$(AWS_MODELS_REVISION)"
 
-## aws-models-check: validate the committed AWS operation corpus and generated runtime ownership indexes without network access
+## aws-models-check: validate the committed AWS operation corpus and generated runtime ownership indexes
+## Set AWS_MODELS_DIR to additionally prove the committed manifest matches that pinned checkout byte-for-byte.
 aws-models-check:
 	$(GO) test -count=1 ./cmd/awsmodelgen ./internal/awsapi ./internal/protocol/codec ./tests/integration/router
 	$(GO) run -tags dev ./cmd/capgen --check-model
+	@if [ -n "$(AWS_MODELS_DIR)" ]; then \
+		$(GO) run ./cmd/awsmodelgen -models "$(AWS_MODELS_DIR)" -output internal/awsapi/manifest.gen.go -source-revision "$(AWS_MODELS_REVISION)" -check; \
+	fi
 
 ## docs-index: regenerate the committed docs search/navigation index (run after editing docs/, then commit)
 docs-index:

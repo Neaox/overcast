@@ -10,6 +10,31 @@ import (
 	"testing"
 )
 
+func TestWriteOrCheckManifest_checksWithoutOverwriting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifest.gen.go")
+	if err := os.WriteFile(path, []byte("current\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeOrCheckManifest(path, []byte("current\n"), true); err != nil {
+		t.Fatalf("check current manifest: %v", err)
+	}
+	if err := writeOrCheckManifest(path, []byte("new\n"), true); err == nil {
+		t.Fatal("stale manifest check unexpectedly passed")
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents) != "current\n" {
+		t.Fatalf("check mode overwrote manifest: %q", contents)
+	}
+
+	if err := writeOrCheckManifest(path, []byte("new\n"), false); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+}
+
 func TestGenerateManifest_extractsServiceOperationsAndProtocols(t *testing.T) {
 	// Given: a minimal official-style Smithy JSON AST with JSON and REST services.
 	modelsDir := t.TempDir()
