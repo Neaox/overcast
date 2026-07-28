@@ -1,0 +1,152 @@
+package lambda
+
+import (
+	"context"
+	"errors"
+	"net"
+	"strings"
+	"testing"
+	"time"
+
+	"go.uber.org/zap"
+
+	"github.com/Neaox/overcast/internal/clock"
+	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/containerendpoint"
+	"github.com/Neaox/overcast/internal/docker"
+)
+
+// newStalledContainerInstance returns a containerInstance whose invocation will
+// never be answered — no container is polling the Runtime API — so Invoke can
+// only leave through its ctx.Done() branch.
+func newStalledContainerInstance(t *testing.T) *containerInstance {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	srv, err := NewRuntimeAPIServerFromListener(ln, addr, zap.NewNop(), clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Stop(context.Background()) })
+
+	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000", Port: 4566}
+	return &containerInstance{
+		id:          "cafebabe1234deadbeef",
+		containerIP: "172.19.0.3",
+		functionARN: "arn:aws:lambda:us-east-1:000000000000:function:demo",
+		memorySize:  2048,
+		// Unroutable endpoint: currentMemoryMB is best-effort and reports 0
+		// rather than reaching a real daemon.
+		docker:     docker.NewClient("tcp://127.0.0.1:1", zap.NewNop()),
+		runtimeAPI: srv,
+		logger:     zap.NewNop(),
+		clk:        clock.New(),
+		exitNotify: newExitNotifier(),
+		endpoint:   containerendpoint.New(cfg, "http://172.18.0.1:4566"),
+		healthy:    true,
+	}
+}
+
+// reportLine returns the REPORT line from the instance's rolling tail buffer.
+func reportLine(t *testing.T, ci *containerInstance) string {
+	t.Helper()
+	ci.tailMu.Lock()
+	defer ci.tailMu.Unlock()
+	for _, line := range strings.Split(string(ci.tailBuf), "\n") {
+		if strings.HasPrefix(line, "REPORT RequestId:") {
+			return line
+		}
+	}
+	t.Fatalf("no REPORT line in tail buffer:\n%s", ci.tailBuf)
+	return ""
+}
+
+// TestContainerInstanceInvoke_callerCancellationIsNotAFunctionTimeout pins that
+// a caller walking away is reported as a cancellation, not as the function
+// overrunning its timeout.
+//
+// The web console's invoke stream used to be proxied through a client with a
+// 30 s cap, so any longer invocation had its request context cancelled. The
+// emulator then logged "lambda invoke timed out" and wrote Status: timeout into
+// CloudWatch for a function whose configured timeout had not been reached —
+// pointing straight at the handler for a fault that was in the proxy.
+func TestContainerInstanceInvoke_callerCancellationIsNotAFunctionTimeout(t *testing.T) {
+	// Given: an invocation bounded by a generous function timeout.
+	ci := newStalledContainerInstance(t)
+	caller, cancelCaller := context.WithCancel(context.Background())
+	invokeCtx, cancel := context.WithTimeout(caller, 30*time.Second)
+	defer cancel()
+
+	// When: the caller disconnects long before that timeout elapses.
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancelCaller()
+	}()
+	result, err := ci.Invoke(invokeCtx, []byte(`{}`))
+
+	// Then: the error says the caller went away, not that the function timed out.
+	if result != nil {
+		t.Fatalf("expected no result, got %+v", result)
+	}
+	var timeout *invokeTimeoutError
+	if errors.As(err, &timeout) {
+		t.Fatalf("caller cancellation reported as a function timeout: %v", err)
+	}
+	if !strings.Contains(err.Error(), "cancelled") {
+		t.Errorf("error should name the cancellation, got %q", err)
+	}
+
+	// And: the REPORT line records an error, not a timeout.
+	report := reportLine(t, ci)
+	if !strings.HasSuffix(report, "Status: error") {
+		t.Errorf("REPORT should end in Status: error, got %q", report)
+	}
+}
+
+// TestContainerInstanceInvoke_timeoutReportsAWSShapedError pins that a real
+// overrun still reports Status: timeout, and that the payload the caller sees
+// is the one AWS returns rather than a Go error string.
+func TestContainerInstanceInvoke_timeoutReportsAWSShapedError(t *testing.T) {
+	// Given: an invocation bounded by a 1 s function timeout.
+	ci := newStalledContainerInstance(t)
+	invokeCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	// When: the function never answers.
+	result, err := ci.Invoke(invokeCtx, []byte(`{}`))
+
+	// Then: the error carries the request ID and the configured timeout.
+	if result != nil {
+		t.Fatalf("expected no result, got %+v", result)
+	}
+	var timeout *invokeTimeoutError
+	if !errors.As(err, &timeout) {
+		t.Fatalf("expected an invokeTimeoutError, got %T: %v", err, err)
+	}
+	if timeout.RequestID == "" {
+		t.Error("timeout error should carry the request ID")
+	}
+
+	// And: the REPORT line records a timeout.
+	report := reportLine(t, ci)
+	if !strings.HasSuffix(report, "Status: timeout") {
+		t.Errorf("REPORT should end in Status: timeout, got %q", report)
+	}
+
+	// And: the response payload matches AWS's timeout shape — a lone
+	// errorMessage naming the request ID and the configured timeout.
+	payload := string(invokeFailurePayload(err))
+	if !strings.Contains(payload, "Task timed out after 1.00 seconds") {
+		t.Errorf("payload should carry AWS's timeout message, got %s", payload)
+	}
+	if !strings.Contains(payload, timeout.RequestID) {
+		t.Errorf("payload should name the request ID, got %s", payload)
+	}
+	if strings.Contains(payload, "errorType") {
+		t.Errorf("AWS's timeout payload has no errorType, got %s", payload)
+	}
+}

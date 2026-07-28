@@ -17,12 +17,14 @@ package lambda
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -1438,6 +1440,18 @@ func lambdaInitTimeout(cfg *config.Config) time.Duration {
 	return 10 * time.Second
 }
 
+// invokeFailurePayload shapes the response body for an invocation that never
+// produced a result. A function that ran past its timeout gets the payload
+// real Lambda returns; anything else keeps the emulator's Runtime.ExitError
+// shape so the underlying cause stays visible to whoever is debugging.
+func invokeFailurePayload(err error) []byte {
+	var timeout *invokeTimeoutError
+	if errors.As(err, &timeout) {
+		return timeout.Payload()
+	}
+	return []byte(fmt.Sprintf(`{"errorMessage":%q,"errorType":"Runtime.ExitError"}`, err.Error()))
+}
+
 func awaitRuntimeReady(ctx context.Context, cfg *config.Config, inst RuntimeInstance) error {
 	ready, ok := inst.(runtimeReadyInstance)
 	if !ok {
@@ -1527,7 +1541,7 @@ func (h *Handler) invokeSyncOnce(ctx context.Context, fn *Function, rt Runtime, 
 		h.log.Error("invoke: execution error", zap.String("function", name), zap.Error(invokeErr))
 		return &InvokeResult{
 			StatusCode:    200,
-			Payload:       []byte(fmt.Sprintf(`{"errorMessage":%q,"errorType":"Runtime.ExitError"}`, invokeErr.Error())),
+			Payload:       invokeFailurePayload(invokeErr),
 			FunctionError: "Unhandled",
 			LogGroupName:  fn.logGroupName(),
 			LogStreamName: logStreamName,
@@ -1629,6 +1643,11 @@ func (h *Handler) invokeAsync(fn *Function, rt Runtime, payload []byte) {
 
 // ─── SSE Invoke (emulator-only) ───────────────────────────────────────────────
 
+// sseKeepaliveInterval is how often the invoke progress stream emits an SSE
+// comment frame while the function is running. Short enough to stay under the
+// idle timeouts proxies commonly apply (nginx defaults to 60 s).
+const sseKeepaliveInterval = 15 * time.Second
+
 // InvokeFunctionSSE handles POST /2015-03-31/functions/{name}/invoke-with-progress.
 // Emulator-only endpoint that streams lifecycle progress events as SSE, then
 // sends the final invoke result. Used by the web UI Test tab.
@@ -1661,8 +1680,19 @@ func (h *Handler) InvokeFunctionSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Guards w against the keepalive goroutine that runs while the handler is
+	// executing; every write to the stream goes through one of these two.
+	var writeMu sync.Mutex
 	sendEvent := func(event, data string) {
+		writeMu.Lock()
+		defer writeMu.Unlock()
 		_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
+		flusher.Flush()
+	}
+	sendKeepalive := func() {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		_, _ = io.WriteString(w, ": keepalive\n\n")
 		flusher.Flush()
 	}
 
@@ -1754,7 +1784,30 @@ func (h *Handler) InvokeFunctionSSE(w http.ResponseWriter, r *http.Request) {
 
 	sendEvent("progress", "Invoking function handler")
 
+	// A handler may legitimately run for its full configured timeout — up to
+	// AWS's 15 minutes — with nothing to report, and an idle connection is what
+	// proxies and browsers drop. SSE comment frames keep it warm without adding
+	// events the console has to understand.
+	stopKeepalive, keepaliveStopped := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(keepaliveStopped)
+		ticker := h.clk.Ticker(sseKeepaliveInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopKeepalive:
+				return
+			case <-ticker.C:
+				sendKeepalive()
+			}
+		}
+	}()
+
 	result, invokeErr := inst.Invoke(invokeCtx, payload)
+	// Join before touching w again: writing to a ResponseWriter after the
+	// handler returns is not allowed, so the goroutine must be gone first.
+	close(stopKeepalive)
+	<-keepaliveStopped
 	healthy := invokeErr == nil
 	rt.Release(invokeCtx, inst, healthy)
 	inv.Finish(invocationOutcome(invokeErr, result))
@@ -1763,7 +1816,7 @@ func (h *Handler) InvokeFunctionSSE(w http.ResponseWriter, r *http.Request) {
 		h.log.Error("invoke-sse: execution error", zap.String("function", name), zap.Error(invokeErr))
 		errResult := InvokeResult{
 			StatusCode:    200,
-			Payload:       []byte(fmt.Sprintf(`{"errorMessage":%q,"errorType":"Runtime.ExitError"}`, invokeErr.Error())),
+			Payload:       invokeFailurePayload(invokeErr),
 			FunctionError: "Unhandled",
 			LogGroupName:  fn.logGroupName(),
 			LogStreamName: logStreamName,
