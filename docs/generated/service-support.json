@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1264,
+  "total_ops": 1266,
   "services": [
     {
       "service": "s3",
@@ -520,8 +520,8 @@
     {
       "service": "lambda",
       "display_name": "Lambda",
-      "total_ops": 40,
-      "implemented_ops": 39,
+      "total_ops": 42,
+      "implemented_ops": 41,
       "operations": [
         {
           "operation": "ListFunctions",
@@ -568,7 +568,19 @@
           "operation": "GetFunctionCodeSigningConfig",
           "category": "Function management",
           "status": "✅ Supported",
-          "notes": "Always returns ResourceNotFoundException; code signing is not enforced by the emulator"
+          "notes": "Returns the associated config; ResourceNotFoundException when the function has none"
+        },
+        {
+          "operation": "PutFunctionCodeSigningConfig",
+          "category": "Function management",
+          "status": "✅ Supported",
+          "notes": "Stores the association and validates the ARN shape; signature validation is not emulated"
+        },
+        {
+          "operation": "DeleteFunctionCodeSigningConfig",
+          "category": "Function management",
+          "status": "✅ Supported",
+          "notes": "Removes the association; idempotent"
         },
         {
           "operation": "Invoke",

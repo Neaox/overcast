@@ -22,7 +22,11 @@ func init() {
 		capabilities.Capability{Service: "lambda", Operation: "UpdateFunctionConfiguration", Category: "Function management",
 			Status: capabilities.StatusSupported, Notes: "Patches Timeout/MemorySize/Description/Handler/Role/Environment/Layers/VpcConfig/ImageConfig; generates new RevisionId"},
 		capabilities.Capability{Service: "lambda", Operation: "GetFunctionCodeSigningConfig", Category: "Function management",
-			Status: capabilities.StatusSupported, Notes: "Always returns ResourceNotFoundException; code signing is not enforced by the emulator"},
+			Status: capabilities.StatusSupported, Notes: "Returns the associated config; ResourceNotFoundException when the function has none"},
+		capabilities.Capability{Service: "lambda", Operation: "PutFunctionCodeSigningConfig", Category: "Function management",
+			Status: capabilities.StatusSupported, Notes: "Stores the association and validates the ARN shape; signature validation is not emulated"},
+		capabilities.Capability{Service: "lambda", Operation: "DeleteFunctionCodeSigningConfig", Category: "Function management",
+			Status: capabilities.StatusSupported, Notes: "Removes the association; idempotent"},
 
 		// Invocation
 		capabilities.Capability{Service: "lambda", Operation: "Invoke", Category: "Invocation",

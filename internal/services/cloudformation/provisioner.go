@@ -2235,6 +2235,12 @@ func (h *lambdaFunctionHandler) Create(ctx context.Context, router http.Handler,
 	if layers, ok := props["Layers"]; ok {
 		body["Layers"] = layers
 	}
+	// Optional; set by CDK's Function `codeSigningConfig` prop. Passed through
+	// so the association survives a deploy — Lambda stores it without enforcing
+	// signature validation.
+	if csc, ok := props["CodeSigningConfigArn"]; ok {
+		body["CodeSigningConfigArn"] = csc
+	}
 	if tagMap := mergeLambdaTags(rCtx.StackTags, props["Tags"]); len(tagMap) > 0 {
 		body["Tags"] = tagMap
 	}

@@ -532,7 +532,7 @@ cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
 
 | Category                    | ✅ Supported | ❌ Unsupported |
 | --------------------------- | ------------ | -------------- |
-| Function management         | 8            |                |
+| Function management         | 10           |                |
 | Invocation                  | 2            | 1              |
 | Aliases & versions          | 7            |                |
 | Function URLs               | 5            |                |
@@ -546,16 +546,18 @@ cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
 
 ### Function management
 
-| Operation                      | Status       | Notes                                                                                                                             | AWS Docs                                                                                   |
-| ------------------------------ | ------------ | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `ListFunctions`                | ✅ Supported | Returns all stored functions; empty list if none                                                                                  | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListFunctions.html)                |
-| `CreateFunction`               | ✅ Supported | Stores metadata; validates runtime; deprecated runtimes rejected; auto-creates CWL log group; VpcConfig and ImageConfig supported | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_CreateFunction.html)               |
-| `DeleteFunction`               | ✅ Supported |                                                                                                                                   | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunction.html)               |
-| `GetFunction`                  | ✅ Supported | Returns FunctionConfiguration + Code location block                                                                               | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunction.html)                  |
-| `GetFunctionConfiguration`     | ✅ Supported | Returns FunctionConfiguration only (no Code block)                                                                                | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionConfiguration.html)     |
-| `UpdateFunctionCode`           | ✅ Supported | Updates code zip; generates new RevisionId                                                                                        | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionCode.html)           |
-| `UpdateFunctionConfiguration`  | ✅ Supported | Patches Timeout/MemorySize/Description/Handler/Role/Environment/Layers/VpcConfig/ImageConfig; generates new RevisionId            | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionConfiguration.html)  |
-| `GetFunctionCodeSigningConfig` | ✅ Supported | Always returns ResourceNotFoundException; code signing is not enforced by the emulator                                            | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionCodeSigningConfig.html) |
+| Operation                         | Status       | Notes                                                                                                                             | AWS Docs                                                                                      |
+| --------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `ListFunctions`                   | ✅ Supported | Returns all stored functions; empty list if none                                                                                  | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListFunctions.html)                   |
+| `CreateFunction`                  | ✅ Supported | Stores metadata; validates runtime; deprecated runtimes rejected; auto-creates CWL log group; VpcConfig and ImageConfig supported | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_CreateFunction.html)                  |
+| `DeleteFunction`                  | ✅ Supported |                                                                                                                                   | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunction.html)                  |
+| `GetFunction`                     | ✅ Supported | Returns FunctionConfiguration + Code location block                                                                               | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunction.html)                     |
+| `GetFunctionConfiguration`        | ✅ Supported | Returns FunctionConfiguration only (no Code block)                                                                                | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionConfiguration.html)        |
+| `UpdateFunctionCode`              | ✅ Supported | Updates code zip; generates new RevisionId                                                                                        | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionCode.html)              |
+| `UpdateFunctionConfiguration`     | ✅ Supported | Patches Timeout/MemorySize/Description/Handler/Role/Environment/Layers/VpcConfig/ImageConfig; generates new RevisionId            | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionConfiguration.html)     |
+| `GetFunctionCodeSigningConfig`    | ✅ Supported | Returns the associated config; ResourceNotFoundException when the function has none                                               | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionCodeSigningConfig.html)    |
+| `PutFunctionCodeSigningConfig`    | ✅ Supported | Stores the association and validates the ARN shape; signature validation is not emulated                                          | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_PutFunctionCodeSigningConfig.html)    |
+| `DeleteFunctionCodeSigningConfig` | ✅ Supported | Removes the association; idempotent                                                                                               | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunctionCodeSigningConfig.html) |
 
 ### Invocation
 

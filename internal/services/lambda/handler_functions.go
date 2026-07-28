@@ -10,6 +10,9 @@ package lambda
 //   - UpdateFunctionCode    PUT  /2015-03-31/functions/{name}/code
 //   - UpdateFunctionConfiguration PUT /2015-03-31/functions/{name}/configuration
 //   - DeleteFunction        DELETE /2015-03-31/functions/{name}
+//   - GetFunctionCodeSigningConfig    GET    /2020-06-30/functions/{name}/code-signing-config
+//   - PutFunctionCodeSigningConfig    PUT    /2020-06-30/functions/{name}/code-signing-config
+//   - DeleteFunctionCodeSigningConfig DELETE /2020-06-30/functions/{name}/code-signing-config
 
 import (
 	"context"
@@ -17,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -101,6 +105,8 @@ type createFunctionRequest struct {
 	LoggingConfig *loggingConfig    `json:"LoggingConfig,omitempty"`
 	VpcConfig     *vpcConfigRequest `json:"VpcConfig,omitempty"`
 	ImageConfig   *imageConfigWire  `json:"ImageConfig,omitempty"`
+	// Optional; AWS requires only FunctionName, Role and Code.
+	CodeSigningConfigArn string `json:"CodeSigningConfigArn,omitempty"`
 	// Layers is a list of layer version ARNs to attach to the function at creation.
 	Layers []string `json:"Layers,omitempty"`
 }
@@ -432,6 +438,17 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 	if req.LoggingConfig != nil && req.LoggingConfig.LogGroup != "" {
 		fn.LogGroup = req.LoggingConfig.LogGroup
 	}
+	if req.CodeSigningConfigArn != "" {
+		if !codeSigningConfigARNPattern.MatchString(req.CodeSigningConfigArn) {
+			protocol.WriteJSONError(w, r, &protocol.AWSError{
+				Code:       "InvalidParameterValueException",
+				Message:    "Invalid code signing config arn: " + req.CodeSigningConfigArn,
+				HTTPStatus: http.StatusBadRequest,
+			})
+			return
+		}
+		fn.CodeSigningConfigArn = req.CodeSigningConfigArn
+	}
 	if req.Environment != nil {
 		fn.Environment = req.Environment.Variables
 	}
@@ -580,15 +597,34 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(functionToConfig(fn))
 }
 
-// GetFunctionCodeSigningConfig handles GET /2015-03-31/functions/{name}/code-signing-config.
-// Code signing is not enforced by the emulator; functions never have a config associated,
-// so this always returns ResourceNotFoundException once the function is confirmed to exist.
-func (h *Handler) GetFunctionCodeSigningConfig(w http.ResponseWriter, r *http.Request) {
+// ─── Code signing config association ─────────────────────────────────────────
+//
+// Code signing is optional: a function has a configuration only if one was
+// passed to CreateFunction or attached with PutFunctionCodeSigningConfig. All
+// three operations are served on the 2020-06-30 API version.
+//
+// Overcast stores and echoes the association but never validates a signature —
+// signing is a security-enforcement feature and Overcast is not a security
+// boundary. It also cannot check that the ARN names a configuration that
+// exists, because the code signing configuration resource itself
+// (CreateCodeSigningConfig and friends, on 2020-04-22) is not implemented; so
+// CodeSigningConfigNotFoundException is never returned and the ARN is taken at
+// face value once it is well-formed.
+
+// codeSigningConfigARNPattern is AWS's own pattern for the ARN, from the Lambda
+// API model. Validating the shape catches a typo at the point of the call the
+// way AWS does, without implying the configuration behind it exists.
+var codeSigningConfigARNPattern = regexp.MustCompile(
+	`^arn:(aws[a-zA-Z-]*)?:lambda:[a-z]{2}((-gov)|(-iso(b?)))?-[a-z]+-\d{1}:\d{12}:code-signing-config:csc-[a-z0-9]{17}$`)
+
+// functionForCodeSigning resolves the named function, writing the AWS-shaped
+// 404 and returning nil when it does not exist.
+func (h *Handler) functionForCodeSigning(w http.ResponseWriter, r *http.Request) (*Function, string) {
 	name := chi.URLParam(r, "name")
 	fn, aerr := h.ls.getFunction(r.Context(), name)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
-		return
+		return nil, name
 	}
 	if fn == nil {
 		protocol.WriteJSONError(w, r, &protocol.AWSError{
@@ -596,13 +632,98 @@ func (h *Handler) GetFunctionCodeSigningConfig(w http.ResponseWriter, r *http.Re
 			Message:    "Function not found: " + name,
 			HTTPStatus: http.StatusNotFound,
 		})
+		return nil, name
+	}
+	return fn, name
+}
+
+func writeCodeSigningConfig(w http.ResponseWriter, r *http.Request, arn, name string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(codeSigningConfigResponse{
+		CodeSigningConfigArn: arn,
+		FunctionName:         name,
+	})
+}
+
+type codeSigningConfigResponse struct {
+	CodeSigningConfigArn string `json:"CodeSigningConfigArn"`
+	FunctionName         string `json:"FunctionName"`
+}
+
+type putFunctionCodeSigningConfigRequest struct {
+	CodeSigningConfigArn string `json:"CodeSigningConfigArn"`
+}
+
+// GetFunctionCodeSigningConfig handles GET /2020-06-30/functions/{name}/code-signing-config.
+//
+// A function with no configuration returns ResourceNotFoundException rather
+// than an empty success: CodeSigningConfigArn is a required member of the 200
+// response, so "no config" has no representation as a successful result, and
+// ResourceNotFoundException is the only not-found error this operation
+// declares (CodeSigningConfigNotFoundException is declared on the mutating
+// operations, not this one).
+func (h *Handler) GetFunctionCodeSigningConfig(w http.ResponseWriter, r *http.Request) {
+	fn, name := h.functionForCodeSigning(w, r)
+	if fn == nil {
 		return
 	}
-	protocol.WriteJSONError(w, r, &protocol.AWSError{
-		Code:       "ResourceNotFoundException",
-		Message:    "No code signing config associated with function: " + name,
-		HTTPStatus: http.StatusNotFound,
-	})
+	if fn.CodeSigningConfigArn == "" {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code:       "ResourceNotFoundException",
+			Message:    "No code signing config associated with function: " + name,
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+	writeCodeSigningConfig(w, r, fn.CodeSigningConfigArn, name)
+}
+
+// PutFunctionCodeSigningConfig handles PUT /2020-06-30/functions/{name}/code-signing-config.
+func (h *Handler) PutFunctionCodeSigningConfig(w http.ResponseWriter, r *http.Request) {
+	fn, name := h.functionForCodeSigning(w, r)
+	if fn == nil {
+		return
+	}
+
+	var req putFunctionCodeSigningConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument("invalid request body"))
+		return
+	}
+	if !codeSigningConfigARNPattern.MatchString(req.CodeSigningConfigArn) {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code:       "InvalidParameterValueException",
+			Message:    "Invalid code signing config arn: " + req.CodeSigningConfigArn,
+			HTTPStatus: http.StatusBadRequest,
+		})
+		return
+	}
+
+	fn.CodeSigningConfigArn = req.CodeSigningConfigArn
+	if aerr := h.ls.putFunction(r.Context(), fn); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	writeCodeSigningConfig(w, r, fn.CodeSigningConfigArn, name)
+}
+
+// DeleteFunctionCodeSigningConfig handles DELETE /2020-06-30/functions/{name}/code-signing-config.
+// Returns 204 with an empty body, and is idempotent: removing an association
+// that is not there is not an error.
+func (h *Handler) DeleteFunctionCodeSigningConfig(w http.ResponseWriter, r *http.Request) {
+	fn, _ := h.functionForCodeSigning(w, r)
+	if fn == nil {
+		return
+	}
+	if fn.CodeSigningConfigArn != "" {
+		fn.CodeSigningConfigArn = ""
+		if aerr := h.ls.putFunction(r.Context(), fn); aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // GetFunction handles GET /2015-03-31/functions/{name}.
