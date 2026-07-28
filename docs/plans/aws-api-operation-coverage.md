@@ -88,6 +88,12 @@ This avoids a generated chi route for every operation, keeps startup and registr
 
 The shared fallback selects `protocol.NotImplementedJSON`, `protocol.NotImplementedQueryXML`, `protocol.NotImplementedEC2QueryXML`, or `protocol.NotImplementedXML` from generated metadata. Keep a tiny explicit error-profile override table only where a Smithy protocol trait cannot select the real AWS envelope.
 
+Until that metadata exists, an unclaimed Query action with no `Version` cannot
+safely select the EC2-family envelope: for example, `DescribeInstances` falls
+back to the common Query `ErrorResponse` envelope. A2 must use generated
+service/protocol ownership to select `NotImplementedEC2QueryXML` only when the
+request has sufficient EC2 evidence.
+
 ### 4.4 Status stays separate
 
 The manifest declares **what AWS exposes**. `capabilities_dev.go` declares **what Overcast does**: unsupported, inert, partial, WIP, or supported.
