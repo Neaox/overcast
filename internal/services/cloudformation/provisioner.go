@@ -453,6 +453,14 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 		p.publishResourceEvent(ctx, events.CFNResourceProvisioned, stack.StackName, logicalID, res.Type, physID)
 	}
 
+	// Cleanup phase. Every resource is updated; what remains is removing what
+	// the update superseded. CloudFormation reports this separately rather than
+	// folding it into UPDATE_IN_PROGRESS, so a stack held up by a resource that
+	// will not delete is visibly stuck here rather than looking mid-update.
+	stack.Status = StatusUpdateCompleteCleanupInProgress
+	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack",
+		StatusUpdateCompleteCleanupInProgress, "")
+
 	// Delete removed resources, honouring DeletionPolicy=Retain.
 	for logicalID, old := range existing {
 		if old.shouldRetainOnDelete() {
@@ -468,10 +476,9 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 		p.publishResourceEvent(ctx, events.CFNResourceDeleted, stack.StackName, logicalID, old.Type, old.PhysicalID)
 	}
 
-	// Cleanup phase. Every resource updated successfully, so the originals the
-	// replacements superseded are no longer needed — this is the point real
-	// CloudFormation deletes them, after the update is committed rather than
-	// during it, so that a failure at any earlier point could still roll back.
+	// The originals that replacements superseded, deleted here rather than at
+	// the point of replacement so that a failure anywhere earlier could still
+	// roll back to them.
 	for _, s := range superseded {
 		p.recordEvent(ctx, stack, s.LogicalID, s.PhysicalID, s.Type, ResourceDeleteInProgress, "")
 		p.deleteResource(ctx, s.LogicalID, s.Type, s.PhysicalID, rCtx)
@@ -949,6 +956,12 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 	stack.StatusReason = reason
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusUpdateRollbackInProgress, reason)
 	p.publishStackEvent(ctx, events.CFNStackFailed, stack)
+
+	// Removing what the failed update created is its own reported phase, just
+	// as it is on the success path.
+	stack.Status = StatusUpdateRollbackCompleteCleanupInProgress
+	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack",
+		StatusUpdateRollbackCompleteCleanupInProgress, reason)
 
 	rollbackFailed := false
 	// Track resources that were created during the failed update but could

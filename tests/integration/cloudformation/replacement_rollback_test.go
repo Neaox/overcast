@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -121,6 +122,47 @@ func TestUpdateStack_successfulReplacementDeletesTheOriginal(t *testing.T) {
 	// deferring the delete must not mean forgetting it
 	assertQueueExists(t, srv, stackName+"-v2", true)
 	assertQueueExists(t, srv, stackName+"-v1", false)
+}
+
+// TestUpdateStack_reportsTheCleanupPhase pins the status sequence AWS exposes.
+// An update does not go straight from UPDATE_IN_PROGRESS to UPDATE_COMPLETE:
+// removing what the update superseded is a separate, observable phase, which
+// is why a stack blocked by a resource that will not delete is visibly stuck
+// in UPDATE_COMPLETE_CLEANUP_IN_PROGRESS rather than looking mid-update.
+func TestUpdateStack_reportsTheCleanupPhase(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	stackName := "cleanup-phase"
+	create := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {fmt.Sprintf(replaceInitialTemplate, stackName)},
+	})
+	defer create.Body.Close()
+	helpers.AssertStatus(t, create, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+
+	// When: an update replaces the queue
+	update := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName": {stackName},
+		"TemplateBody": {`{
+  "Resources": {
+    "Queue": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {"QueueName": "` + stackName + `-v2"}
+    }
+  }
+}`},
+	})
+	defer update.Body.Close()
+	helpers.AssertStatus(t, update, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "UPDATE_COMPLETE")
+
+	// Then: the cleanup phase was reported on the way there
+	eventsResp := cfnQuery(t, srv, "DescribeStackEvents", url.Values{"StackName": {stackName}})
+	defer eventsResp.Body.Close()
+	statuses := describeStackEventStatuses(t, eventsResp)
+	if !slices.Contains(statuses, "UPDATE_COMPLETE_CLEANUP_IN_PROGRESS") {
+		t.Errorf("stack events never reported UPDATE_COMPLETE_CLEANUP_IN_PROGRESS; got %v", statuses)
+	}
 }
 
 // assertQueueExists checks the queue's presence through the SQS API, i.e. the
