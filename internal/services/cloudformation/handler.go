@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -1296,7 +1297,10 @@ func (h *Handler) reachableURL(ctx context.Context, value string) string {
 	}
 	m, ok := middleware.ParseHostRoute(u.Host)
 	if !ok {
-		return value
+		// Not a host-routed endpoint. It may still be one of Overcast's own
+		// path-style URLs — an SQS queue URL is `http://<origin>/<account>/<name>`,
+		// whose host is a plain address rather than a routing label.
+		return h.reoriginOwnURL(ctx, u, value)
 	}
 	rehosted := serviceutil.HostRoutedURLFromBase(h.clientBaseURL(ctx), m.Label, m.ID, m.Region, u.Path)
 	if rehosted == "" {
@@ -1306,6 +1310,62 @@ func (h *Handler) reachableURL(ctx context.Context, value string) string {
 		rehosted += "?" + u.RawQuery
 	}
 	return rehosted
+}
+
+// reoriginOwnURL re-mints a stack output that names Overcast on the origin the
+// caller reached it on, leaving the path and query alone.
+//
+// Resource handlers build these URLs while provisioning, from the configured
+// origin — provisioning runs through internal requests, so there is no caller
+// to derive one from. That value is then stored and handed to every later
+// caller, including ones that reached Overcast somewhere else entirely: a
+// container published on a different host port, or over a different hostname.
+// Correcting it here rather than at provisioning time is what makes it right
+// for each caller rather than only for the one who deployed.
+//
+// Only an origin that is recognisably Overcast's own is claimed. Anything else
+// — a third-party endpoint a template happened to output, an S3 URL, an ECR
+// URI — is left exactly as the user wrote it, the same restraint the
+// host-routed branch shows.
+func (h *Handler) reoriginOwnURL(ctx context.Context, u *url.URL, value string) string {
+	base := h.clientBaseURL(ctx)
+	if base == "" {
+		return value
+	}
+	target, err := url.Parse(base)
+	if err != nil || target.Host == "" || target.Host == u.Host {
+		return value
+	}
+	if !h.isOwnOrigin(u) {
+		return value
+	}
+	u.Scheme = target.Scheme
+	u.Host = target.Host
+	return u.String()
+}
+
+// isOwnOrigin reports whether a URL's origin is one Overcast answers on: the
+// configured external base, or the loopback forms of its own listen port.
+//
+// Loopback counts because a URL minted for one caller — or by a host-side
+// deploy — routinely names localhost, and inside a container or from another
+// host that is not Overcast at all.
+func (h *Handler) isOwnOrigin(u *url.URL) bool {
+	if h.cfg == nil {
+		return false
+	}
+	if configured, err := url.Parse(h.cfg.ExternalBaseURL()); err == nil && configured.Host == u.Host {
+		return true
+	}
+	port := u.Port()
+	if port == "" || port != strconv.Itoa(h.cfg.Port) {
+		return false
+	}
+	switch strings.ToLower(u.Hostname()) {
+	case "localhost", "127.0.0.1", "0.0.0.0", "::1":
+		return true
+	}
+	return false
 }
 
 func (h *Handler) toStackXML(ctx context.Context, s *Stack) stackXML {
