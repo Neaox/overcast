@@ -133,6 +133,26 @@ API stacks, and Events API (v2) with channel namespace CRUD.
   with publish/subscribe auth modes and optional code handlers. Namespaces are
   cascade-deleted when their parent Event API is removed.
 
+## Endpoint URLs
+
+A GraphQL API is reachable two ways, with identical behaviour:
+
+- **Path-style** — `POST {base}/_appsync/{apiId}/graphql`, and the realtime
+  WebSocket at `{base}/_appsync/{apiId}/realtime`. This is what `uris` reports,
+  because it resolves with no DNS setup at all.
+- **Host-routed** — `http://{apiId}.appsync-api.{region}.{base}/graphql`, and
+  `http://{apiId}.appsync-realtime-api.{region}.{base}` for subscriptions.
+  These are the hostnames real AWS serves, and the realtime one is what Amplify
+  derives by substituting into the GraphQL URL, so both route.
+
+The `dns` map reports the host-routed names on the hostname you reached
+Overcast on, not `amazonaws.com`. `dns.REALTIME` deliberately returns the same
+host as `dns.GRAPHQL`: Overcast serves both endpoints from one place, so that
+is the name that actually routes.
+
+Set `OVERCAST_HOSTNAME=localhost.overcast.sh` so the host-routed forms resolve
+on every OS — see [networking.md](../networking.md).
+
 <!-- BEGIN overcast:capabilities -->
 
 ## Summary

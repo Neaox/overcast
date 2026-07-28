@@ -162,10 +162,16 @@ Each is documented here so you know what to expect.
 overcast defaults to path-style S3 URLs (`http://localhost:4566/bucket/key`) rather
 than virtual-hosted style (`http://bucket.localhost:4566/key`).
 
-This matches what most local dev setups need. Virtual-hosted style requires DNS
-resolution of `*.localhost` which doesn't work without extra configuration.
+Virtual-hosted style **is** supported — both `bucket.s3.<base>` and the bare
+`bucket.<base>` — and unlike LocalStack it does not require an `s3.` prefix on
+your endpoint. What it does need is for the bucket subdomain to resolve, which
+`*.localhost` does on Linux and macOS but not on Windows. Setting
+`OVERCAST_HOSTNAME=localhost.overcast.sh` makes it work on every OS; your
+existing `localhost.localstack.cloud` setting is also recognised and keeps
+working unchanged.
 
-**Impact:** If your SDK is configured for virtual-hosted style, set:
+**Impact:** you only need the setting below if you would rather force
+path-style than configure a hostname:
 
 ```bash
 # AWS CLI

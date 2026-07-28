@@ -377,7 +377,7 @@ func (h *Handler) describeStacksTyped(ctx context.Context, req *describeStacksRe
 		}
 		return &describeStacksResp{
 			Xmlns:  cfnXMLNS,
-			Result: describeStacksResult{Stacks: []stackXML{toStackXML(stack)}},
+			Result: describeStacksResult{Stacks: []stackXML{h.toStackXML(ctx, stack)}},
 			Meta:   metaFromCFNCtx(ctx),
 		}, nil
 	}
@@ -389,7 +389,7 @@ func (h *Handler) describeStacksTyped(ctx context.Context, req *describeStacksRe
 	var items []stackXML
 	for _, s := range stacks {
 		if s.Status != StatusDeleteComplete {
-			items = append(items, toStackXML(s))
+			items = append(items, h.toStackXML(ctx, s))
 		}
 	}
 	return &describeStacksResp{

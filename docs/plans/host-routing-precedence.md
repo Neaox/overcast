@@ -477,20 +477,94 @@ collapses into a call to it. This is the DRY requirement from
 drift structurally impossible: a URL Overcast hands out is, by construction,
 one the grammar in §4 can route back.
 
-### Hazard: `AWS::URLSuffix` is not only used for URLs
+### H4 audit result: the hazard does not materialise
 
-Flipping `AWS::URLSuffix` to the configured base is what makes CDK's
-`api.url` output resolve locally, since CDK composes it from `AWS::Region` +
-`AWS::URLSuffix`. But templates also use the same pseudo-parameter to build
-**IAM service principals** (`Fn::Join ["", ["states.", {"Ref": "AWS::URLSuffix"}]]`
-→ `states.amazonaws.com`). A blanket substitution would silently produce
-`states.localhost.overcast.sh` as a principal.
+An earlier draft of this section warned that flipping `AWS::URLSuffix` to the
+configured base would corrupt IAM service principals, since templates build
+them as `Fn::Join ["", ["states.", {"Ref": "AWS::URLSuffix"}]]`. **Audited
+2026-07-28 against real synthesised output — that does not happen.**
 
-This item therefore needs its own investigation and its own failing tests
-before any change — audit real CDK-synthesised templates for every
-`AWS::URLSuffix` use site, and only substitute where the result is a URL host.
-It is sequenced last for that reason and must not be bundled with the
-mechanical URL-minting changes above.
+Method: `npx cdk synth` on `compat/suites/cdk` (aws-cdk-lib 2.220.0, CDK CLI
+2.1133.0), which builds S3, SQS, SNS, Lambda, IAM roles and managed policies,
+API Gateway REST, EventBridge, Step Functions and a nested stack, then walked
+the resulting template for every `{"Ref": "AWS::URLSuffix"}` node.
+
+**Exactly two use sites, both URL hosts:**
+
+| Path in template | Value |
+| --- | --- |
+| `Outputs.CompatApiEndpoint.Value` | `https://{apiId}.execute-api.us-east-1.{URLSuffix}/{stage}/` |
+| `Resources.…NestedStackResource.Properties.TemplateURL` | the nested stack's template URL on S3 |
+
+**Zero service-principal use sites.** CDK v2 resolves principals to literals
+through its region-info database — the template contains
+`"Service": "lambda.amazonaws.com"`, `"states.amazonaws.com"`,
+`"apigateway.amazonaws.com"`, `"events.amazonaws.com"` and
+`"sns.amazonaws.com"` as plain strings, never as a join over the suffix.
+
+Two things further reduce the residual risk:
+
+- The `TemplateURL` site is not merely safe to substitute, it is **currently
+  broken**: it resolves to `https://s3.us-east-1.amazonaws.com/…`, which
+  Overcast cannot fetch, so nested stacks depend on this being substituted.
+- `EnforceIAM` defaults to false ([config.go](../../internal/config/config.go)),
+  so even a mis-substituted principal is inert unless the user opted into
+  enforcement.
+
+**Residual risk, accepted and documented rather than engineered around:** a
+hand-written template, an older CDK, or a non-`aws` partition could still build
+a principal from the suffix. That is not reachable from CDK output today, and
+IAM is off by default. Revisit if `EnforceIAM` ever becomes the default.
+
+### Why substitution is still the wrong lever
+
+Widening the audit (below) removed the hazard, but substitution cannot deliver
+the goal either. CDK emits the scheme as a **literal** and no port:
+
+```json
+["https://", {"Ref":"Api"}, ".execute-api.us-east-1.", {"Ref":"AWS::URLSuffix"}, "/", ...]
+```
+
+`AWS::URLSuffix` cannot carry a scheme or a port, so no value for it produces a
+dialable URL — and one containing `:4566` would make the pseudo-parameter lie
+about what it is. `AWS::URLSuffix` therefore stays `amazonaws.com`, faithful to
+AWS at the template level.
+
+**The correction belongs at output emission instead**, where Overcast has
+already assembled the finished string and still holds the request context:
+`Handler.reachableURL` parses with `middleware.ParseHostRoute` — the same
+grammar that routes inbound — and re-mints through
+`serviceutil.HostRoutedURLFromBase`, the helper every service already uses. The
+grammar is stated once and applied in both directions; scheme and port come
+from the caller's own origin; and only a registered label is claimed, so ECR
+URIs, S3 URLs, ARNs and plain strings pass through untouched.
+
+### Widened audit (all three partitions)
+
+`npx cdk synth` over a fixture covering IAM roles with three `ServicePrincipal`
+forms, ECR, S3 website + virtual-hosted URLs, CloudFront, Cognito hosted UI and
+API Gateway, synthesised for `us-east-1`, **`cn-north-1`** and region-agnostic:
+
+| Stack | `AWS::URLSuffix` sites | Service principals |
+| --- | --- | --- |
+| `AuditAws` | 3 — all `Outputs` (`RepoUri`, `ApiEndpoint`, `ApiUrl`) | all literal |
+| `AuditCn` | 3 — same | **all literal** |
+| `AuditAgnostic` | 3 — same | all literal |
+
+Zero principal use sites in any partition, including with an explicit `region`
+on the principal. S3 website, CloudFront and Cognito URLs never touch the
+suffix — they come from `Fn::GetAtt` on real attributes.
+
+### Correction: `TemplateURL` was never broken
+
+An earlier draft called the nested-stack `TemplateURL` a latent bug because it
+resolves to `https://s3.us-east-1.amazonaws.com/...`. **It is not.** Both
+fetchers — `resolveTemplateBody`
+([handler.go](../../internal/services/cloudformation/handler.go)) and
+`nestedStackHandler.fetchTemplate`
+([provisioner.go](../../internal/services/cloudformation/provisioner.go)) —
+parse the URL and dispatch `u.Path` internally through the router, discarding
+the host. Overcast never dials it, and the nested-stack tests pass.
 
 ## 9. Behaviour changes
 
@@ -543,7 +617,7 @@ per the shipping rule in [aws-api-operation-coverage.md](./aws-api-operation-cov
 | H3 | Canonical URL minting per §8: `serviceutil.HostRoutedURL`, API Gateway v2 `apiEndpoint`, AppSync `uris`/`dns`, `buildFunctionURL` collapsed onto the helper. | A minted URL, fed back as a `Host` header, reaches its own service — asserted end-to-end, not by string comparison. |
 | H4 | `AWS::URLSuffix` audit and scoped substitution per §8's hazard. | Every `AWS::URLSuffix` use site in synthesised CDK templates classified as URL-host or not; IAM service principals provably unaffected. |
 | H5 | *(follow-on PR)* Manifest-derived label validation per §6. | Requires an `api-models-aws` checkout at revision `66e973ca…`. |
-| H6 | Documentation sweep per §10.1 — every doc that states which hostnames, URL shapes or bucket names Overcast supports. | No doc contradicts §4's precedence rule, §8's minted URLs, or §9.4's bucket-name rules. `make docs-index` regenerated. |
+| H6 | ✅ done | Documentation sweep per §10.1 — every doc that states which hostnames, URL shapes or bucket names Overcast supports. | No doc contradicts §4's precedence rule, §8's minted URLs, or §9.4's bucket-name rules. `make docs-index` regenerated. |
 
 H3's gate is deliberately behavioural rather than textual: asserting the minted
 string equals an expected literal would pass even if the routing grammar and
@@ -552,11 +626,13 @@ the only assertion that proves they agree.
 
 ### 10.1 H6 — documentation sweep
 
-This branch changed what Overcast accepts and what it hands back, and only
-`docs/networking.md` was brought in line (H2). Several other docs still state
-the old picture, and at least two of them are now actively wrong rather than
-merely incomplete. **No review has been done yet** — the list below is a survey
-of files that mention the affected claims, not a set of findings.
+**Done.** Every file below was reviewed and corrected. Two were actively wrong
+rather than merely incomplete: `cdk.md` recommended another project's domain in
+the canonical Windows fix, and `migration-from-localstack.md` claimed
+virtual-hosted style "doesn't work without extra configuration". `sdk-cli.md`
+also carried a broken anchor
+(`#s3-asset-upload-fails-on-windows-or-macos`; the heading is
+`#s3-asset-upload-fails-on-windows`).
 
 | File | Why it is in scope |
 | --- | --- |
