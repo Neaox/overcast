@@ -1,6 +1,6 @@
 ---
 name: bug-fix
-description: "Fix bugs in the Overcast codebase with TDD rigor, AWS fidelity, and full verification. Use when: fixing a bug, triaging a reported issue, investigating unexpected behaviour, or resolving a test failure."
+description: "Fix bugs in the Overcast codebase with TDD rigor and AWS fidelity. Use the full workflow for defects that exist on the base branch; use the streamlined current-PR path for regressions introduced by the active unmerged branch."
 compatibility: opencode
 metadata:
   audience: contributors
@@ -12,7 +12,7 @@ license: MIT
 
 # Bug Fix — Overcast
 
-Fix bugs with a strict TDD workflow that guarantees the fix is correct, complete, and does not regress. Every fix starts with a reproducing test and ends with full verification including docs, CloudFormation, and web UI.
+Fix bugs with a strict TDD workflow that guarantees the fix is correct, complete, and does not regress. Defects that exist on the base branch use the full workflow. Regressions introduced by the current unmerged branch or PR use the [streamlined current-PR workflow](#current-branchpr-regressions--streamlined-workflow), because correcting work before it ships is part of finishing that change rather than a separate compatibility project.
 
 The project's core contract is **AWS wire compatibility** — the SDK must work unmodified. Every bug fix must honour that contract. When in doubt about real AWS behaviour, follow the [escalation strategy](#aws-behaviour-verification--escalation-strategy) — don't guess, and don't jump straight to real AWS without exhausting free sources first.
 
@@ -104,7 +104,13 @@ Or for doc-verified behaviour:
 - Behaviour diverges from real AWS in a way that breaks SDK clients
 - A regression is suspected after a recent change
 
-If the bug is an AWS compatibility issue, also follow `docs/dev/compatibility/README.md` and the service tracker in `docs/dev/compatibility/services/<service>.yaml`. Examples include wrong wire shape, wrong status code, wrong error code, missing documented validation, wrong identifier/ARN/URL format, incorrect pagination or idempotency, state transition mismatch, or behavior that only fails under a documented resource configuration such as Cognito `UsernameAttributes` or SQS long polling.
+Choose the workflow before doing any work:
+
+- **Full bug-fix workflow:** the defect exists on the PR's base branch, in a released version, or independently of the active branch.
+- **Streamlined current-PR workflow:** the defect, regression, test failure, or performance problem was introduced by changes on the active unmerged branch.
+- **When uncertain:** inspect the branch diff and history. If that does not establish provenance cheaply, use the full workflow; do not create a temporary worktree or perform an expensive base-branch reproduction solely to classify an obvious review finding.
+
+For a **full-workflow** AWS compatibility bug, also follow `docs/dev/compatibility/README.md` and the service tracker in `docs/dev/compatibility/services/<service>.yaml`. Examples include wrong wire shape, wrong status code, wrong error code, missing documented validation, wrong identifier/ARN/URL format, incorrect pagination or idempotency, state transition mismatch, or behavior that only fails under a documented resource configuration such as Cognito `UsernameAttributes` or SQS long polling. A current-PR regression instead updates the original branch's tests and compatibility evidence unless it escalates to the full workflow below.
 
 Do NOT use this for:
 
@@ -114,7 +120,28 @@ Do NOT use this for:
 
 ---
 
+## Current Branch/PR Regressions — Streamlined Workflow
+
+Use this path for review findings and regressions caused by the active unmerged branch. The goal is to preserve TDD and verification without treating unfinished work as a separately released bug.
+
+1. **Confirm scope cheaply.** Use the review evidence, branch diff, or commit history to establish that the active branch introduced the issue. Do not require a separate compatibility audit when the original branch already established the AWS contract.
+2. **Close the coverage gap before the fix.** A regression normally means the branch is missing a test or test case. Add the smallest focused reproducer first, or confirm that an existing test already fails for the exact reported behaviour.
+   - Behaviour regression: add the missing focused test case and confirm it fails for the reported reason. If an existing test already provides that exact signal, do not duplicate it.
+   - Performance regression: retain or add a representative benchmark and record comparable before/after conditions.
+   - Pure DRY, naming, comment, or dead-code review finding: no artificial failing test is required; rely on the existing behavioural tests and static checks.
+3. **Fix and refactor in the original change.** Keep the implementation coherent with the feature under review. Amend the existing commit when the branch is owned and unshared; otherwise add one focused review-fix commit.
+4. **Run proportional verification.** At minimum, format changed files and run the focused test or benchmark plus tests and vet for affected packages. Before updating the PR, run the branch's existing required checks.
+5. **Fold documentation into the original story.** Correct the existing plan, PR body, tests, and `[Unreleased]` entry where needed. Do not add a second changelog bullet or compatibility-tracker incident for behaviour that never shipped.
+
+Escalate to the full bug-fix workflow if investigation shows that the defect also exists on the base branch, the fix changes an AWS contract beyond the active PR's established scope, or it expands into independently shippable service, storage, CloudFormation, or UI behaviour.
+
+The streamlined path does **not** relax these invariants: AWS-visible behaviour still needs evidence, behavioural fixes still need a pre-fix reproducer, real AWS still requires permission, and the branch must finish with no regressions or broken checks.
+
+---
+
 ## Bug Fix Workflow
+
+This full workflow applies to defects that exist independently of the active unmerged branch. For regressions introduced by the current branch, use the streamlined workflow above.
 
 ### Phase 1 — Triage & Understand
 
@@ -381,7 +408,7 @@ make lint
 
 ## What Agents Must NOT Do During Bug Fixes
 
-- Never fix a bug without a reproducing test first — TDD is mandatory
+- Never fix an existing/base-branch behavioural bug without a reproducing test first — TDD is mandatory. For current-PR regressions and non-behavioural review findings, follow the streamlined workflow above.
 - Never spin up real AWS resources without explicit user permission — even in autopilot mode. Stop and ask at tier 4 of the escalation strategy. The user must consent.
 - Never return bare `404` — unimplemented operations must return `501`
 - Never change wire formats without tests — request/response shapes are the compatibility contract
