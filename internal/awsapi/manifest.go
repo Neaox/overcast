@@ -47,3 +47,31 @@ type Operation struct {
 	HTTPMethod   string
 	URI          string
 }
+
+// HasOperation reports whether the immutable model corpus contains an
+// operation for the established Overcast service key. It is intentionally a
+// build-tool validation helper rather than a router lookup: runtime routing
+// uses generated indexes, while capgen uses this complete corpus to catch
+// capability declarations that no longer map to AWS.
+func HasOperation(service, name string) bool {
+	for _, op := range manifest {
+		if overcastService(op.Service) == service && op.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// WalkOperations visits immutable copies of every modeled operation. It is
+// intended for build tools such as stub-report; request routing must use the
+// generated indexes instead of scanning this complete corpus.
+func WalkOperations(visit func(Operation) bool) {
+	for _, op := range manifest {
+		if !visit(op) {
+			return
+		}
+	}
+}
+
+// ServiceKey maps a modeled service identity to Overcast's established key.
+func ServiceKey(modelService string) string { return overcastService(modelService) }

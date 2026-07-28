@@ -24,6 +24,7 @@ const (
 type Claim struct {
 	Service      string
 	ModelService string
+	SigningName  string
 	Operation    string
 	Protocol     Protocol
 	ErrorProfile ErrorProfile
@@ -89,9 +90,116 @@ func (r *Registry) ClaimQuery(version, action string) (Claim, bool) {
 	}, true
 }
 
+// ClaimREST classifies a modeled REST JSON or REST XML HTTP binding. Literal
+// edges take precedence over labels, matching Smithy's URI binding semantics.
+// It walks generated static tables only: no model parsing, map construction,
+// or whole-manifest scan occurs on the request path.
+func (r *Registry) ClaimREST(method, path string) (Claim, bool) {
+	if path == "" || path[0] != '/' {
+		return Claim{}, false
+	}
+
+	node, ok := restTrieMatch(0, method, path, 1)
+	if !ok {
+		return Claim{}, false
+	}
+
+	current := restTrieNodes[node]
+	for _, op := range restOperations[current.OperationStart:current.OperationEnd] {
+		if op.Method != method {
+			continue
+		}
+		profile := ErrorProfileJSON
+		if op.Protocol == ProtocolRESTXML {
+			profile = ErrorProfileXML
+		}
+		return Claim{
+			Service:      overcastService(op.ModelService),
+			ModelService: op.ModelService,
+			SigningName:  op.SigningName,
+			Operation:    op.Operation,
+			Protocol:     op.Protocol,
+			ErrorProfile: profile,
+			Ambiguous:    op.Ambiguous,
+		}, true
+	}
+	return Claim{}, false
+}
+
+// restTrieMatch walks one path without allocating a strings.Split result. A
+// Smithy greedy label can be followed by literal segments, so it tries each
+// possible number of consumed segments only after literal and simple-label
+// branches fail. That preserves URI precedence while supporting bindings such
+// as /mrap/instances/{Name+}/policy.
+func restTrieMatch(node int, method, path string, start int) (int, bool) {
+	if start == len(path) {
+		current := restTrieNodes[node]
+		for _, op := range restOperations[current.OperationStart:current.OperationEnd] {
+			if op.Method == method {
+				return node, true
+			}
+		}
+		return 0, false
+	}
+	end := strings.IndexByte(path[start:], '/')
+	if end < 0 {
+		end = len(path)
+	} else {
+		end += start
+	}
+	nextStart := end
+	if nextStart < len(path) {
+		nextStart++
+	}
+	current := restTrieNodes[node]
+	if literal := restLiteralNode(current, path[start:end]); literal >= 0 {
+		if matched, ok := restTrieMatch(literal, method, path, nextStart); ok {
+			return matched, true
+		}
+	}
+	if current.Parameter >= 0 {
+		if matched, ok := restTrieMatch(current.Parameter, method, path, nextStart); ok {
+			return matched, true
+		}
+	}
+	if current.Greedy < 0 {
+		return 0, false
+	}
+	for greedyStart := nextStart; ; {
+		if matched, ok := restTrieMatch(current.Greedy, method, path, greedyStart); ok {
+			return matched, true
+		}
+		if greedyStart == len(path) {
+			break
+		}
+		separator := strings.IndexByte(path[greedyStart:], '/')
+		if separator < 0 {
+			greedyStart = len(path)
+		} else {
+			greedyStart += separator + 1
+		}
+	}
+	return 0, false
+}
+
+func restLiteralNode(node restTrieNode, segment string) int {
+	i := sort.Search(node.LiteralEnd-node.LiteralStart, func(i int) bool {
+		return restTrieEdges[node.LiteralStart+i].Segment >= segment
+	})
+	if i == node.LiteralEnd-node.LiteralStart {
+		return -1
+	}
+	edge := restTrieEdges[node.LiteralStart+i]
+	if edge.Segment != segment {
+		return -1
+	}
+	return edge.Node
+}
+
 // Claim classifies the model-backed request forms that can be distinguished
-// without decoding an AWS JSON body or guessing at an S3 path. REST and RPC
-// bindings are deliberately added by the generated trie in A3. For an AWS
+// without decoding an AWS JSON body. REST bindings are exposed separately via
+// ClaimREST because their late fallback must preserve S3's legitimate paths.
+// For an AWS
 // Query request it calls ParseForm, which consumes the request body; callers
 // must therefore invoke it only where Query form parsing is already intended.
 func (r *Registry) Claim(req *http.Request) (Claim, bool) {

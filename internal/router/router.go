@@ -405,6 +405,11 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	var stoppers []namedStopper
 	var readiers []Readier
 	serviceByName := make(map[string]Service, len(allServices))
+	// Keep S3's deliberately broad bucket/object routes private until every
+	// non-S3 service has had an opportunity to own an explicit path. The final
+	// fallback below asks the generated REST registry about otherwise-unmatched
+	// paths before delegating to these routes.
+	s3Router := chi.NewRouter()
 
 	for _, svc := range allServices {
 		if !cfg.Services[svc.Name()] {
@@ -426,7 +431,11 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 			continue
 		}
 		serviceByName[svc.Name()] = svc
-		svc.RegisterRoutes(r)
+		if svc.Name() == "s3" {
+			svc.RegisterRoutes(s3Router)
+		} else {
+			svc.RegisterRoutes(r)
+		}
 		prof.mark("  routes: " + svc.Name())
 		if td, ok := svc.(TargetDispatcher); ok {
 			dispatchers = append(dispatchers, td)
@@ -879,6 +888,11 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// generated registry also owns modeled operations when no configured service
 	// dispatcher does, so this route is present even in a minimal S3-only setup.
 	r.Post("/", targetDispatch(dispatchers, queryDispatchers, disabledQueryDispatchers, disabledTargetPrefixes, operationRegistry))
+	// SigV4's service scope disambiguates the small number of modeled REST root
+	// bindings from S3 ListBuckets; unsigned and S3-signed root requests retain
+	// the established S3 behavior.
+	r.Get("/", restFallback(operationRegistry, s3Router))
+	r.HandleFunc("/*", restFallback(operationRegistry, s3Router))
 
 	r.NotFound(notFoundHandler)
 
@@ -1132,6 +1146,20 @@ func writeNotImplemented(w http.ResponseWriter, r *http.Request, claim awsapi.Cl
 		// Keep a JSON fallback for a malformed zero-value Claim while every
 		// declared ErrorProfile remains explicit for exhaustive checking.
 		protocol.NotImplementedJSON(w, r)
+	}
+}
+
+// restFallback owns no AWS operation itself. It is deliberately registered
+// after every explicit service route, so a modeled binding reaches it only
+// when no implementation or disabled-service route claimed the request. S3 is
+// then the sole remaining legitimate catch-all.
+func restFallback(operationRegistry *awsapi.Registry, s3Router http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if claim, ok := operationRegistry.ClaimREST(r.Method, r.URL.Path); ok && !claim.Ambiguous && claim.SigningName != "" && strings.EqualFold(middleware.ServiceFromCredential(r), claim.SigningName) {
+			writeNotImplemented(w, r, claim)
+			return
+		}
+		s3Router.ServeHTTP(w, r)
 	}
 }
 
