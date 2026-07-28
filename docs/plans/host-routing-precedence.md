@@ -279,19 +279,34 @@ remains fully usable:
 | Labelled vhost `my.execute-api.s3.localhost` | works |
 | Bare vhost `my.execute-api.localhost` | claimed by API Gateway |
 
-### Do not reject at CreateBucket
+### The limitation is currently theoretical — CreateBucket rejects all dots
 
-Real AWS accepts `my.execute-api` as a bucket name, and two of three addressing
-modes work locally. Rejecting creation would break working workflows and fail
-CDK/Terraform stacks that deploy fine against AWS — the exact fidelity
-regression this plan exists to remove. It would also not help buckets created
-before a label was added.
+An earlier draft of this plan proposed a warn-once log at `CreateBucket` for
+reserved-label names. **Dropped: it could never fire.**
 
-Instead: a **warn-once log** at `CreateBucket` when a name carries a reserved
-label as a second-or-later segment, naming the escapes. Log only, no response
-change, so the AWS wire format is untouched. Reuses the dedup machinery already
-in `warnUnrecognisedBase`
-([s3virtualhost.go:85](../../internal/middleware/s3virtualhost.go)).
+`serviceutil.BucketName` ([validation.go:78](../../internal/serviceutil/validation.go))
+restricts bucket names to lowercase letters, numbers and hyphens, so **no
+dotted bucket name can be created through Overcast's own API at all** — via S3
+directly or via CloudFormation, which dispatches through the same handler. A
+name that could collide cannot exist, so there is nothing to warn about.
+`TestCreateBucket_dottedNameIsRejected` pins this.
+
+That also means the §4 tier-B veto is currently protecting against a shape no
+Overcast-created bucket can take. It is still required: the veto is what makes
+host-routed invokes work at all, and a *client* can send any Host it likes
+regardless of what buckets exist.
+
+This is itself a deliberate divergence from real AWS, which permits dots in
+general-purpose bucket names (discouraged, because they break the
+`*.s3.<region>.amazonaws.com` wildcard certificate over HTTPS — which is why
+SDKs fall back to path-style for them). It predates this work and is already
+called out on
+`TestS3VirtualHostedStyle_DottedBucketNameHost_SplitsOnFirstDotS3`
+([s3_test.go:2770](../../tests/integration/s3/s3_test.go)). See §13.
+
+If that validator is ever relaxed to match AWS, the reserved-label warning
+becomes worth adding, and `BucketNameReservedLabel` is already implemented and
+unit-tested for it. Do not add it before then.
 
 ## 7. Performance
 
@@ -449,11 +464,13 @@ mechanical URL-minting changes above.
    bucket carrying a reserved label at segment index ≥ 1 (`my.execute-api`) —
    see §6. It was already broken before this work, just with a corrupted path
    instead of a clean host-route claim.
-3. **New diagnostic** — warn-once at `CreateBucket` for reserved-label names.
+3. **No new diagnostic.** A `CreateBucket` warning was planned and dropped —
+   see §6: dotted bucket names cannot be created at all today, so it could
+   never fire.
 
 ## 10. Phases
 
-> **Progress:** H0 and H1 complete: API Gateway v1/v2, Lambda function URLs and AppSync are covered on every resolvable base, plus a minted-URL round-trip. H2-H5 not started.
+> **Progress:** H0-H2 complete. The planned CreateBucket reserved-label warning is dropped as unreachable -- see section 6. H3-H5 not started.
 
 Each phase begins with failing tests and leaves `main` internally consistent,
 per the shipping rule in [aws-api-operation-coverage.md](./aws-api-operation-coverage.md).
@@ -462,7 +479,7 @@ per the shipping rule in [aws-api-operation-coverage.md](./aws-api-operation-cov
 | --- | --- | --- |
 | H0 | Failing tests: classifier matrix, reserved-label predicate, host-routed integration tests across all bases for apigw v1/v2, Lambda URL, AppSync; S3 positive coverage retained. Permanent benchmarks per §7. | Every new test fails for the documented reason; no existing test fails except the two in §9.2. |
 | H1 | `ClassifyHost` + `HostAddressing`; rewire `router.go`; `detectService` reads the stamped claim. | H0 green. §7 gate met: 0 allocs/op, no ns/op regression. `go vet ./...` clean. |
-| H2 | `CreateBucket` reserved-label warning; `docs/networking.md` addressing-precedence section; `hostroute.go` recipe guardrail; `make docs-index`. | `make docs-check` green. |
+| H2 | `docs/networking.md` addressing-precedence section; `hostroute.go` recipe guardrail; reserved-label integration cover; `make docs-index`. | `make docs-check` green. |
 | H3 | Canonical URL minting per §8: `serviceutil.HostRoutedURL`, API Gateway v2 `apiEndpoint`, AppSync `uris`/`dns`, `buildFunctionURL` collapsed onto the helper. | A minted URL, fed back as a `Host` header, reaches its own service — asserted end-to-end, not by string comparison. |
 | H4 | `AWS::URLSuffix` audit and scoped substitution per §8's hazard. | Every `AWS::URLSuffix` use site in synthesised CDK templates classified as URL-host or not; IAM service principals provably unaffected. |
 | H5 | *(follow-on PR)* Manifest-derived label validation per §6. | Requires an `api-models-aws` checkout at revision `66e973ca…`. |
@@ -586,3 +603,9 @@ fixture that sets an explicit `Host` should be checked against the §4 matrix.
 - Path-style AppSync URIs remain registered and supported after H3 switches the
   *advertised* `uris` to host-routed form. Removing them would be a breaking
   change for existing clients and is not proposed.
+- **Bucket names cannot contain dots** ([validation.go:78](../../internal/serviceutil/validation.go)),
+  while real AWS permits them in general-purpose buckets. Found while
+  implementing H2 (see §6). Independent of host addressing and with its own
+  blast radius across S3 validation and tests, so not folded in here. Relaxing
+  it would make the §6 limitation reachable and would be the trigger to add the
+  reserved-label warning.

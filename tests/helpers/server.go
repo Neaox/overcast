@@ -93,11 +93,12 @@ func NewTestServer(t *testing.T, opts ...Option) *TestServer {
 	t.Helper()
 
 	so := &serverOptions{cfg: defaultTestConfig()}
-	logger := zap.NewNop() // silent in tests — keep output clean
 
 	for _, opt := range opts {
 		opt(so)
 	}
+
+	logger := zap.NewNop() // silent in tests — keep output clean
 
 	// Ensure a data directory is always available for on-disk state.
 	if so.cfg.DataDir == "" {

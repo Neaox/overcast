@@ -39,12 +39,48 @@ implemented, the DNS story that makes it work locally, and the tradeoffs.
 | API Gateway (HTTP v2)     | `{apiId}.execute-api.{region}.{base}/...`         | `$default` stage: no stage segment. Named stages: `{stage}/...` prefix, resolved against your API's actual stages. |
 | Lambda function URLs      | `{urlId}.lambda-url.{region}.{base}/...`          | No path-style equivalent — this is the only way to invoke a function URL, on Overcast and on real AWS alike. See [Lambda function URLs](#lambda-function-urls) below. |
 | AppSync (GraphQL)         | `{apiId}.appsync-api.{region}.{base}/graphql`     | Also reachable at `/realtime` on the same host (Overcast colocates the GraphQL and realtime WebSocket endpoints; real AWS puts realtime on a separate `appsync-realtime-api` host). |
-| S3 (virtual-hosted style) | `{bucket}.s3[.{region}].{base}/...`               | Landing separately from the routing work described here — see the S3 section of [sdk-cli.md](./sdk-cli.md#s3-path-style-addressing) and [cdk.md](./cdk.md#s3-asset-upload-fails-on-windows) for current S3 virtual-hosted-style support. |
+| S3 (virtual-hosted style) | `{bucket}.s3[.{region}].{base}/...` or `{bucket}.{base}/...` | Both forms are supported. The second is what an AWS SDK emits against a custom endpoint with path-style disabled, and the only form CDK's asset publisher uses. See [sdk-cli.md](./sdk-cli.md#s3-path-style-addressing) and [cdk.md](./cdk.md#s3-asset-upload-fails-on-windows). |
 
 Every Host-routed request is rewritten internally onto the same handlers
 path-style requests use, so behavior (authorizers, stage variables,
 integration dispatch, event publishing) is identical either way — pick
 whichever addressing style your client/SDK produces.
+
+### How Overcast decides who owns a Host
+
+S3 virtual-hosted addressing and the host-routed services above share one
+hostname space, so Overcast resolves them with a single rule, applied in order:
+
+1. **`{bucket}.s3.{...}` / `{bucket}.s3-{region}.{...}` → S3.** The bucket is
+   everything before the first `.s3.`, so bucket names containing dots stay
+   addressable here.
+2. **`{bucket}.{base}` → S3**, where `{base}` is `localhost`,
+   `localhost.overcast.sh`, `localhost.localstack.cloud`, or your
+   `OVERCAST_HOSTNAME`. Exception: if the part in front of the base carries a
+   service label (`execute-api`, `lambda-url`, `appsync-api`) as its second or
+   later dot-segment, it is a service address, not a bucket — rule 3 takes it.
+3. **`{id}.{label}[.{region}].{base}` → the owning service**, for the labels in
+   the table above.
+4. **Anything else stays path-style** and reaches S3, which is the emulator's
+   catch-all.
+
+The order is fixed by this rule, not by internal configuration, so the same
+Host always resolves the same way.
+
+> **Reserved service labels.** A bucket name whose **second or later**
+> dot-segment is `execute-api`, `lambda-url`, or `appsync-api` cannot be
+> addressed by rule 2 — `my.execute-api.localhost` is an API Gateway invoke.
+> Use path-style (`localhost:4566/my.execute-api/key`) or the explicit form
+> (`my.execute-api.s3.localhost`), both of which work.
+>
+> A bucket named *exactly* like a label is unaffected: `execute-api.localhost`
+> is the bucket `execute-api`, because a host-routed address always has a
+> non-empty resource ID in front of the label.
+>
+> In practice this is currently unreachable anyway — Overcast's `CreateBucket`
+> rejects dots in bucket names entirely, so no bucket that could collide can be
+> created. Real AWS does permit them, so the rule is documented for when that
+> validation is relaxed.
 
 `{base}` is whatever hostname the request actually arrived on — Overcast
 never hardcodes a domain. Point requests at `localhost`, an
