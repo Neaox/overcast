@@ -72,7 +72,8 @@ public final class Main {
                 new RdsGroup(clients),
                 new StepFunctionsGroup(clients),
                 new WafGroup(clients),
-                new ShieldGroup(clients)
+                new ShieldGroup(clients),
+                new ElastiCacheGroup(clients)
         );
 
         for (ServiceGroup sg : serviceGroups) {

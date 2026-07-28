@@ -26,12 +26,17 @@ func EC2(c *clients.Clients) ServiceGroup {
 			"TerminateInstances":            g.TerminateInstances,
 			"CreateVpc":                     g.CreateVpc,
 			"DescribeVpcs":                  g.DescribeVpcs,
+			"CreateVpnGateway":              g.CreateVpnGateway,
+			"AttachVpnGateway":              g.AttachVpnGateway,
+			"DescribeVpnGateways":           g.DescribeVpnGateways,
 			"CreateSubnet":                  g.CreateSubnet,
 			"DescribeSubnets":               g.DescribeSubnets,
 			"CreateSecurityGroup":           g.CreateSecurityGroup,
 			"DeleteSecurityGroup":           g.DeleteSecurityGroup,
 			"CreateInternetGateway":         g.CreateInternetGateway,
 			"AttachInternetGateway":         g.AttachInternetGateway,
+			"DetachVpnGateway":              g.DetachVpnGateway,
+			"DeleteVpnGateway":              g.DeleteVpnGateway,
 			"DeleteSubnet":                  g.DeleteSubnet,
 			"DeleteVpc":                     g.DeleteVpc,
 			"AuthorizeSecurityGroupIngress": g.AuthorizeSecurityGroupIngress,
@@ -80,6 +85,12 @@ func (g *ec2Group) teardownVPC(ctx context.Context, t *harness.TestContext) erro
 			g.cl().DetachInternetGateway(ctx, &ec2.DetachInternetGatewayInput{InternetGatewayId: aws.String(igwID), VpcId: aws.String(vpcID)}) //nolint:errcheck
 		}
 		g.cl().DeleteInternetGateway(ctx, &ec2.DeleteInternetGatewayInput{InternetGatewayId: aws.String(igwID)}) //nolint:errcheck
+	}
+	if vpnGatewayID := t.GetString("ec2_vpn_gateway_id"); vpnGatewayID != "" {
+		if vpcID := t.GetString("ec2_vpc_id"); vpcID != "" {
+			g.cl().DetachVpnGateway(ctx, &ec2.DetachVpnGatewayInput{VpcId: aws.String(vpcID), VpnGatewayId: aws.String(vpnGatewayID)}) //nolint:errcheck
+		}
+		g.cl().DeleteVpnGateway(ctx, &ec2.DeleteVpnGatewayInput{VpnGatewayId: aws.String(vpnGatewayID)}) //nolint:errcheck
 	}
 	if subnetID := t.GetString("ec2_subnet_id"); subnetID != "" {
 		g.cl().DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: aws.String(subnetID)}) //nolint:errcheck
@@ -332,6 +343,92 @@ func (g *ec2Group) AttachInternetGateway(ctx context.Context, t *harness.TestCon
 	_, err := g.cl().AttachInternetGateway(ctx, &ec2.AttachInternetGatewayInput{
 		InternetGatewayId: aws.String(igwID),
 		VpcId:             aws.String(vpcID),
+	})
+	return err
+}
+
+func (g *ec2Group) CreateVpnGateway(ctx context.Context, t *harness.TestContext) error {
+	resp, err := g.cl().CreateVpnGateway(ctx, &ec2.CreateVpnGatewayInput{
+		Type:          ec2types.GatewayTypeIpsec1,
+		AmazonSideAsn: aws.Int64(65001),
+	})
+	if err != nil {
+		return err
+	}
+	if resp.VpnGateway == nil || resp.VpnGateway.VpnGatewayId == nil {
+		return fmt.Errorf("CreateVpnGateway: missing VpnGatewayId")
+	}
+	t.Set("ec2_vpn_gateway_id", *resp.VpnGateway.VpnGatewayId)
+	return nil
+}
+
+func (g *ec2Group) AttachVpnGateway(ctx context.Context, t *harness.TestContext) error {
+	vpcID := t.GetString("ec2_vpc_id")
+	vpnGatewayID := t.GetString("ec2_vpn_gateway_id")
+	if vpcID == "" {
+		return fmt.Errorf("AttachVpnGateway: no VPC from CreateVpc")
+	}
+	if vpnGatewayID == "" {
+		return fmt.Errorf("AttachVpnGateway: no gateway from CreateVpnGateway")
+	}
+	resp, err := g.cl().AttachVpnGateway(ctx, &ec2.AttachVpnGatewayInput{
+		VpcId:        aws.String(vpcID),
+		VpnGatewayId: aws.String(vpnGatewayID),
+	})
+	if err != nil {
+		return err
+	}
+	if resp.VpcAttachment == nil || resp.VpcAttachment.VpcId == nil || *resp.VpcAttachment.VpcId != vpcID {
+		return fmt.Errorf("AttachVpnGateway: VpcAttachment VpcId mismatch")
+	}
+	return nil
+}
+
+func (g *ec2Group) DescribeVpnGateways(ctx context.Context, t *harness.TestContext) error {
+	vpcID := t.GetString("ec2_vpc_id")
+	vpnGatewayID := t.GetString("ec2_vpn_gateway_id")
+	if vpcID == "" {
+		return fmt.Errorf("DescribeVpnGateways: no VPC from CreateVpc")
+	}
+	if vpnGatewayID == "" {
+		return fmt.Errorf("DescribeVpnGateways: no gateway from CreateVpnGateway")
+	}
+	resp, err := g.cl().DescribeVpnGateways(ctx, &ec2.DescribeVpnGatewaysInput{
+		Filters: []ec2types.Filter{
+			{Name: aws.String("attachment.vpc-id"), Values: []string{vpcID}},
+			{Name: aws.String("attachment.state"), Values: []string{"attached"}},
+			{Name: aws.String("state"), Values: []string{"available"}},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if len(resp.VpnGateways) != 1 {
+		return fmt.Errorf("DescribeVpnGateways: expected one VPN gateway, got %d", len(resp.VpnGateways))
+	}
+	return nil
+}
+
+func (g *ec2Group) DetachVpnGateway(ctx context.Context, t *harness.TestContext) error {
+	vpcID := t.GetString("ec2_vpc_id")
+	vpnGatewayID := t.GetString("ec2_vpn_gateway_id")
+	if vpcID == "" || vpnGatewayID == "" {
+		return nil
+	}
+	_, err := g.cl().DetachVpnGateway(ctx, &ec2.DetachVpnGatewayInput{
+		VpcId:        aws.String(vpcID),
+		VpnGatewayId: aws.String(vpnGatewayID),
+	})
+	return err
+}
+
+func (g *ec2Group) DeleteVpnGateway(ctx context.Context, t *harness.TestContext) error {
+	vpnGatewayID := t.GetString("ec2_vpn_gateway_id")
+	if vpnGatewayID == "" {
+		return nil
+	}
+	_, err := g.cl().DeleteVpnGateway(ctx, &ec2.DeleteVpnGatewayInput{
+		VpnGatewayId: aws.String(vpnGatewayID),
 	})
 	return err
 }
