@@ -143,6 +143,18 @@ jobs:
             -source-revision "$PINNED_REVISION" \
             -inventory-output "$RUNNER_TEMP/baseline-inventory.json"
 
+          # The committed manifest must already be faithful to the revision it
+          # records, or this refresh would carry that drift silently forward.
+          # This is the only genuine staleness check in the run: the -check that
+          # aws-models-check performs below compares the manifest against the
+          # revision it was just generated from, so it can only prove
+          # determinism.
+          go run ./cmd/awsmodelgen \
+            -models "$MODEL_CHECKOUT/models" \
+            -output internal/awsapi/manifest.gen.go \
+            -source-revision "$PINNED_REVISION" \
+            -check
+
           git -C "$MODEL_CHECKOUT" checkout --detach "$LATEST_REVISION"
           model_date="$(git -C "$MODEL_CHECKOUT" show -s --format=%cs "$LATEST_REVISION")"
           go run ./cmd/awsmodelgen \

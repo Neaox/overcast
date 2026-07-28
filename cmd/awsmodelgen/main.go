@@ -79,7 +79,7 @@ func main() {
 		}
 	}
 	if *versionFile != "" {
-		if err := updateModelVersion(*versionFile, *revision, *modelDate); err != nil {
+		if err := updateModelVersion(*versionFile, *revision, *modelDate, ManifestDigest(contents)); err != nil {
 			fmt.Fprintf(os.Stderr, "awsmodelgen: %v\n", err)
 			os.Exit(1)
 		}

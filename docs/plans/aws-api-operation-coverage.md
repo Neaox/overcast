@@ -334,10 +334,22 @@ Starting in A4, every normal PR runs a no-network `aws-models-check` target
 that validates the committed generator fixtures, immutable indexes, collision
 metadata, capability alignment, protocol envelopes, router regressions, and
 generated no-S3-ownership-gap corpus. It deliberately does not fetch models.
+It also verifies the committed manifest against the `manifest-sha256` recorded
+in `models/aws/VERSION`, which closes the remaining offline gap: proving the
+manifest matches *upstream* needs the corpus, but proving it is still the
+generator's own output does not, so a hand-edit or a partial merge fails on an
+ordinary pull request.
+
 A5 supplies the verified upstream checkout from its cache and invokes that same
 target with `AWS_MODELS_DIR` and `AWS_MODELS_REVISION`, enabling full
 regeneration-and-diff validation. Contributors can invoke the identical path
 with any local checkout at the pinned revision.
+
+Note what each check can and cannot prove. Inside the refresh workflow the
+regeneration diff runs against the revision the manifest was just generated
+from, so it asserts determinism only. The staleness assertion is a separate,
+earlier step that regenerates at the *pinned* revision and compares against the
+committed manifest, so a refresh cannot carry existing drift forward.
 
 ## 9. Relationship to Level 2 codegen
 
