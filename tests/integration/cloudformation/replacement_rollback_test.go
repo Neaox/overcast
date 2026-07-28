@@ -11,6 +11,7 @@ package cloudformation_test
 // update would take the data with it.
 
 import (
+	"encoding/xml"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -189,4 +190,155 @@ func assertQueueExists(t *testing.T, srv *helpers.TestServer, queueName string, 
 		}
 		t.Errorf("expected queue %q %s; queues=%v", queueName, verb, out.QueueUrls)
 	}
+}
+
+// TestUpdateStack_rollbackKeepsTheStacksResourceList covers what the stack
+// still knows about itself after a failed update. Rollback restores the
+// pre-update resource list, so a resource that was successfully updated before
+// the failure must still be listed — pointing at the physical resource that
+// actually exists. Losing it would leave the stack believing it owns nothing
+// while the resource is still there, and the next update would try to create
+// it again on top of itself.
+func TestUpdateStack_rollbackKeepsTheStacksResourceList(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	stackName := "rollback-resource-list"
+	create := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {fmt.Sprintf(replaceInitialTemplate, stackName)},
+	})
+	defer create.Body.Close()
+	helpers.AssertStatus(t, create, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+
+	update := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {fmt.Sprintf(replaceThenFailTemplate, stackName, stackName)},
+	})
+	defer update.Body.Close()
+	helpers.AssertStatus(t, update, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "UPDATE_ROLLBACK_COMPLETE")
+
+	resources := describeStackResourceIDs(t, srv, stackName)
+	physID, listed := resources["Queue"]
+	if !listed {
+		t.Fatalf("stack lost the Queue resource after rollback; resources=%v", resources)
+	}
+	// And it points at the original, which is the one that still exists.
+	if !strings.HasSuffix(physID, stackName+"-v1") {
+		t.Errorf("Queue physical ID = %q, want the original %q", physID, stackName+"-v1")
+	}
+}
+
+// describeStackResourceIDs maps logical ID → physical ID for a stack.
+func describeStackResourceIDs(t *testing.T, srv *helpers.TestServer, stackName string) map[string]string {
+	t.Helper()
+	resp := cfnQuery(t, srv, "DescribeStackResources", url.Values{"StackName": {stackName}})
+	defer resp.Body.Close()
+	body := readBody(t, resp)
+	var result struct {
+		Members []struct {
+			LogicalID  string `xml:"LogicalResourceId"`
+			PhysicalID string `xml:"PhysicalResourceId"`
+		} `xml:"DescribeStackResourcesResult>StackResources>member"`
+	}
+	if err := xml.Unmarshal(body, &result); err != nil {
+		t.Fatalf("unmarshal DescribeStackResources: %v\nbody: %s", err, body)
+	}
+	out := map[string]string{}
+	for _, m := range result.Members {
+		out[m.LogicalID] = m.PhysicalID
+	}
+	return out
+}
+
+// UpdateReplacePolicy=Retain keeps the original when a replacement supersedes
+// it. That is about the *original*: the replacement the failed update created
+// is still the update's own doing, so rollback removes it either way. Retaining
+// the original and leaking the replacement would leave two live resources and
+// no way to tell which the stack owns.
+const retainOnReplaceTemplate = `{
+  "Resources": {
+    "Queue": {
+      "Type": "AWS::SQS::Queue",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {"QueueName": "%s-v2"}
+    },
+    "Doomed": {
+      "Type": "AWS::Lambda::Function",
+      "DependsOn": "Queue",
+      "Properties": {
+        "FunctionName": "%s-doomed",
+        "Role": "arn:aws:iam::000000000000:role/lambda-role"
+      }
+    }
+  }
+}`
+
+const retainInitialTemplate = `{
+  "Resources": {
+    "Queue": {
+      "Type": "AWS::SQS::Queue",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {"QueueName": "%s-v1"}
+    }
+  }
+}`
+
+func TestUpdateStack_retainedOriginalSurvivesAndReplacementIsRemoved(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	stackName := "retain-replace"
+	create := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {fmt.Sprintf(retainInitialTemplate, stackName)},
+	})
+	defer create.Body.Close()
+	helpers.AssertStatus(t, create, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+
+	// When: a replacement is forced and the update then fails
+	update := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {fmt.Sprintf(retainOnReplaceTemplate, stackName, stackName)},
+	})
+	defer update.Body.Close()
+	helpers.AssertStatus(t, update, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "UPDATE_ROLLBACK_COMPLETE")
+
+	// Then: the retained original is still there, and so is the stack's claim on it
+	assertQueueExists(t, srv, stackName+"-v1", true)
+	// And: the replacement the failed update created was removed
+	assertQueueExists(t, srv, stackName+"-v2", false)
+}
+
+func TestUpdateStack_retainedOriginalOutlivesASuccessfulReplacement(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	stackName := "retain-success"
+	create := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {fmt.Sprintf(retainInitialTemplate, stackName)},
+	})
+	defer create.Body.Close()
+	helpers.AssertStatus(t, create, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+
+	// When: the replacement succeeds
+	update := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName": {stackName},
+		"TemplateBody": {`{
+  "Resources": {
+    "Queue": {
+      "Type": "AWS::SQS::Queue",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {"QueueName": "` + stackName + `-v2"}
+    }
+  }
+}`},
+	})
+	defer update.Body.Close()
+	helpers.AssertStatus(t, update, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "UPDATE_COMPLETE")
+
+	// Then: cleanup left the retained original alone — that is what Retain means
+	assertQueueExists(t, srv, stackName+"-v1", true)
+	assertQueueExists(t, srv, stackName+"-v2", true)
 }

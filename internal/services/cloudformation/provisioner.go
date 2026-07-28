@@ -295,10 +295,18 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusUpdateInProgress, "User Initiated")
 
 	// For simplicity: treat all resources as requiring re-creation.
-	// Build existing map.
+	// existing tracks resources still to be accounted for; entries are removed
+	// as the template's resources are processed, so whatever remains at the end
+	// is what the template dropped and the cleanup phase must delete.
 	existing := map[string]StackResource{}
+	// preUpdate is the same set, kept intact: rollback restores the stack's
+	// resource list from it. It must not be the map above — that one is
+	// emptied as the update proceeds, so using it would drop every resource
+	// the update had already handled and leave the stack owning nothing.
+	preUpdate := map[string]StackResource{}
 	for _, r := range stack.Resources {
 		existing[r.LogicalID] = r
+		preUpdate[r.LogicalID] = r
 	}
 
 	order, err := topoSort(tmpl.Resources)
@@ -363,14 +371,19 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 
 			// Properties changed — attempt update.
 			p.recordEvent(ctx, stack, logicalID, old.PhysicalID, res.Type, ResourceUpdateInProgress, "")
-			physID, supersededID, updErr := p.updateResource(ctx, logicalID, res, props, old.PhysicalID, &old, rCtx)
-			if supersededID != "" {
-				// Replaced: the old resource stays alive until the whole update
-				// succeeds, so a later failure can still roll back to it.
-				superseded = append(superseded, supersededResource{
-					LogicalID: logicalID, Type: old.Type, PhysicalID: supersededID,
-				})
+			outcome, updErr := p.updateResource(ctx, logicalID, res, props, old.PhysicalID, &old, rCtx)
+			physID := outcome.PhysicalID
+			if outcome.Replaced() {
+				// Rollback must remove the replacement whether or not the
+				// original is retained.
 				replacedBy[logicalID] = physID
+				if !outcome.RetainReplaced {
+					// The original stays alive until the whole update succeeds,
+					// so a later failure can still roll back to it.
+					superseded = append(superseded, supersededResource{
+						LogicalID: logicalID, Type: old.Type, PhysicalID: outcome.ReplacedPhysicalID,
+					})
+				}
 			}
 			now := p.clk.Now()
 			if updErr != nil {
@@ -388,7 +401,7 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 						fmt.Sprintf("resource %s failed: %v", logicalID, updErr))
 					return
 				}
-				p.rollbackUpdate(ctx, stack, newResources, existing, replacedBy, rCtx,
+				p.rollbackUpdate(ctx, stack, newResources, preUpdate, replacedBy, rCtx,
 					fmt.Sprintf("resource %s failed: %v", logicalID, updErr))
 				return
 			}
@@ -432,7 +445,7 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 			}
 			// Roll back: delete newly created resources (those not in `existing`)
 			// in reverse order, then restore the previous resource list.
-			p.rollbackUpdate(ctx, stack, newResources, existing, replacedBy, rCtx,
+			p.rollbackUpdate(ctx, stack, newResources, preUpdate, replacedBy, rCtx,
 				fmt.Sprintf("resource %s failed: %v", logicalID, provErr))
 			return
 		}
@@ -648,8 +661,7 @@ func (p *provisioner) provisionResource(ctx context.Context, logicalID string, r
 // a new one is created and the old one is handed back to the caller to delete
 // once the whole stack update has succeeded.
 //
-// Returns the new physical ID, the old physical ID when the resource was
-// replaced (empty otherwise), and an error.
+// Returns what the update did (see resourceUpdateOutcome) and an error.
 //
 // Replacement creates before deleting, as real CloudFormation does. The old
 // resource is what an update rolls back to, so destroying it up front would
@@ -657,15 +669,15 @@ func (p *provisioner) provisionResource(ctx context.Context, logicalID string, r
 // behind at all. Deletion is deferred to the caller's cleanup phase, which
 // only runs once every resource in the stack has been updated successfully.
 //
-// If the resource has UpdateReplacePolicy=Retain (or Snapshot) the old
-// physical ID is orphaned rather than deleted — it is not returned for
-// cleanup, so it outlives the stack.
-func (p *provisioner) updateResource(ctx context.Context, logicalID string, res TemplateResource, props map[string]any, oldPhysicalID string, oldResource *StackResource, rCtx *resolveContext) (newPhysicalID string, replacedPhysicalID string, err error) {
+// If the resource has UpdateReplacePolicy=Retain (or Snapshot) the original is
+// orphaned rather than deleted, so it outlives the stack. It is still reported
+// as replaced, because rollback must remove the replacement regardless.
+func (p *provisioner) updateResource(ctx context.Context, logicalID string, res TemplateResource, props map[string]any, oldPhysicalID string, oldResource *StackResource, rCtx *resolveContext) (resourceUpdateOutcome, error) {
 	p.mu.Lock()
 	router := p.router
 	p.mu.Unlock()
 	if router == nil {
-		return "", "", fmt.Errorf("router not initialised")
+		return resourceUpdateOutcome{}, fmt.Errorf("router not initialised")
 	}
 
 	// Same reason as in provisionResource: an update may fall through to a
@@ -675,7 +687,7 @@ func (p *provisioner) updateResource(ctx context.Context, logicalID string, res 
 	handler, ok := p.resolveHandler(res.Type)
 	if !ok {
 		// Unknown resource type — keep stub physical ID, no-op.
-		return oldPhysicalID, "", nil
+		return resourceUpdateOutcome{PhysicalID: oldPhysicalID}, nil
 	}
 
 	// Prefer in-place update when supported.
@@ -695,7 +707,7 @@ func (p *provisioner) updateResource(ctx context.Context, logicalID string, res 
 				}
 				rCtx.Attributes[logicalID] = attrs
 			}
-			return physID, "", nil
+			return resourceUpdateOutcome{PhysicalID: physID}, nil
 		}
 		// Sentinel: fall through to replacement (mirrors AWS "Replacement: Yes"
 		// for properties like resource Name or DynamoDB KeySchema).
@@ -717,19 +729,20 @@ func (p *provisioner) updateResource(ctx context.Context, logicalID string, res 
 	// names for resources the template does not name (see generatedName).
 	newPhysID, err := p.provisionResource(ctx, logicalID, res, props, rCtx)
 	if err != nil {
-		return "", "", err
+		return resourceUpdateOutcome{}, err
 	}
 
-	// Honour UpdateReplacePolicy=Retain by orphaning the old resource: it is
-	// not returned for cleanup, so nothing deletes it.
+	outcome := resourceUpdateOutcome{PhysicalID: newPhysID, ReplacedPhysicalID: oldPhysicalID}
 	if oldResource != nil && oldResource.shouldRetainOnReplace() {
+		// UpdateReplacePolicy=Retain orphans the original instead of deleting
+		// it. Still a replacement, so rollback removes the replacement.
+		outcome.RetainReplaced = true
 		p.log.Info("cfn: retaining old resource on replacement (UpdateReplacePolicy=Retain)",
 			zap.String("type", res.Type),
 			zap.String("logicalId", logicalID),
 			zap.String("orphanedPhysicalId", oldPhysicalID))
-		return newPhysID, "", nil
 	}
-	return newPhysID, oldPhysicalID, nil
+	return outcome, nil
 }
 
 // supersededResource is an old physical resource that a replacement replaced.
@@ -740,6 +753,26 @@ type supersededResource struct {
 	Type       string
 	PhysicalID string
 }
+
+// resourceUpdateOutcome describes what an update did to a single resource.
+//
+// Replacement and retention are separate facts, and conflating them loses one:
+// a retained original must not be deleted at cleanup, but the resource was
+// still replaced, and rollback has to remove the replacement either way.
+type resourceUpdateOutcome struct {
+	// PhysicalID is the resource's physical ID after the update.
+	PhysicalID string
+	// ReplacedPhysicalID is the original that a replacement superseded, or ""
+	// when the resource was updated in place.
+	ReplacedPhysicalID string
+	// RetainReplaced reports that UpdateReplacePolicy keeps the original, so
+	// the cleanup phase must leave it alone.
+	RetainReplaced bool
+}
+
+// Replaced reports whether this update replaced the resource rather than
+// updating it in place.
+func (o resourceUpdateOutcome) Replaced() bool { return o.ReplacedPhysicalID != "" }
 
 // hashProps returns a stable sha256 hash of the resolved property map.
 // Used by UpdateStack to detect property drift and reprovision only
