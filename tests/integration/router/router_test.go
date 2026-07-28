@@ -241,6 +241,33 @@ func TestRouter_unclaimedQueryPOST_returnsNotImplemented(t *testing.T) {
 	helpers.AssertQueryXMLError(t, resp, "NotImplemented")
 }
 
+func TestRouter_unclaimedModeledJSONTarget_returnsNotImplemented(t *testing.T) {
+	// Given: an AWS JSON operation modeled for a service Overcast does not yet
+	// implement. GameLift has no target dispatcher, so this exercises the
+	// registry rather than a service-local unknown-operation response.
+	srv := helpers.NewTestServer(t)
+
+	// When: its SDK wire identifier reaches POST /.
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/", bytes.NewBufferString("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	req.Header.Set("X-Amz-Target", "GameLift.ListBuilds")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: it receives the common JSON 501 contract, rather than the old
+	// hand-written 400 unknown-target response.
+	helpers.AssertStatus(t, resp, http.StatusNotImplemented)
+	helpers.AssertHeader(t, resp, "x-emulator-unsupported", "true")
+	helpers.AssertRequestID(t, resp)
+	helpers.AssertJSONError(t, resp, "NotImplemented")
+}
+
 // ---- Debug endpoints (guarded by cfg.Debug) --------------------------------
 
 func TestDebugHealth_returnsOK(t *testing.T) {
