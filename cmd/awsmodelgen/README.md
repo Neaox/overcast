@@ -30,7 +30,10 @@ Never hand-edit or hand-merge `internal/awsapi/manifest.gen.go`.
 
 ## Validation
 
-Normal pull requests run the no-network checks against the committed corpus:
+Normal pull requests run the no-network checks against the committed corpus,
+including a check that the committed manifest still hashes to the
+`manifest-sha256` recorded in `models/aws/VERSION`. That catches a hand-edit or
+a partial merge without needing the models:
 
 ```sh
 make aws-models-check
@@ -98,10 +101,13 @@ Output is deterministic for a given source revision.
 dispatch. When AWS publishes a new revision, it:
 
 1. restores and verifies a cached upstream Git mirror;
-2. generates old and new inventories and the manifest;
-3. runs `make aws-models-check` with full regeneration enabled;
-4. force-with-lease updates only `automation/aws-api-models`; and
-5. creates or updates one pull request without merging it.
+2. asserts the committed manifest still matches the *pinned* revision, so an
+   already-stale manifest cannot be carried forward silently;
+3. generates old and new inventories and the manifest;
+4. runs `make aws-models-check` with full regeneration enabled, which at that
+   point asserts determinism rather than staleness;
+5. force-with-lease updates only `automation/aws-api-models`; and
+6. creates or updates one pull request without merging it.
 
 See `CONTRIBUTING.md` and
 `docs/plans/aws-api-operation-coverage.md` for maintainer configuration and the
