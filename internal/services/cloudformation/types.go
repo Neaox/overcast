@@ -161,6 +161,16 @@ const (
 	StatusUpdateRollbackComplete   = "UPDATE_ROLLBACK_COMPLETE"
 	StatusUpdateRollbackFailed     = "UPDATE_ROLLBACK_FAILED"
 
+	// Cleanup states. An update does not finish the moment every resource has
+	// been updated: CloudFormation then removes what the update superseded —
+	// resources dropped from the template, and the originals that replacements
+	// replaced — and reports that phase separately. Both are transient states
+	// on the way to their COMPLETE counterpart, and both are observable, which
+	// is why a stack can sit visibly in one when a leftover resource will not
+	// delete.
+	StatusUpdateCompleteCleanupInProgress         = "UPDATE_COMPLETE_CLEANUP_IN_PROGRESS"
+	StatusUpdateRollbackCompleteCleanupInProgress = "UPDATE_ROLLBACK_COMPLETE_CLEANUP_IN_PROGRESS"
+
 	ChangeSetStatusCreateComplete = "CREATE_COMPLETE"
 	ChangeSetStatusFailed         = "FAILED"
 

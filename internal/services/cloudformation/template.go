@@ -1,6 +1,7 @@
 package cloudformation
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -234,10 +235,15 @@ func resolveMap(m map[string]any, ctx *resolveContext) any {
 
 // resolveContext holds the resolution state.
 type resolveContext struct {
-	Region     string
-	AccountID  string
-	StackName  string
-	StackID    string
+	Region    string
+	AccountID string
+	StackName string
+	StackID   string
+	// LogicalID is the template logical ID of the resource currently being
+	// provisioned. Set by provisionResource before dispatching to a handler,
+	// so handlers can name a resource whose template does not name itself.
+	// Empty outside provisioning (property resolution does not need it).
+	LogicalID  string
 	StackTags  []Tag
 	Params     map[string]string            // parameter name → value
 	Resources  map[string]string            // logical ID → physical ID
@@ -245,6 +251,87 @@ type resolveContext struct {
 	Mappings   map[string]any               // raw mappings from template
 	Attributes map[string]map[string]string // logical ID → attributes
 	Exports    map[string]string            // export name → value (cross-stack)
+}
+
+// Maximum physical name lengths, per service. CloudFormation truncates a
+// generated name to fit the service that will hold it; exceeding these is a
+// validation error from the service, not from CloudFormation.
+const (
+	maxNameLenLambda  = 64 // function names
+	maxNameLenIAM     = 64 // role, policy and instance-profile names
+	maxNameLenS3      = 63 // bucket names
+	maxNameLenSQS     = 80 // queue names
+	maxNameLenDefault = 255
+)
+
+// physicalIDSuffixLen matches the length of the random component real
+// CloudFormation appends to a generated physical ID.
+const physicalIDSuffixLen = 12
+
+// physicalIDSuffixAlphabet is CloudFormation's: uppercase letters and digits.
+const physicalIDSuffixAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+// generatedName returns the physical name for a resource whose template does
+// not name it, shaped like CloudFormation's own: "{StackName}-{LogicalID}-{RANDOM}".
+//
+// Both trailing parts matter. The logical ID makes the name unique within the
+// stack: built from the stack name alone, every unnamed resource of a type got
+// the same name and the second collided with the first — and since CDK almost
+// never names its resources, a stack with two Lambda functions could not deploy
+// at all.
+//
+// The random component makes it unique across *instances* of the same logical
+// resource, which is what lets a replacement's new resource exist alongside the
+// one it replaces. Replacement creates before it deletes precisely so a failed
+// update can roll back to the original, and that is impossible if both want the
+// same name.
+func (c *resolveContext) generatedName() string {
+	return c.generatedNameWithin(maxNameLenDefault)
+}
+
+// generatedNameWithin is generatedName capped to a service's maximum name
+// length. A stack name and a CDK logical ID are each long enough that the pair
+// can exceed what a service accepts, and CloudFormation truncates to fit.
+//
+// The random suffix is always preserved — it is what guarantees uniqueness, so
+// the head is what gets truncated.
+func (c *resolveContext) generatedNameWithin(max int) string {
+	if c == nil {
+		return ""
+	}
+	base := c.StackName
+	if c.LogicalID != "" {
+		base = c.StackName + "-" + c.LogicalID
+	}
+	suffix := randomPhysicalIDSuffix()
+	if max <= 0 {
+		return base + "-" + suffix
+	}
+	// Room for the separator and suffix; if even that does not fit, the
+	// suffix alone is the most useful thing to keep.
+	keep := max - physicalIDSuffixLen - 1
+	if keep < 1 {
+		if max < physicalIDSuffixLen {
+			return suffix[:max]
+		}
+		return suffix
+	}
+	if len(base) > keep {
+		base = base[:keep]
+	}
+	return base + "-" + suffix
+}
+
+// randomPhysicalIDSuffix returns CloudFormation's random physical-ID component.
+func randomPhysicalIDSuffix() string {
+	buf := make([]byte, physicalIDSuffixLen)
+	// crypto/rand.Read does not fail on any platform Go supports.
+	_, _ = rand.Read(buf)
+	out := make([]byte, physicalIDSuffixLen)
+	for i, b := range buf {
+		out[i] = physicalIDSuffixAlphabet[int(b)%len(physicalIDSuffixAlphabet)]
+	}
+	return string(out)
 }
 
 // resolveRef resolves Ref to a parameter value, pseudo-parameter, or logical resource ID.
