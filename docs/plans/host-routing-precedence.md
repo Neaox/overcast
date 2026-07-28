@@ -516,8 +516,55 @@ hand-written template, an older CDK, or a non-`aws` partition could still build
 a principal from the suffix. That is not reachable from CDK output today, and
 IAM is off by default. Revisit if `EnforceIAM` ever becomes the default.
 
-**Conclusion:** substitute `AWS::URLSuffix` with the configured base. Both real
-use sites are URL hosts and both are improved by it.
+### Why substitution is still the wrong lever
+
+Widening the audit (below) removed the hazard, but substitution cannot deliver
+the goal either. CDK emits the scheme as a **literal** and no port:
+
+```json
+["https://", {"Ref":"Api"}, ".execute-api.us-east-1.", {"Ref":"AWS::URLSuffix"}, "/", ...]
+```
+
+`AWS::URLSuffix` cannot carry a scheme or a port, so no value for it produces a
+dialable URL — and one containing `:4566` would make the pseudo-parameter lie
+about what it is. `AWS::URLSuffix` therefore stays `amazonaws.com`, faithful to
+AWS at the template level.
+
+**The correction belongs at output emission instead**, where Overcast has
+already assembled the finished string and still holds the request context:
+`Handler.reachableURL` parses with `middleware.ParseHostRoute` — the same
+grammar that routes inbound — and re-mints through
+`serviceutil.HostRoutedURLFromBase`, the helper every service already uses. The
+grammar is stated once and applied in both directions; scheme and port come
+from the caller's own origin; and only a registered label is claimed, so ECR
+URIs, S3 URLs, ARNs and plain strings pass through untouched.
+
+### Widened audit (all three partitions)
+
+`npx cdk synth` over a fixture covering IAM roles with three `ServicePrincipal`
+forms, ECR, S3 website + virtual-hosted URLs, CloudFront, Cognito hosted UI and
+API Gateway, synthesised for `us-east-1`, **`cn-north-1`** and region-agnostic:
+
+| Stack | `AWS::URLSuffix` sites | Service principals |
+| --- | --- | --- |
+| `AuditAws` | 3 — all `Outputs` (`RepoUri`, `ApiEndpoint`, `ApiUrl`) | all literal |
+| `AuditCn` | 3 — same | **all literal** |
+| `AuditAgnostic` | 3 — same | all literal |
+
+Zero principal use sites in any partition, including with an explicit `region`
+on the principal. S3 website, CloudFront and Cognito URLs never touch the
+suffix — they come from `Fn::GetAtt` on real attributes.
+
+### Correction: `TemplateURL` was never broken
+
+An earlier draft called the nested-stack `TemplateURL` a latent bug because it
+resolves to `https://s3.us-east-1.amazonaws.com/...`. **It is not.** Both
+fetchers — `resolveTemplateBody`
+([handler.go](../../internal/services/cloudformation/handler.go)) and
+`nestedStackHandler.fetchTemplate`
+([provisioner.go](../../internal/services/cloudformation/provisioner.go)) —
+parse the URL and dispatch `u.Path` internally through the router, discarding
+the host. Overcast never dials it, and the nested-stack tests pass.
 
 ## 9. Behaviour changes
 

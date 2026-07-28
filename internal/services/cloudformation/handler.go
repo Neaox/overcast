@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -380,7 +381,7 @@ func (h *Handler) DescribeStacks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeCFNResponse(w, r, "DescribeStacksResponse", "DescribeStacksResult",
-			describeStacksResult{Stacks: []stackXML{toStackXML(stack)}})
+			describeStacksResult{Stacks: []stackXML{h.toStackXML(r.Context(), stack)}})
 		return
 	}
 
@@ -393,7 +394,7 @@ func (h *Handler) DescribeStacks(w http.ResponseWriter, r *http.Request) {
 	var items []stackXML
 	for _, s := range stacks {
 		if s.Status != StatusDeleteComplete {
-			items = append(items, toStackXML(s))
+			items = append(items, h.toStackXML(r.Context(), s))
 		}
 	}
 	writeCFNResponse(w, r, "DescribeStacksResponse", "DescribeStacksResult",
@@ -1234,7 +1235,80 @@ type templateSummaryResult struct {
 	ResourceTypes []string               `xml:"ResourceTypes>member,omitempty"`
 }
 
-func toStackXML(s *Stack) stackXML {
+// reachableURL re-hosts a stack output that names a host-routed AWS endpoint
+// onto the origin the caller reached Overcast on. Anything else is returned
+// unchanged.
+//
+// CDK composes invoke URLs in the template itself:
+//
+//	{"Fn::Join": ["", ["https://", {"Ref": "Api"}, ".execute-api.us-east-1.",
+//	                   {"Ref": "AWS::URLSuffix"}, "/", {"Ref": "Stage"}, "/"]]}
+//
+// The scheme is a literal and there is no port, so resolving AWS::URLSuffix to
+// anything other than "amazonaws.com" cannot produce a dialable URL — and
+// would make the pseudo-parameter lie about what it is. The correction belongs
+// here instead, where Overcast has already assembled the finished string and
+// still holds the request.
+//
+// It parses with middleware.ParseHostRoute — the same grammar that decides
+// inbound routing — and re-mints through serviceutil.HostRoutedURL, the helper
+// every service that hands back such a URL already uses. So the grammar is
+// stated once and applied in both directions, the scheme and port come from
+// ClientBaseURL (which honours TLS and the request port), and a rewritten
+// output is by construction a URL this router accepts.
+//
+// Only a registered host-route label is claimed, so ECR registry URIs, S3
+// URLs, ARNs and plain strings pass through untouched: Overcast does not serve
+// those hostnames and must not claim it does.
+// clientBaseURL is serviceutil.ClientBaseURL's precedence for a caller that
+// holds a context rather than a request: a configured OVERCAST_HOSTNAME wins
+// over the address the caller happened to dial, but the caller's scheme and
+// port are kept, since those are known to reach this process. serviceutil
+// cannot read the client endpoint itself — middleware imports serviceutil, not
+// the other way round — so the lookup happens here.
+func (h *Handler) clientBaseURL(ctx context.Context) string {
+	base := middleware.ClientEndpointFromContext(ctx)
+	if base == "" {
+		return h.cfg.ExternalBaseURL()
+	}
+	if h.cfg.Hostname == "" {
+		return base
+	}
+	u, err := url.Parse(base)
+	if err != nil || u.Host == "" {
+		return base
+	}
+	if port := u.Port(); port != "" {
+		u.Host = net.JoinHostPort(h.cfg.Hostname, port)
+	} else {
+		u.Host = h.cfg.Hostname
+	}
+	return u.String()
+}
+
+// It takes a context rather than a request so the Query and typed (Smithy)
+// paths share one implementation; the caller's origin is read from the context
+// the ClientEndpoint middleware stamps.
+func (h *Handler) reachableURL(ctx context.Context, value string) string {
+	u, err := url.Parse(value)
+	if err != nil || u.Host == "" {
+		return value
+	}
+	m, ok := middleware.ParseHostRoute(u.Host)
+	if !ok {
+		return value
+	}
+	rehosted := serviceutil.HostRoutedURLFromBase(h.clientBaseURL(ctx), m.Label, m.ID, m.Region, u.Path)
+	if rehosted == "" {
+		return value
+	}
+	if u.RawQuery != "" {
+		rehosted += "?" + u.RawQuery
+	}
+	return rehosted
+}
+
+func (h *Handler) toStackXML(ctx context.Context, s *Stack) stackXML {
 	sx := stackXML{
 		StackName:    s.StackName,
 		StackID:      s.StackID,
@@ -1251,7 +1325,9 @@ func toStackXML(s *Stack) stackXML {
 		sx.Parameters = append(sx.Parameters, paramXML(p))
 	}
 	for _, o := range s.Outputs {
-		sx.Outputs = append(sx.Outputs, outputXML(o))
+		ox := outputXML(o)
+		ox.Value = h.reachableURL(ctx, ox.Value)
+		sx.Outputs = append(sx.Outputs, ox)
 	}
 	for _, t := range s.Tags {
 		sx.Tags = append(sx.Tags, tagXML(t))
