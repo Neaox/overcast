@@ -1512,6 +1512,7 @@ var resourceHandlers = map[string]resourceHandler{
 	"AWS::Lambda::EventSourceMapping": &lambdaEventSourceMappingHandler{},
 	"AWS::Lambda::Permission":         &stubResourceHandler{},
 	"AWS::Lambda::LayerVersion":       &lambdaLayerVersionHandler{},
+	"AWS::Lambda::CodeSigningConfig":  &lambdaCodeSigningConfigHandler{},
 	// IAM
 	"AWS::IAM::Role":              &iamRoleHandler{},
 	"AWS::IAM::Policy":            &iamPolicyHandler{},

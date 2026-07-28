@@ -61,6 +61,12 @@ func LambdaVersionARN(region, accountID, functionName string, version int) strin
 	return fmt.Sprintf("arn:aws:lambda:%s:%s:function:%s:%d", region, accountID, functionName, version)
 }
 
+// LambdaCodeSigningConfigARN builds a Lambda code signing configuration ARN.
+// Format: arn:aws:lambda:{region}:{account}:code-signing-config:{cscID}.
+func LambdaCodeSigningConfigARN(region, accountID, cscID string) string {
+	return ARN(region, accountID, "lambda", "code-signing-config:"+cscID)
+}
+
 // LayerVersionARN builds a Lambda layer version ARN.
 // Format: arn:aws:lambda:{region}:{account}:layer:{name}:{version}.
 func LayerVersionARN(region, accountID, layerName string, version int) string {

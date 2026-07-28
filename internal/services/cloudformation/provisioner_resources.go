@@ -954,6 +954,62 @@ func (h *lambdaLayerVersionHandler) Delete(ctx context.Context, router http.Hand
 	return nil
 }
 
+// ── AWS::Lambda::CodeSigningConfig ─────────────────────────────────────────
+//
+// What CDK's CodeSigningConfig construct synthesises. The configuration has to
+// exist as a real resource before a Function can reference it, because
+// CreateFunction rejects an ARN that names no configuration.
+
+type lambdaCodeSigningConfigHandler struct{}
+
+func (h *lambdaCodeSigningConfigHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	body := map[string]any{}
+	if v, _ := props["Description"].(string); v != "" {
+		body["Description"] = v
+	}
+	if v, ok := props["AllowedPublishers"]; ok {
+		body["AllowedPublishers"] = v
+	}
+	if v, ok := props["CodeSigningPolicies"]; ok {
+		body["CodeSigningPolicies"] = v
+	}
+
+	data, _ := json.Marshal(body)
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPost, "/2020-04-22/code-signing-configs/", "application/json", data)
+	if err != nil {
+		return "", nil, fmt.Errorf("CreateCodeSigningConfig: %w", err)
+	}
+
+	var resp struct {
+		CodeSigningConfig struct {
+			CodeSigningConfigID  string `json:"CodeSigningConfigId"`
+			CodeSigningConfigArn string `json:"CodeSigningConfigArn"`
+		} `json:"CodeSigningConfig"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		return "", nil, fmt.Errorf("CreateCodeSigningConfig: parse response: %w", err)
+	}
+	arn := resp.CodeSigningConfig.CodeSigningConfigArn
+	if arn == "" {
+		return "", nil, fmt.Errorf("CreateCodeSigningConfig: no CodeSigningConfigArn in response")
+	}
+
+	// Ref is the ARN; both documented GetAtt targets are returned.
+	attrs := map[string]string{
+		"CodeSigningConfigArn": arn,
+		"CodeSigningConfigId":  resp.CodeSigningConfig.CodeSigningConfigID,
+	}
+	return arn, attrs, nil
+}
+
+func (h *lambdaCodeSigningConfigHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
+	path := "/2020-04-22/code-signing-configs/" + physicalID
+	if _, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil); err != nil {
+		return fmt.Errorf("DeleteCodeSigningConfig: %w", err)
+	}
+	return nil
+}
+
 // ── AWS::StepFunctions::StateMachine ───────────────────────────────────────
 
 type sfnStateMachineHandler struct{}

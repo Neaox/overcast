@@ -5483,9 +5483,10 @@ type codeSigningConfigResponse struct {
 const testCSCArn = "arn:aws:lambda:us-east-1:000000000000:code-signing-config:csc-0123456789abcdef0"
 
 func TestCreateFunction_storesCodeSigningConfigArn(t *testing.T) {
-	// Given a function created WITH a code signing config, as CDK does when
-	// its codeSigningConfig prop is set
+	// Given a code signing configuration, and a function created against it as
+	// CDK does when its codeSigningConfig prop is set
 	srv := helpers.NewTestServer(t)
+	testCSCArn := createCSC(t, srv).CodeSigningConfig.CodeSigningConfigArn
 	resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions"), map[string]any{
 		"FunctionName": "csc-fn",
 		"Runtime":      "nodejs20.x",
@@ -5517,6 +5518,7 @@ func TestCreateFunction_storesCodeSigningConfigArn(t *testing.T) {
 func TestPutAndDeleteFunctionCodeSigningConfig(t *testing.T) {
 	// Given a function created without one — the overwhelmingly common case
 	srv := helpers.NewTestServer(t)
+	testCSCArn := createCSC(t, srv).CodeSigningConfig.CodeSigningConfigArn
 	createFunction(t, srv, "csc-attach-fn")
 
 	// Then the optional flow still reports "no config", as AWS's own model
@@ -5593,6 +5595,7 @@ func TestFunctionCodeSigningConfig_functionNotFound(t *testing.T) {
 // has no CodeSigningConfigArn member, so adding one would be a custom field.
 func TestGetFunction_doesNotExposeCodeSigningConfigArn(t *testing.T) {
 	srv := helpers.NewTestServer(t)
+	testCSCArn := createCSC(t, srv).CodeSigningConfig.CodeSigningConfigArn
 	createFunction(t, srv, "csc-leak-fn")
 	put := doJSON(t, http.MethodPut, codeSigningConfigURL(srv, "csc-leak-fn"), map[string]any{
 		"CodeSigningConfigArn": testCSCArn,

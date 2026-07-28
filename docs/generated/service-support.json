@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1266,
+  "total_ops": 1272,
   "services": [
     {
       "service": "s3",
@@ -520,8 +520,8 @@
     {
       "service": "lambda",
       "display_name": "Lambda",
-      "total_ops": 42,
-      "implemented_ops": 41,
+      "total_ops": 48,
+      "implemented_ops": 47,
       "operations": [
         {
           "operation": "ListFunctions",
@@ -581,6 +581,42 @@
           "category": "Function management",
           "status": "✅ Supported",
           "notes": "Removes the association; idempotent"
+        },
+        {
+          "operation": "CreateCodeSigningConfig",
+          "category": "Code signing",
+          "status": "✅ Supported",
+          "notes": "Stored as a real resource; AllowedPublishers required, UntrustedArtifactOnDeployment defaults to Warn"
+        },
+        {
+          "operation": "GetCodeSigningConfig",
+          "category": "Code signing",
+          "status": "✅ Supported",
+          "notes": "Returns the stored configuration"
+        },
+        {
+          "operation": "UpdateCodeSigningConfig",
+          "category": "Code signing",
+          "status": "✅ Supported",
+          "notes": "Partial update; omitted members keep their stored value"
+        },
+        {
+          "operation": "DeleteCodeSigningConfig",
+          "category": "Code signing",
+          "status": "✅ Supported",
+          "notes": "ResourceConflictException while a function still references it"
+        },
+        {
+          "operation": "ListCodeSigningConfigs",
+          "category": "Code signing",
+          "status": "✅ Supported",
+          "notes": "Region-scoped; pagination not implemented"
+        },
+        {
+          "operation": "ListFunctionsByCodeSigningConfig",
+          "category": "Code signing",
+          "status": "✅ Supported",
+          "notes": "Returns the ARNs of functions referencing the configuration"
         },
         {
           "operation": "Invoke",
