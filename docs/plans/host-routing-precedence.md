@@ -279,6 +279,51 @@ remains fully usable:
 | Labelled vhost `my.execute-api.s3.localhost` | works |
 | Bare vhost `my.execute-api.localhost` | claimed by API Gateway |
 
+### Do not reject at CreateBucket — warn instead
+
+Real AWS accepts `my.execute-api` as a bucket name, and two of three addressing
+modes work locally, so refusing creation would fail a CDK or Terraform stack
+locally that deploys fine against AWS — the exact fidelity regression this plan
+exists to remove.
+
+Instead, `CreateBucket` logs a warning naming the offending label and both
+escapes. Log only, no response change, so the AWS wire format is untouched.
+Creation is naturally once per name, so no dedup is needed.
+
+> **Found while implementing this:** `serviceutil.BucketName` rejected periods
+> outright, so no bucket that could collide could be created at all — the
+> warning would have been dead code, and the whole limitation unreachable. That
+> was itself a divergence: AWS permits periods and documents `example.com` and
+> `my.example.s3.bucket` as valid. The validator has been corrected against the
+> [AWS naming rules](https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html)
+> as part of this work — see §9.4.
+
+### Scope of the limitation
+
+A reserved label may not appear as the **second-or-later** dot-segment of a
+bucket name — not merely the trailing one, since the label only needs to land
+at hostname index ≥ 1:
+
+| Bucket name | Bare host | Outcome |
+| --- | --- | --- |
+| `my.execute-api` | `my.execute-api.localhost` | → API Gateway |
+| `my.execute-api.thing` | `my.execute-api.thing.localhost` | → API Gateway |
+| `execute-api.thing` | `execute-api.thing.localhost` | → S3 ✅ (index 0) |
+
+A bucket named *exactly* like a service does **not** collide, because
+`ParseHostRoute` skips index 0 ([hostroute.go:108](../../internal/middleware/hostroute.go))
+— `{id}` must be non-empty in every real AWS host-routed shape. That guard was
+written for grammar fidelity and does collision defence for free.
+
+The limitation is scoped to **bare virtual-hosted addressing only**. The bucket
+remains fully usable:
+
+| Addressing mode | `my.execute-api` bucket |
+| --- | --- |
+| Path-style `localhost:4566/my.execute-api/key` | works |
+| Labelled vhost `my.execute-api.s3.localhost` | works |
+| Bare vhost `my.execute-api.localhost` | claimed by API Gateway |
+
 ### The limitation is currently theoretical — CreateBucket rejects all dots
 
 An earlier draft of this plan proposed a warn-once log at `CreateBucket` for
@@ -464,13 +509,27 @@ mechanical URL-minting changes above.
    bucket carrying a reserved label at segment index ≥ 1 (`my.execute-api`) —
    see §6. It was already broken before this work, just with a corrupted path
    instead of a clean host-route claim.
-3. **No new diagnostic.** A `CreateBucket` warning was planned and dropped —
-   see §6: dotted bucket names cannot be created at all today, so it could
-   never fire.
+3. **New diagnostic** — `CreateBucket` warns when a name carries a reserved
+   host label as a second-or-later segment, naming both escapes. Log only; the
+   bucket is still created.
+4. **S3 bucket-name validation now matches AWS.** Found while implementing the
+   diagnostic above. `serviceutil.BucketName` diverged in both directions:
+   - **Rejected names AWS accepts** — any name containing a period
+     (`example.com`, `my.example.s3.bucket` are AWS-documented valid examples),
+     and any name with consecutive hyphens (AWS forbids adjacent *periods*, not
+     hyphens; its own reserved suffixes `--ol-s3`, `--x-s3`, `--table-s3`
+     contain double hyphens).
+   - **Accepted names AWS rejects** — the reserved prefixes `xn--`, `sthree-`,
+     `amzn-s3-demo-` and the reserved suffixes `-s3alias`, `--ol-s3`, `.mrap`,
+     `--x-s3`, `--table-s3`, and names with two adjacent periods.
+
+   Rejecting a valid name is the worse of the two: it fails a stack locally
+   that deploys fine on AWS. `TestBucketName_matchesAWSRules` now pins every
+   rule on the AWS page, case by case.
 
 ## 10. Phases
 
-> **Progress:** H0-H2 complete. The planned CreateBucket reserved-label warning is dropped as unreachable -- see section 6. H3-H5 not started.
+> **Progress:** H0-H2 complete. Section 9.4 added: AWS bucket-name rules corrected in both directions, which makes the section 6 limitation reachable and the reserved-label warning worth having after all. H3-H5 not started.
 
 Each phase begins with failing tests and leaves `main` internally consistent,
 per the shipping rule in [aws-api-operation-coverage.md](./aws-api-operation-coverage.md).
@@ -603,9 +662,14 @@ fixture that sets an explicit `Host` should be checked against the §4 matrix.
 - Path-style AppSync URIs remain registered and supported after H3 switches the
   *advertised* `uris` to host-routed form. Removing them would be a breaking
   change for existing clients and is not proposed.
-- **Bucket names cannot contain dots** ([validation.go:78](../../internal/serviceutil/validation.go)),
-  while real AWS permits them in general-purpose buckets. Found while
-  implementing H2 (see §6). Independent of host addressing and with its own
-  blast radius across S3 validation and tests, so not folded in here. Relaxing
-  it would make the §6 limitation reachable and would be the trigger to add the
-  reserved-label warning.
+- **`CreateBucket` returns `InvalidArgument` where AWS returns
+  `InvalidBucketName`.** `serviceutil.BucketName` already produces the right
+  code; [handler_bucket.go:118](../../internal/services/s3/handler_bucket.go)
+  deliberately overrides it to satisfy existing tests. Noticed while correcting
+  the naming rules (§9.4) but not changed here — the error-code contract wants
+  its own verification against real AWS rather than being bundled into a
+  validation fix.
+- **Every other service's name validation** should get the same treatment
+  §9.4 gave buckets: checked rule-by-rule against the AWS documentation rather
+  than approximated. `serviceutil` alone carries queue-name, table-name and
+  GraphQL-identifier rules.

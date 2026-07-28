@@ -65,6 +65,7 @@ type serverOptions struct {
 	mock       *clock.Mock
 	store      state.Store       // nil means use default MemoryStore
 	initRunner *inithooks.Runner // nil means no init hooks
+	logger     *zap.Logger       // nil means silent (zap.NewNop)
 }
 
 // NewTestServer creates a started test server with sensible defaults.
@@ -98,7 +99,10 @@ func NewTestServer(t *testing.T, opts ...Option) *TestServer {
 		opt(so)
 	}
 
-	logger := zap.NewNop() // silent in tests — keep output clean
+	logger := so.logger
+	if logger == nil {
+		logger = zap.NewNop() // silent in tests — keep output clean
+	}
 
 	// Ensure a data directory is always available for on-disk state.
 	if so.cfg.DataDir == "" {
@@ -264,6 +268,19 @@ func WithInitRunner(r *inithooks.Runner) Option {
 func WithServiceStates(states map[string]config.StateBackend) Option {
 	return func(so *serverOptions) {
 		so.cfg.ServiceStates = states
+	}
+}
+
+// WithLogger routes the server's logs to the supplied zap.Logger instead of
+// discarding them. Pair it with zaptest/observer to assert on a diagnostic the
+// emulator emits but cannot surface in a response — AWS wire formats are fixed,
+// so a log line is sometimes the only place a divergence can be reported.
+//
+//	core, logs := observer.New(zap.WarnLevel)
+//	srv := helpers.NewTestServer(t, helpers.WithLogger(zap.New(core)))
+func WithLogger(logger *zap.Logger) Option {
+	return func(so *serverOptions) {
+		so.logger = logger
 	}
 }
 

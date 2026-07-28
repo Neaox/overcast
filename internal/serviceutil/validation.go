@@ -11,12 +11,23 @@ import (
 // ---- S3 validation ---------------------------------------------------------
 
 var (
-	// validBucketName matches a valid S3 bucket name.
-	// Rules: 3–63 chars, lowercase letters/numbers/hyphens, no consecutive hyphens,
-	// must start and end with letter or number, must not look like an IP address.
+	// validBucketName matches the character and structure rules for an S3
+	// general purpose bucket name: 3–63 chars of lowercase letters, numbers,
+	// periods and hyphens, beginning and ending with a letter or number.
+	// Periods ARE legal — AWS documents example.com and my.example.s3.bucket
+	// as valid — they are merely discouraged, because they break the
+	// *.s3.<region>.amazonaws.com wildcard certificate for virtual-hosted-style
+	// addressing over HTTPS.
 	// https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
-	validBucketName = regexp.MustCompile(`^[a-z0-9][a-z0-9\-]{1,61}[a-z0-9]$`)
+	validBucketName = regexp.MustCompile(`^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$`)
 	ipAddress       = regexp.MustCompile(`^\d+\.\d+\.\d+\.\d+$`)
+
+	// reservedBucketPrefixes and reservedBucketSuffixes are the namespaces AWS
+	// reserves for access point aliases, Object Lambda, Multi-Region Access
+	// Points, directory buckets and S3 Tables. Listed in the same order as the
+	// naming-rules page so the two can be diffed.
+	reservedBucketPrefixes = []string{"xn--", "sthree-", "amzn-s3-demo-"}
+	reservedBucketSuffixes = []string{"-s3alias", "--ol-s3", ".mrap", "--x-s3", "--table-s3"}
 
 	// GraphQLIdentifierPattern matches AppSync GraphQL identifiers documented for
 	// data source, function, type, and field names.
@@ -78,14 +89,16 @@ func BucketName(name string) *protocol.AWSError {
 	if !validBucketName.MatchString(name) {
 		return &protocol.AWSError{
 			Code:       "InvalidBucketName",
-			Message:    "The specified bucket name is not valid. Bucket names can contain only lowercase letters, numbers, and hyphens.",
+			Message:    "The specified bucket name is not valid. Bucket names can consist only of lowercase letters, numbers, periods (.), and hyphens (-), and must begin and end with a letter or number.",
 			HTTPStatus: http.StatusBadRequest,
 		}
 	}
-	if strings.Contains(name, "--") {
+	// AWS forbids two adjacent PERIODS. Adjacent hyphens are legal — its own
+	// reserved suffixes (--ol-s3, --x-s3, --table-s3) contain them.
+	if strings.Contains(name, "..") {
 		return &protocol.AWSError{
 			Code:       "InvalidBucketName",
-			Message:    "The specified bucket name is not valid. Bucket names must not contain consecutive hyphens.",
+			Message:    "The specified bucket name is not valid. Bucket names must not contain two adjacent periods.",
 			HTTPStatus: http.StatusBadRequest,
 		}
 	}
@@ -96,6 +109,28 @@ func BucketName(name string) *protocol.AWSError {
 			HTTPStatus: http.StatusBadRequest,
 		}
 	}
+	for _, prefix := range reservedBucketPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return &protocol.AWSError{
+				Code:       "InvalidBucketName",
+				Message:    "The specified bucket name is not valid. Bucket names must not start with the prefix " + prefix + ".",
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
+	}
+	for _, suffix := range reservedBucketSuffixes {
+		if strings.HasSuffix(name, suffix) {
+			return &protocol.AWSError{
+				Code:       "InvalidBucketName",
+				Message:    "The specified bucket name is not valid. Bucket names must not end with the suffix " + suffix + ".",
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
+	}
+	// Not enforced: "bucket names can only end with the suffix -an when you
+	// are creating buckets in your account regional namespace". That rule is
+	// conditional on the x-amz-bucket-namespace request header, so it belongs
+	// to CreateBucket rather than to a context-free name validator.
 	return nil
 }
 

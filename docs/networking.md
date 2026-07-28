@@ -77,10 +77,9 @@ Host always resolves the same way.
 > is the bucket `execute-api`, because a host-routed address always has a
 > non-empty resource ID in front of the label.
 >
-> In practice this is currently unreachable anyway — Overcast's `CreateBucket`
-> rejects dots in bucket names entirely, so no bucket that could collide can be
-> created. Real AWS does permit them, so the rule is documented for when that
-> validation is relaxed.
+> Overcast warns at `CreateBucket` when a name carries a reserved label, naming
+> both escapes. The bucket is still created — AWS accepts the name, so refusing
+> it would fail a stack locally that deploys fine against AWS.
 
 `{base}` is whatever hostname the request actually arrived on — Overcast
 never hardcodes a domain. Point requests at `localhost`, an
