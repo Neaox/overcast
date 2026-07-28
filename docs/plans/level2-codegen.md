@@ -48,6 +48,13 @@ The v1 plan led with generating types for everything. That inverts the value ord
 
 ### Track 3 — Model-driven codegen (v1's idea, re-scoped smaller)
 
+> **Routing-completeness dependency.**
+> [AWS API operation coverage and S3 fallthrough prevention](./aws-api-operation-coverage.md)
+> defines Track 3's generated operation/binding manifest, generic non-S3 501
+> fallback, generated route-coverage tests, and upstream model refresh workflow.
+> Deliver its A1-A4 phases before or alongside this track's SQS/Scheduler
+> generator pilot; A5 keeps the generated truth current.
+
 Keep v1's mechanism (consume AWS's published **Smithy JSON AST**; generated files checked in; CI regen-and-diff gate; stubs overridable by hand-written registrations) — it was sound. Change the scope:
 
 1. **Generate the operation *manifest* + protocol traits for every service** — op names, protocol list (`SupportedProtocols()` becomes generated), HTTP bindings. This is tiny per service, drives correct 501 stubs for every unimplemented op, feeds `cmd/stub-report` gap analysis, and is what auto-adopts a model's new `@rpcv2Cbor`/future trait on regeneration.

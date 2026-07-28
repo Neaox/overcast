@@ -3,7 +3,6 @@ package router
 import (
 	"context"
 	"encoding/json"
-	"encoding/xml"
 	"fmt"
 	"io"
 	"net"
@@ -152,7 +151,8 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// UnsubscribeURL) letting S3's GET / handle everything else. The pointer
 	// is read at request time, so the slice is fully populated by then.
 	var queryDispatchers []QueryDispatcher
-	r.Use(queryGetMiddleware(&queryDispatchers))
+	var disabledQueryDispatchers []QueryDispatcher
+	r.Use(queryGetMiddleware(&queryDispatchers, &disabledQueryDispatchers))
 	prof.mark("middleware chain")
 
 	// ---- Internal endpoints (always available) ----------------------------
@@ -395,7 +395,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// TargetDispatcher services so targetDispatch can return ServiceDisabled
 	// instead of UnknownOperationException.
 	var disabledTargetPrefixes []string
-	// queryDispatchers is declared above, near middleware registration.
+	// Query dispatchers are declared above, near middleware registration.
 	type namedStopper struct {
 		name string
 		Stopper
@@ -417,6 +417,9 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 				if p := td.TargetPrefix(); p != "" {
 					disabledTargetPrefixes = append(disabledTargetPrefixes, p)
 				}
+			}
+			if qd, ok := svc.(QueryDispatcher); ok {
+				disabledQueryDispatchers = append(disabledQueryDispatchers, qd)
 			}
 			continue
 		}
@@ -871,8 +874,8 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	r.Get("/_topology", newTopologyHandler(cfg, store))
 
 	// Register POST / handler for AWS target and query-protocol dispatch.
-	if len(dispatchers) > 0 || len(queryDispatchers) > 0 || len(disabledTargetPrefixes) > 0 {
-		r.Post("/", targetDispatch(dispatchers, queryDispatchers, disabledTargetPrefixes))
+	if len(dispatchers) > 0 || len(queryDispatchers) > 0 || len(disabledQueryDispatchers) > 0 || len(disabledTargetPrefixes) > 0 {
+		r.Post("/", targetDispatch(dispatchers, queryDispatchers, disabledQueryDispatchers, disabledTargetPrefixes))
 	}
 
 	r.NotFound(notFoundHandler)
@@ -960,7 +963,7 @@ func reconcileDockerNetworks(ctx context.Context, dc *docker.Client, service str
 // targetDispatch returns a handler that inspects the X-Amz-Target header and
 // delegates to the correct service dispatcher. SQS/DynamoDB use X-Amz-Target;
 // SNS uses the Query protocol (form-encoded body with Action field + XML).
-func targetDispatch(dispatchers []TargetDispatcher, queryDispatchers []QueryDispatcher, disabledPrefixes []string) http.HandlerFunc {
+func targetDispatch(dispatchers []TargetDispatcher, queryDispatchers, disabledQueryDispatchers []QueryDispatcher, disabledPrefixes []string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		target := r.Header.Get("X-Amz-Target")
 		for _, td := range dispatchers {
@@ -980,32 +983,20 @@ func targetDispatch(dispatchers []TargetDispatcher, queryDispatchers []QueryDisp
 		}
 		// No X-Amz-Target match — try AWS Query protocol services (SNS, SES v1).
 		// ParseForm caches results; safe to call before dispatching.
-		if len(queryDispatchers) > 0 && strings.Contains(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
+		if (len(queryDispatchers) > 0 || len(disabledQueryDispatchers) > 0) && strings.Contains(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
 			if err := r.ParseForm(); err == nil {
 				action := r.FormValue("Action")
 				version := r.FormValue("Version")
-				// First pass: dispatchers that declare ownership by API version.
 				// Version is a stricter discriminator than action name — it avoids
 				// action name collisions between services (e.g. both SES and
 				// CloudFormation implement "GetTemplate").
-				for _, qd := range queryDispatchers {
-					if ver, ok := qd.(QueryVersionOwner); ok {
-						if ver.OwnsVersion(version) {
-							qd.DispatchQuery(w, r)
-							return
-						}
-						continue
-					}
+				if qd, ok := queryOwner(queryDispatchers, version, action); ok {
+					qd.DispatchQuery(w, r)
+					return
 				}
-				// Second pass: dispatchers that declare ownership by action name.
-				for _, qd := range queryDispatchers {
-					if owner, ok := qd.(QueryActionOwner); ok {
-						if owner.OwnsAction(action) {
-							qd.DispatchQuery(w, r)
-							return
-						}
-						continue
-					}
+				if _, ok := queryOwner(disabledQueryDispatchers, version, action); ok {
+					protocol.WriteQueryXMLError(w, r, protocol.ErrServiceDisabled)
+					return
 				}
 				// Final fallback: first dispatcher with no ownership declaration.
 				for _, qd := range queryDispatchers {
@@ -1029,14 +1020,7 @@ func targetDispatch(dispatchers []TargetDispatcher, queryDispatchers []QueryDisp
 			r.Body.Close()              //nolint:errcheck
 		}
 		if strings.Contains(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
-			action := r.FormValue("Action")
-			var escaped strings.Builder
-			xml.EscapeText(&escaped, []byte(action)) //nolint:errcheck
-			body := []byte(`<?xml version="1.0" encoding="UTF-8"?><ErrorResponse><Error><Code>NotImplemented</Code><Message>Unknown action: ` + escaped.String() + `</Message></Error></ErrorResponse>`)
-			w.Header().Set("Content-Type", "text/xml")
-			w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write(body)
+			protocol.NotImplementedQueryXML(w, r)
 			return
 		}
 		body, _ := json.Marshal(struct {
@@ -1088,7 +1072,7 @@ func serviceDisabledHandler(w http.ResponseWriter, r *http.Request) {
 // It uses a pointer to the dispatchers slice so it reads the fully-populated
 // slice at request time — the slice is filled in by the service registration
 // loop after middleware registration.
-func queryGetMiddleware(queryDispatchers *[]QueryDispatcher) func(http.Handler) http.Handler {
+func queryGetMiddleware(queryDispatchers, disabledQueryDispatchers *[]QueryDispatcher) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet || r.URL.Path != "/" || r.URL.Query().Get("Action") == "" {
@@ -1101,24 +1085,36 @@ func queryGetMiddleware(queryDispatchers *[]QueryDispatcher) func(http.Handler) 
 			}
 			action := r.FormValue("Action")
 			version := r.FormValue("Version")
-			// First pass: version owners.
-			for _, qd := range *queryDispatchers {
-				if ver, ok := qd.(QueryVersionOwner); ok && ver.OwnsVersion(version) {
-					qd.DispatchQuery(w, r)
-					return
-				}
+			if qd, ok := queryOwner(*queryDispatchers, version, action); ok {
+				qd.DispatchQuery(w, r)
+				return
 			}
-			// Second pass: action owners.
-			for _, qd := range *queryDispatchers {
-				if owner, ok := qd.(QueryActionOwner); ok && owner.OwnsAction(action) {
-					qd.DispatchQuery(w, r)
-					return
-				}
+			if _, ok := queryOwner(*disabledQueryDispatchers, version, action); ok {
+				protocol.WriteQueryXMLError(w, r, protocol.ErrServiceDisabled)
+				return
 			}
-			// No dispatcher claimed this action — fall through to chi's normal routing.
-			next.ServeHTTP(w, r)
+			// A root GET carrying Action is AWS Query traffic, not S3. Returning
+			// Query XML keeps an unimplemented AWS command from becoming S3's
+			// ListBuckets response.
+			protocol.NotImplementedQueryXML(w, r)
 		})
 	}
+}
+
+// queryOwner returns the dispatcher that explicitly owns an AWS Query request.
+// API version wins over action name because actions can be shared by services.
+func queryOwner(dispatchers []QueryDispatcher, version, action string) (QueryDispatcher, bool) {
+	for _, qd := range dispatchers {
+		if owner, ok := qd.(QueryVersionOwner); ok && owner.OwnsVersion(version) {
+			return qd, true
+		}
+	}
+	for _, qd := range dispatchers {
+		if owner, ok := qd.(QueryActionOwner); ok && owner.OwnsAction(action) {
+			return qd, true
+		}
+	}
+	return nil, false
 }
 
 // v2APIsDispatch returns a handler that dispatches /v2/apis requests to either

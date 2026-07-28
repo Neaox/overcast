@@ -724,14 +724,20 @@ func (s *Service) Stop(ctx context.Context) {
 
 func (s *Service) Name() string { return "lambda" }
 
-// PathPrefixes implements router.PathPrefixService. When Lambda is disabled,
-// the router registers a 503 ServiceDisabled handler at this prefix so requests
-// don't fall through to S3's /{bucket}/* wildcard and return XML errors.
-// PathPrefixes lists every API version Lambda serves, so a disabled Lambda
-// reports "service disabled" on all of them rather than letting the ones off
-// the 2015-03-31 base fall through to the S3 catch-all.
+// PathPrefixes lists every Lambda API version. The router uses these prefixes
+// only while Lambda is disabled, so each version reports ServiceDisabled rather
+// than falling through to S3's /{bucket}/* wildcard.
 func (s *Service) PathPrefixes() []string {
-	return []string{"/2015-03-31", "/2017-10-31", "/2018-10-31", "/2019-09-30", "/2020-04-22", "/2020-06-30", "/2021-10-31", "/2021-11-15"}
+	return []string{
+		"/2015-03-31",
+		"/2017-10-31",
+		"/2018-10-31",
+		"/2019-09-30",
+		"/2020-04-22",
+		"/2020-06-30",
+		"/2021-10-31",
+		"/2021-11-15",
+	}
 }
 
 // Invoker returns the FunctionInvoker for this Lambda service.
@@ -849,6 +855,7 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	// Service.HostRouteRewrite. Matches any HTTP method: real Lambda
 	// function URLs accept arbitrary methods and let the function decide.
 	r.HandleFunc("/_lambda/url-invoke/{urlId}/*", s.handler.InvokeFunctionURL)
+
 }
 
 // runtimeAPIContainerAddr determines the host:port that Lambda containers use

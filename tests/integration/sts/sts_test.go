@@ -261,8 +261,11 @@ func TestUnsupportedOperations_notImplemented(t *testing.T) {
 			resp := stsCall(t, srv, action, nil)
 			defer resp.Body.Close()
 
-			// Then: a NotImplemented XML error is returned
-			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			// Then: a NotImplemented XML error is returned with the standard
+			// unsupported-operation marker used by every protocol helper.
+			helpers.AssertStatus(t, resp, http.StatusNotImplemented)
+			helpers.AssertHeader(t, resp, "x-emulator-unsupported", "true")
+			helpers.AssertRequestID(t, resp)
 			var result struct {
 				XMLName xml.Name `xml:"ErrorResponse"`
 				Error   struct {

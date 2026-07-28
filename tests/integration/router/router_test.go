@@ -126,6 +126,121 @@ func TestNotFound_returns404(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusNotFound)
 }
 
+func TestRouter_s3BucketNamedLikeLambdaAPIVersion_remainsReachable(t *testing.T) {
+	// Given: Lambda and S3 are enabled.
+	srv := helpers.NewTestServer(t)
+
+	// When: S3 creates a bucket whose legal name matches a Lambda API version.
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/2015-03-31", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: S3 accepts the request instead of Lambda claiming the ambiguous path.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// And: the same bucket remains available for normal object writes.
+	objectReq, err := http.NewRequest(http.MethodPut, srv.URL+"/2015-03-31/key.txt", bytes.NewBufferString("contents"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectResp, err := http.DefaultClient.Do(objectReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer objectResp.Body.Close()
+	helpers.AssertStatus(t, objectResp, http.StatusOK)
+}
+
+func TestRouter_disabledLambdaAlternateAPIVersion_returnsServiceDisabled(t *testing.T) {
+	// Given: S3 is enabled but Lambda is disabled.
+	srv := helpers.NewTestServer(t, helpers.WithServices("s3"))
+
+	// When: a caller uses Lambda's provisioned-concurrency API version.
+	resp, err := http.Get(srv.URL + "/2019-09-30/functions/example/provisioned-concurrency")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: Lambda owns the versioned path and reports its disabled state
+	// instead of letting S3 interpret the path as a bucket and key.
+	helpers.AssertStatus(t, resp, http.StatusServiceUnavailable)
+	helpers.AssertJSONError(t, resp, "ServiceDisabled")
+}
+
+func TestRouter_unclaimedQueryGET_doesNotFallThroughToS3(t *testing.T) {
+	// Given: an emulator with S3 enabled.
+	srv := helpers.NewTestServer(t)
+
+	// When: a caller makes an AWS Query-style GET that no service owns.
+	resp, err := http.Get(srv.URL + "/?Action=FutureQueryOperation&Version=2099-01-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: it receives an AWS Query NotImplemented error, rather than S3's
+	// successful ListBuckets XML response.
+	helpers.AssertStatus(t, resp, http.StatusNotImplemented)
+	helpers.AssertHeader(t, resp, "x-emulator-unsupported", "true")
+	helpers.AssertQueryXMLError(t, resp, "NotImplemented")
+}
+
+func TestRouter_disabledQueryServiceGET_returnsServiceDisabled(t *testing.T) {
+	// Given: S3 is enabled but SQS is disabled.
+	srv := helpers.NewTestServer(t, helpers.WithServices("s3"))
+
+	// When: a caller makes an SQS Query GET request.
+	resp, err := http.Get(srv.URL + "/?Action=ListQueues&Version=2012-11-05")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: it reports the configured disabled state rather than S3 or a generic 501.
+	helpers.AssertStatus(t, resp, http.StatusServiceUnavailable)
+	helpers.AssertQueryXMLError(t, resp, "ServiceDisabled")
+}
+
+func TestRouter_disabledQueryServicePOST_returnsServiceDisabled(t *testing.T) {
+	// Given: S3 is enabled but SQS is disabled.
+	srv := helpers.NewTestServer(t, helpers.WithServices("s3"))
+
+	// When: a caller submits an SQS Query request.
+	resp, err := http.Post(srv.URL+"/", "application/x-www-form-urlencoded", bytes.NewBufferString("Action=ListQueues&Version=2012-11-05"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: it reports the configured disabled state in the Query XML envelope.
+	helpers.AssertStatus(t, resp, http.StatusServiceUnavailable)
+	helpers.AssertQueryXMLError(t, resp, "ServiceDisabled")
+}
+
+func TestRouter_unclaimedQueryPOST_returnsNotImplemented(t *testing.T) {
+	// Given: an emulator with S3 enabled.
+	srv := helpers.NewTestServer(t)
+
+	// When: a caller submits an AWS Query action that no service owns.
+	resp, err := http.Post(srv.URL+"/", "application/x-www-form-urlencoded", bytes.NewBufferString("Action=FutureQueryOperation&Version=2099-01-01"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: POST uses the same protocol-correct NotImplemented contract as GET.
+	helpers.AssertStatus(t, resp, http.StatusNotImplemented)
+	helpers.AssertHeader(t, resp, "x-emulator-unsupported", "true")
+	helpers.AssertQueryXMLError(t, resp, "NotImplemented")
+}
+
 // ---- Debug endpoints (guarded by cfg.Debug) --------------------------------
 
 func TestDebugHealth_returnsOK(t *testing.T) {
