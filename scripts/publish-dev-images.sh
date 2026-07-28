@@ -11,7 +11,12 @@
 #   GHCR_USERNAME=<github-user> GHCR_TOKEN=<classic-or-fine-grained-pat> bash scripts/publish-dev-images.sh
 #
 # Requirements: docker, git, and either gh or GHCR_USERNAME/GHCR_TOKEN.
-# make is optional — see the image build helpers below.
+# make and a host Go/Node toolchain are NOT required — see the build helpers below.
+#
+# Images are published for linux/amd64 and linux/arm64 so they can be pulled on
+# both x86-64 and Apple silicon. Override with GHCR_PLATFORMS, e.g. to build only
+# for the local platform when iterating:
+#   GHCR_PLATFORMS=linux/amd64 bash scripts/publish-dev-images.sh
 
 set -euo pipefail
 
@@ -101,42 +106,79 @@ github_owner_from_remote() {
   esac
 }
 
-# Image builds go through `make` when it is available, and fall back to the
-# `docker build` lines those targets wrap (Makefile: docker-console/docker-slim)
-# when it is not — as on Windows outside the devcontainer.
+# Images are built by driving docker directly rather than through `make`, so the
+# script runs on hosts without make (Windows outside the devcontainer) and so
+# there is one build path rather than two. The Makefile's docker-console and
+# docker-slim targets build for the host platform only, which cannot produce the
+# multi-arch manifests below.
 #
-# No host Go or Node toolchain is needed either way: the Dockerfile builds the
-# SPA and compiles the binary in its own stages. scripts/docker-go.sh is
-# deliberately NOT used here — it runs go subcommands in a golang container that
-# has no Docker CLI or socket, so it cannot build images.
-build_console_image() {
-  if [ "$HAVE_MAKE" -eq 1 ]; then
-    log "Building console image with make docker-console"
-    make docker-console
-  else
-    log "Building console image with docker build"
-    docker build -t overcast:dev .
+# No host Go or Node toolchain is needed: the Dockerfile builds the SPA and
+# compiles the binary in its own stages. scripts/docker-go.sh is deliberately NOT
+# used here — it runs go subcommands in a golang container that has no Docker CLI
+# or socket, so it cannot build images.
+
+# Publish for every platform in $PLATFORMS, not just the build host's. A plain
+# `docker build` bakes in the host architecture, so an amd64 machine publishes a
+# tag that arm64 machines (Apple silicon) cannot pull:
+#   no matching manifest for linux/arm64/v8 in the manifest list entries
+# The Dockerfile cross-compiles natively via --platform=$BUILDPLATFORM with
+# TARGETOS/TARGETARCH, so the extra architecture costs no emulation.
+PLATFORMS="${GHCR_PLATFORMS:-linux/amd64,linux/arm64}"
+BUILDX_BUILDER="${GHCR_BUILDX_BUILDER:-overcast-publish}"
+
+# The default "docker" buildx driver cannot build multi-platform; that needs a
+# docker-container builder. Create one on demand rather than failing obscurely.
+ensure_buildx_builder() {
+  if docker buildx inspect "$BUILDX_BUILDER" >/dev/null 2>&1; then
+    return 0
   fi
+  log "Creating buildx builder $BUILDX_BUILDER (driver: docker-container)"
+  docker buildx create --name "$BUILDX_BUILDER" --driver docker-container >/dev/null
 }
 
-build_slim_image() {
-  if [ "$HAVE_MAKE" -eq 1 ]; then
-    log "Building slim image with make docker-slim"
-    make docker-slim
-  else
-    log "Building slim image with docker build"
-    docker build --target slim --build-arg NOSQLITE=1 -t overcast-slim:dev .
+# build_and_push <image:tag> <local-tag> [extra docker build args...]
+#
+# A multi-platform build cannot be loaded into the local image store, so buildx
+# pushes straight to the registry — there is no intermediate `docker tag`. The
+# single-arch fallback keeps the old build/tag/push flow and the local tag.
+build_and_push() {
+  local ref local_tag
+  ref="$1"
+  local_tag="$2"
+  shift 2
+
+  if [ "$HAVE_BUILDX" -eq 1 ]; then
+    log "Building $ref for $PLATFORMS and pushing"
+    docker buildx build \
+      --builder "$BUILDX_BUILDER" \
+      --platform "$PLATFORMS" \
+      "$@" \
+      --tag "$ref" \
+      --push \
+      .
+    return 0
   fi
+
+  log "Building $local_tag for this host's platform only"
+  docker build "$@" --tag "$local_tag" .
+
+  log "Tagging $local_tag as $ref"
+  docker tag "$local_tag" "$ref"
+
+  log "Pushing $ref"
+  docker push "$ref"
 }
 
 need docker
 need git
 
-if command -v make >/dev/null 2>&1; then
-  HAVE_MAKE=1
+if docker buildx version >/dev/null 2>&1; then
+  HAVE_BUILDX=1
+  ensure_buildx_builder
 else
-  HAVE_MAKE=0
-  log "make not found — building images with docker build directly"
+  HAVE_BUILDX=0
+  log "WARNING: docker buildx not found — publishing for this host's platform only."
+  log "WARNING: pulls from a different architecture will fail with 'no matching manifest'."
 fi
 
 GHCR_OWNER="${GHCR_OWNER:-$(github_owner_from_remote || true)}"
@@ -166,23 +208,11 @@ else
   gh auth token | docker login "$REGISTRY" -u "$GHCR_USERNAME" --password-stdin >/dev/null
 fi
 
-build_console_image
-
-log "Tagging overcast:dev as $CONSOLE_IMAGE:$TAG"
-docker tag overcast:dev "$CONSOLE_IMAGE:$TAG"
-
-log "Pushing $CONSOLE_IMAGE:$TAG"
-docker push "$CONSOLE_IMAGE:$TAG"
+build_and_push "$CONSOLE_IMAGE:$TAG" overcast:dev
 success "Published $CONSOLE_IMAGE:$TAG"
 success "Registry page: $(github_package_url "$CONSOLE_IMAGE")"
 
-build_slim_image
-
-log "Tagging overcast-slim:dev as $SLIM_IMAGE:$TAG"
-docker tag overcast-slim:dev "$SLIM_IMAGE:$TAG"
-
-log "Pushing $SLIM_IMAGE:$TAG"
-docker push "$SLIM_IMAGE:$TAG"
+build_and_push "$SLIM_IMAGE:$TAG" overcast-slim:dev --target slim --build-arg NOSQLITE=1
 success "Published $SLIM_IMAGE:$TAG"
 success "Registry page: $(github_package_url "$SLIM_IMAGE")"
 
