@@ -477,20 +477,47 @@ collapses into a call to it. This is the DRY requirement from
 drift structurally impossible: a URL Overcast hands out is, by construction,
 one the grammar in §4 can route back.
 
-### Hazard: `AWS::URLSuffix` is not only used for URLs
+### H4 audit result: the hazard does not materialise
 
-Flipping `AWS::URLSuffix` to the configured base is what makes CDK's
-`api.url` output resolve locally, since CDK composes it from `AWS::Region` +
-`AWS::URLSuffix`. But templates also use the same pseudo-parameter to build
-**IAM service principals** (`Fn::Join ["", ["states.", {"Ref": "AWS::URLSuffix"}]]`
-→ `states.amazonaws.com`). A blanket substitution would silently produce
-`states.localhost.overcast.sh` as a principal.
+An earlier draft of this section warned that flipping `AWS::URLSuffix` to the
+configured base would corrupt IAM service principals, since templates build
+them as `Fn::Join ["", ["states.", {"Ref": "AWS::URLSuffix"}]]`. **Audited
+2026-07-28 against real synthesised output — that does not happen.**
 
-This item therefore needs its own investigation and its own failing tests
-before any change — audit real CDK-synthesised templates for every
-`AWS::URLSuffix` use site, and only substitute where the result is a URL host.
-It is sequenced last for that reason and must not be bundled with the
-mechanical URL-minting changes above.
+Method: `npx cdk synth` on `compat/suites/cdk` (aws-cdk-lib 2.220.0, CDK CLI
+2.1133.0), which builds S3, SQS, SNS, Lambda, IAM roles and managed policies,
+API Gateway REST, EventBridge, Step Functions and a nested stack, then walked
+the resulting template for every `{"Ref": "AWS::URLSuffix"}` node.
+
+**Exactly two use sites, both URL hosts:**
+
+| Path in template | Value |
+| --- | --- |
+| `Outputs.CompatApiEndpoint.Value` | `https://{apiId}.execute-api.us-east-1.{URLSuffix}/{stage}/` |
+| `Resources.…NestedStackResource.Properties.TemplateURL` | the nested stack's template URL on S3 |
+
+**Zero service-principal use sites.** CDK v2 resolves principals to literals
+through its region-info database — the template contains
+`"Service": "lambda.amazonaws.com"`, `"states.amazonaws.com"`,
+`"apigateway.amazonaws.com"`, `"events.amazonaws.com"` and
+`"sns.amazonaws.com"` as plain strings, never as a join over the suffix.
+
+Two things further reduce the residual risk:
+
+- The `TemplateURL` site is not merely safe to substitute, it is **currently
+  broken**: it resolves to `https://s3.us-east-1.amazonaws.com/…`, which
+  Overcast cannot fetch, so nested stacks depend on this being substituted.
+- `EnforceIAM` defaults to false ([config.go](../../internal/config/config.go)),
+  so even a mis-substituted principal is inert unless the user opted into
+  enforcement.
+
+**Residual risk, accepted and documented rather than engineered around:** a
+hand-written template, an older CDK, or a non-`aws` partition could still build
+a principal from the suffix. That is not reachable from CDK output today, and
+IAM is off by default. Revisit if `EnforceIAM` ever becomes the default.
+
+**Conclusion:** substitute `AWS::URLSuffix` with the configured base. Both real
+use sites are URL hosts and both are improved by it.
 
 ## 9. Behaviour changes
 

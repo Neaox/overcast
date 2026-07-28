@@ -38,7 +38,9 @@ implemented, the DNS story that makes it work locally, and the tradeoffs.
 | API Gateway (REST v1)     | `{apiId}.execute-api.{region}.{base}/{stage}/...` | Stage is always the first path segment, same as real AWS.             |
 | API Gateway (HTTP v2)     | `{apiId}.execute-api.{region}.{base}/...`         | `$default` stage: no stage segment. Named stages: `{stage}/...` prefix, resolved against your API's actual stages. |
 | Lambda function URLs      | `{urlId}.lambda-url.{region}.{base}/...`          | No path-style equivalent — this is the only way to invoke a function URL, on Overcast and on real AWS alike. See [Lambda function URLs](#lambda-function-urls) below. |
-| AppSync (GraphQL)         | `{apiId}.appsync-api.{region}.{base}/graphql`     | Also reachable at `/realtime` on the same host (Overcast colocates the GraphQL and realtime WebSocket endpoints; real AWS puts realtime on a separate `appsync-realtime-api` host). |
+| AppSync (GraphQL)         | `{apiId}.appsync-api.{region}.{base}/graphql`     | Also reachable at `/realtime` on the same host — Overcast colocates the GraphQL and realtime endpoints. |
+| AppSync (subscriptions)   | `{apiId}.appsync-realtime-api.{region}.{base}`    | The host real AWS serves subscriptions on, and the one Amplify derives by substituting into the GraphQL URL. Routes to the same endpoint as `/realtime` above. |
+| CloudFront                | `{distributionId}.cloudfront.{base}`              | Global, so there is no region segment. `DomainName` is minted on the hostname you reached Overcast on rather than the literal `cloudfront.net`. |
 | S3 (virtual-hosted style) | `{bucket}.s3[.{region}].{base}/...` or `{bucket}.{base}/...` | Both forms are supported. The second is what an AWS SDK emits against a custom endpoint with path-style disabled, and the only form CDK's asset publisher uses. See [sdk-cli.md](./sdk-cli.md#s3-path-style-addressing) and [cdk.md](./cdk.md#s3-asset-upload-fails-on-windows). |
 
 Every Host-routed request is rewritten internally onto the same handlers
@@ -57,8 +59,9 @@ hostname space, so Overcast resolves them with a single rule, applied in order:
 2. **`{bucket}.{base}` → S3**, where `{base}` is `localhost`,
    `localhost.overcast.sh`, `localhost.localstack.cloud`, or your
    `OVERCAST_HOSTNAME`. Exception: if the part in front of the base carries a
-   service label (`execute-api`, `lambda-url`, `appsync-api`) as its second or
-   later dot-segment, it is a service address, not a bucket — rule 3 takes it.
+   service label (`execute-api`, `lambda-url`, `appsync-api`,
+   `appsync-realtime-api`, `cloudfront`) as its second or later dot-segment, it
+   is a service address, not a bucket — rule 3 takes it.
 3. **`{id}.{label}[.{region}].{base}` → the owning service**, for the labels in
    the table above.
 4. **Anything else stays path-style** and reaches S3, which is the emulator's
@@ -68,8 +71,8 @@ The order is fixed by this rule, not by internal configuration, so the same
 Host always resolves the same way.
 
 > **Reserved service labels.** A bucket name whose **second or later**
-> dot-segment is `execute-api`, `lambda-url`, or `appsync-api` cannot be
-> addressed by rule 2 — `my.execute-api.localhost` is an API Gateway invoke.
+> dot-segment is `execute-api`, `lambda-url`, `appsync-api`,
+> `appsync-realtime-api` or `cloudfront` cannot be addressed by rule 2 — `my.execute-api.localhost` is an API Gateway invoke.
 > Use path-style (`localhost:4566/my.execute-api/key`) or the explicit form
 > (`my.execute-api.s3.localhost`), both of which work.
 >
