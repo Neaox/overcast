@@ -362,7 +362,6 @@ func (f fixedLocator) AddrFor(netip.Addr) netip.Addr { return f.addr }
 // recordingForwarder is a Forwarder test double.
 type recordingForwarder struct {
 	mu      sync.Mutex
-	n       int
 	last    []byte
 	queries [][]byte
 	reply   []byte
@@ -372,16 +371,9 @@ type recordingForwarder struct {
 func (f *recordingForwarder) Forward(_ context.Context, query []byte) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.n++
 	f.last = append([]byte(nil), query...)
 	f.queries = append(f.queries, append([]byte(nil), query...))
 	return f.reply, f.err
-}
-
-func (f *recordingForwarder) calls() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.n
 }
 
 // forwardedNames decodes the question name out of every relayed query.
