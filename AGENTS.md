@@ -173,7 +173,9 @@ Two Go/TS files are generated from `docs/` and **committed**, exactly like `inte
 | `internal/docssearch/index.gen.go` | `make docs-index` |
 | `web/src/docs-index.gen.ts` | `make docs-index` |
 
-- **After editing anything under `docs/`, run `make docs-index` and commit the result.** CI fails otherwise: `make docs-check` compares both files against what `docs/` would produce.
+- **After editing a published doc under `docs/`, run `make docs-index` and commit the result.** CI fails otherwise: `make docs-check` compares both files against what `docs/` would produce.
+- **`docs/plans/` and `docs/dev/` are NOT indexed — skip `make docs-index` for them.** [scripts/docs-index.go](./scripts/docs-index.go) skips both directories outright (`filepath.SkipDir`) and `isPublishedDocPath` excludes them, so regenerating after a plan or dev-doc edit produces an identical file and only costs you a minute. They are working documents, not user-facing pages.
+- **A Markdown-only change needs no test run.** Editing a plan, a dev doc, or prose in a published doc cannot change Go behaviour, so `go test` proves nothing. Run tests when code, generated files, or test fixtures change. (Published docs still need `make docs-index`; the index is generated output, not a test.)
 - **Never hand-edit them** (they carry `DO NOT EDIT`) and **never hand-merge them** — resolve any conflict by re-running `make docs-index`. `.gitattributes` marks them `linguist-generated`, so GitHub review collapses them.
 - A bare `git clone` builds: `go build ./...` and `go vet ./...` need no generation step.
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -374,29 +375,77 @@ func TestPaginate_maxLimit_capsRequestedLimit(t *testing.T) {
 
 // ---- BucketName validation -------------------------------------------------
 
-func TestBucketName_valid(t *testing.T) {
-	valid := []string{"my-bucket", "bucket123", "a-b-c", "abc"}
-	for _, name := range valid {
-		if err := serviceutil.BucketName(name); err != nil {
-			t.Errorf("expected %q to be valid, got error: %v", name, err)
-		}
-	}
-}
+// TestBucketName_matchesAWSRules is the specification for S3 general purpose
+// bucket names, taken rule-by-rule from
+// https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
+//
+// Overcast's validation must match AWS exactly. Rejecting a name AWS accepts
+// is the worse failure of the two: it fails a stack locally that deploys fine
+// against AWS, which is the divergence this emulator exists to avoid.
+func TestBucketName_matchesAWSRules(t *testing.T) {
+	cases := []struct {
+		name  string
+		valid bool
+		why   string
+	}{
+		// ---- Valid ---------------------------------------------------------
+		{name: "my-bucket", valid: true},
+		{name: "bucket123", valid: true},
+		{name: "a-b-c", valid: true},
+		{name: "abc", valid: true, why: "minimum length"},
+		{name: strings.Repeat("a", 63), valid: true, why: "maximum length"},
 
-func TestBucketName_invalid(t *testing.T) {
-	invalid := []string{
-		"ab",                 // too short
-		"A-BUCKET",           // uppercase
-		"my--bucket",         // consecutive hyphens
-		"192.168.1.1",        // IP address format
-		"-bucket",            // starts with hyphen
-		"bucket-",            // ends with hyphen
-		"bucket with spaces", // spaces
+		// Periods are legal. AWS discourages them (they break the
+		// *.s3.<region>.amazonaws.com wildcard certificate for virtual-hosted
+		// style over HTTPS) but explicitly documents them as valid, and lists
+		// example.com / www.example.com / my.example.s3.bucket as valid names.
+		{name: "example.com", valid: true, why: "AWS-documented valid example"},
+		{name: "www.example.com", valid: true, why: "AWS-documented valid example"},
+		{name: "my.example.s3.bucket", valid: true, why: "AWS-documented valid example"},
+
+		// Consecutive hyphens are legal — AWS forbids two adjacent PERIODS,
+		// not hyphens. Its own reserved suffixes (--ol-s3, --x-s3, --table-s3)
+		// contain double hyphens, which could not exist if they were illegal.
+		{name: "my--bucket", valid: true, why: "AWS forbids adjacent periods, not hyphens"},
+
+		// ---- Invalid: length and alphabet ----------------------------------
+		{name: "ab", why: "too short"},
+		{name: strings.Repeat("a", 64), why: "too long"},
+		{name: "A-BUCKET", why: "uppercase"},
+		{name: "amzn_s3_demo_bucket", why: "underscores — AWS-documented invalid example"},
+		{name: "bucket with spaces", why: "spaces"},
+
+		// ---- Invalid: structure --------------------------------------------
+		{name: "-bucket", why: "must begin with a letter or number"},
+		{name: "bucket-", why: "must end with a letter or number"},
+		{name: ".bucket", why: "must begin with a letter or number"},
+		{name: "bucket.", why: "must end with a letter or number"},
+		{name: "example..com", why: "two adjacent periods — AWS-documented invalid example"},
+		{name: "192.168.5.4", why: "IP address format — AWS-documented invalid example"},
+
+		// ---- Invalid: reserved prefixes ------------------------------------
+		{name: "xn--bucket", why: "reserved prefix xn--"},
+		{name: "sthree-bucket", why: "reserved prefix sthree-"},
+		{name: "amzn-s3-demo-bucket", why: "reserved prefix amzn-s3-demo-"},
+
+		// ---- Invalid: reserved suffixes ------------------------------------
+		{name: "my-bucket-s3alias", why: "reserved suffix -s3alias"},
+		{name: "my-bucket--ol-s3", why: "reserved suffix --ol-s3"},
+		{name: "my-bucket.mrap", why: "reserved suffix .mrap"},
+		{name: "my-bucket--x-s3", why: "reserved suffix --x-s3"},
+		{name: "my-bucket--table-s3", why: "reserved suffix --table-s3"},
 	}
-	for _, name := range invalid {
-		if err := serviceutil.BucketName(name); err == nil {
-			t.Errorf("expected %q to be invalid, but got no error", name)
-		}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := serviceutil.BucketName(tc.name)
+			if tc.valid && err != nil {
+				t.Errorf("BucketName(%q) rejected a name AWS accepts (%s): %v", tc.name, tc.why, err.Message)
+			}
+			if !tc.valid && err == nil {
+				t.Errorf("BucketName(%q) accepted a name AWS rejects (%s)", tc.name, tc.why)
+			}
+		})
 	}
 }
 

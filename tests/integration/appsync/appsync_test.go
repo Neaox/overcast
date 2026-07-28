@@ -169,7 +169,7 @@ func TestCreateGraphqlApi_success(t *testing.T) {
 	if api.Uris["GRAPHQL"] == "" {
 		t.Error("expected uris.GRAPHQL to be set")
 	}
-	if want := srv.URL + "/_appsync/" + api.ApiId + "/graphql"; api.Uris["GRAPHQL"] != want {
+	if want := srv.ExternalBase() + "/_appsync/" + api.ApiId + "/graphql"; api.Uris["GRAPHQL"] != want {
 		t.Fatalf("expected executable GraphQL URL %q, got %q", want, api.Uris["GRAPHQL"])
 	}
 	if api.Uris["REALTIME"] == "" {
@@ -210,7 +210,7 @@ func TestListGraphqlApis_localGraphQLURLs(t *testing.T) {
 	if len(result.GraphqlApis) != 1 {
 		t.Fatalf("expected one API, got %d", len(result.GraphqlApis))
 	}
-	want := srv.URL + "/_appsync/" + apiID + "/graphql"
+	want := srv.ExternalBase() + "/_appsync/" + apiID + "/graphql"
 	if got := result.GraphqlApis[0].Uris["GRAPHQL"]; got != want {
 		t.Fatalf("expected executable GraphQL URL %q, got %q", want, got)
 	}
@@ -6449,6 +6449,64 @@ func TestExecuteGraphQL_hostBasedInvoke(t *testing.T) {
 	helpers.DecodeJSON(t, resp, &result)
 	if result.Data.Hello != "world" {
 		t.Errorf("expected data.hello=%q, got %q", "world", result.Data.Hello)
+	}
+}
+
+// TestExecuteGraphQL_hostBasedInvokeAcrossResolvableBases is the AppSync half
+// of the addressing-precedence regression. Every base below except
+// ".amazonaws.com" used to be claimed by S3 virtual-hosted addressing first,
+// which prepended a bogus bucket segment to the path so the rewritten request
+// never matched /_appsync/{apiId}/graphql.
+//
+// See docs/plans/host-routing-precedence.md.
+func TestExecuteGraphQL_hostBasedInvokeAcrossResolvableBases(t *testing.T) {
+	// Given: a GraphQL API with a NONE-datasource resolver
+	srv := helpers.NewTestServer(t)
+	sdl := `type Query { hello: String }`
+	apiID, keyID := setupGraphQLAPI(t, srv, sdl)
+
+	appsyncPost(t, srv, "/v1/apis/"+apiID+"/datasources", map[string]any{
+		"name": "NoneDS",
+		"type": "NONE",
+	}).Body.Close()
+	appsyncPost(t, srv, "/v1/apis/"+apiID+"/types/Query/resolvers", map[string]any{
+		"fieldName":               "hello",
+		"dataSourceName":          "NoneDS",
+		"kind":                    "UNIT",
+		"requestMappingTemplate":  `{"version":"2018-05-29","payload":"world"}`,
+		"responseMappingTemplate": `$util.toJson($context.result)`,
+	}).Body.Close()
+
+	bases := []struct{ name, host string }{
+		{"amazonaws.com with region", apiID + ".appsync-api.us-east-1.amazonaws.com"},
+		{"localhost with region", apiID + ".appsync-api.us-east-1.localhost:4566"},
+		{"localhost without region", apiID + ".appsync-api.localhost:4566"},
+		{"overcast.sh wildcard with region", apiID + ".appsync-api.us-east-1.localhost.overcast.sh:4566"},
+		{"localstack.cloud wildcard with region", apiID + ".appsync-api.us-east-1.localhost.localstack.cloud:4566"},
+	}
+
+	for _, b := range bases {
+		t.Run(b.name, func(t *testing.T) {
+			// When: the query is executed via the appsync-api Host on that base
+			resp := appsyncPostWithHost(t, srv, "/graphql",
+				map[string]any{"query": `{ hello }`},
+				b.host,
+				map[string]string{"x-api-key": keyID},
+			)
+			defer resp.Body.Close()
+
+			// Then: the same data the path-style invoke returns
+			helpers.AssertStatus(t, resp, http.StatusOK)
+			var result struct {
+				Data struct {
+					Hello string `json:"hello"`
+				} `json:"data"`
+			}
+			helpers.DecodeJSON(t, resp, &result)
+			if result.Data.Hello != "world" {
+				t.Errorf("Host %q: expected data.hello=%q, got %q", b.host, "world", result.Data.Hello)
+			}
+		})
 	}
 }
 

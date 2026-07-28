@@ -95,13 +95,15 @@ func detectService(r *http.Request) string {
 	}
 
 	// 2b. Host-routed AWS-style addresses (execute-api / lambda-url /
-	// appsync-api Host subdomains — see hostroute.go). Checked against the
-	// exact same label table HostDispatch uses to rewrite these requests,
-	// so this label can never drift from what the request was actually
-	// routed to, regardless of which internal path convention the rewrite
-	// used.
-	if svc, ok := HostRouteService(r.Host); ok {
-		return svc
+	// appsync-api Host subdomains — see hostroute.go). Read from the claim
+	// HostAddressing stamped on this request, so the label is what actually
+	// routed it rather than a re-derivation that could disagree — notably
+	// when OVERCAST_HOSTNAME itself contains a registered label, where S3
+	// virtual-hosted addressing legitimately wins.
+	if claim, ok := HostClaimFromContext(r.Context()); ok && claim.Kind == HostClaimHostRoute {
+		if svc, found := HostRouteServiceFor(claim.Route); found {
+			return svc
+		}
 	}
 
 	// 2c. Emulator-internal /_-prefixed paths — S3 bucket names cannot start

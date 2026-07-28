@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
@@ -140,6 +141,20 @@ func (h *Handler) CreateBucket(w http.ResponseWriter, r *http.Request) {
 	if aerr := h.store.putBucket(r.Context(), b); aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
 		return
+	}
+
+	// A bucket whose name carries a host-route label as a second-or-later dot
+	// segment cannot be reached by bare virtual-hosted addressing —
+	// "my.execute-api.localhost" parses as an API Gateway invoke. AWS accepts
+	// the name and so does Overcast, and the AWS wire format has no field for
+	// a warning, so a log line is the only channel available. Creation is
+	// naturally once per name, so no dedup is needed.
+	if label, reserved := middleware.BucketNameReservedLabel(bucket); reserved {
+		h.log.Warn("bucket name contains a reserved host label; it is not addressable in bare "+
+			"virtual-hosted form — use path-style or {bucket}.s3.{host} addressing",
+			zap.String("bucket", bucket),
+			zap.String("reserved_label", label),
+		)
 	}
 
 	w.Header().Set("Location", "/"+bucket)

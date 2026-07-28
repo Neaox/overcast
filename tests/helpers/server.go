@@ -2,8 +2,10 @@ package helpers
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -33,6 +35,29 @@ type TestServer struct {
 	Clock *clock.Mock
 }
 
+// ExternalBase returns the base URL this server embeds in client-facing
+// responses: the configured hostname (OVERCAST_HOSTNAME — "localhost" by
+// default, see defaultTestConfig) on the port httptest actually bound.
+//
+// Assert against this, not Server.URL, whenever a test checks a resource URL a
+// service handed back. Server.URL is the dial address (127.0.0.1), which is
+// deliberately NOT what clients are told: an IP base matches no virtual-host
+// rule, so a test pinned to it silently exercises a host shape no real client
+// ever sends. That is exactly how the S3/host-route addressing collision
+// survived — the Lambda function-URL round-trip test minted
+// "{urlId}.lambda-url.us-east-1.127.0.0.1:PORT" and never hit the bug. See
+// docs/plans/host-routing-precedence.md.
+func (ts *TestServer) ExternalBase() string {
+	if ts.Config == nil || ts.Config.Hostname == "" {
+		return ts.URL
+	}
+	u, err := url.Parse(ts.URL)
+	if err != nil {
+		return ts.URL
+	}
+	return u.Scheme + "://" + net.JoinHostPort(ts.Config.Hostname, u.Port())
+}
+
 // serverOptions holds all non-config options for NewTestServer so that Option
 // can carry both config mutations and server-level settings.
 type serverOptions struct {
@@ -40,6 +65,7 @@ type serverOptions struct {
 	mock       *clock.Mock
 	store      state.Store       // nil means use default MemoryStore
 	initRunner *inithooks.Runner // nil means no init hooks
+	logger     *zap.Logger       // nil means silent (zap.NewNop)
 }
 
 // NewTestServer creates a started test server with sensible defaults.
@@ -68,10 +94,14 @@ func NewTestServer(t *testing.T, opts ...Option) *TestServer {
 	t.Helper()
 
 	so := &serverOptions{cfg: defaultTestConfig()}
-	logger := zap.NewNop() // silent in tests — keep output clean
 
 	for _, opt := range opts {
 		opt(so)
+	}
+
+	logger := so.logger
+	if logger == nil {
+		logger = zap.NewNop() // silent in tests — keep output clean
 	}
 
 	// Ensure a data directory is always available for on-disk state.
@@ -241,6 +271,19 @@ func WithServiceStates(states map[string]config.StateBackend) Option {
 	}
 }
 
+// WithLogger routes the server's logs to the supplied zap.Logger instead of
+// discarding them. Pair it with zaptest/observer to assert on a diagnostic the
+// emulator emits but cannot surface in a response — AWS wire formats are fixed,
+// so a log line is sometimes the only place a divergence can be reported.
+//
+//	core, logs := observer.New(zap.WarnLevel)
+//	srv := helpers.NewTestServer(t, helpers.WithLogger(zap.New(core)))
+func WithLogger(logger *zap.Logger) Option {
+	return func(so *serverOptions) {
+		so.logger = logger
+	}
+}
+
 // WithHostname sets the external hostname used in client-facing URLs.
 func WithHostname(hostname string) Option {
 	return func(so *serverOptions) {
@@ -284,6 +327,7 @@ func WithSigV4Validate(enabled bool) Option {
 func defaultTestConfig() *config.Config {
 	return &config.Config{
 		Host:                "127.0.0.1",
+		Hostname:            "localhost",
 		Port:                0, // httptest assigns the port
 		Region:              "us-east-1",
 		AccountID:           "000000000000",

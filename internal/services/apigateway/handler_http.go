@@ -92,7 +92,7 @@ func (h *Handler) CreateV2Api(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	protocol.WriteJSON(w, r, http.StatusCreated, v2APIToResponse(api, middleware.RegionFromContext(r.Context(), h.cfg.Region)))
+	protocol.WriteJSON(w, r, http.StatusCreated, h.v2APIToResponse(r, api, middleware.RegionFromContext(r.Context(), h.cfg.Region)))
 }
 
 // ---- GetApi (v2) ----------------------------------------------------------
@@ -107,7 +107,7 @@ func (h *Handler) GetV2Api(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	protocol.WriteJSON(w, r, http.StatusOK, v2APIToResponse(api, region))
+	protocol.WriteJSON(w, r, http.StatusOK, h.v2APIToResponse(r, api, region))
 }
 
 // ---- GetApis (v2) ---------------------------------------------------------
@@ -128,7 +128,7 @@ func (h *Handler) GetV2Apis(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]v2APIResponse, 0, len(apis))
 	for _, api := range apis {
-		items = append(items, v2APIToResponse(api, region))
+		items = append(items, h.v2APIToResponse(r, api, region))
 	}
 
 	// TODO(priority:P2): implement pagination
@@ -181,7 +181,7 @@ func (h *Handler) UpdateV2Api(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	protocol.WriteJSON(w, r, http.StatusOK, v2APIToResponse(api, region))
+	protocol.WriteJSON(w, r, http.StatusOK, h.v2APIToResponse(r, api, region))
 }
 
 // ---- DeleteApi (v2) -------------------------------------------------------
@@ -601,8 +601,22 @@ type v2APIResponse struct {
 	ARN                      string            `json:"arn,omitempty"`
 }
 
-func v2APIToResponse(api *APIV2, region string) v2APIResponse {
+// v2APIToResponse renders an HTTP API. ApiEndpoint is minted through the shared
+// host-routed URL helper, so the endpoint an API reports is by construction one
+// this router resolves back to that API -- real AWS returns
+// https://{apiId}.execute-api.{region}.amazonaws.com and CloudFormation exposes
+// it as Fn::GetAtt ApiEndpoint, which resolved to an empty string while this
+// field went unpopulated.
+//
+// DisableExecuteAPI suppresses it, matching AWS: with the execute-api endpoint
+// disabled there is no default invoke URL to report.
+func (h *Handler) v2APIToResponse(r *http.Request, api *APIV2, region string) v2APIResponse {
+	endpoint := ""
+	if !api.DisableExecuteAPI {
+		endpoint = serviceutil.HostRoutedURL(h.cfg, r, middleware.LabelExecuteAPI, api.ApiID, region, "")
+	}
 	return v2APIResponse{
+		ApiEndpoint:              endpoint,
 		ApiID:                    api.ApiID,
 		Name:                     api.Name,
 		ProtocolType:             api.ProtocolType,

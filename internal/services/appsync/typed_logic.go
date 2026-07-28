@@ -60,8 +60,8 @@ func (h *Handler) createGraphqlApiTyped(ctx context.Context, req *createGraphqlA
 	}
 	api.Uris = localGraphQLURIs(h.baseURLFromContext(ctx), apiID)
 	api.Dns = map[string]string{
-		"GRAPHQL":  fmt.Sprintf("%s.appsync-api.%s.amazonaws.com", apiID, h.cfg.Region),
-		"REALTIME": fmt.Sprintf("%s.appsync-realtime-api.%s.amazonaws.com", apiID, h.cfg.Region),
+		"GRAPHQL":  h.graphQLDNSFromBase(h.baseURLFromContext(ctx), apiID, h.cfg.Region),
+		"REALTIME": h.graphQLDNSFromBase(h.baseURLFromContext(ctx), apiID, h.cfg.Region),
 	}
 	if err := h.store.PutAPI(ctx, api); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
@@ -1284,8 +1284,8 @@ func (h *Handler) createEventApiTyped(ctx context.Context, req *createEventApiRe
 		ApiArn:  protocol.ARN(h.regionCtx(ctx), h.cfg.AccountID, "appsync", "apis/"+apiID),
 		Created: h.clk.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
 		Dns: map[string]string{
-			"HTTP":     fmt.Sprintf("%s.appsync-api.%s.amazonaws.com", apiID, h.cfg.Region),
-			"REALTIME": fmt.Sprintf("%s.appsync-realtime-api.%s.amazonaws.com", apiID, h.cfg.Region),
+			"HTTP":     h.graphQLDNSFromBase(h.baseURLFromContext(ctx), apiID, h.cfg.Region),
+			"REALTIME": h.graphQLDNSFromBase(h.baseURLFromContext(ctx), apiID, h.cfg.Region),
 		},
 	}
 	if err := h.store.PutEventApi(ctx, api); err != nil {
