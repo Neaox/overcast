@@ -61,13 +61,23 @@ jobs:
           go test -race -count=1 -timeout=1200s -coverprofile=coverage.out ./...
           go tool cover -func=coverage.out
 
-  slim:
-    name: Test suite (-tags slim)
+  build-tags:
+    name: Test suite (-tags ${{ matrix.tags }})
     runs-on: ubuntu-latest
 
     # Deliberately no `needs: web` and no download-artifact: dropping the
     # embedded SPA is the whole point of the slim build (embed_slim.go), so this
     # job needs no web/dist and can start immediately.
+    strategy:
+      fail-fast: false
+      matrix:
+        # `slim` is what AGENTS.md tells agents to use for backend-only
+        # verification; `slim,nosqlite` is what actually ships — both the
+        # released overcastd binary (the cross-build matrix below) and the slim
+        # Docker image (`build-slim` in the Makefile) are built with it. Gating
+        # only the untagged suite left the shipped tag set ungated.
+        tags: [slim, "slim,nosqlite"]
+
     steps:
       - uses: actions/checkout@v7.0.0
 
@@ -80,15 +90,14 @@ jobs:
         run: go mod download
 
       - name: Vet
-        run: go vet -tags slim ./...
+        run: go vet -tags ${{ matrix.tags }} ./...
 
-      # AGENTS.md directs agents at `-tags slim` for backend-only verification,
-      # so the slim suite has to stay green or that guidance produces false
-      # positives. No -race: the tag changes which routes register and which
-      # assets embed, not concurrency — the untagged coverage job owns race
-      # coverage, and dropping it here roughly halves the runtime.
+      # No -race: these tags change which routes register, which assets embed,
+      # and whether SQLite is compiled in — not concurrency. The untagged
+      # coverage job owns race coverage, and dropping it here roughly halves
+      # the runtime.
       - name: Test suite
-        run: go test -count=1 -timeout=1200s -tags slim ./...
+        run: go test -count=1 -timeout=1200s -tags ${{ matrix.tags }} ./...
 
   sqs-protocol-dispatch:
     name: SQS integration tests (protocol dispatch)

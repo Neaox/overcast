@@ -51,11 +51,17 @@ type esmDeliveryManager struct {
 	log      *serviceutil.ServiceLogger
 	clk      clock.Clock
 	cfg      *config.Config
-	baseCtx  context.Context
 
-	mu   sync.Mutex
-	stop map[string]func() // keyed by ESM UUID; value cancels delivery
-	wg   sync.WaitGroup
+	// baseCtx is the parent of every per-ESM delivery context, and the only
+	// stop signal available to delivery goroutines that are tracked by wg but
+	// have no stop entry (ReloadAll). baseCancel is called by StopAll.
+	baseCtx    context.Context
+	baseCancel context.CancelFunc
+
+	mu      sync.Mutex
+	stopped bool              // latched by StopAll; makes later Start calls no-ops
+	stop    map[string]func() // keyed by ESM UUID; value cancels delivery
+	wg      sync.WaitGroup
 }
 
 type lambdaInvoker interface {
@@ -76,19 +82,24 @@ func newESMDeliveryManager(
 	log *serviceutil.ServiceLogger,
 	clk clock.Clock,
 	cfg *config.Config,
-	baseCtx context.Context,
+	parentCtx context.Context,
 ) *esmDeliveryManager {
+	// Own the cancel rather than relying on the caller's context ever being
+	// cancelled — Service.InitESMDelivery passes context.Background(), and
+	// StopAll needs a signal every delivery goroutine can observe.
+	baseCtx, baseCancel := context.WithCancel(parentCtx)
 	return &esmDeliveryManager{
-		store:    store,
-		invoker:  invoker,
-		receiver: receiver,
-		enqueuer: enqueuer,
-		bus:      bus,
-		log:      log,
-		clk:      clk,
-		cfg:      cfg,
-		baseCtx:  baseCtx,
-		stop:     make(map[string]func()),
+		store:      store,
+		invoker:    invoker,
+		receiver:   receiver,
+		enqueuer:   enqueuer,
+		bus:        bus,
+		log:        log,
+		clk:        clk,
+		cfg:        cfg,
+		baseCtx:    baseCtx,
+		baseCancel: baseCancel,
+		stop:       make(map[string]func()),
 	}
 }
 
@@ -101,6 +112,12 @@ func (m *esmDeliveryManager) Start(esm *EventSourceMapping) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// Shutdown has begun. StopAll has already cancelled everything it knew
+	// about and is draining m.wg, so anything registered now would be waited
+	// on without ever being cancelled. See StopAll.
+	if m.stopped {
+		return
+	}
 	if _, running := m.stop[esm.UUID]; running {
 		return
 	}
@@ -168,16 +185,49 @@ func (m *esmDeliveryManager) Stop(uuid string) {
 	}
 }
 
-// StopAll cancels all running deliveries and waits for SQS pollers to finish.
-// Called from Service.Stop.
-func (m *esmDeliveryManager) StopAll() {
+// StopAll cancels all running deliveries and waits for the delivery
+// goroutines to finish, bounded by ctx. Called from Service.Stop.
+//
+// Three things have to line up for that drain to terminate:
+//
+//   - Every entry in m.stop is cancelled, which stops the SQS pollers and
+//     stream workers registered per ESM.
+//   - baseCtx is cancelled, which reaches the delivery goroutines m.stop does
+//     not know about — InitESMDelivery's ReloadAll is tracked by m.wg but has
+//     no m.stop entry, so while baseCtx was context.Background() a ReloadAll
+//     parked in state.ReadyAwaiter.WaitReady held the WaitGroup counter above
+//     zero with nothing able to bring it down.
+//   - stopped is latched, so a ReloadAll that wakes up mid-teardown cannot
+//     Start a fresh poller after the drain has begun. Cancelling baseCtx
+//     already makes such a poller exit immediately, but the latch is what
+//     keeps its wg.Add from racing wg.Wait — sync.WaitGroup panics on an Add
+//     that starts from a zero counter concurrently with a Wait.
+//
+// The wait is still capped by ctx rather than unbounded, mirroring
+// cmd/overcast's closeStoreBounded: a delivery goroutine that ignores
+// cancellation should surface as a loud log line at shutdown, not as a
+// process that never exits.
+func (m *esmDeliveryManager) StopAll(ctx context.Context) {
 	m.mu.Lock()
+	m.stopped = true
 	for uuid, fn := range m.stop {
 		fn()
 		delete(m.stop, uuid)
 	}
 	m.mu.Unlock()
-	m.wg.Wait()
+	m.baseCancel()
+
+	drained := make(chan struct{})
+	go func() {
+		m.wg.Wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+	case <-ctx.Done():
+		m.log.Logger().Warn("lambda: esm: delivery goroutines did not drain before the shutdown deadline",
+			zap.Error(ctx.Err()))
+	}
 }
 
 // ReloadAll starts delivery for every Enabled ESM found in the store.

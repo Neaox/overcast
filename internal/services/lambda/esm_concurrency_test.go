@@ -200,7 +200,7 @@ func startSQSPoller(t *testing.T, esm *EventSourceMapping, inv lambdaInvoker, re
 		context.Background(),
 	)
 	mgr.Start(esm)
-	t.Cleanup(mgr.StopAll)
+	t.Cleanup(func() { stopAll(t, mgr) })
 	return mgr
 }
 
@@ -294,7 +294,7 @@ func TestDynamoDBStreamESM_deliversOneBatchAtATime(t *testing.T) {
 		context.Background(),
 	)
 	mgr.Start(esm)
-	defer mgr.StopAll()
+	defer stopAll(t, mgr)
 
 	// When: several stream records arrive while the first invocation is still
 	// running.

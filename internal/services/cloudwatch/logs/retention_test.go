@@ -25,9 +25,7 @@ import (
 //     group name in a different region are untouched
 //   - behavior is identical between memEventBackend and sqlEventBackend
 func TestEventBackend_DeleteEventsOlderThan_MemoryAndSQL_Parity(t *testing.T) {
-	mem, sqlBackend := newTestBackends(t)
-
-	for name, b := range map[string]eventBackend{"memory": mem, "sql": sqlBackend} {
+	for name, b := range newTestBackends(t) {
 		b := b
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
@@ -102,17 +100,23 @@ func TestEventBackend_DeleteEventsOlderThan_MemoryAndSQL_Parity(t *testing.T) {
 
 // ---- logsStore.sweepExpiredEventsOnce: memory/SQL parity -------------------
 
-// newTestLogsStores returns a memory-backed and a hybrid(SQL)-backed
-// *logsStore sharing the same mock clock, for parity-testing
-// sweepExpiredEventsOnce against both eventBackend implementations — mirrors
-// event_backend_test.go's newTestBackends, one layer up.
-func newTestLogsStores(t *testing.T) (memStore, sqlStore *logsStore, mock *clock.Mock) {
+// newTestLogsStores returns one *logsStore per eventBackend implementation
+// available in this build — all sharing the same mock clock — for
+// parity-testing sweepExpiredEventsOnce against each of them. Mirrors
+// event_backend_test.go's newTestBackends, one layer up, including its
+// nosqlite behavior: the "sql" store is only present when the build has
+// SQLite compiled in, and the map degrades to memory-only otherwise.
+func newTestLogsStores(t *testing.T) (stores map[string]*logsStore, mock *clock.Mock) {
 	t.Helper()
 	mock = clock.NewMock()
 
 	mem := state.NewMemoryStore()
-	memStore = newLogsStore(mem, mock, "us-east-1")
+	memStore := newLogsStore(mem, mock, "us-east-1")
 	t.Cleanup(memStore.flushBgCancel)
+	stores = map[string]*logsStore{"memory": memStore}
+	if !config.SQLiteSupported() {
+		return stores, mock
+	}
 
 	dir := t.TempDir()
 	hybrid, err := state.NewHybridStore(dir, 20*time.Millisecond)
@@ -124,13 +128,14 @@ func newTestLogsStores(t *testing.T) (memStore, sqlStore *logsStore, mock *clock
 			t.Logf("hybrid.Close: %v", err)
 		}
 	})
-	sqlStore = newLogsStore(hybrid, mock, "us-east-1")
+	sqlStore := newLogsStore(hybrid, mock, "us-east-1")
 	t.Cleanup(sqlStore.flushBgCancel)
 	if _, ok := sqlStore.backend.(*sqlEventBackend); !ok {
 		t.Fatalf("expected sqlEventBackend for a SQLite-backed store, got %T", sqlStore.backend)
 	}
+	stores["sql"] = sqlStore
 
-	return memStore, sqlStore, mock
+	return stores, mock
 }
 
 // TestLogsStore_SweepExpiredEventsOnce_RespectsRetentionInDaysPerGroup proves:
@@ -141,11 +146,11 @@ func newTestLogsStores(t *testing.T) (memStore, sqlStore *logsStore, mock *clock
 //     CloudWatch Logs treats 0 as "never expire"
 //   - different groups' retention windows are independent
 //
-// Run against both memEventBackend and sqlEventBackend.
+// Run against every eventBackend this build provides — see newTestLogsStores.
 func TestLogsStore_SweepExpiredEventsOnce_RespectsRetentionInDaysPerGroup(t *testing.T) {
-	memStore, sqlStore, mock := newTestLogsStores(t)
+	stores, mock := newTestLogsStores(t)
 
-	for name, s := range map[string]*logsStore{"memory": memStore, "sql": sqlStore} {
+	for name, s := range stores {
 		s := s
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
@@ -228,9 +233,9 @@ func TestLogsStore_SweepExpiredEventsOnce_RespectsRetentionInDaysPerGroup(t *tes
 //   - a stream whose persisted events don't match its (stale) metadata is
 //     never removed while it still has persisted events newer than cutoff
 func TestLogsStore_SweepExpiredEventsOnce_DeletesEmptyExpiredStreamMetadata(t *testing.T) {
-	memStore, sqlStore, mock := newTestLogsStores(t)
+	stores, mock := newTestLogsStores(t)
 
-	for name, s := range map[string]*logsStore{"memory": memStore, "sql": sqlStore} {
+	for name, s := range stores {
 		s := s
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
