@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -1295,7 +1296,11 @@ func TestCreateStack_SQSQueueRefOutputIsUsableQueueURL(t *testing.T) {
 	})
 	defer desc.Body.Close()
 	body := string(readBody(t, desc))
-	queueURL := srv.Config.ExternalBaseURL() + "/000000000000/sqs-output-stack-Queue"
+	// The queue is unnamed in the template, so CloudFormation generated its
+	// name — {StackName}-{LogicalID}-{RANDOM}, unpredictable by design. Read it
+	// back from the stack output rather than hardcoding it.
+	queueName := generatedQueueNameFromOutput(t, body, "sqs-output-stack", "EventQueue")
+	queueURL := srv.Config.ExternalBaseURL() + "/000000000000/" + queueName
 
 	list := sqsJSONCall(t, srv, "ListQueues", map[string]any{})
 	defer list.Body.Close()
@@ -1307,7 +1312,7 @@ func TestCreateStack_SQSQueueRefOutputIsUsableQueueURL(t *testing.T) {
 	if !strings.Contains(body, queueURL) {
 		t.Fatalf("expected SQS Ref output to contain queue URL %q, got: %s", queueURL, body)
 	}
-	if !strings.Contains(body, "arn:aws:sqs:ap-southeast-2:000000000000:sqs-output-stack-Queue") {
+	if !strings.Contains(body, "arn:aws:sqs:ap-southeast-2:000000000000:"+queueName) {
 		t.Fatalf("expected SQS Arn output, got: %s", body)
 	}
 	helpers.AssertStatus(t, list, http.StatusOK)
@@ -1319,7 +1324,7 @@ func TestCreateStack_SQSQueueRefOutputIsUsableQueueURL(t *testing.T) {
 	// ListQueues answers this test client with its own origin rather than the
 	// configured hostname the stack output carries. Both address the same queue —
 	// the ReceiveMessage call above proves the stack-output form still works.
-	queuePath := "/000000000000/sqs-output-stack-Queue"
+	queuePath := "/000000000000/" + queueName
 	if !slices.ContainsFunc(queues.QueueUrls, func(u string) bool { return strings.HasSuffix(u, queuePath) }) {
 		t.Fatalf("expected ListQueues to include a URL ending %q, got %#v", queuePath, queues.QueueUrls)
 	}
@@ -1355,7 +1360,14 @@ func TestCreateStack_SQSFIFOQueueGeneratedName(t *testing.T) {
 	defer cr.Body.Close()
 	helpers.AssertStatus(t, cr, http.StatusOK)
 	waitForStackStatus(t, srv, "sqs-fifo-stack", "CREATE_COMPLETE")
-	queueURL := srv.Config.ExternalBaseURL() + "/000000000000/sqs-fifo-stack-Queue.fifo"
+	descFifo := cfnQuery(t, srv, "DescribeStacks", url.Values{"StackName": []string{"sqs-fifo-stack"}})
+	fifoBody := string(readBody(t, descFifo))
+	descFifo.Body.Close()
+	queueName := generatedQueueNameFromOutput(t, fifoBody, "sqs-fifo-stack", "EventQueue")
+	if !strings.HasSuffix(queueName, ".fifo") {
+		t.Fatalf("generated FIFO queue name %q must end in .fifo", queueName)
+	}
+	queueURL := srv.Config.ExternalBaseURL() + "/000000000000/" + queueName
 
 	// When: external SQS APIs inspect the created queue.
 	attrs := sqsJSONCall(t, srv, "GetQueueAttributes", map[string]any{
@@ -1379,7 +1391,7 @@ func TestCreateStack_SQSFIFOQueueGeneratedName(t *testing.T) {
 	if result.Attributes["FifoQueue"] != "true" {
 		t.Fatalf("expected FifoQueue=true, got %#v", result.Attributes)
 	}
-	if !strings.Contains(result.Attributes["QueueArn"], ":sqs-fifo-stack-Queue.fifo") {
+	if !strings.Contains(result.Attributes["QueueArn"], ":"+queueName) {
 		t.Fatalf("expected FIFO queue ARN, got %#v", result.Attributes)
 	}
 	helpers.AssertStatus(t, receive, http.StatusOK)
@@ -3755,4 +3767,17 @@ func TestCreateStack_APIGatewayApiKeyAndUsagePlan(t *testing.T) {
 	if !found {
 		t.Fatalf("usage plan 'cfn-test-plan' not found in %+v", plans.Item)
 	}
+}
+
+// generatedQueueNameFromOutput pulls the generated queue name out of a
+// DescribeStacks body. Unnamed resources get {StackName}-{LogicalID}-{RANDOM},
+// so the name cannot be predicted and must be read back.
+func generatedQueueNameFromOutput(t *testing.T, describeBody, stackName, logicalID string) string {
+	t.Helper()
+	re := regexp.MustCompile(regexp.QuoteMeta(stackName+"-"+logicalID) + `-[A-Z0-9]+(\.fifo)?`)
+	name := re.FindString(describeBody)
+	if name == "" {
+		t.Fatalf("no generated name for %s/%s in stack description: %s", stackName, logicalID, describeBody)
+	}
+	return name
 }

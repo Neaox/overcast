@@ -117,15 +117,22 @@ func TestLambdaProvisionerPackagesInlineCode(t *testing.T) {
 			"Code":    map[string]any{"ZipFile": source},
 		}
 
+		// An unnamed function is named from its logical ID, as the provisioner
+		// sets it before dispatching — two unnamed functions in one stack must
+		// not end up with the same name.
 		name, _, err := h.Create(context.Background(), router, nil, props, &resolveContext{
 			StackName: "Stack",
+			LogicalID: "Function",
 			Region:    "us-east-1",
 		})
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
-		if name != "Stack-Function" {
-			t.Errorf("physical id = %q, want %q", name, "Stack-Function")
+		// Shaped like CloudFormation's own generated physical ID:
+		// {StackName}-{LogicalID}-{RANDOM}. The random part is not predictable,
+		// so assert the shape rather than an exact string.
+		if !generatedNamePattern("Stack", "Function").MatchString(name) {
+			t.Errorf("physical id = %q, want Stack-Function-{RANDOM}", name)
 		}
 		assertReadableArchive(t, codeZipFrom(t, router.carryingCode(t)), "index.py", source)
 	})

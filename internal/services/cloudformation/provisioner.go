@@ -308,6 +308,13 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 	}
 
 	var newResources []StackResource
+	// Old resources that replacements superseded. They stay alive until the
+	// whole update succeeds — see updateResource — and are deleted in the
+	// cleanup phase at the end, or left standing for rollback if it fails.
+	var superseded []supersededResource
+	// logical ID → the replacement's new physical ID, so rollback knows which
+	// resources it created and must remove.
+	replacedBy := map[string]string{}
 
 	for _, logicalID := range order {
 		if ctx.Err() != nil {
@@ -356,7 +363,15 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 
 			// Properties changed — attempt update.
 			p.recordEvent(ctx, stack, logicalID, old.PhysicalID, res.Type, ResourceUpdateInProgress, "")
-			physID, updErr := p.updateResource(ctx, logicalID, res, props, old.PhysicalID, &old, rCtx)
+			physID, supersededID, updErr := p.updateResource(ctx, logicalID, res, props, old.PhysicalID, &old, rCtx)
+			if supersededID != "" {
+				// Replaced: the old resource stays alive until the whole update
+				// succeeds, so a later failure can still roll back to it.
+				superseded = append(superseded, supersededResource{
+					LogicalID: logicalID, Type: old.Type, PhysicalID: supersededID,
+				})
+				replacedBy[logicalID] = physID
+			}
 			now := p.clk.Now()
 			if updErr != nil {
 				newResources = append(newResources, StackResource{
@@ -373,7 +388,7 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 						fmt.Sprintf("resource %s failed: %v", logicalID, updErr))
 					return
 				}
-				p.rollbackUpdate(ctx, stack, newResources, existing, rCtx,
+				p.rollbackUpdate(ctx, stack, newResources, existing, replacedBy, rCtx,
 					fmt.Sprintf("resource %s failed: %v", logicalID, updErr))
 				return
 			}
@@ -417,7 +432,7 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 			}
 			// Roll back: delete newly created resources (those not in `existing`)
 			// in reverse order, then restore the previous resource list.
-			p.rollbackUpdate(ctx, stack, newResources, existing, rCtx,
+			p.rollbackUpdate(ctx, stack, newResources, existing, replacedBy, rCtx,
 				fmt.Sprintf("resource %s failed: %v", logicalID, provErr))
 			return
 		}
@@ -451,6 +466,16 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 		p.deleteResource(ctx, logicalID, old.Type, old.PhysicalID, rCtx)
 		p.recordEvent(ctx, stack, logicalID, old.PhysicalID, old.Type, ResourceDeleteComplete, "")
 		p.publishResourceEvent(ctx, events.CFNResourceDeleted, stack.StackName, logicalID, old.Type, old.PhysicalID)
+	}
+
+	// Cleanup phase. Every resource updated successfully, so the originals the
+	// replacements superseded are no longer needed — this is the point real
+	// CloudFormation deletes them, after the update is committed rather than
+	// during it, so that a failure at any earlier point could still roll back.
+	for _, s := range superseded {
+		p.recordEvent(ctx, stack, s.LogicalID, s.PhysicalID, s.Type, ResourceDeleteInProgress, "")
+		p.deleteResource(ctx, s.LogicalID, s.Type, s.PhysicalID, rCtx)
+		p.recordEvent(ctx, stack, s.LogicalID, s.PhysicalID, s.Type, ResourceDeleteComplete, "")
 	}
 
 	stack.Resources = newResources
@@ -573,6 +598,11 @@ func (p *provisioner) provisionResource(ctx context.Context, logicalID string, r
 		return "", fmt.Errorf("router not initialised")
 	}
 
+	// Handlers name unnamed resources from the logical ID (see
+	// resolveContext.generatedName). Provisioning walks the dependency order
+	// one resource at a time, so a single field on the shared context is safe.
+	rCtx.LogicalID = logicalID
+
 	handler, ok := p.resolveHandler(res.Type)
 	if !ok {
 		// Unknown resource type — generate a fake physical ID and succeed.
@@ -607,27 +637,38 @@ func (p *provisioner) provisionResource(ctx context.Context, logicalID string, r
 }
 
 // updateResource updates an existing resource in place when the handler
-// supports it (resourceUpdater interface). Otherwise it falls back to
-// delete + create so behaviour is correct even for handlers that haven't
-// implemented Update yet. Returns the new physical ID and an error.
+// supports it (resourceUpdater interface). Otherwise it replaces the resource:
+// a new one is created and the old one is handed back to the caller to delete
+// once the whole stack update has succeeded.
 //
-// If the resource has UpdateReplacePolicy=Retain (or Snapshot), and the
-// handler does not support in-place updates, the old physical ID is orphaned
-// instead of being deleted. Real CloudFormation does the same: the new
-// resource is created and the old one is left behind, no longer tracked
-// by the stack.
-func (p *provisioner) updateResource(ctx context.Context, logicalID string, res TemplateResource, props map[string]any, oldPhysicalID string, oldResource *StackResource, rCtx *resolveContext) (string, error) {
+// Returns the new physical ID, the old physical ID when the resource was
+// replaced (empty otherwise), and an error.
+//
+// Replacement creates before deleting, as real CloudFormation does. The old
+// resource is what an update rolls back to, so destroying it up front would
+// make rollback impossible: a create that then failed would leave nothing
+// behind at all. Deletion is deferred to the caller's cleanup phase, which
+// only runs once every resource in the stack has been updated successfully.
+//
+// If the resource has UpdateReplacePolicy=Retain (or Snapshot) the old
+// physical ID is orphaned rather than deleted — it is not returned for
+// cleanup, so it outlives the stack.
+func (p *provisioner) updateResource(ctx context.Context, logicalID string, res TemplateResource, props map[string]any, oldPhysicalID string, oldResource *StackResource, rCtx *resolveContext) (newPhysicalID string, replacedPhysicalID string, err error) {
 	p.mu.Lock()
 	router := p.router
 	p.mu.Unlock()
 	if router == nil {
-		return "", fmt.Errorf("router not initialised")
+		return "", "", fmt.Errorf("router not initialised")
 	}
+
+	// Same reason as in provisionResource: an update may fall through to a
+	// create, which needs the logical ID to name an unnamed resource.
+	rCtx.LogicalID = logicalID
 
 	handler, ok := p.resolveHandler(res.Type)
 	if !ok {
 		// Unknown resource type — keep stub physical ID, no-op.
-		return oldPhysicalID, nil
+		return oldPhysicalID, "", nil
 	}
 
 	// Prefer in-place update when supported.
@@ -647,7 +688,7 @@ func (p *provisioner) updateResource(ctx context.Context, logicalID string, res 
 				}
 				rCtx.Attributes[logicalID] = attrs
 			}
-			return physID, nil
+			return physID, "", nil
 		}
 		// Sentinel: fall through to replacement (mirrors AWS "Replacement: Yes"
 		// for properties like resource Name or DynamoDB KeySchema).
@@ -659,29 +700,38 @@ func (p *provisioner) updateResource(ctx context.Context, logicalID string, res 
 		}
 	}
 
-	// Replacement path. Honour UpdateReplacePolicy=Retain by orphaning the
-	// old resource instead of deleting it.
-	retain := false
-	if oldResource != nil {
-		retain = oldResource.shouldRetainOnReplace()
+	// Replacement path: create the new resource first, leaving the old one
+	// untouched. If this fails the caller rolls back to the old resource,
+	// which is only possible because it still exists.
+	//
+	// A name the template supplies is the caller's problem — creating a second
+	// resource with the same name will 409, exactly as it does on AWS, which
+	// is why AWS treats a name change as replacement and generates unique
+	// names for resources the template does not name (see generatedName).
+	newPhysID, err := p.provisionResource(ctx, logicalID, res, props, rCtx)
+	if err != nil {
+		return "", "", err
 	}
-	if retain {
+
+	// Honour UpdateReplacePolicy=Retain by orphaning the old resource: it is
+	// not returned for cleanup, so nothing deletes it.
+	if oldResource != nil && oldResource.shouldRetainOnReplace() {
 		p.log.Info("cfn: retaining old resource on replacement (UpdateReplacePolicy=Retain)",
 			zap.String("type", res.Type),
 			zap.String("logicalId", logicalID),
 			zap.String("orphanedPhysicalId", oldPhysicalID))
-	} else {
-		// AWS fidelity: do not silently push through to Create if Delete
-		// fails. Real CloudFormation aborts the replacement and surfaces
-		// the failure (the alternative — calling Create against the still-
-		// present old physical resource — would 409 with EntityAlreadyExists
-		// for any service that enforces uniqueness, which is exactly the
-		// confusing failure mode users hit on rebootstrap).
-		if err := handler.Delete(ctx, router, p.cfg, oldPhysicalID, rCtx); err != nil {
-			return "", fmt.Errorf("delete during replace failed: %w", err)
-		}
+		return newPhysID, "", nil
 	}
-	return p.provisionResource(ctx, logicalID, res, props, rCtx)
+	return newPhysID, oldPhysicalID, nil
+}
+
+// supersededResource is an old physical resource that a replacement replaced.
+// It is deleted only after the whole stack update succeeds — until then it is
+// what the update rolls back to.
+type supersededResource struct {
+	LogicalID  string
+	Type       string
+	PhysicalID string
 }
 
 // hashProps returns a stable sha256 hash of the resolved property map.
@@ -880,10 +930,21 @@ func (p *provisioner) rollbackCreate(ctx context.Context, stack *Stack, rCtx *re
 }
 
 // rollbackUpdate is the default failure handler for UpdateStack.
-// It deletes any newly provisioned resources (those not present before the
-// update) in reverse order, then restores the previous resource list and marks
-// the stack UPDATE_ROLLBACK_COMPLETE.
-func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempted []StackResource, previous map[string]StackResource, rCtx *resolveContext, reason string) {
+//
+// It undoes the update in reverse order and restores the previous resource
+// list, marking the stack UPDATE_ROLLBACK_COMPLETE. Two kinds of resource are
+// undone:
+//
+//   - Resources created by this update (absent before it) are deleted.
+//   - Resources this update *replaced* are rolled back to the original: the
+//     replacement that was created is deleted, and the original — still alive,
+//     because replacement creates before deleting and defers the delete to the
+//     post-success cleanup — is what the stack keeps. This is why a failed
+//     replacement leaves the resource intact rather than destroying it.
+//
+// replacedBy maps a logical ID to the physical ID of the replacement created
+// for it, for exactly that second case.
+func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempted []StackResource, previous map[string]StackResource, replacedBy map[string]string, rCtx *resolveContext, reason string) {
 	stack.Status = StatusUpdateRollbackInProgress
 	stack.StatusReason = reason
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusUpdateRollbackInProgress, reason)
@@ -904,8 +965,39 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 			break
 		}
 		r := attempted[i]
+
+		// Replaced by this update: the replacement we created must go, and the
+		// original — still alive, because replacement defers its delete to the
+		// post-success cleanup — is what the stack rolls back to.
+		//
+		// Checked before `previous` deliberately: the caller removes entries
+		// from that map as it processes them, so a resource updated earlier in
+		// this run is no longer in it.
+		if newPhysID, wasReplaced := replacedBy[r.LogicalID]; wasReplaced && newPhysID != "" {
+			handler, ok := p.resolveHandler(r.Type)
+			if !ok {
+				continue
+			}
+			p.mu.Lock()
+			router := p.router
+			p.mu.Unlock()
+			p.recordEvent(ctx, stack, r.LogicalID, newPhysID, r.Type, ResourceDeleteInProgress, "")
+			if err := handler.Delete(ctx, router, p.cfg, newPhysID, rCtx); err != nil {
+				p.log.Warn("cfn: update rollback: failed to delete replacement",
+					zap.String("logicalId", r.LogicalID),
+					zap.String("type", r.Type),
+					zap.String("physicalId", newPhysID),
+					zap.Error(err))
+				p.recordEvent(ctx, stack, r.LogicalID, newPhysID, r.Type, ResourceDeleteFailed, err.Error())
+				rollbackFailed = true
+				continue
+			}
+			p.recordEvent(ctx, stack, r.LogicalID, newPhysID, r.Type, ResourceDeleteComplete, "")
+			continue
+		}
+
 		if _, wasExisting := previous[r.LogicalID]; wasExisting {
-			continue // was pre-existing — do not delete
+			continue // was pre-existing and untouched — do not delete
 		}
 		if r.Status != ResourceCreateComplete || r.PhysicalID == "" {
 			continue
@@ -1843,7 +1935,7 @@ func (h *sqsQueueHandler) Update(ctx context.Context, router http.Handler, cfg *
 func (h *sqsQueueHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	queueName, _ := props["QueueName"].(string)
 	if queueName == "" {
-		queueName = fmt.Sprintf("%s-%s", rCtx.StackName, "Queue")
+		queueName = rCtx.generatedName()
 		if asBool(props["FifoQueue"]) {
 			queueName += ".fifo"
 		}
@@ -1937,7 +2029,7 @@ func (h *snsTopicHandler) Update(ctx context.Context, router http.Handler, cfg *
 func (h *snsTopicHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	topicName, _ := props["TopicName"].(string)
 	if topicName == "" {
-		topicName = fmt.Sprintf("%s-Topic", rCtx.StackName)
+		topicName = rCtx.generatedName()
 	}
 
 	params := map[string]string{
@@ -2044,7 +2136,7 @@ func (h *s3BucketHandler) Update(_ context.Context, _ http.Handler, _ *config.Co
 func (h *s3BucketHandler) Create(ctx context.Context, router http.Handler, _ *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	bucketName, _ := props["BucketName"].(string)
 	if bucketName == "" {
-		bucketName = fmt.Sprintf("%s-bucket-%d", strings.ToLower(rCtx.StackName), len(rCtx.Resources))
+		bucketName = strings.ToLower(rCtx.generatedName())
 	}
 
 	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut, "/"+bucketName, "", nil)
@@ -2119,7 +2211,7 @@ func (h *dynamodbTableHandler) Update(ctx context.Context, router http.Handler, 
 func (h *dynamodbTableHandler) Create(ctx context.Context, router http.Handler, _ *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	tableName, _ := props["TableName"].(string)
 	if tableName == "" {
-		tableName = fmt.Sprintf("%s-Table", rCtx.StackName)
+		tableName = rCtx.generatedName()
 	}
 
 	// Build the CreateTable request.
@@ -2194,7 +2286,7 @@ type lambdaFunctionHandler struct{}
 func (h *lambdaFunctionHandler) Create(ctx context.Context, router http.Handler, _ *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	funcName, _ := props["FunctionName"].(string)
 	if funcName == "" {
-		funcName = fmt.Sprintf("%s-Function", rCtx.StackName)
+		funcName = rCtx.generatedName()
 	}
 
 	// A template's Code.ZipFile is inline source text; the Lambda API's is
@@ -2517,7 +2609,7 @@ type iamRoleHandler struct{}
 func (h *iamRoleHandler) Create(ctx context.Context, router http.Handler, _ *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	roleName, _ := props["RoleName"].(string)
 	if roleName == "" {
-		roleName = fmt.Sprintf("%s-Role-%d", rCtx.StackName, len(rCtx.Resources))
+		roleName = rCtx.generatedName()
 	}
 	assumePolicy := "{}"
 	if ap, ok := props["AssumeRolePolicyDocument"]; ok {
@@ -2606,7 +2698,7 @@ type logsLogGroupHandler struct{}
 func (h *logsLogGroupHandler) Create(ctx context.Context, router http.Handler, _ *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["LogGroupName"].(string)
 	if name == "" {
-		name = fmt.Sprintf("/aws/%s/%s", rCtx.StackName, "logs")
+		name = "/aws/cloudformation/" + rCtx.generatedName()
 	}
 
 	body := map[string]any{"logGroupName": name}
@@ -2657,7 +2749,7 @@ type ssmParameterHandler struct{}
 func (h *ssmParameterHandler) Create(ctx context.Context, router http.Handler, _ *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["Name"].(string)
 	if name == "" {
-		name = fmt.Sprintf("/%s/param", rCtx.StackName)
+		name = "/" + rCtx.generatedName()
 	}
 	paramType, _ := props["Type"].(string)
 	if paramType == "" {
@@ -2762,7 +2854,7 @@ func (h *secretsManagerSecretHandler) Update(ctx context.Context, router http.Ha
 func (h *secretsManagerSecretHandler) Create(ctx context.Context, router http.Handler, _ *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["Name"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-Secret", rCtx.StackName)
+		name = rCtx.generatedName()
 	}
 	body := map[string]any{"Name": name}
 	if sv, ok := props["SecretString"]; ok {

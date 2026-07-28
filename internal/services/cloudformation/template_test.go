@@ -2,6 +2,9 @@ package cloudformation
 
 import (
 	"encoding/json"
+	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -282,4 +285,51 @@ Resources:
 	}
 	assertBefore(t, order, "NotifyTopic", "Subscription")
 	assertBefore(t, order, "OrderQueue", "Subscription")
+}
+
+// generatedNamePattern matches a CloudFormation-shaped generated physical ID
+// for the given stack and logical ID: {StackName}-{LogicalID}-{RANDOM}. The
+// random component is unpredictable by design, so tests assert the shape.
+func generatedNamePattern(stackName, logicalID string) *regexp.Regexp {
+	return regexp.MustCompile(`^` + regexp.QuoteMeta(stackName+"-"+logicalID) +
+		`-[A-Z0-9]{` + strconv.Itoa(physicalIDSuffixLen) + `}$`)
+}
+
+func TestGeneratedName_isUniquePerResourceAndInstance(t *testing.T) {
+	// Given: one stack, two different logical IDs
+	a := (&resolveContext{StackName: "Stack", LogicalID: "Alpha"}).generatedName()
+	b := (&resolveContext{StackName: "Stack", LogicalID: "Beta"}).generatedName()
+
+	// Then: they differ — this is what stops two unnamed resources colliding
+	if a == b {
+		t.Errorf("two logical IDs generated the same name: %q", a)
+	}
+	if !generatedNamePattern("Stack", "Alpha").MatchString(a) {
+		t.Errorf("name %q is not CloudFormation-shaped", a)
+	}
+
+	// And: the same logical ID twice also differs, so a replacement can exist
+	// alongside the resource it replaces
+	again := (&resolveContext{StackName: "Stack", LogicalID: "Alpha"}).generatedName()
+	if a == again {
+		t.Errorf("two instances of %q generated the same name %q; a replacement could not coexist with its original", "Alpha", a)
+	}
+}
+
+func TestGeneratedNameWithin_capsLengthAndKeepsTheSuffix(t *testing.T) {
+	// Given: a stack and logical ID far longer than a Lambda function name allows
+	long := &resolveContext{
+		StackName: strings.Repeat("s", 80),
+		LogicalID: strings.Repeat("L", 80),
+	}
+
+	name := long.generatedNameWithin(maxNameLenLambda)
+
+	if len(name) > maxNameLenLambda {
+		t.Errorf("name length %d exceeds the %d-character limit: %q", len(name), maxNameLenLambda, name)
+	}
+	// The suffix is what guarantees uniqueness, so truncation must not eat it.
+	if !regexp.MustCompile(`-[A-Z0-9]{` + strconv.Itoa(physicalIDSuffixLen) + `}$`).MatchString(name) {
+		t.Errorf("truncated name %q lost its uniqueness suffix", name)
+	}
 }

@@ -17,7 +17,7 @@ type iamPolicyHandler struct{}
 func (h *iamPolicyHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	policyName, _ := props["PolicyName"].(string)
 	if policyName == "" {
-		policyName = fmt.Sprintf("%s-policy", rCtx.StackName)
+		policyName = rCtx.generatedName()
 	}
 
 	policyDoc, _ := props["PolicyDocument"].(map[string]any)
@@ -54,13 +54,15 @@ func (h *iamPolicyHandler) Delete(ctx context.Context, router http.Handler, cfg 
 
 func (h *iamPolicyHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	policyName, _ := props["PolicyName"].(string)
-	if policyName == "" {
-		policyName = fmt.Sprintf("%s-policy", rCtx.StackName)
-	}
 
 	oldPolicyName := physicalID
 	if prefix := rCtx.StackName + "-"; strings.HasPrefix(physicalID, prefix) {
 		oldPolicyName = physicalID[len(prefix):]
+	}
+	if policyName == "" {
+		// Unnamed in the template: keep the generated name from create time.
+		// See iamManagedPolicyHandler.Update for why regenerating is wrong.
+		policyName = oldPolicyName
 	}
 	if oldPolicyName != policyName {
 		return "", nil, errReplacementRequired
@@ -136,7 +138,7 @@ type iamManagedPolicyHandler struct{}
 func (h *iamManagedPolicyHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	policyName, _ := props["ManagedPolicyName"].(string)
 	if policyName == "" {
-		policyName = fmt.Sprintf("%s-managed-policy", rCtx.StackName)
+		policyName = rCtx.generatedName()
 	}
 	policyDoc, _ := props["PolicyDocument"].(map[string]any)
 	policyJSON, _ := json.Marshal(policyDoc)
@@ -184,14 +186,18 @@ func (h *iamManagedPolicyHandler) Delete(ctx context.Context, router http.Handle
 
 func (h *iamManagedPolicyHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	policyName, _ := props["ManagedPolicyName"].(string)
-	if policyName == "" {
-		policyName = fmt.Sprintf("%s-managed-policy", rCtx.StackName)
-	}
 
 	// Extract policy name from ARN to detect rename.
 	oldName := physicalID
 	if idx := strings.LastIndex(physicalID, "/"); idx >= 0 {
 		oldName = physicalID[idx+1:]
+	}
+	if policyName == "" {
+		// The template does not name this policy, so CloudFormation keeps the
+		// name it generated at create time — an unnamed resource is not
+		// renamed by an update. Generating a fresh one here would compare
+		// unequal every time and force a needless replacement.
+		policyName = oldName
 	}
 	if oldName != policyName {
 		return "", nil, errReplacementRequired
@@ -221,7 +227,7 @@ type iamInstanceProfileHandler struct{}
 func (h *iamInstanceProfileHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	profileName, _ := props["InstanceProfileName"].(string)
 	if profileName == "" {
-		profileName = fmt.Sprintf("%s-instance-profile", rCtx.StackName)
+		profileName = rCtx.generatedName()
 	}
 	path := "/"
 	if v, _ := props["Path"].(string); v != "" {
@@ -419,7 +425,7 @@ type eventsEventBusHandler struct{}
 func (h *eventsEventBusHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["Name"].(string)
 	if name == "" {
-		name = rCtx.StackName + "-bus"
+		name = rCtx.generatedName()
 	}
 
 	body := map[string]any{"Name": name}
@@ -910,7 +916,7 @@ type lambdaLayerVersionHandler struct{}
 func (h *lambdaLayerVersionHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	layerName, _ := props["LayerName"].(string)
 	if layerName == "" {
-		layerName = rCtx.StackName + "-layer"
+		layerName = rCtx.generatedName()
 	}
 
 	body := map[string]any{}
@@ -1158,7 +1164,7 @@ func (h *logsLogStreamHandler) Create(ctx context.Context, router http.Handler, 
 	logGroupName, _ := props["LogGroupName"].(string)
 	logStreamName, _ := props["LogStreamName"].(string)
 	if logStreamName == "" {
-		logStreamName = fmt.Sprintf("%s-stream", rCtx.StackName)
+		logStreamName = rCtx.generatedName()
 	}
 
 	body := map[string]any{
