@@ -122,6 +122,11 @@ tasks:
     cmds:
       - go run -tags dev ./cmd/capgen --check
 
+  generate-aws-operations:
+    desc: Regenerate the AWS operation manifest (requires AWS_MODELS_DIR and AWS_MODELS_REVISION)
+    cmds:
+      - go run ./cmd/awsmodelgen -models "{{.AWS_MODELS_DIR}}" -output internal/awsapi/manifest.gen.go -source-revision "{{.AWS_MODELS_REVISION}}"
+
   docs-index:
     desc: Regenerate the committed docs search/navigation index (run after editing docs/, then commit)
     sources:

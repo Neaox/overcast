@@ -32,7 +32,9 @@ The ownership gaps are:
 
 Use AWS's public [`aws/api-models-aws`](https://github.com/aws/api-models-aws) repository as the source of truth. AWS publishes its public service models daily in Smithy JSON AST form and describes them as definitive public API definitions. The model supplies service identity, operations, protocol traits, and HTTP bindings; it does not dictate Overcast's implementation status.
 
-Vendor a pinned snapshot under `models/aws/` with a `VERSION` file recording upstream commit, model date, source URL, and license provenance. Runtime code must never parse model files or contact AWS/GitHub.
+The complete raw Smithy snapshot is deliberately not vendored in A1: it is large, while the checked-in generated manifest is the only artifact required at runtime. `models/aws/VERSION` records the upstream commit, model date, source URL, and license provenance. Regeneration requires a local `api-models-aws` checkout whose `HEAD` matches that recorded commit; the generator validates the match before writing output. Runtime code must never parse model files or contact AWS/GitHub.
+
+This means A1 cannot yet provide the planned no-network regeneration-and-diff CI gate: that belongs to A5, when the refresh workflow supplies a verified snapshot/cache to CI. Until then, the Make target is reproducible from an explicitly checked-out source revision, not offline from this repository alone.
 
 This covers public AWS management-plane/service API operations used by SDKs, CLI, and CDK. It excludes emulator-only `/_*` endpoints, service data/runtime endpoints with intentionally arbitrary user paths (such as API Gateway execution), and CLI conveniences such as waiters. Waiters are covered indirectly through their API operations.
 
@@ -40,7 +42,7 @@ This covers public AWS management-plane/service API operations used by SDKs, CLI
 
 ### 4.1 Generated operation manifest
 
-`cmd/awsmodelgen` reads the pinned JSON AST and generates checked-in `internal/awsapi/manifest.gen.go`. Generate routing metadata only:
+`cmd/awsmodelgen` reads the pinned JSON AST and generates checked-in `internal/awsapi/manifest.gen.go`. Regenerate it with `make generate-aws-operations AWS_MODELS_DIR=/path/to/api-models-aws/models`; it reads the expected revision from `models/aws/VERSION` and validates the local checkout. Generate routing metadata only:
 
 - canonical service name, SDK ID, API version, and source provenance;
 - operation name and protocol traits;
@@ -50,7 +52,13 @@ This covers public AWS management-plane/service API operations used by SDKs, CLI
 - protocol/error-envelope family; and
 - S3 designation or an ambiguous root requiring stronger service evidence.
 
+Where a legacy AWS JSON `X-Amz-Target` prefix is not encoded in Smithy (CloudTrail is the initial case), the generator uses a small, tested override table. Each entry must cite existing AWS-compatible service evidence and be removed if upstream models become sufficient.
+
 Do not generate clients, every request/response type, or a handler per operation. Types remain an allowlisted, implementation-only concern in Level 2 Track 3.
+
+The A1 corpus is private and is not a runtime lookup structure. A2/A3 generate immutable target, Query, and REST-trie indexes from it; neither phase may linearly scan it per request or construct model-sized maps during router startup. The `Service` field is a normalized Smithy SDK identity, not an Overcast router key. A2 introduces an explicit alias table for the non-identical names (for example, Smithy `cloudwatch-logs` to Overcast `logs`).
+
+The initial alias audit has nine intentional mappings: Overcast `apigateway`, `appregistry`, `autoscaling`, `dynamodbstreams`, `elbv2`, `msk`, `route53`, `secretsmanager`, and `stepfunctions` map respectively to manifest `api-gateway`, `service-catalog-appregistry`, `auto-scaling`, `dynamodb-streams`, `elastic-load-balancing-v2`, `kafka`, `route-53`, `secrets-manager`, and `sfn`. `lambda-core` is a separate modeled AWS service (`Lambda Core`, version `2026-04-30`), not an alias of Lambda; preserve it as distinct.
 
 ### 4.2 Registry
 
@@ -116,9 +124,9 @@ Before landing, benchmark router construction and representative S3, AWS JSON, Q
 | Phase | Work | Acceptance gate |
 | --- | --- | --- |
 | A0 | Write failing router integration tests for Lambda alternate versions, unknown API Gateway REST paths, Query `GET /?Action=`, AWS JSON unknown services, disabled services, and legitimate S3 controls. | Every non-S3 fixture returns the correct 501 envelope, not an S3 response; S3 behavior remains unchanged. |
-| A1 | Vendor a pinned model snapshot; add refresh script, validator, and generator pilot for SQS, STS, Lambda, API Gateway, and S3. | Manifest is deterministic and records source provenance. |
+| A1 | Record a pinned model provenance; add the generator and reproducible regeneration target; generate the complete operation-metadata baseline. | Manifest is deterministic, records source provenance, and retains every recognized protocol trait currently present in the model source. |
 | A2 | Implement `awsapi.Registry`, shared fallback, and error-profile selection. | Pilot operations route correctly without changing implementation behavior. |
-| A3 | Generate all public operation metadata and REST trie; migrate `stub-report`; validate capabilities against manifest. | Every generated operation has ownership or an explicit ambiguity/exclusion. |
+| A3 | Compile the generated metadata into the REST trie; migrate `stub-report`; validate capabilities against manifest, including explicit aliases and the ten legacy JSON-target dispatchers modeled as REST (`backup`, `appconfig`, `appconfigdata`, `appregistry`, `appsync`, `bedrock`, `eks`, `msk`, `opensearch`, `scheduler`). | Every generated operation has ownership or an explicit ambiguity/exclusion, and every Overcast service resolves through an alias to at least one manifest operation or an explicit exemption. |
 | A4 | Add generated route-coverage tests, collision reports, performance guardrails, and CI generation checks. | No modeled non-S3 request falls through to S3. |
 | A5 | Add upstream refresh automation and contributor documentation. | One bot-owned PR is updated for model changes with an actionable diff report. |
 
