@@ -164,6 +164,12 @@ type Function struct {
 	LastModified    string             `json:"last_modified,omitempty"`
 	LogGroup        string             `json:"log_group,omitempty"` // Custom log group; defaults to /aws/lambda/{name}
 	Layers          []LayerVersionLink `json:"layers,omitempty"`    // Attached layer versions (empty until layers are implemented)
+	// CodeSigningConfigArn is the code signing configuration associated with
+	// the function, or "" when there is none — the usual case, since code
+	// signing is opt-in. Stored and echoed back so SDKs and CDK read the
+	// association they set; signature validation itself is deliberately not
+	// emulated (Overcast is not a security boundary).
+	CodeSigningConfigArn string `json:"code_signing_config_arn,omitempty"`
 	// SourceCode and SourceFilename are emulator-internal: they hold the raw
 	// handler source text authored in the web UI. Not exposed in AWS wire responses.
 	SourceCode     string `json:"source_code,omitempty"`
@@ -763,6 +769,8 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Delete(apiBase+"/event-source-mappings/{uuid}", s.handler.DeleteEventSourceMapping)
 	r.Get(apiBase+"/functions/{name}", s.handler.GetFunction)
 	r.Get(codeSigningBase+"/functions/{name}/code-signing-config", s.handler.GetFunctionCodeSigningConfig)
+	r.Put(codeSigningBase+"/functions/{name}/code-signing-config", s.handler.PutFunctionCodeSigningConfig)
+	r.Delete(codeSigningBase+"/functions/{name}/code-signing-config", s.handler.DeleteFunctionCodeSigningConfig)
 	r.Delete(apiBase+"/functions/{name}", s.handler.DeleteFunction)
 	r.Put(apiBase+"/functions/{name}/code", s.handler.UpdateFunctionCode)
 	r.Get(apiBase+"/functions/{name}/configuration", s.handler.GetFunctionConfiguration)

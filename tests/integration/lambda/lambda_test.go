@@ -5466,3 +5466,146 @@ exports.handler = async (event) => {
 		t.Errorf("method = %v, want GET", out["method"])
 	}
 }
+
+// ─── Code signing config association ──────────────────────────────────────────
+//
+// Code signing is optional on AWS: a function has a configuration only if one
+// was passed to CreateFunction or attached with PutFunctionCodeSigningConfig.
+// Overcast does not enforce signing (it is not a security boundary), but it
+// must still carry the association faithfully, because SDKs and CDK read it
+// back. All three operations live on the 2020-06-30 API version.
+
+type codeSigningConfigResponse struct {
+	CodeSigningConfigArn string `json:"CodeSigningConfigArn"`
+	FunctionName         string `json:"FunctionName"`
+}
+
+const testCSCArn = "arn:aws:lambda:us-east-1:000000000000:code-signing-config:csc-0123456789abcdef0"
+
+func TestCreateFunction_storesCodeSigningConfigArn(t *testing.T) {
+	// Given a function created WITH a code signing config, as CDK does when
+	// its codeSigningConfig prop is set
+	srv := helpers.NewTestServer(t)
+	resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions"), map[string]any{
+		"FunctionName": "csc-fn",
+		"Runtime":      "nodejs20.x",
+		"Handler":      "index.handler",
+		"Role":         "arn:aws:iam::000000000000:role/lambda-role",
+		"Code":         map[string]any{},
+
+		"CodeSigningConfigArn": testCSCArn,
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusCreated)
+
+	// When GetFunctionCodeSigningConfig is called
+	got := doJSON(t, http.MethodGet, codeSigningConfigURL(srv, "csc-fn"), nil)
+	defer got.Body.Close()
+
+	// Then the association is returned, not a 404
+	helpers.AssertStatus(t, got, http.StatusOK)
+	var out codeSigningConfigResponse
+	decodeJSON(t, got, &out)
+	if out.CodeSigningConfigArn != testCSCArn {
+		t.Errorf("CodeSigningConfigArn = %q, want %q", out.CodeSigningConfigArn, testCSCArn)
+	}
+	if out.FunctionName != "csc-fn" {
+		t.Errorf("FunctionName = %q, want %q", out.FunctionName, "csc-fn")
+	}
+}
+
+func TestPutAndDeleteFunctionCodeSigningConfig(t *testing.T) {
+	// Given a function created without one — the overwhelmingly common case
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "csc-attach-fn")
+
+	// Then the optional flow still reports "no config", as AWS's own model
+	// requires: CodeSigningConfigArn is a required member of the 200 response,
+	// so "no config" cannot be expressed as a success.
+	none := doJSON(t, http.MethodGet, codeSigningConfigURL(srv, "csc-attach-fn"), nil)
+	helpers.AssertStatus(t, none, http.StatusNotFound)
+	none.Body.Close()
+
+	// When one is attached
+	put := doJSON(t, http.MethodPut, codeSigningConfigURL(srv, "csc-attach-fn"), map[string]any{
+		"CodeSigningConfigArn": testCSCArn,
+	})
+	defer put.Body.Close()
+	helpers.AssertStatus(t, put, http.StatusOK)
+	var putOut codeSigningConfigResponse
+	decodeJSON(t, put, &putOut)
+	if putOut.CodeSigningConfigArn != testCSCArn {
+		t.Errorf("Put returned %q, want %q", putOut.CodeSigningConfigArn, testCSCArn)
+	}
+
+	// Then it reads back
+	got := doJSON(t, http.MethodGet, codeSigningConfigURL(srv, "csc-attach-fn"), nil)
+	helpers.AssertStatus(t, got, http.StatusOK)
+	var getOut codeSigningConfigResponse
+	decodeJSON(t, got, &getOut)
+	got.Body.Close()
+	if getOut.CodeSigningConfigArn != testCSCArn {
+		t.Errorf("Get returned %q, want %q", getOut.CodeSigningConfigArn, testCSCArn)
+	}
+
+	// And deleting it returns 204 and restores the unassociated state
+	del := doJSON(t, http.MethodDelete, codeSigningConfigURL(srv, "csc-attach-fn"), nil)
+	helpers.AssertStatus(t, del, http.StatusNoContent)
+	del.Body.Close()
+
+	after := doJSON(t, http.MethodGet, codeSigningConfigURL(srv, "csc-attach-fn"), nil)
+	defer after.Body.Close()
+	helpers.AssertStatus(t, after, http.StatusNotFound)
+}
+
+func TestPutFunctionCodeSigningConfig_rejectsMalformedArn(t *testing.T) {
+	// Given a function
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "csc-bad-arn-fn")
+
+	// When an ARN that does not match AWS's documented pattern is supplied
+	resp := doJSON(t, http.MethodPut, codeSigningConfigURL(srv, "csc-bad-arn-fn"), map[string]any{
+		"CodeSigningConfigArn": "not-an-arn",
+	})
+	defer resp.Body.Close()
+
+	// Then 400 InvalidParameterValueException, as AWS declares for this operation
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+}
+
+func TestFunctionCodeSigningConfig_functionNotFound(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	for _, tc := range []struct {
+		method string
+		body   any
+	}{
+		{http.MethodGet, nil},
+		{http.MethodPut, map[string]any{"CodeSigningConfigArn": testCSCArn}},
+		{http.MethodDelete, nil},
+	} {
+		resp := doJSON(t, tc.method, codeSigningConfigURL(srv, "no-such-fn"), tc.body)
+		helpers.AssertStatus(t, resp, http.StatusNotFound)
+		resp.Body.Close()
+	}
+}
+
+// GetFunction must not leak the association: AWS's FunctionConfiguration shape
+// has no CodeSigningConfigArn member, so adding one would be a custom field.
+func TestGetFunction_doesNotExposeCodeSigningConfigArn(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "csc-leak-fn")
+	put := doJSON(t, http.MethodPut, codeSigningConfigURL(srv, "csc-leak-fn"), map[string]any{
+		"CodeSigningConfigArn": testCSCArn,
+	})
+	helpers.AssertStatus(t, put, http.StatusOK)
+	put.Body.Close()
+
+	resp := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/csc-leak-fn/configuration"), nil)
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var cfg map[string]any
+	decodeJSON(t, resp, &cfg)
+	if _, present := cfg["CodeSigningConfigArn"]; present {
+		t.Error("FunctionConfiguration exposed CodeSigningConfigArn; AWS's shape has no such member")
+	}
+}
