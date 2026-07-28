@@ -6,6 +6,7 @@ import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { Badge } from "@/components/ui/badge"
 import { CopyButton } from "@/components/ui/copy-button"
+import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import type { EcsContainer } from "@/types"
 
 export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskId: string }) {
@@ -51,21 +52,23 @@ export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskI
       {/* Overview */}
       <section className="space-y-3">
         <h2 className="font-mono text-sm font-semibold text-fg">Overview</h2>
-        <div className="grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-3">
-          <InfoRow label="Task ID" value={taskId} />
-          <InfoRow label="Status" value={task.lastStatus} />
-          <InfoRow label="Desired Status" value={task.desiredStatus} />
-          <InfoRow label="Task Definition" value={shortTaskDef(task.taskDefinitionArn)} />
-          <InfoRow label="Launch Type" value={task.launchType ?? "—"} />
-          <InfoRow
+        <DefinitionList>
+          <Definition label="Task ID" value={taskId} />
+          <Definition label="Status" value={task.lastStatus} />
+          <Definition label="Desired Status" value={task.desiredStatus} />
+          <Definition label="Task Definition" value={shortTaskDef(task.taskDefinitionArn)} />
+          <Definition label="Launch Type" value={task.launchType} />
+          <Definition
             label="Started At"
-            value={task.startedAt ? new Date(task.startedAt).toLocaleString() : "—"}
+            value={task.startedAt ? new Date(task.startedAt).toLocaleString() : null}
           />
           {task.stoppedAt && (
-            <InfoRow label="Stopped At" value={new Date(task.stoppedAt).toLocaleString()} />
+            <Definition label="Stopped At" value={new Date(task.stoppedAt).toLocaleString()} />
           )}
-          {task.stoppedReason && <InfoRow label="Stop Reason" value={task.stoppedReason} />}
-        </div>
+          {task.stoppedReason && (
+            <Definition label="Stop Reason" value={task.stoppedReason} variant="prose" />
+          )}
+        </DefinitionList>
       </section>
 
       {/* Containers */}
@@ -152,15 +155,6 @@ function StatusBadge({ status }: { status: string }) {
           ? "danger"
           : "default"
   return <Badge variant={variant}>{status}</Badge>
-}
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-fg-muted">{label}</span>
-      <span className="text-sm text-fg">{value}</span>
-    </div>
-  )
 }
 
 function shortTaskDef(arn: string) {

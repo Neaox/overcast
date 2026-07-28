@@ -5,6 +5,7 @@ import { ArnLink, ArnText } from "@/components/ui/arn-link"
 import { useToast } from "@/components/ui/toast"
 import { Button } from "@/components/ui/button"
 import { Combobox, type ComboboxRenderContext } from "@/components/ui/combobox"
+import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import { Spinner } from "@/components/ui/primitives"
 import { Input } from "@/components/ui/input"
 import {
@@ -205,25 +206,30 @@ function GeneralConfigSection({ fn }: { fn: LambdaFunction }) {
           </div>
         </div>
       ) : (
-        <dl className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm">
-          <ConfigRow label="Function ARN" value={<ArnText arn={fn.FunctionArn ?? ""} />} mono />
-          <ConfigRow label="Runtime" value={fn.Runtime || "—"} />
-          <ConfigRow label="Handler" value={fn.Handler || "—"} mono />
-          <ConfigRow label="Role" value={fn.Role || "—"} mono />
-          <ConfigRow label="Memory" value={`${fn.MemorySize ?? 128} MB`} />
-          <ConfigRow label="Timeout" value={`${fn.Timeout ?? 3}s`} />
-          <ConfigRow label="Package type" value={fn.PackageType ?? "Zip"} />
-          <ConfigRow label="Architectures" value={(fn.Architectures ?? []).join(", ")} />
-          <ConfigRow label="Code size" value={fn.CodeSize ? `${fn.CodeSize} bytes` : "—"} />
-          <ConfigRow label="Last modified" value={fn.LastModified || "—"} />
-          <ConfigRow label="State" value={fn.State ?? ""} />
-          <ConfigRow
+        <DefinitionList>
+          <Definition label="Runtime" value={fn.Runtime} />
+          <Definition label="Handler" value={fn.Handler} />
+          <Definition label="Memory" value={`${fn.MemorySize ?? 128} MB`} />
+          <Definition label="Timeout" value={`${fn.Timeout ?? 3}s`} />
+          <Definition label="Package type" value={fn.PackageType ?? "Zip"} />
+          <Definition label="Architectures" value={(fn.Architectures ?? []).join(", ")} />
+          <Definition label="Code size" value={fn.CodeSize ? `${fn.CodeSize} bytes` : null} />
+          <Definition label="Last modified" value={fn.LastModified} />
+          <Definition label="State" value={fn.State} />
+          <Definition
             label="Log group"
-            value={fn.LoggingConfig?.LogGroup ? <ArnLink arn={fn.LoggingConfig.LogGroup} /> : "—"}
-            mono
+            value={fn.LoggingConfig?.LogGroup ? <ArnLink arn={fn.LoggingConfig.LogGroup} /> : null}
           />
-          {fn.Description && <ConfigRow label="Description" value={fn.Description} />}
-        </dl>
+          <Definition
+            label="Function ARN"
+            value={fn.FunctionArn ? <ArnText arn={fn.FunctionArn} /> : null}
+            full
+          />
+          <Definition label="Role" value={fn.Role} full />
+          {fn.Description && (
+            <Definition label="Description" value={fn.Description} variant="prose" full />
+          )}
+        </DefinitionList>
       )}
     </div>
   )
@@ -478,19 +484,14 @@ function VpcConfigSection({ fn }: { fn: LambdaFunction }) {
           Not connected to a VPC. Edit to configure VPC networking.
         </p>
       ) : (
-        <dl className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm">
-          <ConfigRow label="VPC ID" value={fn.VpcConfig!.VpcId || "—"} mono />
-          <ConfigRow
-            label="Subnets"
-            value={(fn.VpcConfig!.SubnetIds ?? []).join(", ") || "—"}
-            mono
-          />
-          <ConfigRow
+        <DefinitionList>
+          <Definition label="VPC ID" value={fn.VpcConfig!.VpcId} />
+          <Definition label="Subnets" value={(fn.VpcConfig!.SubnetIds ?? []).join(", ")} />
+          <Definition
             label="Security Groups"
-            value={(fn.VpcConfig!.SecurityGroupIds ?? []).join(", ") || "—"}
-            mono
+            value={(fn.VpcConfig!.SecurityGroupIds ?? []).join(", ")}
           />
-        </dl>
+        </DefinitionList>
       )}
     </div>
   )
@@ -607,32 +608,13 @@ function EnvVarsSection({ fn }: { fn: LambdaFunction }) {
       ) : !hasEnvVars ? (
         <p className="text-xs text-fg-muted">No environment variables configured.</p>
       ) : (
-        <dl className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
+        <DefinitionList columns={2}>
           {Object.entries(currentEnv).map(([key, val]) => (
-            <ConfigRow key={key} label={key} value={val} mono />
+            <Definition key={key} label={key} value={val} />
           ))}
-        </dl>
+        </DefinitionList>
       )}
     </div>
-  )
-}
-
-// ─── ConfigRow ────────────────────────────────────────────────────────────
-
-function ConfigRow({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string
-  value: React.ReactNode
-  mono?: boolean
-}) {
-  return (
-    <>
-      <dt className="font-medium text-fg-muted">{label}</dt>
-      <dd className={cn("break-all text-fg", mono && "font-mono text-xs")}>{value}</dd>
-    </>
   )
 }
 

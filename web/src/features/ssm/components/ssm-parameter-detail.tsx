@@ -11,7 +11,7 @@ import {
   deleteParameterMutationOptions,
 } from "@/features/ssm/data"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
+import { Definition, DefinitionCard } from "@/components/ui/definition-card"
 import { Badge } from "@/components/ui/badge"
 import {
   Table,
@@ -152,19 +152,14 @@ export function SsmParameterDetail({ name }: Props) {
       <ApplicationOwnershipBanner candidates={[param.ARN, param.Name, name]} />
 
       {/* Metadata card */}
-      <Card>
-        <CardContent className="grid grid-cols-2 gap-x-8 gap-y-3 p-4 text-sm md:grid-cols-3">
-          <DetailRow label="Name" value={param.Name} mono />
-          <DetailRow label="ARN" value={<ArnText arn={param.ARN ?? ""} />} mono />
-          <div className="flex flex-col gap-0.5">
-            <span className="font-mono text-xs text-fg-muted">Type</span>
-            <Badge variant="outline">{param.Type}</Badge>
-          </div>
-          <DetailRow label="Version" value={`v${param.Version}`} />
-          <DetailRow label="Data type" value={param.DataType} />
-          <DetailRow label="Last modified" value={formatDate(param.LastModifiedDate)} />
-        </CardContent>
-      </Card>
+      <DefinitionCard>
+        <Definition label="Name" value={param.Name} />
+        <Definition label="Type" value={<Badge variant="outline">{param.Type}</Badge>} />
+        <Definition label="Version" value={`v${param.Version}`} />
+        <Definition label="Data type" value={param.DataType} />
+        <Definition label="Last modified" value={formatDate(param.LastModifiedDate)} />
+        <Definition label="ARN" value={param.ARN ? <ArnText arn={param.ARN} /> : null} full />
+      </DefinitionCard>
 
       {/* Parameter value */}
       <section className="flex flex-col gap-2">
@@ -265,23 +260,6 @@ export function SsmParameterDetail({ name }: Props) {
         isPending={deleteMut.isPending}
         onConfirm={() => deleteMut.mutate(name)}
       />
-    </div>
-  )
-}
-
-function DetailRow({
-  label,
-  value,
-  mono,
-}: {
-  label: string
-  value: React.ReactNode
-  mono?: boolean
-}) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-fg-muted">{label}</span>
-      <span className={cn(mono && "font-mono text-xs break-all")}>{value}</span>
     </div>
   )
 }

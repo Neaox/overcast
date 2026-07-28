@@ -12,6 +12,7 @@ import {
 } from "@/features/cloudwatch/metrics/data"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { Badge } from "@/components/ui/badge"
+import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import { Button } from "@/components/ui/button"
 import { QueryListState, PageHeader } from "@/components/ui/primitives"
 import { Select } from "@/components/ui/select"
@@ -382,28 +383,18 @@ export function CloudwatchDashboard() {
                             </Badge>
                           </div>
 
-                          <dl className="grid gap-2 text-sm sm:grid-cols-2">
-                            <div>
-                              <dt className={cn(fieldLabel, "text-fg-muted")}>Threshold</dt>
-                              <dd className="text-fg">{alarm.Threshold ?? "—"}</dd>
-                            </div>
-                            <div>
-                              <dt className={cn(fieldLabel, "text-fg-muted")}>Comparison</dt>
-                              <dd className="text-fg">{alarm.ComparisonOperator ?? "—"}</dd>
-                            </div>
-                            <div>
-                              <dt className={cn(fieldLabel, "text-fg-muted")}>
-                                Evaluation Periods
-                              </dt>
-                              <dd className="text-fg">{alarm.EvaluationPeriods ?? "—"}</dd>
-                            </div>
-                            <div>
-                              <dt className={cn(fieldLabel, "text-fg-muted")}>Last Transition</dt>
-                              <dd className="text-fg">
-                                {formatTimestamp(alarm.StateUpdatedTimestamp)}
-                              </dd>
-                            </div>
-                          </dl>
+                          <DefinitionList columns={2} className="gap-y-2">
+                            <Definition label="Threshold" value={alarm.Threshold} />
+                            <Definition label="Comparison" value={alarm.ComparisonOperator} />
+                            <Definition
+                              label="Evaluation Periods"
+                              value={alarm.EvaluationPeriods}
+                            />
+                            <Definition
+                              label="Last Transition"
+                              value={formatTimestamp(alarm.StateUpdatedTimestamp)}
+                            />
+                          </DefinitionList>
                         </div>
                       ))}
                     </div>

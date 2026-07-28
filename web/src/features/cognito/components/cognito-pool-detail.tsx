@@ -68,6 +68,7 @@ import { CopyButton } from "@/components/ui/copy-button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
+import { Definition, DefinitionCard, DefinitionList } from "@/components/ui/definition-card"
 import {
   Table,
   TableBody,
@@ -220,22 +221,20 @@ function OverviewTab({ pool, poolId }: { pool: PoolSummary; poolId: string }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <Card>
-        <CardContent className="grid grid-cols-1 gap-x-8 gap-y-4 p-6 text-sm sm:grid-cols-2 lg:grid-cols-3">
-          <DetailRow label="Pool ID" value={pool.id} mono copyable />
-          <DetailRow label="Pool name" value={pool.name} />
-          <DetailRow
-            label="ARN"
-            value={<ArnText arn={pool.arn} />}
-            mono
-            copyable
-            copyText={pool.arn}
-          />
-          <DetailRow label="Created" value={formatDate(pool.creationDate)} />
-          <DetailRow label="Last modified" value={formatDate(pool.lastModifiedDate)} />
-          <DetailRow label="Estimated users" value={String(pool.estimatedNumberOfUsers)} />
-        </CardContent>
-      </Card>
+      <DefinitionCard contentClassName="p-6">
+        <DetailRow label="Pool ID" value={pool.id} copyable />
+        <DetailRow label="Pool name" value={pool.name} />
+        <DetailRow label="Created" value={formatDate(pool.creationDate)} />
+        <DetailRow label="Last modified" value={formatDate(pool.lastModifiedDate)} />
+        <DetailRow label="Estimated users" value={String(pool.estimatedNumberOfUsers)} />
+        <DetailRow
+          label="ARN"
+          value={<ArnText arn={pool.arn} />}
+          copyable
+          copyText={pool.arn}
+          full
+        />
+      </DefinitionCard>
 
       {/* ─── Managed Login / Domain ─────────────────────────────────── */}
       <Card>
@@ -1757,37 +1756,36 @@ function ClientDetailPanel({ poolId, clientId }: { poolId: string; clientId: str
   return (
     <div className="border-t bg-bg-muted/30">
       {/* Client info */}
-      <div className="grid grid-cols-1 gap-x-8 gap-y-3 px-6 pt-4 pb-4 text-sm sm:grid-cols-2">
-        <DetailRow label="Client ID" value={detail.clientId} mono copyable />
+      <DefinitionList columns={2} className="px-6 pt-4 pb-4">
+        <DetailRow label="Client ID" value={detail.clientId} copyable />
         <DetailRow label="Client name" value={detail.clientName} />
         {detail.clientSecret ? (
-          <div className="flex flex-col gap-1">
-            <span className="font-mono text-xs font-medium text-fg-muted">Client secret</span>
-            <div className="flex items-center gap-1.5">
-              <span className="font-mono text-sm break-all">
+          <Definition
+            label="Client secret"
+            value={
+              <span className="flex items-center gap-1.5">
                 {secretVisible ? detail.clientSecret : "••••••••••••••••••••"}
-              </span>
-              <button
-                onClick={() => setSecretVisible((v) => !v)}
-                className="shrink-0 text-fg-subtle transition-colors hover:text-fg"
-                title={secretVisible ? "Hide secret" : "Reveal secret"}
-              >
-                {secretVisible ? (
-                  <EyeOff className="h-3.5 w-3.5" />
-                ) : (
-                  <Eye className="h-3.5 w-3.5" />
+                <IconButton
+                  label={secretVisible ? "Hide secret" : "Reveal secret"}
+                  onClick={() => setSecretVisible((v) => !v)}
+                >
+                  {secretVisible ? (
+                    <EyeOff className="h-3.5 w-3.5" />
+                  ) : (
+                    <Eye className="h-3.5 w-3.5" />
+                  )}
+                </IconButton>
+                {secretVisible && (
+                  <CopyButton value={detail.clientSecret} noun="client secret" tone="inline" />
                 )}
-              </button>
-              {secretVisible && (
-                <CopyButton value={detail.clientSecret} noun="client secret" tone="inline" />
-              )}
-            </div>
-          </div>
+              </span>
+            }
+          />
         ) : (
           <DetailRow label="Client secret" value="None" />
         )}
         <DetailRow label="Created" value={formatDate(detail.creationDate)} />
-      </div>
+      </DefinitionList>
 
       {/* Token validity section */}
       <div className="border-t border-border/50 px-6 py-4">
@@ -1838,7 +1836,7 @@ function ClientDetailPanel({ poolId, clientId }: { poolId: string; clientId: str
             />
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-x-8 gap-y-2 text-sm sm:grid-cols-3">
+          <DefinitionList>
             <DetailRow
               label="Access token"
               value={formatTokenValidity(
@@ -1860,7 +1858,7 @@ function ClientDetailPanel({ poolId, clientId }: { poolId: string; clientId: str
                 detail.tokenValidityUnits?.refreshToken ?? "days",
               )}
             />
-          </div>
+          </DefinitionList>
         )}
       </div>
 
@@ -2143,33 +2141,63 @@ function formatTokenValidity(value: number, unit: string): string {
 
 // ─── Shared helpers ────────────────────────────────────────────────────────
 
+/**
+ * A `Definition` with Cognito's copy affordance. Typography — the mono value,
+ * the uppercase label — comes from `Definition`; this only adds the button.
+ */
 function DetailRow({
   label,
   value,
-  mono,
   copyable,
   copyText,
+  full,
 }: {
   label: string
   value: React.ReactNode
-  mono?: boolean
   copyable?: boolean
   copyText?: string
+  full?: boolean
 }) {
   return (
-    <div className="flex flex-col gap-1">
-      <span className="text-xs font-medium text-fg-muted">{label}</span>
-      <div className="flex items-center gap-1.5">
-        <span className={cn("text-sm break-all", mono && "font-mono")}>{value}</span>
-        {copyable && (
-          <CopyButton
-            value={copyText ?? (typeof value === "string" ? value : "")}
-            noun={label}
-            tone="inline"
-          />
-        )}
-      </div>
-    </div>
+    <Definition
+      label={label}
+      full={full}
+      value={
+        copyable ? (
+          <span className="flex items-center gap-1.5">
+            {value}
+            <CopyButton
+              value={copyText ?? (typeof value === "string" ? value : "")}
+              noun={label}
+              tone="inline"
+            />
+          </span>
+        ) : (
+          value
+        )
+      }
+    />
+  )
+}
+
+/** The bare icon button the pool detail uses for its reveal affordances. */
+function IconButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="shrink-0 text-fg-subtle transition-colors hover:text-fg"
+      title={label}
+    >
+      {children}
+    </button>
   )
 }
 
@@ -2309,50 +2337,45 @@ function UserDetailDialog({
         ) : (
           <div className="flex flex-col gap-5">
             {/* ── Identity & metadata ──────────────────────────── */}
-            <div className="grid grid-cols-2 gap-x-8 gap-y-3">
-              <DetailRow label="Username" value={user.username} mono copyable />
-              <DetailRow
-                label="Subject (sub)"
-                value={user.attributes["sub"] ?? "—"}
-                mono
-                copyable
-              />
+            <DefinitionList columns={2}>
+              <DetailRow label="Username" value={user.username} copyable />
+              <DetailRow label="Subject (sub)" value={user.attributes["sub"] ?? "—"} copyable />
               <DetailRow label="Status" value={user.userStatus} />
               <DetailRow label="Enabled" value={user.enabled ? "Yes" : "No"} />
               <DetailRow label="Created" value={formatDate(user.userCreateDate)} />
               <DetailRow label="Last modified" value={formatDate(user.userLastModifiedDate)} />
 
               {/* Password reveal */}
-              <div className="flex flex-col gap-1">
-                <span className="font-mono text-xs font-medium text-fg-muted">Password</span>
-                <div className="flex items-center gap-1.5">
-                  <span className="font-mono text-sm">
+              <Definition
+                label="Password"
+                value={
+                  <span className="flex items-center gap-1.5">
                     {passwordVisible && plaintextPassword
                       ? plaintextPassword
                       : plaintextPassword !== null && !passwordVisible
                         ? "••••••••"
                         : "—"}
-                  </span>
-                  <button
-                    className="shrink-0 text-fg-subtle transition-colors hover:text-fg disabled:opacity-40"
-                    title={passwordVisible ? "Hide password" : "Reveal password"}
-                    disabled={fetchingPassword}
-                    onClick={() => void handleRevealPassword()}
-                  >
-                    {fetchingPassword ? (
-                      <Spinner className="h-3.5 w-3.5" />
-                    ) : passwordVisible ? (
-                      <EyeOff className="h-3.5 w-3.5" />
-                    ) : (
-                      <KeyRound className="h-3.5 w-3.5" />
+                    <button
+                      className="shrink-0 text-fg-subtle transition-colors hover:text-fg disabled:opacity-40"
+                      title={passwordVisible ? "Hide password" : "Reveal password"}
+                      disabled={fetchingPassword}
+                      onClick={() => void handleRevealPassword()}
+                    >
+                      {fetchingPassword ? (
+                        <Spinner className="h-3.5 w-3.5" />
+                      ) : passwordVisible ? (
+                        <EyeOff className="h-3.5 w-3.5" />
+                      ) : (
+                        <KeyRound className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                    {passwordVisible && plaintextPassword && (
+                      <CopyButton value={plaintextPassword} noun="password" tone="inline" />
                     )}
-                  </button>
-                  {passwordVisible && plaintextPassword && (
-                    <CopyButton value={plaintextPassword} noun="password" tone="inline" />
-                  )}
-                </div>
-              </div>
-            </div>
+                  </span>
+                }
+              />
+            </DefinitionList>
 
             {/* ── Attributes table ────────────────────────────── */}
             <div className="flex flex-col gap-2">
