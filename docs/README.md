@@ -160,7 +160,7 @@ All configuration is via environment variables. No config file required.
 | Variable                         | Default                | Description                                                                          |
 | -------------------------------- | ---------------------- | ------------------------------------------------------------------------------------ |
 | `OVERCAST_HOST`                  | `0.0.0.0`              | Hostname or IP to bind to                                                            |
-| `OVERCAST_HOSTNAME`              | `localhost`            | Hostname used in client-facing URLs (e.g. SQS queue URLs, SNS unsubscribe links)     |
+| `OVERCAST_HOSTNAME`              | `localhost`            | Hostname embedded in client-facing URLs (SQS queue URLs, Lambda function URLs, API Gateway `apiEndpoint`, AppSync DNS names, CloudFront domain names). **Set it to `localhost.overcast.sh`** unless you are offline: every `*.localhost.overcast.sh` name resolves to `127.0.0.1` on every OS, which plain `localhost` does not on Windows. See [networking.md](./networking.md) |
 | `OVERCAST_SPLIT_HORIZON_HOSTS`   | _(none)_               | Extra comma-separated hostnames remapped to Overcast inside containers it starts (ECS tasks), so one URL is dialable from both host and container. Added to the built-in `localhost.overcast.sh`, `localhost.localstack.cloud`, `localhost.floci.io` |
 | `OVERCAST_PORT`                  | `4566`                 | TCP port                                                                             |
 | `OVERCAST_SERVICES`              | all                    | Comma-separated list of services to enable, e.g. `s3,sqs,dynamodb`                   |

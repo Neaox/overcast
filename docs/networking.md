@@ -159,27 +159,33 @@ Host-routed addressing needs the Host header's subdomain to actually resolve
 to wherever Overcast is listening. Three ways to get there, in order of
 convenience vs. offline-friendliness:
 
-1. **Plain `localhost` — offline-safe default.** `*.localhost` resolves to
-   `127.0.0.1` out of the box on Linux and macOS. **It does not on
-   Windows** — see the CDK S3 asset-upload troubleshooting in
-   [cdk.md](./cdk.md#s3-asset-upload-fails-on-windows) for the same
-   underlying issue affecting S3 virtual-hosted addressing. If you're on
-   Windows or need this to work with zero network dependency, use option 3.
-2. **A public wildcard-DNS domain**, e.g. `localhost.overcast.sh` or
-   `localhost.localstack.cloud` — both are public domains that
-   unconditionally resolve every `*.<domain>` subdomain to `127.0.0.1`. Set
-   `OVERCAST_HOSTNAME` to the domain and Overcast will echo it back in every
-   generated Host-routed URL (function URLs, and any future host-routed
-   feature). No hosts-file edits, works identically on every OS.
+1. **`localhost.overcast.sh` — recommended.** Set
+   `OVERCAST_HOSTNAME=localhost.overcast.sh`. Every `*.localhost.overcast.sh`
+   subdomain resolves to `127.0.0.1` through public DNS, so Host-routed URLs
+   work with no hosts-file edits and behave identically on Linux, macOS and
+   Windows. Overcast echoes the domain back in every URL it hands out.
+
+   `localhost.localstack.cloud` and `localhost.floci.io` are recognised out of
+   the box and work the same way, so a setup carried over from either tool
+   keeps working — prefer `localhost.overcast.sh` for anything new.
+
+2. **Plain `localhost` — the offline fallback.** `*.localhost` resolves to
+   `127.0.0.1` with no network at all on Linux and macOS. **It does not on
+   Windows**, where only `localhost` itself is in the hosts file — see the CDK
+   S3 asset-upload troubleshooting in
+   [cdk.md](./cdk.md#s3-asset-upload-fails-on-windows). Use this when option 1
+   is unavailable and you are not on Windows.
+
 3. **A hosts-file entry** for each specific subdomain you need, or a local
    DNS resolver (`dnsmasq`, `*.test` via `/etc/hosts`) that wildcard-resolves
-   your own domain to `127.0.0.1`. More setup, but works fully offline and
-   under restrictive network policies.
+   your own domain to `127.0.0.1`. More setup, but works fully offline, on
+   every OS, and under restrictive network policies.
 
 > **Caveat: public wildcard DNS needs internet access, and may be blocked.**
 >
-> - Options 2 above requires a DNS lookup to a public resolver — it will not
->   work in an offline/air-gapped environment. Use option 1 or 3 there.
+> - Option 1 needs a DNS lookup to a public resolver, so it will not work in
+>   an offline or air-gapped environment. Use option 2 (Linux/macOS only) or
+>   option 3 (any OS) there.
 > - Some routers, corporate networks, and DNS filtering software implement
 >   **DNS rebinding protection**, which blocks public hostnames from
 >   resolving to private/loopback addresses like `127.0.0.1` — exactly what
@@ -189,7 +195,9 @@ convenience vs. offline-friendliness:
 >   `127.0.0.1`; if it returns nothing or errors, your network is filtering
 >   it).
 > - Plain `localhost` has neither problem, which is why it remains the
->   default and the right choice for CI and offline development.
+>   built-in default and the right choice for offline development on Linux and
+>   macOS. A hosts-file entry (option 3) is the fallback that works
+>   everywhere, including Windows and behind DNS filtering.
 
 ### Example: `docker compose` with a wildcard-DNS hostname
 
