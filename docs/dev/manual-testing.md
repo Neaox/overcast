@@ -108,6 +108,24 @@ They resolve to `127.0.0.1` in public DNS and to Overcast inside a container, so
 from both sides — that is what makes them the right value for `OVERCAST_HOSTNAME`. `OVERCAST_HOSTNAME`
 and `OVERCAST_SPLIT_HORIZON_HOSTS` are added to the same list.
 
+### Only the exact names — subdomains do not resolve inside a container
+
+`/etc/hosts` is an exact-match table with no wildcard syntax, so **only the names above** point at
+Overcast from inside a container. A subdomain misses the table, falls through to public DNS, and
+resolves to `127.0.0.1` — the container itself:
+
+| From inside a Lambda | |
+| --- | --- |
+| `localhost.overcast.sh` | ✅ Overcast |
+| `mybucket.s3.localhost.overcast.sh` | ❌ `127.0.0.1`, the container |
+| `abc123.execute-api.us-east-1.localhost.overcast.sh` | ❌ `127.0.0.1`, the container |
+
+It **succeeds** rather than failing with `ENOTFOUND`, so it looks like a connection problem rather
+than a resolution one. Virtual-hosted S3 addressing and API Gateway invoke URLs are therefore
+unusable from function code today; the host side is unaffected, because public wildcard DNS gives
+the host the right answer. Use `forcePathStyle` from inside a function until this is fixed — see
+[docs/plans/container-dns-resolution.md](../plans/container-dns-resolution.md).
+
 Bare **`localhost` is deliberately not hijacked** and cannot be: a container needs its own loopback.
 So `OVERCAST_HOSTNAME=localhost` tells Overcast to advertise itself under a name meaning "me" to
 every container that hears it, and URLs it mints are undialable from a Lambda. That is configuration
@@ -160,5 +178,7 @@ found real bugs:
 - Was the endpoint **remapped**, so a config-derived origin could not accidentally be right?
 - Was the client **bare** — no `--endpoint-url`, no explicit `endpoint`?
 - If it involves containers, was it verified **from inside** one?
+- If it uses a **subdomain** form (virtual-hosted S3, `execute-api`), was it resolved from inside a
+  container rather than only from the host? Those two disagree.
 - Both **console and slim** images, where the change could affect either?
 - Containers and stacks **cleaned up** afterwards (`docker ps -a` empty of `overcast-*`)?
