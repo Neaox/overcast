@@ -218,7 +218,7 @@ func (h *Handler) executeRestLambdaProxy(
 		PathParameters:                  pathParams,
 		StageVariables:                  stageVars,
 		RequestContext: v1RequestContext{
-			AccountID:        "000000000000",
+			AccountID:        h.accountID(),
 			APIID:            api.ID,
 			ResourceID:       resource.ID,
 			Stage:            chi.URLParam(r, "stageName"),
@@ -439,7 +439,7 @@ func (h *Handler) executeV2LambdaProxy(
 			StageVariables:        stageVars,
 			Cookies:               cookies,
 			RequestContext: v2RequestContext{
-				AccountID:    "000000000000",
+				AccountID:    h.accountID(),
 				APIID:        api.ApiID,
 				DomainName:   r.Host,
 				DomainPrefix: domainPrefix(r.Host),
@@ -495,7 +495,7 @@ func (h *Handler) executeV2LambdaProxy(
 			PathParameters:                  pathParams,
 			StageVariables:                  stageVars,
 			RequestContext: v1RequestContext{
-				AccountID:        "000000000000",
+				AccountID:        h.accountID(),
 				APIID:            api.ApiID,
 				Stage:            chi.URLParam(r, "stageName"),
 				RequestID:        protocol.NewRequestID(),

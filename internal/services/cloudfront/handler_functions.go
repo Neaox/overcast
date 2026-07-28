@@ -42,7 +42,7 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := h.clk.Now()
-	accountID := "000000000000"
+	accountID := h.accountID()
 	region := "us-east-1"
 
 	fn := &CloudFrontFunction{

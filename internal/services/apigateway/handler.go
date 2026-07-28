@@ -56,6 +56,17 @@ func (h *Handler) ensureRegistryHydrated() {
 	})
 }
 
+// accountID returns the configured AWS account ID, falling back to the standard
+// emulator account when no config is attached (unit-constructed handlers).
+// Customer handler code reads requestContext.accountId, so it has to reflect
+// OVERCAST_ACCOUNT_ID rather than a literal.
+func (h *Handler) accountID() string {
+	if h.cfg != nil && h.cfg.AccountID != "" {
+		return h.cfg.AccountID
+	}
+	return "000000000000"
+}
+
 func newHandler(cfg *config.Config, store state.Store, log *serviceutil.ServiceLogger, clk clock.Clock) *Handler {
 	return &Handler{
 		cfg:   cfg,

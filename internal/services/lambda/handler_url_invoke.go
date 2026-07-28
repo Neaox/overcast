@@ -187,7 +187,7 @@ func (h *Handler) buildFunctionURLEvent(r *http.Request, rawPath, urlID string) 
 		Headers:               headers,
 		QueryStringParameters: queryParams,
 		RequestContext: functionURLRequestContext{
-			AccountID:    "000000000000",
+			AccountID:    h.accountID(),
 			APIID:        urlID,
 			DomainName:   r.Host,
 			DomainPrefix: serviceutil.DomainPrefix(r.Host),

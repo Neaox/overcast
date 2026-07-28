@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"testing"
 	"time"
 
@@ -121,8 +122,27 @@ func NewTestServer(t *testing.T, opts ...Option) *TestServer {
 		clk = clock.New()
 	}
 
+	// Bind the listener before building the router so the real port is known up
+	// front. Config.ExternalBaseURL() formats cfg.Port verbatim, and the harness
+	// would otherwise leave it at 0 — services that mint resource URLs through
+	// it (SQS, the CloudFormation provisioner, SNS, ECR, AppSync) would hand
+	// back an undialable "http://<hostname>:0" base, and any assertion built
+	// from ExternalBaseURL() would agree with them because both sides evaluate
+	// the same call. See docs/plans/harness-representativeness-audit.md.
+	//
+	// Writing cfg.Port here rather than after httptest.NewServer keeps it
+	// race-free: router.New starts background init goroutines that may read the
+	// config, so the value has to be final before that call, not after it.
+	srv := httptest.NewUnstartedServer(nil)
+	if _, port, err := net.SplitHostPort(srv.Listener.Addr().String()); err == nil {
+		if p, convErr := strconv.Atoi(port); convErr == nil {
+			so.cfg.Port = p
+		}
+	}
+
 	handler, _, cleanup, waitReady := router.New(so.cfg, store, logger, clk, so.initRunner)
-	srv := httptest.NewServer(handler)
+	srv.Config.Handler = handler
+	srv.Start()
 
 	// Block until all services with background init (e.g. Lambda Docker
 	// probing) have completed, so tests can invoke immediately.

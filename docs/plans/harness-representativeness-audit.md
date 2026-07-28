@@ -1,23 +1,29 @@
 # Integration-harness audit — unrepresentative defaults
 
-> Status: findings recorded, 2026-07-28. Branch `claude/inspiring-jennings-42768f`.
+> Status: **complete — all findings fixed**, 2026-07-28. Branch
+> `claude/inspiring-jennings-42768f`.
 > Follows [host-routing-precedence.md](./host-routing-precedence.md), which documents
 > the original instance: `defaultTestConfig()` left `OVERCAST_HOSTNAME` unset, so
 > Lambda minted `{urlId}.lambda-url.us-east-1.127.0.0.1:PORT` and the Docker-gated
 > round-trip test passed against an IP base that matches no virtual-host rule.
 >
 > Scope: `tests/helpers/server.go` defaults, and the client-facing URL and ARN
-> minting they fail to exercise. Five failing tests, four findings. Each finding
-> stands on its own evidence; no harness field was changed.
+> minting they fail to exercise. Four findings, three real; six tests, all green.
+>
+> Each finding below records the evidence as it stood *before* the fix — the
+> failing output is what justifies the change, so it is kept rather than rewritten
+> in the past tense. The **Fix** paragraph at the end of each section states what
+> landed. Line numbers in the finding sections are therefore pre-fix positions;
+> the links resolve to the file, not the line.
 
 ## Summary
 
-| # | Finding | Verdict | Reproducing test |
-| --- | --- | --- | --- |
-| 1 | `Host: "127.0.0.1"` | **No gap** — nothing client-facing derives from it | — |
-| 2 | `Port: 0` makes `Config.ExternalBaseURL()` return `http://localhost:0` | **Real gap** — harness | `TestQueueURL_awsHostFallbackIsDialable` |
-| 3 | Cognito mints `iss` from `r.Host` and a hardcoded `http://` | **Real gap** — product, 2 axes | 3 tests (below) |
-| 4 | Invoke-event / ARN account IDs hardcoded, not read from config | **Real gap** — product, 5 sites | 2 tests (below) |
+| # | Finding | Verdict | Test | Fix |
+| --- | --- | --- | --- | --- |
+| 1 | `Host: "127.0.0.1"` | **No gap** — nothing client-facing derives from it | — | none needed |
+| 2 | `Port: 0` makes `Config.ExternalBaseURL()` return `http://localhost:0` | **Real gap** — harness | `TestQueueURL_awsHostFallbackIsDialable` | bind listener first, write real port into `cfg.Port` |
+| 3 | Cognito mints `iss` from `r.Host` and a hardcoded `http://` | **Real gap** — product, 2 axes | 3 tests (below) | both sites via `serviceutil.ClientBaseURL` |
+| 4 | Invoke-event / ARN account IDs hardcoded, not read from config | **Real gap** — product, 7 sites | 2 tests (below) | `accountID()` helper per service |
 
 TLS (the brief's candidate 2) is not a finding on its own — it is the mechanism
 that hides half of finding 3, and is written up there.
@@ -94,11 +100,20 @@ QueueUrl = "http://localhost:0/000000000000/aws-host-dialable",
      want "http://localhost:40023/000000000000/aws-host-dialable"
 ```
 
-**Suggested fix (harness).** Write the bound port back into the config after
-`httptest.NewServer` binds and before `waitReady()` — `so.cfg` is a pointer the
-handlers already hold, so one assignment makes `ExternalBaseURL()` representative
-everywhere at once. Then retarget the assertions above at `ExternalBase()`. Not
-applied here: it is a harness change, and the rule is reproducing test first.
+**Fix.** `NewTestServer` now binds the listener with `httptest.NewUnstartedServer`
+*before* calling `router.New`, reads the OS-assigned port off
+`srv.Listener.Addr()`, writes it into `so.cfg.Port`, then attaches the handler and
+starts serving ([tests/helpers/server.go](../../tests/helpers/server.go)).
+
+Ordering is the load-bearing part. Setting the port after `httptest.NewServer`
+would be a data race: `router.New` starts background init goroutines that may read
+the config, so the value has to be final before that call, not after it. Binding
+first also means any service reading `cfg.Port` at construction gets the real
+value.
+
+`ExternalBase()` was left as-is. It derives the port from `ts.URL` and now agrees
+with `cfg.ExternalBaseURL()` by construction, so it stays a correct accessor
+rather than a second source of truth.
 
 ## 3. Cognito issuer URLs ignore both the configured hostname and TLS
 
@@ -172,9 +187,18 @@ issuerURL   = "http://127.0.0.1:39783/us-east-1/us-east-1_abc123",
        want "https://overcast.local:4566/us-east-1/us-east-1_abc123"
 ```
 
-**Suggested fix.** Route both expressions through `serviceutil.ClientBaseURL`,
-which already resolves hostname, port and scheme together. Fixes both axes at
-once and removes the duplicated copy.
+**Fix.** Both expressions now go through `serviceutil.ClientBaseURL`, which
+resolves hostname, port and scheme together from config and falls back to the
+request's own Host when no external hostname is set — so both axes are fixed at
+once and the duplicated copy is gone
+([handler_auth.go](../../internal/services/cognito/handler_auth.go),
+[handler_managed_login.go](../../internal/services/cognito/handler_managed_login.go)).
+
+Token validation is unaffected: `ValidateCognitoToken` derives the pool ID from
+the issuer with `poolIDFromIssuer`, which takes the trailing path segment
+([jwt.go:142](../../internal/services/cognito/jwt.go)). It never compares the
+issuer against a recomputed value, so changing the origin cannot invalidate a
+token.
 
 Out of scope but noted: `issuerURLTyped`
 ([typed_logic.go:714](../../internal/services/cognito/typed_logic.go)) returns a
@@ -228,6 +252,23 @@ context is only built while invoking a Lambda, which needs Docker, and the
 `NodeRuntime` stub does not execute code so it cannot echo the event back. They
 are the same one-line defect as the Lambda site, which the unit test above pins.
 
+**Fix.** Each service gained an `accountID()` helper of the form already used by
+elasticache, rds and cloudtrail — config value, else the standard emulator
+account for handlers constructed without config — and all sites now call it.
+
+Two sites beyond the five above turned up while fixing and are included, since
+both are the identical defect in code being touched anyway:
+
+- [cloudfront/handler_monitoring.go:145](../../internal/services/cloudfront/handler_monitoring.go)
+  — the realtime-log-config ARN, hardcoded the same way as the function ARN.
+- [lambda/handler_functions.go](../../internal/services/lambda/handler_functions.go)
+  `isForeignAccountLayerARN` already did the config lookup correctly, but inline;
+  it now calls the helper, so the idiom appears once per service.
+
+That last one is worth noting because it is the counter-example that shows the
+others are oversight rather than convention: the same file, in the same service,
+already knew to read config.
+
 ### Region defaults — no gap found
 
 `us-east-1` was checked separately and is clean. Every occurrence in service code
@@ -239,6 +280,17 @@ No region literal reaches a client-facing value unconditionally.
 
 ## Verification
 
-`go vet -tags slim ./...` clean; `gofmt -l` clean on all five new files. Scoped
-runs of the five affected packages fail on exactly the five new tests and nothing
-else — no pre-existing assertion changed or broke.
+All six tests green. `go vet -tags slim ./...` clean, `gofmt -l` clean, full
+`go test ./...` green.
+
+The full-suite run matters more than usual here: finding 2's fix changes
+`cfg.Port` on **every** test server in the repo, so any assertion anywhere that
+was anchored to the degenerate `http://<hostname>:0` base would move. Scoped runs
+cannot establish that, which is why the whole suite was run rather than the five
+affected packages.
+
+No test assertion was rewritten to accommodate a fix. The existing
+`TestQueueURL_awsHostFallsBackToConfiguredOrigin` still builds its expectation
+from `Config.ExternalBaseURL()` and still passes — it is simply no longer vacuous,
+because that call now returns a dialable base. Retargeting it at `ExternalBase()`
+would be equivalent and is not worth the churn.
