@@ -65,10 +65,22 @@ import (
 //     not "appsync-api"/"lambda-url"). Folding it in is tracked as H5 in
 //     docs/plans/host-routing-precedence.md, alongside the manifest work,
 //     so both label lists are replaced in one pass rather than two.
+//
+// Host-route labels, exported so the services that MINT these URLs
+// (serviceutil.HostRoutedURL callers) use the same string the router
+// dispatches on. serviceutil cannot import this package — middleware imports
+// serviceutil — so the label travels as a parameter; these constants are what
+// stops the two sides drifting.
+const (
+	LabelExecuteAPI = "execute-api"
+	LabelLambdaURL  = "lambda-url"
+	LabelAppSyncAPI = "appsync-api"
+)
+
 var hostRouteLabels = map[string]string{
-	"execute-api": "apigateway",
-	"lambda-url":  "lambda",
-	"appsync-api": "appsync",
+	LabelExecuteAPI: "apigateway",
+	LabelLambdaURL:  "lambda",
+	LabelAppSyncAPI: "appsync",
 }
 
 // awsRegionPattern matches AWS region shapes: us-east-1, ap-southeast-2,

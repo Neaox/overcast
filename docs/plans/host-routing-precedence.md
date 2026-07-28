@@ -529,7 +529,7 @@ mechanical URL-minting changes above.
 
 ## 10. Phases
 
-> **Progress:** H0-H2 complete. Section 9.4 added: AWS bucket-name rules corrected in both directions, which makes the section 6 limitation reachable and the reserved-label warning worth having after all. H3-H5 not started.
+> **Progress:** H0-H3 complete and green. Outstanding: H4 (AWS::URLSuffix audit), H6 (documentation sweep, §10.1). H5 is blocked on an api-models-aws checkout.
 
 Each phase begins with failing tests and leaves `main` internally consistent,
 per the shipping rule in [aws-api-operation-coverage.md](./aws-api-operation-coverage.md).
@@ -542,11 +542,44 @@ per the shipping rule in [aws-api-operation-coverage.md](./aws-api-operation-cov
 | H3 | Canonical URL minting per §8: `serviceutil.HostRoutedURL`, API Gateway v2 `apiEndpoint`, AppSync `uris`/`dns`, `buildFunctionURL` collapsed onto the helper. | A minted URL, fed back as a `Host` header, reaches its own service — asserted end-to-end, not by string comparison. |
 | H4 | `AWS::URLSuffix` audit and scoped substitution per §8's hazard. | Every `AWS::URLSuffix` use site in synthesised CDK templates classified as URL-host or not; IAM service principals provably unaffected. |
 | H5 | *(follow-on PR)* Manifest-derived label validation per §6. | Requires an `api-models-aws` checkout at revision `66e973ca…`. |
+| H6 | Documentation sweep per §10.1 — every doc that states which hostnames, URL shapes or bucket names Overcast supports. | No doc contradicts §4's precedence rule, §8's minted URLs, or §9.4's bucket-name rules. `make docs-index` regenerated. |
 
 H3's gate is deliberately behavioural rather than textual: asserting the minted
 string equals an expected literal would pass even if the routing grammar and
 the minting helper drifted apart. Round-tripping the URL through the router is
 the only assertion that proves they agree.
+
+### 10.1 H6 — documentation sweep
+
+This branch changed what Overcast accepts and what it hands back, and only
+`docs/networking.md` was brought in line (H2). Several other docs still state
+the old picture, and at least two of them are now actively wrong rather than
+merely incomplete. **No review has been done yet** — the list below is a survey
+of files that mention the affected claims, not a set of findings.
+
+| File | Why it is in scope |
+| --- | --- |
+| `docs/sdk-cli.md` | "S3 path-style addressing" section describes virtual-hosted support; predates the precedence rule and the bare-form veto. |
+| `docs/migration-from-localstack.md` | States path-style is the default and virtual-hosted needs opting in; also the place to record that Overcast now accepts dotted bucket names LocalStack's vhost path historically broke on. |
+| `docs/services/s3.md` | Frontmatter and body describe addressing via an `S3_ADDRESSING_STYLE` env var — check that variable still exists and that the described behaviour matches §4. Bucket-name rules (§9.4) are not documented anywhere yet. |
+| `docs/services/apigateway.md` | HTTP v2 now returns `apiEndpoint`; REST v1 invoke URL shapes. |
+| `docs/services/appsync.md` | `uris` vs `dns` split and why `uris` stays path-style (§8). |
+| `docs/services/lambda.md` | Function URL host shapes and the wildcard-DNS hostnames. |
+| `docs/cdk.md` | Asset-publisher guidance is written around the S3 virtual-hosted path only. |
+| `docs/services/ecs.md`, `docs/README.md` | Enumerate the split-horizon hostnames; check they agree with the recognised bases in §4. |
+
+Two specific traps for whoever picks this up:
+
+- **The reserved-label limitation must be stated wherever bucket naming is
+  documented**, not only in `networking.md`. A user hits it at `CreateBucket`
+  time, not while reading about networking.
+- **Do not simply assert "virtual-hosted style is supported"** — the whole
+  point of §4 is that it is supported *with a defined precedence* and one
+  documented exception. A flat claim is what the old docs said and it is what
+  made the collision invisible.
+
+`docs/plans/` is excluded from the docs index, but every file above is not —
+run `make docs-index` and commit the result.
 
 ## 11. Permanent guardrail
 

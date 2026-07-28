@@ -25,6 +25,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -295,4 +296,70 @@ func toLower(s string) string {
 
 func hasPrefix(s, prefix string) bool {
 	return strings.HasPrefix(s, prefix)
+}
+
+// HostRoutedURL mints the canonical AWS Host-routed URL for a resource:
+//
+//	{scheme}://{id}.{label}.{region}.{host}[:{port}]{path}
+//
+// It is the single place any service builds one, so a URL Overcast hands back
+// is by construction one its own router can resolve — label must be a key of
+// middleware's host-route table (use the LabelExecuteAPI / LabelLambdaURL /
+// LabelAppSyncAPI constants, which that table is built from). serviceutil
+// cannot import middleware, since middleware imports serviceutil, so the
+// guarantee is enforced by round-trip tests that feed a minted URL back in as
+// a Host header rather than by the type system.
+//
+// It builds on ClientBaseURL, not config.ExternalBaseURL: only ClientBaseURL
+// falls back to the request port when cfg.Port is unset and honours
+// cfg.TLSEnabled(). See docs/plans/harness-representativeness-audit.md finding 2.
+//
+// path is appended verbatim and may be empty (API Gateway v2's apiEndpoint has
+// no path), "/" (Lambda function URLs), or a fixed route ("/graphql").
+func HostRoutedURL(cfg *config.Config, r *http.Request, label, id, region, path string) string {
+	return HostRoutedURLFromBase(ClientBaseURL(cfg, r), label, id, region, path)
+}
+
+// HostRoutedURLFromBase is HostRoutedURL for callers that have already resolved
+// the client-facing base URL and have no *http.Request to hand — AppSync's
+// typed handlers carry it on the context instead.
+func HostRoutedURLFromBase(baseURL, label, id, region, path string) string {
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	host := id + "." + label
+	if region != "" {
+		host += "." + region
+	}
+	host += "." + u.Hostname()
+	if port := u.Port(); port != "" {
+		host = net.JoinHostPort(host, port)
+	}
+	u.Host = host
+	u.Path = path
+	u.RawPath = ""
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
+}
+
+// HostRoutedHostname is HostRoutedURL reduced to the bare DNS name, with no
+// scheme, port or path — the shape AWS uses for fields that carry a hostname
+// rather than a URL, such as AppSync's GraphqlApi.dns map.
+//
+// It is derived from HostRoutedURL rather than rebuilt, so the two forms cannot
+// disagree about the grammar.
+func HostRoutedHostname(cfg *config.Config, r *http.Request, label, id, region string) string {
+	return HostRoutedHostnameFromBase(ClientBaseURL(cfg, r), label, id, region)
+}
+
+// HostRoutedHostnameFromBase is HostRoutedHostname for callers that already
+// hold a resolved base URL.
+func HostRoutedHostnameFromBase(baseURL, label, id, region string) string {
+	u, err := url.Parse(HostRoutedURLFromBase(baseURL, label, id, region, ""))
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }

@@ -229,8 +229,8 @@ func (h *Handler) CreateGraphqlApi(w http.ResponseWriter, r *http.Request) {
 
 	api.Uris = localGraphQLURIs(serviceutil.ClientBaseURL(h.cfg, r), apiID)
 	api.Dns = map[string]string{
-		"GRAPHQL":  fmt.Sprintf("%s.appsync-api.%s.amazonaws.com", apiID, h.region(r)),
-		"REALTIME": fmt.Sprintf("%s.appsync-realtime-api.%s.amazonaws.com", apiID, h.region(r)),
+		"GRAPHQL":  h.graphQLDNS(r, apiID),
+		"REALTIME": h.graphQLDNS(r, apiID),
 	}
 
 	if err := h.store.PutAPI(r.Context(), &api); err != nil {
@@ -377,6 +377,28 @@ func (h *Handler) baseURLFromContext(ctx context.Context) string {
 		return base
 	}
 	return h.cfg.ExternalBaseURL()
+}
+
+// graphQLDNS returns the hostname a client resolves to reach this API, minted
+// through the shared host-routed helper so it is a name this router accepts.
+// It replaces a hardcoded "amazonaws.com", which advertised a name that
+// resolves to real AWS and can never reach the emulator.
+//
+// REALTIME deliberately returns the SAME host as GRAPHQL. Real AWS serves
+// realtime from a separate appsync-realtime-api hostname; Overcast colocates
+// both under /_appsync/{apiId} (see service.go), so the appsync-api host is
+// the one that actually routes. Advertising an appsync-realtime-api name would
+// reintroduce exactly the defect this replaces: a hostname Overcast hands out
+// but cannot serve. Splitting them needs a fourth dispatch label -- tracked as
+// a follow-up in docs/plans/host-routing-precedence.md.
+func (h *Handler) graphQLDNS(r *http.Request, apiID string) string {
+	return serviceutil.HostRoutedHostname(h.cfg, r, middleware.LabelAppSyncAPI, apiID, h.region(r))
+}
+
+// graphQLDNSFromBase is graphQLDNS for the typed handlers, which carry the
+// client base URL on the context rather than holding an *http.Request.
+func (h *Handler) graphQLDNSFromBase(baseURL, apiID, region string) string {
+	return serviceutil.HostRoutedHostnameFromBase(baseURL, middleware.LabelAppSyncAPI, apiID, region)
 }
 
 func localGraphQLURIs(baseURL, apiID string) map[string]string {
