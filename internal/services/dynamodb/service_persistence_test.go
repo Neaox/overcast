@@ -1,3 +1,10 @@
+//go:build !nosqlite
+
+// Every test here needs a real *state.HybridStore. Under -tags nosqlite
+// state.NewHybridStore is a stub that always errors (see
+// internal/state/sqlite_hybrid_nosqlite.go), so the file is excluded from that
+// build rather than failing in it — same convention as item_store_test.go and
+// index_store_test.go in this package.
 package dynamodb
 
 import (

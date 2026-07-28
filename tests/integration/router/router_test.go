@@ -4,13 +4,11 @@ package router_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
 
 	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/mcp"
 	"github.com/Neaox/overcast/internal/state"
 	"github.com/Neaox/overcast/tests/helpers"
 )
@@ -70,45 +68,8 @@ func TestHealth_includesStorageConfig(t *testing.T) {
 	}
 }
 
-func TestRuntimeMCPInitialize_returnsToolsCapability(t *testing.T) {
-	srv := helpers.NewTestServer(t)
-
-	payload, _ := json.Marshal(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": mcp.ProtocolVersion,
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "router-test", "version": "1.0"},
-		},
-	})
-
-	resp, err := http.Post(srv.URL+"/_mcp/", "application/json", bytes.NewReader(payload))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	helpers.AssertStatus(t, resp, http.StatusOK)
-
-	var body map[string]any
-	helpers.DecodeJSON(t, resp, &body)
-	result, ok := body["result"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected result object, got %T", body["result"])
-	}
-	if result["protocolVersion"] != mcp.ProtocolVersion {
-		t.Fatalf("protocolVersion = %v, want %q", result["protocolVersion"], mcp.ProtocolVersion)
-	}
-	caps, ok := result["capabilities"].(map[string]any)
-	if !ok {
-		t.Fatalf("capabilities type = %T", result["capabilities"])
-	}
-	if _, ok := caps["tools"]; !ok {
-		t.Fatal("capabilities.tools must be present")
-	}
-}
+// The runtime MCP endpoint only exists in non-slim builds, so its test lives in
+// the //go:build !slim-guarded mcp_test.go rather than here.
 
 // ---- Not-found -------------------------------------------------------------
 
@@ -553,56 +514,8 @@ func TestDebugMetrics_includesAdvisoriesArray(t *testing.T) {
 	}
 }
 
-// TestDebugReset_withSQLiteStore covers the non-MemoryStore branch of debugReset
-// (the resetAllNamespaces code path).
-func TestDebugReset_withSQLiteStore(t *testing.T) {
-	sqliteStore, err := state.NewSQLiteStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewSQLiteStore: %v", err)
-	}
-	t.Cleanup(func() { sqliteStore.Close() })
-
-	// Wait for the background schema migration to finish before issuing any
-	// requests. Without this, a request that races migration now correctly
-	// gets a fast 503 (middleware.NotReady, storage-plan.md) instead of
-	// silently blocking-then-succeeding the way it used to — this test cares
-	// about debug reset behavior against a SQLiteStore backend, not about
-	// exercising that race, so synchronize past it explicitly. SQLiteStore
-	// has no ReadyAwaiter of its own; any real operation blocks on the same
-	// internal gate migration completion closes.
-	if _, _, err := sqliteStore.Get(context.Background(), "warmup", "warmup"); err != nil {
-		t.Fatalf("warm-up Get (waiting for migration): %v", err)
-	}
-
-	srv := helpers.NewTestServer(t, helpers.WithDebug(true), helpers.WithStore(sqliteStore))
-
-	// Create a queue to populate state.
-	body, _ := json.Marshal(map[string]any{"QueueName": "sqlite-reset-queue"})
-	createReq, _ := http.NewRequest(http.MethodPost, srv.URL+"/", bytes.NewReader(body))
-	createReq.Header.Set("Content-Type", "application/x-amz-json-1.0")
-	createReq.Header.Set("X-Amz-Target", "AmazonSQS.CreateQueue")
-
-	createResp, err := http.DefaultClient.Do(createReq)
-	if err != nil {
-		t.Fatal(err)
-	}
-	createResp.Body.Close()
-	helpers.AssertStatus(t, createResp, http.StatusOK)
-
-	// Reset via debug endpoint — exercises resetAllNamespaces.
-	resetResp, err := http.Post(srv.URL+"/_debug/reset", "application/json", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resetResp.Body.Close()
-
-	helpers.AssertStatus(t, resetResp, http.StatusOK)
-	var result map[string]string
-	helpers.DecodeJSON(t, resetResp, &result)
-	if result["status"] != "reset" {
-		t.Errorf("expected status 'reset', got %q", result["status"])
-	}
-}
+// Debug reset against a real SQLite-backed store is build-tag-sensitive and
+// lives in the //go:build !nosqlite-guarded sqlite_test.go.
 
 // ---- Mixed-backend storage -------------------------------------------------
 
