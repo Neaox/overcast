@@ -91,11 +91,15 @@ func (s *Server) Serve(ctx context.Context) {
 	acceptBackoff := 10 * time.Millisecond
 	const maxAcceptBackoff = 500 * time.Millisecond
 
+	// The loop is labelled so both exits can name it explicitly. The
+	// slot-acquisition select below needs the label — a bare `break` there
+	// terminates the select, not the loop.
+acceptLoop:
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
-				break
+				break acceptLoop
 			}
 			// Transient accept error (EMFILE, ENFILE, etc.) —
 			// back off and retry. Exponential backoff prevents
@@ -118,7 +122,7 @@ func (s *Server) Serve(ctx context.Context) {
 		case s.sema <- struct{}{}:
 		case <-ctx.Done():
 			_ = conn.Close()
-			break
+			break acceptLoop
 		}
 
 		s.wg.Add(1)
