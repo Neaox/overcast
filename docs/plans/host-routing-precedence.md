@@ -453,7 +453,7 @@ mechanical URL-minting changes above.
 
 ## 10. Phases
 
-> **Progress:** H1 complete (one classifier, one middleware; the perf gate in section 7 is met). H0 is unit-level only -- integration cover across every resolvable base still to come. H2-H5 not started.
+> **Progress:** H1 complete; H0 unit-level only. Section 12 now records the invariants that keep this compatible with AWS-coverage A3+. H2-H5 not started.
 
 Each phase begins with failing tests and leaves `main` internally consistent,
 per the shipping rule in [aws-api-operation-coverage.md](./aws-api-operation-coverage.md).
@@ -488,7 +488,89 @@ This belongs in the "adding a new host-routed service" recipe in
 already reading when they are about to get it wrong. H3 makes it enforceable
 rather than advisory.
 
-## 12. Follow-ups not in scope
+## 12. Interaction with the AWS operation coverage work
+
+For whoever picks up A3+ of
+[aws-api-operation-coverage.md](./aws-api-operation-coverage.md).
+
+**Verified 2026-07-28:** a trial merge of this branch with
+`feat/aws-operation-rest-trie` (A3, `8e14e0cf`) applies with no conflicts, and
+`internal/middleware`, `internal/awsapi`, and the router/s3/apigateway/appsync/
+lambda integration suites all pass in the merged state. Nothing below is an
+open action on A3 — it is the set of invariants that keep the two designs
+compatible.
+
+### 1. Path rewriting happens in middleware; REST matching must stay behind it
+
+`HostAddressing` rewrites a host-routed request's path **before any route or
+trie sees it**:
+
+```
+GET /prod/pets            Host: abc123.execute-api.us-east-1.localhost:4566
+  -> GET /_apigateway/execute-api/abc123/us-east-1/prod/pets
+```
+
+This matters because an invoke path is arbitrary customer-defined data. A
+perfectly legal API Gateway route is:
+
+```
+GET /prod/2015-03-31/functions/my-fn/invocations
+```
+
+Matched against a REST trie *before* the Host rewrite, that is Lambda `Invoke`
+and would be 501'd — breaking a working customer API.
+
+A3 already satisfies this by construction: `restFallback` is registered at
+**route** level after every explicit service route, so it runs during chi
+dispatch, long after middleware. The rewritten path is `/_apigateway/...`,
+which matches an explicit route and never reaches the fallback. A3's additional
+requirement that `middleware.ServiceFromCredential(r)` match `claim.SigningName`
+gives a second layer of protection, since host-routed invokes are typically
+unsigned.
+
+The invariants to preserve: **no REST-claiming middleware ahead of
+`HostAddressing`** (currently the 4th `r.Use`), the `/_*` exclusion stays, and
+nothing recovers and re-matches the pre-rewrite path. The rewrite is where
+"service data-plane traffic, not a modeled operation" gets decided.
+
+### 2. No generator ask — `SigningName` already covers it
+
+An earlier draft of this section asked A3 to retain `endpointPrefix` from the
+`aws.api#service` trait so §6 could make `hostRouteLabels` evidence-based.
+**Withdrawn:** A3 already generates `SigningName` from `aws.auth#sigv4`, and
+`execute-api` is present in the generated corpus. That is sufficient evidence
+for the one dispatch label AWS actually models.
+
+`lambda-url` and `appsync-api` are host-only conventions carried by no Smithy
+field at all — Lambda function URLs sign as `lambda`, AppSync as `appsync` — so
+they belong in the documented override table regardless of which field is
+retained. Retaining `endpointPrefix` too would not change that.
+
+H5 therefore needs nothing from A3 beyond a small exported predicate over the
+existing generated data (`SigningName` currently lives only on the private
+`restOperation` table). That is this plan's work, not A3's.
+
+### 3. Exported middleware API changed
+
+Removed: `S3VirtualHost`, `S3VirtualHostFor`, `HostDispatch`,
+`HostRouteService`. Replaced by `HostAddressing`, `HostClassifier`, and
+`HostRouteServiceFor(HostRouteMatch)`. A3 does not reference any of them — the
+trial merge confirms it — but another in-flight branch might.
+
+### 4. `detectService` no longer re-derives the host-route label
+
+It reads the `HostClaim` stamped by `HostAddressing`
+([logger.go](../../internal/middleware/logger.go)). If a later phase adds
+registry-based service labelling there, put it **after** the host-claim check:
+a host-routed request's owning service is already known exactly, and the
+manifest cannot improve on it.
+
+Related, for A4's "no modeled non-S3 request reaches S3" corpus: which hosts do
+and do not resolve to a bucket changed with this work. Corpus requests using
+httptest's default `example.com` Host are unaffected (it matches no base); any
+fixture that sets an explicit `Host` should be checked against the §4 matrix.
+
+## 13. Follow-ups not in scope
 
 - Folding `regionFromHost` ([region.go:49](../../internal/middleware/region.go))
   into the shared parse. It carries a **third** divergent label list
