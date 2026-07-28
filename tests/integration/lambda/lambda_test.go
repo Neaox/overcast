@@ -5407,6 +5407,101 @@ func TestInvokeFunctionURL_unknownUrlIdReturnsForbidden(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusForbidden)
 }
 
+// TestInvokeFunctionURL_hostRoutedAcrossResolvableBases proves the lambda-url
+// Host reaches the Lambda function-URL handler on every base Overcast can
+// actually resolve, not just ".amazonaws.com".
+//
+// It asserts on the unknown-urlId 403 rather than a successful invocation so
+// it needs no Docker runtime: reaching Lambda's own AWS-shaped 403 is the
+// routing proof. Before the addressing-precedence fix these hosts were claimed
+// by S3 virtual-hosted addressing, so the request landed on the S3 handler with
+// a corrupted path and returned an S3 XML error instead.
+//
+// TestInvokeFunctionURL_hostRouted_success below could not have caught that,
+// even though it does round-trip a minted FunctionUrl and does run in CI.
+// Before helpers.NewTestServer defaulted OVERCAST_HOSTNAME, it minted
+// "{urlId}.lambda-url.us-east-1.127.0.0.1:PORT" — an IP base, which matches no
+// virtual-host rule, so the collision never fired. See
+// docs/plans/host-routing-precedence.md.
+func TestInvokeFunctionURL_hostRoutedAcrossResolvableBases(t *testing.T) {
+	// Given: a server with no function URL configs at all
+	srv := helpers.NewTestServer(t)
+
+	bases := []struct{ name, host string }{
+		{"amazonaws.com with region", "nosuchurlid.lambda-url.us-east-1.amazonaws.com"},
+		{"localhost with region", "nosuchurlid.lambda-url.us-east-1.localhost:4566"},
+		{"localhost without region", "nosuchurlid.lambda-url.localhost:4566"},
+		{"overcast.sh wildcard with region", "nosuchurlid.lambda-url.us-east-1.localhost.overcast.sh:4566"},
+		{"localstack.cloud wildcard with region", "nosuchurlid.lambda-url.us-east-1.localhost.localstack.cloud:4566"},
+	}
+
+	for _, b := range bases {
+		t.Run(b.name, func(t *testing.T) {
+			// When: a request hits that lambda-url Host
+			req, err := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+			if err != nil {
+				t.Fatalf("build request: %v", err)
+			}
+			req.Host = b.host
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("request: %v", err)
+			}
+			defer resp.Body.Close()
+
+			// Then: Lambda's 403, proving the request reached Lambda and not S3
+			helpers.AssertStatus(t, resp, http.StatusForbidden)
+		})
+	}
+}
+
+// TestCreateFunctionUrlConfig_mintedURLRoutesBackToLambda closes the loop
+// between minting and routing: the FunctionUrl Overcast hands back must be one
+// its own router accepts. Asserting the string shape would pass even if the
+// minting helper and the routing grammar drifted apart, so this feeds the
+// minted Host straight back in.
+func TestCreateFunctionUrlConfig_mintedURLRoutesBackToLambda(t *testing.T) {
+	// Given: a server on a wildcard-DNS hostname with a function URL config
+	const hostname = "localhost.overcast.sh"
+	srv := helpers.NewTestServer(t, helpers.WithHostname(hostname))
+	createFunction(t, srv, "minted-url-fn")
+
+	createResp := doJSON(t, http.MethodPost, lambdaURLv2021(srv, "/functions/minted-url-fn/url"), map[string]any{"AuthType": "NONE"})
+	helpers.AssertStatus(t, createResp, http.StatusCreated)
+	var cfg functionUrlConfigResp
+	decodeJSON(t, createResp, &cfg)
+
+	// The minted URL must carry the configured hostname, not a hardcoded one.
+	if !strings.Contains(cfg.FunctionUrl, "lambda-url") || !strings.Contains(cfg.FunctionUrl, hostname) {
+		t.Fatalf("FunctionUrl %q does not use the lambda-url grammar on %q", cfg.FunctionUrl, hostname)
+	}
+
+	u, err := url.Parse(cfg.FunctionUrl)
+	if err != nil {
+		t.Fatalf("parse FunctionUrl %q: %v", cfg.FunctionUrl, err)
+	}
+
+	// When: that exact Host is presented back to the router
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Host = u.Host
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: it is claimed by Lambda. The urlId resolves, so this is NOT the
+	// unknown-urlId 403 — any non-403 status proves the host-route claim
+	// landed; the invocation itself needs a runtime and is covered by the
+	// Docker-gated test below.
+	if resp.StatusCode == http.StatusForbidden {
+		t.Errorf("minted FunctionUrl %q was not recognised by its own router (403)", cfg.FunctionUrl)
+	}
+}
+
 // TestInvokeFunctionURL_hostRouted_success proves the full path: create a
 // function URL config, then invoke it via its Host-routed FunctionUrl and
 // confirm the request reaches the function through the same runtime

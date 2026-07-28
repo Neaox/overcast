@@ -453,7 +453,7 @@ mechanical URL-minting changes above.
 
 ## 10. Phases
 
-> **Progress:** H1 complete; H0 unit-level only. Harness realism fixed -- unplanned, and the reason this class of bug was invisible to CI. H2-H5 not started.
+> **Progress:** H0 and H1 complete: API Gateway v1/v2, Lambda function URLs and AppSync are covered on every resolvable base, plus a minted-URL round-trip. H2-H5 not started.
 
 Each phase begins with failing tests and leaves `main` internally consistent,
 per the shipping rule in [aws-api-operation-coverage.md](./aws-api-operation-coverage.md).
