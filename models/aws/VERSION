@@ -1,0 +1,8 @@
+source=https://github.com/aws/api-models-aws
+revision=66e973cadf6b6e909b200217d0d6065e49445a9a
+license=Apache-2.0
+format=Smithy JSON AST
+
+# This A1 pilot records provenance for the generated operation manifest. The
+# refresh workflow introduced in A5 will replace this with a full vendored
+# snapshot and enforce regeneration from the recorded revision.
