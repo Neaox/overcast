@@ -208,9 +208,11 @@ func TestReservedHostLabels_areNotPlausibleBucketSuffixes(t *testing.T) {
 
 	for _, label := range labels {
 		t.Run(label, func(t *testing.T) {
-			// When/Then: each must be hyphenated — a compound AWS token, not
-			// a word someone would end a bucket name with. See the recipe in
-			// hostroute.go before relaxing this.
+			// When/Then: each label must be a compound AWS token, not a word
+			// someone would end a bucket name with. Hyphenation is the cheap
+			// signal; a single-word label is allowed only with a written
+			// rationale, which keeps the exception visible in review. See the
+			// recipe in hostroute.go before relaxing this.
 			hyphenated := false
 			for i := 0; i < len(label); i++ {
 				if label[i] == '-' {
@@ -218,9 +220,14 @@ func TestReservedHostLabels_areNotPlausibleBucketSuffixes(t *testing.T) {
 					break
 				}
 			}
-			if !hyphenated {
-				t.Errorf("host-route label %q is a single bare word; it must be a hyphenated "+
-					"AWS data-plane token so it cannot plausibly end a bucket name", label)
+			if hyphenated {
+				return
+			}
+			if rationale := nonHyphenatedLabelRationale[label]; rationale == "" {
+				t.Errorf("host-route label %q is a single bare word with no recorded rationale; "+
+					"either use the hyphenated AWS data-plane hostname, or add an entry to "+
+					"nonHyphenatedLabelRationale explaining why it cannot plausibly be a "+
+					"segment of a bucket name", label)
 			}
 		})
 	}

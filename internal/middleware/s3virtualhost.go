@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 
 	"go.uber.org/zap"
+
+	"github.com/Neaox/overcast/internal/config"
 )
 
 // s3virtualhost.go holds the S3-specific parts of host addressing: the
@@ -19,18 +21,19 @@ import (
 // docs/plans/host-routing-precedence.md.
 
 // defaultVirtualHostBases are the base hostnames recognised for
-// virtual-hosted-style addressing with no configuration. Every subdomain of
-// each resolves to 127.0.0.1 — "localhost" natively, and the two wildcard-DNS
-// domains via public DNS — so SDK-generated bucket hostnames reach the
-// emulator without hosts-file edits. localhost.localstack.cloud is included
-// because it is what a user migrating from LocalStack already has in their
-// endpoint config; without it their first CDK asset upload fails with a
-// baffling "bucket name is not valid" error naming the object key.
-var defaultVirtualHostBases = []string{
-	"localhost",
-	"localhost.overcast.sh",
-	"localhost.localstack.cloud",
-}
+// virtual-hosted-style addressing with no configuration: plain "localhost",
+// which resolves to 127.0.0.1 natively, plus every public wildcard-DNS domain
+// in config.WildcardDNSDomains.
+//
+// Deriving the wildcard domains rather than restating them is deliberate — the
+// two lists were maintained separately and drifted, leaving buckets
+// unreachable on localhost.floci.io while containerendpoint advertised it.
+// TestVirtualHostBases_coverEveryWildcardDomain now fails if they diverge
+// again.
+var defaultVirtualHostBases = append(
+	[]string{"localhost"},
+	config.WildcardDNSDomains...,
+)
 
 // maxWarnedBases bounds the dedup set so a client sending random subdomains
 // cannot grow it without limit.

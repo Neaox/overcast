@@ -44,11 +44,7 @@ import (
 //
 // Extend per-deployment with OVERCAST_SPLIT_HORIZON_HOSTS rather than editing
 // this list.
-var splitHorizonHostnames = []string{
-	"localhost.overcast.sh",
-	"localhost.localstack.cloud",
-	"localhost.floci.io",
-}
+var splitHorizonHostnames = config.WildcardDNSDomains
 
 // dockerHostGateway is Docker's magic --add-host target resolving to the host's
 // gateway address, used when Overcast runs on the host rather than in a container.

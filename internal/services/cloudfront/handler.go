@@ -14,6 +14,7 @@ import (
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
@@ -92,7 +93,7 @@ func (h *Handler) CreateDistribution(w http.ResponseWriter, r *http.Request) {
 		ID:                            id,
 		ARN:                           protocol.DistributionARN(h.cfg.AccountID, id),
 		Status:                        "Deployed",
-		DomainName:                    fmt.Sprintf("%s.cloudfront.net", id),
+		DomainName:                    h.distributionDomainName(r, id),
 		LastModifiedTime:              now,
 		InProgressInvalidationBatches: 0,
 		ActiveTrustedSigners:          &ActiveTrustedList{Enabled: false, Quantity: 0},
@@ -642,7 +643,7 @@ func (h *Handler) CreateDistributionWithTags(w http.ResponseWriter, r *http.Requ
 		ID:                            id,
 		ARN:                           protocol.DistributionARN(h.cfg.AccountID, id),
 		Status:                        "Deployed",
-		DomainName:                    fmt.Sprintf("%s.cloudfront.net", id),
+		DomainName:                    h.distributionDomainName(r, id),
 		LastModifiedTime:              now,
 		InProgressInvalidationBatches: 0,
 		ActiveTrustedSigners:          &ActiveTrustedList{Enabled: false, Quantity: 0},
@@ -1028,4 +1029,29 @@ func validateOriginRefs(cfg *DistributionConfig) *protocol.AWSError {
 	}
 
 	return nil
+}
+
+// distributionDomainName mints the hostname a client uses to reach this
+// distribution. Real AWS returns "{id}.cloudfront.net"; Overcast returns
+// "{id}.cloudfront.{host}" on the hostname the caller reached it on, because
+// cloudfront.net is a fixed AWS domain Overcast cannot serve without a DNS
+// override — returning it verbatim would advertise a name that resolves away
+// from the emulator.
+//
+// The "cloudfront" label is the same one the router dispatches on, so the
+// minted name routes back to this distribution. CloudFront is global, so there
+// is no region segment.
+func (h *Handler) distributionDomainName(r *http.Request, id string) string {
+	return serviceutil.HostRoutedHostname(h.cfg, r, middleware.LabelCloudFront, id, "")
+}
+
+// distributionIDFromDomainName recovers the distribution ID from a DomainName
+// this service minted. The ID is the first label, which holds whether the
+// domain is AWS's "{id}.cloudfront.net" or Overcast's
+// "{id}.cloudfront.{host}" — so this must not trim a fixed suffix.
+func distributionIDFromDomainName(domain string) string {
+	if i := strings.IndexByte(domain, '.'); i > 0 {
+		return domain[:i]
+	}
+	return domain
 }

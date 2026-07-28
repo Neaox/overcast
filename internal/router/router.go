@@ -828,13 +828,20 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// label in internal/middleware/hostroute.go's hostRouteLabels — see that
 	// file's doc comment for the full recipe.
 	if cfg.Services["apigateway"] {
-		hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: "execute-api", Rewrite: apigwSvc.HostRouteRewrite})
+		hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: middleware.LabelExecuteAPI, Rewrite: apigwSvc.HostRouteRewrite})
+	}
+	if cfg.Services["cloudfront"] {
+		hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: middleware.LabelCloudFront, Rewrite: cloudfrontSvc.HostRouteRewrite})
 	}
 	if cfg.Services["lambda"] {
-		hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: "lambda-url", Rewrite: lambdaSvc.HostRouteRewrite})
+		hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: middleware.LabelLambdaURL, Rewrite: lambdaSvc.HostRouteRewrite})
 	}
 	if cfg.Services["appsync"] {
-		hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: "appsync-api", Rewrite: appsyncSvc.HostRouteRewrite})
+		hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: middleware.LabelAppSyncAPI, Rewrite: appsyncSvc.HostRouteRewrite})
+		// Real AWS serves subscriptions on a separate appsync-realtime-api
+		// host, and Amplify derives it by substituting into the GraphQL URL.
+		// Both labels reach the same service; the rewrite picks the endpoint.
+		hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: middleware.LabelAppSyncRealtimeAPI, Rewrite: appsyncSvc.HostRouteRewrite})
 	}
 
 	// ---- /v2/apis service dispatch ----------------------------------------

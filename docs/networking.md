@@ -81,6 +81,42 @@ Host always resolves the same way.
 > both escapes. The bucket is still created — AWS accepts the name, so refusing
 > it would fail a stack locally that deploys fine against AWS.
 
+### Known AWS resource subdomains
+
+AWS does not publish a single list of the hostnames that carry a resource ID.
+The SDK endpoint rulesets (`endpoints.json`, per-service `endpoint-rules.json`)
+and Smithy's `endpointPrefix` cover **control-plane** endpoints only — neither
+contains `execute-api`, `lambda-url` or `appsync-api`. Those are documented
+per-service, scattered across AWS's docs. This table is therefore the
+centralised list, and it is maintained by hand.
+
+| Form | Overcast | Notes |
+| --- | --- | --- |
+| `{apiId}.execute-api.{region}.{base}` | ✅ routed | API Gateway REST v1 and HTTP v2 invoke |
+| `{urlId}.lambda-url.{region}.{base}` | ✅ routed | Lambda function URLs |
+| `{apiId}.appsync-api.{region}.{base}` | ✅ routed | AppSync GraphQL |
+| `{apiId}.appsync-realtime-api.{region}.{base}` | ✅ routed | AppSync subscriptions. Amplify derives this host by substituting into the GraphQL URL, so it must route even though Overcast serves both endpoints from one place |
+| `{distributionId}.cloudfront.net` | ✅ routed | CloudFront distribution. Global, so there is no region segment |
+| `{bucket}.s3[.{region}].{base}` | ✅ routed | S3 virtual-hosted style |
+| `{bucket}.s3.dualstack.{region}.{base}` | ✅ routed | Matched by the `.s3.` rule |
+| `{bucket}.s3-{region}.{base}` | ✅ routed | Legacy dash dialect, pre-2019 regions |
+| `{bucket}.s3-accelerate.{base}` | ✅ routed | Transfer Acceleration. Routing only — no acceleration is emulated, and AWS forbids periods in bucket names used with it |
+| `{bucket}.s3-website[-.]{region}.{base}` | ⚠️ routed | Reaches S3, but static website hosting behaviour is not implemented |
+| `{ap}-{account}.s3-accesspoint.{region}.{base}` | ⚠️ routed | Reaches S3 treating the access point alias as a bucket name; access points are not modelled |
+| `{bucket}.{base}` | ✅ routed | Bare form. No real-AWS equivalent, but what an SDK emits against a custom endpoint with path-style disabled, and the only form CDK's asset publisher uses |
+| `{domain}.auth.{region}.amazoncognito.com` | ❌ | Cognito hosted UI. Not routed; use the path-style endpoint |
+| `{id}.{hash}.{region}.rds.amazonaws.com` | ❌ | Engine data-plane endpoint |
+| `{cluster}.{hash}.{region}.cache.amazonaws.com` | ❌ | Engine data-plane endpoint |
+| `b-{n}.{cluster}.{hash}.kafka.{region}.amazonaws.com` | ❌ | Engine data-plane endpoint |
+| `{domain}.{region}.es.amazonaws.com` | ❌ | Engine data-plane endpoint |
+
+The engine data-plane endpoints are deliberately absent. Overcast emulates
+those services' control planes, so there is no engine behind the hostname to
+route to — and every one of those labels (`rds`, `cache`, `kafka`, `es`,
+`auth`) is a bare common word. Registering one would make a bucket named
+`my.cache` unaddressable in the bare form for no benefit. See the guardrail in
+[internal/middleware/hostroute.go](https://github.com/Neaox/overcast/blob/main/internal/middleware/hostroute.go).
+
 `{base}` is whatever hostname the request actually arrived on — Overcast
 never hardcodes a domain. Point requests at `localhost`, an
 `OVERCAST_HOSTNAME`-configured wildcard domain (below), or a Docker service
@@ -123,27 +159,33 @@ Host-routed addressing needs the Host header's subdomain to actually resolve
 to wherever Overcast is listening. Three ways to get there, in order of
 convenience vs. offline-friendliness:
 
-1. **Plain `localhost` — offline-safe default.** `*.localhost` resolves to
-   `127.0.0.1` out of the box on Linux and macOS. **It does not on
-   Windows** — see the CDK S3 asset-upload troubleshooting in
-   [cdk.md](./cdk.md#s3-asset-upload-fails-on-windows) for the same
-   underlying issue affecting S3 virtual-hosted addressing. If you're on
-   Windows or need this to work with zero network dependency, use option 3.
-2. **A public wildcard-DNS domain**, e.g. `localhost.overcast.sh` or
-   `localhost.localstack.cloud` — both are public domains that
-   unconditionally resolve every `*.<domain>` subdomain to `127.0.0.1`. Set
-   `OVERCAST_HOSTNAME` to the domain and Overcast will echo it back in every
-   generated Host-routed URL (function URLs, and any future host-routed
-   feature). No hosts-file edits, works identically on every OS.
+1. **`localhost.overcast.sh` — recommended.** Set
+   `OVERCAST_HOSTNAME=localhost.overcast.sh`. Every `*.localhost.overcast.sh`
+   subdomain resolves to `127.0.0.1` through public DNS, so Host-routed URLs
+   work with no hosts-file edits and behave identically on Linux, macOS and
+   Windows. Overcast echoes the domain back in every URL it hands out.
+
+   `localhost.localstack.cloud` and `localhost.floci.io` are recognised out of
+   the box and work the same way, so a setup carried over from either tool
+   keeps working — prefer `localhost.overcast.sh` for anything new.
+
+2. **Plain `localhost` — the offline fallback.** `*.localhost` resolves to
+   `127.0.0.1` with no network at all on Linux and macOS. **It does not on
+   Windows**, where only `localhost` itself is in the hosts file — see the CDK
+   S3 asset-upload troubleshooting in
+   [cdk.md](./cdk.md#s3-asset-upload-fails-on-windows). Use this when option 1
+   is unavailable and you are not on Windows.
+
 3. **A hosts-file entry** for each specific subdomain you need, or a local
    DNS resolver (`dnsmasq`, `*.test` via `/etc/hosts`) that wildcard-resolves
-   your own domain to `127.0.0.1`. More setup, but works fully offline and
-   under restrictive network policies.
+   your own domain to `127.0.0.1`. More setup, but works fully offline, on
+   every OS, and under restrictive network policies.
 
 > **Caveat: public wildcard DNS needs internet access, and may be blocked.**
 >
-> - Options 2 above requires a DNS lookup to a public resolver — it will not
->   work in an offline/air-gapped environment. Use option 1 or 3 there.
+> - Option 1 needs a DNS lookup to a public resolver, so it will not work in
+>   an offline or air-gapped environment. Use option 2 (Linux/macOS only) or
+>   option 3 (any OS) there.
 > - Some routers, corporate networks, and DNS filtering software implement
 >   **DNS rebinding protection**, which blocks public hostnames from
 >   resolving to private/loopback addresses like `127.0.0.1` — exactly what
@@ -153,7 +195,9 @@ convenience vs. offline-friendliness:
 >   `127.0.0.1`; if it returns nothing or errors, your network is filtering
 >   it).
 > - Plain `localhost` has neither problem, which is why it remains the
->   default and the right choice for CI and offline development.
+>   built-in default and the right choice for offline development on Linux and
+>   macOS. A hosts-file entry (option 3) is the fallback that works
+>   everywhere, including Windows and behind DNS filtering.
 
 ### Example: `docker compose` with a wildcard-DNS hostname
 

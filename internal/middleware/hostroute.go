@@ -72,15 +72,28 @@ import (
 // serviceutil — so the label travels as a parameter; these constants are what
 // stops the two sides drifting.
 const (
-	LabelExecuteAPI = "execute-api"
-	LabelLambdaURL  = "lambda-url"
-	LabelAppSyncAPI = "appsync-api"
+	LabelExecuteAPI         = "execute-api"
+	LabelLambdaURL          = "lambda-url"
+	LabelAppSyncAPI         = "appsync-api"
+	LabelAppSyncRealtimeAPI = "appsync-realtime-api"
+	LabelCloudFront         = "cloudfront"
 )
 
 var hostRouteLabels = map[string]string{
-	LabelExecuteAPI: "apigateway",
-	LabelLambdaURL:  "lambda",
-	LabelAppSyncAPI: "appsync",
+	LabelExecuteAPI:         "apigateway",
+	LabelLambdaURL:          "lambda",
+	LabelAppSyncAPI:         "appsync",
+	LabelAppSyncRealtimeAPI: "appsync",
+	LabelCloudFront:         "cloudfront",
+}
+
+// nonHyphenatedLabelRationale documents why a label that is a single word is
+// nonetheless safe, since the hyphenation heuristic below cannot judge it.
+// Every entry must be an AWS brand term that no one would use as a segment of
+// a bucket name. A generic word ("logs", "data", "cache") does not qualify and
+// must never be added.
+var nonHyphenatedLabelRationale = map[string]string{
+	LabelCloudFront: "AWS brand term; {distributionId}.cloudfront.net is the real distribution address",
 }
 
 // awsRegionPattern matches AWS region shapes: us-east-1, ap-southeast-2,
