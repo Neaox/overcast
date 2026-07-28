@@ -466,6 +466,28 @@ type Config struct {
 	// Not loaded from environment — set by the caller after Load().
 	PublishedPort int
 
+	// DNSEnabled turns on the resolver that serves Overcast's split-horizon
+	// hostnames to the containers it starts (OVERCAST_DNS, default true).
+	//
+	// It exists because /etc/hosts is an exact-match table: it can shadow
+	// localhost.overcast.sh but not bucket.s3.localhost.overcast.sh, and the
+	// URLs AWS SDKs build are overwhelmingly subdomains. See internal/dns.
+	DNSEnabled bool
+
+	// DNSPort is the port the resolver listens on (OVERCAST_DNS_PORT, default
+	// 53). Docker's --dns cannot express a port, so anything other than 53 is
+	// only useful for tests.
+	DNSPort int
+
+	// DNSListening reports that the resolver actually bound, which is what
+	// makes it safe to point containers at it: a container told to use a
+	// resolver that is not there loses all name resolution. Binding port 53
+	// needs privilege outside a container, so this is false more often than
+	// DNSEnabled is.
+	//
+	// Not loaded from environment — set by the caller after Load().
+	DNSListening bool
+
 	// MCPReplayLimit bounds in-memory MCP notification replay history for
 	// Last-Event-ID reconnect support. A value of 0 disables replay retention.
 	// Default: 256.
@@ -921,6 +943,13 @@ func Load() (*Config, error) {
 	cfg.LambdaRemoteAWSAccessKeyID = envOr("LAMBDA_REMOTE_AWS_ACCESS_KEY_ID", "")
 	cfg.LambdaRemoteAWSSecretAccessKey = envOr("LAMBDA_REMOTE_AWS_SECRET_ACCESS_KEY", "")
 	cfg.LambdaRemoteAWSSessionToken = envOr("LAMBDA_REMOTE_AWS_SESSION_TOKEN", "")
+
+	// Container-facing resolver for the split-horizon hostnames. On by default:
+	// out of the box a Lambda must be able to reach Overcast by every name
+	// Overcast advertises, including the subdomain forms /etc/hosts cannot
+	// express. Failing to bind is not fatal — see DNSListening.
+	cfg.DNSEnabled = envBool("OVERCAST_DNS", true)
+	cfg.DNSPort = envInt("OVERCAST_DNS_PORT", 53)
 
 	// ECS container runtime — defaults fall back to Lambda socket
 	cfg.ECSDockerSocket = envOr("ECS_DOCKER_SOCKET", cfg.LambdaDockerSocket)

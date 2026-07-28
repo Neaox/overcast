@@ -387,7 +387,12 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 			// Split-horizon hostnames resolve to 127.0.0.1 in public DNS for
 			// host-side callers; inside the container they must point at
 			// Overcast instead. See internal/containerendpoint.
+			//
+			// ExtraHosts covers the apex names exactly; Dns covers their
+			// subdomains — virtual-hosted S3, execute-api — which /etc/hosts
+			// cannot express. Dns is empty unless the resolver is listening.
 			ExtraHosts: cr.endpoint.ExtraHosts(),
+			Dns:        cr.endpoint.DNSServers(),
 		},
 	}
 
@@ -601,6 +606,7 @@ func (cr *ContainerRuntime) newContainerInstance(id, containerIP string, fn *Fun
 		healthy:        true,
 		keepContainers: cr.cfg.LambdaKeepContainers,
 		readyCh:        cr.runtimeAPI.ReadyChan(containerIP),
+		endpoint:       cr.endpoint,
 	}
 
 	if cr.logWriter != nil {
@@ -766,6 +772,13 @@ func (cr *ContainerRuntime) buildEnv(fn *Function, logStream, initType string) [
 		env[k] = cr.endpoint.RewriteURLs(v)
 	}
 
+	// The endpoint containers are told to use. Falls back to the address form
+	// when no split-horizon name can be pinned for this container.
+	clientEndpoint := cr.endpoint.ClientEndpoint()
+	if clientEndpoint == "" {
+		clientEndpoint = cr.overcastEndpoint
+	}
+
 	// Runtime-provided variables are applied after user variables. This matches
 	// Lambda's reserved-env behavior and guarantees extensions inherit the local
 	// endpoint and credential values even if a deployment template contains empty
@@ -796,13 +809,18 @@ func (cr *ContainerRuntime) buildEnv(fn *Function, logStream, initType string) [
 		"TZ":                          ":/etc/localtime",
 		// Route all AWS SDK calls from the function back to the Overcast emulator.
 		// AWS SDKs v2+ honour AWS_ENDPOINT_URL for every service automatically.
-		"AWS_ENDPOINT_URL": cr.overcastEndpoint,
+		//
+		// A name rather than an address: it survives Overcast being recreated on
+		// a different one, and it lets an SDK build the virtual-hosted URLs it
+		// derives from the endpoint ({bucket}.s3.{host} and friends), which an IP
+		// endpoint forces to path-style. See containerendpoint.ClientEndpoint.
+		"AWS_ENDPOINT_URL": clientEndpoint,
 		// Per AWS SDK reference for service-specific endpoints:
 		// SSM and Secrets Manager use these variables, overriding the global endpoint.
 		// Verified with AWS Parameters and Secrets Lambda Extension 1.0.342
 		// (2026-07-14): SSM and Secrets Manager requests honor these vars.
-		"AWS_ENDPOINT_URL_SSM":             cr.overcastEndpoint,
-		"AWS_ENDPOINT_URL_SECRETS_MANAGER": cr.overcastEndpoint,
+		"AWS_ENDPOINT_URL_SSM":             clientEndpoint,
+		"AWS_ENDPOINT_URL_SECRETS_MANAGER": clientEndpoint,
 	}
 	for k, v := range runtimeEnv {
 		env[k] = v
@@ -858,6 +876,7 @@ type containerInstance struct {
 	logCursor      logCursor     // exact Docker timestamp cursor used for reconnect/reconcile deduplication
 	logDone        chan struct{} // closed when streamLogs goroutine exits
 	readyCh        <-chan struct{}
+	endpoint       *containerendpoint.Mapper // re-points Overcast URLs inside invoke payloads
 	healthy        bool
 	keepContainers bool // when true, Close only stops the container instead of removing it
 }
@@ -922,6 +941,14 @@ func (ci *containerInstance) InstanceID() string { return ci.instanceID }
 // Timeout; this method trusts ctx.Deadline() to derive the Lambda-Runtime-Deadline-Ms
 // header, which is what the RIC uses to implement context.getRemainingTimeInMillis().
 func (ci *containerInstance) Invoke(ctx context.Context, event []byte) (*InvokeResult, error) {
+	// A payload can carry Overcast URLs a host-side caller minted — a queue URL
+	// passed to Invoke is the usual one. AWS SDKs resolve the service endpoint
+	// from such a URL rather than from AWS_ENDPOINT_URL, so an origin this
+	// container cannot dial would send its client to its own loopback. Function
+	// environment is rewritten for exactly this reason; a payload is the same
+	// value arriving by another route.
+	event = ci.endpoint.RewriteBytes(event)
+
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		// Fallback: should not happen in normal operation because invokeSync

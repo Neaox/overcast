@@ -113,6 +113,61 @@ func (m *Mapper) Endpoint() string {
 	return m.endpoint
 }
 
+// ClientEndpoint returns the origin to hand container code as AWS_ENDPOINT_URL:
+// the same server as Endpoint, but named rather than numbered.
+//
+// A name is better than the address for two reasons. It survives Overcast's
+// container being recreated on a different address, which an IP baked into a
+// warm execution environment does not. And it can carry a subdomain, so an SDK
+// that derives a virtual-hosted URL from the endpoint — S3's
+// {bucket}.s3.{host}, API Gateway's {id}.execute-api.{region}.{host} — produces
+// a name that resolves; from an IP endpoint the SDK is forced to path-style,
+// and any URL it builds by prefixing labels is unusable.
+//
+// Safe whether or not the resolver is running: the name is one of those
+// ExtraHosts pins in /etc/hosts, so the endpoint itself always resolves, and
+// only its subdomains depend on internal/dns. Falls back to the address when
+// there is no usable name.
+func (m *Mapper) ClientEndpoint() string {
+	if m == nil || m.endpoint == "" {
+		return ""
+	}
+	// Only when ExtraHosts will actually pin the name to an address.
+	if overcastHostAddress(m.endpoint) == "" {
+		return m.endpoint
+	}
+	name := m.advertisedHostname()
+	if name == "" {
+		return m.endpoint
+	}
+	u, err := url.Parse(m.endpoint)
+	if err != nil || u.Host == "" {
+		return m.endpoint
+	}
+	if port := u.Port(); port != "" {
+		u.Host = net.JoinHostPort(name, port)
+	} else {
+		u.Host = name
+	}
+	return u.String()
+}
+
+// advertisedHostname picks the name containers should reach Overcast by: the
+// operator's OVERCAST_HOSTNAME when they set a usable one, otherwise the first
+// built-in split-horizon domain.
+func (m *Mapper) advertisedHostname() string {
+	names := Hostnames(m.cfg)
+	if len(names) == 0 {
+		return ""
+	}
+	if m.cfg != nil {
+		if configured := appendHostname(nil, m.cfg.Hostname); len(configured) == 1 {
+			return configured[0]
+		}
+	}
+	return names[0]
+}
+
 // ExtraHosts returns Docker --add-host entries ("name:target") that point every
 // hostname Overcast might have minted a URL under at Overcast itself. Names
 // that cannot usefully be shadowed — "localhost" (the container needs its own
@@ -126,33 +181,73 @@ func (m *Mapper) ExtraHosts() []string {
 		return nil
 	}
 
-	names := slices.Clone(splitHorizonHostnames)
-	if m.cfg != nil {
-		names = append(names, m.cfg.SplitHorizonHosts...)
-		names = append(names, m.cfg.Hostname)
-	}
+	names := Hostnames(m.cfg)
 	// The endpoint's own hostname, when it is a name rather than an IP. That
 	// only happens on the host.docker.internal fallback, and the entry is what
 	// makes the fallback work at all off Docker Desktop: Docker Desktop
 	// synthesises the name, native Linux does not resolve it without this.
 	if u, err := url.Parse(m.endpoint); err == nil {
-		names = append(names, u.Hostname())
+		names = appendHostname(names, u.Hostname())
 	}
 
 	out := make([]string, 0, len(names))
-	seen := make(map[string]struct{}, len(names))
 	for _, name := range names {
-		name = strings.TrimSpace(name)
-		if name == "" || net.ParseIP(name) != nil || slices.Contains(loopbackHostnames, strings.ToLower(name)) {
-			continue
-		}
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		seen[name] = struct{}{}
 		out = append(out, name+":"+target)
 	}
 	return out
+}
+
+// Hostnames returns every name Overcast may have minted a URL under, filtered
+// to those a container can usefully be told about: no blanks, no IP literals
+// (already addresses), and no loopback names, which name the container itself.
+//
+// Shared by ExtraHosts and by the DNS zone (internal/dns), so the exact-match
+// /etc/hosts entries and the wildcard resolver claim the same set. They were
+// separate lists once and drifted.
+func Hostnames(cfg *config.Config) []string {
+	names := make([]string, 0, len(splitHorizonHostnames)+2)
+	for _, n := range splitHorizonHostnames {
+		names = appendHostname(names, n)
+	}
+	if cfg != nil {
+		for _, n := range cfg.SplitHorizonHosts {
+			names = appendHostname(names, n)
+		}
+		names = appendHostname(names, cfg.Hostname)
+	}
+	return names
+}
+
+// appendHostname adds name when it is usable and not already present.
+func appendHostname(names []string, name string) []string {
+	name = strings.TrimSpace(name)
+	if name == "" || net.ParseIP(name) != nil || slices.Contains(loopbackHostnames, strings.ToLower(name)) {
+		return names
+	}
+	if slices.ContainsFunc(names, func(e string) bool { return strings.EqualFold(e, name) }) {
+		return names
+	}
+	return append(names, name)
+}
+
+// DNSServers returns the resolvers containers on this network should be given
+// (Docker's HostConfig.Dns). Empty unless Overcast's DNS server is listening
+// and Overcast has a container-routable address — pointing a container at a
+// resolver that is not there would break all of its name resolution, which is
+// far worse than the wildcard gap the resolver closes.
+//
+// The address is Overcast's own on this network, the same target ExtraHosts
+// uses; the server listens on every interface and answers each caller with the
+// address reachable from its side.
+func (m *Mapper) DNSServers() []string {
+	if m == nil || m.cfg == nil || !m.cfg.DNSListening {
+		return nil
+	}
+	target := overcastHostAddress(m.endpoint)
+	if target == "" || net.ParseIP(target) == nil {
+		return nil
+	}
+	return []string{target}
 }
 
 // overcastHostAddress returns the /etc/hosts target for Overcast's endpoint: its
@@ -172,6 +267,28 @@ func overcastHostAddress(endpoint string) string {
 		return host
 	}
 	return dockerHostGateway
+}
+
+// RewriteBytes is RewriteURLs for a payload rather than a single value.
+//
+// An invoke event carries the same host-minted URLs function environment does —
+// a queue URL handed to Invoke by a host-side caller is the common one — and
+// AWS SDKs resolve service endpoints from such a URL rather than from
+// AWS_ENDPOINT_URL. Left alone, it sends the container's client to the
+// container's own loopback. Real AWS never has this problem because its URLs
+// are globally valid, so rewriting is what reproduces AWS's observable
+// behaviour rather than diverging from it.
+//
+// The input is returned unchanged when nothing matched, so an untouched payload
+// is not copied.
+func (m *Mapper) RewriteBytes(value []byte) []byte {
+	if m == nil || len(value) == 0 {
+		return value
+	}
+	if rewritten := m.RewriteURLs(string(value)); rewritten != string(value) {
+		return []byte(rewritten)
+	}
+	return value
 }
 
 // RewriteURLs re-points Overcast URLs that a host-side caller minted —

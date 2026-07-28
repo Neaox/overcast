@@ -255,6 +255,7 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 				NetworkMode:  h.cfg.ECSNetwork,
 				PortBindings: portBindings,
 				ExtraHosts:   endpoint.ExtraHosts(),
+				Dns:          endpoint.DNSServers(),
 			},
 			NetworkingConfig: &docker.NetworkingConfig{
 				EndpointsConfig: map[string]*docker.EndpointSettings{
@@ -344,7 +345,9 @@ func buildContainerEnv(cd ContainerDefinition, co *ContainerOverride, endpoint *
 	}
 
 	// Add the Overcast endpoint so containers can call back into the emulator.
-	if addr := endpoint.Endpoint(); addr != "" {
+	// Named rather than numbered: it survives Overcast being recreated on a
+	// different address, and it lets an SDK derive virtual-hosted URLs from it.
+	if addr := endpoint.ClientEndpoint(); addr != "" {
 		env = append(env, "AWS_ENDPOINT_URL="+addr)
 	}
 	return env

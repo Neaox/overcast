@@ -5,7 +5,14 @@ description: /etc/hosts cannot express wildcards, so *.localhost.overcast.sh res
 
 # Wildcard hostnames do not resolve to Overcast inside containers
 
-**Status:** open · **Found:** 2026-07-29, alpha.26 pre-release smoke testing
+> **Resolved.** Overcast now runs a resolver (`internal/dns`) and points the containers it starts at
+> it with Docker's `--dns`. Verified from inside a Lambda: every subdomain below now answers with
+> Overcast's address, container-name discovery and upstream forwarding are unaffected, and a bare
+> `S3Client({})` completes a virtual-hosted PutObject/GetObject. `AWS_ENDPOINT_URL` is now a name
+> (`http://localhost.overcast.sh:4566`) rather than an address, so SDKs can derive virtual-hosted
+> URLs from it at all. This document is kept as the record of the investigation.
+
+**Status:** fixed in alpha.26 · **Found:** 2026-07-29, alpha.26 pre-release smoke testing
 **Severity:** virtual-hosted S3, API Gateway, AppSync and Lambda function URLs are undialable from
 inside a Lambda or ECS container. Pre-existing — **not** an alpha.26 regression, and not a release
 blocker for it.
