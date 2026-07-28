@@ -73,6 +73,8 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Fixed
 
+- **SMTP (mail capture)** — the mock SMTP server no longer hangs on shutdown when a connection arrives while it is stopping. The accept loop's `break` on a cancelled context ended its enclosing `select` rather than the loop, so the server closed the connection and then started a session handler for it anyway. That handler released a concurrency slot it had never acquired: with no other sessions in flight the release blocked forever, `Serve` never returned, and shutdown stalled until the caller's timeout fired; with sessions in flight it took a live session's slot instead, permanently lowering how many connections the server would go on to accept. Reaching it needed a connection accepted in the window between the context being cancelled and the listener closing, and that was roughly a coin flip per connection rather than a rare race, since Go chooses at random when both `select` cases are ready.
+
 - **Router / REST APIs** — modeled REST JSON and REST XML operations that no configured handler claims now return protocol-correct `501 NotImplemented` instead of falling through to S3. The generated path trie is consulted only after explicit routes, and SigV4's modeled service scope disambiguates AWS SDK/CLI/CDK traffic from legitimate S3 bucket and object paths.
 
 - **Router / AWS JSON API** — modeled AWS JSON targets that no configured service dispatcher claims now return `501 NotImplemented` with the standard unsupported-operation marker and request ID, rather than the legacy `400 UnknownOperationException`; existing service dispatchers and legitimate S3 traffic retain precedence.
