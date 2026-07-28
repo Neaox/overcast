@@ -2,8 +2,10 @@ package helpers
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -31,6 +33,29 @@ type TestServer struct {
 	// for real-clock servers it is nil.
 	// Use Clock.Add(d) to advance time without any real sleep.
 	Clock *clock.Mock
+}
+
+// ExternalBase returns the base URL this server embeds in client-facing
+// responses: the configured hostname (OVERCAST_HOSTNAME — "localhost" by
+// default, see defaultTestConfig) on the port httptest actually bound.
+//
+// Assert against this, not Server.URL, whenever a test checks a resource URL a
+// service handed back. Server.URL is the dial address (127.0.0.1), which is
+// deliberately NOT what clients are told: an IP base matches no virtual-host
+// rule, so a test pinned to it silently exercises a host shape no real client
+// ever sends. That is exactly how the S3/host-route addressing collision
+// survived — the Lambda function-URL round-trip test minted
+// "{urlId}.lambda-url.us-east-1.127.0.0.1:PORT" and never hit the bug. See
+// docs/plans/host-routing-precedence.md.
+func (ts *TestServer) ExternalBase() string {
+	if ts.Config == nil || ts.Config.Hostname == "" {
+		return ts.URL
+	}
+	u, err := url.Parse(ts.URL)
+	if err != nil {
+		return ts.URL
+	}
+	return u.Scheme + "://" + net.JoinHostPort(ts.Config.Hostname, u.Port())
 }
 
 // serverOptions holds all non-config options for NewTestServer so that Option
@@ -284,6 +309,7 @@ func WithSigV4Validate(enabled bool) Option {
 func defaultTestConfig() *config.Config {
 	return &config.Config{
 		Host:                "127.0.0.1",
+		Hostname:            "localhost",
 		Port:                0, // httptest assigns the port
 		Region:              "us-east-1",
 		AccountID:           "000000000000",
