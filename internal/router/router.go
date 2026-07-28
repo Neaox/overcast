@@ -1250,14 +1250,34 @@ func writeNotImplemented(w http.ResponseWriter, r *http.Request, claim awsapi.Cl
 // after every explicit service route, so a modeled binding reaches it only
 // when no implementation or disabled-service route claimed the request. S3 is
 // then the sole remaining legitimate catch-all.
+// isS3SigningName reports whether a SigV4 credential scope belongs to the S3
+// family, whose traffic must always reach S3's routes. An empty scope counts:
+// unsigned traffic carries no evidence that it is anything but S3.
+// The variants are real AWS signing names — an SDK addressing Object Lambda,
+// Outposts, or S3 Express signs with them while still speaking the S3 API.
+func isS3SigningName(credentialService string) bool {
+	switch strings.ToLower(credentialService) {
+	case "", "s3", "s3-object-lambda", "s3-outposts", "s3express":
+		return true
+	}
+	return false
+}
+
 func restFallback(operationRegistry *awsapi.Registry, s3Router http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		credentialService := middleware.ServiceFromCredential(r)
-		if credentialService == "" || strings.EqualFold(credentialService, "s3") {
+		if isS3SigningName(credentialService) {
 			s3Router.ServeHTTP(w, r)
 			return
 		}
-		if claim, ok := operationRegistry.ClaimRESTQuery(r.Method, r.URL.Path, r.URL.RawQuery); ok && !claim.Ambiguous && claim.SigningName != "" && strings.EqualFold(credentialService, claim.SigningName) {
+		// Reaching here means the caller signed for a non-S3 AWS service. That
+		// alone rules S3 out, so an exact modeled binding is enough to own the
+		// request: ambiguity decides which service to *name*, not whether S3
+		// owns the path. A binding with several candidate services therefore
+		// still returns the modeled 501 rather than an S3 error, and does so
+		// without any extra per-request work.
+		if claim, ok := operationRegistry.ClaimRESTQuery(r.Method, r.URL.Path, r.URL.RawQuery); ok &&
+			(claim.Ambiguous || (claim.SigningName != "" && strings.EqualFold(credentialService, claim.SigningName))) {
 			writeNotImplemented(w, r, claim)
 			return
 		}
