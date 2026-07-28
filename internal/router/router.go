@@ -1250,34 +1250,88 @@ func writeNotImplemented(w http.ResponseWriter, r *http.Request, claim awsapi.Cl
 // after every explicit service route, so a modeled binding reaches it only
 // when no implementation or disabled-service route claimed the request. S3 is
 // then the sole remaining legitimate catch-all.
-// isS3SigningName reports whether a SigV4 credential scope belongs to the S3
-// family, whose traffic must always reach S3's routes. An empty scope counts:
-// unsigned traffic carries no evidence that it is anything but S3.
-// The variants are real AWS signing names — an SDK addressing Object Lambda,
-// Outposts, or S3 Express signs with them while still speaking the S3 API.
-func isS3SigningName(credentialService string) bool {
+// s3ControlAccountHeader is sent by S3 Control on every operation and never by
+// S3 itself. It is what separates the two APIs, which share a signing name.
+const s3ControlAccountHeader = "X-Amz-Account-Id"
+
+// isS3APISigningName reports whether a SigV4 credential scope belongs to a
+// service that speaks the S3 object API itself, and whose traffic must
+// therefore reach S3's routes. Object Lambda and S3 Express are S3 under
+// another signing name.
+//
+// "s3-outposts" is deliberately absent. It signs the separate s3outposts
+// control API, whose modeled paths cannot be mistaken for an object path.
+func isS3APISigningName(credentialService string) bool {
 	switch strings.ToLower(credentialService) {
-	case "", "s3", "s3-object-lambda", "s3-outposts", "s3express":
+	case "s3", "s3-object-lambda", "s3express":
 		return true
 	}
 	return false
 }
 
+// hasBearerAuthorization reports whether the caller authenticated with a bearer
+// token rather than SigV4. S3 has no bearer-token mode, so for an API modeled
+// without an aws.auth#sigv4 name this is the only evidence that separates it
+// from an S3 request.
+func hasBearerAuthorization(r *http.Request) bool {
+	const scheme = "Bearer "
+	authorization := r.Header.Get("Authorization")
+	return len(authorization) > len(scheme) && strings.EqualFold(authorization[:len(scheme)], scheme)
+}
+
+// addressesNonS3 reports whether a request carries positive evidence that it is
+// not addressing S3. It reads only headers, and restClaimFor consults it before
+// the generated trie, so ordinary S3 traffic never walks the trie.
+func addressesNonS3(r *http.Request, credentialService string) bool {
+	switch {
+	case credentialService == "":
+		// Unsigned traffic is S3's, unless it presents a bearer token — an auth
+		// scheme S3 has no mode for.
+		return hasBearerAuthorization(r)
+	case isS3APISigningName(credentialService):
+		// An S3-family scope is S3's, unless the caller also names the account
+		// that only S3 Control addresses.
+		return r.Header.Get(s3ControlAccountHeader) != ""
+	default:
+		// Every other AWS signing name: no SDK signs an S3 request as another
+		// service, so the scope alone settles it.
+		return true
+	}
+}
+
+// claimAnswersCaller reports whether a modeled binding may answer this caller.
+// Ambiguity decides which service to *name*, not whether S3 owns the path, so
+// an ambiguous binding always qualifies once addressesNonS3 has ruled S3 out.
+func claimAnswersCaller(claim awsapi.Claim, credentialService string) bool {
+	switch {
+	case claim.Ambiguous:
+		return true
+	case claim.SigningName == "":
+		// Modeled with no aws.auth#sigv4 name, so only the bearer-token branch
+		// of addressesNonS3 can have established that this is not S3.
+		return credentialService == ""
+	default:
+		return strings.EqualFold(credentialService, claim.SigningName)
+	}
+}
+
+// restClaimFor returns the modeled operation a request positively identifies,
+// or false when S3 must keep the path.
+func restClaimFor(operationRegistry *awsapi.Registry, r *http.Request) (awsapi.Claim, bool) {
+	credentialService := middleware.ServiceFromCredential(r)
+	if !addressesNonS3(r, credentialService) {
+		return awsapi.Claim{}, false
+	}
+	claim, ok := operationRegistry.ClaimRESTQuery(r.Method, r.URL.Path, r.URL.RawQuery)
+	if !ok {
+		return awsapi.Claim{}, false
+	}
+	return claim, claimAnswersCaller(claim, credentialService)
+}
+
 func restFallback(operationRegistry *awsapi.Registry, s3Router http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		credentialService := middleware.ServiceFromCredential(r)
-		if isS3SigningName(credentialService) {
-			s3Router.ServeHTTP(w, r)
-			return
-		}
-		// Reaching here means the caller signed for a non-S3 AWS service. That
-		// alone rules S3 out, so an exact modeled binding is enough to own the
-		// request: ambiguity decides which service to *name*, not whether S3
-		// owns the path. A binding with several candidate services therefore
-		// still returns the modeled 501 rather than an S3 error, and does so
-		// without any extra per-request work.
-		if claim, ok := operationRegistry.ClaimRESTQuery(r.Method, r.URL.Path, r.URL.RawQuery); ok &&
-			(claim.Ambiguous || (claim.SigningName != "" && strings.EqualFold(credentialService, claim.SigningName))) {
+		if claim, ok := restClaimFor(operationRegistry, r); ok {
 			writeNotImplemented(w, r, claim)
 			return
 		}

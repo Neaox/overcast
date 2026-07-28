@@ -11,23 +11,6 @@ import (
 	"github.com/Neaox/overcast/tests/helpers"
 )
 
-// knownUnownedOperations counts the modeled operations that still reach S3's
-// catch-all instead of a protocol-correct 501, grouped by the structural reason
-// they cannot be claimed. Each entry is a debt, not a target: the numbers may
-// only shrink. Lowering one means deleting or reducing its line here, so a fix
-// cannot land silently and a regression cannot hide behind an aggregate.
-//
-//   - s3-family signing name: S3 Control signs as "s3", indistinguishable from
-//     S3 itself by credential scope alone. Needs host-based routing
-//     (*.s3-control.*) or the x-amz-account-id header S3 Control requires.
-//   - no modeled sigv4 name: CodeCatalyst authenticates with a bearer token and
-//     carries no aws.auth#sigv4 trait, so there is no credential scope to match.
-//     Needs bearer-token presence accepted as non-S3 evidence.
-var knownUnownedOperations = map[string]int{
-	"s3-family signing name": 89,
-	"no modeled sigv4 name":  28,
-}
-
 // TestGeneratedCorpus_noModeledOperationReachesS3 drives every modeled non-S3
 // operation through the real router and asserts the response did not come from
 // S3's catch-all.
@@ -75,25 +58,12 @@ func TestGeneratedCorpus_noModeledOperationReachesS3(t *testing.T) {
 		return true
 	})
 
+	// No modeled non-S3 operation may rely on S3 as its owner. The reason is
+	// reported alongside the count so a regression names the evidence rule that
+	// stopped holding rather than just the total that moved.
 	for _, reason := range sortedKeys(unowned) {
-		allowed, known := knownUnownedOperations[reason]
-		switch {
-		case !known:
-			t.Errorf("%d modeled operations reach S3 for an unrecognised reason %q:\n      %s",
-				unowned[reason], reason, strings.Join(examples[reason], "\n      "))
-		case unowned[reason] > allowed:
-			t.Errorf("%q now leaks %d operations to S3, was %d — a fallback regressed:\n      %s",
-				reason, unowned[reason], allowed, strings.Join(examples[reason], "\n      "))
-		case unowned[reason] < allowed:
-			t.Errorf("%q leaks %d operations to S3, fewer than the recorded %d. "+
-				"Lower knownUnownedOperations[%q] to %d to lock the improvement in.",
-				reason, unowned[reason], allowed, reason, unowned[reason])
-		}
-	}
-	for _, reason := range sortedKeys(knownUnownedOperations) {
-		if _, seen := unowned[reason]; !seen {
-			t.Errorf("%q no longer leaks any operation to S3; remove it from knownUnownedOperations", reason)
-		}
+		t.Errorf("%d modeled operations reach S3 instead of a 501 (%s):\n      %s",
+			unowned[reason], reason, strings.Join(examples[reason], "\n      "))
 	}
 }
 
@@ -140,14 +110,7 @@ func corpusRequest(t *testing.T, base string, registry *awsapi.Registry, op awsa
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Every AWS SDK, CLI, and CDK request is signed. An ambiguous binding
-		// exposes no single modeled signing name, so fall back to the service
-		// identity — the scope a caller for that service would actually send.
-		scope := claim.SigningName
-		if scope == "" {
-			scope = op.Service
-		}
-		req.Header.Set("Authorization", corpusSigV4(scope))
+		applyCorpusAuth(req, op, claim)
 		// Classification uses the *modeled* signing name, not the scope we had
 		// to invent, so a category always names a property of the model.
 		return req, claim.SigningName, true
@@ -178,28 +141,46 @@ func corpusPath(uri string) (path, query string) {
 	return b.String(), query
 }
 
+// applyCorpusAuth attaches the credentials a real caller for this operation
+// would send, which is what the router's evidence rules are written against.
+//
+// X-Amz-Account-Id goes on every request rather than only the S3 Control ones.
+// S3 Control is the only API the router reads it for, so setting it uniformly
+// keeps this test from carrying a second copy of the router's S3-family list
+// that could silently drift out of step with it.
+func applyCorpusAuth(req *http.Request, op awsapi.Operation, claim awsapi.Claim) {
+	req.Header.Set("X-Amz-Account-Id", "000000000000")
+	switch {
+	case claim.SigningName != "":
+		req.Header.Set("Authorization", corpusSigV4(claim.SigningName))
+	case claim.Ambiguous:
+		// No single modeled name; send the scope a caller for this service
+		// would use.
+		req.Header.Set("Authorization", corpusSigV4(op.Service))
+	default:
+		// Modeled with no aws.auth#sigv4 name: a bearer-token API.
+		req.Header.Set("Authorization", "Bearer corpus-token")
+	}
+}
+
+// corpusSigV4 builds a syntactically valid Authorization header with a dummy
+// signature. Ownership is decided from the credential scope alone, so no real
+// signing is needed to drive these paths — which is what makes a sweep of the
+// whole corpus cheap, here and against a running binary. It does depend on
+// signature validation being off, as it is by default; a fixture that enables
+// cfg.SigV4Validate would need genuinely signed requests.
 func corpusSigV4(service string) string {
 	return "AWS4-HMAC-SHA256 Credential=test/20260729/us-east-1/" + service +
 		"/aws4_request, SignedHeaders=host, Signature=test"
 }
 
+// unownedReason names the modeled property that left an operation unowned, so a
+// failure points at the evidence rule to look at rather than just a count.
 func unownedReason(signingName string) string {
-	switch {
-	case signingName == "":
+	if signingName == "" {
 		return "no modeled sigv4 name"
-	case isS3FamilySigningName(signingName):
-		return "s3-family signing name"
-	default:
-		return "unexpected: signed as " + signingName
 	}
-}
-
-func isS3FamilySigningName(name string) bool {
-	switch strings.ToLower(name) {
-	case "s3", "s3-object-lambda", "s3-outposts", "s3express":
-		return true
-	}
-	return false
+	return "signing name " + signingName
 }
 
 func sortedKeys[V any](m map[string]V) []string {
