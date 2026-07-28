@@ -447,6 +447,15 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		exists, aerr := h.codeSigningConfigExists(r, req.CodeSigningConfigArn)
+		if aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
+		if !exists {
+			protocol.WriteJSONError(w, r, errCodeSigningConfigNotFoundForFunction(req.CodeSigningConfigArn))
+			return
+		}
 		fn.CodeSigningConfigArn = req.CodeSigningConfigArn
 	}
 	if req.Environment != nil {
@@ -697,6 +706,15 @@ func (h *Handler) PutFunctionCodeSigningConfig(w http.ResponseWriter, r *http.Re
 			Message:    "Invalid code signing config arn: " + req.CodeSigningConfigArn,
 			HTTPStatus: http.StatusBadRequest,
 		})
+		return
+	}
+	exists, aerr := h.codeSigningConfigExists(r, req.CodeSigningConfigArn)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if !exists {
+		protocol.WriteJSONError(w, r, errCodeSigningConfigNotFoundForFunction(req.CodeSigningConfigArn))
 		return
 	}
 

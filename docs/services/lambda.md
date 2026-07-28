@@ -533,6 +533,7 @@ cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
 | Category                    | ✅ Supported | ❌ Unsupported |
 | --------------------------- | ------------ | -------------- |
 | Function management         | 10           |                |
+| Code signing                | 6            |                |
 | Invocation                  | 2            | 1              |
 | Aliases & versions          | 7            |                |
 | Function URLs               | 5            |                |
@@ -558,6 +559,17 @@ cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
 | `GetFunctionCodeSigningConfig`    | ✅ Supported | Returns the associated config; ResourceNotFoundException when the function has none                                               | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionCodeSigningConfig.html)    |
 | `PutFunctionCodeSigningConfig`    | ✅ Supported | Stores the association and validates the ARN shape; signature validation is not emulated                                          | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_PutFunctionCodeSigningConfig.html)    |
 | `DeleteFunctionCodeSigningConfig` | ✅ Supported | Removes the association; idempotent                                                                                               | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunctionCodeSigningConfig.html) |
+
+### Code signing
+
+| Operation                          | Status       | Notes                                                                                                 | AWS Docs                                                                                       |
+| ---------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `CreateCodeSigningConfig`          | ✅ Supported | Stored as a real resource; AllowedPublishers required, UntrustedArtifactOnDeployment defaults to Warn | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_CreateCodeSigningConfig.html)          |
+| `GetCodeSigningConfig`             | ✅ Supported | Returns the stored configuration                                                                      | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetCodeSigningConfig.html)             |
+| `UpdateCodeSigningConfig`          | ✅ Supported | Partial update; omitted members keep their stored value                                               | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateCodeSigningConfig.html)          |
+| `DeleteCodeSigningConfig`          | ✅ Supported | ResourceConflictException while a function still references it                                        | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteCodeSigningConfig.html)          |
+| `ListCodeSigningConfigs`           | ✅ Supported | Region-scoped; pagination not implemented                                                             | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListCodeSigningConfigs.html)           |
+| `ListFunctionsByCodeSigningConfig` | ✅ Supported | Returns the ARNs of functions referencing the configuration                                           | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListFunctionsByCodeSigningConfig.html) |
 
 ### Invocation
 

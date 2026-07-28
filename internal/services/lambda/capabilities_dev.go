@@ -28,6 +28,20 @@ func init() {
 		capabilities.Capability{Service: "lambda", Operation: "DeleteFunctionCodeSigningConfig", Category: "Function management",
 			Status: capabilities.StatusSupported, Notes: "Removes the association; idempotent"},
 
+		// Code signing configurations
+		capabilities.Capability{Service: "lambda", Operation: "CreateCodeSigningConfig", Category: "Code signing",
+			Status: capabilities.StatusSupported, Notes: "Stored as a real resource; AllowedPublishers required, UntrustedArtifactOnDeployment defaults to Warn"},
+		capabilities.Capability{Service: "lambda", Operation: "GetCodeSigningConfig", Category: "Code signing",
+			Status: capabilities.StatusSupported, Notes: "Returns the stored configuration"},
+		capabilities.Capability{Service: "lambda", Operation: "UpdateCodeSigningConfig", Category: "Code signing",
+			Status: capabilities.StatusSupported, Notes: "Partial update; omitted members keep their stored value"},
+		capabilities.Capability{Service: "lambda", Operation: "DeleteCodeSigningConfig", Category: "Code signing",
+			Status: capabilities.StatusSupported, Notes: "ResourceConflictException while a function still references it"},
+		capabilities.Capability{Service: "lambda", Operation: "ListCodeSigningConfigs", Category: "Code signing",
+			Status: capabilities.StatusSupported, Notes: "Region-scoped; pagination not implemented"},
+		capabilities.Capability{Service: "lambda", Operation: "ListFunctionsByCodeSigningConfig", Category: "Code signing",
+			Status: capabilities.StatusSupported, Notes: "Returns the ARNs of functions referencing the configuration"},
+
 		// Invocation
 		capabilities.Capability{Service: "lambda", Operation: "Invoke", Category: "Invocation",
 			Status: capabilities.StatusSupported, Notes: "Container-based execution via Docker; falls back to stub when Docker unavailable"},

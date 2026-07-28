@@ -731,7 +731,7 @@ func (s *Service) Name() string { return "lambda" }
 // reports "service disabled" on all of them rather than letting the ones off
 // the 2015-03-31 base fall through to the S3 catch-all.
 func (s *Service) PathPrefixes() []string {
-	return []string{"/2015-03-31", "/2017-10-31", "/2018-10-31", "/2019-09-30", "/2020-06-30", "/2021-10-31", "/2021-11-15"}
+	return []string{"/2015-03-31", "/2017-10-31", "/2018-10-31", "/2019-09-30", "/2020-04-22", "/2020-06-30", "/2021-10-31", "/2021-11-15"}
 }
 
 // Invoker returns the FunctionInvoker for this Lambda service.
@@ -755,6 +755,8 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	const reservedConcurrencyBase = "/2017-10-31"
 	const provisionedConcurrencyBase = "/2019-09-30"
 	const codeSigningBase = "/2020-06-30"
+	// The code signing configuration resource itself is on yet another version.
+	const codeSigningConfigBase = "/2020-04-22"
 
 	r.Post(apiBase+"/functions", s.handler.CreateFunction)
 	r.Post(apiBase+"/functions/", s.handler.CreateFunction)
@@ -771,6 +773,16 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Get(codeSigningBase+"/functions/{name}/code-signing-config", s.handler.GetFunctionCodeSigningConfig)
 	r.Put(codeSigningBase+"/functions/{name}/code-signing-config", s.handler.PutFunctionCodeSigningConfig)
 	r.Delete(codeSigningBase+"/functions/{name}/code-signing-config", s.handler.DeleteFunctionCodeSigningConfig)
+	// Code signing configuration resource. AWS's paths carry a trailing slash
+	// on the collection; register both so either form reaches the handler.
+	r.Post(codeSigningConfigBase+"/code-signing-configs", s.handler.CreateCodeSigningConfig)
+	r.Post(codeSigningConfigBase+"/code-signing-configs/", s.handler.CreateCodeSigningConfig)
+	r.Get(codeSigningConfigBase+"/code-signing-configs", s.handler.ListCodeSigningConfigs)
+	r.Get(codeSigningConfigBase+"/code-signing-configs/", s.handler.ListCodeSigningConfigs)
+	r.Get(codeSigningConfigBase+"/code-signing-configs/{arn}", s.handler.GetCodeSigningConfig)
+	r.Put(codeSigningConfigBase+"/code-signing-configs/{arn}", s.handler.UpdateCodeSigningConfig)
+	r.Delete(codeSigningConfigBase+"/code-signing-configs/{arn}", s.handler.DeleteCodeSigningConfig)
+	r.Get(codeSigningConfigBase+"/code-signing-configs/{arn}/functions", s.handler.ListFunctionsByCodeSigningConfig)
 	r.Delete(apiBase+"/functions/{name}", s.handler.DeleteFunction)
 	r.Put(apiBase+"/functions/{name}/code", s.handler.UpdateFunctionCode)
 	r.Get(apiBase+"/functions/{name}/configuration", s.handler.GetFunctionConfiguration)
