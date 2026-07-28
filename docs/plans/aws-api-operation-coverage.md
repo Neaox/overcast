@@ -1,6 +1,6 @@
 # AWS API operation coverage and S3 fallthrough prevention
 
-> Status: proposal, 2026-07-28. Owner: TBD.
+> Status: A2 in progress, 2026-07-28. Owner: TBD.
 > Related: [Level 2 codegen](./level2-codegen.md) Track 3, [Smithy wire protocols](../dev/smithy.md), and [wire-byte goldens](./wire-byte-goldens.md).
 
 ## 1. Objective
@@ -73,6 +73,39 @@ type Claim struct {
 
 func (r *Registry) Claim(req *http.Request) (Claim, bool)
 ```
+
+### A2 implementation boundary
+
+A2 emits sorted, immutable AWS JSON target and fully-qualified Query
+`(Version, Action)` indexes from the manifest. `Registry` binary-searches those
+indexes and the router invokes one shared error-profile writer only after
+enabled and disabled service dispatchers decline ownership. This is deliberately
+not a broad service-prefix interceptor: it preserves existing implementations,
+explicit service stubs, and S3 controls. REST URI-template and RPC v2 matching
+remain A3 work, where the generated trie can provide sufficient evidence rather
+than guessing from a path prefix. The nine service-key aliases live beside the
+registry and are tested as explicit data, never inferred from a naming rule.
+When multiple modeled services share one target or `(Version, Action)` key, the
+generator emits a collision record and marks the registry claim ambiguous rather
+than silently selecting the alphabetically first service. The shared protocol
+still selects the fallback envelope; A3/A4 ownership and coverage reporting use
+the collision records to require an explicit resolution or exclusion.
+
+The A2 collision arrays are intentionally write-only until A3/A4 consume them
+for ownership and coverage reports. Most ambiguous rows are already claimed by
+an Overcast target prefix or Query version, so the router will not reach them;
+the registry-boundary tests are the correct coverage level meanwhile. Likewise,
+the generated Query index currently preserves existing observable behavior: the
+generic Query fallback already uses its common XML envelope, and EC2 owns its
+only modeled version before the registry can choose `ErrorProfileEC2QueryXML`.
+Both become live reporting/routing inputs as A3 widens ownership evidence.
+
+Measured locally after A2 with `go test -run=^$ -bench=RegistryClaim -benchmem
+-count=3 ./internal/awsapi` in a Linux `golang:1.24` container on an AMD Ryzen
+9 5900X: AWS JSON target lookup was 53–56 ns/op and Query lookup 93–105 ns/op;
+both reported `0 B/op` and `0 allocs/op`. This is a focused lookup measurement,
+not a router construction or end-to-end request benchmark; A4 retains the full
+startup and request-path guardrail.
 
 It does not decode bodies, persist data, implement business logic, or replace service routers. It follows Smithy protocol precision:
 

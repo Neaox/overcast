@@ -18,6 +18,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/awsapi"
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/docker"
@@ -152,7 +153,8 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// is read at request time, so the slice is fully populated by then.
 	var queryDispatchers []QueryDispatcher
 	var disabledQueryDispatchers []QueryDispatcher
-	r.Use(queryGetMiddleware(&queryDispatchers, &disabledQueryDispatchers))
+	operationRegistry := awsapi.NewRegistry()
+	r.Use(queryGetMiddleware(&queryDispatchers, &disabledQueryDispatchers, operationRegistry))
 	prof.mark("middleware chain")
 
 	// ---- Internal endpoints (always available) ----------------------------
@@ -873,10 +875,10 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// GET /_topology — full cross-region resource graph for the system map.
 	r.Get("/_topology", newTopologyHandler(cfg, store))
 
-	// Register POST / handler for AWS target and query-protocol dispatch.
-	if len(dispatchers) > 0 || len(queryDispatchers) > 0 || len(disabledQueryDispatchers) > 0 || len(disabledTargetPrefixes) > 0 {
-		r.Post("/", targetDispatch(dispatchers, queryDispatchers, disabledQueryDispatchers, disabledTargetPrefixes))
-	}
+	// Register POST / handler for AWS target and query-protocol dispatch. The
+	// generated registry also owns modeled operations when no configured service
+	// dispatcher does, so this route is present even in a minimal S3-only setup.
+	r.Post("/", targetDispatch(dispatchers, queryDispatchers, disabledQueryDispatchers, disabledTargetPrefixes, operationRegistry))
 
 	r.NotFound(notFoundHandler)
 
@@ -963,7 +965,7 @@ func reconcileDockerNetworks(ctx context.Context, dc *docker.Client, service str
 // targetDispatch returns a handler that inspects the X-Amz-Target header and
 // delegates to the correct service dispatcher. SQS/DynamoDB use X-Amz-Target;
 // SNS uses the Query protocol (form-encoded body with Action field + XML).
-func targetDispatch(dispatchers []TargetDispatcher, queryDispatchers, disabledQueryDispatchers []QueryDispatcher, disabledPrefixes []string) http.HandlerFunc {
+func targetDispatch(dispatchers []TargetDispatcher, queryDispatchers, disabledQueryDispatchers []QueryDispatcher, disabledPrefixes []string, operationRegistry *awsapi.Registry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		target := r.Header.Get("X-Amz-Target")
 		for _, td := range dispatchers {
@@ -980,10 +982,14 @@ func targetDispatch(dispatchers []TargetDispatcher, queryDispatchers, disabledQu
 					return
 				}
 			}
+			if claim, ok := operationRegistry.ClaimTarget(target); ok {
+				writeNotImplemented(w, r, claim)
+				return
+			}
 		}
 		// No X-Amz-Target match — try AWS Query protocol services (SNS, SES v1).
 		// ParseForm caches results; safe to call before dispatching.
-		if (len(queryDispatchers) > 0 || len(disabledQueryDispatchers) > 0) && strings.Contains(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
+		if strings.Contains(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
 			if err := r.ParseForm(); err == nil {
 				action := r.FormValue("Action")
 				version := r.FormValue("Version")
@@ -996,6 +1002,10 @@ func targetDispatch(dispatchers []TargetDispatcher, queryDispatchers, disabledQu
 				}
 				if _, ok := queryOwner(disabledQueryDispatchers, version, action); ok {
 					protocol.WriteQueryXMLError(w, r, protocol.ErrServiceDisabled)
+					return
+				}
+				if claim, ok := operationRegistry.ClaimQuery(version, action); ok {
+					writeNotImplemented(w, r, claim)
 					return
 				}
 				// Final fallback: first dispatcher with no ownership declaration.
@@ -1072,7 +1082,7 @@ func serviceDisabledHandler(w http.ResponseWriter, r *http.Request) {
 // It uses a pointer to the dispatchers slice so it reads the fully-populated
 // slice at request time — the slice is filled in by the service registration
 // loop after middleware registration.
-func queryGetMiddleware(queryDispatchers, disabledQueryDispatchers *[]QueryDispatcher) func(http.Handler) http.Handler {
+func queryGetMiddleware(queryDispatchers, disabledQueryDispatchers *[]QueryDispatcher, operationRegistry *awsapi.Registry) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet || r.URL.Path != "/" || r.URL.Query().Get("Action") == "" {
@@ -1093,11 +1103,35 @@ func queryGetMiddleware(queryDispatchers, disabledQueryDispatchers *[]QueryDispa
 				protocol.WriteQueryXMLError(w, r, protocol.ErrServiceDisabled)
 				return
 			}
+			if claim, ok := operationRegistry.ClaimQuery(version, action); ok {
+				writeNotImplemented(w, r, claim)
+				return
+			}
 			// A root GET carrying Action is AWS Query traffic, not S3. Returning
 			// Query XML keeps an unimplemented AWS command from becoming S3's
 			// ListBuckets response.
 			protocol.NotImplementedQueryXML(w, r)
 		})
+	}
+}
+
+// writeNotImplemented centralizes the modeled AWS error-envelope choice for
+// registry-owned operations. Service handlers remain responsible for their
+// own implemented and explicitly stubbed operations.
+func writeNotImplemented(w http.ResponseWriter, r *http.Request, claim awsapi.Claim) {
+	switch claim.ErrorProfile {
+	case awsapi.ErrorProfileJSON:
+		protocol.NotImplementedJSON(w, r)
+	case awsapi.ErrorProfileEC2QueryXML:
+		protocol.NotImplementedEC2QueryXML(w, r)
+	case awsapi.ErrorProfileQueryXML:
+		protocol.NotImplementedQueryXML(w, r)
+	case awsapi.ErrorProfileXML:
+		protocol.NotImplementedXML(w, r)
+	default:
+		// Keep a JSON fallback for a malformed zero-value Claim while every
+		// declared ErrorProfile remains explicit for exhaustive checking.
+		protocol.NotImplementedJSON(w, r)
 	}
 }
 

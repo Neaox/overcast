@@ -120,7 +120,120 @@ func generateManifest(modelsDir, revision string) ([]byte, error) {
 		fmt.Fprintf(&out, "\t{Service: %q, SDKID: %q, APIVersion: %q, Name: %q, Protocol: Protocol%s, Protocols: %s, TargetPrefix: %q, HTTPMethod: %q, URI: %q},\n", op.Service, op.SDKID, op.APIVersion, op.Name, op.Protocol, protocolSetExpression(op.Protocols), op.TargetPrefix, op.HTTPMethod, op.URI)
 	}
 	out.WriteString("}\n")
+	writeRegistryIndexes(&out, operations)
 	return out.Bytes(), nil
+}
+
+// writeRegistryIndexes emits the two unambiguous A2 lookup indexes. REST and
+// RPC paths require structural matching and are emitted as a trie in A3.
+func writeRegistryIndexes(out *bytes.Buffer, operations []operation) {
+	targets := make([]operation, 0, len(operations))
+	queries := make([]operation, 0, len(operations))
+	for _, op := range operations {
+		if op.TargetPrefix != "" && (op.Protocol == "AWSJSON10" || op.Protocol == "AWSJSON11") {
+			targets = append(targets, op)
+		}
+		if op.Protocol == "AWSQuery" || op.Protocol == "EC2Query" {
+			queries = append(queries, op)
+		}
+	}
+	sort.Slice(targets, func(i, j int) bool {
+		left, right := targets[i].TargetPrefix+targets[i].Name, targets[j].TargetPrefix+targets[j].Name
+		if left != right {
+			return left < right
+		}
+		return targets[i].Service < targets[j].Service
+	})
+	sort.Slice(queries, func(i, j int) bool {
+		if queries[i].APIVersion != queries[j].APIVersion {
+			return queries[i].APIVersion < queries[j].APIVersion
+		}
+		if queries[i].Name != queries[j].Name {
+			return queries[i].Name < queries[j].Name
+		}
+		return queries[i].Service < queries[j].Service
+	})
+	writeTargetIndex(out, targets)
+	writeQueryIndex(out, queries)
+}
+
+func writeTargetIndex(out *bytes.Buffer, operations []operation) {
+	out.WriteString("\nvar targetOperations = []targetOperation{\n")
+	var collisions []registryCollision
+	for start := 0; start < len(operations); {
+		target := operations[start].TargetPrefix + operations[start].Name
+		end := start + 1
+		for end < len(operations) && operations[end].TargetPrefix+operations[end].Name == target {
+			end++
+		}
+		op, services := operations[start], collisionServices(operations[start:end])
+		ambiguous := len(services) > 1
+		if ambiguous {
+			op.Service = ""
+			collisions = append(collisions, registryCollision{Key: target, Services: services})
+			fmt.Fprintf(out, "\t{Target: %q, ModelService: %q, Operation: %q, Protocol: Protocol%s, Ambiguous: true},\n", target, op.Service, op.Name, op.Protocol)
+		} else {
+			fmt.Fprintf(out, "\t{Target: %q, ModelService: %q, Operation: %q, Protocol: Protocol%s},\n", target, op.Service, op.Name, op.Protocol)
+		}
+		start = end
+	}
+	out.WriteString("}\n")
+	writeCollisionIndex(out, "targetCollisions", collisions)
+}
+
+func writeQueryIndex(out *bytes.Buffer, operations []operation) {
+	out.WriteString("\nvar queryOperations = []queryOperation{\n")
+	var collisions []registryCollision
+	for start := 0; start < len(operations); {
+		key := operations[start].APIVersion + "\x00" + operations[start].Name
+		end := start + 1
+		for end < len(operations) && operations[end].APIVersion+"\x00"+operations[end].Name == key {
+			end++
+		}
+		op, services := operations[start], collisionServices(operations[start:end])
+		ambiguous := len(services) > 1
+		if ambiguous {
+			op.Service = ""
+			collisions = append(collisions, registryCollision{Key: key, Services: services})
+			fmt.Fprintf(out, "\t{Version: %q, Operation: %q, ModelService: %q, Protocol: Protocol%s, Ambiguous: true},\n", op.APIVersion, op.Name, op.Service, op.Protocol)
+		} else {
+			fmt.Fprintf(out, "\t{Version: %q, Operation: %q, ModelService: %q, Protocol: Protocol%s},\n", op.APIVersion, op.Name, op.Service, op.Protocol)
+		}
+		start = end
+	}
+	out.WriteString("}\n")
+	writeCollisionIndex(out, "queryCollisions", collisions)
+}
+
+type registryCollision struct {
+	Key      string
+	Services []string
+}
+
+func collisionServices(operations []operation) []string {
+	services := make([]string, 0, len(operations))
+	for _, op := range operations {
+		if len(services) == 0 || services[len(services)-1] != op.Service {
+			services = append(services, op.Service)
+		}
+	}
+	return services
+}
+
+func writeCollisionIndex(out *bytes.Buffer, name string, collisions []registryCollision) {
+	fmt.Fprintf(out, "\nvar %s = []operationCollision{\n", name)
+	for _, collision := range collisions {
+		fmt.Fprintf(out, "\t{Key: %q, Services: []string{%s}},\n", collision.Key, quotedStrings(collision.Services))
+	}
+	out.WriteString("}\n")
+}
+
+func quotedStrings(values []string) string {
+	quoted := make([]string, len(values))
+	for i, value := range values {
+		quoted[i] = fmt.Sprintf("%q", value)
+	}
+	return strings.Join(quoted, ", ")
 }
 
 func parseModel(path string) ([]operation, error) {

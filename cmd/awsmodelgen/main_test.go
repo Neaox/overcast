@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -34,6 +35,13 @@ func TestGenerateManifest_extractsServiceOperationsAndProtocols(t *testing.T) {
     "example.resource#GetWidget":{"type":"operation","traits":{"smithy.api#http":{"method":"GET","uri":"/widgets/{id}"}}}
   }
 }`)
+	writeModel(t, filepath.Join(modelsDir, "query.json"), `{
+  "smithy":"2.0",
+  "shapes":{
+    "example.query#Query":{"type":"service","version":"2026-04-04","operations":[{"target":"example.query#DescribeWidgets"}],"traits":{"aws.api#service":{"sdkId":"Query","endpointPrefix":"query"},"aws.protocols#ec2Query":{}}},
+    "example.query#DescribeWidgets":{"type":"operation"}
+  }
+}`)
 
 	// When: the generator reads the model directory.
 	got, err := generateManifest(modelsDir, "test-revision")
@@ -47,9 +55,38 @@ func TestGenerateManifest_extractsServiceOperationsAndProtocols(t *testing.T) {
 		`{Service: "queue", SDKID: "Queue", APIVersion: "2026-01-01", Name: "CreateQueue", Protocol: ProtocolAWSJSON10, Protocols: ProtocolsAWSJSON10 | ProtocolsRPCV2CBOR, TargetPrefix: "Queue_20260101.", HTTPMethod: "", URI: ""}`,
 		`{Service: "widget", SDKID: "Widget", APIVersion: "2026-02-02", Name: "GetWidget", Protocol: ProtocolRESTJSON, Protocols: ProtocolsRESTJSON, TargetPrefix: "", HTTPMethod: "GET", URI: "/widgets/{id}"}`,
 		`{Service: "resource-service", SDKID: "Resource Service", APIVersion: "2026-03-03", Name: "GetWidget", Protocol: ProtocolRESTJSON, Protocols: ProtocolsRESTJSON, TargetPrefix: "", HTTPMethod: "GET", URI: "/widgets/{id}"}`,
+		`{Target: "Queue_20260101.CreateQueue", ModelService: "queue", Operation: "CreateQueue", Protocol: ProtocolAWSJSON10}`,
+		`{Version: "2026-04-04", Operation: "DescribeWidgets", ModelService: "query", Protocol: ProtocolEC2Query}`,
 	} {
 		if !strings.Contains(string(got), want) {
 			t.Errorf("generated manifest missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestWriteRegistryIndexes_marksCollidingServicesAmbiguous(t *testing.T) {
+	// Given: two modeled services with the same AWS JSON target and Query key.
+	operations := []operation{
+		{Service: "alpha", APIVersion: "2026-01-01", Name: "CreateThing", Protocol: "AWSJSON10", TargetPrefix: "Example."},
+		{Service: "beta", APIVersion: "2026-01-01", Name: "CreateThing", Protocol: "AWSJSON10", TargetPrefix: "Example."},
+		{Service: "alpha", APIVersion: "2026-02-02", Name: "DescribeThing", Protocol: "AWSQuery"},
+		{Service: "beta", APIVersion: "2026-02-02", Name: "DescribeThing", Protocol: "AWSQuery"},
+	}
+	var output bytes.Buffer
+
+	// When: the generator writes its immutable lookup indexes.
+	writeRegistryIndexes(&output, operations)
+
+	// Then: it retains a collision report and avoids assigning either service
+	// identity to the shared wire operation.
+	for _, want := range []string{
+		`{Target: "Example.CreateThing", ModelService: "", Operation: "CreateThing", Protocol: ProtocolAWSJSON10, Ambiguous: true}`,
+		`{Key: "Example.CreateThing", Services: []string{"alpha", "beta"}}`,
+		`{Version: "2026-02-02", Operation: "DescribeThing", ModelService: "", Protocol: ProtocolAWSQuery, Ambiguous: true}`,
+		`{Key: "2026-02-02\x00DescribeThing", Services: []string{"alpha", "beta"}}`,
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("generated registry index missing %q:\n%s", want, output.String())
 		}
 	}
 }
