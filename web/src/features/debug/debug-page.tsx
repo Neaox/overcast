@@ -17,8 +17,7 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
-import { useToast } from "@/components/ui/toast"
-import { debugClipboard } from "./clipboard"
+import { useCopyToClipboard } from "@/hooks/use-clipboard"
 import {
   debugNamespaceInfiniteQueryOptions,
   debugStateQueryOptions,
@@ -129,7 +128,6 @@ export function DebugPage({
    */
   onKeyChange?: (key: string) => void
 }) {
-  const { toast } = useToast()
   const [serviceFilter, setServiceFilter] = useState(initialService ?? "")
   const [namespace, setNamespace] = useState(initialNamespace ?? "")
   const [selectedKey, setSelectedKey] = useState(initialKey ?? "")
@@ -218,13 +216,6 @@ export function DebugPage({
       : activeKey
         ? loadedValues[activeKey]
         : undefined
-
-  function copyText(text: string, title: string) {
-    void debugClipboard.writeText(text).then(
-      () => toast({ title, variant: "success" }),
-      (err: Error) => toast({ title: "Copy failed", description: err.message, variant: "danger" }),
-    )
-  }
 
   function refreshState() {
     void Promise.all([summaryQuery.refetch(), namespaceQuery.refetch()])
@@ -390,7 +381,6 @@ export function DebugPage({
               value={activeValue}
               isRefreshing={summaryQuery.isFetching || namespaceQuery.isFetching}
               onRefresh={refreshState}
-              onCopy={copyText}
             />
           </div>
         </div>
@@ -724,15 +714,16 @@ function StateValueViewer({
   value,
   isRefreshing,
   onRefresh,
-  onCopy,
 }: {
   namespace: string
   stateKey?: string
   value?: string
   isRefreshing: boolean
   onRefresh: () => void
-  onCopy: (text: string, title: string) => void
 }) {
+  // These copy controls carry a text label, so they are `Button`s driven by the
+  // hook rather than the icon-only `<CopyButton>`.
+  const { copy } = useCopyToClipboard()
   const parsed = parseStoredValue(value)
 
   return (
@@ -754,7 +745,7 @@ function StateValueViewer({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => stateKey && onCopy(stateKey, "State key copied")}
+            onClick={() => stateKey && copy(stateKey, { noun: "state key" })}
             disabled={!stateKey}
           >
             <Copy className="h-3.5 w-3.5" />
@@ -763,7 +754,7 @@ function StateValueViewer({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => value != null && onCopy(value, "Raw value copied")}
+            onClick={() => value != null && copy(value, { noun: "raw value" })}
             disabled={value == null}
           >
             <Copy className="h-3.5 w-3.5" />
@@ -789,7 +780,7 @@ function StateValueViewer({
             variant="ghost"
             size="sm"
             onClick={() =>
-              stateKey && onCopy(buildDebugDeepLink(namespace, stateKey), "Debug link copied")
+              stateKey && copy(buildDebugDeepLink(namespace, stateKey), { noun: "debug link" })
             }
             disabled={!stateKey}
           >

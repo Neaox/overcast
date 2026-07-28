@@ -14,9 +14,9 @@ import { ApplicationOwnershipBanner } from "@/components/application-ownership-b
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
 import { useState } from "react"
-import { Copy, Play, Square, Trash2, RefreshCw } from "lucide-react"
+import { Play, Square, Trash2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { useToast } from "@/components/ui/toast"
+import { CopyButton } from "@/components/ui/copy-button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import type { RdsInstance } from "@/types"
 import { cn } from "@/lib/utils"
@@ -203,13 +203,6 @@ function ConfigurationPanel({ db }: { db: RdsInstance }) {
 // ─── Connectivity Panel ───────────────────────────────────────────────────
 
 function ConnectivityPanel({ db }: { db: RdsInstance }) {
-  const { toast } = useToast()
-
-  const copyToClipboard = (text: string) => {
-    void navigator.clipboard.writeText(text)
-    toast({ title: "Copied!", variant: "success" })
-  }
-
   if (!db.Endpoint) {
     return <p className="text-sm text-fg-muted">Endpoint not yet available.</p>
   }
@@ -222,14 +215,7 @@ function ConnectivityPanel({ db }: { db: RdsInstance }) {
         <div className="flex items-center gap-2">
           <span className="font-mono text-sm font-medium text-fg">Endpoint</span>
           <code className="rounded bg-bg-muted px-2 py-1 font-mono text-sm">{endpointStr}</code>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-7 w-7"
-            onClick={() => copyToClipboard(endpointStr)}
-          >
-            <Copy className="h-3.5 w-3.5" />
-          </Button>
+          <CopyButton value={endpointStr} noun="endpoint" />
         </div>
         <div className="grid grid-cols-2 gap-x-8 gap-y-3">
           <InfoRow label="Address" value={db.Endpoint.Address ?? ""} />
@@ -239,20 +225,14 @@ function ConnectivityPanel({ db }: { db: RdsInstance }) {
         </div>
       </div>
 
-      <ConnectionStrings db={db} copyToClipboard={copyToClipboard} />
+      <ConnectionStrings db={db} />
     </div>
   )
 }
 
 // ─── Connection Strings ───────────────────────────────────────────────────
 
-function ConnectionStrings({
-  db,
-  copyToClipboard,
-}: {
-  db: RdsInstance
-  copyToClipboard: (text: string) => void
-}) {
+function ConnectionStrings({ db }: { db: RdsInstance }) {
   if (!db.Endpoint) return null
 
   const { Address: address, Port: port } = db.Endpoint
@@ -272,14 +252,7 @@ function ConnectionStrings({
             <code className="min-w-0 flex-1 truncate rounded bg-bg-muted px-2 py-1 font-mono text-xs">
               {s.value}
             </code>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-7 w-7 shrink-0"
-              onClick={() => copyToClipboard(s.value)}
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </Button>
+            <CopyButton value={s.value} noun={`${s.label} connection string`} />
           </div>
         ))}
       </div>

@@ -1,7 +1,6 @@
 import { http, HttpResponse } from "msw"
 import { fireEvent, render, screen, waitFor, within } from "@/test/render"
 import { server } from "@/test/server"
-import { debugClipboard } from "./clipboard"
 import { DebugPage } from "./debug-page"
 
 /** Wraps a flat key->value map in the paginated /_debug/state/{ns} response shape. */
@@ -32,13 +31,21 @@ vi.mock("@tanstack/react-virtual", () => ({
 }))
 
 describe("DebugPage", () => {
-  const clipboardWriteText = vi.fn<() => Promise<void>>()
+  const clipboardWriteText = vi.fn<(text: string) => Promise<void>>()
 
-  beforeEach(() => {
+  /**
+   * Stands a clipboard up in jsdom, putting the page in the secure context
+   * `lib/clipboard.ts` prefers. Must run *after* `render` — `userEvent.setup()`
+   * installs its own `navigator.clipboard` stub over whatever is there.
+   */
+  function secureContext() {
     clipboardWriteText.mockReset()
     clipboardWriteText.mockResolvedValue(undefined)
-    vi.spyOn(debugClipboard, "writeText").mockImplementation(clipboardWriteText)
-  })
+    Object.defineProperty(globalThis.navigator, "clipboard", {
+      value: { writeText: clipboardWriteText },
+      configurable: true,
+    })
+  }
 
   it("shows raw queue attributes from the state store", async () => {
     // Given: the debug API exposes an SQS queue record with an invalid retained value.
@@ -223,6 +230,7 @@ describe("DebugPage", () => {
 
     // When: the user copies the raw value and direct debug link.
     render(<DebugPage />)
+    secureContext()
     await screen.findByText('"name"')
     await screen.findByText('"my-dlq.fifo"')
     const valueButton = screen.getByRole("button", { name: "Value" })

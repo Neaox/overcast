@@ -11,7 +11,7 @@ import { Handle, Position, type NodeProps, useNodeId } from "@xyflow/react"
 import { useNavigate } from "@tanstack/react-router"
 import { useQuery, queryOptions } from "@tanstack/react-query"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { Box, Zap, Send, Play, Clock, Copy, Filter, Search, X } from "lucide-react"
+import { Box, Zap, Send, Play, Clock, Filter, Search, X } from "lucide-react"
 import { SendMessageDialog } from "@/features/sqs/components/send-message"
 import { PublishMessageDialog } from "@/features/sns/components/publish-dialog"
 import { LambdaInvokeDialog } from "@/features/lambda/components/lambda-invoke-dialog"
@@ -38,6 +38,7 @@ import {
   sqsVisualMessagesStateEqual,
   type DisplayMessage,
 } from "./sqs-visual-messages"
+import { CopyButton } from "@/components/ui/copy-button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useEndpoint } from "@/hooks/use-endpoint"
 import { endpointStore } from "@/services/endpoint-store"
@@ -1427,18 +1428,12 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
             </button>
           )}
           {service === "ecr" && (data as ServiceNodeData).repositoryUri && (
-            <button
-              type="button"
+            <CopyButton
+              value={(data as ServiceNodeData).repositoryUri!}
+              noun="repository URI"
               onKeyDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation()
-                void navigator.clipboard.writeText((data as ServiceNodeData).repositoryUri!)
-              }}
-              className="flex h-5 w-5 items-center justify-center rounded text-fg-muted transition-colors hover:bg-cyan-400/15 hover:text-cyan-400"
-              title="Copy repository URI"
-            >
-              <Copy className="h-3 w-3" />
-            </button>
+              className="h-5 w-5 rounded text-fg-muted hover:bg-cyan-400/15 hover:text-cyan-400"
+            />
           )}
         </div>
       </div>

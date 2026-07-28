@@ -57,6 +57,7 @@ import { logsGroupsQueryOptions } from "@/features/cloudwatch/logs/data"
 import { lambda } from "@/services/api"
 import type { LambdaRuntimeInfo } from "@/types"
 import type { Runtime } from "@aws-sdk/client-lambda"
+import { canReadClipboardText, readClipboardText } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 
 // ─── Runtime data ────────────────────────────────────────────────────────────
@@ -216,6 +217,7 @@ export function CreateFunctionWizard({ open, onOpenChange }: CreateFunctionWizar
   // Environment variables
   const [envVars, setEnvVars] = useState<{ key: string; value: string }[]>([])
   const [showEnvVars, setShowEnvVars] = useState(false)
+  const canPasteEnv = canReadClipboardText()
   // General configuration
   const [showAdvanced, setShowAdvanced] = useState(false)
 
@@ -731,9 +733,19 @@ export function CreateFunctionWizard({ open, onOpenChange }: CreateFunctionWizar
                       variant="ghost"
                       size="sm"
                       type="button"
+                      // Reading the clipboard has no fallback: `execCommand("paste")`
+                      // is refused everywhere, and Firefox never exposes `readText`
+                      // to page scripts. Where it is unavailable the control says
+                      // so rather than looking live and doing nothing.
+                      disabled={!canPasteEnv}
+                      title={
+                        canPasteEnv
+                          ? "Paste KEY=value lines from the clipboard"
+                          : "This browser does not allow reading the clipboard — paste into the fields above instead"
+                      }
                       onClick={async () => {
                         try {
-                          const text = await navigator.clipboard.readText()
+                          const text = await readClipboardText()
                           const parsed = parseEnvString(text)
                           if (parsed.length > 0) {
                             setEnvVars((prev) => {

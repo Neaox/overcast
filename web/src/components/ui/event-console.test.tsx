@@ -182,4 +182,69 @@ describe("EventConsole > theming", () => {
 
     expect(screen.getByText('"assets-bucket"')).toHaveClass("token", "string")
   })
+
+  describe("copying an event", () => {
+    const event = {
+      type: "s3:BucketCreated",
+      source: "s3",
+      time: "2026-07-14T12:00:00Z",
+      resourceArn: "arn:aws:s3:::assets-bucket",
+      payload: { name: "assets-bucket" },
+    }
+
+    /**
+     * Installs a clipboard *after* render — `userEvent.setup()` puts its own
+     * stub on `navigator.clipboard`, so an earlier one would be overwritten.
+     */
+    function renderWithClipboard() {
+      const result = render(<EventConsole connected onClear={() => {}} events={[event]} />)
+      const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined)
+      Object.defineProperty(globalThis.navigator, "clipboard", {
+        value: { writeText },
+        configurable: true,
+      })
+      return { ...result, writeText }
+    }
+
+    it("offers a copy control on the row", () => {
+      renderWithClipboard()
+      expect(screen.getByRole("button", { name: "Copy event" })).toBeInTheDocument()
+    })
+
+    it("copies the whole envelope, not just the payload", async () => {
+      const { user, writeText } = renderWithClipboard()
+
+      await user.click(screen.getByRole("button", { name: "Copy event" }))
+
+      expect(writeText).toHaveBeenCalledWith(
+        JSON.stringify(
+          {
+            type: "s3:BucketCreated",
+            time: "2026-07-14T12:00:00Z",
+            source: "s3",
+            resourceArn: "arn:aws:s3:::assets-bucket",
+            payload: { name: "assets-bucket" },
+          },
+          null,
+          2,
+        ),
+      )
+    })
+
+    it("does not expand the row it sits on", async () => {
+      const { user } = renderWithClipboard()
+
+      await user.click(screen.getByRole("button", { name: "Copy event" }))
+
+      expect(screen.queryByText('"assets-bucket"')).not.toBeInTheDocument()
+    })
+
+    it("confirms the copy", async () => {
+      const { user } = renderWithClipboard()
+
+      await user.click(screen.getByRole("button", { name: "Copy event" }))
+
+      expect(await screen.findByText("Copied event")).toBeInTheDocument()
+    })
+  })
 })

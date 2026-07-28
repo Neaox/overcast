@@ -1,5 +1,5 @@
-import { readFileSync, readdirSync, statSync } from "node:fs"
-import { join } from "node:path"
+import { readFileSync } from "node:fs"
+import { sourceFiles } from "@/test/source-files"
 
 /**
  * Colour utilities Tailwind resolves via `--color-*` in the `@theme` block.
@@ -34,15 +34,6 @@ function declaredThemeColours(css: string): Set<string> {
   expect(start).toBeGreaterThanOrEqual(0)
   const block = css.slice(start, css.indexOf("}", start))
   return new Set([...block.matchAll(/--color-([a-z0-9-]+)\s*:/g)].map((m) => m[1]))
-}
-
-function sourceFiles(dir: string, acc: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const path = join(dir, entry)
-    if (statSync(path).isDirectory()) sourceFiles(path, acc)
-    else if (/\.tsx?$/.test(path)) acc.push(path)
-  }
-  return acc
 }
 
 describe("Prism token theme", () => {

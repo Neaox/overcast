@@ -17,6 +17,7 @@ import { useVirtualizer } from "@tanstack/react-virtual"
 import { Code2, X, Wifi, WifiOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { CopyButton } from "@/components/ui/copy-button"
 import type { StreamEvent } from "@/hooks/use-event-stream"
 import { cn } from "@/lib/utils"
 import Prism from "@/lib/prism"
@@ -357,26 +358,31 @@ function JsonValue({ value, path }: { value: unknown; path: string }) {
   return <span className="text-fg-muted">{jsonLiteral(String(value))}</span>
 }
 
+/**
+ * The event as both rendered and copied. One shape for both so the JSON a user
+ * copies is exactly the JSON they were looking at.
+ */
+function eventEnvelope(event: StreamEvent): Record<string, unknown> {
+  return {
+    type: event.type,
+    time: event.time,
+    source: event.source,
+    // Lifted to the envelope (rather than left inside payload) so events whose
+    // resource ARN lives at the envelope level — see
+    // internal/events.Event.ResourceARN — still get an auto-linked ARN even
+    // when the payload itself has no ARN field.
+    ...(event.resourceArn ? { resourceArn: event.resourceArn } : {}),
+    payload: event.payload,
+  }
+}
+
 function EventPayloadDetails({ event }: { event: StreamEvent }) {
   return (
     // bg-bg-muted rather than the console's own surface: the expanded payload
     // has to read as a nested block in both themes, so it steps *away* from
     // --bg-elevated in whichever direction the theme has room for.
     <div className="mt-1 rounded bg-bg-muted p-2 text-xs break-all whitespace-pre-wrap text-fg-muted">
-      <JsonValue
-        value={{
-          type: event.type,
-          time: event.time,
-          source: event.source,
-          // Rendered here (rather than only inside payload) so events whose
-          // resource ARN lives at the envelope level — see
-          // internal/events.Event.ResourceARN — still get an auto-linked
-          // ARN even when the payload itself has no ARN field.
-          ...(event.resourceArn ? { resourceArn: event.resourceArn } : {}),
-          payload: event.payload,
-        }}
-        path="$"
-      />
+      <JsonValue value={eventEnvelope(event)} path="$" />
     </div>
   )
 }
@@ -487,7 +493,7 @@ export function EventConsole({
                     width: "100%",
                     transform: `translateY(${vr.start}px)`,
                   }}
-                  className="cursor-pointer border-b border-border-muted px-3 py-1.5 transition-colors hover:bg-accent-muted"
+                  className="group/row cursor-pointer border-b border-border-muted px-3 py-1.5 transition-colors hover:bg-accent-muted"
                   onClick={() => setExpanded(isExpanded ? null : vr.index)}
                 >
                   <div className="flex min-w-0 items-baseline gap-2">
@@ -501,6 +507,15 @@ export function EventConsole({
                       {label}
                     </Badge>
                     <span className="min-w-0 truncate text-sm text-fg-muted">{summary}</span>
+                    {/* Stays out of the way until the row is hovered — the console
+                        is dense, and a permanent glyph on every row would compete
+                        with the summary text for the eye. */}
+                    <CopyButton
+                      value={JSON.stringify(eventEnvelope(ev), null, 2)}
+                      noun="event"
+                      tone="inline"
+                      className="ml-auto self-center opacity-0 transition-opacity group-hover/row:opacity-100 focus-visible:opacity-100"
+                    />
                   </div>
                   {isExpanded && <EventPayloadDetails event={ev} />}
                 </div>
