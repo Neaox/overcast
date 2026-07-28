@@ -185,6 +185,27 @@ func TestIdentifyRPCv2JSON_Match(t *testing.T) {
 	}
 }
 
+func TestIdentifyRPCv2_emptyService(t *testing.T) {
+	tests := []struct {
+		name       string
+		protocol   string
+		identifier Identifier
+	}{
+		{name: "CBOR", protocol: "rpc-v2-cbor", identifier: identifyRPCv2CBOR{}},
+		{name: "JSON", protocol: "rpc-v2-json", identifier: identifyRPCv2JSON{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := req("POST", "/service//operation/GetThing", "", map[string]string{
+				"Smithy-Protocol": tt.protocol,
+			})
+			if _, _, ok := tt.identifier.Claim(r); ok {
+				t.Fatal("claimed an RPC v2 path with an empty service")
+			}
+		})
+	}
+}
+
 func TestDefaultIdentifiers_PrecisionOrder(t *testing.T) {
 	ids := DefaultIdentifiers()
 	if len(ids) != 5 {

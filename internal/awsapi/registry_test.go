@@ -113,6 +113,15 @@ func TestRegistryClaimREST_literalQueryBinding(t *testing.T) {
 	}
 }
 
+func TestRawQueryContains_valuelessLiteralWithEquals(t *testing.T) {
+	// Given: a Smithy binding with a valueless literal query component.
+	// When: an HTTP client serializes the component with an empty value.
+	// Then: "?acl=" is equivalent to "?acl" for binding selection.
+	if !rawQueryContains("acl=", "acl") {
+		t.Fatal(`rawQueryContains("acl=", "acl") = false, want true`)
+	}
+}
+
 func TestRegistryClaimRPC_additiveCBORProtocol(t *testing.T) {
 	// Given: GameLift's canonical AWS JSON service model also advertises
 	// Smithy RPC v2 CBOR as an additive protocol.

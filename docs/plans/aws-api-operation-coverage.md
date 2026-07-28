@@ -125,8 +125,9 @@ completes the generated ownership surface:
   including 18 whose canonical protocol is CBOR);
 - the explicit `/service/{service}/operation/{operation}` route consults that
   index after implemented service operations. A modeled gap gets its native
-  501 envelope, a disabled modeled service gets `ServiceDisabled`, and a truly
-  unknown operation preserves the existing unsupported/unknown behavior.
+  501 envelope, a known disabled service gets `ServiceDisabled` even when the
+  operation is not yet modeled, and a truly unknown service preserves the
+  existing unsupported/unknown behavior.
   The Smithy protocol header is required evidence: a headerless S3 multipart
   request with the same legal path grammar delegates to S3; and
 - generated corpus tests require every non-S3 operation and every additive RPC
@@ -184,7 +185,9 @@ Models are fetched, parsed, and generated at build/update time only. The binary 
 - AWS JSON and Query: bounded header/form read plus map lookup.
 - REST: path-segment trie walk, independent of total operation count.
 - No per-request/startup disk I/O, model parsing, network I/O, or allocations proportional to model size.
-- Implemented calls retain existing handlers; S3 incurs only a cheap non-S3 claim check.
+- Implemented calls retain existing handlers. Unsigned and S3-scoped requests
+  skip the REST registry entirely, then delegate once to S3's private chi
+  router; signed non-S3 fallback requests perform the bounded trie lookup.
 
 Before landing, benchmark router construction and representative S3, AWS JSON, Query, and REST-fallback requests. Do not materially move the startup budget or <=1 ms handler-overhead target. Record command, environment, operation, and before/after figures for every published claim.
 
@@ -214,6 +217,20 @@ network latency claims; the request paths remain well below the plan's 1 ms
 handler-overhead guardrail. CI enforces zero-allocation generated lookups, while
 the committed router benchmarks preserve the broader startup/request baseline
 without relying on a noisy wall-clock threshold.
+
+A review A/B after rebasing onto `main` used Linux/amd64, Go 1.24.13 in
+`golang:1.24-bookworm`, the same Ryzen 9 5900X, `-benchtime=2s -count=5`, and
+the committed `S3ListBuckets` benchmark. Main measured a median 11.7 µs/op
+(11.3–25.2 µs/op, 125–132 allocs/op); the initial private-router fallback
+measured a median 16.4 µs/op (16.2–16.7 µs/op, 121 allocs/op), a 40% median
+CPU trade-off from the second chi dispatch rather than allocation or registry
+size. The credential fast path now skips trie matching for unsigned and
+S3-scoped requests. Under the same Go version, CPU, `-benchtime=2s -count=5`,
+and repository Docker harness it measured 16.4–17.7 µs/op at 121 allocs/op.
+The remaining dispatch cost is accepted for A4 because it preserves the
+positive-evidence S3 safety boundary and remains roughly 60x below the 1 ms
+handler-overhead budget; the benchmark remains committed so a future
+single-dispatch design can improve it with evidence.
 
 ## 6. Delivery phases
 

@@ -297,6 +297,28 @@ func TestRouter_disabledServiceModeledRPCv2CBOROperation_returnsServiceDisabled(
 	helpers.AssertHeader(t, resp, "Smithy-Protocol", "rpc-v2-cbor")
 }
 
+func TestRouter_disabledServiceUnmodeledRPCv2CBOROperation_returnsServiceDisabled(t *testing.T) {
+	// Given: CloudWatch is a known RPC-capable service but is disabled.
+	srv := helpers.NewTestServer(t, helpers.WithServices("s3"))
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/service/GraniteServiceVersion20100801/operation/FutureOperation", bytes.NewReader([]byte{0xa0}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Smithy-Protocol", "rpc-v2-cbor")
+
+	// When: a future or otherwise unmodeled operation is requested.
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the known disabled service state is more specific than protocol
+	// support and takes precedence over UnsupportedProtocol.
+	helpers.AssertStatus(t, resp, http.StatusServiceUnavailable)
+	helpers.AssertHeader(t, resp, "Smithy-Protocol", "rpc-v2-cbor")
+}
+
 func TestRouter_unclaimedModeledRESTPath_returnsNotImplemented(t *testing.T) {
 	// Given: a modeled REST JSON operation for a service Overcast does not yet
 	// implement, alongside S3's deliberately broad bucket routes.

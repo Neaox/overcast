@@ -154,31 +154,25 @@ func (r *Registry) ClaimRESTQuery(method, path, rawQuery string) (Claim, bool) {
 		return Claim{}, false
 	}
 
-	node, ok := restTrieMatch(0, method, path, rawQuery, 1)
+	operationIndex, ok := restTrieMatch(0, method, path, rawQuery, 1)
 	if !ok {
 		return Claim{}, false
 	}
 
-	current := restTrieNodes[node]
-	for _, op := range restOperations[current.OperationStart:current.OperationEnd] {
-		if !restOperationMatches(op, method, rawQuery) {
-			continue
-		}
-		profile := ErrorProfileJSON
-		if op.Protocol == ProtocolRESTXML {
-			profile = ErrorProfileXML
-		}
-		return Claim{
-			Service:      overcastService(op.ModelService),
-			ModelService: op.ModelService,
-			SigningName:  op.SigningName,
-			Operation:    op.Operation,
-			Protocol:     op.Protocol,
-			ErrorProfile: profile,
-			Ambiguous:    op.Ambiguous,
-		}, true
+	op := restOperations[operationIndex]
+	profile := ErrorProfileJSON
+	if op.Protocol == ProtocolRESTXML {
+		profile = ErrorProfileXML
 	}
-	return Claim{}, false
+	return Claim{
+		Service:      overcastService(op.ModelService),
+		ModelService: op.ModelService,
+		SigningName:  op.SigningName,
+		Operation:    op.Operation,
+		Protocol:     op.Protocol,
+		ErrorProfile: profile,
+		Ambiguous:    op.Ambiguous,
+	}, true
 }
 
 // restTrieMatch walks one path without allocating a strings.Split result. A
@@ -189,9 +183,9 @@ func (r *Registry) ClaimRESTQuery(method, path, rawQuery string) (Claim, bool) {
 func restTrieMatch(node int, method, path, rawQuery string, start int) (int, bool) {
 	if start == len(path) {
 		current := restTrieNodes[node]
-		for _, op := range restOperations[current.OperationStart:current.OperationEnd] {
-			if restOperationMatches(op, method, rawQuery) {
-				return node, true
+		for i := current.OperationStart; i < current.OperationEnd; i++ {
+			if restOperationMatches(restOperations[i], method, rawQuery) {
+				return i, true
 			}
 		}
 		return 0, false
@@ -267,7 +261,10 @@ func rawQueryContains(rawQuery, required string) bool {
 		} else {
 			rawQuery = ""
 		}
-		if part == required {
+		// Net/http and SDK serializers may render a valueless Smithy query
+		// literal as either "?acl" or "?acl=". Preserve exact matching for
+		// literals that declare a value.
+		if part == required || (!strings.Contains(required, "=") && part == required+"=") {
 			return true
 		}
 	}

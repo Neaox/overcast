@@ -1137,11 +1137,11 @@ func smithyRPCDispatch(dispatchers map[string]*smithyRPCService, operationRegist
 		if service == nil && modeled {
 			service = dispatchers[claim.Service]
 		}
+		if service != nil && !service.enabled {
+			wireCodec.WriteError(w, r, protocol.ErrServiceDisabled)
+			return
+		}
 		if service != nil && modeled {
-			if !service.enabled {
-				wireCodec.WriteError(w, r, protocol.ErrServiceDisabled)
-				return
-			}
 			if service.supports(operation, wireCodec.Name()) {
 				service.dispatcher.Dispatch(w, r)
 				return
@@ -1247,7 +1247,12 @@ func writeNotImplemented(w http.ResponseWriter, r *http.Request, claim awsapi.Cl
 // then the sole remaining legitimate catch-all.
 func restFallback(operationRegistry *awsapi.Registry, s3Router http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if claim, ok := operationRegistry.ClaimRESTQuery(r.Method, r.URL.Path, r.URL.RawQuery); ok && !claim.Ambiguous && claim.SigningName != "" && strings.EqualFold(middleware.ServiceFromCredential(r), claim.SigningName) {
+		credentialService := middleware.ServiceFromCredential(r)
+		if credentialService == "" || strings.EqualFold(credentialService, "s3") {
+			s3Router.ServeHTTP(w, r)
+			return
+		}
+		if claim, ok := operationRegistry.ClaimRESTQuery(r.Method, r.URL.Path, r.URL.RawQuery); ok && !claim.Ambiguous && claim.SigningName != "" && strings.EqualFold(credentialService, claim.SigningName) {
 			writeNotImplemented(w, r, claim)
 			return
 		}

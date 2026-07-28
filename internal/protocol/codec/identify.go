@@ -55,14 +55,7 @@ func DefaultIdentifiers() []Identifier {
 type identifyRPCv2JSON struct{}
 
 func (identifyRPCv2JSON) Claim(r *http.Request) (Codec, string, bool) {
-	if !strings.EqualFold(strings.TrimSpace(r.Header.Get("Smithy-Protocol")), smithyProtocolRPCv2JSON) {
-		return nil, "", false
-	}
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) != 4 || parts[0] != "service" || parts[1] == "" || parts[2] != "operation" || parts[3] == "" {
-		return nil, "", false
-	}
-	return RPCv2JSON, parts[3], true
+	return claimRPCv2(r, smithyProtocolRPCv2JSON, RPCv2JSON)
 }
 
 // --- Smithy RPC v2 CBOR -----------------------------------------------
@@ -70,14 +63,18 @@ func (identifyRPCv2JSON) Claim(r *http.Request) (Codec, string, bool) {
 type identifyRPCv2CBOR struct{}
 
 func (identifyRPCv2CBOR) Claim(r *http.Request) (Codec, string, bool) {
-	if !strings.EqualFold(strings.TrimSpace(r.Header.Get("Smithy-Protocol")), smithyProtocolRPCv2CBOR) {
+	return claimRPCv2(r, smithyProtocolRPCv2CBOR, RPCv2CBOR)
+}
+
+func claimRPCv2(r *http.Request, protocolMarker string, wireCodec Codec) (Codec, string, bool) {
+	if !strings.EqualFold(strings.TrimSpace(r.Header.Get("Smithy-Protocol")), protocolMarker) {
 		return nil, "", false
 	}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) != 4 || parts[0] != "service" || parts[2] != "operation" || parts[3] == "" {
+	if len(parts) != 4 || parts[0] != "service" || parts[1] == "" || parts[2] != "operation" || parts[3] == "" {
 		return nil, "", false
 	}
-	return RPCv2CBOR, parts[3], true
+	return wireCodec, parts[3], true
 }
 
 // --- AWS JSON 1.0 ----------------------------------------------------
