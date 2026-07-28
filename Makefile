@@ -7,6 +7,7 @@
 BINARY    := overcast
 BUILD_DIR := ./bin
 GO        := go
+AWS_MODELS_REVISION ?= $(shell sed -n 's/^revision=//p' models/aws/VERSION)
 GOFLAGS   := -trimpath
 VERSION   := $(shell cat VERSION)
 LDFLAGS   := -w -s -X main.version=$(VERSION)
@@ -23,8 +24,8 @@ ACTIONLINT_VERSION := v1.7.7
         ci-local ci-local-web ci-local-go \
         bench bench-startup lint lint-go lint-web lint-actions fmt vet tidy check docker docker-slim docker-console docker-run clean \
         compat-build compat-serve compat-report \
-generate-caps check-caps docs docs-index docs-check supportmeta-check check-binary-symbols \
-	generate-caps check-caps docs docs-index docs-check supportmeta-check check-binary-symbols
+generate-caps check-caps generate-aws-operations docs docs-index docs-check supportmeta-check check-binary-symbols \
+	generate-caps check-caps generate-aws-operations docs docs-index docs-check supportmeta-check check-binary-symbols
 
 ## help: print this help message
 help:
@@ -196,6 +197,13 @@ generate-caps:
 ## check-caps: verify capabilities declarations match handler operation registrations
 check-caps:
 	$(GO) run -tags dev ./cmd/capgen --check
+
+## generate-aws-operations: regenerate the AWS operation manifest from a pinned local api-models-aws checkout
+## Set AWS_MODELS_DIR to its models directory. The checked-out commit must match models/aws/VERSION.
+generate-aws-operations:
+	@test -n "$(AWS_MODELS_DIR)" || (echo "ERROR: set AWS_MODELS_DIR to api-models-aws/models" && exit 1)
+	@test -n "$(AWS_MODELS_REVISION)" || (echo "ERROR: set AWS_MODELS_REVISION to the api-models-aws commit" && exit 1)
+	$(GO) run ./cmd/awsmodelgen -models "$(AWS_MODELS_DIR)" -output internal/awsapi/manifest.gen.go -source-revision "$(AWS_MODELS_REVISION)"
 
 ## docs-index: regenerate the committed docs search/navigation index (run after editing docs/, then commit)
 docs-index:
