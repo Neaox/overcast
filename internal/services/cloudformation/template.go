@@ -2,8 +2,11 @@ package cloudformation
 
 import (
 	"crypto/rand"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"strconv"
 	"strings"
 
@@ -117,6 +120,10 @@ func yamlNodeToValue(n *yaml.Node) any {
 			return map[string]any{"Fn::Select": s}
 		case "!Split":
 			return map[string]any{"Fn::Split": s}
+		case "!FindInMap":
+			return map[string]any{"Fn::FindInMap": s}
+		case "!Cidr":
+			return map[string]any{"Fn::Cidr": s}
 		case "!If":
 			return map[string]any{"Fn::If": s}
 		case "!Sub":
@@ -219,6 +226,15 @@ func resolveMap(m map[string]any, ctx *resolveContext) any {
 		}
 		if _, ok := m["Fn::GetAZs"]; ok {
 			return resolveGetAZs(ctx)
+		}
+		if findInMap, ok := m["Fn::FindInMap"]; ok {
+			return resolveFindInMap(findInMap, ctx)
+		}
+		if b64, ok := m["Fn::Base64"]; ok {
+			return resolveBase64(b64, ctx)
+		}
+		if cidr, ok := m["Fn::Cidr"]; ok {
+			return resolveCidr(cidr, ctx)
 		}
 		if impVal, ok := m["Fn::ImportValue"]; ok {
 			return resolveImportValue(impVal, ctx)
@@ -441,14 +457,18 @@ func resolveJoin(join any, ctx *resolveContext) any {
 		return join
 	}
 	delimiter, _ := arr[0].(string)
-	values, ok := arr[1].([]any)
+	// The value list may itself be an intrinsic that yields a list — Fn::Split,
+	// Fn::GetAZs, Fn::Cidr, Fn::If. Resolving it first is what makes those
+	// compose; asserting on the raw argument instead left the unresolved map to
+	// be formatted into the output by %v. resolveIntrinsics recurses into a
+	// list, so its elements come back resolved too.
+	values, ok := resolveIntrinsics(arr[1], ctx).([]any)
 	if !ok {
 		return join
 	}
 	parts := make([]string, 0, len(values))
 	for _, v := range values {
-		resolved := resolveIntrinsics(v, ctx)
-		parts = append(parts, fmt.Sprintf("%v", resolved))
+		parts = append(parts, fmt.Sprintf("%v", v))
 	}
 	return strings.Join(parts, delimiter)
 }
@@ -460,22 +480,26 @@ func resolveSelect(sel any, ctx *resolveContext) any {
 		return sel
 	}
 	idx := 0
-	switch v := arr[0].(type) {
+	// The index is usually a literal but may be a Ref to a parameter.
+	switch v := resolveIntrinsics(arr[0], ctx).(type) {
 	case float64:
 		idx = int(v)
+	case int:
+		idx = v
 	case string:
-		// Try parsing
 		parsed, err := strconv.Atoi(v)
 		if err != nil {
 			return ""
 		}
 		idx = parsed
 	}
-	values, ok := arr[1].([]any)
-	if !ok || idx >= len(values) {
+	// As in resolveJoin, the list may be an intrinsic — Fn::Split above all,
+	// which is how CDK builds a nested stack's asset key.
+	values, ok := resolveIntrinsics(arr[1], ctx).([]any)
+	if !ok || idx < 0 || idx >= len(values) {
 		return ""
 	}
-	return resolveIntrinsics(values[idx], ctx)
+	return values[idx]
 }
 
 // resolveGetAtt handles Fn::GetAtt: [logicalId, attribute] or "logicalId.attribute".
@@ -578,4 +602,105 @@ func resolveAllProperties(props map[string]any, ctx *resolveContext) map[string]
 		return m
 	}
 	return props
+}
+
+// resolveFindInMap handles Fn::FindInMap: [MapName, TopLevelKey, SecondLevelKey].
+//
+// The keys are commonly intrinsics themselves — {"Ref": "AWS::Region"} against a
+// region-keyed map is the oldest CloudFormation idiom there is — so each is
+// resolved before lookup.
+//
+// A miss resolves to the empty string. Real CloudFormation rejects the template
+// ("Unable to get mapping for FindInMap"), but the resolver has no way to raise
+// a template error, and an empty value is far less harmful than embedding Go's
+// formatting of the unresolved map into a resource property.
+func resolveFindInMap(findInMap any, ctx *resolveContext) any {
+	arr, ok := findInMap.([]any)
+	if !ok || len(arr) < 3 || ctx == nil || ctx.Mappings == nil {
+		return ""
+	}
+	name, _ := resolveIntrinsics(arr[0], ctx).(string)
+	topKey, _ := resolveIntrinsics(arr[1], ctx).(string)
+	secondKey, _ := resolveIntrinsics(arr[2], ctx).(string)
+
+	topLevel, ok := ctx.Mappings[name].(map[string]any)
+	if !ok {
+		return ""
+	}
+	secondLevel, ok := topLevel[topKey].(map[string]any)
+	if !ok {
+		return ""
+	}
+	value, ok := secondLevel[secondKey]
+	if !ok {
+		return ""
+	}
+	return value
+}
+
+// resolveBase64 handles Fn::Base64, which AWS defines over the already-resolved
+// value — EC2 UserData is nearly always an Fn::Sub underneath.
+func resolveBase64(value any, ctx *resolveContext) any {
+	resolved := resolveIntrinsics(value, ctx)
+	str, ok := resolved.(string)
+	if !ok {
+		str = fmt.Sprintf("%v", resolved)
+	}
+	return base64.StdEncoding.EncodeToString([]byte(str))
+}
+
+// resolveCidr handles Fn::Cidr: [ipBlock, count, cidrBits], returning count
+// consecutive subnets of the block. cidrBits is the number of *host* bits in
+// each subnet, so 8 yields /24s — the parameter is a size, not a prefix length,
+// which is the easy thing to get backwards.
+//
+// IPv4 only: Overcast has no IPv6 networking for a template to describe.
+func resolveCidr(cidr any, ctx *resolveContext) any {
+	arr, ok := cidr.([]any)
+	if !ok || len(arr) < 3 {
+		return ""
+	}
+	block, _ := resolveIntrinsics(arr[0], ctx).(string)
+	count := intFromTemplateValue(resolveIntrinsics(arr[1], ctx))
+	hostBits := intFromTemplateValue(resolveIntrinsics(arr[2], ctx))
+
+	prefix, err := netip.ParsePrefix(block)
+	if err != nil || !prefix.Addr().Is4() || count <= 0 || hostBits <= 0 || hostBits >= 32 {
+		return ""
+	}
+	subnetBits := 32 - hostBits
+	if subnetBits < prefix.Bits() {
+		return "" // the requested subnets are larger than the block itself
+	}
+
+	start := prefix.Masked().Addr().As4()
+	base := binary.BigEndian.Uint32(start[:])
+	step := uint32(1) << uint(hostBits)
+
+	out := make([]any, 0, count)
+	for i := range count {
+		var octets [4]byte
+		binary.BigEndian.PutUint32(octets[:], base+uint32(i)*step)
+		out = append(out, fmt.Sprintf("%s/%d", netip.AddrFrom4(octets), subnetBits))
+	}
+	return out
+}
+
+// intFromTemplateValue reads a count from a template, which may arrive as a JSON
+// number or as a string (YAML, or a Ref to a parameter).
+func intFromTemplateValue(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case string:
+		parsed, err := strconv.Atoi(n)
+		if err != nil {
+			return 0
+		}
+		return parsed
+	default:
+		return 0
+	}
 }
