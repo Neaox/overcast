@@ -164,6 +164,18 @@ jobs:
           cache: true
       - run: make docs-check
 
+  aws-operation-coverage:
+    name: AWS operation coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-go@v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Validate generated operation ownership
+        run: make aws-models-check
+
   web:
     name: Web UI
     runs-on: ubuntu-latest

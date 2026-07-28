@@ -52,12 +52,13 @@ func TestGenerateManifest_extractsServiceOperationsAndProtocols(t *testing.T) {
 	// Then: it emits deterministic operation ownership metadata without model I/O at runtime.
 	for _, want := range []string{
 		`SourceRevision = "test-revision"`,
-		`{Service: "queue", SDKID: "Queue", APIVersion: "2026-01-01", Name: "CreateQueue", Protocol: ProtocolAWSJSON10, Protocols: ProtocolsAWSJSON10 | ProtocolsRPCV2CBOR, TargetPrefix: "Queue_20260101.", HTTPMethod: "", URI: ""}`,
-		`{Service: "widget", SDKID: "Widget", APIVersion: "2026-02-02", Name: "GetWidget", Protocol: ProtocolRESTJSON, Protocols: ProtocolsRESTJSON, TargetPrefix: "", HTTPMethod: "GET", URI: "/widgets/{id}"}`,
-		`{Service: "resource-service", SDKID: "Resource Service", APIVersion: "2026-03-03", Name: "GetWidget", Protocol: ProtocolRESTJSON, Protocols: ProtocolsRESTJSON, TargetPrefix: "", HTTPMethod: "GET", URI: "/widgets/{id}"}`,
+		`{Service: "queue", ServiceShape: "Queue_20260101", SDKID: "Queue", APIVersion: "2026-01-01", Name: "CreateQueue", Protocol: ProtocolAWSJSON10, Protocols: ProtocolsAWSJSON10 | ProtocolsRPCV2CBOR, TargetPrefix: "Queue_20260101.", HTTPMethod: "", URI: ""}`,
+		`{Service: "widget", ServiceShape: "Widget", SDKID: "Widget", APIVersion: "2026-02-02", Name: "GetWidget", Protocol: ProtocolRESTJSON, Protocols: ProtocolsRESTJSON, TargetPrefix: "", HTTPMethod: "GET", URI: "/widgets/{id}"}`,
+		`{Service: "resource-service", ServiceShape: "ResourceService", SDKID: "Resource Service", APIVersion: "2026-03-03", Name: "GetWidget", Protocol: ProtocolRESTJSON, Protocols: ProtocolsRESTJSON, TargetPrefix: "", HTTPMethod: "GET", URI: "/widgets/{id}"}`,
 		`{Target: "Queue_20260101.CreateQueue", ModelService: "queue", Operation: "CreateQueue", Protocol: ProtocolAWSJSON10}`,
 		`{Version: "2026-04-04", Operation: "DescribeWidgets", ModelService: "query", Protocol: ProtocolEC2Query}`,
-		`{Method: "GET", ModelService: "", SigningName: "", Operation: "GetWidget", Protocol: ProtocolRESTJSON, Ambiguous: true}`,
+		`{Method: "GET", Query: "", ModelService: "", SigningName: "", Operation: "GetWidget", Protocol: ProtocolRESTJSON, Ambiguous: true}`,
+		`{Protocol: ProtocolRPCV2CBOR, ServiceShape: "Queue_20260101", Operation: "CreateQueue", ModelService: "queue"}`,
 	} {
 		if !strings.Contains(string(got), want) {
 			t.Errorf("generated manifest missing %q:\n%s", want, got)
@@ -74,6 +75,8 @@ func TestWriteRegistryIndexes_marksCollidingServicesAmbiguous(t *testing.T) {
 		{Service: "beta", APIVersion: "2026-02-02", Name: "DescribeThing", Protocol: "AWSQuery"},
 		{Service: "alpha", Name: "GetThing", Protocol: "RESTJSON", HTTPMethod: "GET", URI: "/things/{id}"},
 		{Service: "beta", Name: "GetThing", Protocol: "RESTJSON", HTTPMethod: "GET", URI: "/things/{thingId}"},
+		{Service: "alpha", ServiceShape: "Example", Name: "CreateThing", Protocol: "AWSJSON10", Protocols: []string{"AWSJSON10", "RPCV2CBOR"}},
+		{Service: "beta", ServiceShape: "Example", Name: "CreateThing", Protocol: "AWSJSON10", Protocols: []string{"AWSJSON10", "RPCV2CBOR"}},
 	}
 	var output bytes.Buffer
 
@@ -87,7 +90,12 @@ func TestWriteRegistryIndexes_marksCollidingServicesAmbiguous(t *testing.T) {
 		`{Key: "Example.CreateThing", Services: []string{"alpha", "beta"}}`,
 		`{Version: "2026-02-02", Operation: "DescribeThing", ModelService: "", Protocol: ProtocolAWSQuery, Ambiguous: true}`,
 		`{Key: "2026-02-02\x00DescribeThing", Services: []string{"alpha", "beta"}}`,
-		`{Method: "GET", ModelService: "", SigningName: "", Operation: "GetThing", Protocol: ProtocolRESTJSON, Ambiguous: true}`,
+		`{Method: "GET", Query: "", ModelService: "", SigningName: "", Operation: "GetThing", Protocol: ProtocolRESTJSON, Ambiguous: true}`,
+		`var restCollisions = []operationCollision{`,
+		`{Key: "GET /things/{}", Services: []string{"alpha", "beta"}}`,
+		`{Protocol: ProtocolRPCV2CBOR, ServiceShape: "Example", Operation: "CreateThing", ModelService: "", Ambiguous: true}`,
+		`var rpcCollisions = []operationCollision{`,
+		`{Key: "rpcv2Cbor\x00Example\x00CreateThing", Services: []string{"alpha", "beta"}}`,
 	} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("generated registry index missing %q:\n%s", want, output.String())

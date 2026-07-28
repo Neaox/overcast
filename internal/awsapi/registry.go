@@ -16,6 +16,8 @@ const (
 	ErrorProfileQueryXML
 	ErrorProfileEC2QueryXML
 	ErrorProfileXML
+	ErrorProfileRPCV2CBOR
+	ErrorProfileRPCV2JSON
 )
 
 // Claim is immutable routing metadata for one modeled AWS operation.
@@ -90,40 +92,87 @@ func (r *Registry) ClaimQuery(version, action string) (Claim, bool) {
 	}, true
 }
 
+// ClaimRPC classifies a Smithy RPC v2 operation by the explicit service and
+// operation names carried in /service/{service}/operation/{operation}. The
+// index includes additive protocol traits, not only each model's canonical
+// protocol.
+func (r *Registry) ClaimRPC(protocol Protocol, serviceShape, operation string) (Claim, bool) {
+	if (protocol != ProtocolRPCV2CBOR && protocol != ProtocolRPCV2JSON) || serviceShape == "" || operation == "" {
+		return Claim{}, false
+	}
+	if separator := strings.LastIndexAny(serviceShape, ".#"); separator >= 0 {
+		serviceShape = serviceShape[separator+1:]
+	}
+	i := sort.Search(len(rpcOperations), func(i int) bool {
+		return compareRPCKey(rpcOperations[i], protocol, serviceShape, operation) >= 0
+	})
+	if i == len(rpcOperations) || compareRPCKey(rpcOperations[i], protocol, serviceShape, operation) != 0 {
+		return Claim{}, false
+	}
+	op := rpcOperations[i]
+	profile := ErrorProfileRPCV2CBOR
+	if protocol == ProtocolRPCV2JSON {
+		profile = ErrorProfileRPCV2JSON
+	}
+	return Claim{
+		Service:      overcastService(op.ModelService),
+		ModelService: op.ModelService,
+		Operation:    op.Operation,
+		Protocol:     op.Protocol,
+		ErrorProfile: profile,
+		Ambiguous:    op.Ambiguous,
+	}, true
+}
+
+func compareRPCKey(op rpcOperation, protocol Protocol, serviceShape, operation string) int {
+	if op.Protocol != protocol {
+		return strings.Compare(string(op.Protocol), string(protocol))
+	}
+	if op.ServiceShape != serviceShape {
+		return strings.Compare(op.ServiceShape, serviceShape)
+	}
+	return strings.Compare(op.Operation, operation)
+}
+
+func compareRPCOperation(left, right rpcOperation) int {
+	return compareRPCKey(left, right.Protocol, right.ServiceShape, right.Operation)
+}
+
 // ClaimREST classifies a modeled REST JSON or REST XML HTTP binding. Literal
 // edges take precedence over labels, matching Smithy's URI binding semantics.
 // It walks generated static tables only: no model parsing, map construction,
 // or whole-manifest scan occurs on the request path.
 func (r *Registry) ClaimREST(method, path string) (Claim, bool) {
+	return r.ClaimRESTQuery(method, path, "")
+}
+
+// ClaimRESTQuery classifies a modeled REST binding including any literal
+// query components declared by Smithy (for example ?operation=tag-resource).
+// Query matching is allocation-free and accepts additional client parameters.
+func (r *Registry) ClaimRESTQuery(method, path, rawQuery string) (Claim, bool) {
 	if path == "" || path[0] != '/' {
 		return Claim{}, false
 	}
 
-	node, ok := restTrieMatch(0, method, path, 1)
+	operationIndex, ok := restTrieMatch(0, method, path, rawQuery, 1)
 	if !ok {
 		return Claim{}, false
 	}
 
-	current := restTrieNodes[node]
-	for _, op := range restOperations[current.OperationStart:current.OperationEnd] {
-		if op.Method != method {
-			continue
-		}
-		profile := ErrorProfileJSON
-		if op.Protocol == ProtocolRESTXML {
-			profile = ErrorProfileXML
-		}
-		return Claim{
-			Service:      overcastService(op.ModelService),
-			ModelService: op.ModelService,
-			SigningName:  op.SigningName,
-			Operation:    op.Operation,
-			Protocol:     op.Protocol,
-			ErrorProfile: profile,
-			Ambiguous:    op.Ambiguous,
-		}, true
+	op := restOperations[operationIndex]
+	profile := ErrorProfileJSON
+	if op.Protocol == ProtocolRESTXML {
+		profile = ErrorProfileXML
 	}
-	return Claim{}, false
+	return Claim{
+		Service:      overcastService(op.ModelService),
+		ModelService: op.ModelService,
+		SigningName:  op.SigningName,
+		Operation:    op.Operation,
+		Protocol:     op.Protocol,
+		ErrorProfile: profile,
+		Ambiguous:    op.Ambiguous,
+	}, true
 }
 
 // restTrieMatch walks one path without allocating a strings.Split result. A
@@ -131,12 +180,12 @@ func (r *Registry) ClaimREST(method, path string) (Claim, bool) {
 // possible number of consumed segments only after literal and simple-label
 // branches fail. That preserves URI precedence while supporting bindings such
 // as /mrap/instances/{Name+}/policy.
-func restTrieMatch(node int, method, path string, start int) (int, bool) {
+func restTrieMatch(node int, method, path, rawQuery string, start int) (int, bool) {
 	if start == len(path) {
 		current := restTrieNodes[node]
-		for _, op := range restOperations[current.OperationStart:current.OperationEnd] {
-			if op.Method == method {
-				return node, true
+		for i := current.OperationStart; i < current.OperationEnd; i++ {
+			if restOperationMatches(restOperations[i], method, rawQuery) {
+				return i, true
 			}
 		}
 		return 0, false
@@ -153,12 +202,12 @@ func restTrieMatch(node int, method, path string, start int) (int, bool) {
 	}
 	current := restTrieNodes[node]
 	if literal := restLiteralNode(current, path[start:end]); literal >= 0 {
-		if matched, ok := restTrieMatch(literal, method, path, nextStart); ok {
+		if matched, ok := restTrieMatch(literal, method, path, rawQuery, nextStart); ok {
 			return matched, true
 		}
 	}
 	if current.Parameter >= 0 {
-		if matched, ok := restTrieMatch(current.Parameter, method, path, nextStart); ok {
+		if matched, ok := restTrieMatch(current.Parameter, method, path, rawQuery, nextStart); ok {
 			return matched, true
 		}
 	}
@@ -166,7 +215,7 @@ func restTrieMatch(node int, method, path string, start int) (int, bool) {
 		return 0, false
 	}
 	for greedyStart := nextStart; ; {
-		if matched, ok := restTrieMatch(current.Greedy, method, path, greedyStart); ok {
+		if matched, ok := restTrieMatch(current.Greedy, method, path, rawQuery, greedyStart); ok {
 			return matched, true
 		}
 		if greedyStart == len(path) {
@@ -180,6 +229,46 @@ func restTrieMatch(node int, method, path string, start int) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+func restOperationMatches(op restOperation, method, rawQuery string) bool {
+	if op.Method != method {
+		return false
+	}
+	for required := op.Query; required != ""; {
+		end := strings.IndexByte(required, '&')
+		part := required
+		if end >= 0 {
+			part = required[:end]
+			required = required[end+1:]
+		} else {
+			required = ""
+		}
+		if !rawQueryContains(rawQuery, part) {
+			return false
+		}
+	}
+	return true
+}
+
+func rawQueryContains(rawQuery, required string) bool {
+	for rawQuery != "" {
+		end := strings.IndexByte(rawQuery, '&')
+		part := rawQuery
+		if end >= 0 {
+			part = rawQuery[:end]
+			rawQuery = rawQuery[end+1:]
+		} else {
+			rawQuery = ""
+		}
+		// Net/http and SDK serializers may render a valueless Smithy query
+		// literal as either "?acl" or "?acl=". Preserve exact matching for
+		// literals that declare a value.
+		if part == required || (!strings.Contains(required, "=") && part == required+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 func restLiteralNode(node restTrieNode, segment string) int {

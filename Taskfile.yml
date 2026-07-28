@@ -129,6 +129,12 @@ tasks:
     cmds:
       - go run ./cmd/awsmodelgen -models "{{.AWS_MODELS_DIR}}" -output internal/awsapi/manifest.gen.go -source-revision "{{.AWS_MODELS_REVISION}}"
 
+  aws-models-check:
+    desc: Validate the committed AWS operation corpus and generated runtime ownership indexes without network access
+    cmds:
+      - go test -count=1 ./cmd/awsmodelgen ./internal/awsapi ./internal/protocol/codec ./tests/integration/router
+      - go run -tags dev ./cmd/capgen --check-model
+
   docs-index:
     desc: Regenerate the committed docs search/navigation index (run after editing docs/, then commit)
     sources:
