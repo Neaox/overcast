@@ -130,10 +130,11 @@ tasks:
       - go run ./cmd/awsmodelgen -models "{{.AWS_MODELS_DIR}}" -output internal/awsapi/manifest.gen.go -source-revision "{{.AWS_MODELS_REVISION}}"
 
   aws-models-check:
-    desc: Validate the committed AWS operation corpus and generated runtime ownership indexes without network access
+    desc: Validate the AWS operation corpus; set AWS_MODELS_DIR for a full regeneration diff
     cmds:
       - go test -count=1 ./cmd/awsmodelgen ./internal/awsapi ./internal/protocol/codec ./tests/integration/router
       - go run -tags dev ./cmd/capgen --check-model
+      - '{{if .AWS_MODELS_DIR}}go run ./cmd/awsmodelgen -models "{{.AWS_MODELS_DIR}}" -output internal/awsapi/manifest.gen.go -source-revision "{{.AWS_MODELS_REVISION}}" -check{{else}}echo "AWS_MODELS_DIR not set; skipping full regeneration diff"{{end}}'
 
   docs-index:
     desc: Regenerate the committed docs search/navigation index (run after editing docs/, then commit)

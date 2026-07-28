@@ -4,6 +4,6 @@ model-date=2026-07-27
 license=Apache-2.0
 format=Smithy JSON AST
 
-# This A1 pilot records provenance for the generated operation manifest. The
-# refresh workflow introduced in A5 will replace this with a full vendored
-# snapshot and enforce regeneration from the recorded revision.
+# The A5 refresh workflow caches a verified upstream Git mirror and enforces
+# regeneration from this revision. Raw Smithy models are not vendored; only the
+# compact generated manifest is committed.

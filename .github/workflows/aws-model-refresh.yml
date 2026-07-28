@@ -1,0 +1,231 @@
+name: AWS API model refresh
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: aws-api-model-refresh
+  cancel-in-progress: false
+
+env:
+  UPDATE_BRANCH: automation/aws-api-models
+  GH_TOKEN: ${{ secrets.AWS_MODELS_PR_TOKEN || github.token }}
+
+jobs:
+  refresh:
+    name: Refresh pinned models
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MODEL_MIRROR: /tmp/overcast-api-models-aws.git
+      MODEL_CHECKOUT: /tmp/overcast-api-models-aws
+
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.AWS_MODELS_PR_TOKEN || github.token }}
+
+      - uses: actions/setup-go@v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Compare the pinned and upstream revisions
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_url="$(sed -n 's/^source=//p' models/aws/VERSION)"
+          pinned_revision="$(sed -n 's/^revision=//p' models/aws/VERSION)"
+          if [[ "$source_url" != "https://github.com/aws/api-models-aws" ]]; then
+            echo "Unexpected AWS model source: $source_url" >&2
+            exit 1
+          fi
+          latest_revision="$(git ls-remote "$source_url" HEAD | awk '{print $1}')"
+          test -n "$pinned_revision"
+          test -n "$latest_revision"
+          {
+            echo "source_url=$source_url"
+            echo "pinned_revision=$pinned_revision"
+            echo "latest_revision=$latest_revision"
+          } >> "$GITHUB_OUTPUT"
+          if [[ "$pinned_revision" == "$latest_revision" ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "AWS API models are current at $pinned_revision." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Inspect the dedicated update branch
+        if: steps.upstream.outputs.changed == 'true'
+        id: branch
+        shell: bash
+        env:
+          LATEST_REVISION: ${{ steps.upstream.outputs.latest_revision }}
+        run: |
+          set -euo pipefail
+          expected_revision=""
+          refresh_needed="true"
+          if git fetch origin "+refs/heads/$UPDATE_BRANCH:refs/remotes/origin/$UPDATE_BRANCH"; then
+            update_ref="refs/remotes/origin/$UPDATE_BRANCH"
+            expected_revision="$(git rev-parse "$update_ref")"
+            update_pin="$(git show "$update_ref:models/aws/VERSION" | sed -n 's/^revision=//p')"
+            update_parent="$(git rev-parse "$update_ref^")"
+            current_main="$(git rev-parse origin/main)"
+            pr_number="$(gh pr list \
+              --state open \
+              --base main \
+              --head "$UPDATE_BRANCH" \
+              --json number \
+              --jq '.[0].number // empty')"
+            if [[ "$update_pin" == "$LATEST_REVISION" && "$update_parent" == "$current_main" && -n "$pr_number" ]]; then
+              refresh_needed="false"
+              echo "Open PR #$pr_number already contains $LATEST_REVISION on current main." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          {
+            echo "expected_revision=$expected_revision"
+            echo "refresh_needed=$refresh_needed"
+          } >> "$GITHUB_OUTPUT"
+          if [[ "$refresh_needed" == "true" ]]; then
+            git switch --force-create "$UPDATE_BRANCH" origin/main
+          fi
+
+      - name: Restore the verified upstream Git mirror
+        if: steps.upstream.outputs.changed == 'true' && steps.branch.outputs.refresh_needed == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MODEL_MIRROR }}
+          key: aws-api-models-${{ runner.os }}-${{ steps.upstream.outputs.latest_revision }}
+          restore-keys: |
+            aws-api-models-${{ runner.os }}-
+
+      - name: Fetch and verify the model revisions
+        if: steps.upstream.outputs.changed == 'true' && steps.branch.outputs.refresh_needed == 'true'
+        shell: bash
+        env:
+          SOURCE_URL: ${{ steps.upstream.outputs.source_url }}
+          PINNED_REVISION: ${{ steps.upstream.outputs.pinned_revision }}
+          LATEST_REVISION: ${{ steps.upstream.outputs.latest_revision }}
+        run: |
+          set -euo pipefail
+          if [[ ! -d "$MODEL_MIRROR" ]]; then
+            git clone --mirror "$SOURCE_URL" "$MODEL_MIRROR"
+          else
+            git --git-dir="$MODEL_MIRROR" remote set-url origin "$SOURCE_URL"
+            git --git-dir="$MODEL_MIRROR" fetch --prune origin '+refs/*:refs/*'
+          fi
+          git --git-dir="$MODEL_MIRROR" cat-file -e "$PINNED_REVISION^{commit}"
+          git --git-dir="$MODEL_MIRROR" cat-file -e "$LATEST_REVISION^{commit}"
+          test "$(git --git-dir="$MODEL_MIRROR" rev-parse HEAD)" = "$LATEST_REVISION"
+
+      - name: Generate the baseline and refreshed inventories
+        if: steps.upstream.outputs.changed == 'true' && steps.branch.outputs.refresh_needed == 'true'
+        id: generate
+        shell: bash
+        env:
+          PINNED_REVISION: ${{ steps.upstream.outputs.pinned_revision }}
+          LATEST_REVISION: ${{ steps.upstream.outputs.latest_revision }}
+        run: |
+          set -euo pipefail
+          git clone "$MODEL_MIRROR" "$MODEL_CHECKOUT"
+          git -C "$MODEL_CHECKOUT" checkout --detach "$PINNED_REVISION"
+          go run ./cmd/awsmodelgen \
+            -models "$MODEL_CHECKOUT/models" \
+            -output "$RUNNER_TEMP/baseline-manifest.go" \
+            -source-revision "$PINNED_REVISION" \
+            -inventory-output "$RUNNER_TEMP/baseline-inventory.json"
+
+          git -C "$MODEL_CHECKOUT" checkout --detach "$LATEST_REVISION"
+          model_date="$(git -C "$MODEL_CHECKOUT" show -s --format=%cs "$LATEST_REVISION")"
+          go run ./cmd/awsmodelgen \
+            -models "$MODEL_CHECKOUT/models" \
+            -output internal/awsapi/manifest.gen.go \
+            -source-revision "$LATEST_REVISION" \
+            -inventory-output "$RUNNER_TEMP/current-inventory.json" \
+            -baseline-inventory "$RUNNER_TEMP/baseline-inventory.json" \
+            -summary-output "$RUNNER_TEMP/aws-model-summary.md" \
+            -version-file models/aws/VERSION \
+            -model-date "$model_date"
+          echo "model_date=$model_date" >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/aws-model-summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate generated ownership and full regeneration
+        if: steps.upstream.outputs.changed == 'true' && steps.branch.outputs.refresh_needed == 'true'
+        env:
+          AWS_MODELS_DIR: ${{ env.MODEL_CHECKOUT }}/models
+          AWS_MODELS_REVISION: ${{ steps.upstream.outputs.latest_revision }}
+        run: make aws-models-check
+
+      - name: Commit and update the dedicated branch
+        if: steps.upstream.outputs.changed == 'true' && steps.branch.outputs.refresh_needed == 'true'
+        shell: bash
+        env:
+          EXPECTED_REVISION: ${{ steps.branch.outputs.expected_revision }}
+          LATEST_REVISION: ${{ steps.upstream.outputs.latest_revision }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet --exit-code; then
+            echo "The upstream commit produced no tracked model changes." >&2
+            exit 1
+          fi
+          git config user.name "overcast-model-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add internal/awsapi/manifest.gen.go models/aws/VERSION
+          git commit -m "chore(aws-models): refresh pinned API models"
+          if [[ -n "$EXPECTED_REVISION" ]]; then
+            git push \
+              --force-with-lease="refs/heads/$UPDATE_BRANCH:$EXPECTED_REVISION" \
+              origin "HEAD:refs/heads/$UPDATE_BRANCH"
+          else
+            git push \
+              --force-with-lease="refs/heads/$UPDATE_BRANCH:" \
+              origin "HEAD:refs/heads/$UPDATE_BRANCH"
+          fi
+
+      - name: Create or update the model refresh pull request
+        if: steps.upstream.outputs.changed == 'true' && steps.branch.outputs.refresh_needed == 'true'
+        shell: bash
+        env:
+          LATEST_REVISION: ${{ steps.upstream.outputs.latest_revision }}
+          MODEL_DATE: ${{ steps.generate.outputs.model_date }}
+        run: |
+          set -euo pipefail
+          short_revision="${LATEST_REVISION:0:12}"
+          {
+            echo "This automated PR refreshes the pinned AWS Smithy models to \`$LATEST_REVISION\` ($MODEL_DATE)."
+            echo
+            cat "$RUNNER_TEMP/aws-model-summary.md"
+            echo
+            echo "## Verification"
+            echo
+            echo "- \`make aws-models-check\`"
+            echo "- Full byte-for-byte regeneration from the verified upstream checkout"
+            echo
+            echo "This workflow never merges the PR automatically."
+          } > "$RUNNER_TEMP/aws-model-pr.md"
+
+          pr_number="$(gh pr list \
+            --state open \
+            --base main \
+            --head "$UPDATE_BRANCH" \
+            --json number \
+            --jq '.[0].number // empty')"
+          if [[ -n "$pr_number" ]]; then
+            gh pr edit "$pr_number" \
+              --title "chore(aws-models): refresh to $short_revision" \
+              --body-file "$RUNNER_TEMP/aws-model-pr.md"
+          else
+            gh pr create \
+              --base main \
+              --head "$UPDATE_BRANCH" \
+              --title "chore(aws-models): refresh to $short_revision" \
+              --body-file "$RUNNER_TEMP/aws-model-pr.md"
+          fi

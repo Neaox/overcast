@@ -44,6 +44,7 @@ AI agents using this repo should also read [AGENTS.md](./AGENTS.md) for agent-sp
     - [Rules](#rules)
   - [Testing](#testing)
   - [Versioning and changelog](#versioning-and-changelog)
+  - [Refreshing the AWS API models](#refreshing-the-aws-api-models)
   - [How to add an endpoint](#how-to-add-an-endpoint)
   - [How to add a service](#how-to-add-a-service)
   - [Service package structure](#service-package-structure)
@@ -993,6 +994,45 @@ Add your entry under `[Unreleased]`:
 
 - SQS: `ReceiveMessage` now correctly applies `VisibilityTimeout` (#38)
 ```
+
+---
+
+## Refreshing the AWS API models
+
+`models/aws/VERSION` pins the public
+[`aws/api-models-aws`](https://github.com/aws/api-models-aws) Smithy corpus used
+to generate `internal/awsapi/manifest.gen.go`. The generated manifest and
+runtime indexes are committed; the raw model checkout is not.
+
+The `AWS API model refresh` workflow checks upstream weekly and can be started
+manually from GitHub Actions. When a new revision exists, it regenerates the
+manifest, runs the model and routing gates, and creates or updates one PR from
+`automation/aws-api-models`. It resets and force-with-lease updates only that
+dedicated branch and never merges the PR.
+
+Maintainers should configure `AWS_MODELS_PR_TOKEN` as a fine-grained PAT with
+contents and pull-request write access. The workflow falls back to
+[`GITHUB_TOKEN`](https://docs.github.com/en/actions/concepts/security/github_token),
+but GitHub does not normally start new workflow runs for changes made with that
+token, so the PR's CI may then require manual approval. The repository's
+[Actions settings](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository)
+must also allow workflows to create pull requests.
+
+To regenerate locally, check out the revision recorded in
+`models/aws/VERSION`, then run:
+
+```sh
+make generate-aws-operations \
+  AWS_MODELS_DIR=/path/to/api-models-aws/models
+make aws-models-check \
+  AWS_MODELS_DIR=/path/to/api-models-aws/models
+```
+
+The generator rejects a checkout whose `HEAD` differs from the pin. Supplying
+`AWS_MODELS_DIR` to `aws-models-check` adds a byte-for-byte regeneration check;
+without it, the same target remains a no-network validation of the committed
+corpus and ownership indexes. Never hand-edit or hand-merge the generated
+manifest.
 
 ---
 

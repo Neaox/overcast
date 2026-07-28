@@ -1,6 +1,6 @@
 # AWS API operation coverage and S3 fallthrough prevention
 
-> Status: A4 implemented, pending review, 2026-07-28. Owner: TBD.
+> Status: A5 implemented, pending review, 2026-07-28. Owner: TBD.
 > Related: [Level 2 codegen](./level2-codegen.md) Track 3, [Smithy wire protocols](../dev/smithy.md), and [wire-byte goldens](./wire-byte-goldens.md).
 
 ## 1. Objective
@@ -34,7 +34,11 @@ Use AWS's public [`aws/api-models-aws`](https://github.com/aws/api-models-aws) r
 
 The complete raw Smithy snapshot is deliberately not vendored in A1: it is large, while the checked-in generated manifest is the only artifact required at runtime. `models/aws/VERSION` records the upstream commit, model date, source URL, and license provenance. Regeneration requires a local `api-models-aws` checkout whose `HEAD` matches that recorded commit; the generator validates the match before writing output. Runtime code must never parse model files or contact AWS/GitHub.
 
-This means A1 cannot yet provide the planned no-network regeneration-and-diff CI gate: that belongs to A5, when the refresh workflow supplies a verified snapshot/cache to CI. Until then, the Make target is reproducible from an explicitly checked-out source revision, not offline from this repository alone.
+Normal PRs validate the committed corpus without network access. When a verified
+model checkout is available, `make aws-models-check AWS_MODELS_DIR=...` also
+regenerates the manifest and compares it byte-for-byte. The A5 refresh workflow
+keeps a GitHub Actions cache of the upstream Git mirror and supplies that
+checkout; the raw Smithy snapshot is still not committed or loaded at runtime.
 
 This covers public AWS management-plane/service API operations used by SDKs, CLI, and CDK. It excludes emulator-only `/_*` endpoints, service data/runtime endpoints with intentionally arbitrary user paths (such as API Gateway execution), and CLI conveniences such as waiters. Waiters are covered indirectly through their API operations.
 
@@ -295,7 +299,9 @@ Run router/protocol integration tests, generator unit tests, manifest determinis
 
 ## 8. Model refresh automation
 
-Add a scheduled GitHub Actions workflow, weekly by default and manually dispatchable. AWS publishes daily, but weekly keeps review diffs manageable. It:
+The `AWS API model refresh` GitHub Actions workflow runs at 03:17 UTC every
+Monday and is also manually dispatchable. AWS publishes daily, but weekly keeps
+review diffs manageable. It:
 
 1. compares upstream `aws/api-models-aws` with `models/aws/VERSION`;
 2. exits when current;
@@ -303,15 +309,35 @@ Add a scheduled GitHub Actions workflow, weekly by default and manually dispatch
 4. summarizes service, operation, trait, binding, collision, and fallback-coverage changes; and
 5. creates or updates one bot-owned PR.
 
-Use a stable branch such as `automation/aws-api-models`. If an open PR exists from that branch, update it rather than creating a duplicate. Use a workflow concurrency group and permit force-with-lease only for this dedicated automation branch. Never update contributor branches or merge automatically.
+It uses the stable `automation/aws-api-models` branch. Each run resets that
+branch to current `main`, commits only the generated manifest and provenance
+pin, and pushes with an exact force-with-lease against the remote revision it
+observed. If an open PR exists from that branch, the workflow updates its title
+and body; otherwise it creates one. The `aws-api-model-refresh` concurrency
+group serializes runs. It never updates contributor branches and never merges.
+
+The upstream repository is cached as a Git mirror keyed by the observed commit.
+Every run still fetches from the configured official source, verifies that both
+the old and new revisions are real commits, and verifies that the mirror's
+`HEAD` is the revision returned by `ls-remote`. The cache is a performance
+optimization, not a trust decision.
+
+The workflow may use the repository `GITHUB_TOKEN`, but maintainers should
+configure `AWS_MODELS_PR_TOKEN` as a fine-grained PAT with contents and
+pull-request write access. GitHub suppresses ordinary workflow runs caused by
+`GITHUB_TOKEN`, so the dedicated token is what makes the automation PR's normal
+CI start without manual intervention. Repository Actions settings must also
+permit workflows to create pull requests. Regardless of token, branch
+protection and human review remain the merge gate.
 
 Starting in A4, every normal PR runs a no-network `aws-models-check` target
 that validates the committed generator fixtures, immutable indexes, collision
 metadata, capability alignment, protocol envelopes, router regressions, and
 generated no-S3-ownership-gap corpus. It deliberately does not fetch models.
-A5 adds the verified upstream snapshot/cache needed to extend that same target
-with full regeneration-and-diff validation; until then, regeneration remains
-the explicit pinned-checkout operation described in §3.
+A5 supplies the verified upstream checkout from its cache and invokes that same
+target with `AWS_MODELS_DIR` and `AWS_MODELS_REVISION`, enabling full
+regeneration-and-diff validation. Contributors can invoke the identical path
+with any local checkout at the pinned revision.
 
 ## 9. Relationship to Level 2 codegen
 
