@@ -186,6 +186,7 @@ Two Go/TS files are generated from `docs/` and **committed**, exactly like `inte
 - Go builds always compile. A binary built without an SPA serves the API normally and returns a 503 naming `make build-web` on the web UI port — that response is the symptom, not a bug to investigate.
 - Anything that must actually serve the UI needs `make build-web` first. `make ci-local-go`, the Docker build, and release builds all assert a real `web/dist/index.html` and fail loudly without one.
 - Backend-only work never needs it: `go vet -tags slim ./...` skips the UI entirely.
+- `-tags slim` also removes real routes, not just the UI — `/_mcp` is registered only in `!slim` builds. A test that exercises one of those surfaces must carry the same build constraint, or it fails under `-tags slim` and looks like a routing bug when it isn't. See [tests/AGENTS.md § Build-tag-sensitive tests](./tests/AGENTS.md#build-tag-sensitive-tests--guard-the-test-like-its-subject).
 
 ---
 

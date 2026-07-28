@@ -100,6 +100,53 @@ Run with: `make test-integration`
 
 ---
 
+## Build-tag-sensitive tests — guard the test like its subject
+
+Some surfaces only exist in some builds. The runtime MCP endpoint is the current
+example: `internal/router/mcp_routes.go` is `//go:build !slim` and its slim twin
+makes `registerMCPRoutes` a no-op, so under `-tags slim` there is no `/_mcp`
+route and requests to it correctly fall through to S3's catch-all and get a 501.
+
+**A test must carry the same build constraint as the surface it exercises.** An
+unguarded test asserting on a non-slim-only route passes untagged and fails under
+`-tags slim` — a false positive that costs whoever hits it the time to re-derive
+that it isn't a real bug. AGENTS.md points agents at `-tags slim` for backend-only
+verification, so that is a well-travelled path.
+
+The same applies to `-tags nosqlite`, where `state.NewSQLiteStore` and
+`state.NewHybridStore` are stubs that always error
+(`internal/state/sqlite_hybrid_nosqlite.go`). The shipped `overcastd` binary and
+slim Docker image are built `slim,nosqlite`, so both tags matter.
+
+Guard the **whole file**, not the individual assertion — put the affected tests in
+their own file with the constraint at the top. Precedents:
+`internal/router/mcp_routes_test.go` and `internal/bff/docs_search_test.go`
+(`!slim`); `internal/router/debug_hybrid_test.go` and
+`internal/services/dynamodb/item_store_test.go` (`!nosqlite`);
+`tests/integration/router/mcp_test.go` (`!slim`) and
+`tests/integration/router/sqlite_test.go` (`!nosqlite`). Leave a one-line pointer
+in the file the tests moved out of.
+
+When you add a build-tagged file, verify both ways before finishing:
+
+```sh
+go test -count=1 ./tests/integration/foo/
+go test -count=1 -tags slim ./tests/integration/foo/
+go test -count=1 -tags slim,nosqlite ./tests/integration/foo/
+```
+
+CI runs the whole suite under `-tags slim` (the `slim` job in
+`.github/workflows/test.yml`), so an unguarded slim-sensitive test fails there.
+`slim,nosqlite` is not yet gated in CI — see the known gap noted below.
+
+> **Known gap:** `go test -tags slim,nosqlite ./...` currently fails in
+> `internal/services/cloudwatch` and `internal/services/cloudwatch/logs`. Those
+> are memory-vs-SQL *parity* tests that build both backends inside one test
+> function, so they need a real restructure rather than a file-level tag. Until
+> that lands, `slim,nosqlite` cannot be added as a CI gate.
+
+---
+
 ## Coverage requirements
 
 | Layer                            | Target coverage                                          |
