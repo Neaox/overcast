@@ -96,6 +96,21 @@ func AssertXMLError(t *testing.T, resp *http.Response, expectedCode string) {
 	}
 }
 
+// AssertQueryXMLError decodes an AWS Query ErrorResponse and checks its error code.
+func AssertQueryXMLError(t *testing.T, resp *http.Response, expectedCode string) {
+	t.Helper()
+	var errResp struct {
+		Error struct {
+			Code    string `xml:"Code"`
+			Message string `xml:"Message"`
+		} `xml:"Error"`
+	}
+	DecodeXML(t, resp, &errResp)
+	if errResp.Error.Code != expectedCode {
+		t.Errorf("expected Query error code %q, got %q (message: %s)", expectedCode, errResp.Error.Code, errResp.Error.Message)
+	}
+}
+
 // Eventually retries fn every interval until it returns true or timeout
 // elapses. Calls t.Fatal with msg if the deadline is reached without success.
 func Eventually(t *testing.T, timeout, interval time.Duration, fn func() bool, msg string) {

@@ -34,7 +34,6 @@ import (
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
-	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
@@ -725,9 +724,9 @@ func (s *Service) Stop(ctx context.Context) {
 
 func (s *Service) Name() string { return "lambda" }
 
-// PathPrefixes implements router.PathPrefixService. When Lambda is disabled,
-// the router registers a 503 ServiceDisabled handler at this prefix so requests
-// don't fall through to S3's /{bucket}/* wildcard and return XML errors.
+// PathPrefixes lists every Lambda API version. The router uses these prefixes
+// only while Lambda is disabled, so each version reports ServiceDisabled rather
+// than falling through to S3's /{bucket}/* wildcard.
 func (s *Service) PathPrefixes() []string {
 	return []string{
 		"/2015-03-31",
@@ -857,13 +856,6 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	// function URLs accept arbitrary methods and let the function decide.
 	r.HandleFunc("/_lambda/url-invoke/{urlId}/*", s.handler.InvokeFunctionURL)
 
-	// Keep every Lambda API vintage out of S3's catch-all route. Exact Lambda
-	// handlers registered above take precedence; this is only the honest 501
-	// fallback for a real Lambda path that Overcast has not implemented yet.
-	for _, prefix := range s.PathPrefixes() {
-		r.HandleFunc(prefix, protocol.NotImplementedJSON)
-		r.HandleFunc(prefix+"/*", protocol.NotImplementedJSON)
-	}
 }
 
 // runtimeAPIContainerAddr determines the host:port that Lambda containers use

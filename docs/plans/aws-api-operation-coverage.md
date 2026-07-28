@@ -118,6 +118,12 @@ Before landing, benchmark router construction and representative S3, AWS JSON, Q
 
 Each phase begins with failing tests. Any correction to modeled protocol, error format, or REST binding uses AWS API docs/Smithy evidence and updates the compatibility tracker.
 
+Until A2 provides the generated evidence-based registry, do not install an
+enabled-service REST catch-all for a path that can also be a legal S3 bucket or
+object path. The disabled-service prefixes remain safe because the configured
+service state is unambiguous; enabled Lambda REST fallback therefore belongs in
+the registry phase, not in a service-local chi wildcard.
+
 ### Shipping and branch strategy
 
 Ship this work as small, independently reviewable PRs; do not keep it on one
