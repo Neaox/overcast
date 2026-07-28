@@ -124,3 +124,37 @@ Other CloudFormation-minted URLs were reviewed:
 
 So SQS queue URLs are the observed case; the fix is written generically against "origin is ours" so
 any future path-style URL is covered by construction.
+
+## Does re-origining break container callers, where `localhost` is the caller?
+
+The concern is fair: hand a Lambda container `localhost` and it dials itself, not Overcast.
+Measured, with a Lambda that reads the stack output via `DescribeStacks` and then sends to the
+queue URL it finds — the shape a real function has:
+
+| `OVERCAST_HOSTNAME` | What the Lambda receives | Before | After |
+| --- | --- | --- | --- |
+| unset (remapped ports) | `localhost:4566` → `172.18.0.2:4566` | **FAIL** `ECONNREFUSED 127.0.0.1:4566` | **PASS** |
+| `localhost` | `localhost:4566` | FAIL | FAIL (unchanged) |
+| `localhost.overcast.sh` | `localhost.overcast.sh:4566` | PASS | PASS |
+
+So the change **fixes** the container case rather than breaking it: the rewrite is per caller, so the
+host gets `localhost:<published>` and the Lambda gets the container-routable address, from the same
+stored output.
+
+The middle row is unchanged by this fix and is a configuration error rather than a defect.
+`OVERCAST_HOSTNAME=localhost` instructs Overcast to advertise itself under a name that means "me" to
+every container that hears it, which cannot work for a sibling. The split-horizon names exist
+precisely for this — `localhost.overcast.sh` resolves to 127.0.0.1 in public DNS and is remapped to
+Overcast inside containers via `/etc/hosts`, so one URL serves both sides. A startup warning when
+`OVERCAST_HOSTNAME` is a bare loopback name and container-backed services are enabled would turn a
+silent failure into a diagnosable one; not done here.
+
+### Why the configured hostname still wins for path-style URLs
+
+Flipping the precedence to "caller's origin always wins" was tried and reverted. It broke
+`TestCreateStack_SQSQueueRefOutputIsUsableQueueURL`, which is correct to object: with a split-horizon
+hostname configured, that name is *better* than the caller's raw address, because it resolves from
+both sides of the container boundary while `127.0.0.1` does not. `clientBaseURL`'s precedence —
+configured hostname authoritative, caller's scheme and port kept — is right for both URL shapes once
+`OVERCAST_HOSTNAME` is understood as a split-horizon name. The port is the part that must follow the
+caller, and that is what this fix corrects.

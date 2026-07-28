@@ -14,6 +14,8 @@
 > Everything there applies to you too — this file adds agent-specific guardrails only.
 >
 > For test conventions, see [tests/AGENTS.md](./tests/AGENTS.md).
+> For smoke testing by hand — and for why the AWS CLI alone cannot verify an endpoint change —
+> see [docs/dev/manual-testing.md](./docs/dev/manual-testing.md).
 > For current implementation status and what to build next, see [STATUS.md](./STATUS.md).
 
 ## Repo-local skills

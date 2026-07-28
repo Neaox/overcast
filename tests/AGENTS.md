@@ -2,6 +2,10 @@
 
 > Test conventions for this project. Read this before writing any test.
 > For general project conventions see the root [AGENTS.md](../AGENTS.md).
+>
+> Conventions here cover **coded** tests. Verifying a change by hand — endpoint and origin
+> behaviour in particular, where the AWS CLI is not a representative client — is covered in
+> [docs/dev/manual-testing.md](../docs/dev/manual-testing.md).
 
 ---
 
