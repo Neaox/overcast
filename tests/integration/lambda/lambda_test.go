@@ -5507,6 +5507,103 @@ func TestCreateFunctionUrlConfig_mintedURLRoutesBackToLambda(t *testing.T) {
 	}
 }
 
+// TestInvokeFunctionURL_hostRoutedInNonDefaultRegion audits the claim in
+// getFunctionURLConfigByURLID (store_url.go) that a Host-routed function URL
+// invocation needs no region hint.
+//
+// That claim holds for the FIRST lookup only: the config scan really is
+// region-agnostic. But InvokeFunctionURL immediately calls getFunction, which
+// is region-scoped (serviceutil.RegionKey, store.go) — so a function URL
+// created in a non-default region resolves its config and then fails to find
+// the function behind it.
+//
+// The assertion is deliberately "not 404 Function not found" rather than a
+// successful invoke: resolving the function is the step under test, and what
+// happens after it needs a container runtime (covered by the Docker-gated
+// test below). Without a runtime this request ends in a 500, which is a pass
+// here — the function was found.
+func TestInvokeFunctionURL_hostRoutedInNonDefaultRegion(t *testing.T) {
+	// Given: a function and its URL config, both created in eu-west-1
+	const region = "eu-west-1"
+	srv := helpers.NewTestServer(t)
+	regional := "AWS4-HMAC-SHA256 Credential=test/20250101/" + region +
+		"/lambda/aws4_request, SignedHeaders=host, Signature=fake"
+
+	createResp := doJSONWithAuth(t, http.MethodPost, lambdaURL(srv, "/functions"), createFunctionReq{
+		FunctionName: "regional-url-fn",
+		Runtime:      "nodejs20.x",
+		Handler:      "index.handler",
+		Role:         "arn:aws:iam::000000000000:role/lambda-role",
+		Code:         &lambdaCode{},
+	}, regional)
+	helpers.AssertStatus(t, createResp, http.StatusCreated)
+	createResp.Body.Close()
+
+	urlResp := doJSONWithAuth(t, http.MethodPost,
+		lambdaURLv2021(srv, "/functions/regional-url-fn/url"),
+		map[string]any{"AuthType": "NONE"}, regional)
+	helpers.AssertStatus(t, urlResp, http.StatusCreated)
+	var cfg functionUrlConfigResp
+	decodeJSON(t, urlResp, &cfg)
+
+	u, err := url.Parse(cfg.FunctionUrl)
+	if err != nil {
+		t.Fatalf("parse FunctionUrl %q: %v", cfg.FunctionUrl, err)
+	}
+	urlID, _, found := strings.Cut(u.Hostname(), ".")
+	if !found || urlID == "" {
+		t.Fatalf("FunctionUrl %q has no {urlId} subdomain", cfg.FunctionUrl)
+	}
+
+	// When: it is invoked over its host-routed URL, whose region segment is
+	// the only thing naming eu-west-1 (a function URL invoke carries no SigV4)
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/hello", nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Host = urlID + ".lambda-url." + region + ".localhost:4566"
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the function behind the URL is resolved
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		t.Errorf("host-routed invoke in %s did not resolve the function: %d — body: %s",
+			region, resp.StatusCode, body)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		t.Errorf("host-routed invoke in %s did not resolve the URL config: %d — body: %s",
+			region, resp.StatusCode, body)
+	}
+}
+
+// doJSONWithAuth is doJSON with an explicit Authorization header, for driving
+// a control-plane call into a specific region's partition of the store.
+func doJSONWithAuth(t *testing.T, method, url string, body any, auth string) *http.Response {
+	t.Helper()
+	var r io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		r = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(method, url, r)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Authorization", auth)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	return resp
+}
+
 // TestInvokeFunctionURL_hostRouted_success proves the full path: create a
 // function URL config, then invoke it via its Host-routed FunctionUrl and
 // confirm the request reaches the function through the same runtime

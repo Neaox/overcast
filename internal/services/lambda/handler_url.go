@@ -393,11 +393,16 @@ func (h *Handler) ListFunctionUrlConfigs(w http.ResponseWriter, r *http.Request)
 
 // HostRouteRewrite adapts a Host-routed Lambda function URL invocation
 // ({urlId}.lambda-url.{region}.{base}/...) to the emulator's internal
-// invocation route (see handler_url_invoke.go). The region segment is not
-// needed here — a UrlID alone resolves to exactly one function URL config
-// regardless of region (see getFunctionURLConfigByURLID) — so, unlike API
-// Gateway's row, this rewrite doesn't need to stamp a region onto the
-// request context.
+// invocation route (see handler_url_invoke.go).
+//
+// This rewrite doesn't stamp a region onto the request context, but not
+// because the region is unneeded: middleware.Region has already read it off
+// the Host by the time this runs (regionFromHost parses the same
+// hostRouteLabels grammar the router dispatched on). The region matters —
+// getFunctionURLConfigByURLID scans every region, but the getFunction call
+// right after it in InvokeFunctionURL is region-scoped, so without the hint a
+// function URL created outside the default region resolves its config and
+// then 404s on the function behind it.
 func (s *Service) HostRouteRewrite(r *http.Request, m middleware.HostRouteMatch) {
 	path := r.URL.Path
 	if !hasLeadingSlash(path) {
