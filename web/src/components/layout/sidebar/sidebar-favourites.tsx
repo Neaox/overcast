@@ -98,7 +98,6 @@ interface SortableFavouriteProps {
   item: SidebarNavEntry
   collapsed: boolean
   pathname: string
-  disabled: boolean
   expanded: boolean
   onToggleExpand: (key: string) => void
   dragging: boolean
