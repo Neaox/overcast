@@ -35,7 +35,7 @@ function ServiceChip({ entry }: { entry: ServiceTierEntry }) {
     <ServiceTile
       entry={entry}
       className={CHIP_CLASS}
-      enabledClassName="transition-colors hover:border-solid hover:border-accent hover:text-accent focus-visible:outline-accent"
+      interactiveClassName="transition-colors hover:border-solid hover:border-accent hover:text-accent focus-visible:outline-accent"
       tooltip={TIER_DESCRIPTIONS[tier]}
     >
       <Icon className="h-3.5 w-3.5" strokeWidth={1.75} />

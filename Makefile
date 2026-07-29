@@ -119,7 +119,7 @@ build-slim-windows-amd64:
 
 ## run: build and run with dev defaults (uses cross-platform Go script)
 run:
-	OVERCAST_SERVICES= $(GO) run ./scripts/run.go
+	$(GO) run ./scripts/run.go
 
 ## dev-server: watch Go sources and hot-reload the server (requires air)
 dev-server:

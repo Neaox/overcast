@@ -16,7 +16,7 @@ These were settled during wave 1 — do not re-litigate them while implementing:
 - **Dashboard sections group by implementation tier only.** Enabled/disabled is a per-entry concern, never a section.
 - **Availability greying keys off the health service list, never the emulation tier.** A service missing a tier entry reports `stub` while being fully live.
 - **The sidebar's pinned group is called "pinned", not "in use"** — artboard 6a still says "in use"; that is the inaccuracy we deliberately fixed.
-- **Disabled services are greyed with a "Disabled" pill** even though 6a draws all disabled services identically. Deliberate product improvement over the artboard.
+- ~~**Disabled services are greyed with a "Disabled" pill**~~ — removed along with `OVERCAST_SERVICES`; every service always runs, so there is no disabled state to draw.
 
 ## Outstanding Work
 

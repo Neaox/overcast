@@ -15,13 +15,7 @@ import { ServiceListView } from "./components/service-list-view"
 
 export const DASHBOARD_VIEW_STORAGE_KEY = "overcast.dashboard.view"
 
-/**
- * Sections group services by how completely they are emulated, and by nothing
- * else. Whether the emulator has a service switched on is an independent axis
- * — carried on each entry and rendered as the status dot in the list view and
- * as dimmed, inert tiles in the grid. Mixing the two used to file a live,
- * enabled service under "not emulated".
- */
+/** Sections group services by how completely they are emulated. */
 const SECTION_BY_TIER = {
   full: "fully",
   partial: "partially",
@@ -38,24 +32,18 @@ export function Dashboard() {
   const [view, setView] = useLocalStorage<DashboardView>(DASHBOARD_VIEW_STORAGE_KEY, "grid")
 
   // No health payload (loading or error) means the emulator's view is unknown —
-  // fall back to treating every registry service as enabled and fully emulated.
+  // fall back to treating every registry service as fully emulated.
   const tierOf = (name: string): EmulationTier => data?.serviceTiers?.[name] ?? "full"
-  const isEnabled = (name: string) => data === undefined || data.services.includes(name)
 
-  // Disabled services sink to the bottom of whichever section they land in —
-  // they cannot be opened, so they should not sit between things that can.
-  // Within that: recently visited first (recentServices holds route paths),
-  // then A-Z.
+  // Recently visited first (recentServices holds route paths), then A-Z.
   const recentRank = new Map(recentServices.map((key, index) => [key, index]))
   const entries: ServiceTierEntry[] = ALL_SERVICES.map((service) => ({
     service,
     tier: tierOf(service.name),
-    enabled: isEnabled(service.name),
   })).sort((a, b) => {
     const rankA = recentRank.get(a.service.to) ?? Number.MAX_SAFE_INTEGER
     const rankB = recentRank.get(b.service.to) ?? Number.MAX_SAFE_INTEGER
     return (
-      Number(b.enabled) - Number(a.enabled) ||
       rankA - rankB ||
       a.service.label.localeCompare(b.service.label)
     )
@@ -66,7 +54,6 @@ export function Dashboard() {
   const fullyEmulated = inSection("fully")
   const partiallyEmulated = inSection("partially")
   const notEmulated = inSection("not")
-  const enabledCount = entries.filter((e) => e.enabled).length
 
   if (isLoading) {
     return (
@@ -79,7 +66,6 @@ export function Dashboard() {
   return (
     <div className="mx-auto max-w-7xl">
       <DashboardHeader
-        activeCount={enabledCount}
         totalCount={ALL_SERVICES.length}
         view={view}
         onViewChange={setView}
@@ -131,18 +117,18 @@ export function Dashboard() {
         </div>
       )}
 
-      {data && <DashboardFooter data={data} enabledCount={enabledCount} />}
+      {data && <DashboardFooter data={data} />}
     </div>
   )
 }
 
-function DashboardFooter({ data, enabledCount }: { data: HealthResponse; enabledCount: number }) {
+function DashboardFooter({ data }: { data: HealthResponse }) {
   const overrides = data.storage.serviceOverrides ?? {}
   const overrideCount = Object.keys(overrides).length
 
   return (
     <p className="mt-6 text-center font-mono text-[11px] text-fg-subtle">
-      Emulator {data.version} &middot; {enabledCount} of {ALL_SERVICES.length} services enabled
+      Emulator {data.version} &middot; {ALL_SERVICES.length} services
       &middot; storage: {data.storage.default}
       {overrideCount > 0 && (
         <Tooltip

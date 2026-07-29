@@ -1745,7 +1745,7 @@ func replaceMarkedSection(path, beginMarker, endMarker, body string) (bool, erro
 	return true, os.WriteFile(path, []byte(content), 0o644)
 }
 
-// serviceConfigToken returns the OVERCAST_SERVICES token for a capgen service
+// serviceConfigName returns the config service name for a capgen service
 // key. The two are the same for all but CloudWatch Logs; see
 // serviceConfigNames.
 func serviceConfigName(service string) string {

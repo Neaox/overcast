@@ -12,7 +12,7 @@ import (
 )
 
 // docServiceNamesHeading is the section of docs/README.md that documents every
-// accepted OVERCAST_SERVICES token. docs/cdk.md links into it by anchor.
+// service name, and so every OVERCAST_STATE_<SERVICE> suffix.
 const docServiceNamesHeading = "### Service names"
 
 // docTokenRow matches a row of the Service names table, capturing the token

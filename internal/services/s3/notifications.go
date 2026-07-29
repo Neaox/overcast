@@ -32,7 +32,7 @@ import (
 type NotificationDispatcher struct {
 	store    *s3Store
 	enqueuer events.MessageEnqueuer
-	invoker  events.FunctionInvoker // nil if lambda service is disabled
+	invoker  events.FunctionInvoker // nil only when wired without Lambda (tests)
 	logger   *zap.Logger
 	region   string
 }
@@ -41,7 +41,7 @@ type NotificationDispatcher struct {
 // given event bus for all S3 event types. The returned cancel function
 // removes the subscriptions (useful in tests).
 //
-// invoker may be nil when the lambda service is disabled; Lambda
+// invoker is nil only when wired without Lambda (tests); Lambda
 // notification configs will be skipped in that case.
 func NewNotificationDispatcher(
 	store *s3Store,

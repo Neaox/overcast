@@ -50,8 +50,7 @@ func TestServiceNamespacePrefix(t *testing.T) {
 }
 
 // TestServiceNamespacePrefix_allServicesAudit walks every known service name
-// (via cfg.Services, populated from config's internal allServices list when
-// OVERCAST_SERVICES is unset) and asserts that ServiceNamespacePrefix returns
+// (via config.AllServices) and asserts that ServiceNamespacePrefix returns
 // either the service name unchanged or one of the three documented short
 // prefixes.
 //
@@ -169,7 +168,7 @@ var colonlessNamespaceServices = map[string]bool{
 }
 
 // TestServiceStateOverride_allServicesAudit classifies every known service
-// (via cfg.Services) into exactly one bucket relevant to whether its
+// (via config.AllServices) into exactly one bucket relevant to whether its
 // OVERCAST_STATE_<SERVICE> override actually works: routable via the
 // prefix-before-colon rule (the implicit default), routable via the
 // colonless whole-name rule (colonlessNamespaceServices — see
