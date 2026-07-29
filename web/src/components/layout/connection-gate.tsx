@@ -1,7 +1,6 @@
 import { useState } from "react"
 import { queryOptions, useQuery } from "@tanstack/react-query"
-import { useEndpoint, useIsConfigured } from "@/hooks/use-endpoint"
-import type { EmulatorEndpoint } from "@/services/discovery"
+import { endpointHost, useEndpoint, useIsConfigured } from "@/hooks/use-endpoint"
 import { health } from "@/services/api"
 import { ConnectionDialog } from "./connection-dialog"
 import { ConnectingScreen } from "./connecting-screen"
@@ -40,14 +39,6 @@ function livenessProbeQueryOptions(reached: boolean) {
   })
 }
 
-function endpointHost(endpoint: EmulatorEndpoint): string {
-  try {
-    return new URL(endpoint.baseUrl).host
-  } catch {
-    return endpoint.baseUrl
-  }
-}
-
 /** Renders `children` only once the configured emulator has answered. */
 export function ConnectionGate({ children }: { children: React.ReactNode }) {
   const configured = useIsConfigured()
@@ -63,8 +54,8 @@ function LivenessGate({ children }: { children: React.ReactNode }) {
   const { isSuccess, refetch } = useQuery(livenessProbeQueryOptions(reached))
 
   // Latched: a connection that has worked once hands over to the shell for
-  // good. A later drop is the OfflineBanner's job — yanking the app back to a
-  // cold-boot screen would throw away every page the user has open.
+  // good. A later drop is the ConnectionToast's job — yanking the app back to
+  // a cold-boot screen would throw away every page the user has open.
   if (isSuccess && !reached) setReached(true)
 
   if (!reached) {

@@ -662,6 +662,35 @@
   }
 }
 
+/* ─── Reconnect countdown — the connection toast's draining hairline ─────
+   Not decoration and not a spinner: it is the same schedule the toast types
+   out as "next in 4s", drawn. The design allows motion inside a toast, and
+   CONTRIBUTING asks for "client-side countdowns or decay when the goal is to
+   communicate that a transient state is draining away".
+
+   The duration comes from the element's inline style — the worker publishes
+   when the next attempt is due, and the bar and the text are two readings of
+   that one clock, so they can never disagree. `scaleX` rather than `width`
+   keeps a per-frame animation off the layout path; the shorthand deliberately
+   omits a duration so the inline one is the only source.
+
+   Under prefers-reduced-motion the rule below collapses it to a single frame,
+   which lands the bar empty. That is the right outcome: it is a redundant
+   reading of a number the toast already spells out.
+   ──────────────────────────────────────────────────────────────────────── */
+@keyframes oc-retry-drain {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+.oc-retry-drain {
+  transform-origin: left;
+  animation: oc-retry-drain linear forwards;
+}
+
 /* ─── Reduced motion ─────────────────────────────────────────────────────
    Everything the app animates other than the caret is decoration: hover and
    focus colour transitions, the dialog and toast entrances, the sidebar

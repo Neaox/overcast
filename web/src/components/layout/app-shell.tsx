@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react"
 import { useRouterState } from "@tanstack/react-router"
 import { Sidebar } from "./sidebar/sidebar"
 import { Header } from "./header/header"
-import { OfflineBanner } from "./offline-banner"
+import { ConnectionToast } from "./connection-toast"
 import { ConnectionGate } from "./connection-gate"
 import { GlobalSearch, useGlobalSearchShortcut } from "./global-search"
 import { ServiceFavicon } from "./service-favicon"
@@ -56,13 +56,14 @@ function AppShellInner({ children }: AppShellProps) {
     <div className="flex h-full overflow-hidden">
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
-        <OfflineBanner />
         <Header onSearchOpen={() => setSearchOpen(true)} />
         <main ref={mainRef} className="flex-1 overflow-auto bg-bg p-6">
           {children}
         </main>
       </div>
       <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} />
+      {/* Docks itself bottom-right rather than taking a row off the shell. */}
+      <ConnectionToast />
     </div>
   )
 }
