@@ -27,7 +27,7 @@ see the [root README](../README.md).
 
 - [Service emulation reference](./services/README.md) — per-service endpoint coverage tables
 - [Configuration reference](#configuration-reference) — all environment variables
-- [Service names](#service-names) — every `OVERCAST_SERVICES` token and the CDK module it corresponds to
+- [Service names](#service-names) — every service name and the CDK module it corresponds to
 - [Log levels](#log-levels) — `OVERCAST_LOG_LEVEL` values and what each one shows
 - [Persistence](#persistence) — storage backends
 - [HTTPS / TLS](#https--tls) — self-signed certs for local HTTPS
@@ -164,7 +164,6 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_HOSTNAME`              | `localhost`            | Hostname embedded in client-facing URLs (SQS queue URLs, Lambda function URLs, API Gateway `apiEndpoint`, AppSync DNS names, CloudFront domain names). **Set it to `localhost.overcast.sh`** unless you are offline: every `*.localhost.overcast.sh` name resolves to `127.0.0.1` on every OS, which plain `localhost` does not on Windows. See [networking.md](./networking.md) |
 | `OVERCAST_SPLIT_HORIZON_HOSTS`   | _(none)_               | Extra comma-separated hostnames remapped to Overcast inside containers it starts (ECS tasks), so one URL is dialable from both host and container. Added to the built-in `localhost.overcast.sh`, `localhost.localstack.cloud`, `localhost.floci.io` |
 | `OVERCAST_PORT`                  | `4566`                 | TCP port                                                                             |
-| `OVERCAST_SERVICES`              | all                    | Comma-separated list of services to enable, e.g. `s3,sqs,dynamodb`. See [Service names](#service-names) for the full token list |
 | `OVERCAST_STATE`                 | `auto`                 | Storage backend: `auto` (default when unset), `memory`, `hybrid`, `persistent`, or `wal`. `auto` resolves to `hybrid` when a volume/bind mount or existing database is found at `OVERCAST_DATA_DIR` (or the dir was explicitly set), otherwise `memory` — see [storage.md § The auto default](./storage.md#the-auto-default) |
 | `OVERCAST_STATE_<SERVICE>`       | _(global)_             | Per-service backend override, e.g. `OVERCAST_STATE_S3=memory`                        |
 | `OVERCAST_HYBRID_FLUSH_INTERVAL` | `5s`                   | How often the hybrid backend flushes in-memory state to disk                         |
@@ -211,37 +210,23 @@ All configuration is via environment variables. No config file required.
 
 ### Service names
 
-`OVERCAST_SERVICES` accepts the tokens below, comma-separated. Leaving it unset
-enables all of them, which is the right default for most people.
+Every service listed below always runs — there is no way to switch one off, and
+nothing to configure to get one. The names matter for one thing: they are what
+the per-service storage override `OVERCAST_STATE_<SERVICE>` is keyed by, in
+upper case. CloudWatch Logs is `logs`, so its override is `OVERCAST_STATE_LOGS`
+— not `OVERCAST_STATE_CLOUDWATCH_LOGS`, which names nothing and is rejected at
+startup.
 
-Trimming the list is not a performance measure: every service is constructed
-either way, and constructors are barred from reading the store or doing I/O (see
-[Startup budget](https://github.com/Neaox/overcast/blob/main/docs/dev/performance.md#startup-budget--rules-for-service-authors)),
-so a disabled service costs about as much as an enabled idle one. What it
-changes is side effects and isolation: no Docker probing, container or network
-reconciliation for `lambda`, `ecs`, `rds`, `elasticache`, `msk`, `ec2`, or
-`eks`; no mock SMTP server bound to port 1025 unless `sns`, `ses`, or `cognito`
-is enabled; and a stack that quietly depends on a service you meant to exclude
-fails loudly instead of working.
-
-Tokens are matched exactly, with no aliases. An unrecognised token is a startup
-error, and a request to a service you left out returns HTTP 503 `ServiceDisabled`
-(rather than a connection failure) so SDKs surface a clear message.
-
-Most tokens are the service's AWS CLI name, but several differ from both the
-display name and the CDK module name — `logs`, `elbv2`, `waf`, `acm`,
-`eventbridge`, `firehose`, `opensearch`, and `appregistry` are the usual
-stumbling blocks. If you are choosing tokens to match a CDK app, start with
-[Using AWS CDK § Choosing `OVERCAST_SERVICES` for your CDK app](./cdk.md#choosing-overcast_services-for-your-cdk-app):
-`cdk deploy` needs several services your stack never mentions, and some
-constructs quietly depend on a second service.
+Each name is the service's AWS CLI name, which for several services matches
+neither the display name nor the `aws-cdk-lib` module you would import. The CDK
+column is there because that is the mapping people most often need to make.
 
 For per-service endpoint coverage, follow the doc links in [Services](#services)
 above.
 
-<!-- BEGIN overcast:service-tokens -->
+<!-- BEGIN overcast:service-names -->
 
-| Token             | Service          | CDK module (`aws-cdk-lib/…`)                       |
+| Name              | Service          | CDK module (`aws-cdk-lib/…`)                       |
 | ----------------- | ---------------- | -------------------------------------------------- |
 | `s3`              | S3               | `aws-s3`                                           |
 | `sqs`             | SQS              | `aws-sqs`                                          |
@@ -293,11 +278,7 @@ above.
 | `route53`         | Route 53         | `aws-route53`, `aws-route53-targets`               |
 | `transfer`        | Transfer Family  | `aws-transfer`                                     |
 
-<!-- END overcast:service-tokens -->
-
-The same tokens are used by the per-service storage override
-`OVERCAST_STATE_<SERVICE>` — for example `OVERCAST_STATE_LOGS=memory`, not
-`OVERCAST_STATE_CLOUDWATCH_LOGS`.
+<!-- END overcast:service-names -->
 
 ### Log levels
 
@@ -360,9 +341,8 @@ Hybrid seeds small control-plane namespaces into memory on startup and reads lar
 ### Per-service storage overrides
 
 Each service can use a different backend. Set `OVERCAST_STATE_<SERVICE>`
-where `<SERVICE>` is one of the [service names](#service-names) in upper case —
-the same tokens `OVERCAST_SERVICES` takes, so CloudWatch Logs is
-`OVERCAST_STATE_LOGS`:
+where `<SERVICE>` is one of the [service names](#service-names) in upper case,
+so CloudWatch Logs is `OVERCAST_STATE_LOGS`:
 
 ```bash
 docker run --rm -p 4566:4566 \

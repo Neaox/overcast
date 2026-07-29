@@ -26,7 +26,6 @@ interface SidebarFavouritesProps {
   collapsed: boolean
   pathname: string
   isExpanded: (key: string) => boolean
-  isEnabled: (route: string) => boolean
   onToggleExpand: (key: string) => void
 }
 
@@ -35,7 +34,6 @@ export function SidebarFavourites({
   collapsed,
   pathname,
   isExpanded,
-  isEnabled,
   onToggleExpand,
 }: SidebarFavouritesProps) {
   const { favourites, reorderFavourites } = useFavourites()
@@ -85,7 +83,6 @@ export function SidebarFavourites({
               item={item}
               collapsed={collapsed}
               pathname={pathname}
-              disabled={!isEnabled(item.to)}
               expanded={isExpanded(item.to)}
               onToggleExpand={onToggleExpand}
               dragging={draggingId === key}

@@ -95,7 +95,7 @@ func main() {
 	// counted: a service list that has drifted from config.AllServices makes
 	// the generated token tables wrong, so carrying on would overwrite correct
 	// rows with incorrect ones before anyone reads the error.
-	if problems := validateServiceTokens(); len(problems) > 0 {
+	if problems := validateServiceNames(); len(problems) > 0 {
 		for _, problem := range problems {
 			fmt.Fprintf(os.Stderr, "capgen: service tokens: %s\n", problem)
 		}
@@ -177,17 +177,11 @@ func main() {
 		} else if changed {
 			fmt.Println("capgen: updated docs/README.md service index")
 		}
-		if changed, err := updateDocsReadmeServiceTokens(root); err != nil {
+		if changed, err := updateDocsReadmeServiceNames(root); err != nil {
 			fmt.Fprintf(os.Stderr, "capgen: docs/README.md: %v\n", err)
 			failures++
 		} else if changed {
-			fmt.Println("capgen: updated docs/README.md service tokens")
-		}
-		if changed, err := updateCDKTokenMismatches(root); err != nil {
-			fmt.Fprintf(os.Stderr, "capgen: docs/cdk.md: %v\n", err)
-			failures++
-		} else if changed {
-			fmt.Println("capgen: updated docs/cdk.md token mismatches")
+			fmt.Println("capgen: updated docs/README.md service names")
 		}
 		if changed, err := updateRootReadmeServiceList(root, allCaps); err != nil {
 			fmt.Fprintf(os.Stderr, "capgen: README.md: %v\n", err)
@@ -1476,11 +1470,11 @@ var serviceDocFileNames = map[string]string{
 	"elbv2": "elb",
 }
 
-// serviceConfigTokens maps a capgen service key to the OVERCAST_SERVICES token
-// when the two differ. capgen keys CloudWatch Logs by its documentation name;
-// config.AllServices calls it "logs". Every other key is its own token, and
-// validateServiceTokens enforces that this stays true.
-var serviceConfigTokens = map[string]string{
+// serviceConfigNames maps a capgen service key to the config service name when
+// the two differ. capgen keys CloudWatch Logs by its documentation name;
+// config.AllServices calls it "logs". Every other key is its own name, and
+// validateServiceNames enforces that this stays true.
+var serviceConfigNames = map[string]string{
 	"cloudwatch-logs": "logs",
 }
 
@@ -1489,7 +1483,7 @@ var serviceConfigTokens = map[string]string{
 // derivable source in the repository, so it is declared here and rendered into
 // both documents — the two can restate the mapping without drifting apart.
 //
-// validateServiceTokens requires an entry for every service, so adding a
+// validateServiceNames requires an entry for every service, so adding a
 // service fails the generator until its CDK mapping is filled in.
 type serviceCDK struct {
 	// Modules are aws-cdk-lib submodule names ("aws-events"), most-used
@@ -1498,13 +1492,6 @@ type serviceCDK struct {
 	// NoModule explains an empty Modules, e.g. "used by the CDK CLI itself".
 	// Rendered in place of the module list.
 	NoModule string
-	// Gotcha marks a service whose token a reader could not guess from the
-	// CDK import or the service's display name. These, and only these, are
-	// listed in the docs/cdk.md mismatch table.
-	Gotcha bool
-	// GotchaNote is an optional parenthetical shown beside the token in the
-	// docs/cdk.md table.
-	GotchaNote string
 }
 
 var serviceCDKInfo = map[string]serviceCDK{
@@ -1516,44 +1503,44 @@ var serviceCDKInfo = map[string]serviceCDK{
 	"dynamodbstreams": {NoModule: "enabled by the `stream` prop on `aws-dynamodb`"},
 	"lambda":          {Modules: []string{"aws-lambda"}},
 	"pipes":           {Modules: []string{"aws-pipes"}},
-	"cloudwatch-logs": {Modules: []string{"aws-logs"}, Gotcha: true, GotchaNote: "the service is CloudWatch Logs, but the token is not `cloudwatch-logs`"},
+	"cloudwatch-logs": {Modules: []string{"aws-logs"}},
 	"secretsmanager":  {Modules: []string{"aws-secretsmanager"}},
 	"sts":             {NoModule: "used by the CDK CLI itself"},
 	"ssm":             {Modules: []string{"aws-ssm"}},
 	"kms":             {Modules: []string{"aws-kms"}},
 	"iam":             {Modules: []string{"aws-iam"}},
 	"cloudformation":  {Modules: []string{"aws-cloudformation"}},
-	"ec2":             {Modules: []string{"aws-ec2"}, Gotcha: true, GotchaNote: "VPC constructs live here too"},
+	"ec2":             {Modules: []string{"aws-ec2"}},
 	"rds":             {Modules: []string{"aws-rds"}},
 	"ecs":             {Modules: []string{"aws-ecs"}},
 	"ecr":             {Modules: []string{"aws-ecr", "aws-ecr-assets"}},
 	"eks":             {Modules: []string{"aws-eks"}},
 	"cognito":         {Modules: []string{"aws-cognito"}},
 	"stepfunctions":   {Modules: []string{"aws-stepfunctions", "aws-stepfunctions-tasks"}},
-	"waf":             {Modules: []string{"aws-wafv2"}, Gotcha: true},
+	"waf":             {Modules: []string{"aws-wafv2"}},
 	"shield":          {Modules: []string{"aws-shield"}},
 	"appsync":         {Modules: []string{"aws-appsync"}},
-	"apigateway":      {Modules: []string{"aws-apigateway", "aws-apigatewayv2"}, Gotcha: true, GotchaNote: "one token covers both v1 and v2"},
+	"apigateway":      {Modules: []string{"aws-apigateway", "aws-apigatewayv2"}},
 	"cloudfront":      {Modules: []string{"aws-cloudfront", "aws-cloudfront-origins"}},
-	"eventbridge":     {Modules: []string{"aws-events", "aws-events-targets"}, Gotcha: true},
+	"eventbridge":     {Modules: []string{"aws-events", "aws-events-targets"}},
 	"kinesis":         {Modules: []string{"aws-kinesis"}},
-	"appregistry":     {Modules: []string{"aws-servicecatalogappregistry"}, Gotcha: true},
-	"cloudwatch":      {Modules: []string{"aws-cloudwatch", "aws-cloudwatch-actions"}, Gotcha: true, GotchaNote: "metrics and alarms only — log groups are `logs`"},
-	"acm":             {Modules: []string{"aws-certificatemanager"}, Gotcha: true},
-	"opensearch":      {Modules: []string{"aws-opensearchservice"}, Gotcha: true},
+	"appregistry":     {Modules: []string{"aws-servicecatalogappregistry"}},
+	"cloudwatch":      {Modules: []string{"aws-cloudwatch", "aws-cloudwatch-actions"}},
+	"acm":             {Modules: []string{"aws-certificatemanager"}},
+	"opensearch":      {Modules: []string{"aws-opensearchservice"}},
 	"appconfig":       {Modules: []string{"aws-appconfig"}},
 	"appconfigdata":   {NoModule: "runtime data plane; no constructs"},
 	"bedrock":         {Modules: []string{"aws-bedrock"}},
 	"glue":            {Modules: []string{"aws-glue"}},
-	"firehose":        {Modules: []string{"aws-kinesisfirehose"}, Gotcha: true},
+	"firehose":        {Modules: []string{"aws-kinesisfirehose"}},
 	"athena":          {Modules: []string{"aws-athena"}},
 	"elasticache":     {Modules: []string{"aws-elasticache"}},
 	"msk":             {Modules: []string{"aws-msk"}},
 	"scheduler":       {Modules: []string{"aws-scheduler"}},
 	"route53":         {Modules: []string{"aws-route53", "aws-route53-targets"}},
-	"elbv2":           {Modules: []string{"aws-elasticloadbalancingv2"}, Gotcha: true},
+	"elbv2":           {Modules: []string{"aws-elasticloadbalancingv2"}},
 	"organizations":   {NoModule: "no constructs"},
-	"autoscaling":     {Modules: []string{"aws-autoscaling", "aws-applicationautoscaling"}, Gotcha: true},
+	"autoscaling":     {Modules: []string{"aws-autoscaling", "aws-applicationautoscaling"}},
 	"cloudtrail":      {Modules: []string{"aws-cloudtrail"}},
 	"backup":          {Modules: []string{"aws-backup"}},
 	"transfer":        {Modules: []string{"aws-transfer"}},
@@ -1760,40 +1747,40 @@ func replaceMarkedSection(path, beginMarker, endMarker, body string) (bool, erro
 
 // serviceConfigToken returns the OVERCAST_SERVICES token for a capgen service
 // key. The two are the same for all but CloudWatch Logs; see
-// serviceConfigTokens.
-func serviceConfigToken(service string) string {
-	if token, ok := serviceConfigTokens[service]; ok {
+// serviceConfigNames.
+func serviceConfigName(service string) string {
+	if token, ok := serviceConfigNames[service]; ok {
 		return token
 	}
 	return service
 }
 
-// validateServiceTokens checks capgen's service list against the tokens
-// OVERCAST_SERVICES actually accepts, and requires a CDK mapping for each.
+// validateServiceNames checks capgen's service list against the services that
+// actually exist, and requires a CDK mapping for each.
 //
 // This is what makes the generated token tables trustworthy. Without it, a
 // service added to config.allServices would simply be absent from the
 // documented list, and a service renamed there would leave a stale row behind
 // — in both cases silently, because generation would still succeed.
-func validateServiceTokens() []string {
+func validateServiceNames() []string {
 	var problems []string
 
 	accepted := map[string]bool{}
-	for _, token := range config.AllServices() {
-		accepted[token] = true
+	for _, name := range config.AllServices() {
+		accepted[name] = true
 	}
 
 	claimed := map[string]bool{}
 	for _, svc := range statusTableOrder {
-		token := serviceConfigToken(svc)
-		if !accepted[token] {
-			problems = append(problems, fmt.Sprintf("service %q maps to token %q, which OVERCAST_SERVICES does not accept", svc, token))
+		name := serviceConfigName(svc)
+		if !accepted[name] {
+			problems = append(problems, fmt.Sprintf("service %q maps to token %q, which is not a known service", svc, name))
 			continue
 		}
-		if claimed[token] {
-			problems = append(problems, fmt.Sprintf("token %q is claimed by more than one service key", token))
+		if claimed[name] {
+			problems = append(problems, fmt.Sprintf("token %q is claimed by more than one service key", name))
 		}
-		claimed[token] = true
+		claimed[name] = true
 
 		info, ok := serviceCDKInfo[svc]
 		if !ok {
@@ -1808,9 +1795,9 @@ func validateServiceTokens() []string {
 		}
 	}
 
-	for _, token := range config.AllServices() {
-		if !claimed[token] {
-			problems = append(problems, fmt.Sprintf("OVERCAST_SERVICES token %q has no capgen service key; add it to statusTableOrder and statusDisplayNames", token))
+	for _, name := range config.AllServices() {
+		if !claimed[name] {
+			problems = append(problems, fmt.Sprintf("service %q has no capgen service key; add it to statusTableOrder and statusDisplayNames", name))
 		}
 	}
 
@@ -1831,9 +1818,9 @@ func cdkModuleCell(info serviceCDK) string {
 	return strings.Join(quoted, ", ")
 }
 
-// updateDocsReadmeServiceTokens regenerates the OVERCAST_SERVICES token table
-// in the configuration reference.
-func updateDocsReadmeServiceTokens(root string) (bool, error) {
+// updateDocsReadmeServiceNames regenerates the service-name table in the
+// configuration reference.
+func updateDocsReadmeServiceNames(root string) (bool, error) {
 	rows := make([][]string, 0, len(statusTableOrder))
 	for _, svc := range statusTableOrder {
 		name := statusDisplayNames[svc]
@@ -1841,7 +1828,7 @@ func updateDocsReadmeServiceTokens(root string) (bool, error) {
 			name = svc
 		}
 		rows = append(rows, []string{
-			"`" + serviceConfigToken(svc) + "`",
+			"`" + serviceConfigName(svc) + "`",
 			name,
 			cdkModuleCell(serviceCDKInfo[svc]),
 		})
@@ -1849,41 +1836,12 @@ func updateDocsReadmeServiceTokens(root string) (bool, error) {
 
 	return replaceMarkedSection(
 		filepath.Join(root, "docs", "README.md"),
-		"<!-- BEGIN overcast:service-tokens -->",
-		"<!-- END overcast:service-tokens -->",
-		formatTable([]string{"Token", "Service", "CDK module (`aws-cdk-lib/…`)"}, rows),
+		"<!-- BEGIN overcast:service-names -->",
+		"<!-- END overcast:service-names -->",
+		formatTable([]string{"Name", "Service", "CDK module (`aws-cdk-lib/…`)"}, rows),
 	)
 }
 
-// updateCDKTokenMismatches regenerates the CDK-import-to-token table in the CDK
-// guide. It lists only the services flagged Gotcha — the ones whose token a
-// reader could not guess from the import or the display name — and renders them
-// from the same serviceCDKInfo the full table uses, so the two cannot disagree.
-func updateCDKTokenMismatches(root string) (bool, error) {
-	rows := make([][]string, 0, len(statusTableOrder))
-	for _, svc := range statusTableOrder {
-		info := serviceCDKInfo[svc]
-		if !info.Gotcha || len(info.Modules) == 0 {
-			continue
-		}
-		imports := make([]string, len(info.Modules))
-		for i, m := range info.Modules {
-			imports[i] = "`aws-cdk-lib/" + m + "`"
-		}
-		token := "`" + serviceConfigToken(svc) + "`"
-		if info.GotchaNote != "" {
-			token += " (" + info.GotchaNote + ")"
-		}
-		rows = append(rows, []string{strings.Join(imports, ", "), token})
-	}
-
-	return replaceMarkedSection(
-		filepath.Join(root, "docs", "cdk.md"),
-		"<!-- BEGIN overcast:cdk-token-mismatches -->",
-		"<!-- END overcast:cdk-token-mismatches -->",
-		formatTable([]string{"CDK import", "Token"}, rows),
-	)
-}
 
 func updateRootReadmeServiceList(root string, allCaps []CapabilityDecl) (bool, error) {
 	const beginMarker = "<!-- BEGIN overcast:root-service-list -->"
