@@ -1,17 +1,14 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Copy, ChevronDown, ChevronRight } from "lucide-react"
+import { ChevronDown, ChevronRight } from "lucide-react"
 import { ecsTasksQueryOptions } from "@/features/ecs/data"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { useToast } from "@/components/ui/toast"
+import { CopyButton } from "@/components/ui/copy-button"
 import type { EcsContainer } from "@/types"
 
 export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskId: string }) {
-  const { toast } = useToast()
-
   const { data: tasks = [], isLoading } = useQuery(ecsTasksQueryOptions(clusterName))
 
   const task = tasks.find((t) => {
@@ -36,11 +33,6 @@ export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskI
   }
 
   const shortId = taskId.slice(0, 12)
-
-  const copyToClipboard = (text: string) => {
-    void navigator.clipboard.writeText(text)
-    toast({ title: "Copied!", variant: "success" })
-  }
 
   return (
     <div className="flex w-full flex-col gap-6">
@@ -84,7 +76,7 @@ export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskI
         ) : (
           <div className="space-y-3">
             {task.containers.map((c) => (
-              <ContainerCard key={c.name} container={c} onCopy={copyToClipboard} />
+              <ContainerCard key={c.name} container={c} />
             ))}
           </div>
         )}
@@ -93,13 +85,7 @@ export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskI
   )
 }
 
-function ContainerCard({
-  container,
-  onCopy,
-}: {
-  container: EcsContainer
-  onCopy: (text: string) => void
-}) {
+function ContainerCard({ container }: { container: EcsContainer }) {
   const [envExpanded, setEnvExpanded] = useState(false)
 
   return (
@@ -129,14 +115,7 @@ function ContainerCard({
                 >
                   <span>{label}</span>
                   {b.hostPort != null && (
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-5 w-5"
-                      onClick={() => onCopy(String(b.hostPort))}
-                    >
-                      <Copy className="h-3 w-3" />
-                    </Button>
+                    <CopyButton value={String(b.hostPort)} noun="host port" tone="inline" />
                   )}
                 </div>
               )

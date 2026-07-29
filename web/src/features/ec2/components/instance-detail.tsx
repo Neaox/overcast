@@ -29,8 +29,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Copy, Pencil } from "lucide-react"
+import { Pencil } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { CopyButton } from "@/components/ui/copy-button"
 import { useToast } from "@/components/ui/toast"
 import type { Ec2SecurityGroup, Ec2IpPermission } from "@/types"
 
@@ -122,11 +123,6 @@ function OverviewPanel({
     onError: () => toast({ title: "Failed to update instance type", variant: "danger" }),
   })
 
-  const copyToClipboard = (text: string) => {
-    void navigator.clipboard.writeText(text)
-    toast({ title: "Copied!", variant: "success" })
-  }
-
   const sgDisplay = inst.securityGroups?.length
     ? inst.securityGroups.map((sg) => `${sg.groupName} (${sg.groupId})`).join(", ")
     : "—"
@@ -166,14 +162,7 @@ function OverviewPanel({
               <code className="rounded bg-bg-muted px-2 py-0.5 font-mono text-sm">
                 {inst.privateIpAddress}
               </code>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-7 w-7"
-                onClick={() => copyToClipboard(inst.privateIpAddress!)}
-              >
-                <Copy className="h-3.5 w-3.5" />
-              </Button>
+              <CopyButton value={inst.privateIpAddress} noun="private IP" />
             </div>
           ) : (
             <span className="text-sm text-fg">—</span>
@@ -382,13 +371,6 @@ function NetworkingPanel({
     privateIpAddress?: string
   }
 }) {
-  const { toast } = useToast()
-
-  const copyToClipboard = (text: string) => {
-    void navigator.clipboard.writeText(text)
-    toast({ title: "Copied!", variant: "success" })
-  }
-
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 gap-x-8 gap-y-3">
@@ -397,14 +379,7 @@ function NetworkingPanel({
             <span className="font-mono text-xs text-fg-muted">VPC ID</span>
             <div className="flex items-center gap-1.5">
               <span className="text-sm text-fg">{inst.vpcId}</span>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-7 w-7"
-                onClick={() => copyToClipboard(inst.vpcId!)}
-              >
-                <Copy className="h-3.5 w-3.5" />
-              </Button>
+              <CopyButton value={inst.vpcId} noun="VPC ID" />
             </div>
           </div>
         ) : (
@@ -416,14 +391,7 @@ function NetworkingPanel({
             <span className="font-mono text-xs text-fg-muted">Subnet ID</span>
             <div className="flex items-center gap-1.5">
               <span className="text-sm text-fg">{inst.subnetId}</span>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-7 w-7"
-                onClick={() => copyToClipboard(inst.subnetId!)}
-              >
-                <Copy className="h-3.5 w-3.5" />
-              </Button>
+              <CopyButton value={inst.subnetId} noun="subnet ID" />
             </div>
           </div>
         ) : (
@@ -437,14 +405,7 @@ function NetworkingPanel({
               <code className="rounded bg-bg-muted px-2 py-0.5 font-mono text-sm">
                 {inst.privateIpAddress}
               </code>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-7 w-7"
-                onClick={() => copyToClipboard(inst.privateIpAddress!)}
-              >
-                <Copy className="h-3.5 w-3.5" />
-              </Button>
+              <CopyButton value={inst.privateIpAddress} noun="private IP" />
             </div>
           </div>
         ) : (

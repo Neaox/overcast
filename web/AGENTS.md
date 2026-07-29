@@ -152,6 +152,32 @@ Custom design tokens (colours, spacing) are defined in `web/src/styles/`. Use `t
 - Large route files (`web/src/routes/<service>/$name.tsx`) may contain sub-components defined in the same file if they are tightly coupled to that route. Extract to `features/<service>/components/` when they exceed ~200 lines or are needed elsewhere.
 - Prefer `cn()` from `@/lib/utils` for conditional class merging.
 
+## Copy to clipboard — always `<CopyButton>`
+
+**Never call `navigator.clipboard` from a component.** It is gated on a secure context, so it is
+absent whenever Overcast is served over plain HTTP from anything but `localhost` — a copy button
+that calls it directly does nothing at all on `http://localhost.overcast.sh` or a LAN address, and
+does it silently. `web/src/lib/clipboard.test.ts` fails the build on any direct call.
+
+```tsx
+import { CopyButton } from "@/components/ui/copy-button"
+
+<CopyButton value={queue.url} noun="queue URL" />   // ghost icon button
+<CopyButton value={arn} noun="ARN" tone="inline" /> // bare glyph beside a value
+```
+
+`noun` supplies both the accessible name (`Copy queue URL`) and the confirmation toast
+(`Copied queue URL`) — always pass it. Success and failure are both reported as toasts, and the
+button shows a tick for 1.5s.
+
+For a copy trigger that is not an icon button — a labelled toolbar button, a menu item, a keyboard
+shortcut — use the hook instead: `const { copy, copied } = useCopyToClipboard()` from
+`@/hooks/use-clipboard`, then `copy(text, { noun: "state key" })`.
+
+*Reading* the clipboard has no fallback (Firefox never exposes `readText` to page scripts). Gate any
+paste affordance on `canReadClipboardText()` from `@/lib/clipboard` and explain the alternative
+rather than leaving a dead control.
+
 ## React effects
 
 Effects carry a high bar. Before adding `useEffect`, read and apply
@@ -445,6 +471,7 @@ Prefer the `describe("ComponentName > scenario")` → `it("does X")` structure s
 - Never edit `web/src/routeTree.gen.ts` directly.
 - Never call `fetch` directly from components — go through `web/src/services/api.ts`.
 - Never use a plain `<input>` or `<Input>` for an AWS ARN field — use `<ResourceArnCombobox>`.
+- Never call `navigator.clipboard` from a component — use `<CopyButton>` or `useCopyToClipboard()`.
 - Never add dependencies to `web/package.json` without justification.
 - Never commit or push code that fails `cd web && pnpm run lint`, `cd web && pnpm run typecheck`, or
   `cd web && pnpm run test`. `make ci-local-web` runs all three plus the build, in CI's order.

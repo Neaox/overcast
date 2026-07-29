@@ -9,11 +9,12 @@
  * A "Copy" button copies the active tab content to the clipboard.
  * JSON payloads (webhook/push) are pretty-printed with syntax highlighting.
  */
-import { useState, useCallback } from "react"
-import { Trash2, Mail, MessageSquare, Webhook, Bell, Copy, Check, GitBranch } from "lucide-react"
+import { useState } from "react"
+import { Trash2, Mail, MessageSquare, Webhook, Bell, GitBranch } from "lucide-react"
 import Prism from "@/lib/prism"
 import { EmptyState } from "@/components/ui/primitives"
 import { Button } from "@/components/ui/button"
+import { CopyButton } from "@/components/ui/copy-button"
 import type { CapturedMessage } from "@/types"
 import { cn } from "@/lib/utils"
 
@@ -29,15 +30,14 @@ interface MessageDetailProps {
 
 export function MessageDetail({ message, onDelete, deleting }: MessageDetailProps) {
   const [tab, setTab] = useState<"plain" | "html" | "raw">("plain")
-  const [copied, setCopied] = useState(false)
 
-  // Reset tab and copy state whenever the selected message changes.
+  // Reset the tab whenever the selected message changes. The copy button holds
+  // its own acknowledgement state and is keyed by message id, so it resets too.
   const messageId = message?.id
   const [prevMessageId, setPrevMessageId] = useState(messageId)
   if (messageId !== prevMessageId) {
     setPrevMessageId(messageId)
     setTab("plain")
-    setCopied(false)
   }
 
   const kind = message?.kind ?? "email"
@@ -54,21 +54,15 @@ export function MessageDetail({ message, onDelete, deleting }: MessageDetailProp
   // Try to pretty-print the body as JSON (webhook/push payloads in particular).
   const prettyJSON = message ? tryPrettyJSON(message.textBody) : null
 
-  // Copy the current tab's content to clipboard. When the payload tab shows
-  // pretty-printed JSON, copy the formatted version rather than the raw body.
-  const handleCopy = useCallback(() => {
-    if (!message) return
-    const content =
-      effectiveTab === "raw"
-        ? (message.raw ?? "")
-        : effectiveTab === "html"
-          ? (message.htmlBody ?? "")
-          : (prettyJSON ?? message.textBody)
-    void navigator.clipboard.writeText(content).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    })
-  }, [effectiveTab, message, prettyJSON])
+  // What the Copy button puts on the clipboard: the current tab's content, and
+  // for the payload tab the pretty-printed JSON rather than the raw body.
+  const copyContent = !message
+    ? ""
+    : effectiveTab === "raw"
+      ? (message.raw ?? "")
+      : effectiveTab === "html"
+        ? (message.htmlBody ?? "")
+        : (prettyJSON ?? message.textBody)
 
   if (!message) {
     return (
@@ -135,15 +129,13 @@ export function MessageDetail({ message, onDelete, deleting }: MessageDetailProp
           )}
         </div>
 
-        <Button
-          variant="ghost"
+        <CopyButton
+          key={message.id}
+          value={copyContent}
+          noun="message content"
           size="icon"
           className="shrink-0 text-fg-muted hover:text-fg"
-          title="Copy content"
-          onClick={handleCopy}
-        >
-          {copied ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
-        </Button>
+        />
         <Button
           variant="ghost"
           size="icon"

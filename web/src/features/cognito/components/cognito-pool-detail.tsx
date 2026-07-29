@@ -11,7 +11,6 @@ import {
   Users,
   ShieldCheck,
   Settings,
-  Copy,
   ChevronDown,
   ChevronRight,
   Pencil,
@@ -65,6 +64,7 @@ import type {
 } from "@/services/api/cognito"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Button } from "@/components/ui/button"
+import { CopyButton } from "@/components/ui/copy-button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
@@ -1779,17 +1779,7 @@ function ClientDetailPanel({ poolId, clientId }: { poolId: string; clientId: str
                 )}
               </button>
               {secretVisible && (
-                <button
-                  onClick={() => {
-                    void navigator.clipboard
-                      .writeText(detail.clientSecret!)
-                      .then(() => toast({ title: "Secret copied to clipboard" }))
-                  }}
-                  className="shrink-0 text-fg-subtle transition-colors hover:text-fg"
-                  title="Copy secret"
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                </button>
+                <CopyButton value={detail.clientSecret} noun="client secret" tone="inline" />
               )}
             </div>
           </div>
@@ -2166,26 +2156,17 @@ function DetailRow({
   copyable?: boolean
   copyText?: string
 }) {
-  const { toast } = useToast()
-
-  function handleCopy() {
-    const text = copyText ?? (typeof value === "string" ? value : "")
-    void navigator.clipboard.writeText(text).then(() => toast({ title: "Copied to clipboard" }))
-  }
-
   return (
     <div className="flex flex-col gap-1">
       <span className="text-xs font-medium text-fg-muted">{label}</span>
       <div className="flex items-center gap-1.5">
         <span className={cn("text-sm break-all", mono && "font-mono")}>{value}</span>
         {copyable && (
-          <button
-            onClick={handleCopy}
-            className="shrink-0 text-fg-subtle transition-colors hover:text-fg"
-            title="Copy"
-          >
-            <Copy className="h-3.5 w-3.5" />
-          </button>
+          <CopyButton
+            value={copyText ?? (typeof value === "string" ? value : "")}
+            noun={label}
+            tone="inline"
+          />
         )}
       </div>
     </div>
@@ -2367,17 +2348,7 @@ function UserDetailDialog({
                     )}
                   </button>
                   {passwordVisible && plaintextPassword && (
-                    <button
-                      className="shrink-0 text-fg-subtle transition-colors hover:text-fg"
-                      title="Copy password"
-                      onClick={() =>
-                        void navigator.clipboard
-                          .writeText(plaintextPassword)
-                          .then(() => toast({ title: "Password copied to clipboard" }))
-                      }
-                    >
-                      <Copy className="h-3.5 w-3.5" />
-                    </button>
+                    <CopyButton value={plaintextPassword} noun="password" tone="inline" />
                   )}
                 </div>
               </div>
@@ -2451,17 +2422,7 @@ function UserDetailDialog({
                         ) : (
                           <div className="flex items-center gap-1.5">
                             <span className="text-xs break-all">{value}</span>
-                            <button
-                              className="shrink-0 text-fg-subtle transition-colors hover:text-fg"
-                              title="Copy value"
-                              onClick={() =>
-                                void navigator.clipboard
-                                  .writeText(value)
-                                  .then(() => toast({ title: "Copied" }))
-                              }
-                            >
-                              <Copy className="h-3 w-3" />
-                            </button>
+                            <CopyButton value={value} noun={name} tone="inline" />
                           </div>
                         )}
                       </TableCell>
@@ -3030,14 +2991,7 @@ function NewClientSecretDialog({
   open: boolean
   onClose: () => void
 }) {
-  const { toast } = useToast()
   const [show, setShow] = useState(false)
-
-  function handleCopy() {
-    void navigator.clipboard
-      .writeText(client.clientSecret ?? "")
-      .then(() => toast({ title: "Client secret copied" }))
-  }
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -3067,14 +3021,12 @@ function NewClientSecretDialog({
               >
                 {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
-              <button
-                type="button"
-                className="shrink-0 text-fg-muted hover:text-fg"
-                onClick={handleCopy}
-                title="Copy secret"
-              >
-                <Copy className="h-4 w-4" />
-              </button>
+              <CopyButton
+                value={client.clientSecret ?? ""}
+                noun="client secret"
+                tone="inline"
+                className="text-fg-muted"
+              />
             </div>
           </div>
         </div>
