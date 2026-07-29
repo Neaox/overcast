@@ -15,6 +15,7 @@
 import { queryOptions, mutationOptions } from "@tanstack/react-query"
 import { sqs } from "@/services/api"
 import { endpointStore } from "@/services/endpoint-store"
+import type { SQSMessage } from "@/types"
 
 // ─── Key factory ───────────────────────────────────────────────────────────
 
@@ -135,5 +136,13 @@ export function redriveMutationOptions(name: string) {
   return mutationOptions({
     mutationKey: [...sqsKeys.queueDetail(name), "redrive"] as const,
     mutationFn: (sourceArn: string) => sqs.startMessageMoveTask(sourceArn),
+  })
+}
+
+/** Returns one message to the queue it dead-lettered from. */
+export function redriveMessageMutationOptions(name: string) {
+  return mutationOptions({
+    mutationKey: [...sqsKeys.messageList(name), "redrive"] as const,
+    mutationFn: (msg: SQSMessage) => sqs.redriveMessage(name, msg),
   })
 }
