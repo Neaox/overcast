@@ -36,6 +36,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
+import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import {
   Table,
   TableBody,
@@ -820,24 +821,19 @@ export function TableDetail({ tableName }: Props) {
 
           <section>
             <h3 className={cn(sectionLabel, "mb-2 text-fg-muted")}>Table details</h3>
-            <div className="grid grid-cols-2 gap-x-8 gap-y-2 rounded-md border border-border bg-bg-muted p-4 text-sm">
-              {[
-                ["ARN", table.tableArn],
-                ["Status", table.tableStatus],
-                ["Billing mode", table.billingMode],
-                [
-                  "Created",
-                  table.creationDateTime ? new Date(table.creationDateTime).toLocaleString() : "—",
-                ],
-                ["Item count", table.itemCount.toLocaleString()],
-                ["Size", `${table.tableSizeBytes.toLocaleString()} bytes`],
-              ].map(([label, value]) => (
-                <div key={label} className="flex flex-col gap-0.5">
-                  <span className="text-xs text-fg-muted">{label}</span>
-                  <span className="font-mono text-xs text-fg">{value}</span>
-                </div>
-              ))}
-            </div>
+            <DefinitionList className="gap-y-2 rounded-md border border-border bg-bg-muted p-4">
+              <Definition label="Status" value={table.tableStatus} />
+              <Definition label="Billing mode" value={table.billingMode} />
+              <Definition
+                label="Created"
+                value={
+                  table.creationDateTime ? new Date(table.creationDateTime).toLocaleString() : null
+                }
+              />
+              <Definition label="Item count" value={table.itemCount.toLocaleString()} />
+              <Definition label="Size" value={`${table.tableSizeBytes.toLocaleString()} bytes`} />
+              <Definition label="ARN" value={table.tableArn} full />
+            </DefinitionList>
           </section>
 
           {/* Streams section */}

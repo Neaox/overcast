@@ -130,7 +130,7 @@ function OverviewPanel({
 
   return (
     <>
-      <DefinitionList columns={2}>
+      <DefinitionList>
         <Definition label="Instance ID" value={inst.instanceId} />
         <Definition label="State" value={<InstanceStateBadge state={inst.state.name} />} />
         <Definition
@@ -368,7 +368,7 @@ function NetworkingPanel({
 }) {
   return (
     <div className="space-y-6">
-      <DefinitionList columns={2}>
+      <DefinitionList>
         <Definition
           label="VPC ID"
           value={inst.vpcId && <CopyableValue value={inst.vpcId} noun="VPC ID" />}

@@ -82,22 +82,63 @@ describe("Definition > semantics", () => {
 })
 
 describe("DefinitionList > layout", () => {
-  it("inherits the inline layout from the list so pairs need not repeat it", () => {
+  // The container must wrap the list rather than be it: `@container` scopes
+  // queries to descendants, so a `<dl>` that declared itself the container
+  // would size its own columns against some ancestor instead of its own width.
+  it("wraps the list in a container so its shape follows the card, not the viewport", () => {
+    const { container } = render(
+      <DefinitionList>
+        <Definition label="Runtime" value="nodejs20.x" />
+      </DefinitionList>,
+    )
+    const dl = container.querySelector("dl")
+    expect(dl).not.toHaveClass("@container")
+    expect(dl?.parentElement).toHaveClass("@container")
+  })
+
+  it("reflows a pair from inline to stacked at the container breakpoint by default", () => {
+    render(
+      <DefinitionList>
+        <Definition label="Runtime" value="nodejs20.x" />
+      </DefinitionList>,
+    )
+    const label = screen.getByText("Runtime")
+    // Narrow card: a fixed label column beside the value.
+    expect(label).toHaveClass("w-28")
+    // Wide card: the column is released and the value sits underneath.
+    expect(label).toHaveClass("@3xl:w-auto")
+    expect(label.parentElement).toHaveClass("@3xl:flex-col")
+  })
+
+  it("pins a list to inline so it never releases the label column", () => {
     render(
       <DefinitionList layout="inline">
         <Definition label="From" value="noreply@example.com" />
       </DefinitionList>,
     )
-    expect(screen.getByText("From")).toHaveClass("w-28")
+    const label = screen.getByText("From")
+    expect(label).toHaveClass("w-28")
+    expect(label).not.toHaveClass("@3xl:w-auto")
   })
 
-  it("leaves labels unconstrained in the default stacked layout", () => {
+  it("pins a list to stacked so it never takes a label column", () => {
     render(
-      <DefinitionList>
+      <DefinitionList layout="stacked">
         <Definition label="From" value="noreply@example.com" />
       </DefinitionList>,
     )
-    expect(screen.getByText("From")).not.toHaveClass("w-28")
+    const label = screen.getByText("From")
+    expect(label).not.toHaveClass("w-28")
+    expect(label.parentElement).toHaveClass("flex-col")
+  })
+
+  it("lets a pair override the layout its list set", () => {
+    render(
+      <DefinitionList layout="inline">
+        <Definition label="Description" value="A queue." layout="stacked" />
+      </DefinitionList>,
+    )
+    expect(screen.getByText("Description")).not.toHaveClass("w-28")
   })
 
   it("spans a full-width pair across the whole grid", () => {
@@ -107,6 +148,17 @@ describe("DefinitionList > layout", () => {
       </DefinitionList>,
     )
     expect(screen.getByText("ARN").parentElement).toHaveClass("col-span-full")
+  })
+
+  it("scales its column count with the container, not the window", () => {
+    const { container } = render(
+      <DefinitionList>
+        <Definition label="Runtime" value="nodejs20.x" />
+      </DefinitionList>,
+    )
+    const dl = container.querySelector("dl")
+    expect(dl).toHaveClass("@3xl:grid-cols-2")
+    expect(dl).toHaveClass("@5xl:grid-cols-3")
   })
 })
 

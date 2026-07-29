@@ -383,7 +383,7 @@ export function CloudwatchDashboard() {
                             </Badge>
                           </div>
 
-                          <DefinitionList columns={2} className="gap-y-2">
+                          <DefinitionList className="gap-y-2">
                             <Definition label="Threshold" value={alarm.Threshold} />
                             <Definition label="Comparison" value={alarm.ComparisonOperator} />
                             <Definition

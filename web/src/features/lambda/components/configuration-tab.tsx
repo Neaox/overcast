@@ -608,7 +608,7 @@ function EnvVarsSection({ fn }: { fn: LambdaFunction }) {
       ) : !hasEnvVars ? (
         <p className="text-xs text-fg-muted">No environment variables configured.</p>
       ) : (
-        <DefinitionList columns={2}>
+        <DefinitionList>
           {Object.entries(currentEnv).map(([key, val]) => (
             <Definition key={key} label={key} value={val} />
           ))}

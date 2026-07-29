@@ -51,6 +51,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
+import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import {
   Table,
   TableBody,
@@ -407,11 +408,10 @@ export function QueueDetail({ queueName }: Props) {
         <StatCard label="Retention" value={formatRetention(queue.messageRetentionPeriod)} />
       </div>
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
-        <AttrRow label="ARN" value={<ArnText arn={queue.arn} />} mono />
-        <AttrRow label="Delay" value={`${queue.delaySeconds}s`} />
-        <AttrRow label="Max Message Size" value={formatBytes(queue.maximumMessageSize)} />
-        <AttrRow
+      <DefinitionList>
+        <Definition label="Delay" value={`${queue.delaySeconds}s`} />
+        <Definition label="Max Message Size" value={formatBytes(queue.maximumMessageSize)} />
+        <Definition
           label="Long Poll Wait"
           value={
             queue.receiveMessageWaitTimeSeconds > 0
@@ -419,22 +419,23 @@ export function QueueDetail({ queueName }: Props) {
               : "Disabled"
           }
         />
-      </div>
+        <Definition label="ARN" value={<ArnText arn={queue.arn} />} full />
+      </DefinitionList>
 
       {/* ── Dead Letter Queue ── */}
       {queue.redrivePolicy && (
         <div className="rounded-lg border border-border bg-bg-muted p-4">
           <p className="mb-2 font-mono text-xs font-medium text-fg-muted">Dead Letter Queue</p>
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-            <AttrRow
+          <DefinitionList className="gap-y-2">
+            <Definition
               label="DLQ ARN"
               value={<ArnLink arn={queue.redrivePolicy.deadLetterTargetArn} />}
             />
-            <AttrRow
+            <Definition
               label="Max Receive Count"
               value={String(queue.redrivePolicy.maxReceiveCount)}
             />
-          </div>
+          </DefinitionList>
         </div>
       )}
 
@@ -1000,23 +1001,6 @@ function StatCard({
       >
         {value}
       </p>
-    </div>
-  )
-}
-
-function AttrRow({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string
-  value: React.ReactNode
-  mono?: boolean
-}) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-fg-muted">{label}</span>
-      <span className={cn("text-sm text-fg", mono && "font-mono")}>{value}</span>
     </div>
   )
 }

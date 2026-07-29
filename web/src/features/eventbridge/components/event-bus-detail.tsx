@@ -84,7 +84,7 @@ export function EventBusDetail({ busName }: Props) {
       <ApplicationOwnershipBanner candidates={[busName]} />
 
       {/* Bus details card */}
-      <DefinitionCard columns={2}>
+      <DefinitionCard>
         <Definition label="Bus name" value={busName} />
         <Definition label="Rules" value={String(rules.length)} />
       </DefinitionCard>

@@ -23,35 +23,48 @@ import { cn } from "@/lib/utils"
  */
 
 // ─── Grid ─────────────────────────────────────────────────────────────────
+/**
+ * The list is a **container query context**, so its shape follows the width of
+ * the card it is in rather than the width of the browser. The same list is a
+ * vertical label/value run inside Lambda's `max-w-2xl` configuration card and a
+ * three-up grid on a full-width detail page, with no call site deciding.
+ *
+ * `@3xl` (48rem) is where a fixed label column stops paying for itself and the
+ * values have room to sit under their labels instead of beside them.
+ */
 const definitionListVariants = cva("grid gap-x-8 gap-y-3", {
   variants: {
     columns: {
+      /** Follows the container. The default — prefer it over pinning a count. */
+      auto: "grid-cols-1 @3xl:grid-cols-2 @5xl:grid-cols-3",
       /** Stacked — a sidebar or a narrow dialog. */
       1: "grid-cols-1",
-      /** The dialog / half-width default. */
-      2: "grid-cols-1 sm:grid-cols-2",
-      /** The detail-page default: two columns tight, three once there is room. */
-      3: "grid-cols-2 md:grid-cols-3",
+      /** The dialog / half-width shape. */
+      2: "grid-cols-1 @2xl:grid-cols-2",
+      3: "grid-cols-2 @3xl:grid-cols-3",
       /** Short values only — ids and ARNs get too narrow to read at four up. */
-      4: "grid-cols-2 md:grid-cols-4",
+      4: "grid-cols-2 @3xl:grid-cols-4",
     },
   },
-  defaultVariants: { columns: 3 },
+  defaultVariants: { columns: "auto" },
 })
 
 /**
- * `"stacked"` puts the label above its value — the detail-page metadata grid.
- * `"inline"` sets them side by side against a fixed label column, for the
- * compact header blocks (a mail message's From/To/Date, an S3 object's
- * content type and size).
+ * `"auto"` — the default — is inline while the card is narrow and stacked once
+ * it is wide, at the same `@3xl` breakpoint the column count uses.
+ *
+ * The two fixed values are for lists whose width does not tell the whole story:
+ * `"inline"` for a block that should stay a label/value run however much room
+ * it is given (a mail message's From/To/Date), `"stacked"` for one that should
+ * never take a fixed label column.
  */
-type DefinitionLayout = "stacked" | "inline"
+type DefinitionLayout = "auto" | "stacked" | "inline"
 
 /**
  * The layout travels by context so a caller sets it once on the list rather
  * than repeating it on every pair.
  */
-const DefinitionLayoutContext = React.createContext<DefinitionLayout>("stacked")
+const DefinitionLayoutContext = React.createContext<DefinitionLayout>("auto")
 
 interface DefinitionListProps
   extends React.HTMLAttributes<HTMLDListElement>, VariantProps<typeof definitionListVariants> {
@@ -62,24 +75,32 @@ interface DefinitionListProps
 function DefinitionList({
   className,
   columns,
-  layout = "stacked",
+  layout = "auto",
   children,
   ...props
 }: DefinitionListProps) {
-  // An inline list reads as a block of rows, so it stays single-column unless
-  // the caller asks otherwise.
-  const cols = columns ?? (layout === "inline" ? 1 : 3)
+  // A list that is always a label/value run stays single-column: a second
+  // column of fixed labels reads as a table without being one.
+  const cols = columns ?? (layout === "inline" ? 1 : "auto")
   return (
-    <dl
-      className={cn(
-        definitionListVariants({ columns: cols }),
-        layout === "inline" && "gap-y-2",
-        className,
-      )}
-      {...props}
-    >
-      <DefinitionLayoutContext.Provider value={layout}>{children}</DefinitionLayoutContext.Provider>
-    </dl>
+    // The container is a wrapper, not the `<dl>` itself: `@container` makes an
+    // element a query context for its *descendants*, so a `<dl>` carrying both
+    // `@container` and `@3xl:grid-cols-2` would never match its own width — the
+    // variant would resolve against whatever container sits further up instead.
+    <div className="@container">
+      <dl
+        className={cn(
+          definitionListVariants({ columns: cols }),
+          layout === "inline" && "gap-y-2",
+          className,
+        )}
+        {...props}
+      >
+        <DefinitionLayoutContext.Provider value={layout}>
+          {children}
+        </DefinitionLayoutContext.Provider>
+      </dl>
+    </div>
   )
 }
 
@@ -109,6 +130,34 @@ const definitionValueColor = {
   prose: "text-fg-muted",
 } as const
 
+/**
+ * Inline and stacked differ only in flex direction and whether the label takes
+ * a fixed column, so `auto` is expressible in CSS — the pair reflows with the
+ * card at `@3xl` without React re-rendering or measuring anything.
+ */
+const definitionItemVariants = cva("flex min-w-0", {
+  variants: {
+    layout: {
+      auto: "gap-3 @3xl:flex-col @3xl:gap-0.5",
+      inline: "gap-3",
+      stacked: "flex-col gap-0.5",
+    },
+  },
+  defaultVariants: { layout: "auto" },
+})
+
+/** The fixed label column exists only while the pair is inline. */
+const definitionLabelVariants = cva("text-fg-subtle", {
+  variants: {
+    layout: {
+      auto: "w-28 shrink-0 pt-0.5 @3xl:w-auto @3xl:pt-0",
+      inline: "w-28 shrink-0 pt-0.5",
+      stacked: "",
+    },
+  },
+  defaultVariants: { layout: "auto" },
+})
+
 interface DefinitionProps extends VariantProps<typeof definitionValueVariants> {
   label: React.ReactNode
   /** `null`, `undefined` and `""` render as an em dash. */
@@ -137,27 +186,17 @@ function Definition({
   valueClassName,
 }: DefinitionProps) {
   const inherited = React.useContext(DefinitionLayoutContext)
-  const inline = (layout ?? inherited) === "inline"
+  const resolved = layout ?? inherited
   const empty = value === null || value === undefined || value === ""
   return (
     <div
       className={cn(
-        "flex min-w-0",
-        inline ? "gap-3" : "flex-col gap-0.5",
+        definitionItemVariants({ layout: resolved }),
         full && "col-span-full",
         className,
       )}
     >
-      <dt
-        className={cn(
-          fieldLabel,
-          "text-fg-subtle",
-          // The fixed column is what lines the values up down the block.
-          inline && "w-28 shrink-0 pt-0.5",
-        )}
-      >
-        {label}
-      </dt>
+      <dt className={cn(fieldLabel, definitionLabelVariants({ layout: resolved }))}>{label}</dt>
       <dd
         className={cn(
           definitionValueColor[variant ?? "mono"],

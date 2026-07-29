@@ -186,7 +186,7 @@ function LogsPanel({ instanceId }: { instanceId: string }) {
 
 function ConfigurationPanel({ db }: { db: RdsInstance }) {
   return (
-    <DefinitionList columns={2}>
+    <DefinitionList>
       <Definition label="Engine" value={db.Engine} />
       <Definition label="Version" value={db.EngineVersion} />
       <Definition label="Instance Class" value={db.DBInstanceClass} />
@@ -221,7 +221,7 @@ function ConnectivityPanel({ db }: { db: RdsInstance }) {
           <code className="rounded bg-bg-muted px-2 py-1 font-mono text-sm">{endpointStr}</code>
           <CopyButton value={endpointStr} noun="endpoint" />
         </div>
-        <DefinitionList columns={2}>
+        <DefinitionList>
           <Definition label="Address" value={db.Endpoint.Address} />
           <Definition label="Port" value={db.Endpoint.Port} />
           <Definition label="VPC" value={db.DBSubnetGroup?.VpcId} />

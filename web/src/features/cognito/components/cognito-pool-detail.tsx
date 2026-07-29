@@ -458,7 +458,7 @@ function PasswordPolicyCard({ pool, poolId }: { pool: PoolSummary; poolId: strin
             </div>
           </form>
         ) : (
-          <div className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+          <DefinitionList>
             <PolicyRow label="Minimum length" value={String(current.minimumLength)} />
             <PolicyRow label="Require uppercase" value={current.requireUppercase ? "Yes" : "No"} />
             <PolicyRow label="Require lowercase" value={current.requireLowercase ? "Yes" : "No"} />
@@ -468,7 +468,7 @@ function PasswordPolicyCard({ pool, poolId }: { pool: PoolSummary; poolId: strin
               label="Temp password validity"
               value={`${current.temporaryPasswordValidityDays} day${current.temporaryPasswordValidityDays !== 1 ? "s" : ""}`}
             />
-          </div>
+          </DefinitionList>
         )}
       </CardContent>
     </Card>
@@ -476,12 +476,7 @@ function PasswordPolicyCard({ pool, poolId }: { pool: PoolSummary; poolId: strin
 }
 
 function PolicyRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-xs font-medium text-fg-muted">{label}</span>
-      <span className="text-sm">{value}</span>
-    </div>
-  )
+  return <Definition label={label} value={value} />
 }
 
 const EMPTY_BRANDING: ManagedLoginBranding = {
@@ -787,7 +782,7 @@ function SelfRegistrationCard({ pool, poolId }: { pool: PoolSummary; poolId: str
             </div>
           </form>
         ) : (
-          <div className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
+          <DefinitionList>
             <PolicyRow
               label="Self-registration"
               value={current.allowAdminCreateUserOnly ? "Disabled (admin only)" : "Enabled"}
@@ -796,7 +791,7 @@ function SelfRegistrationCard({ pool, poolId }: { pool: PoolSummary; poolId: str
               label="Unused account expiry"
               value={`${current.unusedAccountValidityDays} day${current.unusedAccountValidityDays !== 1 ? "s" : ""}`}
             />
-          </div>
+          </DefinitionList>
         )}
       </CardContent>
     </Card>
@@ -901,11 +896,11 @@ function EmailConfigCard({ pool, poolId }: { pool: PoolSummary; poolId: string }
             </div>
           </form>
         ) : (
-          <div className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
+          <DefinitionList>
             {emailFields.map(({ key, label }) => (
-              <PolicyRow key={key} label={label} value={current[key] || "—"} />
+              <PolicyRow key={key} label={label} value={current[key]} />
             ))}
-          </div>
+          </DefinitionList>
         )}
       </CardContent>
     </Card>
@@ -1030,15 +1025,15 @@ function VerificationMessagesCard({ pool, poolId }: { pool: PoolSummary; poolId:
             </div>
           </form>
         ) : (
-          <div className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
+          <DefinitionList>
             <PolicyRow
               label="Verification type"
               value={current.defaultEmailOption === "CONFIRM_WITH_LINK" ? "Link" : "Code"}
             />
-            <PolicyRow label="Email subject" value={current.emailSubject || "—"} />
-            <PolicyRow label="Email message" value={current.emailMessage || "—"} />
-            <PolicyRow label="SMS message" value={current.smsMessage || "—"} />
-          </div>
+            <PolicyRow label="Email subject" value={current.emailSubject} />
+            <PolicyRow label="Email message" value={current.emailMessage} />
+            <PolicyRow label="SMS message" value={current.smsMessage} />
+          </DefinitionList>
         )}
       </CardContent>
     </Card>
@@ -1756,7 +1751,7 @@ function ClientDetailPanel({ poolId, clientId }: { poolId: string; clientId: str
   return (
     <div className="border-t bg-bg-muted/30">
       {/* Client info */}
-      <DefinitionList columns={2} className="px-6 pt-4 pb-4">
+      <DefinitionList className="px-6 pt-4 pb-4">
         <DetailRow label="Client ID" value={detail.clientId} copyable />
         <DetailRow label="Client name" value={detail.clientName} />
         {detail.clientSecret ? (
@@ -2337,7 +2332,7 @@ function UserDetailDialog({
         ) : (
           <div className="flex flex-col gap-5">
             {/* ── Identity & metadata ──────────────────────────── */}
-            <DefinitionList columns={2}>
+            <DefinitionList>
               <DetailRow label="Username" value={user.username} copyable />
               <DetailRow label="Subject (sub)" value={user.attributes["sub"] ?? "—"} copyable />
               <DetailRow label="Status" value={user.userStatus} />

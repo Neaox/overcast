@@ -163,7 +163,7 @@ function OverviewPanel({
 }) {
   const ns = vpc.networkStatus ?? "ok"
   return (
-    <DefinitionList columns={2}>
+    <DefinitionList>
       <Definition label="VPC ID" value={vpc.vpcId} />
       <Definition label="CIDR Block" value={vpc.cidrBlock} />
       <Definition
