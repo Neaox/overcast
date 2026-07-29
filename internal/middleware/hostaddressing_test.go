@@ -158,6 +158,101 @@ func TestHostClassifier_claimsAreMutuallyExclusive(t *testing.T) {
 	}
 }
 
+// TestHostClassifier_hostIsCaseInsensitive is the specification for DNS's own
+// rule: a hostname is case-insensitive (RFC 4343; RFC 3986 §3.2.2 for the URI
+// authority), so the SAME address in any case must reach the same resource.
+//
+// This is not hypothetical robustness. Browsers lowercase the Host before
+// sending it, so every one of these forms is what a user actually gets by
+// pasting an address Overcast minted into the address bar. Only the base was
+// folded (strings.EqualFold in Classify) — the S3 label, the bucket, the
+// service label and the region were all matched case-sensitively.
+func TestHostClassifier_hostIsCaseInsensitive(t *testing.T) {
+	// Given: every tier's address, in the case a client might actually send
+	cases := []struct {
+		name       string
+		host       string
+		configured string
+		want       string
+	}{
+		// ---- Tier A / B: S3. Bucket names are lowercase-only by AWS rule, so
+		// an upper-case Host segment can only mean a case-folded name.
+		{name: "bare bucket, mixed case", host: "MyBucket.localhost:4566", want: "s3:mybucket"},
+		{name: "bare bucket, upper base", host: "mybucket.LOCALHOST.OVERCAST.SH:4566", want: "s3:mybucket"},
+		{name: "labelled bucket, upper s3 label", host: "mybucket.S3.localhost", want: "s3:mybucket"},
+		{name: "labelled bucket, upper region", host: "MyBucket.s3.US-EAST-1.localhost", want: "s3:mybucket"},
+		{name: "legacy dash dialect, mixed case", host: "Legacy-Bucket.S3-US-West-2.localhost", want: "s3:legacy-bucket"},
+		{name: "dotted bucket, mixed case", host: "My.Dotted.Bucket.localhost", want: "s3:my.dotted.bucket"},
+		{name: "s3 service endpoint, upper", host: "S3.localhost", want: "none"},
+
+		// ---- Tier C: one row per registered label, since each is a separate
+		// map lookup that was case-sensitive.
+		{name: "apigw, upper label", host: "abc123.EXECUTE-API.us-east-1.localhost:4566", want: "hostroute:execute-api id=abc123 region=us-east-1"},
+		{name: "apigw, upper region", host: "abc123.execute-api.US-EAST-1.localhost:4566", want: "hostroute:execute-api id=abc123 region=us-east-1"},
+		{name: "apigw, fully upper", host: "ABC123.EXECUTE-API.US-EAST-1.LOCALHOST.OVERCAST.SH:4566", want: "hostroute:execute-api id=abc123 region=us-east-1"},
+		{name: "lambda url, mixed case", host: "UrlId.Lambda-Url.US-East-1.localhost:4566", want: "hostroute:lambda-url id=urlid region=us-east-1"},
+		{name: "appsync graphql, mixed case", host: "MyApi.AppSync-Api.US-East-1.localhost:4566", want: "hostroute:appsync-api id=myapi region=us-east-1"},
+		{name: "appsync realtime, mixed case", host: "MyApi.AppSync-Realtime-Api.US-East-1.localhost:4566", want: "hostroute:appsync-realtime-api id=myapi region=us-east-1"},
+		// CloudFront is the case that brought this in: its IDs are the only
+		// uppercase ones Overcast mints, so pasting a minted DomainName into a
+		// browser is exactly this row.
+		{name: "cloudfront, browser-lowercased", host: "e1pqrs2t3u4v5w.cloudfront.localhost.overcast.sh:4566", want: "hostroute:cloudfront id=e1pqrs2t3u4v5w region="},
+		{name: "cloudfront, as minted", host: "E1PQRS2T3U4V5W.cloudfront.localhost.overcast.sh:4566", want: "hostroute:cloudfront id=e1pqrs2t3u4v5w region="},
+		{name: "cloudfront, upper label", host: "E1PQRS2T3U4V5W.CloudFront.net", want: "hostroute:cloudfront id=e1pqrs2t3u4v5w region="},
+
+		// ---- Precedence survives folding, in both collision directions -----
+		{name: "reserved-suffix bucket labelled, mixed case", host: "My.Execute-Api.S3.localhost", want: "s3:my.execute-api"},
+		{name: "configured base containing a label, mixed case", host: "MyBucket.Execute-Api.MyCorp.com", configured: "execute-api.mycorp.com", want: "s3:mybucket"},
+		{name: "bucket named like a service, upper", host: "EXECUTE-API.localhost:4566", want: "s3:execute-api"},
+
+		// ---- Folding must not invent claims --------------------------------
+		{name: "unregistered label, upper", host: "abc123.NOT-A-REAL-SERVICE.us-east-1.amazonaws.com", want: "none"},
+		{name: "IPv4 literal is untouched", host: "127.0.0.1:4566", want: "none"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// When: the mixed-case host is classified
+			got := NewHostClassifier(tc.configured).Classify(tc.host)
+
+			// Then: it lands on the same owner, with fields in canonical case
+			if s := claimString(got); s != tc.want {
+				t.Errorf("Classify(%q) with OVERCAST_HOSTNAME=%q\n got: %s\nwant: %s",
+					tc.host, tc.configured, s, tc.want)
+			}
+		})
+	}
+}
+
+// TestHostClassifier_lowercaseHostStaysAllocationFree pins the cost of case
+// folding to the requests that actually need it. Classify runs on every
+// request and is specified allocation-free (§7 of the plan, and
+// BenchmarkHostClassifier_Classify); an unconditional strings.ToLower would
+// allocate on all of them. Real clients send lowercase, so folding must be
+// pay-per-use: detect first, convert only when there is something to convert.
+func TestHostClassifier_lowercaseHostStaysAllocationFree(t *testing.T) {
+	// Given: the classifier, and one host per tier in the case clients send
+	c := NewHostClassifier("localhost.overcast.sh")
+	for _, host := range []string{
+		"localhost:4566",
+		"127.0.0.1:4566",
+		"mybucket.localhost:4566",
+		"mybucket.s3.us-east-1.localhost:4566",
+		"abc123.execute-api.us-east-1.localhost.overcast.sh:4566",
+		"e1pqrs2t3u4v5w.cloudfront.localhost.overcast.sh:4566",
+	} {
+		t.Run(host, func(t *testing.T) {
+			// When: it is classified repeatedly
+			got := testing.AllocsPerRun(100, func() { _ = c.Classify(host) })
+
+			// Then: no allocation was needed to do it
+			if got != 0 {
+				t.Errorf("Classify(%q) allocated %v times per run; want 0", host, got)
+			}
+		})
+	}
+}
+
 // TestBucketNameReservedLabel covers the reserved-label predicate backing the
 // CreateBucket diagnostic: a reserved label is only a problem as the
 // second-or-later dot segment, because that is where it lands at hostname

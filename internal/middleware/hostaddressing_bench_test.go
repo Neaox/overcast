@@ -24,6 +24,27 @@ import (
 // (extractS3BucketFromHost) and strings.Split on the hostname (ParseHostRoute).
 // Classify must be 0 allocs/op on every row and must not regress on ns/op.
 // See docs/plans/host-routing-precedence.md §7.
+//
+// Case folding (foldHostname) then added one full pass over the hostname, since
+// any byte could be upper-case and only reaching the end proves none is. Cost
+// measured on the same machine, median of 3, before -> after:
+//
+//	PathStyleLocalhost      29.6 -> 33.6 ns/op   (+4.0)
+//	IPLiteral               15.0 -> 19.5 ns/op   (+4.5)
+//	S3BareVirtualHost       39.8 -> 50.2 ns/op   (+10.4)
+//	S3LabelledVirtualHost   19.6 -> 32.7 ns/op   (+13.1)
+//	HostRouteExecuteAPI      243 ->  259 ns/op   (+16)
+//
+// Still 0 allocs/op on every row, and every row remains far inside the
+// pre-consolidation budget above. S3LabelledVirtualHost moves most in relative
+// terms because tier A used to return as soon as it found ".s3." near the front,
+// so it never touched the rest of the hostname; it now pays the full scan first.
+//
+// A word-at-a-time (SWAR) scan would claw most of that back and was deliberately
+// not taken: this is the code that decides WHICH SERVICE answers a request, ~10ns
+// against a ~1400 ns middleware pass is not worth bit-twiddling that has to be
+// read carefully to be trusted, and the defect it replaced was a routing error.
+// Revisit only with a profile showing this on a real critical path.
 
 var benchHosts = []struct{ name, host string }{
 	{"PathStyleLocalhost", "localhost:4566"},
@@ -31,6 +52,20 @@ var benchHosts = []struct{ name, host string }{
 	{"S3BareVirtualHost", "mybucket.localhost:4566"},
 	{"S3LabelledVirtualHost", "mybucket.s3.us-east-1.localhost:4566"},
 	{"HostRouteExecuteAPI", "abc123.execute-api.us-east-1.localhost.overcast.sh:4566"},
+}
+
+// BenchmarkHostClassifier_ClassifyMixedCase measures the one path that DOES
+// allocate: a host carrying upper-case bytes has to be materialised in its
+// folded form. Kept separate from benchHosts so the 0-allocs/op contract above
+// stays a flat rule with no exceptions, and so the cost of the case that real
+// clients do not send is visible rather than averaged in.
+func BenchmarkHostClassifier_ClassifyMixedCase(b *testing.B) {
+	c := NewHostClassifier("localhost.overcast.sh")
+	const host = "ABC123.Execute-Api.US-East-1.localhost.overcast.sh:4566"
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = c.Classify(host)
+	}
 }
 
 // BenchmarkHostClassifier_Classify measures the consolidated single-pass

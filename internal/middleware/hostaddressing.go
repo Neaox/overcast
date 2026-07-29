@@ -113,7 +113,7 @@ func NewHostClassifier(configuredHostname string) *HostClassifier {
 // Classify returns the single owner of host (which may include a port).
 // Allocation-free.
 func (c *HostClassifier) Classify(host string) HostClaim {
-	hostname := hostWithoutPort(host)
+	hostname := foldHostname(hostWithoutPort(host))
 	if hostname == "" || isIPLiteral(hostname) {
 		return HostClaim{}
 	}
@@ -283,8 +283,10 @@ func indexS3Separator(hostname string) int {
 }
 
 // parseHostRouteName finds a registered host-route label at segment index >= 1
-// in a hostname that already has its port stripped. It walks segments by index
-// rather than strings.Split so it allocates nothing.
+// in a hostname that already has its port stripped and its case folded (see
+// foldHostname — the label lookup is an exact map hit, so an unfolded hostname
+// silently fails to match). It walks segments by index rather than
+// strings.Split so it allocates nothing.
 func parseHostRouteName(hostname string) (HostRouteMatch, bool) {
 	start := 0
 	for segment := 0; ; segment++ {
@@ -353,6 +355,43 @@ func hostWithoutPort(host string) string {
 		return host[:i]
 	}
 	return host
+}
+
+// foldHostname lowercases an ASCII hostname whose port is already stripped, so
+// every downstream match — the ".s3." separator, the bucket name, the
+// hostRouteLabels lookup, the region pattern — can be a plain comparison
+// against the canonical lowercase form.
+//
+// A hostname is case-insensitive (RFC 4343 for DNS, RFC 3986 §3.2.2 for the URI
+// authority), so this loses nothing: the same address in any case is the same
+// address. Without it, casing decided WHICH SERVICE answered — an upper-case
+// label missed hostRouteLabels, and tier B then took the whole
+// "{id}.{label}.{region}" as a bucket name, so a Lambda function URL or a
+// CloudFront distribution address in the wrong case returned S3's NoSuchBucket.
+//
+// Folding is pay-per-use: Classify is specified allocation-free and runs on
+// every request, and real clients send lowercase, so a host that is already
+// lowercase is returned unchanged and the scan stops at the first upper-case
+// byte. ASCII-only by construction — DNS names are ASCII (an IDN arrives
+// punycode-encoded), and Unicode case folding has locale hazards a hostname
+// comparison must not inherit.
+func foldHostname(hostname string) string {
+	i := 0
+	for ; i < len(hostname); i++ {
+		if c := hostname[i]; c >= 'A' && c <= 'Z' {
+			break
+		}
+	}
+	if i == len(hostname) {
+		return hostname
+	}
+	b := []byte(hostname)
+	for ; i < len(b); i++ {
+		if c := b[i]; c >= 'A' && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	return string(b)
 }
 
 // isIPLiteral reports whether hostname (port and brackets already removed) is

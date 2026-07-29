@@ -117,6 +117,34 @@ Recognised bases for tier B: `localhost`, `localhost.overcast.sh`,
 `localhost.localstack.cloud`, plus `OVERCAST_HOSTNAME` when set, matched
 longest-first so a configured parent domain never shadows a longer default.
 
+**The host is case-folded before any tier is evaluated** (`foldHostname`). A
+hostname is case-insensitive — RFC 4343 for DNS, RFC 3986 §3.2.2 for the URI
+authority — so the same address in any case must produce the same claim. Only
+the base was originally folded (`strings.EqualFold`); the `.s3.` separator, the
+bucket name, the `hostRouteLabels` lookup and the region segment were all
+matched case-sensitively, which meant **casing decided which service answered**:
+
+| Host | Before folding | After |
+| --- | --- | --- |
+| `UrlId.Lambda-Url.US-East-1.localhost` | S3 `NoSuchBucket: UrlId.Lambda-Url.US-East-1` | Lambda function URL |
+| `E1PQRS2T3U4V5W.cloudfront.localhost.overcast.sh` | CloudFront, ID `E1PQRS2T3U4V5W` | CloudFront, ID folded then canonicalised |
+| `e1pqrs2t3u4v5w.cloudfront.localhost.overcast.sh` | CloudFront, `502 Distribution "e…" not found` | same distribution |
+| `MyBucket.localhost` | S3 bucket `MyBucket`, which cannot exist | S3 bucket `mybucket` |
+| `mybucket.S3.localhost` | S3 bucket `mybucket.S3` | S3 bucket `mybucket` |
+
+The lower-case form is not hypothetical: a browser lower-cases the Host before
+sending it, so it is what a user gets by pasting an address Overcast minted into
+the address bar. CloudFront is where this first surfaced, because its IDs are
+the only upper-case ones Overcast mints (`E` + 13 upper-case alphanumerics);
+API Gateway, Lambda function URLs and AppSync all mint lower-case IDs, so only
+their *label* and *region* segments were exposed.
+
+Folding is a property of the **host** only. Paths stay case-sensitive, as they
+are on AWS — `/_cloudfront/{distributionId}/…` and every other path-style route
+match verbatim. The one place the two meet is CloudFront's `HostRouteRewrite`,
+which turns a folded host segment back into a path segment: it re-canonicalises
+the ID to upper case, since that is the only form the store holds.
+
 Tier B is a local-only convenience in the sense that real AWS has no bare
 form — but it is the form AWS SDKs actually emit against an endpoint override
 with virtual-hosted addressing, and the only form CDK's asset publisher uses
@@ -439,6 +467,37 @@ allocation-free and only on host-routed requests, which are rare relative to S3
 traffic, so hand-rolling it is not justified yet — but it is the next thing to
 cut if host-routed throughput ever matters. That row is also the noisiest
 across runs (213–409 ns), consistent with regexp machine-pool contention.
+
+### Case folding — measured cost
+
+`foldHostname` adds one full pass over the hostname to every classification:
+any byte could be upper-case, so only reaching the end proves none is. Same
+command and environment, median of 3:
+
+| Host | Before folding | After | Change |
+| --- | --- | --- | --- |
+| `localhost:4566` | 29.6 ns | 33.6 ns | +4.0 ns |
+| `127.0.0.1:4566` | 15.0 ns | 19.5 ns | +4.5 ns |
+| `mybucket.localhost:4566` | 39.8 ns | 50.2 ns | +10.4 ns |
+| `mybucket.s3.us-east-1.localhost:4566` | 19.6 ns | 32.7 ns | +13.1 ns |
+| `abc123.execute-api.us-east-1.localhost.overcast.sh:4566` | 243 ns | 259 ns | +16 ns |
+
+Zero allocations on every row still, and every row remains far inside the
+pre-consolidation budget. The labelled-S3 row moves most in relative terms
+because tier A used to return as soon as it found `.s3.` near the front and
+never touched the rest of the hostname; it now pays the scan first.
+
+Folding is pay-per-use: a host that is already lower-case is returned unchanged,
+so the allocation only happens for a host that actually carries upper-case bytes
+(`BenchmarkHostClassifier_ClassifyMixedCase`: 311 ns, 129 B, 2 allocs). Real
+clients send lower-case, so that path is effectively never taken in normal
+traffic — but it must stay correct, because it is the one a human types.
+
+A word-at-a-time (SWAR) scan would recover most of the 4–13 ns and was
+deliberately not taken. This code decides which service answers a request; the
+defect it replaced was a misroute, and ~10 ns against a ~1400 ns middleware pass
+does not justify bit-twiddling that has to be read carefully to be trusted.
+Revisit only with a profile showing host classification on a real critical path.
 
 ## 8. Canonical URLs — minting must match routing
 

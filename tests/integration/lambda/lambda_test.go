@@ -5433,6 +5433,11 @@ func TestInvokeFunctionURL_hostRoutedAcrossResolvableBases(t *testing.T) {
 		{"localhost without region", "nosuchurlid.lambda-url.localhost:4566"},
 		{"overcast.sh wildcard with region", "nosuchurlid.lambda-url.us-east-1.localhost.overcast.sh:4566"},
 		{"localstack.cloud wildcard with region", "nosuchurlid.lambda-url.us-east-1.localhost.localstack.cloud:4566"},
+		// A hostname is case-insensitive, so the same address in any case is
+		// the same address. Sent case-sensitively, the label missed
+		// hostRouteLabels and S3 virtual-hosted addressing claimed the Host
+		// instead — an S3 XML error for a Lambda invoke.
+		{"mixed case", "NoSuchUrlId.Lambda-Url.US-East-1.localhost.overcast.sh:4566"},
 	}
 
 	for _, b := range bases {

@@ -530,12 +530,20 @@ func (h *Handler) resolveStagingTarget(ctx context.Context, cfg *DistributionCon
 // CloudFront is global, so the address is {id}.cloudfront.net with no region
 // segment. middleware.ParseHostRoute already tolerates that — Region is
 // optional — so "cloudfront" needs no special parsing, only this rewrite.
+//
+// The ID is upper-cased because a Host is case-insensitive (RFC 3986 §3.2.2)
+// and browsers lowercase it before sending, while a distribution ID is
+// uppercase ("E" + 13 uppercase alphanumerics, generateDistributionID) and the
+// store looks it up verbatim. Without this, pasting a minted DomainName into a
+// browser 502s with `Distribution "e…" not found` while curl -H Host works.
+// CloudFront is the only host-routed service whose IDs are not already
+// lowercase, which is why only this rewrite needs to canonicalise.
 func (s *Service) HostRouteRewrite(r *http.Request, m middleware.HostRouteMatch) {
 	path := r.URL.Path
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	r.URL.Path = "/_cloudfront/" + m.ID + path
+	r.URL.Path = "/_cloudfront/" + strings.ToUpper(m.ID) + path
 	if r.URL.RawPath != "" {
 		r.URL.RawPath = r.URL.Path
 	}

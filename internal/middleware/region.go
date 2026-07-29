@@ -46,6 +46,12 @@ func Region(next http.Handler) http.Handler {
 //
 // Returns "" if the host does not have at least 4 dot-separated labels with a
 // known service segment in position 1. Strips any port suffix.
+//
+// The host is case-folded first (foldHostname), because a hostname is
+// case-insensitive and the region extracted here is not just a routing hint: it
+// becomes the store's key prefix via serviceutil.RegionKey. Returning the
+// segment verbatim let "…execute-api.US-East-1.…" partition state into a region
+// no other request could name.
 func regionFromHost(host string) string {
 	if host == "" {
 		return ""
@@ -53,6 +59,7 @@ func regionFromHost(host string) string {
 	if i := strings.IndexByte(host, ':'); i >= 0 {
 		host = host[:i]
 	}
+	host = foldHostname(host)
 	parts := strings.Split(host, ".")
 	if len(parts) < 4 {
 		return ""
