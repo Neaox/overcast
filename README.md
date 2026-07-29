@@ -349,22 +349,46 @@ overcast status
 overcast status --endpoint http://localhost:4566
 ```
 
-### overcast trust
+### overcast https
 
-Manages the local system trust store for Overcast's self-signed TLS certificate. Required only when `OVERCAST_TLS_CERT` / `OVERCAST_TLS_KEY` are set and you want browsers and SDK clients to accept the certificate without a flag.
+One-shot HTTPS setup: creates the local overcast CA if missing, installs it
+into the system trust store (approve the OS prompt — that's the only manual
+step), and mints the server certificate. Serving both the API and the web UI
+over TLS unlocks browser HTTP/2, which keeps the web console responsive under
+load. See [docs/https.md](./docs/https.md).
 
 ```bash
-# Install the certificate into the system trust store
+overcast https enable            # once per machine
+OVERCAST_TLS=auto overcast serve # HTTPS + HTTP/2 on both listeners
+# → https://localhost.overcast.sh:4567
+
+overcast https status            # report the setup state
+overcast https disable           # remove the CA from the trust store
+```
+
+### overcast trust
+
+Lower-level management of the overcast CA in the system trust store (the
+`https` subcommands build on it). Useful with `OVERCAST_TLS=auto`, or when
+scripting the pieces separately.
+
+```bash
+# Install the CA certificate into the system trust store
 overcast trust install
 
-# Remove it
+# Report whether it is installed
+overcast trust status
+
+# Remove it (the CA key material on disk is kept)
 overcast trust uninstall
 ```
 
 > [!NOTE]
-> `overcast trust` requires administrator / root privileges to modify the system trust store.
-> On macOS it uses the Keychain; on Linux it writes to the system CA bundle; on Windows it uses
-> the Windows Certificate Store.
+> On Windows the CA goes into the current user's certificate store (a
+> confirmation dialog appears); on macOS into the login keychain (an
+> authorisation prompt appears); on Linux into the system CA bundle, which
+> requires root (`sudo overcast trust install`). Firefox/Chromium on Linux
+> read their own NSS store — see [docs/https.md](./docs/https.md).
 
 ### Platform notes
 

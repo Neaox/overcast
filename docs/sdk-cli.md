@@ -339,5 +339,8 @@ region by default. These appear in ARNs and STS responses. Override with
 
 ### HTTPS
 
-For HTTPS, configure `OVERCAST_TLS_CERT` and `OVERCAST_TLS_KEY`. See the
-[root README](../README.md#https--tls) for details.
+For browser-trusted HTTPS (and HTTP/2) run `overcast https enable` once and
+start the daemon with `OVERCAST_TLS=auto`; to bring your own certificate,
+configure `OVERCAST_TLS_CERT` and `OVERCAST_TLS_KEY`. Point SDK clients at
+the CA with `AWS_CA_BUNDLE=~/.overcast/data/ca/rootCA.pem`. See
+[HTTPS and HTTP/2](./https.md) for details.
