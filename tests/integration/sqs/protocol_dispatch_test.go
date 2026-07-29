@@ -242,7 +242,9 @@ func TestProtocolDispatch_remainingSQSOperations(t *testing.T) {
 	defer listDLQResp.Body.Close()
 	helpers.AssertStatus(t, listDLQResp, http.StatusOK)
 	var sources struct {
-		QueueUrls []string `json:"QueueUrls"`
+		// AWS names this member `queueUrls`, not `QueueUrls` — see
+		// TestListDeadLetterSourceQueues_usesLowerCamelWireName.
+		QueueUrls []string `json:"queueUrls"`
 	}
 	helpers.DecodeJSON(t, listDLQResp, &sources)
 	if len(sources.QueueUrls) != 1 || sources.QueueUrls[0] != queueURL {
