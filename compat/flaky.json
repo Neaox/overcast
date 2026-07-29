@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "comment": "Compat tests that give different answers on identical input. Quarantined from the baseline gate in BOTH directions: a flaky test never fails a PR, and never gets promoted on the run where it happened to pass. These are bugs to fix, not a resting state — this list only shrinks. Remove an entry in the PR that fixes it. See compat/AGENTS.md § Baseline & uniformity policy.",
+  "flaky": [
+    {
+      "suite": "dotnet-sdk",
+      "group": "sns-subscriptions",
+      "test": "PublishDeliveredToSQS",
+      "reason": "Intermittent 'Topic does not exist: oc-<run>-dn-sns-sub'. The same topic was used successfully by SubscribeSQS earlier in the group, so the topic is being lost between calls rather than never created — suspect a race in the emulator's SNS topic store or in the suite's setup ordering. Observed passing and failing on consecutive CI runs of an unchanged tree."
+    },
+    {
+      "suite": "dotnet-sdk",
+      "group": "sns-subscriptions",
+      "test": "Unsubscribe",
+      "reason": "Cascades from PublishDeliveredToSQS: skipped as 'dependency failed' whenever that test fails. Remove this entry together with the one above."
+    }
+  ]
+}

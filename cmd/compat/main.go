@@ -1,22 +1,28 @@
 // cmd/compat/main.go — Overcast compatibility test CLI.
 //
 // Runs one or more test suite subprocesses, collects their NDJSON output, and
-// prints a summary report.  When --serve is set a live compatibility dashboard
-// is served on --port (default 7777).
+// prints a summary report. When --serve is set a live compatibility dashboard
+// is served too.
+//
+// Unless an endpoint is pinned, compat starts and owns a throwaway Overcast
+// instance on a free port — 4566/4567 are reserved for the developer's own
+// instance (AGENTS.md § Reserved ports). See launch.go.
 //
 // Usage:
 //
-//	go run ./cmd/compat [flags]
+//	go run ./cmd/compat --dev            # dashboard + hot-reloading UI + browser
+//	go run ./cmd/compat --format agent   # headless run, agent-readable summary
 //	go build -o bin/compat ./cmd/compat
 //
-// Flags:
+// Flags (the full list is in the var block below):
 //
-//	--endpoint    Overcast base URL (default: http://localhost:4566)
-//	--region      AWS region (default: us-east-1)
-//	--suite       Comma-separated suite names to run (default: all)
-//	--format      Output format: pretty | json (default: pretty)
-//	--serve       Start the compatibility dashboard HTTP server
-//	--port        Dashboard listen address (default: :7777)
+//	--dev             Dashboard + hot-reloading UI + browser, on free ports
+//	--endpoint        Target an instance you already run (skips managing one)
+//	--start-overcast  auto | always | never
+//	--suite           Comma-separated suite names to run (default: all)
+//	--format          Output format: pretty | json | agent | junit
+//	--serve           Start the compatibility dashboard HTTP server
+//	--port            Preferred dashboard port; a free one is picked if taken
 package main
 
 import (
@@ -39,27 +45,69 @@ import (
 	"github.com/Neaox/overcast/compat"
 )
 
+// Flags are package-level so that both main and run can read them; run holds
+// the deferred cleanup that must survive every exit path.
+var (
+	endpoint            = flag.String("endpoint", envOr("OVERCAST_ENDPOINT", ""), "Overcast base URL (default: a throwaway instance compat starts itself)")
+	region              = flag.String("region", envOr("OVERCAST_DEFAULT_REGION", "us-east-1"), "AWS region")
+	suiteFlag           = flag.String("suite", "", "Comma-separated suite names to run (empty = all)")
+	format              = flag.String("format", envOr("OVERCAST_COMPAT_FORMAT", "pretty"), "Output format: pretty|json|agent")
+	serve               = flag.Bool("serve", false, "Start the compatibility dashboard HTTP server")
+	port                = flag.String("port", envOr("OVERCAST_COMPAT_PORT", ":7777"), "Preferred dashboard listen address; a free port is chosen if it is taken")
+	resultsFile         = flag.String("results-file", envOr("OVERCAST_COMPAT_RESULTS_FILE", "compat-results.json"), "Path to persist last run results (empty to disable)")
+	agentReportFile     = flag.String("agent-report-file", envOr("OVERCAST_COMPAT_AGENT_REPORT", "compat-report.txt"), "Path to write the agent-friendly text report after each run (empty to disable)")
+	reportMode          = flag.Bool("report", false, "Read an existing results file and print an agent-friendly summary (no tests are run)")
+	mergeResults        = flag.String("merge-results", "", "Comma-separated result files or glob patterns to merge, then exit")
+	baselineFile        = flag.String("baseline-file", "compat/baseline.json", "Compatibility baseline file")
+	compareBaselineFlag = flag.Bool("compare-baseline", false, "Compare --results-file against --baseline-file, then exit")
+	annotate            = flag.Bool("annotate", false, "Emit GitHub workflow ::error commands for baseline regressions so they surface as PR annotations")
+	flakyFilePath       = flag.String("flaky-file", "compat/flaky.json", "Tests quarantined as intermittent: exempt from the baseline gate in both directions")
+	updateBaselineFlag  = flag.Bool("update-baseline", false, "Update --baseline-file from --results-file with improvements only, then exit")
+
+	registryFile       = flag.String("registry-file", "compat/suites/registry.json", "Shared compat test registry")
+	parityDebtFilePath = flag.String("parity-debt-file", "compat/parity-debt.json", "Cross-suite parity debt file")
+	checkParity        = flag.Bool("check-parity", false, "Check cross-suite registry parity against --parity-debt-file, then exit")
+	updateParityDebt   = flag.Bool("update-parity-debt", false, "Regenerate --parity-debt-file from --results-file, then exit")
+
+	lintBaselineFrom = flag.String("lint-baseline-from", "", "Old compatibility baseline file for downgrade linting")
+	lintBaselineTo   = flag.String("lint-baseline-to", "", "New compatibility baseline file for downgrade linting")
+	interactive      = flag.Bool("interactive", false, "Start in interactive mode (long-lived suite processes)")
+	noUI             = flag.Bool("no-ui", false, "Don't serve embedded UI (use with external Vite dev server)")
+
+	// Environment management — see launch.go.
+	dev               = flag.Bool("dev", false, "One-command dev loop: manage Overcast, serve the dashboard with a hot-reloading UI, open a browser")
+	startOvercastMode = flag.String("start-overcast", envOr("OVERCAST_COMPAT_START", startOvercastAuto), "Manage a throwaway Overcast instance: auto|always|never")
+	overcastHost      = flag.String("overcast-host", envOr("OVERCAST_COMPAT_HOST", "localhost"), "Hostname the suites address the managed instance by (e.g. localhost.overcast.sh for virtual-host-style S3)")
+	overcastBin       = flag.String("overcast-bin", envOr("OVERCAST_COMPAT_BIN", ""), "Path to an overcast binary (default: bin/overcast, then PATH, then a container)")
+	overcastImage     = flag.String("overcast-image", envOr("OVERCAST_COMPAT_IMAGE", defaultOvercastImage), "Container image used when no overcast binary is found")
+	overcastUI        = flag.Bool("overcast-ui", false, "Also expose the managed instance's own web UI on a free port")
+	overcastTimeout   = flag.Int("overcast-timeout", 60, "Seconds to wait for the managed instance to become healthy")
+	portBase          = flag.Int("port-base", defaultPortBase, "First port considered when scanning for free ports (never 4566/4567)")
+	uiDev             = flag.Bool("ui-dev", false, "Serve the dashboard UI from Vite with hot reloading instead of the embedded build")
+	uiDir             = flag.String("ui-dir", "", "Serve the dashboard UI from this directory instead of the build embedded in the binary")
+	buildUI           = flag.Bool("build-ui", false, "Build the dashboard UI before serving it (implies --ui-dir compat/ui/dist)")
+	openBrowserFlag   = flag.Bool("open", false, "Open the dashboard in a browser once it is ready")
+)
+
+// endpointPinned reports whether the caller chose the Overcast endpoint, in
+// which case compat targets it rather than starting one of its own.
+func endpointPinned() bool {
+	if os.Getenv("OVERCAST_ENDPOINT") != "" {
+		return true
+	}
+	pinned := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "endpoint" {
+			pinned = true
+		}
+	})
+	return pinned
+}
+
 func main() {
-	endpoint := flag.String("endpoint", envOr("OVERCAST_ENDPOINT", "http://localhost:4566"), "Overcast base URL")
-	region := flag.String("region", envOr("OVERCAST_DEFAULT_REGION", "us-east-1"), "AWS region")
-	suiteFlag := flag.String("suite", "", "Comma-separated suite names to run (empty = all)")
-	format := flag.String("format", envOr("OVERCAST_COMPAT_FORMAT", "pretty"), "Output format: pretty|json|agent")
-	serve := flag.Bool("serve", false, "Start the compatibility dashboard HTTP server")
-	port := flag.String("port", envOr("OVERCAST_COMPAT_PORT", ":7777"), "Dashboard listen address (e.g. :7777)")
-	resultsFile := flag.String("results-file", envOr("OVERCAST_COMPAT_RESULTS_FILE", "compat-results.json"), "Path to persist last run results (empty to disable)")
-	agentReportFile := flag.String("agent-report-file", envOr("OVERCAST_COMPAT_AGENT_REPORT", "compat-report.txt"), "Path to write the agent-friendly text report after each run (empty to disable)")
-	reportMode := flag.Bool("report", false, "Read an existing results file and print an agent-friendly summary (no tests are run)")
-	mergeResults := flag.String("merge-results", "", "Comma-separated result files or glob patterns to merge, then exit")
-	baselineFile := flag.String("baseline-file", "compat/baseline.json", "Compatibility baseline file")
-	compareBaseline := flag.Bool("compare-baseline", false, "Compare --results-file against --baseline-file, then exit")
-	updateBaseline := flag.Bool("update-baseline", false, "Update --baseline-file from --results-file with improvements only, then exit")
-	lintBaselineFrom := flag.String("lint-baseline-from", "", "Old compatibility baseline file for downgrade linting")
-	lintBaselineTo := flag.String("lint-baseline-to", "", "New compatibility baseline file for downgrade linting")
-	interactive := flag.Bool("interactive", false, "Start in interactive mode (long-lived suite processes)")
-	noUI := flag.Bool("no-ui", false, "Don't serve embedded UI (use with external Vite dev server)")
 	flag.Parse()
 
-	if *compareBaseline {
+	if *compareBaselineFlag {
 		if err := compareBaselineFile(*baselineFile, *resultsFile); err != nil {
 			fmt.Fprintf(os.Stderr, "compat: baseline check failed: %v\n", err)
 			os.Exit(1)
@@ -67,9 +115,25 @@ func main() {
 		return
 	}
 
-	if *updateBaseline {
+	if *updateBaselineFlag {
 		if err := updateBaselineFile(*baselineFile, *resultsFile); err != nil {
 			fmt.Fprintf(os.Stderr, "compat: update baseline: %v\n", err)
+			os.Exit(2)
+		}
+		return
+	}
+
+	if *checkParity {
+		if err := checkParityFiles(*registryFile, *parityDebtFilePath, *resultsFile, *annotate); err != nil {
+			fmt.Fprintf(os.Stderr, "compat: parity check failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *updateParityDebt {
+		if err := updateParityDebtFile(*registryFile, *parityDebtFilePath, *resultsFile); err != nil {
+			fmt.Fprintf(os.Stderr, "compat: update parity debt: %v\n", err)
 			os.Exit(2)
 		}
 		return
@@ -135,10 +199,34 @@ func main() {
 		return
 	}
 
-	// Normalise port: accept bare number like "7777" as well as ":7777".
-	addr := *port
-	if len(addr) > 0 && addr[0] != ':' {
-		addr = ":" + addr
+	os.Exit(run())
+}
+
+// run performs a compat run and/or serves the dashboard, returning the process
+// exit code. It is separate from main so that deferred cleanup — stopping a
+// managed Overcast instance, the Vite dev server — always happens, which
+// os.Exit inside main would skip.
+func run() int {
+	// --dev is the one-command loop: manage the emulator, serve the dashboard
+	// with a hot-reloading UI, open a browser.
+	if *dev {
+		*serve = true
+		*interactive = true
+		*uiDev = true
+		*openBrowserFlag = true
+	}
+	if *uiDev {
+		*noUI = true
+	}
+	if *buildUI {
+		if err := buildDashboardUI(context.Background(), uiProjectDir(),
+			func(f string, a ...any) { fmt.Fprintf(os.Stderr, "compat: "+f+"\n", a...) }); err != nil {
+			fmt.Fprintf(os.Stderr, "compat: %v\n", err)
+			return 2
+		}
+		if *uiDir == "" {
+			*uiDir = uiDistDir()
+		}
 	}
 
 	suites := splitCSV(*suiteFlag)
@@ -146,56 +234,130 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	// Pick a dashboard port that is actually free, and never the reserved
+	// pair, so concurrent sessions don't collide.
+	addr, err := resolveListenAddr(*port)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "compat: %v\n", err)
+		return 2
+	}
+	compatURL := "http://localhost" + addr
+
+	// Resolve the endpoint. Unless the caller pinned one, compat starts and
+	// owns a throwaway instance on a free port — AGENTS.md reserves 4566/4567
+	// for the developer's own instance.
+	endpointURL := *endpoint
+	if shouldStartOvercast(*startOvercastMode, endpointPinned()) {
+		oc, err := startOvercast(ctx, overcastOptions{
+			Host:     *overcastHost,
+			Bin:      *overcastBin,
+			Image:    *overcastImage,
+			PortBase: *portBase,
+			WithUI:   *overcastUI,
+			Timeout:  time.Duration(*overcastTimeout) * time.Second,
+			LogLevel: envOr("OVERCAST_LOG_LEVEL", "warn"),
+			Logf:     func(f string, a ...any) { fmt.Fprintf(os.Stderr, "compat: "+f+"\n", a...) },
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "compat: %v\n", err)
+			return 2
+		}
+		defer oc.Stop()
+		endpointURL = oc.Endpoint
+		fmt.Fprintf(os.Stderr, "compat: Overcast ready at %s (%s, managed by compat)\n", oc.Endpoint, oc.Mode)
+		if oc.UIURL != "" {
+			fmt.Fprintf(os.Stderr, "compat: Overcast web UI at %s\n", oc.UIURL)
+		}
+	}
+	if endpointURL == "" {
+		// --start-overcast=never with no endpoint: target the developer's own
+		// instance on the default port, which is what 4566 is reserved for.
+		endpointURL = fmt.Sprintf("http://localhost:%d", reservedAPIPort)
+	}
+
+	// --ui-dev: Vite serves the dashboard UI with hot reloading and proxies
+	// its API calls to the compat server.
+	dashboardURL := compatURL
+	if *uiDev {
+		viteURL, stopVite, err := startViteDev(ctx, viteOptions{
+			Dir:       uiProjectDir(),
+			CompatURL: compatURL,
+			PortBase:  *portBase,
+			Logf:      func(f string, a ...any) { fmt.Fprintf(os.Stderr, "compat: "+f+"\n", a...) },
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "compat: %v\n", err)
+			return 2
+		}
+		defer stopVite()
+		dashboardURL = viteURL
+	}
+
 	// --interactive: long-lived suite processes with orchestrator control.
 	if *serve && *interactive {
-		var ui fs.FS
-		if !*noUI {
-			ui = uiFS
-		}
-		srv := compat.NewServer(ui)
+		srv := compat.NewServer(dashboardUIFS())
 		if *resultsFile != "" {
 			if err := srv.LoadResultsFile(*resultsFile); err != nil {
 				fmt.Fprintf(os.Stderr, "compat: warning: %v\n", err)
 			}
 		}
 
-		configs := compat.DefaultSuiteConfigs(*endpoint, *region)
+		configs := compat.DefaultSuiteConfigs(endpointURL, *region)
 		if len(suites) > 0 {
 			configs = compat.FilterSuiteConfigs(configs, suites)
 		}
 
 		logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 		orch := compat.NewOrchestrator(ctx, configs, srv.Broadcast, logger)
-		orch.Endpoint = *endpoint
+		orch.Endpoint = endpointURL
 		orch.Region = *region
+		// Finalise results whenever the dashboard's queue drains, so
+		// GET /results, the results file, and --report reflect interactive
+		// runs the same way they do batch ones.
+		orch.OnIdle = func(rep *compat.RunReport) {
+			srv.FinishRun(rep)
+			if *resultsFile != "" {
+				if err := srv.SaveResultsFile(*resultsFile); err != nil {
+					fmt.Fprintf(os.Stderr, "compat: warning: %v\n", err)
+				}
+			}
+			if *agentReportFile != "" {
+				if err := writeAgentReportFile(*agentReportFile, rep); err != nil {
+					fmt.Fprintf(os.Stderr, "compat: warning: %v\n", err)
+				}
+			}
+		}
 		srv.SetOrchestrator(orch)
 
 		if err := orch.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "compat: orchestrator start: %v\n", err)
-			os.Exit(2)
+			return 2
 		}
 
 		httpSrv := &http.Server{Addr: addr, Handler: srv.Handler()} //nolint:gosec
 		go func() {
-			fmt.Fprintf(os.Stderr, "compat: interactive dashboard listening on http://localhost%s\n", addr)
 			if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				fmt.Fprintf(os.Stderr, "compat: server error: %v\n", err)
 			}
 		}()
+		printBanner(dashboardURL, compatURL, endpointURL, true)
+		if *openBrowserFlag {
+			openBrowser(dashboardURL)
+		}
 
 		<-ctx.Done()
 		orch.Shutdown()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
 		_ = httpSrv.Shutdown(shutdownCtx)
-		return
+		return 0
 	}
 
 	// --serve: start the live dashboard server before running suites.
 	var srv *compat.Server
 	var httpSrv *http.Server
 	if *serve {
-		srv = compat.NewServer(uiFS)
+		srv = compat.NewServer(dashboardUIFS())
 		// Pre-populate from disk so the dashboard shows the last run immediately.
 		if *resultsFile != "" {
 			if err := srv.LoadResultsFile(*resultsFile); err != nil {
@@ -208,7 +370,7 @@ func main() {
 		arf := *agentReportFile
 		srv.SetRunFunc(func(filter compat.RunFilter) error {
 			runCfg := compat.RunConfig{
-				Endpoint:  *endpoint,
+				Endpoint:  endpointURL,
 				Region:    *region,
 				Suites:    suites,
 				Service:   filter.Service,
@@ -244,15 +406,18 @@ func main() {
 
 		httpSrv = &http.Server{Addr: addr, Handler: srv.Handler()} //nolint:gosec
 		go func() {
-			fmt.Fprintf(os.Stderr, "compat: dashboard listening on http://localhost%s\n", addr)
 			if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				fmt.Fprintf(os.Stderr, "compat: server error: %v\n", err)
 			}
 		}()
+		printBanner(dashboardURL, compatURL, endpointURL, false)
+		if *openBrowserFlag {
+			openBrowser(dashboardURL)
+		}
 	}
 
 	cfg := compat.RunConfig{
-		Endpoint: *endpoint,
+		Endpoint: endpointURL,
 		Region:   *region,
 		Suites:   suites,
 	}
@@ -269,13 +434,13 @@ func main() {
 	report, err := runner.Run(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "compat: fatal: %v\n", err)
-		os.Exit(2)
+		return 2
 	}
 
 	if *resultsFile != "" {
 		if err := writeRunReportFile(*resultsFile, report); err != nil {
 			fmt.Fprintf(os.Stderr, "compat: save results: %v\n", err)
-			os.Exit(2)
+			return 2
 		}
 	}
 
@@ -294,12 +459,12 @@ func main() {
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(report); err != nil {
 			fmt.Fprintf(os.Stderr, "compat: json encode: %v\n", err)
-			os.Exit(2)
+			return 2
 		}
 	case "junit":
 		if err := printJUnit(report); err != nil {
 			fmt.Fprintf(os.Stderr, "compat: junit: %v\n", err)
-			os.Exit(2)
+			return 2
 		}
 	case "agent":
 		printAgentReport(report)
@@ -309,7 +474,7 @@ func main() {
 
 	// When --serve is active, keep the server alive so users can review results.
 	if *serve {
-		fmt.Fprintf(os.Stderr, "compat: run complete — dashboard still at http://localhost%s (Ctrl+C to quit)\n", addr)
+		fmt.Fprintf(os.Stderr, "compat: run complete — dashboard still at %s (Ctrl+C to quit)\n", dashboardURL)
 		<-ctx.Done()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
@@ -318,6 +483,36 @@ func main() {
 
 	// Always exit 0: individual test failures are expected coverage gaps.
 	// Only infrastructure errors (handled above) use non-zero exit codes.
+	return 0
+}
+
+// dashboardUIFS chooses where the dashboard UI is served from: nothing when an
+// external Vite server owns it, a directory when --ui-dir/--build-ui asked for
+// a freshly built one, otherwise the build embedded in this binary.
+func dashboardUIFS() fs.FS {
+	switch {
+	case *noUI:
+		return nil
+	case *uiDir != "":
+		return os.DirFS(*uiDir)
+	default:
+		return uiFS
+	}
+}
+
+// printBanner summarises the URLs a session is reachable on. Every port is
+// chosen at runtime, so this is the only reliable place to learn them.
+func printBanner(dashboardURL, compatURL, endpointURL string, interactive bool) {
+	fmt.Fprintf(os.Stderr, "\n  Dashboard:  %s\n", dashboardURL)
+	if dashboardURL != compatURL {
+		fmt.Fprintf(os.Stderr, "  Compat API: %s\n", compatURL)
+	}
+	fmt.Fprintf(os.Stderr, "  Overcast:   %s\n", endpointURL)
+	if interactive {
+		fmt.Fprintf(os.Stderr, "\n  Tests run on demand from the dashboard. Ctrl+C to stop.\n\n")
+	} else {
+		fmt.Fprintf(os.Stderr, "\n")
+	}
 }
 
 func printPretty(report *compat.RunReport) {

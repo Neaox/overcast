@@ -108,7 +108,16 @@ public final class Registry {
                 TestFn fn = impls.get(rg.name() + "/" + rt.name());
                 if (fn == null) fn = impls.get(rt.name());
                 if (fn == null) {
-                    tests.add(new TestCase(rt.name(), NOOP, op, "not implemented", rt.depends()));
+                    // Sentinel wording is shared by every suite loader: the
+                    // parity checker (cmd/compat --check-parity) classifies
+                    // registry gaps by this exact phrasing, so it must not
+                    // drift. See compat/AGENTS.md § Baseline & uniformity.
+                    tests.add(new TestCase(
+                            rt.name(),
+                            NOOP,
+                            op,
+                            String.format("not yet implemented in %s test suite", suite),
+                            rt.depends()));
                 } else {
                     tests.add(new TestCase(rt.name(), fn, op, null, rt.depends()));
                 }

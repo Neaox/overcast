@@ -1,10 +1,45 @@
 import fs from "node:fs";
-import { defineConfig } from "vite";
+import path from "node:path";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
+// The compat server picks its port at runtime (a fixed one collides when two
+// sessions run side by side), so it tells Vite where it landed via
+// COMPAT_SERVER_URL. Falling back to :7777 keeps a bare `npm run dev` working.
+const compatServer = process.env.COMPAT_SERVER_URL ?? "http://localhost:7777";
+
+// Paths the dashboard calls on the compat server rather than on itself.
+const apiPaths = [
+  "/events",
+  "/results",
+  "/suites",
+  "/cancel",
+  "/registry",
+  "/queue",
+  "/run",
+  "/config",
+  "/open",
+  "/mcp",
+];
+
+// dist/.gitkeep is committed so that `//go:embed all:ui/dist` resolves on a
+// fresh checkout, before the UI has ever been built. emptyOutDir deletes it on
+// every build, which leaves a deletion in the working tree of anyone who runs
+// one. Put it back as part of the build itself, so it holds no matter who
+// builds: npm directly, `--build-ui`, the Makefile, or CI.
+function keepDistPlaceholder(): Plugin {
+  return {
+    name: "keep-dist-placeholder",
+    closeBundle() {
+      const keep = path.join(__dirname, "dist", ".gitkeep");
+      if (!fs.existsSync(keep)) fs.writeFileSync(keep, "");
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), keepDistPlaceholder()],
   build: {
     outDir: "dist",
     emptyOutDir: true,
@@ -13,18 +48,7 @@ export default defineConfig({
     host: true,
     watch: needsPolling() ? { usePolling: true, interval: 1000 } : {},
     // Forward API calls to the compat server during `vite dev`.
-    proxy: {
-      "/events": "http://localhost:7777",
-      "/results": "http://localhost:7777",
-      "/suites": "http://localhost:7777",
-      "/cancel": "http://localhost:7777",
-      "/registry": "http://localhost:7777",
-      "/queue": "http://localhost:7777",
-      "/run": "http://localhost:7777",
-      "/config": "http://localhost:7777",
-      "/open": "http://localhost:7777",
-      "/mcp": "http://localhost:7777",
-    },
+    proxy: Object.fromEntries(apiPaths.map((path) => [path, compatServer])),
   },
 });
 

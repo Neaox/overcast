@@ -2456,6 +2456,7 @@
     {
       "service": "cdk",
       "name": "cdk-lifecycle",
+      "suites": ["cdk"],
       "tests": [
         {"name": "Bootstrap"},
         {"name": "Synth", "depends": ["Bootstrap"]},

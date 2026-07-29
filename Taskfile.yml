@@ -231,6 +231,35 @@ tasks:
     cmds:
       - bash scripts/ci-local.sh --go-only
 
+  # ---- Compatibility suites -------------------------------------------------
+  # All of these manage their own throwaway Overcast instance on free ports —
+  # 4566/4567 stay yours. Pass --endpoint to target an instance you run.
+
+  compat:
+    desc: Run the compat suites headlessly (starts its own Overcast instance)
+    cmds:
+      - go run ./cmd/compat {{.CLI_ARGS}}
+
+  compat-dev:
+    desc: Compat dashboard with a hot-reloading UI, opened in a browser
+    cmds:
+      - go run ./cmd/compat --dev {{.CLI_ARGS}}
+
+  compat-serve:
+    desc: Compat dashboard with a pre-built UI, opened in a browser
+    cmds:
+      - go run ./cmd/compat --serve --interactive --build-ui --open {{.CLI_ARGS}}
+
+  compat-docker:
+    desc: Run the compat suites entirely in containers (no host Go or Node)
+    cmds:
+      - docker compose -f compat/docker-compose.yml run --rm compat
+
+  compat-report:
+    desc: Print an agent-friendly summary of the last compat run
+    cmds:
+      - go run ./cmd/compat --report
+
   # ---- Docker ---------------------------------------------------------------
 
   docker:

@@ -1071,7 +1071,7 @@ manifest.
    >
    > **AWS Docs links** are auto-generated from the `serviceDocsBaseMap` in `cmd/capgen/main.go` — no per-operation `DocsURL` is needed for most operations. If a service is missing from that map, add it. Use the `DocsURL` field on a `Capability` entry only to override the link for a specific operation (e.g. when the URL pattern differs from the service base).
 7. Add entry to `CHANGELOG.md` under `[Unreleased]`
-8. Add or extend the corresponding test group in `compat/suites/node-js-sdk/src/groups/<service>.ts` to cover the new endpoint
+8. Add the operation to `compat/suites/registry.json`, then implement it in **every** SDK/CLI compat suite (node-js-sdk, python-sdk, go-sdk, cli, java-sdk, dotnet-sdk, rust-sdk) — marking it `na` where an SDK has no API for it. `go run ./cmd/compat --check-parity` enforces this; see [compat/AGENTS.md § Baseline & uniformity policy](./compat/AGENTS.md#baseline--uniformity-policy)
 9. **Web UI** — if the new endpoint exposes data the user would want to see or manage:
    - Update the service's list/detail pages in `web/src/features/<service>/` (or create them if they don't exist)
    - Add topology nodes/edges in `internal/router/topology.go` if the endpoint creates a new resource type that has relationships to other services
@@ -1136,7 +1136,7 @@ manifest.
    | ...       | ✅/⚠️/🚧/❌ |       | [link](...) |
    ```
 9. Add service to README.md table and `CHANGELOG.md`
-10. Create `compat/suites/node-js-sdk/src/groups/<n>.ts` with compat tests covering all P1 operations and register the group in `compat/suites/node-js-sdk/src/index.ts`; add the service to the CLI suite if applicable (`compat/suites/cli/`)
+10. Add the service's groups and tests to `compat/suites/registry.json` covering all P1 operations, then implement them in **every** SDK/CLI compat suite — the per-suite file and registration table is in [compat/AGENTS.md § When a new Overcast service is implemented](./compat/AGENTS.md#when-a-new-overcast-service-is-implemented). Uniformity is enforced by `go run ./cmd/compat --check-parity`; any suite you cannot complete in the same PR must be declared in `compat/parity-debt.json` with a reason
 11. **Web UI** — consider whether developers using Overcast would find it useful to see or administer this service's resources from the management console (most CRUD-style services qualify; internal plumbing like STS usually does not). If yes:
 
 - Add an entry to `SERVICES` in `web/src/lib/service-registry.ts`. This is the **single registration point** — `nav-services.ts` (sidebar + search) and `dashboard.tsx` (dashboard cards) both derive from it automatically. Set the relevant fields:
