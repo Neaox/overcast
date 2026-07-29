@@ -397,3 +397,15 @@ func TestHostAddressing_stampsClaimForLogging(t *testing.T) {
 		t.Errorf("stamped claim = %s, want hostroute:appsync-api", claimString(got))
 	}
 }
+
+// TestFoldHostname_lowercaseInputIsNotCopied pins the pay-per-use property the
+// allocation-free contract depends on: a host that needs no folding must be
+// returned as-is, not copied. Without it, the fold would quietly put an
+// allocation on every request — which is what the Classify benchmarks exist to
+// prevent, and this states it directly for the one function responsible.
+func TestFoldHostname_lowercaseInputIsNotCopied(t *testing.T) {
+	const host = "abc123.execute-api.us-east-1.localhost.overcast.sh:4566"
+	if got := testing.AllocsPerRun(100, func() { _ = foldHostname(host) }); got != 0 {
+		t.Errorf("foldHostname(%q) allocated %v times per run; want 0", host, got)
+	}
+}

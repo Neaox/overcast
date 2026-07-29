@@ -370,11 +370,22 @@ func hostWithoutPort(host string) string {
 // CloudFront distribution address in the wrong case returned S3's NoSuchBucket.
 //
 // Folding is pay-per-use: Classify is specified allocation-free and runs on
-// every request, and real clients send lowercase, so a host that is already
-// lowercase is returned unchanged and the scan stops at the first upper-case
-// byte. ASCII-only by construction — DNS names are ASCII (an IDN arrives
+// every request, and real clients send lowercase (a browser lower-cases the
+// Host before sending it; curl and Go's http.Client pass through whatever case
+// was typed), so an already-lowercase host is returned unchanged with no copy.
+// ASCII-only by construction — DNS names are ASCII (an IDN arrives
 // punycode-encoded), and Unicode case folding has locale hazards a hostname
-// comparison must not inherit.
+// comparison must not inherit. That is also why this does not call
+// strings.ToLower, which is allocation-free for an already-lowercase ASCII
+// string too but measures ~2.4x slower here: its scan tracks non-ASCII as well
+// and cannot stop early.
+// A word-at-a-time (SWAR) scan was measured against this and is NOT used. It is
+// faster in isolation on long hostnames, but end-to-end through Classify the
+// difference was within run-to-run noise — better on the S3 virtual-hosted and
+// host-routed rows by 4-6 ns, worse on the short path-style host that dominates
+// real traffic by 2 ns. A bit-trick that needs a differential test and a fuzz
+// target to be trusted is not worth single-digit nanoseconds in the code that
+// decides which service answers a request.
 func foldHostname(hostname string) string {
 	i := 0
 	for ; i < len(hostname); i++ {

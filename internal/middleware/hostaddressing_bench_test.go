@@ -40,11 +40,18 @@ import (
 // terms because tier A used to return as soon as it found ".s3." near the front,
 // so it never touched the rest of the hostname; it now pays the full scan first.
 //
-// A word-at-a-time (SWAR) scan would claw most of that back and was deliberately
-// not taken: this is the code that decides WHICH SERVICE answers a request, ~10ns
-// against a ~1400 ns middleware pass is not worth bit-twiddling that has to be
-// read carefully to be trusted, and the defect it replaced was a routing error.
-// Revisit only with a profile showing this on a real critical path.
+// A word-at-a-time (SWAR) scan was implemented and measured against this, then
+// dropped. End-to-end through Classify it was better on three rows
+// (S3BareVirtualHost 50.2 -> 44.3, S3LabelledVirtualHost 32.7 -> 27.2,
+// HostRouteExecuteAPI 259 -> 248) and worse on PathStyleLocalhost, 33.6 -> 35.7,
+// which is the row that dominates real traffic — the word loop does not pay for
+// its setup on a 9-byte hostname. In isolation it looked like a clear win at
+// every length, but those micro-benchmarks varied by ~2x run to run, so the
+// honest reading is that the difference is at or below the noise floor. That
+// makes it a choice about simplicity, and the byte loop wins: a bit-trick in the
+// code that decides which service answers a request needs a differential test
+// and a fuzz target before anyone can trust it. Revisit only with a profile
+// showing host classification on a real critical path.
 
 var benchHosts = []struct{ name, host string }{
 	{"PathStyleLocalhost", "localhost:4566"},

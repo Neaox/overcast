@@ -493,11 +493,23 @@ so the allocation only happens for a host that actually carries upper-case bytes
 clients send lower-case, so that path is effectively never taken in normal
 traffic — but it must stay correct, because it is the one a human types.
 
-A word-at-a-time (SWAR) scan would recover most of the 4–13 ns and was
-deliberately not taken. This code decides which service answers a request; the
-defect it replaced was a misroute, and ~10 ns against a ~1400 ns middleware pass
-does not justify bit-twiddling that has to be read carefully to be trusted.
-Revisit only with a profile showing host classification on a real critical path.
+`strings.ToLower` is not used, despite being allocation-free for an
+already-lowercase ASCII string too: it measured ~2.4x slower than the byte loop
+(11.6 vs 4.8 ns on a short host, 36.7 vs 15.4 on a typical one), because its
+scan also tracks non-ASCII and cannot stop at the first upper-case byte.
+
+A word-at-a-time (SWAR) scan was implemented, fuzz-verified against a
+byte-at-a-time reference, measured, and then dropped. End-to-end through
+`Classify` it was better on three rows (S3 bare 50.2 → 44.3, S3 labelled
+32.7 → 27.2, host-routed 259 → 248 ns) and worse on `localhost:4566` —
+33.6 → 35.7 ns — which is the row that dominates real traffic, because the word
+loop does not pay for its setup on a 9-byte hostname. Isolated micro-benchmarks
+of the scan alone suggested a win at every length, but varied by ~2x run to run,
+so the honest reading is that the difference sits at or below the noise floor.
+That turns it into a question of simplicity rather than speed, and the byte loop
+wins: a bit-trick in the code that decides which service answers a request has to
+carry a differential test and a fuzz target before anyone can trust it. Revisit
+only with a profile showing host classification on a real critical path.
 
 ## 8. Canonical URLs — minting must match routing
 
