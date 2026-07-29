@@ -3,6 +3,7 @@ import { Fingerprint, RefreshCw } from "lucide-react"
 import { stsCallerIdentityQueryOptions } from "@/features/sts/data"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { cn } from "@/lib/utils"
@@ -60,31 +61,18 @@ export function StsPage() {
                 </p>
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm md:grid-cols-3">
-              <DetailRow label="Account" value={identity.Account} mono />
-              <DetailRow label="User ID" value={identity.UserId} mono />
-              <DetailRow label="ARN" value={<ArnText arn={identity.Arn ?? ""} />} mono />
-            </div>
+            <DefinitionList>
+              <Definition label="Account" value={identity.Account} />
+              <Definition label="User ID" value={identity.UserId} />
+              <Definition
+                label="ARN"
+                value={identity.Arn ? <ArnText arn={identity.Arn} /> : null}
+                full
+              />
+            </DefinitionList>
           </CardContent>
         </Card>
       ) : null}
-    </div>
-  )
-}
-
-function DetailRow({
-  label,
-  value,
-  mono,
-}: {
-  label: string
-  value: React.ReactNode
-  mono?: boolean
-}) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-fg-muted">{label}</span>
-      <span className={cn(mono && "font-mono text-xs break-all")}>{value}</span>
     </div>
   )
 }

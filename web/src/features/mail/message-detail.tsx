@@ -15,6 +15,7 @@ import Prism from "@/lib/prism"
 import { EmptyState } from "@/components/ui/primitives"
 import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
+import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import type { CapturedMessage } from "@/types"
 import { cn } from "@/lib/utils"
 
@@ -104,23 +105,25 @@ export function MessageDetail({ message, onDelete, deleting }: MessageDetailProp
             )}
           </h2>
           {/* For SMS/push: show To (phone/device) prominently; for webhook: show destination URL */}
-          {kind === "sms" ? (
-            <MetaRow label="To" value={message.to.join(", ")} />
-          ) : kind === "webhook" || kind === "push" ? (
-            <MetaRow label="Endpoint" value={message.to.join(", ")} />
-          ) : (
-            <>
-              <MetaRow label="From" value={message.from} />
-              <MetaRow label="To" value={message.to.join(", ")} />
-            </>
-          )}
-          <MetaRow
-            label="Date"
-            value={new Date(message.receivedAt).toLocaleString(undefined, {
-              dateStyle: "medium",
-              timeStyle: "short",
-            })}
-          />
+          <DefinitionList layout="inline" className="gap-y-1">
+            {kind === "sms" ? (
+              <Definition label="To" value={message.to.join(", ")} />
+            ) : kind === "webhook" || kind === "push" ? (
+              <Definition label="Endpoint" value={message.to.join(", ")} />
+            ) : (
+              <>
+                <Definition label="From" value={message.from} />
+                <Definition label="To" value={message.to.join(", ")} />
+              </>
+            )}
+            <Definition
+              label="Date"
+              value={new Date(message.receivedAt).toLocaleString(undefined, {
+                dateStyle: "medium",
+                timeStyle: "short",
+              })}
+            />
+          </DefinitionList>
           {message.groupTopic && (
             <div className="flex items-center gap-1 pt-0.5 text-xs text-fg-subtle">
               <GitBranch className="h-3 w-3 shrink-0" />
@@ -209,15 +212,6 @@ function tryPrettyJSON(text: string): string | null {
   } catch {
     return null
   }
-}
-
-function MetaRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex gap-2 text-sm">
-      <span className="w-10 shrink-0 text-fg-subtle">{label}</span>
-      <span className="truncate text-fg-muted">{value}</span>
-    </div>
-  )
 }
 
 function TabButton({

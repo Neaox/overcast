@@ -4,6 +4,7 @@ import { Download } from "lucide-react"
 import { s3ObjectPreviewQueryOptions } from "@/features/s3/data"
 import { s3 } from "@/services/api"
 import { Button } from "@/components/ui/button"
+import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import {
   Dialog,
   DialogContent,
@@ -13,7 +14,6 @@ import {
 } from "@/components/ui/dialog"
 import { Spinner, CodeBlock } from "@/components/ui/primitives"
 import { formatBytes, formatDate } from "@/lib/format"
-import { cn } from "@/lib/utils"
 import { formatPreviewText, isImagePreviewable, isTextPreviewable } from "./object-preview-format"
 
 const TEXT_PREVIEW_LIMIT = 1024 * 1024
@@ -74,10 +74,12 @@ export function ObjectPreviewDialog({
           </div>
         ) : metadata ? (
           <div className="flex min-h-0 flex-col gap-3 overflow-hidden">
-            <MetaRow label="Content-Type" value={metadata.contentType} />
-            <MetaRow label="Size" value={formatBytes(metadata.contentLength)} />
-            <MetaRow label="Last Modified" value={formatDate(metadata.lastModified)} />
-            <MetaRow label="ETag" value={metadata.etag} mono />
+            <DefinitionList layout="inline">
+              <Definition label="Content-Type" value={metadata.contentType} />
+              <Definition label="Size" value={formatBytes(metadata.contentLength)} />
+              <Definition label="Last Modified" value={formatDate(metadata.lastModified)} />
+              <Definition label="ETag" value={metadata.etag} />
+            </DefinitionList>
             {previewUrl && canPreviewImage && (
               <div className="min-h-0 overflow-auto rounded-lg border border-border bg-bg-muted p-3">
                 <img
@@ -135,14 +137,5 @@ export function ObjectPreviewDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  )
-}
-
-function MetaRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex gap-3">
-      <span className="w-32 shrink-0 text-sm text-fg-muted">{label}</span>
-      <span className={cn("text-sm break-all text-fg", mono && "font-mono")}>{value}</span>
-    </div>
   )
 }

@@ -12,6 +12,7 @@ import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { Badge } from "@/components/ui/badge"
+import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
 import { useState } from "react"
 import { Play, Square, Trash2, RefreshCw } from "lucide-react"
@@ -185,18 +186,21 @@ function LogsPanel({ instanceId }: { instanceId: string }) {
 
 function ConfigurationPanel({ db }: { db: RdsInstance }) {
   return (
-    <div className="grid grid-cols-2 gap-x-8 gap-y-3">
-      <InfoRow label="Engine" value={db.Engine ?? ""} />
-      <InfoRow label="Version" value={db.EngineVersion ?? ""} />
-      <InfoRow label="Instance Class" value={db.DBInstanceClass ?? ""} />
-      <InfoRow label="Storage" value={db.AllocatedStorage ? `${db.AllocatedStorage} GB` : "—"} />
-      <InfoRow label="Multi-AZ" value={db.MultiAZ ? "Yes" : "No"} />
-      <InfoRow label="Master Username" value={db.MasterUsername ?? "—"} />
-      <InfoRow
-        label="Created"
-        value={db.InstanceCreateTime ? db.InstanceCreateTime.toLocaleString() : "—"}
+    <DefinitionList>
+      <Definition label="Engine" value={db.Engine} />
+      <Definition label="Version" value={db.EngineVersion} />
+      <Definition label="Instance Class" value={db.DBInstanceClass} />
+      <Definition
+        label="Storage"
+        value={db.AllocatedStorage ? `${db.AllocatedStorage} GB` : null}
       />
-    </div>
+      <Definition label="Multi-AZ" value={db.MultiAZ ? "Yes" : "No"} />
+      <Definition label="Master Username" value={db.MasterUsername} />
+      <Definition
+        label="Created"
+        value={db.InstanceCreateTime ? db.InstanceCreateTime.toLocaleString() : null}
+      />
+    </DefinitionList>
   )
 }
 
@@ -217,12 +221,12 @@ function ConnectivityPanel({ db }: { db: RdsInstance }) {
           <code className="rounded bg-bg-muted px-2 py-1 font-mono text-sm">{endpointStr}</code>
           <CopyButton value={endpointStr} noun="endpoint" />
         </div>
-        <div className="grid grid-cols-2 gap-x-8 gap-y-3">
-          <InfoRow label="Address" value={db.Endpoint.Address ?? ""} />
-          <InfoRow label="Port" value={String(db.Endpoint.Port ?? "")} />
-          <InfoRow label="VPC" value={db.DBSubnetGroup?.VpcId ?? "—"} />
-          <InfoRow label="Subnet Group" value={db.DBSubnetGroup?.DBSubnetGroupName ?? "—"} />
-        </div>
+        <DefinitionList>
+          <Definition label="Address" value={db.Endpoint.Address} />
+          <Definition label="Port" value={db.Endpoint.Port} />
+          <Definition label="VPC" value={db.DBSubnetGroup?.VpcId} />
+          <Definition label="Subnet Group" value={db.DBSubnetGroup?.DBSubnetGroupName} />
+        </DefinitionList>
       </div>
 
       <ConnectionStrings db={db} />
@@ -292,15 +296,6 @@ function getConnectionStrings(
 }
 
 // ─── Shared ───────────────────────────────────────────────────────────────
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-fg-muted">{label}</span>
-      <span className="text-sm text-fg">{value}</span>
-    </div>
-  )
-}
 
 function EngineLabel({ engine }: { engine: string }) {
   const label =

@@ -9,6 +9,7 @@ import {
   modifyInstanceTypeMutationOptions,
 } from "@/features/ec2/data"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
+import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { InstanceStateBadge } from "./instance-state-badge"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
@@ -125,58 +126,52 @@ function OverviewPanel({
 
   const sgDisplay = inst.securityGroups?.length
     ? inst.securityGroups.map((sg) => `${sg.groupName} (${sg.groupId})`).join(", ")
-    : "—"
+    : null
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-x-8 gap-y-3">
-        <InfoRow label="Instance ID" value={inst.instanceId} />
-        <div className="flex flex-col gap-0.5">
-          <span className="font-mono text-xs text-fg-muted">State</span>
-          <InstanceStateBadge state={inst.state.name} />
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <span className="font-mono text-xs text-fg-muted">Instance Type</span>
-          <div className="flex items-center gap-1.5">
-            <span className="text-sm text-fg">{inst.instanceType}</span>
-            {inst.state.name === "stopped" && (
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-6 w-6 text-fg-muted"
-                title="Change instance type"
-                onClick={() => setShowEditType(true)}
-              >
-                <Pencil className="h-3 w-3" />
-              </Button>
-            )}
-          </div>
-        </div>
-        <InfoRow label="AMI ID" value={inst.imageId} />
-        <InfoRow label="VPC ID" value={inst.vpcId ?? "—"} />
-        <InfoRow label="Subnet ID" value={inst.subnetId ?? "—"} />
-        <div className="flex flex-col gap-0.5">
-          <span className="font-mono text-xs text-fg-muted">Private IP</span>
-          {inst.privateIpAddress ? (
-            <div className="flex items-center gap-1.5">
-              <code className="rounded bg-bg-muted px-2 py-0.5 font-mono text-sm">
-                {inst.privateIpAddress}
-              </code>
-              <CopyButton value={inst.privateIpAddress} noun="private IP" />
-            </div>
-          ) : (
-            <span className="text-sm text-fg">—</span>
-          )}
-        </div>
-        <InfoRow label="Security Groups" value={sgDisplay} />
-        <InfoRow
+      <DefinitionList>
+        <Definition label="Instance ID" value={inst.instanceId} />
+        <Definition label="State" value={<InstanceStateBadge state={inst.state.name} />} />
+        <Definition
+          label="Instance Type"
+          value={
+            <span className="flex items-center gap-1.5">
+              {inst.instanceType}
+              {inst.state.name === "stopped" && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-6 w-6 text-fg-muted"
+                  title="Change instance type"
+                  onClick={() => setShowEditType(true)}
+                >
+                  <Pencil className="h-3 w-3" />
+                </Button>
+              )}
+            </span>
+          }
+        />
+        <Definition label="AMI ID" value={inst.imageId} />
+        <Definition label="VPC ID" value={inst.vpcId} />
+        <Definition label="Subnet ID" value={inst.subnetId} />
+        <Definition
+          label="Private IP"
+          value={
+            inst.privateIpAddress && (
+              <CopyableValue value={inst.privateIpAddress} noun="private IP" code />
+            )
+          }
+        />
+        <Definition label="Security Groups" value={sgDisplay} />
+        <Definition
           label="Launch Time"
-          value={inst.launchTime ? new Date(inst.launchTime).toLocaleString() : "—"}
+          value={inst.launchTime ? new Date(inst.launchTime).toLocaleString() : null}
         />
         {(inst.state.name === "stopped" || inst.state.name === "terminated") && (
-          <InfoRow label="State Reason" value={`Instance is ${inst.state.name}`} />
+          <Definition label="State Reason" value={`Instance is ${inst.state.name}`} />
         )}
-      </div>
+      </DefinitionList>
 
       <EditInstanceTypeDialog
         open={showEditType}
@@ -373,48 +368,26 @@ function NetworkingPanel({
 }) {
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-x-8 gap-y-3">
-        {inst.vpcId ? (
-          <div className="flex flex-col gap-0.5">
-            <span className="font-mono text-xs text-fg-muted">VPC ID</span>
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm text-fg">{inst.vpcId}</span>
-              <CopyButton value={inst.vpcId} noun="VPC ID" />
-            </div>
-          </div>
-        ) : (
-          <InfoRow label="VPC ID" value="—" />
-        )}
-
-        {inst.subnetId ? (
-          <div className="flex flex-col gap-0.5">
-            <span className="font-mono text-xs text-fg-muted">Subnet ID</span>
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm text-fg">{inst.subnetId}</span>
-              <CopyButton value={inst.subnetId} noun="subnet ID" />
-            </div>
-          </div>
-        ) : (
-          <InfoRow label="Subnet ID" value="—" />
-        )}
-
-        {inst.privateIpAddress ? (
-          <div className="flex flex-col gap-0.5">
-            <span className="font-mono text-xs text-fg-muted">Private IP Address</span>
-            <div className="flex items-center gap-1.5">
-              <code className="rounded bg-bg-muted px-2 py-0.5 font-mono text-sm">
-                {inst.privateIpAddress}
-              </code>
-              <CopyButton value={inst.privateIpAddress} noun="private IP" />
-            </div>
-          </div>
-        ) : (
-          <InfoRow label="Private IP Address" value="—" />
-        )}
-
-        <InfoRow label="Private DNS Name" value="—" />
-        <InfoRow label="Network Interface ID" value="—" />
-      </div>
+      <DefinitionList>
+        <Definition
+          label="VPC ID"
+          value={inst.vpcId && <CopyableValue value={inst.vpcId} noun="VPC ID" />}
+        />
+        <Definition
+          label="Subnet ID"
+          value={inst.subnetId && <CopyableValue value={inst.subnetId} noun="subnet ID" />}
+        />
+        <Definition
+          label="Private IP Address"
+          value={
+            inst.privateIpAddress && (
+              <CopyableValue value={inst.privateIpAddress} noun="private IP" code />
+            )
+          }
+        />
+        <Definition label="Private DNS Name" value={null} />
+        <Definition label="Network Interface ID" value={null} />
+      </DefinitionList>
     </div>
   )
 }
@@ -448,11 +421,24 @@ function TagsPanel({ tags }: { tags?: Array<{ key: string; value: string }> }) {
 
 // ─── Shared ───────────────────────────────────────────────────────────────
 
-function InfoRow({ label, value }: { label: string; value: string }) {
+/**
+ * A definition value with a copy affordance beside it. `code` boxes the value,
+ * for IPs. The button is `tone="inline"` because it sits against the value
+ * rather than in a row of controls.
+ */
+function CopyableValue({
+  value,
+  noun,
+  code = false,
+}: {
+  value: string
+  noun: string
+  code?: boolean
+}) {
   return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-fg-muted">{label}</span>
-      <span className="text-sm text-fg">{value}</span>
-    </div>
+    <span className="flex items-center gap-1.5">
+      {code ? <code className="rounded bg-bg-muted px-2 py-0.5">{value}</code> : value}
+      <CopyButton value={value} noun={noun} tone="inline" />
+    </span>
   )
 }

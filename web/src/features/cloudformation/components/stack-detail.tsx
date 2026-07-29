@@ -36,7 +36,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Card, CardContent } from "@/components/ui/card"
+import { Definition, DefinitionCard } from "@/components/ui/definition-card"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { cn } from "@/lib/utils"
 
@@ -227,32 +227,30 @@ export function StackDetail({ stackName }: Props) {
         {/* ── Overview ──────────────────────────────────────────────────── */}
         <TabPanel id="overview" className="mt-4 flex flex-col gap-4">
           {/* Stack details card */}
-          <Card>
-            <CardContent className="grid grid-cols-2 gap-x-8 gap-y-3 p-4 text-sm md:grid-cols-3">
-              <DetailRow label="Stack ID" value={stack.StackId ?? ""} mono />
-              {stack.ParentId && (
-                <div className="flex flex-col gap-0.5">
-                  <dt className="font-mono text-xs text-fg-muted">Parent stack</dt>
-                  <dd>
-                    <Link
-                      to="/cloudformation/$stackName"
-                      params={{ stackName: parentStackName(stack.ParentId) }}
-                      className="text-sm text-accent hover:underline"
-                    >
-                      {parentStackName(stack.ParentId)}
-                    </Link>
-                  </dd>
-                </div>
-              )}
-              <DetailRow label="Created" value={stack.CreationTime?.toLocaleString() ?? "—"} />
-              {stack.LastUpdatedTime && (
-                <DetailRow label="Last updated" value={stack.LastUpdatedTime.toLocaleString()} />
-              )}
-              {(stack.Capabilities ?? []).length > 0 && (
-                <DetailRow label="Capabilities" value={(stack.Capabilities ?? []).join(", ")} />
-              )}
-            </CardContent>
-          </Card>
+          <DefinitionCard>
+            <Definition label="Created" value={stack.CreationTime?.toLocaleString()} />
+            {stack.LastUpdatedTime && (
+              <Definition label="Last updated" value={stack.LastUpdatedTime.toLocaleString()} />
+            )}
+            {stack.ParentId && (
+              <Definition
+                label="Parent stack"
+                value={
+                  <Link
+                    to="/cloudformation/$stackName"
+                    params={{ stackName: parentStackName(stack.ParentId) }}
+                    className="text-accent hover:underline"
+                  >
+                    {parentStackName(stack.ParentId)}
+                  </Link>
+                }
+              />
+            )}
+            {(stack.Capabilities ?? []).length > 0 && (
+              <Definition label="Capabilities" value={(stack.Capabilities ?? []).join(", ")} />
+            )}
+            <Definition label="Stack ID" value={stack.StackId} full />
+          </DefinitionCard>
 
           {/* Parameters */}
           {(stack.Parameters ?? []).length > 0 && (
@@ -559,23 +557,6 @@ export function StackDetail({ stackName }: Props) {
 function parentStackName(arn: string): string {
   const match = arn.match(/:stack\/([^/]+)/)
   return match?.[1] ?? arn
-}
-
-function DetailRow({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string
-  value: string
-  mono?: boolean
-}) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <dt className="text-xs text-fg-muted">{label}</dt>
-      <dd className={cn("text-sm", mono ? "font-mono text-xs break-all" : "text-fg")}>{value}</dd>
-    </div>
-  )
 }
 
 /**
