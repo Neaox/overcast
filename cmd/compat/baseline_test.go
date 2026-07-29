@@ -224,6 +224,75 @@ func TestLintBaselineChange_emptyingAPopulatedBaselineIsRejected(t *testing.T) {
 	}
 }
 
+func TestCompareBaseline_flakyTestIsToleratedInEitherDirection(t *testing.T) {
+	// Given: a test known to be intermittent, declared in the flaky list
+	baseline := &compatBaseline{Version: baselineVersion, Entries: []baselineEntry{
+		{Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS", Status: compat.StatusFail},
+	}}
+	flaky := flakySet{"dotnet-sdk/sns-subscriptions/PublishDeliveredToSQS": true}
+
+	// When: it fails on one run and passes on the next
+	for _, status := range []compat.Status{compat.StatusFail, compat.StatusPass, compat.StatusSkip} {
+		report := reportWithResults(resultSpec{
+			suite: "dotnet-sdk", service: "sns", group: "sns-subscriptions",
+			test: "PublishDeliveredToSQS", status: status,
+		})
+		// Then: neither outcome blocks a PR. An intermittent test that
+		// randomly reds the build teaches people to ignore the gate.
+		if got := compareBaselineWith(baseline, report, flaky); len(got) != 0 {
+			t.Errorf("status %s produced regressions %#v, want none", status, got)
+		}
+	}
+}
+
+func TestCompareBaseline_flakyListDoesNotExcuseOtherTests(t *testing.T) {
+	// Given: one flaky test declared, and a different test that regresses
+	baseline := &compatBaseline{Version: baselineVersion, Entries: []baselineEntry{
+		{Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS", Status: compat.StatusFail},
+		{Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "SubscribeSQS", Status: compat.StatusPass},
+	}}
+	flaky := flakySet{"dotnet-sdk/sns-subscriptions/PublishDeliveredToSQS": true}
+	report := reportWithResults(
+		resultSpec{suite: "dotnet-sdk", service: "sns", group: "sns-subscriptions", test: "PublishDeliveredToSQS", status: compat.StatusPass},
+		resultSpec{suite: "dotnet-sdk", service: "sns", group: "sns-subscriptions", test: "SubscribeSQS", status: compat.StatusFail},
+	)
+
+	// Then: the quarantine is per test, not a blanket amnesty
+	got := compareBaselineWith(baseline, report, flaky)
+	if len(got) != 1 || !strings.Contains(got[0], "SubscribeSQS") {
+		t.Fatalf("regressions = %#v, want only SubscribeSQS", got)
+	}
+}
+
+func TestUpdateBaseline_doesNotPromoteFlakyTests(t *testing.T) {
+	// Given: a flaky test recorded at its worst observed status
+	baseline := &compatBaseline{Version: baselineVersion, Entries: []baselineEntry{
+		{Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS", Status: compat.StatusFail},
+		{Suite: "go-sdk", Group: "s3-crud", Test: "CreateBucket", Status: compat.StatusFail},
+	}}
+	flaky := flakySet{"dotnet-sdk/sns-subscriptions/PublishDeliveredToSQS": true}
+	report := reportWithResults(
+		resultSpec{suite: "dotnet-sdk", service: "sns", group: "sns-subscriptions", test: "PublishDeliveredToSQS", status: compat.StatusPass},
+		resultSpec{suite: "go-sdk", service: "s3", group: "s3-crud", test: "CreateBucket", status: compat.StatusPass},
+	)
+
+	// When: the baseline is promoted from a run where the flaky test happened
+	// to pass
+	updated := updateBaselineWith(baseline, report, flaky)
+	entries := baselineEntryMap(updated.Entries)
+
+	// Then: the flaky test keeps its floor — promoting it would make the very
+	// next intermittent failure a red build. A genuine fix is promoted by
+	// removing it from the flaky list.
+	if got := entries["dotnet-sdk/sns-subscriptions/PublishDeliveredToSQS"].Status; got != compat.StatusFail {
+		t.Errorf("flaky test promoted to %s, want it held at fail", got)
+	}
+	// And: everything else still ratchets normally.
+	if got := entries["go-sdk/s3-crud/CreateBucket"].Status; got != compat.StatusPass {
+		t.Errorf("non-flaky test = %s, want pass", got)
+	}
+}
+
 func TestBaselineAnnotations_renderGitHubErrorCommands(t *testing.T) {
 	// Given: a set of regression messages
 	regressions := []string{

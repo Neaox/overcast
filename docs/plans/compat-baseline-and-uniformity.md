@@ -88,6 +88,23 @@ auto-promotion on merge; nothing to hand-edit.
 
 R2 (CDK ESM) is done — it resolved the moment CI stopped skipping Docker.
 
+## Outstanding — fix the quarantined flake
+
+[compat/flaky.json](../../compat/flaky.json) holds one real flake, found by
+running the same tree through CI twice:
+
+- **`dotnet-sdk/sns-subscriptions/PublishDeliveredToSQS`** — intermittently
+  reports `Topic does not exist: oc-<run>-dn-sns-sub`, on a topic
+  `SubscribeSQS` used successfully moments earlier in the same group. So the
+  topic is being *lost between calls*, not never created. Suspect a race in the
+  emulator's SNS topic store, or setup ordering in the suite.
+  `Unsubscribe` cascades from it.
+
+Quarantine is a holding pen, not a resolution: the entry stays out of the gate
+in both directions until someone fixes the bug and deletes it. It is worth
+treating as high priority — an intermittent emulator bug is exactly the kind of
+thing users hit and cannot reproduce.
+
 Cascade skips must shrink with their root cause — check the skip clusters, not
 just the fail count. End state: zero `fail` entries, plus a CI guard asserting
 it stays that way (flips the grandfather clause off permanently).

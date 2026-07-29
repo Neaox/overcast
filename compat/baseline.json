@@ -6551,7 +6551,7 @@
       "service": "sns",
       "group": "sns-subscriptions",
       "test": "PublishDeliveredToSQS",
-      "status": "pass"
+      "status": "fail"
     },
     {
       "suite": "dotnet-sdk",
@@ -6572,7 +6572,7 @@
       "service": "sns",
       "group": "sns-subscriptions",
       "test": "Unsubscribe",
-      "status": "pass"
+      "status": "skip"
     },
     {
       "suite": "dotnet-sdk",

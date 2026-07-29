@@ -488,6 +488,19 @@ reaches zero, CI asserts it stays there.
 `dependency failed: X` is a symptom of another failure in the same group. Fix
 the root cause; never grandfather a cascade on its own.
 
+**Flaky tests are quarantined, not tolerated.** A test that gives different
+answers on identical input cannot be ratcheted: baseline it as passing and the
+next bad run reds an innocent PR; baseline it as failing and a promotion run
+lifts it back. Both teach people to re-run the gate instead of reading it.
+
+List such a test in [compat/flaky.json](./flaky.json) with a reason. It is then
+exempt in **both** directions — never a regression, never promoted — while its
+recorded status stays at the worst outcome observed. The exemption is per test,
+not per group, and the list only shrinks: delete the entry in the PR that fixes
+the underlying bug. Do not reach for this to silence a test that fails
+consistently; that is a `fail` entry in the baseline and belongs in the
+burn-down.
+
 **Improvements are promoted for you.** On push to `main`, the aggregate job runs
 `--update-baseline` and commits `compat/baseline.json` when a result improved.
 Do not hand-edit the baseline to record a fix — merge the fix and the ratchet
@@ -611,6 +624,13 @@ compat/suites/
 - Never remove or rename an existing group or test entry — that breaks the
   dashboard history. If an operation is no longer relevant, mark it with
   `"deprecated": true` instead (field is supported by the schema).
+- **A rename you cannot avoid must carry the baseline with it.**
+  `compat/baseline.json` is keyed by `suite/group/test`, so renaming one test
+  orphans one entry *per suite* — seven or eight of them — and each orphan fails
+  the gate as `compat baseline missing result`. Rename in the registry and every
+  suite, then regenerate the baseline keys, in the same PR.
+  `compat/flaky.json` and `compat/parity-debt.json` are keyed the same way and
+  need the same treatment.
 - Bump the `version` field only for breaking schema changes; adding new groups
   is non-breaking and does not require a version bump.
 

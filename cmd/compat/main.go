@@ -61,6 +61,7 @@ var (
 	baselineFile        = flag.String("baseline-file", "compat/baseline.json", "Compatibility baseline file")
 	compareBaselineFlag = flag.Bool("compare-baseline", false, "Compare --results-file against --baseline-file, then exit")
 	annotate            = flag.Bool("annotate", false, "Emit GitHub workflow ::error commands for baseline regressions so they surface as PR annotations")
+	flakyFilePath       = flag.String("flaky-file", "compat/flaky.json", "Tests quarantined as intermittent: exempt from the baseline gate in both directions")
 	updateBaselineFlag  = flag.Bool("update-baseline", false, "Update --baseline-file from --results-file with improvements only, then exit")
 
 	registryFile       = flag.String("registry-file", "compat/suites/registry.json", "Shared compat test registry")

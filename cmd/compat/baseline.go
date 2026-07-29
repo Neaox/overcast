@@ -36,7 +36,11 @@ func compareBaselineFile(baselinePath, resultsPath string) error {
 	if err != nil {
 		return err
 	}
-	regressions := compareBaseline(baseline, report)
+	flaky, err := readFlakyFile(*flakyFilePath)
+	if err != nil {
+		return err
+	}
+	regressions := compareBaselineWith(baseline, report, flaky)
 	if len(regressions) > 0 {
 		for _, regression := range regressions {
 			fmt.Fprintln(os.Stderr, regression)
@@ -61,7 +65,11 @@ func updateBaselineFile(baselinePath, resultsPath string) error {
 	if err != nil {
 		return err
 	}
-	updated := updateBaseline(baseline, report)
+	flaky, err := readFlakyFile(*flakyFilePath)
+	if err != nil {
+		return err
+	}
+	updated := updateBaselineWith(baseline, report, flaky)
 	return writeBaselineFile(baselinePath, updated)
 }
 
@@ -88,19 +96,70 @@ func lintBaselineChangeFiles(oldPath, newPath string) error {
 	return nil
 }
 
+// flakySet is the set of baseline keys quarantined as intermittent.
+type flakySet map[string]bool
+
+// flakyFile is compat/flaky.json — tests known to give different answers on
+// identical input. They are bugs, not a resting state; the list only shrinks.
+type flakyFile struct {
+	Version int          `json:"version"`
+	Comment string       `json:"comment,omitempty"`
+	Flaky   []flakyEntry `json:"flaky"`
+}
+
+type flakyEntry struct {
+	Suite  string `json:"suite"`
+	Group  string `json:"group"`
+	Test   string `json:"test"`
+	Reason string `json:"reason"`
+}
+
+func readFlakyFile(path string) (flakySet, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return flakySet{}, nil
+		}
+		return nil, fmt.Errorf("read flaky list %s: %w", path, err)
+	}
+	var file flakyFile
+	if err := json.Unmarshal(b, &file); err != nil {
+		return nil, fmt.Errorf("parse flaky list %s: %w", path, err)
+	}
+	set := make(flakySet, len(file.Flaky))
+	for _, e := range file.Flaky {
+		set[e.Suite+"/"+e.Group+"/"+e.Test] = true
+	}
+	return set, nil
+}
+
 func compareBaseline(baseline *compatBaseline, report *compat.RunReport) []string {
+	return compareBaselineWith(baseline, report, flakySet{})
+}
+
+// compareBaselineWith reports regressions, ignoring tests quarantined as flaky.
+//
+// A quarantined test is exempt in both directions: it may fail where the
+// baseline says pass, and it is not promoted when it passes. Anything else
+// makes the gate intermittent, and a gate that reds the build at random is one
+// people learn to re-run rather than read.
+func compareBaselineWith(baseline *compatBaseline, report *compat.RunReport, flaky flakySet) []string {
 	current := baselineEntriesFromReport(report)
 	currentByKey := baselineEntryMap(current.Entries)
 	baselineByKey := baselineEntryMap(baseline.Entries)
 	var regressions []string
 	for _, expected := range baseline.Entries {
-		actual, ok := currentByKey[baselineKey(expected)]
+		key := baselineKey(expected)
+		if flaky[key] {
+			continue
+		}
+		actual, ok := currentByKey[key]
 		if !ok {
-			regressions = append(regressions, fmt.Sprintf("compat baseline missing result: %s expected %s", baselineKey(expected), expected.Status))
+			regressions = append(regressions, fmt.Sprintf("compat baseline missing result: %s expected %s", key, expected.Status))
 			continue
 		}
 		if statusRank(actual.Status) < statusRank(expected.Status) {
-			regressions = append(regressions, fmt.Sprintf("compat baseline regression: %s %s -> %s", baselineKey(expected), expected.Status, actual.Status))
+			regressions = append(regressions, fmt.Sprintf("compat baseline regression: %s %s -> %s", key, expected.Status, actual.Status))
 		}
 	}
 	// A test the baseline says nothing about is new. Adding tests is always
@@ -112,21 +171,36 @@ func compareBaseline(baseline *compatBaseline, report *compat.RunReport) []strin
 		if actual.Status != compat.StatusFail {
 			continue
 		}
-		if _, grandfathered := baselineByKey[baselineKey(actual)]; grandfathered {
+		key := baselineKey(actual)
+		if flaky[key] {
 			continue
 		}
-		regressions = append(regressions, fmt.Sprintf("compat baseline new failure, not in baseline: %s", baselineKey(actual)))
+		if _, grandfathered := baselineByKey[key]; grandfathered {
+			continue
+		}
+		regressions = append(regressions, fmt.Sprintf("compat baseline new failure, not in baseline: %s", key))
 	}
 	sort.Strings(regressions)
 	return regressions
 }
 
 func updateBaseline(baseline *compatBaseline, report *compat.RunReport) *compatBaseline {
+	return updateBaselineWith(baseline, report, flakySet{})
+}
+
+// updateBaselineWith ratchets the baseline forward, holding quarantined tests
+// at their recorded floor. Promoting a flaky test on the run where it happened
+// to pass would make its next intermittent failure a red build; a real fix is
+// promoted by deleting its entry from compat/flaky.json.
+func updateBaselineWith(baseline *compatBaseline, report *compat.RunReport, flaky flakySet) *compatBaseline {
 	current := baselineEntriesFromReport(report)
 	merged := baselineEntryMap(baseline.Entries)
 	for _, entry := range current.Entries {
 		key := baselineKey(entry)
 		old, ok := merged[key]
+		if ok && flaky[key] {
+			continue
+		}
 		if !ok || statusRank(entry.Status) > statusRank(old.Status) {
 			merged[key] = entry
 		}
