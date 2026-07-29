@@ -431,9 +431,10 @@ func (h *Handler) servesOriginLocally(domain, viewerHost string) bool {
 	switch h.originHosts.Classify(domain).Kind {
 	case middleware.HostClaimS3, middleware.HostClaimHostRoute:
 		return true
-	default:
+	case middleware.HostClaimNone:
 		return false
 	}
+	return false
 }
 
 // isIPLiteralHost reports whether a host is an IP address rather than a DNS
