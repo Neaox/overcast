@@ -4,15 +4,20 @@
  *
  * Responsibilities:
  *  1. Maintain one EventSource with automatic reconnect (exponential backoff).
- *  2. Cache the most recent MAX_EVENTS events so newly-connected tabs get
- *     immediate history without waiting for fresh events.
- *  3. Broadcast every new event and status change to all connected tabs.
+ *  2. Cache recent events (see event-buffer.ts for capacity and eviction) so
+ *     newly-connected tabs get immediate history without waiting for fresh
+ *     events — including after a reload, when the worker outlives the page.
+ *  3. Broadcast new events, in batches, and status changes to all tabs.
+ *
+ * The connection is opened as soon as any tab subscribes — which the app
+ * shell does on load — so events are captured in the background whether or
+ * not the Events page has ever been opened.
  *
  * Tabs communicate via MessagePort (SharedWorker.port):
  *  - Tab sends { type: "subscribe", url } to start/change the SSE URL.
  *  - Tab sends { type: "clear" } to wipe the event cache.
  *  - Worker replies with { type: "init", events, connected } on subscribe.
- *  - Worker broadcasts { type: "event", event } for each new SSE frame.
+ *  - Worker broadcasts { type: "events", events } for each batch of frames.
  *  - Worker broadcasts { type: "status", connected } on connection changes.
  *  - Worker broadcasts { type: "cleared" } after the cache is wiped.
  */
@@ -22,19 +27,22 @@ declare let self: SharedWorkerGlobalScope
 
 import type { StreamEvent } from "@/types"
 import type { TabMessage, WorkerMessage } from "./event-stream.protocol"
-
-const MAX_EVENTS = 1_000
+import { withResumePoint } from "./event-stream.protocol"
+import { EventBatcher } from "./event-buffer"
 
 // ─── State ─────────────────────────────────────────────────────────────────
 
-let events: StreamEvent[] = []
 let connected = false
 let currentUrl: string | null = null
 let eventSource: EventSource | null = null
 let retryCount = 0
 let retryHandle: ReturnType<typeof setTimeout> | null = null
+/** Last SSE id seen, replayed to the server on reconnect — see withResumePoint. */
+let lastEventId: string | null = null
 
 const ports = new Set<MessagePort>()
+
+const buffer = new EventBatcher((events) => broadcast({ type: "events", events }))
 
 // ─── Broadcasting ──────────────────────────────────────────────────────────
 
@@ -56,9 +64,13 @@ function openConnection(url: string): void {
 
   currentUrl = url
   retryCount = 0
+  // A resume point is only meaningful against the server that issued it.
+  // The server's run id makes a stale one harmless rather than dangerous,
+  // but there is no reason to send one to a different endpoint at all.
+  lastEventId = null
 
   function attempt(): void {
-    const es = new EventSource(url)
+    const es = new EventSource(withResumePoint(url, lastEventId))
     eventSource = es
 
     es.onopen = () => {
@@ -95,25 +107,10 @@ function openConnection(url: string): void {
     }
 
     es.onmessage = (e: MessageEvent<string>) => {
+      if (e.lastEventId) lastEventId = e.lastEventId
       if (!e.data) return
       try {
-        const evt = JSON.parse(e.data) as StreamEvent
-
-        // Heartbeats are not cached (they are ephemeral) but are still
-        // forwarded so the UI can optionally display them.
-        if (evt.type === "heartbeat") {
-          broadcast({ type: "event", event: evt })
-          return
-        }
-
-        // Append, sort, and cap the cache.
-        events.push(evt)
-        events.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0))
-        if (events.length > MAX_EVENTS) {
-          events = events.slice(events.length - MAX_EVENTS)
-        }
-
-        broadcast({ type: "event", event: evt })
+        buffer.push(JSON.parse(e.data) as StreamEvent)
       } catch {
         console.error("[event-stream] malformed SSE frame", e.data)
       }
@@ -137,15 +134,18 @@ self.addEventListener("connect", (e: MessageEvent) => {
           openConnection(msg.data.url)
         }
         // Always send the current snapshot to the newly-subscribing tab.
+        // Anything already queued for the next flush is deliberately not in
+        // it — the tab receives those in the batch instead, so nothing is
+        // delivered twice or missed at the subscription boundary.
         port.postMessage({
           type: "init",
-          events: [...events],
+          events: buffer.snapshot(),
           connected,
         } satisfies WorkerMessage)
         break
 
       case "clear":
-        events = []
+        buffer.clear()
         broadcast({ type: "cleared" })
         break
     }

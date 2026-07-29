@@ -541,11 +541,19 @@ func handleEvents(w http.ResponseWriter, r *http.Request) {
 	ep := resolveEndpointQP(r)
 
 	upstream := ep + "/_events"
-	if sources := r.URL.Query()["source"]; len(sources) > 0 {
-		q := url.Values{}
-		for _, s := range sources {
-			q.Add("source", s)
-		}
+	q := url.Values{}
+	for _, s := range r.URL.Query()["source"] {
+		q.Add("source", s)
+	}
+	// The resume point a reconnecting client sent, so /_events replays only
+	// what the client is missing instead of its whole history buffer. It can
+	// arrive either way — see the Last-Event-ID handling in
+	// internal/router/events.go — and both have to survive this hop, since
+	// the upstream request is built here rather than forwarded.
+	if id := r.URL.Query().Get("last_event_id"); id != "" {
+		q.Set("last_event_id", id)
+	}
+	if len(q) > 0 {
 		upstream += "?" + q.Encode()
 	}
 
@@ -555,6 +563,9 @@ func handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Header.Set("Accept", "text/event-stream")
+	if id := r.Header.Get("Last-Event-ID"); id != "" {
+		req.Header.Set("Last-Event-ID", id)
+	}
 
 	resp, err := bffStreamingClient.Do(req)
 	if err != nil {

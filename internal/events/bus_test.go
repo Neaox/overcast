@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -296,4 +297,100 @@ func TestPublish_StampsZeroTime(t *testing.T) {
 	if !snap[1].Time.Equal(explicit) {
 		t.Fatalf("explicit Time overwritten: got %v want %v", snap[1].Time, explicit)
 	}
+}
+
+// TestPublish_AssignsMonotonicSeq pins the resume token's foundation: every
+// published event gets a sequence number, they ascend, and the number the
+// live subscriber sees is the number stored in history. Without that
+// agreement a client resuming at "seq N" could not be served from history.
+func TestPublish_AssignsMonotonicSeq(t *testing.T) {
+	b := NewBus()
+	defer b.Stop()
+
+	var mu sync.Mutex
+	var live []uint64
+	_, unsub := b.SnapshotAndSubscribeAll(func(_ context.Context, e Event) {
+		mu.Lock()
+		live = append(live, e.Seq)
+		mu.Unlock()
+	})
+	defer unsub()
+
+	for i := 0; i < 3; i++ {
+		b.Publish(context.Background(), Event{Type: S3BucketCreated, Source: "s3"})
+	}
+
+	snap, unsub2 := b.SnapshotAndSubscribeAll(func(context.Context, Event) {})
+	defer unsub2()
+	if len(snap) != 3 {
+		t.Fatalf("expected 3 events in history, got %d", len(snap))
+	}
+	for i := 1; i < len(snap); i++ {
+		if snap[i].Seq <= snap[i-1].Seq {
+			t.Fatalf("history seq not ascending: %d then %d", snap[i-1].Seq, snap[i].Seq)
+		}
+	}
+	if snap[0].Seq == 0 {
+		t.Fatal("first published event has Seq 0; sequence numbers must start above zero so a resume token is never ambiguous")
+	}
+
+	// Every live delivery carries the same seq its history entry has — as a
+	// set, not a sequence. Delivery order is deliberately not asserted: the
+	// bus hands each subscriber invocation to a 16-goroutine pool, so two
+	// events published in order can reach one subscriber in either order.
+	// That is why the SSE endpoint tracks a contiguous low-water mark rather
+	// than trusting the last id it happened to write (internal/router/events.go),
+	// and why the web client sorts by time rather than by arrival.
+	waitFor(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(live) == 3
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	got := append([]uint64(nil), live...)
+	sort.Slice(got, func(i, j int) bool { return got[i] < got[j] })
+	for i, seq := range got {
+		if seq != snap[i].Seq {
+			t.Errorf("live seq set differs from history: position %d is %d, history has %d", i, seq, snap[i].Seq)
+		}
+	}
+}
+
+// TestBus_RunID_IdentifiesTheProcess pins the other half of the resume
+// token. Sequence numbers restart from zero when Overcast restarts, so a
+// token has to say which run it came from — otherwise a client resuming
+// "seq 5000" against a fresh bus would skip the first 5,000 events of the
+// new run and never notice.
+func TestBus_RunID_IdentifiesTheProcess(t *testing.T) {
+	a := NewBus()
+	defer a.Stop()
+	c := NewBus()
+	defer c.Stop()
+
+	first := a.RunID()
+	if first == "" {
+		t.Fatal("RunID is empty")
+	}
+	// Stable across calls: a token minted early in a run has to still match
+	// the run it names when a client reconnects hours later.
+	if again := a.RunID(); again != first {
+		t.Errorf("RunID changed within one bus: %q then %q", first, again)
+	}
+	if first == c.RunID() {
+		t.Error("two buses share a RunID; a restart would be indistinguishable from the same run")
+	}
+}
+
+// waitFor polls cond until it holds or the deadline expires.
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("condition not met within deadline")
 }

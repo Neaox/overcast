@@ -521,3 +521,177 @@ func TestEventsHandler_HistoryRespectsSourceFilter(t *testing.T) {
 		t.Errorf("expected sqs history event to be replayed; got:\n%s", body)
 	}
 }
+
+// --- resume (Last-Event-ID) --------------------------------------------------
+
+// publishN publishes n events whose payload carries their index, so a test
+// can tell exactly which ones a client was sent.
+func publishN(bus *events.Bus, n int) {
+	for i := 0; i < n; i++ {
+		bus.Publish(context.Background(), events.Event{
+			Type:    events.S3ObjectCreated,
+			Source:  "s3",
+			Payload: map[string]string{"key": fmt.Sprintf("evt-%d.txt", i)},
+		})
+	}
+}
+
+// doSSERequestWithHeaders is doSSERequest with request headers, for the
+// Last-Event-ID a browser's EventSource sends on an automatic reconnect.
+func doSSERequestWithHeaders(handler http.HandlerFunc, query string, headers map[string]string) (*flushRecorder, context.CancelFunc) {
+	rec := newFlushRecorder()
+	url := "/_events"
+	if query != "" {
+		url += "?" + query
+	}
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	ctx, cancel := context.WithCancel(req.Context())
+	req = req.WithContext(ctx)
+
+	go handler(rec, req)
+	return rec, cancel
+}
+
+// TestEventsHandler_EmitsEventID pins that every data frame carries an SSE
+// id. Without it a browser has nothing to send back as Last-Event-ID, and
+// every reconnect replays the entire history buffer again.
+func TestEventsHandler_EmitsEventID(t *testing.T) {
+	bus := newTestBus()
+	handler := eventsHandler(bus, nopLogger(), clock.New(), newTestShutdown())
+
+	publishN(bus, 1)
+
+	rec, cancel := doSSERequest(handler, "")
+	defer cancel()
+	body := rec.waitForFlushes(t, 2, time.Second)
+
+	want := fmt.Sprintf("id: %s-1", bus.RunID())
+	if !strings.Contains(body, want) {
+		t.Errorf("expected %q in SSE body; got:\n%s", want, body)
+	}
+}
+
+// TestEventsHandler_ResumeSkipsAlreadyDelivered is the point of the whole
+// mechanism: a client that says where it got to is sent only what followed.
+func TestEventsHandler_ResumeSkipsAlreadyDelivered(t *testing.T) {
+	bus := newTestBus()
+	handler := eventsHandler(bus, nopLogger(), clock.New(), newTestShutdown())
+
+	publishN(bus, 3)
+
+	rec, cancel := doSSERequestWithHeaders(handler, "", map[string]string{
+		"Last-Event-ID": fmt.Sprintf("%s-2", bus.RunID()),
+	})
+	defer cancel()
+
+	// ": connected" plus exactly one replayed frame (the third event).
+	body := rec.waitForFlushes(t, 2, time.Second)
+
+	if strings.Contains(body, "evt-0.txt") || strings.Contains(body, "evt-1.txt") {
+		t.Errorf("resumed stream replayed events the client already had:\n%s", body)
+	}
+	if !strings.Contains(body, "evt-2.txt") {
+		t.Errorf("resumed stream dropped the event after the resume point:\n%s", body)
+	}
+}
+
+// TestEventsHandler_ResumeAcceptsQueryParam covers the reconnect path the
+// browser does not manage for us. When the stream fails hard the client
+// constructs a brand-new EventSource, which has no memory of the last id, so
+// it passes the resume point explicitly.
+func TestEventsHandler_ResumeAcceptsQueryParam(t *testing.T) {
+	bus := newTestBus()
+	handler := eventsHandler(bus, nopLogger(), clock.New(), newTestShutdown())
+
+	publishN(bus, 3)
+
+	rec, cancel := doSSERequest(handler, "last_event_id="+bus.RunID()+"-2")
+	defer cancel()
+	body := rec.waitForFlushes(t, 2, time.Second)
+
+	if strings.Contains(body, "evt-1.txt") {
+		t.Errorf("query-param resume point ignored:\n%s", body)
+	}
+	if !strings.Contains(body, "evt-2.txt") {
+		t.Errorf("resumed stream dropped the event after the resume point:\n%s", body)
+	}
+}
+
+// TestEventsHandler_ResumeFromAnotherRunReplaysEverything is the guard that
+// makes a restart safe. Sequence numbers restart with the process, so a
+// token minted by an earlier run must be discarded rather than believed —
+// honouring it would skip the first events of the new run silently.
+func TestEventsHandler_ResumeFromAnotherRunReplaysEverything(t *testing.T) {
+	bus := newTestBus()
+	handler := eventsHandler(bus, nopLogger(), clock.New(), newTestShutdown())
+
+	publishN(bus, 2)
+
+	rec, cancel := doSSERequestWithHeaders(handler, "", map[string]string{
+		"Last-Event-ID": "some-other-run-99",
+	})
+	defer cancel()
+	body := rec.waitForFlushes(t, 3, time.Second)
+
+	for i := 0; i < 2; i++ {
+		want := fmt.Sprintf("evt-%d.txt", i)
+		if !strings.Contains(body, want) {
+			t.Errorf("stale-run token suppressed %s; got:\n%s", want, body)
+		}
+	}
+}
+
+// TestEventsHandler_MalformedResumeReplaysEverything pins the safe default:
+// an unparseable token replays rather than skips. Sending history twice is
+// a nuisance; skipping it silently is data loss.
+func TestEventsHandler_MalformedResumeReplaysEverything(t *testing.T) {
+	for _, id := range []string{"", "garbage", "-", "abc-notanumber", "12345"} {
+		t.Run(fmt.Sprintf("id=%q", id), func(t *testing.T) {
+			bus := newTestBus()
+			handler := eventsHandler(bus, nopLogger(), clock.New(), newTestShutdown())
+
+			publishN(bus, 1)
+
+			rec, cancel := doSSERequestWithHeaders(handler, "", map[string]string{"Last-Event-ID": id})
+			defer cancel()
+			body := rec.waitForFlushes(t, 2, time.Second)
+
+			if !strings.Contains(body, "evt-0.txt") {
+				t.Errorf("malformed token %q suppressed history; got:\n%s", id, body)
+			}
+		})
+	}
+}
+
+// TestEventsHandler_ResumeIDSurvivesAnEvictedGap covers history eviction.
+// The buffer drops the oldest request telemetry first, so the replayed
+// snapshot can have holes in its sequence numbers. The resume point after a
+// replay must still be the newest event replayed — stalling at the hole
+// would make the next reconnect re-send everything after it, which is the
+// behaviour this whole change exists to remove.
+func TestEventsHandler_ResumeIDSurvivesAnEvictedGap(t *testing.T) {
+	bus := newTestBus()
+	handler := eventsHandler(bus, nopLogger(), clock.New(), newTestShutdown())
+
+	// seq 1 and 3 are noise, seq 2 and 4 are not. A small buffer would evict
+	// 1 and 3 first; here nothing is evicted, but the ids must still track
+	// the highest seq replayed rather than the count of frames written.
+	bus.Publish(context.Background(), events.Event{Type: events.RequestReceived, Source: "request"})
+	bus.Publish(context.Background(), events.Event{Type: events.S3ObjectCreated, Source: "s3", Payload: map[string]string{"key": "evt-a.txt"}})
+	bus.Publish(context.Background(), events.Event{Type: events.RequestReceived, Source: "request"})
+	bus.Publish(context.Background(), events.Event{Type: events.S3ObjectCreated, Source: "s3", Payload: map[string]string{"key": "evt-b.txt"}})
+
+	// A source filter makes the delivered subsequence sparse: only seq 2 and
+	// 4 are written, so the last id must be 4, not 2.
+	rec, cancel := doSSERequest(handler, "source=s3")
+	defer cancel()
+	body := rec.waitForFlushes(t, 3, time.Second)
+
+	want := fmt.Sprintf("id: %s-4", bus.RunID())
+	if !strings.Contains(body, want) {
+		t.Errorf("expected the resume point to reach %q after a filtered replay; got:\n%s", want, body)
+	}
+}

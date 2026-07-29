@@ -758,6 +758,20 @@ type Event struct {
 	// model, leave this empty. Consumers (e.g. the web Events page's
 	// ARN auto-linking) must treat it as optional.
 	ResourceARN string `json:"resourceArn,omitempty"`
+
+	// Seq is this event's position in the bus's publication order, assigned
+	// by Bus.Publish. It starts at 1, so a zero value means "never published"
+	// and can never be mistaken for a valid resume point.
+	//
+	// It exists so a disconnected event-stream client can say what it has
+	// already seen and be sent only what followed, instead of the whole
+	// history buffer again — see the SSE endpoint's Last-Event-ID handling in
+	// internal/router/events.go. Sequence numbers are per-run and restart
+	// from 1 when Overcast does, which is why a resume token also has to
+	// carry Bus.RunID.
+	//
+	// Publishers must not set this; Publish overwrites whatever it finds.
+	Seq uint64 `json:"-"`
 }
 
 // arnCarrier is implemented by payload types that know their own resource

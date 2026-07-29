@@ -572,10 +572,10 @@ Wave 4
   `cloudformation/create-stack-dialog.tsx` have genuinely different field graphs with cross-field
   validation. A schema-driven field renderer is the classic over-abstraction here.
 
-- **`useEventStream` vs `useEventSource`.** These are *not* two solutions to one problem —
-  `use-event-stream.ts` is the SharedWorker-backed singleton and `use-event-source.ts` is a
-  raw-EventSource hook with **zero callers**. Do not unify them; **delete `use-event-source.ts` (115
-  lines) and its only consumer `use-page-unloading.ts` (24 lines).**
+- ~~**`useEventStream` vs `useEventSource`.**~~ Done. These were *not* two solutions to one problem —
+  `use-event-stream.ts` is the SharedWorker-backed singleton and `use-event-source.ts` was a
+  raw-EventSource hook with zero callers. Both it and its only consumer `use-page-unloading.ts` are
+  deleted (139 lines); the SharedWorker client and worker remain the only EventSource owners.
 
 - **`ConfirmDialog` vs `ResourceFormDialog`.** Keep them separate. `ConfirmDialog` has no form, has
   a deliberate focus override (`confirm-dialog.tsx:66-73` — auto-focusing the destructive button is
@@ -599,7 +599,7 @@ build a parallel one.
 | `TableEmpty` | `ui/table.tsx:96` | 0 |
 | `CardHeader`, `CardTitle`, `CardDescription`, `CardFooter` | `ui/card.tsx` | 0 (only `Card` + `CardContent` are used, 11 files) |
 | `ComboboxCompact` | `ui/combobox.tsx` | 1 (`region-select.tsx`) — arguably fine |
-| `useEventSource` + `usePageUnloading` | `hooks/` | 0 / 1 (each other). **139 dead lines.** |
+| ~~`useEventSource` + `usePageUnloading`~~ | ~~`hooks/`~~ | deleted — 139 dead lines removed |
 | ~~`debugClipboard`~~ | ~~`features/debug/clipboard.ts`~~ | deleted — folded into P7 |
 | `ResourceListFilter` | `ui/resource-list-page.tsx:117` | 1, while 14 files hand-roll the same input |
 | `RowAction` `tone` prop | `ui/resource-list-page.tsx:159` | `tone="danger"` used; verify `neutral` is ever passed explicitly |
