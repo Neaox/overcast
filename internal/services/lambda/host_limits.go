@@ -85,7 +85,8 @@ type resolvedLimits struct {
 // pinned reports whether every derivable limit was set explicitly, in which
 // case Docker never needs to be asked.
 func (r resolvedLimits) pinned() bool {
-	return r.maxConcurrentStarts > 0 && r.pool.MaxInstances > 0 && r.pool.MaxInstancesPerFunction > 0
+	return r.maxConcurrentStarts > 0 && r.pool.MaxInstances > 0 &&
+		r.pool.MaxInstancesPerFunction > 0 && r.pool.MaxMemoryMB > 0
 }
 
 // resolveRuntimeLimits returns the instance limits the Lambda runtime should
@@ -99,6 +100,7 @@ func resolveRuntimeLimits(ctx context.Context, cfg *config.Config, dc dockerInfo
 			MaxWarmPerFunction:      cfg.LambdaMaxWarmInstances,
 			MaxInstances:            cfg.LambdaMaxInstances,
 			MaxInstancesPerFunction: cfg.LambdaMaxInstancesPerFunction,
+			MaxMemoryMB:             cfg.LambdaMaxMemoryMB,
 		},
 		maxConcurrentStarts: cfg.LambdaDockerMaxConcurrentStarts,
 	}
@@ -114,6 +116,7 @@ func resolveRuntimeLimits(ctx context.Context, cfg *config.Config, dc dockerInfo
 			zap.Int("max_concurrent_starts", defaultMaxConcurrentStarts),
 			zap.Int("max_instances", defaultMaxInstances),
 			zap.Int("max_instances_per_function", defaultMaxInstancesPerFunction),
+			zap.String("max_memory", "unlimited"),
 			zap.Error(err))
 		info = nil
 	}
@@ -139,6 +142,11 @@ func resolveRuntimeLimits(ctx context.Context, cfg *config.Config, dc dockerInfo
 			limits.pool.MaxInstancesPerFunction = clampInt(limits.pool.MaxInstances/2, minDerivedPerFunction, limits.pool.MaxInstances)
 		}
 	}
+	if limits.pool.MaxMemoryMB < 1 && info != nil && info.MemTotal > 0 {
+		// No fixed fallback here: without host facts the budget stays 0
+		// (unlimited), which is exactly the pre-budget behaviour.
+		limits.pool.MaxMemoryMB = int(float64(info.MemTotal) * derivedMemoryFraction / mib)
+	}
 
 	if info != nil {
 		log.Info("lambda: derived instance limits from the Docker host",
@@ -147,6 +155,7 @@ func resolveRuntimeLimits(ctx context.Context, cfg *config.Config, dc dockerInfo
 			zap.Int("max_concurrent_starts", limits.maxConcurrentStarts),
 			zap.Int("max_instances", limits.pool.MaxInstances),
 			zap.Int("max_instances_per_function", limits.pool.MaxInstancesPerFunction),
+			zap.Int("max_memory_mb", limits.pool.MaxMemoryMB),
 		)
 	}
 	return limits

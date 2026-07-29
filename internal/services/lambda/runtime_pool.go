@@ -114,6 +114,20 @@ type InstancePool struct {
 	maxWarm        int
 	maxInstances   int
 	maxPerFunction int
+	// maxMemoryMB bounds Σ MemorySize over live containers; 0 = unlimited.
+	maxMemoryMB int
+	// liveMemMB records the MemorySize (MB) each live container was created
+	// with, keyed by instance ID, so closing it releases exactly what its
+	// admission reserved even if the function's configuration changed since.
+	liveMemMB map[string]int
+	// pendingMemMB is memory reserved by admitContainer for containers whose
+	// cold start has not yet produced an instance.
+	pendingMemMB int
+	// reservedMemMB is the running total: Σ liveMemMB + pendingMemMB.
+	reservedMemMB int
+	// memWarnOnce gates the one warning emitted when the memory budget first
+	// forces an invocation to queue.
+	memWarnOnce sync.Once
 	// slotFreed is closed and replaced whenever capacity frees up, waking every
 	// invocation queued behind an instance limit. See signalSlotFreed.
 	slotFreed chan struct{}
@@ -140,6 +154,11 @@ type PoolLimits struct {
 	MaxInstances int
 	// MaxInstancesPerFunction bounds concurrent containers for one function.
 	MaxInstancesPerFunction int
+	// MaxMemoryMB bounds Σ MemorySize over all live containers, in MB. Each
+	// container is hard-capped at its function's MemorySize with swap disabled,
+	// so this sum is a real bound on host memory, not an estimate. Zero means
+	// unlimited.
+	MaxMemoryMB int
 }
 
 func (l PoolLimits) withDefaults() PoolLimits {
@@ -174,6 +193,8 @@ func NewInstancePool(rt Runtime, log *zap.Logger, clk clock.Clock, limits PoolLi
 		maxWarm:              limits.MaxWarmPerFunction,
 		maxInstances:         limits.MaxInstances,
 		maxPerFunction:       limits.MaxInstancesPerFunction,
+		maxMemoryMB:          limits.MaxMemoryMB,
+		liveMemMB:            make(map[string]int),
 		slotFreed:            make(chan struct{}),
 		rt:                   rt,
 		log:                  log,
@@ -335,6 +356,10 @@ func (p *InstancePool) acquire(ctx context.Context, fn *Function, progress Progr
 	if inst := p.takeWarm(fn); inst != nil {
 		return inst, nil
 	}
+	// admitContainer reserved memory for the container about to be created;
+	// every exit below must either commit that reservation to the instance or
+	// give it back.
+	memMB := functionMemoryMB(fn)
 	if err := p.admitContainer(admitCtx, fn); err != nil {
 		p.releaseSlot(fn.Name)
 		return nil, err
@@ -351,12 +376,14 @@ func (p *InstancePool) acquire(ctx context.Context, fn *Function, progress Progr
 	if err != nil || inst == nil {
 		// A runtime that returns no instance and no error would otherwise leak
 		// the admitted slot, permanently shrinking the function's concurrency.
+		p.unreservePendingMem(memMB)
 		p.releaseSlot(fn.Name)
 		if err == nil {
 			err = fmt.Errorf("lambda runtime returned no instance for %q", fn.Name)
 		}
 		return nil, err
 	}
+	p.commitPendingMem(inst.InstanceID(), memMB)
 	return inst, nil
 }
 
@@ -389,14 +416,16 @@ const (
 	closeAfterStop
 	closeRetired
 	closeSurplus
+	closeMemoryPressure
 )
 
 // releaseLog maps a disposition to its log line.
 var releaseLog = map[releaseDisposition]string{
-	closeUnhealthy: "lambda pool: discarding unhealthy instance",
-	closeAfterStop: "lambda pool: closing instance released after stop",
-	closeRetired:   "lambda pool: retiring instance after configuration change",
-	closeSurplus:   "lambda pool: warm set full — closing surplus instance",
+	closeUnhealthy:      "lambda pool: discarding unhealthy instance",
+	closeAfterStop:      "lambda pool: closing instance released after stop",
+	closeRetired:        "lambda pool: retiring instance after configuration change",
+	closeSurplus:        "lambda pool: warm set full — closing surplus instance",
+	closeMemoryPressure: "lambda pool: memory budget near exhaustion — closing instead of keeping warm",
 }
 
 // Release returns inst to the warm set after an invocation. The instance is
@@ -431,6 +460,14 @@ func (p *InstancePool) Release(_ context.Context, inst RuntimeInstance, healthy 
 	// that can never see the new configuration.
 	case want != "" && want != inst.ConfigIdentity():
 		disposition = closeRetired
+	// Above the memory budget's high-water mark, surplus warmth is the first
+	// thing to give: the finished invocation's container is destroyed rather
+	// than pooled, so queued work regains budget without waiting for the idle
+	// sweep. A running invocation is never touched — this only decides what
+	// happens to a container whose work is already done — and a provisioned
+	// environment is always kept, that being what the reservation buys.
+	case p.overMemoryHighWaterLocked() && !p.isProvisionedLocked(name, inst):
+		disposition = closeMemoryPressure
 	case len(p.entries[name]) >= p.warmCapacityLocked(name):
 		disposition = closeSurplus
 	default:
@@ -478,6 +515,10 @@ func (p *InstancePool) closeInstance(name string, inst RuntimeInstance, msg stri
 			delete(p.provisionedInstances, name)
 		}
 	}
+	// The container's memory leaves the budget with it; wake anything queued
+	// on memory. (Instances the pool never admitted — released to it directly —
+	// have no entry and free nothing.)
+	p.releaseLiveMemLocked(inst.InstanceID())
 	p.mu.Unlock()
 	if err := inst.Close(); err != nil {
 		p.log.Warn("lambda pool: "+msg,
@@ -782,6 +823,10 @@ func (p *InstancePool) replenishProvisioned(name string) {
 			// sweeper and the capacity reclaimer see it as protected the
 			// instant it becomes visible.
 			p.markProvisioned(fn.Name, inst.InstanceID())
+			// Provisioned capacity skips admission but not the books: its
+			// memory counts against the budget so on-demand admission sees
+			// the host as full as it really is.
+			p.registerLiveMem(inst.InstanceID(), functionMemoryMB(&fn))
 			if p.observer != nil {
 				// Announce before pooling: if Release decides to close this
 				// instance instead, closeInstance's InstanceLost retracts it.
@@ -818,6 +863,9 @@ func (p *InstancePool) Stop() {
 	p.provisionedInstances = nil
 	p.provisionedPending = nil
 	p.checkedOut = nil
+	p.liveMemMB = nil
+	p.pendingMemMB = 0
+	p.reservedMemMB = 0
 	// Wake anything queued behind an instance limit; it will see the stopped
 	// pool and give up rather than wait out its whole timeout.
 	p.signalSlotFreedLocked()

@@ -55,6 +55,9 @@ func TestResolveRuntimeLimits_derivesFromSmallHost(t *testing.T) {
 	if got.pool.MaxInstancesPerFunction != 2 {
 		t.Errorf("MaxInstancesPerFunction = %d, want 2 (5/2 = 2)", got.pool.MaxInstancesPerFunction)
 	}
+	if got.pool.MaxMemoryMB != 1331 {
+		t.Errorf("MaxMemoryMB = %d, want 1331 (65%% of 2048 MiB)", got.pool.MaxMemoryMB)
+	}
 }
 
 func TestResolveRuntimeLimits_derivesFromBigHost(t *testing.T) {
@@ -85,6 +88,7 @@ func TestResolveRuntimeLimits_explicitEnvAlwaysWins(t *testing.T) {
 		LambdaMaxInstances:              50,
 		LambdaMaxInstancesPerFunction:   40,
 		LambdaDockerMaxConcurrentStarts: 12,
+		LambdaMaxMemoryMB:               8192,
 	}
 	dc := &fakeInfoClient{info: &docker.SystemInfo{NCPU: 2, MemTotal: 2 * gib}}
 
@@ -98,6 +102,9 @@ func TestResolveRuntimeLimits_explicitEnvAlwaysWins(t *testing.T) {
 	if got.maxConcurrentStarts != 12 || got.pool.MaxInstances != 50 || got.pool.MaxInstancesPerFunction != 40 {
 		t.Errorf("resolved = (starts=%d, max=%d, perFn=%d), want the pinned (12, 50, 40)",
 			got.maxConcurrentStarts, got.pool.MaxInstances, got.pool.MaxInstancesPerFunction)
+	}
+	if got.pool.MaxMemoryMB != 8192 {
+		t.Errorf("MaxMemoryMB = %d, want the pinned 8192", got.pool.MaxMemoryMB)
 	}
 }
 
@@ -118,6 +125,9 @@ func TestResolveRuntimeLimits_infoFailureFallsBackToBuiltInDefaults(t *testing.T
 	}
 	if got.pool.MaxInstancesPerFunction != 10 {
 		t.Errorf("MaxInstancesPerFunction = %d, want the built-in default 10", got.pool.MaxInstancesPerFunction)
+	}
+	if got.pool.MaxMemoryMB != 0 {
+		t.Errorf("MaxMemoryMB = %d, want 0 (unlimited — the pre-budget behaviour)", got.pool.MaxMemoryMB)
 	}
 }
 

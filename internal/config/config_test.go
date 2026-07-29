@@ -108,6 +108,9 @@ func TestLoad_defaults(t *testing.T) {
 	if cfg.LambdaMaxInstancesPerFunction != 0 {
 		t.Errorf("LambdaMaxInstancesPerFunction: expected 0 (auto), got %d", cfg.LambdaMaxInstancesPerFunction)
 	}
+	if cfg.LambdaMaxMemoryMB != 0 {
+		t.Errorf("LambdaMaxMemoryMB: expected 0 (auto), got %d", cfg.LambdaMaxMemoryMB)
+	}
 	if cfg.LambdaSeedRuntimeImages {
 		t.Error("LambdaSeedRuntimeImages: expected false by default")
 	}
@@ -180,6 +183,23 @@ func TestLoad_lambdaDockerMaxConcurrentStarts(t *testing.T) {
 	}
 	if cfg.LambdaDockerMaxConcurrentStarts != 7 {
 		t.Fatalf("LambdaDockerMaxConcurrentStarts = %d, want 7", cfg.LambdaDockerMaxConcurrentStarts)
+	}
+}
+
+func TestLoad_lambdaMaxMemoryMB(t *testing.T) {
+	// Given: LAMBDA_MAX_MEMORY_MB is set.
+	clearEnv(t)
+	t.Setenv("LAMBDA_MAX_MEMORY_MB", "2048")
+
+	// When: we load config.
+	cfg, err := config.Load()
+
+	// Then: the aggregate Lambda memory budget is parsed.
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LambdaMaxMemoryMB != 2048 {
+		t.Fatalf("LambdaMaxMemoryMB = %d, want 2048", cfg.LambdaMaxMemoryMB)
 	}
 }
 

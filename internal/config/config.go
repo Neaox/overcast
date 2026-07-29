@@ -264,6 +264,17 @@ type Config struct {
 	// unavailable.
 	LambdaMaxInstancesPerFunction int
 
+	// LambdaMaxMemoryMB bounds the aggregate memory of live Lambda containers,
+	// in MB: Σ MemorySize over warm and executing containers. Each container is
+	// hard-capped at its function's MemorySize with swap disabled, so this is a
+	// real bound on what Lambda can take from the host, not an estimate. When
+	// the budget is exhausted a new invocation reclaims idle containers, then
+	// queues, then throttles at the function's timeout — the same ladder as
+	// LambdaMaxInstances. Corresponds to env var LAMBDA_MAX_MEMORY_MB. 0 (the
+	// default) means unset: the Lambda runtime derives 65% of the Docker host's
+	// MemTotal, or leaves the budget unlimited when Docker /info is unavailable.
+	LambdaMaxMemoryMB int
+
 	// LambdaMaxWarmInstances bounds how many idle containers one function keeps
 	// after a concurrency burst. Surplus instances are destroyed on release
 	// rather than waiting out the 15-minute idle sweep. A provisioned
@@ -731,6 +742,8 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	LAMBDA_MAX_INSTANCES               (auto)  derived from Docker host memory:
 //	                                           clamp(MemTotal*0.65 / 256MiB, 4, 32); 25 when /info is unavailable
 //	LAMBDA_MAX_INSTANCES_PER_FUNCTION  (auto)  clamp(maxInstances/2, 2, maxInstances); 10 when /info is unavailable
+//	LAMBDA_MAX_MEMORY_MB               (auto)  aggregate Σ MemorySize budget for live containers, in MB;
+//	                                           derived as MemTotal*0.65; unlimited when /info is unavailable
 //	LAMBDA_MAX_WARM_INSTANCES          10
 //	LAMBDA_INIT_TIMEOUT_SECONDS       10
 //	LAMBDA_KEEP_CONTAINERS             false (true = keep stopped containers after expiry/delete)
@@ -980,6 +993,10 @@ func Load() (*Config, error) {
 	cfg.LambdaMaxInstancesPerFunction = envInt("LAMBDA_MAX_INSTANCES_PER_FUNCTION", 0)
 	if cfg.LambdaMaxInstancesPerFunction < 0 {
 		cfg.LambdaMaxInstancesPerFunction = 0
+	}
+	cfg.LambdaMaxMemoryMB = envInt("LAMBDA_MAX_MEMORY_MB", 0)
+	if cfg.LambdaMaxMemoryMB < 0 {
+		cfg.LambdaMaxMemoryMB = 0
 	}
 	cfg.LambdaMaxWarmInstances = envInt("LAMBDA_MAX_WARM_INSTANCES", 10)
 	if cfg.LambdaMaxWarmInstances < 1 {
