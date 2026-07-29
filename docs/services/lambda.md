@@ -97,10 +97,15 @@ a real bound on host memory, not an estimate. Exhausting the budget follows
 the same ladder as the instance limits — reclaim the least-recently-used idle
 container, queue, throttle at the function's timeout — and logs one warning
 (naming `LAMBDA_MAX_MEMORY_MB`) the first time it forces an invocation to
-queue. While the pool sits above ~90% of the budget, a container whose
-invocation just finished is destroyed instead of kept warm, so queued work
-regains budget without waiting for the idle sweep; provisioned environments
-are always kept, and a running invocation is never interrupted.
+queue. A reclaim forced by the memory budget is logged at `WARN` (the routine
+instance-count reclaim stays `INFO`). While the pool sits above ~90% of the
+budget, a container whose invocation just finished is destroyed instead of
+kept warm, so queued work regains budget without waiting for the idle sweep;
+provisioned environments are always kept, and a running invocation is never
+interrupted. Entering that regime is logged once at `WARN` (budget, reserved
+memory, and the high-water threshold — expect cold starts while it lasts) and
+leaving it once at `INFO` with how many containers were shed and for how
+long, rather than one line per destroyed container.
 
 `ReservedConcurrentExecutions` is enforced with AWS's semantics instead: no
 queueing, an immediate 429 with

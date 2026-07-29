@@ -53,6 +53,14 @@ const (
 	memoryHighWaterPercent = 90
 )
 
+// Memory-pressure regime edge log lines. The per-container destruction stays
+// at Debug; these mark the episode itself so the default log level shows why
+// every invocation suddenly cold starts.
+const (
+	memPressureEnterMsg = "lambda pool: memory budget above high water — finished containers will be destroyed instead of kept warm (expect cold starts)"
+	memPressureExitMsg  = "lambda pool: memory budget back under high water — resuming warm container pooling"
+)
+
 // Throttle reasons. These are the values real Lambda puts in the Reason field
 // of a TooManyRequestsException — see the Invoke API reference, which documents
 // exceeding a concurrency limit "at either the account level
@@ -215,7 +223,16 @@ func (p *InstancePool) admitContainer(ctx context.Context, fn *Function) error {
 		p.mu.Unlock()
 
 		if reclaimed != nil {
-			p.log.Info("lambda pool: instance limit reached — reclaiming an idle instance",
+			// A count-cap reclaim is routine pool behaviour (Info); a
+			// memory-bound one means the host budget is the constraint and the
+			// operator should act — raise LAMBDA_MAX_MEMORY_MB or lower the
+			// functions' MemorySize — so it surfaces at Warn. Same pattern as
+			// the sweep's leveled p.log.Log call.
+			msg, level := "lambda pool: instance limit reached — reclaiming an idle instance", zap.InfoLevel
+			if overMemory {
+				msg, level = "lambda pool: memory budget reached — reclaiming an idle instance", zap.WarnLevel
+			}
+			p.log.Log(level, msg,
 				zap.String("for_function", fn.Name),
 				zap.String("reclaimed_from", victim),
 				zap.Bool("memory_bound", overMemory),

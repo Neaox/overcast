@@ -211,6 +211,124 @@ func TestAcquire_memoryBudgetWarnsOnceNamingTheEnvVar(t *testing.T) {
 	}
 }
 
+func TestRelease_memoryPressureRegimeLogsEntryAndExitExactlyOnce(t *testing.T) {
+	// Given: a pool logging into an observer at Info level, with a 420 MB
+	// budget (high water 378 MB) and two 200 MB invocations in flight.
+	core, logs := observer.New(zap.InfoLevel)
+	pool := NewInstancePool(&countingColdStartRuntime{}, zap.New(core), clock.NewMock(),
+		PoolLimits{MaxInstances: 10, MaxMemoryMB: 420})
+	defer pool.Stop()
+	a := mustAcquire(t, pool, &Function{Name: "a", MemorySize: 200})
+	b := mustAcquire(t, pool, &Function{Name: "b", MemorySize: 200})
+
+	// When: the pool bounces across the high-water mark — a release sheds its
+	// container (dropping reserved memory right back under the mark), a new
+	// invocation pushes it over again, a second release sheds again, and a
+	// final release under the mark pools normally.
+	pool.Release(context.Background(), a, true) // 400 ≥ 378: shed — regime entry
+	c := mustAcquire(t, pool, &Function{Name: "c", MemorySize: 200})
+	pool.Release(context.Background(), b, true) // 400 ≥ 378 again: shed — same episode, no second entry
+	pool.Release(context.Background(), c, true) // 200 < 378: pooled — regime exit
+
+	// Then: the episode is logged exactly once at each edge — an entry warning
+	// when shedding starts and a recovery line when it stops — never one line
+	// per release while the pool bounces on the boundary. The recovery line
+	// reports how many containers the episode shed.
+	var entries, exits int
+	var shed int64 = -1
+	for _, e := range logs.All() {
+		switch e.Message {
+		case memPressureEnterMsg:
+			entries++
+		case memPressureExitMsg:
+			exits++
+			for _, f := range e.Context {
+				if f.Key == "containers_shed" {
+					shed = f.Integer
+				}
+			}
+		}
+	}
+	if entries != 1 {
+		t.Errorf("regime entry lines = %d, want exactly 1", entries)
+	}
+	if exits != 1 {
+		t.Errorf("regime exit lines = %d, want exactly 1", exits)
+	}
+	if shed != 2 {
+		t.Errorf("containers_shed = %d, want 2 (both sheds belong to the one episode)", shed)
+	}
+}
+
+func TestAcquire_memoryBoundReclaimLogsAtWarn(t *testing.T) {
+	// Given: a 256 MB budget held entirely by one idle container, with plenty
+	// of instance-count headroom, so a reclaim can only be memory-bound.
+	core, logs := observer.New(zap.InfoLevel)
+	pool := NewInstancePool(&countingColdStartRuntime{}, zap.New(core), clock.NewMock(),
+		PoolLimits{MaxInstances: 10, MaxMemoryMB: 256})
+	defer pool.Stop()
+	idle := &Function{Name: "idle-fn", MemorySize: 200}
+	pool.Release(context.Background(), mustAcquire(t, pool, idle), true)
+
+	// When: admission reclaims the idle container to free its memory.
+	if _, err := pool.Acquire(context.Background(), &Function{Name: "busy-fn", MemorySize: 200}); err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+
+	// Then: the reclaim is logged at Warn — the host budget is the binding
+	// constraint and the operator should act on it — not at the Info the
+	// routine count-cap reclaim uses.
+	var found bool
+	for _, e := range logs.All() {
+		for _, f := range e.Context {
+			if f.Key == "memory_bound" && f.Integer == 1 { // zap encodes bools as 0/1
+				found = true
+				if e.Level != zap.WarnLevel {
+					t.Errorf("memory-bound reclaim logged at %v, want %v", e.Level, zap.WarnLevel)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no memory-bound reclaim log entry found")
+	}
+}
+
+func TestAcquire_countBoundReclaimStaysAtInfo(t *testing.T) {
+	// Given: a two-container cap with no memory budget, both slots held by
+	// idle containers.
+	core, logs := observer.New(zap.InfoLevel)
+	pool := NewInstancePool(&countingColdStartRuntime{}, zap.New(core), clock.NewMock(),
+		PoolLimits{MaxInstances: 2, MaxWarmPerFunction: 2})
+	defer pool.Stop()
+	idle := &Function{Name: "idle-fn"}
+	first := mustAcquire(t, pool, idle) // hold both so two containers exist
+	second := mustAcquire(t, pool, idle)
+	pool.Release(context.Background(), first, true)
+	pool.Release(context.Background(), second, true)
+
+	// When: admission reclaims an idle container for the count cap.
+	if _, err := pool.Acquire(context.Background(), &Function{Name: "busy-fn"}); err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+
+	// Then: the routine count-cap reclaim stays at Info.
+	var found bool
+	for _, e := range logs.All() {
+		for _, f := range e.Context {
+			if f.Key == "memory_bound" && f.Integer == 0 {
+				found = true
+				if e.Level != zap.InfoLevel {
+					t.Errorf("count-bound reclaim logged at %v, want %v", e.Level, zap.InfoLevel)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no count-bound reclaim log entry found")
+	}
+}
+
 // flakyColdStartRuntime fails its first Acquire calls, then succeeds.
 type flakyColdStartRuntime struct {
 	mu       sync.Mutex

@@ -128,6 +128,14 @@ type InstancePool struct {
 	// memWarnOnce gates the one warning emitted when the memory budget first
 	// forces an invocation to queue.
 	memWarnOnce sync.Once
+	// memPressure latches while releases are shedding finished containers for
+	// memory (the high-water regime), so the regime is logged once at each
+	// edge rather than once per destroyed container. memPressureShed counts
+	// containers shed in the current episode; memPressureSince is when it
+	// began. See Release for why the transitions live at its decision point.
+	memPressure      bool
+	memPressureShed  int
+	memPressureSince time.Time
 	// slotFreed is closed and replaced whenever capacity frees up, waking every
 	// invocation queued behind an instance limit. See signalSlotFreed.
 	slotFreed chan struct{}
@@ -477,7 +485,52 @@ func (p *InstancePool) Release(_ context.Context, inst RuntimeInstance, healthy 
 			lastUsed: p.clk.Now(),
 		})
 	}
+
+	// Memory-pressure regime edges are detected here — at the release decision
+	// point — and nowhere else, so entry and exit always pair up. Detecting
+	// exit where memory is freed (releaseLiveMemLocked) would un-latch the
+	// regime on the shed's own close whenever one container spans the gap
+	// between reserved memory and the high-water mark, and every following
+	// release would then log a fresh entry: one line per release, exactly the
+	// noise the latch exists to avoid. The cost is that a pool which goes
+	// quiet mid-episode logs its recovery on the next release rather than on
+	// the sweep that freed the memory.
+	pressureEntered, pressureExited := false, false
+	shedCount, reservedNow := 0, p.reservedMemMB
+	var pressureFor time.Duration
+	switch {
+	case disposition == closeMemoryPressure:
+		if !p.memPressure {
+			p.memPressure = true
+			p.memPressureShed = 0
+			p.memPressureSince = p.clk.Now()
+			pressureEntered = true
+		}
+		p.memPressureShed++
+	case p.memPressure && !p.overMemoryHighWaterLocked():
+		p.memPressure = false
+		pressureExited = true
+		shedCount = p.memPressureShed
+		pressureFor = p.clk.Now().Sub(p.memPressureSince)
+		p.memPressureShed = 0
+	}
 	p.mu.Unlock()
+
+	if pressureEntered {
+		p.log.Warn(memPressureEnterMsg,
+			zap.Int("budget_mb", p.maxMemoryMB),
+			zap.Int("high_water_mb", p.maxMemoryMB*memoryHighWaterPercent/100),
+			zap.Int("reserved_mb", reservedNow),
+			zap.String("env_var", "LAMBDA_MAX_MEMORY_MB"),
+		)
+	}
+	if pressureExited {
+		p.log.Info(memPressureExitMsg,
+			zap.Int("containers_shed", shedCount),
+			zap.Duration("pressure_for", pressureFor),
+			zap.Int("reserved_mb", reservedNow),
+		)
+	}
 
 	if disposition == pooled {
 		p.log.Debug("lambda pool: instance returned to pool", zap.String("function", name))
@@ -866,6 +919,8 @@ func (p *InstancePool) Stop() {
 	p.liveMemMB = nil
 	p.pendingMemMB = 0
 	p.reservedMemMB = 0
+	p.memPressure = false
+	p.memPressureShed = 0
 	// Wake anything queued behind an instance limit; it will see the stopped
 	// pool and give up rather than wait out its whole timeout.
 	p.signalSlotFreedLocked()
