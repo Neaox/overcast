@@ -97,7 +97,7 @@
       "service": "cdk",
       "group": "cdk-lifecycle",
       "test": "VerifyFilteredEsmDelivery",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "cdk",
@@ -118,7 +118,7 @@
       "service": "cdk",
       "group": "cdk-lifecycle",
       "test": "VerifyLambdaInvokedByStream",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "cdk",
@@ -1679,7 +1679,7 @@
       "service": "eventbridge",
       "group": "eventbridge-buses",
       "test": "DeleteEventBus",
-      "status": "pass"
+      "status": "skip"
     },
     {
       "suite": "cli",
@@ -1700,7 +1700,7 @@
       "service": "eventbridge",
       "group": "eventbridge-buses",
       "test": "ListEventBuses",
-      "status": "pass"
+      "status": "fail"
     },
     {
       "suite": "cli",
@@ -2358,21 +2358,21 @@
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeAsync",
-      "status": "pass"
+      "status": "skip"
     },
     {
       "suite": "cli",
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeDryRun",
-      "status": "pass"
+      "status": "fail"
     },
     {
       "suite": "cli",
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeSync",
-      "status": "pass"
+      "status": "skip"
     },
     {
       "suite": "cli",
@@ -6551,7 +6551,7 @@
       "service": "sns",
       "group": "sns-subscriptions",
       "test": "PublishDeliveredToSQS",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
@@ -6572,7 +6572,7 @@
       "service": "sns",
       "group": "sns-subscriptions",
       "test": "Unsubscribe",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
@@ -9036,14 +9036,14 @@
       "service": "lambda",
       "group": "lambda-invoke-stream",
       "test": "InvokeWithResponseStream",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeAsync",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
@@ -9057,7 +9057,7 @@
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeSync",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
@@ -12494,28 +12494,28 @@
       "service": "lambda",
       "group": "lambda-invoke-stream",
       "test": "InvokeWithResponseStream",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeAsync",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeDryRun",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeSync",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
@@ -15735,28 +15735,32 @@
       "service": "lambda",
       "group": "lambda-invoke-stream",
       "test": "InvokeWithResponseStream",
-      "status": "skip"
+      "op": "InvokeWithResponseStream",
+      "status": "pass"
     },
     {
       "suite": "node-js-sdk",
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeAsync",
-      "status": "skip"
+      "op": "Invoke",
+      "status": "pass"
     },
     {
       "suite": "node-js-sdk",
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeDryRun",
-      "status": "skip"
+      "op": "Invoke",
+      "status": "pass"
     },
     {
       "suite": "node-js-sdk",
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeSync",
-      "status": "skip"
+      "op": "Invoke",
+      "status": "pass"
     },
     {
       "suite": "node-js-sdk",
@@ -18995,28 +18999,32 @@
       "service": "lambda",
       "group": "lambda-invoke-stream",
       "test": "InvokeWithResponseStream",
-      "status": "skip"
+      "op": "InvokeWithResponseStream",
+      "status": "pass"
     },
     {
       "suite": "python-sdk",
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeAsync",
-      "status": "skip"
+      "op": "Invoke",
+      "status": "pass"
     },
     {
       "suite": "python-sdk",
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeDryRun",
-      "status": "skip"
+      "op": "Invoke",
+      "status": "pass"
     },
     {
       "suite": "python-sdk",
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeSync",
-      "status": "skip"
+      "op": "Invoke",
+      "status": "pass"
     },
     {
       "suite": "python-sdk",

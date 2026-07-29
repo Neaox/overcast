@@ -29,8 +29,9 @@ Three things were undermining the compat suites:
   invisible); `lintBaselineChange` rejects a new entry arriving as `fail` (it
   previously iterated old entries only, so failures could be grandfathered by
   adding them). `--annotate` renders both as `::error` workflow commands.
-- **Baseline populated** — 3,361 entries from the `main` CI run: 2,552 `pass`,
-  777 `skip`, 1 `na`, and **31 `fail` grandfathered for burn-down**.
+- **Baseline populated** — 3,361 entries seeded from the first Docker-enabled CI
+  run (the configuration CI now uses): 2,566 `pass`, 766 `skip`, 1 `na`, and
+  **28 `fail` grandfathered for burn-down**.
 - **Parity checker** ([cmd/compat/parity.go](../../cmd/compat/parity.go)) —
   `--check-parity` / `--update-parity-debt`. Classifies every (suite, registry
   test) pair from a real run: implemented, registry gap, environmental skip,
@@ -54,19 +55,38 @@ Three things were undermining the compat suites:
   back by the workflow. The sole documented exception to "never push to `main`",
   granted to the workflow only.
 
-## Outstanding — burn down the 31 grandfathered failures
+## What turning Docker on changed
+
+Enabling the Docker-dependent tests in CI was a net win and, more importantly,
+told the truth for the first time:
+
+| | Before (stub) | After (real containers) |
+| --- | --- | --- |
+| Total failures | 31 | **28** |
+| cdk | 2 | **0** — the ESM assertions pass; R2 is done |
+| java-sdk | 3 | **1** — the function-Active failures were an artefact of the stub |
+| cli | 1 | **3** — two genuine bugs the stub was hiding (R7) |
+
+`cli/lambda-invoke/InvokeDryRun` and `cli/eventbridge-buses/ListEventBuses` were
+passing against a stub that never ran a container. That is exactly the blindspot
+this work existed to close: the suite was green on a code path CI never
+exercised.
+
+## Outstanding — burn down the 28 grandfathered failures
 
 One PR per root cause, reproducing test first. The baseline shrinks by
 auto-promotion on merge; nothing to hand-edit.
 
 | # | Root cause | Fails | Notes |
 | --- | --- | --- | --- |
-| R1 | `rds-subnet-groups` — "At least one SubnetId is required", plus the Describe cascade | 8 | node, python×2, go×2, cli, java. Determine whether the suites' subnet setup or the emulator's EC2/RDS path is wrong |
-| R2 | CDK ESM assertions ("No records processed") | 2 | Expected to resolve now Docker runs in CI — verify, then gate the assertions on genuine Docker availability for local parity |
-| R3 | Lambda function never reaches Active ("still being created") | 2 | java `InvokeDryRun`, `InvokeWithResponseStream`; verify after Docker lands, else fix function-state readiness |
-| R4 | dotnet-sdk suite bugs | 11 | Null-refs (PurgeQueue, DeleteItem, PublishBatch), s3-copy bucket collision, IAM `Get*Policy` URL-decode assertions, BatchGetSecretValue, appsync ordering |
+| R1 | `rds-subnet-groups` — "At least one SubnetId is required", plus the Describe cascade | 6 | node, python×2, go×2, cli. Determine whether the suites' subnet setup or the emulator's EC2/RDS path is wrong |
+| R3 | java-sdk Lambda function readiness | 1 | Mostly resolved by real containers; one failure left |
+| R4 | dotnet-sdk suite bugs | 10 | Null-refs (PurgeQueue, DeleteItem, PublishBatch), s3-copy bucket collision, IAM `Get*Policy` URL-decode assertions, BatchGetSecretValue, appsync ordering |
 | R5 | rust-sdk opaque `service error` reporting, then the real bugs | 9 | Fix `SdkError` rendering first — the errors are currently unreadable; ssm masked-value expectation; BatchGetSecretValue |
-| R6 | Suites hardcode `nodejs18.x`, which the emulator now rejects | 1 + ~17 cascades | appsync-functions setup across java/dotnet/rust |
+| R6 | Suites hardcode `nodejs18.x`, which the emulator now rejects | ~17 cascading skips | appsync-functions and lambda-invoke setup across dotnet/rust — no longer a `fail`, but it masks whole groups |
+| R7 | **New — exposed by running Lambda for real** | 2 | `cli/lambda-invoke/InvokeDryRun` → `InvalidParameterValueException` on Invoke; `cli/eventbridge-buses/ListEventBuses` → created bus not found. Both cascade (3 further skips). Investigate the emulator first: the CLI sends the same wire request the SDKs do, and the SDK suites pass |
+
+R2 (CDK ESM) is done — it resolved the moment CI stopped skipping Docker.
 
 Cascade skips must shrink with their root cause — check the skip clusters, not
 just the fail count. End state: zero `fail` entries, plus a CI guard asserting

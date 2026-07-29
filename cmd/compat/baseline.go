@@ -152,6 +152,16 @@ func lintBaselineChange(oldBaseline, newBaseline *compatBaseline) []string {
 	// a fresh failure simply by adding an entry for it. New expectations are
 	// fine at any other status — the burn-down shrinks the fail set, never
 	// grows it.
+	//
+	// Seeding is the exception: an empty old baseline means there is nothing to
+	// get worse than, and the first population necessarily records reality
+	// including its known failures. This cannot be abused to launder failures
+	// later — emptying a populated baseline trips the removed-expectation check
+	// above for every entry it dropped.
+	if len(oldBaseline.Entries) == 0 {
+		sort.Strings(issues)
+		return issues
+	}
 	for _, newEntry := range newBaseline.Entries {
 		if newEntry.Status != compat.StatusFail {
 			continue

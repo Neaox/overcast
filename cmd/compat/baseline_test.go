@@ -165,8 +165,11 @@ func TestCompareBaseline_grandfatheredFailureIsAllowed(t *testing.T) {
 }
 
 func TestLintBaselineChange_newFailEntryRejected(t *testing.T) {
-	// Given: a baseline change that introduces a brand-new expectation, failing
-	oldBaseline := &compatBaseline{Version: baselineVersion}
+	// Given: an established baseline, and a change that adds a brand-new
+	// expectation at `fail`
+	oldBaseline := &compatBaseline{Version: baselineVersion, Entries: []baselineEntry{
+		{Suite: "go-sdk", Group: "s3-crud", Test: "DeleteBucket", Status: compat.StatusPass},
+	}}
 	newBaseline := &compatBaseline{Version: baselineVersion, Entries: []baselineEntry{
 		{Suite: "go-sdk", Group: "s3-crud", Test: "CreateBucket", Status: compat.StatusFail},
 		{Suite: "go-sdk", Group: "s3-crud", Test: "DeleteBucket", Status: compat.StatusPass},
@@ -182,6 +185,42 @@ func TestLintBaselineChange_newFailEntryRejected(t *testing.T) {
 	}
 	if !strings.Contains(issues[0], "go-sdk/s3-crud/CreateBucket") {
 		t.Fatalf("issue message = %q", issues[0])
+	}
+}
+
+func TestLintBaselineChange_seedingAnEmptyBaselineIsAllowed(t *testing.T) {
+	// Given: an empty baseline being populated for the first time, recording
+	// reality — which includes failures that already exist
+	oldBaseline := &compatBaseline{Version: baselineVersion}
+	newBaseline := &compatBaseline{Version: baselineVersion, Entries: []baselineEntry{
+		{Suite: "cli", Group: "lambda-invoke", Test: "InvokeDryRun", Status: compat.StatusFail},
+		{Suite: "cli", Group: "s3-crud", Test: "CreateBucket", Status: compat.StatusPass},
+	}}
+
+	// When: the seeding change is linted
+	issues := lintBaselineChange(oldBaseline, newBaseline)
+
+	// Then: it is allowed. There is nothing to regress from, and the burn-down
+	// starts from whatever the first run measured.
+	if len(issues) != 0 {
+		t.Fatalf("issues = %#v, want none when seeding an empty baseline", issues)
+	}
+}
+
+func TestLintBaselineChange_emptyingAPopulatedBaselineIsRejected(t *testing.T) {
+	// Given: someone empties a populated baseline — the move that would
+	// otherwise let the next PR re-seed failures freely
+	oldBaseline := &compatBaseline{Version: baselineVersion, Entries: []baselineEntry{
+		{Suite: "cli", Group: "s3-crud", Test: "CreateBucket", Status: compat.StatusPass},
+		{Suite: "cli", Group: "s3-crud", Test: "DeleteBucket", Status: compat.StatusPass},
+	}}
+	newBaseline := &compatBaseline{Version: baselineVersion}
+
+	// When/Then: every dropped expectation is reported, so the seeding
+	// exemption cannot be reached by wiping the file first.
+	issues := lintBaselineChange(oldBaseline, newBaseline)
+	if len(issues) != 2 {
+		t.Fatalf("issues = %#v, want one per removed expectation", issues)
 	}
 }
 

@@ -333,7 +333,12 @@ jobs:
     if: always() && needs.prepare-matrix.result == 'success'
     runs-on: ubuntu-latest
     permissions:
+      # contents: write — the baseline-promotion commit on main.
+      # pull-requests: write — the sticky digest comment.
+      # checks: write — the JUnit check run.
       contents: write
+      pull-requests: write
+      checks: write
 
     steps:
       - uses: actions/checkout@v7.0.0
