@@ -14,7 +14,9 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
+import { useDragClickGuard } from "@/hooks/use-drag-click-guard"
 import { useFavourites } from "@/hooks/use-favourites"
+import { restrictToVerticalAxis } from "@/lib/dnd"
 import { ALL_SERVICES } from "@/lib/nav-services"
 import { SidebarNavItem, type SidebarNavEntry } from "./sidebar-nav-item"
 
@@ -37,6 +39,13 @@ export function SidebarFavourites({
   const { favourites, reorderFavourites } = useFavourites()
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
+  const markDragged = useDragClickGuard()
+
+  function handleDragStart(id: string) {
+    setDraggingId(id)
+    // Keep the drop from activating the link under the pointer, wherever it lands.
+    markDragged()
+  }
 
   function handleDragEnd({ active, over }: DragEndEvent) {
     setDraggingId(null)
@@ -59,7 +68,8 @@ export function SidebarFavourites({
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
-      onDragStart={({ active }) => setDraggingId(active.id as string)}
+      modifiers={[restrictToVerticalAxis]}
+      onDragStart={({ active }) => handleDragStart(active.id as string)}
       onDragEnd={handleDragEnd}
       onDragCancel={() => setDraggingId(null)}
     >
