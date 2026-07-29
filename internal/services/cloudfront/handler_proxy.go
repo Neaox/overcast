@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // proxyClient is the HTTP client used for origin requests.
@@ -122,7 +123,9 @@ func (h *Handler) ProxyRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	case "redirect-to-https":
 		if r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
-			http.Redirect(w, r, "https://"+r.Host+r.RequestURI, http.StatusMovedPermanently)
+			// Fold the Host into the Location we mint: a redirect target is
+			// output, and output carries the canonical lowercase form.
+			http.Redirect(w, r, "https://"+serviceutil.FoldHostname(r.Host)+r.RequestURI, http.StatusMovedPermanently)
 			return
 		}
 		// "allow-all" — no enforcement needed.

@@ -35,6 +35,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // proxyHTTPClient is used for HTTP_PROXY integrations. A 30-second timeout
@@ -441,8 +442,10 @@ func (h *Handler) executeV2LambdaProxy(
 			RequestContext: v2RequestContext{
 				AccountID:    h.accountID(),
 				APIID:        api.ApiID,
-				DomainName:   r.Host,
-				DomainPrefix: domainPrefix(r.Host),
+				// Folded: a Host is case-insensitive, so the domain reported to
+				// handler code must not vary with how the caller typed it.
+				DomainName:   serviceutil.FoldHostname(r.Host),
+				DomainPrefix: serviceutil.DomainPrefix(r.Host),
 				HTTP: v2HTTP{
 					Method:    r.Method,
 					Path:      requestPath,
@@ -674,20 +677,6 @@ func requestProtocol(r *http.Request) string {
 	return "HTTP/1.1"
 }
 
-// domainPrefix returns the first label of host (e.g. "api" for "api.example.com").
-// Falls back to "localhost".
-func domainPrefix(host string) string {
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	if host == "" {
-		return "localhost"
-	}
-	if i := strings.IndexByte(host, '.'); i > 0 {
-		return host[:i]
-	}
-	return host
-}
 
 // lambdaProxyResponse is the unified response format from Lambda proxy integration.
 type lambdaProxyResponse struct {

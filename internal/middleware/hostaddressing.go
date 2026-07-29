@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 
 	"go.uber.org/zap"
+
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // hostaddressing.go decides, once per request, who owns a Host header: S3
@@ -357,53 +359,12 @@ func hostWithoutPort(host string) string {
 	return host
 }
 
-// foldHostname lowercases an ASCII hostname whose port is already stripped, so
-// every downstream match — the ".s3." separator, the bucket name, the
-// hostRouteLabels lookup, the region pattern — can be a plain comparison
-// against the canonical lowercase form.
-//
-// A hostname is case-insensitive (RFC 4343 for DNS, RFC 3986 §3.2.2 for the URI
-// authority), so this loses nothing: the same address in any case is the same
-// address. Without it, casing decided WHICH SERVICE answered — an upper-case
-// label missed hostRouteLabels, and tier B then took the whole
-// "{id}.{label}.{region}" as a bucket name, so a Lambda function URL or a
-// CloudFront distribution address in the wrong case returned S3's NoSuchBucket.
-//
-// Folding is pay-per-use: Classify is specified allocation-free and runs on
-// every request, and real clients send lowercase (a browser lower-cases the
-// Host before sending it; curl and Go's http.Client pass through whatever case
-// was typed), so an already-lowercase host is returned unchanged with no copy.
-// ASCII-only by construction — DNS names are ASCII (an IDN arrives
-// punycode-encoded), and Unicode case folding has locale hazards a hostname
-// comparison must not inherit. That is also why this does not call
-// strings.ToLower, which is allocation-free for an already-lowercase ASCII
-// string too but measures ~2.4x slower here: its scan tracks non-ASCII as well
-// and cannot stop early.
-// A word-at-a-time (SWAR) scan was measured against this and is NOT used. It is
-// faster in isolation on long hostnames, but end-to-end through Classify the
-// difference was within run-to-run noise — better on the S3 virtual-hosted and
-// host-routed rows by 4-6 ns, worse on the short path-style host that dominates
-// real traffic by 2 ns. A bit-trick that needs a differential test and a fuzz
-// target to be trusted is not worth single-digit nanoseconds in the code that
-// decides which service answers a request.
-func foldHostname(hostname string) string {
-	i := 0
-	for ; i < len(hostname); i++ {
-		if c := hostname[i]; c >= 'A' && c <= 'Z' {
-			break
-		}
-	}
-	if i == len(hostname) {
-		return hostname
-	}
-	b := []byte(hostname)
-	for ; i < len(b); i++ {
-		if c := b[i]; c >= 'A' && c <= 'Z' {
-			b[i] = c + ('a' - 'A')
-		}
-	}
-	return string(b)
-}
+// foldHostname is serviceutil.FoldHostname, aliased so the hot path reads
+// plainly and so this package documents WHY classification folds: casing must
+// never decide which service answers a request. The implementation lives in
+// serviceutil because minting needs the identical rule on the way out, and one
+// implementation is the only way the two directions cannot drift.
+func foldHostname(hostname string) string { return serviceutil.FoldHostname(hostname) }
 
 // isIPLiteral reports whether hostname (port and brackets already removed) is
 // an IP address rather than a DNS name. IP literals never carry a

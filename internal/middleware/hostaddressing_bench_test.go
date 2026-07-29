@@ -25,15 +25,21 @@ import (
 // Classify must be 0 allocs/op on every row and must not regress on ns/op.
 // See docs/plans/host-routing-precedence.md §7.
 //
-// Case folding (foldHostname) then added one full pass over the hostname, since
-// any byte could be upper-case and only reaching the end proves none is. Cost
-// measured on the same machine, median of 3, before -> after:
+// Case folding (serviceutil.FoldHostname) then added one full pass over the
+// hostname, since any byte could be upper-case and only reaching the end proves
+// none is. Cost measured on the same machine, median of 3, before -> after:
 //
-//	PathStyleLocalhost      29.6 -> 33.6 ns/op   (+4.0)
-//	IPLiteral               15.0 -> 19.5 ns/op   (+4.5)
-//	S3BareVirtualHost       39.8 -> 50.2 ns/op   (+10.4)
-//	S3LabelledVirtualHost   19.6 -> 32.7 ns/op   (+13.1)
-//	HostRouteExecuteAPI      243 ->  259 ns/op   (+16)
+//	PathStyleLocalhost      29.6 -> 34.1 ns/op   (+4.5)
+//	IPLiteral               15.0 -> 20.1 ns/op   (+5.1)
+//	S3BareVirtualHost       39.8 -> 54.7 ns/op   (+14.9)
+//	S3LabelledVirtualHost   19.6 -> 36.4 ns/op   (+16.8)
+//	HostRouteExecuteAPI      243 ->  268 ns/op   (+25)
+//
+// About 4 ns of the S3 rows is the fold living in serviceutil rather than this
+// package, so it no longer inlines. That is deliberate: minting needs the
+// identical rule on the way out (serviceutil.RequestBaseURL), and two copies of
+// a case rule is precisely how the original defect arose — the base was folded,
+// everything else was not. One implementation, 4 ns.
 //
 // Still 0 allocs/op on every row, and every row remains far inside the
 // pre-consolidation budget above. S3LabelledVirtualHost moves most in relative

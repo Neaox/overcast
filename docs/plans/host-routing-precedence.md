@@ -476,11 +476,16 @@ command and environment, median of 3:
 
 | Host | Before folding | After | Change |
 | --- | --- | --- | --- |
-| `localhost:4566` | 29.6 ns | 33.6 ns | +4.0 ns |
-| `127.0.0.1:4566` | 15.0 ns | 19.5 ns | +4.5 ns |
-| `mybucket.localhost:4566` | 39.8 ns | 50.2 ns | +10.4 ns |
-| `mybucket.s3.us-east-1.localhost:4566` | 19.6 ns | 32.7 ns | +13.1 ns |
-| `abc123.execute-api.us-east-1.localhost.overcast.sh:4566` | 243 ns | 259 ns | +16 ns |
+| `localhost:4566` | 29.6 ns | 34.1 ns | +4.5 ns |
+| `127.0.0.1:4566` | 15.0 ns | 20.1 ns | +5.1 ns |
+| `mybucket.localhost:4566` | 39.8 ns | 54.7 ns | +14.9 ns |
+| `mybucket.s3.us-east-1.localhost:4566` | 19.6 ns | 36.4 ns | +16.8 ns |
+| `abc123.execute-api.us-east-1.localhost.overcast.sh:4566` | 243 ns | 268 ns | +25 ns |
+
+About 4 ns of the S3 rows is the fold living in `serviceutil` rather than
+`middleware`, so it no longer inlines. That is deliberate: minting needs the
+identical rule on the way out, and two copies of a case rule is exactly how the
+original defect arose — the base was folded, everything else was not.
 
 Zero allocations on every row still, and every row remains far inside the
 pre-consolidation budget. The labelled-S3 row moves most in relative terms
