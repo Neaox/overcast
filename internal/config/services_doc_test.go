@@ -18,16 +18,17 @@ const docServiceNamesHeading = "### Service names"
 // from the first column: "| `s3` | S3 | `aws-s3` |".
 var docTokenRow = regexp.MustCompile("^\\|\\s*`([a-z0-9]+)`\\s*\\|")
 
-// TestServiceNamesDocMatchesAllServices is a drift tripwire for the
-// hand-maintained token table in docs/README.md § Service names.
+// TestServiceNamesDocMatchesAllServices checks that the committed token table
+// in docs/README.md § Service names still describes the services this build
+// accepts.
 //
-// That table can't be generated the way the service index is: capgen keys
-// services by doc filename ("cloudwatch-logs", "elb") while OVERCAST_SERVICES
-// keys them by config name ("logs", "elbv2"), and the CDK module column has no
-// source in the codebase at all. So the table is written by hand, and this
-// test pins it to reality — a service added to allServices without a matching
-// row, or a row left behind after a rename, fails here instead of sending
-// users to a token that doesn't exist.
+// cmd/capgen generates that table from AllServices and refuses to run when its
+// own service list has drifted, so the generator is the primary guard. This
+// test covers the gap the generator cannot: docs/README.md is a committed
+// artifact, and nothing forces a contributor to regenerate it. `make
+// docs-check` catches that in CI by regenerating and diffing; this catches it
+// in `go test`, without needing the dev build tag or a generator run, and it
+// names the offending token directly.
 //
 // cfg.Services with OVERCAST_SERVICES unset is the full allServices set; see
 // TestLoad_allServicesEnabled.

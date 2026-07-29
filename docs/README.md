@@ -230,57 +230,61 @@ constructs quietly depend on a second service.
 For per-service endpoint coverage, follow the doc links in [Services](#services)
 above.
 
-| Token              | Service                     | CDK module (`aws-cdk-lib/…`)                       |
-| ------------------ | --------------------------- | -------------------------------------------------- |
-| `s3`               | S3                          | `aws-s3`                                           |
-| `sqs`              | SQS                         | `aws-sqs`                                          |
-| `sns`              | SNS                         | `aws-sns`                                          |
-| `ses`              | SES                         | `aws-ses`                                          |
-| `dynamodb`         | DynamoDB                    | `aws-dynamodb`                                     |
-| `dynamodbstreams`  | DynamoDB Streams            | — (enabled by the `stream` prop on `aws-dynamodb`) |
-| `lambda`           | Lambda                      | `aws-lambda`                                       |
-| `pipes`            | Pipes                       | `aws-pipes`                                        |
-| `logs`             | CloudWatch Logs             | `aws-logs`                                         |
-| `secretsmanager`   | Secrets Manager             | `aws-secretsmanager`                               |
-| `sts`              | STS                         | — (used by the CDK CLI itself)                     |
-| `ssm`              | SSM                         | `aws-ssm`                                          |
-| `kms`              | KMS                         | `aws-kms`                                          |
-| `iam`              | IAM                         | `aws-iam`                                          |
-| `cloudformation`   | CloudFormation              | `aws-cloudformation`                               |
-| `ec2`              | EC2 / VPC                   | `aws-ec2`                                          |
-| `rds`              | RDS                         | `aws-rds`                                          |
-| `ecs`              | ECS                         | `aws-ecs`                                          |
-| `ecr`              | ECR                         | `aws-ecr`, `aws-ecr-assets`                        |
-| `eks`              | EKS                         | `aws-eks`                                          |
-| `cognito`          | Cognito                     | `aws-cognito`                                      |
-| `stepfunctions`    | Step Functions              | `aws-stepfunctions`, `aws-stepfunctions-tasks`     |
-| `waf`              | WAF v2                      | `aws-wafv2`                                        |
-| `shield`           | Shield                      | `aws-shield`                                       |
-| `appsync`          | AppSync                     | `aws-appsync`                                      |
-| `apigateway`       | API Gateway (v1 and v2)     | `aws-apigateway`, `aws-apigatewayv2`               |
-| `cloudfront`       | CloudFront                  | `aws-cloudfront`, `aws-cloudfront-origins`         |
-| `eventbridge`      | EventBridge                 | `aws-events`, `aws-events-targets`                 |
-| `kinesis`          | Kinesis                     | `aws-kinesis`                                      |
-| `appregistry`      | AppRegistry                 | `aws-servicecatalogappregistry`                    |
-| `cloudwatch`       | CloudWatch (metrics/alarms) | `aws-cloudwatch`, `aws-cloudwatch-actions`         |
-| `acm`              | ACM                         | `aws-certificatemanager`                           |
-| `opensearch`       | OpenSearch                  | `aws-opensearchservice`                            |
-| `appconfig`        | AppConfig                   | `aws-appconfig`                                    |
-| `appconfigdata`    | AppConfigData               | — (runtime data plane; no constructs)              |
-| `bedrock`          | Bedrock                     | `aws-bedrock`                                      |
-| `glue`             | Glue                        | `aws-glue`                                         |
-| `firehose`         | Firehose                    | `aws-kinesisfirehose`                              |
-| `athena`           | Athena                      | `aws-athena`                                       |
-| `elasticache`      | ElastiCache                 | `aws-elasticache`                                  |
-| `msk`              | MSK                         | `aws-msk`                                          |
-| `scheduler`        | Scheduler                   | `aws-scheduler`                                    |
-| `route53`          | Route 53                    | `aws-route53`, `aws-route53-targets`               |
-| `elbv2`            | ELBv2                       | `aws-elasticloadbalancingv2`                       |
-| `organizations`    | Organizations               | — (no constructs)                                  |
-| `autoscaling`      | Auto Scaling                | `aws-autoscaling`, `aws-applicationautoscaling`    |
-| `cloudtrail`       | CloudTrail                  | `aws-cloudtrail`                                   |
-| `backup`           | Backup                      | `aws-backup`                                       |
-| `transfer`         | Transfer Family             | `aws-transfer`                                     |
+<!-- BEGIN overcast:service-tokens -->
+
+| Token             | Service          | CDK module (`aws-cdk-lib/…`)                       |
+| ----------------- | ---------------- | -------------------------------------------------- |
+| `s3`              | S3               | `aws-s3`                                           |
+| `sqs`             | SQS              | `aws-sqs`                                          |
+| `dynamodb`        | DynamoDB         | `aws-dynamodb`                                     |
+| `lambda`          | Lambda           | `aws-lambda`                                       |
+| `apigateway`      | API Gateway      | `aws-apigateway`, `aws-apigatewayv2`               |
+| `appsync`         | AppSync          | `aws-appsync`                                      |
+| `cloudfront`      | CloudFront       | `aws-cloudfront`, `aws-cloudfront-origins`         |
+| `cognito`         | Cognito          | `aws-cognito`                                      |
+| `ec2`             | EC2 / VPC        | `aws-ec2`                                          |
+| `sns`             | SNS              | `aws-sns`                                          |
+| `iam`             | IAM              | `aws-iam`                                          |
+| `ecs`             | ECS              | `aws-ecs`                                          |
+| `ecr`             | ECR              | `aws-ecr`, `aws-ecr-assets`                        |
+| `kms`             | KMS              | `aws-kms`                                          |
+| `kinesis`         | Kinesis          | `aws-kinesis`                                      |
+| `eventbridge`     | EventBridge      | `aws-events`, `aws-events-targets`                 |
+| `scheduler`       | Scheduler        | `aws-scheduler`                                    |
+| `cloudformation`  | CloudFormation   | `aws-cloudformation`                               |
+| `rds`             | RDS              | `aws-rds`                                          |
+| `elasticache`     | ElastiCache      | `aws-elasticache`                                  |
+| `appconfig`       | AppConfig        | `aws-appconfig`                                    |
+| `appconfigdata`   | AppConfigData    | — (runtime data plane; no constructs)              |
+| `secretsmanager`  | Secrets Manager  | `aws-secretsmanager`                               |
+| `ssm`             | SSM              | `aws-ssm`                                          |
+| `logs`            | CloudWatch Logs  | `aws-logs`                                         |
+| `ses`             | SES              | `aws-ses`                                          |
+| `sts`             | STS              | — (used by the CDK CLI itself)                     |
+| `stepfunctions`   | Step Functions   | `aws-stepfunctions`, `aws-stepfunctions-tasks`     |
+| `pipes`           | Pipes            | `aws-pipes`                                        |
+| `waf`             | WAF v2           | `aws-wafv2`                                        |
+| `shield`          | Shield           | `aws-shield`                                       |
+| `acm`             | ACM              | `aws-certificatemanager`                           |
+| `athena`          | Athena           | `aws-athena`                                       |
+| `bedrock`         | Bedrock          | `aws-bedrock`                                      |
+| `cloudwatch`      | CloudWatch       | `aws-cloudwatch`, `aws-cloudwatch-actions`         |
+| `dynamodbstreams` | DynamoDB Streams | — (enabled by the `stream` prop on `aws-dynamodb`) |
+| `firehose`        | Firehose         | `aws-kinesisfirehose`                              |
+| `glue`            | Glue             | `aws-glue`                                         |
+| `opensearch`      | OpenSearch       | `aws-opensearchservice`                            |
+| `appregistry`     | AppRegistry      | `aws-servicecatalogappregistry`                    |
+| `autoscaling`     | Auto Scaling     | `aws-autoscaling`, `aws-applicationautoscaling`    |
+| `backup`          | Backup           | `aws-backup`                                       |
+| `cloudtrail`      | CloudTrail       | `aws-cloudtrail`                                   |
+| `eks`             | EKS              | `aws-eks`                                          |
+| `elbv2`           | ELBv2            | `aws-elasticloadbalancingv2`                       |
+| `msk`             | MSK              | `aws-msk`                                          |
+| `organizations`   | Organizations    | — (no constructs)                                  |
+| `route53`         | Route 53         | `aws-route53`, `aws-route53-targets`               |
+| `transfer`        | Transfer Family  | `aws-transfer`                                     |
+
+<!-- END overcast:service-tokens -->
 
 The same tokens are used by the per-service storage override
 `OVERCAST_STATE_<SERVICE>` — for example `OVERCAST_STATE_LOGS=memory`, not

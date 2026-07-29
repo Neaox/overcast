@@ -128,19 +128,24 @@ behaviour is silently skipped:
 The token is the AWS CLI service name, not the CDK module name. The ones that
 catch people out:
 
-| CDK import | Token |
-| ---------- | ----- |
-| `aws-cdk-lib/aws-logs` | `logs` |
-| `aws-cdk-lib/aws-events`, `aws-events-targets` | `eventbridge` |
-| `aws-cdk-lib/aws-apigateway` **and** `aws-apigatewayv2` | `apigateway` (one token covers both) |
-| `aws-cdk-lib/aws-elasticloadbalancingv2` | `elbv2` |
-| `aws-cdk-lib/aws-certificatemanager` | `acm` |
-| `aws-cdk-lib/aws-wafv2` | `waf` |
-| `aws-cdk-lib/aws-opensearchservice` | `opensearch` |
-| `aws-cdk-lib/aws-kinesisfirehose` | `firehose` |
-| `aws-cdk-lib/aws-servicecatalogappregistry` | `appregistry` |
-| `aws-cdk-lib/aws-autoscaling`, `aws-applicationautoscaling` | `autoscaling` |
-| `aws-cdk-lib/aws-cloudwatch` | `cloudwatch` (metrics and alarms — not `logs`) |
+<!-- BEGIN overcast:cdk-token-mismatches -->
+
+| CDK import                                                              | Token                                                                           |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `aws-cdk-lib/aws-apigateway`, `aws-cdk-lib/aws-apigatewayv2`            | `apigateway` (one token covers both v1 and v2)                                  |
+| `aws-cdk-lib/aws-ec2`                                                   | `ec2` (VPC constructs live here too)                                            |
+| `aws-cdk-lib/aws-events`, `aws-cdk-lib/aws-events-targets`              | `eventbridge`                                                                   |
+| `aws-cdk-lib/aws-logs`                                                  | `logs` (the service is CloudWatch Logs, but the token is not `cloudwatch-logs`) |
+| `aws-cdk-lib/aws-wafv2`                                                 | `waf`                                                                           |
+| `aws-cdk-lib/aws-certificatemanager`                                    | `acm`                                                                           |
+| `aws-cdk-lib/aws-cloudwatch`, `aws-cdk-lib/aws-cloudwatch-actions`      | `cloudwatch` (metrics and alarms only — log groups are `logs`)                  |
+| `aws-cdk-lib/aws-kinesisfirehose`                                       | `firehose`                                                                      |
+| `aws-cdk-lib/aws-opensearchservice`                                     | `opensearch`                                                                    |
+| `aws-cdk-lib/aws-servicecatalogappregistry`                             | `appregistry`                                                                   |
+| `aws-cdk-lib/aws-autoscaling`, `aws-cdk-lib/aws-applicationautoscaling` | `autoscaling`                                                                   |
+| `aws-cdk-lib/aws-elasticloadbalancingv2`                                | `elbv2`                                                                         |
+
+<!-- END overcast:cdk-token-mismatches -->
 
 The full token list is in
 [Documentation § Service names](./README.md#service-names). Tokens are matched

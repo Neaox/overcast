@@ -556,6 +556,19 @@ func (c *Config) TLSEnabled() bool {
 // allServices is the canonical list of supported service names.
 var allServices = []string{"s3", "sqs", "sns", "ses", "dynamodb", "dynamodbstreams", "lambda", "pipes", "logs", "secretsmanager", "sts", "ssm", "kms", "iam", "cloudformation", "ec2", "rds", "ecs", "ecr", "eks", "cognito", "stepfunctions", "waf", "shield", "appsync", "apigateway", "cloudfront", "eventbridge", "kinesis", "appregistry", "cloudwatch", "acm", "opensearch", "appconfig", "appconfigdata", "bedrock", "glue", "firehose", "athena", "elasticache", "msk", "scheduler", "route53", "elbv2", "organizations", "autoscaling", "cloudtrail", "backup", "transfer"}
 
+// AllServices returns the canonical list of supported service names — the
+// exact set of tokens OVERCAST_SERVICES accepts — in declaration order. The
+// result is a copy, so callers cannot mutate package state through it.
+//
+// cmd/capgen generates the service-token table in docs/README.md from this,
+// which is what keeps the documented tokens from drifting away from the
+// accepted ones when a service is added or renamed.
+func AllServices() []string {
+	out := make([]string, len(allServices))
+	copy(out, allServices)
+	return out
+}
+
 // ServiceNamespacePrefix returns the canonical mapping from a config service
 // name (as used in OVERCAST_SERVICES, OVERCAST_STATE_<SERVICE>, and
 // allServices) to the storage-namespace prefix that service actually writes
