@@ -4724,3 +4724,66 @@ func TestS3VirtualHostedStyle_hostIsCaseInsensitive(t *testing.T) {
 		})
 	}
 }
+
+// TestObjectPost_unsupportedSubresourceIsMethodNotAllowed covers POST on an
+// object path that names no subresource.
+//
+// POST /{bucket}/{key} is only an operation when a subresource selects one —
+// ?uploads, ?uploadId=, ?restore, ?select. Without one it is not an AWS
+// operation at all, and S3 answers 405 MethodNotAllowed: "The specified method
+// is not allowed against this resource."
+//
+// ObjectPost fell back to NotImplemented, which says something different and
+// untrue — that this is an operation Overcast has not got to yet. A client
+// seeing 501 reasonably concludes the emulator is incomplete and looks for a
+// workaround, when in fact real AWS rejects the same request. That was the
+// response a CloudFront distribution surfaced when a POST was routed to an S3
+// origin: the misleading error sent the investigation after a missing feature
+// instead of a misrouted request.
+func TestObjectPost_unsupportedSubresourceIsMethodNotAllowed(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "post-method-bucket")
+
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/post-method-bucket/some/key",
+		strings.NewReader(`{"anything":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want 405", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "MethodNotAllowed") {
+		t.Errorf("expected a MethodNotAllowed error code, got: %s", body)
+	}
+	// Not an "unimplemented" answer: this operation does not exist in AWS
+	// either, so the emulator must not advertise it as a gap in its coverage.
+	if got := resp.Header.Get("x-emulator-unsupported"); got != "" {
+		t.Errorf("x-emulator-unsupported = %q; a method AWS also rejects is not an emulator gap", got)
+	}
+}
+
+// TestObjectPost_validSubresourceStillDispatches guards the other direction:
+// narrowing the fallback must not shadow the real POST operations.
+func TestObjectPost_validSubresourceStillDispatches(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "post-subresource-bucket")
+
+	req, _ := http.NewRequest(http.MethodPost,
+		srv.URL+"/post-subresource-bucket/multipart/key?uploads", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "InitiateMultipartUploadResult") {
+		t.Errorf("expected CreateMultipartUpload to still dispatch, got: %s", body)
+	}
+}
