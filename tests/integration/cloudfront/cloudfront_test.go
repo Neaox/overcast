@@ -4362,3 +4362,149 @@ func TestProxy_unknownTargetOriginIsStillAnError(t *testing.T) {
 
 	_ = dist
 }
+
+// singleOriginDistXML builds a distribution with one origin at the given
+// domain, no CustomOriginConfig, so the origin is resolved purely from its
+// DomainName — the shape CDK emits for an S3 or service-backed origin.
+func singleOriginDistXML(callerRef, originDomain, originPath string) string {
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<DistributionConfig xmlns="http://cloudfront.amazonaws.com/doc/2020-05-31/">
+  <CallerReference>%s</CallerReference>
+  <Comment>origin resolution test</Comment>
+  <Enabled>true</Enabled>
+  <Origins>
+    <Quantity>1</Quantity>
+    <Items>
+      <Origin>
+        <Id>the-origin</Id>
+        <DomainName>%s</DomainName>
+        <OriginPath>%s</OriginPath>
+        <S3OriginConfig><OriginAccessIdentity></OriginAccessIdentity></S3OriginConfig>
+      </Origin>
+    </Items>
+  </Origins>
+  <DefaultCacheBehavior>
+    <TargetOriginId>the-origin</TargetOriginId>
+    <ViewerProtocolPolicy>allow-all</ViewerProtocolPolicy>
+    <ForwardedValues><QueryString>false</QueryString></ForwardedValues>
+  </DefaultCacheBehavior>
+</DistributionConfig>`, callerRef, originDomain, originPath)
+}
+
+// TestProxy_originsBackedByAnEmulatedServiceStayLocal covers the rule that an
+// origin naming an AWS endpoint Overcast emulates must be served by Overcast,
+// not dialled on the public internet.
+//
+// Only the "{bucket}.s3.{...}.amazonaws.com" spelling was recognised, by a
+// bespoke prefix check, and everything else fell through to "custom origin" and
+// was dialled at its literal domain. So a distribution fronting an S3 website
+// endpoint, a legacy dash-region bucket, or an API Gateway — all of which
+// Overcast serves — left the emulator and hit real AWS or failed to resolve.
+//
+// Resolution now goes through the same HostClassifier the router uses for
+// inbound requests, so an origin is recognised by exactly the rules that decide
+// who serves a Host, and the two cannot drift.
+func TestProxy_originsBackedByAnEmulatedServiceStayLocal(t *testing.T) {
+	const objectBody = "served by the emulator"
+
+	t.Run("S3 origin spellings", func(t *testing.T) {
+		for _, tc := range []struct{ name, domain string }{
+			{"virtual-hosted", "cf-origin-bucket.s3.amazonaws.com"},
+			{"virtual-hosted with region", "cf-origin-bucket.s3.us-east-1.amazonaws.com"},
+			{"legacy dash region", "cf-origin-bucket.s3-us-west-2.amazonaws.com"},
+			{"website endpoint", "cf-origin-bucket.s3-website-us-east-1.amazonaws.com"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				srv := helpers.NewTestServer(t)
+
+				// Given: a bucket holding one object
+				putBucket, _ := http.NewRequest(http.MethodPut, srv.URL+"/cf-origin-bucket", nil)
+				bResp, err := http.DefaultClient.Do(putBucket)
+				if err != nil {
+					t.Fatalf("create bucket: %v", err)
+				}
+				bResp.Body.Close()
+				putObj, _ := http.NewRequest(http.MethodPut,
+					srv.URL+"/cf-origin-bucket/index.html", strings.NewReader(objectBody))
+				oResp, err := http.DefaultClient.Do(putObj)
+				if err != nil {
+					t.Fatalf("put object: %v", err)
+				}
+				oResp.Body.Close()
+
+				dist, _ := cfCreateDistFromXML(t, srv, singleOriginDistXML("cf-origin-"+tc.name, tc.domain, ""))
+
+				// When: the object is fetched through the distribution
+				req, _ := http.NewRequest(http.MethodGet, srv.URL+"/_cloudfront/"+dist.ID+"/index.html", nil)
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					t.Fatalf("proxy request: %v", err)
+				}
+				defer resp.Body.Close()
+
+				// Then: the emulator's own S3 served it
+				helpers.AssertStatus(t, resp, http.StatusOK)
+				if body := string(readBody(t, resp)); body != objectBody {
+					t.Errorf("body = %q, want %q — origin %q was not resolved to the emulator", body, objectBody, tc.domain)
+				}
+			})
+		}
+	})
+
+	t.Run("OriginPath is prepended to the request path", func(t *testing.T) {
+		srv := helpers.NewTestServer(t)
+		putBucket, _ := http.NewRequest(http.MethodPut, srv.URL+"/cf-origin-bucket", nil)
+		bResp, _ := http.DefaultClient.Do(putBucket)
+		bResp.Body.Close()
+		putObj, _ := http.NewRequest(http.MethodPut,
+			srv.URL+"/cf-origin-bucket/sub/dir/index.html", strings.NewReader(objectBody))
+		oResp, _ := http.DefaultClient.Do(putObj)
+		oResp.Body.Close()
+
+		dist, _ := cfCreateDistFromXML(t, srv,
+			singleOriginDistXML("cf-origin-path", "cf-origin-bucket.s3.amazonaws.com", "/sub/dir"))
+
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/_cloudfront/"+dist.ID+"/index.html", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("proxy request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		helpers.AssertStatus(t, resp, http.StatusOK)
+		if body := string(readBody(t, resp)); body != objectBody {
+			t.Errorf("body = %q, want %q", body, objectBody)
+		}
+	})
+
+	// NOT covered here, and deliberately: a bucket whose own NAME contains
+	// ".s3" (e.g. "my.s3.archive", addressed as
+	// "my.s3.archive.s3.us-east-1.amazonaws.com") is truncated to "my",
+	// because HostClassifier tier A takes everything before the FIRST ".s3."
+	// separator while AWS parses from the right. That is pre-existing behaviour
+	// of the shared classifier, documented in
+	// docs/plans/host-routing-precedence.md §4, and it affects inbound requests
+	// identically — so it belongs in a change to that rule, not to origin
+	// resolution, which now simply defers to it.
+	t.Run("API Gateway origin reaches API Gateway", func(t *testing.T) {
+		// Asserts on API Gateway's own AWS-shaped 403 for an unknown API rather
+		// than a successful invoke: reaching that error is the proof the request
+		// stayed inside the emulator. Before this, the origin was dialled at
+		// execute-api.us-east-1.amazonaws.com on the public internet.
+		srv := helpers.NewTestServer(t)
+		dist, _ := cfCreateDistFromXML(t, srv,
+			singleOriginDistXML("cf-origin-apigw", "nosuchapi.execute-api.us-east-1.amazonaws.com", ""))
+
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/_cloudfront/"+dist.ID+"/prod/hello", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("proxy request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("status = %d, want 403 — the origin should have been served by the emulator's API Gateway",
+				resp.StatusCode)
+		}
+	})
+}

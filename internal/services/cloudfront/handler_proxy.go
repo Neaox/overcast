@@ -6,7 +6,6 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
-	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -357,19 +356,31 @@ func copyHeaders(h http.Header) map[string][]string {
 	return out
 }
 
-// buildOriginURL constructs the full URL to forward to the origin.
-func buildOriginURL(origin *Origin, reqPath string, emulatorPort int) string {
+// buildOriginRequest works out where to send a viewer request for this origin:
+// the URL to dial, and the Host header to present when that differs.
+//
+// An origin naming an endpoint THIS emulator serves — an S3 bucket in any of
+// its spellings, an API Gateway invoke host, a Lambda function URL, an AppSync
+// endpoint — is answered locally, by dialling the emulator and preserving the
+// origin's own Host. The router then classifies it with exactly the rules it
+// applies to an inbound request from a client, so origin resolution and request
+// routing cannot disagree about what a hostname means, and a service becomes
+// usable as an origin the moment it becomes routable.
+//
+// This replaces a bespoke ".s3." prefix check that recognised only one S3
+// spelling. A website endpoint, a legacy dash-region bucket, or any non-S3 AWS
+// service fell through to "custom origin" and was dialled at its literal
+// domain — so a distribution fronting an emulated service quietly reached out
+// to real AWS instead.
+func (h *Handler) buildOriginRequest(origin *Origin, reqPath string) (originURL, hostHeader string) {
 	domain := origin.DomainName
 	originPath := strings.TrimRight(origin.OriginPath, "/")
 
-	// S3 origins: domain ends with .s3.amazonaws.com or .s3.{region}.amazonaws.com
-	// Rewrite to local emulator endpoint.
-	if isS3Origin(domain) {
-		bucket := extractS3Bucket(domain)
-		return fmt.Sprintf("http://localhost:%d/%s%s%s", emulatorPort, bucket, originPath, reqPath)
+	if h.servesOriginLocally(domain) {
+		return fmt.Sprintf("http://127.0.0.1:%d%s%s", h.emulatorPort(), originPath, reqPath), domain
 	}
 
-	// Custom origin — use the configured protocol/port.
+	// A genuine third-party origin — dial it as configured.
 	scheme := "http"
 	port := 80
 	if origin.CustomOriginConfig != nil {
@@ -381,34 +392,40 @@ func buildOriginURL(origin *Origin, reqPath string, emulatorPort int) string {
 			port = origin.CustomOriginConfig.HTTPPort
 		}
 	}
-
-	// If the domain is "localhost" or looks like an internal emulator reference,
-	// keep it as-is.
 	host := domain
 	if port != 80 && port != 443 {
 		host = fmt.Sprintf("%s:%d", domain, port)
 	}
-
-	return fmt.Sprintf("%s://%s%s%s", scheme, host, originPath, reqPath)
+	return fmt.Sprintf("%s://%s%s%s", scheme, host, originPath, reqPath), ""
 }
 
-// isS3Origin checks if a domain looks like an S3 origin.
-func isS3Origin(domain string) bool {
-	return strings.HasSuffix(domain, ".s3.amazonaws.com") ||
-		strings.Contains(domain, ".s3.") && strings.HasSuffix(domain, ".amazonaws.com")
-}
-
-// extractS3Bucket extracts the bucket name from an S3 origin domain.
-// Formats: {bucket}.s3.amazonaws.com or {bucket}.s3.{region}.amazonaws.com.
-func extractS3Bucket(domain string) string {
-	// Remove suffix
-	domain = strings.TrimSuffix(domain, ".amazonaws.com")
-	// Now "{bucket}.s3" or "{bucket}.s3.{region}"
-	idx := strings.Index(domain, ".s3")
-	if idx > 0 {
-		return domain[:idx]
+// servesOriginLocally reports whether this emulator answers for an origin's
+// domain, using the same classifier that decides who owns an inbound Host.
+//
+// A claim of either kind means Overcast serves that hostname: S3 for a bucket
+// subdomain, a host route for a service endpoint. Anything unclaimed is a real
+// third-party origin. Note this asks "can this be routed here", not "is that
+// service enabled" — a disabled service should answer with its own error rather
+// than have CloudFront silently dial the internet on its behalf.
+func (h *Handler) servesOriginLocally(domain string) bool {
+	if h.originHosts == nil {
+		return false
 	}
-	return domain
+	switch h.originHosts.Classify(domain).Kind {
+	case middleware.HostClaimS3, middleware.HostClaimHostRoute:
+		return true
+	default:
+		return false
+	}
+}
+
+// emulatorPort is the port this server listens on, defaulting to the standard
+// one for unit-constructed handlers with no config attached.
+func (h *Handler) emulatorPort() int {
+	if h.cfg != nil && h.cfg.Port > 0 {
+		return h.cfg.Port
+	}
+	return 4566
 }
 
 // forwardHeaders copies relevant request headers to the outbound origin request.
@@ -431,30 +448,76 @@ func forwardHeaders(src, dst *http.Request) {
 	}
 }
 
-// matchPathPattern matches a CloudFront path pattern against a request path.
-// CloudFront patterns use * as a wildcard and ? as a single-char wildcard.
+// matchPathPattern matches a CloudFront cache behavior path pattern against a
+// request path, following the documented semantics of
+// CacheBehavior.PathPattern:
+//
+//   - "*" matches zero or more characters and DOES match across "/" — the
+//     pattern applies to the whole path, not segment by segment.
+//   - "?" matches exactly one character.
+//   - The leading "/" is optional; AWS states the behavior is the same with or
+//     without it, so "api/*" and "/api/*" are one pattern.
+//
+// path.Match cannot express this: its "*" stops at "/", so the documentation's
+// own "*.jpg" example would match nothing below the root. And because a request
+// path always begins with "/", comparing a slash-less pattern against it
+// directly meant such a behavior could never match — its requests fell through
+// to the default behavior and were served by the wrong origin, silently.
 func matchPathPattern(pattern, reqPath string) bool {
-	// path.Match uses * and ? the same way as CloudFront.
-	// However, CloudFront's * matches across slashes while path.Match's * does not.
-	// We handle this by checking if the pattern has a simple prefix+suffix around *.
 	if pattern == "*" || pattern == "/*" {
 		return true
 	}
+	return globMatch(withLeadingSlash(pattern), withLeadingSlash(reqPath))
+}
 
-	// For patterns like /images/* or /api/v1/*.json, use simple prefix matching
-	// when the wildcard is at the end.
-	if strings.HasSuffix(pattern, "/*") {
-		prefix := strings.TrimSuffix(pattern, "/*")
-		return strings.HasPrefix(reqPath, prefix+"/") || reqPath == prefix
+// withLeadingSlash normalises the optional leading "/" of a path pattern so a
+// pattern and a request path are always compared in the same form.
+func withLeadingSlash(s string) string {
+	if strings.HasPrefix(s, "/") {
+		return s
 	}
-	if strings.HasSuffix(pattern, "*") {
-		prefix := strings.TrimSuffix(pattern, "*")
-		return strings.HasPrefix(reqPath, prefix)
-	}
+	return "/" + s
+}
 
-	// Fall back to path.Match for simple ? wildcards and exact matches.
-	matched, _ := path.Match(pattern, reqPath)
-	return matched
+// globMatch reports whether s matches a pattern of literals, "*" (any run of
+// characters, "/" included) and "?" (exactly one character).
+//
+// Iterative rather than recursive, with a single backtrack point for the most
+// recent "*": linear in practice, and allocation-free, which matters because
+// this runs for every cache behavior on every proxied request. Deliberately not
+// a regexp — compiling one per behavior per request would cost far more than
+// the match, and the pattern is a glob, so regexp metacharacters in it ("." in
+// "*.jpg", "+" in a path segment) must stay literal.
+func globMatch(pattern, s string) bool {
+	var (
+		p, i  int
+		starP = -1
+		starI int
+	)
+	for i < len(s) {
+		switch {
+		case p < len(pattern) && (pattern[p] == '?' || pattern[p] == s[i]):
+			p++
+			i++
+		case p < len(pattern) && pattern[p] == '*':
+			// Remember where to resume if the rest fails to match, then try
+			// consuming nothing with this star.
+			starP, starI = p, i
+			p++
+		case starP >= 0:
+			// Backtrack: let the last star swallow one more character.
+			starI++
+			i = starI
+			p = starP + 1
+		default:
+			return false
+		}
+	}
+	// Trailing stars may match the empty remainder.
+	for p < len(pattern) && pattern[p] == '*' {
+		p++
+	}
+	return p == len(pattern)
 }
 
 // resolveStagingTarget checks the continuous deployment policy for the distribution
@@ -634,7 +697,7 @@ func (h *Handler) dispatchToOrigins(
 	var lastErr error
 	var lastURL string
 	for i, origin := range candidates {
-		originURL := buildOriginURL(origin, reqPath, h.cfg.Port)
+		originURL, originHost := h.buildOriginRequest(origin, reqPath)
 		lastURL = originURL
 		isLast := i == len(candidates)-1
 
@@ -645,6 +708,11 @@ func (h *Handler) dispatchToOrigins(
 				return nil, originURL, lastErr
 			}
 			continue
+		}
+		if originHost != "" {
+			// Present the origin's own Host so this emulator's router resolves
+			// it the same way it would for an inbound client request.
+			outReq.Host = originHost
 		}
 		forwardHeaders(r, outReq)
 		if origin.CustomHeaders != nil {
