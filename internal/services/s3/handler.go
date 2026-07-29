@@ -119,8 +119,13 @@ func (h *Handler) ObjectDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 // ObjectPost dispatches POST /{bucket}/{key} by sub-resource query param.
+// POST on an object is only an operation when a subresource selects one —
+// ?uploads, ?uploadId=, ?restore, ?select. Without one there is no such AWS
+// operation, so the fallback is MethodNotAllowed rather than NotImplemented:
+// the latter would claim a gap in this emulator for a request real S3 refuses
+// too, sending a caller after a workaround that does not exist.
 func (h *Handler) ObjectPost(w http.ResponseWriter, r *http.Request) {
-	dispatchByQuery(w, r, h.objectPostRoutes, protocol.NotImplementedXML)
+	dispatchByQuery(w, r, h.objectPostRoutes, protocol.MethodNotAllowedXML)
 }
 
 // PutObjectOrCopy dispatches PUT /{bucket}/{key}.
