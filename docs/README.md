@@ -27,6 +27,7 @@ see the [root README](../README.md).
 
 - [Service emulation reference](./services/README.md) — per-service endpoint coverage tables
 - [Configuration reference](#configuration-reference) — all environment variables
+- [Service names](#service-names) — every `OVERCAST_SERVICES` token and the CDK module it corresponds to
 - [Log levels](#log-levels) — `OVERCAST_LOG_LEVEL` values and what each one shows
 - [Persistence](#persistence) — storage backends
 - [HTTPS / TLS](#https--tls) — self-signed certs for local HTTPS
@@ -163,7 +164,7 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_HOSTNAME`              | `localhost`            | Hostname embedded in client-facing URLs (SQS queue URLs, Lambda function URLs, API Gateway `apiEndpoint`, AppSync DNS names, CloudFront domain names). **Set it to `localhost.overcast.sh`** unless you are offline: every `*.localhost.overcast.sh` name resolves to `127.0.0.1` on every OS, which plain `localhost` does not on Windows. See [networking.md](./networking.md) |
 | `OVERCAST_SPLIT_HORIZON_HOSTS`   | _(none)_               | Extra comma-separated hostnames remapped to Overcast inside containers it starts (ECS tasks), so one URL is dialable from both host and container. Added to the built-in `localhost.overcast.sh`, `localhost.localstack.cloud`, `localhost.floci.io` |
 | `OVERCAST_PORT`                  | `4566`                 | TCP port                                                                             |
-| `OVERCAST_SERVICES`              | all                    | Comma-separated list of services to enable, e.g. `s3,sqs,dynamodb`                   |
+| `OVERCAST_SERVICES`              | all                    | Comma-separated list of services to enable, e.g. `s3,sqs,dynamodb`. See [Service names](#service-names) for the full token list |
 | `OVERCAST_STATE`                 | `auto`                 | Storage backend: `auto` (default when unset), `memory`, `hybrid`, `persistent`, or `wal`. `auto` resolves to `hybrid` when a volume/bind mount or existing database is found at `OVERCAST_DATA_DIR` (or the dir was explicitly set), otherwise `memory` — see [storage.md § The auto default](./storage.md#the-auto-default) |
 | `OVERCAST_STATE_<SERVICE>`       | _(global)_             | Per-service backend override, e.g. `OVERCAST_STATE_S3=memory`                        |
 | `OVERCAST_HYBRID_FLUSH_INTERVAL` | `5s`                   | How often the hybrid backend flushes in-memory state to disk                         |
@@ -207,6 +208,83 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_SMTP_PASSWORD`         | —                      | SMTP AUTH PLAIN password for external relay                                          |
 | `OVERCAST_SMTP_TLS`              | `false`                | Enable implicit TLS (port 465) for external relay                                    |
 | `OVERCAST_SMTP_INBOX_MAX`        | `500`                  | Maximum number of captured messages retained before eviction                         |
+
+### Service names
+
+`OVERCAST_SERVICES` accepts the tokens below, comma-separated. Leaving it unset
+enables all of them, which is the right default for most people — trim the list
+only to save memory or to prove a stack doesn't depend on a service.
+
+Tokens are matched exactly, with no aliases. An unrecognised token is a startup
+error, and a request to a service you left out returns HTTP 503 `ServiceDisabled`
+(rather than a connection failure) so SDKs surface a clear message.
+
+Most tokens are the service's AWS CLI name, but several differ from both the
+display name and the CDK module name — `logs`, `elbv2`, `waf`, `acm`,
+`eventbridge`, `firehose`, `opensearch`, and `appregistry` are the usual
+stumbling blocks. If you are choosing tokens to match a CDK app, start with
+[Using AWS CDK § Choosing `OVERCAST_SERVICES` for your CDK app](./cdk.md#choosing-overcast_services-for-your-cdk-app):
+`cdk deploy` needs several services your stack never mentions, and some
+constructs quietly depend on a second service.
+
+For per-service endpoint coverage, follow the doc links in [Services](#services)
+above.
+
+| Token              | Service                     | CDK module (`aws-cdk-lib/…`)                       |
+| ------------------ | --------------------------- | -------------------------------------------------- |
+| `s3`               | S3                          | `aws-s3`                                           |
+| `sqs`              | SQS                         | `aws-sqs`                                          |
+| `sns`              | SNS                         | `aws-sns`                                          |
+| `ses`              | SES                         | `aws-ses`                                          |
+| `dynamodb`         | DynamoDB                    | `aws-dynamodb`                                     |
+| `dynamodbstreams`  | DynamoDB Streams            | — (enabled by the `stream` prop on `aws-dynamodb`) |
+| `lambda`           | Lambda                      | `aws-lambda`                                       |
+| `pipes`            | Pipes                       | `aws-pipes`                                        |
+| `logs`             | CloudWatch Logs             | `aws-logs`                                         |
+| `secretsmanager`   | Secrets Manager             | `aws-secretsmanager`                               |
+| `sts`              | STS                         | — (used by the CDK CLI itself)                     |
+| `ssm`              | SSM                         | `aws-ssm`                                          |
+| `kms`              | KMS                         | `aws-kms`                                          |
+| `iam`              | IAM                         | `aws-iam`                                          |
+| `cloudformation`   | CloudFormation              | `aws-cloudformation`                               |
+| `ec2`              | EC2 / VPC                   | `aws-ec2`                                          |
+| `rds`              | RDS                         | `aws-rds`                                          |
+| `ecs`              | ECS                         | `aws-ecs`                                          |
+| `ecr`              | ECR                         | `aws-ecr`, `aws-ecr-assets`                        |
+| `eks`              | EKS                         | `aws-eks`                                          |
+| `cognito`          | Cognito                     | `aws-cognito`                                      |
+| `stepfunctions`    | Step Functions              | `aws-stepfunctions`, `aws-stepfunctions-tasks`     |
+| `waf`              | WAF v2                      | `aws-wafv2`                                        |
+| `shield`           | Shield                      | `aws-shield`                                       |
+| `appsync`          | AppSync                     | `aws-appsync`                                      |
+| `apigateway`       | API Gateway (v1 and v2)     | `aws-apigateway`, `aws-apigatewayv2`               |
+| `cloudfront`       | CloudFront                  | `aws-cloudfront`, `aws-cloudfront-origins`         |
+| `eventbridge`      | EventBridge                 | `aws-events`, `aws-events-targets`                 |
+| `kinesis`          | Kinesis                     | `aws-kinesis`                                      |
+| `appregistry`      | AppRegistry                 | `aws-servicecatalogappregistry`                    |
+| `cloudwatch`       | CloudWatch (metrics/alarms) | `aws-cloudwatch`, `aws-cloudwatch-actions`         |
+| `acm`              | ACM                         | `aws-certificatemanager`                           |
+| `opensearch`       | OpenSearch                  | `aws-opensearchservice`                            |
+| `appconfig`        | AppConfig                   | `aws-appconfig`                                    |
+| `appconfigdata`    | AppConfigData               | — (runtime data plane; no constructs)              |
+| `bedrock`          | Bedrock                     | `aws-bedrock`                                      |
+| `glue`             | Glue                        | `aws-glue`                                         |
+| `firehose`         | Firehose                    | `aws-kinesisfirehose`                              |
+| `athena`           | Athena                      | `aws-athena`                                       |
+| `elasticache`      | ElastiCache                 | `aws-elasticache`                                  |
+| `msk`              | MSK                         | `aws-msk`                                          |
+| `scheduler`        | Scheduler                   | `aws-scheduler`                                    |
+| `route53`          | Route 53                    | `aws-route53`, `aws-route53-targets`               |
+| `elbv2`            | ELBv2                       | `aws-elasticloadbalancingv2`                       |
+| `organizations`    | Organizations               | — (no constructs)                                  |
+| `autoscaling`      | Auto Scaling                | `aws-autoscaling`, `aws-applicationautoscaling`    |
+| `cloudtrail`       | CloudTrail                  | `aws-cloudtrail`                                   |
+| `backup`           | Backup                      | `aws-backup`                                       |
+| `transfer`         | Transfer Family             | `aws-transfer`                                     |
+
+The same tokens are used by the per-service storage override
+`OVERCAST_STATE_<SERVICE>` — for example `OVERCAST_STATE_LOGS=memory`, not
+`OVERCAST_STATE_CLOUDWATCH_LOGS`.
 
 ### Log levels
 
