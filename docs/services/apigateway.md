@@ -40,7 +40,10 @@ REST v1 and HTTP v2 APIs are reachable two ways, with identical behaviour:
 HTTP v2 APIs report the host-routed form in `apiEndpoint`, minted on the
 hostname you called Overcast on rather than `amazonaws.com`, so
 CloudFormation's `Fn::GetAtt ApiEndpoint` returns a URL you can dial. REST v1
-has no such field, matching AWS — the console composes it client-side.
+has no such field, matching AWS — the console composes it client-side, and it
+composes the host-routed form too, falling back to path-style only when the
+endpoint it is connected to cannot carry a subdomain (a bare `localhost`, or an
+IP). That is the URL its copy button yields.
 
 Stack outputs that compose an invoke URL in the template (as CDK does) are also
 re-hosted onto a reachable origin when returned by `DescribeStacks`. See

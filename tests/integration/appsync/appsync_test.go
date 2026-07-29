@@ -225,7 +225,9 @@ func TestListGraphqlApis_configuredHostname(t *testing.T) {
 	resp := appsyncGet(t, srv, "/v1/apis")
 	defer resp.Body.Close()
 
-	// Then: the returned GraphQL URL uses the configured client-facing base URL.
+	// Then: the returned GraphQL URL uses the configured client-facing hostname.
+	// "overcast.local" is multi-label, so it can carry the host-routed grammar —
+	// see TestGraphqlApi_urisFollowTheBase for the rule.
 	helpers.AssertStatus(t, resp, http.StatusOK)
 	var result struct {
 		GraphqlApis []struct {
@@ -240,7 +242,7 @@ func TestListGraphqlApis_configuredHostname(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse test server URL: %v", err)
 	}
-	want := "http://overcast.local:" + serverURL.Port() + "/_appsync/" + apiID + "/graphql"
+	want := "http://" + apiID + ".appsync-api.us-east-1.overcast.local:" + serverURL.Port() + "/graphql"
 	if got := result.GraphqlApis[0].Uris["GRAPHQL"]; got != want {
 		t.Fatalf("expected configured GraphQL URL %q, got %q", want, got)
 	}
