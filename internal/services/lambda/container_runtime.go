@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -933,6 +934,32 @@ func (ci *containerInstance) ContainerID() string { return ci.id }
 // InstanceID returns the stable execution-environment ID for this container.
 func (ci *containerInstance) InstanceID() string { return ci.instanceID }
 
+// invokeTimeoutError reports that a function ran past its configured timeout.
+// It carries what real Lambda puts in the timeout response so the invoke
+// handlers can shape the payload the way AWS does rather than leaking a Go
+// error string into the caller's response.
+type invokeTimeoutError struct {
+	RequestID string
+	Timeout   time.Duration
+	At        time.Time
+}
+
+func (e *invokeTimeoutError) Error() string {
+	return fmt.Sprintf("Task timed out after %.2f seconds", e.Timeout.Seconds())
+}
+
+// Payload is the response body real Lambda returns for a timed-out
+// invocation: a lone errorMessage of the form
+// "<UTC timestamp> <request id> Task timed out after N.NN seconds", with the
+// error type carried by X-Amz-Function-Error rather than the body.
+func (e *invokeTimeoutError) Payload() []byte {
+	out, _ := json.Marshal(map[string]string{
+		"errorMessage": fmt.Sprintf("%s %s Task timed out after %.2f seconds",
+			e.At.UTC().Format("2006-01-02T15:04:05.000Z"), e.RequestID, e.Timeout.Seconds()),
+	})
+	return out
+}
+
 // Invoke sends the event to the container via the Runtime API and waits for
 // the result. The container's RIC picks up the event from GET /next, runs the
 // handler, and POSTs the result back to /response or /error.
@@ -1043,12 +1070,25 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte) (*InvokeR
 			ci.waitForLogDrain(context.Background())
 		}
 		elapsed := ci.clk.Now().Sub(start)
+		// Only a deadline is a Lambda timeout. A plain cancellation means the
+		// caller went away — the console closing its progress stream, an SDK
+		// client disconnecting — and labelling that "timeout" sends people
+		// hunting for a handler bug that isn't there, with a REPORT line that
+		// contradicts the function's configured timeout.
+		timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
+		status := "error"
+		if timedOut {
+			status = "timeout"
+		}
 		ci.writeLogLine(context.Background(),
 			fmt.Sprintf("END RequestId: %s", reqID))
 		ci.writeLogLine(context.Background(),
-			fmt.Sprintf("REPORT RequestId: %s\tDuration: %.2f ms\tBilled Duration: %d ms\tMemory Size: %d MB\tMax Memory Used: %d MB\tStatus: timeout",
-				reqID, float64(elapsed.Microseconds())/1000.0, billedDuration(elapsed), ci.memorySize, ci.currentMemoryMB()))
-		return nil, fmt.Errorf("lambda invoke timed out: %w", ctx.Err())
+			fmt.Sprintf("REPORT RequestId: %s\tDuration: %.2f ms\tBilled Duration: %d ms\tMemory Size: %d MB\tMax Memory Used: %d MB\tStatus: %s",
+				reqID, float64(elapsed.Microseconds())/1000.0, billedDuration(elapsed), ci.memorySize, ci.currentMemoryMB(), status))
+		if timedOut {
+			return nil, &invokeTimeoutError{RequestID: reqID, Timeout: deadline.Sub(start), At: ci.clk.Now()}
+		}
+		return nil, fmt.Errorf("lambda invoke cancelled before the function returned: %w", ctx.Err())
 	}
 
 	elapsed := ci.clk.Now().Sub(start)

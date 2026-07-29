@@ -44,6 +44,21 @@ type pendingInvocation struct {
 	TraceID     string // X-Ray trace header (Root=1-...;Parent=...;Sampled=0)
 	Event       []byte
 	ResultCh    chan invokeResponse
+
+	// cancelled is set by CancelInvocation once the caller has given up. The
+	// invocation may still be sitting in a function queue or in a waiter's
+	// buffer at that point, and handing it to a container would run the
+	// handler for a request that has already been reported as failed.
+	// Guarded by RuntimeAPIServer.mu.
+	cancelled bool
+}
+
+// runtimeWaiter is one container parked on GET /next. Waiters are tracked per
+// container rather than per function: a function may be served by several
+// execution environments at once, and each of them polls independently.
+type runtimeWaiter struct {
+	ch          chan *pendingInvocation
+	containerIP string
 }
 
 type runtimeContainerConfig struct {
@@ -108,10 +123,10 @@ type invokeResponse struct {
 // RuntimeAPIServer serves the Lambda Runtime API to containers.
 type RuntimeAPIServer struct {
 	mu               sync.Mutex
-	pending          map[string]*pendingInvocation      // keyed by request ID
-	funcQueues       map[string][]*pendingInvocation    // keyed by function ARN — FIFO
-	waiting          map[string]chan *pendingInvocation // keyed by function ARN — one waiter per container
-	containers       map[string]string                  // container ID → function ARN (registered on Acquire)
+	pending          map[string]*pendingInvocation   // keyed by request ID
+	funcQueues       map[string][]*pendingInvocation // keyed by function ARN — FIFO
+	waiting          map[string][]*runtimeWaiter     // keyed by function ARN — FIFO of parked containers
+	containers       map[string]string               // container ID → function ARN (registered on Acquire)
 	containerConfigs map[string]runtimeContainerConfig
 	containerExts    map[string]map[string]bool
 	containerErrors  map[string]string
@@ -152,7 +167,7 @@ func NewRuntimeAPIServerFromListener(ln net.Listener, containerAddr string, logg
 	s := &RuntimeAPIServer{
 		pending:          make(map[string]*pendingInvocation),
 		funcQueues:       make(map[string][]*pendingInvocation),
-		waiting:          make(map[string]chan *pendingInvocation),
+		waiting:          make(map[string][]*runtimeWaiter),
 		containers:       make(map[string]string),
 		containerConfigs: make(map[string]runtimeContainerConfig),
 		containerExts:    make(map[string]map[string]bool),
@@ -252,6 +267,23 @@ func (s *RuntimeAPIServer) UnregisterContainer(containerIP string) {
 			delete(s.extensions, id)
 		}
 	}
+	// Drop this container's parked polls. Its own handlers unwind when their
+	// request contexts end, but until they do the container looks available and
+	// SubmitInvocation would hand it work it can no longer run.
+	for arn, waiters := range s.waiting {
+		kept := waiters[:0]
+		for _, waiter := range waiters {
+			if waiter.containerIP == containerIP {
+				continue
+			}
+			kept = append(kept, waiter)
+		}
+		if len(kept) == 0 {
+			delete(s.waiting, arn)
+			continue
+		}
+		s.waiting[arn] = kept
+	}
 }
 
 func (s *RuntimeAPIServer) ContainerError(containerIP string) (string, bool) {
@@ -312,15 +344,37 @@ func (s *RuntimeAPIServer) lookupContainerWait(ctx context.Context, ip string, m
 // ResultCh so that any goroutine blocked on <-resultCh is unblocked. This
 // must be called when the container crashes or the invoke times out to prevent
 // goroutine leaks from drain goroutines that would otherwise block forever.
+//
+// The invocation is also dropped from its function queue and marked cancelled.
+// Without that it stayed queued after the caller gave up, and the next
+// container to poll ran the handler for a request that had already been
+// reported as timed out — real side effects, under a dead request ID, with the
+// response then discarded because nothing was left in s.pending to route it to.
 func (s *RuntimeAPIServer) CancelInvocation(reqID string) {
 	s.mu.Lock()
 	inv, ok := s.pending[reqID]
 	if ok {
 		delete(s.pending, reqID)
+		inv.cancelled = true
+		s.dropFromQueueLocked(inv)
 	}
 	s.mu.Unlock()
 	if ok {
 		close(inv.ResultCh)
+	}
+}
+
+// dropFromQueueLocked removes inv from its function's pending queue. Caller
+// must hold s.mu. An invocation already handed to a waiter is not in the queue;
+// the cancelled flag covers that case.
+func (s *RuntimeAPIServer) dropFromQueueLocked(inv *pendingInvocation) {
+	queue := s.funcQueues[inv.FunctionARN]
+	for i, queued := range queue {
+		if queued != inv {
+			continue
+		}
+		s.funcQueues[inv.FunctionARN] = append(queue[:i:i], queue[i+1:]...)
+		return
 	}
 }
 
@@ -343,15 +397,15 @@ func (s *RuntimeAPIServer) SubmitInvocation(functionARN string, event []byte, de
 	s.pending[reqID] = inv
 
 	// If a container for this function is already waiting (long-polling /next),
-	// deliver immediately.
-	if waiter, ok := s.waiting[functionARN]; ok {
-		select {
-		case waiter <- inv:
-			delete(s.waiting, functionARN)
-			s.mu.Unlock()
-			return reqID, ch
-		default:
-		}
+	// hand it straight over. The waiter is removed from the list as it is
+	// claimed, so two invocations arriving together go to two containers rather
+	// than both targeting the same one.
+	if waiters := s.waiting[functionARN]; len(waiters) > 0 {
+		waiter := waiters[0]
+		s.waiting[functionARN] = waiters[1:]
+		waiter.ch <- inv // buffered, and this waiter is now claimed by us alone
+		s.mu.Unlock()
+		return reqID, ch
 	}
 
 	// No waiter — enqueue for later pickup.
@@ -500,17 +554,28 @@ func (s *RuntimeAPIServer) handleExtensionNext(w http.ResponseWriter, r *http.Re
 	case event := <-waiter:
 		s.writeExtensionEvent(w, event)
 	case <-r.Context().Done():
-		s.mu.Lock()
-		if ext.Waiter == waiter {
-			ext.Waiter = nil
-		}
-		s.mu.Unlock()
+		s.releaseExtensionWaiter(ext, waiter)
 	case <-s.done:
-		s.mu.Lock()
-		if ext.Waiter == waiter {
-			ext.Waiter = nil
-		}
-		s.mu.Unlock()
+		s.releaseExtensionWaiter(ext, waiter)
+	}
+}
+
+// releaseExtensionWaiter clears an extension's parked poll, putting back any
+// event that was handed to it in the same moment. The invocation queue had the
+// same hazard: a buffered send always succeeds, so an event delivered just as
+// the poll unwound was lost rather than redelivered — and a lost SHUTDOWN is an
+// extension that never gets told to flush.
+func (s *RuntimeAPIServer) releaseExtensionWaiter(ext *extensionState, waiter chan extensionEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ext.Waiter == waiter {
+		ext.Waiter = nil
+		return
+	}
+	select {
+	case event := <-waiter:
+		ext.Queue = append([]extensionEvent{event}, ext.Queue...)
+	default:
 	}
 }
 
@@ -727,9 +792,7 @@ func (s *RuntimeAPIServer) handleNext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check the function's invocation queue first.
-	if queue := s.funcQueues[functionARN]; len(queue) > 0 {
-		inv := queue[0]
-		s.funcQueues[functionARN] = queue[1:]
+	if inv := s.popQueuedLocked(functionARN); inv != nil {
 		// Do NOT delete from s.pending here — handleInvocationAction needs it
 		// to route the container's response POST back to the caller's ResultCh.
 		s.enqueueExtensionInvokeLocked(remoteIP, inv)
@@ -738,27 +801,115 @@ func (s *RuntimeAPIServer) handleNext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// No pending invocation — register a waiter channel and long-poll.
-	waiterCh := make(chan *pendingInvocation, 1)
-	s.waiting[functionARN] = waiterCh
+	// No pending invocation — park this container and long-poll. Each container
+	// gets its own waiter: a function may be served by several execution
+	// environments at once, and a shared slot meant the last one to poll
+	// displaced the rest, leaving them blocked on a channel nothing would send
+	// to while queued work went undelivered until its deadline expired.
+	waiter := &runtimeWaiter{ch: make(chan *pendingInvocation, 1), containerIP: remoteIP}
+	s.waiting[functionARN] = append(s.waiting[functionARN], waiter)
 	s.mu.Unlock()
 
 	ctx := r.Context()
 	select {
-	case inv := <-waiterCh:
+	case inv := <-waiter.ch:
 		s.mu.Lock()
+		if inv.cancelled {
+			// Cancelled between hand-off and pickup — take the next queued
+			// invocation instead of running work the caller has abandoned.
+			inv = s.popQueuedLocked(functionARN)
+		}
+		if inv == nil {
+			s.waiting[functionARN] = append(s.waiting[functionARN], waiter)
+			s.mu.Unlock()
+			s.awaitWaiter(w, r, functionARN, waiter, remoteIP)
+			return
+		}
 		s.enqueueExtensionInvokeLocked(remoteIP, inv)
 		s.mu.Unlock()
 		s.writeNextResponse(w, inv)
 	case <-ctx.Done():
-		s.mu.Lock()
-		delete(s.waiting, functionARN)
-		s.mu.Unlock()
+		s.releaseWaiter(functionARN, waiter)
 	case <-s.done:
-		s.mu.Lock()
-		delete(s.waiting, functionARN)
-		s.mu.Unlock()
+		s.releaseWaiter(functionARN, waiter)
 	}
+}
+
+// awaitWaiter re-enters the long poll after a claimed invocation turned out to
+// be cancelled. Split out so handleNext stays a single level deep.
+func (s *RuntimeAPIServer) awaitWaiter(w http.ResponseWriter, r *http.Request, functionARN string, waiter *runtimeWaiter, remoteIP string) {
+	select {
+	case inv := <-waiter.ch:
+		s.mu.Lock()
+		if inv.cancelled {
+			s.mu.Unlock()
+			s.releaseWaiter(functionARN, waiter)
+			return
+		}
+		s.enqueueExtensionInvokeLocked(remoteIP, inv)
+		s.mu.Unlock()
+		s.writeNextResponse(w, inv)
+	case <-r.Context().Done():
+		s.releaseWaiter(functionARN, waiter)
+	case <-s.done:
+		s.releaseWaiter(functionARN, waiter)
+	}
+}
+
+// popQueuedLocked removes and returns the next live invocation for functionARN,
+// discarding any that were cancelled while queued. Caller must hold s.mu.
+func (s *RuntimeAPIServer) popQueuedLocked(functionARN string) *pendingInvocation {
+	queue := s.funcQueues[functionARN]
+	for len(queue) > 0 {
+		inv := queue[0]
+		queue = queue[1:]
+		if inv.cancelled {
+			continue
+		}
+		s.funcQueues[functionARN] = queue
+		return inv
+	}
+	s.funcQueues[functionARN] = queue
+	return nil
+}
+
+// releaseWaiter removes a container's waiter when its poll ends. An invocation
+// handed over in the same moment is put back on the queue rather than lost with
+// the waiter — that is the difference between another container picking it up
+// immediately and the caller waiting out the full function timeout.
+func (s *RuntimeAPIServer) releaseWaiter(functionARN string, waiter *runtimeWaiter) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	waiters := s.waiting[functionARN]
+	for i, w := range waiters {
+		if w != waiter {
+			continue
+		}
+		s.waiting[functionARN] = append(waiters[:i:i], waiters[i+1:]...)
+		return
+	}
+	// Not in the list: SubmitInvocation already claimed it. Recover whatever it
+	// was handed so the work is not stranded in a channel nobody will read.
+	select {
+	case inv := <-waiter.ch:
+		if inv.cancelled {
+			return
+		}
+		s.redeliverLocked(functionARN, inv)
+	default:
+	}
+}
+
+// redeliverLocked hands inv to another parked container, or puts it back at the
+// head of the queue if none is available. Caller must hold s.mu.
+func (s *RuntimeAPIServer) redeliverLocked(functionARN string, inv *pendingInvocation) {
+	if waiters := s.waiting[functionARN]; len(waiters) > 0 {
+		next := waiters[0]
+		s.waiting[functionARN] = waiters[1:]
+		next.ch <- inv
+		return
+	}
+	s.funcQueues[functionARN] = append([]*pendingInvocation{inv}, s.funcQueues[functionARN]...)
 }
 
 func (s *RuntimeAPIServer) maybeMarkReadyLocked(containerIP string) {
