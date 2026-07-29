@@ -93,11 +93,29 @@ RUN groupadd --gid ${USER_GID} ${USERNAME} \
 
 # Pre-warm the Go module cache directory so the vscode user can write to it.
 # The actual modules are downloaded by postCreateCommand in devcontainer.json.
-RUN mkdir -p /go/pkg/mod \
+#
+# This MUST be the same path as GOPATH below (/home/vscode/go/pkg/mod), not the
+# base image's default /go. Both docker-compose.dev.yml and
+# .devcontainer/init-worktree.sh mount a named volume there, and Docker creates
+# a volume's mount point owned by root when the path does not already exist in
+# the image. The container runs as vscode, so a root-owned mount point fails
+# every build with "mkdir /home/vscode/go/pkg/mod/cache: permission denied".
+# Creating it here, owned by vscode, is what the volume inherits instead.
+#
+# /home/vscode/bin exists for the same reason: docker-compose.dev.yml keeps the
+# compiled binary on a named volume, and that mount point has to be outside the
+# /workspace bind mount — a bind mount hides whatever the image put at its path,
+# so a volume nested under it can never inherit image ownership.
+RUN mkdir -p /home/${USERNAME}/go/pkg/mod \
+             /home/${USERNAME}/bin \
              /home/${USERNAME}/.config/opencode \
              /home/${USERNAME}/.config/gh \
              /home/${USERNAME}/.local/share/opencode \
-  && chown -R ${USERNAME}:${USERNAME} /go /home/${USERNAME}/.config /home/${USERNAME}/.local
+  && chown -R ${USERNAME}:${USERNAME} \
+             /home/${USERNAME}/go \
+             /home/${USERNAME}/bin \
+             /home/${USERNAME}/.config \
+             /home/${USERNAME}/.local
 
 USER ${USERNAME}
 

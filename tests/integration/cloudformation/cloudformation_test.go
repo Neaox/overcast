@@ -1255,8 +1255,10 @@ func TestCreateStack_GetAttResolution(t *testing.T) {
 	if !strings.Contains(body, "arn:aws:s3:::getatt-test-bucket") {
 		t.Errorf("expected S3 ARN in output, got: %s", body)
 	}
-	// DomainName should contain the S3 domain pattern.
-	if !strings.Contains(body, "getatt-test-bucket.s3.amazonaws.com") {
+	// DomainName is the S3 virtual-hosted shape on THIS emulator's hostname,
+	// not amazonaws.com — see
+	// TestCreateStack_S3BucketDomainsAreServableByThisEmulator for why.
+	if !strings.Contains(body, "getatt-test-bucket.s3.localhost") {
 		t.Errorf("expected S3 domain name in output, got: %s", body)
 	}
 }
@@ -3780,4 +3782,67 @@ func generatedQueueNameFromOutput(t *testing.T, describeBody, stackName, logical
 		t.Fatalf("no generated name for %s/%s in stack description: %s", stackName, logicalID, describeBody)
 	}
 	return name
+}
+
+const s3BucketDomainTemplate = `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "AssetBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": { "BucketName": "cfn-origin-assets" }
+    }
+  },
+  "Outputs": {
+    "BucketDomainName": { "Value": { "Fn::GetAtt": ["AssetBucket", "DomainName"] } },
+    "BucketRegionalDomainName": { "Value": { "Fn::GetAtt": ["AssetBucket", "RegionalDomainName"] } }
+  }
+}`
+
+// TestCreateStack_S3BucketDomainsAreServableByThisEmulator covers the domain
+// attributes of AWS::S3::Bucket, which were hardcoded to "amazonaws.com".
+//
+// These are not decoration. CDK wires an S3 origin into a CloudFront
+// distribution by Fn::GetAtt-ing RegionalDomainName, so the value went straight
+// into a distribution's Origins as its DomainName — pointing the distribution
+// at the real AWS bucket of that name, or at nothing, rather than at the bucket
+// the same stack had just created here. The same value handed to function code
+// or a test is equally undialable.
+//
+// The provisioner mints them from OVERCAST_HOSTNAME, because provisioning runs
+// on internal requests and has no caller to derive an origin from — the same
+// reasoning already recorded for other provisioning-time URLs.
+func TestCreateStack_S3BucketDomainsAreServableByThisEmulator(t *testing.T) {
+	// Given: a server on a configured external hostname
+	const hostname = "dev.example.test"
+	srv := helpers.NewTestServer(t, helpers.WithHostname(hostname), helpers.WithRegion("ap-southeast-2"))
+
+	// When: a stack creates a bucket and outputs its domain attributes
+	cr := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"s3-origin-domain-stack"},
+		"TemplateBody": []string{s3BucketDomainTemplate},
+	})
+	defer cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	waitForStackStatus(t, srv, "s3-origin-domain-stack", "CREATE_COMPLETE")
+
+	resp := cfnQuery(t, srv, "DescribeStacks", url.Values{
+		"StackName": []string{"s3-origin-domain-stack"},
+	})
+	defer resp.Body.Close()
+	body := string(readBody(t, resp))
+
+	// Then: the domains name this emulator, not AWS
+	// Scoped to the output values: the response envelope legitimately carries
+	// amazonaws.com in its XML namespace and in the stack ARN.
+	if strings.Contains(body, ".s3.amazonaws.com") {
+		t.Errorf("bucket domain outputs name real AWS, which this emulator does not serve:\n%s", body)
+	}
+	for _, want := range []string{
+		"cfn-origin-assets.s3." + hostname,
+		"cfn-origin-assets.s3.ap-southeast-2." + hostname,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected a bucket domain %q in outputs, got:\n%s", want, body)
+		}
+	}
 }

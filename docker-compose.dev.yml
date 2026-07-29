@@ -16,6 +16,12 @@
 # To rebuild after changes:
 #   docker compose -f docker-compose.dev.yml up --build
 #
+# If you last ran this before the module-cache ownership fix in
+# .devcontainer/Dockerfile, the go-mod-cache volume still carries the root
+# ownership Docker gave it, and the build fails with
+# "mkdir /home/vscode/go/pkg/mod/cache: permission denied". Drop it once:
+#   docker compose -f docker-compose.dev.yml down -v
+#
 # To run tests:
 #   docker compose -f docker-compose.dev.yml run --rm test
 
@@ -57,7 +63,13 @@ services:
         consistency: cached
       # Separate volume for the compiled binary so it doesn't pollute
       # the host source tree and avoids Windows/Linux binary incompatibility.
-      - overcast-bin:/workspace/bin
+      #
+      # Deliberately OUTSIDE /workspace. /workspace is a bind mount of the host
+      # source, and a bind mount hides whatever the image placed at that path,
+      # so a named volume nested under it is created root-owned and the vscode
+      # user cannot write the binary into it. /home/vscode/bin is created and
+      # chowned in .devcontainer/Dockerfile, so the volume inherits that.
+      - overcast-bin:/home/vscode/bin
       # Module cache: reused across rebuilds for fast dependency resolution.
       - go-mod-cache:/home/vscode/go/pkg/mod
     environment:
@@ -69,8 +81,8 @@ services:
     # Build then run in one command. The binary is rebuilt on every `up --build`.
     command: >
       sh -c "
-        go build -trimpath -ldflags='-w -s' -o bin/overcast ./cmd/overcast &&
-        bin/overcast serve
+        go build -trimpath -ldflags='-w -s' -o /home/vscode/bin/overcast ./cmd/overcast &&
+        /home/vscode/bin/overcast serve
       "
     healthcheck:
       test: [ "CMD", "wget", "-qO-", "http://localhost:4566/_health" ]

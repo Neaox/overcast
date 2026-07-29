@@ -4181,3 +4181,330 @@ func TestProxy_viewerProtocolPolicyIsGatedOnServableTLS(t *testing.T) {
 		})
 	}
 }
+
+// originGroupDistXML builds a distribution with two custom origins and one
+// origin group whose primary is origin-a and whose failover is origin-b. The
+// DefaultCacheBehavior targets the GROUP, which is the shape CDK emits for
+// CloudFront origin failover and the shape that 502'd.
+func originGroupDistXML(callerRef, host string, portA, portB int, failoverCodes []int) string {
+	var codes strings.Builder
+	for _, c := range failoverCodes {
+		fmt.Fprintf(&codes, "<StatusCode>%d</StatusCode>", c)
+	}
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<DistributionConfig xmlns="http://cloudfront.amazonaws.com/doc/2020-05-31/">
+  <CallerReference>%s</CallerReference>
+  <Comment>origin group test</Comment>
+  <Enabled>true</Enabled>
+  <Origins>
+    <Quantity>2</Quantity>
+    <Items>
+      <Origin>
+        <Id>origin-a</Id>
+        <DomainName>%s</DomainName>
+        <CustomOriginConfig><HTTPPort>%d</HTTPPort><HTTPSPort>443</HTTPSPort><OriginProtocolPolicy>http-only</OriginProtocolPolicy></CustomOriginConfig>
+      </Origin>
+      <Origin>
+        <Id>origin-b</Id>
+        <DomainName>%s</DomainName>
+        <CustomOriginConfig><HTTPPort>%d</HTTPPort><HTTPSPort>443</HTTPSPort><OriginProtocolPolicy>http-only</OriginProtocolPolicy></CustomOriginConfig>
+      </Origin>
+    </Items>
+  </Origins>
+  <OriginGroups>
+    <Quantity>1</Quantity>
+    <Items>
+      <OriginGroup>
+        <Id>group-1</Id>
+        <FailoverCriteria><StatusCodes><Quantity>%d</Quantity><Items>%s</Items></StatusCodes></FailoverCriteria>
+        <Members>
+          <Quantity>2</Quantity>
+          <Items>
+            <OriginGroupMember><OriginId>origin-a</OriginId></OriginGroupMember>
+            <OriginGroupMember><OriginId>origin-b</OriginId></OriginGroupMember>
+          </Items>
+        </Members>
+      </OriginGroup>
+    </Items>
+  </OriginGroups>
+  <DefaultCacheBehavior>
+    <TargetOriginId>group-1</TargetOriginId>
+    <ViewerProtocolPolicy>allow-all</ViewerProtocolPolicy>
+    <ForwardedValues><QueryString>false</QueryString></ForwardedValues>
+  </DefaultCacheBehavior>
+</DistributionConfig>`, callerRef, host, portA, host, portB, len(failoverCodes), codes.String())
+}
+
+// TestProxy_originGroupFailover covers cache behaviors that target an origin
+// GROUP rather than an origin.
+//
+// CreateDistribution has always accepted this — validateOriginRefs adds every
+// OriginGroup Id to the set of legal TargetOriginIds, citing the AWS origin
+// failover docs — but the proxy resolved TargetOriginId against Origins only.
+// So Overcast accepted a distribution it could not serve, and every viewer
+// request returned "502 Origin not found". CDK emits exactly this shape when a
+// Distribution is given an origin group, so a real stack could deploy clean and
+// then fail on every request.
+//
+// Failover semantics follow AWS: the group's members are tried in order, a
+// response whose status is listed in FailoverCriteria (or a connection failure)
+// moves to the next member, and failover happens ONLY for GET, HEAD and OPTIONS
+// — for any other method CloudFront returns the primary's response as-is.
+func TestProxy_originGroupFailover(t *testing.T) {
+	newOrigin := func(name string, status int) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(name))
+		}))
+	}
+
+	cases := []struct {
+		name          string
+		primaryStatus int
+		killPrimary   bool
+		method        string
+		failoverCodes []int
+		wantStatus    int
+		wantBody      string
+		why           string
+	}{
+		{
+			name: "healthy primary serves the request", primaryStatus: 200, method: http.MethodGet,
+			failoverCodes: []int{502, 504}, wantStatus: 200, wantBody: "primary",
+			why: "the bug: this returned 502 Origin not found",
+		},
+		{
+			name: "POST to a group resolves the primary", primaryStatus: 200, method: http.MethodPost,
+			failoverCodes: []int{502, 504}, wantStatus: 200, wantBody: "primary",
+			why: "the reported case was a POST",
+		},
+		{
+			name: "failover status on GET moves to the secondary", primaryStatus: 502, method: http.MethodGet,
+			failoverCodes: []int{502, 504}, wantStatus: 200, wantBody: "secondary",
+		},
+		{
+			name: "failover status on POST does NOT fail over", primaryStatus: 502, method: http.MethodPost,
+			failoverCodes: []int{502, 504}, wantStatus: 502, wantBody: "primary",
+			why: "AWS fails over only for GET, HEAD and OPTIONS",
+		},
+		{
+			name: "status not in the criteria is returned as-is", primaryStatus: 404, method: http.MethodGet,
+			failoverCodes: []int{502, 504}, wantStatus: 404, wantBody: "primary",
+		},
+		{
+			name: "unreachable primary fails over on GET", killPrimary: true, method: http.MethodGet,
+			failoverCodes: []int{502}, wantStatus: 200, wantBody: "secondary",
+			why: "a connection failure is a failover trigger, not just a status code",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status := tc.primaryStatus
+			if status == 0 {
+				status = 200
+			}
+			primary := newOrigin("primary", status)
+			secondary := newOrigin("secondary", 200)
+			defer secondary.Close()
+
+			portOf := func(s *httptest.Server) int {
+				hostPort := s.URL[len("http://"):]
+				var p int
+				fmt.Sscanf(hostPort[strings.LastIndexByte(hostPort, ':')+1:], "%d", &p)
+				return p
+			}
+			primaryPort := portOf(primary)
+			if tc.killPrimary {
+				primary.Close() // nothing is listening on that port any more
+			} else {
+				defer primary.Close()
+			}
+
+			srv := helpers.NewTestServer(t)
+			dist, _ := cfCreateDistFromXML(t, srv,
+				originGroupDistXML("origin-group-"+tc.name, "127.0.0.1", primaryPort, portOf(secondary), tc.failoverCodes))
+
+			req, _ := http.NewRequest(tc.method, srv.URL+"/_cloudfront/"+dist.ID+"/thing", nil)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("proxy request: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tc.wantStatus {
+				t.Errorf("status = %d, want %d (%s)", resp.StatusCode, tc.wantStatus, tc.why)
+			}
+			if body := string(readBody(t, resp)); body != tc.wantBody {
+				t.Errorf("served by %q, want %q (%s)", body, tc.wantBody, tc.why)
+			}
+		})
+	}
+}
+
+// TestProxy_unknownTargetOriginIsStillAnError keeps the genuine
+// misconfiguration case reporting, so resolving groups does not turn a broken
+// distribution into a silent one.
+func TestProxy_unknownTargetOriginIsStillAnError(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	dist, _ := cfCreateDistFromXML(t, srv, distributionConfigXML("origin-group-unknown-target"))
+
+	// Rewrite the stored config to target something that exists nowhere by
+	// going through UpdateDistribution would require a valid ref, so instead
+	// assert the shape that reaches the proxy: a distribution whose behavior
+	// names a missing origin cannot be created at all.
+	resp := cfCreate(t, srv, strings.Replace(
+		distributionConfigXML("origin-group-missing-origin"),
+		"<TargetOriginId>origin-1</TargetOriginId>",
+		"<TargetOriginId>no-such-origin</TargetOriginId>", 1))
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+
+	_ = dist
+}
+
+// singleOriginDistXML builds a distribution with one origin at the given
+// domain, no CustomOriginConfig, so the origin is resolved purely from its
+// DomainName — the shape CDK emits for an S3 or service-backed origin.
+func singleOriginDistXML(callerRef, originDomain, originPath string) string {
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<DistributionConfig xmlns="http://cloudfront.amazonaws.com/doc/2020-05-31/">
+  <CallerReference>%s</CallerReference>
+  <Comment>origin resolution test</Comment>
+  <Enabled>true</Enabled>
+  <Origins>
+    <Quantity>1</Quantity>
+    <Items>
+      <Origin>
+        <Id>the-origin</Id>
+        <DomainName>%s</DomainName>
+        <OriginPath>%s</OriginPath>
+        <S3OriginConfig><OriginAccessIdentity></OriginAccessIdentity></S3OriginConfig>
+      </Origin>
+    </Items>
+  </Origins>
+  <DefaultCacheBehavior>
+    <TargetOriginId>the-origin</TargetOriginId>
+    <ViewerProtocolPolicy>allow-all</ViewerProtocolPolicy>
+    <ForwardedValues><QueryString>false</QueryString></ForwardedValues>
+  </DefaultCacheBehavior>
+</DistributionConfig>`, callerRef, originDomain, originPath)
+}
+
+// TestProxy_originsBackedByAnEmulatedServiceStayLocal covers the rule that an
+// origin naming an AWS endpoint Overcast emulates must be served by Overcast,
+// not dialled on the public internet.
+//
+// Only the "{bucket}.s3.{...}.amazonaws.com" spelling was recognised, by a
+// bespoke prefix check, and everything else fell through to "custom origin" and
+// was dialled at its literal domain. So a distribution fronting an S3 website
+// endpoint, a legacy dash-region bucket, or an API Gateway — all of which
+// Overcast serves — left the emulator and hit real AWS or failed to resolve.
+//
+// Resolution now goes through the same HostClassifier the router uses for
+// inbound requests, so an origin is recognised by exactly the rules that decide
+// who serves a Host, and the two cannot drift.
+func TestProxy_originsBackedByAnEmulatedServiceStayLocal(t *testing.T) {
+	const objectBody = "served by the emulator"
+
+	t.Run("S3 origin spellings", func(t *testing.T) {
+		for _, tc := range []struct{ name, domain string }{
+			{"virtual-hosted", "cf-origin-bucket.s3.amazonaws.com"},
+			{"virtual-hosted with region", "cf-origin-bucket.s3.us-east-1.amazonaws.com"},
+			{"legacy dash region", "cf-origin-bucket.s3-us-west-2.amazonaws.com"},
+			{"website endpoint", "cf-origin-bucket.s3-website-us-east-1.amazonaws.com"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				srv := helpers.NewTestServer(t)
+
+				// Given: a bucket holding one object
+				putBucket, _ := http.NewRequest(http.MethodPut, srv.URL+"/cf-origin-bucket", nil)
+				bResp, err := http.DefaultClient.Do(putBucket)
+				if err != nil {
+					t.Fatalf("create bucket: %v", err)
+				}
+				bResp.Body.Close()
+				putObj, _ := http.NewRequest(http.MethodPut,
+					srv.URL+"/cf-origin-bucket/index.html", strings.NewReader(objectBody))
+				oResp, err := http.DefaultClient.Do(putObj)
+				if err != nil {
+					t.Fatalf("put object: %v", err)
+				}
+				oResp.Body.Close()
+
+				dist, _ := cfCreateDistFromXML(t, srv, singleOriginDistXML("cf-origin-"+tc.name, tc.domain, ""))
+
+				// When: the object is fetched through the distribution
+				req, _ := http.NewRequest(http.MethodGet, srv.URL+"/_cloudfront/"+dist.ID+"/index.html", nil)
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					t.Fatalf("proxy request: %v", err)
+				}
+				defer resp.Body.Close()
+
+				// Then: the emulator's own S3 served it
+				helpers.AssertStatus(t, resp, http.StatusOK)
+				if body := string(readBody(t, resp)); body != objectBody {
+					t.Errorf("body = %q, want %q — origin %q was not resolved to the emulator", body, objectBody, tc.domain)
+				}
+			})
+		}
+	})
+
+	t.Run("OriginPath is prepended to the request path", func(t *testing.T) {
+		srv := helpers.NewTestServer(t)
+		putBucket, _ := http.NewRequest(http.MethodPut, srv.URL+"/cf-origin-bucket", nil)
+		bResp, _ := http.DefaultClient.Do(putBucket)
+		bResp.Body.Close()
+		putObj, _ := http.NewRequest(http.MethodPut,
+			srv.URL+"/cf-origin-bucket/sub/dir/index.html", strings.NewReader(objectBody))
+		oResp, _ := http.DefaultClient.Do(putObj)
+		oResp.Body.Close()
+
+		dist, _ := cfCreateDistFromXML(t, srv,
+			singleOriginDistXML("cf-origin-path", "cf-origin-bucket.s3.amazonaws.com", "/sub/dir"))
+
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/_cloudfront/"+dist.ID+"/index.html", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("proxy request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		helpers.AssertStatus(t, resp, http.StatusOK)
+		if body := string(readBody(t, resp)); body != objectBody {
+			t.Errorf("body = %q, want %q", body, objectBody)
+		}
+	})
+
+	// NOT covered here, and deliberately: a bucket whose own NAME contains
+	// ".s3" (e.g. "my.s3.archive", addressed as
+	// "my.s3.archive.s3.us-east-1.amazonaws.com") is truncated to "my",
+	// because HostClassifier tier A takes everything before the FIRST ".s3."
+	// separator while AWS parses from the right. That is pre-existing behaviour
+	// of the shared classifier, documented in
+	// docs/plans/host-routing-precedence.md §4, and it affects inbound requests
+	// identically — so it belongs in a change to that rule, not to origin
+	// resolution, which now simply defers to it.
+	t.Run("API Gateway origin reaches API Gateway", func(t *testing.T) {
+		// Asserts on API Gateway's own AWS-shaped 403 for an unknown API rather
+		// than a successful invoke: reaching that error is the proof the request
+		// stayed inside the emulator. Before this, the origin was dialled at
+		// execute-api.us-east-1.amazonaws.com on the public internet.
+		srv := helpers.NewTestServer(t)
+		dist, _ := cfCreateDistFromXML(t, srv,
+			singleOriginDistXML("cf-origin-apigw", "nosuchapi.execute-api.us-east-1.amazonaws.com", ""))
+
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/_cloudfront/"+dist.ID+"/prod/hello", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("proxy request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("status = %d, want 403 — the origin should have been served by the emulator's API Gateway",
+				resp.StatusCode)
+		}
+	})
+}

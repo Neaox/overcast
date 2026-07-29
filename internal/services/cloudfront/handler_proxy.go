@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
 	"net/http"
-	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -210,15 +210,10 @@ func (h *Handler) ProxyRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Resolve the target origin.
-	var origin *Origin
-	for i := range cfg.Origins.Items {
-		if cfg.Origins.Items[i].ID == targetOriginID {
-			origin = &cfg.Origins.Items[i]
-			break
-		}
-	}
-	if origin == nil {
+	// Resolve the target. A behavior's TargetOriginId names either an origin or
+	// an origin GROUP; a group resolves to its members in failover order.
+	candidates, failoverCodes := resolveOriginTargets(cfg, targetOriginID)
+	if len(candidates) == 0 {
 		h.log.Error("origin not found in distribution config",
 			zap.String("distId", distID),
 			zap.String("targetOriginId", targetOriginID),
@@ -227,32 +222,7 @@ func (h *Handler) ProxyRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build the origin URL.
-	originURL := buildOriginURL(origin, reqPath, h.cfg.Port)
-
-	// Create outbound request, streaming the body.
-	outReq, err := http.NewRequestWithContext(ctx, r.Method, originURL, r.Body)
-	if err != nil {
-		h.log.Error("failed to create origin request",
-			zap.String("originURL", originURL),
-			zap.Error(err),
-		)
-		http.Error(w, "Failed to create origin request", http.StatusBadGateway)
-		return
-	}
-
-	// Forward standard headers (but not Host — origin sets its own).
-	forwardHeaders(r, outReq)
-
-	// Inject origin custom headers.
-	if origin.CustomHeaders != nil {
-		for _, ch := range origin.CustomHeaders.Items {
-			outReq.Header.Set(ch.HeaderName, ch.HeaderValue)
-		}
-	}
-
-	// Execute the origin request.
-	resp, err := proxyClient.Do(outReq)
+	resp, originURL, err := h.dispatchToOrigins(ctx, r, reqPath, candidates, failoverCodes)
 	if err != nil {
 		h.log.Error("origin request failed",
 			zap.String("originURL", originURL),
@@ -387,19 +357,31 @@ func copyHeaders(h http.Header) map[string][]string {
 	return out
 }
 
-// buildOriginURL constructs the full URL to forward to the origin.
-func buildOriginURL(origin *Origin, reqPath string, emulatorPort int) string {
+// buildOriginRequest works out where to send a viewer request for this origin:
+// the URL to dial, and the Host header to present when that differs.
+//
+// An origin naming an endpoint THIS emulator serves — an S3 bucket in any of
+// its spellings, an API Gateway invoke host, a Lambda function URL, an AppSync
+// endpoint — is answered locally, by dialling the emulator and preserving the
+// origin's own Host. The router then classifies it with exactly the rules it
+// applies to an inbound request from a client, so origin resolution and request
+// routing cannot disagree about what a hostname means, and a service becomes
+// usable as an origin the moment it becomes routable.
+//
+// This replaces a bespoke ".s3." prefix check that recognised only one S3
+// spelling. A website endpoint, a legacy dash-region bucket, or any non-S3 AWS
+// service fell through to "custom origin" and was dialled at its literal
+// domain — so a distribution fronting an emulated service quietly reached out
+// to real AWS instead.
+func (h *Handler) buildOriginRequest(origin *Origin, reqPath, viewerHost string) (originURL, hostHeader string) {
 	domain := origin.DomainName
 	originPath := strings.TrimRight(origin.OriginPath, "/")
 
-	// S3 origins: domain ends with .s3.amazonaws.com or .s3.{region}.amazonaws.com
-	// Rewrite to local emulator endpoint.
-	if isS3Origin(domain) {
-		bucket := extractS3Bucket(domain)
-		return fmt.Sprintf("http://localhost:%d/%s%s%s", emulatorPort, bucket, originPath, reqPath)
+	if h.servesOriginLocally(domain, viewerHost) {
+		return fmt.Sprintf("http://127.0.0.1:%d%s%s", h.emulatorPort(), originPath, reqPath), domain
 	}
 
-	// Custom origin — use the configured protocol/port.
+	// A genuine third-party origin — dial it as configured.
 	scheme := "http"
 	port := 80
 	if origin.CustomOriginConfig != nil {
@@ -411,34 +393,71 @@ func buildOriginURL(origin *Origin, reqPath string, emulatorPort int) string {
 			port = origin.CustomOriginConfig.HTTPPort
 		}
 	}
-
-	// If the domain is "localhost" or looks like an internal emulator reference,
-	// keep it as-is.
 	host := domain
 	if port != 80 && port != 443 {
 		host = fmt.Sprintf("%s:%d", domain, port)
 	}
-
-	return fmt.Sprintf("%s://%s%s%s", scheme, host, originPath, reqPath)
+	return fmt.Sprintf("%s://%s%s%s", scheme, host, originPath, reqPath), ""
 }
 
-// isS3Origin checks if a domain looks like an S3 origin.
-func isS3Origin(domain string) bool {
-	return strings.HasSuffix(domain, ".s3.amazonaws.com") ||
-		strings.Contains(domain, ".s3.") && strings.HasSuffix(domain, ".amazonaws.com")
-}
-
-// extractS3Bucket extracts the bucket name from an S3 origin domain.
-// Formats: {bucket}.s3.amazonaws.com or {bucket}.s3.{region}.amazonaws.com.
-func extractS3Bucket(domain string) string {
-	// Remove suffix
-	domain = strings.TrimSuffix(domain, ".amazonaws.com")
-	// Now "{bucket}.s3" or "{bucket}.s3.{region}"
-	idx := strings.Index(domain, ".s3")
-	if idx > 0 {
-		return domain[:idx]
+// servesOriginLocally reports whether this emulator answers for an origin's
+// domain, using the same classifier that decides who owns an inbound Host.
+//
+// A claim of either kind means Overcast serves that hostname: S3 for a bucket
+// subdomain, a host route for a service endpoint. Anything unclaimed is a real
+// third-party origin. Note this asks "can this be routed here", not "is that
+// service enabled" — a disabled service should answer with its own error rather
+// than have CloudFront silently dial the internet on its behalf.
+func (h *Handler) servesOriginLocally(domain, viewerHost string) bool {
+	// The endpoint the viewer actually reached this server on counts as ours
+	// too, ahead of the configured hostname — the same precedence every
+	// client-facing URL is minted with (serviceutil.ClientBaseURL: the request
+	// first, OVERCAST_HOSTNAME otherwise). A stack deployed against a server
+	// reachable at some other name gets bucket and service domains on THAT
+	// name, and those must resolve back here rather than be dialled outward.
+	// Strictly a SUBDOMAIN of the viewer's endpoint, and never an IP literal.
+	// An origin whose domain is exactly the endpoint host, or is an address on
+	// the same IP, is a real origin reachable on its own port — a sibling
+	// service on 127.0.0.1:9000 is not this emulator, and dialling it here
+	// would swallow it. Only "{bucket}.s3.{endpoint}" and friends are ours.
+	if base := serviceutil.FoldHostname(hostWithoutPort(viewerHost)); base != "" && !isIPLiteralHost(base) {
+		if d := serviceutil.FoldHostname(domain); strings.HasSuffix(d, "."+base) {
+			return true
+		}
 	}
-	return domain
+	if h.originHosts == nil {
+		return false
+	}
+	switch h.originHosts.Classify(domain).Kind {
+	case middleware.HostClaimS3, middleware.HostClaimHostRoute:
+		return true
+	case middleware.HostClaimNone:
+		return false
+	}
+	return false
+}
+
+// isIPLiteralHost reports whether a host is an IP address rather than a DNS
+// name. Subdomain reasoning is meaningless for one.
+func isIPLiteralHost(host string) bool {
+	return net.ParseIP(strings.Trim(host, "[]")) != nil
+}
+
+// hostWithoutPort strips a trailing :port from a Host header value.
+func hostWithoutPort(host string) string {
+	if i := strings.LastIndexByte(host, ':'); i > 0 && !strings.Contains(host[i+1:], "]") {
+		return host[:i]
+	}
+	return host
+}
+
+// emulatorPort is the port this server listens on, defaulting to the standard
+// one for unit-constructed handlers with no config attached.
+func (h *Handler) emulatorPort() int {
+	if h.cfg != nil && h.cfg.Port > 0 {
+		return h.cfg.Port
+	}
+	return 4566
 }
 
 // forwardHeaders copies relevant request headers to the outbound origin request.
@@ -461,30 +480,76 @@ func forwardHeaders(src, dst *http.Request) {
 	}
 }
 
-// matchPathPattern matches a CloudFront path pattern against a request path.
-// CloudFront patterns use * as a wildcard and ? as a single-char wildcard.
+// matchPathPattern matches a CloudFront cache behavior path pattern against a
+// request path, following the documented semantics of
+// CacheBehavior.PathPattern:
+//
+//   - "*" matches zero or more characters and DOES match across "/" — the
+//     pattern applies to the whole path, not segment by segment.
+//   - "?" matches exactly one character.
+//   - The leading "/" is optional; AWS states the behavior is the same with or
+//     without it, so "api/*" and "/api/*" are one pattern.
+//
+// path.Match cannot express this: its "*" stops at "/", so the documentation's
+// own "*.jpg" example would match nothing below the root. And because a request
+// path always begins with "/", comparing a slash-less pattern against it
+// directly meant such a behavior could never match — its requests fell through
+// to the default behavior and were served by the wrong origin, silently.
 func matchPathPattern(pattern, reqPath string) bool {
-	// path.Match uses * and ? the same way as CloudFront.
-	// However, CloudFront's * matches across slashes while path.Match's * does not.
-	// We handle this by checking if the pattern has a simple prefix+suffix around *.
 	if pattern == "*" || pattern == "/*" {
 		return true
 	}
+	return globMatch(withLeadingSlash(pattern), withLeadingSlash(reqPath))
+}
 
-	// For patterns like /images/* or /api/v1/*.json, use simple prefix matching
-	// when the wildcard is at the end.
-	if strings.HasSuffix(pattern, "/*") {
-		prefix := strings.TrimSuffix(pattern, "/*")
-		return strings.HasPrefix(reqPath, prefix+"/") || reqPath == prefix
+// withLeadingSlash normalises the optional leading "/" of a path pattern so a
+// pattern and a request path are always compared in the same form.
+func withLeadingSlash(s string) string {
+	if strings.HasPrefix(s, "/") {
+		return s
 	}
-	if strings.HasSuffix(pattern, "*") {
-		prefix := strings.TrimSuffix(pattern, "*")
-		return strings.HasPrefix(reqPath, prefix)
-	}
+	return "/" + s
+}
 
-	// Fall back to path.Match for simple ? wildcards and exact matches.
-	matched, _ := path.Match(pattern, reqPath)
-	return matched
+// globMatch reports whether s matches a pattern of literals, "*" (any run of
+// characters, "/" included) and "?" (exactly one character).
+//
+// Iterative rather than recursive, with a single backtrack point for the most
+// recent "*": linear in practice, and allocation-free, which matters because
+// this runs for every cache behavior on every proxied request. Deliberately not
+// a regexp — compiling one per behavior per request would cost far more than
+// the match, and the pattern is a glob, so regexp metacharacters in it ("." in
+// "*.jpg", "+" in a path segment) must stay literal.
+func globMatch(pattern, s string) bool {
+	var (
+		p, i  int
+		starP = -1
+		starI int
+	)
+	for i < len(s) {
+		switch {
+		case p < len(pattern) && (pattern[p] == '?' || pattern[p] == s[i]):
+			p++
+			i++
+		case p < len(pattern) && pattern[p] == '*':
+			// Remember where to resume if the rest fails to match, then try
+			// consuming nothing with this star.
+			starP, starI = p, i
+			p++
+		case starP >= 0:
+			// Backtrack: let the last star swallow one more character.
+			starI++
+			i = starI
+			p = starP + 1
+		default:
+			return false
+		}
+	}
+	// Trailing stars may match the empty remainder.
+	for p < len(pattern) && pattern[p] == '*' {
+		p++
+	}
+	return p == len(pattern)
 }
 
 // resolveStagingTarget checks the continuous deployment policy for the distribution
@@ -586,4 +651,133 @@ func (h *Handler) warnViewerPolicyNotEnforceable(distID, policy string) {
 			zap.String("resolution", "set OVERCAST_TLS_CERT and OVERCAST_TLS_KEY to enforce it, or use a TLS-terminating proxy that sets X-Forwarded-Proto: https"),
 		)
 	})
+}
+
+// resolveOriginTargets maps a cache behavior's TargetOriginId to the origins
+// that may serve it, in the order they should be tried.
+//
+// TargetOriginId names either an Origin or an OriginGroup — validateOriginRefs
+// accepts both, per AWS's origin failover documentation. An origin resolves to
+// itself with no failover; a group resolves to its members in declared order,
+// with the status codes its FailoverCriteria lists.
+//
+// A group member naming an origin that does not exist is skipped rather than
+// failing the whole lookup: the remaining members are still serviceable, and a
+// group with no resolvable member returns nothing, which the caller reports as
+// the same "Origin not found" a bad TargetOriginId gets.
+func resolveOriginTargets(cfg *DistributionConfig, targetID string) ([]*Origin, map[int]bool) {
+	byID := make(map[string]*Origin, len(cfg.Origins.Items))
+	for i := range cfg.Origins.Items {
+		byID[cfg.Origins.Items[i].ID] = &cfg.Origins.Items[i]
+	}
+
+	if origin, ok := byID[targetID]; ok {
+		return []*Origin{origin}, nil
+	}
+
+	if cfg.OriginGroups == nil {
+		return nil, nil
+	}
+	for _, group := range cfg.OriginGroups.Items {
+		if group.ID != targetID {
+			continue
+		}
+		members := make([]*Origin, 0, len(group.Members.Items))
+		for _, m := range group.Members.Items {
+			if origin, ok := byID[m.OriginId]; ok {
+				members = append(members, origin)
+			}
+		}
+		codes := make(map[int]bool, len(group.FailoverCriteria.StatusCodes.Items))
+		for _, c := range group.FailoverCriteria.StatusCodes.Items {
+			codes[c] = true
+		}
+		return members, codes
+	}
+	return nil, nil
+}
+
+// requestCanFailOver reports whether a viewer request may be retried against
+// the next member of an origin group.
+//
+// AWS fails over only for GET, HEAD and OPTIONS — for any other method
+// CloudFront returns the primary's response as-is, because replaying a request
+// that changes state is not safe. The body check enforces the same thing
+// mechanically: a request whose body has already been streamed to the first
+// origin cannot be replayed to the second, and ContentLength 0 is the only case
+// where there is provably nothing to replay (-1 means chunked, i.e. unknown).
+func requestCanFailOver(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return r.ContentLength == 0
+	default:
+		return false
+	}
+}
+
+// dispatchToOrigins sends the viewer request to the first candidate origin,
+// falling back through the rest when the response is a failover trigger.
+//
+// Returns the response that should be served, the URL it came from (for error
+// logging), and an error only when no candidate produced a response at all.
+func (h *Handler) dispatchToOrigins(
+	ctx context.Context, r *http.Request, reqPath string,
+	candidates []*Origin, failoverCodes map[int]bool,
+) (*http.Response, string, error) {
+	canFailOver := len(candidates) > 1 && requestCanFailOver(r)
+
+	var lastErr error
+	var lastURL string
+	for i, origin := range candidates {
+		originURL, originHost := h.buildOriginRequest(origin, reqPath, r.Host)
+		lastURL = originURL
+		isLast := i == len(candidates)-1
+
+		outReq, err := http.NewRequestWithContext(ctx, r.Method, originURL, r.Body)
+		if err != nil {
+			lastErr = fmt.Errorf("build origin request: %w", err)
+			if isLast || !canFailOver {
+				return nil, originURL, lastErr
+			}
+			continue
+		}
+		if originHost != "" {
+			// Present the origin's own Host so this emulator's router resolves
+			// it the same way it would for an inbound client request.
+			outReq.Host = originHost
+		}
+		forwardHeaders(r, outReq)
+		if origin.CustomHeaders != nil {
+			for _, ch := range origin.CustomHeaders.Items {
+				outReq.Header.Set(ch.HeaderName, ch.HeaderValue)
+			}
+		}
+
+		resp, err := proxyClient.Do(outReq)
+		if err != nil {
+			// A connection failure is a failover trigger in its own right, not
+			// only a listed status code.
+			lastErr = err
+			if isLast || !canFailOver {
+				return nil, originURL, lastErr
+			}
+			h.log.Warn("origin unreachable, failing over to the next group member",
+				zap.String("originId", origin.ID),
+				zap.String("originURL", originURL),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		if !isLast && canFailOver && failoverCodes[resp.StatusCode] {
+			resp.Body.Close()
+			h.log.Warn("origin returned a failover status, trying the next group member",
+				zap.String("originId", origin.ID),
+				zap.Int("status", resp.StatusCode),
+			)
+			continue
+		}
+		return resp, originURL, nil
+	}
+	return nil, lastURL, lastErr
 }

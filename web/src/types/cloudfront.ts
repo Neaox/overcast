@@ -7,6 +7,7 @@ export interface CloudFrontDistribution {
   comment: string
   lastModifiedTime: string
   origins: CloudFrontOrigin[]
+  originGroups: CloudFrontOriginGroup[]
   defaultRootObject: string
   priceClass: string
   httpVersion: string
@@ -23,6 +24,19 @@ export interface CloudFrontOrigin {
     httpsPort: number
     originProtocolPolicy: string
   }
+}
+
+/**
+ * An origin group gives a cache behavior a primary origin and a failover one.
+ * A behavior's TargetOriginId may name a group instead of an origin, so a
+ * distribution's origin list alone does not explain where its traffic goes.
+ */
+export interface CloudFrontOriginGroup {
+  id: string
+  /** Origin IDs in failover order: the first is primary. */
+  members: string[]
+  /** Origin response codes that trigger failover to the next member. */
+  failoverStatusCodes: number[]
 }
 
 export interface CloudFrontInvalidation {
