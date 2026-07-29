@@ -138,6 +138,9 @@ func (cr *ContainerRuntime) connectVPCNetworks(ctx context.Context, containerID 
 
 // NewContainerRuntime creates a ContainerRuntime.
 // The Docker client and RuntimeAPIServer must already be initialised.
+// maxConcurrentStarts bounds concurrent container creation/INIT bursts; the
+// caller resolves it from LAMBDA_DOCKER_MAX_CONCURRENT_STARTS or the Docker
+// host (see resolveRuntimeLimits).
 func NewContainerRuntime(
 	cfg *config.Config,
 	clk clock.Clock,
@@ -145,6 +148,7 @@ func NewContainerRuntime(
 	gc *docker.GC,
 	runtimeAPI *RuntimeAPIServer,
 	logger *zap.Logger,
+	maxConcurrentStarts int,
 ) *ContainerRuntime {
 	// Derive the Overcast emulator endpoint from the Runtime API address.
 	// The Runtime API host is the IP that Lambda containers can route to on
@@ -154,7 +158,7 @@ func NewContainerRuntime(
 	runtimeHost, _, _ := net.SplitHostPort(runtimeAPI.Addr())
 	overcastEndpoint := fmt.Sprintf("http://%s:%d", runtimeHost, cfg.Port)
 
-	limit := cfg.LambdaDockerMaxConcurrentStarts
+	limit := maxConcurrentStarts
 	if limit < 1 {
 		limit = 1
 	}
