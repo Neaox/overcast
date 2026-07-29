@@ -336,7 +336,7 @@ Before creating the PR:
 3. Confirm commits are coherent and readable.
 4. Confirm `CHANGELOG.md` is updated or intentionally skipped.
 5. Run scoped tests and required docs generation for changed areas.
-6. Run final verification appropriate to the change (`go build`, `go vet`, `pnpm run typecheck` from `web/`, or targeted equivalents).
+6. Run final verification. Prefer `make check` (`fmt vet lint test`) over assembling a subset — "targeted equivalents" is how a required CI job gets skipped. At minimum: `go build ./...`, `go vet ./...`, `make lint-go`, and the scoped tests. Lint is not optional and is not implied by the others: CI runs it as its own job, and staticcheck findings pass build, vet and tests. For `web/` changes add `pnpm run typecheck` and `pnpm run lint` — never bare `tsc --noEmit`, which resolves the solution-style `web/tsconfig.json`, compiles zero files and always exits 0 (`tsc -b` is a correct alternative).
 7. Ensure no secrets, local config, or throwaway debug output are included.
 8. For visual changes, capture screenshots and confirm any capture harness (temporary pages under `web/public/`, seeded fixtures) is removed from the branch.
 
