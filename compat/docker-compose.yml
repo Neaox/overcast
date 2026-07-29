@@ -18,8 +18,6 @@
 #                                   (default: pretty).
 #   OVERCAST_COMPAT_SUITE=go-sdk    Optional comma-separated suite filter.
 
-version: "3.9"
-
 services:
   # ── Overcast emulator ─────────────────────────────────────────────────────
   overcast:
@@ -62,8 +60,17 @@ services:
         source: ..
         target: /workspace
         consistency: cached
-      # Module cache so repeated runs don't re-download modules.
+      # Module and build caches so repeated runs don't re-download modules or
+      # recompile the whole tree — a cold build of ./cmd/compat is minutes, a
+      # warm one seconds. Both paths are pre-created and user-owned in the
+      # image; see .devcontainer/Dockerfile.
       - go-mod-cache:/home/vscode/go/pkg/mod
+      - go-build-cache:/home/vscode/.cache/go-build
+      # Keep container installs out of the bind mount. node_modules holds
+      # platform-specific binaries, so sharing these directories with the host
+      # leaves whichever side installed last with a tree the other cannot run.
+      - node-js-sdk-modules:/workspace/compat/suites/node-js-sdk/node_modules
+      - cdk-modules:/workspace/compat/suites/cdk/node_modules
     environment:
       CGO_ENABLED: "0"
       OVERCAST_ENDPOINT: http://overcast:4566
@@ -76,24 +83,30 @@ services:
       overcast:
         condition: service_healthy
     # Install suite prerequisites, then run the compat CLI.
-    # node-js-sdk: npm ci (tsx + AWS SDK v3).
-    # python-sdk:  pip install boto3/botocore.
+    #
+    # chown first: Docker creates a named volume's mountpoint as root when the
+    # path does not exist in the image, and these live under the bind-mounted
+    # workspace, so they always start root-owned and npm cannot write to them.
+    # The image gives vscode passwordless sudo for exactly this kind of fixup.
+    #
+    # npm: a full `npm ci` only when the volume is empty — it deletes and
+    # reinstalls the tree, which is minutes on every container start otherwise.
+    # A populated volume takes `npm install`, which is a no-op when the tree
+    # already matches the lockfile and repairs it when it does not.
+    # pip: --break-system-packages because Debian marks its Python externally
+    # managed (PEP 668); this is a throwaway container, so system-wide is fine.
     # go-sdk, cli: 'go run' handles deps automatically.
-    command: >
-      sh -c '
-        npm ci --prefix compat/suites/node-js-sdk --silent &&
-        pip install --quiet -r compat/suites/python-sdk/requirements.txt &&
-        if [ -n "$$OVERCAST_COMPAT_SUITE" ]; then
-          go run ./cmd/compat \
-            --endpoint http://overcast:4566 \
-            --format ${OVERCAST_COMPAT_FORMAT:-pretty} \
-            --suite "$$OVERCAST_COMPAT_SUITE";
-        else
-          go run ./cmd/compat \
-            --endpoint http://overcast:4566 \
-            --format ${OVERCAST_COMPAT_FORMAT:-pretty};
-        fi
-      '
+    #
+    # A suite whose dependencies fail to install must not abort the run — it
+    # reports as a failing suite, which is the honest result.
+    command:
+      - sh
+      - -c
+      - >
+        sudo -n chown vscode:vscode compat/suites/node-js-sdk/node_modules compat/suites/cdk/node_modules;
+        if [ -z "$$(ls -A compat/suites/node-js-sdk/node_modules)" ]; then npm ci --prefix compat/suites/node-js-sdk --silent; else npm install --prefix compat/suites/node-js-sdk --silent --no-audit --no-fund; fi || echo "compat: node-js-sdk dependencies failed to install" >&2;
+        pip install --break-system-packages --quiet -r compat/suites/python-sdk/requirements.txt || echo "compat: python-sdk dependencies failed to install" >&2;
+        exec go run ./cmd/compat --endpoint http://overcast:4566 --format "$${OVERCAST_COMPAT_FORMAT:-pretty}" $${OVERCAST_COMPAT_SUITE:+--suite "$$OVERCAST_COMPAT_SUITE"}
 
   # ── Compat dashboard (containerised) ──────────────────────────────────────
   # The only path to the dashboard that needs no host toolchain at all — not
@@ -115,21 +128,50 @@ services:
         target: /workspace
         consistency: cached
       - go-mod-cache:/home/vscode/go/pkg/mod
+      - go-build-cache:/home/vscode/.cache/go-build
+      # See the compat service above: node_modules must not be shared with the
+      # host, and the dashboard UI is built in here too.
+      - node-js-sdk-modules:/workspace/compat/suites/node-js-sdk/node_modules
+      - cdk-modules:/workspace/compat/suites/cdk/node_modules
+      - compat-ui-modules:/workspace/compat/ui/node_modules
+      # The UI build output is a volume too, so the container never writes into
+      # the host's working tree — Vite empties this directory on every build,
+      # and a container-written dist/ is unremovable from the host side (and
+      # vice versa) once the two disagree about ownership.
+      - compat-ui-dist:/workspace/compat/ui/dist
     environment:
       CGO_ENABLED: "0"
       OVERCAST_COMPAT_SKIP_DOCKER: ${OVERCAST_COMPAT_SKIP_DOCKER:-1}
     depends_on:
       overcast:
         condition: service_healthy
-    command: >
-      sh -c '
-        npm ci --prefix compat/suites/node-js-sdk --silent &&
-        pip install --quiet -r compat/suites/python-sdk/requirements.txt &&
-        go run ./cmd/compat
-          --endpoint http://overcast:4566
-          --serve --interactive --build-ui
-          --port :7777
-      '
+    # Same preparation as the compat service above (see its comment for why the
+    # chown and the npm ci/install split are there), plus compat/ui — which
+    # --build-ui installs and builds itself. Dependency installs are
+    # best-effort: a suite that cannot install still shows up in the dashboard
+    # as an errored suite, which is more useful than no dashboard at all.
+    command:
+      - sh
+      - -c
+      - >
+        sudo -n chown vscode:vscode compat/ui/node_modules compat/ui/dist compat/suites/node-js-sdk/node_modules compat/suites/cdk/node_modules;
+        touch compat/ui/dist/.gitkeep;
+        if [ -z "$$(ls -A compat/suites/node-js-sdk/node_modules)" ]; then npm ci --prefix compat/suites/node-js-sdk --silent; else npm install --prefix compat/suites/node-js-sdk --silent --no-audit --no-fund; fi || echo "compat: node-js-sdk dependencies failed to install" >&2;
+        pip install --break-system-packages --quiet -r compat/suites/python-sdk/requirements.txt || echo "compat: python-sdk dependencies failed to install" >&2;
+        exec go run ./cmd/compat --endpoint http://overcast:4566 --serve --interactive --build-ui --port :7777
+    # The first start compiles the CLI and builds the UI, so give it room; once
+    # the caches are warm a restart is seconds. `up --wait` blocks on this.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:7777/suites"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 300s
 
 volumes:
   go-mod-cache:
+  go-build-cache:
+  node-js-sdk-modules:
+  cdk-modules:
+  compat-ui-modules:
+  compat-ui-dist:

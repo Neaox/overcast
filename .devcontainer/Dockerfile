@@ -91,13 +91,28 @@ RUN groupadd --gid ${USER_GID} ${USERNAME} \
   && chmod 0440 /etc/sudoers.d/${USERNAME} \
   && rm -rf /var/lib/apt/lists/*
 
-# Pre-warm the Go module cache directory so the vscode user can write to it.
+# Pre-warm the Go cache directories so the vscode user can write to them.
 # The actual modules are downloaded by postCreateCommand in devcontainer.json.
+#
+# These must exist in the image, owned by the user, before anything mounts a
+# volume over them: Docker copies ownership from the image directory when it
+# initialises a named volume, and creates any missing parent as root:root.
+# Without this, mounting a module cache at ${GOPATH}/pkg/mod leaves
+# /home/vscode/go root-owned and every build fails with "permission denied"
+# — which is exactly what compat/docker-compose.yml used to hit. The paths
+# below must stay in step with the GOPATH set after USER.
 RUN mkdir -p /go/pkg/mod \
+             /home/${USERNAME}/go/pkg/mod \
+             /home/${USERNAME}/go/bin \
+             /home/${USERNAME}/.cache/go-build \
              /home/${USERNAME}/.config/opencode \
              /home/${USERNAME}/.config/gh \
              /home/${USERNAME}/.local/share/opencode \
-  && chown -R ${USERNAME}:${USERNAME} /go /home/${USERNAME}/.config /home/${USERNAME}/.local
+  && chown -R ${USERNAME}:${USERNAME} /go \
+             /home/${USERNAME}/go \
+             /home/${USERNAME}/.cache \
+             /home/${USERNAME}/.config \
+             /home/${USERNAME}/.local
 
 USER ${USERNAME}
 

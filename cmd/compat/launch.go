@@ -409,18 +409,27 @@ func waitForHealth(ctx context.Context, endpoint string, timeout time.Duration) 
 	}
 }
 
-// hasNodeModules reports whether a UI project's dependencies are installed.
-// An empty node_modules counts as missing: that is what a fresh volume mount
-// looks like, and skipping the install there fails later with a confusing
-// module-resolution error instead of a missing-directory one.
-func hasNodeModules(dir string) bool {
-	entries, err := os.ReadDir(filepath.Join(dir, "node_modules"))
-	return err == nil && len(entries) > 0
+// installUIDeps installs a UI project's dependencies. It runs even when
+// node_modules already exists: npm is a no-op when the tree is current, and a
+// tree installed on another platform — a repo shared between a Windows host
+// and a Linux container is the common case — resolves to native binaries this
+// machine cannot load. Reinstalling repairs that; skipping it produces a
+// MODULE_NOT_FOUND from deep inside the bundler instead.
+func installUIDeps(ctx context.Context, npm, dir string, logf func(format string, args ...any)) error {
+	logf("installing UI dependencies…")
+	install := exec.CommandContext(ctx, npm, "install", "--silent", "--no-audit", "--no-fund")
+	install.Dir = dir
+	install.Stdout = os.Stderr
+	install.Stderr = os.Stderr
+	if err := install.Run(); err != nil {
+		return fmt.Errorf("npm install in %s: %w", dir, err)
+	}
+	return nil
 }
 
-// buildDashboardUI runs the dashboard UI's production build, installing
-// dependencies first when they are missing. Used by --build-ui so the stable
-// (non-HMR) dashboard is a single command on every platform.
+// buildDashboardUI installs the dashboard UI's dependencies and runs its
+// production build. Used by --build-ui so the stable (non-HMR) dashboard is a
+// single command on every platform.
 func buildDashboardUI(ctx context.Context, dir string, logf func(format string, args ...any)) error {
 	if logf == nil {
 		logf = func(string, ...any) {}
@@ -429,15 +438,8 @@ func buildDashboardUI(ctx context.Context, dir string, logf func(format string, 
 	if err != nil {
 		return fmt.Errorf("npm not found on PATH — needed to build the dashboard UI")
 	}
-	if !hasNodeModules(dir) {
-		logf("installing UI dependencies (first run only)…")
-		install := exec.CommandContext(ctx, npm, "install", "--silent")
-		install.Dir = dir
-		install.Stdout = os.Stderr
-		install.Stderr = os.Stderr
-		if err := install.Run(); err != nil {
-			return fmt.Errorf("npm install in %s: %w", dir, err)
-		}
+	if err := installUIDeps(ctx, npm, dir, logf); err != nil {
+		return err
 	}
 	logf("building the dashboard UI…")
 	build := exec.CommandContext(ctx, npm, "run", "build", "--silent")
@@ -447,15 +449,9 @@ func buildDashboardUI(ctx context.Context, dir string, logf func(format string, 
 	if err := build.Run(); err != nil {
 		return fmt.Errorf("npm run build in %s: %w", dir, err)
 	}
-	// Vite's emptyOutDir wipes the committed dist/.gitkeep, and without it
-	// `//go:embed all:ui/dist` stops resolving on a fresh checkout. Put it
-	// back rather than leaving a deletion in everyone's working tree.
-	keep := filepath.Join(dir, "dist", ".gitkeep")
-	if _, err := os.Stat(keep); err != nil {
-		if err := os.WriteFile(keep, nil, 0o644); err != nil {
-			return fmt.Errorf("restore %s: %w", keep, err)
-		}
-	}
+	// The committed dist/.gitkeep that keeps `//go:embed all:ui/dist` resolving
+	// is restored by the build itself — see the keep-dist-placeholder plugin in
+	// compat/ui/vite.config.ts, which covers every way the UI gets built.
 	return nil
 }
 
@@ -473,8 +469,8 @@ type viteOptions struct {
 	Logf func(format string, args ...any)
 }
 
-// startViteDev installs dependencies if needed and runs the Vite dev server on
-// a free port, returning its URL. Used by --ui-dev / --dev for hot reloading.
+// startViteDev installs dependencies and runs the Vite dev server on a free
+// port, returning its URL. Used by --ui-dev / --dev for hot reloading.
 func startViteDev(ctx context.Context, opts viteOptions) (string, func(), error) {
 	logf := opts.Logf
 	if logf == nil {
@@ -487,15 +483,8 @@ func startViteDev(ctx context.Context, opts viteOptions) (string, func(), error)
 	if err != nil {
 		return "", nil, fmt.Errorf("npm not found on PATH — needed for the hot-reloading UI (use --serve without --ui-dev for the embedded UI)")
 	}
-	if _, err := os.Stat(filepath.Join(opts.Dir, "node_modules")); err != nil {
-		logf("installing UI dependencies (first run only)…")
-		install := exec.CommandContext(ctx, npm, "install", "--silent")
-		install.Dir = opts.Dir
-		install.Stdout = os.Stderr
-		install.Stderr = os.Stderr
-		if err := install.Run(); err != nil {
-			return "", nil, fmt.Errorf("npm install in %s: %w", opts.Dir, err)
-		}
+	if err := installUIDeps(ctx, npm, opts.Dir, logf); err != nil {
+		return "", nil, err
 	}
 
 	port, err := freePort(opts.PortBase)

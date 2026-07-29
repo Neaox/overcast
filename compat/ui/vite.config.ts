@@ -1,5 +1,6 @@
 import fs from "node:fs";
-import { defineConfig } from "vite";
+import path from "node:path";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
@@ -22,8 +23,23 @@ const apiPaths = [
   "/mcp",
 ];
 
+// dist/.gitkeep is committed so that `//go:embed all:ui/dist` resolves on a
+// fresh checkout, before the UI has ever been built. emptyOutDir deletes it on
+// every build, which leaves a deletion in the working tree of anyone who runs
+// one. Put it back as part of the build itself, so it holds no matter who
+// builds: npm directly, `--build-ui`, the Makefile, or CI.
+function keepDistPlaceholder(): Plugin {
+  return {
+    name: "keep-dist-placeholder",
+    closeBundle() {
+      const keep = path.join(__dirname, "dist", ".gitkeep");
+      if (!fs.existsSync(keep)) fs.writeFileSync(keep, "");
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), keepDistPlaceholder()],
   build: {
     outDir: "dist",
     emptyOutDir: true,

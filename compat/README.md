@@ -76,7 +76,17 @@ docker compose -f compat/docker-compose.yml up dashboard
 
 The second command serves the dashboard at `http://localhost:7777`; set
 `COMPAT_PORT` if that port is taken (a published container port is the one
-thing compat cannot pick for you).
+thing compat cannot pick for you). Add `--wait` to block until it is actually
+serving. A cold start — no image layers, no caches — takes about a minute;
+afterwards a restart is under ten seconds, because the Go module and build
+caches, the suites' `node_modules`, and the UI build all live in named volumes
+rather than in your working tree. `docker compose -f compat/docker-compose.yml
+down -v` discards those caches and returns you to a cold start.
+
+Suites that shell out to Docker (`java-sdk`, `dotnet-sdk`, `rust-sdk`, `cdk`)
+report as `error` in the containerised dashboard: there is no Docker daemon
+inside it. The rest — `node-js-sdk`, `python-sdk`, `go-sdk`, `cli` — run
+normally. Use a host entry point if you need the container-backed suites.
 
 ### Useful flags
 
