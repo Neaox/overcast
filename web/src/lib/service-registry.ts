@@ -639,8 +639,8 @@ export const SERVICES = {
     description: "Metrics, alarms & logs",
     dashboardCard: false,
     children: [
-      { to: "/cloudwatch", label: "Metrics" },
       { to: "/cloudwatch/logs", label: "Logs" },
+      { to: "/cloudwatch", label: "Metrics" },
     ],
   },
 
@@ -685,3 +685,31 @@ export const SERVICES = {
     letter: "IG",
   },
 } as const satisfies Record<string, ServiceEntry>
+
+// ── Route matching ─────────────────────────────────────────────────────────
+
+/**
+ * Whether `pathname` is owned by a service whose primary route is `to`.
+ * Segment-aware, and tolerant of the trailing slash a few entries carry, so
+ * "/ec2" never claims "/ec2-classic" and "/cloudformation/" still owns
+ * "/cloudformation".
+ */
+export function matchesRoute(pathname: string, to: string): boolean {
+  const base = to.replace(/\/+$/, "")
+  return pathname === base || pathname.startsWith(base + "/")
+}
+
+/** Routed entries, longest route first, so the most specific one matches. */
+const ROUTED_SERVICES = Object.values(SERVICES as Record<string, ServiceEntry>)
+  .filter((entry): entry is ServiceEntry & { to: string } => entry.to != null)
+  .sort((a, b) => b.to.length - a.to.length)
+
+/**
+ * The service that owns `pathname`, across the whole registry rather than the
+ * nav subset — dashboard-only services (KMS, SSM, STS) own their routes too.
+ * Undefined on the dashboard and on non-service pages (map, docs, metrics).
+ */
+export function findServiceForPathname(pathname: string): ServiceEntry | undefined {
+  if (pathname === "/") return undefined
+  return ROUTED_SERVICES.find((entry) => matchesRoute(pathname, entry.to))
+}

@@ -5,6 +5,7 @@ import { Header } from "./header/header"
 import { OfflineBanner } from "./offline-banner"
 import { ConnectionGate } from "./connection-gate"
 import { GlobalSearch, useGlobalSearchShortcut } from "./global-search"
+import { ServiceFavicon } from "./service-favicon"
 import { ConnectionStatusProvider } from "@/hooks/use-connection-status"
 import { FavouritesProvider } from "@/hooks/use-favourites"
 import { useEventStreamSubscription } from "@/hooks/use-event-stream"
@@ -17,15 +18,17 @@ interface AppShellProps {
 export function AppShell({ children }: AppShellProps) {
   return (
     <ConnectionStatusProvider>
-      <FavouritesProvider>
-        <SidebarCollapseProvider>
-          {/* Nothing behind the gate mounts — no SSE, no queries — until the
-              emulator has actually answered. */}
-          <ConnectionGate>
+      <ServiceFavicon />
+      <SidebarCollapseProvider>
+        {/* Nothing behind the gate mounts — no SSE, no queries — until the
+            emulator has actually answered. FavouritesProvider reads the
+            emulator's enabled services, so it belongs behind the gate too. */}
+        <ConnectionGate>
+          <FavouritesProvider>
             <AppShellInner>{children}</AppShellInner>
-          </ConnectionGate>
-        </SidebarCollapseProvider>
-      </FavouritesProvider>
+          </FavouritesProvider>
+        </ConnectionGate>
+      </SidebarCollapseProvider>
     </ConnectionStatusProvider>
   )
 }

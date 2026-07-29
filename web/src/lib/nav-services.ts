@@ -27,6 +27,7 @@ import {
   type SubNavChild,
   CATEGORY_LABELS,
   CATEGORY_ORDER,
+  matchesRoute,
 } from "./service-registry"
 
 export type { ServiceCategory, SubNavItem, SubNavGroup, SubNavChild }
@@ -85,7 +86,7 @@ export const ALL_SERVICES: ServiceDefinition[] = Object.values(
  */
 export function findServiceKeyForPathname(pathname: string): string | undefined {
   if (pathname === "/") return undefined
-  return ALL_SERVICES.filter((s) => pathname === s.to || pathname.startsWith(s.to + "/")).sort(
+  return ALL_SERVICES.filter((s) => matchesRoute(pathname, s.to)).sort(
     (a, b) => b.to.length - a.to.length,
   )[0]?.key
 }

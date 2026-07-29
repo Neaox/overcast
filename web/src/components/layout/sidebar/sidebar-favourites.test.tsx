@@ -15,6 +15,7 @@ function PinnedSidebar() {
         collapsed={false}
         pathname="/"
         isExpanded={() => false}
+        isEnabled={() => true}
         onToggleExpand={() => {}}
       />
     </FavouritesProvider>

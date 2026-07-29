@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useRouterState } from "@tanstack/react-router"
 import { cn } from "@/lib/utils"
 import { useFavourites } from "@/hooks/use-favourites"
+import { useServiceAvailability } from "@/hooks/use-service-availability"
 import { inboxMessagesQueryOptions } from "@/features/mail/data"
 import { useInboxReadState } from "@/features/mail/read-state"
 import { ALL_SERVICES, DASHBOARD_ITEM } from "@/lib/nav-services"
@@ -18,6 +19,7 @@ export function Sidebar() {
   const { collapsed, toggleCollapsed } = useSidebarCollapse()
   const [expanded, setExpanded] = useState<Record<string, boolean | undefined>>({})
   const { favourites } = useFavourites()
+  const { isEnabled } = useServiceAvailability()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const { data: inboxMessages = [] } = useQuery(inboxMessagesQueryOptions())
   const { unreadCount } = useInboxReadState(inboxMessages)
@@ -68,6 +70,7 @@ export function Sidebar() {
               item={currentService}
               collapsed={collapsed}
               pathname={pathname}
+              disabled={!isEnabled(currentService.to)}
               expanded={isExpanded(currentService.to)}
               onToggleExpand={toggleExpand}
             />
@@ -76,6 +79,7 @@ export function Sidebar() {
             collapsed={collapsed}
             pathname={pathname}
             isExpanded={isExpanded}
+            isEnabled={isEnabled}
             onToggleExpand={toggleExpand}
           />
         </SidebarSection>

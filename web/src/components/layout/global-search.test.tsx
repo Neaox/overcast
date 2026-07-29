@@ -103,24 +103,36 @@ describe("GlobalSearch mega menu", () => {
   it("shows an outline star on an unfavourited service without hovering the card", async () => {
     renderSearch()
 
-    const star = within(await findCard("S3")).getByRole("button", { name: "Pin S3 to sidebar" })
+    const star = within(await findCard("DynamoDB")).getByRole("button", {
+      name: "Pin DynamoDB to sidebar",
+    })
     expect(star.className).not.toMatch(/opacity-0|group-hover:opacity/)
   })
 
   it("renders the star as a sibling of the card's navigation target, not nested inside it", async () => {
     renderSearch()
 
-    const card = await findCard("S3")
-    expect(within(card).getByRole("button", { name: "S3" })).not.toContainElement(
-      within(card).getByRole("button", { name: "Pin S3 to sidebar" }),
+    const card = await findCard("DynamoDB")
+    expect(within(card).getByRole("button", { name: "DynamoDB" })).not.toContainElement(
+      within(card).getByRole("button", { name: "Pin DynamoDB to sidebar" }),
     )
   })
 
   it("pins a service to the sidebar when its star is clicked", async () => {
     const { user } = renderSearch()
 
-    const card = await findCard("S3")
-    await user.click(within(card).getByRole("button", { name: "Pin S3 to sidebar" }))
+    const card = await findCard("DynamoDB")
+    await user.click(within(card).getByRole("button", { name: "Pin DynamoDB to sidebar" }))
+
+    expect(
+      within(await findCard("DynamoDB")).getByRole("button", {
+        name: "Unpin DynamoDB from sidebar",
+      }),
+    ).toBeInTheDocument()
+  })
+
+  it("stars the enabled services on a narrowed run, so they match the sidebar's default pins", async () => {
+    renderSearch()
 
     expect(
       within(await findCard("S3")).getByRole("button", { name: "Unpin S3 from sidebar" }),

@@ -69,6 +69,8 @@ need it than accidentally ship a breaking change as a patch.
 
 ### Changed
 
+- **Web UI (tabs and sidebar)** — the browser tab now carries the icon of the service you are on, drawn from the same registry entry the sidebar renders and inked light or dark from the tab strip's colour scheme, so a wall of open Overcast tabs is readable at a glance; a run narrowed with `OVERCAST_SERVICES` starts with its enabled services pinned in the sidebar instead of an empty pinned list, and those defaults are only written to local storage once you actually pin, unpin, or reorder them; a pinned service that this run has switched off is dimmed rather than hidden and stays clickable, so its page can explain why it is disabled; and CloudWatch's sub-navigation lists Logs before Metrics.
+
 - **Build from source** — `git clone && go build ./...` now works with only the Go toolchain: the docs search index (`internal/docssearch/index.gen.go`, `web/src/docs-index.gen.ts`) is committed rather than generated on every build, and a committed `web/dist/.gitkeep` keeps `//go:embed all:web/dist` resolving before the SPA is built. A binary compiled without the SPA serves the API normally and returns an explanatory 503 (naming `make build-web`) on the web UI port instead of a bare 500; Docker and release builds are unaffected and still assert a real SPA.
 
 ### Fixed

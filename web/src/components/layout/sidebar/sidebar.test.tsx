@@ -14,7 +14,7 @@ import {
   SIDEBAR_COLLAPSED_WIDE_STORAGE_KEY,
   SidebarCollapseProvider,
 } from "../use-sidebar-collapse"
-import type { CapturedMessage } from "@/types"
+import type { CapturedMessage, HealthResponse } from "@/types"
 
 const messages: CapturedMessage[] = [
   {
@@ -36,10 +36,22 @@ const messages: CapturedMessage[] = [
   },
 ]
 
-function renderScreen(component: React.FC, { debug = false }: { debug?: boolean } = {}) {
+function renderScreen(
+  component: React.FC,
+  { debug = false, services }: { debug?: boolean; services?: string[] } = {},
+) {
   const queryClient = createTestQueryClient()
   queryClient.setQueryData(inboxMessagesQueryOptions().queryKey, messages)
   queryClient.setQueryData(serverInfoQueryOptions().queryKey, { debug })
+  if (services) {
+    queryClient.setQueryData(["health"], {
+      status: "ok",
+      timestamp: "2026-07-29T00:00:00Z",
+      version: "0.1.0-test",
+      services,
+      storage: { default: "memory" },
+    } satisfies HealthResponse)
+  }
 
   return renderWithRouter(component, { queryClient })
 }
@@ -151,6 +163,33 @@ describe("Sidebar debug navigation", () => {
     renderScreen(SidebarOnly, { debug: true })
 
     expect(await screen.findByRole("link", { name: "Debug" })).toBeInTheDocument()
+  })
+})
+
+describe("Sidebar service availability", () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it("pins the enabled services when the run is narrowed and nothing is pinned", async () => {
+    renderScreen(SidebarOnly, { services: ["s3", "sqs"] })
+
+    expect(await screen.findByRole("link", { name: "S3" })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "SQS" })).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "DynamoDB" })).not.toBeInTheDocument()
+  })
+
+  it("greys a pinned service the emulator has switched off, but keeps it clickable", async () => {
+    localStorage.setItem("overcast-favourites", JSON.stringify(["/s3", "/dynamodb"]))
+
+    renderScreen(SidebarOnly, { services: ["s3"] })
+
+    // The dimming must sit on the link, not the row: a pinned row carries an
+    // inline `opacity` from the drag sortable that would override the class.
+    const disabled = await screen.findByRole("link", { name: "DynamoDB" })
+    expect(disabled).toHaveClass("opacity-50")
+    expect(disabled).toHaveAttribute("title", "Disabled in this emulator run.")
+    expect(screen.getByRole("link", { name: "S3" })).not.toHaveClass("opacity-50")
   })
 })
 

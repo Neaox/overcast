@@ -3,6 +3,7 @@ import { ChevronDown, GripVertical, type LucideIcon } from "lucide-react"
 import type { DraggableAttributes, DraggableSyntheticListeners } from "@dnd-kit/core"
 import { cva } from "class-variance-authority"
 import { cn } from "@/lib/utils"
+import { DISABLED_HINT } from "@/hooks/use-service-availability"
 import type { SubNavChild } from "@/lib/nav-services"
 import { flatChildren } from "./nav-children"
 import { SidebarBadge } from "./sidebar-badge"
@@ -52,11 +53,24 @@ const rowVariants = cva(
  */
 const rowHitArea = "flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-[7px]"
 
+/**
+ * Switched off in this emulator run — dimmed, never blocked. It rides on the
+ * icon-and-label element rather than the row because a pinned row already
+ * carries an inline `opacity` from the drag sortable, which would win.
+ */
+const dimmed = "opacity-50"
+
 interface SidebarNavItemProps {
   item: SidebarNavEntry
   collapsed: boolean
   pathname: string
   tone?: "default" | "muted"
+  /**
+   * Service switched off by OVERCAST_SERVICES. Dimmed rather than removed —
+   * a pinned service should not vanish from the sidebar — and still a link,
+   * because its page explains that it is disabled.
+   */
+  disabled?: boolean
   expanded?: boolean
   onToggleExpand?: (key: string) => void
   badge?: { count: number; label: string }
@@ -68,6 +82,7 @@ export function SidebarNavItem({
   collapsed,
   pathname,
   tone = "default",
+  disabled = false,
   expanded = false,
   onToggleExpand,
   badge,
@@ -85,7 +100,7 @@ export function SidebarNavItem({
     const target = children?.length ? flatChildren(children)[0].to : to
     return (
       <SidebarTooltip label={label}>
-        <Link to={target} className={rowCls} aria-label={label}>
+        <Link to={target} className={cn(rowCls, disabled && dimmed)} aria-label={label}>
           <Icon className={iconCls} />
           {badgeNode}
         </Link>
@@ -109,7 +124,8 @@ export function SidebarNavItem({
               event.stopPropagation()
               onToggleExpand?.(to)
             }}
-            className={cn(rowHitArea, "text-left")}
+            className={cn(rowHitArea, "text-left", disabled && dimmed)}
+            title={disabled ? DISABLED_HINT : undefined}
             aria-expanded={expanded}
           >
             <Icon className={iconCls} />
@@ -133,7 +149,12 @@ export function SidebarNavItem({
       {...sortable?.listeners}
     >
       {sortable && <SidebarGrip />}
-      <Link to={to} className={rowHitArea} draggable={false}>
+      <Link
+        to={to}
+        className={cn(rowHitArea, disabled && dimmed)}
+        title={disabled ? DISABLED_HINT : undefined}
+        draggable={false}
+      >
         <Icon className={iconCls} />
         <span className="truncate">{label}</span>
         {badgeNode}

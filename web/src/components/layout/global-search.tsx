@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useNavigate, useRouterState } from "@tanstack/react-router"
-import { queryOptions, useQuery } from "@tanstack/react-query"
 import {
   Search,
   Star,
@@ -17,6 +16,7 @@ import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import { useFavourites } from "@/hooks/use-favourites"
 import { useSearch } from "@/hooks/use-search"
+import { DISABLED_HINT, useServiceAvailability } from "@/hooks/use-service-availability"
 import {
   ALL_SERVICES,
   CATEGORY_LABELS,
@@ -24,11 +24,9 @@ import {
   findServiceKeyForPathname,
   type ServiceDefinition,
 } from "@/lib/nav-services"
-import { SERVICES, type ServiceEntry } from "@/lib/service-registry"
 import { matchesQuery, orderGroupsByActiveService, type SearchResult } from "@/lib/search"
 import { CATALOG, type CatalogEntry } from "@/lib/unsupported-services"
 import { Tooltip } from "@/components/ui/tooltip"
-import { health } from "@/services/api"
 
 // ─── Star toggle variants ──────────────────────────────────────────────────
 
@@ -65,40 +63,6 @@ const iconTileVariants = cva(
 )
 
 // ─── Service availability ──────────────────────────────────────────────────
-
-const DISABLED_HINT = "Disabled in this emulator run."
-
-/** Registry key (the name the emulator reports in /_health) by route path. */
-const REGISTRY_NAME_BY_ROUTE = new Map<string, string>(
-  Object.entries(SERVICES as Record<string, ServiceEntry>).flatMap(([name, entry]) =>
-    entry.to ? [[entry.to, name] as const] : [],
-  ),
-)
-
-/** Shares the dashboard's cache entry so both surfaces agree on availability. */
-const healthQueryOptions = queryOptions({
-  queryKey: ["health"],
-  queryFn: () => health.check(),
-  staleTime: 30_000,
-  retry: 2,
-})
-
-/**
- * Availability is the emulator's enabled/disabled list and nothing else.
- * Emulation tier is deliberately ignored: a live service whose tier entry is
- * missing reports "stub", and greying on that would hide working services.
- */
-function useServiceEnabled(): (service: ServiceDefinition) => boolean {
-  const { data } = useQuery(healthQueryOptions)
-  return useCallback(
-    (service: ServiceDefinition) => {
-      if (!data) return true
-      const name = REGISTRY_NAME_BY_ROUTE.get(service.to)
-      return name === undefined || data.services.includes(name)
-    },
-    [data],
-  )
-}
 
 /** Sized to the description line it replaces so disabled cards stay the same height. */
 function DisabledPill() {
@@ -211,7 +175,7 @@ function ServiceCard({
 
 function MegaMenu({ onSelectService }: { onSelectService: (service: ServiceDefinition) => void }) {
   const { isFavourite, recentServices, toggleFavourite } = useFavourites()
-  const isEnabled = useServiceEnabled()
+  const { isEnabled } = useServiceAvailability()
 
   function handleToggleFavourite(key: string, e: React.MouseEvent) {
     e.stopPropagation()
@@ -223,7 +187,7 @@ function MegaMenu({ onSelectService }: { onSelectService: (service: ServiceDefin
       <ServiceCard
         key={s.key}
         service={s}
-        enabled={isEnabled(s)}
+        enabled={isEnabled(s.to)}
         isFavourite={isFavourite(s.key)}
         onToggleFavourite={handleToggleFavourite}
         onSelect={onSelectService}
@@ -397,7 +361,7 @@ function SearchResults({
   onSelectCatalogEntry: (id: string) => void
 }) {
   const { isFavourite, toggleFavourite } = useFavourites()
-  const isEnabled = useServiceEnabled()
+  const { isEnabled } = useServiceAvailability()
 
   // Matching services, with the current route's service promoted to the front.
   const matchedServices = ALL_SERVICES.filter((s) =>
@@ -448,7 +412,7 @@ function SearchResults({
             {matchedServices.map((s) => {
               const Icon = s.icon
               const isFav = isFavourite(s.key)
-              const enabled = isEnabled(s)
+              const enabled = isEnabled(s.to)
               return (
                 <button
                   key={s.key}
