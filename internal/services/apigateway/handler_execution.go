@@ -440,8 +440,8 @@ func (h *Handler) executeV2LambdaProxy(
 			StageVariables:        stageVars,
 			Cookies:               cookies,
 			RequestContext: v2RequestContext{
-				AccountID:    h.accountID(),
-				APIID:        api.ApiID,
+				AccountID: h.accountID(),
+				APIID:     api.ApiID,
 				// Folded: a Host is case-insensitive, so the domain reported to
 				// handler code must not vary with how the caller typed it.
 				DomainName:   serviceutil.FoldHostname(r.Host),
@@ -676,7 +676,6 @@ func requestProtocol(r *http.Request) string {
 	}
 	return "HTTP/1.1"
 }
-
 
 // lambdaProxyResponse is the unified response format from Lambda proxy integration.
 type lambdaProxyResponse struct {

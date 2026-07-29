@@ -187,8 +187,8 @@ func (h *Handler) buildFunctionURLEvent(r *http.Request, rawPath, urlID string) 
 		Headers:               headers,
 		QueryStringParameters: queryParams,
 		RequestContext: functionURLRequestContext{
-			AccountID:    h.accountID(),
-			APIID:        urlID,
+			AccountID: h.accountID(),
+			APIID:     urlID,
 			// Folded: a Host is case-insensitive, so the domain reported to
 			// handler code must not vary with how the caller typed it.
 			DomainName:   serviceutil.FoldHostname(r.Host),
