@@ -37,8 +37,9 @@ export function ConnectionToast() {
 
   useReconnectedToast(isOnline, host)
 
-  // `null` is the pre-answer render, which belongs to the connection gate's
-  // cold-boot screen; this toast is only ever about losing a live connection.
+  // `null` is a stream that is still opening — the pre-answer render and the
+  // SSE handshake behind the connection gate's cold-boot screen. This toast is
+  // only ever about a connection that stopped delivering.
   if (isOnline !== false || !dockFooter) return null
 
   return createPortal(<ReconnectingToast host={host} />, dockFooter)
@@ -53,7 +54,9 @@ export function ConnectionToast() {
  * or the cache it was showing five minutes ago.
  *
  * Only a return is announced. The first connection of a session is the
- * connecting screen's business, so `null → true` stays quiet.
+ * connecting screen's business, so `null → true` stays quiet — which is why
+ * "still opening" has to reach here as `null` and not as `false`; see
+ * `connectionOf` in use-connection-status.
  */
 function useReconnectedToast(isOnline: boolean | null, host: string): void {
   const { toast } = useToast()
@@ -100,6 +103,9 @@ function ReconnectingToast({ host }: { host: string }) {
             than showing the outgoing one's last value for up to a second. */}
         <RetrySchedule key={String(nextAttemptAt)} attempt={attempt} dueAt={nextAttemptAt} />
 
+        {/* There is always a stamp to show — the card is only ever up because
+            a live connection dropped, and the open before it recorded one. The
+            other arm is for a state the worker should not be able to report. */}
         <p aria-hidden className="truncate text-[11px] text-fg-subtle">
           {lastConnectedAt
             ? `Cached at ${formatTimeOfDay(lastConnectedAt)} · writes paused`
