@@ -811,6 +811,10 @@ func (o *Orchestrator) Report() *RunReport {
 		case StatusUnimplemented:
 			gr.Unimplemented++
 			sr.Unimplemented++
+		case StatusNA:
+			// no-op: the SDK has no API for this operation, so it is neither a
+			// pass nor a gap. Listed in the group's tests but excluded from
+			// every count, matching the batch runner's aggregation.
 		}
 	}
 	return report

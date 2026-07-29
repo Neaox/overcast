@@ -85,6 +85,33 @@ func TestReportAggregatesResultsBySuiteAndGroup(t *testing.T) {
 	}
 }
 
+func TestReportExcludesNAFromCounts(t *testing.T) {
+	// Given: a group where the SDK exposes no API for one operation
+	o := newTestOrchestrator(t)
+	seedResults(o,
+		TestResultEvent{Suite: "rust-sdk", Service: "s3", Group: "s3-crud", Test: "CreateBucket", Status: StatusPass},
+		TestResultEvent{Suite: "rust-sdk", Service: "s3", Group: "s3-crud", Test: "PutBucketAcl", Status: StatusNA},
+	)
+
+	// When: the report is built
+	report := o.Report()
+
+	// Then: the N/A result is listed but counted nowhere — it is neither an
+	// Overcast gap nor a suite gap, and must not move the pass rate. This
+	// matches how the batch runner aggregates.
+	sr := report.Suites[0]
+	if sr.Passed != 1 {
+		t.Errorf("Passed = %d, want 1", sr.Passed)
+	}
+	if total := sr.Failed + sr.Skipped + sr.Unimplemented; total != 0 {
+		t.Errorf("N/A leaked into the counts: failed=%d skipped=%d unimplemented=%d",
+			sr.Failed, sr.Skipped, sr.Unimplemented)
+	}
+	if len(sr.Groups[0].Tests) != 2 {
+		t.Errorf("group lists %d tests, want both including the N/A one", len(sr.Groups[0].Tests))
+	}
+}
+
 func TestReportIsStableAcrossCalls(t *testing.T) {
 	// Given: results that arrived in arbitrary map order
 	o := newTestOrchestrator(t)
