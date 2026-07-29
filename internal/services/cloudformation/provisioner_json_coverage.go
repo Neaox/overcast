@@ -79,6 +79,7 @@ func (h *ecrRepositoryHandler) Create(ctx context.Context, router http.Handler, 
 	var resp struct {
 		Repository struct {
 			RepositoryArn string `json:"repositoryArn"`
+			RepositoryUri string `json:"repositoryUri"`
 		} `json:"repository"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
@@ -90,9 +91,21 @@ func (h *ecrRepositoryHandler) Create(ctx context.Context, router http.Handler, 
 		arn = fmt.Sprintf("arn:aws:ecr:%s:%s:repository/%s", rCtx.Region, rCtx.AccountID, name)
 	}
 
+	// RepositoryUri comes from the CreateRepository response rather than being
+	// rebuilt here. ECR mints it on the address its registry is actually
+	// listening on (see Service.registryEndpoint); synthesising
+	// "{account}.dkr.ecr.{region}.amazonaws.com/{name}" instead meant
+	// Fn::GetAtt RepositoryUri handed stacks a registry no `docker push` in
+	// this environment can reach, while `aws ecr describe-repositories` on the
+	// same repository returned the working one.
+	uri := resp.Repository.RepositoryUri
+	if uri == "" {
+		uri = fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com/%s", rCtx.AccountID, rCtx.Region, name)
+	}
+
 	attrs := map[string]string{
 		"Arn":            arn,
-		"RepositoryUri":  fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com/%s", rCtx.AccountID, rCtx.Region, name),
+		"RepositoryUri":  uri,
 		"RepositoryName": name,
 	}
 	return arn, attrs, nil

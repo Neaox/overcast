@@ -52,6 +52,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { useToast } from "@/components/ui/toast"
+import { restInvokeUrl } from "@/features/apigateway/invoke-url"
 import { formatDate } from "@/lib/format"
 import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
@@ -261,11 +262,7 @@ export function RestApiDetail({ apiId }: Props) {
   const firstStage = stages[0]?.stageName
 
   function buildInvokeUrl(path: string): string {
-    const base = endpoint.baseUrl.replace(/\/$/, "")
-    if (firstStage) {
-      return `${base}/restapis/${apiId}/${firstStage}/_user_request_${path}`
-    }
-    return `${base}/restapis/${apiId}/_user_request_${path}`
+    return restInvokeUrl(endpoint, apiId, firstStage, path)
   }
 
   async function sendTestRequest() {

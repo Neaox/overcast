@@ -227,7 +227,7 @@ func (h *Handler) CreateGraphqlApi(w http.ResponseWriter, r *http.Request) {
 		api.IntrospectionConfig = "ENABLED"
 	}
 
-	api.Uris = localGraphQLURIs(serviceutil.ClientBaseURL(h.cfg, r), apiID)
+	api.Uris = localGraphQLURIs(serviceutil.ClientBaseURL(h.cfg, r), apiID, h.region(r))
 	api.Dns = map[string]string{
 		"GRAPHQL":  h.graphQLDNS(r, apiID),
 		"REALTIME": h.graphQLDNS(r, apiID),
@@ -254,7 +254,7 @@ func (h *Handler) CreateGraphqlApi(w http.ResponseWriter, r *http.Request) {
 
 	h.publish(r, events.AppSyncAPICreated, events.ResourcePayload{Name: api.Name})
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"graphqlApi": api.withLocalURIs(serviceutil.ClientBaseURL(h.cfg, r))})
+	writeJSON(w, r, http.StatusOK, map[string]any{"graphqlApi": api.withLocalURIs(serviceutil.ClientBaseURL(h.cfg, r), h.region(r))})
 }
 
 // ─── GetGraphqlApi ───────────────────────────────────────────────────────────
@@ -265,7 +265,7 @@ func (h *Handler) GetGraphqlApi(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"graphqlApi": api.withLocalURIs(serviceutil.ClientBaseURL(h.cfg, r))})
+	writeJSON(w, r, http.StatusOK, map[string]any{"graphqlApi": api.withLocalURIs(serviceutil.ClientBaseURL(h.cfg, r), h.region(r))})
 }
 
 // ─── ListGraphqlApis ─────────────────────────────────────────────────────────
@@ -299,7 +299,7 @@ func (h *Handler) ListGraphqlApis(w http.ResponseWriter, r *http.Request) {
 		if owner == "OTHER_ACCOUNTS" && api.Owner == h.cfg.AccountID {
 			continue
 		}
-		filtered = append(filtered, api.withLocalURIs(baseURL))
+		filtered = append(filtered, api.withLocalURIs(baseURL, h.region(r)))
 	}
 	writeListJSON(w, r, "graphqlApis", filtered)
 }
@@ -351,7 +351,7 @@ func (h *Handler) UpdateGraphqlApi(w http.ResponseWriter, r *http.Request) {
 
 	h.publish(r, events.AppSyncAPIUpdated, events.ResourcePayload{Name: update.Name, ARN: update.ARN})
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"graphqlApi": update.withLocalURIs(serviceutil.ClientBaseURL(h.cfg, r))})
+	writeJSON(w, r, http.StatusOK, map[string]any{"graphqlApi": update.withLocalURIs(serviceutil.ClientBaseURL(h.cfg, r), h.region(r))})
 }
 
 // ─── DeleteGraphqlApi ────────────────────────────────────────────────────────
@@ -401,10 +401,38 @@ func (h *Handler) graphQLDNSFromBase(baseURL, apiID, region string) string {
 	return serviceutil.HostRoutedHostnameFromBase(baseURL, middleware.LabelAppSyncAPI, apiID, region)
 }
 
-func localGraphQLURIs(baseURL, apiID string) map[string]string {
+// localGraphQLURIs mints the executable GraphQL and realtime endpoints, in the
+// canonical AWS host-routed shape wherever the base can carry a subdomain:
+//
+//	http://{apiId}.appsync-api.{region}.{host}:{port}/graphql
+//	ws://{apiId}.appsync-api.{region}.{host}:{port}/realtime
+//
+// That is the shape every AWS client expects and the one CloudFormation's
+// Fn::GetAtt GraphQLUrl hands on to stacks. It was unconditionally path-style
+// ({base}/_appsync/{apiId}/graphql) — a URL only Overcast understands — on the
+// grounds that *.localhost does not resolve on Windows or macOS. That is true
+// of a bare localhost base and false of every wildcard-DNS domain, so the
+// choice belongs to serviceutil.SupportsHostRouting rather than to the whole
+// service: an OVERCAST_HOSTNAME deployment gets the AWS shape, and a bare
+// localhost one keeps the URL that resolves there.
+//
+// Both forms stay served either way, so nothing already holding a path-style
+// URI breaks. See docs/plans/host-routing-precedence.md §8.
+//
+// REALTIME shares the appsync-api label with GRAPHQL for the same reason
+// dns.REALTIME does — see graphQLDNS.
+func localGraphQLURIs(baseURL, apiID, region string) map[string]string {
+	if !serviceutil.SupportsHostRouting(baseURL) {
+		return map[string]string{
+			"GRAPHQL":  fmt.Sprintf("%s/_appsync/%s/graphql", baseURL, apiID),
+			"REALTIME": fmt.Sprintf("%s/_appsync/%s/realtime", websocketBaseURL(baseURL), apiID),
+		}
+	}
 	return map[string]string{
-		"GRAPHQL":  fmt.Sprintf("%s/_appsync/%s/graphql", baseURL, apiID),
-		"REALTIME": fmt.Sprintf("%s/_appsync/%s/realtime", websocketBaseURL(baseURL), apiID),
+		"GRAPHQL": serviceutil.HostRoutedURLFromBase(
+			baseURL, middleware.LabelAppSyncAPI, apiID, region, "/graphql"),
+		"REALTIME": serviceutil.HostRoutedURLFromBase(
+			websocketBaseURL(baseURL), middleware.LabelAppSyncAPI, apiID, region, "/realtime"),
 	}
 }
 
@@ -418,12 +446,12 @@ func websocketBaseURL(baseURL string) string {
 	return baseURL
 }
 
-func (api *GraphqlAPI) withLocalURIs(baseURL string) *GraphqlAPI {
+func (api *GraphqlAPI) withLocalURIs(baseURL, region string) *GraphqlAPI {
 	if api == nil {
 		return nil
 	}
 	out := *api
-	out.Uris = localGraphQLURIs(baseURL, api.ApiId)
+	out.Uris = localGraphQLURIs(baseURL, api.ApiId, region)
 	if api.Dns != nil {
 		out.Dns = make(map[string]string, len(api.Dns))
 		for k, v := range api.Dns {

@@ -546,10 +546,72 @@ http://{id}.{label}.{region}.{OVERCAST_HOSTNAME}:{port}/{stage}/
 | --- | --- | --- |
 | Lambda `FunctionUrl` | `{urlId}.lambda-url.{region}.{host}:{port}/` ✅ | unchanged — this is the reference implementation |
 | API Gateway v2 `apiEndpoint` | **never populated** — field omitted by `v2APIToResponse` ([handler_http.go:604](../../internal/services/apigateway/handler_http.go)), so CFN `Fn::GetAtt ApiEndpoint` yields `""` | `http://{apiId}.execute-api.{region}.{host}:{port}` |
-| API Gateway v1 | no invoke-URL field | unchanged — real AWS has none either; the console composes it client-side |
-| AppSync `uris.GRAPHQL` | path-style `{base}/_appsync/{apiId}/graphql` | `http://{apiId}.appsync-api.{region}.{host}:{port}/graphql` |
+| API Gateway v1 | no invoke-URL field | unchanged on the wire — real AWS has none either; the console composes it client-side, and must compose the host-routed form (see §8.1) |
+| AppSync `uris.GRAPHQL` | path-style `{base}/_appsync/{apiId}/graphql` | `http://{apiId}.appsync-api.{region}.{host}:{port}/graphql` **when the base can carry a subdomain** — see §8.1 |
 | AppSync `dns.GRAPHQL` / `dns.REALTIME` | hardcoded `amazonaws.com` ([handler.go:232](../../internal/services/appsync/handler.go)) | the configured base |
+| AppSync `appsyncDomainName` | hardcoded `d-{hex}.appsync-api.{region}.amazonaws.com` ([handler_config.go](../../internal/services/appsync/handler_config.go)) | the configured base |
+| ECR `Fn::GetAtt RepositoryUri` | rebuilt as `{account}.dkr.ecr.{region}.amazonaws.com/{name}` ([provisioner_json_coverage.go](../../internal/services/cloudformation/provisioner_json_coverage.go)), diverging from the `repositoryUri` ECR itself returns | read the value off the CreateRepository response |
+| S3 `Fn::GetAtt DomainName` / `RegionalDomainName` | hardcoded `{bucket}.s3[.{region}].amazonaws.com` ([provisioner.go](../../internal/services/cloudformation/provisioner.go)) | `{bucket}.s3[.{region}].{host}` — a portless hostname; see §8.2 |
 | `AWS::URLSuffix` | `amazonaws.com` ([template.go:357](../../internal/services/cloudformation/template.go)) | see hazard below |
+
+### 8.1 The gate: minting host-routed is not unconditional
+
+`uris.GRAPHQL` was left path-style on purpose, and the reasoning was sound as
+far as it went: the host-routed form needs `*.{base}` to resolve, and
+`*.localhost` does not on Windows or macOS, so on a default install the AWS
+shape is a URL the caller cannot dial. Advertising one is worse than the shape
+difference.
+
+But that is a property of the *base*, not of the service. On any domain in
+`config.WildcardDNSDomains` — or any multi-label `OVERCAST_HOSTNAME`, which is
+the operator asserting their own name resolves — every subdomain resolves and
+the path-style form buys nothing. So the choice belongs to one predicate:
+
+```go
+func SupportsHostRouting(baseURL string) bool  // internal/serviceutil/request.go
+```
+
+False for an IP literal and for a single-label host (`localhost`, a Docker
+service alias); true otherwise. `web/src/lib/host-routed-url.ts` states the
+same rule for the console, and `TestSupportsHostRouting_coversEveryWildcardDomain`
+fails if a domain is added to `WildcardDNSDomains` that the gate would reject.
+
+It applies **only** to fields with a path-style alternative Overcast also
+serves — AppSync's `uris`, and the console's REST v1 invoke URLs. Fields with
+no fallback (`FunctionUrl`, `apiEndpoint`, `dns.*`, `appsyncDomainName`) stay
+host-routed unconditionally, because there is nothing to degrade to.
+
+### 8.2 The portless-hostname case, and what it took to close
+
+S3's `Fn::GetAtt DomainName` / `RegionalDomainName` were the hard case, and
+were carried as an open gap here until #377 closed them. Overcast has always
+served `{bucket}.s3.{base}` (see §4), so the grammar existed — but these
+attributes are *bare hostnames with no port*, and Overcast is not on 443, so
+re-minting them looked like trading a name that does not resolve for one that
+resolves and then fails to connect.
+
+What made it tractable is that the only consumer that matters never dials the
+name over the network. CDK wires an S3 origin into a CloudFront distribution by
+`Fn::GetAtt`-ing `RegionalDomainName`, and #377 taught CloudFront's origin
+resolution to classify any endpoint this emulator serves and dial it locally
+with the origin's own Host preserved. The port comes from the local dial, not
+from the attribute, so the portless name is sufficient — and the previous
+`amazonaws.com` value was actively harmful, pointing the distribution at the
+real AWS bucket of that name rather than the one the same stack had created.
+
+Both are now minted through `serviceutil.HostRoutedHostnameFromBase`
+([provisioner.go](../../internal/services/cloudformation/provisioner.go)), so
+they cannot drift from what `HostClassifier` resolves.
+
+### 8.3 Known gaps, deliberately not closed
+
+- **ECR `repositoryUri`** names Overcast's own registry (`{host}:{registryPort}`)
+  rather than the `dkr.ecr` grammar. That is correct and deliberate: `docker
+  push` needs a real registry, and `dkr`/`ecr` are not host-route labels. The
+  CloudFormation `Fn::GetAtt RepositoryUri` now reads that value rather than
+  rebuilding an `amazonaws.com` one, so the two agree.
+- **EKS `endpoint`** is the placeholder `https://{name}.mock.eks.local`. No
+  control plane is emulated, so there is nothing to point at.
 
 ### One helper, shared with the router
 

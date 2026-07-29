@@ -390,6 +390,36 @@ func HostRoutedURLFromBase(baseURL, label, id, region, path string) string {
 	return u.String()
 }
 
+// SupportsHostRouting reports whether a host-routed URL minted on baseURL would
+// actually resolve for the client holding it.
+//
+// Host routing needs the base to carry an arbitrary subdomain. An IP literal
+// cannot, and a bare single-label name — "localhost", a Docker service alias —
+// only resolves under wildcard DNS that Windows and macOS do not provide for
+// *.localhost. Every public domain in config.WildcardDNSDomains is multi-label
+// and so passes, as does any multi-label OVERCAST_HOSTNAME an operator set,
+// which is the operator asserting that their own name resolves.
+//
+// It is the gate for the fields that have a path-style alternative Overcast
+// also serves (AppSync's uris; the console's REST v1 invoke URLs), so those
+// degrade to a URL that works rather than advertising one that will not
+// resolve. Fields with no path-style form — Lambda FunctionUrl, API Gateway v2
+// apiEndpoint — are host-routed unconditionally, because there is nothing to
+// fall back to.
+//
+// web/src/lib/host-routed-url.ts states the same rule for the console.
+func SupportsHostRouting(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	hostname := u.Hostname()
+	if net.ParseIP(hostname) != nil {
+		return false
+	}
+	return strings.Contains(hostname, ".")
+}
+
 // HostRoutedHostname is HostRoutedURL reduced to the bare DNS name, with no
 // scheme, port or path — the shape AWS uses for fields that carry a hostname
 // rather than a URL, such as AppSync's GraphqlApi.dns map.
