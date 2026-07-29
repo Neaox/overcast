@@ -77,13 +77,30 @@ import {
   RouterProvider,
 } from "@tanstack/react-router"
 import { render as rtlRender, type RenderOptions, type RenderResult } from "@testing-library/react"
-import userEvent from "@testing-library/user-event"
+import userEventDefault from "@testing-library/user-event"
+import { advanceTimers } from "@/test/fake-timers"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { ToastContextProvider } from "@/components/ui/toast"
 
 // Re-export everything from RTL so tests only need one import.
 export * from "@testing-library/react"
-export { userEvent }
+
+// Deliberately a `const` and not `export { userEvent }`.
+//
+// The `renderWithRouter` docblock below spells out `vi.mock("@tanstack/react-router")`
+// as the thing *not* to do. Vitest decides whether to run its mock-hoisting
+// transform by looking for the substring `vi.mock(` in the raw source, so that
+// prose — comment or not — opts this module into hoisting. The rewrite moves
+// the `vi.mock` calls it expects above the imports, and a re-exported *import
+// binding* then gets read before its `__vite_ssr_import__` is initialised. The
+// generated getter wraps that read in `try {} catch {}`, so the ReferenceError
+// is swallowed and importers silently receive `undefined` — while `export *`
+// re-exports (`screen`, `fireEvent`, …) keep working, which makes it look like
+// a user-event interop problem rather than a transform artefact.
+//
+// A local binding is immune, because the hoisted code still initialises it.
+// `render-exports.test.ts` guards this.
+export const userEvent = userEventDefault
 
 // ─── QueryClient factory ──────────────────────────────────────────────────
 
@@ -153,7 +170,7 @@ export function render(
 
   return {
     ...result,
-    user: userEvent.setup(),
+    user: userEvent.setup({ advanceTimers }),
     queryClient,
   }
 }
@@ -265,7 +282,7 @@ export function renderWithRouter(
 
   return {
     ...result,
-    user: userEvent.setup(),
+    user: userEvent.setup({ advanceTimers }),
     queryClient,
     router,
   }

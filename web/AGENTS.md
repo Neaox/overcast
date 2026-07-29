@@ -293,6 +293,32 @@ it("submits the form", async () => {
 })
 ```
 
+### Fake timers — use `useFakeTimers()` from `@/test/fake-timers`
+
+Never call `vi.useFakeTimers()` directly in a block that also awaits `user.*`, `findBy*`, or
+`waitFor`. Testing Library only recognises **jest**'s fake clock, so under a bare
+`vi.useFakeTimers()` it believes timers are real and waits on a frozen clock that nothing
+advances — the test hangs until the 5s timeout instead of failing an assertion.
+
+```ts
+import { useFakeTimers } from "@/test/fake-timers"
+
+describe("retry affordance", () => {
+  useFakeTimers()   // ✅ installs the fake clock *and* the bridge Testing Library needs
+
+  it("withdraws the chip when retried", async () => {
+    const { user } = render(<ConnectingScreen host="localhost:4566" onRetry={() => {}} />)
+    act(() => { vi.advanceTimersByTime(RETRY_AFTER_MS) })
+    await user.click(screen.getByRole("button", { name: "Retry connecting" }))
+    expect(screen.queryByRole("button", { name: "Retry connecting" })).not.toBeInTheDocument()
+  })
+})
+```
+
+It also restores real timers afterwards, so no `afterEach` of your own is needed. Prefer it
+over shortening a component's delay via a prop: a real-time window, however small, is a race
+under parallel load.
+
 ### Query selectors — prefer semantic roles
 
 ```ts
