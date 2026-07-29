@@ -12,11 +12,15 @@
 
 COMPOSE = docker compose -f docker-compose.yml
 
-.PHONY: run json ci build clean dev ui baseline-check baseline-update baseline-lint
+.PHONY: run json ci build clean dev serve ui baseline-check baseline-update baseline-lint
 
-## dev — build UI + binary, start Overcast if needed, open dashboard in browser
+## dev — dashboard with a hot-reloading UI, on free ports, opened in a browser
 dev:
-	@bash dev.sh
+	go run ../cmd/compat --dev
+
+## serve — dashboard with a pre-built UI, on free ports, opened in a browser
+serve:
+	go run ../cmd/compat --serve --interactive --build-ui --open
 
 ## ui — (re)build the compat UI only
 ui:

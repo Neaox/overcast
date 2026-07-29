@@ -95,5 +95,41 @@ services:
         fi
       '
 
+  # ── Compat dashboard (containerised) ──────────────────────────────────────
+  # The only path to the dashboard that needs no host toolchain at all — not
+  # Go, not Node. Start it with:
+  #   docker compose -f compat/docker-compose.yml up dashboard
+  # then open http://localhost:${COMPAT_PORT:-7777}. Tests run on demand from
+  # the dashboard. The published port is the one thing compose cannot pick for
+  # you: set COMPAT_PORT if 7777 is taken.
+  dashboard:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    working_dir: /workspace
+    ports:
+      - "${COMPAT_PORT:-7777}:7777"
+    volumes:
+      - type: bind
+        source: ..
+        target: /workspace
+        consistency: cached
+      - go-mod-cache:/home/vscode/go/pkg/mod
+    environment:
+      CGO_ENABLED: "0"
+      OVERCAST_COMPAT_SKIP_DOCKER: ${OVERCAST_COMPAT_SKIP_DOCKER:-1}
+    depends_on:
+      overcast:
+        condition: service_healthy
+    command: >
+      sh -c '
+        npm ci --prefix compat/suites/node-js-sdk --silent &&
+        pip install --quiet -r compat/suites/python-sdk/requirements.txt &&
+        go run ./cmd/compat
+          --endpoint http://overcast:4566
+          --serve --interactive --build-ui
+          --port :7777
+      '
+
 volumes:
   go-mod-cache:

@@ -49,6 +49,30 @@ and reconsider the approach.
 
 ---
 
+## Running a session — ports are chosen, never assumed
+
+`cmd/compat` manages its own emulator. Unless `--endpoint` is pinned it starts
+a throwaway Overcast instance on a **free port**, waits for `/_health`, and
+stops it on exit; the dashboard and Vite ports are probed the same way. Ports
+**4566 and 4567 are never bound** — they belong to the user's own instance, per
+the root [AGENTS.md § Reserved ports](../AGENTS.md#reserved-ports--4566-and-4567-belong-to-the-user).
+
+Consequences for agents:
+
+- **Never hard-code a port in instructions, docs, or a URL you hand the user.**
+  Read the banner the CLI prints (`Dashboard:` / `Overcast:`) and quote those
+  exact URLs. Two sessions can run at once, so yesterday's port proves nothing.
+- **Do not start your own emulator alongside compat.** `go run ./cmd/compat`
+  already has one. Passing `--endpoint` opts out of management entirely — use
+  it only when you mean to target an instance that already exists.
+- The wrappers (`compat/dev.sh`, `compat/dev.ps1`, `compat/run.sh`,
+  `compat/run.ps1`), the `task compat-*` / `make compat-*` targets, and the
+  compose services are all thin shells over the same code path. Fix behaviour
+  in [cmd/compat/launch.go](../cmd/compat/launch.go), never in a wrapper —
+  otherwise the platforms drift apart.
+
+---
+
 ## Core principles (compat-specific)
 
 1. **Tests use the SDK/CLI/CDK exactly as production code would.** The only
@@ -259,10 +283,13 @@ raw SSE streams or JSON files.
 **Transport:** Streamable HTTP — JSON-RPC 2.0 over `POST /mcp/`, with an
 optional SSE stream at `GET /mcp/sse` for live event notifications.
 
-**When the compat dev server is running** (`./dev.sh` in `compat/`), the MCP
-endpoint is live at `http://localhost:7777/mcp/`. Agents with an MCP client
-configured can call tools directly. Agents without an MCP client can call the
-endpoint via `curl`:
+**When the compat dev server is running** (`go run ./cmd/compat --dev`, or the
+`compat/dev.sh` / `compat\dev.ps1` wrappers), the MCP endpoint is live under
+the dashboard's base URL. The port is **chosen at runtime** — `:7777` when it
+is free, the next free port otherwise — so read it from the banner the CLI
+prints rather than assuming. The examples below use `:7777`; substitute the
+port you were given. Agents with an MCP client configured can call tools
+directly. Agents without an MCP client can call the endpoint via `curl`:
 
 ```bash
 # List all available tools

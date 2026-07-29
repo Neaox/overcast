@@ -40,8 +40,11 @@ docker run --rm --network host \
 ### Via the Go CLI (recommended — runs all suites)
 
 ```bash
-go run ./cmd/compat --endpoint http://localhost:4566
+# Starts its own Overcast instance on a free port and stops it afterwards:
+go run ./cmd/compat
 # or just this suite:
+go run ./cmd/compat --suite node-js-sdk
+# or against an instance you are already running:
 go run ./cmd/compat --endpoint http://localhost:4566 --suite node-js-sdk
 ```
 

@@ -3,6 +3,25 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
+// The compat server picks its port at runtime (a fixed one collides when two
+// sessions run side by side), so it tells Vite where it landed via
+// COMPAT_SERVER_URL. Falling back to :7777 keeps a bare `npm run dev` working.
+const compatServer = process.env.COMPAT_SERVER_URL ?? "http://localhost:7777";
+
+// Paths the dashboard calls on the compat server rather than on itself.
+const apiPaths = [
+  "/events",
+  "/results",
+  "/suites",
+  "/cancel",
+  "/registry",
+  "/queue",
+  "/run",
+  "/config",
+  "/open",
+  "/mcp",
+];
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
@@ -13,18 +32,7 @@ export default defineConfig({
     host: true,
     watch: needsPolling() ? { usePolling: true, interval: 1000 } : {},
     // Forward API calls to the compat server during `vite dev`.
-    proxy: {
-      "/events": "http://localhost:7777",
-      "/results": "http://localhost:7777",
-      "/suites": "http://localhost:7777",
-      "/cancel": "http://localhost:7777",
-      "/registry": "http://localhost:7777",
-      "/queue": "http://localhost:7777",
-      "/run": "http://localhost:7777",
-      "/config": "http://localhost:7777",
-      "/open": "http://localhost:7777",
-      "/mcp": "http://localhost:7777",
-    },
+    proxy: Object.fromEntries(apiPaths.map((path) => [path, compatServer])),
   },
 });
 

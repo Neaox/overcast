@@ -28,7 +28,7 @@ GOLANGCI_LINT_VERSION := v2.8.0
         run test test-unit test-integration test-coverage \
         ci-local ci-local-web ci-local-go \
         bench bench-startup lint lint-go lint-web lint-actions fmt vet tidy check aws-models-check docker docker-slim docker-console docker-run clean \
-        compat-build compat-serve compat-report \
+        compat compat-build compat-serve compat-dev compat-docker compat-report \
         generate-caps check-caps generate-aws-operations aws-models-check docs docs-index docs-check supportmeta-check check-binary-symbols
 
 ## help: print this help message
@@ -267,6 +267,13 @@ clean:
 	@rm -rf $(BUILD_DIR) coverage.out coverage.html
 
 # ---- Compat dashboard -------------------------------------------------------
+# Every target manages its own throwaway Overcast instance on free ports —
+# 4566/4567 stay yours. Pass ARGS='--endpoint http://localhost:4566' to target
+# an instance you are already running.
+
+## compat: run the compat suites headlessly (starts its own Overcast instance)
+compat:
+	$(GO) run ./cmd/compat $(ARGS)
 
 ## compat-build: build the compat UI and embed it into the compat binary
 compat-build:
@@ -275,10 +282,17 @@ compat-build:
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/compat ./cmd/compat
 
-## compat-serve: build everything and start the compat dashboard on :7777
-compat-serve: compat-build
-	@-pkill -x compat 2>/dev/null; sleep 0.3
-	$(BUILD_DIR)/compat --serve --port :7777
+## compat-serve: start the compat dashboard with a freshly built UI
+compat-serve:
+	$(GO) run ./cmd/compat --serve --interactive --build-ui --open $(ARGS)
+
+## compat-dev: start the compat dashboard with a hot-reloading UI
+compat-dev:
+	$(GO) run ./cmd/compat --dev $(ARGS)
+
+## compat-docker: run the compat suites entirely in containers (no host Go or Node)
+compat-docker:
+	docker compose -f compat/docker-compose.yml run --rm compat
 
 ## compat-report: print an agent-friendly summary of the last compat run (reads compat-results.json)
 compat-report:

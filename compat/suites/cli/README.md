@@ -41,11 +41,14 @@ To upgrade the pinned version, bump `AWS_CLI_VERSION` in
 ## Running the suite
 
 ```bash
-# From workspace root
-make compat-serve
+# From workspace root — starts its own Overcast instance on a free port
+go run ./cmd/compat --suite cli
 
-# Or run the CLI suite alone
-cd compat/suites/cli && go run ./cmd/runner
+# With the dashboard (task compat-dev / make compat-dev are equivalent)
+go run ./cmd/compat --dev --suite cli
+
+# Or run the CLI suite alone against an instance you are already running
+cd compat/suites/cli && OVERCAST_ENDPOINT=http://localhost:4566 go run ./cmd/runner
 ```
 
 ## Environment variables
