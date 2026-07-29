@@ -115,20 +115,28 @@ func (h *Handler) ProxyRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ViewerProtocolPolicy enforcement.
-	switch viewerProtoPolicy {
-	case "https-only":
-		if r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
-			http.Error(w, "HTTPS is required", http.StatusForbidden)
-			return
-		}
-	case "redirect-to-https":
-		if r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
+	//
+	// Enforced only when this server can actually answer over HTTPS. Overcast
+	// listens for TLS only when OVERCAST_TLS_CERT and OVERCAST_TLS_KEY are both
+	// set; without them, "redirect-to-https" would send a browser to a TLS
+	// handshake against a plain-HTTP listener, and "https-only" would make the
+	// distribution permanently unreachable — neither is a condition any client
+	// can satisfy. Real AWS always serves HTTPS, so both are satisfiable there;
+	// pointing a caller at a scheme the emulator does not serve is the worse
+	// divergence, the same call docs/plans/host-routing-precedence.md §8 records
+	// for AppSync's uris map.
+	if isHTTPSViewerPolicy(viewerProtoPolicy) && !h.requestIsHTTPS(r) {
+		if h.cfg != nil && h.cfg.TLSEnabled() {
+			if viewerProtoPolicy == "https-only" {
+				http.Error(w, "HTTPS is required", http.StatusForbidden)
+				return
+			}
 			// Fold the Host into the Location we mint: a redirect target is
 			// output, and output carries the canonical lowercase form.
 			http.Redirect(w, r, "https://"+serviceutil.FoldHostname(r.Host)+r.RequestURI, http.StatusMovedPermanently)
 			return
 		}
-		// "allow-all" — no enforcement needed.
+		h.warnViewerPolicyNotEnforceable(distID, viewerProtoPolicy)
 	}
 
 	// Geo-restriction enforcement.
@@ -550,4 +558,32 @@ func (s *Service) HostRouteRewrite(r *http.Request, m middleware.HostRouteMatch)
 	if r.URL.RawPath != "" {
 		r.URL.RawPath = r.URL.Path
 	}
+}
+
+// isHTTPSViewerPolicy reports whether a ViewerProtocolPolicy requires the
+// viewer connection to be HTTPS. "allow-all" (and any unrecognised value, which
+// CreateDistribution validation should already have rejected) does not.
+func isHTTPSViewerPolicy(policy string) bool {
+	return policy == "https-only" || policy == "redirect-to-https"
+}
+
+// requestIsHTTPS reports whether the viewer hop was already HTTPS — either
+// terminated by this server, or by a proxy in front of it that said so.
+func (h *Handler) requestIsHTTPS(r *http.Request) bool {
+	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+}
+
+// warnViewerPolicyNotEnforceable explains, once per process, why a
+// distribution's HTTPS viewer policy is being served as allow-all. Silence here
+// would be its own trap: the policy is in the distribution config the user
+// wrote, so its absence needs a reason they can find.
+func (h *Handler) warnViewerPolicyNotEnforceable(distID, policy string) {
+	h.tlsPolicyWarnOnce.Do(func() {
+		h.log.Warn("serving an HTTPS-only viewer protocol policy over plain HTTP",
+			zap.String("distributionId", distID),
+			zap.String("viewerProtocolPolicy", policy),
+			zap.String("reason", "this server is not serving TLS, so the policy cannot be satisfied by any client"),
+			zap.String("resolution", "set OVERCAST_TLS_CERT and OVERCAST_TLS_KEY to enforce it, or use a TLS-terminating proxy that sets X-Forwarded-Proto: https"),
+		)
+	})
 }

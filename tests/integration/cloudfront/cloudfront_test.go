@@ -4040,3 +4040,144 @@ func TestProxy_hostRoutedInvokeAcrossResolvableBases(t *testing.T) {
 		})
 	}
 }
+
+// viewerPolicyDistXML returns a distribution whose DefaultCacheBehavior carries
+// the given ViewerProtocolPolicy, pointed at the given custom origin.
+func viewerPolicyDistXML(callerRef, policy, originDomain string, originPort int) string {
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<DistributionConfig xmlns="http://cloudfront.amazonaws.com/doc/2020-05-31/">
+  <CallerReference>%s</CallerReference>
+  <Comment>viewer protocol policy test</Comment>
+  <Enabled>true</Enabled>
+  <Origins>
+    <Quantity>1</Quantity>
+    <Items>
+      <Origin>
+        <Id>custom-1</Id>
+        <DomainName>%s</DomainName>
+        <CustomOriginConfig>
+          <HTTPPort>%d</HTTPPort>
+          <HTTPSPort>443</HTTPSPort>
+          <OriginProtocolPolicy>http-only</OriginProtocolPolicy>
+        </CustomOriginConfig>
+      </Origin>
+    </Items>
+  </Origins>
+  <DefaultCacheBehavior>
+    <TargetOriginId>custom-1</TargetOriginId>
+    <ViewerProtocolPolicy>%s</ViewerProtocolPolicy>
+    <ForwardedValues><QueryString>false</QueryString></ForwardedValues>
+  </DefaultCacheBehavior>
+</DistributionConfig>`, callerRef, originDomain, originPort, policy)
+}
+
+// TestProxy_viewerProtocolPolicyIsGatedOnServableTLS covers the rule that an
+// emulator must not point a client at a scheme it does not serve.
+//
+// ViewerProtocolPolicy was enforced unconditionally: "redirect-to-https" issued
+// a 301 to https://{host}:{port} and "https-only" a 403, on a server that only
+// listens for plain HTTP unless OVERCAST_TLS_CERT and OVERCAST_TLS_KEY are both
+// set. Real AWS always serves HTTPS so both are satisfiable there; on Overcast
+// the redirect handed the browser a TLS handshake against an HTTP listener, and
+// https-only made the distribution permanently unreachable — no client could
+// ever satisfy either.
+//
+// This is the same call docs/plans made for AppSync's uris map: advertising an
+// endpoint the caller cannot dial is worse in practice than the shape
+// difference. So both policies are enforced only when TLS is actually
+// configured, and are otherwise served as allow-all.
+func TestProxy_viewerProtocolPolicyIsGatedOnServableTLS(t *testing.T) {
+	const originBody = "hello from origin"
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(originBody))
+	}))
+	defer origin.Close()
+
+	originHost := origin.URL[len("http://"):]
+	colonIdx := strings.LastIndexByte(originHost, ':')
+	originDomain := originHost[:colonIdx]
+	var originPort int
+	fmt.Sscanf(originHost[colonIdx+1:], "%d", &originPort)
+
+	cases := []struct {
+		name        string
+		policy      string
+		tlsEnabled  bool
+		fwdProto    string
+		wantStatus  int
+		wantBody    string
+		description string
+	}{
+		{
+			name:   "redirect-to-https without TLS serves the request",
+			policy: "redirect-to-https", tlsEnabled: false,
+			wantStatus: http.StatusOK, wantBody: originBody,
+			description: "the 301 target would be a TLS handshake against an HTTP listener",
+		},
+		{
+			name:   "redirect-to-https with TLS still redirects",
+			policy: "redirect-to-https", tlsEnabled: true,
+			wantStatus:  http.StatusMovedPermanently,
+			description: "parity is kept wherever it is actually reachable",
+		},
+		{
+			name:   "redirect-to-https behind a TLS-terminating proxy does not redirect",
+			policy: "redirect-to-https", tlsEnabled: false, fwdProto: "https",
+			wantStatus: http.StatusOK, wantBody: originBody,
+			description: "X-Forwarded-Proto already says the hop was https",
+		},
+		{
+			name:   "https-only without TLS serves the request",
+			policy: "https-only", tlsEnabled: false,
+			wantStatus: http.StatusOK, wantBody: originBody,
+			description: "otherwise the distribution can never be reached at all",
+		},
+		{
+			name:   "https-only with TLS still refuses plain HTTP",
+			policy: "https-only", tlsEnabled: true,
+			wantStatus:  http.StatusForbidden,
+			description: "parity is kept wherever it is actually reachable",
+		},
+		{
+			name:   "allow-all is unaffected either way",
+			policy: "allow-all", tlsEnabled: true,
+			wantStatus: http.StatusOK, wantBody: originBody,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var opts []helpers.Option
+			if tc.tlsEnabled {
+				opts = append(opts, helpers.WithTLS())
+			}
+			srv := helpers.NewTestServer(t, opts...)
+
+			dist, _ := cfCreateDistFromXML(t, srv,
+				viewerPolicyDistXML("viewer-policy-"+tc.name, tc.policy, originDomain, originPort))
+
+			req, _ := http.NewRequest(http.MethodGet, srv.URL+"/_cloudfront/"+dist.ID+"/hello", nil)
+			if tc.fwdProto != "" {
+				req.Header.Set("X-Forwarded-Proto", tc.fwdProto)
+			}
+			// Do not follow the redirect — the point is what Overcast returns.
+			client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			}}
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatalf("proxy request: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tc.wantStatus {
+				t.Errorf("status = %d, want %d (%s)", resp.StatusCode, tc.wantStatus, tc.description)
+			}
+			if tc.wantBody != "" {
+				if body := string(readBody(t, resp)); body != tc.wantBody {
+					t.Errorf("body = %q, want %q", body, tc.wantBody)
+				}
+			}
+		})
+	}
+}

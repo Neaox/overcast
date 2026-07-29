@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -27,6 +28,12 @@ type Handler struct {
 	clk   clock.Clock
 	bus   *events.Bus
 	cache *cfCache
+
+	// tlsPolicyWarnOnce guards the one-time warning emitted when a
+	// distribution asks for an HTTPS-only viewer protocol that this server
+	// cannot serve. Once per process, not per request: a proxied page pulls
+	// dozens of assets through the same distribution.
+	tlsPolicyWarnOnce sync.Once
 }
 
 func newHandler(cfg *config.Config, store *Store, log *serviceutil.ServiceLogger, clk clock.Clock) *Handler {
