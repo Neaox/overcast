@@ -3405,7 +3405,7 @@ func TestListDeadLetterSourceQueues(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusOK)
 
 	var result struct {
-		QueueUrls []string `json:"QueueUrls"`
+		QueueUrls []string `json:"queueUrls"`
 	}
 	helpers.DecodeJSON(t, resp, &result)
 
@@ -3421,6 +3421,45 @@ func TestListDeadLetterSourceQueues(t *testing.T) {
 	}
 	if len(result.QueueUrls) != 2 {
 		t.Errorf("expected 2 source queues, got %d: %v", len(result.QueueUrls), result.QueueUrls)
+	}
+}
+
+// TestListDeadLetterSourceQueues_usesLowerCamelWireName pins the response member
+// name to `queueUrls`. Every other SQS list response capitalises it
+// (ListQueues → `QueueUrls`), but the AWS model really does spell this one
+// lower-camel; the Response Syntax at
+// https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListDeadLetterSourceQueues.html
+// shows `"queueUrls": [ "string" ]`.
+//
+// Getting this wrong is silent: the AWS SDKs decode a missing member as an
+// empty list rather than erroring, so callers just never see a source queue —
+// which is how the web UI's "Redrive Messages" button stayed invisible.
+func TestListDeadLetterSourceQueues_usesLowerCamelWireName(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	dlqURL := createQueue(t, srv, "wire-name-dlq")
+	dlqARN := getQueueARN(t, srv, dlqURL)
+	src := createQueueWithAttrs(t, srv, "wire-name-src", map[string]string{
+		"RedrivePolicy": `{"deadLetterTargetArn":"` + dlqARN + `","maxReceiveCount":5}`,
+	})
+
+	resp := sqsCall(t, srv, "ListDeadLetterSourceQueues", map[string]any{
+		"QueueUrl": dlqURL,
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var body map[string]any
+	helpers.DecodeJSON(t, resp, &body)
+
+	if _, wrong := body["QueueUrls"]; wrong {
+		t.Errorf("response uses QueueUrls; AWS spells this member queueUrls, so SDK clients decode it as empty (body: %#v)", body)
+	}
+	urls, ok := body["queueUrls"].([]any)
+	if !ok {
+		t.Fatalf("expected a queueUrls array, got %#v", body)
+	}
+	if len(urls) != 1 || urls[0] != src {
+		t.Errorf("queueUrls = %#v, want [%q]", urls, src)
 	}
 }
 
@@ -3686,6 +3725,38 @@ func TestQueryProtocol_CreateQueue(t *testing.T) {
 	}
 	if !strings.Contains(body, "RequestId") {
 		t.Errorf("expected RequestId in response, got: %s", body)
+	}
+}
+
+// TestQueryProtocol_ListDeadLetterSourceQueues checks that renaming the JSON
+// member to `queueUrls` did not change the Query-protocol XML. AWS models the
+// member with an xmlName of `QueueUrl` and flattens the list, so the Query
+// response is repeated <QueueUrl> elements exactly as for ListQueues.
+func TestQueryProtocol_ListDeadLetterSourceQueues(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	dlqURL := createQueue(t, srv, "query-dlq")
+	dlqARN := getQueueARN(t, srv, dlqURL)
+	srcURL := createQueueWithAttrs(t, srv, "query-dlq-source", map[string]string{
+		"RedrivePolicy": `{"deadLetterTargetArn":"` + dlqARN + `","maxReceiveCount":3}`,
+	})
+
+	resp := sqsQueryCall(t, srv, url.Values{
+		"Action":   {"ListDeadLetterSourceQueues"},
+		"QueueUrl": {dlqURL},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var raw queryXMLResult
+	if err := xml.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		t.Fatalf("decode XML: %v", err)
+	}
+	body := string(raw.Inner)
+	if !strings.Contains(body, "<QueueUrl>"+srcURL+"</QueueUrl>") {
+		t.Errorf("expected a <QueueUrl> element holding %q, got: %s", srcURL, body)
+	}
+	if strings.Contains(body, "<queueUrl") {
+		t.Errorf("Query XML leaked the JSON member name, got: %s", body)
 	}
 }
 

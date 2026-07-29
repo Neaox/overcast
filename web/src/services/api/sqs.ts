@@ -266,4 +266,74 @@ export const sqs = {
     )
     return { taskHandle: res.TaskHandle ?? "" }
   },
+
+  /**
+   * Moves a single message off a DLQ and back to the queue it failed on.
+   *
+   * SQS has no single-message redrive API — StartMessageMoveTask always drains
+   * the whole DLQ. This does by hand what that task does per message, using the
+   * same three calls AWS's own redrive needs permission for (SendMessage on the
+   * destination, ReceiveMessage + DeleteMessage on the DLQ; see the redrive IAM
+   * policy in the SQS Developer Guide).
+   *
+   * The destination comes from the message's DeadLetterSourceQueueArn system
+   * attribute, which is how "Redrive to source queue(s)" routes each message.
+   * Send happens before delete, so a failure mid-way leaves the message on the
+   * DLQ rather than losing it.
+   *
+   * Like a real redrive, the message arrives as a *new* message: fresh
+   * messageId and timestamps, receive count back to zero.
+   */
+  redriveMessage: async (dlqName: string, msg: SQSMessage) => {
+    const sourceArn = msg.attributes.DeadLetterSourceQueueArn
+    if (!sourceArn) {
+      throw new Error(
+        "Message has no DeadLetterSourceQueueArn attribute, so its source queue is unknown.",
+      )
+    }
+    const destination = sourceArn.split(":").pop() ?? ""
+    if (!destination) {
+      throw new Error(`DeadLetterSourceQueueArn is not a valid SQS ARN: ${sourceArn}`)
+    }
+
+    const client = awsClients.sqs()
+    const [dlqUrl, destUrl] = await Promise.all([
+      client.send(new GetQueueUrlCommand({ QueueName: dlqName })),
+      client.send(new GetQueueUrlCommand({ QueueName: destination })),
+    ])
+
+    await client.send(
+      new SendMessageCommand({
+        QueueUrl: destUrl.QueueUrl,
+        MessageBody: msg.body,
+        // FIFO destinations reject a send without a group ID. Reuse the group
+        // the message was originally published under so ordering is preserved.
+        ...(msg.attributes.MessageGroupId
+          ? {
+              MessageGroupId: msg.attributes.MessageGroupId,
+              // AWS replaces a redriven message's dedup ID with the original
+              // message ID; do the same so redriving twice isn't silently
+              // deduplicated away inside the 5-minute window.
+              MessageDeduplicationId: msg.messageId,
+            }
+          : {}),
+        ...(Object.keys(msg.messageAttributes).length > 0
+          ? {
+              MessageAttributes: Object.fromEntries(
+                Object.entries(msg.messageAttributes).map(([k, v]) => [
+                  k,
+                  { DataType: v.dataType, StringValue: v.stringValue },
+                ]),
+              ),
+            }
+          : {}),
+      }),
+    )
+
+    await client.send(
+      new DeleteMessageCommand({ QueueUrl: dlqUrl.QueueUrl, ReceiptHandle: msg.receiptHandle }),
+    )
+
+    return { destination }
+  },
 }

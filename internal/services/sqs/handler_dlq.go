@@ -28,8 +28,17 @@ type listDeadLetterSourceQueuesRequest struct {
 	QueueUrl string `json:"QueueUrl"`
 }
 
+// listDeadLetterSourceQueuesResponse mirrors AWS's response shape.
+//
+// The JSON member is lower-camel `queueUrls`, unlike every other SQS list
+// response (ListQueues returns `QueueUrls`). That inconsistency is real: see
+// the Response Syntax in
+// https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListDeadLetterSourceQueues.html
+// The SDKs model it as a member named `queueUrls` carrying an xmlName of
+// `QueueUrl`, so the Query-protocol XML still renders repeated <QueueUrl>
+// elements — see collectionElements in query.go.
 type listDeadLetterSourceQueuesResponse struct {
-	QueueUrls []string `json:"QueueUrls"`
+	QueueUrls []string `json:"queueUrls"`
 }
 
 // redrivePolicy is the parsed form of the SQS RedrivePolicy queue attribute.
@@ -225,36 +234,16 @@ func (h *Handler) ListDeadLetterSourceQueues(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	dlqName := queueNameFromURL(req.QueueUrl)
-	dlq, aerr := h.store.getQueue(r.Context(), dlqName)
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	allQueues, aerr := h.store.listQueues(r.Context(), "")
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	var sourceURLs []string
-	for _, q := range allQueues {
-		rp, err := parseRedrivePolicy(q.Attributes)
-		if err != nil || rp == nil {
-			continue
-		}
-		if rp.DeadLetterTargetArn == dlq.ARN {
-			sourceURLs = append(sourceURLs, h.queueURL(r.Context(), q.Name))
-		}
-	}
-	if sourceURLs == nil {
-		sourceURLs = []string{}
-	}
-
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"QueueUrls": sourceURLs,
+	// Share the typed implementation so the two dispatch paths cannot drift on
+	// the response member name.
+	resp, aerr := h.listDeadLetterSourceQueuesTyped(r.Context(), &listDeadLetterSourceQueuesRequest{
+		QueueUrl: req.QueueUrl,
 	})
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
 func (h *Handler) listDeadLetterSourceQueuesTyped(ctx context.Context, in *listDeadLetterSourceQueuesRequest) (*listDeadLetterSourceQueuesResponse, *protocol.AWSError) {
