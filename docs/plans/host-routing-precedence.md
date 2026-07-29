@@ -1,8 +1,11 @@
 # Host-addressing precedence — S3 virtual-hosted vs. host-routed services
 
-> Status: in progress. Branch `claude/api-gateway-url-routing-4050e7`.
+> Status: shipped on `main`, except H5b — see §10. Everything this plan
+> describes as a fix is live; the remaining phase is an evidence gate over a
+> label set that already works.
 > Scope: `internal/middleware/` (host classification), `internal/router/router.go`
 > (middleware wiring), `internal/services/s3/` (reserved-label diagnostic),
+> `internal/services/{appsync,lambda,cloudfront,cloudformation}/`,
 > `docs/networking.md`.
 > Related: [AWS API operation coverage](./aws-api-operation-coverage.md) — the
 > reserved-label set converges on that plan's generated manifest (see §6).
@@ -241,9 +244,12 @@ and applies the matching rewrite. Consequences:
 The collision only exists for hosts Overcast **dispatches** on. Precision
 matters here, and the wording in §7 of the docs must follow it:
 
-- **Reserved for dispatch** = keys of `hostRouteLabels`. Three today:
-  `execute-api`, `lambda-url`, `appsync-api`. This is the set that collides,
-  and the only set the bucket-name diagnostic uses.
+- **Reserved for dispatch** = keys of `hostRouteLabels`. Five today:
+  `execute-api`, `lambda-url`, `appsync-api`, `appsync-realtime-api` and
+  `cloudfront` — the last two added by H7. This is the set that collides, and
+  the only set the bucket-name diagnostic uses. Since H5a it is also the set
+  region extraction reads (`regionFromHost`, §13.1), so a label registered here
+  resolves in the right region without further work.
 - **Not** the full set of AWS endpoint prefixes. Reserving all ~400 would make
   `my.logs`, `my.events`, `my.states` collide for zero benefit, since Overcast
   does not host-route those.
@@ -266,22 +272,26 @@ not stay a free-form hand-maintained list. Target state:
    `X-Amz-Target` prefixes that Smithy does not encode.
 
 The override table is required because Smithy models the **control plane**.
-`execute-api` is API Gateway's real `endpointPrefix`, but `lambda-url` and
-`appsync-api` are data-plane host conventions that no Smithy model carries —
-and that plan explicitly excludes "service data/runtime endpoints with
-intentionally arbitrary user paths (such as API Gateway execution)" from its
-scope. Each override entry cites AWS documentation evidence.
+`execute-api` is API Gateway's real `endpointPrefix`, but `lambda-url`,
+`appsync-api`, `appsync-realtime-api` and `cloudfront` are data-plane host
+conventions that no Smithy model carries — and that plan explicitly excludes
+"service data/runtime endpoints with intentionally arbitrary user paths (such
+as API Gateway execution)" from its scope. Each override entry cites AWS
+documentation evidence. Four of the five labels landing in the override table
+rather than the generated set is itself worth noting when H5b is built: the
+manifest constrains less of this set than §6 first assumed.
 
 Net effect, which is the point: **the label set can only grow when AWS adds a
 service or a hostname**, arriving through the A5 model-refresh PR, not through
 a contributor inventing a label.
 
-> **Blocked in this branch.** Step 1 needs `make generate-aws-operations
-> AWS_MODELS_DIR=…` against an `api-models-aws` checkout at revision
+> **Still blocked — this is H5b, the plan's only outstanding phase.** Step 1
+> needs `make generate-aws-operations AWS_MODELS_DIR=…` against an
+> `api-models-aws` checkout at revision
 > `66e973cadf6b6e909b200217d0d6065e49445a9a` (see `models/aws/VERSION`). The
 > snapshot is deliberately not vendored, and the generator validates the
-> revision before writing. Steps 1–3 are therefore a follow-on PR; this branch
-> keeps `hostRouteLabels` hand-maintained with the override-evidence comment in
+> revision before writing. Steps 1–3 are therefore a follow-on PR; `main` keeps
+> `hostRouteLabels` hand-maintained with the override-evidence comment in
 > place, so the follow-on is a pure substitution.
 
 ### Scope of the limitation
@@ -682,22 +692,34 @@ the host. Overcast never dials it, and the nested-stack tests pass.
 
 ## 10. Phases
 
-> **Progress:** H5a (`regionFromHost` folded onto `hostRouteLabels`) complete.
-> Previously: H7 (realtime + CloudFront labels, wildcard-domain DRY), H0-H3 complete and green. Outstanding: H4 (AWS::URLSuffix audit), H6 (documentation sweep, §10.1), H5b (manifest-derived label validation, still blocked on an api-models-aws checkout).
+> **Progress:** H0-H4, H5a, H6 and H7 complete and green.
+> **Outstanding: H5b alone** — manifest-derived label validation (§6), blocked
+> on an `api-models-aws` checkout rather than on effort.
+>
+> H4 was carried as outstanding here long after its gate was met; §8 records the
+> audit (dated 2026-07-28, widened to all three partitions) and the correction
+> that came out of it shipped as `Handler.reachableURL`. H6 was marked done in
+> the table below but not here. Both are corrected.
 
 Each phase begins with failing tests and leaves `main` internally consistent,
 per the shipping rule in [aws-api-operation-coverage.md](./aws-api-operation-coverage.md).
 
-| Phase | Work | Gate |
-| --- | --- | --- |
-| H0 | Failing tests: classifier matrix, reserved-label predicate, host-routed integration tests across all bases for apigw v1/v2, Lambda URL, AppSync; S3 positive coverage retained. Permanent benchmarks per §7. | Every new test fails for the documented reason; no existing test fails except the two in §9.2. |
-| H1 | `ClassifyHost` + `HostAddressing`; rewire `router.go`; `detectService` reads the stamped claim. | H0 green. §7 gate met: 0 allocs/op, no ns/op regression. `go vet ./...` clean. |
-| H2 | `docs/networking.md` addressing-precedence section; `hostroute.go` recipe guardrail; reserved-label integration cover; `make docs-index`. | `make docs-check` green. |
-| H3 | Canonical URL minting per §8: `serviceutil.HostRoutedURL`, API Gateway v2 `apiEndpoint`, AppSync `uris`/`dns`, `buildFunctionURL` collapsed onto the helper. | A minted URL, fed back as a `Host` header, reaches its own service — asserted end-to-end, not by string comparison. |
-| H4 | `AWS::URLSuffix` audit and scoped substitution per §8's hazard. | Every `AWS::URLSuffix` use site in synthesised CDK templates classified as URL-host or not; IAM service principals provably unaffected. |
+The Status column is the one to trust; a phase is done only when its gate is
+met. (This table previously declared three columns while two rows carried four
+cells, so those rows' gates were silently dropped when rendered — hence the
+explicit column here.)
+
+| Phase | Status | Work | Gate |
+| --- | --- | --- | --- |
+| H0 | ✅ done | Failing tests: classifier matrix, reserved-label predicate, host-routed integration tests across all bases for apigw v1/v2, Lambda URL, AppSync; S3 positive coverage retained. Permanent benchmarks per §7. | Every new test fails for the documented reason; no existing test fails except the two in §9.2. |
+| H1 | ✅ done | `ClassifyHost` + `HostAddressing`; rewire `router.go`; `detectService` reads the stamped claim. | H0 green. §7 gate met: 0 allocs/op, no ns/op regression. `go vet ./...` clean. |
+| H2 | ✅ done | `docs/networking.md` addressing-precedence section; `hostroute.go` recipe guardrail; reserved-label integration cover; `make docs-index`. | `make docs-check` green. |
+| H3 | ✅ done | Canonical URL minting per §8: `serviceutil.HostRoutedURL`, API Gateway v2 `apiEndpoint`, AppSync `uris`/`dns`, `buildFunctionURL` collapsed onto the helper. | A minted URL, fed back as a `Host` header, reaches its own service — asserted end-to-end, not by string comparison. |
+| H4 | ✅ done | `AWS::URLSuffix` audit per §8's hazard. Substitution was audited and **rejected** — the suffix cannot carry a scheme or port, so no value for it yields a dialable URL; the correction went to output emission as `Handler.reachableURL` instead. | Met: every use site in synthesised CDK templates classified as a URL host, across `us-east-1`, `cn-north-1` and region-agnostic; zero service-principal sites in any partition, so principals are provably unaffected. |
 | H5a | ✅ done | Fold `regionFromHost` onto `hostRouteLabels` (§13.1). | A host-routed invoke in a non-default region resolves, asserted end-to-end for AppSync and Lambda function URLs; every dispatch label is covered by a test that fails if region extraction cannot read it. |
-| H5b | *(follow-on PR)* Manifest-derived label validation per §6. | Requires an `api-models-aws` checkout at revision `66e973ca…`. |
+| H5b | ⏳ blocked | Manifest-derived label validation per §6. | Requires an `api-models-aws` checkout at revision `66e973ca…`. |
 | H6 | ✅ done | Documentation sweep per §10.1 — every doc that states which hostnames, URL shapes or bucket names Overcast supports. | No doc contradicts §4's precedence rule, §8's minted URLs, or §9.4's bucket-name rules. `make docs-index` regenerated. |
+| H7 | ✅ done | AppSync realtime + CloudFront dispatch labels; wildcard-domain base list DRYed onto `internal/config`. | Both hosts reach their service; `TestVirtualHostBases_coverEveryWildcardDomain` ([hostbase_matrix_test.go](../../internal/middleware/hostbase_matrix_test.go)) fails if the S3 base list and the domains `internal/containerendpoint` advertises diverge again. |
 
 H3's gate is deliberately behavioural rather than textual: asserting the minted
 string equals an expected literal would pass even if the routing grammar and
@@ -807,12 +829,14 @@ An earlier draft of this section asked A3 to retain `endpointPrefix` from the
 `execute-api` is present in the generated corpus. That is sufficient evidence
 for the one dispatch label AWS actually models.
 
-`lambda-url` and `appsync-api` are host-only conventions carried by no Smithy
-field at all — Lambda function URLs sign as `lambda`, AppSync as `appsync` — so
-they belong in the documented override table regardless of which field is
-retained. Retaining `endpointPrefix` too would not change that.
+`lambda-url`, `appsync-api`, `appsync-realtime-api` and `cloudfront` are
+host-only conventions carried by no Smithy field at all — Lambda function URLs
+sign as `lambda`, AppSync as `appsync`, and CloudFront's distribution host is
+not an endpoint prefix — so they belong in the documented override table
+regardless of which field is retained. Retaining `endpointPrefix` too would not
+change that.
 
-H5 therefore needs nothing from A3 beyond a small exported predicate over the
+H5b therefore needs nothing from A3 beyond a small exported predicate over the
 existing generated data (`SigningName` currently lives only on the private
 `restOperation` table). That is this plan's work, not A3's.
 
@@ -843,11 +867,17 @@ fixture that sets an explicit `Host` should be checked against the §4 matrix.
   was tidiness. It was not: the divergence was a live bug, and waiting on an
   `api-models-aws` checkout to fix it was the wrong trade. The manifest half is
   now tracked separately as H5b.
-- AppSync realtime on its own `appsync-realtime-api` host. Real AWS serves
-  realtime from a separate hostname; Overcast colocates it under the same
-  `/_appsync/{apiId}` prefix, so H3 advertises the colocated URL. Splitting it
-  needs a fourth dispatch label, which per §6 should wait for H5's evidence
-  gate rather than being hand-added now.
+- ~~AppSync realtime on its own `appsync-realtime-api` host, deferred until §6's
+  evidence gate rather than hand-added.~~ **Superseded by H7**, which registered
+  `appsync-realtime-api` (and `cloudfront`) by hand after all. The deferral was
+  the wrong call: the host was not a nicety but the one Amplify derives by
+  substituting into the GraphQL URL, so until it dispatched, a subscription to
+  the hostname AWS actually serves was claimed as an S3 bucket. Overcast still
+  colocates realtime under the same `/_appsync/{apiId}` prefix, so the label
+  routes to the same endpoint as `appsync-api`, with the query string preserved
+  because AppSync carries connection auth there. H5b's evidence gate will
+  therefore validate five existing labels rather than gate the addition of new
+  ones — see §6.
 - Path-style AppSync URIs remain registered and supported after H3 switches the
   *advertised* `uris` to host-routed form. Removing them would be a breaking
   change for existing clients and is not proposed.
