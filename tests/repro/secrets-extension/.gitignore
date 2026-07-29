@@ -1,6 +1,7 @@
 node_modules/
 package-lock.json
 cdk.out/
+cdk.context.json
 outputs.json
 response.json
 r.json

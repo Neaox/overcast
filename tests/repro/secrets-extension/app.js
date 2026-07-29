@@ -8,8 +8,14 @@
 
 const { App, Stack, CfnOutput, Duration } = require("aws-cdk-lib")
 const lambda = require("aws-cdk-lib/aws-lambda")
+const ec2 = require("aws-cdk-lib/aws-ec2")
 const secretsmanager = require("aws-cdk-lib/aws-secretsmanager")
 const path = require("path")
+
+// IN_VPC=1 attaches the function to a VPC with isolated subnets and no
+// internet gateway — the shape a private deployment has, and the one where
+// Overcast marks the Docker network --internal.
+const IN_VPC = process.env.IN_VPC === "1"
 
 const EXTENSION_LAYER_ARN = process.env.EXTENSION_LAYER_ARN
 if (!EXTENSION_LAYER_ARN) {
@@ -36,7 +42,20 @@ class ReproStack extends Stack {
       secretStringValue: require("aws-cdk-lib").SecretValue.unsafePlainText(SECRET_VALUE),
     })
 
+    let vpcProps = {}
+    if (IN_VPC) {
+      const vpc = new ec2.Vpc(this, "PrivateVpc", {
+        maxAzs: 1,
+        natGateways: 0,
+        subnetConfiguration: [
+          { name: "isolated", subnetType: ec2.SubnetType.PRIVATE_ISOLATED, cidrMask: 24 },
+        ],
+      })
+      vpcProps = { vpc, vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED } }
+    }
+
     const fn = new lambda.Function(this, "QueueListingUpdates", {
+      ...vpcProps,
       functionName: "repro-queue-listing-updates",
       runtime: lambda.Runtime.NODEJS_22_X,
       handler: "index.handler",

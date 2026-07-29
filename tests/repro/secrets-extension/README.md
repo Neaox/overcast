@@ -53,3 +53,15 @@ SIZES="2000 8000 16000" REPEATS=3 bash sweep.sh
 ```
 
 Every line should read `ok`. A `HUNG` line is the bug.
+
+## VPC variant
+
+`IN_VPC=1` puts the function in a VPC whose only subnets are isolated and which
+has no internet gateway — the shape a private deployment has, and the one where
+Overcast marks the VPC's Docker network `--internal`. The handler probes DNS and
+an outbound request either way, so the log lines say whether egress survived.
+
+It does: the container starts on the Lambda network and is *added* to the VPC
+network, so the default route stays on the Lambda network's gateway. A function
+that cannot reach a host in this configuration is looking at the wrong host, not
+at a missing route.
