@@ -1728,22 +1728,22 @@
       "name": "cognito-token-validity",
       "tests": [
         {
-          "name": "CreateUserPoolClient with token validity",
+          "name": "CreateUserPoolClientWithTokenValidity",
           "op": "CreateUserPoolClient"
         },
         {
-          "name": "DescribeUserPoolClient returns token validity",
+          "name": "DescribeUserPoolClientTokenValidity",
           "op": "DescribeUserPoolClient",
-          "depends": ["CreateUserPoolClient with token validity"]
+          "depends": ["CreateUserPoolClientWithTokenValidity"]
         },
         {
-          "name": "UpdateUserPoolClient changes token validity",
+          "name": "UpdateUserPoolClientTokenValidity",
           "op": "UpdateUserPoolClient",
-          "depends": ["DescribeUserPoolClient returns token validity"]
+          "depends": ["DescribeUserPoolClientTokenValidity"]
         },
         {
           "name": "DeleteUserPoolClient",
-          "depends": ["UpdateUserPoolClient changes token validity"]
+          "depends": ["UpdateUserPoolClientTokenValidity"]
         }
       ]
     },

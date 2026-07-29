@@ -305,17 +305,22 @@ func (s *Service) resendConfirmationCode(w http.ResponseWriter, r *http.Request)
 // issuerURL constructs the Cognito issuer URL embedded in JWTs.
 // Clients that validate tokens must configure their JWT library to use this URL.
 //
-// The origin comes from serviceutil.ClientBaseURL, which resolves hostname, port
-// and scheme together from config (OVERCAST_HOSTNAME, OVERCAST_PORT, TLS), and
-// falls back to the request's own Host when no external hostname is configured.
-// It must not be built from r.Host directly: "iss" is not decoration — an OIDC
-// client validates it and fetches "{iss}/.well-known/jwks.json" for signing
-// keys, so a token minted on the address one caller happened to dial is
-// unverifiable by anyone who reaches Overcast under a different name (a sibling
-// container handed 127.0.0.1, a host CLI handed a compose service name). The
-// scheme matters for the same reason: with TLS enabled the JWKS endpoint is
-// served over https, and an http issuer sends clients to a scheme the server
-// does not answer. See docs/plans/harness-representativeness-audit.md.
+// The origin comes from serviceutil.ClientBaseURL: the configured
+// OVERCAST_HOSTNAME (authoritative — a token minted on the address one caller
+// happened to dial is unverifiable by anyone who reaches Overcast under a
+// different name), the TLS-aware scheme (with TLS enabled the JWKS endpoint is
+// https, and an http issuer sends clients to a scheme the server does not
+// answer), and the *caller's* port.
+//
+// The caller's port is not a compromise here — it is what OIDC requires.
+// Discovery 1.0 §4.3: the issuer MUST be byte-identical to the URL the
+// configuration was retrieved from. A host client on a remapped port fetches
+// discovery on that port, so an issuer carrying cfg.Port fails spec-compliant
+// validation for exactly that caller (and its jwks_uri is undialable for
+// them). Overcast's own validation is unaffected by the per-caller port:
+// ValidateCognitoToken reads the pool ID from the issuer path and never
+// compares the string literally — see the guard comment there before changing
+// either side. Full analysis: docs/plans/client-facing-url-minting.md.
 func (s *Service) issuerURL(r *http.Request, poolID string) string {
 	return serviceutil.ClientBaseURL(s.cfg, r) + "/" + s.region(r.Context()) + "/" + poolID
 }

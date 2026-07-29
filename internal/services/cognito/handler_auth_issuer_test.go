@@ -27,9 +27,18 @@ import (
 // issuer or tries to fetch signing keys over a scheme the server does not
 // answer, and in both cases token validation fails rather than degrades.
 //
-// serviceutil.ClientBaseURL already resolves hostname, port and scheme together
-// from cfg — routing issuerURL through it fixes both defects at once, and is
-// what every other client-facing URL in the codebase does.
+// serviceutil.ClientBaseURL resolves hostname and scheme from cfg — routing
+// issuerURL through it fixes both defects at once, and is what every other
+// client-facing URL in the codebase does.
+//
+// The port, deliberately, is the *caller's*, not cfg.Port. OIDC Discovery 1.0
+// §4.3 requires the issuer to be byte-identical to the URL the configuration
+// was retrieved from: a client that reached Overcast on a remapped port
+// fetches discovery on that port, so an issuer carrying cfg.Port fails
+// spec-compliant validation for exactly that caller, and points jwks_uri at a
+// port they cannot dial. Overcast's own validation is port-agnostic
+// (TestPoolIDFromIssuer_ignoresTheOrigin). See
+// docs/plans/client-facing-url-minting.md.
 func TestIssuerURL_honoursConfiguredHostnameAndTLS(t *testing.T) {
 	tests := []struct {
 		name string
@@ -43,7 +52,7 @@ func TestIssuerURL_honoursConfiguredHostnameAndTLS(t *testing.T) {
 				Hostname: "overcast.local",
 				Port:     4566,
 			},
-			want: "http://overcast.local:4566/us-east-1/us-east-1_abc123",
+			want: "http://overcast.local:39783/us-east-1/us-east-1_abc123",
 		},
 		{
 			name: "TLS makes the issuer https",
@@ -54,7 +63,7 @@ func TestIssuerURL_honoursConfiguredHostnameAndTLS(t *testing.T) {
 				TLSCertFile: "/tmp/cert.pem",
 				TLSKeyFile:  "/tmp/key.pem",
 			},
-			want: "https://overcast.local:4566/us-east-1/us-east-1_abc123",
+			want: "https://overcast.local:39783/us-east-1/us-east-1_abc123",
 		},
 	}
 
@@ -73,5 +82,32 @@ func TestIssuerURL_honoursConfiguredHostnameAndTLS(t *testing.T) {
 				t.Errorf("issuerURL = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestPoolIDFromIssuer_ignoresTheOrigin guards the accommodation that makes
+// per-caller issuer minting safe: Overcast validates its own tokens by reading
+// the pool ID from the issuer's *path*, never by comparing the issuer string
+// literally. Two callers who reached Overcast on different ports mint tokens
+// with different iss strings for the same pool, and both must validate.
+//
+// Do not "tidy" ValidateCognitoToken into a literal issuer comparison — that
+// breaks every token the moment the API port is remapped. See
+// docs/plans/client-facing-url-minting.md, "Per-service requirements".
+func TestPoolIDFromIssuer_ignoresTheOrigin(t *testing.T) {
+	for _, iss := range []string{
+		"http://localhost.overcast.sh:4566/us-east-1/us-east-1_abc123",
+		"http://localhost.overcast.sh:4652/us-east-1/us-east-1_abc123", // published port
+		"http://localhost:39783/us-east-1/us-east-1_abc123",            // harness port
+		"https://overcast.local:8443/us-east-1/us-east-1_abc123",       // TLS proxy
+	} {
+		got, err := poolIDFromIssuer(iss)
+		if err != nil {
+			t.Errorf("poolIDFromIssuer(%q): %v", iss, err)
+			continue
+		}
+		if got != "us-east-1_abc123" {
+			t.Errorf("poolIDFromIssuer(%q) = %q, want %q", iss, got, "us-east-1_abc123")
+		}
 	}
 }

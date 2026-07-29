@@ -184,6 +184,19 @@ jobs:
           cache: true
       - run: make docs-check
 
+  compat-registry:
+    name: Compat registry schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-python@v6.3.0
+        with:
+          python-version: "3.11"
+      - name: Install jsonschema
+        run: pip install --quiet jsonschema
+      - name: Validate compat registry against its schema
+        run: python3 scripts/validate-compat-registry.py
+
   aws-operation-coverage:
     name: AWS operation coverage
     runs-on: ubuntu-latest

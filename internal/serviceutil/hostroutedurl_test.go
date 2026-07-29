@@ -37,11 +37,16 @@ func TestHostRoutedURL(t *testing.T) {
 			want: "http://urlid.lambda-url.us-east-1.127.0.0.1:34349/",
 		},
 		{
-			name:    "configured hostname wins over the dial address",
+			// The hostname is the operator's assertion that one name resolves
+			// for every party; the port is the caller's, because theirs is the
+			// only port proven dialable — cfg.Port is undialable from the host
+			// whenever the API port is remapped. See
+			// docs/plans/client-facing-url-minting.md.
+			name:    "configured hostname wins over the dial address, the caller's port over the configured one",
 			cfg:     &config.Config{Hostname: "localhost.overcast.sh", Port: 4566},
 			reqHost: "127.0.0.1:34349",
 			label:   "lambda-url", id: "urlid", region: "us-east-1", path: "/",
-			want: "http://urlid.lambda-url.us-east-1.localhost.overcast.sh:4566/",
+			want: "http://urlid.lambda-url.us-east-1.localhost.overcast.sh:34349/",
 		},
 		{
 			name:    "configured hostname with no port takes the request port",
@@ -55,21 +60,21 @@ func TestHostRoutedURL(t *testing.T) {
 			cfg:     &config.Config{Hostname: "localhost", Port: 4566, TLSCertFile: "c.pem", TLSKeyFile: "k.pem"},
 			reqHost: "127.0.0.1:34349",
 			label:   "appsync-api", id: "myapi", region: "us-east-1", path: "/graphql",
-			want: "https://myapi.appsync-api.us-east-1.localhost:4566/graphql",
+			want: "https://myapi.appsync-api.us-east-1.localhost:34349/graphql",
 		},
 		{
 			name:    "api gateway v2 endpoint carries no path",
 			cfg:     &config.Config{Hostname: "localhost", Port: 4566},
 			reqHost: "127.0.0.1:34349",
 			label:   "execute-api", id: "abc123", region: "ap-southeast-2", path: "",
-			want: "http://abc123.execute-api.ap-southeast-2.localhost:4566",
+			want: "http://abc123.execute-api.ap-southeast-2.localhost:34349",
 		},
 		{
 			name:    "appsync graphql path",
 			cfg:     &config.Config{Hostname: "localhost", Port: 4566},
 			reqHost: "127.0.0.1:34349",
 			label:   "appsync-api", id: "myapi", region: "eu-west-1", path: "/graphql",
-			want: "http://myapi.appsync-api.eu-west-1.localhost:4566/graphql",
+			want: "http://myapi.appsync-api.eu-west-1.localhost:34349/graphql",
 		},
 	}
 

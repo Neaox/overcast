@@ -161,9 +161,12 @@ func TestClientBaseURL_configuredHostname(t *testing.T) {
 	// When: a service asks for its client-facing base URL.
 	got := serviceutil.ClientBaseURL(cfg, req)
 
-	// Then: the configured external URL is authoritative.
-	if got != "http://overcast.local:4566" {
-		t.Fatalf("expected configured base URL, got %q", got)
+	// Then: the configured hostname is authoritative, on the *caller's* port —
+	// theirs is the only port proven dialable, and the two differ whenever the
+	// API port is remapped. Same precedence as CloudFormation's output
+	// re-minting and the plan in docs/plans/client-facing-url-minting.md.
+	if got != "http://overcast.local:12345" {
+		t.Fatalf("expected the configured host on the caller's port, got %q", got)
 	}
 }
 

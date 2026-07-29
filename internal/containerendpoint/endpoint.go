@@ -64,6 +64,11 @@ type Mapper struct {
 	// publishedPort is the host port Overcast's API is reachable on when that
 	// differs from cfg.Port. Zero when they are the same or it is unknown.
 	publishedPort int
+	// publishedRewrites are precomputed old→new pairs for split-horizon
+	// hostnames carrying the published port (see rewritePublishedSplitHorizon).
+	// Built once in WithPublishedPort because RewriteURLs runs on every invoke
+	// payload, and rebuilding the patterns there would allocate per invoke.
+	publishedRewrites [][2]string
 }
 
 // New returns a Mapper for containers that reach Overcast at endpoint (an
@@ -91,6 +96,16 @@ func (m *Mapper) WithPublishedPort(port int) *Mapper {
 		return nil
 	}
 	m.publishedPort = port
+	m.publishedRewrites = nil
+	if m.cfg != nil && port > 0 && port != m.cfg.Port {
+		pub, listen := strconv.Itoa(port), strconv.Itoa(m.cfg.Port)
+		for _, name := range Hostnames(m.cfg) {
+			for _, prefix := range []string{"://", "."} {
+				m.publishedRewrites = append(m.publishedRewrites,
+					[2]string{prefix + name + ":" + pub, prefix + name + ":" + listen})
+			}
+		}
+	}
 	return m
 }
 
@@ -316,6 +331,32 @@ func (m *Mapper) RewriteURLs(value string) string {
 					value = strings.ReplaceAll(value, origin, m.endpoint)
 				}
 			}
+		}
+	}
+	return m.rewritePublishedSplitHorizon(value)
+}
+
+// rewritePublishedSplitHorizon re-points a split-horizon hostname carrying the
+// *published* port at the listen port.
+//
+// Client-facing URLs are minted on the caller's port (see
+// docs/plans/client-facing-url-minting.md), so a host-side deploy bakes
+// "localhost.overcast.sh:<published>" into function and task environment.
+// Inside a container the name resolves — that is the whole point of the
+// split-horizon set — but the published port is bound only on the host, so the
+// dial dies. This is the inverse of the loopback case: the name is right and
+// only the port is wrong, so the hostname is preserved rather than replaced
+// with the endpoint address, which also keeps virtual-hosted forms
+// ("{bucket}.s3.{name}:{port}") working. Two patterns cover both shapes: the
+// origin form "://name:port" and the subdomain form ".name:port".
+//
+// The patterns are precomputed in WithPublishedPort; this runs on every invoke
+// payload, so the steady-state cost is a handful of strings.Contains scans and
+// no allocations when nothing matches.
+func (m *Mapper) rewritePublishedSplitHorizon(value string) string {
+	for _, pair := range m.publishedRewrites {
+		if strings.Contains(value, pair[0]) {
+			value = strings.ReplaceAll(value, pair[0], pair[1])
 		}
 	}
 	return value

@@ -1013,7 +1013,7 @@
       "suite": "cli",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "CreateUserPoolClient with token validity",
+      "test": "CreateUserPoolClientWithTokenValidity",
       "status": "pass"
     },
     {
@@ -1027,14 +1027,14 @@
       "suite": "cli",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "DescribeUserPoolClient returns token validity",
+      "test": "DescribeUserPoolClientTokenValidity",
       "status": "pass"
     },
     {
       "suite": "cli",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "UpdateUserPoolClient changes token validity",
+      "test": "UpdateUserPoolClientTokenValidity",
       "status": "pass"
     },
     {
@@ -4471,7 +4471,7 @@
       "suite": "dotnet-sdk",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "CreateUserPoolClient with token validity",
+      "test": "CreateUserPoolClientWithTokenValidity",
       "status": "skip"
     },
     {
@@ -4485,14 +4485,14 @@
       "suite": "dotnet-sdk",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "DescribeUserPoolClient returns token validity",
+      "test": "DescribeUserPoolClientTokenValidity",
       "status": "skip"
     },
     {
       "suite": "dotnet-sdk",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "UpdateUserPoolClient changes token validity",
+      "test": "UpdateUserPoolClientTokenValidity",
       "status": "skip"
     },
     {
@@ -7698,7 +7698,7 @@
       "suite": "go-sdk",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "CreateUserPoolClient with token validity",
+      "test": "CreateUserPoolClientWithTokenValidity",
       "status": "pass"
     },
     {
@@ -7712,14 +7712,14 @@
       "suite": "go-sdk",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "DescribeUserPoolClient returns token validity",
+      "test": "DescribeUserPoolClientTokenValidity",
       "status": "pass"
     },
     {
       "suite": "go-sdk",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "UpdateUserPoolClient changes token validity",
+      "test": "UpdateUserPoolClientTokenValidity",
       "status": "pass"
     },
     {
@@ -11156,7 +11156,7 @@
       "suite": "java-sdk",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "CreateUserPoolClient with token validity",
+      "test": "CreateUserPoolClientWithTokenValidity",
       "status": "pass"
     },
     {
@@ -11170,14 +11170,14 @@
       "suite": "java-sdk",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "DescribeUserPoolClient returns token validity",
+      "test": "DescribeUserPoolClientTokenValidity",
       "status": "pass"
     },
     {
       "suite": "java-sdk",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "UpdateUserPoolClient changes token validity",
+      "test": "UpdateUserPoolClientTokenValidity",
       "status": "pass"
     },
     {
@@ -14383,7 +14383,7 @@
       "suite": "node-js-sdk",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "CreateUserPoolClient with token validity",
+      "test": "CreateUserPoolClientWithTokenValidity",
       "op": "CreateUserPoolClient",
       "status": "pass"
     },
@@ -14398,7 +14398,7 @@
       "suite": "node-js-sdk",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "DescribeUserPoolClient returns token validity",
+      "test": "DescribeUserPoolClientTokenValidity",
       "op": "DescribeUserPoolClient",
       "status": "pass"
     },
@@ -14406,7 +14406,7 @@
       "suite": "node-js-sdk",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "UpdateUserPoolClient changes token validity",
+      "test": "UpdateUserPoolClientTokenValidity",
       "op": "UpdateUserPoolClient",
       "status": "pass"
     },
@@ -17647,7 +17647,7 @@
       "suite": "python-sdk",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "CreateUserPoolClient with token validity",
+      "test": "CreateUserPoolClientWithTokenValidity",
       "op": "CreateUserPoolClient",
       "status": "pass"
     },
@@ -17662,7 +17662,7 @@
       "suite": "python-sdk",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "DescribeUserPoolClient returns token validity",
+      "test": "DescribeUserPoolClientTokenValidity",
       "op": "DescribeUserPoolClient",
       "status": "pass"
     },
@@ -17670,7 +17670,7 @@
       "suite": "python-sdk",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "UpdateUserPoolClient changes token validity",
+      "test": "UpdateUserPoolClientTokenValidity",
       "op": "UpdateUserPoolClient",
       "status": "pass"
     },
@@ -21142,7 +21142,7 @@
       "suite": "rust-sdk",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "CreateUserPoolClient with token validity",
+      "test": "CreateUserPoolClientWithTokenValidity",
       "status": "skip"
     },
     {
@@ -21156,14 +21156,14 @@
       "suite": "rust-sdk",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "DescribeUserPoolClient returns token validity",
+      "test": "DescribeUserPoolClientTokenValidity",
       "status": "skip"
     },
     {
       "suite": "rust-sdk",
       "service": "cognito",
       "group": "cognito-token-validity",
-      "test": "UpdateUserPoolClient changes token validity",
+      "test": "UpdateUserPoolClientTokenValidity",
       "status": "skip"
     },
     {

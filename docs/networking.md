@@ -231,6 +231,42 @@ for the matching `docker compose` pattern for the `/data` volume.
 
 ---
 
+## Which host and port a URL carries, and why
+
+Every URL Overcast hands out follows one rule: **the configured `OVERCAST_HOSTNAME` (when
+set) on the port *you* reached Overcast on.** Your request is the only proof of a dialable
+port — Overcast cannot see its own Docker port mapping — so with a remapped port
+(`docker run -p 4652:4566`), host-side callers get URLs on `:4652` and containers started by
+Overcast get `:4566`. Each party receives a URL that works *for them*. Values that cross the
+container boundary mechanically — queue URLs baked into function environment by a deploy,
+invoke payloads — are rewritten at the boundary.
+
+Consequences worth knowing before they look like bugs:
+
+- **The same resource shows different ports to different callers.** A stack output read from
+  the host says `:4652`; the same output inside a Lambda says `:4566`. Both dial correctly.
+  This is deliberate, not drift.
+- **SQS queue URLs echo your exact origin** (no hostname substitution): SDKs dial the
+  `QueueUrl` itself, so Overcast returns precisely what you just proved reachable.
+- **The Cognito issuer also carries your port.** OIDC discovery requires `issuer` to match
+  the URL you fetched the configuration from, and `jwks_uri` must be dialable by whoever
+  validates the token. One consequence with a *remapped* port: a token minted from the host
+  carries `:4652` in its `iss`, and a validator inside a container comparing that string
+  literally against its own `:4566` issuer will report a mismatch. No single port can be
+  dialable from both sides of a remap — if you hit this, publish the API 1:1
+  (`-p 4566:4566`) and the issuer becomes identical everywhere. Overcast's own token
+  validation is unaffected either way.
+- **ECR `repositoryUri` is the exception**: it always uses the configured host and port,
+  because the docker daemon — not your API client — is what dials it.
+- **All of this presumes `OVERCAST_HOSTNAME`, if set, resolves to Overcast for every party.**
+  The split-horizon names above do. `OVERCAST_HOSTNAME=localhost` does not (inside a
+  container, `localhost` is the container) and remains the one configuration that silently
+  breaks container callers.
+
+The full design and per-service analysis: `docs/plans/client-facing-url-minting.md`.
+
+---
+
 ## See also
 
 - [Using AWS SDKs and CLI](./sdk-cli.md) — endpoint configuration for every SDK

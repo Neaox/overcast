@@ -100,7 +100,21 @@ func (h *Handler) queueURL(ctx context.Context, queueName string) string {
 		h.queueURLBase(ctx), h.cfg.AccountID, queueName)
 }
 
-// queueURLBase returns the origin queue URLs should carry for this request.
+// queueURLBase returns the origin queue URLs should carry for this request:
+// the caller's own origin, verbatim.
+//
+// DELIBERATE DIVERGENCE — do not "unify" this onto
+// serviceutil.ClientBaseURLFromOrigin, which substitutes a configured
+// OVERCAST_HOSTNAME. A wire-response QueueUrl is consumed by the requesting
+// client itself: JS/.NET/Java SDKs dial the URL directly, so echoing exactly
+// the origin the caller just dialed carries zero resolution assumptions.
+// Substituting the configured name adds one for no reachability gain, and
+// under the documented OVERCAST_HOSTNAME=localhost misconfiguration it would
+// hand a container caller a URL meaning "yourself" — turning a bad config into
+// a hard failure. Cross-party values (stack outputs, GetAtt-passed URIs) are
+// the ones that need the configured name, and CloudFormation re-mints those
+// itself. See docs/plans/client-facing-url-minting.md, "Per-service
+// requirements and constraints".
 func (h *Handler) queueURLBase(ctx context.Context) string {
 	if origin := middleware.ClientEndpointFromContext(ctx); origin != "" {
 		return origin
