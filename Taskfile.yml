@@ -164,6 +164,11 @@ tasks:
       - go run ./scripts/docs-index.go --check
       - git diff --exit-code README.md STATUS.md docs/README.md docs/services/ docs/generated/service-support.json
 
+  compat-registry-check:
+    desc: Validate compat/suites/registry.json against registry.schema.json
+    cmds:
+      - python3 scripts/validate-compat-registry.py
+
   # ---- Quality --------------------------------------------------------------
 
   bench:

@@ -455,11 +455,22 @@ compat/suites/
 
 - Adding a new group or test to `registry.json` is the first step when
   implementing a new service or operation — do it before writing suite code.
-- Never remove or rename an existing group or test entry — that breaks the
-  dashboard history. If an operation is no longer relevant, mark it with
-  `"deprecated": true` instead (field is supported by the schema).
+- Test names must be PascalCase (`^[A-Z][A-Za-z0-9]+$`) and group names
+  kebab-case (`^[a-z0-9]+(-[a-z0-9]+)*$`). When a test exercises a variant of an
+  operation, fold the distinction into the name (`CreateUserPoolClientWithTokenValidity`)
+  and put the bare operation in `op` — never use a descriptive name with spaces.
+- Avoid removing or renaming an existing group or test entry: the name is the
+  join key across every suite, `compat/baseline.json`, and dashboard history, so
+  a rename must update all of them in the same commit. A rename is only
+  justified when an entry violates the schema.
 - Bump the `version` field only for breaking schema changes; adding new groups
   is non-breaking and does not require a version bump.
+- CI validates the registry against `registry.schema.json` (the `Compat registry
+  schema` job). Run it locally before pushing:
+
+```bash
+make compat-registry-check
+```
 
 ### When a new Overcast service is implemented
 
