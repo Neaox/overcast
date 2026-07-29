@@ -30,13 +30,7 @@ func newMCPRouterTestServer(t *testing.T, mutateCfg ...func(*config.Config)) *ht
 		AccountID: "000000000000",
 		State:     config.StateBackendMemory,
 		LogLevel:  "error",
-		Services: map[string]bool{
-			"s3":       true,
-			"sqs":      true,
-			"dynamodb": true,
-			"sns":      true,
-			"lambda":   true,
-		},
+
 		ShutdownTimeout: 0,
 		SigV4Validate:   false,
 		Debug:           false,

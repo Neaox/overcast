@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/Neaox/overcast/internal/config"
@@ -63,14 +64,10 @@ func TestServiceNamespacePrefix(t *testing.T) {
 // added to config.ServiceNamespacePrefix (and to this test's expected set)
 // alongside the service that needs it.
 func TestServiceNamespacePrefix_allServicesAudit(t *testing.T) {
-	// Given: the default service list (no OVERCAST_SERVICES override)
-	clearEnv(t)
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if len(cfg.Services) == 0 {
-		t.Fatal("expected at least one default service, got none")
+	// Given: the canonical service list
+	services := config.AllServices()
+	if len(services) == 0 {
+		t.Fatal("expected at least one service, got none")
 	}
 
 	knownRemaps := map[string]string{
@@ -79,7 +76,7 @@ func TestServiceNamespacePrefix_allServicesAudit(t *testing.T) {
 		"eventbridge":    "eb",
 	}
 
-	for svc := range cfg.Services {
+	for _, svc := range services {
 		t.Run(svc, func(t *testing.T) {
 			// When: we resolve the namespace prefix
 			got := config.ServiceNamespacePrefix(svc)
@@ -101,8 +98,8 @@ func TestServiceNamespacePrefix_allServicesAudit(t *testing.T) {
 	// guards against the mapping silently going stale if a service were ever
 	// renamed or removed.
 	for svc := range knownRemaps {
-		if !cfg.Services[svc] {
-			t.Errorf("expected known remapped service %q to be in the default service list", svc)
+		if !slices.Contains(services, svc) {
+			t.Errorf("expected known remapped service %q to be in the service list", svc)
 		}
 	}
 }
@@ -181,14 +178,10 @@ var colonlessNamespaceServices = map[string]bool{
 // classified as both colonless-routable and known-inert, since those are
 // mutually exclusive explanations of how its override behaves.
 func TestServiceStateOverride_allServicesAudit(t *testing.T) {
-	// Given: the default service list (no OVERCAST_SERVICES override)
-	clearEnv(t)
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	// Given: the canonical service list
+	services := config.AllServices()
 
-	for svc := range cfg.Services {
+	for _, svc := range services {
 		t.Run(svc, func(t *testing.T) {
 			// When: we classify the service
 			_, inert := config.ServiceOverrideIneffective(svc)
@@ -207,8 +200,8 @@ func TestServiceStateOverride_allServicesAudit(t *testing.T) {
 	// service — guards against the exemption list going stale if a service
 	// were ever renamed or removed.
 	for svc := range colonlessNamespaceServices {
-		if !cfg.Services[svc] {
-			t.Errorf("colonlessNamespaceServices contains %q, which is not in the default service list", svc)
+		if !slices.Contains(services, svc) {
+			t.Errorf("colonlessNamespaceServices contains %q, which is not a known service", svc)
 		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -79,7 +80,6 @@ type serverOptions struct {
 // Example — with options:
 //
 //	srv := helpers.NewTestServer(t,
-//	    helpers.WithServices("s3"),
 //	    helpers.WithRegion("eu-west-1"),
 //	    helpers.WithMockClock(),
 //	)
@@ -182,14 +182,24 @@ func (ts *TestServer) Reset() {
 // Use the With* constructors rather than crafting values directly.
 type Option func(*serverOptions)
 
-// WithServices restricts which services are enabled.
-// Useful for testing that disabled services return 404/501 correctly.
-func WithServices(services ...string) Option {
+// WithServiceSubset registers only the named services on the test server.
+//
+// This is not a general-purpose knob and should not be reached for to "focus" a
+// test: every service is always on in real runs, so a test that narrows the set
+// is exercising a shape no user ever gets. It exists for the router tests that
+// cannot be written any other way — proving no modeled operation falls through
+// to S3's broad bucket/object routes requires a server where nothing else is
+// registered to claim the path first. See config.TestOnlyServiceSubset.
+func WithServiceSubset(services ...string) Option {
 	return func(so *serverOptions) {
-		so.cfg.Services = make(map[string]bool)
+		subset := make(map[string]bool, len(services))
 		for _, s := range services {
-			so.cfg.Services[s] = true
+			if !slices.Contains(config.AllServices(), s) {
+				panic("helpers.WithServiceSubset: unknown service " + s)
+			}
+			subset[s] = true
 		}
+		so.cfg.TestOnlyServiceSubset = subset
 	}
 }
 
@@ -346,63 +356,18 @@ func WithSigV4Validate(enabled bool) Option {
 // defaultTestConfig returns a config suited for test servers.
 func defaultTestConfig() *config.Config {
 	return &config.Config{
-		Host:                "127.0.0.1",
-		Hostname:            "localhost",
-		Port:                0, // httptest assigns the port
-		Region:              "us-east-1",
-		AccountID:           "000000000000",
-		EKSMode:             config.EKSModeMock,
-		State:               config.StateBackendMemory,
-		ServiceStates:       make(map[string]config.StateBackend),
-		HybridFlushInterval: 5 * time.Second,
-		CFNSyncWait:         time.Second,
-		LogLevel:            "error", // suppress info/debug logs in test output
-		Services: map[string]bool{
-			"s3":              true,
-			"sqs":             true,
-			"dynamodb":        true,
-			"dynamodbstreams": true,
-			"sns":             true,
-			"ses":             true,
-			"lambda":          true,
-			"pipes":           true,
-			"logs":            true,
-			"secretsmanager":  true, "sts": true,
-			"ssm":            true,
-			"kms":            true,
-			"iam":            true,
-			"cloudformation": true,
-			"ec2":            true,
-			"rds":            true,
-			"ecs":            true,
-			"ecr":            true,
-			"eks":            true,
-			"cognito":        true,
-			"stepfunctions":  true,
-			"waf":            true,
-			"shield":         true,
-			"appsync":        true,
-			"apigateway":     true,
-			"cloudfront":     true,
-			"eventbridge":    true,
-			"kinesis":        true,
-			"appregistry":    true,
-			"cloudwatch":     true,
-			"acm":            true,
-			"opensearch":     true,
-			"appconfig":      true,
-			"appconfigdata":  true,
-			"bedrock":        true,
-			"glue":           true,
-			"firehose":       true,
-			"athena":         true,
-			"elasticache":    true,
-			"msk":            true,
-			"scheduler":      true,
-			"route53":        true,
-			"elbv2":          true,
-		},
-		LambdaDockerSocket:   "", // empty = skip Docker probe; use WithLambdaDocker() for container tests
+		Host:                 "127.0.0.1",
+		Hostname:             "localhost",
+		Port:                 0, // httptest assigns the port
+		Region:               "us-east-1",
+		AccountID:            "000000000000",
+		EKSMode:              config.EKSModeMock,
+		State:                config.StateBackendMemory,
+		ServiceStates:        make(map[string]config.StateBackend),
+		HybridFlushInterval:  5 * time.Second,
+		CFNSyncWait:          time.Second,
+		LogLevel:             "error", // suppress info/debug logs in test output
+		LambdaDockerSocket:   "",      // empty = skip Docker probe; use WithLambdaDocker() for container tests
 		LambdaNetwork:        "overcast_lambda",
 		LambdaRuntimeAPIPort: 0, // OS-assigned port — avoids conflicts when test packages run in parallel
 		ShutdownTimeout:      0,

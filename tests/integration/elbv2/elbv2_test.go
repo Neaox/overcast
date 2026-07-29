@@ -99,7 +99,7 @@ func createTG(t *testing.T, srv *helpers.TestServer, name string) string {
 
 func TestCreateLoadBalancer_success(t *testing.T) {
 	// Given: an empty store
-	srv := helpers.NewTestServer(t, helpers.WithServices("elbv2"))
+	srv := helpers.NewTestServer(t)
 
 	// When: CreateLoadBalancer is called
 	arn := createLB(t, srv, "my-alb")
@@ -112,7 +112,7 @@ func TestCreateLoadBalancer_success(t *testing.T) {
 
 func TestCreateLoadBalancer_missingName(t *testing.T) {
 	// Given: an empty store
-	srv := helpers.NewTestServer(t, helpers.WithServices("elbv2"))
+	srv := helpers.NewTestServer(t)
 
 	// When: CreateLoadBalancer is called without a name
 	resp := elbCall(t, srv, "CreateLoadBalancer", url.Values{
@@ -129,7 +129,7 @@ func TestCreateLoadBalancer_missingName(t *testing.T) {
 
 func TestDescribeLoadBalancers_empty(t *testing.T) {
 	// Given: an empty store
-	srv := helpers.NewTestServer(t, helpers.WithServices("elbv2"))
+	srv := helpers.NewTestServer(t)
 
 	// When: DescribeLoadBalancers is called
 	resp := elbCall(t, srv, "DescribeLoadBalancers", url.Values{})
@@ -151,7 +151,7 @@ func TestDescribeLoadBalancers_empty(t *testing.T) {
 
 func TestDescribeLoadBalancers_afterCreate(t *testing.T) {
 	// Given: two load balancers exist
-	srv := helpers.NewTestServer(t, helpers.WithServices("elbv2"))
+	srv := helpers.NewTestServer(t)
 	createLB(t, srv, "alb-alpha")
 	createLB(t, srv, "alb-beta")
 
@@ -177,7 +177,7 @@ func TestDescribeLoadBalancers_afterCreate(t *testing.T) {
 
 func TestDeleteLoadBalancer_success(t *testing.T) {
 	// Given: an LB exists
-	srv := helpers.NewTestServer(t, helpers.WithServices("elbv2"))
+	srv := helpers.NewTestServer(t)
 	arn := createLB(t, srv, "delete-me")
 
 	// When: DeleteLoadBalancer is called
@@ -207,7 +207,7 @@ func TestDeleteLoadBalancer_success(t *testing.T) {
 
 func TestCreateTargetGroup_success(t *testing.T) {
 	// Given: an empty store
-	srv := helpers.NewTestServer(t, helpers.WithServices("elbv2"))
+	srv := helpers.NewTestServer(t)
 
 	// When: CreateTargetGroup is called
 	arn := createTG(t, srv, "my-tg")
@@ -222,7 +222,7 @@ func TestCreateTargetGroup_success(t *testing.T) {
 
 func TestDescribeTargetGroups_afterCreate(t *testing.T) {
 	// Given: a target group exists
-	srv := helpers.NewTestServer(t, helpers.WithServices("elbv2"))
+	srv := helpers.NewTestServer(t)
 	createTG(t, srv, "tg-one")
 
 	// When: DescribeTargetGroups is called
@@ -247,7 +247,7 @@ func TestDescribeTargetGroups_afterCreate(t *testing.T) {
 
 func TestCreateListener_success(t *testing.T) {
 	// Given: an LB and TG exist
-	srv := helpers.NewTestServer(t, helpers.WithServices("elbv2"))
+	srv := helpers.NewTestServer(t)
 	lbArn := createLB(t, srv, "my-alb")
 	tgArn := createTG(t, srv, "my-tg")
 
@@ -281,7 +281,7 @@ func TestCreateListener_success(t *testing.T) {
 
 func TestDescribeListeners_afterCreate(t *testing.T) {
 	// Given: a listener exists
-	srv := helpers.NewTestServer(t, helpers.WithServices("elbv2"))
+	srv := helpers.NewTestServer(t)
 	lbArn := createLB(t, srv, "my-alb")
 	tgArn := createTG(t, srv, "my-tg")
 	elbCall(t, srv, "CreateListener", url.Values{

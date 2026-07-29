@@ -73,9 +73,20 @@ type Config struct {
 	// internal/containerendpoint.
 	SplitHorizonHosts []string
 
-	// Services is the set of AWS services to enable.
-	// Map key is the lowercase service name, e.g. "s3", "sqs".
-	Services map[string]bool
+	// TestOnlyServiceSubset restricts which services router.New registers.
+	// nil — the normal case, and the only case any production path produces —
+	// registers every service.
+	//
+	// Load never populates this: there is no environment variable for it and
+	// no way for a user to set it. It exists because a handful of router tests
+	// need a server where nothing but the service under test is registered.
+	// S3's bucket/object routes are deliberately broad, so proving that no
+	// modeled operation falls through to them, or that an S3 bucket whose name
+	// collides with another service's REST literal stays reachable, requires
+	// removing the other claimants — there is no way to assert it against a
+	// fully-registered router. See tests/integration/router and
+	// docs/plans/host-routing-precedence.md.
+	TestOnlyServiceSubset map[string]bool
 
 	// State controls the global storage backend used for all services. This
 	// is always a concrete backend (memory, persistent, hybrid, or wal) —
@@ -556,13 +567,14 @@ func (c *Config) TLSEnabled() bool {
 // allServices is the canonical list of supported service names.
 var allServices = []string{"s3", "sqs", "sns", "ses", "dynamodb", "dynamodbstreams", "lambda", "pipes", "logs", "secretsmanager", "sts", "ssm", "kms", "iam", "cloudformation", "ec2", "rds", "ecs", "ecr", "eks", "cognito", "stepfunctions", "waf", "shield", "appsync", "apigateway", "cloudfront", "eventbridge", "kinesis", "appregistry", "cloudwatch", "acm", "opensearch", "appconfig", "appconfigdata", "bedrock", "glue", "firehose", "athena", "elasticache", "msk", "scheduler", "route53", "elbv2", "organizations", "autoscaling", "cloudtrail", "backup", "transfer"}
 
-// AllServices returns the canonical list of supported service names — the
-// exact set of tokens OVERCAST_SERVICES accepts — in declaration order. The
-// result is a copy, so callers cannot mutate package state through it.
+// AllServices returns the canonical list of supported service names in
+// declaration order. The result is a copy, so callers cannot mutate package
+// state through it.
 //
-// cmd/capgen generates the service-token table in docs/README.md from this,
-// which is what keeps the documented tokens from drifting away from the
-// accepted ones when a service is added or renamed.
+// These are the names OVERCAST_STATE_<SERVICE> is keyed by, and cmd/capgen
+// generates the service-name table in docs/README.md from this list, which is
+// what keeps the documented names from drifting away from the real ones when a
+// service is added or renamed.
 func AllServices() []string {
 	out := make([]string, len(allServices))
 	copy(out, allServices)
@@ -570,8 +582,8 @@ func AllServices() []string {
 }
 
 // ServiceNamespacePrefix returns the canonical mapping from a config service
-// name (as used in OVERCAST_SERVICES, OVERCAST_STATE_<SERVICE>, and
-// allServices) to the storage-namespace prefix that service actually writes
+// name (as used in OVERCAST_STATE_<SERVICE> and allServices) to the
+// storage-namespace prefix that service actually writes
 // under — the segment before the first ":" in namespaces like "cfn:stacks" or
 // "sqs:queues".
 //
@@ -670,7 +682,6 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_SPLIT_HORIZON_HOSTS       (empty — extra names remapped to Overcast
 //	                                           inside containers, comma-separated)
 //	OVERCAST_PORT                      4566
-//	OVERCAST_SERVICES                  s3,sqs,sns,ses,dynamodb,dynamodbstreams,lambda
 //	OVERCAST_STATE                     auto    (auto | memory | persistent | hybrid | wal)
 //	                                           auto resolves to hybrid when the data directory
 //	                                           is a mounted volume/bind mount, OVERCAST_DATA_DIR
@@ -765,20 +776,6 @@ func Load() (*Config, error) {
 	}
 	cfg.Port = port
 
-	// Services
-	svcStr := envOr("OVERCAST_SERVICES", strings.Join(allServices, ","))
-	cfg.Services = make(map[string]bool)
-	for _, s := range strings.Split(svcStr, ",") {
-		s = strings.TrimSpace(strings.ToLower(s))
-		if s == "" {
-			continue
-		}
-		if !isKnownService(s) {
-			return nil, fmt.Errorf("config: unknown service %q in OVERCAST_SERVICES", s)
-		}
-		cfg.Services[s] = true
-	}
-
 	// Data directory — resolved before the state backend below, since
 	// OVERCAST_STATE=auto inspects it (mountpoint check, existing-database
 	// check). dataDirEnvRaw/dataDirSource are read raw (undefaulted) because
@@ -871,21 +868,46 @@ func Load() (*Config, error) {
 	}
 	cfg.WALMaxLogBytes = walMaxLogBytes
 
-	// Per-service state overrides
-	cfg.ServiceStates = make(map[string]StateBackend)
+	// Per-service state overrides.
+	//
+	// Scanned out of the environment rather than probed per known service.
+	// The probe form — building "OVERCAST_STATE_"+svc for each service and
+	// reading that — cannot see a variable it does not think to construct, so
+	// OVERCAST_STATE_CLOUDWATCH_LOGS (the plausible guess for a service whose
+	// name is "logs"), or any typo, or a name that used to be right before a
+	// rename, was silently ignored: no error, no warning, and the service
+	// quietly kept using the global backend. Scanning means an override that
+	// names nothing real is a startup error instead.
+	serviceByEnvSuffix := make(map[string]string, len(allServices))
 	for _, svc := range allServices {
-		envKey := "OVERCAST_STATE_" + strings.ToUpper(strings.ReplaceAll(svc, "-", "_"))
-		if v := os.Getenv(envKey); v != "" {
-			raw := strings.ToLower(v)
-			if raw == "sqlite" {
-				raw = string(StateBackendPersistent)
-			}
-			svcBackend := StateBackend(raw)
-			if err := validateStateBackend(svcBackend, envKey); err != nil {
-				return nil, err
-			}
-			cfg.ServiceStates[svc] = svcBackend
+		serviceByEnvSuffix[strings.ToUpper(strings.ReplaceAll(svc, "-", "_"))] = svc
+	}
+
+	const statePrefix = "OVERCAST_STATE_"
+	cfg.ServiceStates = make(map[string]StateBackend)
+	for _, entry := range os.Environ() {
+		envKey, value, ok := strings.Cut(entry, "=")
+		if !ok || !strings.HasPrefix(envKey, statePrefix) {
+			continue
 		}
+		// An empty value means "unset", matching every other variable here.
+		if value == "" {
+			continue
+		}
+		svc, known := serviceByEnvSuffix[envKey[len(statePrefix):]]
+		if !known {
+			return nil, fmt.Errorf("config: %s does not name a known service (see the service names table in docs/README.md)", envKey)
+		}
+
+		raw := strings.ToLower(value)
+		if raw == "sqlite" {
+			raw = string(StateBackendPersistent)
+		}
+		svcBackend := StateBackend(raw)
+		if err := validateStateBackend(svcBackend, envKey); err != nil {
+			return nil, err
+		}
+		cfg.ServiceStates[svc] = svcBackend
 	}
 
 	// AWS identity defaults
@@ -1121,15 +1143,6 @@ func defaultDataDir() string {
 		return filepath.Join(os.TempDir(), "overcast", "data")
 	}
 	return filepath.Join(home, ".overcast", "data")
-}
-
-func isKnownService(s string) bool {
-	for _, known := range allServices {
-		if s == known {
-			return true
-		}
-	}
-	return false
 }
 
 // validateStateBackend returns an error if b is not one of the four recognised

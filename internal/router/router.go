@@ -163,9 +163,8 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// UnsubscribeURL) letting S3's GET / handle everything else. The pointer
 	// is read at request time, so the slice is fully populated by then.
 	var queryDispatchers []QueryDispatcher
-	var disabledQueryDispatchers []QueryDispatcher
 	operationRegistry := awsapi.NewRegistry()
-	r.Use(queryGetMiddleware(&queryDispatchers, &disabledQueryDispatchers, operationRegistry))
+	r.Use(queryGetMiddleware(&queryDispatchers, operationRegistry))
 	prof.mark("middleware chain")
 
 	// ---- Internal endpoints (always available) ----------------------------
@@ -247,19 +246,11 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	prof.mark("  new: logs")
 	if cfg.Debug {
 		var ec2Debug debugEC2Provider
-		if cfg.Services["ec2"] {
-			ec2Debug = ec2Svc
-		}
+		ec2Debug = ec2Svc
 		var debugProviders []DebugStateProvider
-		if cfg.Services["dynamodb"] {
-			debugProviders = append(debugProviders, ddbSvc)
-		}
-		if cfg.Services["logs"] {
-			debugProviders = append(debugProviders, logsSvc)
-		}
-		if cfg.Services["sqs"] {
-			debugProviders = append(debugProviders, sqsSvc)
-		}
+		debugProviders = append(debugProviders, ddbSvc)
+		debugProviders = append(debugProviders, logsSvc)
+		debugProviders = append(debugProviders, sqsSvc)
 		r.Route("/_debug", debugHandlers(cfg, store, ec2Debug, debugProviders))
 	}
 	lambdaSvc := lambda.New(cfg, store, logger, clk)
@@ -404,10 +395,6 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 
 	// Collect target dispatchers for services that share POST /.
 	var dispatchers []TargetDispatcher
-	// disabledTargetPrefixes collects X-Amz-Target prefixes of known-but-disabled
-	// TargetDispatcher services so targetDispatch can return ServiceDisabled
-	// instead of UnknownOperationException.
-	var disabledTargetPrefixes []string
 	// Query dispatchers are declared above, near middleware registration.
 	type namedStopper struct {
 		name string
@@ -423,30 +410,31 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	s3Router := chi.NewRouter()
 
 	for _, svc := range allServices {
+		// Test-only isolation. nil in every production path — see
+		// config.TestOnlyServiceSubset for why this exists and why it is not
+		// reachable from the environment. Skipping before dispatcher
+		// registration is what makes the service genuinely absent rather than
+		// merely unrouted.
+		if cfg.TestOnlyServiceSubset != nil && !cfg.TestOnlyServiceSubset[svc.Name()] {
+			// An excluded service still claims its own path prefixes, with a
+			// 501. Leaving them unclaimed would drop those paths into S3's
+			// broad bucket/object fallback, so the very routes a subset test
+			// is trying to isolate would answer as S3 and the test would
+			// report a fallthrough that no real run can produce.
+			if pp, ok := svc.(PathPrefixService); ok {
+				for _, prefix := range pp.PathPrefixes() {
+					r.HandleFunc(prefix, testOnlyAbsentHandler)
+					r.HandleFunc(prefix+"/*", testOnlyAbsentHandler)
+				}
+			}
+			continue
+		}
 		if td, ok := svc.(TargetDispatcher); ok {
-			rpcService := newSmithyRPCService(td, svc, cfg.Services[svc.Name()])
+			rpcService := newSmithyRPCService(td, svc)
 			smithyDispatchers[strings.ToLower(svc.Name())] = rpcService
 			if prefix := strings.TrimSuffix(td.TargetPrefix(), "."); prefix != "" {
 				smithyDispatchers[strings.ToLower(prefix)] = rpcService
 			}
-		}
-		if !cfg.Services[svc.Name()] {
-			logger.Debug("service disabled", zap.String("service", svc.Name()))
-			if pp, ok := svc.(PathPrefixService); ok {
-				for _, prefix := range pp.PathPrefixes() {
-					r.HandleFunc(prefix, serviceDisabledHandler)
-					r.HandleFunc(prefix+"/*", serviceDisabledHandler)
-				}
-			}
-			if td, ok := svc.(TargetDispatcher); ok {
-				if p := td.TargetPrefix(); p != "" {
-					disabledTargetPrefixes = append(disabledTargetPrefixes, p)
-				}
-			}
-			if qd, ok := svc.(QueryDispatcher); ok {
-				disabledQueryDispatchers = append(disabledQueryDispatchers, qd)
-			}
-			continue
 		}
 		serviceByName[svc.Name()] = svc
 		if svc.Name() == "s3" {
@@ -480,261 +468,163 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 
 	// ---- Event notification wiring ----------------------------------------
 	// S3 notifications → SQS + Lambda: connect after all services are constructed.
-	if cfg.Services["s3"] && cfg.Services["sqs"] {
-		var lambdaInvoker events.FunctionInvoker
-		if cfg.Services["lambda"] {
-			lambdaInvoker = lambdaSvc.Invoker()
-		}
-		s3Svc.InitNotifications(sqsSvc.Enqueuer(), lambdaInvoker, bus, logger)
-	}
+	var lambdaInvoker events.FunctionInvoker
+	lambdaInvoker = lambdaSvc.Invoker()
+	s3Svc.InitNotifications(sqsSvc.Enqueuer(), lambdaInvoker, bus, logger)
 	// Lambda → CloudWatch Logs: wire log writer so Lambda can write invocation logs.
-	if cfg.Services["lambda"] && cfg.Services["logs"] {
-		lambdaSvc.InitLogWriter(logsSvc.LogWriter())
-	}
+	lambdaSvc.InitLogWriter(logsSvc.LogWriter())
 	// Lambda bus: lifecycle events for topology / UI.
-	if cfg.Services["lambda"] {
-		lambdaSvc.InitBus(bus)
-	}
+	lambdaSvc.InitBus(bus)
 	// Lambda ← S3: reactive code sync — when a function's code object is
 	// updated in S3, automatically refresh CodeZip and invalidate the warm pool
 	// so the next invoke picks up the new code without a redeploy.
-	if cfg.Services["lambda"] && cfg.Services["s3"] {
-		lambdaSvc.InitS3Sync(func(ctx context.Context, bucket, key string) ([]byte, error) {
-			return s3Svc.GetObjectBytes(ctx, bucket, key)
-		})
-	}
+	lambdaSvc.InitS3Sync(func(ctx context.Context, bucket, key string) ([]byte, error) {
+		return s3Svc.GetObjectBytes(ctx, bucket, key)
+	})
 	// Lambda → EC2: VPC resolver so Lambda can connect containers to VPC networks.
-	if cfg.Services["lambda"] && cfg.Services["ec2"] {
-		lambdaSvc.SetVPCResolver(ec2Svc)
-	}
+	lambdaSvc.SetVPCResolver(ec2Svc)
 	// ECS/RDS → EC2: resolve subnet-backed launches against VPC network state.
-	if cfg.Services["ecs"] && cfg.Services["ec2"] {
-		ecsSvc.SetVPCResolver(ec2Svc)
-	}
-	if cfg.Services["rds"] && cfg.Services["ec2"] {
-		rdsSvc.SetVPCResolver(ec2Svc)
-	}
+	ecsSvc.SetVPCResolver(ec2Svc)
+	rdsSvc.SetVPCResolver(ec2Svc)
 	// SNS: wire lifecycle/publish events for topology / UI.
-	if cfg.Services["sns"] {
-		snsSvc.InitBus(bus)
-	}
+	snsSvc.InitBus(bus)
 	// SNS → SQS: wire enqueuer for Publish fan-out.
-	if cfg.Services["sns"] && cfg.Services["sqs"] {
-		snsSvc.InitSQSDelivery(sqsSvc.Enqueuer())
-	}
+	snsSvc.InitSQSDelivery(sqsSvc.Enqueuer())
 	// SNS/SES → email: wire SMTP mailer. The mock capture server (if enabled) is
 	// started as a background goroutine; its lifecycle is tied to the process.
-	if cfg.Services["sns"] || cfg.Services["ses"] || cfg.Services["cognito"] {
-		mailStore := smtp.NewMailStore(cfg.SMTPInboxMax)
+	mailStore := smtp.NewMailStore(cfg.SMTPInboxMax)
 
-		// publishInbox fires the inbox SSE event for any captured message
-		// (email or SMS). Defined once and shared by both transport callbacks.
-		publishInbox := func(m *smtp.CapturedMessage) {
-			bus.Publish(context.Background(), events.Event{
-				Type:   events.InboxDelivered,
-				Time:   m.ReceivedAt,
-				Source: "inbox",
-				Payload: events.InboxDeliveredPayload{
-					ID:      m.ID,
-					From:    m.From,
-					To:      m.To,
-					Subject: m.Subject,
-				},
-			})
-		}
+	// publishInbox fires the inbox SSE event for any captured message
+	// (email or SMS). Defined once and shared by both transport callbacks.
+	publishInbox := func(m *smtp.CapturedMessage) {
+		bus.Publish(context.Background(), events.Event{
+			Type:   events.InboxDelivered,
+			Time:   m.ReceivedAt,
+			Source: "inbox",
+			Payload: events.InboxDeliveredPayload{
+				ID:      m.ID,
+				From:    m.From,
+				To:      m.To,
+				Subject: m.Subject,
+			},
+		})
+	}
 
-		// SMS capture is always available — it writes directly into the store.
-		smsSender := smtp.NewMockSMSSender(mailStore)
-		smsSender.OnMessage = publishInbox
-		if cfg.Services["sns"] {
-			snsSvc.InitSMSDelivery(smsSender)
-		}
-		if cfg.Services["cognito"] {
-			cognitoSvc.InitSMSDelivery(smsSender)
-		}
+	// SMS capture is always available — it writes directly into the store.
+	smsSender := smtp.NewMockSMSSender(mailStore)
+	smsSender.OnMessage = publishInbox
+	snsSvc.InitSMSDelivery(smsSender)
+	cognitoSvc.InitSMSDelivery(smsSender)
 
-		// Webhook + push capture for SNS http/https and application subscriptions.
-		if cfg.Services["sns"] {
-			outbound := smtp.NewMockOutboundCapture(mailStore, publishInbox)
-			snsSvc.InitOutboundCapture(outbound)
-		}
+	// Webhook + push capture for SNS http/https and application subscriptions.
+	outbound := smtp.NewMockOutboundCapture(mailStore, publishInbox)
+	snsSvc.InitOutboundCapture(outbound)
 
-		// Expose the inbox capture API under /_overcast/inbox/.
-		r.Route("/_overcast/inbox", inboxHandlers(mailStore))
+	// Expose the inbox capture API under /_overcast/inbox/.
+	r.Route("/_overcast/inbox", inboxHandlers(mailStore))
 
-		var mailerHost string
-		var mailerPort int
-		if cfg.SMTPMock {
-			// Bind and serve in the background so startup is not blocked.
-			smtpAddr := fmt.Sprintf("127.0.0.1:%d", cfg.SMTPPort)
-			smtpSrv := smtp.NewServer(smtpAddr, mailStore)
-			smtpSrv.OnMessage = publishInbox
+	var mailerHost string
+	var mailerPort int
+	if cfg.SMTPMock {
+		// Bind and serve in the background so startup is not blocked.
+		smtpAddr := fmt.Sprintf("127.0.0.1:%d", cfg.SMTPPort)
+		smtpSrv := smtp.NewServer(smtpAddr, mailStore)
+		smtpSrv.OnMessage = publishInbox
 
-			// lazyMailer will block the first Send until the SMTP server is ready.
-			lm := smtp.NewLazyMailer()
-			cleanups = append(cleanups, func() { smtpSrv.Close() })
+		// lazyMailer will block the first Send until the SMTP server is ready.
+		lm := smtp.NewLazyMailer()
+		cleanups = append(cleanups, func() { smtpSrv.Close() })
 
-			go func() {
-				boundAddr, err := smtpSrv.Listen()
-				if err != nil {
-					logger.Error("smtp mock server: failed to bind", zap.Error(err))
-					return
-				}
-				go smtpSrv.Serve(smtpCtx)
-
-				host, portStr, _ := net.SplitHostPort(boundAddr)
-				port, _ := strconv.Atoi(portStr)
-				lm.SetReady(smtp.NewMailer(smtp.Config{
-					Host: host,
-					Port: port,
-				}))
-				logger.Info("smtp mock server started", zap.String("addr", boundAddr))
-			}()
-
-			if cfg.Services["sns"] {
-				snsSvc.InitEmailDelivery(lm)
+		go func() {
+			boundAddr, err := smtpSrv.Listen()
+			if err != nil {
+				logger.Error("smtp mock server: failed to bind", zap.Error(err))
+				return
 			}
-			if cfg.Services["ses"] {
-				sesSvc.InitEmailDelivery(lm)
-			}
-			if cfg.Services["cognito"] {
-				cognitoSvc.InitEmailDelivery(lm)
-			}
-		} else {
-			mailerHost = cfg.SMTPHost
-			mailerPort = cfg.SMTPPort
-		}
-		if mailerHost != "" {
-			mailer := smtp.NewMailer(smtp.Config{
-				Host:     mailerHost,
-				Port:     mailerPort,
-				Username: cfg.SMTPUsername,
-				Password: cfg.SMTPPassword,
-				TLS:      cfg.SMTPTLS,
-			})
-			if cfg.Services["sns"] {
-				snsSvc.InitEmailDelivery(mailer)
-			}
-			if cfg.Services["ses"] {
-				sesSvc.InitEmailDelivery(mailer)
-			}
-			if cfg.Services["cognito"] {
-				cognitoSvc.InitEmailDelivery(mailer)
-			}
-		}
+			go smtpSrv.Serve(smtpCtx)
+
+			host, portStr, _ := net.SplitHostPort(boundAddr)
+			port, _ := strconv.Atoi(portStr)
+			lm.SetReady(smtp.NewMailer(smtp.Config{
+				Host: host,
+				Port: port,
+			}))
+			logger.Info("smtp mock server started", zap.String("addr", boundAddr))
+		}()
+
+		snsSvc.InitEmailDelivery(lm)
+		sesSvc.InitEmailDelivery(lm)
+		cognitoSvc.InitEmailDelivery(lm)
+	} else {
+		mailerHost = cfg.SMTPHost
+		mailerPort = cfg.SMTPPort
+	}
+	if mailerHost != "" {
+		mailer := smtp.NewMailer(smtp.Config{
+			Host:     mailerHost,
+			Port:     mailerPort,
+			Username: cfg.SMTPUsername,
+			Password: cfg.SMTPPassword,
+			TLS:      cfg.SMTPTLS,
+		})
+		snsSvc.InitEmailDelivery(mailer)
+		sesSvc.InitEmailDelivery(mailer)
+		cognitoSvc.InitEmailDelivery(mailer)
 	}
 	// SQS: wire bus for queue lifecycle events (topology map).
-	if cfg.Services["sqs"] {
-		sqsSvc.InitBus(bus)
-	}
+	sqsSvc.InitBus(bus)
 	// CloudWatch Logs: wire bus for log group lifecycle events.
-	if cfg.Services["logs"] {
-		logsSvc.InitBus(bus)
-	}
+	logsSvc.InitBus(bus)
 	// IAM: wire bus for role/user/policy lifecycle events.
-	if cfg.Services["iam"] {
-		iamSvc.InitBus(bus)
-	}
+	iamSvc.InitBus(bus)
 	// STS: wire bus for assume-role events.
-	if cfg.Services["sts"] {
-		stsSvc.InitBus(bus)
-	}
+	stsSvc.InitBus(bus)
 	// SSM: wire bus for parameter lifecycle events.
-	if cfg.Services["ssm"] {
-		ssmSvc.InitBus(bus)
-	}
+	ssmSvc.InitBus(bus)
 	// KMS: wire bus for key lifecycle events.
-	if cfg.Services["kms"] {
-		kmsSvc.InitBus(bus)
-	}
+	kmsSvc.InitBus(bus)
 	// Secrets Manager: wire bus for secret lifecycle events.
-	if cfg.Services["secretsmanager"] {
-		smSvc.InitBus(bus)
-	}
+	smSvc.InitBus(bus)
 	// SES: wire bus for email/identity/template events.
-	if cfg.Services["ses"] {
-		sesSvc.InitBus(bus)
-	}
+	sesSvc.InitBus(bus)
 	// Kinesis: wire bus for stream lifecycle events.
-	if cfg.Services["kinesis"] {
-		kinesisSvc.InitBus(bus)
-	}
+	kinesisSvc.InitBus(bus)
 	// RDS: wire bus so Docker container events update instance status.
-	if cfg.Services["rds"] {
-		rdsSvc.InitBus(bus)
-	}
+	rdsSvc.InitBus(bus)
 	// ECS: wire bus so Docker container events update task status.
-	if cfg.Services["ecs"] {
-		ecsSvc.InitBus(bus)
-	}
+	ecsSvc.InitBus(bus)
 	// ElastiCache: wire bus so Docker container events update cluster status.
-	if cfg.Services["elasticache"] {
-		elasticacheSvc.InitBus(bus)
-	}
+	elasticacheSvc.InitBus(bus)
 	// ECR: wire bus for repository lifecycle events.
-	if cfg.Services["ecr"] {
-		ecrSvc.InitBus(bus)
-	}
+	ecrSvc.InitBus(bus)
 	// MSK: wire bus so Docker container events update cluster status.
-	if cfg.Services["msk"] {
-		mskSvc.InitBus(bus)
-	}
+	mskSvc.InitBus(bus)
 	// EC2: wire bus for VPC/subnet/security group lifecycle events.
-	if cfg.Services["ec2"] {
-		ec2Svc.InitBus(bus)
-	}
+	ec2Svc.InitBus(bus)
 	// EventBridge: wire bus for bus/rule lifecycle events.
-	if cfg.Services["eventbridge"] {
-		ebSvc.InitBus(bus)
-		ebSvc.InitRouter(r)
-	}
+	ebSvc.InitBus(bus)
+	ebSvc.InitRouter(r)
 	// Step Functions: wire bus for state machine/execution lifecycle events.
-	if cfg.Services["stepfunctions"] {
-		sfnSvc.InitBus(bus)
-	}
+	sfnSvc.InitBus(bus)
 	// AppSync: wire bus for API lifecycle events.
-	if cfg.Services["appsync"] {
-		appsyncSvc.InitBus(bus)
-		if cfg.Services["lambda"] {
-			appsyncSvc.InitLambdaInvoker(lambdaSvc.SyncInvoker())
-		}
-		if cfg.Services["dynamodb"] {
-			appsyncSvc.InitDynamoDBInvoker(ddbSvc.DynamoDBInvoker())
-		}
-	}
+	appsyncSvc.InitBus(bus)
+	appsyncSvc.InitLambdaInvoker(lambdaSvc.SyncInvoker())
+	appsyncSvc.InitDynamoDBInvoker(ddbSvc.DynamoDBInvoker())
 	// CloudFront: wire bus for distribution lifecycle events.
-	if cfg.Services["cloudfront"] {
-		cloudfrontSvc.InitBus(bus)
-	}
+	cloudfrontSvc.InitBus(bus)
 	// CloudFormation: wire bus + router for async provisioning.
-	if cfg.Services["cloudformation"] {
-		cfnSvc.InitBus(bus)
-	}
+	cfnSvc.InitBus(bus)
 	// API Gateway: wire bus + Lambda invoker for proxy execution.
-	if cfg.Services["apigateway"] {
-		apigwSvc.InitBus(bus)
-		apigwSvc.InitDomainRegistry(domainReg)
-		if cfg.Services["lambda"] {
-			apigwSvc.InitLambdaInvoker(lambdaSvc.SyncInvoker())
-		}
-		if cfg.Services["cognito"] {
-			apigwSvc.InitCognitoValidator(cognitoSvc)
-		}
-	}
+	apigwSvc.InitBus(bus)
+	apigwSvc.InitDomainRegistry(domainReg)
+	apigwSvc.InitLambdaInvoker(lambdaSvc.SyncInvoker())
+	apigwSvc.InitCognitoValidator(cognitoSvc)
 	// DynamoDB Streams → SQS via Pipes: subscribe to stream events and enqueue.
-	if cfg.Services["pipes"] && cfg.Services["dynamodb"] && cfg.Services["sqs"] {
-		pipesSvc.InitDelivery(bus, sqsSvc.Enqueuer())
-	}
-	if cfg.Services["scheduler"] {
-		ti := scheduler.TargetInvoker{}
-		if cfg.Services["lambda"] {
-			ti.Lambda = lambdaSvc.Invoker()
-		}
-		if cfg.Services["sqs"] {
-			ti.SQS = sqsSvc.Enqueuer()
-		}
-		schedulerSvc.InitTargets(ti)
-	}
+	pipesSvc.InitDelivery(bus, sqsSvc.Enqueuer())
+	ti := scheduler.TargetInvoker{}
+	ti.Lambda = lambdaSvc.Invoker()
+	ti.SQS = sqsSvc.Enqueuer()
+	schedulerSvc.InitTargets(ti)
 	// ---- Docker Supervisor ------------------------------------------------
 	// A single Supervisor probes Docker once per unique socket, creates per-
 	// service networks, runs one event watcher, and reconciles container state.
@@ -744,34 +634,22 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// watcher (container lifecycle events on the bus).
 	dockerServices := map[string]docker.ServiceConfig{}
 	dockerSetters := map[string]func(*docker.Client){} // name → SetDocker callback
-	if cfg.Services["lambda"] {
-		// Lambda probes Docker independently (it needs the Runtime API server);
-		// we register its socket/network so the Supervisor starts a watcher.
-		dockerServices["lambda"] = docker.ServiceConfig{Name: "lambda", Socket: cfg.LambdaDockerSocket, Network: cfg.LambdaNetwork}
-	}
-	if cfg.Services["rds"] {
-		dockerServices["rds"] = docker.ServiceConfig{Name: "rds", Socket: cfg.RDSDockerSocket, Network: cfg.RDSNetwork}
-		dockerSetters["rds"] = rdsSvc.SetDocker
-	}
-	if cfg.Services["elasticache"] {
-		dockerServices["elasticache"] = docker.ServiceConfig{Name: "elasticache", Socket: cfg.ElastiCacheDockerSocket, Network: cfg.ElastiCacheNetwork}
-		dockerSetters["elasticache"] = elasticacheSvc.SetDocker
-	}
-	if cfg.Services["msk"] {
-		dockerServices["msk"] = docker.ServiceConfig{Name: "msk", Socket: cfg.MSKDockerSocket, Network: cfg.MSKNetwork}
-		dockerSetters["msk"] = mskSvc.SetDocker
-	}
-	if cfg.Services["ecs"] {
-		dockerServices["ecs"] = docker.ServiceConfig{Name: "ecs", Socket: cfg.ECSDockerSocket, Network: cfg.ECSNetwork}
-		dockerSetters["ecs"] = ecsSvc.SetDocker
-	}
-	if cfg.Services["ec2"] {
-		// EC2 manages its own networks (one per VPC) — empty Network skips
-		// static network creation in the Supervisor probe.
-		dockerServices["ec2"] = docker.ServiceConfig{Name: "ec2", Socket: cfg.LambdaDockerSocket, Network: ""}
-		dockerSetters["ec2"] = ec2Svc.SetDocker
-	}
-	if cfg.Services["eks"] && cfg.EKSMode == config.EKSModeLive && cfg.EKSDockerSocket != "" {
+	// Lambda probes Docker independently (it needs the Runtime API server);
+	// we register its socket/network so the Supervisor starts a watcher.
+	dockerServices["lambda"] = docker.ServiceConfig{Name: "lambda", Socket: cfg.LambdaDockerSocket, Network: cfg.LambdaNetwork}
+	dockerServices["rds"] = docker.ServiceConfig{Name: "rds", Socket: cfg.RDSDockerSocket, Network: cfg.RDSNetwork}
+	dockerSetters["rds"] = rdsSvc.SetDocker
+	dockerServices["elasticache"] = docker.ServiceConfig{Name: "elasticache", Socket: cfg.ElastiCacheDockerSocket, Network: cfg.ElastiCacheNetwork}
+	dockerSetters["elasticache"] = elasticacheSvc.SetDocker
+	dockerServices["msk"] = docker.ServiceConfig{Name: "msk", Socket: cfg.MSKDockerSocket, Network: cfg.MSKNetwork}
+	dockerSetters["msk"] = mskSvc.SetDocker
+	dockerServices["ecs"] = docker.ServiceConfig{Name: "ecs", Socket: cfg.ECSDockerSocket, Network: cfg.ECSNetwork}
+	dockerSetters["ecs"] = ecsSvc.SetDocker
+	// EC2 manages its own networks (one per VPC) — empty Network skips
+	// static network creation in the Supervisor probe.
+	dockerServices["ec2"] = docker.ServiceConfig{Name: "ec2", Socket: cfg.LambdaDockerSocket, Network: ""}
+	dockerSetters["ec2"] = ec2Svc.SetDocker
+	if cfg.EKSMode == config.EKSModeLive && cfg.EKSDockerSocket != "" {
 		dockerServices["eks"] = docker.ServiceConfig{Name: "eks", Socket: cfg.EKSDockerSocket, Network: cfg.EKSNetwork}
 		dockerSetters["eks"] = eksSvc.SetDocker
 	}
@@ -804,15 +682,11 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		}()
 	}
 	// SQS/DynamoDB Streams → Lambda via event source mappings.
-	if cfg.Services["lambda"] {
-		var receiver events.MessageReceiver
-		var enqueuer events.MessageEnqueuer
-		if cfg.Services["sqs"] {
-			receiver = sqsSvc.Receiver()
-			enqueuer = sqsSvc.Enqueuer()
-		}
-		lambdaSvc.InitESMDelivery(receiver, enqueuer, bus)
-	}
+	var receiver events.MessageReceiver
+	var enqueuer events.MessageEnqueuer
+	receiver = sqsSvc.Receiver()
+	enqueuer = sqsSvc.Enqueuer()
+	lambdaSvc.InitESMDelivery(receiver, enqueuer, bus)
 
 	// Build goal tier map for enabled services.
 	enabledGoalTiers := make(map[string]string, len(enabledServiceNames))
@@ -831,22 +705,14 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// Adding a new host-routed service costs exactly one row here plus one
 	// label in internal/middleware/hostroute.go's hostRouteLabels — see that
 	// file's doc comment for the full recipe.
-	if cfg.Services["apigateway"] {
-		hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: middleware.LabelExecuteAPI, Rewrite: apigwSvc.HostRouteRewrite})
-	}
-	if cfg.Services["cloudfront"] {
-		hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: middleware.LabelCloudFront, Rewrite: cloudfrontSvc.HostRouteRewrite})
-	}
-	if cfg.Services["lambda"] {
-		hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: middleware.LabelLambdaURL, Rewrite: lambdaSvc.HostRouteRewrite})
-	}
-	if cfg.Services["appsync"] {
-		hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: middleware.LabelAppSyncAPI, Rewrite: appsyncSvc.HostRouteRewrite})
-		// Real AWS serves subscriptions on a separate appsync-realtime-api
-		// host, and Amplify derives it by substituting into the GraphQL URL.
-		// Both labels reach the same service; the rewrite picks the endpoint.
-		hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: middleware.LabelAppSyncRealtimeAPI, Rewrite: appsyncSvc.HostRouteRewrite})
-	}
+	hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: middleware.LabelExecuteAPI, Rewrite: apigwSvc.HostRouteRewrite})
+	hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: middleware.LabelCloudFront, Rewrite: cloudfrontSvc.HostRouteRewrite})
+	hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: middleware.LabelLambdaURL, Rewrite: lambdaSvc.HostRouteRewrite})
+	hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: middleware.LabelAppSyncAPI, Rewrite: appsyncSvc.HostRouteRewrite})
+	// Real AWS serves subscriptions on a separate appsync-realtime-api
+	// host, and Amplify derives it by substituting into the GraphQL URL.
+	// Both labels reach the same service; the rewrite picks the endpoint.
+	hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: middleware.LabelAppSyncRealtimeAPI, Rewrite: appsyncSvc.HostRouteRewrite})
 
 	// ---- /v2/apis service dispatch ----------------------------------------
 	// Both API Gateway v2 and AppSync Events API register routes under /v2/apis.
@@ -857,10 +723,10 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// more commonly used service at this path).
 	{
 		var apigwV2Router, appsyncEventsRouter http.Handler
-		if cfg.Services["apigateway"] {
+		if registeredForTest(cfg, "apigateway") {
 			apigwV2Router = apigwSvc.V2APIRouter()
 		}
-		if cfg.Services["appsync"] {
+		if registeredForTest(cfg, "appsync") {
 			appsyncEventsRouter = appsyncSvc.EventsAPIRouter()
 		}
 		if apigwV2Router != nil || appsyncEventsRouter != nil {
@@ -883,10 +749,10 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// a request to either service in the first place.
 	{
 		tagRouters := map[string]http.Handler{}
-		if cfg.Services["appsync"] {
+		if registeredForTest(cfg, "appsync") {
 			tagRouters["appsync"] = appsyncSvc.TagsRouter()
 		}
-		if cfg.Services["msk"] {
+		if registeredForTest(cfg, "msk") {
 			tagRouters["kafka"] = mskSvc.TagsRouter()
 		}
 		if len(tagRouters) > 0 {
@@ -904,7 +770,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// Register POST / handler for AWS target and query-protocol dispatch. The
 	// generated registry also owns modeled operations when no configured service
 	// dispatcher does, so this route is present even in a minimal S3-only setup.
-	r.Post("/", targetDispatch(dispatchers, queryDispatchers, disabledQueryDispatchers, disabledTargetPrefixes, operationRegistry))
+	r.Post("/", targetDispatch(dispatchers, queryDispatchers, operationRegistry))
 	r.Post("/service/{service}/operation/{operation}", smithyRPCDispatch(smithyDispatchers, operationRegistry, s3Router))
 	// SigV4's service scope disambiguates the small number of modeled REST root
 	// bindings from S3 ListBuckets; unsigned and S3-signed root requests retain
@@ -922,9 +788,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	readyTime = time.Now()
 
 	// Wire CloudFormation's internal dispatch router now that all routes are registered.
-	if cfg.Services["cloudformation"] {
-		cfnSvc.InitRouter(r)
-	}
+	cfnSvc.InitRouter(r)
 
 	// Start goroutine leak monitor in debug mode.
 	// Samples every 5 s; dumps all goroutine stacks when the count stays above
@@ -997,7 +861,7 @@ func reconcileDockerNetworks(ctx context.Context, dc *docker.Client, service str
 // targetDispatch returns a handler that inspects the X-Amz-Target header and
 // delegates to the correct service dispatcher. SQS/DynamoDB use X-Amz-Target;
 // SNS uses the Query protocol (form-encoded body with Action field + XML).
-func targetDispatch(dispatchers []TargetDispatcher, queryDispatchers, disabledQueryDispatchers []QueryDispatcher, disabledPrefixes []string, operationRegistry *awsapi.Registry) http.HandlerFunc {
+func targetDispatch(dispatchers []TargetDispatcher, queryDispatchers []QueryDispatcher, operationRegistry *awsapi.Registry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		target := r.Header.Get("X-Amz-Target")
 		for _, td := range dispatchers {
@@ -1006,14 +870,7 @@ func targetDispatch(dispatchers []TargetDispatcher, queryDispatchers, disabledQu
 				return
 			}
 		}
-		// Check if the target matches a known-but-disabled service.
 		if target != "" {
-			for _, prefix := range disabledPrefixes {
-				if strings.HasPrefix(target, prefix) {
-					protocol.WriteJSONError(w, r, protocol.ErrServiceDisabled)
-					return
-				}
-			}
 			if claim, ok := operationRegistry.ClaimTarget(target); ok {
 				writeNotImplemented(w, r, claim)
 				return
@@ -1030,10 +887,6 @@ func targetDispatch(dispatchers []TargetDispatcher, queryDispatchers, disabledQu
 				// CloudFormation implement "GetTemplate").
 				if qd, ok := queryOwner(queryDispatchers, version, action); ok {
 					qd.DispatchQuery(w, r)
-					return
-				}
-				if _, ok := queryOwner(disabledQueryDispatchers, version, action); ok {
-					protocol.WriteQueryXMLError(w, r, protocol.ErrServiceDisabled)
 					return
 				}
 				if claim, ok := operationRegistry.ClaimQuery(version, action); ok {
@@ -1082,13 +935,11 @@ type smithyRPCService struct {
 	operations      map[string]struct{}
 	protocols       map[string]struct{}
 	indexOnce       sync.Once
-	enabled         bool
 }
 
-func newSmithyRPCService(dispatcher TargetDispatcher, service Service, enabled bool) *smithyRPCService {
+func newSmithyRPCService(dispatcher TargetDispatcher, service Service) *smithyRPCService {
 	entry := &smithyRPCService{
 		dispatcher: dispatcher,
-		enabled:    enabled,
 	}
 	if protocolService, ok := service.(ProtocolService); ok {
 		entry.protocolService = protocolService
@@ -1142,10 +993,6 @@ func smithyRPCDispatch(dispatchers map[string]*smithyRPCService, operationRegist
 		if service == nil && modeled {
 			service = dispatchers[claim.Service]
 		}
-		if service != nil && !service.enabled {
-			wireCodec.WriteError(w, r, protocol.ErrServiceDisabled)
-			return
-		}
 		if service != nil && modeled {
 			if service.supports(operation, wireCodec.Name()) {
 				service.dispatcher.Dispatch(w, r)
@@ -1154,7 +1001,7 @@ func smithyRPCDispatch(dispatchers map[string]*smithyRPCService, operationRegist
 			writeNotImplemented(w, r, claim)
 			return
 		}
-		if service != nil && service.enabled {
+		if service != nil {
 			service.dispatcher.Dispatch(w, r)
 			return
 		}
@@ -1171,25 +1018,12 @@ func smithyRPCDispatch(dispatchers map[string]*smithyRPCService, operationRegist
 	}
 }
 
-// serviceDisabledHandler returns a 503 ServiceDisabled response when a service
-// is known to the emulator but not enabled. The response format is determined
-// by the Content-Type of the incoming request:
-//   - application/x-www-form-urlencoded → AWS Query-protocol XML
-//   - everything else                   → AWS JSON (Lambda, DynamoDB, etc.)
-func serviceDisabledHandler(w http.ResponseWriter, r *http.Request) {
-	if strings.Contains(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrServiceDisabled)
-		return
-	}
-	protocol.WriteJSONError(w, r, protocol.ErrServiceDisabled)
-}
-
 // queryGetMiddleware returns middleware that intercepts GET / requests carrying
 // an AWS Query-protocol Action param (e.g. SNS UnsubscribeURL).
 // It uses a pointer to the dispatchers slice so it reads the fully-populated
 // slice at request time — the slice is filled in by the service registration
 // loop after middleware registration.
-func queryGetMiddleware(queryDispatchers, disabledQueryDispatchers *[]QueryDispatcher, operationRegistry *awsapi.Registry) func(http.Handler) http.Handler {
+func queryGetMiddleware(queryDispatchers *[]QueryDispatcher, operationRegistry *awsapi.Registry) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet || r.URL.Path != "/" || r.URL.Query().Get("Action") == "" {
@@ -1204,10 +1038,6 @@ func queryGetMiddleware(queryDispatchers, disabledQueryDispatchers *[]QueryDispa
 			version := r.FormValue("Version")
 			if qd, ok := queryOwner(*queryDispatchers, version, action); ok {
 				qd.DispatchQuery(w, r)
-				return
-			}
-			if _, ok := queryOwner(*disabledQueryDispatchers, version, action); ok {
-				protocol.WriteQueryXMLError(w, r, protocol.ErrServiceDisabled)
 				return
 			}
 			if claim, ok := operationRegistry.ClaimQuery(version, action); ok {
@@ -1225,6 +1055,27 @@ func queryGetMiddleware(queryDispatchers, disabledQueryDispatchers *[]QueryDispa
 // writeNotImplemented centralizes the modeled AWS error-envelope choice for
 // registry-owned operations. Service handlers remain responsible for their
 // own implemented and explicitly stubbed operations.
+// registeredForTest reports whether a service is part of the test-only subset.
+// Always true in production, where config.TestOnlyServiceSubset is nil.
+//
+// Only the two shared-path dispatchers below need this: /v2/apis and /v1/tags
+// are registered outside the service loop because more than one service answers
+// on them, so the loop's own subset check cannot reach them.
+func registeredForTest(cfg *config.Config, service string) bool {
+	return cfg.TestOnlyServiceSubset == nil || cfg.TestOnlyServiceSubset[service]
+}
+
+// testOnlyAbsentHandler answers for a service excluded by
+// config.TestOnlyServiceSubset. It is unreachable in any production
+// configuration, where the subset is always nil.
+func testOnlyAbsentHandler(w http.ResponseWriter, r *http.Request) {
+	if strings.Contains(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
+		protocol.WriteQueryXMLError(w, r, protocol.ErrNotImplemented)
+		return
+	}
+	protocol.WriteJSONError(w, r, protocol.ErrNotImplemented)
+}
+
 func writeNotImplemented(w http.ResponseWriter, r *http.Request, claim awsapi.Claim) {
 	switch claim.ErrorProfile {
 	case awsapi.ErrorProfileJSON:

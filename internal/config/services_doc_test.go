@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,9 +19,10 @@ const docServiceNamesHeading = "### Service names"
 // from the first column: "| `s3` | S3 | `aws-s3` |".
 var docTokenRow = regexp.MustCompile("^\\|\\s*`([a-z0-9]+)`\\s*\\|")
 
-// TestServiceNamesDocMatchesAllServices checks that the committed token table
+// TestServiceNamesDocMatchesAllServices checks that the committed name table
 // in docs/README.md § Service names still describes the services this build
-// accepts.
+// has. Those names are what OVERCAST_STATE_<SERVICE> is keyed by, so a wrong
+// row sends a reader to an override that fails at startup.
 //
 // cmd/capgen generates that table from AllServices and refuses to run when its
 // own service list has drifted, so the generator is the primary guard. This
@@ -28,32 +30,25 @@ var docTokenRow = regexp.MustCompile("^\\|\\s*`([a-z0-9]+)`\\s*\\|")
 // artifact, and nothing forces a contributor to regenerate it. `make
 // docs-check` catches that in CI by regenerating and diffing; this catches it
 // in `go test`, without needing the dev build tag or a generator run, and it
-// names the offending token directly.
-//
-// cfg.Services with OVERCAST_SERVICES unset is the full allServices set; see
-// TestLoad_allServicesEnabled.
+// names the offending service directly.
 func TestServiceNamesDocMatchesAllServices(t *testing.T) {
-	// Given: the default config, which enables every known service
-	clearEnv(t)
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	// Given: the canonical service list
+	services := config.AllServices()
 
-	// When: we read the documented token list out of the Service names table
+	// When: we read the documented names out of the Service names table
 	documented := parseDocumentedServiceTokens(t)
 
-	// Then: every accepted token is documented
-	for svc := range cfg.Services {
+	// Then: every real service is documented
+	for _, svc := range services {
 		if !documented[svc] {
-			t.Errorf("service %q is accepted by OVERCAST_SERVICES but has no row in docs/README.md %s", svc, docServiceNamesHeading)
+			t.Errorf("service %q exists but has no row in docs/README.md %s", svc, docServiceNamesHeading)
 		}
 	}
 
-	// And: every documented token is actually accepted
+	// And: every documented name is a real service
 	for svc := range documented {
-		if !cfg.Services[svc] {
-			t.Errorf("docs/README.md %s lists token %q, which OVERCAST_SERVICES rejects", docServiceNamesHeading, svc)
+		if !slices.Contains(services, svc) {
+			t.Errorf("docs/README.md %s lists %q, which is not a known service", docServiceNamesHeading, svc)
 		}
 	}
 }

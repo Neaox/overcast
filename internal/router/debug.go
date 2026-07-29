@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -65,7 +66,7 @@ func debugHandlers(cfg *config.Config, store state.Store, ec2 debugEC2Provider, 
 		r.Get("/state", debugState(store, providers))
 		r.Get("/state/{namespace}", debugStateNamespace(store, providers))
 		r.Post("/reset", debugReset(store, providers))
-		r.Post("/reset/{service}", debugResetService(store, providers, cfg.Services))
+		r.Post("/reset/{service}", debugResetService(store, providers))
 		r.Get("/metrics", debugMetrics(cfg, store))
 
 		// ---- Service-specific debug endpoints ---------------------------------
@@ -95,7 +96,7 @@ type debugHealthResponse struct {
 	Timestamp     string            `json:"timestamp"`
 	Uptime        string            `json:"uptime"`
 	GoVersion     string            `json:"go_version"`
-	Services      map[string]bool   `json:"services"`
+	Services      []string          `json:"services"`
 	State         string            `json:"state"`
 	ServiceStates map[string]string `json:"serviceStates,omitempty"`
 	Persistent    *persistentHealth `json:"persistent,omitempty"`
@@ -123,7 +124,7 @@ func debugHealth(cfg *config.Config, store state.Store) http.HandlerFunc {
 			Timestamp:     time.Now().UTC().Format(time.RFC3339),
 			Uptime:        time.Since(startTime).Round(time.Second).String(),
 			GoVersion:     runtime.Version(),
-			Services:      cfg.Services,
+			Services:      config.AllServices(),
 			State:         string(cfg.State),
 			ServiceStates: svcStates,
 			Persistent:    persistent,
@@ -136,7 +137,7 @@ func debugHealth(cfg *config.Config, store state.Store) http.HandlerFunc {
 type debugConfigResponse struct {
 	Host          string            `json:"host"`
 	Port          int               `json:"port"`
-	Services      map[string]bool   `json:"services"`
+	Services      []string          `json:"services"`
 	State         string            `json:"state"`
 	ServiceStates map[string]string `json:"serviceStates,omitempty"`
 	DataDir       string            `json:"data_dir"`
@@ -157,7 +158,7 @@ func debugConfig(cfg *config.Config) http.HandlerFunc {
 		resp := &debugConfigResponse{
 			Host:          cfg.Host,
 			Port:          cfg.Port,
-			Services:      cfg.Services,
+			Services:      config.AllServices(),
 			State:         string(cfg.State),
 			ServiceStates: svcStates,
 			DataDir:       cfg.DataDir,
@@ -445,10 +446,10 @@ func debugReset(store state.Store, providers []DebugStateProvider) http.HandlerF
 	}
 }
 
-func debugResetService(store state.Store, providers []DebugStateProvider, services map[string]bool) http.HandlerFunc {
+func debugResetService(store state.Store, providers []DebugStateProvider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		service := chi.URLParam(r, "service")
-		if !services[service] {
+		if !slices.Contains(config.AllServices(), service) {
 			writeDebugJSON(w, http.StatusBadRequest, map[string]string{
 				"error": "unknown service: " + service,
 			})

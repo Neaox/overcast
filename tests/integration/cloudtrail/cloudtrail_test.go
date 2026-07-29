@@ -45,7 +45,7 @@ func decodeMap(t *testing.T, resp *http.Response) map[string]any {
 }
 
 func TestCreateDescribeDeleteTrail_roundTrip(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("cloudtrail"))
+	srv := helpers.NewTestServer(t)
 
 	createResp := ctCall(t, srv, "CreateTrail", map[string]any{
 		"Name":                       "trail-a",
@@ -94,7 +94,7 @@ func TestCreateDescribeDeleteTrail_roundTrip(t *testing.T) {
 }
 
 func TestLookupEvents_inertEmptyResult(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("cloudtrail"))
+	srv := helpers.NewTestServer(t)
 
 	resp := ctCall(t, srv, "LookupEvents", map[string]any{
 		"MaxResults": 20,

@@ -20,11 +20,11 @@ import (
 // claim is *acted on*, because restFallback applies credential-scope rules that
 // the registry knows nothing about. Both gates are needed.
 //
-// Only S3 is enabled, which makes the assertion exact: with no other service
-// registered, any response that is not a 501 or a ServiceDisabled 503 can only
-// have come from S3.
+// Only S3 is registered, which makes the assertion exact: every other service
+// answers 501 on its own path prefixes, so any response that is not a 501 can
+// only have come from S3.
 func TestGeneratedCorpus_noModeledOperationReachesS3(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("s3"))
+	srv := helpers.NewTestServer(t, helpers.WithServiceSubset("s3"))
 	registry := awsapi.NewRegistry()
 	client := &http.Client{}
 

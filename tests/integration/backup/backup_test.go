@@ -41,7 +41,7 @@ func decodeMap(t *testing.T, resp *http.Response) map[string]any {
 }
 
 func TestBackupVaultLifecycle(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("backup"))
+	srv := helpers.NewTestServer(t)
 
 	createResp := backupCall(t, srv, "CreateBackupVault", map[string]any{"BackupVaultName": "vault-a"})
 	if createResp.StatusCode != http.StatusOK {
@@ -67,7 +67,7 @@ func TestBackupVaultLifecycle(t *testing.T) {
 }
 
 func TestBackupPlanLifecycle(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("backup"))
+	srv := helpers.NewTestServer(t)
 
 	createResp := backupCall(t, srv, "CreateBackupPlan", map[string]any{
 		"BackupPlan": map[string]any{

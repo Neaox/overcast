@@ -2830,9 +2830,7 @@ func TestExecuteGraphQL_lambdaDirectResolver(t *testing.T) {
 
 func TestExecuteGraphQL_lambdaNoInvoker(t *testing.T) {
 	// Given: AppSync enabled but Lambda disabled — no invoker wired
-	srv := helpers.NewTestServer(t, helpers.WithServices(
-		"appsync",
-	))
+	srv := helpers.NewTestServer(t)
 	sdl := `type Query { fn: String }`
 	apiID, keyID := setupGraphQLAPI(t, srv, sdl)
 

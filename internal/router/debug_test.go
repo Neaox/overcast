@@ -325,7 +325,7 @@ func TestDebugResetService_dynamodbClearsVirtualItems(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("service", "dynamodb")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	debugResetService(store, []DebugStateProvider{dynamo}, map[string]bool{"dynamodb": true}).ServeHTTP(rec, req)
+	debugResetService(store, []DebugStateProvider{dynamo}).ServeHTTP(rec, req)
 
 	// Then: store-backed metadata and virtual item state are both cleared.
 	body := rec.Body.String()
@@ -462,7 +462,7 @@ func TestDebugResetService_logsClearsVirtualEvents(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("service", "logs")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	debugResetService(store, []DebugStateProvider{logsProvider}, map[string]bool{"logs": true}).ServeHTTP(rec, req)
+	debugResetService(store, []DebugStateProvider{logsProvider}).ServeHTTP(rec, req)
 
 	// Then: store-backed metadata and virtual event state are both cleared.
 	body := rec.Body.String()
@@ -514,7 +514,7 @@ func TestDebugResetService_dynamodbUnaffectedByOtherProviders(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("service", "dynamodb")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	debugResetService(store, []DebugStateProvider{dynamo, logsProvider}, map[string]bool{"dynamodb": true}).ServeHTTP(rec, req)
+	debugResetService(store, []DebugStateProvider{dynamo, logsProvider}).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())

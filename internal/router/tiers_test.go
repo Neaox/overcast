@@ -7,26 +7,15 @@ import (
 	"github.com/Neaox/overcast/internal/config"
 )
 
-// registeredServices returns every service name the emulator can register —
-// config's canonical default set, which is exactly the set New walks when
-// wiring routes (a service absent from it can never be enabled at all).
+// registeredServices returns every service name the emulator registers —
+// config's canonical list, which is exactly the set New walks when wiring
+// routes.
 func registeredServices(t *testing.T) []string {
 	t.Helper()
 
-	// envOr treats "" as unset, so this restores the canonical default list
-	// even when the ambient environment narrows OVERCAST_SERVICES.
-	t.Setenv("OVERCAST_SERVICES", "")
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("config.Load: %v", err)
-	}
-	if len(cfg.Services) == 0 {
-		t.Fatal("config.Load returned no services")
-	}
-
-	names := make([]string, 0, len(cfg.Services))
-	for name := range cfg.Services {
-		names = append(names, name)
+	names := config.AllServices()
+	if len(names) == 0 {
+		t.Fatal("config.AllServices returned no services")
 	}
 	sort.Strings(names)
 	return names
