@@ -1,9 +1,9 @@
-import { useQuery, queryOptions } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query"
 import { Tooltip } from "@/components/ui/tooltip"
 import { Spinner } from "@/components/ui/primitives"
-import { health } from "@/services/api"
 import { useFavourites } from "@/hooks/use-favourites"
 import { useLocalStorage } from "@/hooks/use-local-storage"
+import { healthQueryOptions } from "@/hooks/use-service-availability"
 import type { EmulationTier, HealthResponse } from "@/types/common"
 import { ALL_SERVICES, type ServiceTierEntry } from "./service-defs"
 import { AvailableServiceCard } from "./components/available-service-card"
@@ -31,13 +31,6 @@ const SECTION_BY_TIER = {
 } satisfies Record<EmulationTier, "fully" | "partially" | "not">
 
 type SectionKey = (typeof SECTION_BY_TIER)[EmulationTier]
-
-const healthQueryOptions = queryOptions({
-  queryKey: ["health"],
-  queryFn: () => health.check(),
-  staleTime: 30_000,
-  retry: 2,
-})
 
 export function Dashboard() {
   const { data, isLoading } = useQuery(healthQueryOptions)

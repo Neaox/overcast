@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext } from "react"
 import { useLocalStorage } from "@/hooks/use-local-storage"
+import { useServiceAvailability } from "@/hooks/use-service-availability"
 import { ALL_SERVICES } from "@/lib/nav-services"
 
 const FAVOURITES_KEY = "overcast-favourites"
@@ -19,24 +20,39 @@ interface FavouritesContextValue {
 
 const FavouritesContext = createContext<FavouritesContextValue | null>(null)
 
+/**
+ * Pins are stored per user, but a run that enables only some services starts
+ * from those services rather than from nothing — on a narrowed emulator the
+ * enabled set is the useful sidebar. Those defaults are suggestions, not
+ * state: nothing is written until the user pins, unpins, or reorders, which is
+ * why `null` (never chosen) is kept distinct from `[]` (chose to pin nothing).
+ */
 export function FavouritesProvider({ children }: { children: React.ReactNode }) {
-  const [favourites, setFavourites] = useLocalStorage<string[]>(FAVOURITES_KEY, [])
+  const [pinned, setPinned] = useLocalStorage<string[] | null>(FAVOURITES_KEY, null)
   const [recentServices, setRecentServices] = useLocalStorage<string[]>(RECENT_KEY, [])
+  const { defaultPins } = useServiceAvailability()
 
+  const favourites = pinned ?? defaultPins
+
+  // Editing a defaulted list commits it: the user is adjusting these pins, not
+  // opting out of them.
   const toggleFavourite = useCallback(
     (key: string) => {
       const svcDef = ALL_SERVICES.find((s) => s.key === key)
       if (svcDef?.favouritable === false) return
-      setFavourites((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]))
+      setPinned((prev) => {
+        const current = prev ?? defaultPins
+        return current.includes(key) ? current.filter((k) => k !== key) : [...current, key]
+      })
     },
-    [setFavourites],
+    [setPinned, defaultPins],
   )
 
   const reorderFavourites = useCallback(
     (ordered: string[]) => {
-      setFavourites(ordered)
+      setPinned(ordered)
     },
-    [setFavourites],
+    [setPinned],
   )
 
   const addRecentService = useCallback(
