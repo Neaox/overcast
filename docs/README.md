@@ -391,6 +391,15 @@ overcast https enable            # once per machine: local CA → system trust s
 OVERCAST_TLS=auto overcast serve # both listeners now serve HTTPS + HTTP/2
 ```
 
+Running in Docker? Also two commands — the daemon serves its CA certificate
+at `/_overcast/ca.pem`, so no shared volume or manual cert wrangling:
+
+```bash
+docker run -d -e OVERCAST_TLS=auto -v overcast-data:/data \
+  -p 4566:4566 -p 4567:4567 ghcr.io/neaox/overcast:alpha
+overcast https enable --endpoint http://localhost:4566
+```
+
 Then open <https://localhost.overcast.sh:4567> (public DNS resolves
 `*.localhost.overcast.sh` to `127.0.0.1` — no hosts-file edits). Both the API
 (4566) and the web UI (4567) are served over TLS; browsers negotiate HTTP/2

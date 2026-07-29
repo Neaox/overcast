@@ -27,8 +27,11 @@ var ErrUnsupported = errors.New("trust: no backend available on this platform")
 // idempotent: installing an already-installed CA, or uninstalling one that
 // was never installed, must succeed without error.
 type Store interface {
-	// Install adds the local CA to the system trust store. On first run it
-	// generates the CA key pair; subsequent calls are a no-op.
+	// Install adds the CA certificate in the store's directory to the
+	// system trust store. The certificate must already exist — the CLI
+	// creates it via LoadOrCreateCA (local flow) or caches a fetched one
+	// via SaveRemoteCA (--endpoint flow). Installing an already-installed
+	// CA is a no-op.
 	Install(ctx context.Context) error
 
 	// Uninstall removes the local CA from the system trust store. The CA

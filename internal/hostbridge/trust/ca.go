@@ -333,6 +333,13 @@ func splitSANs(sans []string) (dnsNames []string, ips []net.IP) {
 	return dnsNames, ips
 }
 
+// ParseCertificatePEM parses the first CERTIFICATE block in pemBytes. Used
+// by the /_overcast/ca.pem endpoint to refuse serving a corrupt file, and by
+// the remote fetch to validate what a daemon handed back.
+func ParseCertificatePEM(pemBytes []byte) (*x509.Certificate, error) {
+	return parsePEMCertificate(pemBytes)
+}
+
 func parsePEMCertificate(pemBytes []byte) (*x509.Certificate, error) {
 	block, _ := pem.Decode(pemBytes)
 	if block == nil || block.Type != "CERTIFICATE" {

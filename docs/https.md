@@ -48,18 +48,83 @@ Re-running `overcast https enable` is safe — it reports what is already in
 place. `overcast https status` shows the current state, and
 `overcast https disable` removes the CA from the trust store again.
 
-In Docker, set the env var and publish the UI port:
+Running Overcast in Docker instead? See [Docker](#docker) below — the daemon
+serves its own CA certificate, so trusting it is one command with no shared
+volume.
+
+## Docker
+
+The container mints its CA inside the container, where the host cannot read
+it — so the daemon serves the CA **certificate** (public half only, never
+the key) at `GET /_overcast/ca.pem`, and the host-side CLI fetches and
+installs it. Two commands total:
 
 ```bash
-docker run --rm -p 4566:4566 -p 4567:4567 \
-  -e OVERCAST_TLS=auto \
-  -v ~/.overcast/data:/data \
+docker run -d -e OVERCAST_TLS=auto \
+  -v overcast-data:/data \
+  -p 4566:4566 -p 4567:4567 \
   ghcr.io/neaox/overcast:alpha
+
+overcast https enable --endpoint http://localhost:4566
 ```
 
-The volume mount matters: the CA lives under the data dir (`/data/ca` in the
-image), so mounting `~/.overcast/data` means the container mints from the
-same CA that `overcast https enable` installed on the host.
+Then open **<https://localhost.overcast.sh:4567>**. The `http://` spelling
+is fine — the CLI notices the daemon answers TLS and fetches over https
+(unverified for this one bootstrap fetch; the payload is validated as a CA
+certificate, and the endpoint must be loopback — see below). The daemon also
+logs this exact command at startup when it detects it is containerized.
+
+With docker-compose:
+
+```yaml
+services:
+  overcast:
+    image: ghcr.io/neaox/overcast:alpha
+    environment:
+      OVERCAST_TLS: auto
+    ports:
+      - "4566:4566"
+      - "4567:4567"
+    volumes:
+      - overcast-data:/data
+
+volumes:
+  overcast-data:
+```
+
+Both images work the same way: the **console** image serves the web UI on
+4567 and the API on 4566 over TLS + HTTP/2; the **slim** image has no web UI
+but its API listener does TLS + HTTP/2 identically (skip the `4567` port
+mapping). Both images' health checks handle TLS.
+
+**Persist `/data`.** The named volume above is not optional decoration: the
+CA lives under the data dir, so without a volume every container recreation
+mints a **fresh CA** — the one you installed goes stale, browsers show
+warnings again, and `AWS_CA_BUNDLE` paths stop verifying. With the volume
+the CA survives recreations and the trust install keeps working. If you do
+recreate without a volume, re-trusting is the same one command again:
+`overcast https enable --endpoint http://localhost:4566` (it fetches the new
+CA and installs it alongside; `overcast https disable --endpoint ...` removes
+one when you're done with it).
+
+How the `--endpoint` flow works, precisely:
+
+- The CLI fetches `/_overcast/ca.pem`, **validates the payload is actually a
+  CA certificate**, and caches it under `<data dir>/ca-remote/<host_port>/`
+  — deliberately separate from the local CA's `<data dir>/ca`, so
+  `status`/`disable --endpoint` find exactly the CA that install used and a
+  fetched CA can never be confused with a locally-minted one.
+- **Loopback endpoints only, by default.** Installing a root CA fetched from
+  another machine is a trust decision — that host could then impersonate any
+  TLS site to you — so a non-loopback `--endpoint` (including names like
+  `localhost.overcast.sh` that merely *resolve* to 127.0.0.1) is refused
+  unless you add `--trust-remote`.
+- The same flag works on the lower-level commands:
+  `overcast trust install|status|uninstall --endpoint http://localhost:4566`.
+- No `overcast` binary on the host? Fetch the cert yourself and use the
+  [manual install commands](#doing-it-manually):
+  `curl -ko rootCA.pem https://localhost:4566/_overcast/ca.pem` (the UI port
+  mirrors it at `/api/ca.pem`).
 
 ## What you're living with over plain HTTP
 
@@ -168,10 +233,13 @@ certutil.exe -user -addstore Root "$(wslpath -w ~/.overcast/data/ca/rootCA.pem)"
 ```
 
 (or from a Windows shell, using the UNC path:
-`certutil.exe -user -addstore Root \\wsl$\<distro>\home\<user>\.overcast\data\ca\rootCA.pem`).
-Approve the confirmation dialog. WSL2's localhost forwarding then makes
-<https://localhost:4567> — and `localhost.overcast.sh`, which resolves to
-`127.0.0.1` — work from the Windows browser directly.
+`certutil.exe -user -addstore Root \\wsl$\<distro>\home\<user>\.overcast\data\ca\rootCA.pem`;
+or, with a Windows `overcast.exe` installed,
+`overcast.exe https enable --endpoint http://localhost:4566` — WSL2's
+localhost forwarding carries the fetch). Approve the confirmation dialog.
+WSL2's localhost forwarding then makes <https://localhost:4567> — and
+`localhost.overcast.sh`, which resolves to `127.0.0.1` — work from the
+Windows browser directly.
 
 ### Limitations
 
