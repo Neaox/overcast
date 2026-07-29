@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -372,11 +373,11 @@ func copyHeaders(h http.Header) map[string][]string {
 // service fell through to "custom origin" and was dialled at its literal
 // domain — so a distribution fronting an emulated service quietly reached out
 // to real AWS instead.
-func (h *Handler) buildOriginRequest(origin *Origin, reqPath string) (originURL, hostHeader string) {
+func (h *Handler) buildOriginRequest(origin *Origin, reqPath, viewerHost string) (originURL, hostHeader string) {
 	domain := origin.DomainName
 	originPath := strings.TrimRight(origin.OriginPath, "/")
 
-	if h.servesOriginLocally(domain) {
+	if h.servesOriginLocally(domain, viewerHost) {
 		return fmt.Sprintf("http://127.0.0.1:%d%s%s", h.emulatorPort(), originPath, reqPath), domain
 	}
 
@@ -407,7 +408,23 @@ func (h *Handler) buildOriginRequest(origin *Origin, reqPath string) (originURL,
 // third-party origin. Note this asks "can this be routed here", not "is that
 // service enabled" — a disabled service should answer with its own error rather
 // than have CloudFront silently dial the internet on its behalf.
-func (h *Handler) servesOriginLocally(domain string) bool {
+func (h *Handler) servesOriginLocally(domain, viewerHost string) bool {
+	// The endpoint the viewer actually reached this server on counts as ours
+	// too, ahead of the configured hostname — the same precedence every
+	// client-facing URL is minted with (serviceutil.ClientBaseURL: the request
+	// first, OVERCAST_HOSTNAME otherwise). A stack deployed against a server
+	// reachable at some other name gets bucket and service domains on THAT
+	// name, and those must resolve back here rather than be dialled outward.
+	// Strictly a SUBDOMAIN of the viewer's endpoint, and never an IP literal.
+	// An origin whose domain is exactly the endpoint host, or is an address on
+	// the same IP, is a real origin reachable on its own port — a sibling
+	// service on 127.0.0.1:9000 is not this emulator, and dialling it here
+	// would swallow it. Only "{bucket}.s3.{endpoint}" and friends are ours.
+	if base := serviceutil.FoldHostname(hostWithoutPort(viewerHost)); base != "" && !isIPLiteralHost(base) {
+		if d := serviceutil.FoldHostname(domain); strings.HasSuffix(d, "."+base) {
+			return true
+		}
+	}
 	if h.originHosts == nil {
 		return false
 	}
@@ -417,6 +434,20 @@ func (h *Handler) servesOriginLocally(domain string) bool {
 	default:
 		return false
 	}
+}
+
+// isIPLiteralHost reports whether a host is an IP address rather than a DNS
+// name. Subdomain reasoning is meaningless for one.
+func isIPLiteralHost(host string) bool {
+	return net.ParseIP(strings.Trim(host, "[]")) != nil
+}
+
+// hostWithoutPort strips a trailing :port from a Host header value.
+func hostWithoutPort(host string) string {
+	if i := strings.LastIndexByte(host, ':'); i > 0 && !strings.Contains(host[i+1:], "]") {
+		return host[:i]
+	}
+	return host
 }
 
 // emulatorPort is the port this server listens on, defaulting to the standard
@@ -697,7 +728,7 @@ func (h *Handler) dispatchToOrigins(
 	var lastErr error
 	var lastURL string
 	for i, origin := range candidates {
-		originURL, originHost := h.buildOriginRequest(origin, reqPath)
+		originURL, originHost := h.buildOriginRequest(origin, reqPath, r.Host)
 		lastURL = originURL
 		isLast := i == len(candidates)-1
 

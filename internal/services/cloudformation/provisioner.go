@@ -2159,7 +2159,7 @@ func (h *snsSubscriptionHandler) Update(ctx context.Context, router http.Handler
 
 type s3BucketHandler struct{}
 
-func (h *s3BucketHandler) Update(_ context.Context, _ http.Handler, _ *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+func (h *s3BucketHandler) Update(_ context.Context, _ http.Handler, cfg *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	// BucketName is immutable.
 	if n, ok := props["BucketName"].(string); ok && n != "" && n != physicalID {
 		return "", nil, errReplacementRequired
@@ -2169,17 +2169,10 @@ func (h *s3BucketHandler) Update(_ context.Context, _ http.Handler, _ *config.Co
 	// bucket in real AWS. The emulator does not yet drive those sub-resource
 	// PUT calls from CFN — accept the change and keep the bucket. Users who
 	// need the configuration to take effect can call the S3 API directly.
-	arn := fmt.Sprintf("arn:aws:s3:::%s", physicalID)
-	attrs := map[string]string{
-		"Arn":                arn,
-		"BucketName":         physicalID,
-		"DomainName":         fmt.Sprintf("%s.s3.amazonaws.com", physicalID),
-		"RegionalDomainName": fmt.Sprintf("%s.s3.%s.amazonaws.com", physicalID, rCtx.Region),
-	}
-	return physicalID, attrs, nil
+	return physicalID, s3BucketAttrs(cfg, physicalID, rCtx.Region), nil
 }
 
-func (h *s3BucketHandler) Create(ctx context.Context, router http.Handler, _ *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+func (h *s3BucketHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	bucketName, _ := props["BucketName"].(string)
 	if bucketName == "" {
 		bucketName = strings.ToLower(rCtx.generatedName())
@@ -2189,14 +2182,34 @@ func (h *s3BucketHandler) Create(ctx context.Context, router http.Handler, _ *co
 	if err != nil {
 		return "", nil, fmt.Errorf("s3 CreateBucket: %w", err)
 	}
-	arn := fmt.Sprintf("arn:aws:s3:::%s", bucketName)
-	attrs := map[string]string{
-		"Arn":                arn,
-		"BucketName":         bucketName,
-		"DomainName":         fmt.Sprintf("%s.s3.amazonaws.com", bucketName),
-		"RegionalDomainName": fmt.Sprintf("%s.s3.%s.amazonaws.com", bucketName, rCtx.Region),
+	return bucketName, s3BucketAttrs(cfg, bucketName, rCtx.Region), nil
+}
+
+// s3BucketAttrs builds the Fn::GetAtt attributes for an AWS::S3::Bucket.
+//
+// DomainName and RegionalDomainName are minted on the hostname THIS emulator
+// answers on, not the literal "amazonaws.com" AWS returns. They are not
+// decoration: CDK wires an S3 origin into a CloudFront distribution by
+// Fn::GetAtt-ing RegionalDomainName, so an amazonaws.com value made the
+// distribution front the real AWS bucket of that name — or nothing at all —
+// rather than the bucket the same stack had just created here.
+//
+// Minted through the shared helper every other client-facing hostname uses, so
+// the grammar cannot drift from what the router resolves: the result is
+// "{bucket}.s3[.{region}].{host}", which HostClassifier tier A recognises by
+// its ".s3." separator on any base, including OVERCAST_HOSTNAME and the
+// wildcard-DNS domains.
+func s3BucketAttrs(cfg *config.Config, bucket, region string) map[string]string {
+	base := "http://localhost:4566"
+	if cfg != nil {
+		base = cfg.ExternalBaseURL()
 	}
-	return bucketName, attrs, nil
+	return map[string]string{
+		"Arn":                fmt.Sprintf("arn:aws:s3:::%s", bucket),
+		"BucketName":         bucket,
+		"DomainName":         serviceutil.HostRoutedHostnameFromBase(base, "s3", bucket, ""),
+		"RegionalDomainName": serviceutil.HostRoutedHostnameFromBase(base, "s3", bucket, region),
+	}
 }
 
 func (h *s3BucketHandler) Delete(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, rCtx *resolveContext) error {
