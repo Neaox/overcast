@@ -16,6 +16,7 @@ import (
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // ─── shared request types ─────────────────────────────────────────────────────
@@ -723,28 +724,19 @@ func (s *Service) issuerURLTyped(ctx context.Context, poolID string) string {
 	return s.issuerBase(ctx) + "/" + s.region(ctx) + "/" + poolID
 }
 
-// issuerBase mirrors serviceutil.ClientBaseURL's precedence — a configured
-// external hostname is authoritative, the caller's own origin fills in when none
-// is configured — for callers that have only a context. The origin comes from
-// the ClientEndpoint middleware, which stamps it per request and deliberately
-// leaves it unset for real AWS hostnames so those are never echoed back. Same
-// shape as SQS's queueURLBase, for the same reason.
+// issuerBase is serviceutil.ClientBaseURL for the typed path, which holds a
+// context rather than a request. The origin comes from the ClientEndpoint
+// middleware, which stamps it per request and deliberately leaves it unset for
+// real AWS hostnames so those are never echoed back.
 //
-// ClientBaseURL additionally recovers the port from the request when cfg.Port is
-// unset; there is no request here to recover it from. That only diverges on a
-// server configured with a hostname but no port, which neither the runtime
-// default (4566) nor the test harness produces.
+// This used to be a hand-kept mirror of ClientBaseURL's precedence, and it
+// drifted: it took cfg.Port where the JSON path took the caller's, so a
+// caller's wire protocol changed the issuer their token carried — the exact
+// defect the typed/JSON unification fixed. Both paths now call the same
+// function, so they cannot disagree again. See
+// docs/plans/client-facing-url-minting.md.
 func (s *Service) issuerBase(ctx context.Context) string {
-	if s.cfg != nil && s.cfg.Hostname != "" {
-		return s.cfg.ExternalBaseURL()
-	}
-	if origin := middleware.ClientEndpointFromContext(ctx); origin != "" {
-		return origin
-	}
-	if s.cfg != nil {
-		return s.cfg.ExternalBaseURL()
-	}
-	return "http://localhost:4566"
+	return serviceutil.ClientBaseURLFromOrigin(s.cfg, middleware.ClientEndpointFromContext(ctx))
 }
 
 // ─── typed auth challenge handlers ────────────────────────────────────────────

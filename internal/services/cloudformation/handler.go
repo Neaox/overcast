@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -1261,30 +1260,16 @@ type templateSummaryResult struct {
 // Only a registered host-route label is claimed, so ECR registry URIs, S3
 // URLs, ARNs and plain strings pass through untouched: Overcast does not serve
 // those hostnames and must not claim it does.
-// clientBaseURL is serviceutil.ClientBaseURL's precedence for a caller that
-// holds a context rather than a request: a configured OVERCAST_HOSTNAME wins
-// over the address the caller happened to dial, but the caller's scheme and
-// port are kept, since those are known to reach this process. serviceutil
-// cannot read the client endpoint itself — middleware imports serviceutil, not
-// the other way round — so the lookup happens here.
+// clientBaseURL is serviceutil.ClientBaseURL for a caller that holds a context
+// rather than a request: a configured OVERCAST_HOSTNAME wins over the address
+// the caller happened to dial, but the caller's port is kept, since it is the
+// one known to reach this process. This used to be a private copy of that
+// precedence — the copy predates ClientBaseURLFromOrigin, which now implements
+// it for every context-shaped caller (see docs/plans/client-facing-url-minting.md).
+// serviceutil cannot read the client endpoint itself — middleware imports
+// serviceutil, not the other way round — so the context lookup happens here.
 func (h *Handler) clientBaseURL(ctx context.Context) string {
-	base := middleware.ClientEndpointFromContext(ctx)
-	if base == "" {
-		return h.cfg.ExternalBaseURL()
-	}
-	if h.cfg.Hostname == "" {
-		return base
-	}
-	u, err := url.Parse(base)
-	if err != nil || u.Host == "" {
-		return base
-	}
-	if port := u.Port(); port != "" {
-		u.Host = net.JoinHostPort(h.cfg.Hostname, port)
-	} else {
-		u.Host = h.cfg.Hostname
-	}
-	return u.String()
+	return serviceutil.ClientBaseURLFromOrigin(h.cfg, middleware.ClientEndpointFromContext(ctx))
 }
 
 // It takes a context rather than a request so the Query and typed (Smithy)

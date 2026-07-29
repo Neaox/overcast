@@ -111,32 +111,71 @@ func HasQueryParam(r *http.Request, param string) bool {
 	return ok
 }
 
-// ClientBaseURL returns the base URL services should embed in client-facing
-// responses. OVERCAST_HOSTNAME/OVERCAST_PORT are authoritative in normal
-// runtime config; request headers provide the fallback for httptest servers and
-// reverse-proxy deployments where no explicit external hostname is configured.
+// ClientBaseURL returns the base URL services embed in client-facing
+// responses: the configured OVERCAST_HOSTNAME (when set) on the *caller's*
+// port. It is the single implementation of the URL-minting rule — see
+// docs/plans/client-facing-url-minting.md for the rule, the per-service
+// analysis behind it, and the deliberate divergences (SQS's wire echo).
+//
+// Why each part:
+//
+//   - Host: a configured hostname is the operator's assertion that one name
+//     resolves for every party — the split-horizon defaults do, from the host
+//     and from inside containers alike. A caller's own host (an IP, a compose
+//     alias) may resolve nowhere else, so the configured name wins (#351).
+//   - Port: always the caller's. Their request is the only proof of a dialable
+//     port — Overcast cannot see its own port mapping, and with the API port
+//     remapped (`docker run -p 4652:4566`) a URL carrying cfg.Port is
+//     undialable by every host-side caller. cfg.Port fills in only when the
+//     request carries no port at all (background work, synthetic internal
+//     dispatch), and those values are re-rendered per caller at read time.
+//   - Scheme: https if Overcast itself serves TLS or the caller arrived over
+//     https; never a downgrade. A synthetic internal request carries no TLS
+//     state, which is why config must be able to assert the scheme.
+//
+// With no hostname configured, the caller's origin is returned verbatim —
+// their own host is the only name known to resolve for them.
 func ClientBaseURL(cfg *config.Config, r *http.Request) string {
-	if cfg != nil && cfg.Hostname != "" {
-		scheme := "http"
-		if cfg.TLSEnabled() {
-			scheme = "https"
+	return ClientBaseURLFromOrigin(cfg, RequestBaseURL(r))
+}
+
+// ClientBaseURLFromOrigin is ClientBaseURL for callers holding a
+// middleware-stamped origin (middleware.ClientEndpointFromContext) rather than
+// an *http.Request — CloudFormation's provisioner paths and Cognito's typed
+// (Smithy CBOR) dispatch. One function for both shapes is what stops the
+// hand-kept copies this replaced from drifting apart again: before it, the
+// repo had four base-URL precedences and two of them disagreed on the port,
+// which was exactly the bug.
+func ClientBaseURLFromOrigin(cfg *config.Config, origin string) string {
+	if cfg == nil || cfg.Hostname == "" {
+		if origin != "" {
+			return origin
 		}
-		port := cfg.Port
-		if port <= 0 {
-			port = requestPort(r)
+		if cfg != nil {
+			return cfg.ExternalBaseURL()
 		}
-		if port > 0 {
-			return scheme + "://" + net.JoinHostPort(cfg.Hostname, strconv.Itoa(port))
+		return "http://localhost:4566"
+	}
+
+	scheme := "http"
+	if cfg.TLSEnabled() || strings.HasPrefix(origin, "https://") {
+		scheme = "https"
+	}
+	port := 0
+	if origin != "" {
+		if u, err := url.Parse(origin); err == nil {
+			if p := u.Port(); p != "" {
+				port, _ = strconv.Atoi(p)
+			}
 		}
-		return scheme + "://" + cfg.Hostname
 	}
-	if base := RequestBaseURL(r); base != "" {
-		return base
+	if port <= 0 {
+		port = cfg.Port
 	}
-	if cfg != nil {
-		return cfg.ExternalBaseURL()
+	if port > 0 {
+		return scheme + "://" + net.JoinHostPort(cfg.Hostname, strconv.Itoa(port))
 	}
-	return "http://localhost:4566"
+	return scheme + "://" + cfg.Hostname
 }
 
 // FoldHostname lowercases an ASCII hostname (a trailing :port is unaffected,
@@ -203,25 +242,6 @@ func RequestBaseURL(r *http.Request) string {
 		}
 	}
 	return scheme + "://" + host
-}
-
-func requestPort(r *http.Request) int {
-	if r == nil {
-		return 0
-	}
-	host := r.Header.Get("X-Forwarded-Host")
-	if host == "" {
-		host = r.Host
-	}
-	_, port, err := net.SplitHostPort(host)
-	if err != nil {
-		return 0
-	}
-	n, err := strconv.Atoi(port)
-	if err != nil {
-		return 0
-	}
-	return n
 }
 
 // ClientIP returns the caller's IP address: the first entry of
