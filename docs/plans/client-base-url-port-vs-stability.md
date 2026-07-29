@@ -5,7 +5,13 @@ description: With OVERCAST_HOSTNAME set and the API port remapped, host-routed U
 
 # `ClientBaseURL` cannot serve both a stable issuer and a dialable resource URL
 
-**Status:** open, deliberately not fixed for alpha.26 · **Found:** 2026-07-29
+> **Superseded.** The conflict this records was re-analysed and resolved — per-caller ports
+> turned out to be what OIDC Discovery §4.3 *requires* for the issuer, not a threat to it.
+> The design, the per-service constraints analysis, and the implementation live in
+> [client-facing-url-minting.md](./client-facing-url-minting.md). This file remains as the
+> record of the initial (incorrect) framing and its measurements.
+
+**Status:** superseded by `client-facing-url-minting.md` · **Found:** 2026-07-29
 **Severity:** AppSync `uris`, API Gateway v2 `apiEndpoint` and Lambda function URLs are undialable
 from the host when `OVERCAST_HOSTNAME` is set *and* the API port is remapped. Correct on the default
 1:1 mapping, and correct whenever `OVERCAST_HOSTNAME` is unset.
