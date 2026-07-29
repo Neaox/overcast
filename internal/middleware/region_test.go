@@ -28,11 +28,135 @@ func TestRegionFromHost(t *testing.T) {
 		{"d038ecd84a.execute-api.AP-SOUTHEAST-2.amazonaws.com", "ap-southeast-2"},
 		{"D038ECD84A.Execute-Api.EU-West-1.localhost:4566", "eu-west-1"},
 		{"MyBucket.S3.US-East-1.amazonaws.com", "us-east-1"},
+
+		// Host-routed labels this function did not know before H5 folded it
+		// onto hostRouteLabels. These are the shapes that carry no SigV4 at
+		// all, so a missed region here is not a missed hint — it is the only
+		// evidence the request had, and the lookup lands in the wrong
+		// partition of a region-scoped store.
+		{"abc123.appsync-api.eu-west-1.localhost:4566", "eu-west-1"},
+		{"abc123.appsync-api.eu-west-1.amazonaws.com", "eu-west-1"},
+		{"abc123.appsync-realtime-api.ap-southeast-2.amazonaws.com", "ap-southeast-2"},
+		{"abc123.AppSync-Api.EU-West-1.localhost.overcast.sh:4566", "eu-west-1"},
+		{"u7yrl2bkfxcaq.lambda-url.eu-west-1.on.aws", "eu-west-1"},
+		{"u7yrl2bkfxcaq.lambda-url.us-east-1.localhost:4566", "us-east-1"},
+
+		// A host-routed label with no region segment names no region, and
+		// must not have one invented from the base hostname.
+		{"abc123.appsync-api.localhost:4566", ""},
+		{"abc123.execute-api.localhost:4566", ""},
+
+		// CloudFront is global: its host grammar has no region segment, and
+		// the shared parse rejects "net" as one rather than needing the label
+		// to be held out of the table by hand.
+		{"d111111abcdef8.cloudfront.net", ""},
+
+		// Dotted IDs. The old parts[1] lookup could only ever see a label in
+		// position 1; the shared parse walks every segment.
+		{"my.dotted.id.execute-api.eu-west-1.amazonaws.com", "eu-west-1"},
+
+		// IP literals never carry a virtual-hosted or host-routed subdomain.
+		{"127.0.0.1:4566", ""},
+
+		// The segment after a non-host-routed service label must actually look
+		// like a region. These are ordinary, routable S3 virtual-hosted
+		// addresses; before H5a they resolved to the "region" localhost (or
+		// amazonaws) and partitioned that request's state under a name nothing
+		// else could reach — the same defect an unfolded region segment causes.
+		{"mybucket.s3.localhost.overcast.sh:4566", ""},
+		{"mybucket.s3.localhost.localstack.cloud:4566", ""},
+		{"mybucket.s3.amazonaws.com.example", ""},
 	}
 	for _, tc := range cases {
 		if got := regionFromHost(tc.host); got != tc.want {
 			t.Errorf("regionFromHost(%q) = %q; want %q", tc.host, got, tc.want)
 		}
+	}
+}
+
+// TestRegionFromHost_agreesWithTheRouterOnEveryHostRoutedLabel is the guard
+// that stops the two label lists drifting apart again. H5 folded regionFromHost
+// onto hostRouteLabels, but "shares a parse today" decays quietly; this fails
+// the moment a label is registered for dispatch that regionFromHost cannot read
+// a region from, which was exactly the AppSync and Lambda-function-URL bug.
+//
+// CloudFront is the deliberate exception: it is a global service whose real
+// hostname ({distributionId}.cloudfront.net) has no region segment at all.
+func TestRegionFromHost_agreesWithTheRouterOnEveryHostRoutedLabel(t *testing.T) {
+	for _, label := range ReservedHostLabels() {
+		t.Run(label, func(t *testing.T) {
+			host := "someid." + label + ".eu-west-1.localhost:4566"
+			got := regionFromHost(host)
+
+			if label == LabelCloudFront {
+				return // global; no region in the real grammar
+			}
+			if got != "eu-west-1" {
+				t.Errorf("label %q dispatches on a Host that regionFromHost reads no region from: "+
+					"regionFromHost(%q) = %q, want %q", label, host, got, "eu-west-1")
+			}
+		})
+	}
+}
+
+// TestRegion_hostNeverOverridesASignedScope pins the documented resolution
+// order at the boundary that matters. Widening what regionFromHost recognises
+// widens the chance of it disagreeing with a signed request's credential
+// scope, and the scope has to win: the Host is a fallback for requests that
+// carry no signature, not a competing source.
+func TestRegion_hostNeverOverridesASignedScope(t *testing.T) {
+	cases := []struct {
+		name, header, auth, host, want string
+	}{
+		{
+			name: "sigv4 scope beats a disagreeing host-routed region",
+			auth: "AWS4-HMAC-SHA256 Credential=AKIA/20260729/us-east-1/appsync/aws4_request, SignedHeaders=host, Signature=abc",
+			host: "abc123.appsync-api.eu-west-1.localhost:4566",
+			want: "us-east-1",
+		},
+		{
+			name: "sigv4 scope beats a disagreeing lambda-url region",
+			auth: "AWS4-HMAC-SHA256 Credential=AKIA/20260729/ap-southeast-2/lambda/aws4_request, SignedHeaders=host, Signature=abc",
+			host: "urlid.lambda-url.eu-west-1.on.aws",
+			want: "ap-southeast-2",
+		},
+		{
+			name:   "internal override header beats both",
+			header: "us-west-2",
+			auth:   "AWS4-HMAC-SHA256 Credential=AKIA/20260729/us-east-1/appsync/aws4_request, SignedHeaders=host, Signature=abc",
+			host:   "abc123.appsync-api.eu-west-1.localhost:4566",
+			want:   "us-west-2",
+		},
+		{
+			name: "host is used when nothing signed the request",
+			host: "abc123.appsync-api.eu-west-1.localhost:4566",
+			want: "eu-west-1",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got string
+			h := Region(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				got = RegionFromContext(r.Context(), "")
+			}))
+
+			r, err := http.NewRequest(http.MethodGet, "http://localhost:4566/", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.Host = tc.host
+			if tc.header != "" {
+				r.Header.Set("X-Overcast-Region", tc.header)
+			}
+			if tc.auth != "" {
+				r.Header.Set("Authorization", tc.auth)
+			}
+			h.ServeHTTP(httptest.NewRecorder(), r)
+
+			if got != tc.want {
+				t.Errorf("region in context = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

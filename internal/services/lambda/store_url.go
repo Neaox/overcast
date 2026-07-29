@@ -109,12 +109,18 @@ func (s *lambdaStore) deleteFunctionURLConfig(ctx context.Context, functionName,
 	return nil
 }
 
-// getFunctionURLConfigByURLID resolves a config by its generated UrlID —
-// the only thing a Host-routed invocation ({urlId}.lambda-url.{region}.{base})
+// getFunctionURLConfigByURLID resolves a config by its generated UrlID — the
+// identifier a Host-routed invocation ({urlId}.lambda-url.{region}.{base})
 // carries. Scans every region: a UrlID is a random ~32-char token with no
-// meaningful collision risk, so there is no need to know the caller's region
-// up front (unlike API Gateway, where {apiId} alone is not always unique
-// enough to skip the region hint). Returns nil, nil when not found.
+// meaningful collision risk, so this lookup does not need the caller's region
+// (unlike API Gateway, where {apiId} alone is not always unique enough).
+// Returns nil, nil when not found.
+//
+// Being region-agnostic HERE does not make the invocation region-agnostic.
+// InvokeFunctionURL follows this with getFunction, which is region-scoped, so
+// the region hint middleware.Region reads off the Host is still load-bearing —
+// see TestInvokeFunctionURL_hostRoutedInNonDefaultRegion, which fails with a
+// 404 "Function not found" when it is dropped.
 func (s *lambdaStore) getFunctionURLConfigByURLID(ctx context.Context, urlID string) (*FunctionURLConfig, *protocol.AWSError) {
 	kvs, err := s.store.Scan(ctx, nsFunctionURLConfigs, "")
 	if err != nil {

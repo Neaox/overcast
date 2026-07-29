@@ -682,8 +682,8 @@ the host. Overcast never dials it, and the nested-stack tests pass.
 
 ## 10. Phases
 
-> **Progress:** H7 (realtime + CloudFront labels, wildcard-domain DRY) complete.
-> Previously: H0-H3 complete and green. Outstanding: H4 (AWS::URLSuffix audit), H6 (documentation sweep, §10.1). H5 is blocked on an api-models-aws checkout.
+> **Progress:** H5a (`regionFromHost` folded onto `hostRouteLabels`) complete.
+> Previously: H7 (realtime + CloudFront labels, wildcard-domain DRY), H0-H3 complete and green. Outstanding: H4 (AWS::URLSuffix audit), H6 (documentation sweep, §10.1), H5b (manifest-derived label validation, still blocked on an api-models-aws checkout).
 
 Each phase begins with failing tests and leaves `main` internally consistent,
 per the shipping rule in [aws-api-operation-coverage.md](./aws-api-operation-coverage.md).
@@ -695,7 +695,8 @@ per the shipping rule in [aws-api-operation-coverage.md](./aws-api-operation-cov
 | H2 | `docs/networking.md` addressing-precedence section; `hostroute.go` recipe guardrail; reserved-label integration cover; `make docs-index`. | `make docs-check` green. |
 | H3 | Canonical URL minting per §8: `serviceutil.HostRoutedURL`, API Gateway v2 `apiEndpoint`, AppSync `uris`/`dns`, `buildFunctionURL` collapsed onto the helper. | A minted URL, fed back as a `Host` header, reaches its own service — asserted end-to-end, not by string comparison. |
 | H4 | `AWS::URLSuffix` audit and scoped substitution per §8's hazard. | Every `AWS::URLSuffix` use site in synthesised CDK templates classified as URL-host or not; IAM service principals provably unaffected. |
-| H5 | *(follow-on PR)* Manifest-derived label validation per §6. | Requires an `api-models-aws` checkout at revision `66e973ca…`. |
+| H5a | ✅ done | Fold `regionFromHost` onto `hostRouteLabels` (§13.1). | A host-routed invoke in a non-default region resolves, asserted end-to-end for AppSync and Lambda function URLs; every dispatch label is covered by a test that fails if region extraction cannot read it. |
+| H5b | *(follow-on PR)* Manifest-derived label validation per §6. | Requires an `api-models-aws` checkout at revision `66e973ca…`. |
 | H6 | ✅ done | Documentation sweep per §10.1 — every doc that states which hostnames, URL shapes or bucket names Overcast supports. | No doc contradicts §4's precedence rule, §8's minted URLs, or §9.4's bucket-name rules. `make docs-index` regenerated. |
 
 H3's gate is deliberately behavioural rather than textual: asserting the minted
@@ -837,12 +838,11 @@ fixture that sets an explicit `Host` should be checked against the §4 matrix.
 
 ## 13. Follow-ups not in scope
 
-- Folding `regionFromHost` ([region.go:49](../../internal/middleware/region.go))
-  into the shared parse. It carries a **third** divergent label list
-  (`execute-api`, `s3`, `sqs`, `sns`, `dynamodb`, `lambda`) that already
-  disagrees with `hostRouteLabels` — it does not know `appsync-api` or
-  `lambda-url`. Do it with H5, when the manifest makes the label set
-  generated rather than hand-written.
+- ~~Folding `regionFromHost` into the shared parse.~~ **Done — see §13.1.** It
+  was scheduled to ride along with the manifest work, on the assumption that it
+  was tidiness. It was not: the divergence was a live bug, and waiting on an
+  `api-models-aws` checkout to fix it was the wrong trade. The manifest half is
+  now tracked separately as H5b.
 - AppSync realtime on its own `appsync-realtime-api` host. Real AWS serves
   realtime from a separate hostname; Overcast colocates it under the same
   `/_appsync/{apiId}` prefix, so H3 advertises the colocated URL. Splitting it
@@ -862,3 +862,94 @@ fixture that sets an explicit `Host` should be checked against the §4 matrix.
   §9.4 gave buckets: checked rule-by-rule against the AWS documentation rather
   than approximated. `serviceutil` alone carries queue-name, table-name and
   GraphQL-identifier rules.
+
+### 13.1. H5a — `regionFromHost` folded onto `hostRouteLabels`
+
+`regionFromHost` ([region.go](../../internal/middleware/region.go)) held a
+third label list — `execute-api`, `s3`, `sqs`, `sns`, `dynamodb`, `lambda` —
+that predated `hostRouteLabels` and had drifted from it. The gap was not
+cosmetic. Three facts combined into a bug:
+
+1. AppSync's store is region-scoped (`serviceutil.RegionKey`,
+   [appsync/store.go](../../internal/services/appsync/store.go)), as is
+   Lambda's `getFunction`.
+2. Only API Gateway's rewrite stamped a region onto the request context;
+   AppSync's and Lambda's did not.
+3. A host-routed invoke carries **no SigV4** — AppSync authenticates it with an
+   `x-api-key` header, a Lambda function URL with nothing at all — so the Host
+   is the only region evidence such a request has.
+
+So an AppSync API created in `eu-west-1` and invoked over
+`{apiId}.appsync-api.eu-west-1.{base}` resolved against the default region and
+answered `NotFoundException`. Lambda function URLs had the same defect behind a
+comment asserting the lookup was region-agnostic: that is true of
+`getFunctionURLConfigByURLID`, which scans every region, but `InvokeFunctionURL`
+calls `getFunction` immediately after it and that **is** region-scoped, so the
+config resolved and the function behind it 404'd.
+
+**Fix.** `regionFromHost` now calls `parseHostRouteName` — the same parse the
+router dispatches on — for the host-routed half. Registering a label in
+`hostRouteLabels` is now sufficient for a service to resolve in the right
+region, which is what this fold was for.
+`TestRegionFromHost_agreesWithTheRouterOnEveryHostRoutedLabel` iterates
+`ReservedHostLabels()` so the two cannot drift again.
+
+CloudFront needs no special-casing: the grammar rejects `net` as a region
+segment, so `{distributionId}.cloudfront.net` yields `""` on its own.
+
+**What stayed behind, and why it is not a second copy.**
+`regionalEndpointLabels` keeps `s3`, `sqs`, `sns`, `dynamodb`, `lambda` for the
+`{id}.{service}.{region}.{base}` endpoint form. These cannot move into
+`hostRouteLabels`: that set drives *dispatch*, so registering `s3` there would
+make every virtual-hosted bucket address parse as a host-routed service, and a
+bare common-word label would wreck the reserved-label guardrail (§6) besides.
+The two sets are disjoint by construction and answer different questions.
+`s3` is the one with a real AWS shape behind it; the rest are retained because
+requests have historically been read this way and narrowing the set is a
+behaviour change nothing asks for.
+
+**Found while rewriting it: the endpoint read had no region-shape check.**
+`regionFromEndpointHost` returned the segment after the label verbatim, so the
+base hostname's first segment was taken as a region whenever the address had no
+real one:
+
+| Host | Before | After |
+| --- | --- | --- |
+| `mybucket.s3.localhost.overcast.sh` | `localhost` | `""` |
+| `mybucket.s3.localhost.localstack.cloud` | `localhost` | `""` |
+| `mybucket.s3.us-east-1.amazonaws.com` | `us-east-1` | `us-east-1` |
+
+Those are ordinary routable S3 virtual-hosted addresses, so an **unsigned**
+request to one partitioned its S3 state under the region `localhost` — a name
+no other request could reach, which is the same failure mode as the unfolded
+region segment §4 covers. Signed requests were unaffected, because the
+credential scope resolves ahead of the Host, which is why this survived. The
+fix is the `awsRegionPattern` guard `regionSegment` already applies on the
+host-routed side, applied to the half that was open to it.
+
+**Rejected: stamping the region in `HostAddressing`.**
+`HostRouteMatch.Region` is already parsed at classification time, so having
+`HostAddressing` put it into the context would give every host-routed service
+the hint without each rewrite remembering to. It was rejected on ordering
+grounds. `HostAddressing` is registered at
+[router.go:136](../../internal/router/router.go) and `Region` at
+[router.go:151](../../internal/router/router.go) — `Region` runs **second**, and
+whichever runs second wins. The precedence would happen to come out right
+(`Region` only overwrites when it resolves something, and it resolves the
+header and the credential scope ahead of the Host), but it would put region
+resolution's correctness at the mercy of middleware registration order, and it
+would break the invariant H-case-folding established: that a region enters the
+context at exactly one point, which is what makes "the region in context is
+always canonical" (`TestRegion_contextRegionIsAlwaysCanonical`) hold
+unconditionally rather than depend on each source having remembered to fold.
+S3 and unclaimed hosts are not stamped with a claim at all, so `regionFromHost`
+would have been needed regardless.
+
+Doing it inside `regionFromHost` keeps `Region` the single point of entry,
+keeps the function pure and directly unit-testable, and preserves the
+documented order — `X-Overcast-Region`, then SigV4 credential scope, then Host
+— by construction, since the Host remains the last fallback. A signed request
+never reaches `regionFromHost` at all;
+`TestRegion_hostNeverOverridesASignedScope` pins that at the middleware
+boundary, because widening what the Host can name widens the chance of it
+disagreeing with a scope that must win.
