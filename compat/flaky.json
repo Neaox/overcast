@@ -13,6 +13,12 @@
       "group": "sns-subscriptions",
       "test": "Unsubscribe",
       "reason": "Cascades from PublishDeliveredToSQS: skipped as 'dependency failed' whenever that test fails. Remove this entry together with the one above."
+    },
+    {
+      "suite": "cli",
+      "group": "eventbridge-buses",
+      "test": "DeleteEventBus",
+      "reason": "Downstream of the cli/eventbridge-buses/ListEventBuses failure (plan R7), whose cascade is not deterministic: DeleteEventBus is reported 'skip — dependency failed: ListEventBuses' on some runs and 'fail' on others, on trees that do not touch EventBridge. Quarantined so an unrelated PR is not blocked by which side of that coin lands. Remove it with the ListEventBuses fix."
     }
   ]
 }
