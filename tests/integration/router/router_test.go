@@ -4,13 +4,11 @@ package router_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
 
 	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/mcp"
 	"github.com/Neaox/overcast/internal/state"
 	"github.com/Neaox/overcast/tests/helpers"
 )
@@ -70,52 +68,15 @@ func TestHealth_includesStorageConfig(t *testing.T) {
 	}
 }
 
-func TestRuntimeMCPInitialize_returnsToolsCapability(t *testing.T) {
-	srv := helpers.NewTestServer(t)
-
-	payload, _ := json.Marshal(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": mcp.ProtocolVersion,
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "router-test", "version": "1.0"},
-		},
-	})
-
-	resp, err := http.Post(srv.URL+"/_mcp/", "application/json", bytes.NewReader(payload))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	helpers.AssertStatus(t, resp, http.StatusOK)
-
-	var body map[string]any
-	helpers.DecodeJSON(t, resp, &body)
-	result, ok := body["result"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected result object, got %T", body["result"])
-	}
-	if result["protocolVersion"] != mcp.ProtocolVersion {
-		t.Fatalf("protocolVersion = %v, want %q", result["protocolVersion"], mcp.ProtocolVersion)
-	}
-	caps, ok := result["capabilities"].(map[string]any)
-	if !ok {
-		t.Fatalf("capabilities type = %T", result["capabilities"])
-	}
-	if _, ok := caps["tools"]; !ok {
-		t.Fatal("capabilities.tools must be present")
-	}
-}
+// The runtime MCP endpoint only exists in non-slim builds, so its test lives in
+// the //go:build !slim-guarded mcp_test.go rather than here.
 
 // ---- Not-found -------------------------------------------------------------
 
 func TestNotFound_returns404(t *testing.T) {
 	// Disable S3 so bucket routes aren't registered.
 	// Then GET /some-bucket genuinely matches no route → notFoundHandler.
-	srv := helpers.NewTestServer(t, helpers.WithServices("sqs"))
+	srv := helpers.NewTestServer(t)
 
 	resp, err := http.Get(srv.URL + "/some-bucket-that-has-no-handler")
 	if err != nil {
@@ -157,23 +118,6 @@ func TestRouter_s3BucketNamedLikeLambdaAPIVersion_remainsReachable(t *testing.T)
 	helpers.AssertStatus(t, objectResp, http.StatusOK)
 }
 
-func TestRouter_disabledLambdaAlternateAPIVersion_returnsServiceDisabled(t *testing.T) {
-	// Given: S3 is enabled but Lambda is disabled.
-	srv := helpers.NewTestServer(t, helpers.WithServices("s3"))
-
-	// When: a caller uses Lambda's provisioned-concurrency API version.
-	resp, err := http.Get(srv.URL + "/2019-09-30/functions/example/provisioned-concurrency")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	// Then: Lambda owns the versioned path and reports its disabled state
-	// instead of letting S3 interpret the path as a bucket and key.
-	helpers.AssertStatus(t, resp, http.StatusServiceUnavailable)
-	helpers.AssertJSONError(t, resp, "ServiceDisabled")
-}
-
 func TestRouter_unclaimedQueryGET_doesNotFallThroughToS3(t *testing.T) {
 	// Given: an emulator with S3 enabled.
 	srv := helpers.NewTestServer(t)
@@ -190,38 +134,6 @@ func TestRouter_unclaimedQueryGET_doesNotFallThroughToS3(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusNotImplemented)
 	helpers.AssertHeader(t, resp, "x-emulator-unsupported", "true")
 	helpers.AssertQueryXMLError(t, resp, "NotImplemented")
-}
-
-func TestRouter_disabledQueryServiceGET_returnsServiceDisabled(t *testing.T) {
-	// Given: S3 is enabled but SQS is disabled.
-	srv := helpers.NewTestServer(t, helpers.WithServices("s3"))
-
-	// When: a caller makes an SQS Query GET request.
-	resp, err := http.Get(srv.URL + "/?Action=ListQueues&Version=2012-11-05")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	// Then: it reports the configured disabled state rather than S3 or a generic 501.
-	helpers.AssertStatus(t, resp, http.StatusServiceUnavailable)
-	helpers.AssertQueryXMLError(t, resp, "ServiceDisabled")
-}
-
-func TestRouter_disabledQueryServicePOST_returnsServiceDisabled(t *testing.T) {
-	// Given: S3 is enabled but SQS is disabled.
-	srv := helpers.NewTestServer(t, helpers.WithServices("s3"))
-
-	// When: a caller submits an SQS Query request.
-	resp, err := http.Post(srv.URL+"/", "application/x-www-form-urlencoded", bytes.NewBufferString("Action=ListQueues&Version=2012-11-05"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	// Then: it reports the configured disabled state in the Query XML envelope.
-	helpers.AssertStatus(t, resp, http.StatusServiceUnavailable)
-	helpers.AssertQueryXMLError(t, resp, "ServiceDisabled")
 }
 
 func TestRouter_unclaimedQueryPOST_returnsNotImplemented(t *testing.T) {
@@ -266,6 +178,53 @@ func TestRouter_unclaimedModeledJSONTarget_returnsNotImplemented(t *testing.T) {
 	helpers.AssertHeader(t, resp, "x-emulator-unsupported", "true")
 	helpers.AssertRequestID(t, resp)
 	helpers.AssertJSONError(t, resp, "NotImplemented")
+}
+
+func TestRouter_unclaimedModeledRPCv2CBOROperation_returnsNotImplemented(t *testing.T) {
+	// Given: a modeled additive RPC v2 CBOR operation for a service without an
+	// Overcast dispatcher.
+	srv := helpers.NewTestServer(t)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/service/GameLift/operation/ListBuilds", bytes.NewReader([]byte{0xa0}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Smithy-Protocol", "rpc-v2-cbor")
+
+	// When: the explicit Smithy RPC route reaches the operation registry.
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the modeled operation receives a protocol-shaped 501 rather than
+	// an unsupported-protocol error or S3 fallback.
+	helpers.AssertStatus(t, resp, http.StatusNotImplemented)
+	helpers.AssertHeader(t, resp, "Smithy-Protocol", "rpc-v2-cbor")
+	helpers.AssertHeader(t, resp, "x-emulator-unsupported", "true")
+	helpers.AssertRequestID(t, resp)
+}
+
+func TestRouter_enabledServiceUnimplementedRPCv2CBOROperation_returnsNotImplemented(t *testing.T) {
+	// Given: CloudWatch is enabled, but its modeled additive CBOR operations
+	// have no RPC dispatcher implementation.
+	srv := helpers.NewTestServer(t)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/service/GraniteServiceVersion20100801/operation/AssociateDatasetKmsKey", bytes.NewReader([]byte{0xa0}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Smithy-Protocol", "rpc-v2-cbor")
+
+	// When: the modeled operation reaches the central RPC dispatcher.
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the service's unknown-operation branch cannot turn it into a 400.
+	helpers.AssertStatus(t, resp, http.StatusNotImplemented)
+	helpers.AssertHeader(t, resp, "x-emulator-unsupported", "true")
 }
 
 func TestRouter_unclaimedModeledRESTPath_returnsNotImplemented(t *testing.T) {
@@ -319,7 +278,10 @@ func TestRouter_signedRESTRootPath_returnsNotImplemented(t *testing.T) {
 
 func TestRouter_unsignedS3PathMatchingAmbiguousRESTBinding_remainsReachable(t *testing.T) {
 	// Given: an unsigned S3 bucket whose name is also an ambiguous REST literal.
-	srv := helpers.NewTestServer(t, helpers.WithServices("s3"))
+	// Only S3 is registered: with API Gateway present its literal /tags/* route
+	// legitimately wins, so the precedence this test pins is only observable
+	// once the other claimant is out of the way.
+	srv := helpers.NewTestServer(t, helpers.WithServiceSubset("s3"))
 	create, err := http.NewRequest(http.MethodPut, srv.URL+"/tags", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -352,6 +314,40 @@ func TestRouter_unsignedS3PathMatchingAmbiguousRESTBinding_remainsReachable(t *t
 	helpers.AssertStatus(t, resp, http.StatusOK)
 	if got := helpers.ReadBody(t, resp); got != "contents" {
 		t.Errorf("object body = %q, want contents", got)
+	}
+}
+
+func TestRouter_headerlessS3MultipartPathMatchingRPCGrammar_remainsReachable(t *testing.T) {
+	// Given: a legitimate S3 bucket and key whose path has Smithy RPC's
+	// /service/{service}/operation/{operation} shape.
+	srv := helpers.NewTestServer(t)
+	create, err := http.NewRequest(http.MethodPut, srv.URL+"/service", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createResp, err := http.DefaultClient.Do(create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+
+	// When: S3 initiates a multipart upload on that exact four-segment path.
+	initiate, err := http.NewRequest(http.MethodPost, srv.URL+"/service/example/operation/upload?uploads", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(initiate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the absence of Smithy-Protocol leaves the request with S3 instead
+	// of the RPC route returning its generic 404.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	if got := resp.Header.Get("Content-Type"); got != "application/xml" {
+		t.Errorf("Content-Type = %q, want application/xml", got)
 	}
 }
 
@@ -553,56 +549,8 @@ func TestDebugMetrics_includesAdvisoriesArray(t *testing.T) {
 	}
 }
 
-// TestDebugReset_withSQLiteStore covers the non-MemoryStore branch of debugReset
-// (the resetAllNamespaces code path).
-func TestDebugReset_withSQLiteStore(t *testing.T) {
-	sqliteStore, err := state.NewSQLiteStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewSQLiteStore: %v", err)
-	}
-	t.Cleanup(func() { sqliteStore.Close() })
-
-	// Wait for the background schema migration to finish before issuing any
-	// requests. Without this, a request that races migration now correctly
-	// gets a fast 503 (middleware.NotReady, storage-plan.md) instead of
-	// silently blocking-then-succeeding the way it used to — this test cares
-	// about debug reset behavior against a SQLiteStore backend, not about
-	// exercising that race, so synchronize past it explicitly. SQLiteStore
-	// has no ReadyAwaiter of its own; any real operation blocks on the same
-	// internal gate migration completion closes.
-	if _, _, err := sqliteStore.Get(context.Background(), "warmup", "warmup"); err != nil {
-		t.Fatalf("warm-up Get (waiting for migration): %v", err)
-	}
-
-	srv := helpers.NewTestServer(t, helpers.WithDebug(true), helpers.WithStore(sqliteStore))
-
-	// Create a queue to populate state.
-	body, _ := json.Marshal(map[string]any{"QueueName": "sqlite-reset-queue"})
-	createReq, _ := http.NewRequest(http.MethodPost, srv.URL+"/", bytes.NewReader(body))
-	createReq.Header.Set("Content-Type", "application/x-amz-json-1.0")
-	createReq.Header.Set("X-Amz-Target", "AmazonSQS.CreateQueue")
-
-	createResp, err := http.DefaultClient.Do(createReq)
-	if err != nil {
-		t.Fatal(err)
-	}
-	createResp.Body.Close()
-	helpers.AssertStatus(t, createResp, http.StatusOK)
-
-	// Reset via debug endpoint — exercises resetAllNamespaces.
-	resetResp, err := http.Post(srv.URL+"/_debug/reset", "application/json", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resetResp.Body.Close()
-
-	helpers.AssertStatus(t, resetResp, http.StatusOK)
-	var result map[string]string
-	helpers.DecodeJSON(t, resetResp, &result)
-	if result["status"] != "reset" {
-		t.Errorf("expected status 'reset', got %q", result["status"])
-	}
-}
+// Debug reset against a real SQLite-backed store is build-tag-sensitive and
+// lives in the //go:build !nosqlite-guarded sqlite_test.go.
 
 // ---- Mixed-backend storage -------------------------------------------------
 
@@ -615,7 +563,6 @@ func TestMixedBackend_isolatesPerServiceData(t *testing.T) {
 	})
 
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("sqs", "sns"),
 		helpers.WithStore(ns),
 	)
 

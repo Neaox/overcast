@@ -97,7 +97,7 @@ they create real state that you can query via the AWS APIs.
 ### Real handlers (resources are fully provisioned)
 
 | Service         | Resource Types                                                                                                                                                                                                                                             |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | -------------- | ------------------------------------------------------------------------------------------------ |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | S3              | `AWS::S3::Bucket`, `AWS::S3::BucketPolicy`                                                                                                                                                                                                                 |
 | SQS             | `AWS::SQS::Queue`                                                                                                                                                                                                                                          |
 | SNS             | `AWS::SNS::Topic`, `AWS::SNS::Subscription`                                                                                                                                                                                                                |
@@ -113,7 +113,8 @@ they create real state that you can query via the AWS APIs.
 | Step Functions  | `AWS::StepFunctions::StateMachine`                                                                                                                                                                                                                         |
 | CloudWatch Logs | `AWS::Logs::LogGroup`, `AWS::Logs::LogStream`                                                                                                                                                                                                              |
 | SSM             | `AWS::SSM::Parameter`                                                                                                                                                                                                                                      |
-| Secrets Manager | `AWS::SecretsManager::Secret`                                                                                                                                                                                                                              |     | CloudFormation | `AWS::CloudFormation::Stack` (nested stacks), `AWS::CloudFormation::CustomResource`, `Custom::*` |
+| Secrets Manager | `AWS::SecretsManager::Secret`                                                                                                                                                                                                                              |
+| CloudFormation  | `AWS::CloudFormation::Stack` (nested stacks), `AWS::CloudFormation::CustomResource`, `Custom::*` |
 
 ### Stubs (succeed silently, no real state)
 
@@ -223,21 +224,18 @@ platforms.
 the `OVERCAST_HOSTNAME` environment variable as an additional virtual-host base,
 so any `<bucket>.<hostname>` request is correctly rewritten to path-style.
 
-`localhost.localstack.cloud` is a public domain maintained by LocalStack whose
-DNS unconditionally resolves all `*.localhost.localstack.cloud` subdomains to
-`127.0.0.1` (your local machine). Using it here does **not** involve LocalStack in any way — the
-domain is purely a convenience DNS service. All traffic goes directly to
-Overcast on your machine; nothing is sent to LocalStack's servers. No
-hosts-file edits required:
+`localhost.overcast.sh` is a public domain whose DNS unconditionally resolves
+all `*.localhost.overcast.sh` subdomains to `127.0.0.1` (your local machine).
+No hosts-file edits required, and it behaves identically on every OS:
 
 ```bash
 # Start Overcast with the wildcard-DNS hostname
 docker run --rm -p 4566:4566 \
-  -e OVERCAST_HOSTNAME=localhost.localstack.cloud \
+  -e OVERCAST_HOSTNAME=localhost.overcast.sh \
   ghcr.io/neaox/overcast:alpha
 
 # Point CDK at that hostname
-export AWS_ENDPOINT_URL=http://localhost.localstack.cloud:4566
+export AWS_ENDPOINT_URL=http://localhost.overcast.sh:4566
 export AWS_ACCESS_KEY_ID=test
 export AWS_SECRET_ACCESS_KEY=test
 export AWS_DEFAULT_REGION=us-east-1
@@ -247,13 +245,22 @@ npx cdk deploy --require-approval never
 ```
 
 With this configuration, CDK constructs a bucket hostname like
-`cdk-hnb659fds-assets-000000000000-us-east-1.localhost.localstack.cloud:4566`,
+`cdk-hnb659fds-assets-000000000000-us-east-1.localhost.overcast.sh:4566`,
 which resolves via public DNS to `127.0.0.1` and is rewritten by Overcast's
 S3 virtual-host middleware to the correct path-style route.
 
 > **Note:** This fix also works on Linux and macOS, so
-> `OVERCAST_HOSTNAME=localhost.localstack.cloud` is safe to use in a shared
-> CI/CD environment where developers use different host operating systems.
+> `OVERCAST_HOSTNAME=localhost.overcast.sh` is safe to use in a shared CI/CD
+> environment where developers are on different host operating systems.
+>
+> `localhost.localstack.cloud` and `localhost.floci.io` are recognised too and
+> behave identically, so a setup carried over from either tool keeps working
+> unchanged. Neither sends any traffic to those projects — the domains are
+> purely a DNS convenience and every request goes to Overcast on your machine.
+>
+> All three need a public DNS lookup, so none of them works offline or behind
+> DNS rebinding protection. See the caveat in
+> [networking.md](./networking.md) for the fallbacks.
 
 ---
 

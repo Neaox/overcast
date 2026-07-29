@@ -150,6 +150,12 @@ type HostConfig struct {
 	// wins over DNS in glibc and musl, so an entry here shadows a public record
 	// for the same name inside this container only.
 	ExtraHosts []string `json:"ExtraHosts,omitempty"`
+	// Dns sets the container's resolvers. Docker keeps its own embedded
+	// resolver (127.0.0.11) in front and uses these as its upstream, so
+	// container-name service discovery is unaffected — but names these servers
+	// claim are answered by them, including wildcard subdomains that ExtraHosts
+	// cannot express. See internal/dns.
+	Dns []string `json:"Dns,omitempty"`
 }
 
 // PortBinding represents a host-to-container port mapping.

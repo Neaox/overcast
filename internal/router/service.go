@@ -70,11 +70,12 @@ type Readier interface {
 }
 
 // PathPrefixService is optionally implemented by services that own specific URL
-// path prefixes distinct from S3's /{bucket}/* wildcard. When a service is
-// disabled, the router registers a 503 ServiceDisabled catch-all handler at
-// each declared prefix so callers receive a clear error instead of a stray 404
-// or a spurious S3 response. The format (JSON or XML) is determined by the
-// Content-Type of the incoming request at dispatch time.
+// path prefixes distinct from S3's /{bucket}/* wildcard.
+//
+// Declaring them matters for router tests that register only a subset of
+// services (config.TestOnlyServiceSubset): an excluded service's prefixes are
+// answered with a 501 rather than left unclaimed, which would drop them into
+// S3's wildcard and make the test report a fallthrough no real run produces.
 //
 // Prefix examples: "/2015-03-31" for Lambda, "/clusters" for EKS.
 // Each prefix must start with "/" and must NOT end with "/".

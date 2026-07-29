@@ -47,7 +47,6 @@ services:
     image: ghcr.io/neaox/overcast:alpha
     ports: ["4566:4566"]
     environment:
-      OVERCAST_SERVICES: s3,sqs,dynamodb
       OVERCAST_LOG_LEVEL: debug
 ```
 
@@ -59,7 +58,7 @@ services:
 | ----------------- | ---------------------------------------- | ----------------------------------------------------------------- |
 | `LOCALSTACK_HOST` | `OVERCAST_HOST`                          | Hostname to bind. Default: `0.0.0.0`                              |
 | `EDGE_PORT`       | `OVERCAST_PORT`                          | Default: `4566`                                                   |
-| `SERVICES`        | `OVERCAST_SERVICES`                      | Comma-separated. Same service names.                              |
+| `SERVICES`        | — *(no equivalent)*                      | Overcast runs every service, always. Drop the variable; a leftover value is ignored rather than rejected |
 | `DATA_DIR`        | `OVERCAST_DATA_DIR`                      | SQLite persistence directory                                      |
 | `DEBUG=1`         | `OVERCAST_LOG_LEVEL=debug`               | Verbose logging                                                   |
 | `DEFAULT_REGION`  | `OVERCAST_DEFAULT_REGION`                | Default: `us-east-1`                                              |
@@ -162,10 +161,16 @@ Each is documented here so you know what to expect.
 overcast defaults to path-style S3 URLs (`http://localhost:4566/bucket/key`) rather
 than virtual-hosted style (`http://bucket.localhost:4566/key`).
 
-This matches what most local dev setups need. Virtual-hosted style requires DNS
-resolution of `*.localhost` which doesn't work without extra configuration.
+Virtual-hosted style **is** supported — both `bucket.s3.<base>` and the bare
+`bucket.<base>` — and unlike LocalStack it does not require an `s3.` prefix on
+your endpoint. What it does need is for the bucket subdomain to resolve, which
+`*.localhost` does on Linux and macOS but not on Windows. Setting
+`OVERCAST_HOSTNAME=localhost.overcast.sh` makes it work on every OS; your
+existing `localhost.localstack.cloud` setting is also recognised and keeps
+working unchanged.
 
-**Impact:** If your SDK is configured for virtual-hosted style, set:
+**Impact:** you only need the setting below if you would rather force
+path-style than configure a hostname:
 
 ```bash
 # AWS CLI

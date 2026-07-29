@@ -258,6 +258,7 @@ describe("ServiceNode ECR interactions", () => {
 
     expect(navigateMock).not.toHaveBeenCalled()
     expect(writeTextSpy).toHaveBeenCalledWith("localhost:5111/backend/api")
+    expect(await screen.findByText("Copied repository URI")).toBeInTheDocument()
   })
 
   it("event pulse counters remain visual-only for ECR nodes", () => {

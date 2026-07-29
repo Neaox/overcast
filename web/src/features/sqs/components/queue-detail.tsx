@@ -30,6 +30,7 @@ import {
   updateQueueAttributesMutationOptions,
   deadLetterSourceQueuesQueryOptions,
   redriveMutationOptions,
+  redriveMessageMutationOptions,
 } from "@/features/sqs/data"
 import {
   snsQueueSubscriptionsQueryOptions,
@@ -51,6 +52,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
+import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import {
   Table,
   TableBody,
@@ -83,6 +85,9 @@ interface Props {
   queueName: string
 }
 
+/** Why a message left the queue, for the 30s ghost row it leaves behind. */
+type TombstoneReason = "deleted" | "redriven"
+
 export function QueueDetail({ queueName }: Props) {
   const navigate = useNavigate()
   const qc = useQueryClient()
@@ -98,10 +103,16 @@ export function QueueDetail({ queueName }: Props) {
   const [unsubscribeTarget, setUnsubscribeTarget] = useState<SNSSubscription>()
   const [activeTab, setActiveTab] = useState<"messages" | "subscriptions">("messages")
 
-  // Track recently-deleted messages: show them crossed-out for 30s before hiding.
+  // Track recently-removed messages: show them crossed-out for 30s before hiding.
+  // A redrive leaves the DLQ via DeleteMessage too, so the reason is recorded
+  // to stop a message the user just sent home from reading as "deleted".
   const [deletedMessages, setDeletedMessages] = useState<
-    Map<string, { message: SQSMessage; deletedAt: number }>
+    Map<string, { message: SQSMessage; deletedAt: number; reason: TombstoneReason }>
   >(new Map())
+
+  // Message IDs this page redrove, so the MessageDeleted event that follows is
+  // attributed correctly even when it lands before the mutation resolves.
+  const redrivenIdsRef = useRef<Set<string>>(new Set())
 
   // Stable ref for invalidating queries from within SSE event callbacks.
   const invalidateMessages = useCallback(() => {
@@ -134,8 +145,7 @@ export function QueueDetail({ queueName }: Props) {
     // useQuerySync (mounted in AppShell). Only the tombstone behaviour for
     // MessageDeleted needs to live here.
     if (latest.type === EventType.sqs.MessageDeleted) {
-      // Message was deleted externally — mark it as deleted locally too.
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- responding to external SSE events; this is a subscriber callback pattern
+      // Message left the queue — record a tombstone locally too.
       setDeletedMessages((prev) => {
         const next = new Map(prev)
         // Find the message in the current messages list to capture its data.
@@ -158,6 +168,7 @@ export function QueueDetail({ queueName }: Props) {
               approximateReceiveCount: 0,
             },
             deletedAt: Date.now(),
+            reason: redrivenIdsRef.current.has(payload.messageId) ? "redriven" : "deleted",
           })
         }
         return next
@@ -174,7 +185,10 @@ export function QueueDetail({ queueName }: Props) {
         const now = Date.now()
         const next = new Map(prev)
         for (const [id, entry] of next) {
-          if (now - entry.deletedAt >= 30_000) next.delete(id)
+          if (now - entry.deletedAt >= 30_000) {
+            next.delete(id)
+            redrivenIdsRef.current.delete(id)
+          }
         }
         return next.size === prev.size ? prev : next
       })
@@ -196,7 +210,16 @@ export function QueueDetail({ queueName }: Props) {
     refetch: refetchMessages,
   } = useQuery(sqsMessagesQueryOptions(queueName))
 
-  // Check if this queue is a DLQ (has source queues pointing to it).
+  // Whether redrive is offered at all follows AWS's own rule: StartMessageMoveTask
+  // "is currently limited to supporting message redrive from queues that are
+  // configured as dead-letter queues (DLQs) of other Amazon SQS queues only"
+  // (API_StartMessageMoveTask). ListDeadLetterSourceQueues answers exactly that
+  // question — a non-empty result means at least one SQS queue names this queue
+  // in its RedrivePolicy — and it is one of the calls AWS lists under the
+  // minimum IAM permissions for a redrive.
+  //
+  // Deliberately *not* gated on the queue being non-empty: AWS lets you start a
+  // redrive on an idle DLQ, and the peek only sees the messages it can read.
   const { data: dlqSourceUrls = [] } = useQuery(deadLetterSourceQueuesQueryOptions(queueName))
   const isDLQ = dlqSourceUrls.length > 0
 
@@ -204,10 +227,36 @@ export function QueueDetail({ queueName }: Props) {
     options: redriveMutationOptions(queueName),
     invalidateKeys: [sqsKeys.messageList(queueName), sqsKeys.queueDetail(queueName)],
     successTitle: "Redrive started",
-    successDescription: () => `Messages moved back to source queue`,
+    successDescription: () =>
+      dlqSourceUrls.length === 1
+        ? `Messages moved back to ${queueNameFromUrl(dlqSourceUrls[0])}`
+        : "Messages moved back to their source queues",
     successVariant: "success",
     errorTitle: "Redrive failed",
   })
+
+  // Single-message redrive. SQS has no API for this — see sqs.redriveMessage.
+  const redriveMsgMut = useResourceMutation({
+    options: redriveMessageMutationOptions(queueName),
+    invalidateKeys: [sqsKeys.messageList(queueName), sqsKeys.queueDetail(queueName)],
+    successTitle: "Message returned to source",
+    successDescription: (msg: SQSMessage) =>
+      `Sent back to ${queueNameFromArn(msg.attributes.DeadLetterSourceQueueArn ?? "")}`,
+    successVariant: "success",
+    errorTitle: "Redrive failed",
+    onSuccess: (_data, msg) => {
+      setDeletedMessages((prev) => {
+        const next = new Map(prev)
+        next.set(msg.messageId, { message: msg, deletedAt: Date.now(), reason: "redriven" })
+        return next
+      })
+    },
+  })
+
+  function handleRedriveMessage(msg: SQSMessage) {
+    redrivenIdsRef.current.add(msg.messageId)
+    redriveMsgMut.mutate(msg)
+  }
 
   const deleteQueueMut = useResourceMutation({
     options: deleteQueueMutationOptions(),
@@ -242,7 +291,7 @@ export function QueueDetail({ queueName }: Props) {
       if (msg) {
         setDeletedMessages((prev) => {
           const next = new Map(prev)
-          next.set(msg.messageId, { message: msg, deletedAt: Date.now() })
+          next.set(msg.messageId, { message: msg, deletedAt: Date.now(), reason: "deleted" })
           return next
         })
       }
@@ -407,11 +456,10 @@ export function QueueDetail({ queueName }: Props) {
         <StatCard label="Retention" value={formatRetention(queue.messageRetentionPeriod)} />
       </div>
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
-        <AttrRow label="ARN" value={<ArnText arn={queue.arn} />} mono />
-        <AttrRow label="Delay" value={`${queue.delaySeconds}s`} />
-        <AttrRow label="Max Message Size" value={formatBytes(queue.maximumMessageSize)} />
-        <AttrRow
+      <DefinitionList>
+        <Definition label="Delay" value={`${queue.delaySeconds}s`} />
+        <Definition label="Max Message Size" value={formatBytes(queue.maximumMessageSize)} />
+        <Definition
           label="Long Poll Wait"
           value={
             queue.receiveMessageWaitTimeSeconds > 0
@@ -419,43 +467,46 @@ export function QueueDetail({ queueName }: Props) {
               : "Disabled"
           }
         />
-      </div>
+        <Definition label="ARN" value={<ArnText arn={queue.arn} />} full />
+      </DefinitionList>
 
       {/* ── Dead Letter Queue ── */}
       {queue.redrivePolicy && (
         <div className="rounded-lg border border-border bg-bg-muted p-4">
           <p className="mb-2 font-mono text-xs font-medium text-fg-muted">Dead Letter Queue</p>
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-            <AttrRow
+          <DefinitionList className="gap-y-2">
+            <Definition
               label="DLQ ARN"
               value={<ArnLink arn={queue.redrivePolicy.deadLetterTargetArn} />}
             />
-            <AttrRow
+            <Definition
               label="Max Receive Count"
               value={String(queue.redrivePolicy.maxReceiveCount)}
             />
-          </div>
+          </DefinitionList>
         </div>
       )}
 
       {/* ── Redrive (this queue IS a DLQ) ── */}
       {isDLQ && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-4">
             <div>
               <p className="font-mono text-sm font-medium text-fg">Dead Letter Queue</p>
               <p className="text-xs text-fg-muted">
-                This queue receives failed messages from{" "}
+                Receives failed messages from{" "}
                 {dlqSourceUrls.length === 1
-                  ? dlqSourceUrls[0].split("/").pop()
+                  ? queueNameFromUrl(dlqSourceUrls[0])
                   : `${dlqSourceUrls.length} source queues`}
+                . Redrive returns every message to the queue it failed on.
               </p>
             </div>
             <Button
               size="sm"
               variant="outline"
+              className="shrink-0"
               onClick={() => redriveMut.mutate(queue.arn)}
-              disabled={redriveMut.isPending || messages.length === 0}
+              disabled={redriveMut.isPending}
             >
               <Undo2 className="mr-1.5 h-3.5 w-3.5" />
               {redriveMut.isPending ? "Redriving…" : "Redrive Messages"}
@@ -509,7 +560,7 @@ export function QueueDetail({ queueName }: Props) {
           <CardContent className="p-0">
             <div className="flex items-center justify-between border-b border-border px-4 py-2">
               <span className="text-xs text-fg-muted">
-                Dimmed rows are in-flight · strikethrough rows recently deleted
+                Dimmed rows are in-flight · strikethrough rows recently left the queue
               </span>
               <div className="flex items-center gap-2">
                 <Button size="sm" variant="ghost" onClick={() => setShowSend(true)}>
@@ -568,7 +619,7 @@ export function QueueDetail({ queueName }: Props) {
                     <TableHead>Body</TableHead>
                     <TableHead>Receive Count</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead className="w-12" />
+                    <TableHead className="w-20" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -576,7 +627,6 @@ export function QueueDetail({ queueName }: Props) {
                     <MessageRow
                       key={msg.receiptHandle || msg.messageId}
                       msg={msg}
-                      deleted={false}
                       expanded={expandedMsg === msg.messageId}
                       onToggle={() =>
                         setExpandedMsg((prev) =>
@@ -584,6 +634,11 @@ export function QueueDetail({ queueName }: Props) {
                         )
                       }
                       onDelete={() => setDeleteTarget(msg)}
+                      onRedrive={() => handleRedriveMessage(msg)}
+                      redriving={
+                        redriveMsgMut.isPending &&
+                        redriveMsgMut.variables.messageId === msg.messageId
+                      }
                       onInflightExpired={invalidateMessages}
                     />
                   ))}
@@ -592,12 +647,14 @@ export function QueueDetail({ queueName }: Props) {
                     .filter((e) => !messages.some((m) => m.messageId === e.message.messageId))
                     .map((e) => (
                       <MessageRow
-                        key={`deleted-${e.message.messageId}`}
+                        key={`gone-${e.message.messageId}`}
                         msg={e.message}
-                        deleted={true}
+                        tombstone={e.reason}
                         expanded={false}
                         onToggle={() => {}}
                         onDelete={() => {}}
+                        onRedrive={() => {}}
+                        redriving={false}
                         onInflightExpired={() => {}}
                       />
                     ))}
@@ -844,21 +901,34 @@ function DelayedCountdown({
 
 function MessageRow({
   msg,
-  deleted,
+  tombstone,
   expanded,
   onToggle,
   onDelete,
+  onRedrive,
+  redriving,
   onInflightExpired,
 }: {
   msg: SQSMessage
-  deleted: boolean
+  /** Set on a ghost row for a message that has just left the queue. */
+  tombstone?: TombstoneReason
   expanded: boolean
   onToggle: () => void
   onDelete: () => void
+  onRedrive: () => void
+  redriving: boolean
   onInflightExpired: () => void
 }) {
+  const deleted = tombstone !== undefined
   const hasAttrs = Object.keys(msg.messageAttributes).length > 0
   const receiveCount = parseInt(msg.attributes.ApproximateReceiveCount ?? "0", 10)
+
+  // Only messages that arrived here by dead-lettering carry
+  // DeadLetterSourceQueueArn, and it is the only record of where they came
+  // from — so it is exactly the set that can be sent back. A message produced
+  // straight onto this queue has no source to return to.
+  const sourceQueueArn = msg.attributes.DeadLetterSourceQueueArn
+  const canRedrive = !deleted && !!sourceQueueArn
 
   return (
     <>
@@ -867,7 +937,9 @@ function MessageRow({
         onClick={deleted ? undefined : onToggle}
       >
         <TableCell>
-          {deleted ? (
+          {tombstone === "redriven" ? (
+            <Undo2 className="h-3.5 w-3.5 text-fg-muted" />
+          ) : tombstone === "deleted" ? (
             <Trash2 className="h-3.5 w-3.5 text-fg-muted" />
           ) : expanded ? (
             <ChevronDown className="h-3.5 w-3.5 text-fg-muted" />
@@ -889,7 +961,9 @@ function MessageRow({
           <Badge variant={receiveCount > 1 ? "warning" : "default"}>{receiveCount}</Badge>
         </TableCell>
         <TableCell>
-          {deleted ? (
+          {tombstone === "redriven" ? (
+            <Badge variant="info">returned to source</Badge>
+          ) : tombstone === "deleted" ? (
             <Badge variant="danger">deleted</Badge>
           ) : msg.delayed && msg.visibleAfter > 0 ? (
             <DelayedCountdown visibleAfter={msg.visibleAfter} onExpired={onInflightExpired} />
@@ -901,17 +975,41 @@ function MessageRow({
         </TableCell>
         <TableCell>
           {!deleted && (
-            <Button
-              size="icon"
-              variant="ghost"
-              className="text-fg-muted hover:text-danger"
-              onClick={(e) => {
-                e.stopPropagation()
-                onDelete()
-              }}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
+            <div className="flex items-center justify-end">
+              {canRedrive && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="text-fg-muted hover:text-accent"
+                  title={`Return to ${queueNameFromArn(sourceQueueArn)}`}
+                  aria-label={`Return message to ${queueNameFromArn(sourceQueueArn)}`}
+                  disabled={redriving}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onRedrive()
+                  }}
+                >
+                  {redriving ? (
+                    <Spinner className="h-3.5 w-3.5" />
+                  ) : (
+                    <Undo2 className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              )}
+              <Button
+                size="icon"
+                variant="ghost"
+                className="text-fg-muted hover:text-danger"
+                title="Delete message"
+                aria-label="Delete message"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onDelete()
+                }}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
           )}
         </TableCell>
       </TableRow>
@@ -933,6 +1031,12 @@ function MessageRow({
                 <span className="font-mono text-xs font-medium text-fg-muted">Body</span>
                 <CodeBlock>{msg.body}</CodeBlock>
               </div>
+              {sourceQueueArn && (
+                <div className="flex flex-col gap-1">
+                  <span className="font-mono text-xs font-medium text-fg-muted">Source Queue</span>
+                  <ArnLink arn={sourceQueueArn} />
+                </div>
+              )}
               {msg.attributes.SentTimestamp && (
                 <div className="flex flex-col gap-1">
                   <span className="font-mono text-xs font-medium text-fg-muted">Sent</span>
@@ -1004,21 +1108,14 @@ function StatCard({
   )
 }
 
-function AttrRow({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string
-  value: React.ReactNode
-  mono?: boolean
-}) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-fg-muted">{label}</span>
-      <span className={cn("text-sm text-fg", mono && "font-mono")}>{value}</span>
-    </div>
-  )
+/** "arn:aws:sqs:us-east-1:000000000000:orders" → "orders". */
+function queueNameFromArn(arn: string): string {
+  return arn.split(":").pop() || arn
+}
+
+/** "http://host/000000000000/orders" → "orders". */
+function queueNameFromUrl(url: string): string {
+  return url.split("/").pop() || url
 }
 
 function formatRetention(seconds: number): string {

@@ -990,7 +990,7 @@ func TestPurgeQueue_clearsAllMessages(t *testing.T) {
 // message_json can't be decoded) is now covered where it can actually occur
 // — the SQL backend — by
 // TestSQLMessageBackend_ToleratesCorruptRows in
-// internal/services/sqs/message_backend_test.go. This test is kept, adjusted
+// internal/services/sqs/message_backend_sqlite_test.go. This test is kept, adjusted
 // to verify what's still true and observable from the public HTTP surface:
 // PurgeQueue succeeds and clears real messages even when an unrelated,
 // unreadable legacy value happens to be sitting in the now-dead
@@ -3405,7 +3405,7 @@ func TestListDeadLetterSourceQueues(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusOK)
 
 	var result struct {
-		QueueUrls []string `json:"QueueUrls"`
+		QueueUrls []string `json:"queueUrls"`
 	}
 	helpers.DecodeJSON(t, resp, &result)
 
@@ -3421,6 +3421,45 @@ func TestListDeadLetterSourceQueues(t *testing.T) {
 	}
 	if len(result.QueueUrls) != 2 {
 		t.Errorf("expected 2 source queues, got %d: %v", len(result.QueueUrls), result.QueueUrls)
+	}
+}
+
+// TestListDeadLetterSourceQueues_usesLowerCamelWireName pins the response member
+// name to `queueUrls`. Every other SQS list response capitalises it
+// (ListQueues → `QueueUrls`), but the AWS model really does spell this one
+// lower-camel; the Response Syntax at
+// https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListDeadLetterSourceQueues.html
+// shows `"queueUrls": [ "string" ]`.
+//
+// Getting this wrong is silent: the AWS SDKs decode a missing member as an
+// empty list rather than erroring, so callers just never see a source queue —
+// which is how the web UI's "Redrive Messages" button stayed invisible.
+func TestListDeadLetterSourceQueues_usesLowerCamelWireName(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	dlqURL := createQueue(t, srv, "wire-name-dlq")
+	dlqARN := getQueueARN(t, srv, dlqURL)
+	src := createQueueWithAttrs(t, srv, "wire-name-src", map[string]string{
+		"RedrivePolicy": `{"deadLetterTargetArn":"` + dlqARN + `","maxReceiveCount":5}`,
+	})
+
+	resp := sqsCall(t, srv, "ListDeadLetterSourceQueues", map[string]any{
+		"QueueUrl": dlqURL,
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var body map[string]any
+	helpers.DecodeJSON(t, resp, &body)
+
+	if _, wrong := body["QueueUrls"]; wrong {
+		t.Errorf("response uses QueueUrls; AWS spells this member queueUrls, so SDK clients decode it as empty (body: %#v)", body)
+	}
+	urls, ok := body["queueUrls"].([]any)
+	if !ok {
+		t.Fatalf("expected a queueUrls array, got %#v", body)
+	}
+	if len(urls) != 1 || urls[0] != src {
+		t.Errorf("queueUrls = %#v, want [%q]", urls, src)
 	}
 }
 
@@ -3686,6 +3725,38 @@ func TestQueryProtocol_CreateQueue(t *testing.T) {
 	}
 	if !strings.Contains(body, "RequestId") {
 		t.Errorf("expected RequestId in response, got: %s", body)
+	}
+}
+
+// TestQueryProtocol_ListDeadLetterSourceQueues checks that renaming the JSON
+// member to `queueUrls` did not change the Query-protocol XML. AWS models the
+// member with an xmlName of `QueueUrl` and flattens the list, so the Query
+// response is repeated <QueueUrl> elements exactly as for ListQueues.
+func TestQueryProtocol_ListDeadLetterSourceQueues(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	dlqURL := createQueue(t, srv, "query-dlq")
+	dlqARN := getQueueARN(t, srv, dlqURL)
+	srcURL := createQueueWithAttrs(t, srv, "query-dlq-source", map[string]string{
+		"RedrivePolicy": `{"deadLetterTargetArn":"` + dlqARN + `","maxReceiveCount":3}`,
+	})
+
+	resp := sqsQueryCall(t, srv, url.Values{
+		"Action":   {"ListDeadLetterSourceQueues"},
+		"QueueUrl": {dlqURL},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var raw queryXMLResult
+	if err := xml.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		t.Fatalf("decode XML: %v", err)
+	}
+	body := string(raw.Inner)
+	if !strings.Contains(body, "<QueueUrl>"+srcURL+"</QueueUrl>") {
+		t.Errorf("expected a <QueueUrl> element holding %q, got: %s", srcURL, body)
+	}
+	if strings.Contains(body, "<queueUrl") {
+		t.Errorf("Query XML leaked the JSON member name, got: %s", body)
 	}
 }
 
@@ -4077,4 +4148,70 @@ func extractXMLElement(xmlBody, element string) string {
 		return ""
 	}
 	return xmlBody[start : start+end]
+}
+
+// TestCreateQueue_mintedURLIsCanonicalRegardlessOfHostCase is the end-to-end
+// half of the Host case-insensitivity contract, on a real service rather than
+// on the minting helper alone.
+//
+// Every client-facing URL Overcast mints funnels through
+// serviceutil.RequestBaseURL, which folds the Host — but a unit test on that
+// helper proves only that the helper folds, not that a service actually reaches
+// it. SQS is the sharpest case to assert on, because AWS SDKs resolve the SQS
+// endpoint from the QueueUrl itself rather than from client configuration, so a
+// non-canonical URL here is one a client will dial verbatim.
+//
+// Two properties, and both matter:
+//   - the minted URL is lowercase, so the same queue has ONE identity no matter
+//     how the creating caller happened to type the Host (RFC 3986 §3.2.2 tells
+//     producers to emit the lowercase registered name, and AWS does);
+//   - the minted URL still works, which is what stops the canonicalisation from
+//     being a cosmetic change that breaks addressing.
+func TestCreateQueue_mintedURLIsCanonicalRegardlessOfHostCase(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	// Given: the queue is created over a mixed-case Host, as a browser-adjacent
+	// or hand-written client can produce
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/",
+		bytes.NewReader([]byte(`{"QueueName":"case-fold-queue"}`)))
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+	req.Header.Set("X-Amz-Target", "AmazonSQS.CreateQueue")
+	// The base domain itself, upper-cased. NOT "MixedCase.localhost..." — a
+	// label in front of a recognised base is an S3 virtual-hosted bucket
+	// address by tier B, which would correctly route this to S3 and prove
+	// nothing about SQS.
+	req.Host = "LOCALHOST.OVERCAST.SH:4566"
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("CreateQueue: %v", err)
+	}
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var created struct {
+		QueueUrl string `json:"QueueUrl"`
+	}
+	helpers.DecodeJSON(t, resp, &created)
+
+	// Then: the URL handed back carries no trace of the caller's casing
+	u, err := url.Parse(created.QueueUrl)
+	if err != nil {
+		t.Fatalf("parse QueueUrl %q: %v", created.QueueUrl, err)
+	}
+	if want := strings.ToLower(u.Host); u.Host != want {
+		t.Errorf("QueueUrl host = %q, want canonical %q (full URL %q)", u.Host, want, created.QueueUrl)
+	}
+
+	// And: it is still a URL that addresses this queue, so canonicalising did
+	// not trade correctness for tidiness.
+	getResp := sqsCall(t, srv, "GetQueueAttributes", map[string]any{
+		"QueueUrl":       created.QueueUrl,
+		"AttributeNames": []string{"QueueArn"},
+	})
+	defer getResp.Body.Close()
+	helpers.AssertStatus(t, getResp, http.StatusOK)
 }

@@ -322,7 +322,8 @@ func (st *Store) ListFunctions(ctx context.Context) ([]*CloudFrontFunction, erro
 }
 
 // GetFunctionByARN returns the function with the given ARN, or nil if not found.
-// ARN format: arn:aws:cloudfront::000000000000:function/{name}.
+// ARN format: arn:aws:cloudfront::{accountID}:function/{name}. Only the trailing
+// name is matched, so any account ID resolves.
 func (st *Store) GetFunctionByARN(ctx context.Context, arn string) (*CloudFrontFunction, error) {
 	parts := strings.Split(arn, "/")
 	if len(parts) < 2 {

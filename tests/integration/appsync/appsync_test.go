@@ -169,7 +169,7 @@ func TestCreateGraphqlApi_success(t *testing.T) {
 	if api.Uris["GRAPHQL"] == "" {
 		t.Error("expected uris.GRAPHQL to be set")
 	}
-	if want := srv.URL + "/_appsync/" + api.ApiId + "/graphql"; api.Uris["GRAPHQL"] != want {
+	if want := srv.ExternalBase() + "/_appsync/" + api.ApiId + "/graphql"; api.Uris["GRAPHQL"] != want {
 		t.Fatalf("expected executable GraphQL URL %q, got %q", want, api.Uris["GRAPHQL"])
 	}
 	if api.Uris["REALTIME"] == "" {
@@ -210,7 +210,7 @@ func TestListGraphqlApis_localGraphQLURLs(t *testing.T) {
 	if len(result.GraphqlApis) != 1 {
 		t.Fatalf("expected one API, got %d", len(result.GraphqlApis))
 	}
-	want := srv.URL + "/_appsync/" + apiID + "/graphql"
+	want := srv.ExternalBase() + "/_appsync/" + apiID + "/graphql"
 	if got := result.GraphqlApis[0].Uris["GRAPHQL"]; got != want {
 		t.Fatalf("expected executable GraphQL URL %q, got %q", want, got)
 	}
@@ -225,7 +225,9 @@ func TestListGraphqlApis_configuredHostname(t *testing.T) {
 	resp := appsyncGet(t, srv, "/v1/apis")
 	defer resp.Body.Close()
 
-	// Then: the returned GraphQL URL uses the configured client-facing base URL.
+	// Then: the returned GraphQL URL uses the configured client-facing hostname.
+	// "overcast.local" is multi-label, so it can carry the host-routed grammar —
+	// see TestGraphqlApi_urisFollowTheBase for the rule.
 	helpers.AssertStatus(t, resp, http.StatusOK)
 	var result struct {
 		GraphqlApis []struct {
@@ -240,7 +242,7 @@ func TestListGraphqlApis_configuredHostname(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse test server URL: %v", err)
 	}
-	want := "http://overcast.local:" + serverURL.Port() + "/_appsync/" + apiID + "/graphql"
+	want := "http://" + apiID + ".appsync-api.us-east-1.overcast.local:" + serverURL.Port() + "/graphql"
 	if got := result.GraphqlApis[0].Uris["GRAPHQL"]; got != want {
 		t.Fatalf("expected configured GraphQL URL %q, got %q", want, got)
 	}
@@ -2830,9 +2832,7 @@ func TestExecuteGraphQL_lambdaDirectResolver(t *testing.T) {
 
 func TestExecuteGraphQL_lambdaNoInvoker(t *testing.T) {
 	// Given: AppSync enabled but Lambda disabled — no invoker wired
-	srv := helpers.NewTestServer(t, helpers.WithServices(
-		"appsync",
-	))
+	srv := helpers.NewTestServer(t)
 	sdl := `type Query { fn: String }`
 	apiID, keyID := setupGraphQLAPI(t, srv, sdl)
 
@@ -6450,6 +6450,153 @@ func TestExecuteGraphQL_hostBasedInvoke(t *testing.T) {
 	if result.Data.Hello != "world" {
 		t.Errorf("expected data.hello=%q, got %q", "world", result.Data.Hello)
 	}
+}
+
+// TestExecuteGraphQL_hostBasedInvokeAcrossResolvableBases is the AppSync half
+// of the addressing-precedence regression. Every base below except
+// ".amazonaws.com" used to be claimed by S3 virtual-hosted addressing first,
+// which prepended a bogus bucket segment to the path so the rewritten request
+// never matched /_appsync/{apiId}/graphql.
+//
+// See docs/plans/host-routing-precedence.md.
+func TestExecuteGraphQL_hostBasedInvokeAcrossResolvableBases(t *testing.T) {
+	// Given: a GraphQL API with a NONE-datasource resolver
+	srv := helpers.NewTestServer(t)
+	sdl := `type Query { hello: String }`
+	apiID, keyID := setupGraphQLAPI(t, srv, sdl)
+
+	appsyncPost(t, srv, "/v1/apis/"+apiID+"/datasources", map[string]any{
+		"name": "NoneDS",
+		"type": "NONE",
+	}).Body.Close()
+	appsyncPost(t, srv, "/v1/apis/"+apiID+"/types/Query/resolvers", map[string]any{
+		"fieldName":               "hello",
+		"dataSourceName":          "NoneDS",
+		"kind":                    "UNIT",
+		"requestMappingTemplate":  `{"version":"2018-05-29","payload":"world"}`,
+		"responseMappingTemplate": `$util.toJson($context.result)`,
+	}).Body.Close()
+
+	bases := []struct{ name, host string }{
+		{"amazonaws.com with region", apiID + ".appsync-api.us-east-1.amazonaws.com"},
+		{"localhost with region", apiID + ".appsync-api.us-east-1.localhost:4566"},
+		{"localhost without region", apiID + ".appsync-api.localhost:4566"},
+		{"overcast.sh wildcard with region", apiID + ".appsync-api.us-east-1.localhost.overcast.sh:4566"},
+		{"localstack.cloud wildcard with region", apiID + ".appsync-api.us-east-1.localhost.localstack.cloud:4566"},
+		// A hostname is case-insensitive, so the same address in any case is
+		// the same address. Sent case-sensitively, the label missed
+		// hostRouteLabels and S3 virtual-hosted addressing claimed the Host
+		// instead — an S3 XML error for a GraphQL query.
+		{"mixed case", apiID + ".AppSync-Api.US-East-1.localhost.overcast.sh:4566"},
+	}
+
+	for _, b := range bases {
+		t.Run(b.name, func(t *testing.T) {
+			// When: the query is executed via the appsync-api Host on that base
+			resp := appsyncPostWithHost(t, srv, "/graphql",
+				map[string]any{"query": `{ hello }`},
+				b.host,
+				map[string]string{"x-api-key": keyID},
+			)
+			defer resp.Body.Close()
+
+			// Then: the same data the path-style invoke returns
+			helpers.AssertStatus(t, resp, http.StatusOK)
+			var result struct {
+				Data struct {
+					Hello string `json:"hello"`
+				} `json:"data"`
+			}
+			helpers.DecodeJSON(t, resp, &result)
+			if result.Data.Hello != "world" {
+				t.Errorf("Host %q: expected data.hello=%q, got %q", b.host, "world", result.Data.Hello)
+			}
+		})
+	}
+}
+
+// TestExecuteGraphQL_hostBasedInvokeInNonDefaultRegion is the region-scoped
+// counterpart to the test above, which only ever exercised the default region —
+// which is why it could not catch this.
+//
+// AppSync's store is region-scoped (serviceutil.RegionKey, store.go), so an API
+// created in eu-west-1 lives under a different key prefix from one created in
+// us-east-1. A host-routed invoke carries no SigV4 — AppSync authenticates it
+// with an x-api-key header — so the Host is the ONLY evidence of which region
+// the caller means. If the region hint in that Host is dropped, the lookup
+// resolves against the default region and the API is not found.
+func TestExecuteGraphQL_hostBasedInvokeInNonDefaultRegion(t *testing.T) {
+	// Given: a GraphQL API with a NONE-datasource resolver, created entirely
+	// in eu-west-1 via SigV4-scoped control-plane calls
+	const region = "eu-west-1"
+	srv := helpers.NewTestServer(t)
+	regional := map[string]string{"Authorization": appsyncSigV4In(region)}
+
+	resp := appsyncPostWithHeaders(t, srv, "/v1/apis", map[string]any{
+		"name":               "regional-api",
+		"authenticationType": "API_KEY",
+	}, regional)
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var created struct {
+		GraphqlAPI struct {
+			ApiId string `json:"apiId"`
+		} `json:"graphqlApi"`
+	}
+	helpers.DecodeJSON(t, resp, &created)
+	apiID := created.GraphqlAPI.ApiId
+
+	sdl := base64.StdEncoding.EncodeToString([]byte(`type Query { hello: String }`))
+	appsyncPostWithHeaders(t, srv, "/v1/apis/"+apiID+"/schemacreation",
+		map[string]any{"definition": sdl}, regional).Body.Close()
+	appsyncPostWithHeaders(t, srv, "/v1/apis/"+apiID+"/datasources", map[string]any{
+		"name": "NoneDS",
+		"type": "NONE",
+	}, regional).Body.Close()
+	appsyncPostWithHeaders(t, srv, "/v1/apis/"+apiID+"/types/Query/resolvers", map[string]any{
+		"fieldName":               "hello",
+		"dataSourceName":          "NoneDS",
+		"kind":                    "UNIT",
+		"requestMappingTemplate":  `{"version":"2018-05-29","payload":"world"}`,
+		"responseMappingTemplate": `$util.toJson($context.result)`,
+	}, regional).Body.Close()
+
+	keyResp := appsyncPostWithHeaders(t, srv, "/v1/apis/"+apiID+"/apikeys",
+		map[string]any{}, regional)
+	helpers.AssertStatus(t, keyResp, http.StatusOK)
+	var key struct {
+		ApiKey struct {
+			Id string `json:"id"`
+		} `json:"apiKey"`
+	}
+	helpers.DecodeJSON(t, keyResp, &key)
+
+	// When: the query is executed over that API's own host-routed URL, whose
+	// region segment is the only thing naming eu-west-1
+	invoke := appsyncPostWithHost(t, srv, "/graphql",
+		map[string]any{"query": `{ hello }`},
+		apiID+".appsync-api."+region+".localhost:4566",
+		map[string]string{"x-api-key": key.ApiKey.Id},
+	)
+	defer invoke.Body.Close()
+
+	// Then: the same data a path-style invoke in that region returns
+	helpers.AssertStatus(t, invoke, http.StatusOK)
+	var result struct {
+		Data struct {
+			Hello string `json:"hello"`
+		} `json:"data"`
+	}
+	helpers.DecodeJSON(t, invoke, &result)
+	if result.Data.Hello != "world" {
+		t.Errorf("expected data.hello=%q, got %q", "world", result.Data.Hello)
+	}
+}
+
+// appsyncSigV4In builds a fake SigV4 Authorization header scoped to region, so
+// a control-plane call lands in that region's partition of the store.
+func appsyncSigV4In(region string) string {
+	return "AWS4-HMAC-SHA256 Credential=test/20250101/" + region +
+		"/appsync/aws4_request, SignedHeaders=host, Signature=fake"
 }
 
 // appsyncPostWithHost is appsyncPostWithHeaders but also sets an explicit

@@ -23,7 +23,7 @@ import (
 
 // Smithy protocol shape IDs. These are the canonical names used by the
 // Smithy 2.0 spec and are stable identifiers we use in logs, telemetry,
-// and for the Smithy-Protocol response header (rpcv2Cbor only).
+// and for the Smithy-Protocol response header (Smithy RPC v2 protocols only).
 //
 // Source:
 //   - https://smithy.io/2.0/aws/protocols/aws-json-1_0-protocol.html
@@ -31,12 +31,14 @@ import (
 //   - https://smithy.io/2.0/aws/protocols/aws-query-protocol.html
 //   - https://smithy.io/2.0/aws/protocols/aws-restxml-protocol.html
 //   - https://smithy.io/2.0/additional-specs/protocols/smithy-rpc-v2.html
+//   - https://smithy.io/2.0/additional-specs/protocols/smithy-rpc-v2-json.html
 const (
 	NameAWSJSON10 = "aws.protocols#awsJson1_0"
 	NameAWSJSON11 = "aws.protocols#awsJson1_1"
 	NameAWSQuery  = "aws.protocols#awsQuery"
 	NameRESTXML   = "aws.protocols#restXml"
 	NameRPCv2CBOR = "smithy.protocols#rpcv2Cbor"
+	NameRPCv2JSON = "smithy.protocols#rpcv2Json"
 )
 
 // Codec serialises requests and responses for one AWS wire protocol.
@@ -55,7 +57,7 @@ const (
 type Codec interface {
 	// Name returns the Smithy protocol shape ID, e.g. NameAWSJSON10.
 	// Used for diagnostics, logging, and the Smithy-Protocol response
-	// header (rpcv2Cbor only).
+	// header (Smithy RPC v2 protocols only).
 	Name() string
 
 	// Decode reads r.Body into into. into MUST be a non-nil pointer to a

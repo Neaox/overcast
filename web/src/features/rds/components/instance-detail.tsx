@@ -12,11 +12,12 @@ import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { Badge } from "@/components/ui/badge"
+import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
 import { useState } from "react"
-import { Copy, Play, Square, Trash2, RefreshCw } from "lucide-react"
+import { Play, Square, Trash2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { useToast } from "@/components/ui/toast"
+import { CopyButton } from "@/components/ui/copy-button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import type { RdsInstance } from "@/types"
 import { cn } from "@/lib/utils"
@@ -185,31 +186,27 @@ function LogsPanel({ instanceId }: { instanceId: string }) {
 
 function ConfigurationPanel({ db }: { db: RdsInstance }) {
   return (
-    <div className="grid grid-cols-2 gap-x-8 gap-y-3">
-      <InfoRow label="Engine" value={db.Engine ?? ""} />
-      <InfoRow label="Version" value={db.EngineVersion ?? ""} />
-      <InfoRow label="Instance Class" value={db.DBInstanceClass ?? ""} />
-      <InfoRow label="Storage" value={db.AllocatedStorage ? `${db.AllocatedStorage} GB` : "—"} />
-      <InfoRow label="Multi-AZ" value={db.MultiAZ ? "Yes" : "No"} />
-      <InfoRow label="Master Username" value={db.MasterUsername ?? "—"} />
-      <InfoRow
-        label="Created"
-        value={db.InstanceCreateTime ? db.InstanceCreateTime.toLocaleString() : "—"}
+    <DefinitionList>
+      <Definition label="Engine" value={db.Engine} />
+      <Definition label="Version" value={db.EngineVersion} />
+      <Definition label="Instance Class" value={db.DBInstanceClass} />
+      <Definition
+        label="Storage"
+        value={db.AllocatedStorage ? `${db.AllocatedStorage} GB` : null}
       />
-    </div>
+      <Definition label="Multi-AZ" value={db.MultiAZ ? "Yes" : "No"} />
+      <Definition label="Master Username" value={db.MasterUsername} />
+      <Definition
+        label="Created"
+        value={db.InstanceCreateTime ? db.InstanceCreateTime.toLocaleString() : null}
+      />
+    </DefinitionList>
   )
 }
 
 // ─── Connectivity Panel ───────────────────────────────────────────────────
 
 function ConnectivityPanel({ db }: { db: RdsInstance }) {
-  const { toast } = useToast()
-
-  const copyToClipboard = (text: string) => {
-    void navigator.clipboard.writeText(text)
-    toast({ title: "Copied!", variant: "success" })
-  }
-
   if (!db.Endpoint) {
     return <p className="text-sm text-fg-muted">Endpoint not yet available.</p>
   }
@@ -222,37 +219,24 @@ function ConnectivityPanel({ db }: { db: RdsInstance }) {
         <div className="flex items-center gap-2">
           <span className="font-mono text-sm font-medium text-fg">Endpoint</span>
           <code className="rounded bg-bg-muted px-2 py-1 font-mono text-sm">{endpointStr}</code>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-7 w-7"
-            onClick={() => copyToClipboard(endpointStr)}
-          >
-            <Copy className="h-3.5 w-3.5" />
-          </Button>
+          <CopyButton value={endpointStr} noun="endpoint" />
         </div>
-        <div className="grid grid-cols-2 gap-x-8 gap-y-3">
-          <InfoRow label="Address" value={db.Endpoint.Address ?? ""} />
-          <InfoRow label="Port" value={String(db.Endpoint.Port ?? "")} />
-          <InfoRow label="VPC" value={db.DBSubnetGroup?.VpcId ?? "—"} />
-          <InfoRow label="Subnet Group" value={db.DBSubnetGroup?.DBSubnetGroupName ?? "—"} />
-        </div>
+        <DefinitionList>
+          <Definition label="Address" value={db.Endpoint.Address} />
+          <Definition label="Port" value={db.Endpoint.Port} />
+          <Definition label="VPC" value={db.DBSubnetGroup?.VpcId} />
+          <Definition label="Subnet Group" value={db.DBSubnetGroup?.DBSubnetGroupName} />
+        </DefinitionList>
       </div>
 
-      <ConnectionStrings db={db} copyToClipboard={copyToClipboard} />
+      <ConnectionStrings db={db} />
     </div>
   )
 }
 
 // ─── Connection Strings ───────────────────────────────────────────────────
 
-function ConnectionStrings({
-  db,
-  copyToClipboard,
-}: {
-  db: RdsInstance
-  copyToClipboard: (text: string) => void
-}) {
+function ConnectionStrings({ db }: { db: RdsInstance }) {
   if (!db.Endpoint) return null
 
   const { Address: address, Port: port } = db.Endpoint
@@ -272,14 +256,7 @@ function ConnectionStrings({
             <code className="min-w-0 flex-1 truncate rounded bg-bg-muted px-2 py-1 font-mono text-xs">
               {s.value}
             </code>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-7 w-7 shrink-0"
-              onClick={() => copyToClipboard(s.value)}
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </Button>
+            <CopyButton value={s.value} noun={`${s.label} connection string`} />
           </div>
         ))}
       </div>
@@ -319,15 +296,6 @@ function getConnectionStrings(
 }
 
 // ─── Shared ───────────────────────────────────────────────────────────────
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-fg-muted">{label}</span>
-      <span className="text-sm text-fg">{value}</span>
-    </div>
-  )
-}
 
 function EngineLabel({ engine }: { engine: string }) {
   const label =

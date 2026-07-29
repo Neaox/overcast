@@ -329,20 +329,40 @@ Ranked by (call sites collapsed × risk reduced) ÷ effort, with unblocking weig
   CREATING/UPDATING; CloudFormation's suffix matching in `cloudformation/utils.ts` is already the
   right shape and should feed the table rather than be replaced).
 
-### P7 — `useCopyToClipboard` + `<CopyButton>` — **S** — depends on nothing
+### P7 — `useCopyToClipboard` + `<CopyButton>` — **S** — **LANDED**
 
-- **Collapses:** 11 `navigator.clipboard.writeText` sites, 4 of which are literally the same
-  three-line closure (`ec2/instance-detail.tsx:123` and `:387`, `ecs/task-detail.tsx:40`,
-  `rds/instance-detail.tsx:208` — all `void writeText(text); toast({title:"Copied!",
-  variant:"success"})`), plus three variants with different copy
-  (`cognito/cognito-pool-detail.tsx` "Copied to clipboard", `apigateway/api-key-value.tsx:24`
-  "API key value copied" + a 1.5s `copied` flag, `mail/message-detail.tsx`,
-  `cloudwatch/logs/log-events-viewer.tsx`, `map/topology-nodes.tsx`).
-- **Unblocks** the wave-2 "copy-to-clipboard on identifiers" QoL item and P1's `copyable` prop; a
-  `<CopyButton>` used by `DetailField` and `ArnText` is how it reaches the 320px truncated ARN
-  column.
-- `features/debug/clipboard.ts` is a 5-line test seam over the same API; fold it in or keep it as
-  the injectable, but not both.
+Landed ahead of the rest of the plan, because it turned out to be a live bug rather than a tidy-up:
+`navigator.clipboard` is gated on a secure context, so **every** copy button in the app did nothing
+at all when Overcast was served over plain HTTP from anything other than `localhost` —
+`http://localhost.overcast.sh`, a LAN address, a container hostname. Silently: no error, no toast.
+
+- **Collapsed:** all 13 `navigator.clipboard.writeText` sites across 11 files, including the 4
+  identical three-line closures (`ec2/instance-detail.tsx` ×2, `ecs/task-detail.tsx`,
+  `rds/instance-detail.tsx`) and the five in `cognito/cognito-pool-detail.tsx`. A local
+  `CopyButton` in `cloudwatch/logs/log-events-viewer.tsx` was shadowing the name and is gone.
+- **Shipped as three pieces:**
+  - `lib/clipboard.ts` — the platform primitive. Prefers the async Clipboard API, falls back to a
+    hidden `<textarea>` + `document.execCommand("copy")` where it is absent or rejects. The
+    textarea is mounted beside the focused element rather than on `document.body` so a Radix focus
+    scope does not yank focus and drop the selection mid-copy. Also exposes
+    `canReadClipboardText()`, since *reading* has no fallback at all.
+  - `hooks/use-clipboard.ts` — `useCopyToClipboard()`: success **and** failure toasts, plus the
+    transient `copied` flag. For copy triggers that are not icon buttons (the labelled Key/Value/
+    Link controls on the debug page).
+  - `components/ui/copy-button.tsx` — `<CopyButton value noun tone>`, the default. `tone="inline"`
+    is the bare glyph beside a value; `control` is the ghost icon button.
+- **Decision 6 resolved** as recommended: `Copied {noun}` with the noun from the caller, which also
+  supplies the accessible name (`Copy {noun}`) that these icon-only buttons never had.
+- `features/debug/clipboard.ts` (the 5-line test seam) is deleted — folded in, not kept.
+- **Guardrail landed early too**, in `lib/clipboard.test.ts` rather than the style test: a direct
+  `navigator.clipboard.*()` call anywhere in `src/` outside `lib/clipboard.ts` fails the build. Not
+  a ratchet — a hard zero, because any new direct call reintroduces the insecure-context bug.
+- **First new affordance on the shared component:** each row in `ui/event-console.tsx` now copies
+  its whole event envelope as pretty JSON, hover-revealed so the dense console stays readable. The
+  envelope is built by one `eventEnvelope()` helper shared with the expanded view, so what is
+  copied is exactly what was on screen.
+- **Still unblocks** the wave-2 "copy-to-clipboard on identifiers" QoL item and P1's `copyable`
+  prop; `DetailField` and `ArnText` should use `<CopyButton>` when they land.
 
 ### P8 — Adopt `useResourceMutation` in the 21 files that bypass it — **M** — depends on nothing
 
@@ -429,7 +449,7 @@ Wave 0 (all parallel — new files only, no call-site edits)
   ├── A: create components/ui/detail-fields.tsx        (P1)   owns: components/ui/detail-fields.tsx
   ├── B: create components/ui/resource-table.tsx       (P3)   owns: components/ui/resource-table.tsx
   ├── C: create components/ui/status-badge.tsx         (P6)   owns: components/ui/status-badge.tsx
-  ├── D: create hooks/use-clipboard.ts + ui/copy-button (P7)  owns: hooks/use-clipboard.ts, components/ui/copy-button.tsx
+  ├── D: DONE — lib/clipboard.ts + hooks/use-clipboard.ts + ui/copy-button.tsx (P7), call sites migrated
   ├── E: extend lib/format.ts + ui/timestamp.tsx       (P10)  owns: lib/format.ts, components/ui/timestamp.tsx
   └── F: add `asChild` to ui/tabs.tsx                  (P12)  owns: components/ui/tabs.tsx
 
@@ -552,10 +572,10 @@ Wave 4
   `cloudformation/create-stack-dialog.tsx` have genuinely different field graphs with cross-field
   validation. A schema-driven field renderer is the classic over-abstraction here.
 
-- **`useEventStream` vs `useEventSource`.** These are *not* two solutions to one problem —
-  `use-event-stream.ts` is the SharedWorker-backed singleton and `use-event-source.ts` is a
-  raw-EventSource hook with **zero callers**. Do not unify them; **delete `use-event-source.ts` (115
-  lines) and its only consumer `use-page-unloading.ts` (24 lines).**
+- ~~**`useEventStream` vs `useEventSource`.**~~ Done. These were *not* two solutions to one problem —
+  `use-event-stream.ts` is the SharedWorker-backed singleton and `use-event-source.ts` was a
+  raw-EventSource hook with zero callers. Both it and its only consumer `use-page-unloading.ts` are
+  deleted (139 lines); the SharedWorker client and worker remain the only EventSource owners.
 
 - **`ConfirmDialog` vs `ResourceFormDialog`.** Keep them separate. `ConfirmDialog` has no form, has
   a deliberate focus override (`confirm-dialog.tsx:66-73` — auto-focusing the destructive button is
@@ -579,8 +599,8 @@ build a parallel one.
 | `TableEmpty` | `ui/table.tsx:96` | 0 |
 | `CardHeader`, `CardTitle`, `CardDescription`, `CardFooter` | `ui/card.tsx` | 0 (only `Card` + `CardContent` are used, 11 files) |
 | `ComboboxCompact` | `ui/combobox.tsx` | 1 (`region-select.tsx`) — arguably fine |
-| `useEventSource` + `usePageUnloading` | `hooks/` | 0 / 1 (each other). **139 dead lines.** |
-| `debugClipboard` | `features/debug/clipboard.ts` | 1 — a 5-line indirection; fold into P7 |
+| ~~`useEventSource` + `usePageUnloading`~~ | ~~`hooks/`~~ | deleted — 139 dead lines removed |
+| ~~`debugClipboard`~~ | ~~`features/debug/clipboard.ts`~~ | deleted — folded into P7 |
 | `ResourceListFilter` | `ui/resource-list-page.tsx:117` | 1, while 14 files hand-roll the same input |
 | `RowAction` `tone` prop | `ui/resource-list-page.tsx:159` | `tone="danger"` used; verify `neutral` is ever passed explicitly |
 
@@ -626,8 +646,10 @@ assertions that are counts rather than lint diagnostics, because it can encode a
   unambiguous, and it makes the 205→~20 spinner reduction a build-enforced fact rather than a hope.
 - The same ratchet for `disabled={…isPending}` (120), local `DetailRow` definitions (14), raw
   `useMutation(` in `features/**` (72), and `<Loader2` (7).
-- A hard `expect(0)` for symbols that must never return: `<Loader2` outside `ui/primitives.tsx`,
-  `navigator.clipboard.writeText` outside `hooks/use-clipboard.ts`.
+- A hard `expect(0)` for symbols that must never return: `<Loader2` outside `ui/primitives.tsx`.
+  (The equivalent rule for `navigator.clipboard` shipped with P7 and lives in
+  `lib/clipboard.test.ts`, next to the module it protects, sharing the tree walk via
+  `test/source-files.ts`.)
 
 A ratchet test is strictly better than a lint rule for the migration period: it permits the existing
 sites, forbids new ones, and its failure message can name the file that grew the count.

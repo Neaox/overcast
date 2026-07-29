@@ -5,7 +5,7 @@ import { TIER_BADGE } from "../tiers"
 import type { SectionTone } from "./dashboard-section"
 import { ServiceTile } from "./service-tile"
 
-const GRID = "grid grid-cols-[26px_200px_1fr_120px_96px] gap-3 items-center"
+const GRID = "grid grid-cols-[26px_200px_1fr_120px] gap-3 items-center"
 
 const TONE_CLASS: Record<SectionTone, string> = {
   strong: "text-fg",
@@ -13,7 +13,7 @@ const TONE_CLASS: Record<SectionTone, string> = {
   subtle: "text-fg-subtle",
 }
 
-const COLUMNS = ["", "service", "scope", "tier", "state"]
+const COLUMNS = ["", "service", "scope", "tier"]
 
 export interface ServiceListGroup {
   title: string
@@ -59,7 +59,7 @@ export function ServiceListView({
               TONE_CLASS[group.tone],
             )}
           >
-            <span role="rowheader" className="col-span-5">
+            <span role="rowheader" className="col-span-4">
               {group.title} &middot; {group.entries.length}
             </span>
           </div>
@@ -79,51 +79,27 @@ function ServiceListRow({
   entry: ServiceTierEntry
   onNavigate: (key: string) => void
 }) {
-  const { service, tier, enabled } = entry
+  const { service, tier } = entry
   const Icon = service.icon
-  // Emphasis tracks whether the service is switched on, nothing else. The tier
-  // is already carried by the section, the tier column, and the badge — also
-  // demoting a live row for it just reads as broken.
   return (
     <ServiceTile
       entry={entry}
       onNavigate={onNavigate}
       role="row"
       className={cn(GRID, "border-b border-border px-4 py-2 last:border-b-0")}
-      enabledClassName="transition-colors hover:bg-accent-muted focus-visible:outline-accent"
+      interactiveClassName="transition-colors hover:bg-accent-muted focus-visible:outline-accent"
     >
       <span role="cell">
-        <Icon
-          className={cn("h-4 w-4", enabled ? "text-accent" : "text-fg-subtle")}
-          strokeWidth={1.75}
-        />
+        <Icon className="h-4 w-4 text-accent" strokeWidth={1.75} />
       </span>
-      <span
-        role="cell"
-        className={cn(
-          "truncate font-mono text-[13px]",
-          enabled ? "font-bold text-fg" : "text-fg-muted",
-        )}
-      >
+      <span role="cell" className="truncate font-mono text-[13px] font-bold text-fg">
         {service.label}
       </span>
       <span role="cell" className="truncate text-xs text-fg-subtle">
         {service.description}
       </span>
-      <span
-        role="cell"
-        className={cn("font-mono text-xs", enabled ? "text-accent" : "text-fg-subtle")}
-      >
+      <span role="cell" className="font-mono text-xs text-accent">
         {TIER_BADGE[tier]?.label ?? "Full"}
-      </span>
-      <span
-        role="cell"
-        className="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.12em] uppercase"
-      >
-        {enabled && <span className="h-1.5 w-1.5 rounded-full bg-success" />}
-        <span className={cn(enabled ? "text-fg-muted" : "text-fg-subtle")}>
-          {enabled ? "active" : "off"}
-        </span>
       </span>
     </ServiceTile>
   )

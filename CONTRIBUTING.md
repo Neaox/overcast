@@ -44,6 +44,7 @@ AI agents using this repo should also read [AGENTS.md](./AGENTS.md) for agent-sp
     - [Rules](#rules)
   - [Testing](#testing)
   - [Versioning and changelog](#versioning-and-changelog)
+  - [Refreshing the AWS API models](#refreshing-the-aws-api-models)
   - [How to add an endpoint](#how-to-add-an-endpoint)
   - [How to add a service](#how-to-add-a-service)
   - [Service package structure](#service-package-structure)
@@ -173,7 +174,7 @@ pattern, and `internal/router/procstart_*.go` for the process-start-time files.
 | ------------- | ------- | --------------------------------------------------------- |
 | Go            | 1.24+   | https://go.dev/dl/                                        |
 | Docker        | 24+     | https://docs.docker.com/get-docker/                       |
-| golangci-lint | v1.64.8 | `brew install golangci-lint` or https://golangci-lint.run |
+| golangci-lint | v2.8.0  | `make lint-go` uses pinned `go run` automatically          |
 | actionlint    | v1.7.7  | `make lint-actions` uses pinned `go run` automatically         |
 | Node.js       | 18+     | For web UI builds and Lambda work — https://nodejs.org    |
 
@@ -312,7 +313,7 @@ See [tests/AGENTS.md](./tests/AGENTS.md) for test conventions.
 ## Code standards
 
 - **Format:** `gofmt`. Run `make fmt` before committing. Non-formatted code fails CI.
-- **Lint:** `golangci-lint`. Run `make lint`. Config in `.golangci.yml`.
+- **Lint:** `golangci-lint` v2.x (pinned in the Makefile, fetched via `go run` — no install needed). Run `make lint`. Config in `.golangci.yml`, which uses the v2 schema.
 - **Naming:** Exported types get doc comments. Error sentinels: `ErrBucketNotFound`. Constructors: `NewHandler(...)`.
 - **Comments:** Exported symbols require doc comments (linter enforced). Mark deferred work with `// TODO(priority:Pn):`.
 - **HTTP errors:** Use `protocol.WriteXMLError` (S3) or `protocol.WriteJSONError` (JSON services) — never raw `http.Error`.
@@ -996,6 +997,45 @@ Add your entry under `[Unreleased]`:
 
 ---
 
+## Refreshing the AWS API models
+
+`models/aws/VERSION` pins the public
+[`aws/api-models-aws`](https://github.com/aws/api-models-aws) Smithy corpus used
+to generate `internal/awsapi/manifest.gen.go`. The generated manifest and
+runtime indexes are committed; the raw model checkout is not.
+
+The `AWS API model refresh` workflow checks upstream weekly and can be started
+manually from GitHub Actions. When a new revision exists, it regenerates the
+manifest, runs the model and routing gates, and creates or updates one PR from
+`automation/aws-api-models`. It resets and force-with-lease updates only that
+dedicated branch and never merges the PR.
+
+Maintainers should configure `AWS_MODELS_PR_TOKEN` as a fine-grained PAT with
+contents and pull-request write access. The workflow falls back to
+[`GITHUB_TOKEN`](https://docs.github.com/en/actions/concepts/security/github_token),
+but GitHub does not normally start new workflow runs for changes made with that
+token, so the PR's CI may then require manual approval. The repository's
+[Actions settings](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository)
+must also allow workflows to create pull requests.
+
+To regenerate locally, check out the revision recorded in
+`models/aws/VERSION`, then run:
+
+```sh
+make generate-aws-operations \
+  AWS_MODELS_DIR=/path/to/api-models-aws/models
+make aws-models-check \
+  AWS_MODELS_DIR=/path/to/api-models-aws/models
+```
+
+The generator rejects a checkout whose `HEAD` differs from the pin. Supplying
+`AWS_MODELS_DIR` to `aws-models-check` adds a byte-for-byte regeneration check;
+without it, the same target remains a no-network validation of the committed
+corpus and ownership indexes. Never hand-edit or hand-merge the generated
+manifest.
+
+---
+
 ## How to add an endpoint
 
 1. Write a **failing test** in `tests/integration/<service>/<service>_test.go` (GWT form)
@@ -1015,12 +1055,23 @@ Add your entry under `[Unreleased]`:
    make generate-caps   # regenerates internal/capabilities/all.gen.go
    make docs            # rewrites the capabilities table in docs/services/<service>.md
    make check-caps      # verifies all dispatcher entries have a matching capability
+   make aws-models-check # verifies capabilities against the pinned AWS operation corpus
    ```
+   `aws-models-check` reports `UNKNOWN_MODEL_OPERATION` when the service or
+   operation name does not resolve through the generated AWS manifest. Correct
+   a typo or add the appropriate modeled-name alias first. Use `DocOnly: true`
+   only for documentation metadata that is not a dispatched AWS operation. For
+   a deliberate emulator-internal helper or a legacy operation that AWS no
+   longer models, add a narrowly scoped entry with a reason to
+   `capabilityManifestExemptions` in `cmd/capgen/main.go`; do not weaken the
+   global gate or mark an implemented AWS endpoint `DocOnly` merely to silence
+   the check.
+
    > **Do not manually edit the table in `docs/services/<service>.md`.** Everything between the `<!-- BEGIN overcast:capabilities -->` and `<!-- END overcast:capabilities -->` markers is overwritten by `make docs`. Edit `capabilities_dev.go` and re-run `make docs` instead.
    >
    > **AWS Docs links** are auto-generated from the `serviceDocsBaseMap` in `cmd/capgen/main.go` — no per-operation `DocsURL` is needed for most operations. If a service is missing from that map, add it. Use the `DocsURL` field on a `Capability` entry only to override the link for a specific operation (e.g. when the URL pattern differs from the service base).
 7. Add entry to `CHANGELOG.md` under `[Unreleased]`
-8. Add or extend the corresponding test group in `compat/suites/node-js-sdk/src/groups/<service>.ts` to cover the new endpoint
+8. Add the operation to `compat/suites/registry.json`, then implement it in **every** SDK/CLI compat suite (node-js-sdk, python-sdk, go-sdk, cli, java-sdk, dotnet-sdk, rust-sdk) — marking it `na` where an SDK has no API for it. `go run ./cmd/compat --check-parity` enforces this; see [compat/AGENTS.md § Baseline & uniformity policy](./compat/AGENTS.md#baseline--uniformity-policy)
 9. **Web UI** — if the new endpoint exposes data the user would want to see or manage:
    - Update the service's list/detail pages in `web/src/features/<service>/` (or create them if they don't exist)
    - Add topology nodes/edges in `internal/router/topology.go` if the endpoint creates a new resource type that has relationships to other services
@@ -1085,7 +1136,7 @@ Add your entry under `[Unreleased]`:
    | ...       | ✅/⚠️/🚧/❌ |       | [link](...) |
    ```
 9. Add service to README.md table and `CHANGELOG.md`
-10. Create `compat/suites/node-js-sdk/src/groups/<n>.ts` with compat tests covering all P1 operations and register the group in `compat/suites/node-js-sdk/src/index.ts`; add the service to the CLI suite if applicable (`compat/suites/cli/`)
+10. Add the service's groups and tests to `compat/suites/registry.json` covering all P1 operations, then implement them in **every** SDK/CLI compat suite — the per-suite file and registration table is in [compat/AGENTS.md § When a new Overcast service is implemented](./compat/AGENTS.md#when-a-new-overcast-service-is-implemented). Uniformity is enforced by `go run ./cmd/compat --check-parity`; any suite you cannot complete in the same PR must be declared in `compat/parity-debt.json` with a reason
 11. **Web UI** — consider whether developers using Overcast would find it useful to see or administer this service's resources from the management console (most CRUD-style services qualify; internal plumbing like STS usually does not). If yes:
 
 - Add an entry to `SERVICES` in `web/src/lib/service-registry.ts`. This is the **single registration point** — `nav-services.ts` (sidebar + search) and `dashboard.tsx` (dashboard cards) both derive from it automatically. Set the relevant fields:

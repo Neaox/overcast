@@ -3,8 +3,10 @@
  *
  * A SharedWorker maintains the single EventSource to the emulator.
  * This keeps the connection alive across React HMR cycles and shares it
- * across all open tabs. The worker caches the last 1 000 events so any
- * newly-opened tab gets immediate history.
+ * across all open tabs. The worker caches recent events (see
+ * event-buffer.ts) so any newly-opened tab gets immediate history, and the
+ * server replays its own history buffer on connect so even the first tab of
+ * a browser session opens with the events that preceded it.
  *
  * The singleton is set up by calling useEventStreamSubscription() once in
  * the app shell. Individual components consume with useEventStream().
@@ -15,10 +17,17 @@
  *   const { data: events } = useEventStream() // all sources
  */
 import { useCallback, useEffect, useRef } from "react"
-import { useQuery, useQueryClient, queryOptions, type QueryKey } from "@tanstack/react-query"
+import {
+  useQuery,
+  useQueryClient,
+  queryOptions,
+  type QueryClient,
+  type QueryKey,
+} from "@tanstack/react-query"
 import { useEndpoint } from "@/hooks/use-endpoint"
 import * as eventStreamClient from "@/workers/event-stream.client"
-import type { WorkerMessage } from "@/workers/event-stream.protocol"
+import { DISCONNECTED } from "@/workers/event-stream.protocol"
+import type { ConnectionState, WorkerMessage } from "@/workers/event-stream.protocol"
 import { EventType } from "@/services/event-types"
 import { s3Keys } from "@/features/s3/data"
 import { sqsKeys } from "@/features/sqs/data"
@@ -49,11 +58,10 @@ import { kinesisKeys } from "@/features/kinesis/data"
 import { ecrKeys } from "@/features/ecr/data"
 import { topologyKey } from "@/features/map/use-topology"
 import { lambdaInstanceKeys } from "@/hooks/use-lambda-instances"
+import { appendEvents } from "@/workers/event-buffer"
 import type { StreamEvent } from "@/types"
 
 export type { StreamEvent }
-
-const MAX_EVENTS = 5_000
 
 // ─── Query keys & options ──────────────────────────────────────────────────
 
@@ -62,9 +70,47 @@ const eventStreamKeys = {
   status: ["_eventStream", "status"] as const,
 }
 
-interface EventStreamStatus {
+/**
+ * The connection state as the UI sees it: the worker's own
+ * {@link ConnectionState}, widened so `connected` can be `null` for
+ * "the worker has not reported yet" — the first render of a fresh tab.
+ */
+export type EventStreamStatus = Omit<ConnectionState, "connected"> & {
   /** `null` = connecting (initial), `true` = online, `false` = offline */
   connected: boolean | null
+}
+
+/** What the status query holds until the worker's first message arrives. */
+const UNREPORTED: EventStreamStatus = { ...DISCONNECTED, connected: null }
+
+/**
+ * Retention for both stream queries — see installEventStreamDefaults for why
+ * this is registered as a *query default* and not only set here.
+ */
+const RETAIN_FOREVER = { staleTime: Infinity, gcTime: Infinity } as const
+
+/**
+ * Pins both stream queries in the cache for the lifetime of the page.
+ *
+ * This is what makes background capture work at all. The subscription lives
+ * in the app shell and writes with setQueryData, but nothing *observes* the
+ * event query unless a consumer — the Events page, the map, a detail panel —
+ * happens to be mounted. An unobserved query is garbage collected after
+ * gcTime (5 minutes by default) and setQueryData does not reschedule that
+ * timer, so the buffer was dropped wholesale a few minutes into every
+ * session. Opening the Events page afterwards then created the query afresh
+ * and ran its queryFn, which resolves to an empty list — so the stream
+ * appeared to only start capturing once you looked at it.
+ *
+ * It has to be a query default rather than an option on the hooks below:
+ * setQueryData builds the query from the client's defaults for that key, and
+ * never sees options passed to useQuery elsewhere. Registering them here
+ * means the retention holds from the first event written, before anything has
+ * subscribed.
+ */
+export function installEventStreamDefaults(queryClient: QueryClient): void {
+  queryClient.setQueryDefaults(eventStreamKeys.events, RETAIN_FOREVER)
+  queryClient.setQueryDefaults(eventStreamKeys.status, RETAIN_FOREVER)
 }
 
 /** Query options for the raw (unfiltered) event list. */
@@ -72,7 +118,7 @@ export function eventStreamQueryOptions() {
   return queryOptions({
     queryKey: eventStreamKeys.events,
     queryFn: () => [] as StreamEvent[],
-    staleTime: Infinity,
+    ...RETAIN_FOREVER,
     // Populated by the subscription — never refetch via HTTP
     refetchOnMount: false,
     refetchOnWindowFocus: false,
@@ -84,8 +130,8 @@ export function eventStreamQueryOptions() {
 export function eventStreamStatusQueryOptions() {
   return queryOptions({
     queryKey: eventStreamKeys.status,
-    queryFn: (): EventStreamStatus => ({ connected: null }),
-    staleTime: Infinity,
+    queryFn: (): EventStreamStatus => UNREPORTED,
+    ...RETAIN_FOREVER,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -117,6 +163,10 @@ export function useEventStreamSubscription() {
   qcRef.current = queryClient
 
   useEffect(() => {
+    // Before the first event is written, so the buffer is never collected
+    // out from under a page that has no consumer mounted.
+    installEventStreamDefaults(qcRef.current)
+
     function handleMessage(msg: WorkerMessage): void {
       const qc = qcRef.current
 
@@ -124,24 +174,18 @@ export function useEventStreamSubscription() {
         case "init":
           // Bootstrap the cache with the worker's stored events.
           qc.setQueryData<StreamEvent[]>(eventStreamKeys.events, msg.events)
-          qc.setQueryData<EventStreamStatus>(eventStreamKeys.status, {
-            connected: msg.connected,
-          })
+          qc.setQueryData<EventStreamStatus>(eventStreamKeys.status, msg.state)
           break
 
-        case "event":
-          qc.setQueryData<StreamEvent[]>(eventStreamKeys.events, (old = []) => {
-            const next = [...old, msg.event]
-            next.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0))
-            return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next
-          })
-          invalidateForEvent(qc, msg.event)
+        case "events":
+          qc.setQueryData<StreamEvent[]>(eventStreamKeys.events, (old = []) =>
+            appendEvents(old, msg.events),
+          )
+          invalidateForEvents(qc, msg.events)
           break
 
         case "status":
-          qc.setQueryData<EventStreamStatus>(eventStreamKeys.status, {
-            connected: msg.connected,
-          })
+          qc.setQueryData<EventStreamStatus>(eventStreamKeys.status, msg.state)
           break
 
         case "cleared":
@@ -199,6 +243,17 @@ export function useEventStream(opts: UseEventStreamOptions = {}): UseEventStream
   }, [])
 
   return { events, connected: status?.connected ?? false, clear }
+}
+
+/**
+ * Brings the scheduled reconnect forward to now — what "retry now" on the
+ * reconnecting toast calls. A no-op while an attempt is already in flight.
+ *
+ * Lives here so nothing above the hooks layer has to reach into the worker
+ * client directly.
+ */
+export function reconnectEventStream(): void {
+  eventStreamClient.reconnect()
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -464,23 +519,38 @@ function getEventQueryMap(): Record<string, QueryKey[] | undefined> {
 }
 
 /**
- * Invalidate React Query caches for a single SSE event.
+ * Invalidate React Query caches for a batch of SSE events.
  * Called synchronously from onMessage — no effect, no ref, no delay.
+ *
+ * The map is built once per batch, not once per event: it is a large object
+ * literal that closes over every feature's key factory, and a fresh page load
+ * replays the server's entire history buffer through here. Distinct keys are
+ * likewise invalidated once — a batch of 400 SQS events describes the same
+ * queue, and asking React Query to refetch it 400 times only spends network.
  */
-function invalidateForEvent(qc: ReturnType<typeof useQueryClient>, evt: StreamEvent) {
-  const keys = getEventQueryMap()[evt.type]
-  if (keys) {
-    for (const key of keys) {
-      void qc.invalidateQueries({ queryKey: key })
+function invalidateForEvents(qc: ReturnType<typeof useQueryClient>, events: StreamEvent[]) {
+  if (events.length === 0) return
+
+  const map = getEventQueryMap()
+  const pending = new Map<string, QueryKey>()
+
+  for (const evt of events) {
+    for (const key of map[evt.type] ?? []) {
+      pending.set(JSON.stringify(key), key)
+    }
+
+    // logs:LogEventsWritten — scoped invalidation by log group
+    if (evt.type === EventType.logs.LogEventsWritten) {
+      const p = evt.payload as Record<string, unknown> | undefined
+      const logGroupName = p?.logGroupName as string | undefined
+      if (logGroupName) {
+        const key = logsKeys.filter(logGroupName)
+        pending.set(JSON.stringify(key), key)
+      }
     }
   }
 
-  // logs:LogEventsWritten — scoped invalidation by log group
-  if (evt.type === EventType.logs.LogEventsWritten) {
-    const p = evt.payload as Record<string, unknown> | undefined
-    const logGroupName = p?.logGroupName as string | undefined
-    if (logGroupName) {
-      void qc.invalidateQueries({ queryKey: logsKeys.filter(logGroupName) })
-    }
+  for (const key of pending.values()) {
+    void qc.invalidateQueries({ queryKey: key })
   }
 }

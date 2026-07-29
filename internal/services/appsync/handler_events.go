@@ -18,7 +18,6 @@ package appsync
 //   - DeleteChannelNamespace DELETE /v2/apis/{apiId}/channelNamespaces/{name}
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -49,8 +48,8 @@ func (h *Handler) CreateApi(w http.ResponseWriter, r *http.Request) {
 
 	// Generate synthetic DNS entries.
 	api.Dns = map[string]string{
-		"HTTP":     fmt.Sprintf("%s.appsync-api.%s.amazonaws.com", apiID, h.region(r)),
-		"REALTIME": fmt.Sprintf("%s.appsync-realtime-api.%s.amazonaws.com", apiID, h.region(r)),
+		"HTTP":     h.graphQLDNS(r, apiID),
+		"REALTIME": h.graphQLDNS(r, apiID),
 	}
 
 	if err := h.store.PutEventApi(r.Context(), &api); err != nil {

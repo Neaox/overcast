@@ -100,6 +100,99 @@ Run with: `make test-integration`
 
 ---
 
+## Build-tag-sensitive tests — guard the test like its subject
+
+Some surfaces only exist in some builds. The runtime MCP endpoint is the current
+example: `internal/router/mcp_routes.go` is `//go:build !slim` and its slim twin
+makes `registerMCPRoutes` a no-op, so under `-tags slim` there is no `/_mcp`
+route and requests to it correctly fall through to S3's catch-all and get a 501.
+
+**A test must carry the same build constraint as the surface it exercises.** An
+unguarded test asserting on a non-slim-only route passes untagged and fails under
+`-tags slim` — a false positive that costs whoever hits it the time to re-derive
+that it isn't a real bug. AGENTS.md points agents at `-tags slim` for backend-only
+verification, so that is a well-travelled path.
+
+The same applies to `-tags nosqlite`, where `state.NewSQLiteStore` and
+`state.NewHybridStore` are stubs that always error
+(`internal/state/sqlite_hybrid_nosqlite.go`). The shipped `overcastd` binary and
+slim Docker image are built `slim,nosqlite`, so both tags matter.
+
+Guard the **whole file**, not the individual assertion — put the affected tests in
+their own file with the constraint at the top. Precedents:
+`internal/router/mcp_routes_test.go` and `internal/bff/docs_search_test.go`
+(`!slim`); `internal/router/debug_hybrid_test.go`,
+`internal/services/cloudwatch/metric_retention_sqlite_test.go`,
+`internal/services/cloudwatch/logs/event_backend_sqlite_test.go`,
+`internal/services/sqs/message_backend_sqlite_test.go` and
+`internal/services/dynamodb/index_store_sqlite_test.go` (`!nosqlite`);
+`tests/integration/router/mcp_test.go` (`!slim`) and
+`tests/integration/router/sqlite_test.go` (`!nosqlite`). Leave a one-line pointer
+in the file the tests moved out of.
+
+The one exception is a test whose subject only *partly* disappears — see the next
+section.
+
+### Parity tests — drop the missing backend, don't tag out the test
+
+A file-level tag is wrong when only *part* of a test's subject disappears.
+Memory-vs-SQL parity tests build both backends inside one test function and run
+identical assertions against each; tagging the file out under `-tags nosqlite`
+would silently drop the memory-side coverage too, even though it still works
+there.
+
+Instead, have the fixture return **only the backends this build has** and let
+the test iterate over whatever it gets. Use `config.SQLiteSupported()` — it
+exists for exactly this and needs no build tag on the test file:
+
+```go
+func newTestBackends(t *testing.T) map[string]eventBackend {
+	backends := map[string]eventBackend{"memory": newMemEventBackend()}
+	if !config.SQLiteSupported() {
+		return backends
+	}
+	// ... build the SQLite-backed one ...
+	backends["sql"] = sqlBackend
+	return backends
+}
+
+for name, b := range newTestBackends(t) {
+	t.Run(name, func(t *testing.T) { /* same assertions for every backend */ })
+}
+```
+
+Under `nosqlite` the suite then runs the `memory` subtest and skips `sql`, rather
+than failing or vanishing. The worked examples are
+`internal/services/cloudwatch/logs/event_backend_test.go` (`newTestBackends`),
+`internal/services/sqs/message_backend_test.go` (`newTestMessageBackends`) and
+`internal/services/dynamodb/item_store_test.go` (`newTestItemBackends`, shared
+with `index_store_test.go`) — plus two fixtures that do the same one layer up,
+returning whole stores rather than bare backends:
+`internal/services/cloudwatch/logs/retention_test.go` (`newTestLogsStores`) and
+`internal/services/dynamodb/handler_transact_index_test.go`
+(`newTestDynamoStores`).
+
+Tests that are *wholly* about SQLite — "does this select `sqlEventBackend`?",
+"does the hybrid backend physically delete the row?", "does `*sql.Tx` roll the
+write back?" — still belong in their own `!nosqlite` file; there is no memory
+half to preserve.
+
+When you add a build-tagged file or a backend-map fixture, verify all three ways
+before finishing:
+
+```sh
+go test -count=1 ./tests/integration/foo/
+go test -count=1 -tags slim ./tests/integration/foo/
+go test -count=1 -tags slim,nosqlite ./tests/integration/foo/
+```
+
+CI runs the whole suite under both tag sets — the `build-tags` matrix job in
+`.github/workflows/test.yml` covers `slim` and `slim,nosqlite`, the latter being
+what the released `overcastd` binary and slim Docker image are actually built
+with — so an unguarded tag-sensitive test fails there.
+
+---
+
 ## Coverage requirements
 
 | Layer                            | Target coverage                                          |

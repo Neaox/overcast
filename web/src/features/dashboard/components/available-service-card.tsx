@@ -17,7 +17,7 @@ export function AvailableServiceCard({
       entry={entry}
       onNavigate={onNavigate}
       className="flex items-center gap-2.5 rounded-card border border-border p-3"
-      enabledClassName="transition-colors hover:border-accent hover:bg-bg-elevated focus-visible:outline-accent"
+      interactiveClassName="transition-colors hover:border-accent hover:bg-bg-elevated focus-visible:outline-accent"
     >
       <span className="flex h-[26px] w-[26px] flex-none items-center justify-center rounded-control border border-border text-fg-subtle">
         <Icon className="h-[15px] w-[15px]" strokeWidth={1.75} />

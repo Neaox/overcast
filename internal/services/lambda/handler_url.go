@@ -25,7 +25,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
-	"net/url"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -117,26 +116,14 @@ func newFunctionURLID() string {
 }
 
 // buildFunctionURL constructs the caller-facing Lambda function URL:
-// http://{urlId}.lambda-url.{region}.{host}:{port}/ — reusing
-// serviceutil.ClientBaseURL for host/port/scheme resolution so this always
-// echoes the request's own Host (or OVERCAST_HOSTNAME, when configured)
-// rather than a hardcoded domain.
+// http://{urlId}.lambda-url.{region}.{host}:{port}/
+//
+// It delegates to the shared minting helper that every service handing back a
+// host-routed URL now uses, so the grammar cannot drift between services or
+// away from what the router accepts. The label is the same constant the router
+// dispatches on.
 func buildFunctionURL(cfg *config.Config, r *http.Request, urlID, region string) string {
-	base := serviceutil.ClientBaseURL(cfg, r)
-	u, err := url.Parse(base)
-	if err != nil || u.Host == "" {
-		return "http://" + urlID + ".lambda-url." + region + ".localhost/"
-	}
-	hostname := u.Hostname()
-	port := u.Port()
-	newHost := urlID + ".lambda-url." + region + "." + hostname
-	if port != "" {
-		newHost = newHost + ":" + port
-	}
-	u.Host = newHost
-	u.Path = "/"
-	u.RawQuery = ""
-	return u.String()
+	return serviceutil.HostRoutedURL(cfg, r, middleware.LabelLambdaURL, urlID, region, "/")
 }
 
 // CreateFunctionUrlConfig handles POST /2021-10-31/functions/{name}/url.
@@ -406,11 +393,16 @@ func (h *Handler) ListFunctionUrlConfigs(w http.ResponseWriter, r *http.Request)
 
 // HostRouteRewrite adapts a Host-routed Lambda function URL invocation
 // ({urlId}.lambda-url.{region}.{base}/...) to the emulator's internal
-// invocation route (see handler_url_invoke.go). The region segment is not
-// needed here — a UrlID alone resolves to exactly one function URL config
-// regardless of region (see getFunctionURLConfigByURLID) — so, unlike API
-// Gateway's row, this rewrite doesn't need to stamp a region onto the
-// request context.
+// invocation route (see handler_url_invoke.go).
+//
+// This rewrite doesn't stamp a region onto the request context, but not
+// because the region is unneeded: middleware.Region has already read it off
+// the Host by the time this runs (regionFromHost parses the same
+// hostRouteLabels grammar the router dispatched on). The region matters —
+// getFunctionURLConfigByURLID scans every region, but the getFunction call
+// right after it in InvokeFunctionURL is region-scoped, so without the hint a
+// function URL created outside the default region resolves its config and
+// then 404s on the function behind it.
 func (s *Service) HostRouteRewrite(r *http.Request, m middleware.HostRouteMatch) {
 	path := r.URL.Path
 	if !hasLeadingSlash(path) {

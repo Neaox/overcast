@@ -6,13 +6,16 @@
  * The public API is intentionally minimal:
  *
  *   client.subscribe(url, listener)  → unsubscribe fn
+ *   client.reconnect()
  *   client.clear()
  *
  * React hooks wrap this so components never interact with it directly.
  */
 
-import type { StreamEvent } from "@/types"
-import type { TabMessage, WorkerMessage } from "./event-stream.protocol"
+import type { TabMessage, WorkerMessage, ConnectionState } from "./event-stream.protocol"
+import { DISCONNECTED } from "./event-stream.protocol"
+import { ReconnectingStream } from "./event-stream.connection"
+import { EventBatcher } from "./event-buffer"
 
 // ─── Listener type ─────────────────────────────────────────────────────────
 
@@ -26,13 +29,10 @@ let currentUrl: string | null = null
 const listeners = new Set<EventStreamListener>()
 
 // Fallback state (when SharedWorker is unavailable).
-let fallbackES: EventSource | null = null
-let fallbackRetryCount = 0
-let fallbackRetryHandle: ReturnType<typeof setTimeout> | null = null
-let fallbackEvents: StreamEvent[] = []
-let fallbackConnected = false
+let fallback: ReconnectingStream | null = null
+let fallbackState: ConnectionState = DISCONNECTED
 
-const MAX_EVENTS = 1_000
+const fallbackBuffer = new EventBatcher((events) => dispatch({ type: "events", events }))
 
 // ─── Shared dispatch ───────────────────────────────────────────────────────
 
@@ -66,71 +66,20 @@ function sendToWorker(msg: TabMessage): void {
 // ─── Direct EventSource fallback ───────────────────────────────────────────
 
 function openFallback(url: string): void {
-  fallbackES?.close()
-  if (fallbackRetryHandle !== null) {
-    clearTimeout(fallbackRetryHandle)
-    fallbackRetryHandle = null
-  }
-  fallbackRetryCount = 0
+  fallback?.close()
+  fallbackState = DISCONNECTED
 
-  function attempt(): void {
-    const es = new EventSource(url)
-    fallbackES = es
+  // Send init with whatever we have cached, before the connection reports.
+  dispatch({ type: "init", events: fallbackBuffer.snapshot(), state: fallbackState })
 
-    es.onopen = () => {
-      if (fallbackRetryCount > 0) {
-        console.info(`[event-stream] reconnected after ${fallbackRetryCount} retries`)
-      } else {
-        console.info("[event-stream] connected (fallback)")
-      }
-      fallbackRetryCount = 0
-      fallbackConnected = true
-      dispatch({ type: "status", connected: true })
-    }
-
-    es.onerror = () => {
-      if (es.readyState === EventSource.CLOSED) {
-        fallbackConnected = false
-        dispatch({ type: "status", connected: false })
-        const delay = Math.min(1_000 * 2 ** fallbackRetryCount, 5_000)
-        fallbackRetryCount++
-        console.warn(
-          `[event-stream] connection closed, retrying in ${delay}ms (attempt ${fallbackRetryCount})`,
-        )
-        fallbackRetryHandle = setTimeout(attempt, delay)
-      } else if (fallbackConnected) {
-        console.warn("[event-stream] connection lost, browser is reconnecting")
-        fallbackConnected = false
-        dispatch({ type: "status", connected: false })
-      }
-    }
-
-    es.onmessage = (e: MessageEvent<string>) => {
-      if (!e.data) return
-      try {
-        const evt = JSON.parse(e.data) as StreamEvent
-
-        // Heartbeats are not cached but forwarded so the UI can optionally display them.
-        if (evt.type === "heartbeat") {
-          dispatch({ type: "event", event: evt })
-          return
-        }
-
-        fallbackEvents.push(evt)
-        fallbackEvents.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0))
-        if (fallbackEvents.length > MAX_EVENTS) {
-          fallbackEvents = fallbackEvents.slice(fallbackEvents.length - MAX_EVENTS)
-        }
-        dispatch({ type: "event", event: evt })
-      } catch {
-        console.error("[event-stream] malformed SSE frame", e.data)
-      }
-    }
-  }
-
-  // Send init with whatever we have cached.
-  dispatch({ type: "init", events: [...fallbackEvents], connected: fallbackConnected })
-  attempt()
+  fallback = new ReconnectingStream({
+    url,
+    onEvent: (event) => fallbackBuffer.push(event),
+    onState: (state) => {
+      fallbackState = state
+      dispatch({ type: "status", state })
+    },
+  })
 }
 
 // ─── Public API ────────────────────────────────────────────────────────────
@@ -141,9 +90,9 @@ const supportsSharedWorker = typeof SharedWorker !== "undefined"
  * Subscribe to the event stream at `url`. Returns an unsubscribe function.
  *
  * The listener receives WorkerMessage objects:
- *  - `init`    — cached events + current connection status (on first subscribe)
- *  - `event`   — a single new event
- *  - `status`  — connection status changed
+ *  - `init`    — cached events + current connection state (on first subscribe)
+ *  - `events`  — a batch of new events
+ *  - `status`  — the connection state changed
  *  - `cleared` — the event cache was wiped
  *
  * Calling subscribe again with a different `url` will reconnect the stream.
@@ -160,11 +109,12 @@ export function subscribe(url: string, listener: EventStreamListener): () => voi
     // The worker only reconnects when the URL actually changes.
     sendToWorker({ type: "subscribe", url })
   } else {
-    if (urlChanged || !fallbackES) {
+    if (urlChanged || !fallback) {
+      console.info("[event-stream] no SharedWorker — using a direct EventSource")
       openFallback(url)
     } else {
       // Same URL, just send the cached snapshot to the new listener.
-      listener({ type: "init", events: [...fallbackEvents], connected: fallbackConnected })
+      listener({ type: "init", events: fallbackBuffer.snapshot(), state: fallbackState })
     }
   }
 
@@ -173,12 +123,24 @@ export function subscribe(url: string, listener: EventStreamListener): () => voi
   }
 }
 
+/**
+ * Brings the scheduled reconnect forward to now — the "retry now" affordance
+ * on the reconnecting toast. A no-op while an attempt is already in flight.
+ */
+export function reconnect(): void {
+  if (supportsSharedWorker) {
+    sendToWorker({ type: "reconnect" })
+  } else {
+    fallback?.retryNow()
+  }
+}
+
 /** Clear the event cache across all tabs. */
 export function clear(): void {
   if (supportsSharedWorker) {
     sendToWorker({ type: "clear" })
   } else {
-    fallbackEvents = []
+    fallbackBuffer.clear()
     dispatch({ type: "cleared" })
   }
 }

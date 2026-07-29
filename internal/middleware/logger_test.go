@@ -59,9 +59,9 @@ func TestDetectService(t *testing.T) {
 		{name: "mail internal", method: "GET", path: "/_overcast/inbox/messages", want: "ses"},
 
 		// Host-routed AWS-style addresses (execute-api / lambda-url /
-		// appsync-api Host subdomains) — see hostroute.go. Labelled from
-		// HostRouteService regardless of what internal path convention the
-		// (already-applied) rewrite used for the path.
+		// appsync-api Host subdomains) — see hostroute.go. Labelled from the
+		// claim HostAddressing stamped on the request, regardless of what
+		// internal path convention the (already-applied) rewrite used.
 		{name: "host-routed execute-api", method: "GET", path: "/_apigateway/execute-api/abc123/us-east-1/prod/pets", host: "abc123.execute-api.us-east-1.amazonaws.com", want: "apigateway"},
 		{name: "host-routed execute-api no region", method: "GET", path: "/_apigateway/execute-api/abc123/-/prod/pets", host: "abc123.execute-api.localhost", want: "apigateway"},
 		{name: "host-routed lambda-url", method: "POST", path: "/_lambda/url-invoke/deadbeef/", host: "deadbeefdeadbeefdeadbeefdeadbeef.lambda-url.us-east-1.amazonaws.com", want: "lambda"},
@@ -87,7 +87,16 @@ func TestDetectService(t *testing.T) {
 			if tt.host != "" {
 				r.Host = tt.host
 			}
-			got := detectService(r)
+			// detectService reads the claim HostAddressing stamps, so the
+			// request must pass through it exactly as it does in the real
+			// chain (router.go registers HostAddressing before Logger). Rows
+			// are empty: we want the classification and its stamp, not a path
+			// rewrite — these fixtures already carry post-rewrite paths.
+			var noRows []HostRouteRow
+			got := "s3"
+			HostAddressing("", &noRows, nil)(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+				got = detectService(req)
+			})).ServeHTTP(httptest.NewRecorder(), r)
 			if got != tt.want {
 				t.Errorf("detectService(%s %s) = %q, want %q", tt.method, tt.path, got, tt.want)
 			}
@@ -97,9 +106,9 @@ func TestDetectService(t *testing.T) {
 
 // TestDetectService_virtualHostedS3StillLabelsS3 verifies that a
 // virtual-hosted-style S3 request (bucket in the Host header) is still
-// labelled "s3" by detectService after S3VirtualHostFor has rewritten the
+// labelled "s3" by detectService after HostAddressing has rewritten the
 // URL path. detectService itself never looks at r.Host — it relies on
-// S3VirtualHostFor running earlier in the middleware chain (see router.go)
+// HostAddressing running earlier in the middleware chain (see router.go)
 // to turn "/key" with Host "mybucket.s3.localhost" into path-style
 // "/mybucket/key" before Logger (and therefore detectService) ever sees the
 // request. This test exercises that ordering explicitly so a future
@@ -109,11 +118,12 @@ func TestDetectService_virtualHostedS3StillLabelsS3(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/key.txt", nil)
 	r.Host = "mybucket.s3.localhost"
 
-	// Run the real S3VirtualHostFor middleware to perform the rewrite, then
+	// Run the real HostAddressing middleware to perform the rewrite, then
 	// inspect the (possibly mutated) request that reaches the next handler —
 	// exactly as Logger would.
 	var rewritten *http.Request
-	handler := S3VirtualHostFor("")(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	var noRows []HostRouteRow
+	handler := HostAddressing("", &noRows, nil)(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		rewritten = req
 	}))
 	handler.ServeHTTP(httptest.NewRecorder(), r)

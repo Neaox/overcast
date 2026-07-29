@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useNavigate, useRouterState } from "@tanstack/react-router"
-import { queryOptions, useQuery } from "@tanstack/react-query"
 import {
   Search,
   Star,
@@ -24,11 +23,9 @@ import {
   findServiceKeyForPathname,
   type ServiceDefinition,
 } from "@/lib/nav-services"
-import { SERVICES, type ServiceEntry } from "@/lib/service-registry"
 import { matchesQuery, orderGroupsByActiveService, type SearchResult } from "@/lib/search"
 import { CATALOG, type CatalogEntry } from "@/lib/unsupported-services"
 import { Tooltip } from "@/components/ui/tooltip"
-import { health } from "@/services/api"
 
 // ─── Star toggle variants ──────────────────────────────────────────────────
 
@@ -51,63 +48,8 @@ const starVariants = cva("rounded p-0.5 transition-colors", {
   defaultVariants: { active: false, placement: "card" },
 })
 
-const iconTileVariants = cva(
-  "flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-control",
-  {
-    variants: {
-      enabled: {
-        true: "bg-accent-muted text-accent",
-        false: "bg-bg-muted text-fg-subtle",
-      },
-    },
-    defaultVariants: { enabled: true },
-  },
-)
-
-// ─── Service availability ──────────────────────────────────────────────────
-
-const DISABLED_HINT = "Disabled in this emulator run."
-
-/** Registry key (the name the emulator reports in /_health) by route path. */
-const REGISTRY_NAME_BY_ROUTE = new Map<string, string>(
-  Object.entries(SERVICES as Record<string, ServiceEntry>).flatMap(([name, entry]) =>
-    entry.to ? [[entry.to, name] as const] : [],
-  ),
-)
-
-/** Shares the dashboard's cache entry so both surfaces agree on availability. */
-const healthQueryOptions = queryOptions({
-  queryKey: ["health"],
-  queryFn: () => health.check(),
-  staleTime: 30_000,
-  retry: 2,
-})
-
-/**
- * Availability is the emulator's enabled/disabled list and nothing else.
- * Emulation tier is deliberately ignored: a live service whose tier entry is
- * missing reports "stub", and greying on that would hide working services.
- */
-function useServiceEnabled(): (service: ServiceDefinition) => boolean {
-  const { data } = useQuery(healthQueryOptions)
-  return useCallback(
-    (service: ServiceDefinition) => {
-      if (!data) return true
-      const name = REGISTRY_NAME_BY_ROUTE.get(service.to)
-      return name === undefined || data.services.includes(name)
-    },
-    [data],
-  )
-}
-
-/** Sized to the description line it replaces so disabled cards stay the same height. */
-function DisabledPill() {
-  return (
-    <span className="self-start rounded-full bg-bg-muted px-1.5 font-mono text-[10px] leading-[14px] text-fg-subtle">
-      Disabled
-    </span>
-  )
-}
+const iconTileClass =
+  "flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-control bg-accent-muted text-accent"
 
 function pinLabel(label: string, isFavourite: boolean) {
   return isFavourite ? `Unpin ${label} from sidebar` : `Pin ${label} to sidebar`
@@ -139,13 +81,11 @@ export function useGlobalSearchShortcut(onOpen: () => void) {
 
 function ServiceCard({
   service,
-  enabled,
   isFavourite,
   onToggleFavourite,
   onSelect,
 }: {
   service: ServiceDefinition
-  enabled: boolean
   isFavourite: boolean
   onToggleFavourite: (key: string, e: React.MouseEvent) => void
   onSelect: (service: ServiceDefinition) => void
@@ -158,23 +98,18 @@ function ServiceCard({
       aria-label={service.label}
       className={cn(
         "relative flex flex-col gap-2 rounded-control border border-border bg-bg p-2 transition-colors",
-        enabled ? "hover:border-accent" : "opacity-60",
+        "hover:border-accent",
       )}
     >
       {/* Full-bleed click target keeps the star a sibling rather than a nested button. */}
       <button
-        onClick={() => enabled && onSelect(service)}
+        onClick={() => onSelect(service)}
         aria-label={service.label}
-        aria-disabled={!enabled}
-        title={enabled ? undefined : DISABLED_HINT}
-        className={cn(
-          "absolute inset-0 rounded-control focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
-          enabled ? "cursor-pointer" : "cursor-not-allowed",
-        )}
+        className="absolute inset-0 cursor-pointer rounded-control focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
       />
 
       <div className="flex items-center justify-between">
-        <span className={iconTileVariants({ enabled })}>
+        <span className={iconTileClass}>
           <Icon className="h-[15px] w-[15px]" strokeWidth={1.75} />
         </span>
         {service.favouritable !== false && (
@@ -195,13 +130,9 @@ function ServiceCard({
 
       <div className="flex min-w-0 flex-col gap-px">
         <span className="truncate font-mono text-[12px] font-bold text-fg">{service.label}</span>
-        {enabled ? (
-          <span className="truncate text-[10px] leading-[14px] text-fg-subtle">
-            {service.description}
-          </span>
-        ) : (
-          <DisabledPill />
-        )}
+        <span className="truncate text-[10px] leading-[14px] text-fg-subtle">
+          {service.description}
+        </span>
       </div>
     </div>
   )
@@ -211,7 +142,6 @@ function ServiceCard({
 
 function MegaMenu({ onSelectService }: { onSelectService: (service: ServiceDefinition) => void }) {
   const { isFavourite, recentServices, toggleFavourite } = useFavourites()
-  const isEnabled = useServiceEnabled()
 
   function handleToggleFavourite(key: string, e: React.MouseEvent) {
     e.stopPropagation()
@@ -223,7 +153,6 @@ function MegaMenu({ onSelectService }: { onSelectService: (service: ServiceDefin
       <ServiceCard
         key={s.key}
         service={s}
-        enabled={isEnabled(s)}
         isFavourite={isFavourite(s.key)}
         onToggleFavourite={handleToggleFavourite}
         onSelect={onSelectService}
@@ -397,7 +326,6 @@ function SearchResults({
   onSelectCatalogEntry: (id: string) => void
 }) {
   const { isFavourite, toggleFavourite } = useFavourites()
-  const isEnabled = useServiceEnabled()
 
   // Matching services, with the current route's service promoted to the front.
   const matchedServices = ALL_SERVICES.filter((s) =>
@@ -448,23 +376,19 @@ function SearchResults({
             {matchedServices.map((s) => {
               const Icon = s.icon
               const isFav = isFavourite(s.key)
-              const enabled = isEnabled(s)
               return (
                 <button
                   key={s.key}
-                  onClick={() => enabled && onSelectService(s)}
-                  aria-disabled={!enabled}
-                  title={enabled ? undefined : DISABLED_HINT}
+                  onClick={() => onSelectService(s)}
                   className={cn(
                     "group relative flex shrink-0 items-center gap-2 rounded-lg border border-border bg-bg px-3 py-2",
                     "transition-colors focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
                     // Cards and chips hover on the border alone — no fill change.
-                    enabled ? "hover:border-accent" : "cursor-not-allowed opacity-60",
+                    "hover:border-accent",
                   )}
                 >
-                  <Icon className={cn("h-4 w-4 shrink-0", enabled ? s.color : "text-fg-muted")} />
+                  <Icon className={cn("h-4 w-4 shrink-0", s.color)} />
                   <span className="text-sm font-medium whitespace-nowrap text-fg">{s.label}</span>
-                  {!enabled && <DisabledPill />}
                   {s.favouritable !== false && (
                     <span
                       role="button"

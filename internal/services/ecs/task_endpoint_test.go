@@ -37,10 +37,19 @@ func TestBuildContainerEnv_pointsAWSEndpointURLAtAReachableAddress(t *testing.T)
 	// When: the container environment is built.
 	env := envMap(buildContainerEnv(cd, nil, ep))
 
-	// Then: AWS_ENDPOINT_URL carries the resolved address, not
-	// host.docker.internal — a name that does not exist on native Linux.
-	if got := env["AWS_ENDPOINT_URL"]; got != "http://172.18.0.1:4566" {
-		t.Errorf("AWS_ENDPOINT_URL = %q, want %q", got, "http://172.18.0.1:4566")
+	// Then: AWS_ENDPOINT_URL names Overcast on a split-horizon hostname, and
+	// that name is pinned to the resolved address in the task's /etc/hosts — so
+	// it resolves without depending on any external DNS, which is what
+	// host.docker.internal could not promise on native Linux.
+	//
+	// A name rather than the address because an SDK derives virtual-hosted URLs
+	// from the endpoint ({bucket}.s3.{host}); from an IP it cannot.
+	const want = "http://localhost.overcast.sh:4566"
+	if got := env["AWS_ENDPOINT_URL"]; got != want {
+		t.Errorf("AWS_ENDPOINT_URL = %q, want %q", got, want)
+	}
+	if hosts := ep.ExtraHosts(); !slices.Contains(hosts, "localhost.overcast.sh:172.18.0.1") {
+		t.Errorf("ExtraHosts() = %v, want the advertised name pinned to the resolved address", hosts)
 	}
 }
 

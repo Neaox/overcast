@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { Card, CardContent } from "@/components/ui/card"
+import { Definition, DefinitionCard } from "@/components/ui/definition-card"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { cn } from "@/lib/utils"
@@ -84,12 +84,10 @@ export function EventBusDetail({ busName }: Props) {
       <ApplicationOwnershipBanner candidates={[busName]} />
 
       {/* Bus details card */}
-      <Card>
-        <CardContent className="grid grid-cols-2 gap-x-8 gap-y-3 p-4 text-sm">
-          <DetailRow label="Bus name" value={busName} mono />
-          <DetailRow label="Rules" value={String(rules.length)} />
-        </CardContent>
-      </Card>
+      <DefinitionCard>
+        <Definition label="Bus name" value={busName} />
+        <Definition label="Rules" value={String(rules.length)} />
+      </DefinitionCard>
 
       {/* Rules section */}
       <section className="flex flex-col gap-3">
@@ -169,15 +167,6 @@ export function EventBusDetail({ busName }: Props) {
         isPending={deleteMut.isPending}
         onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
       />
-    </div>
-  )
-}
-
-function DetailRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-fg-muted">{label}</span>
-      <span className={cn(mono && "font-mono text-xs break-all")}>{value}</span>
     </div>
   )
 }

@@ -14,7 +14,7 @@ import { useToast } from "@/components/ui/toast"
 import { Button } from "@/components/ui/button"
 import { PageHeader, Spinner, EmptyState, CodeBlock } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
-import { Card, CardContent } from "@/components/ui/card"
+import { Definition, DefinitionCard } from "@/components/ui/definition-card"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import {
   Dialog,
@@ -163,19 +163,17 @@ export function SecretDetail({ secretName }: Props) {
       <ApplicationOwnershipBanner candidates={[secret.ARN, secret.Name, secretName]} />
 
       {/* Metadata card */}
-      <Card>
-        <CardContent className="grid grid-cols-2 gap-x-8 gap-y-3 p-4 text-sm md:grid-cols-3">
-          <DetailRow
-            label="ARN"
-            value={secret.ARN != null ? <ArnText arn={secret.ARN} /> : "—"}
-            mono
-          />
-          <DetailRow label="Created" value={formatDate(secret.CreatedDate)} />
-          <DetailRow label="Last changed" value={formatDate(secret.LastChangedDate)} />
-          <DetailRow label="Last accessed" value={formatDate(secret.LastAccessedDate)} />
-          <DetailRow label="Rotation" value={secret.RotationEnabled ? "Enabled" : "Disabled"} />
-        </CardContent>
-      </Card>
+      <DefinitionCard>
+        <Definition
+          label="ARN"
+          value={secret.ARN != null ? <ArnText arn={secret.ARN} /> : null}
+          full
+        />
+        <Definition label="Created" value={formatDate(secret.CreatedDate)} />
+        <Definition label="Last changed" value={formatDate(secret.LastChangedDate)} />
+        <Definition label="Last accessed" value={formatDate(secret.LastAccessedDate)} />
+        <Definition label="Rotation" value={secret.RotationEnabled ? "Enabled" : "Disabled"} />
+      </DefinitionCard>
 
       {/* Secret value */}
       <section className="flex flex-col gap-2">
@@ -265,25 +263,6 @@ export function SecretDetail({ secretName }: Props) {
         isPending={deleteMut.isPending}
         onConfirm={() => deleteMut.mutate(secretName)}
       />
-    </div>
-  )
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function DetailRow({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string
-  value: React.ReactNode
-  mono?: boolean
-}) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <dt className="text-xs text-fg-muted">{label}</dt>
-      <dd className={cn("text-sm", mono ? "font-mono text-xs" : "text-fg")}>{value}</dd>
     </div>
   )
 }

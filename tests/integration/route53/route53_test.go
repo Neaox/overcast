@@ -69,7 +69,7 @@ func createZone(t *testing.T, srv *helpers.TestServer, name string) string {
 
 func TestCreateHostedZone_success(t *testing.T) {
 	// Given: an empty store
-	srv := helpers.NewTestServer(t, helpers.WithServices("route53"))
+	srv := helpers.NewTestServer(t)
 
 	// When: CreateHostedZone is called
 	zoneID := createZone(t, srv, "example.com.")
@@ -82,7 +82,7 @@ func TestCreateHostedZone_success(t *testing.T) {
 
 func TestCreateHostedZone_missingName(t *testing.T) {
 	// Given: an empty store
-	srv := helpers.NewTestServer(t, helpers.WithServices("route53"))
+	srv := helpers.NewTestServer(t)
 
 	// When: CreateHostedZone is called without a Name
 	body := `<CreateHostedZoneRequest xmlns="https://route53.amazonaws.com/doc/2013-04-01/">` +
@@ -99,7 +99,7 @@ func TestCreateHostedZone_missingName(t *testing.T) {
 
 func TestListHostedZones_empty(t *testing.T) {
 	// Given: an empty store
-	srv := helpers.NewTestServer(t, helpers.WithServices("route53"))
+	srv := helpers.NewTestServer(t)
 
 	// When: ListHostedZones is called
 	resp := r53Call(t, srv, http.MethodGet, "/2013-04-01/hostedzone", "")
@@ -120,7 +120,7 @@ func TestListHostedZones_empty(t *testing.T) {
 
 func TestListHostedZones_afterCreate(t *testing.T) {
 	// Given: two hosted zones exist
-	srv := helpers.NewTestServer(t, helpers.WithServices("route53"))
+	srv := helpers.NewTestServer(t)
 	createZone(t, srv, "alpha.com.")
 	createZone(t, srv, "beta.com.")
 
@@ -145,7 +145,7 @@ func TestListHostedZones_afterCreate(t *testing.T) {
 
 func TestGetHostedZone_success(t *testing.T) {
 	// Given: a hosted zone exists
-	srv := helpers.NewTestServer(t, helpers.WithServices("route53"))
+	srv := helpers.NewTestServer(t)
 	zoneID := createZone(t, srv, "example.com.")
 	// zoneID is like /hostedzone/Z123…; strip to get the bare ID
 	bareID := strings.TrimPrefix(zoneID, "/hostedzone/")
@@ -168,7 +168,7 @@ func TestGetHostedZone_success(t *testing.T) {
 
 func TestGetHostedZone_notFound(t *testing.T) {
 	// Given: an empty store
-	srv := helpers.NewTestServer(t, helpers.WithServices("route53"))
+	srv := helpers.NewTestServer(t)
 
 	// When: GetHostedZone is called with a non-existent ID
 	resp := r53Call(t, srv, http.MethodGet, "/2013-04-01/hostedzone/ZNOTEXIST", "")
@@ -182,7 +182,7 @@ func TestGetHostedZone_notFound(t *testing.T) {
 
 func TestDeleteHostedZone_success(t *testing.T) {
 	// Given: a hosted zone exists
-	srv := helpers.NewTestServer(t, helpers.WithServices("route53"))
+	srv := helpers.NewTestServer(t)
 	zoneID := createZone(t, srv, "example.com.")
 	bareID := strings.TrimPrefix(zoneID, "/hostedzone/")
 
@@ -201,7 +201,7 @@ func TestDeleteHostedZone_success(t *testing.T) {
 
 func TestChangeResourceRecordSets_upsert(t *testing.T) {
 	// Given: a hosted zone exists
-	srv := helpers.NewTestServer(t, helpers.WithServices("route53"))
+	srv := helpers.NewTestServer(t)
 	zoneID := createZone(t, srv, "example.com.")
 	bareID := strings.TrimPrefix(zoneID, "/hostedzone/")
 
@@ -246,7 +246,7 @@ func TestChangeResourceRecordSets_upsert(t *testing.T) {
 
 func TestListResourceRecordSets_afterChange(t *testing.T) {
 	// Given: a hosted zone exists with one record
-	srv := helpers.NewTestServer(t, helpers.WithServices("route53"))
+	srv := helpers.NewTestServer(t)
 	zoneID := createZone(t, srv, "example.com.")
 	bareID := strings.TrimPrefix(zoneID, "/hostedzone/")
 
@@ -287,7 +287,7 @@ func TestListResourceRecordSets_afterChange(t *testing.T) {
 
 func TestGetChange_insync(t *testing.T) {
 	// Given: a change was submitted
-	srv := helpers.NewTestServer(t, helpers.WithServices("route53"))
+	srv := helpers.NewTestServer(t)
 	zoneID := createZone(t, srv, "example.com.")
 	bareID := strings.TrimPrefix(zoneID, "/hostedzone/")
 

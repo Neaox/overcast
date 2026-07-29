@@ -12,6 +12,11 @@ GOFLAGS   := -trimpath
 VERSION   := $(shell cat VERSION)
 LDFLAGS   := -w -s -X main.version=$(VERSION)
 ACTIONLINT_VERSION := v1.7.7
+# golangci-lint v2.x — v2 config schema (.golangci.yml declares `version: "2"`).
+# v2.8.0 is the newest release that still builds with the Go 1.24 toolchain in
+# go.mod; v2.10.0+ requires Go 1.25. Keep in sync with .devcontainer/Dockerfile
+# and CONTRIBUTING.md.
+GOLANGCI_LINT_VERSION := v2.8.0
 
 .PHONY: help setup build build-web build-slim build-cross \
         build-linux-amd64 build-linux-arm64 \
@@ -22,10 +27,9 @@ ACTIONLINT_VERSION := v1.7.7
         build-slim-windows-amd64 \
         run test test-unit test-integration test-coverage \
         ci-local ci-local-web ci-local-go \
-        bench bench-startup lint lint-go lint-web lint-actions fmt vet tidy check docker docker-slim docker-console docker-run clean \
-        compat-build compat-serve compat-report \
-generate-caps check-caps generate-aws-operations docs docs-index docs-check supportmeta-check check-binary-symbols \
-	generate-caps check-caps generate-aws-operations docs docs-index docs-check supportmeta-check check-binary-symbols
+        bench bench-startup lint lint-go lint-web lint-actions fmt vet tidy check aws-models-check docker docker-slim docker-console docker-run clean \
+        compat compat-build compat-serve compat-dev compat-docker compat-report compat-registry-check \
+        generate-caps check-caps generate-aws-operations aws-models-check docs docs-index docs-check supportmeta-check check-binary-symbols
 
 ## help: print this help message
 help:
@@ -115,7 +119,7 @@ build-slim-windows-amd64:
 
 ## run: build and run with dev defaults (uses cross-platform Go script)
 run:
-	OVERCAST_SERVICES= $(GO) run ./scripts/run.go
+	$(GO) run ./scripts/run.go
 
 ## dev-server: watch Go sources and hot-reload the server (requires air)
 dev-server:
@@ -150,9 +154,9 @@ bench-startup:
 ## lint: run all linters (Go/emulation, web UI, GitHub Actions)
 lint: lint-go lint-web lint-actions
 
-## lint-go: run golangci-lint for Go/emulation code
+## lint-go: run golangci-lint for Go/emulation code (pinned via go run — no install needed)
 lint-go:
-	golangci-lint run ./...
+	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...
 
 ## lint-web: run web UI linting
 lint-web:
@@ -205,6 +209,15 @@ generate-aws-operations:
 	@test -n "$(AWS_MODELS_REVISION)" || (echo "ERROR: set AWS_MODELS_REVISION to the api-models-aws commit" && exit 1)
 	$(GO) run ./cmd/awsmodelgen -models "$(AWS_MODELS_DIR)" -output internal/awsapi/manifest.gen.go -source-revision "$(AWS_MODELS_REVISION)"
 
+## aws-models-check: validate the committed AWS operation corpus and generated runtime ownership indexes
+## Set AWS_MODELS_DIR to additionally prove the committed manifest matches that pinned checkout byte-for-byte.
+aws-models-check:
+	$(GO) test -count=1 ./cmd/awsmodelgen ./internal/awsapi ./internal/protocol/codec ./tests/integration/router
+	$(GO) run -tags dev ./cmd/capgen --check-model
+	@if [ -n "$(AWS_MODELS_DIR)" ]; then \
+		$(GO) run ./cmd/awsmodelgen -models "$(AWS_MODELS_DIR)" -output internal/awsapi/manifest.gen.go -source-revision "$(AWS_MODELS_REVISION)" -check; \
+	fi
+
 ## docs-index: regenerate the committed docs search/navigation index (run after editing docs/, then commit)
 docs-index:
 	$(GO) run ./scripts/docs-index.go --write-index --write-go-index
@@ -221,8 +234,8 @@ docs-check: check-caps
 		|| (echo "ERROR: internal/capabilities/all.gen.go is stale. Run: make generate-caps" && exit 1)
 	$(GO) run -tags dev ./cmd/capgen --write-docs
 	$(GO) run ./scripts/docs-index.go --check
-	@git diff --exit-code README.md STATUS.md docs/README.md docs/services/ docs/generated/service-support.json \
-		|| (echo "ERROR: README.md, STATUS.md, docs/README.md, docs/services/, or docs/generated/service-support.json are stale. Run: make docs" && exit 1)
+	@git diff --exit-code README.md STATUS.md docs/README.md docs/cdk.md docs/services/ docs/generated/service-support.json \
+		|| (echo "ERROR: README.md, STATUS.md, docs/README.md, docs/cdk.md, docs/services/, or docs/generated/service-support.json are stale. Run: make docs" && exit 1)
 
 ## supportmeta-check: alias for docs-check (manifest schema, registry parity, docs parity, generated artifacts)
 supportmeta-check: docs-check
@@ -254,6 +267,13 @@ clean:
 	@rm -rf $(BUILD_DIR) coverage.out coverage.html
 
 # ---- Compat dashboard -------------------------------------------------------
+# Every target manages its own throwaway Overcast instance on free ports —
+# 4566/4567 stay yours. Pass ARGS='--endpoint http://localhost:4566' to target
+# an instance you are already running.
+
+## compat: run the compat suites headlessly (starts its own Overcast instance)
+compat:
+	$(GO) run ./cmd/compat $(ARGS)
 
 ## compat-build: build the compat UI and embed it into the compat binary
 compat-build:
@@ -262,14 +282,25 @@ compat-build:
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/compat ./cmd/compat
 
-## compat-serve: build everything and start the compat dashboard on :7777
-compat-serve: compat-build
-	@-pkill -x compat 2>/dev/null; sleep 0.3
-	$(BUILD_DIR)/compat --serve --port :7777
+## compat-serve: start the compat dashboard with a freshly built UI
+compat-serve:
+	$(GO) run ./cmd/compat --serve --interactive --build-ui --open $(ARGS)
+
+## compat-dev: start the compat dashboard with a hot-reloading UI
+compat-dev:
+	$(GO) run ./cmd/compat --dev $(ARGS)
+
+## compat-docker: run the compat suites entirely in containers (no host Go or Node)
+compat-docker:
+	docker compose -f compat/docker-compose.yml run --rm compat
 
 ## compat-report: print an agent-friendly summary of the last compat run (reads compat-results.json)
 compat-report:
 	$(GO) run ./cmd/compat --report
+
+## compat-registry-check: validate compat/suites/registry.json against registry.schema.json
+compat-registry-check:
+	python3 scripts/validate-compat-registry.py
 
 # ---- Container-based development (cross-platform) --------------------------
 # These targets work identically on Mac, Linux, and Windows.

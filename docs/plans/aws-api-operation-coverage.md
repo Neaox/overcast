@@ -1,7 +1,17 @@
 # AWS API operation coverage and S3 fallthrough prevention
 
-> Status: A2 in progress, 2026-07-28. Owner: TBD.
+> Status: A5 implemented, pending review, 2026-07-28. Owner: TBD.
 > Related: [Level 2 codegen](./level2-codegen.md) Track 3, [Smithy wire protocols](../dev/smithy.md), and [wire-byte goldens](./wire-byte-goldens.md).
+>
+> **`OVERCAST_SERVICES` was removed after this plan was written.** Every service
+> is now always registered, so there is no disabled-service state and no
+> `ServiceDisabled` response. The audit findings in §2 and the note in §8
+> describe the routing situation as it stood then, and are kept as the record of
+> what motivated the work; where they say a `PathPrefixService` prefix protects a
+> *disabled* service, that protection now only applies under the test-only
+> `config.TestOnlyServiceSubset`. Nothing else in the plan is affected: S3's
+> broad fallback and the evidence-based registry are what actually prevent
+> fallthrough, and both are unchanged.
 
 ## 1. Objective
 
@@ -34,7 +44,11 @@ Use AWS's public [`aws/api-models-aws`](https://github.com/aws/api-models-aws) r
 
 The complete raw Smithy snapshot is deliberately not vendored in A1: it is large, while the checked-in generated manifest is the only artifact required at runtime. `models/aws/VERSION` records the upstream commit, model date, source URL, and license provenance. Regeneration requires a local `api-models-aws` checkout whose `HEAD` matches that recorded commit; the generator validates the match before writing output. Runtime code must never parse model files or contact AWS/GitHub.
 
-This means A1 cannot yet provide the planned no-network regeneration-and-diff CI gate: that belongs to A5, when the refresh workflow supplies a verified snapshot/cache to CI. Until then, the Make target is reproducible from an explicitly checked-out source revision, not offline from this repository alone.
+Normal PRs validate the committed corpus without network access. When a verified
+model checkout is available, `make aws-models-check AWS_MODELS_DIR=...` also
+regenerates the manifest and compares it byte-for-byte. The A5 refresh workflow
+keeps a GitHub Actions cache of the upstream Git mirror and supplies that
+checkout; the raw Smithy snapshot is still not committed or loaded at runtime.
 
 This covers public AWS management-plane/service API operations used by SDKs, CLI, and CDK. It excludes emulator-only `/_*` endpoints, service data/runtime endpoints with intentionally arbitrary user paths (such as API Gateway execution), and CLI conveniences such as waiters. Waiters are covered indirectly through their API operations.
 
@@ -44,7 +58,7 @@ This covers public AWS management-plane/service API operations used by SDKs, CLI
 
 `cmd/awsmodelgen` reads the pinned JSON AST and generates checked-in `internal/awsapi/manifest.gen.go`. Regenerate it with `make generate-aws-operations AWS_MODELS_DIR=/path/to/api-models-aws/models`; it reads the expected revision from `models/aws/VERSION` and validates the local checkout. Generate routing metadata only:
 
-- canonical service name, SDK ID, API version, and source provenance;
+- canonical service name, Smithy service shape name, SDK ID, API version, and source provenance;
 - operation name and protocol traits;
 - AWS JSON target-prefix data;
 - AWS Query API-version/action ownership;
@@ -79,7 +93,7 @@ func (r *Registry) Claim(req *http.Request) (Claim, bool)
 A2 emits sorted, immutable AWS JSON target and fully-qualified Query
 `(Version, Action)` indexes from the manifest. `Registry` binary-searches those
 indexes and the router invokes one shared error-profile writer only after
-enabled and disabled service dispatchers decline ownership. This is deliberately
+service dispatchers decline ownership. This is deliberately
 not a broad service-prefix interceptor: it preserves existing implementations,
 explicit service stubs, and S3 controls. REST URI-template and RPC v2 matching
 remain A3 work, where the generated trie can provide sufficient evidence rather
@@ -106,6 +120,39 @@ Measured locally after A2 with `go test -run=^$ -bench=RegistryClaim -benchmem
 both reported `0 B/op` and `0 allocs/op`. This is a focused lookup measurement,
 not a router construction or end-to-end request benchmark; A4 retains the full
 startup and request-path guardrail.
+
+### A3/A4 implementation boundary
+
+A3 compiles REST JSON/XML bindings into immutable generated trie tables and
+consults them only after every explicit non-S3 route declines the request. A4
+completes the generated ownership surface:
+
+- Smithy literal query components are stored separately from the REST path and
+  matched without allocation; trailing-slash templates normalize to the same
+  trie leaf as the request path;
+- REST collisions use normalized, human-readable method/template/query keys
+  and ambiguous bindings remain explicit S3-preserving exclusions;
+- RPC v2 CBOR and RPC v2 JSON get a sorted immutable
+  `(protocol, service shape, operation)` index. It includes additive protocol
+  traits, so the 575 operations that advertise CBOR alongside another
+  canonical protocol are not omitted (593 total CBOR-capable operations,
+  including 18 whose canonical protocol is CBOR);
+- the explicit `/service/{service}/operation/{operation}` route consults that
+  index after implemented service operations. A modeled gap gets its native
+  501 envelope, and a truly unknown service preserves the existing
+  unsupported/unknown behavior. (There is no longer a disabled-service case:
+  `OVERCAST_SERVICES` is gone and every service is always wired, so the
+  `ServiceDisabled` branch this route used to carry was removed with it.)
+  The Smithy protocol header is required evidence: a headerless S3 multipart
+  request with the same legal path grammar delegates to S3; and
+- generated corpus tests require every non-S3 operation and every additive RPC
+  trait to resolve through a target, Query, REST, or RPC ownership index.
+
+Runtime request paths never read or scan `manifest`. Target, Query, and RPC
+lookups binary-search static generated slices, while REST walks static trie
+tables. The RPC dispatcher builds only a service's small implemented-operation
+set, lazily on its first RPC request, using `sync.Once`; router construction
+does not allocate a model-sized map.
 
 It does not decode bodies, persist data, implement business logic, or replace service routers. It follows Smithy protocol precision:
 
@@ -153,15 +200,58 @@ Models are fetched, parsed, and generated at build/update time only. The binary 
 - AWS JSON and Query: bounded header/form read plus map lookup.
 - REST: path-segment trie walk, independent of total operation count.
 - No per-request/startup disk I/O, model parsing, network I/O, or allocations proportional to model size.
-- Implemented calls retain existing handlers; S3 incurs only a cheap non-S3 claim check.
+- Implemented calls retain existing handlers. Unsigned and S3-scoped requests
+  skip the REST registry entirely, then delegate once to S3's private chi
+  router; signed non-S3 fallback requests perform the bounded trie lookup.
 
 Before landing, benchmark router construction and representative S3, AWS JSON, Query, and REST-fallback requests. Do not materially move the startup budget or <=1 ms handler-overhead target. Record command, environment, operation, and before/after figures for every published claim.
+
+### A4 measured guardrail
+
+Measurements below used Linux/amd64 Docker containers on an AMD Ryzen 9 5900X,
+the `golang:1.25.6` image, Go's default benchmark duration, `-benchmem`, and
+three runs per benchmark on 2026-07-28. The exact commands were:
+
+```sh
+go test -run '^$' -bench BenchmarkRegistryClaim -benchmem -count=3 ./internal/awsapi
+go test -run '^$' -bench 'Benchmark(RouterConstruction|OperationCoverageRoutes)' -benchmem -count=3 ./internal/router
+```
+
+The exact A3 parent (`290f484b`) measured target lookup at 83–93 ns/op, Query
+at 112–120 ns/op, and REST at 90–103 ns/op. A4 measured target at 79–82 ns/op,
+Query at 101–114 ns/op, REST at 106–109 ns/op, and RPC at 160–217 ns/op; every
+registry lookup remained `0 B/op` and `0 allocs/op`. The small REST increase is
+the literal-query discriminator and remains independent of corpus size.
+
+With the final lazy RPC implementation index, router construction measured
+2.75–3.28 ms/op and 1.68 MB/op. Representative in-process requests measured
+13–61 µs/op across two runs for S3 ListBuckets, modeled AWS JSON, Query, and signed REST
+fallbacks, including request construction, middleware, response recording, and
+request-ID generation. These are development-machine microbenchmarks, not
+network latency claims; the request paths remain well below the plan's 1 ms
+handler-overhead guardrail. CI enforces zero-allocation generated lookups, while
+the committed router benchmarks preserve the broader startup/request baseline
+without relying on a noisy wall-clock threshold.
+
+A review A/B after rebasing onto `main` used Linux/amd64, Go 1.24.13 in
+`golang:1.24-bookworm`, the same Ryzen 9 5900X, `-benchtime=2s -count=5`, and
+the committed `S3ListBuckets` benchmark. Main measured a median 11.7 µs/op
+(11.3–25.2 µs/op, 125–132 allocs/op); the initial private-router fallback
+measured a median 16.4 µs/op (16.2–16.7 µs/op, 121 allocs/op), a 40% median
+CPU trade-off from the second chi dispatch rather than allocation or registry
+size. The credential fast path now skips trie matching for unsigned and
+S3-scoped requests. Under the same Go version, CPU, `-benchtime=2s -count=5`,
+and repository Docker harness it measured 16.4–17.7 µs/op at 121 allocs/op.
+The remaining dispatch cost is accepted for A4 because it preserves the
+positive-evidence S3 safety boundary and remains roughly 60x below the 1 ms
+handler-overhead budget; the benchmark remains committed so a future
+single-dispatch design can improve it with evidence.
 
 ## 6. Delivery phases
 
 | Phase | Work | Acceptance gate |
 | --- | --- | --- |
-| A0 | Write failing router integration tests for Lambda alternate versions, unknown API Gateway REST paths, Query `GET /?Action=`, AWS JSON unknown services, disabled services, and legitimate S3 controls. | Every non-S3 fixture returns the correct 501 envelope, not an S3 response; S3 behavior remains unchanged. |
+| A0 | Write failing router integration tests for Lambda alternate versions, unknown API Gateway REST paths, Query `GET /?Action=`, AWS JSON unknown services, and legitimate S3 controls. | Every non-S3 fixture returns the correct 501 envelope, not an S3 response; S3 behavior remains unchanged. |
 | A1 | Record a pinned model provenance; add the generator and reproducible regeneration target; generate the complete operation-metadata baseline. | Manifest is deterministic, records source provenance, and retains every recognized protocol trait currently present in the model source. |
 | A2 | Implement `awsapi.Registry`, shared fallback, and error-profile selection. | Pilot operations route correctly without changing implementation behavior. |
 | A3 | Compile the generated metadata into the REST trie; migrate `stub-report`; validate capabilities against manifest, including explicit aliases and the ten legacy JSON-target dispatchers modeled as REST (`backup`, `appconfig`, `appconfigdata`, `appregistry`, `appsync`, `bedrock`, `eks`, `msk`, `opensearch`, `scheduler`). | Every generated operation has ownership or an explicit ambiguity/exclusion, and every Overcast service resolves through an alias to at least one manifest operation or an explicit exemption. |
@@ -220,7 +310,9 @@ Run router/protocol integration tests, generator unit tests, manifest determinis
 
 ## 8. Model refresh automation
 
-Add a scheduled GitHub Actions workflow, weekly by default and manually dispatchable. AWS publishes daily, but weekly keeps review diffs manageable. It:
+The `AWS API model refresh` GitHub Actions workflow runs at 03:17 UTC every
+Monday and is also manually dispatchable. AWS publishes daily, but weekly keeps
+review diffs manageable. It:
 
 1. compares upstream `aws/api-models-aws` with `models/aws/VERSION`;
 2. exits when current;
@@ -228,9 +320,47 @@ Add a scheduled GitHub Actions workflow, weekly by default and manually dispatch
 4. summarizes service, operation, trait, binding, collision, and fallback-coverage changes; and
 5. creates or updates one bot-owned PR.
 
-Use a stable branch such as `automation/aws-api-models`. If an open PR exists from that branch, update it rather than creating a duplicate. Use a workflow concurrency group and permit force-with-lease only for this dedicated automation branch. Never update contributor branches or merge automatically.
+It uses the stable `automation/aws-api-models` branch. Each run resets that
+branch to current `main`, commits only the generated manifest and provenance
+pin, and pushes with an exact force-with-lease against the remote revision it
+observed. If an open PR exists from that branch, the workflow updates its title
+and body; otherwise it creates one. The `aws-api-model-refresh` concurrency
+group serializes runs. It never updates contributor branches and never merges.
 
-Every normal PR runs a no-network `aws-models-check` target verifying the snapshot, generated diff, model validity, capability alignment, route collisions, and generated no-S3-fallthrough suite.
+The upstream repository is cached as a Git mirror keyed by the observed commit.
+Every run still fetches from the configured official source, verifies that both
+the old and new revisions are real commits, and verifies that the mirror's
+`HEAD` is the revision returned by `ls-remote`. The cache is a performance
+optimization, not a trust decision.
+
+The workflow may use the repository `GITHUB_TOKEN`, but maintainers should
+configure `AWS_MODELS_PR_TOKEN` as a fine-grained PAT with contents and
+pull-request write access. GitHub suppresses ordinary workflow runs caused by
+`GITHUB_TOKEN`, so the dedicated token is what makes the automation PR's normal
+CI start without manual intervention. Repository Actions settings must also
+permit workflows to create pull requests. Regardless of token, branch
+protection and human review remain the merge gate.
+
+Starting in A4, every normal PR runs a no-network `aws-models-check` target
+that validates the committed generator fixtures, immutable indexes, collision
+metadata, capability alignment, protocol envelopes, router regressions, and
+generated no-S3-ownership-gap corpus. It deliberately does not fetch models.
+It also verifies the committed manifest against the `manifest-sha256` recorded
+in `models/aws/VERSION`, which closes the remaining offline gap: proving the
+manifest matches *upstream* needs the corpus, but proving it is still the
+generator's own output does not, so a hand-edit or a partial merge fails on an
+ordinary pull request.
+
+A5 supplies the verified upstream checkout from its cache and invokes that same
+target with `AWS_MODELS_DIR` and `AWS_MODELS_REVISION`, enabling full
+regeneration-and-diff validation. Contributors can invoke the identical path
+with any local checkout at the pinned revision.
+
+Note what each check can and cannot prove. Inside the refresh workflow the
+regeneration diff runs against the revision the manifest was just generated
+from, so it asserts determinism only. The staleness assertion is a separate,
+earlier step that regenerates at the *pinned* revision and compares against the
+committed manifest, so a refresh cannot carry existing drift forward.
 
 ## 9. Relationship to Level 2 codegen
 

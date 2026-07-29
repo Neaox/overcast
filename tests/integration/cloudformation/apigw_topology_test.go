@@ -19,7 +19,6 @@ import (
 func TestCFN_APIGateway_TopologyRegion(t *testing.T) {
 	srv := helpers.NewTestServer(t,
 		helpers.WithRegion("us-east-1"),
-		helpers.WithServices("cloudformation", "apigateway"),
 	)
 
 	template := `{

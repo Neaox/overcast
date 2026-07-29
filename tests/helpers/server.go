@@ -2,8 +2,12 @@ package helpers
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -33,6 +37,29 @@ type TestServer struct {
 	Clock *clock.Mock
 }
 
+// ExternalBase returns the base URL this server embeds in client-facing
+// responses: the configured hostname (OVERCAST_HOSTNAME — "localhost" by
+// default, see defaultTestConfig) on the port httptest actually bound.
+//
+// Assert against this, not Server.URL, whenever a test checks a resource URL a
+// service handed back. Server.URL is the dial address (127.0.0.1), which is
+// deliberately NOT what clients are told: an IP base matches no virtual-host
+// rule, so a test pinned to it silently exercises a host shape no real client
+// ever sends. That is exactly how the S3/host-route addressing collision
+// survived — the Lambda function-URL round-trip test minted
+// "{urlId}.lambda-url.us-east-1.127.0.0.1:PORT" and never hit the bug. See
+// docs/plans/host-routing-precedence.md.
+func (ts *TestServer) ExternalBase() string {
+	if ts.Config == nil || ts.Config.Hostname == "" {
+		return ts.URL
+	}
+	u, err := url.Parse(ts.URL)
+	if err != nil {
+		return ts.URL
+	}
+	return u.Scheme + "://" + net.JoinHostPort(ts.Config.Hostname, u.Port())
+}
+
 // serverOptions holds all non-config options for NewTestServer so that Option
 // can carry both config mutations and server-level settings.
 type serverOptions struct {
@@ -40,6 +67,7 @@ type serverOptions struct {
 	mock       *clock.Mock
 	store      state.Store       // nil means use default MemoryStore
 	initRunner *inithooks.Runner // nil means no init hooks
+	logger     *zap.Logger       // nil means silent (zap.NewNop)
 }
 
 // NewTestServer creates a started test server with sensible defaults.
@@ -52,7 +80,6 @@ type serverOptions struct {
 // Example — with options:
 //
 //	srv := helpers.NewTestServer(t,
-//	    helpers.WithServices("s3"),
 //	    helpers.WithRegion("eu-west-1"),
 //	    helpers.WithMockClock(),
 //	)
@@ -68,10 +95,14 @@ func NewTestServer(t *testing.T, opts ...Option) *TestServer {
 	t.Helper()
 
 	so := &serverOptions{cfg: defaultTestConfig()}
-	logger := zap.NewNop() // silent in tests — keep output clean
 
 	for _, opt := range opts {
 		opt(so)
+	}
+
+	logger := so.logger
+	if logger == nil {
+		logger = zap.NewNop() // silent in tests — keep output clean
 	}
 
 	// Ensure a data directory is always available for on-disk state.
@@ -91,8 +122,27 @@ func NewTestServer(t *testing.T, opts ...Option) *TestServer {
 		clk = clock.New()
 	}
 
+	// Bind the listener before building the router so the real port is known up
+	// front. Config.ExternalBaseURL() formats cfg.Port verbatim, and the harness
+	// would otherwise leave it at 0 — services that mint resource URLs through
+	// it (SQS, the CloudFormation provisioner, SNS, ECR, AppSync) would hand
+	// back an undialable "http://<hostname>:0" base, and any assertion built
+	// from ExternalBaseURL() would agree with them because both sides evaluate
+	// the same call. See docs/plans/harness-representativeness-audit.md.
+	//
+	// Writing cfg.Port here rather than after httptest.NewServer keeps it
+	// race-free: router.New starts background init goroutines that may read the
+	// config, so the value has to be final before that call, not after it.
+	srv := httptest.NewUnstartedServer(nil)
+	if _, port, err := net.SplitHostPort(srv.Listener.Addr().String()); err == nil {
+		if p, convErr := strconv.Atoi(port); convErr == nil {
+			so.cfg.Port = p
+		}
+	}
+
 	handler, _, cleanup, waitReady := router.New(so.cfg, store, logger, clk, so.initRunner)
-	srv := httptest.NewServer(handler)
+	srv.Config.Handler = handler
+	srv.Start()
 
 	// Block until all services with background init (e.g. Lambda Docker
 	// probing) have completed, so tests can invoke immediately.
@@ -132,14 +182,24 @@ func (ts *TestServer) Reset() {
 // Use the With* constructors rather than crafting values directly.
 type Option func(*serverOptions)
 
-// WithServices restricts which services are enabled.
-// Useful for testing that disabled services return 404/501 correctly.
-func WithServices(services ...string) Option {
+// WithServiceSubset registers only the named services on the test server.
+//
+// This is not a general-purpose knob and should not be reached for to "focus" a
+// test: every service is always on in real runs, so a test that narrows the set
+// is exercising a shape no user ever gets. It exists for the router tests that
+// cannot be written any other way — proving no modeled operation falls through
+// to S3's broad bucket/object routes requires a server where nothing else is
+// registered to claim the path first. See config.TestOnlyServiceSubset.
+func WithServiceSubset(services ...string) Option {
 	return func(so *serverOptions) {
-		so.cfg.Services = make(map[string]bool)
+		subset := make(map[string]bool, len(services))
 		for _, s := range services {
-			so.cfg.Services[s] = true
+			if !slices.Contains(config.AllServices(), s) {
+				panic("helpers.WithServiceSubset: unknown service " + s)
+			}
+			subset[s] = true
 		}
+		so.cfg.TestOnlyServiceSubset = subset
 	}
 }
 
@@ -241,10 +301,38 @@ func WithServiceStates(states map[string]config.StateBackend) Option {
 	}
 }
 
+// WithLogger routes the server's logs to the supplied zap.Logger instead of
+// discarding them. Pair it with zaptest/observer to assert on a diagnostic the
+// emulator emits but cannot surface in a response — AWS wire formats are fixed,
+// so a log line is sometimes the only place a divergence can be reported.
+//
+//	core, logs := observer.New(zap.WarnLevel)
+//	srv := helpers.NewTestServer(t, helpers.WithLogger(zap.New(core)))
+func WithLogger(logger *zap.Logger) Option {
+	return func(so *serverOptions) {
+		so.logger = logger
+	}
+}
+
 // WithHostname sets the external hostname used in client-facing URLs.
 func WithHostname(hostname string) Option {
 	return func(so *serverOptions) {
 		so.cfg.Hostname = hostname
+	}
+}
+
+// WithTLS marks the server as TLS-enabled for the purposes of config
+// (cfg.TLSEnabled()), without actually serving HTTPS.
+//
+// Handlers that must not advertise an https:// URL the emulator cannot answer
+// — CloudFront's ViewerProtocolPolicy is the case this exists for — branch on
+// cfg.TLSEnabled(), which only checks that both paths are set. Serving real TLS
+// would mean generating a certificate and re-dialling every helper in this
+// package for one boolean, so this sets the paths and nothing else.
+func WithTLS() Option {
+	return func(so *serverOptions) {
+		so.cfg.TLSCertFile = "testdata/unused.crt"
+		so.cfg.TLSKeyFile = "testdata/unused.key"
 	}
 }
 
@@ -283,62 +371,18 @@ func WithSigV4Validate(enabled bool) Option {
 // defaultTestConfig returns a config suited for test servers.
 func defaultTestConfig() *config.Config {
 	return &config.Config{
-		Host:                "127.0.0.1",
-		Port:                0, // httptest assigns the port
-		Region:              "us-east-1",
-		AccountID:           "000000000000",
-		EKSMode:             config.EKSModeMock,
-		State:               config.StateBackendMemory,
-		ServiceStates:       make(map[string]config.StateBackend),
-		HybridFlushInterval: 5 * time.Second,
-		CFNSyncWait:         time.Second,
-		LogLevel:            "error", // suppress info/debug logs in test output
-		Services: map[string]bool{
-			"s3":              true,
-			"sqs":             true,
-			"dynamodb":        true,
-			"dynamodbstreams": true,
-			"sns":             true,
-			"ses":             true,
-			"lambda":          true,
-			"pipes":           true,
-			"logs":            true,
-			"secretsmanager":  true, "sts": true,
-			"ssm":            true,
-			"kms":            true,
-			"iam":            true,
-			"cloudformation": true,
-			"ec2":            true,
-			"rds":            true,
-			"ecs":            true,
-			"ecr":            true,
-			"eks":            true,
-			"cognito":        true,
-			"stepfunctions":  true,
-			"waf":            true,
-			"shield":         true,
-			"appsync":        true,
-			"apigateway":     true,
-			"cloudfront":     true,
-			"eventbridge":    true,
-			"kinesis":        true,
-			"appregistry":    true,
-			"cloudwatch":     true,
-			"acm":            true,
-			"opensearch":     true,
-			"appconfig":      true,
-			"appconfigdata":  true,
-			"bedrock":        true,
-			"glue":           true,
-			"firehose":       true,
-			"athena":         true,
-			"elasticache":    true,
-			"msk":            true,
-			"scheduler":      true,
-			"route53":        true,
-			"elbv2":          true,
-		},
-		LambdaDockerSocket:   "", // empty = skip Docker probe; use WithLambdaDocker() for container tests
+		Host:                 "127.0.0.1",
+		Hostname:             "localhost",
+		Port:                 0, // httptest assigns the port
+		Region:               "us-east-1",
+		AccountID:            "000000000000",
+		EKSMode:              config.EKSModeMock,
+		State:                config.StateBackendMemory,
+		ServiceStates:        make(map[string]config.StateBackend),
+		HybridFlushInterval:  5 * time.Second,
+		CFNSyncWait:          time.Second,
+		LogLevel:             "error", // suppress info/debug logs in test output
+		LambdaDockerSocket:   "",      // empty = skip Docker probe; use WithLambdaDocker() for container tests
 		LambdaNetwork:        "overcast_lambda",
 		LambdaRuntimeAPIPort: 0, // OS-assigned port — avoids conflicts when test packages run in parallel
 		ShutdownTimeout:      0,

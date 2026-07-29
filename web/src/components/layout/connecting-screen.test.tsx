@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { act, render, screen } from "@/test/render"
+import { useFakeTimers } from "@/test/fake-timers"
 import { ConnectingScreen, RETRY_AFTER_MS } from "./connecting-screen"
 
 describe("ConnectingScreen", () => {
@@ -31,15 +32,14 @@ describe("ConnectingScreen", () => {
     return screen.queryByRole("button", { name: "Retry connecting" })
   }
 
-  describe("retry affordance timing", () => {
-    beforeEach(() => vi.useFakeTimers())
-    afterEach(() => vi.useRealTimers())
+  function elapse(ms: number) {
+    act(() => {
+      vi.advanceTimersByTime(ms)
+    })
+  }
 
-    function elapse(ms: number) {
-      act(() => {
-        vi.advanceTimersByTime(ms)
-      })
-    }
+  describe("retry affordance timing", () => {
+    useFakeTimers()
 
     it("stays hidden while the attempt is still young", () => {
       render(<ConnectingScreen host="localhost:4566" onRetry={() => {}} />)
@@ -60,34 +60,32 @@ describe("ConnectingScreen", () => {
     })
   })
 
-  // user-event drives a real pointer sequence and deadlocks against Vitest's
-  // fake clock, so these shorten the delay instead of freezing time.
+  // On the fake clock as well, so the chip's re-arm can never race the assertion
+  // that it went away — the whole interaction happens at a standstill.
   describe("retry affordance interaction", () => {
-    const BRIEF_DELAY_MS = 20
+    useFakeTimers()
 
-    function renderBriefly(onRetry: () => void = () => {}) {
-      return render(
-        <ConnectingScreen host="localhost:4566" onRetry={onRetry} retryAfterMs={BRIEF_DELAY_MS} />,
-      )
+    async function clickChipOnceItAppears(onRetry: () => void = () => {}) {
+      const { user } = render(<ConnectingScreen host="localhost:4566" onRetry={onRetry} />)
+      elapse(RETRY_AFTER_MS)
+      await user.click(screen.getByRole("button", { name: "Retry connecting" }))
     }
 
     it("re-issues the probe when the chip itself is clicked", async () => {
       const onRetry = vi.fn()
-      const { user } = renderBriefly(onRetry)
-      await user.click(await screen.findByRole("button", { name: "Retry connecting" }))
+      await clickChipOnceItAppears(onRetry)
       expect(onRetry).toHaveBeenCalledOnce()
     })
 
     it("withdraws the chip while the fresh attempt runs", async () => {
-      const { user } = renderBriefly()
-      await user.click(await screen.findByRole("button", { name: "Retry connecting" }))
+      await clickChipOnceItAppears()
       expect(retryChip()).not.toBeInTheDocument()
     })
 
     it("re-arms the timer so a stalled retry offers the chip again", async () => {
-      const { user } = renderBriefly()
-      await user.click(await screen.findByRole("button", { name: "Retry connecting" }))
-      expect(await screen.findByRole("button", { name: "Retry connecting" })).toBeInTheDocument()
+      await clickChipOnceItAppears()
+      elapse(RETRY_AFTER_MS)
+      expect(retryChip()).toBeInTheDocument()
     })
   })
 })

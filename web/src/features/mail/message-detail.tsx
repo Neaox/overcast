@@ -9,11 +9,13 @@
  * A "Copy" button copies the active tab content to the clipboard.
  * JSON payloads (webhook/push) are pretty-printed with syntax highlighting.
  */
-import { useState, useCallback } from "react"
-import { Trash2, Mail, MessageSquare, Webhook, Bell, Copy, Check, GitBranch } from "lucide-react"
+import { useState } from "react"
+import { Trash2, Mail, MessageSquare, Webhook, Bell, GitBranch } from "lucide-react"
 import Prism from "@/lib/prism"
 import { EmptyState } from "@/components/ui/primitives"
 import { Button } from "@/components/ui/button"
+import { CopyButton } from "@/components/ui/copy-button"
+import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import type { CapturedMessage } from "@/types"
 import { cn } from "@/lib/utils"
 
@@ -29,15 +31,14 @@ interface MessageDetailProps {
 
 export function MessageDetail({ message, onDelete, deleting }: MessageDetailProps) {
   const [tab, setTab] = useState<"plain" | "html" | "raw">("plain")
-  const [copied, setCopied] = useState(false)
 
-  // Reset tab and copy state whenever the selected message changes.
+  // Reset the tab whenever the selected message changes. The copy button holds
+  // its own acknowledgement state and is keyed by message id, so it resets too.
   const messageId = message?.id
   const [prevMessageId, setPrevMessageId] = useState(messageId)
   if (messageId !== prevMessageId) {
     setPrevMessageId(messageId)
     setTab("plain")
-    setCopied(false)
   }
 
   const kind = message?.kind ?? "email"
@@ -54,21 +55,15 @@ export function MessageDetail({ message, onDelete, deleting }: MessageDetailProp
   // Try to pretty-print the body as JSON (webhook/push payloads in particular).
   const prettyJSON = message ? tryPrettyJSON(message.textBody) : null
 
-  // Copy the current tab's content to clipboard. When the payload tab shows
-  // pretty-printed JSON, copy the formatted version rather than the raw body.
-  const handleCopy = useCallback(() => {
-    if (!message) return
-    const content =
-      effectiveTab === "raw"
-        ? (message.raw ?? "")
-        : effectiveTab === "html"
-          ? (message.htmlBody ?? "")
-          : (prettyJSON ?? message.textBody)
-    void navigator.clipboard.writeText(content).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    })
-  }, [effectiveTab, message, prettyJSON])
+  // What the Copy button puts on the clipboard: the current tab's content, and
+  // for the payload tab the pretty-printed JSON rather than the raw body.
+  const copyContent = !message
+    ? ""
+    : effectiveTab === "raw"
+      ? (message.raw ?? "")
+      : effectiveTab === "html"
+        ? (message.htmlBody ?? "")
+        : (prettyJSON ?? message.textBody)
 
   if (!message) {
     return (
@@ -110,23 +105,25 @@ export function MessageDetail({ message, onDelete, deleting }: MessageDetailProp
             )}
           </h2>
           {/* For SMS/push: show To (phone/device) prominently; for webhook: show destination URL */}
-          {kind === "sms" ? (
-            <MetaRow label="To" value={message.to.join(", ")} />
-          ) : kind === "webhook" || kind === "push" ? (
-            <MetaRow label="Endpoint" value={message.to.join(", ")} />
-          ) : (
-            <>
-              <MetaRow label="From" value={message.from} />
-              <MetaRow label="To" value={message.to.join(", ")} />
-            </>
-          )}
-          <MetaRow
-            label="Date"
-            value={new Date(message.receivedAt).toLocaleString(undefined, {
-              dateStyle: "medium",
-              timeStyle: "short",
-            })}
-          />
+          <DefinitionList layout="inline" className="gap-y-1">
+            {kind === "sms" ? (
+              <Definition label="To" value={message.to.join(", ")} />
+            ) : kind === "webhook" || kind === "push" ? (
+              <Definition label="Endpoint" value={message.to.join(", ")} />
+            ) : (
+              <>
+                <Definition label="From" value={message.from} />
+                <Definition label="To" value={message.to.join(", ")} />
+              </>
+            )}
+            <Definition
+              label="Date"
+              value={new Date(message.receivedAt).toLocaleString(undefined, {
+                dateStyle: "medium",
+                timeStyle: "short",
+              })}
+            />
+          </DefinitionList>
           {message.groupTopic && (
             <div className="flex items-center gap-1 pt-0.5 text-xs text-fg-subtle">
               <GitBranch className="h-3 w-3 shrink-0" />
@@ -135,15 +132,13 @@ export function MessageDetail({ message, onDelete, deleting }: MessageDetailProp
           )}
         </div>
 
-        <Button
-          variant="ghost"
+        <CopyButton
+          key={message.id}
+          value={copyContent}
+          noun="message content"
           size="icon"
           className="shrink-0 text-fg-muted hover:text-fg"
-          title="Copy content"
-          onClick={handleCopy}
-        >
-          {copied ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
-        </Button>
+        />
         <Button
           variant="ghost"
           size="icon"
@@ -217,15 +212,6 @@ function tryPrettyJSON(text: string): string | null {
   } catch {
     return null
   }
-}
-
-function MetaRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex gap-2 text-sm">
-      <span className="w-10 shrink-0 text-fg-subtle">{label}</span>
-      <span className="truncate text-fg-muted">{value}</span>
-    </div>
-  )
 }
 
 function TabButton({

@@ -34,9 +34,9 @@ type Identifier interface {
 	Claim(r *http.Request) (Codec, string, bool)
 }
 
-// DefaultIdentifiers returns the built-in identifiers in precision
-// order. CBOR is intentionally omitted in Phase 1 (introduced in
-// Phase 4 with the cbor codec).
+// DefaultIdentifiers returns the built-in identifiers in precision order.
+// Explicit Smithy RPC protocol markers take precedence over the AWS JSON and
+// Query heuristics.
 //
 // REST-XML has no reliable header/path-only identification heuristic
 // — services using it (S3, CloudFront) are routed by their own router
@@ -45,10 +45,17 @@ type Identifier interface {
 func DefaultIdentifiers() []Identifier {
 	return []Identifier{
 		identifyRPCv2CBOR{},
+		identifyRPCv2JSON{},
 		identifyJSON10{},
 		identifyJSON11{},
 		identifyQuery{},
 	}
+}
+
+type identifyRPCv2JSON struct{}
+
+func (identifyRPCv2JSON) Claim(r *http.Request) (Codec, string, bool) {
+	return claimRPCv2(r, smithyProtocolRPCv2JSON, RPCv2JSON)
 }
 
 // --- Smithy RPC v2 CBOR -----------------------------------------------
@@ -56,14 +63,18 @@ func DefaultIdentifiers() []Identifier {
 type identifyRPCv2CBOR struct{}
 
 func (identifyRPCv2CBOR) Claim(r *http.Request) (Codec, string, bool) {
-	if !strings.EqualFold(strings.TrimSpace(r.Header.Get("Smithy-Protocol")), smithyProtocolRPCv2CBOR) {
+	return claimRPCv2(r, smithyProtocolRPCv2CBOR, RPCv2CBOR)
+}
+
+func claimRPCv2(r *http.Request, protocolMarker string, wireCodec Codec) (Codec, string, bool) {
+	if !strings.EqualFold(strings.TrimSpace(r.Header.Get("Smithy-Protocol")), protocolMarker) {
 		return nil, "", false
 	}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) != 4 || parts[0] != "service" || parts[2] != "operation" || parts[3] == "" {
+	if len(parts) != 4 || parts[0] != "service" || parts[1] == "" || parts[2] != "operation" || parts[3] == "" {
 		return nil, "", false
 	}
-	return RPCv2CBOR, parts[3], true
+	return wireCodec, parts[3], true
 }
 
 // --- AWS JSON 1.0 ----------------------------------------------------

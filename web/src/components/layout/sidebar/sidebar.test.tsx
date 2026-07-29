@@ -14,7 +14,7 @@ import {
   SIDEBAR_COLLAPSED_WIDE_STORAGE_KEY,
   SidebarCollapseProvider,
 } from "../use-sidebar-collapse"
-import type { CapturedMessage } from "@/types"
+import type { CapturedMessage, HealthResponse } from "@/types"
 
 const messages: CapturedMessage[] = [
   {
@@ -36,10 +36,22 @@ const messages: CapturedMessage[] = [
   },
 ]
 
-function renderScreen(component: React.FC, { debug = false }: { debug?: boolean } = {}) {
+function renderScreen(
+  component: React.FC,
+  { debug = false, services }: { debug?: boolean; services?: string[] } = {},
+) {
   const queryClient = createTestQueryClient()
   queryClient.setQueryData(inboxMessagesQueryOptions().queryKey, messages)
   queryClient.setQueryData(serverInfoQueryOptions().queryKey, { debug })
+  if (services) {
+    queryClient.setQueryData(["health"], {
+      status: "ok",
+      timestamp: "2026-07-29T00:00:00Z",
+      version: "0.1.0-test",
+      services,
+      storage: { default: "memory" },
+    } satisfies HealthResponse)
+  }
 
   return renderWithRouter(component, { queryClient })
 }
@@ -151,6 +163,30 @@ describe("Sidebar debug navigation", () => {
     renderScreen(SidebarOnly, { debug: true })
 
     expect(await screen.findByRole("link", { name: "Debug" })).toBeInTheDocument()
+  })
+})
+
+describe("Sidebar pins", () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  // Availability is gone: every service always runs, so a pinned service is
+  // simply a link. Nothing is dimmed and nothing is inferred from /_health.
+  it("renders the pinned services as plain links", async () => {
+    localStorage.setItem("overcast-favourites", JSON.stringify(["/s3", "/dynamodb"]))
+
+    renderScreen(SidebarOnly, {})
+
+    expect(await screen.findByRole("link", { name: "S3" })).not.toHaveClass("opacity-50")
+    expect(screen.getByRole("link", { name: "DynamoDB" })).not.toHaveClass("opacity-50")
+  })
+
+  it("pins nothing by default", async () => {
+    renderScreen(SidebarOnly, {})
+
+    await screen.findByRole("link", { name: "Dashboard" })
+    expect(screen.queryByRole("link", { name: "SQS" })).not.toBeInTheDocument()
   })
 })
 

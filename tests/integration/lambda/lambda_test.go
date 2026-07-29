@@ -5407,6 +5407,203 @@ func TestInvokeFunctionURL_unknownUrlIdReturnsForbidden(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusForbidden)
 }
 
+// TestInvokeFunctionURL_hostRoutedAcrossResolvableBases proves the lambda-url
+// Host reaches the Lambda function-URL handler on every base Overcast can
+// actually resolve, not just ".amazonaws.com".
+//
+// It asserts on the unknown-urlId 403 rather than a successful invocation so
+// it needs no Docker runtime: reaching Lambda's own AWS-shaped 403 is the
+// routing proof. Before the addressing-precedence fix these hosts were claimed
+// by S3 virtual-hosted addressing, so the request landed on the S3 handler with
+// a corrupted path and returned an S3 XML error instead.
+//
+// TestInvokeFunctionURL_hostRouted_success below could not have caught that,
+// even though it does round-trip a minted FunctionUrl and does run in CI.
+// Before helpers.NewTestServer defaulted OVERCAST_HOSTNAME, it minted
+// "{urlId}.lambda-url.us-east-1.127.0.0.1:PORT" — an IP base, which matches no
+// virtual-host rule, so the collision never fired. See
+// docs/plans/host-routing-precedence.md.
+func TestInvokeFunctionURL_hostRoutedAcrossResolvableBases(t *testing.T) {
+	// Given: a server with no function URL configs at all
+	srv := helpers.NewTestServer(t)
+
+	bases := []struct{ name, host string }{
+		{"amazonaws.com with region", "nosuchurlid.lambda-url.us-east-1.amazonaws.com"},
+		{"localhost with region", "nosuchurlid.lambda-url.us-east-1.localhost:4566"},
+		{"localhost without region", "nosuchurlid.lambda-url.localhost:4566"},
+		{"overcast.sh wildcard with region", "nosuchurlid.lambda-url.us-east-1.localhost.overcast.sh:4566"},
+		{"localstack.cloud wildcard with region", "nosuchurlid.lambda-url.us-east-1.localhost.localstack.cloud:4566"},
+		// A hostname is case-insensitive, so the same address in any case is
+		// the same address. Sent case-sensitively, the label missed
+		// hostRouteLabels and S3 virtual-hosted addressing claimed the Host
+		// instead — an S3 XML error for a Lambda invoke.
+		{"mixed case", "NoSuchUrlId.Lambda-Url.US-East-1.localhost.overcast.sh:4566"},
+	}
+
+	for _, b := range bases {
+		t.Run(b.name, func(t *testing.T) {
+			// When: a request hits that lambda-url Host
+			req, err := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+			if err != nil {
+				t.Fatalf("build request: %v", err)
+			}
+			req.Host = b.host
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("request: %v", err)
+			}
+			defer resp.Body.Close()
+
+			// Then: Lambda's 403, proving the request reached Lambda and not S3
+			helpers.AssertStatus(t, resp, http.StatusForbidden)
+		})
+	}
+}
+
+// TestCreateFunctionUrlConfig_mintedURLRoutesBackToLambda closes the loop
+// between minting and routing: the FunctionUrl Overcast hands back must be one
+// its own router accepts. Asserting the string shape would pass even if the
+// minting helper and the routing grammar drifted apart, so this feeds the
+// minted Host straight back in.
+func TestCreateFunctionUrlConfig_mintedURLRoutesBackToLambda(t *testing.T) {
+	// Given: a server on a wildcard-DNS hostname with a function URL config
+	const hostname = "localhost.overcast.sh"
+	srv := helpers.NewTestServer(t, helpers.WithHostname(hostname))
+	createFunction(t, srv, "minted-url-fn")
+
+	createResp := doJSON(t, http.MethodPost, lambdaURLv2021(srv, "/functions/minted-url-fn/url"), map[string]any{"AuthType": "NONE"})
+	helpers.AssertStatus(t, createResp, http.StatusCreated)
+	var cfg functionUrlConfigResp
+	decodeJSON(t, createResp, &cfg)
+
+	// The minted URL must carry the configured hostname, not a hardcoded one.
+	if !strings.Contains(cfg.FunctionUrl, "lambda-url") || !strings.Contains(cfg.FunctionUrl, hostname) {
+		t.Fatalf("FunctionUrl %q does not use the lambda-url grammar on %q", cfg.FunctionUrl, hostname)
+	}
+
+	u, err := url.Parse(cfg.FunctionUrl)
+	if err != nil {
+		t.Fatalf("parse FunctionUrl %q: %v", cfg.FunctionUrl, err)
+	}
+
+	// When: that exact Host is presented back to the router
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Host = u.Host
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: it is claimed by Lambda. The urlId resolves, so this is NOT the
+	// unknown-urlId 403 — any non-403 status proves the host-route claim
+	// landed; the invocation itself needs a runtime and is covered by the
+	// Docker-gated test below.
+	if resp.StatusCode == http.StatusForbidden {
+		t.Errorf("minted FunctionUrl %q was not recognised by its own router (403)", cfg.FunctionUrl)
+	}
+}
+
+// TestInvokeFunctionURL_hostRoutedInNonDefaultRegion audits the claim in
+// getFunctionURLConfigByURLID (store_url.go) that a Host-routed function URL
+// invocation needs no region hint.
+//
+// That claim holds for the FIRST lookup only: the config scan really is
+// region-agnostic. But InvokeFunctionURL immediately calls getFunction, which
+// is region-scoped (serviceutil.RegionKey, store.go) — so a function URL
+// created in a non-default region resolves its config and then fails to find
+// the function behind it.
+//
+// The assertion is deliberately "not 404 Function not found" rather than a
+// successful invoke: resolving the function is the step under test, and what
+// happens after it needs a container runtime (covered by the Docker-gated
+// test below). Without a runtime this request ends in a 500, which is a pass
+// here — the function was found.
+func TestInvokeFunctionURL_hostRoutedInNonDefaultRegion(t *testing.T) {
+	// Given: a function and its URL config, both created in eu-west-1
+	const region = "eu-west-1"
+	srv := helpers.NewTestServer(t)
+	regional := "AWS4-HMAC-SHA256 Credential=test/20250101/" + region +
+		"/lambda/aws4_request, SignedHeaders=host, Signature=fake"
+
+	createResp := doJSONWithAuth(t, http.MethodPost, lambdaURL(srv, "/functions"), createFunctionReq{
+		FunctionName: "regional-url-fn",
+		Runtime:      "nodejs20.x",
+		Handler:      "index.handler",
+		Role:         "arn:aws:iam::000000000000:role/lambda-role",
+		Code:         &lambdaCode{},
+	}, regional)
+	helpers.AssertStatus(t, createResp, http.StatusCreated)
+	createResp.Body.Close()
+
+	urlResp := doJSONWithAuth(t, http.MethodPost,
+		lambdaURLv2021(srv, "/functions/regional-url-fn/url"),
+		map[string]any{"AuthType": "NONE"}, regional)
+	helpers.AssertStatus(t, urlResp, http.StatusCreated)
+	var cfg functionUrlConfigResp
+	decodeJSON(t, urlResp, &cfg)
+
+	u, err := url.Parse(cfg.FunctionUrl)
+	if err != nil {
+		t.Fatalf("parse FunctionUrl %q: %v", cfg.FunctionUrl, err)
+	}
+	urlID, _, found := strings.Cut(u.Hostname(), ".")
+	if !found || urlID == "" {
+		t.Fatalf("FunctionUrl %q has no {urlId} subdomain", cfg.FunctionUrl)
+	}
+
+	// When: it is invoked over its host-routed URL, whose region segment is
+	// the only thing naming eu-west-1 (a function URL invoke carries no SigV4)
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/hello", nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Host = urlID + ".lambda-url." + region + ".localhost:4566"
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the function behind the URL is resolved
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		t.Errorf("host-routed invoke in %s did not resolve the function: %d — body: %s",
+			region, resp.StatusCode, body)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		t.Errorf("host-routed invoke in %s did not resolve the URL config: %d — body: %s",
+			region, resp.StatusCode, body)
+	}
+}
+
+// doJSONWithAuth is doJSON with an explicit Authorization header, for driving
+// a control-plane call into a specific region's partition of the store.
+func doJSONWithAuth(t *testing.T, method, url string, body any, auth string) *http.Response {
+	t.Helper()
+	var r io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		r = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(method, url, r)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Authorization", auth)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	return resp
+}
+
 // TestInvokeFunctionURL_hostRouted_success proves the full path: create a
 // function URL config, then invoke it via its Host-routed FunctionUrl and
 // confirm the request reaches the function through the same runtime

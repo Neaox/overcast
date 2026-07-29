@@ -161,7 +161,11 @@ func BuildGroups(reg *Registry, impls ImplMap, opts BuildGroupsOptions) []harnes
 			if !ok {
 				tests = append(tests, harness.TestCase{
 					Name: rt.Name, Fn: _noop, Op: op,
-					Skip:    "not implemented in cli suite",
+					// Sentinel wording is shared by every suite loader: the
+					// parity checker (cmd/compat --check-parity) classifies
+					// registry gaps by this exact phrasing, so it must not
+					// drift. See compat/AGENTS.md § Baseline & uniformity.
+					Skip:    fmt.Sprintf("not yet implemented in %s test suite", opts.Suite),
 					Depends: rt.Depends,
 				})
 				continue

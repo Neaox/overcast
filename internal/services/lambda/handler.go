@@ -76,6 +76,15 @@ func newHandler(cfg *config.Config, log *serviceutil.ServiceLogger, clk clock.Cl
 	return &Handler{cfg: cfg, log: log, clk: clk, runtimes: runtimes, ls: ls, tracker: tracker, rtCache: rtCache}
 }
 
+// accountID returns the configured AWS account ID, falling back to the standard
+// emulator account when no config is attached (unit-constructed handlers).
+func (h *Handler) accountID() string {
+	if h.cfg != nil && h.cfg.AccountID != "" {
+		return h.cfg.AccountID
+	}
+	return "000000000000"
+}
+
 // StopAsync waits for all in-flight async invocations to complete, with a
 // timeout provided by ctx. This prevents goroutine leaks on shutdown.
 func (h *Handler) StopAsync(ctx context.Context) {

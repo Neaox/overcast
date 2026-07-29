@@ -74,18 +74,30 @@ Then:
 aws --profile overcast s3 ls
 ```
 
-### S3 path-style addressing
+### S3 addressing styles
 
-Overcast uses path-style S3 URLs by default (`http://localhost:4566/bucket/key`).
-The CLI respects this automatically when using `--endpoint-url` or
-`AWS_ENDPOINT_URL`.
+Both styles work, with no configuration:
 
-Overcast also supports **virtual-hosted-style** requests (`http://mybucket.localhost:4566/key`),
-including the `.s3.` variants used by AWS SDK v3. If you are using CDK and
-running on Windows or macOS, see the
-[CDK S3 asset upload troubleshooting](./cdk.md#s3-asset-upload-fails-on-windows-or-macos)
-section — `*.localhost` subdomains do not resolve on those platforms and require
-the `OVERCAST_HOSTNAME` workaround.
+- **Path-style** — `http://localhost:4566/bucket/key`. Always works, needs no
+  DNS at all. The CLI uses it automatically with `--endpoint-url` or
+  `AWS_ENDPOINT_URL`.
+- **Virtual-hosted style** — `http://mybucket.s3.localhost:4566/key` and the
+  bare `http://mybucket.localhost:4566/key`. The bare form is what an AWS SDK
+  emits against a custom endpoint when path-style is disabled, and the only
+  form CDK's asset publisher uses.
+
+Virtual-hosted style needs the bucket subdomain to resolve. `*.localhost` does
+that on Linux and macOS but **not on Windows**, so set
+`OVERCAST_HOSTNAME=localhost.overcast.sh`, whose every subdomain resolves to
+`127.0.0.1` on every OS. See
+[networking.md](./networking.md) for the full rule and the offline fallbacks,
+and the [CDK S3 asset upload troubleshooting](./cdk.md#s3-asset-upload-fails-on-windows)
+for the CDK-specific case.
+
+> A bucket name whose second-or-later dot segment is a reserved service label
+> (`execute-api`, `lambda-url`, `appsync-api`, `appsync-realtime-api`,
+> `cloudfront`) is a service address in the bare form — use path-style or the
+> `.s3.` form for those. Overcast warns at `CreateBucket` when you create one.
 
 ---
 

@@ -453,7 +453,10 @@ type queryXMLErrorBody struct {
 // collectionElements maps JSON array keys to their XML element names.
 // SQS Query XML uses singular element names for repeated items.
 var collectionElements = map[string]string{
-	"QueueUrls":  "QueueUrl",
+	"QueueUrls": "QueueUrl",
+	// ListDeadLetterSourceQueues alone names its JSON member `queueUrls`; its
+	// xmlName is still `QueueUrl`, so Query responses look like ListQueues.
+	"queueUrls":  "QueueUrl",
 	"Messages":   "Message",
 	"Successful": "SendMessageBatchResultEntry",
 	"Failed":     "BatchResultErrorEntry",

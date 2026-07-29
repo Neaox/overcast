@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"sort"
 	"sync"
 	"syscall"
 	"time"
@@ -127,6 +128,17 @@ type Orchestrator struct {
 	// Endpoint and Region are injected into suite subprocess environments.
 	Endpoint string
 	Region   string
+
+	// OnIdle is called with an aggregated report each time the last
+	// outstanding batch completes. Interactive runs have no single end — the
+	// dashboard submits work whenever the user asks — so "everything queued
+	// has finished" is the point at which results are worth persisting.
+	// Optional; set before Start.
+	OnIdle func(*RunReport)
+
+	// startedAt is when the first result of this session arrived, used as the
+	// report's start time.
+	startedAt time.Time
 }
 
 // NewOrchestrator creates a new orchestrator for the given suite configs.
@@ -731,6 +743,108 @@ func (o *Orchestrator) Results(suite, service, group, test, status string) []Tes
 	return out
 }
 
+// Report aggregates every result seen so far into a RunReport — the same
+// shape the batch runner produces, so GET /results, the saved results file,
+// and `--report` all work for dashboard-triggered runs too.
+//
+// Results accumulate across batches, so this is the full picture, not just the
+// most recent batch. Ordering is deterministic (suite, then group, then test)
+// so a saved file does not churn between identical runs.
+func (o *Orchestrator) Report() *RunReport {
+	o.resultsMu.RLock()
+	events := make([]TestResultEvent, 0, len(o.results))
+	for _, ev := range o.results {
+		events = append(events, ev)
+	}
+	started := o.startedAt
+	o.resultsMu.RUnlock()
+
+	sort.Slice(events, func(i, j int) bool {
+		a, b := events[i], events[j]
+		if a.Suite != b.Suite {
+			return a.Suite < b.Suite
+		}
+		if a.Group != b.Group {
+			return a.Group < b.Group
+		}
+		return a.Test < b.Test
+	})
+
+	if started.IsZero() {
+		started = time.Now()
+	}
+	report := &RunReport{
+		Endpoint:   o.Endpoint,
+		StartedAt:  started,
+		FinishedAt: time.Now(),
+		Suites:     []*SuiteReport{},
+	}
+
+	suiteIdx := make(map[string]*SuiteReport)
+	groupIdx := make(map[string]*GroupReport)
+	for _, ev := range events {
+		sr, ok := suiteIdx[ev.Suite]
+		if !ok {
+			sr = &SuiteReport{Suite: ev.Suite}
+			suiteIdx[ev.Suite] = sr
+			report.Suites = append(report.Suites, sr)
+		}
+		groupKey := ev.Suite + ":" + ev.Group
+		gr, ok := groupIdx[groupKey]
+		if !ok {
+			gr = &GroupReport{Suite: ev.Suite, Service: ev.Service, Name: ev.Group}
+			groupIdx[groupKey] = gr
+			sr.Groups = append(sr.Groups, gr)
+		}
+		gr.Tests = append(gr.Tests, ev)
+
+		switch ev.Status {
+		case StatusPass:
+			gr.Passed++
+			sr.Passed++
+		case StatusFail:
+			gr.Failed++
+			sr.Failed++
+		case StatusSkip:
+			gr.Skipped++
+			sr.Skipped++
+		case StatusUnimplemented:
+			gr.Unimplemented++
+			sr.Unimplemented++
+		case StatusNA:
+			// no-op: the SDK has no API for this operation, so it is neither a
+			// pass nor a gap. Listed in the group's tests but excluded from
+			// every count, matching the batch runner's aggregation.
+		}
+	}
+	return report
+}
+
+// idle reports whether every suite has drained: nothing running, nothing
+// queued. A suite that is building or errored counts as idle — it holds no
+// work, and waiting on it would mean never reporting at all.
+func (o *Orchestrator) idle() bool {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	for _, sp := range o.processes {
+		sp.mu.Lock()
+		busy := sp.ActiveBatch != nil || len(sp.Queue) > 0
+		sp.mu.Unlock()
+		if busy {
+			return false
+		}
+	}
+	return true
+}
+
+// notifyIfIdle invokes OnIdle when the last outstanding batch has drained.
+func (o *Orchestrator) notifyIfIdle() {
+	if o.OnIdle == nil || !o.idle() {
+		return
+	}
+	o.OnIdle(o.Report())
+}
+
 // ReloadSuite restarts a specific suite process (hot-swap).
 func (o *Orchestrator) ReloadSuite(name string) error {
 	o.mu.RLock()
@@ -931,6 +1045,9 @@ func (o *Orchestrator) readStdout(sp *SuiteProcess) {
 				key := ev.Suite + ":" + ev.Group + ":" + ev.Test
 				o.resultsMu.Lock()
 				o.results[key] = ev
+				if o.startedAt.IsZero() {
+					o.startedAt = time.Now()
+				}
 				o.resultsMu.Unlock()
 			}
 
@@ -945,6 +1062,9 @@ func (o *Orchestrator) readStdout(sp *SuiteProcess) {
 			}
 			sp.mu.Unlock()
 			o.processQueue(sp)
+			// Everything submitted may now have drained — that is the moment
+			// an interactive run's results are worth finalising.
+			o.notifyIfIdle()
 
 		case "error", string(EventSuiteError):
 			sp.mu.Lock()

@@ -1,9 +1,8 @@
-//go:build !nosqlite
-
 // Tests for itemBackend.scanPage (storage-access-plan.md A3 / pagination-plan.md
-// G2). Run against BOTH backends — memItemBackend and a real SQLite-backed
-// sqlItemBackend — so a fix to one implementation can't silently diverge from
-// the other (item_store.go's interface contract is meant to be identical).
+// G2). Run against every backend this build provides — memItemBackend and, when
+// SQLite is compiled in, a real SQLite-backed sqlItemBackend — so a fix to one
+// implementation can't silently diverge from the other (item_store.go's
+// interface contract is meant to be identical). See newTestItemBackends.
 package dynamodb
 
 import (
@@ -11,13 +10,26 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/state"
 )
 
-// newTestItemBackends returns one instance per itemBackend implementation,
-// keyed by a short label used in t.Run subtests.
+// newTestItemBackends returns one instance per itemBackend implementation
+// available in this build, keyed by a short label used in t.Run subtests.
+//
+// "sql" is only present when the build has SQLite compiled in. Under
+// -tags nosqlite, state.NewSQLiteStore is a stub that always errors
+// (internal/state/sqlite_hybrid_nosqlite.go), so the map degrades to
+// memory-only rather than this file being tagged out — the memory half of
+// every parity test using it still works there and is worth keeping. See
+// tests/AGENTS.md § Build-tag-sensitive tests.
 func newTestItemBackends(t *testing.T) map[string]itemBackend {
 	t.Helper()
+
+	backends := map[string]itemBackend{"memory": newMemItemBackend()}
+	if !config.SQLiteSupported() {
+		return backends
+	}
 
 	dir := t.TempDir()
 	sqlStore, err := state.NewSQLiteStore(dir)
@@ -34,11 +46,9 @@ func newTestItemBackends(t *testing.T) map[string]itemBackend {
 	if _, ok := sqlBackend.(*sqlItemBackend); !ok {
 		t.Fatalf("expected newItemBackendFor(sqlStore) to select sqlItemBackend, got %T", sqlBackend)
 	}
+	backends["sql"] = sqlBackend
 
-	return map[string]itemBackend{
-		"memory": newMemItemBackend(),
-		"sql":    sqlBackend,
-	}
+	return backends
 }
 
 // TestItemBackend_ScanPage_ParityWithScanAll is storage-access-plan.md A3's

@@ -12,7 +12,7 @@ import {
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
+import { Definition, DefinitionCard } from "@/components/ui/definition-card"
 import { Badge } from "@/components/ui/badge"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
@@ -127,24 +127,26 @@ export function KmsKeyDetail({ keyId }: Props) {
 
       <ApplicationOwnershipBanner candidates={[key.metadata?.Arn, key.metadata?.KeyId, keyId]} />
 
-      <Card>
-        <CardContent className="grid grid-cols-2 gap-x-8 gap-y-3 p-4 text-sm md:grid-cols-3">
-          <DetailRow label="Key ID" value={key.metadata?.KeyId} mono />
-          <DetailRow label="ARN" value={<ArnText arn={key.metadata?.Arn ?? ""} />} mono />
-          <div className="flex flex-col gap-0.5">
-            <span className="font-mono text-xs text-fg-muted">State</span>
-            <Badge variant={stateVariant}>{key.metadata?.KeyState}</Badge>
-          </div>
-          <DetailRow label="Key spec" value={key.metadata?.KeySpec} />
-          <DetailRow label="Key usage" value={key.metadata?.KeyUsage} />
-          <DetailRow label="Origin" value={key.metadata?.Origin} />
-          <DetailRow label="Key manager" value={key.metadata?.KeyManager} />
-          <DetailRow label="Created" value={formatDate(key.metadata?.CreationDate)} />
-          {key.metadata?.DeletionDate && (
-            <DetailRow label="Scheduled deletion" value={formatDate(key.metadata.DeletionDate)} />
-          )}
-        </CardContent>
-      </Card>
+      <DefinitionCard>
+        <Definition label="Key ID" value={key.metadata?.KeyId} />
+        <Definition
+          label="State"
+          value={<Badge variant={stateVariant}>{key.metadata?.KeyState}</Badge>}
+        />
+        <Definition label="Key spec" value={key.metadata?.KeySpec} />
+        <Definition label="Key usage" value={key.metadata?.KeyUsage} />
+        <Definition label="Origin" value={key.metadata?.Origin} />
+        <Definition label="Key manager" value={key.metadata?.KeyManager} />
+        <Definition label="Created" value={formatDate(key.metadata?.CreationDate)} />
+        {key.metadata?.DeletionDate && (
+          <Definition label="Scheduled deletion" value={formatDate(key.metadata.DeletionDate)} />
+        )}
+        <Definition
+          label="ARN"
+          value={key.metadata?.Arn ? <ArnText arn={key.metadata.Arn} /> : null}
+          full
+        />
+      </DefinitionCard>
 
       {key.aliases.length > 0 && (
         <section className="flex flex-col gap-2">
@@ -174,23 +176,6 @@ export function KmsKeyDetail({ keyId }: Props) {
         isPending={deleteMut.isPending}
         onConfirm={() => deleteMut.mutate(keyId)}
       />
-    </div>
-  )
-}
-
-function DetailRow({
-  label,
-  value,
-  mono,
-}: {
-  label: string
-  value: React.ReactNode
-  mono?: boolean
-}) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-fg-muted">{label}</span>
-      <span className={cn(mono && "font-mono text-xs")}>{value}</span>
     </div>
   )
 }

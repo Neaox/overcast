@@ -50,7 +50,11 @@ var publishedAPIPort int
 var bffHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 // bffStreamingClient is used for long-lived streaming requests (SSE) where a
-// total-request timeout would kill the connection prematurely.
+// total-request timeout would kill the connection prematurely. http.Client's
+// Timeout covers reading the response body, so any handler that proxies a
+// stream — the event feed, the Lambda invoke progress stream — must use this
+// client. A Lambda invocation may legitimately run for the function's full
+// configured timeout, up to AWS's 15-minute maximum.
 var bffStreamingClient = &http.Client{}
 
 // UIConfig is injected into the served index.html so the bundled SPA knows
@@ -537,11 +541,19 @@ func handleEvents(w http.ResponseWriter, r *http.Request) {
 	ep := resolveEndpointQP(r)
 
 	upstream := ep + "/_events"
-	if sources := r.URL.Query()["source"]; len(sources) > 0 {
-		q := url.Values{}
-		for _, s := range sources {
-			q.Add("source", s)
-		}
+	q := url.Values{}
+	for _, s := range r.URL.Query()["source"] {
+		q.Add("source", s)
+	}
+	// The resume point a reconnecting client sent, so /_events replays only
+	// what the client is missing instead of its whole history buffer. It can
+	// arrive either way — see the Last-Event-ID handling in
+	// internal/router/events.go — and both have to survive this hop, since
+	// the upstream request is built here rather than forwarded.
+	if id := r.URL.Query().Get("last_event_id"); id != "" {
+		q.Set("last_event_id", id)
+	}
+	if len(q) > 0 {
 		upstream += "?" + q.Encode()
 	}
 
@@ -551,6 +563,9 @@ func handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Header.Set("Accept", "text/event-stream")
+	if id := r.Header.Get("Last-Event-ID"); id != "" {
+		req.Header.Set("Last-Event-ID", id)
+	}
 
 	resp, err := bffStreamingClient.Do(req)
 	if err != nil {
@@ -988,7 +1003,10 @@ func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 		r.Body)
 	req.Header.Set("Content-Type", "application/json")
 	forwardRegion(req, r)
-	resp, err := bffHTTPClient.Do(req)
+	// Streaming client: the invocation runs for as long as the function's own
+	// timeout allows, and bffHTTPClient's 30 s cap would cut the stream mid-run
+	// and leave the UI with no result event.
+	resp, err := bffStreamingClient.Do(req)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
 		return

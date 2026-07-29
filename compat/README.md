@@ -8,6 +8,24 @@ including those not yet implemented. Failures on unimplemented features are
 expected and tracked — this is how we measure what's left to build, and how we
 guard against regressions in what's already working.
 
+> **Two rules CI enforces**, documented in full at
+> [AGENTS.md § Baseline & uniformity policy](./AGENTS.md#baseline--uniformity-policy):
+>
+> 1. **No new failures.** [baseline.json](./baseline.json) records every test's
+>    expected status; a result that gets worse, or a new failing test, fails the
+>    build. Improvements are promoted automatically on `main`.
+> 2. **Every SDK/CLI suite tests the same operations.** Add to
+>    [suites/registry.json](./suites/registry.json) first, then implement in all
+>    of them. Gaps must be declared in [parity-debt.json](./parity-debt.json),
+>    and that file only shrinks.
+>
+> Check both locally before pushing:
+>
+> ```sh
+> go run ./cmd/compat --compare-baseline --results-file compat-results.json
+> go run ./cmd/compat --check-parity --results-file compat-results.json
+> ```
+
 > **Separation boundary:** everything in `compat/` is a black-box external
 > observer of Overcast. Each suite uses its SDK, CLI, or CDK tool **without
 > modification** — the only difference from talking to real AWS is the endpoint
@@ -19,28 +37,108 @@ guard against regressions in what's already working.
 
 ## Quick start
 
-```bash
-# Build and start the compat dashboard on :7777
-make compat-serve
+**The runner manages its own Overcast instance.** Unless you pin `--endpoint`,
+`cmd/compat` starts a throwaway emulator on a **free port**, waits for
+`/_health`, runs against it, and stops it on exit. Ports 4566 (API) and 4567
+(web UI) are never bound — those belong to your own instance
+([AGENTS.md § Reserved ports](../AGENTS.md#reserved-ports--4566-and-4567-belong-to-the-user)) —
+so a compat run never disturbs whatever you have running, and two runs can go
+at once. The dashboard port is probed the same way.
 
-# Then open http://localhost:7777 in your browser.
-# The dashboard streams live test results as they arrive.
+Dashboard with a hot-reloading UI, opened in your browser:
+
+```bash
+go run ./cmd/compat --dev
 ```
 
-Run a single suite from the CLI without the UI:
+Same thing through whichever entry point you prefer — all four are the same
+code path, so they behave identically on Windows, macOS, and Linux:
+
+| Entry point | Command |
+| --- | --- |
+| Go directly | `go run ./cmd/compat --dev` |
+| Task (any OS) | `task compat-dev` |
+| Make | `make compat-dev` |
+| Shell wrapper | `compat/dev.sh` · `compat\dev.ps1` |
+
+For a stable, pre-built (non-HMR) dashboard, swap `--dev` for
+`--serve --interactive --build-ui --open` — or use `task compat-serve`,
+`make compat-serve`, `compat/run.sh`, `compat\run.ps1`.
+
+Headless runs, no UI:
+
+```bash
+go run ./cmd/compat --format agent
+```
+
+```bash
+go run ./cmd/compat --suite go-sdk --format json
+```
+
+Target an instance you are already running (nothing is started or stopped for
+you):
 
 ```bash
 go run ./cmd/compat --endpoint http://localhost:4566
-
-# JSON output (CI / dashboards)
-go run ./cmd/compat --endpoint http://localhost:4566 --format json
 ```
 
-Run via Docker — no local toolchain required:
+Run via Docker — no host Go or Node required:
 
 ```bash
 docker compose -f compat/docker-compose.yml run --rm compat
 ```
+
+```bash
+docker compose -f compat/docker-compose.yml up dashboard
+```
+
+The second command serves the dashboard at `http://localhost:7777`; set
+`COMPAT_PORT` if that port is taken (a published container port is the one
+thing compat cannot pick for you). Add `--wait` to block until it is actually
+serving. A cold start — no image layers, no caches — takes about a minute;
+afterwards a restart is under ten seconds, because the Go module and build
+caches, the suites' `node_modules`, and the UI build all live in named volumes
+rather than in your working tree. `docker compose -f compat/docker-compose.yml
+down -v` discards those caches and returns you to a cold start.
+
+All eight suites run in the containerised dashboard, including the four that
+build and run their own images (`java-sdk`, `dotnet-sdk`, `rust-sdk`) and the
+Lambda tests. Both the emulator and the runner mount the host Docker socket, so
+those images are **siblings on the host daemon** rather than a nested daemon;
+each suite runner already detects it is inside a container and joins the
+runner's network namespace so the sibling can reach `overcast`. Without the
+socket the emulator's Lambda, ECS, RDS, ElastiCache and MSK support is
+metadata-only, and a compat run measures the stub instead of Overcast — which
+is why `OVERCAST_COMPAT_SKIP_DOCKER` now defaults to `0`. Set it to `1` to skip
+the Docker-dependent tests, and `COMPAT_DOCKER_SOCK` if your socket is not at
+`/var/run/docker.sock`.
+
+Mounting the socket gives those containers control of your Docker daemon. That
+is the same trust the dev container and `make docker-run` already assume, but
+it is worth knowing; the compose file is for local development, not CI on
+shared infrastructure.
+
+First build of the Java, .NET and Rust suite images takes a few minutes; they
+are cached on the host daemon afterwards and start in seconds.
+
+### Useful flags
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--dev` | off | `--serve --interactive --ui-dev --open` in one switch |
+| `--endpoint` | — | Target your own instance; disables instance management |
+| `--start-overcast` | `auto` | `auto` \| `always` \| `never` |
+| `--port-base` | `4570` | First port considered when scanning (never 4566/4567) |
+| `--port` | `:7777` | *Preferred* dashboard port; a free one is picked if taken |
+| `--overcast-bin` | — | Binary to run (default: `bin/overcast`, then `PATH`) |
+| `--overcast-image` | `ghcr.io/neaox/overcast:alpha` | Image used when no binary is found |
+| `--overcast-host` | `localhost` | Hostname the suites use — e.g. `localhost.overcast.sh` for virtual-host-style S3 |
+| `--overcast-ui` | off | Also expose the managed instance's own web UI |
+| `--build-ui` | off | Build the dashboard UI before serving it |
+| `--ui-dir` | — | Serve the dashboard UI from a directory instead of the embedded build |
+
+A managed instance runs with `OVERCAST_STATE=memory` and its own web UI
+disabled, so it leaves nothing behind.
 
 For GitHub Actions, a dedicated workflow is provided at
 `.github/workflows/compat.yml`. It runs on every push to `main`, every PR to
@@ -317,6 +415,14 @@ mid-run receive all buffered events since the run started.
 Returns the latest `RunReport` as a single JSON object. Useful for CI badge
 generation and one-shot queries.
 
+An interactive session has no single end — the dashboard submits work whenever
+you ask it to — so the report is finalised each time the queue **drains**:
+every batch done, nothing running. At that point results are merged into the
+last report (a scoped re-run replaces just those suites), written to
+`--results-file`, and summarised into `--agent-report-file`. So `--report`
+and the results file reflect dashboard-triggered runs exactly as they do
+batch ones.
+
 ### `POST /run` — trigger a run
 
 Starts a new run (returns `202 Accepted` or `409 Conflict` if already running).
@@ -331,199 +437,18 @@ Accepts a JSON filter body:
 
 ### `GET /` — compat dashboard
 
-Serves the embedded `compat/ui/dist/` build. Run `make compat-serve` to build
-and start everything.
+Serves the dashboard UI. Where it comes from depends on how you started:
 
-Compatibility test suites that verify standard AWS tooling (SDKs, CLI, CDK,
-IaC) works correctly against Overcast without modification.
-
-Tests are used as a **coverage metric**: every service and operation is tested,
-including those not yet implemented. Failures on unimplemented features are
-expected and tracked — this is how we measure what's left to build, and how we
-guard against regressions in what's already working.
-
-> **Separation boundary:** everything in `compat/` is a black-box external
-> observer of Overcast. Each suite uses its SDK, CLI, or CDK tool **without
-> modification** — the only difference from talking to real AWS is the endpoint
-> URL. Nothing in `compat/` imports from `internal/`, routes, middleware, or
-> any other part of the Overcast server. The emulator has no knowledge that
-> compat exists. This boundary must never be crossed.
-
----
-
-## Quick start
-
-```bash
-# Run all suites and print a summary (no Overcast changes required)
-go run ./cmd/compat --endpoint http://localhost:4566
-
-# JSON output (CI / dashboards / pipe to the compat server)
-go run ./cmd/compat --endpoint http://localhost:4566 --format json
-
-# Run via Docker — no local toolchain required
-docker compose -f compat/docker-compose.yml run --rm compat
-
-# Start the compat server so the UI can connect (planned)
-go run ./cmd/compat --serve --endpoint http://localhost:4566
-# then open http://localhost:7777 in the compat-ui
-```
-
-For GitHub Actions:
-
-```yaml
-- name: Run compat tests
-  run: docker compose -f compat/docker-compose.yml run --rm compat
-```
-
-The compose file starts Overcast, health-checks it, then runs the Go CLI which
-spawns each suite subprocess. Suite failures are expected; the CLI exits `0`.
-Only infrastructure failures (Overcast failed to start, subprocess crashed)
-produce a non-zero exit code.
-
----
-
-## Suites
-
-| Suite         | Language   | SDK / Tool           | README                                                       | Status     |
-| ------------- | ---------- | -------------------- | ------------------------------------------------------------ | ---------- |
-| `node-js-sdk` | TypeScript | AWS SDK v3 (JS)      | [suites/node-js-sdk/README.md](suites/node-js-sdk/README.md) | ✅ initial |
-| `python`      | Python 3   | boto3                | —                                                            | 🔜 planned |
-| `go`          | Go 1.24    | AWS SDK Go v2        | —                                                            | 🔜 planned |
-| `cli`         | Bash       | AWS CLI v2           | —                                                            | 🔜 planned |
-| `cdk`         | TypeScript | AWS CDK v2           | —                                                            | 🔜 planned |
-| `tofu`        | HCL        | OpenTofu + AWS prov. | —                                                            | 🔜 planned |
-
----
-
-## Architecture
-
-```
-[ Overcast emulator ]  ← the system under test; knows nothing about compat
-        ↑ HTTP (port 4566)
-        │
-[ compat runner ]      ← spawns suite subprocesses, reads NDJSON from stdout
-        │
-  ┌─────┴──────┐
-  │  suites    │  ← each suite is an independent subprocess / Docker image
-  │ node-js-sdk│     that speaks only to the emulator via the AWS SDK
-  │  python …  │
-  └────────────┘
-        │ aggregated RunReport (JSON)
-        ↓
-[ compat server ]      ← small HTTP service inside cmd/compat (planned)
-        │               serves last run result + streams live NDJSON events
-        ↓
-[ compat-ui ]          ← standalone Vite/React app (compat/ui/) (planned)
-                          reads from compat server only; never from Overcast
-```
-
-```
-compat/
-  README.md          ← you are here
-  AGENTS.md          ← coding conventions for contributors and AI agents
-  Makefile           ← make run / make ci / make json / make serve
-  docker-compose.yml
-  result.go          ← Go types for the NDJSON wire format
-  runner.go          ← orchestrates suite subprocesses, aggregates results
-  server.go          ← HTTP server: GET /events (SSE), GET /results (planned)
-
-  suites/
-    node-js-sdk/     ← see suites/node-js-sdk/README.md
-
-  ui/                ← standalone compat UI (planned)
-    package.json
-    src/
-
-cmd/compat/
-  main.go            ← CLI: run suites and/or start the compat server
-```
-
----
-
-## Wire format (NDJSON)
-
-Every suite runner emits **newline-delimited JSON** to stdout — one object per
-line, three event types:
-
-```
-{"event":"run_start","suite":"node-js-sdk","started_at":"…","endpoint":"…","version":"1"}
-{"event":"test_result","suite":"node-js-sdk","service":"s3","group":"s3-crud","test":"CreateBucket","status":"pass","duration_ms":42}
-{"event":"test_result","suite":"node-js-sdk","service":"iam","group":"iam-users","test":"CreateUser","status":"fail","duration_ms":120,"error":"501 Not Implemented"}
-{"event":"run_end","suite":"node-js-sdk","passed":45,"failed":12,"skipped":2,"duration_ms":5432}
-```
-
-| Field         | Type   | Description                               |
-| ------------- | ------ | ----------------------------------------- |
-| `event`       | string | `run_start` \| `test_result` \| `run_end` |
-| `suite`       | string | Suite name, e.g. `"node-js-sdk"`          |
-| `service`     | string | AWS service, e.g. `"s3"`, `"iam"`         |
-| `group`       | string | Group within suite, e.g. `"s3-crud"`      |
-| `test`        | string | Test name                                 |
-| `status`      | string | `"pass"` \| `"fail"` \| `"skip"`          |
-| `duration_ms` | number | Wall-clock milliseconds                   |
-| `error`       | string | Error message (only on `fail`)            |
-
-**Rules:** emit to stdout only; one line per event; exit `0` always (suites
-must not fail the process for expected test failures).
-
----
-
-## Adding a new suite
-
-1. Create `compat/suites/<name>/` with a package manifest, source tree, and
-   `Dockerfile` (for CI).
-2. Emit the NDJSON wire format above to stdout.
-3. Register the suite in `compat/runner.go`.
-4. Add a `README.md` in the suite directory.
-5. Add a row to the Suites table above.
-
----
-
-## Compat server (planned)
-
-The Go CLI will optionally start a small HTTP server (`--serve`, default port
-`7777`) that:
-
-### `GET /events` — SSE stream
-
-The primary endpoint. Uses **Server-Sent Events** to push individual result
-objects to connected clients as they arrive from the suite subprocesses:
-
-```
-Content-Type: text/event-stream
-
-data: {"event":"run_start","suite":"node-js-sdk","started_at":"…","endpoint":"…"}
-
-data: {"event":"test_result","suite":"node-js-sdk","service":"s3","group":"s3-crud","test":"CreateBucket","status":"pass","duration_ms":42}
-
-data: {"event":"test_result","suite":"node-js-sdk","service":"iam","group":"iam-users","test":"CreateUser","status":"fail","duration_ms":120,"error":"501 Not Implemented"}
-
-data: {"event":"run_end","suite":"node-js-sdk","passed":45,"failed":12,"skipped":2,"duration_ms":5432}
-```
-
-Each `data:` line is one JSON object — the same event shape as the internal
-NDJSON wire format, re-emitted as SSE. The UI updates each cell in real time as
-results stream in. Clients that connect mid-run receive all buffered events
-since the run started (the server keeps them in memory), then continue to
-receive live events.
-
-### `GET /results` — last completed run
-
-Returns the latest `RunReport` as a single JSON object once a run has finished.
-Useful for CI badge generation and one-shot queries without keeping a
-persistent SSE connection.
-
-### `GET /` — compat UI bundle
-
-Serves the embedded `compat/ui/` static build.
-
-The compat server is entirely self-contained inside `cmd/compat`. It has no
-dependency on the Overcast emulator and does not import anything from
-`internal/`.
+| Mode | Source of the UI |
+| --- | --- |
+| default | the `compat/ui/dist/` build embedded in the binary at compile time |
+| `--build-ui` | a fresh build, served from `compat/ui/dist/` on disk |
+| `--ui-dir DIR` | `DIR` on disk |
+| `--ui-dev` / `--dev` | an external Vite dev server, with HMR |
 
 ## Compat UI
 
-`compat/ui/` will be a standalone Vite + React app. It:
+`compat/ui/` is a standalone Vite + React app. It:
 
 - Opens an `EventSource` to `GET /events` and updates the compatibility matrix
   in real time as each `test_result` event arrives — no polling, no page reload.
@@ -531,6 +456,8 @@ dependency on the Overcast emulator and does not import anything from
   run.
 - Never connects to Overcast directly.
 - Is built and embedded into the `cmd/compat` binary as a static asset.
+- In `--ui-dev`, proxies its API calls to the compat server named by
+  `COMPAT_SERVER_URL` (the CLI sets it, since both ports are chosen at runtime).
 
 ## State management
 

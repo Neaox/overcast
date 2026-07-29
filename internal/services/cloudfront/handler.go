@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -14,6 +15,7 @@ import (
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
@@ -26,16 +28,44 @@ type Handler struct {
 	clk   clock.Clock
 	bus   *events.Bus
 	cache *cfCache
+
+	// originHosts decides whether an origin's DomainName is one this emulator
+	// serves. It is the same classifier the router uses on inbound requests, so
+	// origin resolution and request routing cannot disagree about a hostname.
+	originHosts *middleware.HostClassifier
+
+	// tlsPolicyWarnOnce guards the one-time warning emitted when a
+	// distribution asks for an HTTPS-only viewer protocol that this server
+	// cannot serve. Once per process, not per request: a proxied page pulls
+	// dozens of assets through the same distribution.
+	tlsPolicyWarnOnce sync.Once
 }
 
 func newHandler(cfg *config.Config, store *Store, log *serviceutil.ServiceLogger, clk clock.Clock) *Handler {
-	return &Handler{
-		cfg:   cfg,
-		store: store,
-		log:   log,
-		clk:   clk,
-		cache: newCFCache(clk),
+	var hostname string
+	if cfg != nil {
+		hostname = cfg.Hostname
 	}
+	return &Handler{
+		cfg:         cfg,
+		store:       store,
+		log:         log,
+		clk:         clk,
+		cache:       newCFCache(clk),
+		originHosts: middleware.NewHostClassifier(hostname),
+	}
+}
+
+// accountID returns the configured AWS account ID, falling back to the standard
+// emulator account when no config is attached (unit-constructed handlers).
+// Distribution ARNs already read config via protocol.DistributionARN; this gives
+// the function and realtime-log-config ARNs the same behaviour, so every ARN one
+// server hands out names the same account.
+func (h *Handler) accountID() string {
+	if h.cfg != nil && h.cfg.AccountID != "" {
+		return h.cfg.AccountID
+	}
+	return "000000000000"
 }
 
 // ─── CreateDistribution ─────────────────────────────────────────────────────
@@ -92,7 +122,7 @@ func (h *Handler) CreateDistribution(w http.ResponseWriter, r *http.Request) {
 		ID:                            id,
 		ARN:                           protocol.DistributionARN(h.cfg.AccountID, id),
 		Status:                        "Deployed",
-		DomainName:                    fmt.Sprintf("%s.cloudfront.net", id),
+		DomainName:                    h.distributionDomainName(r, id),
 		LastModifiedTime:              now,
 		InProgressInvalidationBatches: 0,
 		ActiveTrustedSigners:          &ActiveTrustedList{Enabled: false, Quantity: 0},
@@ -642,7 +672,7 @@ func (h *Handler) CreateDistributionWithTags(w http.ResponseWriter, r *http.Requ
 		ID:                            id,
 		ARN:                           protocol.DistributionARN(h.cfg.AccountID, id),
 		Status:                        "Deployed",
-		DomainName:                    fmt.Sprintf("%s.cloudfront.net", id),
+		DomainName:                    h.distributionDomainName(r, id),
 		LastModifiedTime:              now,
 		InProgressInvalidationBatches: 0,
 		ActiveTrustedSigners:          &ActiveTrustedList{Enabled: false, Quantity: 0},
@@ -1028,4 +1058,29 @@ func validateOriginRefs(cfg *DistributionConfig) *protocol.AWSError {
 	}
 
 	return nil
+}
+
+// distributionDomainName mints the hostname a client uses to reach this
+// distribution. Real AWS returns "{id}.cloudfront.net"; Overcast returns
+// "{id}.cloudfront.{host}" on the hostname the caller reached it on, because
+// cloudfront.net is a fixed AWS domain Overcast cannot serve without a DNS
+// override — returning it verbatim would advertise a name that resolves away
+// from the emulator.
+//
+// The "cloudfront" label is the same one the router dispatches on, so the
+// minted name routes back to this distribution. CloudFront is global, so there
+// is no region segment.
+func (h *Handler) distributionDomainName(r *http.Request, id string) string {
+	return serviceutil.HostRoutedHostname(h.cfg, r, middleware.LabelCloudFront, id, "")
+}
+
+// distributionIDFromDomainName recovers the distribution ID from a DomainName
+// this service minted. The ID is the first label, which holds whether the
+// domain is AWS's "{id}.cloudfront.net" or Overcast's
+// "{id}.cloudfront.{host}" — so this must not trim a fixed suffix.
+func distributionIDFromDomainName(domain string) string {
+	if i := strings.IndexByte(domain, '.'); i > 0 {
+		return domain[:i]
+	}
+	return domain
 }

@@ -6,6 +6,9 @@ const FAVOURITES_KEY = "overcast-favourites"
 const RECENT_KEY = "overcast-recent-services"
 const MAX_RECENT = 8
 
+/** Stable identity so `pinned ?? EMPTY_PINS` does not remount consumers. */
+const EMPTY_PINS: string[] = []
+
 interface FavouritesContextValue {
   /** Favourited service keys in display order — the array IS the order. */
   favourites: string[]
@@ -19,24 +22,34 @@ interface FavouritesContextValue {
 
 const FavouritesContext = createContext<FavouritesContextValue | null>(null)
 
+/**
+ * Pins are stored per user and start empty — every service is always running,
+ * so there is no subset the console could infer a useful starting selection
+ * from. `null` (never chosen) is still kept distinct from `[]` (chose to pin
+ * nothing) because nothing is written until the user pins, unpins, or reorders.
+ */
 export function FavouritesProvider({ children }: { children: React.ReactNode }) {
-  const [favourites, setFavourites] = useLocalStorage<string[]>(FAVOURITES_KEY, [])
+  const [pinned, setPinned] = useLocalStorage<string[] | null>(FAVOURITES_KEY, null)
   const [recentServices, setRecentServices] = useLocalStorage<string[]>(RECENT_KEY, [])
+  const favourites = pinned ?? EMPTY_PINS
 
   const toggleFavourite = useCallback(
     (key: string) => {
       const svcDef = ALL_SERVICES.find((s) => s.key === key)
       if (svcDef?.favouritable === false) return
-      setFavourites((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]))
+      setPinned((prev) => {
+        const current = prev ?? EMPTY_PINS
+        return current.includes(key) ? current.filter((k) => k !== key) : [...current, key]
+      })
     },
-    [setFavourites],
+    [setPinned],
   )
 
   const reorderFavourites = useCallback(
     (ordered: string[]) => {
-      setFavourites(ordered)
+      setPinned(ordered)
     },
-    [setFavourites],
+    [setPinned],
   )
 
   const addRecentService = useCallback(

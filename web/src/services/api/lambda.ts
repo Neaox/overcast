@@ -102,7 +102,15 @@ export const lambda = {
     try {
       for (;;) {
         const { done, value } = await reader.read()
-        if (done) throw new Error("Stream ended without result")
+        if (done) {
+          // The stream closed before the result event. The invocation itself is
+          // not necessarily lost — the connection is what went away — so point
+          // at the logs rather than reporting a function failure.
+          throw new Error(
+            "Connection to the emulator closed before the invocation returned. " +
+              "The function may still be running — check its CloudWatch logs.",
+          )
+        }
 
         buffer += decoder.decode(value, { stream: true })
         const parts = buffer.split("\n")

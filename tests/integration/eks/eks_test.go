@@ -50,7 +50,7 @@ func decodeBody(t *testing.T, resp *http.Response) map[string]any {
 
 func newEKSServer(t *testing.T) *helpers.TestServer {
 	t.Helper()
-	return helpers.NewTestServer(t, helpers.WithServices("eks"))
+	return helpers.NewTestServer(t)
 }
 
 func expectStatus(t *testing.T, resp *http.Response, expected int) {
@@ -244,11 +244,9 @@ func TestEKSClusterLifecycle(t *testing.T) {
 func TestEKSLiveModeDescribeClusterReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -262,11 +260,9 @@ func TestEKSLiveModeDescribeClusterReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeListClustersFiltersLegacyMockRecords(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -290,11 +286,9 @@ func TestEKSLiveModeListClustersFiltersLegacyMockRecords(t *testing.T) {
 func TestEKSLiveModeDeleteLegacyMockClusterAllowed(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -311,11 +305,9 @@ func TestEKSLiveModeDeleteLegacyMockClusterAllowed(t *testing.T) {
 func TestEKSLiveModeUpdateClusterConfigReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -331,11 +323,9 @@ func TestEKSLiveModeUpdateClusterConfigReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeListUpdatesReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -349,11 +339,9 @@ func TestEKSLiveModeListUpdatesReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeListInsightsReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -367,11 +355,9 @@ func TestEKSLiveModeListInsightsReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeDescribeUpdateReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -385,11 +371,9 @@ func TestEKSLiveModeDescribeUpdateReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeDescribeInsightReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -403,11 +387,9 @@ func TestEKSLiveModeDescribeInsightReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeUpdateClusterVersionReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -423,11 +405,9 @@ func TestEKSLiveModeUpdateClusterVersionReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeListNodegroupsReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -441,11 +421,9 @@ func TestEKSLiveModeListNodegroupsReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeCreateNodegroupReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -463,11 +441,9 @@ func TestEKSLiveModeCreateNodegroupReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeDescribeNodegroupReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -481,11 +457,9 @@ func TestEKSLiveModeDescribeNodegroupReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeDeleteNodegroupReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -499,11 +473,9 @@ func TestEKSLiveModeDeleteNodegroupReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeListAccessEntriesReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -517,11 +489,9 @@ func TestEKSLiveModeListAccessEntriesReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeDescribeAccessEntryReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -536,11 +506,9 @@ func TestEKSLiveModeDescribeAccessEntryReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeCreateAccessEntryReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -556,11 +524,9 @@ func TestEKSLiveModeCreateAccessEntryReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeUpdateAccessEntryReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -577,11 +543,9 @@ func TestEKSLiveModeUpdateAccessEntryReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeDeleteAccessEntryReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -596,11 +560,9 @@ func TestEKSLiveModeDeleteAccessEntryReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeAssociateAccessPolicyReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -617,11 +579,9 @@ func TestEKSLiveModeAssociateAccessPolicyReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeListAssociatedAccessPoliciesReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -636,11 +596,9 @@ func TestEKSLiveModeListAssociatedAccessPoliciesReturnsNotImplemented(t *testing
 func TestEKSLiveModeDisassociateAccessPolicyReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -656,11 +614,9 @@ func TestEKSLiveModeDisassociateAccessPolicyReturnsNotImplemented(t *testing.T) 
 func TestEKSLiveModeListIdentityProviderConfigsReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -674,11 +630,9 @@ func TestEKSLiveModeListIdentityProviderConfigsReturnsNotImplemented(t *testing.
 func TestEKSLiveModeDescribeIdentityProviderConfigReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -692,11 +646,9 @@ func TestEKSLiveModeDescribeIdentityProviderConfigReturnsNotImplemented(t *testi
 func TestEKSLiveModeAssociateIdentityProviderConfigReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -710,11 +662,9 @@ func TestEKSLiveModeAssociateIdentityProviderConfigReturnsNotImplemented(t *test
 func TestEKSLiveModeUpdateIdentityProviderConfigReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -730,11 +680,9 @@ func TestEKSLiveModeUpdateIdentityProviderConfigReturnsNotImplemented(t *testing
 func TestEKSLiveModeDisassociateIdentityProviderConfigReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -753,11 +701,9 @@ func TestEKSLiveModeDisassociateIdentityProviderConfigReturnsNotImplemented(t *t
 func TestEKSLiveModeListPodIdentityAssociationsReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -771,11 +717,9 @@ func TestEKSLiveModeListPodIdentityAssociationsReturnsNotImplemented(t *testing.
 func TestEKSLiveModeDescribePodIdentityAssociationReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -789,11 +733,9 @@ func TestEKSLiveModeDescribePodIdentityAssociationReturnsNotImplemented(t *testi
 func TestEKSLiveModeCreatePodIdentityAssociationReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -811,11 +753,9 @@ func TestEKSLiveModeCreatePodIdentityAssociationReturnsNotImplemented(t *testing
 func TestEKSLiveModeUpdatePodIdentityAssociationReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -831,11 +771,9 @@ func TestEKSLiveModeUpdatePodIdentityAssociationReturnsNotImplemented(t *testing
 func TestEKSLiveModeDeletePodIdentityAssociationReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -849,11 +787,9 @@ func TestEKSLiveModeDeletePodIdentityAssociationReturnsNotImplemented(t *testing
 func TestEKSLiveModeListFargateProfilesReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -867,11 +803,9 @@ func TestEKSLiveModeListFargateProfilesReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeDescribeFargateProfileReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -885,11 +819,9 @@ func TestEKSLiveModeDescribeFargateProfileReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeCreateFargateProfileReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -909,11 +841,9 @@ func TestEKSLiveModeCreateFargateProfileReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeDeleteFargateProfileReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -927,11 +857,9 @@ func TestEKSLiveModeDeleteFargateProfileReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeListAddonsReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -945,11 +873,9 @@ func TestEKSLiveModeListAddonsReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeDescribeAddonReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -963,11 +889,9 @@ func TestEKSLiveModeDescribeAddonReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeUpdateNodegroupConfigReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -983,11 +907,9 @@ func TestEKSLiveModeUpdateNodegroupConfigReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeUpdateNodegroupVersionReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1003,11 +925,9 @@ func TestEKSLiveModeUpdateNodegroupVersionReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeCreateAddonReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1023,11 +943,9 @@ func TestEKSLiveModeCreateAddonReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeUpdateAddonReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1043,11 +961,9 @@ func TestEKSLiveModeUpdateAddonReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeDeleteAddonReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1061,11 +977,9 @@ func TestEKSLiveModeDeleteAddonReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeListTagsForLegacyMockClusterReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1083,11 +997,9 @@ func TestEKSLiveModeListTagsForLegacyMockClusterReturnsNotImplemented(t *testing
 func TestEKSLiveModeTagLegacyMockClusterReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1105,11 +1017,9 @@ func TestEKSLiveModeTagLegacyMockClusterReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeTagLegacyMockClusterMalformedRequestStillReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1127,11 +1037,9 @@ func TestEKSLiveModeTagLegacyMockClusterMalformedRequestStillReturnsNotImplement
 func TestEKSLiveModeUntagLegacyMockClusterReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1149,11 +1057,9 @@ func TestEKSLiveModeUntagLegacyMockClusterReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeUntagLegacyMockClusterMissingTagKeysStillReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1170,7 +1076,6 @@ func TestEKSLiveModeUntagLegacyMockClusterMissingTagKeysStillReturnsNotImplement
 
 func TestEKSLiveModeListAccessPoliciesStillWorks(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
 
@@ -1183,7 +1088,6 @@ func TestEKSLiveModeListAccessPoliciesStillWorks(t *testing.T) {
 
 func TestEKSLiveModeDescribeAccessPolicyStillWorks(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
 
@@ -1196,7 +1100,6 @@ func TestEKSLiveModeDescribeAccessPolicyStillWorks(t *testing.T) {
 
 func TestEKSLiveModeDescribeAccessPolicyMissingStillReturnsNotFound(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
 
@@ -1205,7 +1108,6 @@ func TestEKSLiveModeDescribeAccessPolicyMissingStillReturnsNotFound(t *testing.T
 
 func TestEKSLiveModeDescribeClusterVersionsStillWorks(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
 
@@ -1218,7 +1120,6 @@ func TestEKSLiveModeDescribeClusterVersionsStillWorks(t *testing.T) {
 
 func TestEKSLiveModeDescribeAddonVersionsStillWorks(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
 
@@ -1231,7 +1132,6 @@ func TestEKSLiveModeDescribeAddonVersionsStillWorks(t *testing.T) {
 
 func TestEKSLiveModeDescribeAddonVersionsUnknownStillReturnsEmpty(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
 
@@ -1244,7 +1144,6 @@ func TestEKSLiveModeDescribeAddonVersionsUnknownStillReturnsEmpty(t *testing.T) 
 
 func TestEKSLiveModeDescribeAddonConfigurationStillWorks(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
 
@@ -1259,7 +1158,6 @@ func TestEKSLiveModeDescribeAddonConfigurationStillWorks(t *testing.T) {
 
 func TestEKSLiveModeDescribeAddonConfigurationMissingStillReturnsNotFound(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
 
@@ -1269,11 +1167,9 @@ func TestEKSLiveModeDescribeAddonConfigurationMissingStillReturnsNotFound(t *tes
 func TestEKSLiveModeListTagsForLegacyMockNodegroupReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1292,11 +1188,9 @@ func TestEKSLiveModeListTagsForLegacyMockNodegroupReturnsNotImplemented(t *testi
 func TestEKSLiveModeTagLegacyMockNodegroupReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1317,11 +1211,9 @@ func TestEKSLiveModeTagLegacyMockNodegroupReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeTagLegacyMockNodegroupMalformedRequestStillReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1340,11 +1232,9 @@ func TestEKSLiveModeTagLegacyMockNodegroupMalformedRequestStillReturnsNotImpleme
 func TestEKSLiveModeUntagLegacyMockNodegroupReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1363,11 +1253,9 @@ func TestEKSLiveModeUntagLegacyMockNodegroupReturnsNotImplemented(t *testing.T) 
 func TestEKSLiveModeUntagLegacyMockNodegroupMissingTagKeysStillReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1386,11 +1274,9 @@ func TestEKSLiveModeUntagLegacyMockNodegroupMissingTagKeysStillReturnsNotImpleme
 func TestEKSLiveModeListTagsForLegacyMockAddonArnReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1406,11 +1292,9 @@ func TestEKSLiveModeListTagsForLegacyMockAddonArnReturnsNotImplemented(t *testin
 func TestEKSLiveModeTagLegacyMockAddonArnReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1428,11 +1312,9 @@ func TestEKSLiveModeTagLegacyMockAddonArnReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeTagLegacyMockAddonArnMalformedRequestStillReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1448,11 +1330,9 @@ func TestEKSLiveModeTagLegacyMockAddonArnMalformedRequestStillReturnsNotImplemen
 func TestEKSLiveModeUntagLegacyMockAddonArnReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1468,11 +1348,9 @@ func TestEKSLiveModeUntagLegacyMockAddonArnReturnsNotImplemented(t *testing.T) {
 func TestEKSLiveModeUntagLegacyMockAddonArnMissingTagKeysStillReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1488,11 +1366,9 @@ func TestEKSLiveModeUntagLegacyMockAddonArnMissingTagKeysStillReturnsNotImplemen
 func TestEKSLiveModeTagLegacyMockFargateProfileArnReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1510,11 +1386,9 @@ func TestEKSLiveModeTagLegacyMockFargateProfileArnReturnsNotImplemented(t *testi
 func TestEKSLiveModeListTagsForLegacyMockFargateProfileArnReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1530,11 +1404,9 @@ func TestEKSLiveModeListTagsForLegacyMockFargateProfileArnReturnsNotImplemented(
 func TestEKSLiveModeUntagLegacyMockFargateProfileArnReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1550,11 +1422,9 @@ func TestEKSLiveModeUntagLegacyMockFargateProfileArnReturnsNotImplemented(t *tes
 func TestEKSLiveModeTagLegacyMockFargateProfileArnMalformedRequestStillReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1570,11 +1440,9 @@ func TestEKSLiveModeTagLegacyMockFargateProfileArnMalformedRequestStillReturnsNo
 func TestEKSLiveModeUntagLegacyMockFargateProfileArnMissingTagKeysStillReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1590,11 +1458,9 @@ func TestEKSLiveModeUntagLegacyMockFargateProfileArnMissingTagKeysStillReturnsNo
 func TestEKSLiveModeUntagLegacyMockPodIdentityAssociationArnReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1610,11 +1476,9 @@ func TestEKSLiveModeUntagLegacyMockPodIdentityAssociationArnReturnsNotImplemente
 func TestEKSLiveModeListTagsForLegacyMockPodIdentityAssociationArnReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1630,11 +1494,9 @@ func TestEKSLiveModeListTagsForLegacyMockPodIdentityAssociationArnReturnsNotImpl
 func TestEKSLiveModeTagLegacyMockPodIdentityAssociationArnReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1652,11 +1514,9 @@ func TestEKSLiveModeTagLegacyMockPodIdentityAssociationArnReturnsNotImplemented(
 func TestEKSLiveModeTagLegacyMockPodIdentityAssociationArnMalformedRequestStillReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1672,11 +1532,9 @@ func TestEKSLiveModeTagLegacyMockPodIdentityAssociationArnMalformedRequestStillR
 func TestEKSLiveModeUntagLegacyMockPodIdentityAssociationArnMissingTagKeysStillReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1692,11 +1550,9 @@ func TestEKSLiveModeUntagLegacyMockPodIdentityAssociationArnMissingTagKeysStillR
 func TestEKSLiveModeListTagsForLegacyMockIdentityProviderConfigArnReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1712,11 +1568,9 @@ func TestEKSLiveModeListTagsForLegacyMockIdentityProviderConfigArnReturnsNotImpl
 func TestEKSLiveModeTagLegacyMockIdentityProviderConfigArnReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1734,11 +1588,9 @@ func TestEKSLiveModeTagLegacyMockIdentityProviderConfigArnReturnsNotImplemented(
 func TestEKSLiveModeUntagLegacyMockIdentityProviderConfigArnReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1754,11 +1606,9 @@ func TestEKSLiveModeUntagLegacyMockIdentityProviderConfigArnReturnsNotImplemente
 func TestEKSLiveModeTagLegacyMockIdentityProviderConfigArnMalformedRequestStillReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1774,11 +1624,9 @@ func TestEKSLiveModeTagLegacyMockIdentityProviderConfigArnMalformedRequestStillR
 func TestEKSLiveModeUntagLegacyMockIdentityProviderConfigArnMissingTagKeysStillReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1794,11 +1642,9 @@ func TestEKSLiveModeUntagLegacyMockIdentityProviderConfigArnMissingTagKeysStillR
 func TestEKSLiveModeListTagsForLegacyMockAccessEntryArnReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1814,11 +1660,9 @@ func TestEKSLiveModeListTagsForLegacyMockAccessEntryArnReturnsNotImplemented(t *
 func TestEKSLiveModeTagLegacyMockAccessEntryArnReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1836,11 +1680,9 @@ func TestEKSLiveModeTagLegacyMockAccessEntryArnReturnsNotImplemented(t *testing.
 func TestEKSLiveModeUntagLegacyMockAccessEntryArnReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1856,11 +1698,9 @@ func TestEKSLiveModeUntagLegacyMockAccessEntryArnReturnsNotImplemented(t *testin
 func TestEKSLiveModeTagLegacyMockAccessEntryArnMalformedRequestStillReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1876,11 +1716,9 @@ func TestEKSLiveModeTagLegacyMockAccessEntryArnMalformedRequestStillReturnsNotIm
 func TestEKSLiveModeUntagLegacyMockAccessEntryArnMissingTagKeysStillReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1896,7 +1734,6 @@ func TestEKSLiveModeUntagLegacyMockAccessEntryArnMissingTagKeysStillReturnsNotIm
 func TestEKSLiveModeListTagsForNonEKSArnStillAllowed(t *testing.T) {
 	store := state.NewMemoryStore()
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1915,7 +1752,6 @@ func TestEKSLiveModeListTagsForNonEKSArnStillAllowed(t *testing.T) {
 func TestEKSLiveModeTagNonEKSArnStillAllowed(t *testing.T) {
 	store := state.NewMemoryStore()
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1935,7 +1771,6 @@ func TestEKSLiveModeTagNonEKSArnStillAllowed(t *testing.T) {
 func TestEKSLiveModeTagNonEKSArnRejectsEmptyTagsMap(t *testing.T) {
 	store := state.NewMemoryStore()
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1954,7 +1789,6 @@ func TestEKSLiveModeTagNonEKSArnRejectsEmptyTagsMap(t *testing.T) {
 func TestEKSLiveModeUntagNonEKSArnStillAllowed(t *testing.T) {
 	store := state.NewMemoryStore()
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1977,7 +1811,6 @@ func TestEKSLiveModeUntagNonEKSArnStillAllowed(t *testing.T) {
 func TestEKSLiveModeUntagNonEKSArnRejectsMissingTagKeys(t *testing.T) {
 	store := state.NewMemoryStore()
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
@@ -1995,7 +1828,6 @@ func TestEKSLiveModeUntagNonEKSArnRejectsMissingTagKeys(t *testing.T) {
 
 func TestEKSLiveModeCreateClusterRequiresDocker(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
 
@@ -2222,11 +2054,9 @@ func TestEKSUpdateKubeconfig(t *testing.T) {
 func TestEKSLiveModeUpdateKubeconfigReturnsNotImplemented(t *testing.T) {
 	store := state.NewMemoryStore()
 	mockSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 	)
 	liveSrv := helpers.NewTestServer(t,
-		helpers.WithServices("eks"),
 		helpers.WithStore(store),
 		helpers.WithEKSMode(config.EKSModeLive),
 	)

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -160,9 +161,12 @@ func TestClientBaseURL_configuredHostname(t *testing.T) {
 	// When: a service asks for its client-facing base URL.
 	got := serviceutil.ClientBaseURL(cfg, req)
 
-	// Then: the configured external URL is authoritative.
-	if got != "http://overcast.local:4566" {
-		t.Fatalf("expected configured base URL, got %q", got)
+	// Then: the configured hostname is authoritative, on the *caller's* port —
+	// theirs is the only port proven dialable, and the two differ whenever the
+	// API port is remapped. Same precedence as CloudFormation's output
+	// re-minting and the plan in docs/plans/client-facing-url-minting.md.
+	if got != "http://overcast.local:12345" {
+		t.Fatalf("expected the configured host on the caller's port, got %q", got)
 	}
 }
 
@@ -374,29 +378,77 @@ func TestPaginate_maxLimit_capsRequestedLimit(t *testing.T) {
 
 // ---- BucketName validation -------------------------------------------------
 
-func TestBucketName_valid(t *testing.T) {
-	valid := []string{"my-bucket", "bucket123", "a-b-c", "abc"}
-	for _, name := range valid {
-		if err := serviceutil.BucketName(name); err != nil {
-			t.Errorf("expected %q to be valid, got error: %v", name, err)
-		}
-	}
-}
+// TestBucketName_matchesAWSRules is the specification for S3 general purpose
+// bucket names, taken rule-by-rule from
+// https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
+//
+// Overcast's validation must match AWS exactly. Rejecting a name AWS accepts
+// is the worse failure of the two: it fails a stack locally that deploys fine
+// against AWS, which is the divergence this emulator exists to avoid.
+func TestBucketName_matchesAWSRules(t *testing.T) {
+	cases := []struct {
+		name  string
+		valid bool
+		why   string
+	}{
+		// ---- Valid ---------------------------------------------------------
+		{name: "my-bucket", valid: true},
+		{name: "bucket123", valid: true},
+		{name: "a-b-c", valid: true},
+		{name: "abc", valid: true, why: "minimum length"},
+		{name: strings.Repeat("a", 63), valid: true, why: "maximum length"},
 
-func TestBucketName_invalid(t *testing.T) {
-	invalid := []string{
-		"ab",                 // too short
-		"A-BUCKET",           // uppercase
-		"my--bucket",         // consecutive hyphens
-		"192.168.1.1",        // IP address format
-		"-bucket",            // starts with hyphen
-		"bucket-",            // ends with hyphen
-		"bucket with spaces", // spaces
+		// Periods are legal. AWS discourages them (they break the
+		// *.s3.<region>.amazonaws.com wildcard certificate for virtual-hosted
+		// style over HTTPS) but explicitly documents them as valid, and lists
+		// example.com / www.example.com / my.example.s3.bucket as valid names.
+		{name: "example.com", valid: true, why: "AWS-documented valid example"},
+		{name: "www.example.com", valid: true, why: "AWS-documented valid example"},
+		{name: "my.example.s3.bucket", valid: true, why: "AWS-documented valid example"},
+
+		// Consecutive hyphens are legal — AWS forbids two adjacent PERIODS,
+		// not hyphens. Its own reserved suffixes (--ol-s3, --x-s3, --table-s3)
+		// contain double hyphens, which could not exist if they were illegal.
+		{name: "my--bucket", valid: true, why: "AWS forbids adjacent periods, not hyphens"},
+
+		// ---- Invalid: length and alphabet ----------------------------------
+		{name: "ab", why: "too short"},
+		{name: strings.Repeat("a", 64), why: "too long"},
+		{name: "A-BUCKET", why: "uppercase"},
+		{name: "amzn_s3_demo_bucket", why: "underscores — AWS-documented invalid example"},
+		{name: "bucket with spaces", why: "spaces"},
+
+		// ---- Invalid: structure --------------------------------------------
+		{name: "-bucket", why: "must begin with a letter or number"},
+		{name: "bucket-", why: "must end with a letter or number"},
+		{name: ".bucket", why: "must begin with a letter or number"},
+		{name: "bucket.", why: "must end with a letter or number"},
+		{name: "example..com", why: "two adjacent periods — AWS-documented invalid example"},
+		{name: "192.168.5.4", why: "IP address format — AWS-documented invalid example"},
+
+		// ---- Invalid: reserved prefixes ------------------------------------
+		{name: "xn--bucket", why: "reserved prefix xn--"},
+		{name: "sthree-bucket", why: "reserved prefix sthree-"},
+		{name: "amzn-s3-demo-bucket", why: "reserved prefix amzn-s3-demo-"},
+
+		// ---- Invalid: reserved suffixes ------------------------------------
+		{name: "my-bucket-s3alias", why: "reserved suffix -s3alias"},
+		{name: "my-bucket--ol-s3", why: "reserved suffix --ol-s3"},
+		{name: "my-bucket.mrap", why: "reserved suffix .mrap"},
+		{name: "my-bucket--x-s3", why: "reserved suffix --x-s3"},
+		{name: "my-bucket--table-s3", why: "reserved suffix --table-s3"},
 	}
-	for _, name := range invalid {
-		if err := serviceutil.BucketName(name); err == nil {
-			t.Errorf("expected %q to be invalid, but got no error", name)
-		}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := serviceutil.BucketName(tc.name)
+			if tc.valid && err != nil {
+				t.Errorf("BucketName(%q) rejected a name AWS accepts (%s): %v", tc.name, tc.why, err.Message)
+			}
+			if !tc.valid && err == nil {
+				t.Errorf("BucketName(%q) accepted a name AWS rejects (%s)", tc.name, tc.why)
+			}
+		})
 	}
 }
 
@@ -761,4 +813,52 @@ func TestServiceLogger_LogStateError(t *testing.T) {
 	}
 	// Should not panic.
 	slog.LogStateError(req, "get-object", aerr, zap.String("bucket", "test"))
+}
+
+// TestRequestBaseURL_canonicalisesHostCase covers the output half of the
+// case-insensitivity rule. Routing folds the Host so any case reaches the right
+// service; what Overcast MINTS back must also be canonical, because a caller
+// stores and compares those strings. RFC 3986 §3.2.2 says producers should emit
+// a lowercase registered name, and AWS does.
+//
+// Without this, the case of whichever request happened to create a resource was
+// baked into its URL: a queue created via "MixedCase.localhost:4566" came back
+// with a QueueUrl no string-equal to the same queue's URL fetched over the
+// lowercase host, even though both address one endpoint.
+func TestRequestBaseURL_canonicalisesHostCase(t *testing.T) {
+	cases := []struct {
+		name, host, forwarded, want string
+	}{
+		{name: "mixed case host", host: "MixedCase.Localhost.Overcast.SH:4566", want: "http://mixedcase.localhost.overcast.sh:4566"},
+		{name: "already lowercase", host: "localhost:4566", want: "http://localhost:4566"},
+		{name: "upper via X-Forwarded-Host", host: "localhost:4566", forwarded: "Proxy.Example.TEST", want: "http://proxy.example.test"},
+		{name: "IPv4 literal untouched", host: "127.0.0.1:4566", want: "http://127.0.0.1:4566"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "http://example/", nil)
+			r.Host = tc.host
+			if tc.forwarded != "" {
+				r.Header.Set("X-Forwarded-Host", tc.forwarded)
+			}
+			if got := serviceutil.RequestBaseURL(r); got != tc.want {
+				t.Errorf("RequestBaseURL() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDomainPrefix_canonicalisesCase covers the same rule for the value handed
+// to function code: requestContext.domainPrefix is data a handler can branch on,
+// so it must not vary with how the caller happened to type the Host.
+func TestDomainPrefix_canonicalisesCase(t *testing.T) {
+	for _, tc := range []struct{ host, want string }{
+		{"MixedCase.Localhost.Overcast.SH:4566", "mixedcase"},
+		{"abc123.execute-api.us-east-1.localhost:4566", "abc123"},
+		{"", "localhost"},
+	} {
+		if got := serviceutil.DomainPrefix(tc.host); got != tc.want {
+			t.Errorf("DomainPrefix(%q) = %q, want %q", tc.host, got, tc.want)
+		}
+	}
 }

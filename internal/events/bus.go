@@ -2,7 +2,11 @@ package events
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"strconv"
 	"sync"
+	"time"
 
 	"github.com/Neaox/overcast/internal/clock"
 )
@@ -51,6 +55,12 @@ type Bus struct {
 	wg          sync.WaitGroup
 	history     *History
 	clk         clock.Clock
+
+	// seq is the last sequence number handed out by Publish, guarded by mu.
+	seq uint64
+	// runID identifies this Bus instance for the lifetime of the process.
+	// Immutable after construction, so it needs no lock.
+	runID string
 }
 
 // NewBus returns an initialised Bus with its worker pool running.
@@ -68,6 +78,7 @@ func NewBusWithClock(clk clock.Clock) *Bus {
 		stopCh:      make(chan struct{}),
 		history:     NewHistory(HistoryCapacity),
 		clk:         clk,
+		runID:       newRunID(),
 	}
 	b.wg.Add(workerCount)
 	for range workerCount {
@@ -75,6 +86,24 @@ func NewBusWithClock(clk clock.Clock) *Bus {
 	}
 	return b
 }
+
+// newRunID returns a short, process-unique identifier for one Bus instance.
+// Randomness beats a timestamp here only because it survives a restart
+// inside the same second; nothing about this is security-sensitive, and a
+// failed read falls back to the clock rather than refusing to start.
+func newRunID() string {
+	var b [6]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// RunID identifies this Bus instance. Event sequence numbers are only
+// meaningful within one run, so a consumer that persists a resume point
+// must record the RunID alongside it and discard the pair when it changes —
+// see Event.Seq.
+func (b *Bus) RunID() string { return b.runID }
 
 // Stop shuts down the worker pool after draining all queued work items.
 func (b *Bus) Stop() {
@@ -148,9 +177,9 @@ func (b *Bus) SubscribeAll(h HandlerFunc) (cancel func()) {
 // SnapshotAndSubscribeAll atomically returns a chronological snapshot of the
 // buffered event History and registers h as a wildcard (All) subscriber.
 //
-// The snapshot and the subscription are taken under the same exclusive lock
-// that Publish acquires (as a read lock) around its own history-append +
-// subscriber-dispatch section, so there is no gap or duplicate at the
+// The snapshot and the subscription are taken under the same lock that
+// Publish holds around its own sequence-assign + history-append +
+// subscriber-copy section, so there is no gap or duplicate at the
 // connection boundary: any Publish call that is fully serialized before this
 // call is reflected in the returned snapshot only, and any Publish call
 // serialized after it is delivered to h only — never both, never neither.
@@ -171,9 +200,19 @@ func (b *Bus) SnapshotAndSubscribeAll(h HandlerFunc) (snapshot []Event, cancel f
 // queue is completely full, in which case it blocks briefly until a slot
 // opens — no events are ever dropped.
 //
-// The event is also appended to the rolling History buffer under the same
-// read-lock section that reads the subscriber lists, which is what gives
-// SnapshotAndSubscribeAll its atomicity guarantee (see its doc comment).
+// The event is stamped with its sequence number and appended to the rolling
+// History buffer under the same locked section that reads the subscriber
+// lists, which is what gives SnapshotAndSubscribeAll its atomicity guarantee
+// (see its doc comment).
+//
+// That section takes the write lock rather than a read lock, so publishes
+// serialize against each other. This is what makes Event.Seq usable as a
+// resume point: assigning the number outside the lock would let two
+// concurrent publishes land in history in the opposite order to their
+// numbers, and a client resuming from "everything up to N" would then be
+// sent an event it already had. The serialized work is a counter increment
+// and two slice copies — the History append underneath already took an
+// exclusive lock of its own — and handler dispatch stays outside it.
 func (b *Bus) Publish(ctx context.Context, e Event) {
 	// Zero-Time guard: most publishers stamp their service clock, but a
 	// publisher that omits Time must never produce a zero timestamp in the
@@ -194,13 +233,15 @@ func (b *Bus) Publish(ctx context.Context, e Event) {
 			e.ResourceARN = carrier.arnFromPayload()
 		}
 	}
-	b.mu.RLock()
+	b.mu.Lock()
+	b.seq++
+	e.Seq = b.seq
 	b.history.Append(e)
 	typed := make([]HandlerFunc, len(b.subscribers[e.Type]))
 	copy(typed, b.subscribers[e.Type])
 	wild := make([]HandlerFunc, len(b.subscribers[All]))
 	copy(wild, b.subscribers[All])
-	b.mu.RUnlock()
+	b.mu.Unlock()
 
 	for _, h := range typed {
 		b.workCh <- workItem{ctx: ctx, e: e, h: h}

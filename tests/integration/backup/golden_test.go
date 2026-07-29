@@ -69,14 +69,14 @@ func createPlan(t *testing.T, srv *helpers.TestServer, name string) string {
 }
 
 func TestGolden_CreateBackupVault(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("backup"), helpers.WithMockClock())
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 
 	resp := backupCall(t, srv, "CreateBackupVault", map[string]any{"BackupVaultName": "golden-vault"})
 	helpers.GoldenTest(t, backupGoldenDir, "CreateBackupVault", resp, nil)
 }
 
 func TestGolden_DescribeBackupVault(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("backup"), helpers.WithMockClock())
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 	createVault(t, srv, "golden-vault")
 
 	resp := backupCall(t, srv, "DescribeBackupVault", map[string]any{"BackupVaultName": "golden-vault"})
@@ -84,7 +84,7 @@ func TestGolden_DescribeBackupVault(t *testing.T) {
 }
 
 func TestGolden_ListBackupVaults(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("backup"), helpers.WithMockClock())
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 	createVault(t, srv, "golden-vault-a")
 	createVault(t, srv, "golden-vault-b")
 
@@ -93,7 +93,7 @@ func TestGolden_ListBackupVaults(t *testing.T) {
 }
 
 func TestGolden_DeleteBackupVault(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("backup"), helpers.WithMockClock())
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 	createVault(t, srv, "golden-vault")
 
 	resp := backupCall(t, srv, "DeleteBackupVault", map[string]any{"BackupVaultName": "golden-vault"})
@@ -101,7 +101,7 @@ func TestGolden_DeleteBackupVault(t *testing.T) {
 }
 
 func TestGolden_CreateBackupPlan(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("backup"), helpers.WithMockClock())
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 
 	resp := backupCall(t, srv, "CreateBackupPlan", map[string]any{
 		"BackupPlan": map[string]any{
@@ -115,7 +115,7 @@ func TestGolden_CreateBackupPlan(t *testing.T) {
 }
 
 func TestGolden_GetBackupPlan(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("backup"), helpers.WithMockClock())
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 	planID := createPlan(t, srv, "golden-plan")
 
 	resp := backupCall(t, srv, "GetBackupPlan", map[string]any{"BackupPlanId": planID})
@@ -123,7 +123,7 @@ func TestGolden_GetBackupPlan(t *testing.T) {
 }
 
 func TestGolden_ListBackupPlans(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("backup"), helpers.WithMockClock())
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 	createPlan(t, srv, "golden-plan-a")
 	// Advance the mock clock so the second plan gets a distinct
 	// nanosecond-derived BackupPlanId (see file-level doc comment).
@@ -135,7 +135,7 @@ func TestGolden_ListBackupPlans(t *testing.T) {
 }
 
 func TestGolden_UpdateBackupPlan(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("backup"), helpers.WithMockClock())
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 	planID := createPlan(t, srv, "golden-plan")
 	srv.Clock.Add(time.Second)
 
@@ -152,7 +152,7 @@ func TestGolden_UpdateBackupPlan(t *testing.T) {
 }
 
 func TestGolden_DeleteBackupPlan(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("backup"), helpers.WithMockClock())
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 	planID := createPlan(t, srv, "golden-plan")
 
 	resp := backupCall(t, srv, "DeleteBackupPlan", map[string]any{"BackupPlanId": planID})

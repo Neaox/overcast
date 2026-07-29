@@ -133,7 +133,11 @@ export function SidebarNavItem({
       {...sortable?.listeners}
     >
       {sortable && <SidebarGrip />}
-      <Link to={to} className={rowHitArea} draggable={false}>
+      <Link
+        to={to}
+        className={rowHitArea}
+        draggable={false}
+      >
         <Icon className={iconCls} />
         <span className="truncate">{label}</span>
         {badgeNode}
@@ -144,10 +148,12 @@ export function SidebarNavItem({
 
 /**
  * Drag affordance — absolutely positioned so it never shifts icon alignment, and
- * click-through so it does not punch a hole in the link it overlaps.
+ * click-through so it does not punch a hole in the link it overlaps. It hangs into the
+ * nav's left gutter (`px-2` on the `<nav>`) so it clears the service icon rather than
+ * sitting on top of it.
  */
 function SidebarGrip() {
   return (
-    <GripVertical className="pointer-events-none absolute top-1/2 left-0.5 h-3 w-3 -translate-y-1/2 text-fg-subtle/40 opacity-0 transition-opacity group-hover:opacity-100" />
+    <GripVertical className="pointer-events-none absolute top-1/2 -left-1 h-3 w-3 -translate-y-1/2 text-fg-subtle/40 opacity-0 transition-opacity group-hover:opacity-100" />
   )
 }

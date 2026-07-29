@@ -254,3 +254,63 @@ func TestRewriteURLs_publishedPortSameOrUnknown(t *testing.T) {
 		}
 	}
 }
+
+// With client-facing URLs minted on the caller's port (see
+// docs/plans/client-facing-url-minting.md), a host-side deploy can bake a
+// split-horizon URL carrying the *published* port into function or task
+// environment. Inside a container the name resolves — /etc/hosts and the
+// resolver see to that — but the published port is bound only on the host, so
+// the dial dies. The name is right and the port is wrong, the inverse of the
+// loopback case; the fix preserves the hostname and corrects only the port.
+func TestRewriteURLs_repointsSplitHorizonPublishedPorts(t *testing.T) {
+	m := New(&config.Config{Port: 4566}, "http://172.18.0.2:4566").WithPublishedPort(4652)
+
+	cases := map[string]string{
+		// Origin form — a queue URL from a host-side cdk deploy.
+		"http://localhost.overcast.sh:4652/000000000000/orders": "http://localhost.overcast.sh:4566/000000000000/orders",
+		// Virtual-hosted form — the bucket label rides in front of the name, so
+		// the origin-form pattern alone would miss it.
+		"https://assets.s3.localhost.localstack.cloud:4652/k.json": "https://assets.s3.localhost.localstack.cloud:4566/k.json",
+		// Inside a JSON blob, as deploy tools pass them.
+		`{"queue":"http://localhost.overcast.sh:4652/000000000000/q"}`: `{"queue":"http://localhost.overcast.sh:4566/000000000000/q"}`,
+	}
+	for in, want := range cases {
+		if got := m.RewriteURLs(in); got != want {
+			t.Errorf("RewriteURLs(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestRewriteURLs_leavesCorrectSplitHorizonURLsAlone(t *testing.T) {
+	m := New(&config.Config{Port: 4566}, "http://172.18.0.2:4566").WithPublishedPort(4652)
+
+	for _, in := range []string{
+		"http://localhost.overcast.sh:4566/000000000000/orders", // already the listen port
+		"http://localhost.overcast.sh:9999/x",                   // a port Overcast does not own
+		"http://example.com:4652/x",                             // not a name Overcast serves
+	} {
+		if got := m.RewriteURLs(in); got != in {
+			t.Errorf("RewriteURLs(%q) = %q, want it untouched", in, got)
+		}
+	}
+
+	// And with no published port recorded there is nothing to correct.
+	plain := New(&config.Config{Port: 4566}, "http://172.18.0.2:4566")
+	in := "http://localhost.overcast.sh:4652/q"
+	if got := plain.RewriteURLs(in); got != in {
+		t.Errorf("without a published port: RewriteURLs(%q) = %q, want it untouched", in, got)
+	}
+}
+
+// RewriteURLs runs on every invoke payload, so the miss path — a payload
+// containing none of Overcast's origins, which is nearly all of them — is the
+// one that must stay cheap. The split-horizon patterns are precomputed in
+// WithPublishedPort precisely so this path allocates nothing.
+func BenchmarkRewriteURLs_payloadMiss(b *testing.B) {
+	m := New(&config.Config{Port: 4566}, "http://172.18.0.2:4566").WithPublishedPort(4652)
+	payload := strings.Repeat(`{"detail":{"bucket":"photos","key":"2026/07/29/img.jpg","size":48213},`, 16) + `"end":true}`
+	b.ReportAllocs()
+	for b.Loop() {
+		m.RewriteURLs(payload)
+	}
+}

@@ -26,6 +26,7 @@ import {
 } from "@/features/s3/data"
 import { sqsQueuesQueryOptions } from "@/features/sqs/data"
 import { Badge } from "@/components/ui/badge"
+import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import { ArnLink } from "@/components/ui/arn-link"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { Button } from "@/components/ui/button"
@@ -597,11 +598,15 @@ function LambdaRow({ config: l }: { config: LambdaNotificationConfig }) {
   )
 }
 
+/**
+ * A notification config's Events/Filters rows. Always inline — this sits under
+ * a queue or topic heading where the label column is what ties the rows
+ * together, however wide the panel gets.
+ */
 function ConfigRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-start gap-4 pl-5">
-      <span className="w-16 shrink-0 text-xs text-fg-muted">{label}</span>
-      <div className="flex-1">{children}</div>
-    </div>
+    <DefinitionList layout="inline" className="pl-5">
+      <Definition label={label} value={children} valueClassName="flex-1" />
+    </DefinitionList>
   )
 }

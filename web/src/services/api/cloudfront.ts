@@ -17,10 +17,12 @@ import {
   GetMonitoringSubscriptionCommand,
   type Origin,
   type Origins,
+  type OriginGroups,
 } from "@aws-sdk/client-cloudfront"
 import type {
   CloudFrontDistribution,
   CloudFrontOrigin,
+  CloudFrontOriginGroup,
   CloudFrontInvalidation,
   CloudFrontOriginAccessControl,
   CloudFrontRealtimeLogConfig,
@@ -56,6 +58,20 @@ function mapOrigins(origins?: Origins): CloudFrontOrigin[] {
   }))
 }
 
+/**
+ * Maps origin groups from the SDK shape. Exported for unit tests: the members
+ * are order-significant (first is primary) and every level of the SDK type is
+ * optional, so the flattening is worth pinning.
+ */
+export function mapOriginGroups(groups?: OriginGroups): CloudFrontOriginGroup[] {
+  if (!groups?.Items) return []
+  return groups.Items.map((g) => ({
+    id: g.Id ?? "",
+    members: (g.Members?.Items ?? []).map((m) => m.OriginId ?? ""),
+    failoverStatusCodes: g.FailoverCriteria?.StatusCodes?.Items ?? [],
+  }))
+}
+
 export const cloudfront = {
   listDistributions: async (): Promise<CloudFrontDistribution[]> => {
     const res = await awsClients.cloudfront().send(new ListDistributionsCommand({}))
@@ -69,6 +85,7 @@ export const cloudfront = {
       comment: d.Comment ?? "",
       lastModifiedTime: d.LastModifiedTime?.toISOString() ?? "",
       origins: mapOrigins(d.Origins),
+      originGroups: mapOriginGroups(d.OriginGroups),
       defaultRootObject: "",
       priceClass: d.PriceClass ?? "",
       httpVersion: d.HttpVersion ?? "",
@@ -92,6 +109,7 @@ export const cloudfront = {
         comment: cfg.Comment ?? "",
         lastModifiedTime: d.LastModifiedTime?.toISOString() ?? "",
         origins: mapOrigins(cfg.Origins),
+        originGroups: mapOriginGroups(cfg.OriginGroups),
         defaultRootObject: cfg.DefaultRootObject ?? "",
         priceClass: cfg.PriceClass ?? "",
         httpVersion: cfg.HttpVersion ?? "",

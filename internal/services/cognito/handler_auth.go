@@ -304,8 +304,25 @@ func (s *Service) resendConfirmationCode(w http.ResponseWriter, r *http.Request)
 
 // issuerURL constructs the Cognito issuer URL embedded in JWTs.
 // Clients that validate tokens must configure their JWT library to use this URL.
+//
+// The origin comes from serviceutil.ClientBaseURL: the configured
+// OVERCAST_HOSTNAME (authoritative — a token minted on the address one caller
+// happened to dial is unverifiable by anyone who reaches Overcast under a
+// different name), the TLS-aware scheme (with TLS enabled the JWKS endpoint is
+// https, and an http issuer sends clients to a scheme the server does not
+// answer), and the *caller's* port.
+//
+// The caller's port is not a compromise here — it is what OIDC requires.
+// Discovery 1.0 §4.3: the issuer MUST be byte-identical to the URL the
+// configuration was retrieved from. A host client on a remapped port fetches
+// discovery on that port, so an issuer carrying cfg.Port fails spec-compliant
+// validation for exactly that caller (and its jwks_uri is undialable for
+// them). Overcast's own validation is unaffected by the per-caller port:
+// ValidateCognitoToken reads the pool ID from the issuer path and never
+// compares the string literally — see the guard comment there before changing
+// either side. Full analysis: docs/plans/client-facing-url-minting.md.
 func (s *Service) issuerURL(r *http.Request, poolID string) string {
-	return "http://" + r.Host + "/" + s.region(r.Context()) + "/" + poolID
+	return serviceutil.ClientBaseURL(s.cfg, r) + "/" + s.region(r.Context()) + "/" + poolID
 }
 
 // initiateAuth — InitiateAuth (USER_PASSWORD_AUTH + REFRESH_TOKEN_AUTH).

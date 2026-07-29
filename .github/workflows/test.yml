@@ -61,6 +61,44 @@ jobs:
           go test -race -count=1 -timeout=1200s -coverprofile=coverage.out ./...
           go tool cover -func=coverage.out
 
+  build-tags:
+    name: Test suite (-tags ${{ matrix.tags }})
+    runs-on: ubuntu-latest
+
+    # Deliberately no `needs: web` and no download-artifact: dropping the
+    # embedded SPA is the whole point of the slim build (embed_slim.go), so this
+    # job needs no web/dist and can start immediately.
+    strategy:
+      fail-fast: false
+      matrix:
+        # `slim` is what AGENTS.md tells agents to use for backend-only
+        # verification; `slim,nosqlite` is what actually ships — both the
+        # released overcastd binary (the cross-build matrix below) and the slim
+        # Docker image (`build-slim` in the Makefile) are built with it. Gating
+        # only the untagged suite left the shipped tag set ungated.
+        tags: [slim, "slim,nosqlite"]
+
+    steps:
+      - uses: actions/checkout@v7.0.0
+
+      - uses: actions/setup-go@v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Vet
+        run: go vet -tags ${{ matrix.tags }} ./...
+
+      # No -race: these tags change which routes register, which assets embed,
+      # and whether SQLite is compiled in — not concurrency. The untagged
+      # coverage job owns race coverage, and dropping it here roughly halves
+      # the runtime.
+      - name: Test suite
+        run: go test -count=1 -timeout=1200s -tags ${{ matrix.tags }} ./...
+
   sqs-protocol-dispatch:
     name: SQS integration tests (protocol dispatch)
     needs: web
@@ -102,8 +140,9 @@ jobs:
         with:
           name: web-dist
           path: web/dist
-      - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+      # No install step: `make lint-go` runs golangci-lint via a pinned
+      # `go run`, so CI and local runs cannot drift onto different versions.
+      # The pin lives in the Makefile (GOLANGCI_LINT_VERSION).
       - name: Run Go lint
         run: make lint-go
 
@@ -113,6 +152,26 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: rhysd/actionlint@v1.7.7
+
+  # The repo's helper scripts carry unittest files next to them; they are cheap
+  # and guard logic CI depends on (the compat report's JUnit mapping decides
+  # whether a check run goes red).
+  script-tests:
+    name: Script tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-python@v6.3.0
+        with:
+          python-version: "3.11"
+      - name: Run script unit tests
+        run: |
+          status=0
+          for t in scripts/*_test.py; do
+            echo "── $t"
+            python3 "$t" || status=1
+          done
+          exit "$status"
 
   docs-check:
     name: Docs and capability registry
@@ -124,6 +183,31 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: make docs-check
+
+  compat-registry:
+    name: Compat registry schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-python@v6.3.0
+        with:
+          python-version: "3.11"
+      - name: Install jsonschema
+        run: pip install --quiet jsonschema
+      - name: Validate compat registry against its schema
+        run: python3 scripts/validate-compat-registry.py
+
+  aws-operation-coverage:
+    name: AWS operation coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-go@v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Validate generated operation ownership
+        run: make aws-models-check
 
   web:
     name: Web UI

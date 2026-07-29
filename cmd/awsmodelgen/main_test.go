@@ -10,6 +10,31 @@ import (
 	"testing"
 )
 
+func TestWriteOrCheckManifest_checksWithoutOverwriting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifest.gen.go")
+	if err := os.WriteFile(path, []byte("current\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeOrCheckManifest(path, []byte("current\n"), true); err != nil {
+		t.Fatalf("check current manifest: %v", err)
+	}
+	if err := writeOrCheckManifest(path, []byte("new\n"), true); err == nil {
+		t.Fatal("stale manifest check unexpectedly passed")
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents) != "current\n" {
+		t.Fatalf("check mode overwrote manifest: %q", contents)
+	}
+
+	if err := writeOrCheckManifest(path, []byte("new\n"), false); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+}
+
 func TestGenerateManifest_extractsServiceOperationsAndProtocols(t *testing.T) {
 	// Given: a minimal official-style Smithy JSON AST with JSON and REST services.
 	modelsDir := t.TempDir()
@@ -52,12 +77,13 @@ func TestGenerateManifest_extractsServiceOperationsAndProtocols(t *testing.T) {
 	// Then: it emits deterministic operation ownership metadata without model I/O at runtime.
 	for _, want := range []string{
 		`SourceRevision = "test-revision"`,
-		`{Service: "queue", SDKID: "Queue", APIVersion: "2026-01-01", Name: "CreateQueue", Protocol: ProtocolAWSJSON10, Protocols: ProtocolsAWSJSON10 | ProtocolsRPCV2CBOR, TargetPrefix: "Queue_20260101.", HTTPMethod: "", URI: ""}`,
-		`{Service: "widget", SDKID: "Widget", APIVersion: "2026-02-02", Name: "GetWidget", Protocol: ProtocolRESTJSON, Protocols: ProtocolsRESTJSON, TargetPrefix: "", HTTPMethod: "GET", URI: "/widgets/{id}"}`,
-		`{Service: "resource-service", SDKID: "Resource Service", APIVersion: "2026-03-03", Name: "GetWidget", Protocol: ProtocolRESTJSON, Protocols: ProtocolsRESTJSON, TargetPrefix: "", HTTPMethod: "GET", URI: "/widgets/{id}"}`,
+		`{Service: "queue", ServiceShape: "Queue_20260101", SDKID: "Queue", APIVersion: "2026-01-01", Name: "CreateQueue", Protocol: ProtocolAWSJSON10, Protocols: ProtocolsAWSJSON10 | ProtocolsRPCV2CBOR, TargetPrefix: "Queue_20260101.", HTTPMethod: "", URI: ""}`,
+		`{Service: "widget", ServiceShape: "Widget", SDKID: "Widget", APIVersion: "2026-02-02", Name: "GetWidget", Protocol: ProtocolRESTJSON, Protocols: ProtocolsRESTJSON, TargetPrefix: "", HTTPMethod: "GET", URI: "/widgets/{id}"}`,
+		`{Service: "resource-service", ServiceShape: "ResourceService", SDKID: "Resource Service", APIVersion: "2026-03-03", Name: "GetWidget", Protocol: ProtocolRESTJSON, Protocols: ProtocolsRESTJSON, TargetPrefix: "", HTTPMethod: "GET", URI: "/widgets/{id}"}`,
 		`{Target: "Queue_20260101.CreateQueue", ModelService: "queue", Operation: "CreateQueue", Protocol: ProtocolAWSJSON10}`,
 		`{Version: "2026-04-04", Operation: "DescribeWidgets", ModelService: "query", Protocol: ProtocolEC2Query}`,
-		`{Method: "GET", ModelService: "", SigningName: "", Operation: "GetWidget", Protocol: ProtocolRESTJSON, Ambiguous: true}`,
+		`{Method: "GET", Query: "", ModelService: "", SigningName: "", Operation: "GetWidget", Protocol: ProtocolRESTJSON, Ambiguous: true}`,
+		`{Protocol: ProtocolRPCV2CBOR, ServiceShape: "Queue_20260101", Operation: "CreateQueue", ModelService: "queue"}`,
 	} {
 		if !strings.Contains(string(got), want) {
 			t.Errorf("generated manifest missing %q:\n%s", want, got)
@@ -74,6 +100,8 @@ func TestWriteRegistryIndexes_marksCollidingServicesAmbiguous(t *testing.T) {
 		{Service: "beta", APIVersion: "2026-02-02", Name: "DescribeThing", Protocol: "AWSQuery"},
 		{Service: "alpha", Name: "GetThing", Protocol: "RESTJSON", HTTPMethod: "GET", URI: "/things/{id}"},
 		{Service: "beta", Name: "GetThing", Protocol: "RESTJSON", HTTPMethod: "GET", URI: "/things/{thingId}"},
+		{Service: "alpha", ServiceShape: "Example", Name: "CreateThing", Protocol: "AWSJSON10", Protocols: []string{"AWSJSON10", "RPCV2CBOR"}},
+		{Service: "beta", ServiceShape: "Example", Name: "CreateThing", Protocol: "AWSJSON10", Protocols: []string{"AWSJSON10", "RPCV2CBOR"}},
 	}
 	var output bytes.Buffer
 
@@ -87,7 +115,12 @@ func TestWriteRegistryIndexes_marksCollidingServicesAmbiguous(t *testing.T) {
 		`{Key: "Example.CreateThing", Services: []string{"alpha", "beta"}}`,
 		`{Version: "2026-02-02", Operation: "DescribeThing", ModelService: "", Protocol: ProtocolAWSQuery, Ambiguous: true}`,
 		`{Key: "2026-02-02\x00DescribeThing", Services: []string{"alpha", "beta"}}`,
-		`{Method: "GET", ModelService: "", SigningName: "", Operation: "GetThing", Protocol: ProtocolRESTJSON, Ambiguous: true}`,
+		`{Method: "GET", Query: "", ModelService: "", SigningName: "", Operation: "GetThing", Protocol: ProtocolRESTJSON, Ambiguous: true}`,
+		`var restCollisions = []operationCollision{`,
+		`{Key: "GET /things/{}", Services: []string{"alpha", "beta"}}`,
+		`{Protocol: ProtocolRPCV2CBOR, ServiceShape: "Example", Operation: "CreateThing", ModelService: "", Ambiguous: true}`,
+		`var rpcCollisions = []operationCollision{`,
+		`{Key: "rpcv2Cbor\x00Example\x00CreateThing", Services: []string{"alpha", "beta"}}`,
 	} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("generated registry index missing %q:\n%s", want, output.String())

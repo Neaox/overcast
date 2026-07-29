@@ -1,6 +1,6 @@
 ---
 name: pull-request
-description: "Prepare Overcast pull requests with digestible commit hygiene, concise PR summaries, CHANGELOG management, and AWS compatibility evidence. Use when: creating a PR, preparing a branch for review, splitting commits, writing PR descriptions, or deciding what belongs in CHANGELOG.md."
+description: "Prepare Overcast pull requests with digestible commit hygiene, concise PR summaries, CHANGELOG management, and AWS compatibility and visual evidence. Use when: creating a PR, preparing a branch for review, splitting commits, writing PR descriptions, screenshotting a visual change for reviewers, or deciding what belongs in CHANGELOG.md."
 compatibility: opencode
 metadata:
   audience: contributors
@@ -27,6 +27,7 @@ All coding standards are in [CONTRIBUTING.md](../../../CONTRIBUTING.md). Agent g
 - Writing a PR title/body
 - Updating `CHANGELOG.md`
 - Documenting AWS compatibility evidence for a change
+- Capturing screenshots for a change reviewers have to look at to judge
 
 Do NOT use this as a substitute for implementation skills:
 
@@ -104,6 +105,9 @@ Use this shape unless the repository has a more specific PR template:
 ## Summary
 - <1-3 bullets describing the user-visible or AWS-visible result>
 
+## Screenshots
+- <only when the change is visual — see "Visual Evidence" below; omit the section otherwise>
+
 ## Verification
 - <tests, builds, docs generation, manual checks>
 
@@ -124,6 +128,7 @@ Use this shape unless the repository has a more specific PR template:
 - Include docs generation when capability tables or service docs changed.
 - Say when a verification step was not run and why.
 - Do not paste full passing output unless it contains useful context.
+- For visual changes, say the screenshots were captured against a running emulator and dev server, not mocked up.
 
 ### Notes guidance
 
@@ -153,6 +158,86 @@ Preferred evidence order:
 Put one or two high-value links in the PR body. Put only the most important link in a commit body, and only when the commit is hard to understand without it.
 
 For surprising behavior, add a short code comment near the implementation using the verification comment style from `new-feature` and `bug-fix` skills. Do not use comments to restate obvious code.
+
+---
+
+## Visual Evidence
+
+A prose description of a layout, a font, or a spacing change is not reviewable. When a change alters what the web UI looks like, consider capturing screenshots — the reviewer should not have to run the branch to judge whether it looks right.
+
+### When screenshots are warranted
+
+- Typography, colour, spacing, alignment, or density changes.
+- New components, pages, panels, dialogs, or empty/loading/error states.
+- Anything where "does this look correct?" is the actual review question.
+- Theme or responsive behavior — see the light/dark and breakpoint guidance below.
+
+### When to skip them
+
+- Logic, data-fetching, or API changes with no visual result.
+- Behavior a test asserts more precisely than an image can show.
+- Pure refactors that render identically — say so instead.
+
+### What to show
+
+- **Before and after** when changing UI that already exists. A lone "after" gives the reviewer nothing to compare against.
+- A single shot for genuinely new UI.
+- Only the states that changed. Do not attach ten screenshots when two carry the argument.
+- Keep the viewport identical between before and after, or the diff is unreadable.
+
+#### Light and dark mode
+
+Capture both themes when the change touches anything the theme controls — colour, contrast, borders, shadows, overlays, focus rings, or a token whose light and dark values differ. The console ships both (`web/src/styles/global.css` resolves them from `prefers-color-scheme` and the `data-theme` attribute on `<html>`), and a change that reads well on the dark ground can fail contrast on the light one.
+
+One theme is enough when the change cannot differ between them: pure layout, spacing, font family or size, or copy.
+
+#### Viewport breakpoints
+
+Capture more than one width when the change crosses a breakpoint — responsive grids and column counts, sidebars and navigation that collapse, tables that scroll or restack, anything using `sm:`/`md:`/`lg:` variants.
+
+Show the narrowest width where the layout still has to work and the widest where it changes again; the intermediate steps are usually noise. One width is enough for a change that renders identically at every size.
+
+Be honest about the combinatorics: two themes times three widths is six images nobody reads. Pick the axis the change actually moves, and show the other axis once.
+
+### Capturing
+
+- Run the emulator and the dev server, and seed a real resource. Screenshot the running app, never a mockup.
+- Capture the "after" first, while the branch is checked out.
+- Drive theme and width from the browser tooling rather than by hand, so the pair really is identical apart from the axis under test — the preview browser's `resize_window` takes both a `colorScheme` and explicit `width`/`height`.
+- To capture the "before", stash **only your own tracked changes** (`git stash push -- <paths>`), screenshot, then restore.
+
+  Beware: `git stash` is shared across all worktrees of a repo. A concurrent session can push its own stash on top of yours between your push and your pop, so `git stash pop` may restore the wrong one. Prefer capturing "before" from a separate checkout of the base branch, and if you must stash, apply by commit hash (`git stash apply <sha>`) rather than by position.
+
+### Hosting
+
+`gh` cannot upload images to GitHub — the web uploader is browser-only. So:
+
+- Push the images to a throwaway `assets/<branch-name>` branch and reference them with `raw.githubusercontent.com` URLs. This keeps binaries out of the PR diff and out of `main`'s history.
+- Note in the PR body that the assets branch should be deleted after merge.
+- Never commit screenshots into the repo tree to make them render.
+- Never screenshot real credentials, real account identifiers, or customer data. Emulator fixtures only.
+
+Example:
+
+```markdown
+## Screenshots
+
+| Before | After |
+| --- | --- |
+| ![before](https://raw.githubusercontent.com/<owner>/<repo>/assets/<branch>/before-dark.png) | ![after](https://raw.githubusercontent.com/<owner>/<repo>/assets/<branch>/after-dark.png) |
+
+Light mode, where the muted border had to change to hold contrast:
+
+![after, light](https://raw.githubusercontent.com/<owner>/<repo>/assets/<branch>/after-light.png)
+
+At 375px, where the three-column grid collapses to one:
+
+![after, narrow](https://raw.githubusercontent.com/<owner>/<repo>/assets/<branch>/after-375.png)
+
+Hosted on the `assets/<branch>` branch to keep them out of this diff; delete it after merge.
+```
+
+Name the files for the axis they vary — `after-light.png`, `after-375.png` — so a reviewer knows what they are looking at before the image loads.
 
 ---
 
@@ -251,8 +336,9 @@ Before creating the PR:
 3. Confirm commits are coherent and readable.
 4. Confirm `CHANGELOG.md` is updated or intentionally skipped.
 5. Run scoped tests and required docs generation for changed areas.
-6. Run final verification appropriate to the change (`go build`, `go vet`, `pnpm run typecheck` from `web/`, or targeted equivalents).
+6. Run final verification. Prefer `make check` (`fmt vet lint test`) over assembling a subset — "targeted equivalents" is how a required CI job gets skipped. At minimum: `go build ./...`, `go vet ./...`, `make lint-go`, and the scoped tests. Lint is not optional and is not implied by the others: CI runs it as its own job, and staticcheck findings pass build, vet and tests. For `web/` changes add `pnpm run typecheck` and `pnpm run lint` — never bare `tsc --noEmit`, which resolves the solution-style `web/tsconfig.json`, compiles zero files and always exits 0 (`tsc -b` is a correct alternative).
 7. Ensure no secrets, local config, or throwaway debug output are included.
+8. For visual changes, capture screenshots and confirm any capture harness (temporary pages under `web/public/`, seeded fixtures) is removed from the branch.
 
 When creating a PR with `gh pr create`, use a heredoc for the body so markdown stays readable.
 

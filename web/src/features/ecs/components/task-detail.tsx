@@ -1,17 +1,15 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Copy, ChevronDown, ChevronRight } from "lucide-react"
+import { ChevronDown, ChevronRight } from "lucide-react"
 import { ecsTasksQueryOptions } from "@/features/ecs/data"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { useToast } from "@/components/ui/toast"
+import { CopyButton } from "@/components/ui/copy-button"
+import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import type { EcsContainer } from "@/types"
 
 export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskId: string }) {
-  const { toast } = useToast()
-
   const { data: tasks = [], isLoading } = useQuery(ecsTasksQueryOptions(clusterName))
 
   const task = tasks.find((t) => {
@@ -37,11 +35,6 @@ export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskI
 
   const shortId = taskId.slice(0, 12)
 
-  const copyToClipboard = (text: string) => {
-    void navigator.clipboard.writeText(text)
-    toast({ title: "Copied!", variant: "success" })
-  }
-
   return (
     <div className="flex w-full flex-col gap-6">
       <PageHeader
@@ -59,21 +52,23 @@ export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskI
       {/* Overview */}
       <section className="space-y-3">
         <h2 className="font-mono text-sm font-semibold text-fg">Overview</h2>
-        <div className="grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-3">
-          <InfoRow label="Task ID" value={taskId} />
-          <InfoRow label="Status" value={task.lastStatus} />
-          <InfoRow label="Desired Status" value={task.desiredStatus} />
-          <InfoRow label="Task Definition" value={shortTaskDef(task.taskDefinitionArn)} />
-          <InfoRow label="Launch Type" value={task.launchType ?? "—"} />
-          <InfoRow
+        <DefinitionList>
+          <Definition label="Task ID" value={taskId} />
+          <Definition label="Status" value={task.lastStatus} />
+          <Definition label="Desired Status" value={task.desiredStatus} />
+          <Definition label="Task Definition" value={shortTaskDef(task.taskDefinitionArn)} />
+          <Definition label="Launch Type" value={task.launchType} />
+          <Definition
             label="Started At"
-            value={task.startedAt ? new Date(task.startedAt).toLocaleString() : "—"}
+            value={task.startedAt ? new Date(task.startedAt).toLocaleString() : null}
           />
           {task.stoppedAt && (
-            <InfoRow label="Stopped At" value={new Date(task.stoppedAt).toLocaleString()} />
+            <Definition label="Stopped At" value={new Date(task.stoppedAt).toLocaleString()} />
           )}
-          {task.stoppedReason && <InfoRow label="Stop Reason" value={task.stoppedReason} />}
-        </div>
+          {task.stoppedReason && (
+            <Definition label="Stop Reason" value={task.stoppedReason} variant="prose" />
+          )}
+        </DefinitionList>
       </section>
 
       {/* Containers */}
@@ -84,7 +79,7 @@ export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskI
         ) : (
           <div className="space-y-3">
             {task.containers.map((c) => (
-              <ContainerCard key={c.name} container={c} onCopy={copyToClipboard} />
+              <ContainerCard key={c.name} container={c} />
             ))}
           </div>
         )}
@@ -93,13 +88,7 @@ export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskI
   )
 }
 
-function ContainerCard({
-  container,
-  onCopy,
-}: {
-  container: EcsContainer
-  onCopy: (text: string) => void
-}) {
+function ContainerCard({ container }: { container: EcsContainer }) {
   const [envExpanded, setEnvExpanded] = useState(false)
 
   return (
@@ -129,14 +118,7 @@ function ContainerCard({
                 >
                   <span>{label}</span>
                   {b.hostPort != null && (
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-5 w-5"
-                      onClick={() => onCopy(String(b.hostPort))}
-                    >
-                      <Copy className="h-3 w-3" />
-                    </Button>
+                    <CopyButton value={String(b.hostPort)} noun="host port" tone="inline" />
                   )}
                 </div>
               )
@@ -173,15 +155,6 @@ function StatusBadge({ status }: { status: string }) {
           ? "danger"
           : "default"
   return <Badge variant={variant}>{status}</Badge>
-}
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-fg-muted">{label}</span>
-      <span className="text-sm text-fg">{value}</span>
-    </div>
-  )
 }
 
 function shortTaskDef(arn: string) {

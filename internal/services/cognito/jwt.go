@@ -204,6 +204,14 @@ func (s *Service) ValidateCognitoToken(ctx context.Context, tokenStr string) (ma
 		return nil, fmt.Errorf("cognito: malformed JWT: %w", err)
 	}
 
+	// The pool ID is read from the issuer's *path*, never by comparing the
+	// issuer string literally. This is a load-bearing accommodation: issuers
+	// are minted on the caller's own port (docs/plans/client-facing-url-minting.md),
+	// so two callers who reached Overcast on different ports hold tokens with
+	// different iss strings for the same pool — and both must validate. Do not
+	// "tidy" this into an equality check against a recomputed issuer; that
+	// breaks every token the moment the API port is remapped. Guarded by
+	// TestPoolIDFromIssuer_ignoresTheOrigin.
 	iss, _ := claims["iss"].(string)
 	poolID, err := poolIDFromIssuer(iss)
 	if err != nil {

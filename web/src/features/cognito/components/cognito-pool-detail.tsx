@@ -11,7 +11,6 @@ import {
   Users,
   ShieldCheck,
   Settings,
-  Copy,
   ChevronDown,
   ChevronRight,
   Pencil,
@@ -65,9 +64,11 @@ import type {
 } from "@/services/api/cognito"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Button } from "@/components/ui/button"
+import { CopyButton } from "@/components/ui/copy-button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
+import { Definition, DefinitionCard, DefinitionList } from "@/components/ui/definition-card"
 import {
   Table,
   TableBody,
@@ -220,22 +221,20 @@ function OverviewTab({ pool, poolId }: { pool: PoolSummary; poolId: string }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <Card>
-        <CardContent className="grid grid-cols-1 gap-x-8 gap-y-4 p-6 text-sm sm:grid-cols-2 lg:grid-cols-3">
-          <DetailRow label="Pool ID" value={pool.id} mono copyable />
-          <DetailRow label="Pool name" value={pool.name} />
-          <DetailRow
-            label="ARN"
-            value={<ArnText arn={pool.arn} />}
-            mono
-            copyable
-            copyText={pool.arn}
-          />
-          <DetailRow label="Created" value={formatDate(pool.creationDate)} />
-          <DetailRow label="Last modified" value={formatDate(pool.lastModifiedDate)} />
-          <DetailRow label="Estimated users" value={String(pool.estimatedNumberOfUsers)} />
-        </CardContent>
-      </Card>
+      <DefinitionCard contentClassName="p-6">
+        <DetailRow label="Pool ID" value={pool.id} copyable />
+        <DetailRow label="Pool name" value={pool.name} />
+        <DetailRow label="Created" value={formatDate(pool.creationDate)} />
+        <DetailRow label="Last modified" value={formatDate(pool.lastModifiedDate)} />
+        <DetailRow label="Estimated users" value={String(pool.estimatedNumberOfUsers)} />
+        <DetailRow
+          label="ARN"
+          value={<ArnText arn={pool.arn} />}
+          copyable
+          copyText={pool.arn}
+          full
+        />
+      </DefinitionCard>
 
       {/* ─── Managed Login / Domain ─────────────────────────────────── */}
       <Card>
@@ -459,7 +458,7 @@ function PasswordPolicyCard({ pool, poolId }: { pool: PoolSummary; poolId: strin
             </div>
           </form>
         ) : (
-          <div className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+          <DefinitionList>
             <PolicyRow label="Minimum length" value={String(current.minimumLength)} />
             <PolicyRow label="Require uppercase" value={current.requireUppercase ? "Yes" : "No"} />
             <PolicyRow label="Require lowercase" value={current.requireLowercase ? "Yes" : "No"} />
@@ -469,7 +468,7 @@ function PasswordPolicyCard({ pool, poolId }: { pool: PoolSummary; poolId: strin
               label="Temp password validity"
               value={`${current.temporaryPasswordValidityDays} day${current.temporaryPasswordValidityDays !== 1 ? "s" : ""}`}
             />
-          </div>
+          </DefinitionList>
         )}
       </CardContent>
     </Card>
@@ -477,12 +476,7 @@ function PasswordPolicyCard({ pool, poolId }: { pool: PoolSummary; poolId: strin
 }
 
 function PolicyRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-xs font-medium text-fg-muted">{label}</span>
-      <span className="text-sm">{value}</span>
-    </div>
-  )
+  return <Definition label={label} value={value} />
 }
 
 const EMPTY_BRANDING: ManagedLoginBranding = {
@@ -788,7 +782,7 @@ function SelfRegistrationCard({ pool, poolId }: { pool: PoolSummary; poolId: str
             </div>
           </form>
         ) : (
-          <div className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
+          <DefinitionList>
             <PolicyRow
               label="Self-registration"
               value={current.allowAdminCreateUserOnly ? "Disabled (admin only)" : "Enabled"}
@@ -797,7 +791,7 @@ function SelfRegistrationCard({ pool, poolId }: { pool: PoolSummary; poolId: str
               label="Unused account expiry"
               value={`${current.unusedAccountValidityDays} day${current.unusedAccountValidityDays !== 1 ? "s" : ""}`}
             />
-          </div>
+          </DefinitionList>
         )}
       </CardContent>
     </Card>
@@ -902,11 +896,11 @@ function EmailConfigCard({ pool, poolId }: { pool: PoolSummary; poolId: string }
             </div>
           </form>
         ) : (
-          <div className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
+          <DefinitionList>
             {emailFields.map(({ key, label }) => (
-              <PolicyRow key={key} label={label} value={current[key] || "—"} />
+              <PolicyRow key={key} label={label} value={current[key]} />
             ))}
-          </div>
+          </DefinitionList>
         )}
       </CardContent>
     </Card>
@@ -1031,15 +1025,15 @@ function VerificationMessagesCard({ pool, poolId }: { pool: PoolSummary; poolId:
             </div>
           </form>
         ) : (
-          <div className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
+          <DefinitionList>
             <PolicyRow
               label="Verification type"
               value={current.defaultEmailOption === "CONFIRM_WITH_LINK" ? "Link" : "Code"}
             />
-            <PolicyRow label="Email subject" value={current.emailSubject || "—"} />
-            <PolicyRow label="Email message" value={current.emailMessage || "—"} />
-            <PolicyRow label="SMS message" value={current.smsMessage || "—"} />
-          </div>
+            <PolicyRow label="Email subject" value={current.emailSubject} />
+            <PolicyRow label="Email message" value={current.emailMessage} />
+            <PolicyRow label="SMS message" value={current.smsMessage} />
+          </DefinitionList>
         )}
       </CardContent>
     </Card>
@@ -1757,47 +1751,36 @@ function ClientDetailPanel({ poolId, clientId }: { poolId: string; clientId: str
   return (
     <div className="border-t bg-bg-muted/30">
       {/* Client info */}
-      <div className="grid grid-cols-1 gap-x-8 gap-y-3 px-6 pt-4 pb-4 text-sm sm:grid-cols-2">
-        <DetailRow label="Client ID" value={detail.clientId} mono copyable />
+      <DefinitionList className="px-6 pt-4 pb-4">
+        <DetailRow label="Client ID" value={detail.clientId} copyable />
         <DetailRow label="Client name" value={detail.clientName} />
         {detail.clientSecret ? (
-          <div className="flex flex-col gap-1">
-            <span className="font-mono text-xs font-medium text-fg-muted">Client secret</span>
-            <div className="flex items-center gap-1.5">
-              <span className="font-mono text-sm break-all">
+          <Definition
+            label="Client secret"
+            value={
+              <span className="flex items-center gap-1.5">
                 {secretVisible ? detail.clientSecret : "••••••••••••••••••••"}
-              </span>
-              <button
-                onClick={() => setSecretVisible((v) => !v)}
-                className="shrink-0 text-fg-subtle transition-colors hover:text-fg"
-                title={secretVisible ? "Hide secret" : "Reveal secret"}
-              >
-                {secretVisible ? (
-                  <EyeOff className="h-3.5 w-3.5" />
-                ) : (
-                  <Eye className="h-3.5 w-3.5" />
-                )}
-              </button>
-              {secretVisible && (
-                <button
-                  onClick={() => {
-                    void navigator.clipboard
-                      .writeText(detail.clientSecret!)
-                      .then(() => toast({ title: "Secret copied to clipboard" }))
-                  }}
-                  className="shrink-0 text-fg-subtle transition-colors hover:text-fg"
-                  title="Copy secret"
+                <IconButton
+                  label={secretVisible ? "Hide secret" : "Reveal secret"}
+                  onClick={() => setSecretVisible((v) => !v)}
                 >
-                  <Copy className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-          </div>
+                  {secretVisible ? (
+                    <EyeOff className="h-3.5 w-3.5" />
+                  ) : (
+                    <Eye className="h-3.5 w-3.5" />
+                  )}
+                </IconButton>
+                {secretVisible && (
+                  <CopyButton value={detail.clientSecret} noun="client secret" tone="inline" />
+                )}
+              </span>
+            }
+          />
         ) : (
           <DetailRow label="Client secret" value="None" />
         )}
         <DetailRow label="Created" value={formatDate(detail.creationDate)} />
-      </div>
+      </DefinitionList>
 
       {/* Token validity section */}
       <div className="border-t border-border/50 px-6 py-4">
@@ -1848,7 +1831,7 @@ function ClientDetailPanel({ poolId, clientId }: { poolId: string; clientId: str
             />
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-x-8 gap-y-2 text-sm sm:grid-cols-3">
+          <DefinitionList>
             <DetailRow
               label="Access token"
               value={formatTokenValidity(
@@ -1870,7 +1853,7 @@ function ClientDetailPanel({ poolId, clientId }: { poolId: string; clientId: str
                 detail.tokenValidityUnits?.refreshToken ?? "days",
               )}
             />
-          </div>
+          </DefinitionList>
         )}
       </div>
 
@@ -2153,42 +2136,63 @@ function formatTokenValidity(value: number, unit: string): string {
 
 // ─── Shared helpers ────────────────────────────────────────────────────────
 
+/**
+ * A `Definition` with Cognito's copy affordance. Typography — the mono value,
+ * the uppercase label — comes from `Definition`; this only adds the button.
+ */
 function DetailRow({
   label,
   value,
-  mono,
   copyable,
   copyText,
+  full,
 }: {
   label: string
   value: React.ReactNode
-  mono?: boolean
   copyable?: boolean
   copyText?: string
+  full?: boolean
 }) {
-  const { toast } = useToast()
-
-  function handleCopy() {
-    const text = copyText ?? (typeof value === "string" ? value : "")
-    void navigator.clipboard.writeText(text).then(() => toast({ title: "Copied to clipboard" }))
-  }
-
   return (
-    <div className="flex flex-col gap-1">
-      <span className="text-xs font-medium text-fg-muted">{label}</span>
-      <div className="flex items-center gap-1.5">
-        <span className={cn("text-sm break-all", mono && "font-mono")}>{value}</span>
-        {copyable && (
-          <button
-            onClick={handleCopy}
-            className="shrink-0 text-fg-subtle transition-colors hover:text-fg"
-            title="Copy"
-          >
-            <Copy className="h-3.5 w-3.5" />
-          </button>
-        )}
-      </div>
-    </div>
+    <Definition
+      label={label}
+      full={full}
+      value={
+        copyable ? (
+          <span className="flex items-center gap-1.5">
+            {value}
+            <CopyButton
+              value={copyText ?? (typeof value === "string" ? value : "")}
+              noun={label}
+              tone="inline"
+            />
+          </span>
+        ) : (
+          value
+        )
+      }
+    />
+  )
+}
+
+/** The bare icon button the pool detail uses for its reveal affordances. */
+function IconButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="shrink-0 text-fg-subtle transition-colors hover:text-fg"
+      title={label}
+    >
+      {children}
+    </button>
   )
 }
 
@@ -2328,60 +2332,45 @@ function UserDetailDialog({
         ) : (
           <div className="flex flex-col gap-5">
             {/* ── Identity & metadata ──────────────────────────── */}
-            <div className="grid grid-cols-2 gap-x-8 gap-y-3">
-              <DetailRow label="Username" value={user.username} mono copyable />
-              <DetailRow
-                label="Subject (sub)"
-                value={user.attributes["sub"] ?? "—"}
-                mono
-                copyable
-              />
+            <DefinitionList>
+              <DetailRow label="Username" value={user.username} copyable />
+              <DetailRow label="Subject (sub)" value={user.attributes["sub"] ?? "—"} copyable />
               <DetailRow label="Status" value={user.userStatus} />
               <DetailRow label="Enabled" value={user.enabled ? "Yes" : "No"} />
               <DetailRow label="Created" value={formatDate(user.userCreateDate)} />
               <DetailRow label="Last modified" value={formatDate(user.userLastModifiedDate)} />
 
               {/* Password reveal */}
-              <div className="flex flex-col gap-1">
-                <span className="font-mono text-xs font-medium text-fg-muted">Password</span>
-                <div className="flex items-center gap-1.5">
-                  <span className="font-mono text-sm">
+              <Definition
+                label="Password"
+                value={
+                  <span className="flex items-center gap-1.5">
                     {passwordVisible && plaintextPassword
                       ? plaintextPassword
                       : plaintextPassword !== null && !passwordVisible
                         ? "••••••••"
                         : "—"}
-                  </span>
-                  <button
-                    className="shrink-0 text-fg-subtle transition-colors hover:text-fg disabled:opacity-40"
-                    title={passwordVisible ? "Hide password" : "Reveal password"}
-                    disabled={fetchingPassword}
-                    onClick={() => void handleRevealPassword()}
-                  >
-                    {fetchingPassword ? (
-                      <Spinner className="h-3.5 w-3.5" />
-                    ) : passwordVisible ? (
-                      <EyeOff className="h-3.5 w-3.5" />
-                    ) : (
-                      <KeyRound className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                  {passwordVisible && plaintextPassword && (
                     <button
-                      className="shrink-0 text-fg-subtle transition-colors hover:text-fg"
-                      title="Copy password"
-                      onClick={() =>
-                        void navigator.clipboard
-                          .writeText(plaintextPassword)
-                          .then(() => toast({ title: "Password copied to clipboard" }))
-                      }
+                      className="shrink-0 text-fg-subtle transition-colors hover:text-fg disabled:opacity-40"
+                      title={passwordVisible ? "Hide password" : "Reveal password"}
+                      disabled={fetchingPassword}
+                      onClick={() => void handleRevealPassword()}
                     >
-                      <Copy className="h-3.5 w-3.5" />
+                      {fetchingPassword ? (
+                        <Spinner className="h-3.5 w-3.5" />
+                      ) : passwordVisible ? (
+                        <EyeOff className="h-3.5 w-3.5" />
+                      ) : (
+                        <KeyRound className="h-3.5 w-3.5" />
+                      )}
                     </button>
-                  )}
-                </div>
-              </div>
-            </div>
+                    {passwordVisible && plaintextPassword && (
+                      <CopyButton value={plaintextPassword} noun="password" tone="inline" />
+                    )}
+                  </span>
+                }
+              />
+            </DefinitionList>
 
             {/* ── Attributes table ────────────────────────────── */}
             <div className="flex flex-col gap-2">
@@ -2451,17 +2440,7 @@ function UserDetailDialog({
                         ) : (
                           <div className="flex items-center gap-1.5">
                             <span className="text-xs break-all">{value}</span>
-                            <button
-                              className="shrink-0 text-fg-subtle transition-colors hover:text-fg"
-                              title="Copy value"
-                              onClick={() =>
-                                void navigator.clipboard
-                                  .writeText(value)
-                                  .then(() => toast({ title: "Copied" }))
-                              }
-                            >
-                              <Copy className="h-3 w-3" />
-                            </button>
+                            <CopyButton value={value} noun={name} tone="inline" />
                           </div>
                         )}
                       </TableCell>
@@ -3030,14 +3009,7 @@ function NewClientSecretDialog({
   open: boolean
   onClose: () => void
 }) {
-  const { toast } = useToast()
   const [show, setShow] = useState(false)
-
-  function handleCopy() {
-    void navigator.clipboard
-      .writeText(client.clientSecret ?? "")
-      .then(() => toast({ title: "Client secret copied" }))
-  }
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -3067,14 +3039,12 @@ function NewClientSecretDialog({
               >
                 {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
-              <button
-                type="button"
-                className="shrink-0 text-fg-muted hover:text-fg"
-                onClick={handleCopy}
-                title="Copy secret"
-              >
-                <Copy className="h-4 w-4" />
-              </button>
+              <CopyButton
+                value={client.clientSecret ?? ""}
+                noun="client secret"
+                tone="inline"
+                className="text-fg-muted"
+              />
             </div>
           </div>
         </div>

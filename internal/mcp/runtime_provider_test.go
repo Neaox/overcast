@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -189,10 +190,6 @@ func TestRuntimeProvider_ListServices_CountsKeysAcrossRealServiceNamespaces(t *t
 	store := state.NewMemoryStore()
 	cfg := &config.Config{
 		Region: "us-east-1",
-		Services: map[string]bool{
-			"iam": true,
-			"s3":  true,
-		},
 	}
 	provider := NewRuntimeProvider(cfg, store)
 
@@ -212,9 +209,11 @@ func TestRuntimeProvider_ListServices_CountsKeysAcrossRealServiceNamespaces(t *t
 	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("unmarshal toolListServices() result: %v", err)
 	}
+	// Every service is always running, so all of them are listed; what the
+	// tool reports per service is how many keys it actually owns.
 	services, _ := body["services"].([]any)
-	if len(services) != 2 {
-		t.Fatalf("services length = %d, want 2 (%#v)", len(services), body["services"])
+	if len(services) != len(config.AllServices()) {
+		t.Fatalf("services length = %d, want %d (%#v)", len(services), len(config.AllServices()), body["services"])
 	}
 	counts := map[string]float64{}
 	for _, entry := range services {
@@ -229,6 +228,10 @@ func TestRuntimeProvider_ListServices_CountsKeysAcrossRealServiceNamespaces(t *t
 	if counts["iam"] != 2 {
 		t.Fatalf("iam key_count = %v, want 2", counts["iam"])
 	}
+	// A service nothing was seeded into reports zero rather than dropping out.
+	if counts["sqs"] != 0 {
+		t.Fatalf("sqs key_count = %v, want 0", counts["sqs"])
+	}
 }
 
 func TestRuntimeProvider_GetHealthAndConfigTools(t *testing.T) {
@@ -242,7 +245,6 @@ func TestRuntimeProvider_GetHealthAndConfigTools(t *testing.T) {
 		Version:   "dev",
 		LogLevel:  "info",
 		Debug:     true,
-		Services:  map[string]bool{"s3": true},
 		State:     config.StateBackendMemory,
 	}
 	provider := NewRuntimeProvider(cfg, store)
@@ -256,8 +258,8 @@ func TestRuntimeProvider_GetHealthAndConfigTools(t *testing.T) {
 		t.Fatalf("status = %#v, want ok", health["status"])
 	}
 	services, _ := health["services"].([]string)
-	if len(services) != 1 || services[0] != "s3" {
-		t.Fatalf("services = %#v, want [s3]", health["services"])
+	if len(services) != len(config.AllServices()) {
+		t.Fatalf("services = %#v, want all %d services", health["services"], len(config.AllServices()))
 	}
 
 	configOut, err := provider.toolGetConfig(ctx, nil)
@@ -288,7 +290,7 @@ func TestRuntimeProvider_GetConfigRequiresDebugWhenDisabled(t *testing.T) {
 func TestRuntimeProvider_GetServiceStateTool(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Debug: true, Services: map[string]bool{"s3": true}}
+	cfg := &config.Config{Debug: true}
 	provider := NewRuntimeProvider(cfg, store)
 
 	if err := store.Set(ctx, "s3:buckets", "demo-a", "{}a"); err != nil {
@@ -318,7 +320,7 @@ func TestRuntimeProvider_GetServiceStateTool(t *testing.T) {
 func TestRuntimeProvider_GetRecentEventsTool(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	provider := NewRuntimeProvider(&config.Config{Services: map[string]bool{"s3": true, "sqs": true}}, store)
+	provider := NewRuntimeProvider(&config.Config{}, store)
 
 	bus := events.NewBus()
 	defer bus.Stop()
@@ -382,7 +384,7 @@ func TestRuntimeProvider_GetRecentEventsTool(t *testing.T) {
 
 func TestRuntimeProvider_EventBusMutation_EmitsResourceListChanged(t *testing.T) {
 	store := state.NewMemoryStore()
-	provider := NewRuntimeProvider(&config.Config{Region: "us-east-1", Services: map[string]bool{"s3": true}}, store)
+	provider := NewRuntimeProvider(&config.Config{Region: "us-east-1"}, store)
 
 	listChangedCount := 0
 	updatedURIs := make([]string, 0, 1)
@@ -412,7 +414,7 @@ func TestRuntimeProvider_EventBusMutation_EmitsResourceListChanged(t *testing.T)
 
 func TestRuntimeProvider_EventBusNonMutation_DoesNotEmitResourceListChanged(t *testing.T) {
 	store := state.NewMemoryStore()
-	provider := NewRuntimeProvider(&config.Config{Region: "us-east-1", Services: map[string]bool{"s3": true}}, store)
+	provider := NewRuntimeProvider(&config.Config{Region: "us-east-1"}, store)
 
 	listChangedCount := 0
 	updatedCount := 0
@@ -439,7 +441,7 @@ func TestRuntimeProvider_EventBusNonMutation_DoesNotEmitResourceListChanged(t *t
 
 func TestRuntimeProvider_EventBusUpdate_EmitsResourceUpdatedWithoutListChanged(t *testing.T) {
 	store := state.NewMemoryStore()
-	provider := NewRuntimeProvider(&config.Config{Region: "us-west-2", Services: map[string]bool{"lambda": true}}, store)
+	provider := NewRuntimeProvider(&config.Config{Region: "us-west-2"}, store)
 
 	listChangedCount := 0
 	updatedURIs := make([]string, 0, 1)
@@ -471,7 +473,7 @@ func TestRuntimeProvider_EventBusUpdate_EmitsResourceUpdatedWithoutListChanged(t
 func TestRuntimeProvider_ProbeKVStoreSupportsCursorAndLimit(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", Services: map[string]bool{"s3": true}}
+	cfg := &config.Config{Region: "us-east-1"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	if err := store.Set(ctx, "s3:buckets", "alpha", "111"); err != nil {
@@ -506,7 +508,7 @@ func TestRuntimeProvider_ProbeKVStoreSupportsCursorAndLimit(t *testing.T) {
 func TestRuntimeProvider_ProbeKVStoreIncludesValuesAndPatternFilter(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", Services: map[string]bool{"ssm": true}}
+	cfg := &config.Config{Region: "us-east-1"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	if err := store.Set(ctx, ssmStoreNamespace, ssmParameterPrefix+"/app/db/password", "very-long-secret-value-preview-me"); err != nil {
@@ -539,7 +541,7 @@ func TestRuntimeProvider_ProbeKVStoreIncludesValuesAndPatternFilter(t *testing.T
 func TestRuntimeProvider_ListAndReadS3Resources(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", Services: map[string]bool{"s3": true}}
+	cfg := &config.Config{Region: "us-east-1"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	seedRuntimeJSON(t, ctx, store, "s3:buckets", "demo-bucket", map[string]any{"name": "demo-bucket", "region": "us-east-1"})
@@ -574,7 +576,7 @@ func TestRuntimeProvider_ListAndReadS3Resources(t *testing.T) {
 func TestRuntimeProvider_S3MutationTools(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", Services: map[string]bool{"s3": true}}
+	cfg := &config.Config{Region: "us-east-1"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	createParams, _ := json.Marshal(map[string]any{"name": "unit-bucket", "tags": map[string]string{"team": "platform"}})
@@ -619,7 +621,7 @@ func TestRuntimeProvider_S3MutationTools(t *testing.T) {
 func TestRuntimeProvider_ListAndReadSQSResources(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", Services: map[string]bool{"sqs": true}}
+	cfg := &config.Config{Region: "us-east-1"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	queue := map[string]any{
@@ -666,7 +668,6 @@ func TestRuntimeProvider_SQSMutationTools(t *testing.T) {
 		AccountID: "000000000000",
 		Hostname:  "localhost",
 		Port:      4566,
-		Services:  map[string]bool{"sqs": true},
 	}
 	provider := NewRuntimeProvider(cfg, store)
 
@@ -717,7 +718,6 @@ func TestRuntimeProvider_SQSPurgeQueue(t *testing.T) {
 		AccountID: "000000000000",
 		Hostname:  "localhost",
 		Port:      4566,
-		Services:  map[string]bool{"sqs": true},
 	}
 	provider := NewRuntimeProvider(cfg, store)
 
@@ -790,7 +790,7 @@ func TestRuntimeProvider_SQSPurgeQueue(t *testing.T) {
 func TestRuntimeProvider_ListAndReadDynamoDBResources(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", Services: map[string]bool{"dynamodb": true}}
+	cfg := &config.Config{Region: "us-east-1"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	table := dynamodb.Table{
@@ -850,7 +850,6 @@ func TestRuntimeProvider_DynamoDBMutationTools(t *testing.T) {
 	cfg := &config.Config{
 		Region:    "us-east-1",
 		AccountID: "000000000000",
-		Services:  map[string]bool{"dynamodb": true},
 	}
 	provider := NewRuntimeProvider(cfg, store)
 
@@ -908,7 +907,7 @@ func TestRuntimeProvider_DynamoDBMutationTools(t *testing.T) {
 func TestRuntimeProvider_ListAndReadSNSResources(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", Services: map[string]bool{"sns": true}}
+	cfg := &config.Config{Region: "us-east-1"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	topic := sns.Topic{
@@ -965,7 +964,6 @@ func TestRuntimeProvider_SNSMutationTools(t *testing.T) {
 	cfg := &config.Config{
 		Region:    "us-east-1",
 		AccountID: "000000000000",
-		Services:  map[string]bool{"sns": true},
 	}
 	provider := NewRuntimeProvider(cfg, store)
 
@@ -1014,7 +1012,7 @@ func TestRuntimeProvider_SNSMutationTools(t *testing.T) {
 func TestRuntimeProvider_ListAndReadKMSResources(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", Services: map[string]bool{"kms": true}}
+	cfg := &config.Config{Region: "us-east-1"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	createdAt := time.Unix(1710000000, 0).UTC()
@@ -1073,7 +1071,7 @@ func TestRuntimeProvider_ListAndReadKMSResources(t *testing.T) {
 func TestRuntimeProvider_KMSMutationTools(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000", Services: map[string]bool{"kms": true}}
+	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	createParams, _ := json.Marshal(map[string]any{
@@ -1139,7 +1137,7 @@ func TestRuntimeProvider_KMSMutationTools(t *testing.T) {
 func TestRuntimeProvider_ListAndReadStepFunctionsResources(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", Services: map[string]bool{"stepfunctions": true}}
+	cfg := &config.Config{Region: "us-east-1"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	stateMachine := stepfunctions.StateMachine{
@@ -1217,7 +1215,6 @@ func TestRuntimeProvider_StepFunctionsMutationTools(t *testing.T) {
 	cfg := &config.Config{
 		Region:    "us-east-1",
 		AccountID: "000000000000",
-		Services:  map[string]bool{"stepfunctions": true},
 	}
 	provider := NewRuntimeProvider(cfg, store)
 
@@ -1279,7 +1276,7 @@ func TestRuntimeProvider_StepFunctionsMutationTools(t *testing.T) {
 func TestRuntimeProvider_ListAndReadSSMResources(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", Services: map[string]bool{"ssm": true}}
+	cfg := &config.Config{Region: "us-east-1"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	parameter := ssm.ParameterRecord{
@@ -1338,10 +1335,6 @@ func TestRuntimeProvider_RuntimeInventory_ListsEnabledServicesAndResources(t *te
 	store := state.NewMemoryStore()
 	cfg := &config.Config{
 		Region: "us-east-1",
-		Services: map[string]bool{
-			"s3":  true,
-			"iam": true,
-		},
 	}
 	provider := NewRuntimeProvider(cfg, store)
 
@@ -1354,9 +1347,16 @@ func TestRuntimeProvider_RuntimeInventory_ListsEnabledServicesAndResources(t *te
 	}
 	body := out.(map[string]any)
 
+	// Every service is always running, so the inventory covers all of them;
+	// the per-service entries below are what distinguishes seeded from empty.
 	enabled := body["enabled_services"].([]string)
-	if len(enabled) != 2 || enabled[0] != "iam" || enabled[1] != "s3" {
-		t.Fatalf("unexpected enabled_services: %#v", enabled)
+	if len(enabled) != len(config.AllServices()) {
+		t.Fatalf("enabled_services = %d entries, want all %d: %#v", len(enabled), len(config.AllServices()), enabled)
+	}
+	for _, want := range []string{"iam", "s3"} {
+		if !slices.Contains(enabled, want) {
+			t.Fatalf("enabled_services missing %q: %#v", want, enabled)
+		}
 	}
 
 	entries := body["services"].([]map[string]any)
@@ -1409,7 +1409,7 @@ func TestRuntimeProvider_RuntimeInventory_ListsEnabledServicesAndResources(t *te
 func TestRuntimeProvider_RuntimeInventory_ServiceFilter(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", Services: map[string]bool{"s3": true, "iam": true}}
+	cfg := &config.Config{Region: "us-east-1"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	seedRuntimeJSON(t, ctx, store, "iam:roles", "only", iam.Role{RoleName: "only", RoleId: "AROA1234567890ONLY", Arn: "arn:aws:iam::000000000000:role/only", Path: "/", CreateDate: "2026-04-21T00:00:00Z"})
@@ -1432,7 +1432,7 @@ func TestRuntimeProvider_RuntimeInventory_ServiceFilter(t *testing.T) {
 func TestRuntimeProvider_RuntimeInventoryResources_ListAndRead(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", Services: map[string]bool{"s3": true, "iam": true}}
+	cfg := &config.Config{Region: "us-east-1"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	seedRuntimeJSON(t, ctx, store, "s3:buckets", "demo-bucket", map[string]any{"name": "demo-bucket", "region": "us-east-1"})
@@ -1478,7 +1478,7 @@ func TestRuntimeProvider_RuntimeInventoryResources_ListAndRead(t *testing.T) {
 func TestRuntimeProvider_ListAndReadIAMResources(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", Services: map[string]bool{"iam": true}}
+	cfg := &config.Config{Region: "us-east-1"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	seedRuntimeJSON(t, ctx, store, "iam:users", "alice", iam.User{UserName: "alice", UserId: "AIDA1234567890ALICE", Arn: "arn:aws:iam::000000000000:user/alice", Path: "/", CreateDate: "2026-04-21T00:00:00Z"})
@@ -1533,7 +1533,7 @@ func TestRuntimeProvider_ListAndReadIAMResources(t *testing.T) {
 func TestRuntimeProvider_ListAndReadACMResources(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", Services: map[string]bool{"acm": true}}
+	cfg := &config.Config{Region: "us-east-1"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	certARN := "arn:aws:acm:us-east-1:000000000000:certificate/demo-cert"
@@ -1565,7 +1565,7 @@ func TestRuntimeProvider_ListAndReadACMResources(t *testing.T) {
 func TestRuntimeProvider_IAMMutationTools(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000", Services: map[string]bool{"iam": true}}
+	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	createUserParams, _ := json.Marshal(map[string]any{"name": "unit-user", "tags": map[string]string{"team": "platform"}})
@@ -1717,7 +1717,7 @@ func TestRuntimeProvider_IAMMutationTools(t *testing.T) {
 func TestRuntimeProvider_SSMMutationTools(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", Services: map[string]bool{"ssm": true}}
+	cfg := &config.Config{Region: "us-east-1"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	putParams, _ := json.Marshal(map[string]any{
@@ -1775,7 +1775,7 @@ func TestRuntimeProvider_SSMMutationTools(t *testing.T) {
 func TestRuntimeProvider_ListAndReadSecretsManagerResources(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", Services: map[string]bool{"secretsmanager": true}}
+	cfg := &config.Config{Region: "us-east-1"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	secret := secretsmanager.Secret{
@@ -1838,7 +1838,7 @@ func TestRuntimeProvider_ListAndReadSecretsManagerResources(t *testing.T) {
 func TestRuntimeProvider_SecretsManagerMutationTools(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000", Services: map[string]bool{"secretsmanager": true}}
+	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	createParams, _ := json.Marshal(map[string]any{
@@ -1907,7 +1907,7 @@ func TestRuntimeProvider_SecretsManagerMutationTools(t *testing.T) {
 func TestRuntimeProvider_ListAndReadKinesisResources(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", Services: map[string]bool{"kinesis": true}}
+	cfg := &config.Config{Region: "us-east-1"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	stream := kinesis.Stream{
@@ -1963,7 +1963,7 @@ func TestRuntimeProvider_ListAndReadKinesisResources(t *testing.T) {
 func TestRuntimeProvider_KinesisMutationTools(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000", Services: map[string]bool{"kinesis": true}}
+	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	createParams, _ := json.Marshal(map[string]any{
@@ -2023,7 +2023,6 @@ func TestRuntimeProvider_ACMMutationTools(t *testing.T) {
 	cfg := &config.Config{
 		Region:    "us-east-1",
 		AccountID: "000000000000",
-		Services:  map[string]bool{"acm": true},
 	}
 	provider := NewRuntimeProvider(cfg, store)
 
@@ -2129,19 +2128,6 @@ func TestRuntimeProvider_AllListedOCResourcesResolve(t *testing.T) {
 	store := state.NewMemoryStore()
 	cfg := &config.Config{
 		Region: "us-east-1",
-		Services: map[string]bool{
-			"s3":             true,
-			"sqs":            true,
-			"dynamodb":       true,
-			"sns":            true,
-			"kinesis":        true,
-			"kms":            true,
-			"stepfunctions":  true,
-			"ssm":            true,
-			"secretsmanager": true,
-			"iam":            true,
-			"acm":            true,
-		},
 	}
 	provider := NewRuntimeProvider(cfg, store)
 
@@ -2164,7 +2150,7 @@ func TestRuntimeProvider_AllListedOCResourcesResolve(t *testing.T) {
 func TestRuntimeProvider_ListAndReadLambdaResources(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", Services: map[string]bool{"lambda": true}}
+	cfg := &config.Config{Region: "us-east-1"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	seedRuntimeJSON(t, ctx, store, "lambda:functions", "us-east-1/my-func", lambda.Function{
@@ -2206,7 +2192,7 @@ func TestRuntimeProvider_ListAndReadLambdaResources(t *testing.T) {
 func TestRuntimeProvider_ListAndReadECRResources(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", Services: map[string]bool{"ecr": true}}
+	cfg := &config.Config{Region: "us-east-1"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	seedRuntimeJSON(t, ctx, store, "ecr:repositories", "us-east-1/my-repo", ecr.Repository{
@@ -2247,7 +2233,7 @@ func TestRuntimeProvider_ListAndReadECRResources(t *testing.T) {
 func TestRuntimeProvider_ListAndReadECSResources(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemoryStore()
-	cfg := &config.Config{Region: "us-east-1", Services: map[string]bool{"ecs": true}}
+	cfg := &config.Config{Region: "us-east-1"}
 	provider := NewRuntimeProvider(cfg, store)
 
 	seedRuntimeJSON(t, ctx, store, "ecs:clusters", "us-east-1/my-cluster", ecs.Cluster{

@@ -311,7 +311,12 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("/mcp/", mcpSrv.Handler())
 	}
 	if s.uiFS != nil {
-		mux.Handle("GET /", http.FileServer(http.FS(s.uiFS)))
+		// Registered as "/" rather than "GET /": against the "/mcp/" pattern
+		// above, "GET /" is more specific in method but less specific in path,
+		// which ServeMux rejects as a conflict at registration time (a panic,
+		// not an error). Plain "/" loses cleanly to "/mcp/" instead. The file
+		// server answers non-GET requests with 405 by itself.
+		mux.Handle("/", http.FileServer(http.FS(s.uiFS)))
 	}
 	return mux
 }

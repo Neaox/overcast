@@ -34,6 +34,7 @@ import (
 	"unicode"
 
 	"github.com/Neaox/overcast/internal/awsapi"
+	"github.com/Neaox/overcast/internal/config"
 )
 
 // CapabilityDecl is a capability entry parsed from a capabilities_dev.go file.
@@ -89,6 +90,17 @@ func main() {
 
 	failures := 0
 	var allCaps []CapabilityDecl
+
+	// Checked on every run, not just --write-docs, and fatal rather than
+	// counted: a service list that has drifted from config.AllServices makes
+	// the generated token tables wrong, so carrying on would overwrite correct
+	// rows with incorrect ones before anyone reads the error.
+	if problems := validateServiceNames(); len(problems) > 0 {
+		for _, problem := range problems {
+			fmt.Fprintf(os.Stderr, "capgen: service tokens: %s\n", problem)
+		}
+		fatalf("service list is out of sync with config.AllServices (%d problem(s) above)", len(problems))
+	}
 
 	for _, svc := range services {
 		svcDir := filepath.Join(root, "internal", "services", serviceDir(svc))
@@ -164,6 +176,12 @@ func main() {
 			fmt.Fprintf(os.Stderr, "capgen: docs/README.md: %v\n", err)
 		} else if changed {
 			fmt.Println("capgen: updated docs/README.md service index")
+		}
+		if changed, err := updateDocsReadmeServiceNames(root); err != nil {
+			fmt.Fprintf(os.Stderr, "capgen: docs/README.md: %v\n", err)
+			failures++
+		} else if changed {
+			fmt.Println("capgen: updated docs/README.md service names")
 		}
 		if changed, err := updateRootReadmeServiceList(root, allCaps); err != nil {
 			fmt.Fprintf(os.Stderr, "capgen: README.md: %v\n", err)
@@ -1452,6 +1470,82 @@ var serviceDocFileNames = map[string]string{
 	"elbv2": "elb",
 }
 
+// serviceConfigNames maps a capgen service key to the config service name when
+// the two differ. capgen keys CloudWatch Logs by its documentation name;
+// config.AllServices calls it "logs". Every other key is its own name, and
+// validateServiceNames enforces that this stays true.
+var serviceConfigNames = map[string]string{
+	"cloudwatch-logs": "logs",
+}
+
+// serviceCDK describes a service in CDK terms, for the token tables in
+// docs/README.md and docs/cdk.md. This is the one part of those tables with no
+// derivable source in the repository, so it is declared here and rendered into
+// both documents — the two can restate the mapping without drifting apart.
+//
+// validateServiceNames requires an entry for every service, so adding a
+// service fails the generator until its CDK mapping is filled in.
+type serviceCDK struct {
+	// Modules are aws-cdk-lib submodule names ("aws-events"), most-used
+	// first. Empty when the service has no construct module at all.
+	Modules []string
+	// NoModule explains an empty Modules, e.g. "used by the CDK CLI itself".
+	// Rendered in place of the module list.
+	NoModule string
+}
+
+var serviceCDKInfo = map[string]serviceCDK{
+	"s3":              {Modules: []string{"aws-s3"}},
+	"sqs":             {Modules: []string{"aws-sqs"}},
+	"sns":             {Modules: []string{"aws-sns"}},
+	"ses":             {Modules: []string{"aws-ses"}},
+	"dynamodb":        {Modules: []string{"aws-dynamodb"}},
+	"dynamodbstreams": {NoModule: "enabled by the `stream` prop on `aws-dynamodb`"},
+	"lambda":          {Modules: []string{"aws-lambda"}},
+	"pipes":           {Modules: []string{"aws-pipes"}},
+	"cloudwatch-logs": {Modules: []string{"aws-logs"}},
+	"secretsmanager":  {Modules: []string{"aws-secretsmanager"}},
+	"sts":             {NoModule: "used by the CDK CLI itself"},
+	"ssm":             {Modules: []string{"aws-ssm"}},
+	"kms":             {Modules: []string{"aws-kms"}},
+	"iam":             {Modules: []string{"aws-iam"}},
+	"cloudformation":  {Modules: []string{"aws-cloudformation"}},
+	"ec2":             {Modules: []string{"aws-ec2"}},
+	"rds":             {Modules: []string{"aws-rds"}},
+	"ecs":             {Modules: []string{"aws-ecs"}},
+	"ecr":             {Modules: []string{"aws-ecr", "aws-ecr-assets"}},
+	"eks":             {Modules: []string{"aws-eks"}},
+	"cognito":         {Modules: []string{"aws-cognito"}},
+	"stepfunctions":   {Modules: []string{"aws-stepfunctions", "aws-stepfunctions-tasks"}},
+	"waf":             {Modules: []string{"aws-wafv2"}},
+	"shield":          {Modules: []string{"aws-shield"}},
+	"appsync":         {Modules: []string{"aws-appsync"}},
+	"apigateway":      {Modules: []string{"aws-apigateway", "aws-apigatewayv2"}},
+	"cloudfront":      {Modules: []string{"aws-cloudfront", "aws-cloudfront-origins"}},
+	"eventbridge":     {Modules: []string{"aws-events", "aws-events-targets"}},
+	"kinesis":         {Modules: []string{"aws-kinesis"}},
+	"appregistry":     {Modules: []string{"aws-servicecatalogappregistry"}},
+	"cloudwatch":      {Modules: []string{"aws-cloudwatch", "aws-cloudwatch-actions"}},
+	"acm":             {Modules: []string{"aws-certificatemanager"}},
+	"opensearch":      {Modules: []string{"aws-opensearchservice"}},
+	"appconfig":       {Modules: []string{"aws-appconfig"}},
+	"appconfigdata":   {NoModule: "runtime data plane; no constructs"},
+	"bedrock":         {Modules: []string{"aws-bedrock"}},
+	"glue":            {Modules: []string{"aws-glue"}},
+	"firehose":        {Modules: []string{"aws-kinesisfirehose"}},
+	"athena":          {Modules: []string{"aws-athena"}},
+	"elasticache":     {Modules: []string{"aws-elasticache"}},
+	"msk":             {Modules: []string{"aws-msk"}},
+	"scheduler":       {Modules: []string{"aws-scheduler"}},
+	"route53":         {Modules: []string{"aws-route53", "aws-route53-targets"}},
+	"elbv2":           {Modules: []string{"aws-elasticloadbalancingv2"}},
+	"organizations":   {NoModule: "no constructs"},
+	"autoscaling":     {Modules: []string{"aws-autoscaling", "aws-applicationautoscaling"}},
+	"cloudtrail":      {Modules: []string{"aws-cloudtrail"}},
+	"backup":          {Modules: []string{"aws-backup"}},
+	"transfer":        {Modules: []string{"aws-transfer"}},
+}
+
 type serviceLink struct {
 	name string
 	link string
@@ -1597,24 +1691,9 @@ func regexpMustReplace(content, pattern, replacement string, changed *bool) stri
 }
 
 func updateDocsReadmeServiceIndex(root string, allCaps []CapabilityDecl) (bool, error) {
-	const beginMarker = "<!-- BEGIN overcast:service-index -->"
-	const endMarker = "<!-- END overcast:service-index -->"
-
 	opCounts := map[string]int{}
 	for _, c := range allCaps {
 		opCounts[c.Service]++
-	}
-
-	path := filepath.Join(root, "docs", "README.md")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return false, err
-	}
-	content := string(raw)
-	beginIdx := strings.Index(content, beginMarker)
-	endIdx := strings.Index(content, endMarker)
-	if beginIdx < 0 || endIdx <= beginIdx {
-		return false, fmt.Errorf("missing %s/%s markers", beginMarker, endMarker)
 	}
 
 	rows := make([][]string, 0, len(opCounts))
@@ -1636,19 +1715,133 @@ func updateDocsReadmeServiceIndex(root string, allCaps []CapabilityDecl) (bool, 
 		})
 	}
 
-	var buf strings.Builder
-	buf.WriteString(beginMarker + "\n\n")
-	buf.WriteString(formatTable([]string{"Service", "Doc", "Ops", "Coverage tier"}, rows))
-	buf.WriteString("\n" + endMarker)
+	return replaceMarkedSection(
+		filepath.Join(root, "docs", "README.md"),
+		"<!-- BEGIN overcast:service-index -->",
+		"<!-- END overcast:service-index -->",
+		formatTable([]string{"Service", "Doc", "Ops", "Coverage tier"}, rows),
+	)
+}
 
-	replacement := buf.String()
-	oldSection := content[beginIdx : endIdx+len(endMarker)]
-	if replacement == oldSection {
+// replaceMarkedSection rewrites the sentinel-bracketed block in path with body,
+// reporting whether the file changed.
+func replaceMarkedSection(path, beginMarker, endMarker, body string) (bool, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	content := string(raw)
+	beginIdx := strings.Index(content, beginMarker)
+	endIdx := strings.Index(content, endMarker)
+	if beginIdx < 0 || endIdx <= beginIdx {
+		return false, fmt.Errorf("%s: missing %s/%s markers", filepath.Base(path), beginMarker, endMarker)
+	}
+
+	replacement := beginMarker + "\n\n" + body + "\n" + endMarker
+	if replacement == content[beginIdx:endIdx+len(endMarker)] {
 		return false, nil
 	}
 	content = content[:beginIdx] + replacement + content[endIdx+len(endMarker):]
 	return true, os.WriteFile(path, []byte(content), 0o644)
 }
+
+// serviceConfigName returns the config service name for a capgen service
+// key. The two are the same for all but CloudWatch Logs; see
+// serviceConfigNames.
+func serviceConfigName(service string) string {
+	if token, ok := serviceConfigNames[service]; ok {
+		return token
+	}
+	return service
+}
+
+// validateServiceNames checks capgen's service list against the services that
+// actually exist, and requires a CDK mapping for each.
+//
+// This is what makes the generated token tables trustworthy. Without it, a
+// service added to config.allServices would simply be absent from the
+// documented list, and a service renamed there would leave a stale row behind
+// — in both cases silently, because generation would still succeed.
+func validateServiceNames() []string {
+	var problems []string
+
+	accepted := map[string]bool{}
+	for _, name := range config.AllServices() {
+		accepted[name] = true
+	}
+
+	claimed := map[string]bool{}
+	for _, svc := range statusTableOrder {
+		name := serviceConfigName(svc)
+		if !accepted[name] {
+			problems = append(problems, fmt.Sprintf("service %q maps to token %q, which is not a known service", svc, name))
+			continue
+		}
+		if claimed[name] {
+			problems = append(problems, fmt.Sprintf("token %q is claimed by more than one service key", name))
+		}
+		claimed[name] = true
+
+		info, ok := serviceCDKInfo[svc]
+		if !ok {
+			problems = append(problems, fmt.Sprintf("service %q has no serviceCDKInfo entry; add its aws-cdk-lib module, or a NoModule reason", svc))
+			continue
+		}
+		if len(info.Modules) == 0 && info.NoModule == "" {
+			problems = append(problems, fmt.Sprintf("service %q has neither Modules nor a NoModule reason", svc))
+		}
+		if len(info.Modules) > 0 && info.NoModule != "" {
+			problems = append(problems, fmt.Sprintf("service %q sets both Modules and NoModule; NoModule is only for services with no construct module", svc))
+		}
+	}
+
+	for _, name := range config.AllServices() {
+		if !claimed[name] {
+			problems = append(problems, fmt.Sprintf("service %q has no capgen service key; add it to statusTableOrder and statusDisplayNames", name))
+		}
+	}
+
+	sort.Strings(problems)
+	return problems
+}
+
+// cdkModuleCell renders the CDK module column of the docs/README.md token
+// table: a list of modules, or an em-dash and the reason there are none.
+func cdkModuleCell(info serviceCDK) string {
+	if len(info.Modules) == 0 {
+		return "— (" + info.NoModule + ")"
+	}
+	quoted := make([]string, len(info.Modules))
+	for i, m := range info.Modules {
+		quoted[i] = "`" + m + "`"
+	}
+	return strings.Join(quoted, ", ")
+}
+
+// updateDocsReadmeServiceNames regenerates the service-name table in the
+// configuration reference.
+func updateDocsReadmeServiceNames(root string) (bool, error) {
+	rows := make([][]string, 0, len(statusTableOrder))
+	for _, svc := range statusTableOrder {
+		name := statusDisplayNames[svc]
+		if name == "" {
+			name = svc
+		}
+		rows = append(rows, []string{
+			"`" + serviceConfigName(svc) + "`",
+			name,
+			cdkModuleCell(serviceCDKInfo[svc]),
+		})
+	}
+
+	return replaceMarkedSection(
+		filepath.Join(root, "docs", "README.md"),
+		"<!-- BEGIN overcast:service-names -->",
+		"<!-- END overcast:service-names -->",
+		formatTable([]string{"Name", "Service", "CDK module (`aws-cdk-lib/…`)"}, rows),
+	)
+}
+
 
 func updateRootReadmeServiceList(root string, allCaps []CapabilityDecl) (bool, error) {
 	const beginMarker = "<!-- BEGIN overcast:root-service-list -->"

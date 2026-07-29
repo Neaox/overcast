@@ -43,7 +43,7 @@ func decodeBody(t *testing.T, resp *http.Response) map[string]any {
 }
 
 func TestDescribeOrganization(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("organizations"))
+	srv := helpers.NewTestServer(t)
 
 	resp := orgsCall(t, http.MethodPost, srv.URL+"/", nil)
 	if resp.StatusCode != http.StatusOK {

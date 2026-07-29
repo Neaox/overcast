@@ -21,6 +21,8 @@ vars:
   VERSION:
     sh: cat VERSION
   ACTIONLINT_VERSION: v1.7.7
+  # Keep in sync with the Makefile and .devcontainer/Dockerfile.
+  GOLANGCI_LINT_VERSION: v2.8.0
 
 tasks:
   default:
@@ -127,6 +129,13 @@ tasks:
     cmds:
       - go run ./cmd/awsmodelgen -models "{{.AWS_MODELS_DIR}}" -output internal/awsapi/manifest.gen.go -source-revision "{{.AWS_MODELS_REVISION}}"
 
+  aws-models-check:
+    desc: Validate the AWS operation corpus; set AWS_MODELS_DIR for a full regeneration diff
+    cmds:
+      - go test -count=1 ./cmd/awsmodelgen ./internal/awsapi ./internal/protocol/codec ./tests/integration/router
+      - go run -tags dev ./cmd/capgen --check-model
+      - '{{if .AWS_MODELS_DIR}}go run ./cmd/awsmodelgen -models "{{.AWS_MODELS_DIR}}" -output internal/awsapi/manifest.gen.go -source-revision "{{.AWS_MODELS_REVISION}}" -check{{else}}echo "AWS_MODELS_DIR not set; skipping full regeneration diff"{{end}}'
+
   docs-index:
     desc: Regenerate the committed docs search/navigation index (run after editing docs/, then commit)
     sources:
@@ -155,6 +164,11 @@ tasks:
       - go run ./scripts/docs-index.go --check
       - git diff --exit-code README.md STATUS.md docs/README.md docs/services/ docs/generated/service-support.json
 
+  compat-registry-check:
+    desc: Validate compat/suites/registry.json against registry.schema.json
+    cmds:
+      - python3 scripts/validate-compat-registry.py
+
   # ---- Quality --------------------------------------------------------------
 
   bench:
@@ -169,7 +183,7 @@ tasks:
   lint-go:
     desc: Run golangci-lint for Go/emulation code
     cmds:
-      - golangci-lint run ./...
+      - go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}} run ./...
 
   lint-web:
     desc: Run web UI linting
@@ -216,6 +230,35 @@ tasks:
     desc: CI pipeline, Go stages only (docs index, vet, build, unit tests)
     cmds:
       - bash scripts/ci-local.sh --go-only
+
+  # ---- Compatibility suites -------------------------------------------------
+  # All of these manage their own throwaway Overcast instance on free ports —
+  # 4566/4567 stay yours. Pass --endpoint to target an instance you run.
+
+  compat:
+    desc: Run the compat suites headlessly (starts its own Overcast instance)
+    cmds:
+      - go run ./cmd/compat {{.CLI_ARGS}}
+
+  compat-dev:
+    desc: Compat dashboard with a hot-reloading UI, opened in a browser
+    cmds:
+      - go run ./cmd/compat --dev {{.CLI_ARGS}}
+
+  compat-serve:
+    desc: Compat dashboard with a pre-built UI, opened in a browser
+    cmds:
+      - go run ./cmd/compat --serve --interactive --build-ui --open {{.CLI_ARGS}}
+
+  compat-docker:
+    desc: Run the compat suites entirely in containers (no host Go or Node)
+    cmds:
+      - docker compose -f compat/docker-compose.yml run --rm compat
+
+  compat-report:
+    desc: Print an agent-friendly summary of the last compat run
+    cmds:
+      - go run ./cmd/compat --report
 
   # ---- Docker ---------------------------------------------------------------
 

@@ -14,7 +14,9 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // ─── shared request types ─────────────────────────────────────────────────────
@@ -711,8 +713,30 @@ func (s *Service) validateAccessTokenTyped(ctx context.Context, tokenStr string)
 	}, nil
 }
 
+// issuerURLTyped is issuerURL for the typed (Smithy RPC v2 CBOR) dispatch path,
+// which is handed a context rather than an *http.Request. It must produce the
+// same string issuerURL does: a caller's wire protocol is not allowed to change
+// the issuer their token carries, and it used to — this returned a bare
+// "{region}/{poolId}" with no scheme or host, so a CBOR client's "iss" was a
+// relative string that no OIDC key discovery and no API Gateway JWT authorizer
+// could use. See docs/plans/harness-representativeness-audit.md.
 func (s *Service) issuerURLTyped(ctx context.Context, poolID string) string {
-	return s.region(ctx) + "/" + poolID
+	return s.issuerBase(ctx) + "/" + s.region(ctx) + "/" + poolID
+}
+
+// issuerBase is serviceutil.ClientBaseURL for the typed path, which holds a
+// context rather than a request. The origin comes from the ClientEndpoint
+// middleware, which stamps it per request and deliberately leaves it unset for
+// real AWS hostnames so those are never echoed back.
+//
+// This used to be a hand-kept mirror of ClientBaseURL's precedence, and it
+// drifted: it took cfg.Port where the JSON path took the caller's, so a
+// caller's wire protocol changed the issuer their token carried — the exact
+// defect the typed/JSON unification fixed. Both paths now call the same
+// function, so they cannot disagree again. See
+// docs/plans/client-facing-url-minting.md.
+func (s *Service) issuerBase(ctx context.Context) string {
+	return serviceutil.ClientBaseURLFromOrigin(s.cfg, middleware.ClientEndpointFromContext(ctx))
 }
 
 // ─── typed auth challenge handlers ────────────────────────────────────────────

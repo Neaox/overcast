@@ -452,7 +452,6 @@ func queryCallWithAuthValues(
 
 func TestIAMEnforceIntegration_signedAllowOnSQS(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"sqs:CreateQueue","Resource":"*"}]}`)
@@ -471,7 +470,6 @@ func TestIAMEnforceIntegration_signedAllowOnSQS(t *testing.T) {
 
 func TestIAMEnforceIntegration_signedDenyWithoutPolicyOnSQS(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 
@@ -489,7 +487,6 @@ func TestIAMEnforceIntegration_signedDenyWithoutPolicyOnSQS(t *testing.T) {
 
 func TestIAMEnforceIntegration_signedAllowOnS3ListBuckets(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "s3"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:ListBuckets","Resource":"*"}]}`)
@@ -508,7 +505,6 @@ func TestIAMEnforceIntegration_signedAllowOnS3ListBuckets(t *testing.T) {
 
 func TestIAMEnforceIntegration_signedDenyOnS3ListBuckets(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "s3"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test", `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"s3:ListBuckets","Resource":"*"}]}`)
@@ -527,7 +523,6 @@ func TestIAMEnforceIntegration_signedDenyOnS3ListBuckets(t *testing.T) {
 
 func TestIAMEnforceIntegration_groupExplicitDenyOverridesUserAllowOnSQS(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"sqs:CreateQueue","Resource":"*"}]}`)
@@ -547,7 +542,6 @@ func TestIAMEnforceIntegration_groupExplicitDenyOverridesUserAllowOnSQS(t *testi
 
 func TestIAMEnforceIntegration_groupAllowWithoutUserInlineOnSQS(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test", `{"Version":"2012-10-17","Statement":[]}`)
@@ -567,7 +561,6 @@ func TestIAMEnforceIntegration_groupAllowWithoutUserInlineOnSQS(t *testing.T) {
 
 func TestIAMEnforceIntegration_signedAllowOnS3GetObjectResourceMatch(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "s3"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::demo/*"}]}`)
@@ -588,7 +581,6 @@ func TestIAMEnforceIntegration_signedAllowOnS3GetObjectResourceMatch(t *testing.
 
 func TestIAMEnforceIntegration_signedDenyOnS3GetObjectResourceMismatch(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "s3"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::demo/allowed/*"}]}`)
@@ -607,7 +599,6 @@ func TestIAMEnforceIntegration_signedDenyOnS3GetObjectResourceMismatch(t *testin
 
 func TestIAMEnforceIntegration_signedAllowOnSTSQuery(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sts"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"sts:GetCallerIdentity","Resource":"*"}]}`)
@@ -626,7 +617,6 @@ func TestIAMEnforceIntegration_signedAllowOnSTSQuery(t *testing.T) {
 
 func TestIAMEnforceIntegration_signedDenyOnSTSQueryWithoutAllow(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sts"),
 		helpers.WithEnforceIAM(true),
 	)
 
@@ -644,7 +634,6 @@ func TestIAMEnforceIntegration_signedDenyOnSTSQueryWithoutAllow(t *testing.T) {
 
 func TestIAMEnforceIntegration_groupExplicitDenyOverridesUserAllowOnSTSQuery(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sts"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"sts:GetCallerIdentity","Resource":"*"}]}`)
@@ -700,7 +689,6 @@ func seedIAMRoleWithSession(t *testing.T, srv *helpers.TestServer, tempAccessKey
 
 func TestIAMEnforceIntegration_roleSession_allowsMatchingAction(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMRoleWithSession(t, srv,
@@ -724,7 +712,6 @@ func TestIAMEnforceIntegration_roleSession_allowsMatchingAction(t *testing.T) {
 
 func TestIAMEnforceIntegration_roleSession_deniesUnallowedAction(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMRoleWithSession(t, srv,
@@ -748,7 +735,6 @@ func TestIAMEnforceIntegration_roleSession_deniesUnallowedAction(t *testing.T) {
 
 func TestIAMEnforceIntegration_roleSession_explicitDenyBlocksAllowedAction(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMRoleWithSession(t, srv,
@@ -774,7 +760,6 @@ func TestIAMEnforceIntegration_roleSession_explicitDenyBlocksAllowedAction(t *te
 
 func TestIAMEnforceIntegration_condition_regionAllows(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	// Allow SQS only in us-east-1.
@@ -797,7 +782,6 @@ func TestIAMEnforceIntegration_condition_regionAllows(t *testing.T) {
 
 func TestIAMEnforceIntegration_condition_regionBlocks(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	// Allow SQS only in us-east-1.
@@ -820,7 +804,6 @@ func TestIAMEnforceIntegration_condition_regionBlocks(t *testing.T) {
 
 func TestIAMEnforceIntegration_condition_unknownOperator_denies(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	// Unknown condition operator — must fail closed.
@@ -842,7 +825,6 @@ func TestIAMEnforceIntegration_condition_unknownOperator_denies(t *testing.T) {
 
 func TestIAMEnforceIntegration_condition_denyInRegion_allowsOtherRegion(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	// Allow all SQS; then deny SQS in eu-west-1 only.
@@ -865,7 +847,6 @@ func TestIAMEnforceIntegration_condition_denyInRegion_allowsOtherRegion(t *testi
 
 func TestIAMEnforceIntegration_condition_denyInRegion_blocksMatchingRegion(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	// Allow all SQS; then deny SQS in eu-west-1 only.
@@ -888,7 +869,6 @@ func TestIAMEnforceIntegration_condition_denyInRegion_blocksMatchingRegion(t *te
 
 func TestIAMEnforceIntegration_condition_principalArnAllows(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 
@@ -924,7 +904,6 @@ func TestIAMEnforceIntegration_condition_principalArnAllows(t *testing.T) {
 
 func TestIAMEnforceIntegration_condition_currentTimeAllows(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -945,7 +924,6 @@ func TestIAMEnforceIntegration_condition_currentTimeAllows(t *testing.T) {
 
 func TestIAMEnforceIntegration_condition_dateLessThanAllows(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -966,7 +944,6 @@ func TestIAMEnforceIntegration_condition_dateLessThanAllows(t *testing.T) {
 
 func TestIAMEnforceIntegration_condition_nullFalse_allowsWhenPrincipalArnPresent(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -987,7 +964,6 @@ func TestIAMEnforceIntegration_condition_nullFalse_allowsWhenPrincipalArnPresent
 
 func TestIAMEnforceIntegration_condition_nullTrue_deniesWhenPrincipalArnPresent(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1008,7 +984,6 @@ func TestIAMEnforceIntegration_condition_nullTrue_deniesWhenPrincipalArnPresent(
 
 func TestIAMEnforceIntegration_condition_stringEqualsIfExists_allowsWhenKeyMissing(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1029,7 +1004,6 @@ func TestIAMEnforceIntegration_condition_stringEqualsIfExists_allowsWhenKeyMissi
 
 func TestIAMEnforceIntegration_sqsResourceScopedAllowsMatchingQueue(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1050,7 +1024,6 @@ func TestIAMEnforceIntegration_sqsResourceScopedAllowsMatchingQueue(t *testing.T
 
 func TestIAMEnforceIntegration_sqsResourceScopedDeniesQueueURLMismatch(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1071,7 +1044,6 @@ func TestIAMEnforceIntegration_sqsResourceScopedDeniesQueueURLMismatch(t *testin
 
 func TestIAMEnforceIntegration_snsResourceScopedAllowsMatchingCreateTopicName(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sns"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1090,7 +1062,6 @@ func TestIAMEnforceIntegration_snsResourceScopedAllowsMatchingCreateTopicName(t 
 
 func TestIAMEnforceIntegration_snsResourceScopedDeniesMismatchedCreateTopicName(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sns"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1109,7 +1080,6 @@ func TestIAMEnforceIntegration_snsResourceScopedDeniesMismatchedCreateTopicName(
 
 func TestIAMEnforceIntegration_dynamodbResourceScopedAllowsMatchingTable(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "dynamodb"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1138,7 +1108,6 @@ func TestIAMEnforceIntegration_dynamodbResourceScopedAllowsMatchingTable(t *test
 
 func TestIAMEnforceIntegration_dynamodbResourceScopedDeniesMismatchedTable(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "dynamodb"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1167,7 +1136,6 @@ func TestIAMEnforceIntegration_dynamodbResourceScopedDeniesMismatchedTable(t *te
 
 func TestIAMEnforceIntegration_ssmResourceScopedAllowsMatchingParameter(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "ssm"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1187,7 +1155,6 @@ func TestIAMEnforceIntegration_ssmResourceScopedAllowsMatchingParameter(t *testi
 
 func TestIAMEnforceIntegration_ssmResourceScopedDeniesMismatchedParameter(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "ssm"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1204,7 +1171,6 @@ func TestIAMEnforceIntegration_ssmResourceScopedDeniesMismatchedParameter(t *tes
 
 func TestIAMEnforceIntegration_notActionAllow_allowsNonExcludedAction(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1225,7 +1191,6 @@ func TestIAMEnforceIntegration_notActionAllow_allowsNonExcludedAction(t *testing
 
 func TestIAMEnforceIntegration_notActionAllow_deniesExcludedAction(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1246,7 +1211,6 @@ func TestIAMEnforceIntegration_notActionAllow_deniesExcludedAction(t *testing.T)
 
 func TestIAMEnforceIntegration_notResourceAllow_allowsOtherResource(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1267,7 +1231,6 @@ func TestIAMEnforceIntegration_notResourceAllow_allowsOtherResource(t *testing.T
 
 func TestIAMEnforceIntegration_notResourceAllow_deniesExcludedResource(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1291,7 +1254,6 @@ func TestIAMEnforceIntegration_notResourceAllow_deniesExcludedResource(t *testin
 // request whose body is smaller than the policy threshold.
 func TestIAMEnforceIntegration_condition_numericLessThan_allowsRequest(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	// Allow requests with Content-Length < 10000 bytes.
@@ -1316,7 +1278,6 @@ func TestIAMEnforceIntegration_condition_numericLessThan_allowsRequest(t *testin
 // before matching, allowing access to their own resource.
 func TestIAMEnforceIntegration_policyVariable_username_allowsOwnResource(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	// Policy grants access to queues prefixed with the caller's username.
@@ -1341,7 +1302,6 @@ func TestIAMEnforceIntegration_policyVariable_username_allowsOwnResource(t *test
 // another user's resource prefix.
 func TestIAMEnforceIntegration_policyVariable_username_deniesOtherResource(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "sqs"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "alice",
@@ -1362,7 +1322,6 @@ func TestIAMEnforceIntegration_policyVariable_username_deniesOtherResource(t *te
 
 func TestIAMEnforceIntegration_kmsResourceScopedDeniesMismatchedKeyID(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "kms"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1383,7 +1342,6 @@ func TestIAMEnforceIntegration_kmsResourceScopedDeniesMismatchedKeyID(t *testing
 
 func TestIAMEnforceIntegration_kinesisResourceScopedDeniesMismatchedStreamName(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "kinesis"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1404,7 +1362,6 @@ func TestIAMEnforceIntegration_kinesisResourceScopedDeniesMismatchedStreamName(t
 
 func TestIAMEnforceIntegration_firehoseResourceScopedDeniesMismatchedDeliveryStreamName(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "firehose"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1425,7 +1382,6 @@ func TestIAMEnforceIntegration_firehoseResourceScopedDeniesMismatchedDeliveryStr
 
 func TestIAMEnforceIntegration_logsResourceScopedDeniesMismatchedLogStream(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "logs"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1446,7 +1402,6 @@ func TestIAMEnforceIntegration_logsResourceScopedDeniesMismatchedLogStream(t *te
 
 func TestIAMEnforceIntegration_ecrResourceScopedDeniesMismatchedRepositoryName(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "ecr"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1467,7 +1422,6 @@ func TestIAMEnforceIntegration_ecrResourceScopedDeniesMismatchedRepositoryName(t
 
 func TestIAMEnforceIntegration_secretsManagerResourceScopedDeniesMismatchedSecretID(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "secretsmanager"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1488,7 +1442,6 @@ func TestIAMEnforceIntegration_secretsManagerResourceScopedDeniesMismatchedSecre
 
 func TestIAMEnforceIntegration_stepFunctionsResourceScopedDeniesMismatchedStateMachineArn(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "stepfunctions"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1509,7 +1462,6 @@ func TestIAMEnforceIntegration_stepFunctionsResourceScopedDeniesMismatchedStateM
 
 func TestIAMEnforceIntegration_cloudFormationResourceScopedDeniesMismatchedStackName(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "cloudformation"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1534,7 +1486,6 @@ func TestIAMEnforceIntegration_cloudFormationResourceScopedDeniesMismatchedStack
 
 func TestIAMEnforceIntegration_ecsResourceScopedDeniesMismatchedCluster(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "ecs"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1555,7 +1506,6 @@ func TestIAMEnforceIntegration_ecsResourceScopedDeniesMismatchedCluster(t *testi
 
 func TestIAMEnforceIntegration_lambdaResourceScopedDeniesMismatchedInvokeFunction(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "lambda"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1577,7 +1527,6 @@ func TestIAMEnforceIntegration_lambdaResourceScopedDeniesMismatchedInvokeFunctio
 
 func TestIAMEnforceIntegration_cloudWatchResourceScopedDeniesMismatchedAlarmName(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "cloudwatch"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1602,7 +1551,6 @@ func TestIAMEnforceIntegration_cloudWatchResourceScopedDeniesMismatchedAlarmName
 
 func TestIAMEnforceIntegration_lambdaAliasResourceScopedDeniesMismatchedFunction(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "lambda"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1624,7 +1572,6 @@ func TestIAMEnforceIntegration_lambdaAliasResourceScopedDeniesMismatchedFunction
 
 func TestIAMEnforceIntegration_lambdaResponseStreamingResourceScopedDeniesMismatchedFunction(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "lambda"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1646,7 +1593,6 @@ func TestIAMEnforceIntegration_lambdaResponseStreamingResourceScopedDeniesMismat
 
 func TestIAMEnforceIntegration_lambdaTestEventResourceScopedDeniesMismatchedFunction(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "lambda"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1668,7 +1614,6 @@ func TestIAMEnforceIntegration_lambdaTestEventResourceScopedDeniesMismatchedFunc
 
 func TestIAMEnforceIntegration_lambdaLayerVersionResourceScopedDeniesMismatchedLayer(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "lambda"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",
@@ -1690,7 +1635,6 @@ func TestIAMEnforceIntegration_lambdaLayerVersionResourceScopedDeniesMismatchedL
 
 func TestIAMEnforceIntegration_pipesResourceScopedDeniesMismatchedPipe(t *testing.T) {
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("iam", "pipes"),
 		helpers.WithEnforceIAM(true),
 	)
 	seedIAMPrincipal(t, srv, "test",

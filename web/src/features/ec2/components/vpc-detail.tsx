@@ -25,6 +25,7 @@ import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { Badge } from "@/components/ui/badge"
+import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
 import {
   Table,
@@ -162,23 +163,25 @@ function OverviewPanel({
 }) {
   const ns = vpc.networkStatus ?? "ok"
   return (
-    <div className="grid grid-cols-2 gap-x-8 gap-y-3">
-      <InfoRow label="VPC ID" value={vpc.vpcId} />
-      <InfoRow label="CIDR Block" value={vpc.cidrBlock} />
-      <div className="flex flex-col gap-0.5">
-        <span className="font-mono text-xs text-fg-muted">State</span>
-        <div className="w-fit">
+    <DefinitionList>
+      <Definition label="VPC ID" value={vpc.vpcId} />
+      <Definition label="CIDR Block" value={vpc.cidrBlock} />
+      <Definition
+        label="State"
+        value={
           <Badge variant={vpc.state === "available" ? "success" : "warning"}>{vpc.state}</Badge>
-        </div>
-      </div>
-      <InfoRow label="Default VPC" value={vpc.isDefault ? "Yes" : "No"} />
-      <div className="flex flex-col gap-0.5">
-        <span className="font-mono text-xs text-fg-muted">Network Status</span>
-        <div className="w-fit" title={networkStatusTooltip[ns] ?? ns}>
-          <Badge variant={networkStatusVariant[ns] ?? "default"}>{ns}</Badge>
-        </div>
-      </div>
-    </div>
+        }
+      />
+      <Definition label="Default VPC" value={vpc.isDefault ? "Yes" : "No"} />
+      <Definition
+        label="Network Status"
+        value={
+          <span title={networkStatusTooltip[ns] ?? ns}>
+            <Badge variant={networkStatusVariant[ns] ?? "default"}>{ns}</Badge>
+          </span>
+        }
+      />
+    </DefinitionList>
   )
 }
 
@@ -801,15 +804,6 @@ function CreatePeeringDialog({
 }
 
 // ─── Shared helpers ───────────────────────────────────────────────────────
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-fg-muted">{label}</span>
-      <span className="text-sm text-fg">{value}</span>
-    </div>
-  )
-}
 
 function PeeringStatusBadge({ code }: { code: string }) {
   const variant =

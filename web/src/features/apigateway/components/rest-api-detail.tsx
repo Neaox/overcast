@@ -1,4 +1,4 @@
-import { Fragment, useState, useCallback, useMemo } from "react"
+import { Fragment, useState, useMemo } from "react"
 import { useQuery, useMutation } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import {
@@ -7,7 +7,6 @@ import {
   Plus,
   ChevronRight,
   Rocket,
-  Copy,
   Send,
   Check,
   Shield,
@@ -31,6 +30,7 @@ import {
   deleteAuthorizerMutationOptions,
 } from "@/features/apigateway/data"
 import { Button } from "@/components/ui/button"
+import { CopyButton } from "@/components/ui/copy-button"
 import {
   Table,
   TableBody,
@@ -52,6 +52,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { useToast } from "@/components/ui/toast"
+import { restInvokeUrl } from "@/features/apigateway/invoke-url"
 import { formatDate } from "@/lib/format"
 import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
@@ -82,7 +83,6 @@ export function RestApiDetail({ apiId }: Props) {
     id: string
     name: string
   }>()
-  const [copiedId, setCopiedId] = useState<string>()
 
   // Test harness state
   const [testTarget, setTestTarget] = useState<{
@@ -262,22 +262,8 @@ export function RestApiDetail({ apiId }: Props) {
   const firstStage = stages[0]?.stageName
 
   function buildInvokeUrl(path: string): string {
-    const base = endpoint.baseUrl.replace(/\/$/, "")
-    if (firstStage) {
-      return `${base}/restapis/${apiId}/${firstStage}/_user_request_${path}`
-    }
-    return `${base}/restapis/${apiId}/_user_request_${path}`
+    return restInvokeUrl(endpoint, apiId, firstStage, path)
   }
-
-  const copyUrl = useCallback(
-    (path: string, id: string) => {
-      void navigator.clipboard.writeText(buildInvokeUrl(path))
-      setCopiedId(id)
-      setTimeout(() => setCopiedId(undefined), 1500)
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [endpoint.baseUrl, apiId, firstStage],
-  )
 
   async function sendTestRequest() {
     if (!testTarget) return
@@ -591,21 +577,11 @@ export function RestApiDetail({ apiId }: Props) {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <Button
+                          <CopyButton
+                            value={buildInvokeUrl(resource.path)}
+                            noun="invoke URL"
                             size="sm"
-                            variant="ghost"
-                            title="Copy invoke URL"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              copyUrl(resource.path, resource.id)
-                            }}
-                          >
-                            {copiedId === resource.id ? (
-                              <Check className="h-3.5 w-3.5 text-success" />
-                            ) : (
-                              <Copy className="h-3.5 w-3.5" />
-                            )}
-                          </Button>
+                          />
                           <Button
                             size="sm"
                             variant="ghost"
@@ -650,8 +626,6 @@ export function RestApiDetail({ apiId }: Props) {
                             }
                           }
                         }}
-                        onCopyUrl={(method) => copyUrl(resource.path, `${resource.id}-${method}`)}
-                        copiedId={copiedId}
                         buildInvokeUrl={buildInvokeUrl}
                         resourcePath={resource.path}
                         apiId={apiId}
@@ -1289,17 +1263,13 @@ function MethodDetails({
   resource,
   methods,
   onTest,
-  onCopyUrl,
-  copiedId,
-  buildInvokeUrl: _buildInvokeUrl,
+  buildInvokeUrl,
   resourcePath,
   apiId,
 }: {
   resource: ApiResource
   methods: string[]
   onTest: (method: string) => void
-  onCopyUrl: (method: string) => void
-  copiedId?: string
   buildInvokeUrl: (path: string) => string
   resourcePath: string
   apiId: string
@@ -1358,21 +1328,11 @@ function MethodDetails({
                   )}
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
-                  <Button
+                  <CopyButton
+                    value={buildInvokeUrl(resourcePath)}
+                    noun={`${method} ${resourcePath} invoke URL`}
                     size="sm"
-                    variant="ghost"
-                    title={`Copy ${method} ${resourcePath} invoke URL`}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onCopyUrl(method)
-                    }}
-                  >
-                    {copiedId === `${resource.id}-${method}` ? (
-                      <Check className="h-3 w-3 text-success" />
-                    ) : (
-                      <Copy className="h-3 w-3" />
-                    )}
-                  </Button>
+                  />
                   <Button
                     size="sm"
                     variant="ghost"

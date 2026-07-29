@@ -222,7 +222,7 @@ export function makeCognitoGroups(suite: string): TestGroup[] {
       name: "cognito-token-validity",
       tests: [
         {
-          name: "CreateUserPoolClient with token validity",
+          name: "CreateUserPoolClientWithTokenValidity",
           fn: async (ctx) => {
             const { cognito } = makeClients(ctx);
             const poolName = `compat-tv-${ctx.runId}`;
@@ -262,7 +262,7 @@ export function makeCognitoGroups(suite: string): TestGroup[] {
           },
         },
         {
-          name: "DescribeUserPoolClient returns token validity",
+          name: "DescribeUserPoolClientTokenValidity",
           fn: async (ctx) => {
             const { cognito } = makeClients(ctx);
             const poolId = (ctx as Record<string, unknown>)[
@@ -286,7 +286,7 @@ export function makeCognitoGroups(suite: string): TestGroup[] {
           },
         },
         {
-          name: "UpdateUserPoolClient changes token validity",
+          name: "UpdateUserPoolClientTokenValidity",
           fn: async (ctx) => {
             const { cognito } = makeClients(ctx);
             const poolId = (ctx as Record<string, unknown>)[

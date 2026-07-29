@@ -44,7 +44,9 @@ RUN npm install -g pnpm@${PNPM_VERSION}
 
 # Install golangci-lint — pinned version for reproducibility.
 # Check for updates at: https://github.com/golangci/golangci-lint/releases
-ENV GOLANGCI_LINT_VERSION=v1.62.2
+# v2.x is required: .golangci.yml uses the v2 config schema, which v1 cannot
+# parse. Keep in sync with the Makefile and Taskfile.yml.
+ENV GOLANGCI_LINT_VERSION=v2.8.0
 RUN curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
     | sh -s -- -b /usr/local/bin ${GOLANGCI_LINT_VERSION}
 
@@ -74,6 +76,23 @@ RUN curl -sSfL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_V
     && /tmp/aws/install \
     && rm -rf /tmp/awscli.zip /tmp/aws
 
+# Install the Docker CLI (client only — no daemon). The dev container gets one
+# from the docker-outside-of-docker feature, but features are applied by the
+# devcontainer tooling, not by a plain `docker build` of this file, so anything
+# building the image directly — compat/docker-compose.yml does — had no
+# `docker` on PATH. The compat suites that build and run their own images
+# (java-sdk, dotnet-sdk, rust-sdk, cdk) need it to talk to the host daemon over
+# the mounted socket.
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg \
+         -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+         > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli docker-buildx-plugin \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create a non-root `vscode` user — VS Code Dev Containers convention.
 # UID 1000 matches the default user on most Linux host systems, which avoids
 # file permission issues on mounted volumes.
@@ -89,13 +108,38 @@ RUN groupadd --gid ${USER_GID} ${USERNAME} \
   && chmod 0440 /etc/sudoers.d/${USERNAME} \
   && rm -rf /var/lib/apt/lists/*
 
-# Pre-warm the Go module cache directory so the vscode user can write to it.
+# Pre-warm the Go cache directories so the vscode user can write to them.
 # The actual modules are downloaded by postCreateCommand in devcontainer.json.
-RUN mkdir -p /go/pkg/mod \
+#
+# This MUST be the same path as GOPATH below (/home/vscode/go/pkg/mod), not the
+# base image's default /go. Both docker-compose.dev.yml and
+# .devcontainer/init-worktree.sh mount a named volume there, and Docker creates
+# a volume's mount point owned by root when the path does not already exist in
+# the image. The container runs as vscode, so a root-owned mount point fails
+# every build with "mkdir /home/vscode/go/pkg/mod/cache: permission denied".
+# Creating it here, owned by vscode, is what the volume inherits instead.
+#
+# .cache/go-build is here for the same reason: compat/docker-compose.yml mounts
+# a build-cache volume there so repeated compat runs do not recompile the tree
+# from scratch (a cold build is minutes, a warm one seconds).
+#
+# /home/vscode/bin exists for the same reason too: docker-compose.dev.yml keeps
+# the compiled binary on a named volume, and that mount point has to be outside
+# the /workspace bind mount — a bind mount hides whatever the image put at its
+# path, so a volume nested under it can never inherit image ownership.
+RUN mkdir -p /home/${USERNAME}/go/pkg/mod \
+             /home/${USERNAME}/go/bin \
+             /home/${USERNAME}/bin \
+             /home/${USERNAME}/.cache/go-build \
              /home/${USERNAME}/.config/opencode \
              /home/${USERNAME}/.config/gh \
              /home/${USERNAME}/.local/share/opencode \
-  && chown -R ${USERNAME}:${USERNAME} /go /home/${USERNAME}/.config /home/${USERNAME}/.local
+  && chown -R ${USERNAME}:${USERNAME} \
+             /home/${USERNAME}/go \
+             /home/${USERNAME}/bin \
+             /home/${USERNAME}/.cache \
+             /home/${USERNAME}/.config \
+             /home/${USERNAME}/.local
 
 USER ${USERNAME}
 

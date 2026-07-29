@@ -4675,3 +4675,115 @@ func sha256Hex(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
+
+// TestS3VirtualHostedStyle_hostIsCaseInsensitive proves a bucket is reachable
+// virtual-hosted style whatever the case of the Host, in both the bare and the
+// labelled form.
+//
+// A hostname is case-insensitive (RFC 4343), and a bucket name is
+// lowercase-only by AWS rule, so an upper-case segment in a Host can only ever
+// mean a case-folded bucket name — never a different bucket. Matching it
+// case-sensitively made the bucket unreachable: the extracted name kept its
+// case and could match nothing, and an upper-case ".S3." label was not even
+// recognised as the S3 separator, so the whole "{bucket}.s3" was taken as the
+// bucket name.
+func TestS3VirtualHostedStyle_hostIsCaseInsensitive(t *testing.T) {
+	// Given: an ordinary bucket holding one object
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "case-fold-bucket")
+	putResp, err := http.DefaultClient.Do(put(srv, "/case-fold-bucket/greeting.txt", []byte("hello"), nil))
+	if err != nil {
+		t.Fatalf("seed object: %v", err)
+	}
+	putResp.Body.Close()
+
+	hosts := []struct{ name, host string }{
+		{"bare, mixed case", "Case-Fold-Bucket.localhost:4566"},
+		{"bare, upper base", "case-fold-bucket.LOCALHOST.OVERCAST.SH:4566"},
+		{"labelled, upper s3 label", "case-fold-bucket.S3.localhost:4566"},
+		{"labelled, mixed case with region", "Case-Fold-Bucket.s3.US-East-1.localhost:4566"},
+	}
+
+	for _, h := range hosts {
+		t.Run(h.name, func(t *testing.T) {
+			// When: the object is fetched with the bucket in the Host header
+			req, _ := http.NewRequest(http.MethodGet, srv.URL+"/greeting.txt", nil)
+			req.Host = h.host
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("request: %v", err)
+			}
+			defer resp.Body.Close()
+
+			// Then: the same object the path-style URL serves
+			helpers.AssertStatus(t, resp, http.StatusOK)
+			got, _ := io.ReadAll(resp.Body)
+			if string(got) != "hello" {
+				t.Errorf("Host %q: got body %q, want %q", h.host, got, "hello")
+			}
+		})
+	}
+}
+
+// TestObjectPost_unsupportedSubresourceIsMethodNotAllowed covers POST on an
+// object path that names no subresource.
+//
+// POST /{bucket}/{key} is only an operation when a subresource selects one —
+// ?uploads, ?uploadId=, ?restore, ?select. Without one it is not an AWS
+// operation at all, and S3 answers 405 MethodNotAllowed: "The specified method
+// is not allowed against this resource."
+//
+// ObjectPost fell back to NotImplemented, which says something different and
+// untrue — that this is an operation Overcast has not got to yet. A client
+// seeing 501 reasonably concludes the emulator is incomplete and looks for a
+// workaround, when in fact real AWS rejects the same request. That was the
+// response a CloudFront distribution surfaced when a POST was routed to an S3
+// origin: the misleading error sent the investigation after a missing feature
+// instead of a misrouted request.
+func TestObjectPost_unsupportedSubresourceIsMethodNotAllowed(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "post-method-bucket")
+
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/post-method-bucket/some/key",
+		strings.NewReader(`{"anything":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want 405", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "MethodNotAllowed") {
+		t.Errorf("expected a MethodNotAllowed error code, got: %s", body)
+	}
+	// Not an "unimplemented" answer: this operation does not exist in AWS
+	// either, so the emulator must not advertise it as a gap in its coverage.
+	if got := resp.Header.Get("x-emulator-unsupported"); got != "" {
+		t.Errorf("x-emulator-unsupported = %q; a method AWS also rejects is not an emulator gap", got)
+	}
+}
+
+// TestObjectPost_validSubresourceStillDispatches guards the other direction:
+// narrowing the fallback must not shadow the real POST operations.
+func TestObjectPost_validSubresourceStillDispatches(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "post-subresource-bucket")
+
+	req, _ := http.NewRequest(http.MethodPost,
+		srv.URL+"/post-subresource-bucket/multipart/key?uploads", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "InitiateMultipartUploadResult") {
+		t.Errorf("expected CreateMultipartUpload to still dispatch, got: %s", body)
+	}
+}

@@ -6,14 +6,13 @@ import {
   ArrowDown,
   ArrowDownUp,
   ArrowLeft,
-  Check,
-  Copy,
   FileText,
   RefreshCw,
   Search,
   X,
   Zap,
 } from "lucide-react"
+import { CopyButton } from "@/components/ui/copy-button"
 import { logsFilterQueryOptions } from "@/features/cloudwatch/logs/data"
 import {
   TimeRangeFilter,
@@ -131,28 +130,6 @@ function sortEvents(events: FilteredLogEvent[], asc: boolean): FilteredLogEvent[
     if (ingestDelta !== 0) return asc ? ingestDelta : -ingestDelta
     return (a.logStreamName ?? "").localeCompare(b.logStreamName ?? "") * (asc ? 1 : -1)
   })
-}
-
-// ── Copy button ────────────────────────────────────────────────────────────
-
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false)
-  const handleCopy = useCallback(() => {
-    void navigator.clipboard.writeText(text).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    })
-  }, [text])
-  return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      className="rounded p-0.5 text-fg-muted/40 opacity-0 transition-opacity group-hover/row:opacity-100 hover:text-fg-muted"
-      title="Copy message"
-    >
-      {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
-    </button>
-  )
 }
 
 // ── Main component ─────────────────────────────────────────────────────────
@@ -544,7 +521,12 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
                     )}
                     {/* Actions */}
                     <div className="flex w-8 shrink-0 items-start justify-center pt-1.5">
-                      <CopyButton text={meta.msg} />
+                      <CopyButton
+                        value={meta.msg}
+                        noun="log message"
+                        tone="inline"
+                        className="p-0.5 text-fg-muted/40 opacity-0 transition-opacity group-hover/row:opacity-100 hover:text-fg-muted"
+                      />
                     </div>
                   </div>
                 )
