@@ -496,10 +496,17 @@ lifts it back. Both teach people to re-run the gate instead of reading it.
 List such a test in [compat/flaky.json](./flaky.json) with a reason. It is then
 exempt in **both** directions — never a regression, never promoted — while its
 recorded status stays at the worst outcome observed. The exemption is per test,
-not per group, and the list only shrinks: delete the entry in the PR that fixes
-the underlying bug. Do not reach for this to silence a test that fails
-consistently; that is a `fail` entry in the baseline and belongs in the
-burn-down.
+not per group. Do not reach for this to silence a test that fails consistently;
+that is a `fail` entry in the baseline and belongs in the burn-down.
+
+**Adding an entry is a reviewer's decision, and CI enforces that.** Quarantine
+takes a test out of the gate entirely, so an unguarded list is an amnesty file:
+any inconvenient failure could be silenced by adding a line, and nothing would
+notice the coverage had gone. `--lint-flaky-from/--lint-flaky-to` runs on PRs
+and **fails on any new entry**, and on any entry without a reason. Removing an
+entry — the fix — is always allowed. If you genuinely need a new quarantine, say
+so in the PR description with the evidence: two runs of an unchanged tree
+disagreeing is the bar.
 
 **Improvements are promoted for you.** On push to `main`, the aggregate job runs
 `--update-baseline` and commits `compat/baseline.json` when a result improved.
@@ -510,6 +517,21 @@ improvement visible in a PR diff.
 > This automated commit is the **only** exception to the "never push to `main`"
 > rule in the root [AGENTS.md](../AGENTS.md). It is granted to the workflow, not
 > to agents or contributors: it touches `compat/baseline.json` and nothing else.
+
+**Changing what CI measures means re-seeding, not comparing.** The baseline
+records what a particular configuration produces. Change the configuration —
+turn a class of test on, add a suite, change the emulator's defaults — and the
+next run legitimately differs from the baseline in both directions, so comparing
+is meaningless and the gate fires on work that is not a regression. Re-seed
+instead: empty `compat/baseline.json` to `{"version": 1, "entries": []}`, run
+`--update-baseline` against an artifact **from the new configuration**, and say
+in the PR why the seed moved.
+
+This is not hypothetical. Enabling the Docker-dependent tests in CI turned five
+results over: the CDK ESM assertions started passing, and two `cli` Lambda and
+EventBridge tests started failing because they had only ever been measured
+against a stub. A baseline seeded before that change described a configuration
+that no longer existed.
 
 `--lint-baseline-from/--lint-baseline-to` runs on PRs and rejects a baseline
 edit that downgrades an expectation, removes one, or adds a new `fail`.

@@ -224,6 +224,76 @@ func TestLintBaselineChange_emptyingAPopulatedBaselineIsRejected(t *testing.T) {
 	}
 }
 
+func TestLintFlakyChange_newQuarantineRejected(t *testing.T) {
+	// Given: a change that adds a test to the flaky list
+	oldFlaky := &flakyFile{Version: 1, Flaky: []flakyEntry{
+		{Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS", Reason: "known race"},
+	}}
+	newFlaky := &flakyFile{Version: 1, Flaky: []flakyEntry{
+		{Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS", Reason: "known race"},
+		{Suite: "go-sdk", Group: "s3-crud", Test: "CreateBucket", Reason: "sometimes fails"},
+	}}
+
+	// When: the change is linted
+	issues := lintFlakyChange(oldFlaky, newFlaky)
+
+	// Then: it is rejected. Without this the flaky list is an amnesty file —
+	// any failing test can be silenced by adding a line to it, and the baseline
+	// gate quietly stops covering it.
+	if len(issues) != 1 {
+		t.Fatalf("issues = %#v, want 1", issues)
+	}
+	if !strings.Contains(issues[0], "go-sdk/s3-crud/CreateBucket") {
+		t.Errorf("issue message = %q", issues[0])
+	}
+}
+
+func TestLintFlakyChange_removingAQuarantineIsTheGoal(t *testing.T) {
+	// Given: a change that deletes an entry — the test was fixed
+	oldFlaky := &flakyFile{Version: 1, Flaky: []flakyEntry{
+		{Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS", Reason: "known race"},
+		{Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "Unsubscribe", Reason: "cascade"},
+	}}
+	newFlaky := &flakyFile{Version: 1, Flaky: []flakyEntry{
+		{Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "Unsubscribe", Reason: "cascade"},
+	}}
+
+	// When/Then: shrinking is always allowed — that is the whole point
+	if issues := lintFlakyChange(oldFlaky, newFlaky); len(issues) != 0 {
+		t.Fatalf("issues = %#v, want none when the list shrinks", issues)
+	}
+}
+
+func TestLintFlakyChange_entryNeedsAReason(t *testing.T) {
+	// Given: an existing entry stripped of its reason
+	oldFlaky := &flakyFile{Version: 1, Flaky: []flakyEntry{
+		{Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS", Reason: "known race"},
+	}}
+	newFlaky := &flakyFile{Version: 1, Flaky: []flakyEntry{
+		{Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS", Reason: "  "},
+	}}
+
+	// When/Then: rejected. An entry without evidence is untriageable, and the
+	// next person cannot tell a real flake from a silenced failure.
+	issues := lintFlakyChange(oldFlaky, newFlaky)
+	if len(issues) != 1 || !strings.Contains(issues[0], "reason") {
+		t.Fatalf("issues = %#v, want a missing-reason issue", issues)
+	}
+}
+
+func TestLintFlakyChange_seedingAnEmptyListIsAllowed(t *testing.T) {
+	// Given: the first population of the list, mirroring the baseline's
+	// seeding exemption
+	oldFlaky := &flakyFile{Version: 1}
+	newFlaky := &flakyFile{Version: 1, Flaky: []flakyEntry{
+		{Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS", Reason: "known race"},
+	}}
+
+	if issues := lintFlakyChange(oldFlaky, newFlaky); len(issues) != 0 {
+		t.Fatalf("issues = %#v, want none when seeding", issues)
+	}
+}
+
 func TestCompareBaseline_flakyTestIsToleratedInEitherDirection(t *testing.T) {
 	// Given: a test known to be intermittent, declared in the flaky list
 	baseline := &compatBaseline{Version: baselineVersion, Entries: []baselineEntry{

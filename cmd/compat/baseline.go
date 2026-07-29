@@ -114,6 +114,80 @@ type flakyEntry struct {
 	Reason string `json:"reason"`
 }
 
+func (e flakyEntry) key() string { return e.Suite + "/" + e.Group + "/" + e.Test }
+
+// lintFlakyChange rejects growth of the quarantine list.
+//
+// Quarantine removes a test from the baseline gate in both directions, so an
+// unguarded list is an amnesty file: any inconvenient failure can be silenced
+// by adding a line, and nothing ever notices the gate stopped covering it.
+// Adding an entry is therefore a deliberate act that has to be argued for in
+// review, not something CI waves through. Removing one — the fix — is always
+// allowed, and seeding an empty list mirrors the baseline's own exemption.
+func lintFlakyChange(oldFlaky, newFlaky *flakyFile) []string {
+	oldByKey := make(map[string]flakyEntry, len(oldFlaky.Flaky))
+	for _, e := range oldFlaky.Flaky {
+		oldByKey[e.key()] = e
+	}
+
+	var issues []string
+	for _, e := range newFlaky.Flaky {
+		if strings.TrimSpace(e.Reason) == "" {
+			issues = append(issues, fmt.Sprintf(
+				"compat flaky entry has no reason: %s — record what was observed, so the next person can tell a real flake from a silenced failure",
+				e.key()))
+		}
+		if len(oldFlaky.Flaky) == 0 {
+			continue
+		}
+		if _, existed := oldByKey[e.key()]; !existed {
+			issues = append(issues, fmt.Sprintf(
+				"compat flaky list grew: %s — quarantine removes a test from the baseline gate entirely, so adding one needs a reviewer's agreement, not just a green build",
+				e.key()))
+		}
+	}
+	sort.Strings(issues)
+	return issues
+}
+
+func lintFlakyChangeFiles(oldPath, newPath string) error {
+	oldFlaky, err := readFlakyFileRaw(oldPath)
+	if err != nil {
+		return err
+	}
+	newFlaky, err := readFlakyFileRaw(newPath)
+	if err != nil {
+		return err
+	}
+	issues := lintFlakyChange(oldFlaky, newFlaky)
+	if len(issues) > 0 {
+		for _, issue := range issues {
+			fmt.Fprintln(os.Stderr, issue)
+		}
+		if *annotate {
+			fmt.Print(baselineAnnotations(issues))
+		}
+		return fmt.Errorf("%d compat flaky list issue(s)", len(issues))
+	}
+	fmt.Printf("compat: flaky list check passed (%d quarantined test(s))\n", len(newFlaky.Flaky))
+	return nil
+}
+
+func readFlakyFileRaw(path string) (*flakyFile, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return &flakyFile{Version: 1}, nil
+		}
+		return nil, fmt.Errorf("read flaky list %s: %w", path, err)
+	}
+	var file flakyFile
+	if err := json.Unmarshal(b, &file); err != nil {
+		return nil, fmt.Errorf("parse flaky list %s: %w", path, err)
+	}
+	return &file, nil
+}
+
 func readFlakyFile(path string) (flakySet, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
