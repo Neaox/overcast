@@ -351,7 +351,9 @@ Hybrid seeds small control-plane namespaces into memory on startup and reads lar
 ### Per-service storage overrides
 
 Each service can use a different backend. Set `OVERCAST_STATE_<SERVICE>`
-where `<SERVICE>` is the uppercase service name (hyphens become underscores):
+where `<SERVICE>` is one of the [service names](#service-names) in upper case —
+the same tokens `OVERCAST_SERVICES` takes, so CloudWatch Logs is
+`OVERCAST_STATE_LOGS`:
 
 ```bash
 docker run --rm -p 4566:4566 \

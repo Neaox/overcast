@@ -296,7 +296,7 @@ OVERCAST_LOG_LEVEL=debug \
 | `OVERCAST_PORT`                  | `4566`      | AWS API port.                                                                                |
 | `OVERCAST_HOST`                  | `127.0.0.1` | Interface to bind.                                                                           |
 | `OVERCAST_STATE`                 | `auto`      | State backend: `auto` (default — resolves to `hybrid` or `memory`, see [storage.md](./docs/storage.md#the-auto-default)), `memory`, `hybrid`, `persistent`, `wal`. |
-| `OVERCAST_SERVICES`              | all         | Comma-separated list of services to enable.                                                  |
+| `OVERCAST_SERVICES`              | all         | Comma-separated list of services to enable — see [service names](./docs/README.md#service-names) for the accepted tokens. |
 
 See the [configuration reference](./docs/README.md#configuration-reference) for the full list.
 

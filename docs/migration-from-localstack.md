@@ -59,7 +59,7 @@ services:
 | ----------------- | ---------------------------------------- | ----------------------------------------------------------------- |
 | `LOCALSTACK_HOST` | `OVERCAST_HOST`                          | Hostname to bind. Default: `0.0.0.0`                              |
 | `EDGE_PORT`       | `OVERCAST_PORT`                          | Default: `4566`                                                   |
-| `SERVICES`        | `OVERCAST_SERVICES`                      | Comma-separated. Same service names.                              |
+| `SERVICES`        | `OVERCAST_SERVICES`                      | Comma-separated. Most names carry over unchanged, but not all, and an unrecognised one stops startup rather than being ignored. LocalStack's `events`, `sfn`, `es`, and `cognito-idp` are `eventbridge`, `stepfunctions`, `opensearch`, and `cognito` here — check the rest against [service names](./README.md#service-names) |
 | `DATA_DIR`        | `OVERCAST_DATA_DIR`                      | SQLite persistence directory                                      |
 | `DEBUG=1`         | `OVERCAST_LOG_LEVEL=debug`               | Verbose logging                                                   |
 | `DEFAULT_REGION`  | `OVERCAST_DEFAULT_REGION`                | Default: `us-east-1`                                              |
