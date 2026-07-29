@@ -47,7 +47,6 @@ services:
     image: ghcr.io/neaox/overcast:alpha
     ports: ["4566:4566"]
     environment:
-      OVERCAST_SERVICES: s3,sqs,dynamodb
       OVERCAST_LOG_LEVEL: debug
 ```
 
@@ -59,7 +58,7 @@ services:
 | ----------------- | ---------------------------------------- | ----------------------------------------------------------------- |
 | `LOCALSTACK_HOST` | `OVERCAST_HOST`                          | Hostname to bind. Default: `0.0.0.0`                              |
 | `EDGE_PORT`       | `OVERCAST_PORT`                          | Default: `4566`                                                   |
-| `SERVICES`        | `OVERCAST_SERVICES`                      | Comma-separated. Same service names.                              |
+| `SERVICES`        | — *(no equivalent)*                      | Overcast runs every service, always. Drop the variable; a leftover value is ignored rather than rejected |
 | `DATA_DIR`        | `OVERCAST_DATA_DIR`                      | SQLite persistence directory                                      |
 | `DEBUG=1`         | `OVERCAST_LOG_LEVEL=debug`               | Verbose logging                                                   |
 | `DEFAULT_REGION`  | `OVERCAST_DEFAULT_REGION`                | Default: `us-east-1`                                              |

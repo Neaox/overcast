@@ -65,7 +65,6 @@ services:
       OVERCAST_STATE: memory
       OVERCAST_LOG_LEVEL: debug
       OVERCAST_DEBUG: "true"
-      OVERCAST_SERVICES: s3,sqs,dynamodb,sns,lambda,logs,cloudwatch
       CGO_ENABLED: "0"
     # Build then run in one command. The binary is rebuilt on every `up --build`.
     command: >

@@ -41,7 +41,7 @@ func decodeMap(t *testing.T, resp *http.Response) map[string]any {
 }
 
 func TestTransferServerAndUserLifecycle(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("transfer"))
+	srv := helpers.NewTestServer(t)
 
 	createServerResp := transferCall(t, srv, "CreateServer", map[string]any{})
 	if createServerResp.StatusCode != http.StatusOK {

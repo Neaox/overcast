@@ -209,61 +209,22 @@ func TestLoad_lambdaInitTimeoutSeconds(t *testing.T) {
 	}
 }
 
-// TestLoad_allServicesEnabled verifies all known services are enabled by default.
-func TestLoad_allServicesEnabled(t *testing.T) {
-	// Given: no OVERCAST_SERVICES set
+// TestLoad_ignoresRemovedServicesVar pins that OVERCAST_SERVICES is inert.
+//
+// It used to select which services ran. Every service is now always wired, so
+// a stale value in an old compose file or CI job must load cleanly rather than
+// failing validation or half-configuring anything.
+func TestLoad_ignoresRemovedServicesVar(t *testing.T) {
+	// Given: a leftover OVERCAST_SERVICES, including a name that never existed
 	clearEnv(t)
-
-	// When: we load config
-	cfg, err := config.Load()
-
-	// Then: all services are enabled
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	for _, svc := range []string{"s3", "sqs", "sns", "dynamodb", "lambda"} {
-		if !cfg.Services[svc] {
-			t.Errorf("expected service %q to be enabled by default", svc)
-		}
-	}
-}
-
-// TestLoad_serviceSubset verifies OVERCAST_SERVICES filters correctly.
-func TestLoad_serviceSubset(t *testing.T) {
-	// Given: OVERCAST_SERVICES is set to a subset
-	clearEnv(t)
-	t.Setenv("OVERCAST_SERVICES", "s3,sqs")
-
-	// When: we load config
-	cfg, err := config.Load()
-
-	// Then: only the specified services are enabled
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if !cfg.Services["s3"] {
-		t.Error("expected s3 to be enabled")
-	}
-	if !cfg.Services["sqs"] {
-		t.Error("expected sqs to be enabled")
-	}
-	if cfg.Services["dynamodb"] {
-		t.Error("expected dynamodb to be disabled")
-	}
-}
-
-// TestLoad_unknownService verifies that unknown service names are rejected.
-func TestLoad_unknownService(t *testing.T) {
-	// Given: OVERCAST_SERVICES contains an unknown service
-	clearEnv(t)
-	t.Setenv("OVERCAST_SERVICES", "s3,unknownservice")
+	t.Setenv("OVERCAST_SERVICES", "s3,sqs,unknownservice")
 
 	// When: we load config
 	_, err := config.Load()
 
-	// Then: an error is returned
-	if err == nil {
-		t.Error("expected error for unknown service, got nil")
+	// Then: it is ignored entirely
+	if err != nil {
+		t.Fatalf("Load should ignore OVERCAST_SERVICES, got: %v", err)
 	}
 }
 
@@ -527,6 +488,61 @@ func TestLoad_perServiceState(t *testing.T) {
 	}
 	if _, ok := cfg.ServiceStates["dynamodb"]; ok {
 		t.Errorf("dynamodb: expected no override, but found one")
+	}
+}
+
+// TestLoad_perServiceStateUnknownService verifies that an override naming a
+// service that does not exist is rejected rather than ignored.
+//
+// Load used to probe os.Getenv("OVERCAST_STATE_"+svc) for each known service,
+// which cannot see a variable it does not think to construct. So
+// OVERCAST_STATE_CLOUDWATCH_LOGS — the plausible guess for a service actually
+// named "logs", and what the docs implied until recently — was a silent no-op:
+// the user believed CloudWatch Logs was on its own backend while it quietly
+// used the global one. Every misspelling and every post-rename name behaved the
+// same way.
+func TestLoad_perServiceStateUnknownService(t *testing.T) {
+	for _, envKey := range []string{
+		"OVERCAST_STATE_CLOUDWATCH_LOGS", // real service, wrong name for it
+		"OVERCAST_STATE_S4",              // typo
+		"OVERCAST_STATE_NOTASERVICE",
+	} {
+		t.Run(envKey, func(t *testing.T) {
+			// Given: an override naming something that is not a service
+			clearEnv(t)
+			t.Setenv(envKey, "memory")
+
+			// When: we load config
+			_, err := config.Load()
+
+			// Then: it fails, naming the offending variable
+			if err == nil {
+				t.Fatalf("expected %s to be rejected, got nil error", envKey)
+			}
+			if !strings.Contains(err.Error(), envKey) {
+				t.Errorf("error should name %s, got: %v", envKey, err)
+			}
+		})
+	}
+}
+
+// TestLoad_perServiceStateEmptyValueIgnored pins that an empty override is
+// treated as unset, not as a service name to validate — matching how every
+// other variable in Load behaves.
+func TestLoad_perServiceStateEmptyValueIgnored(t *testing.T) {
+	// Given: a real service override set to the empty string
+	clearEnv(t)
+	t.Setenv("OVERCAST_STATE_S3", "")
+
+	// When: we load config
+	cfg, err := config.Load()
+
+	// Then: it loads, with no override recorded
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, ok := cfg.ServiceStates["s3"]; ok {
+		t.Error("s3: expected no override for an empty value")
 	}
 }
 

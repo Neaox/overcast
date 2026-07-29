@@ -17,7 +17,6 @@ export interface ServiceCardDef {
 export interface ServiceTierEntry {
   service: ServiceCardDef
   tier: EmulationTier
-  enabled: boolean
 }
 
 /** Every service that warrants a dashboard entry, derived from the registry. */

@@ -1055,7 +1055,7 @@ func (h *Handler) externalHostname() string {
 }
 
 func (h *Handler) connectToLambdaNetwork(ctx context.Context, containerID string, aliases []string) {
-	if h.cfg == nil || h.cfg.LambdaNetwork == "" || h.cfg.LambdaNetwork == h.network() || len(aliases) == 0 || !h.cfg.Services["lambda"] {
+	if h.cfg == nil || h.cfg.LambdaNetwork == "" || h.cfg.LambdaNetwork == h.network() || len(aliases) == 0 {
 		return
 	}
 	if err := h.docker.ConnectNetworkWithAliases(ctx, h.cfg.LambdaNetwork, containerID, aliases); err != nil {

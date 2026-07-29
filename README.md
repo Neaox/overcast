@@ -124,7 +124,6 @@ docker run --rm \
   -p 4566:4566 \
   -p 4567:4567 \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -e OVERCAST_SERVICES=s3,sqs,dynamodb,lambda \
   -e OVERCAST_LOG_LEVEL=debug \
   ghcr.io/neaox/overcast:alpha
 
@@ -136,14 +135,12 @@ docker run --rm \
   -p 4567:4567 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v ~/.overcast:/data \
-  -e OVERCAST_SERVICES=s3,sqs,dynamodb,lambda \
   ghcr.io/neaox/overcast:alpha
 
 # Slim image (no web UI) — no Docker socket needed when only using
 # non-container services (S3, SQS, DynamoDB, SNS, etc.)
 docker run --rm \
   -p 4566:4566 \
-  -e OVERCAST_SERVICES=s3,sqs,dynamodb \
   ghcr.io/neaox/overcast-slim:alpha
 ```
 
@@ -162,7 +159,6 @@ services:
       # makes auto resolve to hybrid automatically. Set OVERCAST_STATE
       # explicitly (memory | hybrid | persistent | wal) to override.
       OVERCAST_LOG_LEVEL: debug
-      OVERCAST_SERVICES: s3,sqs,dynamodb,sns,lambda
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock # required for Lambda, ECS, RDS, EC2
       - overcast-data:/data # mounting this is what makes auto resolve to hybrid
@@ -210,7 +206,6 @@ docker compose up
 >       - "4566:4566"
 >     environment:
 >       LAMBDA_DOCKER_SOCKET: tcp://dind:2375
->       OVERCAST_SERVICES: s3,sqs,dynamodb,lambda
 >     depends_on:
 >       - dind
 > ```
@@ -281,7 +276,6 @@ overcast serve
 # Common overrides
 OVERCAST_PORT=4566 \
 OVERCAST_STATE=hybrid \
-OVERCAST_SERVICES=s3,sqs,dynamodb,lambda \
 OVERCAST_LOG_LEVEL=debug \
   overcast serve
 ```
@@ -296,7 +290,6 @@ OVERCAST_LOG_LEVEL=debug \
 | `OVERCAST_PORT`                  | `4566`      | AWS API port.                                                                                |
 | `OVERCAST_HOST`                  | `127.0.0.1` | Interface to bind.                                                                           |
 | `OVERCAST_STATE`                 | `auto`      | State backend: `auto` (default — resolves to `hybrid` or `memory`, see [storage.md](./docs/storage.md#the-auto-default)), `memory`, `hybrid`, `persistent`, `wal`. |
-| `OVERCAST_SERVICES`              | all         | Comma-separated list of services to enable.                                                  |
 
 See the [configuration reference](./docs/README.md#configuration-reference) for the full list.
 

@@ -76,7 +76,7 @@ func TestHealth_includesStorageConfig(t *testing.T) {
 func TestNotFound_returns404(t *testing.T) {
 	// Disable S3 so bucket routes aren't registered.
 	// Then GET /some-bucket genuinely matches no route → notFoundHandler.
-	srv := helpers.NewTestServer(t, helpers.WithServices("sqs"))
+	srv := helpers.NewTestServer(t)
 
 	resp, err := http.Get(srv.URL + "/some-bucket-that-has-no-handler")
 	if err != nil {
@@ -118,23 +118,6 @@ func TestRouter_s3BucketNamedLikeLambdaAPIVersion_remainsReachable(t *testing.T)
 	helpers.AssertStatus(t, objectResp, http.StatusOK)
 }
 
-func TestRouter_disabledLambdaAlternateAPIVersion_returnsServiceDisabled(t *testing.T) {
-	// Given: S3 is enabled but Lambda is disabled.
-	srv := helpers.NewTestServer(t, helpers.WithServices("s3"))
-
-	// When: a caller uses Lambda's provisioned-concurrency API version.
-	resp, err := http.Get(srv.URL + "/2019-09-30/functions/example/provisioned-concurrency")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	// Then: Lambda owns the versioned path and reports its disabled state
-	// instead of letting S3 interpret the path as a bucket and key.
-	helpers.AssertStatus(t, resp, http.StatusServiceUnavailable)
-	helpers.AssertJSONError(t, resp, "ServiceDisabled")
-}
-
 func TestRouter_unclaimedQueryGET_doesNotFallThroughToS3(t *testing.T) {
 	// Given: an emulator with S3 enabled.
 	srv := helpers.NewTestServer(t)
@@ -151,38 +134,6 @@ func TestRouter_unclaimedQueryGET_doesNotFallThroughToS3(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusNotImplemented)
 	helpers.AssertHeader(t, resp, "x-emulator-unsupported", "true")
 	helpers.AssertQueryXMLError(t, resp, "NotImplemented")
-}
-
-func TestRouter_disabledQueryServiceGET_returnsServiceDisabled(t *testing.T) {
-	// Given: S3 is enabled but SQS is disabled.
-	srv := helpers.NewTestServer(t, helpers.WithServices("s3"))
-
-	// When: a caller makes an SQS Query GET request.
-	resp, err := http.Get(srv.URL + "/?Action=ListQueues&Version=2012-11-05")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	// Then: it reports the configured disabled state rather than S3 or a generic 501.
-	helpers.AssertStatus(t, resp, http.StatusServiceUnavailable)
-	helpers.AssertQueryXMLError(t, resp, "ServiceDisabled")
-}
-
-func TestRouter_disabledQueryServicePOST_returnsServiceDisabled(t *testing.T) {
-	// Given: S3 is enabled but SQS is disabled.
-	srv := helpers.NewTestServer(t, helpers.WithServices("s3"))
-
-	// When: a caller submits an SQS Query request.
-	resp, err := http.Post(srv.URL+"/", "application/x-www-form-urlencoded", bytes.NewBufferString("Action=ListQueues&Version=2012-11-05"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	// Then: it reports the configured disabled state in the Query XML envelope.
-	helpers.AssertStatus(t, resp, http.StatusServiceUnavailable)
-	helpers.AssertQueryXMLError(t, resp, "ServiceDisabled")
 }
 
 func TestRouter_unclaimedQueryPOST_returnsNotImplemented(t *testing.T) {
@@ -276,49 +227,6 @@ func TestRouter_enabledServiceUnimplementedRPCv2CBOROperation_returnsNotImplemen
 	helpers.AssertHeader(t, resp, "x-emulator-unsupported", "true")
 }
 
-func TestRouter_disabledServiceModeledRPCv2CBOROperation_returnsServiceDisabled(t *testing.T) {
-	// Given: CloudWatch is modeled for RPC v2 CBOR but disabled.
-	srv := helpers.NewTestServer(t, helpers.WithServices("s3"))
-	req, err := http.NewRequest(http.MethodPost, srv.URL+"/service/GraniteServiceVersion20100801/operation/AssociateDatasetKmsKey", bytes.NewReader([]byte{0xa0}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Smithy-Protocol", "rpc-v2-cbor")
-
-	// When: its explicit RPC route is requested.
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	// Then: configuration state takes precedence over the generic 501 fallback.
-	helpers.AssertStatus(t, resp, http.StatusServiceUnavailable)
-	helpers.AssertHeader(t, resp, "Smithy-Protocol", "rpc-v2-cbor")
-}
-
-func TestRouter_disabledServiceUnmodeledRPCv2CBOROperation_returnsServiceDisabled(t *testing.T) {
-	// Given: CloudWatch is a known RPC-capable service but is disabled.
-	srv := helpers.NewTestServer(t, helpers.WithServices("s3"))
-	req, err := http.NewRequest(http.MethodPost, srv.URL+"/service/GraniteServiceVersion20100801/operation/FutureOperation", bytes.NewReader([]byte{0xa0}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Smithy-Protocol", "rpc-v2-cbor")
-
-	// When: a future or otherwise unmodeled operation is requested.
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	// Then: the known disabled service state is more specific than protocol
-	// support and takes precedence over UnsupportedProtocol.
-	helpers.AssertStatus(t, resp, http.StatusServiceUnavailable)
-	helpers.AssertHeader(t, resp, "Smithy-Protocol", "rpc-v2-cbor")
-}
-
 func TestRouter_unclaimedModeledRESTPath_returnsNotImplemented(t *testing.T) {
 	// Given: a modeled REST JSON operation for a service Overcast does not yet
 	// implement, alongside S3's deliberately broad bucket routes.
@@ -370,7 +278,10 @@ func TestRouter_signedRESTRootPath_returnsNotImplemented(t *testing.T) {
 
 func TestRouter_unsignedS3PathMatchingAmbiguousRESTBinding_remainsReachable(t *testing.T) {
 	// Given: an unsigned S3 bucket whose name is also an ambiguous REST literal.
-	srv := helpers.NewTestServer(t, helpers.WithServices("s3"))
+	// Only S3 is registered: with API Gateway present its literal /tags/* route
+	// legitimately wins, so the precedence this test pins is only observable
+	// once the other claimant is out of the way.
+	srv := helpers.NewTestServer(t, helpers.WithServiceSubset("s3"))
 	create, err := http.NewRequest(http.MethodPut, srv.URL+"/tags", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -409,7 +320,7 @@ func TestRouter_unsignedS3PathMatchingAmbiguousRESTBinding_remainsReachable(t *t
 func TestRouter_headerlessS3MultipartPathMatchingRPCGrammar_remainsReachable(t *testing.T) {
 	// Given: a legitimate S3 bucket and key whose path has Smithy RPC's
 	// /service/{service}/operation/{operation} shape.
-	srv := helpers.NewTestServer(t, helpers.WithServices("s3"))
+	srv := helpers.NewTestServer(t)
 	create, err := http.NewRequest(http.MethodPut, srv.URL+"/service", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -652,7 +563,6 @@ func TestMixedBackend_isolatesPerServiceData(t *testing.T) {
 	})
 
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("sqs", "sns"),
 		helpers.WithStore(ns),
 	)
 

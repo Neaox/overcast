@@ -424,7 +424,7 @@ func TestPublish_topicNotFound(t *testing.T) {
 
 func TestPublish_snsOnlyServiceSet(t *testing.T) {
 	// Given: SNS is enabled without SQS fan-out support.
-	srv := helpers.NewTestServer(t, helpers.WithServices("sns"))
+	srv := helpers.NewTestServer(t)
 	topicArn := createTopic(t, srv, "sns-only-topic")
 
 	// When: a message is published to the topic.

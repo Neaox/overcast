@@ -67,7 +67,7 @@ func (s *Service) Name() string { return serviceName }
 // InitNotifications wires up the S3 event notification dispatcher.
 // Call this after constructing both the S3 and SQS services so the router can
 // pass the SQS enqueuer without creating an import cycle between services.
-// invoker may be nil when the lambda service is disabled.
+// invoker is nil only in tests that wire notifications without Lambda.
 func (s *Service) InitNotifications(enqueuer events.MessageEnqueuer, invoker events.FunctionInvoker, bus *events.Bus, logger *zap.Logger) {
 	NewNotificationDispatcher(s.handler.store, enqueuer, invoker, bus, logger, s.cfg.Region)
 }

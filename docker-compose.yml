@@ -13,7 +13,6 @@ services:
       OVERCAST_LOG_LEVEL: debug
       OVERCAST_DEFAULT_REGION: us-east-1
       OVERCAST_ACCOUNT_ID: "000000000000"
-      OVERCAST_SERVICES: s3,sqs,dynamodb,sns,lambda,logs,cloudwatch
       # OVERCAST_SIGV4_VALIDATE: "false"  # TODO: set to true once implemented
     volumes:
       # Persist SQLite data across container restarts when STATE=sqlite.

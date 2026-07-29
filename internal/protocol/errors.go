@@ -142,15 +142,6 @@ var (
 		HTTPStatus: http.StatusInternalServerError,
 	}
 
-	// ErrServiceDisabled is returned when a request targets a service that is
-	// known to the emulator but not enabled in the current configuration.
-	// Callers should add the service name to OVERCAST_SERVICES to enable it.
-	ErrServiceDisabled = &AWSError{
-		Code:       "ServiceDisabled",
-		Message:    "This service is not enabled in this emulator. Add it to OVERCAST_SERVICES to enable it.",
-		HTTPStatus: http.StatusServiceUnavailable,
-	}
-
 	// ErrStorageMigrating is returned by middleware.NotReady while the
 	// storage backend is still completing a one-time schema migration on
 	// startup (see internal/state/migrate.go) and cannot yet serve requests
