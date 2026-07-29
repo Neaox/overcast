@@ -30,7 +30,7 @@ registers that directory explicitly so agents can discover them without promptin
 - `git-worktrees`: Use for parallel multi-agent work that needs isolated worktrees.
 - `github-issue-lifecycle`: Use for creating, triaging, updating, linking, and closing GitHub issues.
 - `new-feature`: Use for adding AWS endpoints, services, CloudFormation resources, or other product features.
-- `pull-request`: Use for preparing PRs, PR descriptions, commit hygiene, and CHANGELOG decisions.
+- `pull-request`: Use for preparing PRs, PR descriptions, commit hygiene, screenshots for visual changes, and CHANGELOG decisions.
 
 ---
 
