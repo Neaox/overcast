@@ -811,3 +811,51 @@ func TestServiceLogger_LogStateError(t *testing.T) {
 	// Should not panic.
 	slog.LogStateError(req, "get-object", aerr, zap.String("bucket", "test"))
 }
+
+// TestRequestBaseURL_canonicalisesHostCase covers the output half of the
+// case-insensitivity rule. Routing folds the Host so any case reaches the right
+// service; what Overcast MINTS back must also be canonical, because a caller
+// stores and compares those strings. RFC 3986 §3.2.2 says producers should emit
+// a lowercase registered name, and AWS does.
+//
+// Without this, the case of whichever request happened to create a resource was
+// baked into its URL: a queue created via "MixedCase.localhost:4566" came back
+// with a QueueUrl no string-equal to the same queue's URL fetched over the
+// lowercase host, even though both address one endpoint.
+func TestRequestBaseURL_canonicalisesHostCase(t *testing.T) {
+	cases := []struct {
+		name, host, forwarded, want string
+	}{
+		{name: "mixed case host", host: "MixedCase.Localhost.Overcast.SH:4566", want: "http://mixedcase.localhost.overcast.sh:4566"},
+		{name: "already lowercase", host: "localhost:4566", want: "http://localhost:4566"},
+		{name: "upper via X-Forwarded-Host", host: "localhost:4566", forwarded: "Proxy.Example.TEST", want: "http://proxy.example.test"},
+		{name: "IPv4 literal untouched", host: "127.0.0.1:4566", want: "http://127.0.0.1:4566"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "http://example/", nil)
+			r.Host = tc.host
+			if tc.forwarded != "" {
+				r.Header.Set("X-Forwarded-Host", tc.forwarded)
+			}
+			if got := serviceutil.RequestBaseURL(r); got != tc.want {
+				t.Errorf("RequestBaseURL() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDomainPrefix_canonicalisesCase covers the same rule for the value handed
+// to function code: requestContext.domainPrefix is data a handler can branch on,
+// so it must not vary with how the caller happened to type the Host.
+func TestDomainPrefix_canonicalisesCase(t *testing.T) {
+	for _, tc := range []struct{ host, want string }{
+		{"MixedCase.Localhost.Overcast.SH:4566", "mixedcase"},
+		{"abc123.execute-api.us-east-1.localhost:4566", "abc123"},
+		{"", "localhost"},
+	} {
+		if got := serviceutil.DomainPrefix(tc.host); got != tc.want {
+			t.Errorf("DomainPrefix(%q) = %q, want %q", tc.host, got, tc.want)
+		}
+	}
+}

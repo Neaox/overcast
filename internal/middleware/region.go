@@ -31,6 +31,14 @@ func Region(next http.Handler) http.Handler {
 			region = regionFromHost(r.Host)
 		}
 		if region != "" {
+			// Canonicalise at the one point a region enters the context,
+			// whichever source produced it. Everything downstream keys state on
+			// this value (serviceutil.RegionKey), so "the region in context is
+			// lowercase" has to hold unconditionally rather than depend on each
+			// source having remembered. The header path is Overcast's own
+			// internal override and already canonical; this costs it nothing,
+			// because ToLower returns an already-lowercase string unchanged.
+			region = strings.ToLower(region)
 			ctx := context.WithValue(r.Context(), regionContextKey{}, region)
 			r = r.WithContext(ctx)
 		}
@@ -46,6 +54,12 @@ func Region(next http.Handler) http.Handler {
 //
 // Returns "" if the host does not have at least 4 dot-separated labels with a
 // known service segment in position 1. Strips any port suffix.
+//
+// The host is case-folded first (foldHostname), because a hostname is
+// case-insensitive and the region extracted here is not just a routing hint: it
+// becomes the store's key prefix via serviceutil.RegionKey. Returning the
+// segment verbatim let "…execute-api.US-East-1.…" partition state into a region
+// no other request could name.
 func regionFromHost(host string) string {
 	if host == "" {
 		return ""
@@ -53,6 +67,7 @@ func regionFromHost(host string) string {
 	if i := strings.IndexByte(host, ':'); i >= 0 {
 		host = host[:i]
 	}
+	host = foldHostname(host)
 	parts := strings.Split(host, ".")
 	if len(parts) < 4 {
 		return ""
@@ -82,10 +97,24 @@ func ContextWithRegion(ctx context.Context, region string) context.Context {
 
 // regionFromCredential extracts the region component from the SigV4
 // Authorization header. Returns "" if not parseable.
+//
+// The region is canonicalised to lowercase, as AWS region identifiers are and
+// as requestedRegionFromSigV4 (iam_enforce.go) already does with this same
+// segment. This is not cosmetic: serviceutil.RegionKey makes the value the
+// store's key prefix, so an unfolded region partitions state into a region no
+// other request can name — and, before this, a single request could evaluate
+// its IAM conditions against "us-east-1" while writing state under "US-East-1".
+//
+// Folding cannot weaken authentication. Signature verification never reads this
+// value: parseSigV4 rebuilds the scope string straight from the Authorization
+// header, so a caller that signed an upper-case scope still verifies against
+// exactly the bytes it sent.
 func regionFromCredential(r *http.Request) string {
 	parts := credentialScope(r)
 	if len(parts) >= 3 && parts[2] != "" {
-		return parts[2]
+		// Deliberately the same expression as requestedRegionFromSigV4, so the
+		// two readings of one scope cannot drift.
+		return strings.ToLower(strings.TrimSpace(parts[2]))
 	}
 	return ""
 }

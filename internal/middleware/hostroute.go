@@ -122,7 +122,7 @@ type HostRouteMatch struct {
 // virtual-hosted addressing — i.e. anything on the request path — should use
 // HostClassifier.Classify instead, which applies the full precedence rule.
 func ParseHostRoute(host string) (HostRouteMatch, bool) {
-	hostname := hostWithoutPort(host)
+	hostname := foldHostname(hostWithoutPort(host))
 	if hostname == "" || isIPLiteral(hostname) {
 		return HostRouteMatch{}, false
 	}
