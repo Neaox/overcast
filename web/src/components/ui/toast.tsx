@@ -36,23 +36,40 @@ function defaultDetailKind(variant: ToastVariant | undefined): ToastDetailKind {
 
 const ToastProvider = ToastPrimitive.Provider
 
+/**
+ * The bottom-right column every toast lives in. Only its bottom edge is
+ * pinned, so the stack grows upward and the corner-most toast never moves.
+ */
+const TOAST_DOCK = "fixed right-4 bottom-4 z-[10001] flex w-[300px] flex-col gap-2"
+
+/**
+ * The card itself: surface, radius, padding, and the room down the left edge
+ * that the 3px variant bar occupies. Exported because the docked connection
+ * toast is not a Radix toast — it is driven by connection state rather than by
+ * `toast()` — but has to be the same object on screen.
+ */
+export const TOAST_CARD =
+  "relative flex items-start gap-2.5 overflow-hidden rounded-control border border-border bg-bg-elevated py-3 pr-3 pl-[15px] shadow-lg"
+
+/** Geometry of the 3px full-height left bar; the fill is the variant's. */
+export const TOAST_BAR = "absolute inset-y-0 left-0 w-[3px]"
+
 const ToastViewport = React.forwardRef<
   React.ComponentRef<typeof ToastPrimitive.Viewport>,
   React.ComponentPropsWithoutRef<typeof ToastPrimitive.Viewport>
 >(({ className, ...props }, ref) => (
   <ToastPrimitive.Viewport
     ref={ref}
-    className={cn(
-      "fixed right-4 bottom-4 z-[10001] flex max-h-screen w-[300px] flex-col gap-2",
-      className,
-    )}
+    // Positioned by the dock, not by itself: it is the column's first item, so
+    // transient toasts pile above whatever is docked beneath them.
+    className={cn("flex max-h-screen w-full flex-col gap-2", className)}
     {...props}
   />
 ))
 ToastViewport.displayName = "ToastViewport"
 
 /** 3px full-height left bar — the variant's only load-bearing colour. */
-const toastBarVariants = cva("absolute inset-y-0 left-0 w-[3px]", {
+const toastBarVariants = cva(TOAST_BAR, {
   variants: {
     variant: {
       default: "bg-border",
@@ -106,7 +123,7 @@ const Toast = React.forwardRef<
     // re-arms it when the duration becomes finite again on resolution.
     duration={variant === "pending" ? Infinity : undefined}
     className={cn(
-      "relative flex items-start gap-2.5 overflow-hidden rounded-control border border-border bg-bg-elevated py-3 pr-3 pl-[15px] shadow-lg",
+      TOAST_CARD,
       "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-right-full",
       className,
     )}
@@ -203,8 +220,20 @@ type ToastContextValue = {
 
 const ToastContext = React.createContext<ToastContextValue | null>(null)
 
+/**
+ * The dock's footer slot: where a *persistent* status toast mounts.
+ *
+ * Those toasts are driven by application state rather than by `toast()`, and
+ * they live deep in the router tree, so they cannot be items in Radix's
+ * viewport list. Portalling them into the bottom of the dock keeps one
+ * bottom-right column — the persistent toast holds the corner and transient
+ * ones stack above it — instead of two stacks overlapping in the same corner.
+ */
+const ToastDockContext = React.createContext<HTMLElement | null>(null)
+
 export function ToastContextProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = React.useState<ToastItem[]>([])
+  const [dockFooter, setDockFooter] = React.useState<HTMLElement | null>(null)
 
   // Stable identities: callers hold on to `toast` across renders (and put it in
   // dependency arrays), and a pending toast is resolved long after it was shown.
@@ -229,31 +258,48 @@ export function ToastContextProvider({ children }: { children: React.ReactNode }
 
   return (
     <ToastContext.Provider value={value}>
-      <ToastProvider>
-        {children}
-        {toasts.map((t) => (
-          <Toast
-            key={t.id}
-            variant={t.variant}
-            onOpenChange={(open) => {
-              if (!open) dismissToast(t.id)
-            }}
-          >
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <ToastTitle>{t.title}</ToastTitle>
-              {t.description && (
-                <ToastDescription kind={t.descriptionKind ?? defaultDetailKind(t.variant)}>
-                  {t.description}
-                </ToastDescription>
-              )}
-            </div>
-            <ToastClose />
-          </Toast>
-        ))}
-        <ToastViewport />
-      </ToastProvider>
+      <ToastDockContext.Provider value={dockFooter}>
+        <ToastProvider>
+          {children}
+          {toasts.map((t) => (
+            <Toast
+              key={t.id}
+              variant={t.variant}
+              onOpenChange={(open) => {
+                if (!open) dismissToast(t.id)
+              }}
+            >
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <ToastTitle>{t.title}</ToastTitle>
+                {t.description && (
+                  <ToastDescription kind={t.descriptionKind ?? defaultDetailKind(t.variant)}>
+                    {t.description}
+                  </ToastDescription>
+                )}
+              </div>
+              <ToastClose />
+            </Toast>
+          ))}
+          <div className={TOAST_DOCK}>
+            <ToastViewport />
+            {/* `contents` so what mounts here is a column item in its own
+                right, rather than a child of an extra wrapper. */}
+            <div ref={setDockFooter} className="contents" />
+          </div>
+        </ToastProvider>
+      </ToastDockContext.Provider>
     </ToastContext.Provider>
   )
+}
+
+/**
+ * The dock's footer element, once mounted — a `createPortal` target for a
+ * persistent status toast. `null` outside a `ToastContextProvider`, and on the
+ * first render inside one, so callers render nothing until it resolves.
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export function useToastDockFooter(): HTMLElement | null {
+  return React.useContext(ToastDockContext)
 }
 
 // eslint-disable-next-line react-refresh/only-export-components

@@ -38,7 +38,9 @@ export function HeaderBreadcrumbs() {
       <span
         className={cn(
           "h-[7px] w-[7px] shrink-0 rounded-full",
-          isOnline === true ? "bg-success" : "bg-fg-subtle",
+          // Amber for a drop, matching the connection toast that explains it;
+          // grey only while the first answer is still outstanding.
+          isOnline === true ? "bg-success" : isOnline === false ? "bg-warning" : "bg-fg-subtle",
         )}
         title={
           isOnline === true ? "Connected" : isOnline === false ? "Disconnected" : "Connecting…"
