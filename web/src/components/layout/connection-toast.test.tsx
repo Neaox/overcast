@@ -36,10 +36,18 @@ const HOST = "localhost:4566"
 /** A connection state, with `connected` widened as the UI sees it. */
 type Status = Omit<Partial<ConnectionState>, "connected"> & { connected?: boolean | null }
 
+/**
+ * A stream that was live and has dropped — the only thing the card exists to
+ * describe, and so the base every case here builds on. `DISCONNECTED` is a
+ * *different* state: a stream that has never been open, which belongs to the
+ * connecting screen and is spelled out explicitly by the cases that want it.
+ */
+const DROPPED: ConnectionState = { ...DISCONNECTED, attempt: 1, lastConnectedAt: NOW - 60_000 }
+
 async function renderToast(status: Status = {}) {
   const queryClient = createTestQueryClient()
   queryClient.setQueryData(eventStreamStatusQueryOptions().queryKey, {
-    ...DISCONNECTED,
+    ...DROPPED,
     ...status,
   })
 
@@ -99,6 +107,32 @@ describe("ConnectionToast", () => {
       expect(card(container)).toBeNull()
     })
 
+    /**
+     * The state a fresh tab is actually handed. Both transports start their
+     * stream at `DISCONNECTED` and broadcast it before the SSE handshake has
+     * had a chance, so "offline" is the first definitive answer of every
+     * session — and it is not a drop.
+     */
+    it("holds off while the stream is still opening for the first time", async () => {
+      const { container } = await renderToast(DISCONNECTED)
+      expect(card(container)).toBeNull()
+    })
+
+    /**
+     * A stream that has never opened is the connecting screen's business
+     * however long it takes, so the retry schedule alone is not the trigger —
+     * the probe behind that screen and the stream share a server, so if one
+     * cannot connect the user is already being told.
+     */
+    it("leaves a stream that has never opened to the connecting screen", async () => {
+      const { container } = await renderToast({
+        ...DISCONNECTED,
+        attempt: 3,
+        nextAttemptAt: NOW + 4_000,
+      })
+      expect(card(container)).toBeNull()
+    })
+
     it("names the host it is reconnecting to", async () => {
       await renderToast({ nextAttemptAt: NOW + 4_000 })
       expect(screen.getByText(`Reconnecting to ${HOST}`)).toBeInTheDocument()
@@ -131,25 +165,19 @@ describe("ConnectionToast", () => {
       elapse(1_000)
       expect(screen.getByText("Attempt 3 · connecting…")).toBeInTheDocument()
     })
-
-    it("drops the attempt count before there has been an attempt", async () => {
-      await renderToast({ attempt: 0, nextAttemptAt: null })
-      expect(screen.getByText("connecting…")).toBeInTheDocument()
-    })
   })
 
   describe("what the cached view means", () => {
+    /**
+     * There is always a timestamp to show: the card only exists because a live
+     * connection dropped, and the open that preceded the drop stamped one.
+     */
     it("stamps the data with the moment the stream was last open", async () => {
       const lastConnectedAt = NOW - 60_000
       await renderToast({ nextAttemptAt: NOW + 4_000, lastConnectedAt })
       expect(
         screen.getByText(`Cached at ${formatTimeOfDay(lastConnectedAt)} · writes paused`),
       ).toBeInTheDocument()
-    })
-
-    it("says only what it knows when the stream has never been open", async () => {
-      await renderToast({ nextAttemptAt: NOW + 4_000 })
-      expect(screen.getByText("Writes paused until reconnected")).toBeInTheDocument()
     })
   })
 
@@ -203,11 +231,25 @@ describe("ConnectionToast", () => {
       expect(screen.queryByText("Reconnected")).not.toBeInTheDocument()
     })
 
+    /**
+     * The regression this guards: a session opens on the worker's pre-connect
+     * `DISCONNECTED`, so *every* app load ran `false → true` and announced a
+     * reconnect for a connection that had never dropped.
+     */
+    it("stays quiet when the stream opens after reporting its pre-connect state", async () => {
+      const { queryClient } = await renderToast(DISCONNECTED)
+
+      report(queryClient, { connected: true, lastConnectedAt: NOW })
+
+      expect(screen.queryByText("Reconnected")).not.toBeInTheDocument()
+    })
+
     it("announces each return, not just the first", async () => {
       const { queryClient } = await renderToast({ attempt: 1, nextAttemptAt: NOW + 4_000 })
 
       report(queryClient, { connected: true, lastConnectedAt: NOW })
-      report(queryClient, { attempt: 1, nextAttemptAt: NOW + 4_000 })
+      // The second drop carries the timestamp of the open it just lost.
+      report(queryClient, { attempt: 1, nextAttemptAt: NOW + 4_000, lastConnectedAt: NOW })
       report(queryClient, { connected: true, lastConnectedAt: NOW })
 
       expect(screen.getAllByText("Reconnected")).toHaveLength(2)
