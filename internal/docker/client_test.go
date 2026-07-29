@@ -64,6 +64,49 @@ func TestEndpointAliases_filtersNonDNSAddresses(t *testing.T) {
 	}
 }
 
+func TestInfo_returnsHostResources(t *testing.T) {
+	// Given: a fake Docker daemon reporting its CPU and memory resources.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1.45/info" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		// A real /info response carries dozens of fields; only the resource
+		// ones matter here, plus one extra to prove unknown fields are ignored.
+		_, _ = w.Write([]byte(`{"NCPU":8,"MemTotal":16777216000,"ServerVersion":"27.0.1"}`))
+	}))
+	defer server.Close()
+	client := &Client{httpClient: server.Client(), host: server.URL, logger: zap.NewNop(), sem: make(chan struct{}, maxConcurrentOps)}
+
+	// When: daemon system info is fetched.
+	info, err := client.Info(context.Background())
+
+	// Then: the daemon's host resources are reported — the machine containers
+	// actually run on, not necessarily the machine Overcast runs on.
+	if err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+	if info.NCPU != 8 {
+		t.Fatalf("NCPU = %d, want 8", info.NCPU)
+	}
+	if info.MemTotal != 16777216000 {
+		t.Fatalf("MemTotal = %d, want 16777216000", info.MemTotal)
+	}
+}
+
+func TestInfo_daemonErrorIsReturned(t *testing.T) {
+	// Given: a daemon that answers /info with a server error.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	client := &Client{httpClient: server.Client(), host: server.URL, logger: zap.NewNop(), sem: make(chan struct{}, maxConcurrentOps)}
+
+	// When/Then: the error surfaces instead of a zero-value SystemInfo.
+	if _, err := client.Info(context.Background()); err == nil {
+		t.Fatal("Info: expected an error for a 500 response")
+	}
+}
+
 func TestConnectNetworkWithAliases_sendsEndpointConfig(t *testing.T) {
 	// Given: a fake Docker daemon that captures network connect payloads.
 	var got struct {

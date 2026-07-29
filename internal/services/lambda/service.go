@@ -500,7 +500,13 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 		return
 	}
 
-	containerRuntime := NewContainerRuntime(cfg, clk, dc, s.gc, runtimeAPI, log)
+	// Resolve instance limits now that the Docker client exists: env-pinned
+	// values are used as-is, unset ones are derived from the daemon's /info
+	// (this goroutine is already off the startup path, so the call never
+	// delays other services).
+	limits := resolveRuntimeLimits(context.Background(), cfg, dc, log)
+
+	containerRuntime := NewContainerRuntime(cfg, clk, dc, s.gc, runtimeAPI, log, limits.maxConcurrentStarts)
 
 	// When a container's RIC issues its first GET /next, throttle the
 	// INIT-burst CPU down to the steady-state proportional allocation. The
@@ -551,11 +557,7 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 	}
 
 	// Atomically upgrade to ContainerRuntime. NodeRuntime stays as fallback.
-	pool := NewInstancePool(containerRuntime, log, clk, PoolLimits{
-		MaxWarmPerFunction:      cfg.LambdaMaxWarmInstances,
-		MaxInstances:            cfg.LambdaMaxInstances,
-		MaxInstancesPerFunction: cfg.LambdaMaxInstancesPerFunction,
-	})
+	pool := NewInstancePool(containerRuntime, log, clk, limits.pool)
 	// Keep the instance tracker in step with the containers that actually exist.
 	pool.observer = s.tracker
 	// Rebuild provisioned concurrency reservations from the store — an

@@ -237,7 +237,10 @@ type Config struct {
 	// LambdaDockerMaxConcurrentStarts bounds concurrent Docker-backed Lambda
 	// environment starts. This is local Docker backpressure, not an AWS-facing
 	// Lambda concurrency quota. Corresponds to env var
-	// LAMBDA_DOCKER_MAX_CONCURRENT_STARTS. Default 4.
+	// LAMBDA_DOCKER_MAX_CONCURRENT_STARTS. 0 (the default) means unset: the
+	// Lambda runtime derives a value from the Docker host's CPU count —
+	// clamp(NCPU/2, 2, 8), because every start bursts to ~2 CPUs during INIT —
+	// falling back to 4 when Docker /info is unavailable.
 	LambdaDockerMaxConcurrentStarts int
 
 	// LambdaMaxInstances bounds how many Lambda containers Overcast runs at
@@ -246,13 +249,19 @@ type Config struct {
 	// container; if none can be reclaimed it queues until the function's
 	// timeout and is then throttled. This protects the host, it is not an
 	// emulation of the AWS account concurrency quota. Corresponds to env var
-	// LAMBDA_MAX_INSTANCES. Default 25.
+	// LAMBDA_MAX_INSTANCES. 0 (the default) means unset: the Lambda runtime
+	// derives a value from the Docker host's memory —
+	// clamp(MemTotal*0.65 / 256 MiB, 4, 32) — falling back to 25 when Docker
+	// /info is unavailable.
 	LambdaMaxInstances int
 
 	// LambdaMaxInstancesPerFunction bounds concurrent containers for a single
 	// function, independent of any AWS reserved concurrency the function has.
 	// Clamped to LambdaMaxInstances. Corresponds to env var
-	// LAMBDA_MAX_INSTANCES_PER_FUNCTION. Default 10.
+	// LAMBDA_MAX_INSTANCES_PER_FUNCTION. 0 (the default) means unset: the
+	// Lambda runtime derives clamp(maxInstances/2, 2, maxInstances) from the
+	// effective global limit, falling back to 10 when Docker /info is
+	// unavailable.
 	LambdaMaxInstancesPerFunction int
 
 	// LambdaMaxWarmInstances bounds how many idle containers one function keeps
@@ -717,7 +726,12 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_DEBUG                     false
 //	OVERCAST_TLS_CERT                  ""
 //	OVERCAST_TLS_KEY                   ""
-//	LAMBDA_DOCKER_MAX_CONCURRENT_STARTS 4
+//	LAMBDA_DOCKER_MAX_CONCURRENT_STARTS (auto) derived from Docker host CPUs: clamp(NCPU/2, 2, 8);
+//	                                           4 when Docker /info is unavailable
+//	LAMBDA_MAX_INSTANCES               (auto)  derived from Docker host memory:
+//	                                           clamp(MemTotal*0.65 / 256MiB, 4, 32); 25 when /info is unavailable
+//	LAMBDA_MAX_INSTANCES_PER_FUNCTION  (auto)  clamp(maxInstances/2, 2, maxInstances); 10 when /info is unavailable
+//	LAMBDA_MAX_WARM_INSTANCES          10
 //	LAMBDA_INIT_TIMEOUT_SECONDS       10
 //	LAMBDA_KEEP_CONTAINERS             false (true = keep stopped containers after expiry/delete)
 //	LAMBDA_FETCH_REMOTE_LAYERS         false (true = download missing layers from real AWS)
@@ -950,17 +964,22 @@ func Load() (*Config, error) {
 	cfg.LambdaDockerSocket = envOr("LAMBDA_DOCKER_SOCKET", defaultDockerSocket)
 	cfg.LambdaNetwork = envOr("LAMBDA_NETWORK", "overcast_lambda")
 	cfg.LambdaRuntimeAPIPort = envInt("LAMBDA_RUNTIME_API_PORT", 9001)
-	cfg.LambdaDockerMaxConcurrentStarts = envInt("LAMBDA_DOCKER_MAX_CONCURRENT_STARTS", 4)
-	if cfg.LambdaDockerMaxConcurrentStarts < 1 {
-		cfg.LambdaDockerMaxConcurrentStarts = 1
+	// For the three derivable limits, 0 is a sentinel meaning "unset — derive
+	// from the Docker host when the Lambda runtime initialises" (see
+	// internal/services/lambda/host_limits.go). A negative or zero env value is
+	// normalised to the sentinel rather than clamped to 1: pinning a limit
+	// means setting a positive integer.
+	cfg.LambdaDockerMaxConcurrentStarts = envInt("LAMBDA_DOCKER_MAX_CONCURRENT_STARTS", 0)
+	if cfg.LambdaDockerMaxConcurrentStarts < 0 {
+		cfg.LambdaDockerMaxConcurrentStarts = 0
 	}
-	cfg.LambdaMaxInstances = envInt("LAMBDA_MAX_INSTANCES", 25)
-	if cfg.LambdaMaxInstances < 1 {
-		cfg.LambdaMaxInstances = 1
+	cfg.LambdaMaxInstances = envInt("LAMBDA_MAX_INSTANCES", 0)
+	if cfg.LambdaMaxInstances < 0 {
+		cfg.LambdaMaxInstances = 0
 	}
-	cfg.LambdaMaxInstancesPerFunction = envInt("LAMBDA_MAX_INSTANCES_PER_FUNCTION", 10)
-	if cfg.LambdaMaxInstancesPerFunction < 1 {
-		cfg.LambdaMaxInstancesPerFunction = 1
+	cfg.LambdaMaxInstancesPerFunction = envInt("LAMBDA_MAX_INSTANCES_PER_FUNCTION", 0)
+	if cfg.LambdaMaxInstancesPerFunction < 0 {
+		cfg.LambdaMaxInstancesPerFunction = 0
 	}
 	cfg.LambdaMaxWarmInstances = envInt("LAMBDA_MAX_WARM_INSTANCES", 10)
 	if cfg.LambdaMaxWarmInstances < 1 {

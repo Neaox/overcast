@@ -188,7 +188,10 @@ All configuration is via environment variables. No config file required.
 | `LAMBDA_DOCKER_SOCKET`           | `/var/run/docker.sock` | Docker endpoint — Unix path or `tcp://host:port` (for DinD)                          |
 | `LAMBDA_NETWORK`                 | `overcast_lambda`      | Docker network for Lambda containers                                                 |
 | `LAMBDA_RUNTIME_API_PORT`        | `9001`                 | Port Overcast exposes the Lambda Runtime API on                                      |
-| `LAMBDA_DOCKER_MAX_CONCURRENT_STARTS` | `4`                    | Max concurrent Docker-backed Lambda container starts                                 |
+| `LAMBDA_DOCKER_MAX_CONCURRENT_STARTS` | _(auto)_               | Max concurrent Docker-backed Lambda container starts. Unset: derived from the Docker host as `clamp(NCPU/2, 2, 8)` (each start bursts ~2 CPUs during INIT); `4` when Docker `/info` is unavailable |
+| `LAMBDA_MAX_INSTANCES`           | _(auto)_               | Max Lambda containers across all functions. Unset: derived from the Docker host as `clamp(MemTotal×0.65 / 256 MiB, 4, 32)`; `25` when `/info` is unavailable |
+| `LAMBDA_MAX_INSTANCES_PER_FUNCTION` | _(auto)_            | Max concurrent containers for one function. Unset: `clamp(maxInstances/2, 2, maxInstances)`; `10` when `/info` is unavailable |
+| `LAMBDA_MAX_WARM_INSTANCES`      | `10`                   | Idle containers kept warm per function after a burst                                 |
 | `LAMBDA_SEED_RUNTIME_IMAGES`     | `false`                | Pre-pull every managed Lambda runtime image at startup                               |
 | `LAMBDA_INIT_TIMEOUT_SECONDS`    | `10`                   | Max seconds to wait for a Lambda runtime to finish INIT                              |
 | `LAMBDA_KEEP_CONTAINERS`         | `false`                | Keep stopped Lambda containers after expiry/delete (useful for debugging)            |
