@@ -1,13 +1,13 @@
-// Package trust defines the Store contract for managing a local Certificate
-// Authority in the operating system's trust store. The overcast host CLI
-// uses it to install a CA once, mint short-lived leaf certificates for
-// registered custom domains, and serve HTTPS that the user's browser and
-// HTTP clients accept without the usual self-signed-cert dance.
+// Package trust owns the Overcast local Certificate Authority: minting it,
+// signing leaf server certificates from it (see ca.go), and installing the
+// CA certificate into the operating system's trust store so browsers and
+// HTTP clients accept Overcast's HTTPS without the usual self-signed-cert
+// dance. `overcast trust install|uninstall|status` and `OVERCAST_TLS=auto`
+// both hang off this package, and off the same key material.
 //
-// The interface mirrors the shape of smallstep/truststore so that the
-// concrete backend — added in step 3 — is a thin wrapper over it. Keeping
-// the interface small and platform-agnostic means the host CLI never
-// imports the backend directly.
+// The Store interface mirrors the shape of smallstep/truststore; the
+// concrete backends shell out to each platform's own tooling (certutil,
+// security, update-ca-certificates) so no extra dependency is needed.
 package trust
 
 import (
@@ -41,6 +41,7 @@ type Store interface {
 	Installed(ctx context.Context) (bool, error)
 }
 
-// New returns the trust Store for the current platform. If no backend is
-// available it returns ErrUnsupported.
-func New(log *zap.Logger) (Store, error) { return newStore(log) }
+// New returns the trust Store for the current platform, managing the CA
+// persisted under caDir (see DirFor). If no backend is available it returns
+// ErrUnsupported.
+func New(log *zap.Logger, caDir string) (Store, error) { return newStore(log, caDir) }

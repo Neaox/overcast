@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/containerendpoint"
 	"github.com/Neaox/overcast/internal/docker"
+	"github.com/Neaox/overcast/internal/hostbridge/trust"
 	"github.com/Neaox/overcast/internal/inithooks"
 	"github.com/Neaox/overcast/internal/router"
 	"github.com/Neaox/overcast/internal/serviceutil"
@@ -180,6 +182,19 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	resolvePublishedPort(cfg, logger)
 	prof.mark("resolvePublishedPort")
 
+	// ---- TLS material --------------------------------------------------------
+	// Resolved before the servers are built because both the API and the web
+	// UI listeners share it — serving the UI over plain HTTP while the API is
+	// TLS would leave the SPA unable to call the API (mixed content). With TLS
+	// on, browsers negotiate HTTP/2 via ALPN and multiplex the UI's SSE
+	// stream, invoke progress streams, and polling over one connection instead
+	// of fighting over the 6-socket HTTP/1.1 limit.
+	tlsServerConf, tlsTrustPEM, err := serverTLSConfig(cfg, logger)
+	if err != nil {
+		return err
+	}
+	prof.mark("serverTLSConfig")
+
 	// ---- HTTP server -------------------------------------------------------
 	handler, preShutdown, cleanup, _ := router.New(cfg, store, logger, clock.New(), hookRunner)
 	prof.mark("router.New (full)")
@@ -195,7 +210,8 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	}
 
 	srv := &http.Server{
-		Handler: srvHandler,
+		Handler:   srvHandler,
+		TLSConfig: tlsServerConf,
 		// IdleTimeout governs how long a keep-alive connection may sit idle
 		// between requests. Without this, every AWS SDK connection (which uses
 		// HTTP keep-alive by default) holds a goroutine open indefinitely —
@@ -222,7 +238,7 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	}
 	var uiLn net.Listener
 	if uiPort != 0 {
-		uiHandler, err := newUIHandler(cfg.Port, browserAPIPort(cfg), cfg.Region, cfg.Debug)
+		uiHandler, err := newUIHandler(cfg.Port, browserAPIPort(cfg), cfg.Region, cfg.Debug, cfg.TLSEnabled(), tlsTrustPEM)
 		if err != nil {
 			logger.Warn("web UI unavailable", zap.Error(err))
 		} else {
@@ -248,11 +264,24 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 				}
 			}
 			if uiLn != nil {
-				uiSrv := &http.Server{Handler: uiHandler, IdleTimeout: 60 * time.Second}
+				// The UI listener shares the API's TLS material: one mode
+				// governs both, so the SPA's https origin can call the https
+				// API, and browsers get HTTP/2 (via ALPN) for the UI's SSE and
+				// progress streams instead of the 6-connection HTTP/1.1 cap.
+				uiSrv := &http.Server{Handler: uiHandler, TLSConfig: tlsServerConf, IdleTimeout: 60 * time.Second}
 				go func() {
-					logger.Info("web UI listening", zap.String("addr", uiLn.Addr().String()))
-					if err := uiSrv.Serve(uiLn); err != nil && err != http.ErrServerClosed {
-						logger.Warn("web UI server error", zap.Error(err))
+					logger.Info("web UI listening",
+						zap.String("addr", uiLn.Addr().String()),
+						zap.Bool("tls", tlsServerConf != nil),
+					)
+					var uiErr error
+					if tlsServerConf != nil {
+						uiErr = uiSrv.ServeTLS(uiLn, "", "")
+					} else {
+						uiErr = uiSrv.Serve(uiLn)
+					}
+					if uiErr != nil && uiErr != http.ErrServerClosed {
+						logger.Warn("web UI server error", zap.Error(uiErr))
 					}
 				}()
 				defer uiSrv.Shutdown(context.Background()) //nolint:errcheck
@@ -261,6 +290,12 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	}
 
 	// ---- Bridge (optional) ------------------------------------------------
+	if bridgeEnabled && cfg.TLSEnabled() {
+		// The bridge's port-80 reverse proxy speaks plain HTTP to its
+		// backends; pointing it at TLS listeners would fail every request.
+		logger.Warn("--bridge is not supported while TLS is enabled — skipping the mDNS bridge and port-80 proxy")
+		bridgeEnabled = false
+	}
 	if bridgeEnabled {
 		bindIP := net.ParseIP(bridgeBindIPStr)
 		if bindIP == nil {
@@ -301,8 +336,10 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 			zap.Bool("debug", cfg.Debug),
 		)
 
-		if cfg.TLSEnabled() {
-			err = srv.ServeTLS(ln, cfg.TLSCertFile, cfg.TLSKeyFile)
+		if tlsServerConf != nil {
+			// Certificates already live in srv.TLSConfig — for both the
+			// explicit cert/key pair and the auto-minted leaf.
+			err = srv.ServeTLS(ln, "", "")
 		} else {
 			err = srv.Serve(ln)
 		}
@@ -575,13 +612,69 @@ func logStoreMode(logger *zap.Logger, cfg *config.Config) {
 
 // buildHookEnv returns the environment variables passed to init hook scripts.
 func buildHookEnv(cfg *config.Config) []string {
-	return []string{
-		fmt.Sprintf("AWS_ENDPOINT_URL=http://localhost:%d", cfg.Port),
+	scheme := "http"
+	if cfg.TLSEnabled() {
+		scheme = "https"
+	}
+	env := []string{
+		fmt.Sprintf("AWS_ENDPOINT_URL=%s://localhost:%d", scheme, cfg.Port),
 		"AWS_DEFAULT_REGION=" + cfg.Region,
 		"AWS_ACCESS_KEY_ID=test",
 		"AWS_SECRET_ACCESS_KEY=test",
 		"LOCALSTACK_HOSTNAME=localhost",
 		fmt.Sprintf("EDGE_PORT=%d", cfg.Port),
+	}
+	// With TLS on, point the AWS CLI / boto3 in hook scripts at the trust
+	// root so their https calls verify: the local CA in auto mode, the
+	// operator's own certificate chain in explicit mode.
+	if cfg.TLSAuto() {
+		env = append(env, "AWS_CA_BUNDLE="+filepath.Join(trust.DirFor(cfg.DataDir), trust.CACertFile))
+	} else if cfg.TLSEnabled() {
+		env = append(env, "AWS_CA_BUNDLE="+cfg.TLSCertFile)
+	}
+	return env
+}
+
+// serverTLSConfig resolves the TLS material both listeners (API and web UI)
+// serve with, plus the PEM roots the BFF must trust to dial the API. Returns
+// (nil, nil, nil) when TLS is off.
+//
+// Auto mode (OVERCAST_TLS=auto) mints — or reuses, see
+// trust.ServerCertificate — a leaf signed by the local overcast CA under
+// <data dir>/ca, covering every name Overcast advertises
+// (cfg.TLSAutoSANs). Explicit mode loads the configured cert/key pair and
+// hands the BFF the certificate file's PEM (self-signed certs and bundled
+// chains both verify that way; a chain-less private-CA leaf will not — ship
+// the chain in the cert file).
+func serverTLSConfig(cfg *config.Config, logger *zap.Logger) (*tls.Config, []byte, error) {
+	switch {
+	case cfg.TLSAuto():
+		caDir := trust.DirFor(cfg.DataDir)
+		cert, _, err := trust.ServerCertificate(caDir, cfg.TLSAutoSANs())
+		if err != nil {
+			return nil, nil, fmt.Errorf("mint TLS certificate: %w", err)
+		}
+		caPEM, err := os.ReadFile(filepath.Join(caDir, trust.CACertFile))
+		if err != nil {
+			return nil, nil, fmt.Errorf("read CA certificate: %w", err)
+		}
+		logger.Info("TLS auto mode: serving HTTPS with a certificate minted from the local overcast CA",
+			zap.String("ca_dir", caDir),
+			zap.String("hint", "run `overcast trust install` once per machine so browsers and SDKs trust it"),
+		)
+		return &tls.Config{Certificates: []tls.Certificate{cert}}, caPEM, nil
+	case cfg.TLSEnabled():
+		cert, err := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
+		if err != nil {
+			return nil, nil, fmt.Errorf("load TLS cert/key: %w", err)
+		}
+		certPEM, err := os.ReadFile(cfg.TLSCertFile)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read TLS certificate: %w", err)
+		}
+		return &tls.Config{Certificates: []tls.Certificate{cert}}, certPEM, nil
+	default:
+		return nil, nil, nil
 	}
 }
 

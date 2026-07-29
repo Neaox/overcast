@@ -6,6 +6,7 @@
 //   - overcast serve        — start the emulator daemon
 //   - overcast bridge       — publish *.local domains via mDNS + port-80 proxy
 //   - overcast trust        — manage the local trust store for TLS certificates
+//   - overcast https        — one-shot HTTPS setup (CA + trust store + certificate)
 //   - overcast status       — inspect a running daemon
 //
 // The Docker image uses `overcast serve` as its entrypoint. Host-only
@@ -37,6 +38,7 @@ func main() {
 	root.AddCommand(newBridgeCmd())
 	root.AddCommand(newStatusCmd())
 	root.AddCommand(newTrustCmd())
+	root.AddCommand(newHTTPSCmd())
 	root.AddCommand(newImportCmd())
 
 	if err := root.Execute(); err != nil {

@@ -10,7 +10,7 @@ import (
 	"github.com/Neaox/overcast/internal/bff"
 )
 
-func newUIHandler(apiPort, browserAPIPort int, region string, debug bool) (http.Handler, error) {
+func newUIHandler(apiPort, browserAPIPort int, region string, debug bool, tlsEnabled bool, tlsTrustPEM []byte) (http.Handler, error) {
 	staticFS, err := fs.Sub(overcast.WebDistFS, "web/dist")
 	if err != nil {
 		return nil, err
@@ -24,5 +24,7 @@ func newUIHandler(apiPort, browserAPIPort int, region string, debug bool) (http.
 		BrowserAPIPort: browserAPIPort,
 		Region:         region,
 		Debug:          debug,
+		TLS:            tlsEnabled,
+		TLSTrustPEM:    tlsTrustPEM,
 	}), nil
 }

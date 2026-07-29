@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -433,6 +434,13 @@ type Config struct {
 	// TLSKeyFile is the path to the TLS private key file.
 	TLSKeyFile string
 
+	// TLSMode selects how TLS is provisioned (OVERCAST_TLS). Empty means
+	// plain HTTP unless TLSCertFile/TLSKeyFile are set; TLSModeAuto mints a
+	// server certificate from Overcast's local CA at startup and serves both
+	// the API and the web UI over HTTPS (which also unlocks browser HTTP/2
+	// via ALPN). Mutually exclusive with TLSCertFile/TLSKeyFile.
+	TLSMode string
+
 	// SMTPMock enables the built-in SMTP capture server. When true, all
 	// outbound SNS email/email-json notifications are delivered to the local
 	// capture server and are browseable in the web UI under /mail.
@@ -579,9 +587,65 @@ func (c *Config) ExternalBaseURL() string {
 	return fmt.Sprintf("%s://%s:%d", scheme, c.ExternalHostname(), c.Port)
 }
 
-// TLSEnabled returns true when both TLS cert and key are configured.
+// TLSModeAuto is the OVERCAST_TLS value that mints a certificate from the
+// local Overcast CA at startup.
+const TLSModeAuto = "auto"
+
+// TLSEnabled returns true when the server should serve HTTPS — either via an
+// explicitly configured cert/key pair or via the auto-minted local CA leaf.
 func (c *Config) TLSEnabled() bool {
-	return c.TLSCertFile != "" && c.TLSKeyFile != ""
+	return c.TLSAuto() || (c.TLSCertFile != "" && c.TLSKeyFile != "")
+}
+
+// TLSAuto returns true when OVERCAST_TLS=auto: the server certificate is
+// minted from Overcast's local CA at startup.
+func (c *Config) TLSAuto() bool {
+	return c.TLSMode == TLSModeAuto
+}
+
+// TLSAutoSANs returns every subject alternative name the auto-minted server
+// certificate must cover: the loopback names and addresses, each wildcard
+// DNS domain (apex, one-level wildcard, and the "*.s3." level used by S3
+// virtual-hosted addressing), any extra split-horizon hosts, and the
+// configured hostname.
+//
+// One-level wildcards are a TLS constraint, not a choice: "*.<base>" matches
+// exactly one label, so deeper host-routed names with a variable middle
+// (e.g. "{id}.execute-api.{region}.<base>") cannot be enumerated here and
+// are not covered. The S3 level is included explicitly because
+// "{bucket}.s3.<base>" is the common two-label shape.
+func (c *Config) TLSAutoSANs() []string {
+	sans := []string{"localhost", "127.0.0.1", "::1"}
+	seen := map[string]bool{"localhost": true, "127.0.0.1": true, "::1": true}
+	add := func(name string) {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		sans = append(sans, name)
+	}
+	addDomain := func(base string) {
+		base = strings.TrimSpace(base)
+		if base == "" {
+			return
+		}
+		if net.ParseIP(base) != nil {
+			add(base) // an IP literal gets an IP SAN; wildcards over IPs are meaningless
+			return
+		}
+		add(base)
+		add("*." + base)
+		add("*.s3." + base)
+	}
+	for _, base := range WildcardDNSDomains {
+		addDomain(base)
+	}
+	for _, base := range c.SplitHorizonHosts {
+		addDomain(base)
+	}
+	addDomain(c.Hostname)
+	return sans
 }
 
 // allServices is the canonical list of supported service names.
@@ -735,6 +799,7 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_LAMBDA_NODE_BIN           node
 //	OVERCAST_LAMBDA_HOT_RELOAD         false
 //	OVERCAST_DEBUG                     false
+//	OVERCAST_TLS                       ""    (auto = mint from the local overcast CA; serves API + web UI over HTTPS/h2)
 //	OVERCAST_TLS_CERT                  ""
 //	OVERCAST_TLS_KEY                   ""
 //	LAMBDA_DOCKER_MAX_CONCURRENT_STARTS (auto) derived from Docker host CPUs: clamp(NCPU/2, 2, 8);
@@ -1065,6 +1130,17 @@ func Load() (*Config, error) {
 	cfg.TLSKeyFile = os.Getenv("OVERCAST_TLS_KEY")
 	if (cfg.TLSCertFile == "") != (cfg.TLSKeyFile == "") {
 		return nil, fmt.Errorf("config: OVERCAST_TLS_CERT and OVERCAST_TLS_KEY must both be set or both be empty")
+	}
+	switch mode := strings.ToLower(strings.TrimSpace(os.Getenv("OVERCAST_TLS"))); mode {
+	case "", "off", "false", "0":
+		cfg.TLSMode = ""
+	case TLSModeAuto:
+		cfg.TLSMode = TLSModeAuto
+	default:
+		return nil, fmt.Errorf("config: OVERCAST_TLS must be 'auto' or unset, got %q", mode)
+	}
+	if cfg.TLSAuto() && (cfg.TLSCertFile != "" || cfg.TLSKeyFile != "") {
+		return nil, fmt.Errorf("config: OVERCAST_TLS=auto and OVERCAST_TLS_CERT/OVERCAST_TLS_KEY are mutually exclusive — use one or the other")
 	}
 
 	// SMTP

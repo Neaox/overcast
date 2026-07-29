@@ -30,7 +30,7 @@ see the [root README](../README.md).
 - [Service names](#service-names) — every service name and the CDK module it corresponds to
 - [Log levels](#log-levels) — `OVERCAST_LOG_LEVEL` values and what each one shows
 - [Persistence](#persistence) — storage backends
-- [HTTPS / TLS](#https--tls) — self-signed certs for local HTTPS
+- [HTTPS / TLS](#https--tls) — browser-trusted HTTPS and HTTP/2 in two commands; see [HTTPS and HTTP/2](./https.md)
 - [Debug endpoints](#debug-endpoints) — health, metrics, state dump, pprof
 - [Event pipelines](#event-pipelines) — SNS→SQS, SQS→Lambda, DynamoDB Streams
 - [Web management console](#web-management-console) — built-in dashboard
@@ -182,8 +182,9 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_DEBUG`                 | `false`                | Enable `/_debug/*` endpoints                                                         |
 | `OVERCAST_SIGV4_VALIDATE`        | `false`                | SigV4 verification _(not yet implemented)_                                           |
 | `OVERCAST_CFN_SYNC_WAIT_MS`      | `1000`                 | Milliseconds CloudFormation waits for fast stack provisioning before returning (`0` disables) |
-| `OVERCAST_TLS_CERT`              | —                      | Path to TLS certificate (enables HTTPS)                                              |
-| `OVERCAST_TLS_KEY`               | —                      | Path to TLS private key                                                              |
+| `OVERCAST_TLS`                   | —                      | `auto` = serve API **and** web UI over HTTPS with a certificate minted from the local overcast CA (unlocks browser HTTP/2) — see [HTTPS and HTTP/2](./https.md) |
+| `OVERCAST_TLS_CERT`              | —                      | Path to your own TLS certificate (enables HTTPS for API and web UI; mutually exclusive with `OVERCAST_TLS=auto`) |
+| `OVERCAST_TLS_KEY`               | —                      | Path to the matching TLS private key                                                 |
 | `OVERCAST_SHUTDOWN_TIMEOUT`      | `5s`                   | Graceful shutdown wait; also budgets the final store flush — if it can't finish in time the process exits anyway and unflushed writes replay from the pending log on next start |
 | `LAMBDA_DOCKER_SOCKET`           | `/var/run/docker.sock` | Docker endpoint — Unix path or `tcp://host:port` (for DinD)                          |
 | `LAMBDA_NETWORK`                 | `overcast_lambda`      | Docker network for Lambda containers                                                 |
@@ -377,14 +378,30 @@ The active storage configuration is visible in three places:
 
 ## HTTPS / TLS
 
-```bash
-# Generate a self-signed cert for local development
-openssl req -x509 -newkey rsa:4096 \
-  -keyout key.pem -out cert.pem \
-  -days 365 -nodes -subj '/CN=localhost'
+Full guide: **[HTTPS and HTTP/2](./https.md)** — why the web console needs it
+(browsers cap HTTP/1.1 at 6 connections per origin, localhost included, and
+never speak cleartext HTTP/2, so the console's SSE + progress streams starve
+navigation under load), the trust model, offline behaviour, and the manual
+setup path.
 
+The two-command version:
+
+```bash
+overcast https enable            # once per machine: local CA → system trust store
+OVERCAST_TLS=auto overcast serve # both listeners now serve HTTPS + HTTP/2
+```
+
+Then open <https://localhost.overcast.sh:4567> (public DNS resolves
+`*.localhost.overcast.sh` to `127.0.0.1` — no hosts-file edits). Both the API
+(4566) and the web UI (4567) are served over TLS; browsers negotiate HTTP/2
+via ALPN and multiplex everything over one connection.
+
+Prefer your own certificate? `OVERCAST_TLS_CERT`/`OVERCAST_TLS_KEY` still
+work and now also apply to the web UI:
+
+```bash
 docker run --rm \
-  -p 4566:4566 \
+  -p 4566:4566 -p 4567:4567 \
   -e OVERCAST_TLS_CERT=/certs/cert.pem \
   -e OVERCAST_TLS_KEY=/certs/key.pem \
   -v $(pwd):/certs \
@@ -392,8 +409,8 @@ docker run --rm \
 ```
 
 ```bash
-export AWS_CA_BUNDLE=/path/to/cert.pem       # AWS CLI + boto3
-export NODE_EXTRA_CA_CERTS=/path/to/cert.pem # Node.js SDK
+export AWS_CA_BUNDLE=~/.overcast/data/ca/rootCA.pem  # AWS CLI + boto3 (auto mode)
+export NODE_EXTRA_CA_CERTS=~/.overcast/data/ca/rootCA.pem # Node.js SDK
 ```
 
 ---
@@ -475,3 +492,10 @@ The console provides:
 
 The web UI is non-critical — if the BFF server fails to start, the Go backend
 runs normally without it.
+
+> [!TIP]
+> If the console feels sluggish or stops responding to clicks while many
+> Lambdas run or transfers are in flight, you are hitting the browser's
+> 6-connection HTTP/1.1 limit — the live feed and progress streams are
+> holding the sockets. Serve the console over HTTPS to unlock HTTP/2 and
+> keep it responsive under any load: see [HTTPS and HTTP/2](./https.md).
