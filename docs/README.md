@@ -212,8 +212,17 @@ All configuration is via environment variables. No config file required.
 ### Service names
 
 `OVERCAST_SERVICES` accepts the tokens below, comma-separated. Leaving it unset
-enables all of them, which is the right default for most people — trim the list
-only to save memory or to prove a stack doesn't depend on a service.
+enables all of them, which is the right default for most people.
+
+Trimming the list is not a performance measure: every service is constructed
+either way, and constructors are barred from reading the store or doing I/O (see
+[Startup budget](https://github.com/Neaox/overcast/blob/main/docs/dev/performance.md#startup-budget--rules-for-service-authors)),
+so a disabled service costs about as much as an enabled idle one. What it
+changes is side effects and isolation: no Docker probing, container or network
+reconciliation for `lambda`, `ecs`, `rds`, `elasticache`, `msk`, `ec2`, or
+`eks`; no mock SMTP server bound to port 1025 unless `sns`, `ses`, or `cognito`
+is enabled; and a stack that quietly depends on a service you meant to exclude
+fails loudly instead of working.
 
 Tokens are matched exactly, with no aliases. An unrecognised token is a startup
 error, and a request to a service you left out returns HTTP 503 `ServiceDisabled`
