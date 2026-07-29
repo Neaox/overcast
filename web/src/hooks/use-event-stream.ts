@@ -59,6 +59,7 @@ import { ecrKeys } from "@/features/ecr/data"
 import { topologyKey } from "@/features/map/use-topology"
 import { lambdaInstanceKeys } from "@/hooks/use-lambda-instances"
 import { appendEvents } from "@/workers/event-buffer"
+import { KeyedThrottle } from "@/lib/keyed-throttle"
 import type { StreamEvent } from "@/types"
 
 export type { StreamEvent }
@@ -167,6 +168,10 @@ export function useEventStreamSubscription() {
     // out from under a page that has no consumer mounted.
     installEventStreamDefaults(qcRef.current)
 
+    // Scoped to the subscription so an endpoint switch starts a fresh slate
+    // and unmounting cancels any trailing invalidations still scheduled.
+    const throttle = new KeyedThrottle(INVALIDATE_INTERVAL_MS)
+
     function handleMessage(msg: WorkerMessage): void {
       const qc = qcRef.current
 
@@ -181,7 +186,7 @@ export function useEventStreamSubscription() {
           qc.setQueryData<StreamEvent[]>(eventStreamKeys.events, (old = []) =>
             appendEvents(old, msg.events),
           )
-          invalidateForEvents(qc, msg.events)
+          invalidateForEvents(qc, msg.events, throttle)
           break
 
         case "status":
@@ -194,7 +199,11 @@ export function useEventStreamSubscription() {
       }
     }
 
-    return eventStreamClient.subscribe(url, handleMessage)
+    const unsubscribe = eventStreamClient.subscribe(url, handleMessage)
+    return () => {
+      throttle.cancel()
+      unsubscribe()
+    }
   }, [url])
 }
 
@@ -519,6 +528,18 @@ function getEventQueryMap(): Record<string, QueryKey[] | undefined> {
 }
 
 /**
+ * Ceiling on how often a single query key is invalidated during a sustained
+ * event burst. Deduplicating within a batch (below) is not enough once the
+ * emulator is busy: a Lambda load test puts the same keys — instance lists,
+ * the topology graph — in *every* flush window, and each invalidation
+ * refetches every active query under that key, hammering the six-per-origin
+ * socket pool navigations also need. The throttle's leading edge keeps sparse
+ * events exactly as fresh as before; its trailing call guarantees a refetch
+ * after the last event of a burst, so the UI never settles on stale data.
+ */
+const INVALIDATE_INTERVAL_MS = 1_000
+
+/**
  * Invalidate React Query caches for a batch of SSE events.
  * Called synchronously from onMessage — no effect, no ref, no delay.
  *
@@ -527,8 +548,14 @@ function getEventQueryMap(): Record<string, QueryKey[] | undefined> {
  * replays the server's entire history buffer through here. Distinct keys are
  * likewise invalidated once — a batch of 400 SQS events describes the same
  * queue, and asking React Query to refetch it 400 times only spends network.
+ * Across batches, `throttle` rate-limits each key to once per
+ * {@link INVALIDATE_INTERVAL_MS} with a trailing call.
  */
-function invalidateForEvents(qc: ReturnType<typeof useQueryClient>, events: StreamEvent[]) {
+function invalidateForEvents(
+  qc: ReturnType<typeof useQueryClient>,
+  events: StreamEvent[],
+  throttle: KeyedThrottle,
+) {
   if (events.length === 0) return
 
   const map = getEventQueryMap()
@@ -550,7 +577,7 @@ function invalidateForEvents(qc: ReturnType<typeof useQueryClient>, events: Stre
     }
   }
 
-  for (const key of pending.values()) {
-    void qc.invalidateQueries({ queryKey: key })
+  for (const [id, key] of pending) {
+    throttle.run(id, () => void qc.invalidateQueries({ queryKey: key }))
   }
 }

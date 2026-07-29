@@ -5,6 +5,8 @@ import {
   EventBatcher,
   EVENT_BUFFER_CAPACITY,
   FLUSH_INTERVAL_MS,
+  flushIntervalFor,
+  MAX_FLUSH_INTERVAL_MS,
   MIN_EVENT_BUFFER_CAPACITY,
   setHeapProbe,
 } from "./event-buffer"
@@ -155,6 +157,29 @@ describe("appendEvents under memory pressure", () => {
   })
 })
 
+describe("flushIntervalFor", () => {
+  it("widens the window when a batch arrives at burst rate", () => {
+    // 20 events in a 50 ms window is 400/s — well past the high water mark.
+    expect(flushIntervalFor(20, FLUSH_INTERVAL_MS)).toBe(FLUSH_INTERVAL_MS * 2)
+  })
+
+  it("keeps widening under sustained pressure, no further than the ceiling", () => {
+    let interval = FLUSH_INTERVAL_MS
+    for (let i = 0; i < 20; i++) interval = flushIntervalFor(interval * 10, interval)
+    expect(interval).toBe(MAX_FLUSH_INTERVAL_MS)
+  })
+
+  it("narrows back once traffic subsides, no lower than the base interval", () => {
+    expect(flushIntervalFor(1, 200)).toBe(100)
+    expect(flushIntervalFor(1, FLUSH_INTERVAL_MS)).toBe(FLUSH_INTERVAL_MS)
+  })
+
+  it("holds steady between the two water marks", () => {
+    // 5 events per 50 ms window is 100/s — busy, but not a burst.
+    expect(flushIntervalFor(5, FLUSH_INTERVAL_MS)).toBe(FLUSH_INTERVAL_MS)
+  })
+})
+
 describe("EventBatcher", () => {
   afterEach(() => vi.useRealTimers())
 
@@ -212,5 +237,49 @@ describe("EventBatcher", () => {
 
     expect(batches).toHaveLength(0)
     expect(batcher.snapshot()).toHaveLength(0)
+  })
+
+  /** Push `count` events and advance past one flush of `windowMs`. */
+  function burst(batcher: EventBatcher, count: number, windowMs: number): void {
+    for (let i = 0; i < count; i++) batcher.push(ev("s3:BucketCreated", i))
+    vi.advanceTimersByTime(windowMs)
+  }
+
+  it("widens the flush window during a sustained burst", () => {
+    vi.useFakeTimers()
+    const { batches, batcher } = collect()
+
+    // A burst-rate batch doubles the next window: 50 ms is no longer enough.
+    burst(batcher, 20, FLUSH_INTERVAL_MS)
+    expect(batches).toHaveLength(1)
+
+    batcher.push(ev("s3:BucketCreated", 99))
+    vi.advanceTimersByTime(FLUSH_INTERVAL_MS)
+    expect(batches).toHaveLength(1)
+    vi.advanceTimersByTime(FLUSH_INTERVAL_MS)
+    expect(batches).toHaveLength(2)
+  })
+
+  it("narrows back to the base interval once the burst subsides", () => {
+    vi.useFakeTimers()
+    const { batches, batcher } = collect()
+
+    burst(batcher, 20, FLUSH_INTERVAL_MS) // window is now 100 ms
+    burst(batcher, 1, FLUSH_INTERVAL_MS * 2) // sparse flush narrows it again
+    expect(batches).toHaveLength(2)
+
+    burst(batcher, 1, FLUSH_INTERVAL_MS)
+    expect(batches).toHaveLength(3)
+  })
+
+  it("resets the adaptive window on clear", () => {
+    vi.useFakeTimers()
+    const { batches, batcher } = collect()
+
+    burst(batcher, 20, FLUSH_INTERVAL_MS) // window is now 100 ms
+    batcher.clear()
+
+    burst(batcher, 1, FLUSH_INTERVAL_MS)
+    expect(batches).toHaveLength(2)
   })
 })

@@ -180,4 +180,48 @@ describe("useEventStreamSubscription", () => {
 
     expect(bufferedEvents(client)).toHaveLength(0)
   })
+
+  it("invalidates a query key at most once per interval during a sustained burst", () => {
+    const client = makeClient()
+    const invalidate = vi.spyOn(client, "invalidateQueries")
+    renderHook(() => useEventStreamSubscription(), { wrapper: wrapperFor(client) })
+
+    emit(init([]))
+    emit({ type: "events", events: [ev(1)] })
+    const leading = invalidate.mock.calls.length
+    expect(leading).toBeGreaterThan(0)
+
+    // A Lambda-style burst: the same event type in every 50 ms flush window.
+    for (let i = 2; i <= 10; i++) {
+      act(() => {
+        vi.advanceTimersByTime(50)
+      })
+      emit({ type: "events", events: [ev(i)] })
+    }
+    expect(invalidate.mock.calls.length).toBe(leading)
+
+    // The trailing call still lands, so the final state is never missed.
+    act(() => {
+      vi.advanceTimersByTime(2_000)
+    })
+    expect(invalidate.mock.calls.length).toBe(leading * 2)
+  })
+
+  it("keeps sparse events fresh — a quiet key invalidates immediately", () => {
+    const client = makeClient()
+    const invalidate = vi.spyOn(client, "invalidateQueries")
+    renderHook(() => useEventStreamSubscription(), { wrapper: wrapperFor(client) })
+
+    emit(init([]))
+    emit({ type: "events", events: [ev(1)] })
+    const leading = invalidate.mock.calls.length
+
+    act(() => {
+      vi.advanceTimersByTime(60_000)
+    })
+    const afterQuiet = invalidate.mock.calls.length
+
+    emit({ type: "events", events: [ev(2)] })
+    expect(invalidate.mock.calls.length).toBe(afterQuiet + leading)
+  })
 })
