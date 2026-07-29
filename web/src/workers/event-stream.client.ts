@@ -13,6 +13,7 @@
 
 import type { StreamEvent } from "@/types"
 import type { TabMessage, WorkerMessage } from "./event-stream.protocol"
+import { EventBatcher } from "./event-buffer"
 
 // ─── Listener type ─────────────────────────────────────────────────────────
 
@@ -29,10 +30,9 @@ const listeners = new Set<EventStreamListener>()
 let fallbackES: EventSource | null = null
 let fallbackRetryCount = 0
 let fallbackRetryHandle: ReturnType<typeof setTimeout> | null = null
-let fallbackEvents: StreamEvent[] = []
 let fallbackConnected = false
 
-const MAX_EVENTS = 1_000
+const fallbackBuffer = new EventBatcher((events) => dispatch({ type: "events", events }))
 
 // ─── Shared dispatch ───────────────────────────────────────────────────────
 
@@ -108,20 +108,7 @@ function openFallback(url: string): void {
     es.onmessage = (e: MessageEvent<string>) => {
       if (!e.data) return
       try {
-        const evt = JSON.parse(e.data) as StreamEvent
-
-        // Heartbeats are not cached but forwarded so the UI can optionally display them.
-        if (evt.type === "heartbeat") {
-          dispatch({ type: "event", event: evt })
-          return
-        }
-
-        fallbackEvents.push(evt)
-        fallbackEvents.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0))
-        if (fallbackEvents.length > MAX_EVENTS) {
-          fallbackEvents = fallbackEvents.slice(fallbackEvents.length - MAX_EVENTS)
-        }
-        dispatch({ type: "event", event: evt })
+        fallbackBuffer.push(JSON.parse(e.data) as StreamEvent)
       } catch {
         console.error("[event-stream] malformed SSE frame", e.data)
       }
@@ -129,7 +116,7 @@ function openFallback(url: string): void {
   }
 
   // Send init with whatever we have cached.
-  dispatch({ type: "init", events: [...fallbackEvents], connected: fallbackConnected })
+  dispatch({ type: "init", events: fallbackBuffer.snapshot(), connected: fallbackConnected })
   attempt()
 }
 
@@ -164,7 +151,7 @@ export function subscribe(url: string, listener: EventStreamListener): () => voi
       openFallback(url)
     } else {
       // Same URL, just send the cached snapshot to the new listener.
-      listener({ type: "init", events: [...fallbackEvents], connected: fallbackConnected })
+      listener({ type: "init", events: fallbackBuffer.snapshot(), connected: fallbackConnected })
     }
   }
 
@@ -178,7 +165,7 @@ export function clear(): void {
   if (supportsSharedWorker) {
     sendToWorker({ type: "clear" })
   } else {
-    fallbackEvents = []
+    fallbackBuffer.clear()
     dispatch({ type: "cleared" })
   }
 }
