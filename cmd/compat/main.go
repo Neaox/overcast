@@ -288,6 +288,22 @@ func run() int {
 		orch := compat.NewOrchestrator(ctx, configs, srv.Broadcast, logger)
 		orch.Endpoint = endpointURL
 		orch.Region = *region
+		// Finalise results whenever the dashboard's queue drains, so
+		// GET /results, the results file, and --report reflect interactive
+		// runs the same way they do batch ones.
+		orch.OnIdle = func(rep *compat.RunReport) {
+			srv.FinishRun(rep)
+			if *resultsFile != "" {
+				if err := srv.SaveResultsFile(*resultsFile); err != nil {
+					fmt.Fprintf(os.Stderr, "compat: warning: %v\n", err)
+				}
+			}
+			if *agentReportFile != "" {
+				if err := writeAgentReportFile(*agentReportFile, rep); err != nil {
+					fmt.Fprintf(os.Stderr, "compat: warning: %v\n", err)
+				}
+			}
+		}
 		srv.SetOrchestrator(orch)
 
 		if err := orch.Start(); err != nil {

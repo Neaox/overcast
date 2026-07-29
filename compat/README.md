@@ -83,10 +83,25 @@ caches, the suites' `node_modules`, and the UI build all live in named volumes
 rather than in your working tree. `docker compose -f compat/docker-compose.yml
 down -v` discards those caches and returns you to a cold start.
 
-Suites that shell out to Docker (`java-sdk`, `dotnet-sdk`, `rust-sdk`, `cdk`)
-report as `error` in the containerised dashboard: there is no Docker daemon
-inside it. The rest — `node-js-sdk`, `python-sdk`, `go-sdk`, `cli` — run
-normally. Use a host entry point if you need the container-backed suites.
+All eight suites run in the containerised dashboard, including the four that
+build and run their own images (`java-sdk`, `dotnet-sdk`, `rust-sdk`) and the
+Lambda tests. Both the emulator and the runner mount the host Docker socket, so
+those images are **siblings on the host daemon** rather than a nested daemon;
+each suite runner already detects it is inside a container and joins the
+runner's network namespace so the sibling can reach `overcast`. Without the
+socket the emulator's Lambda, ECS, RDS, ElastiCache and MSK support is
+metadata-only, and a compat run measures the stub instead of Overcast — which
+is why `OVERCAST_COMPAT_SKIP_DOCKER` now defaults to `0`. Set it to `1` to skip
+the Docker-dependent tests, and `COMPAT_DOCKER_SOCK` if your socket is not at
+`/var/run/docker.sock`.
+
+Mounting the socket gives those containers control of your Docker daemon. That
+is the same trust the dev container and `make docker-run` already assume, but
+it is worth knowing; the compose file is for local development, not CI on
+shared infrastructure.
+
+First build of the Java, .NET and Rust suite images takes a few minutes; they
+are cached on the host daemon afterwards and start in seconds.
 
 ### Useful flags
 
@@ -381,6 +396,14 @@ mid-run receive all buffered events since the run started.
 
 Returns the latest `RunReport` as a single JSON object. Useful for CI badge
 generation and one-shot queries.
+
+An interactive session has no single end — the dashboard submits work whenever
+you ask it to — so the report is finalised each time the queue **drains**:
+every batch done, nothing running. At that point results are merged into the
+last report (a scoped re-run replaces just those suites), written to
+`--results-file`, and summarised into `--agent-report-file`. So `--report`
+and the results file reflect dashboard-triggered runs exactly as they do
+batch ones.
 
 ### `POST /run` — trigger a run
 

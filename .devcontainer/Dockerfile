@@ -76,6 +76,23 @@ RUN curl -sSfL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_V
     && /tmp/aws/install \
     && rm -rf /tmp/awscli.zip /tmp/aws
 
+# Install the Docker CLI (client only — no daemon). The dev container gets one
+# from the docker-outside-of-docker feature, but features are applied by the
+# devcontainer tooling, not by a plain `docker build` of this file, so anything
+# building the image directly — compat/docker-compose.yml does — had no
+# `docker` on PATH. The compat suites that build and run their own images
+# (java-sdk, dotnet-sdk, rust-sdk, cdk) need it to talk to the host daemon over
+# the mounted socket.
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg \
+         -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+         > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli docker-buildx-plugin \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create a non-root `vscode` user — VS Code Dev Containers convention.
 # UID 1000 matches the default user on most Linux host systems, which avoids
 # file permission issues on mounted volumes.

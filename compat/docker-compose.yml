@@ -11,8 +11,12 @@
 #     run: docker compose -f compat/docker-compose.yml run --rm compat
 #
 # Configuration via environment variables (all optional):
-#   OVERCAST_COMPAT_SKIP_DOCKER=1   Skip Lambda invocation tests that
-#                                   require a nested Docker daemon.
+#   OVERCAST_COMPAT_SKIP_DOCKER=1   Skip tests that need a Docker daemon
+#                                   (Lambda invocation). Default 0: the host
+#                                   socket is mounted, so containers are
+#                                   siblings on the host daemon, not nested.
+#   COMPAT_DOCKER_SOCK=…            Host Docker socket path, if not the
+#                                   default /var/run/docker.sock.
 #   OVERCAST_LOG_LEVEL=info         Overcast log verbosity (default: warn).
 #   OVERCAST_COMPAT_FORMAT=json     Go runner output format: pretty|json
 #                                   (default: pretty).
@@ -26,6 +30,11 @@ services:
       dockerfile: Dockerfile
     ports:
       - "4566" # internal only — compat service reaches it via the network
+    volumes:
+      # Lambda, ECS, RDS, ElastiCache and MSK run real containers. Without the
+      # host daemon those services are metadata-only and every invocation
+      # returns a stub, so the suites measure the stub rather than Overcast.
+      - ${COMPAT_DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
     environment:
       OVERCAST_PORT: "4566"
       OVERCAST_STATE: memory
@@ -66,6 +75,13 @@ services:
       # image; see .devcontainer/Dockerfile.
       - go-mod-cache:/home/vscode/go/pkg/mod
       - go-build-cache:/home/vscode/.cache/go-build
+      # The host Docker socket, so the suites that build and run their own
+      # images (java-sdk, dotnet-sdk, rust-sdk, cdk) can drive the host daemon.
+      # Their runners already detect /.dockerenv and join this container's
+      # network namespace, so the sibling they start reaches `overcast` on the
+      # compose network. This grants the container control of the host daemon —
+      # the same trust the dev container and `make docker-run` already assume.
+      - ${COMPAT_DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
       # Keep container installs out of the bind mount. node_modules holds
       # platform-specific binaries, so sharing these directories with the host
       # leaves whichever side installed last with a tree the other cannot run.
@@ -74,7 +90,7 @@ services:
     environment:
       CGO_ENABLED: "0"
       OVERCAST_ENDPOINT: http://overcast:4566
-      OVERCAST_COMPAT_SKIP_DOCKER: ${OVERCAST_COMPAT_SKIP_DOCKER:-1}
+      OVERCAST_COMPAT_SKIP_DOCKER: ${OVERCAST_COMPAT_SKIP_DOCKER:-0}
       OVERCAST_COMPAT_FORMAT: ${OVERCAST_COMPAT_FORMAT:-pretty}
       OVERCAST_COMPAT_SUITE: ${OVERCAST_COMPAT_SUITE:-}
       # Pass the pre-built node-js-sdk image name so the Go runner can exec it.
@@ -89,10 +105,13 @@ services:
     # workspace, so they always start root-owned and npm cannot write to them.
     # The image gives vscode passwordless sudo for exactly this kind of fixup.
     #
-    # npm: a full `npm ci` only when the volume is empty — it deletes and
-    # reinstalls the tree, which is minutes on every container start otherwise.
-    # A populated volume takes `npm install`, which is a no-op when the tree
-    # already matches the lockfile and repairs it when it does not.
+    # npm: node-js-sdk and cdk are both TypeScript suites. A full `npm ci` only
+    # when the volume is empty — it deletes and reinstalls the tree, which is
+    # minutes on every container start otherwise. A populated volume takes
+    # `npm install`, which is a no-op when the tree already matches the
+    # lockfile and repairs it when it does not. The installs run concurrently
+    # (separate prefixes, and npm's cache is safe for concurrent use), so the
+    # dashboard comes up in the time of the slowest one rather than their sum.
     # pip: --break-system-packages because Debian marks its Python externally
     # managed (PEP 668); this is a throwaway container, so system-wide is fine.
     # go-sdk, cli: 'go run' handles deps automatically.
@@ -104,8 +123,10 @@ services:
       - -c
       - >
         sudo -n chown vscode:vscode compat/suites/node-js-sdk/node_modules compat/suites/cdk/node_modules;
-        if [ -z "$$(ls -A compat/suites/node-js-sdk/node_modules)" ]; then npm ci --prefix compat/suites/node-js-sdk --silent; else npm install --prefix compat/suites/node-js-sdk --silent --no-audit --no-fund; fi || echo "compat: node-js-sdk dependencies failed to install" >&2;
-        pip install --break-system-packages --quiet -r compat/suites/python-sdk/requirements.txt || echo "compat: python-sdk dependencies failed to install" >&2;
+        sudo -n chgrp "$$(id -g)" /var/run/docker.sock 2>/dev/null && sudo -n chmod g+rw /var/run/docker.sock || echo "compat: no Docker socket — java-sdk, dotnet-sdk, rust-sdk and cdk will not run" >&2;
+        for d in compat/suites/node-js-sdk compat/suites/cdk; do ( if [ -z "$$(ls -A $$d/node_modules)" ]; then npm ci --prefix "$$d" --silent; else npm install --prefix "$$d" --silent --no-audit --no-fund; fi || echo "compat: $$d dependencies failed to install" >&2 ) & done;
+        ( pip install --break-system-packages --quiet -r compat/suites/python-sdk/requirements.txt || echo "compat: python-sdk dependencies failed to install" >&2 ) &
+        wait;
         exec go run ./cmd/compat --endpoint http://overcast:4566 --format "$${OVERCAST_COMPAT_FORMAT:-pretty}" $${OVERCAST_COMPAT_SUITE:+--suite "$$OVERCAST_COMPAT_SUITE"}
 
   # ── Compat dashboard (containerised) ──────────────────────────────────────
@@ -129,6 +150,13 @@ services:
         consistency: cached
       - go-mod-cache:/home/vscode/go/pkg/mod
       - go-build-cache:/home/vscode/.cache/go-build
+      # The host Docker socket, so the suites that build and run their own
+      # images (java-sdk, dotnet-sdk, rust-sdk, cdk) can drive the host daemon.
+      # Their runners already detect /.dockerenv and join this container's
+      # network namespace, so the sibling they start reaches `overcast` on the
+      # compose network. This grants the container control of the host daemon —
+      # the same trust the dev container and `make docker-run` already assume.
+      - ${COMPAT_DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
       # See the compat service above: node_modules must not be shared with the
       # host, and the dashboard UI is built in here too.
       - node-js-sdk-modules:/workspace/compat/suites/node-js-sdk/node_modules
@@ -141,7 +169,7 @@ services:
       - compat-ui-dist:/workspace/compat/ui/dist
     environment:
       CGO_ENABLED: "0"
-      OVERCAST_COMPAT_SKIP_DOCKER: ${OVERCAST_COMPAT_SKIP_DOCKER:-1}
+      OVERCAST_COMPAT_SKIP_DOCKER: ${OVERCAST_COMPAT_SKIP_DOCKER:-0}
     depends_on:
       overcast:
         condition: service_healthy
@@ -155,9 +183,11 @@ services:
       - -c
       - >
         sudo -n chown vscode:vscode compat/ui/node_modules compat/ui/dist compat/suites/node-js-sdk/node_modules compat/suites/cdk/node_modules;
+        sudo -n chgrp "$$(id -g)" /var/run/docker.sock 2>/dev/null && sudo -n chmod g+rw /var/run/docker.sock || echo "compat: no Docker socket — java-sdk, dotnet-sdk, rust-sdk and cdk will not run" >&2;
         touch compat/ui/dist/.gitkeep;
-        if [ -z "$$(ls -A compat/suites/node-js-sdk/node_modules)" ]; then npm ci --prefix compat/suites/node-js-sdk --silent; else npm install --prefix compat/suites/node-js-sdk --silent --no-audit --no-fund; fi || echo "compat: node-js-sdk dependencies failed to install" >&2;
-        pip install --break-system-packages --quiet -r compat/suites/python-sdk/requirements.txt || echo "compat: python-sdk dependencies failed to install" >&2;
+        for d in compat/suites/node-js-sdk compat/suites/cdk; do ( if [ -z "$$(ls -A $$d/node_modules)" ]; then npm ci --prefix "$$d" --silent; else npm install --prefix "$$d" --silent --no-audit --no-fund; fi || echo "compat: $$d dependencies failed to install" >&2 ) & done;
+        ( pip install --break-system-packages --quiet -r compat/suites/python-sdk/requirements.txt || echo "compat: python-sdk dependencies failed to install" >&2 ) &
+        wait;
         exec go run ./cmd/compat --endpoint http://overcast:4566 --serve --interactive --build-ui --port :7777
     # The first start compiles the CLI and builds the UI, so give it room; once
     # the caches are warm a restart is seconds. `up --wait` blocks on this.
