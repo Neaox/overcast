@@ -368,13 +368,16 @@ func TestBus_RunID_IdentifiesTheProcess(t *testing.T) {
 	c := NewBus()
 	defer c.Stop()
 
-	if a.RunID() == "" {
+	first := a.RunID()
+	if first == "" {
 		t.Fatal("RunID is empty")
 	}
-	if a.RunID() != a.RunID() {
-		t.Error("RunID is not stable across calls")
+	// Stable across calls: a token minted early in a run has to still match
+	// the run it names when a client reconnects hours later.
+	if again := a.RunID(); again != first {
+		t.Errorf("RunID changed within one bus: %q then %q", first, again)
 	}
-	if a.RunID() == c.RunID() {
+	if first == c.RunID() {
 		t.Error("two buses share a RunID; a restart would be indistinguishable from the same run")
 	}
 }
