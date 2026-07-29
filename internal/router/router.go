@@ -245,13 +245,8 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	logsSvc := logs.New(cfg, store, logger, clk)
 	prof.mark("  new: logs")
 	if cfg.Debug {
-		var ec2Debug debugEC2Provider
-		ec2Debug = ec2Svc
-		var debugProviders []DebugStateProvider
-		debugProviders = append(debugProviders, ddbSvc)
-		debugProviders = append(debugProviders, logsSvc)
-		debugProviders = append(debugProviders, sqsSvc)
-		r.Route("/_debug", debugHandlers(cfg, store, ec2Debug, debugProviders))
+		debugProviders := []DebugStateProvider{ddbSvc, logsSvc, sqsSvc}
+		r.Route("/_debug", debugHandlers(cfg, store, ec2Svc, debugProviders))
 	}
 	lambdaSvc := lambda.New(cfg, store, logger, clk)
 	prof.mark("  new: lambda")
@@ -468,9 +463,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 
 	// ---- Event notification wiring ----------------------------------------
 	// S3 notifications → SQS + Lambda: connect after all services are constructed.
-	var lambdaInvoker events.FunctionInvoker
-	lambdaInvoker = lambdaSvc.Invoker()
-	s3Svc.InitNotifications(sqsSvc.Enqueuer(), lambdaInvoker, bus, logger)
+	s3Svc.InitNotifications(sqsSvc.Enqueuer(), lambdaSvc.Invoker(), bus, logger)
 	// Lambda → CloudWatch Logs: wire log writer so Lambda can write invocation logs.
 	lambdaSvc.InitLogWriter(logsSvc.LogWriter())
 	// Lambda bus: lifecycle events for topology / UI.
