@@ -117,7 +117,10 @@ Recognised bases for tier B: `localhost`, `localhost.overcast.sh`,
 `localhost.localstack.cloud`, plus `OVERCAST_HOSTNAME` when set, matched
 longest-first so a configured parent domain never shadows a longer default.
 
-**The host is case-folded before any tier is evaluated** (`foldHostname`). A
+**The host is case-folded before any tier is evaluated**
+(`serviceutil.FoldHostname`, which `middleware.foldHostname` aliases — minting
+needs the identical rule on the way out, and one implementation is the only way
+the two directions cannot drift). A
 hostname is case-insensitive — RFC 4343 for DNS, RFC 3986 §3.2.2 for the URI
 authority — so the same address in any case must produce the same claim. Only
 the base was originally folded (`strings.EqualFold`); the `.s3.` separator, the
