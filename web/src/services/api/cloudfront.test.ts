@@ -30,10 +30,13 @@ describe("mapOriginGroups", () => {
   })
 
   it("tolerates a group with missing members or criteria", () => {
-    // Every level of the SDK type is optional, and a distribution that came
-    // from a hand-written template can be missing any of them. The UI must
-    // still render a row rather than throw.
-    const groups: OriginGroups = { Quantity: 1, Items: [{ Id: "sparse" }] }
+    // The SDK types Members and FailoverCriteria as REQUIRED, but that is a
+    // statement about well-formed AWS responses, not a guarantee about the
+    // bytes on the wire — an emulator or a hand-written template can omit
+    // either. The cast is the point of the test: it constructs the shape the
+    // types forbid, so the mapper's optional chaining is exercised rather than
+    // merely assumed, and the UI renders a row instead of throwing.
+    const groups = { Quantity: 1, Items: [{ Id: "sparse" }] } as unknown as OriginGroups
 
     expect(mapOriginGroups(groups)).toEqual([
       { id: "sparse", members: [], failoverStatusCodes: [] },
