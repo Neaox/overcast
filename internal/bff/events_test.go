@@ -63,3 +63,55 @@ func TestHandleEvents_survivesLongerThanClientTimeout(t *testing.T) {
 			"SSE proxy likely inherits bffHTTPClient Timeout", count)
 	}
 }
+
+// TestHandleEvents_ForwardsResumePoint pins that a reconnecting browser's
+// resume point survives the proxy hop. The BFF builds a fresh upstream
+// request rather than forwarding the client's, so neither the Last-Event-ID
+// header nor the ?last_event_id fallback reaches /_events unless it is
+// copied across deliberately — and without it the emulator replays its whole
+// history buffer on every reconnect.
+func TestHandleEvents_ForwardsResumePoint(t *testing.T) {
+	type received struct {
+		header string
+		query  string
+	}
+	got := make(chan received, 1)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- received{
+			header: r.Header.Get("Last-Event-ID"),
+			query:  r.URL.Query().Get("last_event_id"),
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+	}))
+	defer upstream.Close()
+
+	t.Run("header", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/events?ep="+upstream.URL, nil)
+		req.Header.Set("Last-Event-ID", "run7-42")
+		handleEvents(httptest.NewRecorder(), req)
+
+		if r := <-got; r.header != "run7-42" {
+			t.Errorf("upstream Last-Event-ID = %q, want run7-42", r.header)
+		}
+	})
+
+	t.Run("query param", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/events?ep="+upstream.URL+"&last_event_id=run7-99", nil)
+		handleEvents(httptest.NewRecorder(), req)
+
+		if r := <-got; r.query != "run7-99" {
+			t.Errorf("upstream last_event_id = %q, want run7-99", r.query)
+		}
+	})
+
+	t.Run("query param survives alongside source filters", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/events?ep="+upstream.URL+"&source=s3&last_event_id=run7-1", nil)
+		handleEvents(httptest.NewRecorder(), req)
+
+		if r := <-got; r.query != "run7-1" {
+			t.Errorf("upstream last_event_id = %q, want run7-1", r.query)
+		}
+	})
+}

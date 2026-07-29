@@ -13,6 +13,7 @@
 
 import type { StreamEvent } from "@/types"
 import type { TabMessage, WorkerMessage } from "./event-stream.protocol"
+import { withResumePoint } from "./event-stream.protocol"
 import { EventBatcher } from "./event-buffer"
 
 // ─── Listener type ─────────────────────────────────────────────────────────
@@ -31,6 +32,8 @@ let fallbackES: EventSource | null = null
 let fallbackRetryCount = 0
 let fallbackRetryHandle: ReturnType<typeof setTimeout> | null = null
 let fallbackConnected = false
+/** Last SSE id seen, replayed to the server on reconnect — see withResumePoint. */
+let fallbackLastEventId: string | null = null
 
 const fallbackBuffer = new EventBatcher((events) => dispatch({ type: "events", events }))
 
@@ -72,9 +75,11 @@ function openFallback(url: string): void {
     fallbackRetryHandle = null
   }
   fallbackRetryCount = 0
+  // A resume point only means anything to the server that issued it.
+  fallbackLastEventId = null
 
   function attempt(): void {
-    const es = new EventSource(url)
+    const es = new EventSource(withResumePoint(url, fallbackLastEventId))
     fallbackES = es
 
     es.onopen = () => {
@@ -106,6 +111,7 @@ function openFallback(url: string): void {
     }
 
     es.onmessage = (e: MessageEvent<string>) => {
+      if (e.lastEventId) fallbackLastEventId = e.lastEventId
       if (!e.data) return
       try {
         fallbackBuffer.push(JSON.parse(e.data) as StreamEvent)

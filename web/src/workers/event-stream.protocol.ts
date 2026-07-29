@@ -27,3 +27,26 @@ export type WorkerMessage =
   | { type: "events"; events: StreamEvent[] }
   | { type: "status"; connected: boolean }
   | { type: "cleared" }
+
+// ─── Resuming ──────────────────────────────────────────────────────────────
+
+/**
+ * Adds a resume point to the stream URL, so the server replays only what
+ * this client is missing instead of its whole history buffer.
+ *
+ * A browser sends the last id it saw as the `Last-Event-ID` header on the
+ * reconnects it manages itself — but only for *that* EventSource. When the
+ * connection fails hard (`readyState === CLOSED`) both the worker and the
+ * fallback construct a brand-new EventSource, which starts with no memory of
+ * the id, and there is no API for setting a request header on one. The
+ * server therefore accepts the same value as a query parameter; see the
+ * Last-Event-ID handling in internal/router/events.go.
+ *
+ * Returns `url` unchanged when there is nothing to resume from.
+ */
+export function withResumePoint(url: string, lastEventId: string | null): string {
+  if (!lastEventId) return url
+  const resolved = new URL(url, self.location.href)
+  resolved.searchParams.set("last_event_id", lastEventId)
+  return resolved.pathname + resolved.search
+}

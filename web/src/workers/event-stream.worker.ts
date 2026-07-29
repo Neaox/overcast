@@ -27,6 +27,7 @@ declare let self: SharedWorkerGlobalScope
 
 import type { StreamEvent } from "@/types"
 import type { TabMessage, WorkerMessage } from "./event-stream.protocol"
+import { withResumePoint } from "./event-stream.protocol"
 import { EventBatcher } from "./event-buffer"
 
 // ─── State ─────────────────────────────────────────────────────────────────
@@ -36,6 +37,8 @@ let currentUrl: string | null = null
 let eventSource: EventSource | null = null
 let retryCount = 0
 let retryHandle: ReturnType<typeof setTimeout> | null = null
+/** Last SSE id seen, replayed to the server on reconnect — see withResumePoint. */
+let lastEventId: string | null = null
 
 const ports = new Set<MessagePort>()
 
@@ -61,9 +64,13 @@ function openConnection(url: string): void {
 
   currentUrl = url
   retryCount = 0
+  // A resume point is only meaningful against the server that issued it.
+  // The server's run id makes a stale one harmless rather than dangerous,
+  // but there is no reason to send one to a different endpoint at all.
+  lastEventId = null
 
   function attempt(): void {
-    const es = new EventSource(url)
+    const es = new EventSource(withResumePoint(url, lastEventId))
     eventSource = es
 
     es.onopen = () => {
@@ -100,6 +107,7 @@ function openConnection(url: string): void {
     }
 
     es.onmessage = (e: MessageEvent<string>) => {
+      if (e.lastEventId) lastEventId = e.lastEventId
       if (!e.data) return
       try {
         buffer.push(JSON.parse(e.data) as StreamEvent)
