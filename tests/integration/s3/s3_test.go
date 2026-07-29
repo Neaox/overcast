@@ -4675,3 +4675,52 @@ func sha256Hex(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
+
+// TestS3VirtualHostedStyle_hostIsCaseInsensitive proves a bucket is reachable
+// virtual-hosted style whatever the case of the Host, in both the bare and the
+// labelled form.
+//
+// A hostname is case-insensitive (RFC 4343), and a bucket name is
+// lowercase-only by AWS rule, so an upper-case segment in a Host can only ever
+// mean a case-folded bucket name — never a different bucket. Matching it
+// case-sensitively made the bucket unreachable: the extracted name kept its
+// case and could match nothing, and an upper-case ".S3." label was not even
+// recognised as the S3 separator, so the whole "{bucket}.s3" was taken as the
+// bucket name.
+func TestS3VirtualHostedStyle_hostIsCaseInsensitive(t *testing.T) {
+	// Given: an ordinary bucket holding one object
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "case-fold-bucket")
+	putResp, err := http.DefaultClient.Do(put(srv, "/case-fold-bucket/greeting.txt", []byte("hello"), nil))
+	if err != nil {
+		t.Fatalf("seed object: %v", err)
+	}
+	putResp.Body.Close()
+
+	hosts := []struct{ name, host string }{
+		{"bare, mixed case", "Case-Fold-Bucket.localhost:4566"},
+		{"bare, upper base", "case-fold-bucket.LOCALHOST.OVERCAST.SH:4566"},
+		{"labelled, upper s3 label", "case-fold-bucket.S3.localhost:4566"},
+		{"labelled, mixed case with region", "Case-Fold-Bucket.s3.US-East-1.localhost:4566"},
+	}
+
+	for _, h := range hosts {
+		t.Run(h.name, func(t *testing.T) {
+			// When: the object is fetched with the bucket in the Host header
+			req, _ := http.NewRequest(http.MethodGet, srv.URL+"/greeting.txt", nil)
+			req.Host = h.host
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("request: %v", err)
+			}
+			defer resp.Body.Close()
+
+			// Then: the same object the path-style URL serves
+			helpers.AssertStatus(t, resp, http.StatusOK)
+			got, _ := io.ReadAll(resp.Body)
+			if string(got) != "hello" {
+				t.Errorf("Host %q: got body %q, want %q", h.host, got, "hello")
+			}
+		})
+	}
+}

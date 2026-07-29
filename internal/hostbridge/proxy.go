@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 )
 
 // NewProxy returns an http.Handler that routes requests to either apiAddr or
@@ -20,7 +21,11 @@ func NewProxy(apiAddr, uiAddr string) http.Handler {
 		if h, _, err := net.SplitHostPort(host); err == nil {
 			host = h
 		}
-		if host == "overcast-app.local" {
+		// EqualFold, not ==: a hostname is case-insensitive (RFC 4343), so
+		// which backend a request reaches must not depend on how the caller
+		// typed it. deriveAPIBaseURL in internal/bff pairs these two names and
+		// already compares them this way.
+		if strings.EqualFold(host, "overcast-app.local") {
 			uiProxy.ServeHTTP(w, r)
 		} else {
 			apiProxy.ServeHTTP(w, r)

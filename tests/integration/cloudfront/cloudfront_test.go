@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Neaox/overcast/tests/helpers"
@@ -3965,4 +3966,77 @@ func cfCreateDistFromXML(t *testing.T, srv *helpers.TestServer, xmlBody string) 
 		t.Fatalf("unmarshal Distribution: %v\nbody: %s", err, b)
 	}
 	return dist, etag
+}
+
+// TestProxy_hostRoutedInvokeAcrossResolvableBases proves a distribution is
+// reachable on the DomainName the service mints for it — the CloudFront twin of
+// TestExecuteRestAPI_hostBasedInvokeAcrossResolvableBases — on every base a
+// client can actually resolve, and in the lowercased form a browser sends.
+func TestProxy_hostRoutedInvokeAcrossResolvableBases(t *testing.T) {
+	originBody := "hello from origin"
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(originBody))
+	}))
+	defer origin.Close()
+
+	originHost := origin.URL[len("http://"):]
+	colonIdx := strings.LastIndexByte(originHost, ':')
+	originDomain := originHost[:colonIdx]
+	var port int
+	fmt.Sscanf(originHost[colonIdx+1:], "%d", &port)
+
+	srv := helpers.NewTestServer(t)
+	distConfig := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<DistributionConfig xmlns="http://cloudfront.amazonaws.com/doc/2020-05-31/">
+  <CallerReference>proxy-host-routed</CallerReference>
+  <Comment>host route test</Comment>
+  <Enabled>true</Enabled>
+  <Origins>
+    <Quantity>1</Quantity>
+    <Items>
+      <Origin>
+        <Id>custom-1</Id>
+        <DomainName>%s</DomainName>
+        <CustomOriginConfig>
+          <HTTPPort>%d</HTTPPort>
+          <HTTPSPort>443</HTTPSPort>
+          <OriginProtocolPolicy>http-only</OriginProtocolPolicy>
+        </CustomOriginConfig>
+      </Origin>
+    </Items>
+  </Origins>
+  <DefaultCacheBehavior>
+    <TargetOriginId>custom-1</TargetOriginId>
+    <ViewerProtocolPolicy>allow-all</ViewerProtocolPolicy>
+    <ForwardedValues><QueryString>false</QueryString></ForwardedValues>
+  </DefaultCacheBehavior>
+</DistributionConfig>`, originDomain, port)
+
+	dist, _ := cfCreateDistFromXML(t, srv, distConfig)
+	t.Logf("minted DomainName = %q", dist.DomainName)
+
+	hosts := []struct{ name, host string }{
+		{"minted DomainName", dist.DomainName},
+		{"cloudfront.net", dist.ID + ".cloudfront.net"},
+		{"localhost", dist.ID + ".cloudfront.localhost:4566"},
+		{"overcast.sh wildcard", dist.ID + ".cloudfront.localhost.overcast.sh:4566"},
+		{"browser-lowercased host", strings.ToLower(dist.ID + ".cloudfront.localhost.overcast.sh:4566")},
+		{"mixed case", dist.ID + ".CloudFront.localhost.overcast.sh:4566"},
+	}
+
+	for _, h := range hosts {
+		t.Run(h.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodGet, srv.URL+"/hello", nil)
+			req.Host = h.host
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("proxy request: %v", err)
+			}
+			defer resp.Body.Close()
+			body := string(readBody(t, resp))
+			if resp.StatusCode != http.StatusOK || body != originBody {
+				t.Errorf("Host %q: got %d %q, want 200 %q", h.host, resp.StatusCode, body, originBody)
+			}
+		})
+	}
 }

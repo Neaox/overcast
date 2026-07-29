@@ -48,6 +48,14 @@ path-style requests use, so behavior (authorizers, stage variables,
 integration dispatch, event publishing) is identical either way — pick
 whichever addressing style your client/SDK produces.
 
+**The Host is case-insensitive in every part** — the resource ID, the service
+label, the region segment and the base domain alike — because a hostname is
+(RFC 4343). So `E1PQRS2T3U4V5W.cloudfront.localhost.overcast.sh:4566` and the
+all-lowercase form a browser actually sends reach the same distribution, and
+`MyBucket.localhost:4566` reaches bucket `mybucket`. **Paths are
+case-sensitive**, as they are on AWS: `/_cloudfront/{distributionId}/...` and
+every other path-style route must match exactly.
+
 ### How Overcast decides who owns a Host
 
 S3 virtual-hosted addressing and the host-routed services above share one

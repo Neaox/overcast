@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 
 	"go.uber.org/zap"
+
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // hostaddressing.go decides, once per request, who owns a Host header: S3
@@ -113,7 +115,7 @@ func NewHostClassifier(configuredHostname string) *HostClassifier {
 // Classify returns the single owner of host (which may include a port).
 // Allocation-free.
 func (c *HostClassifier) Classify(host string) HostClaim {
-	hostname := hostWithoutPort(host)
+	hostname := foldHostname(hostWithoutPort(host))
 	if hostname == "" || isIPLiteral(hostname) {
 		return HostClaim{}
 	}
@@ -283,8 +285,10 @@ func indexS3Separator(hostname string) int {
 }
 
 // parseHostRouteName finds a registered host-route label at segment index >= 1
-// in a hostname that already has its port stripped. It walks segments by index
-// rather than strings.Split so it allocates nothing.
+// in a hostname that already has its port stripped and its case folded (see
+// foldHostname — the label lookup is an exact map hit, so an unfolded hostname
+// silently fails to match). It walks segments by index rather than
+// strings.Split so it allocates nothing.
 func parseHostRouteName(hostname string) (HostRouteMatch, bool) {
 	start := 0
 	for segment := 0; ; segment++ {
@@ -354,6 +358,13 @@ func hostWithoutPort(host string) string {
 	}
 	return host
 }
+
+// foldHostname is serviceutil.FoldHostname, aliased so the hot path reads
+// plainly and so this package documents WHY classification folds: casing must
+// never decide which service answers a request. The implementation lives in
+// serviceutil because minting needs the identical rule on the way out, and one
+// implementation is the only way the two directions cannot drift.
+func foldHostname(hostname string) string { return serviceutil.FoldHostname(hostname) }
 
 // isIPLiteral reports whether hostname (port and brackets already removed) is
 // an IP address rather than a DNS name. IP literals never carry a

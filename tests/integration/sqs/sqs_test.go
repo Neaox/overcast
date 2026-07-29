@@ -4149,3 +4149,69 @@ func extractXMLElement(xmlBody, element string) string {
 	}
 	return xmlBody[start : start+end]
 }
+
+// TestCreateQueue_mintedURLIsCanonicalRegardlessOfHostCase is the end-to-end
+// half of the Host case-insensitivity contract, on a real service rather than
+// on the minting helper alone.
+//
+// Every client-facing URL Overcast mints funnels through
+// serviceutil.RequestBaseURL, which folds the Host — but a unit test on that
+// helper proves only that the helper folds, not that a service actually reaches
+// it. SQS is the sharpest case to assert on, because AWS SDKs resolve the SQS
+// endpoint from the QueueUrl itself rather than from client configuration, so a
+// non-canonical URL here is one a client will dial verbatim.
+//
+// Two properties, and both matter:
+//   - the minted URL is lowercase, so the same queue has ONE identity no matter
+//     how the creating caller happened to type the Host (RFC 3986 §3.2.2 tells
+//     producers to emit the lowercase registered name, and AWS does);
+//   - the minted URL still works, which is what stops the canonicalisation from
+//     being a cosmetic change that breaks addressing.
+func TestCreateQueue_mintedURLIsCanonicalRegardlessOfHostCase(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	// Given: the queue is created over a mixed-case Host, as a browser-adjacent
+	// or hand-written client can produce
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/",
+		bytes.NewReader([]byte(`{"QueueName":"case-fold-queue"}`)))
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+	req.Header.Set("X-Amz-Target", "AmazonSQS.CreateQueue")
+	// The base domain itself, upper-cased. NOT "MixedCase.localhost..." — a
+	// label in front of a recognised base is an S3 virtual-hosted bucket
+	// address by tier B, which would correctly route this to S3 and prove
+	// nothing about SQS.
+	req.Host = "LOCALHOST.OVERCAST.SH:4566"
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("CreateQueue: %v", err)
+	}
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var created struct {
+		QueueUrl string `json:"QueueUrl"`
+	}
+	helpers.DecodeJSON(t, resp, &created)
+
+	// Then: the URL handed back carries no trace of the caller's casing
+	u, err := url.Parse(created.QueueUrl)
+	if err != nil {
+		t.Fatalf("parse QueueUrl %q: %v", created.QueueUrl, err)
+	}
+	if want := strings.ToLower(u.Host); u.Host != want {
+		t.Errorf("QueueUrl host = %q, want canonical %q (full URL %q)", u.Host, want, created.QueueUrl)
+	}
+
+	// And: it is still a URL that addresses this queue, so canonicalising did
+	// not trade correctness for tidiness.
+	getResp := sqsCall(t, srv, "GetQueueAttributes", map[string]any{
+		"QueueUrl":       created.QueueUrl,
+		"AttributeNames": []string{"QueueArn"},
+	})
+	defer getResp.Body.Close()
+	helpers.AssertStatus(t, getResp, http.StatusOK)
+}
