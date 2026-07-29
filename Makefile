@@ -28,7 +28,7 @@ GOLANGCI_LINT_VERSION := v2.8.0
         run test test-unit test-integration test-coverage \
         ci-local ci-local-web ci-local-go \
         bench bench-startup lint lint-go lint-web lint-actions fmt vet tidy check aws-models-check docker docker-slim docker-console docker-run clean \
-        compat-build compat-serve compat-report \
+        compat-build compat-serve compat-report compat-registry-check \
         generate-caps check-caps generate-aws-operations aws-models-check docs docs-index docs-check supportmeta-check check-binary-symbols
 
 ## help: print this help message
@@ -283,6 +283,10 @@ compat-serve: compat-build
 ## compat-report: print an agent-friendly summary of the last compat run (reads compat-results.json)
 compat-report:
 	$(GO) run ./cmd/compat --report
+
+## compat-registry-check: validate compat/suites/registry.json against registry.schema.json
+compat-registry-check:
+	python3 scripts/validate-compat-registry.py
 
 # ---- Container-based development (cross-platform) --------------------------
 # These targets work identically on Mac, Linux, and Windows.

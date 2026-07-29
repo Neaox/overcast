@@ -84,9 +84,9 @@ IMPLS = {
     "ListUsers": ListUsers,
     "AdminDeleteUser": AdminDeleteUser,
     "DeleteUserPool": DeleteUserPool,
-    "CreateUserPoolClient with token validity": lambda ctx: CreateClientTokenValidity(ctx),
-    "DescribeUserPoolClient returns token validity": lambda ctx: DescribeClientTokenValidity(ctx),
-    "UpdateUserPoolClient changes token validity": lambda ctx: UpdateClientTokenValidity(ctx),
+    "CreateUserPoolClientWithTokenValidity": lambda ctx: CreateClientTokenValidity(ctx),
+    "DescribeUserPoolClientTokenValidity": lambda ctx: DescribeClientTokenValidity(ctx),
+    "UpdateUserPoolClientTokenValidity": lambda ctx: UpdateClientTokenValidity(ctx),
     "DeleteUserPoolClient": lambda ctx: DeleteUserPoolClientFn(ctx),
 }
 
