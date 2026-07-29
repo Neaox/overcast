@@ -311,6 +311,21 @@ func WithHostname(hostname string) Option {
 	}
 }
 
+// WithTLS marks the server as TLS-enabled for the purposes of config
+// (cfg.TLSEnabled()), without actually serving HTTPS.
+//
+// Handlers that must not advertise an https:// URL the emulator cannot answer
+// — CloudFront's ViewerProtocolPolicy is the case this exists for — branch on
+// cfg.TLSEnabled(), which only checks that both paths are set. Serving real TLS
+// would mean generating a certificate and re-dialling every helper in this
+// package for one boolean, so this sets the paths and nothing else.
+func WithTLS() Option {
+	return func(so *serverOptions) {
+		so.cfg.TLSCertFile = "testdata/unused.crt"
+		so.cfg.TLSKeyFile = "testdata/unused.key"
+	}
+}
+
 // WithEKSMode sets the EKS service mode used by the test server.
 func WithEKSMode(mode config.EKSMode) Option {
 	return func(so *serverOptions) {
