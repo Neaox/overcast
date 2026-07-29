@@ -210,15 +210,10 @@ func (h *Handler) ProxyRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Resolve the target origin.
-	var origin *Origin
-	for i := range cfg.Origins.Items {
-		if cfg.Origins.Items[i].ID == targetOriginID {
-			origin = &cfg.Origins.Items[i]
-			break
-		}
-	}
-	if origin == nil {
+	// Resolve the target. A behavior's TargetOriginId names either an origin or
+	// an origin GROUP; a group resolves to its members in failover order.
+	candidates, failoverCodes := resolveOriginTargets(cfg, targetOriginID)
+	if len(candidates) == 0 {
 		h.log.Error("origin not found in distribution config",
 			zap.String("distId", distID),
 			zap.String("targetOriginId", targetOriginID),
@@ -227,32 +222,7 @@ func (h *Handler) ProxyRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build the origin URL.
-	originURL := buildOriginURL(origin, reqPath, h.cfg.Port)
-
-	// Create outbound request, streaming the body.
-	outReq, err := http.NewRequestWithContext(ctx, r.Method, originURL, r.Body)
-	if err != nil {
-		h.log.Error("failed to create origin request",
-			zap.String("originURL", originURL),
-			zap.Error(err),
-		)
-		http.Error(w, "Failed to create origin request", http.StatusBadGateway)
-		return
-	}
-
-	// Forward standard headers (but not Host — origin sets its own).
-	forwardHeaders(r, outReq)
-
-	// Inject origin custom headers.
-	if origin.CustomHeaders != nil {
-		for _, ch := range origin.CustomHeaders.Items {
-			outReq.Header.Set(ch.HeaderName, ch.HeaderValue)
-		}
-	}
-
-	// Execute the origin request.
-	resp, err := proxyClient.Do(outReq)
+	resp, originURL, err := h.dispatchToOrigins(ctx, r, reqPath, candidates, failoverCodes)
 	if err != nil {
 		h.log.Error("origin request failed",
 			zap.String("originURL", originURL),
@@ -586,4 +556,128 @@ func (h *Handler) warnViewerPolicyNotEnforceable(distID, policy string) {
 			zap.String("resolution", "set OVERCAST_TLS_CERT and OVERCAST_TLS_KEY to enforce it, or use a TLS-terminating proxy that sets X-Forwarded-Proto: https"),
 		)
 	})
+}
+
+// resolveOriginTargets maps a cache behavior's TargetOriginId to the origins
+// that may serve it, in the order they should be tried.
+//
+// TargetOriginId names either an Origin or an OriginGroup — validateOriginRefs
+// accepts both, per AWS's origin failover documentation. An origin resolves to
+// itself with no failover; a group resolves to its members in declared order,
+// with the status codes its FailoverCriteria lists.
+//
+// A group member naming an origin that does not exist is skipped rather than
+// failing the whole lookup: the remaining members are still serviceable, and a
+// group with no resolvable member returns nothing, which the caller reports as
+// the same "Origin not found" a bad TargetOriginId gets.
+func resolveOriginTargets(cfg *DistributionConfig, targetID string) ([]*Origin, map[int]bool) {
+	byID := make(map[string]*Origin, len(cfg.Origins.Items))
+	for i := range cfg.Origins.Items {
+		byID[cfg.Origins.Items[i].ID] = &cfg.Origins.Items[i]
+	}
+
+	if origin, ok := byID[targetID]; ok {
+		return []*Origin{origin}, nil
+	}
+
+	if cfg.OriginGroups == nil {
+		return nil, nil
+	}
+	for _, group := range cfg.OriginGroups.Items {
+		if group.ID != targetID {
+			continue
+		}
+		members := make([]*Origin, 0, len(group.Members.Items))
+		for _, m := range group.Members.Items {
+			if origin, ok := byID[m.OriginId]; ok {
+				members = append(members, origin)
+			}
+		}
+		codes := make(map[int]bool, len(group.FailoverCriteria.StatusCodes.Items))
+		for _, c := range group.FailoverCriteria.StatusCodes.Items {
+			codes[c] = true
+		}
+		return members, codes
+	}
+	return nil, nil
+}
+
+// requestCanFailOver reports whether a viewer request may be retried against
+// the next member of an origin group.
+//
+// AWS fails over only for GET, HEAD and OPTIONS — for any other method
+// CloudFront returns the primary's response as-is, because replaying a request
+// that changes state is not safe. The body check enforces the same thing
+// mechanically: a request whose body has already been streamed to the first
+// origin cannot be replayed to the second, and ContentLength 0 is the only case
+// where there is provably nothing to replay (-1 means chunked, i.e. unknown).
+func requestCanFailOver(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return r.ContentLength == 0
+	default:
+		return false
+	}
+}
+
+// dispatchToOrigins sends the viewer request to the first candidate origin,
+// falling back through the rest when the response is a failover trigger.
+//
+// Returns the response that should be served, the URL it came from (for error
+// logging), and an error only when no candidate produced a response at all.
+func (h *Handler) dispatchToOrigins(
+	ctx context.Context, r *http.Request, reqPath string,
+	candidates []*Origin, failoverCodes map[int]bool,
+) (*http.Response, string, error) {
+	canFailOver := len(candidates) > 1 && requestCanFailOver(r)
+
+	var lastErr error
+	var lastURL string
+	for i, origin := range candidates {
+		originURL := buildOriginURL(origin, reqPath, h.cfg.Port)
+		lastURL = originURL
+		isLast := i == len(candidates)-1
+
+		outReq, err := http.NewRequestWithContext(ctx, r.Method, originURL, r.Body)
+		if err != nil {
+			lastErr = fmt.Errorf("build origin request: %w", err)
+			if isLast || !canFailOver {
+				return nil, originURL, lastErr
+			}
+			continue
+		}
+		forwardHeaders(r, outReq)
+		if origin.CustomHeaders != nil {
+			for _, ch := range origin.CustomHeaders.Items {
+				outReq.Header.Set(ch.HeaderName, ch.HeaderValue)
+			}
+		}
+
+		resp, err := proxyClient.Do(outReq)
+		if err != nil {
+			// A connection failure is a failover trigger in its own right, not
+			// only a listed status code.
+			lastErr = err
+			if isLast || !canFailOver {
+				return nil, originURL, lastErr
+			}
+			h.log.Warn("origin unreachable, failing over to the next group member",
+				zap.String("originId", origin.ID),
+				zap.String("originURL", originURL),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		if !isLast && canFailOver && failoverCodes[resp.StatusCode] {
+			resp.Body.Close()
+			h.log.Warn("origin returned a failover status, trying the next group member",
+				zap.String("originId", origin.ID),
+				zap.Int("status", resp.StatusCode),
+			)
+			continue
+		}
+		return resp, originURL, nil
+	}
+	return nil, lastURL, lastErr
 }
