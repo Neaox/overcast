@@ -36,6 +36,12 @@
           "type": "boolean",
           "description": "Mark a group as slow so runners can schedule it first. Groups with slow=true are sorted to the front of the execution queue, allowing them to run in parallel with fast groups instead of becoming a long tail."
         },
+        "suites": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "Restrict this group to specific suites. Omit for the normal case: every SDK/CLI suite is expected to implement the group, and the parity checker enforces that. Use it only when the group tests something a single tool does — e.g. cdk-lifecycle, which exercises CDK deploy/destroy and has no meaning for an SDK suite. Out-of-scope suites neither implement the group nor carry parity debt for it."
+        },
         "tests": {
           "type": "array",
           "items": { "$ref": "#/definitions/TestCase" },

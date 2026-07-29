@@ -8,6 +8,24 @@ including those not yet implemented. Failures on unimplemented features are
 expected and tracked — this is how we measure what's left to build, and how we
 guard against regressions in what's already working.
 
+> **Two rules CI enforces**, documented in full at
+> [AGENTS.md § Baseline & uniformity policy](./AGENTS.md#baseline--uniformity-policy):
+>
+> 1. **No new failures.** [baseline.json](./baseline.json) records every test's
+>    expected status; a result that gets worse, or a new failing test, fails the
+>    build. Improvements are promoted automatically on `main`.
+> 2. **Every SDK/CLI suite tests the same operations.** Add to
+>    [suites/registry.json](./suites/registry.json) first, then implement in all
+>    of them. Gaps must be declared in [parity-debt.json](./parity-debt.json),
+>    and that file only shrinks.
+>
+> Check both locally before pushing:
+>
+> ```sh
+> go run ./cmd/compat --compare-baseline --results-file compat-results.json
+> go run ./cmd/compat --check-parity --results-file compat-results.json
+> ```
+
 > **Separation boundary:** everything in `compat/` is a black-box external
 > observer of Overcast. Each suite uses its SDK, CLI, or CDK tool **without
 > modification** — the only difference from talking to real AWS is the endpoint

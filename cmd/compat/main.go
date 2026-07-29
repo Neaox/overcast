@@ -60,7 +60,13 @@ var (
 	mergeResults        = flag.String("merge-results", "", "Comma-separated result files or glob patterns to merge, then exit")
 	baselineFile        = flag.String("baseline-file", "compat/baseline.json", "Compatibility baseline file")
 	compareBaselineFlag = flag.Bool("compare-baseline", false, "Compare --results-file against --baseline-file, then exit")
+	annotate            = flag.Bool("annotate", false, "Emit GitHub workflow ::error commands for baseline regressions so they surface as PR annotations")
 	updateBaselineFlag  = flag.Bool("update-baseline", false, "Update --baseline-file from --results-file with improvements only, then exit")
+
+	registryFile       = flag.String("registry-file", "compat/suites/registry.json", "Shared compat test registry")
+	parityDebtFilePath = flag.String("parity-debt-file", "compat/parity-debt.json", "Cross-suite parity debt file")
+	checkParity        = flag.Bool("check-parity", false, "Check cross-suite registry parity against --parity-debt-file, then exit")
+	updateParityDebt   = flag.Bool("update-parity-debt", false, "Regenerate --parity-debt-file from --results-file, then exit")
 
 	lintBaselineFrom = flag.String("lint-baseline-from", "", "Old compatibility baseline file for downgrade linting")
 	lintBaselineTo   = flag.String("lint-baseline-to", "", "New compatibility baseline file for downgrade linting")
@@ -111,6 +117,22 @@ func main() {
 	if *updateBaselineFlag {
 		if err := updateBaselineFile(*baselineFile, *resultsFile); err != nil {
 			fmt.Fprintf(os.Stderr, "compat: update baseline: %v\n", err)
+			os.Exit(2)
+		}
+		return
+	}
+
+	if *checkParity {
+		if err := checkParityFiles(*registryFile, *parityDebtFilePath, *resultsFile, *annotate); err != nil {
+			fmt.Fprintf(os.Stderr, "compat: parity check failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *updateParityDebt {
+		if err := updateParityDebtFile(*registryFile, *parityDebtFilePath, *resultsFile); err != nil {
+			fmt.Fprintf(os.Stderr, "compat: update parity debt: %v\n", err)
 			os.Exit(2)
 		}
 		return

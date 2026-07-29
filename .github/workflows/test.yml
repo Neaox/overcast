@@ -153,6 +153,26 @@ jobs:
       - uses: actions/checkout@v7.0.0
       - uses: rhysd/actionlint@v1.7.7
 
+  # The repo's helper scripts carry unittest files next to them; they are cheap
+  # and guard logic CI depends on (the compat report's JUnit mapping decides
+  # whether a check run goes red).
+  script-tests:
+    name: Script tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-python@v6.3.0
+        with:
+          python-version: "3.11"
+      - name: Run script unit tests
+        run: |
+          status=0
+          for t in scripts/*_test.py; do
+            echo "── $t"
+            python3 "$t" || status=1
+          done
+          exit "$status"
+
   docs-check:
     name: Docs and capability registry
     runs-on: ubuntu-latest

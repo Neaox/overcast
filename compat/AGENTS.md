@@ -450,6 +450,127 @@ Planned suite AGENTS.md files (implementation guide for agents building each sui
 
 When adding a new suite, create **both** `AGENTS.md` and `README.md` before writing any group code.
 
+## Baseline & uniformity policy
+
+**This section is enforced by CI. Read it before changing anything under
+`compat/`.**
+
+Two invariants hold the compat suites together. Both are checked on every push
+and pull request by `.github/workflows/compat.yml`, and both fail the build.
+
+### 1. No new failures — the baseline is a ratchet
+
+[compat/baseline.json](./baseline.json) records the expected status of every
+(suite, group, test) triple. `go run ./cmd/compat --compare-baseline` fails when:
+
+- a result is **worse** than the baseline records, ranked
+  `pass` > `skip`/`na` > `unimplemented` > `fail`; or
+- a test is **failing and absent** from the baseline — a brand-new failure
+  cannot slip in just because nothing recorded it before.
+
+Adding tests is always welcome: a new test that passes, is `unimplemented`,
+`skip`, or `na` never blocks a PR.
+
+**Legitimate non-passing states.** A test may sit at:
+
+| Status | Means | Example |
+| --- | --- | --- |
+| `unimplemented` | The **emulator** does not implement the operation (HTTP 501). A real, tracked gap in Overcast. | A service endpoint nobody has built yet |
+| `skip` | The test exists but could not run **here** — an environmental gate — or the **suite** has not implemented the registry group yet | `requires: docker`; `not yet implemented in rust-sdk test suite` |
+| `na` | The SDK or tool **has no API** for the operation. Not a gap in Overcast or in the suite. | An operation the AWS CLI does not expose |
+| `fail` | The emulator answered, and answered **wrongly**. Always a bug — in the emulator or in the test. | Wrong field, wrong error, assertion failure |
+
+`fail` is never an acceptable resting state. Entries recorded as `fail` are
+grandfathered failures being burned down; that set only ever shrinks. Once it
+reaches zero, CI asserts it stays there.
+
+**Cascades are not gaps.** A skip reading `setup failed: …` or
+`dependency failed: X` is a symptom of another failure in the same group. Fix
+the root cause; never grandfather a cascade on its own.
+
+**Improvements are promoted for you.** On push to `main`, the aggregate job runs
+`--update-baseline` and commits `compat/baseline.json` when a result improved.
+Do not hand-edit the baseline to record a fix — merge the fix and the ratchet
+tightens itself. `make -C compat baseline-update` still exists for making an
+improvement visible in a PR diff.
+
+> This automated commit is the **only** exception to the "never push to `main`"
+> rule in the root [AGENTS.md](../AGENTS.md). It is granted to the workflow, not
+> to agents or contributors: it touches `compat/baseline.json` and nothing else.
+
+`--lint-baseline-from/--lint-baseline-to` runs on PRs and rejects a baseline
+edit that downgrades an expectation, removes one, or adds a new `fail`.
+
+### 2. Uniformity — the registry is the contract
+
+Every SDK and CLI suite tests **the same operations**. When you add an
+operation, group, or case to one suite, it goes into all of them.
+
+The workflow is registry-first:
+
+1. Add the group/test to [suites/registry.json](./suites/registry.json).
+2. Implement it in **every** suite — `node-js-sdk`, `python-sdk`, `go-sdk`,
+   `cli`, `java-sdk`, `dotnet-sdk`, `rust-sdk`.
+3. Where an SDK genuinely lacks the API, register the test as `na` with a
+   reason rather than leaving it unimplemented.
+
+`go run ./cmd/compat --check-parity` enforces this. It classifies every
+(suite, registry test) pair from a real run and fails when a gap is not
+declared in [compat/parity-debt.json](./parity-debt.json).
+
+**Divergence is allowed only when the tool differs, and must be explicit:**
+
+- **`na`** — the SDK has no API for the operation. Recorded per test, in the
+  suite.
+- **`"suites": [...]`** on a registry group — the group only makes sense for
+  specific suites. Used by `cdk-lifecycle`: CDK deploys whole stacks rather than
+  calling operations one at a time, so registry-wide uniformity does not apply
+  to it and it runs only groups scoped to it. Reach for this rarely; an SDK
+  suite is never a legitimate `suites` scope.
+- **`compat/parity-debt.json`** — a group a suite has not implemented *yet*.
+  Temporary, and it only shrinks. The check fails if debt grows, if new debt is
+  undeclared, or if declared debt is stale (the group is now implemented, so the
+  entry must be deleted in the same PR).
+
+Regenerate the debt file with:
+
+```sh
+go run ./cmd/compat --update-parity-debt --results-file compat-results.json
+```
+
+**Every suite loader emits the same not-implemented sentinel** —
+`not yet implemented in <suite> test suite`. The parity checker tells a registry
+gap apart from an environmental skip by that exact phrasing, so all eight
+loaders must keep producing it. A skip reason matching no known category is
+reported as `unclassified`, which is how wording drift surfaces instead of
+silently hiding a gap.
+
+### 3. Docker-dependent tests are first-class
+
+Lambda invocation, ESM delivery, and the CDK stream tests execute real
+containers. They run **locally and in CI** — GitHub's `ubuntu-latest` runners
+have a Docker daemon, and `compat/docker-compose.yml` mounts the host socket.
+
+`OVERCAST_COMPAT_SKIP_DOCKER=1` is a local opt-out for a machine without a
+daemon. **Never set it in CI**: skipping those tests hid the emulator's Lambda
+stub behind a green check, which is exactly the blindspot this policy exists to
+prevent.
+
+### How failures reach you
+
+The aggregate job renders one report three ways, all from
+[scripts/compat-report.py](../scripts/compat-report.py):
+
+| Surface | What it carries |
+| --- | --- |
+| **Job summary** | Gate failures first, then the suite matrix, new vs known failures, and parity debt |
+| **PR annotations** | One `::error` per regression and per parity issue, on the checks tab |
+| **`Compat Report` check run** | JUnit — regressions are failures, expected gaps are skips, with per-test history |
+| **Sticky PR comment** | Digest: counts, pass rate, top issues, link to the run |
+| **Artifacts** | `compat-results.json` + `compat-junit.xml`, 90-day retention; attached to releases |
+
+---
+
 ### registry.json — canonical test matrix
 
 `compat/suites/registry.json` is the **single source of truth** for every
@@ -464,13 +585,18 @@ compat/suites/
 
 **Rules for every suite:**
 
-- A suite must implement the groups listed in `registry.json` **for the
-  services its tool supports**. For example, `rust-sdk` only covers the nine
-  core services listed in its README — it should still register the remaining
-  groups but emit `"skip"` for them so the dashboard shows a consistent matrix.
+- A suite must implement **every** group in `registry.json`, except groups a
+  registry entry scopes elsewhere via `"suites"`. "The tool only covers a few
+  services" is parity debt, not a design — it belongs in
+  [parity-debt.json](./parity-debt.json) and it shrinks. See
+  [§ Baseline & uniformity policy](#baseline--uniformity-policy).
 - When a suite has not yet implemented a group, it must emit a `test_result`
   with `status: "skip"` for every test in that group — never simply omit the
-  group from the output.
+  group from the output. Use the shared sentinel reason
+  `not yet implemented in <suite> test suite`; the parity checker classifies
+  gaps by that exact wording.
+- When the SDK or tool genuinely has no API for an operation, emit `"na"` with a
+  reason instead — that is a permanent, accepted divergence, unlike a skip.
 - Group names and test names in suite implementations **must exactly match**
   the registry (`name` fields are case-sensitive). The dashboard joins results
   across suites using these names.
@@ -494,10 +620,26 @@ Every new service **must** have a corresponding compat group added at the same
 time as the implementation:
 
 1. Add the new service's groups and tests to `compat/suites/registry.json`.
-2. Create `compat/suites/node-js-sdk/src/groups/<service>.ts` with test cases
-   matching the registry group/test names exactly.
-3. Register the new group in `compat/suites/node-js-sdk/src/index.ts`.
-4. If the service has CLI support, add a matching group to `compat/suites/cli/`.
+2. Implement the group in **every** SDK/CLI suite, matching the registry
+   group/test names exactly and registering it in that suite's runner:
+
+   | Suite | Group file | Registered in |
+   | --- | --- | --- |
+   | `node-js-sdk` | `src/groups/<service>.ts` | `src/index.ts` |
+   | `python-sdk` | `groups/<service>.py` | `runner.py` |
+   | `go-sdk` | `internal/groups/<service>.go` | `internal/groups/groups.go` |
+   | `cli` | `internal/groups/<service>.go` | `internal/groups/groups.go` |
+   | `java-sdk` | `src/main/java/io/overcast/compat/groups/<Service>Group.java` | `Main.java` |
+   | `dotnet-sdk` | `src/Groups/<Service>Group.cs` | the group registry |
+   | `rust-sdk` | `src/groups/<service>.rs` | `src/groups/mod.rs` |
+
+   Where an SDK has no API for an operation, register it as `na` with a reason —
+   do not leave it unimplemented. See the suite's own `AGENTS.md` for its
+   "Adding a new group" checklist.
+3. Run `go run ./cmd/compat --check-parity` and confirm it passes. If a suite
+   genuinely cannot be completed in the same PR, record the gap in
+   `compat/parity-debt.json` and say why in the PR description — debt is a
+   deliberate, reviewed decision, not a default.
 
 Do not open a PR that adds a new service without also updating the registry and
 adding its compat group. Compat tests are the external contract check —

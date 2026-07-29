@@ -102,6 +102,129 @@ func TestLintBaselineChange_removal(t *testing.T) {
 	}
 }
 
+func TestCompareBaseline_newFailureNotInBaseline(t *testing.T) {
+	// Given: a baseline that says nothing about a test — it did not exist when
+	// the baseline was taken.
+	baseline := &compatBaseline{Version: baselineVersion, Entries: []baselineEntry{{
+		Suite:  "node-js-sdk",
+		Group:  "sqs-basic",
+		Test:   "SendMessage",
+		Status: compat.StatusPass,
+	}}}
+	// When: that test shows up failing.
+	report := reportWithResults(
+		resultSpec{suite: "node-js-sdk", service: "sqs", group: "sqs-basic", test: "SendMessage", status: compat.StatusPass},
+		resultSpec{suite: "node-js-sdk", service: "sqs", group: "sqs-basic", test: "DeleteMessage", status: compat.StatusFail},
+	)
+	regressions := compareBaseline(baseline, report)
+
+	// Then: it is a regression. Iterating only over baseline entries would miss
+	// it entirely, which is how a brand-new failing test used to land on main
+	// with a green check.
+	if len(regressions) != 1 {
+		t.Fatalf("regressions len = %d, want 1: %#v", len(regressions), regressions)
+	}
+	if !strings.Contains(regressions[0], "node-js-sdk/sqs-basic/DeleteMessage") {
+		t.Fatalf("regression message = %q", regressions[0])
+	}
+	if !strings.Contains(regressions[0], "not in baseline") {
+		t.Fatalf("regression message should explain the test is ungrandfathered: %q", regressions[0])
+	}
+}
+
+func TestCompareBaseline_newPassingTestIsNotARegression(t *testing.T) {
+	// Given: a baseline that predates a newly added test
+	baseline := &compatBaseline{Version: baselineVersion}
+	// When: the new test passes (or is a known gap)
+	report := reportWithResults(
+		resultSpec{suite: "go-sdk", service: "s3", group: "s3-crud", test: "CreateBucket", status: compat.StatusPass},
+		resultSpec{suite: "go-sdk", service: "s3", group: "s3-crud", test: "DeleteBucket", status: compat.StatusUnimplemented},
+		resultSpec{suite: "go-sdk", service: "s3", group: "s3-crud", test: "PutObject", status: compat.StatusSkip},
+		resultSpec{suite: "go-sdk", service: "s3", group: "s3-crud", test: "GetObject", status: compat.StatusNA},
+	)
+	// Then: adding tests never blocks a PR on its own — only failures do.
+	if regressions := compareBaseline(baseline, report); len(regressions) != 0 {
+		t.Fatalf("regressions = %#v, want none", regressions)
+	}
+}
+
+func TestCompareBaseline_grandfatheredFailureIsAllowed(t *testing.T) {
+	// Given: a baseline that already records a failure (burn-down pending)
+	baseline := &compatBaseline{Version: baselineVersion, Entries: []baselineEntry{{
+		Suite:  "rust-sdk",
+		Group:  "s3-copy",
+		Test:   "CreateSourceBucket",
+		Status: compat.StatusFail,
+	}}}
+	report := reportWithResults(resultSpec{suite: "rust-sdk", service: "s3", group: "s3-copy", test: "CreateSourceBucket", status: compat.StatusFail})
+
+	// Then: it is not a regression — the ratchet only forbids getting worse.
+	if regressions := compareBaseline(baseline, report); len(regressions) != 0 {
+		t.Fatalf("regressions = %#v, want none for a grandfathered failure", regressions)
+	}
+}
+
+func TestLintBaselineChange_newFailEntryRejected(t *testing.T) {
+	// Given: a baseline change that introduces a brand-new expectation, failing
+	oldBaseline := &compatBaseline{Version: baselineVersion}
+	newBaseline := &compatBaseline{Version: baselineVersion, Entries: []baselineEntry{
+		{Suite: "go-sdk", Group: "s3-crud", Test: "CreateBucket", Status: compat.StatusFail},
+		{Suite: "go-sdk", Group: "s3-crud", Test: "DeleteBucket", Status: compat.StatusPass},
+	}}
+
+	// When: the change is linted
+	issues := lintBaselineChange(oldBaseline, newBaseline)
+
+	// Then: the new fail expectation is rejected. Iterating only the old
+	// baseline let contributors grandfather fresh failures by adding them.
+	if len(issues) != 1 {
+		t.Fatalf("issues len = %d, want 1: %#v", len(issues), issues)
+	}
+	if !strings.Contains(issues[0], "go-sdk/s3-crud/CreateBucket") {
+		t.Fatalf("issue message = %q", issues[0])
+	}
+}
+
+func TestBaselineAnnotations_renderGitHubErrorCommands(t *testing.T) {
+	// Given: a set of regression messages
+	regressions := []string{
+		"compat baseline regression: node-js-sdk/sqs-basic/SendMessage pass -> fail",
+		"compat baseline new failure, not in baseline: rust-sdk/s3-copy/CreateSourceBucket",
+	}
+
+	// When: they are rendered as GitHub workflow commands
+	out := baselineAnnotations(regressions)
+
+	// Then: each becomes an ::error line so it lands on the PR checks tab, with
+	// newlines escaped — a raw newline would truncate the annotation.
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d annotation lines, want 2: %q", len(lines), out)
+	}
+	for i, line := range lines {
+		if !strings.HasPrefix(line, "::error title=Compat baseline::") {
+			t.Errorf("line %d = %q, want an ::error annotation", i, line)
+		}
+	}
+	if !strings.Contains(lines[0], "SendMessage pass -> fail") {
+		t.Errorf("annotation lost its detail: %q", lines[0])
+	}
+}
+
+func TestBaselineAnnotations_escapesMultilineDetail(t *testing.T) {
+	// Given: a regression message carrying a multi-line error body
+	out := baselineAnnotations([]string{"compat baseline regression: a/b/c pass -> fail\nsecond line"})
+
+	// When/Then: the annotation stays on one line, with the newline percent-encoded
+	// as GitHub's workflow-command format requires.
+	if strings.Count(strings.TrimSpace(out), "\n") != 0 {
+		t.Fatalf("annotation spans multiple lines: %q", out)
+	}
+	if !strings.Contains(out, "%0A") {
+		t.Fatalf("newline not escaped as %%0A: %q", out)
+	}
+}
+
 type resultSpec struct {
 	suite   string
 	service string

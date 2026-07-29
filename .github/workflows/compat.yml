@@ -7,6 +7,10 @@ name: Compatibility Tests
 on:
   push:
     branches: [main]
+    # The baseline-promotion commit this workflow pushes to main must not
+    # trigger another run — see "Promote baseline improvements".
+    paths-ignore:
+      - compat/baseline.json
   pull_request:
     branches: [main]
   release:
@@ -262,6 +266,14 @@ jobs:
         run: pip install --quiet -r requirements.txt
         working-directory: compat/suites/python-sdk
 
+      # Lambda invocation, ESM delivery and the CDK stream tests execute real
+      # containers. The runner has a Docker daemon, so pull the runtime image up
+      # front: a cold pull inside a test's function-Active wait is what used to
+      # time out. Best-effort — a pull failure shows up as the test failing,
+      # which is the honest result.
+      - name: Pre-pull the Lambda runtime image
+        run: docker pull --quiet public.ecr.aws/lambda/nodejs:20 || true
+
       - name: Start Overcast
         run: |
           OVERCAST_PORT=4566 \
@@ -282,10 +294,13 @@ jobs:
           echo "Overcast did not become healthy within 30 s" >&2
           exit 1
 
+      # OVERCAST_COMPAT_SKIP_DOCKER is deliberately NOT set: skipping the
+      # Docker-dependent tests in CI hid Lambda invocation and ESM delivery
+      # entirely — the emulator answered from its stub and nothing noticed. It
+      # stays available as a local opt-out for machines without a daemon.
       - name: Run compat suite
         env:
           OVERCAST_ENDPOINT: http://localhost:4566
-          OVERCAST_COMPAT_SKIP_DOCKER: "1"
           OVERCAST_COMPAT_RESULTS_FILE: compat-results-${{ matrix.suite }}.json
         run: |
           ./bin/compat \
@@ -343,31 +358,84 @@ jobs:
             --results-file compat-results.json \
             --format pretty
 
+      # --annotate turns each regression into an ::error workflow command, so it
+      # lands on the PR's checks tab instead of only in this log. Kept
+      # continue-on-error so the surfacing steps below always run; the outcome is
+      # re-asserted in "Enforce compat gates" at the end of the job.
       - name: Compare compat baseline
+        id: baseline
+        continue-on-error: true
         run: |
           go run ./cmd/compat \
-            --compare-baseline \
+            --compare-baseline --annotate \
             --baseline-file compat/baseline.json \
-            --results-file compat-results.json
+            --results-file compat-results.json \
+            2>baseline-regressions.txt
+
+      - name: Check cross-suite parity
+        id: parity
+        continue-on-error: true
+        run: |
+          go run ./cmd/compat \
+            --check-parity --annotate \
+            --registry-file compat/suites/registry.json \
+            --parity-debt-file compat/parity-debt.json \
+            --results-file compat-results.json \
+            2>parity-issues.txt
 
       - name: Lint compat baseline changes
+        id: baseline-lint
         if: github.event_name == 'pull_request'
+        continue-on-error: true
         run: |
           git fetch --depth=1 origin main
           if git show origin/main:compat/baseline.json > compat-baseline-main.json 2>/dev/null; then
             go run ./cmd/compat \
               --lint-baseline-from compat-baseline-main.json \
-              --lint-baseline-to compat/baseline.json
+              --lint-baseline-to compat/baseline.json \
+              --annotate
           else
             echo "No baseline exists on origin/main yet; skipping downgrade lint."
           fi
+
+      # One report, three renderings: the job summary (full detail), a digest for
+      # the PR comment, and JUnit XML for a check run with per-test history.
+      # Regressions become JUnit failures; grandfathered gaps become skips, so
+      # the check run shows what changed rather than 800 expected gaps.
+      - name: Build compat report
+        if: always()
+        run: python3 scripts/compat-report.py
+
+      - name: Publish JUnit check run
+        if: always() && hashFiles('compat-junit.xml') != ''
+        uses: mikepenz/action-junit-report@v5.6.0
+        with:
+          report_paths: compat-junit.xml
+          check_name: Compat Report
+          # The baseline gate below decides pass/fail; this check run exists to
+          # give per-test visibility and history.
+          fail_on_failure: false
+          require_tests: true
+          detailed_summary: true
+          include_passed: false
+          annotate_only: true
+
+      - name: Comment compat digest on the PR
+        if: always() && github.event_name == 'pull_request' && hashFiles('compat-comment.md') != ''
+        uses: marocchino/sticky-pull-request-comment@v2.9.4
+        with:
+          header: compat-results
+          recreate: true
+          path: compat-comment.md
 
       - name: Upload merged compat results
         uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: compat-results-${{ github.sha }}
-          path: compat-results.json
+          path: |
+            compat-results.json
+            compat-junit.xml
           if-no-files-found: error
           retention-days: 90
 
@@ -377,42 +445,51 @@ jobs:
         with:
           files: compat-results.json
 
-      - name: Write job summary
+      # Promote improvements automatically so contributors never hand-edit the
+      # baseline: a fix merges, the ratchet tightens on the next push. Only ever
+      # improves entries (updateBaseline keeps the better status), only runs on
+      # main, and only commits compat/baseline.json. paths-ignore on the push
+      # trigger stops this commit from starting another run.
+      - name: Promote baseline improvements
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.baseline.outcome == 'success'
+        run: |
+          go run ./cmd/compat \
+            --update-baseline \
+            --baseline-file compat/baseline.json \
+            --results-file compat-results.json
+          if git diff --quiet -- compat/baseline.json; then
+            echo "Baseline unchanged — nothing to promote."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add compat/baseline.json
+          git commit -m "chore(compat): promote baseline improvements" \
+            -m "Automated: compat results on main improved on the recorded baseline." \
+            -m "[skip ci]"
+          # Non-fatal: promotion is an optimisation, not a gate. If main moved on
+          # (or branch protection rejects the push) the next run promotes the
+          # same improvement — failing the build over it would be noise.
+          if ! git push origin HEAD:main; then
+            echo "::warning title=Compat baseline::Could not push the baseline promotion — the next run on main will retry."
+          fi
+
+      # continue-on-error above kept the surfacing steps running; the gates are
+      # asserted here so the job's conclusion reflects them.
+      - name: Enforce compat gates
         if: always()
         run: |
-          echo "## Compatibility Test Results" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          if [[ -f compat-results.json ]]; then
-            python3 - <<'PY'
-          import json, os
-
-          with open("compat-results.json") as f:
-              data = json.load(f)
-
-          out = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout")
-          with open(out, "a") as f:
-              suites = data.get("Suites", [])
-              f.write("| Suite | Pass | Fail | Unimplemented | Skip | Total |\n")
-              f.write("| ----- | ---: | ---: | ------------: | ---: | ----: |\n")
-              total_pass = total_fail = total_unimplemented = total_skip = total_all = 0
-              for s in suites:
-                  p = s.get("Passed", 0)
-                  fa = s.get("Failed", 0)
-                  un = s.get("Unimplemented", 0)
-                  sk = s.get("Skipped", 0)
-                  tot = p + fa + un + sk
-                  f.write(f"| {s['Suite']} | {p} | {fa} | {un} | {sk} | {tot} |\n")
-                  total_pass += p
-                  total_fail += fa
-                  total_unimplemented += un
-                  total_skip += sk
-                  total_all += tot
-              f.write(f"| **Total** | **{total_pass}** | **{total_fail}** | **{total_unimplemented}** | **{total_skip}** | **{total_all}** |\n")
-              endpoint = data.get("Endpoint", "")
-              if endpoint:
-                  f.write(f"\nEndpoint: `{endpoint}`\n")
-          PY
-          else
-            echo "_compat-results.json not found — a suite may have failed before writing results._" >> "$GITHUB_STEP_SUMMARY"
-            exit 1
+          failed=0
+          if [[ "${{ steps.baseline.outcome }}" == "failure" ]]; then
+            echo "Baseline comparison failed — see the annotations and job summary." >&2
+            failed=1
           fi
+          if [[ "${{ steps.parity.outcome }}" == "failure" ]]; then
+            echo "Cross-suite parity check failed — see the annotations and job summary." >&2
+            failed=1
+          fi
+          if [[ "${{ steps.baseline-lint.outcome }}" == "failure" ]]; then
+            echo "Baseline change lint failed — a downgrade or a new fail expectation." >&2
+            failed=1
+          fi
+          exit "$failed"
