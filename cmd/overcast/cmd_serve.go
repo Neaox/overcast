@@ -41,7 +41,6 @@ All configuration is via environment variables. See internal/config/config.go.
 Examples:
   overcast serve
   OVERCAST_STATE=memory overcast serve
-  OVERCAST_SERVICES=s3,sqs overcast serve
   OVERCAST_HOST=127.0.0.1 overcast serve`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {

@@ -2,6 +2,16 @@
 
 > Status: A5 implemented, pending review, 2026-07-28. Owner: TBD.
 > Related: [Level 2 codegen](./level2-codegen.md) Track 3, [Smithy wire protocols](../dev/smithy.md), and [wire-byte goldens](./wire-byte-goldens.md).
+>
+> **`OVERCAST_SERVICES` was removed after this plan was written.** Every service
+> is now always registered, so there is no disabled-service state and no
+> `ServiceDisabled` response. The audit findings in §2 and the note in §8
+> describe the routing situation as it stood then, and are kept as the record of
+> what motivated the work; where they say a `PathPrefixService` prefix protects a
+> *disabled* service, that protection now only applies under the test-only
+> `config.TestOnlyServiceSubset`. Nothing else in the plan is affected: S3's
+> broad fallback and the evidence-based registry are what actually prevent
+> fallthrough, and both are unchanged.
 
 ## 1. Objective
 
@@ -83,7 +93,7 @@ func (r *Registry) Claim(req *http.Request) (Claim, bool)
 A2 emits sorted, immutable AWS JSON target and fully-qualified Query
 `(Version, Action)` indexes from the manifest. `Registry` binary-searches those
 indexes and the router invokes one shared error-profile writer only after
-enabled and disabled service dispatchers decline ownership. This is deliberately
+service dispatchers decline ownership. This is deliberately
 not a broad service-prefix interceptor: it preserves existing implementations,
 explicit service stubs, and S3 controls. REST URI-template and RPC v2 matching
 remain A3 work, where the generated trie can provide sufficient evidence rather
@@ -129,9 +139,10 @@ completes the generated ownership surface:
   including 18 whose canonical protocol is CBOR);
 - the explicit `/service/{service}/operation/{operation}` route consults that
   index after implemented service operations. A modeled gap gets its native
-  501 envelope, a known disabled service gets `ServiceDisabled` even when the
-  operation is not yet modeled, and a truly unknown service preserves the
-  existing unsupported/unknown behavior.
+  501 envelope, and a truly unknown service preserves the existing
+  unsupported/unknown behavior. (There is no longer a disabled-service case:
+  `OVERCAST_SERVICES` is gone and every service is always wired, so the
+  `ServiceDisabled` branch this route used to carry was removed with it.)
   The Smithy protocol header is required evidence: a headerless S3 multipart
   request with the same legal path grammar delegates to S3; and
 - generated corpus tests require every non-S3 operation and every additive RPC
@@ -240,7 +251,7 @@ single-dispatch design can improve it with evidence.
 
 | Phase | Work | Acceptance gate |
 | --- | --- | --- |
-| A0 | Write failing router integration tests for Lambda alternate versions, unknown API Gateway REST paths, Query `GET /?Action=`, AWS JSON unknown services, disabled services, and legitimate S3 controls. | Every non-S3 fixture returns the correct 501 envelope, not an S3 response; S3 behavior remains unchanged. |
+| A0 | Write failing router integration tests for Lambda alternate versions, unknown API Gateway REST paths, Query `GET /?Action=`, AWS JSON unknown services, and legitimate S3 controls. | Every non-S3 fixture returns the correct 501 envelope, not an S3 response; S3 behavior remains unchanged. |
 | A1 | Record a pinned model provenance; add the generator and reproducible regeneration target; generate the complete operation-metadata baseline. | Manifest is deterministic, records source provenance, and retains every recognized protocol trait currently present in the model source. |
 | A2 | Implement `awsapi.Registry`, shared fallback, and error-profile selection. | Pilot operations route correctly without changing implementation behavior. |
 | A3 | Compile the generated metadata into the REST trie; migrate `stub-report`; validate capabilities against manifest, including explicit aliases and the ten legacy JSON-target dispatchers modeled as REST (`backup`, `appconfig`, `appconfigdata`, `appregistry`, `appsync`, `bedrock`, `eks`, `msk`, `opensearch`, `scheduler`). | Every generated operation has ownership or an explicit ambiguity/exclusion, and every Overcast service resolves through an alias to at least one manifest operation or an explicit exemption. |

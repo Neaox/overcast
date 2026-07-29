@@ -111,22 +111,32 @@ RUN groupadd --gid ${USER_GID} ${USERNAME} \
 # Pre-warm the Go cache directories so the vscode user can write to them.
 # The actual modules are downloaded by postCreateCommand in devcontainer.json.
 #
-# These must exist in the image, owned by the user, before anything mounts a
-# volume over them: Docker copies ownership from the image directory when it
-# initialises a named volume, and creates any missing parent as root:root.
-# Without this, mounting a module cache at ${GOPATH}/pkg/mod leaves
-# /home/vscode/go root-owned and every build fails with "permission denied"
-# — which is exactly what compat/docker-compose.yml used to hit. The paths
-# below must stay in step with the GOPATH set after USER.
-RUN mkdir -p /go/pkg/mod \
-             /home/${USERNAME}/go/pkg/mod \
+# This MUST be the same path as GOPATH below (/home/vscode/go/pkg/mod), not the
+# base image's default /go. Both docker-compose.dev.yml and
+# .devcontainer/init-worktree.sh mount a named volume there, and Docker creates
+# a volume's mount point owned by root when the path does not already exist in
+# the image. The container runs as vscode, so a root-owned mount point fails
+# every build with "mkdir /home/vscode/go/pkg/mod/cache: permission denied".
+# Creating it here, owned by vscode, is what the volume inherits instead.
+#
+# .cache/go-build is here for the same reason: compat/docker-compose.yml mounts
+# a build-cache volume there so repeated compat runs do not recompile the tree
+# from scratch (a cold build is minutes, a warm one seconds).
+#
+# /home/vscode/bin exists for the same reason too: docker-compose.dev.yml keeps
+# the compiled binary on a named volume, and that mount point has to be outside
+# the /workspace bind mount — a bind mount hides whatever the image put at its
+# path, so a volume nested under it can never inherit image ownership.
+RUN mkdir -p /home/${USERNAME}/go/pkg/mod \
              /home/${USERNAME}/go/bin \
+             /home/${USERNAME}/bin \
              /home/${USERNAME}/.cache/go-build \
              /home/${USERNAME}/.config/opencode \
              /home/${USERNAME}/.config/gh \
              /home/${USERNAME}/.local/share/opencode \
-  && chown -R ${USERNAME}:${USERNAME} /go \
+  && chown -R ${USERNAME}:${USERNAME} \
              /home/${USERNAME}/go \
+             /home/${USERNAME}/bin \
              /home/${USERNAME}/.cache \
              /home/${USERNAME}/.config \
              /home/${USERNAME}/.local

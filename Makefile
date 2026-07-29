@@ -119,7 +119,7 @@ build-slim-windows-amd64:
 
 ## run: build and run with dev defaults (uses cross-platform Go script)
 run:
-	OVERCAST_SERVICES= $(GO) run ./scripts/run.go
+	$(GO) run ./scripts/run.go
 
 ## dev-server: watch Go sources and hot-reload the server (requires air)
 dev-server:
@@ -234,8 +234,8 @@ docs-check: check-caps
 		|| (echo "ERROR: internal/capabilities/all.gen.go is stale. Run: make generate-caps" && exit 1)
 	$(GO) run -tags dev ./cmd/capgen --write-docs
 	$(GO) run ./scripts/docs-index.go --check
-	@git diff --exit-code README.md STATUS.md docs/README.md docs/services/ docs/generated/service-support.json \
-		|| (echo "ERROR: README.md, STATUS.md, docs/README.md, docs/services/, or docs/generated/service-support.json are stale. Run: make docs" && exit 1)
+	@git diff --exit-code README.md STATUS.md docs/README.md docs/cdk.md docs/services/ docs/generated/service-support.json \
+		|| (echo "ERROR: README.md, STATUS.md, docs/README.md, docs/cdk.md, docs/services/, or docs/generated/service-support.json are stale. Run: make docs" && exit 1)
 
 ## supportmeta-check: alias for docs-check (manifest schema, registry parity, docs parity, generated artifacts)
 supportmeta-check: docs-check

@@ -7,15 +7,16 @@
       "Bash(go fmt:*)",
       "Bash(go vet:*)",
       "Bash(golangci-lint run:*)",
-      "Bash(npx tsc *)",
       "Bash(npm install *)",
       "Bash(npm run *)",
-      "Bash(./node_modules/.bin/tsc --noEmit)",
       "WebSearch",
       "WebFetch(domain:docs.localstack.cloud)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:floci.io)",
-      "WebFetch(domain:hectorvent.dev)"
+      "WebFetch(domain:hectorvent.dev)",
+      "Bash(pnpm run *)",
+      "Bash(make check)",
+      "Bash(make lint-go)"
     ]
   }
 }

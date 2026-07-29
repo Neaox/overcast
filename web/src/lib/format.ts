@@ -23,6 +23,18 @@ export function formatDate(date: string | Date | number | undefined): string {
   }
 }
 
+/**
+ * Wall-clock time of day in the viewer's locale, e.g. `14:22:07` — for "as of"
+ * stamps, where the date is either implied or beside the point.
+ */
+export function formatTimeOfDay(value: number | string | Date): string {
+  return new Date(value).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  })
+}
+
 export function formatStorageClass(sc: string): string {
   return sc
     .replace(/_/g, " ")

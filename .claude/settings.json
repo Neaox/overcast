@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git push*)",
+            "command": "bash scripts/verify-changed.sh",
+            "timeout": 900,
+            "statusMessage": "Verifying changed code before push (golangci-lint / pnpm typecheck)"
+          }
+        ]
+      }
+    ]
+  }
+}

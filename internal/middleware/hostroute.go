@@ -56,15 +56,16 @@ import (
 // this evidence-based against the generated AWS operation manifest, so the set
 // can only grow when AWS itself adds a service or hostname.
 //
-// ---- Deliberately NOT folded into this table yet (follow-up) ----
+// ---- Also reads this table ----
 //
-//   - internal/middleware/region.go's regionFromHost: extracts only the
-//     region hint from this same grammar, for SigV4-less requests, and
-//     predates this file. It carries a third divergent label list that
-//     already disagrees with this one (it knows "sqs"/"sns"/"dynamodb" but
-//     not "appsync-api"/"lambda-url"). Folding it in is tracked as H5 in
-//     docs/plans/host-routing-precedence.md, alongside the manifest work,
-//     so both label lists are replaced in one pass rather than two.
+//   - internal/middleware/region.go's regionFromHost: extracts the region hint
+//     from this same grammar for SigV4-less requests, which is the only region
+//     evidence a host-routed invoke carries. It used to keep a third divergent
+//     label list; H5 folded it onto parseHostRouteName, so registering a label
+//     below is all a new host-routed service needs to resolve in the right
+//     region. It keeps a small disjoint set for regional service endpoints
+//     Overcast does NOT dispatch on ("s3" and friends), which must stay out of
+//     this table — see regionalEndpointLabels.
 //
 // Host-route labels, exported so the services that MINT these URLs
 // (serviceutil.HostRoutedURL callers) use the same string the router
@@ -122,7 +123,7 @@ type HostRouteMatch struct {
 // virtual-hosted addressing — i.e. anything on the request path — should use
 // HostClassifier.Classify instead, which applies the full precedence rule.
 func ParseHostRoute(host string) (HostRouteMatch, bool) {
-	hostname := hostWithoutPort(host)
+	hostname := foldHostname(hostWithoutPort(host))
 	if hostname == "" || isIPLiteral(hostname) {
 		return HostRouteMatch{}, false
 	}

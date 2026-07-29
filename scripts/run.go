@@ -27,7 +27,6 @@ import (
 
 func main() {
 	port := flag.String("port", envOr("OVERCAST_PORT", "4566"), "Port to listen on")
-	services := flag.String("services", os.Getenv("OVERCAST_SERVICES"), "Comma-separated services to enable (default: all)")
 	state := flag.String("state", envOr("OVERCAST_STATE", "hybrid"), "State backend: memory, persistent, hybrid or wal")
 	logLevel := flag.String("log", envOr("OVERCAST_LOG_LEVEL", "debug"), "Log level: debug, info, warn, error")
 	flag.Parse()
@@ -77,10 +76,6 @@ func main() {
 		"OVERCAST_LOG_LEVEL="+*logLevel,
 		"OVERCAST_DEBUG=true",
 	)
-	if *services != "" {
-		run.Env = append(run.Env, "OVERCAST_SERVICES="+*services)
-	}
-
 	// Start the child process and forward signals so it can shut down
 	// cleanly before we exit. Without this, Go's default SIGINT handler
 	// kills the wrapper and the child may not finish cleanup (e.g.

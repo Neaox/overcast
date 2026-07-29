@@ -183,6 +183,49 @@ export function DistributionDetail() {
               ))}
             </TableBody>
           </Table>
+
+          {/* Origin groups give a behavior a primary and a failover origin, so
+              the origin list alone does not explain where traffic goes. Only
+              rendered when the distribution actually defines one. */}
+          {dist.originGroups.length > 0 && (
+            <div className="mt-6">
+              <h3 className="mb-2 text-sm font-medium">Origin Groups</h3>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Group ID</TableHead>
+                    <TableHead>Primary</TableHead>
+                    <TableHead>Failover</TableHead>
+                    <TableHead>Failover On</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {dist.originGroups.map((group) => (
+                    <TableRow key={group.id}>
+                      <TableCell>{group.id}</TableCell>
+                      <TableCell>{group.members[0] ?? "—"}</TableCell>
+                      <TableCell className="text-fg-muted">
+                        {group.members.slice(1).join(", ") || "—"}
+                      </TableCell>
+                      <TableCell>
+                        {group.failoverStatusCodes.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {group.failoverStatusCodes.map((code) => (
+                              <Badge key={code} variant="default">
+                                {code}
+                              </Badge>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-fg-muted">—</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </TabPanel>
 
         {/* ── Invalidations tab ── */}

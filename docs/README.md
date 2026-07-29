@@ -27,6 +27,7 @@ see the [root README](../README.md).
 
 - [Service emulation reference](./services/README.md) — per-service endpoint coverage tables
 - [Configuration reference](#configuration-reference) — all environment variables
+- [Service names](#service-names) — every service name and the CDK module it corresponds to
 - [Log levels](#log-levels) — `OVERCAST_LOG_LEVEL` values and what each one shows
 - [Persistence](#persistence) — storage backends
 - [HTTPS / TLS](#https--tls) — self-signed certs for local HTTPS
@@ -163,7 +164,6 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_HOSTNAME`              | `localhost`            | Hostname embedded in client-facing URLs (SQS queue URLs, Lambda function URLs, API Gateway `apiEndpoint`, AppSync DNS names, CloudFront domain names). **Set it to `localhost.overcast.sh`** unless you are offline: every `*.localhost.overcast.sh` name resolves to `127.0.0.1` on every OS, which plain `localhost` does not on Windows. See [networking.md](./networking.md) |
 | `OVERCAST_SPLIT_HORIZON_HOSTS`   | _(none)_               | Extra comma-separated hostnames remapped to Overcast inside containers it starts (ECS tasks), so one URL is dialable from both host and container. Added to the built-in `localhost.overcast.sh`, `localhost.localstack.cloud`, `localhost.floci.io` |
 | `OVERCAST_PORT`                  | `4566`                 | TCP port                                                                             |
-| `OVERCAST_SERVICES`              | all                    | Comma-separated list of services to enable, e.g. `s3,sqs,dynamodb`                   |
 | `OVERCAST_STATE`                 | `auto`                 | Storage backend: `auto` (default when unset), `memory`, `hybrid`, `persistent`, or `wal`. `auto` resolves to `hybrid` when a volume/bind mount or existing database is found at `OVERCAST_DATA_DIR` (or the dir was explicitly set), otherwise `memory` — see [storage.md § The auto default](./storage.md#the-auto-default) |
 | `OVERCAST_STATE_<SERVICE>`       | _(global)_             | Per-service backend override, e.g. `OVERCAST_STATE_S3=memory`                        |
 | `OVERCAST_HYBRID_FLUSH_INTERVAL` | `5s`                   | How often the hybrid backend flushes in-memory state to disk                         |
@@ -207,6 +207,78 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_SMTP_PASSWORD`         | —                      | SMTP AUTH PLAIN password for external relay                                          |
 | `OVERCAST_SMTP_TLS`              | `false`                | Enable implicit TLS (port 465) for external relay                                    |
 | `OVERCAST_SMTP_INBOX_MAX`        | `500`                  | Maximum number of captured messages retained before eviction                         |
+
+### Service names
+
+Every service listed below always runs — there is no way to switch one off, and
+nothing to configure to get one. The names matter for one thing: they are what
+the per-service storage override `OVERCAST_STATE_<SERVICE>` is keyed by, in
+upper case. CloudWatch Logs is `logs`, so its override is `OVERCAST_STATE_LOGS`
+— not `OVERCAST_STATE_CLOUDWATCH_LOGS`, which names nothing and is rejected at
+startup.
+
+Each name is the service's AWS CLI name, which for several services matches
+neither the display name nor the `aws-cdk-lib` module you would import. The CDK
+column is there because that is the mapping people most often need to make.
+
+For per-service endpoint coverage, follow the doc links in [Services](#services)
+above.
+
+<!-- BEGIN overcast:service-names -->
+
+| Name              | Service          | CDK module (`aws-cdk-lib/…`)                       |
+| ----------------- | ---------------- | -------------------------------------------------- |
+| `s3`              | S3               | `aws-s3`                                           |
+| `sqs`             | SQS              | `aws-sqs`                                          |
+| `dynamodb`        | DynamoDB         | `aws-dynamodb`                                     |
+| `lambda`          | Lambda           | `aws-lambda`                                       |
+| `apigateway`      | API Gateway      | `aws-apigateway`, `aws-apigatewayv2`               |
+| `appsync`         | AppSync          | `aws-appsync`                                      |
+| `cloudfront`      | CloudFront       | `aws-cloudfront`, `aws-cloudfront-origins`         |
+| `cognito`         | Cognito          | `aws-cognito`                                      |
+| `ec2`             | EC2 / VPC        | `aws-ec2`                                          |
+| `sns`             | SNS              | `aws-sns`                                          |
+| `iam`             | IAM              | `aws-iam`                                          |
+| `ecs`             | ECS              | `aws-ecs`                                          |
+| `ecr`             | ECR              | `aws-ecr`, `aws-ecr-assets`                        |
+| `kms`             | KMS              | `aws-kms`                                          |
+| `kinesis`         | Kinesis          | `aws-kinesis`                                      |
+| `eventbridge`     | EventBridge      | `aws-events`, `aws-events-targets`                 |
+| `scheduler`       | Scheduler        | `aws-scheduler`                                    |
+| `cloudformation`  | CloudFormation   | `aws-cloudformation`                               |
+| `rds`             | RDS              | `aws-rds`                                          |
+| `elasticache`     | ElastiCache      | `aws-elasticache`                                  |
+| `appconfig`       | AppConfig        | `aws-appconfig`                                    |
+| `appconfigdata`   | AppConfigData    | — (runtime data plane; no constructs)              |
+| `secretsmanager`  | Secrets Manager  | `aws-secretsmanager`                               |
+| `ssm`             | SSM              | `aws-ssm`                                          |
+| `logs`            | CloudWatch Logs  | `aws-logs`                                         |
+| `ses`             | SES              | `aws-ses`                                          |
+| `sts`             | STS              | — (used by the CDK CLI itself)                     |
+| `stepfunctions`   | Step Functions   | `aws-stepfunctions`, `aws-stepfunctions-tasks`     |
+| `pipes`           | Pipes            | `aws-pipes`                                        |
+| `waf`             | WAF v2           | `aws-wafv2`                                        |
+| `shield`          | Shield           | `aws-shield`                                       |
+| `acm`             | ACM              | `aws-certificatemanager`                           |
+| `athena`          | Athena           | `aws-athena`                                       |
+| `bedrock`         | Bedrock          | `aws-bedrock`                                      |
+| `cloudwatch`      | CloudWatch       | `aws-cloudwatch`, `aws-cloudwatch-actions`         |
+| `dynamodbstreams` | DynamoDB Streams | — (enabled by the `stream` prop on `aws-dynamodb`) |
+| `firehose`        | Firehose         | `aws-kinesisfirehose`                              |
+| `glue`            | Glue             | `aws-glue`                                         |
+| `opensearch`      | OpenSearch       | `aws-opensearchservice`                            |
+| `appregistry`     | AppRegistry      | `aws-servicecatalogappregistry`                    |
+| `autoscaling`     | Auto Scaling     | `aws-autoscaling`, `aws-applicationautoscaling`    |
+| `backup`          | Backup           | `aws-backup`                                       |
+| `cloudtrail`      | CloudTrail       | `aws-cloudtrail`                                   |
+| `eks`             | EKS              | `aws-eks`                                          |
+| `elbv2`           | ELBv2            | `aws-elasticloadbalancingv2`                       |
+| `msk`             | MSK              | `aws-msk`                                          |
+| `organizations`   | Organizations    | — (no constructs)                                  |
+| `route53`         | Route 53         | `aws-route53`, `aws-route53-targets`               |
+| `transfer`        | Transfer Family  | `aws-transfer`                                     |
+
+<!-- END overcast:service-names -->
 
 ### Log levels
 
@@ -269,7 +341,8 @@ Hybrid seeds small control-plane namespaces into memory on startup and reads lar
 ### Per-service storage overrides
 
 Each service can use a different backend. Set `OVERCAST_STATE_<SERVICE>`
-where `<SERVICE>` is the uppercase service name (hyphens become underscores):
+where `<SERVICE>` is one of the [service names](#service-names) in upper case,
+so CloudWatch Logs is `OVERCAST_STATE_LOGS`:
 
 ```bash
 docker run --rm -p 4566:4566 \

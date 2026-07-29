@@ -135,7 +135,7 @@ func runDockerCommandWithInput(t *testing.T, input string, args ...string) strin
 // ── CreateRepository ───────────────────────────────────────────────────────────
 
 func TestCreateRepository_success(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"), helpers.WithAccountID("000000000000"))
+	srv := helpers.NewTestServer(t, helpers.WithAccountID("000000000000"))
 	resp := ecrCall(t, srv, "CreateRepository", map[string]any{
 		"repositoryName": "my-app",
 	})
@@ -163,7 +163,7 @@ func TestCreateRepository_success(t *testing.T) {
 }
 
 func TestCreateRepository_duplicate(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"))
+	srv := helpers.NewTestServer(t)
 	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "my-app"})
 	resp := ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "my-app"})
 	defer resp.Body.Close()
@@ -177,7 +177,7 @@ func TestCreateRepository_duplicate(t *testing.T) {
 }
 
 func TestCreateRepository_nameRequired(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"))
+	srv := helpers.NewTestServer(t)
 	resp := ecrCall(t, srv, "CreateRepository", map[string]any{})
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
@@ -188,7 +188,7 @@ func TestCreateRepository_nameRequired(t *testing.T) {
 // ── DescribeRepositories ───────────────────────────────────────────────────────
 
 func TestDescribeRepositories_empty(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"))
+	srv := helpers.NewTestServer(t)
 	resp := ecrCall(t, srv, "DescribeRepositories", map[string]any{})
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -205,7 +205,7 @@ func TestDescribeRepositories_empty(t *testing.T) {
 }
 
 func TestDescribeRepositories_afterCreate(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"))
+	srv := helpers.NewTestServer(t)
 	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "repo-a"})
 	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "repo-b"})
 
@@ -222,7 +222,7 @@ func TestDescribeRepositories_afterCreate(t *testing.T) {
 }
 
 func TestDescribeRepositories_filterByName(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"))
+	srv := helpers.NewTestServer(t)
 	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "repo-a"})
 	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "repo-b"})
 
@@ -241,7 +241,7 @@ func TestDescribeRepositories_filterByName(t *testing.T) {
 }
 
 func TestDescribeRepositories_notFound(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"))
+	srv := helpers.NewTestServer(t)
 	resp := ecrCall(t, srv, "DescribeRepositories", map[string]any{
 		"repositoryNames": []string{"nonexistent"},
 	})
@@ -258,7 +258,7 @@ func TestDescribeRepositories_notFound(t *testing.T) {
 // ── DeleteRepository ───────────────────────────────────────────────────────────
 
 func TestDeleteRepository_success(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"))
+	srv := helpers.NewTestServer(t)
 	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "to-delete"})
 
 	resp := ecrCall(t, srv, "DeleteRepository", map[string]any{
@@ -287,7 +287,7 @@ func TestDeleteRepository_success(t *testing.T) {
 }
 
 func TestDeleteRepository_notFound(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"))
+	srv := helpers.NewTestServer(t)
 	resp := ecrCall(t, srv, "DeleteRepository", map[string]any{
 		"repositoryName": "nonexistent",
 	})
@@ -304,7 +304,7 @@ func TestDeleteRepository_notFound(t *testing.T) {
 // ── GetAuthorizationToken ──────────────────────────────────────────────────────
 
 func TestGetAuthorizationToken_success(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"), helpers.WithAccountID("000000000000"))
+	srv := helpers.NewTestServer(t, helpers.WithAccountID("000000000000"))
 	resp := ecrCall(t, srv, "GetAuthorizationToken", map[string]any{})
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -340,7 +340,7 @@ func TestGetAuthorizationToken_success(t *testing.T) {
 }
 
 func TestDescribeRegistry_success(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"), helpers.WithAccountID("000000000000"))
+	srv := helpers.NewTestServer(t, helpers.WithAccountID("000000000000"))
 	resp := ecrCall(t, srv, "DescribeRegistry", map[string]any{})
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -366,7 +366,7 @@ func TestDescribeRegistry_success(t *testing.T) {
 // ── ListImages ────────────────────────────────────────────────────────────────
 
 func TestListImages_empty(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"))
+	srv := helpers.NewTestServer(t)
 	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "my-app"})
 
 	resp := ecrCall(t, srv, "ListImages", map[string]any{
@@ -387,7 +387,7 @@ func TestListImages_empty(t *testing.T) {
 }
 
 func TestListImages_repositoryNotFound(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"))
+	srv := helpers.NewTestServer(t)
 	resp := ecrCall(t, srv, "ListImages", map[string]any{
 		"repositoryName": "nonexistent",
 	})
@@ -402,7 +402,7 @@ func TestListImages_repositoryNotFound(t *testing.T) {
 }
 
 func TestDescribeImages_success(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"), helpers.WithRegion("us-east-1"), helpers.WithAccountID("000000000000"))
+	srv := helpers.NewTestServer(t, helpers.WithRegion("us-east-1"), helpers.WithAccountID("000000000000"))
 	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "my-app"})
 	ecrCall(t, srv, "PutImage", map[string]any{
 		"repositoryName": "my-app",
@@ -436,7 +436,7 @@ func TestDescribeImages_success(t *testing.T) {
 }
 
 func TestDescribeImages_repositoryNotFound(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"))
+	srv := helpers.NewTestServer(t)
 	resp := ecrCall(t, srv, "DescribeImages", map[string]any{"repositoryName": "nope"})
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
@@ -451,7 +451,7 @@ func TestDescribeImages_repositoryNotFound(t *testing.T) {
 // ── PutImage / BatchGetImage / BatchDeleteImage ────────────────────────────────
 
 func TestPutImage_success(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"), helpers.WithRegion("us-east-1"), helpers.WithAccountID("000000000000"))
+	srv := helpers.NewTestServer(t, helpers.WithRegion("us-east-1"), helpers.WithAccountID("000000000000"))
 	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "my-app"})
 
 	resp := ecrCall(t, srv, "PutImage", map[string]any{
@@ -479,7 +479,7 @@ func TestPutImage_success(t *testing.T) {
 }
 
 func TestPutImage_autoDigestIsManifestSHA256(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"), helpers.WithRegion("us-east-1"), helpers.WithAccountID("000000000000"))
+	srv := helpers.NewTestServer(t, helpers.WithRegion("us-east-1"), helpers.WithAccountID("000000000000"))
 	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "digest-app"})
 
 	manifest := `{"schemaVersion":2,"config":{"mediaType":"application/vnd.docker.container.image.v1+json","digest":"sha256:abc"}}`
@@ -505,7 +505,7 @@ func TestPutImage_autoDigestIsManifestSHA256(t *testing.T) {
 }
 
 func TestBatchGetImage_success(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"), helpers.WithRegion("us-east-1"), helpers.WithAccountID("000000000000"))
+	srv := helpers.NewTestServer(t, helpers.WithRegion("us-east-1"), helpers.WithAccountID("000000000000"))
 	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "my-app"})
 	ecrCall(t, srv, "PutImage", map[string]any{
 		"repositoryName": "my-app",
@@ -531,7 +531,7 @@ func TestBatchGetImage_success(t *testing.T) {
 }
 
 func TestBatchDeleteImage_success(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"), helpers.WithRegion("us-east-1"), helpers.WithAccountID("000000000000"))
+	srv := helpers.NewTestServer(t, helpers.WithRegion("us-east-1"), helpers.WithAccountID("000000000000"))
 	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "my-app"})
 	ecrCall(t, srv, "PutImage", map[string]any{
 		"repositoryName": "my-app",
@@ -562,7 +562,7 @@ func TestBatchDeleteImage_success(t *testing.T) {
 // ── Repository policy ──────────────────────────────────────────────────────────
 
 func TestSetRepositoryPolicy_success(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"))
+	srv := helpers.NewTestServer(t)
 	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "my-app"})
 
 	policy := `{"Version":"2012-10-17","Statement":[]}`
@@ -577,7 +577,7 @@ func TestSetRepositoryPolicy_success(t *testing.T) {
 }
 
 func TestGetRepositoryPolicy_success(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"))
+	srv := helpers.NewTestServer(t)
 	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "my-app"})
 	policy := `{"Version":"2012-10-17","Statement":[]}`
 	ecrCall(t, srv, "SetRepositoryPolicy", map[string]any{
@@ -599,7 +599,7 @@ func TestGetRepositoryPolicy_success(t *testing.T) {
 }
 
 func TestGetRepositoryPolicy_notSet(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"))
+	srv := helpers.NewTestServer(t)
 	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "my-app"})
 
 	resp := ecrCall(t, srv, "GetRepositoryPolicy", map[string]any{
@@ -616,7 +616,7 @@ func TestGetRepositoryPolicy_notSet(t *testing.T) {
 }
 
 func TestPutGetDeleteLifecyclePolicy_success(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"))
+	srv := helpers.NewTestServer(t)
 	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "my-app"})
 
 	lifecycle := `{"rules":[{"rulePriority":1,"description":"expire old","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}}]}`
@@ -664,7 +664,7 @@ func TestPutGetDeleteLifecyclePolicy_success(t *testing.T) {
 }
 
 func TestGetLifecyclePolicy_notFound(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"))
+	srv := helpers.NewTestServer(t)
 	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "my-app"})
 
 	resp := ecrCall(t, srv, "GetLifecyclePolicy", map[string]any{
@@ -681,7 +681,7 @@ func TestGetLifecyclePolicy_notFound(t *testing.T) {
 }
 
 func TestDeleteRepositoryPolicy_success(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"))
+	srv := helpers.NewTestServer(t)
 	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "my-app"})
 	ecrCall(t, srv, "SetRepositoryPolicy", map[string]any{
 		"repositoryName": "my-app",
@@ -700,7 +700,7 @@ func TestDeleteRepositoryPolicy_success(t *testing.T) {
 // ── Tag operations ─────────────────────────────────────────────────────────────
 
 func TestTagResource_success(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"), helpers.WithAccountID("000000000000"))
+	srv := helpers.NewTestServer(t, helpers.WithAccountID("000000000000"))
 	createResp := ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "my-app"})
 	createBody := mustDecode(t, createResp)
 	arn := createBody["repository"].(map[string]any)["repositoryArn"].(string)
@@ -718,7 +718,7 @@ func TestTagResource_success(t *testing.T) {
 }
 
 func TestListTagsForResource_success(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"), helpers.WithAccountID("000000000000"))
+	srv := helpers.NewTestServer(t, helpers.WithAccountID("000000000000"))
 	createResp := ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "my-app"})
 	createBody := mustDecode(t, createResp)
 	arn := createBody["repository"].(map[string]any)["repositoryArn"].(string)
@@ -741,7 +741,7 @@ func TestListTagsForResource_success(t *testing.T) {
 }
 
 func TestUntagResource_success(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"), helpers.WithAccountID("000000000000"))
+	srv := helpers.NewTestServer(t, helpers.WithAccountID("000000000000"))
 	createResp := ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "my-app"})
 	createBody := mustDecode(t, createResp)
 	arn := createBody["repository"].(map[string]any)["repositoryArn"].(string)
@@ -770,7 +770,7 @@ func TestUntagResource_success(t *testing.T) {
 // ── DescribeImageScanFindings ────────────────────────────────────────────────
 
 func TestDescribeImageScanFindings_supportedNotScanned(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"), helpers.WithRegion("us-east-1"), helpers.WithAccountID("000000000000"))
+	srv := helpers.NewTestServer(t, helpers.WithRegion("us-east-1"), helpers.WithAccountID("000000000000"))
 	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "scan-me"})
 	ecrCall(t, srv, "PutImage", map[string]any{
 		"repositoryName": "scan-me",
@@ -804,7 +804,7 @@ func TestDescribeImageScanFindings_supportedNotScanned(t *testing.T) {
 }
 
 func TestDescribeImageScanFindings_imageNotFound(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithServices("ecr"))
+	srv := helpers.NewTestServer(t)
 	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "any"})
 	resp := ecrCall(t, srv, "DescribeImageScanFindings", map[string]any{
 		"repositoryName": "any",
@@ -828,7 +828,6 @@ func TestGetAuthorizationToken_withDocker_lazyStartsSharedRegistry(t *testing.T)
 	}
 
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("ecr"),
 		helpers.WithHostname("overcast"),
 		helpers.WithLambdaDocker(),
 	)
@@ -868,7 +867,6 @@ func TestGetAuthorizationToken_withDocker_tokenAuthenticatesRegistry(t *testing.
 	}
 
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("ecr"),
 		helpers.WithLambdaDocker(),
 	)
 
@@ -937,7 +935,6 @@ func TestECR_withDocker_pushListGetAndPullRoundTrip(t *testing.T) {
 	skipWithoutDocker(t)
 
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("ecr"),
 		helpers.WithLambdaDocker(),
 		helpers.WithRegion("us-east-1"),
 		helpers.WithAccountID("000000000000"),
@@ -1065,7 +1062,6 @@ func TestECR_withDocker_registryContainerRemovedOnServerShutdown(t *testing.T) {
 	})
 
 	srv := helpers.NewTestServer(t,
-		helpers.WithServices("ecr"),
 		helpers.WithLambdaDocker(),
 	)
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -164,7 +165,7 @@ func (p *RuntimeProvider) emitResourceUpdated(uri string) {
 
 func (p *RuntimeProvider) shouldEmitResourceListChangedFromEvent(e events.Event) bool {
 	source := strings.ToLower(strings.TrimSpace(e.Source))
-	if source == "" || !p.isServiceEnabled(source) {
+	if source == "" {
 		return false
 	}
 	return runtimeEventChangesResourceList(e.Type)
@@ -192,7 +193,7 @@ func runtimeEventChangesResourceList(eventType events.Type) bool {
 
 func (p *RuntimeProvider) resourceUpdatedURIsFromEvent(e events.Event) []string {
 	source := strings.ToLower(strings.TrimSpace(e.Source))
-	if source == "" || !p.isServiceEnabled(source) {
+	if source == "" {
 		return nil
 	}
 
@@ -1847,540 +1848,490 @@ func (p *RuntimeProvider) ListResources(ctx context.Context) ([]map[string]any, 
 			"mimeType":    "application/json",
 		})
 	}
-	if p.isServiceEnabled("s3") {
-		resources = append(resources, map[string]any{
-			"uri":         "oc://s3/buckets",
-			"name":        "S3 Buckets",
-			"description": "Collection of S3 buckets in this running Overcast instance",
+	resources = append(resources, map[string]any{
+		"uri":         "oc://s3/buckets",
+		"name":        "S3 Buckets",
+		"description": "Collection of S3 buckets in this running Overcast instance",
+		"mimeType":    "application/json",
+	})
+	resources = append(resources, map[string]any{
+		"uri":         "oc://sqs/queues",
+		"name":        "SQS Queues",
+		"description": "Collection of SQS queues in this running Overcast instance",
+		"mimeType":    "application/json",
+	})
+	resources = append(resources, map[string]any{
+		"uri":         "oc://dynamodb/tables",
+		"name":        "DynamoDB Tables",
+		"description": "Collection of DynamoDB tables in this running Overcast instance",
+		"mimeType":    "application/json",
+	})
+	resources = append(resources, map[string]any{
+		"uri":         "oc://sns/topics",
+		"name":        "SNS Topics",
+		"description": "Collection of SNS topics in this running Overcast instance",
+		"mimeType":    "application/json",
+	})
+	resources = append(resources, map[string]any{
+		"uri":         "oc://kinesis/streams",
+		"name":        "Kinesis Streams",
+		"description": "Collection of Kinesis streams in this running Overcast instance",
+		"mimeType":    "application/json",
+	})
+	resources = append(resources, map[string]any{
+		"uri":         "oc://kms/keys",
+		"name":        "KMS Keys",
+		"description": "Collection of KMS keys in this running Overcast instance",
+		"mimeType":    "application/json",
+	})
+	resources = append(resources,
+		map[string]any{
+			"uri":         "oc://stepfunctions/state-machines",
+			"name":        "Step Functions State Machines",
+			"description": "Collection of Step Functions state machines in this running Overcast instance",
 			"mimeType":    "application/json",
-		})
-	}
-	if p.isServiceEnabled("sqs") {
-		resources = append(resources, map[string]any{
-			"uri":         "oc://sqs/queues",
-			"name":        "SQS Queues",
-			"description": "Collection of SQS queues in this running Overcast instance",
+		},
+		map[string]any{
+			"uri":         "oc://stepfunctions/executions",
+			"name":        "Step Functions Executions",
+			"description": "Collection of Step Functions executions in this running Overcast instance",
 			"mimeType":    "application/json",
-		})
-	}
-	if p.isServiceEnabled("dynamodb") {
-		resources = append(resources, map[string]any{
-			"uri":         "oc://dynamodb/tables",
-			"name":        "DynamoDB Tables",
-			"description": "Collection of DynamoDB tables in this running Overcast instance",
+		},
+	)
+	resources = append(resources, map[string]any{
+		"uri":         "oc://ssm/parameters",
+		"name":        "SSM Parameters",
+		"description": "Collection of SSM parameters in this running Overcast instance",
+		"mimeType":    "application/json",
+	})
+	resources = append(resources, map[string]any{
+		"uri":         "oc://secretsmanager/secrets",
+		"name":        "Secrets Manager Secrets",
+		"description": "Collection of Secrets Manager secrets in this running Overcast instance",
+		"mimeType":    "application/json",
+	})
+	resources = append(resources, map[string]any{
+		"uri":         "oc://acm/certificates",
+		"name":        "ACM Certificates",
+		"description": "Collection of ACM certificates in this running Overcast instance",
+		"mimeType":    "application/json",
+	})
+	resources = append(resources,
+		map[string]any{
+			"uri":         "oc://iam/users",
+			"name":        "IAM Users",
+			"description": "Collection of IAM users in this running Overcast instance",
 			"mimeType":    "application/json",
-		})
-	}
-	if p.isServiceEnabled("sns") {
-		resources = append(resources, map[string]any{
-			"uri":         "oc://sns/topics",
-			"name":        "SNS Topics",
-			"description": "Collection of SNS topics in this running Overcast instance",
+		},
+		map[string]any{
+			"uri":         "oc://iam/roles",
+			"name":        "IAM Roles",
+			"description": "Collection of IAM roles in this running Overcast instance",
 			"mimeType":    "application/json",
-		})
-	}
-	if p.isServiceEnabled("kinesis") {
-		resources = append(resources, map[string]any{
-			"uri":         "oc://kinesis/streams",
-			"name":        "Kinesis Streams",
-			"description": "Collection of Kinesis streams in this running Overcast instance",
+		},
+		map[string]any{
+			"uri":         "oc://iam/policies",
+			"name":        "IAM Policies",
+			"description": "Collection of IAM managed policies in this running Overcast instance",
 			"mimeType":    "application/json",
-		})
-	}
-	if p.isServiceEnabled("kms") {
-		resources = append(resources, map[string]any{
-			"uri":         "oc://kms/keys",
-			"name":        "KMS Keys",
-			"description": "Collection of KMS keys in this running Overcast instance",
+		},
+		map[string]any{
+			"uri":         "oc://iam/groups",
+			"name":        "IAM Groups",
+			"description": "Collection of IAM groups in this running Overcast instance",
 			"mimeType":    "application/json",
-		})
-	}
-	if p.isServiceEnabled("stepfunctions") {
-		resources = append(resources,
-			map[string]any{
-				"uri":         "oc://stepfunctions/state-machines",
-				"name":        "Step Functions State Machines",
-				"description": "Collection of Step Functions state machines in this running Overcast instance",
-				"mimeType":    "application/json",
-			},
-			map[string]any{
-				"uri":         "oc://stepfunctions/executions",
-				"name":        "Step Functions Executions",
-				"description": "Collection of Step Functions executions in this running Overcast instance",
-				"mimeType":    "application/json",
-			},
-		)
-	}
-	if p.isServiceEnabled("ssm") {
-		resources = append(resources, map[string]any{
-			"uri":         "oc://ssm/parameters",
-			"name":        "SSM Parameters",
-			"description": "Collection of SSM parameters in this running Overcast instance",
+		},
+		map[string]any{
+			"uri":         "oc://iam/instance-profiles",
+			"name":        "IAM Instance Profiles",
+			"description": "Collection of IAM instance profiles in this running Overcast instance",
 			"mimeType":    "application/json",
-		})
-	}
-	if p.isServiceEnabled("secretsmanager") {
-		resources = append(resources, map[string]any{
-			"uri":         "oc://secretsmanager/secrets",
-			"name":        "Secrets Manager Secrets",
-			"description": "Collection of Secrets Manager secrets in this running Overcast instance",
-			"mimeType":    "application/json",
-		})
-	}
-	if p.isServiceEnabled("acm") {
-		resources = append(resources, map[string]any{
-			"uri":         "oc://acm/certificates",
-			"name":        "ACM Certificates",
-			"description": "Collection of ACM certificates in this running Overcast instance",
-			"mimeType":    "application/json",
-		})
-	}
-	if p.isServiceEnabled("iam") {
-		resources = append(resources,
-			map[string]any{
-				"uri":         "oc://iam/users",
-				"name":        "IAM Users",
-				"description": "Collection of IAM users in this running Overcast instance",
-				"mimeType":    "application/json",
-			},
-			map[string]any{
-				"uri":         "oc://iam/roles",
-				"name":        "IAM Roles",
-				"description": "Collection of IAM roles in this running Overcast instance",
-				"mimeType":    "application/json",
-			},
-			map[string]any{
-				"uri":         "oc://iam/policies",
-				"name":        "IAM Policies",
-				"description": "Collection of IAM managed policies in this running Overcast instance",
-				"mimeType":    "application/json",
-			},
-			map[string]any{
-				"uri":         "oc://iam/groups",
-				"name":        "IAM Groups",
-				"description": "Collection of IAM groups in this running Overcast instance",
-				"mimeType":    "application/json",
-			},
-			map[string]any{
-				"uri":         "oc://iam/instance-profiles",
-				"name":        "IAM Instance Profiles",
-				"description": "Collection of IAM instance profiles in this running Overcast instance",
-				"mimeType":    "application/json",
-			},
-		)
-	}
+		},
+	)
 	if p.store == nil {
 		return resources, nil
 	}
-	if p.isServiceEnabled("s3") {
-		keys, err := p.store.List(ctx, "s3:buckets", "")
-		if err != nil {
-			return nil, fmt.Errorf("list s3 buckets: %w", err)
-		}
-		sort.Strings(keys)
-		for _, name := range keys {
-			resources = append(resources, map[string]any{
-				"uri":         "oc://s3/buckets/" + url.PathEscape(name),
-				"name":        name,
-				"description": "S3 bucket " + name,
-				"mimeType":    "application/json",
-			})
-		}
+	keys, err := p.store.List(ctx, "s3:buckets", "")
+	if err != nil {
+		return nil, fmt.Errorf("list s3 buckets: %w", err)
 	}
-	if p.isServiceEnabled("sqs") {
-		kvs, err := p.store.Scan(ctx, "sqs:queues", "")
-		if err != nil {
-			return nil, fmt.Errorf("list sqs queues: %w", err)
-		}
-		for _, kv := range kvs {
-			region, queueName := serviceutil.SplitRegionKey(kv.Key)
-			if strings.TrimSpace(queueName) == "" {
-				continue
-			}
-			uri := "oc://sqs/queues/" + url.PathEscape(queueName)
-			if strings.TrimSpace(region) != "" {
-				uri = "oc://sqs/queues/" + url.PathEscape(region) + "/" + url.PathEscape(queueName)
-			}
-			resources = append(resources, map[string]any{
-				"uri":         uri,
-				"name":        queueName,
-				"description": "SQS queue " + queueName,
-				"mimeType":    "application/json",
-			})
-		}
-	}
-	if p.isServiceEnabled("dynamodb") {
-		kvs, err := p.store.Scan(ctx, "dynamodb:tables", "")
-		if err != nil {
-			return nil, fmt.Errorf("list dynamodb tables: %w", err)
-		}
-		for _, kv := range kvs {
-			region, tableName := serviceutil.SplitRegionKey(kv.Key)
-			if strings.TrimSpace(tableName) == "" {
-				continue
-			}
-			uri := "oc://dynamodb/tables/" + url.PathEscape(tableName)
-			if strings.TrimSpace(region) != "" {
-				uri = "oc://dynamodb/tables/" + url.PathEscape(region) + "/" + url.PathEscape(tableName)
-			}
-			resources = append(resources, map[string]any{
-				"uri":         uri,
-				"name":        tableName,
-				"description": "DynamoDB table " + tableName,
-				"mimeType":    "application/json",
-			})
-		}
-	}
-	if p.isServiceEnabled("sns") {
-		kvs, err := p.store.Scan(ctx, "sns:topics", "")
-		if err != nil {
-			return nil, fmt.Errorf("list sns topics: %w", err)
-		}
-		for _, kv := range kvs {
-			region, topicName := serviceutil.SplitRegionKey(kv.Key)
-			if strings.TrimSpace(topicName) == "" {
-				continue
-			}
-			uri := "oc://sns/topics/" + url.PathEscape(topicName)
-			if strings.TrimSpace(region) != "" {
-				uri = "oc://sns/topics/" + url.PathEscape(region) + "/" + url.PathEscape(topicName)
-			}
-			resources = append(resources, map[string]any{
-				"uri":         uri,
-				"name":        topicName,
-				"description": "SNS topic " + topicName,
-				"mimeType":    "application/json",
-			})
-		}
-	}
-	if p.isServiceEnabled("kinesis") {
-		kvs, err := p.store.Scan(ctx, kinesisStreamsStoreNamespace, "")
-		if err != nil {
-			return nil, fmt.Errorf("list kinesis streams: %w", err)
-		}
-		for _, kv := range kvs {
-			region, streamName := serviceutil.SplitRegionKey(kv.Key)
-			if strings.TrimSpace(streamName) == "" {
-				continue
-			}
-			uri := "oc://kinesis/streams/" + url.PathEscape(streamName)
-			if strings.TrimSpace(region) != "" {
-				uri = "oc://kinesis/streams/" + url.PathEscape(region) + "/" + url.PathEscape(streamName)
-			}
-			resources = append(resources, map[string]any{
-				"uri":         uri,
-				"name":        streamName,
-				"description": "Kinesis stream " + streamName,
-				"mimeType":    "application/json",
-			})
-		}
-	}
-	if p.isServiceEnabled("kms") {
-		kvs, err := p.store.Scan(ctx, kmsStoreNamespace, "")
-		if err != nil {
-			return nil, fmt.Errorf("list kms keys: %w", err)
-		}
-		for _, kv := range kvs {
-			region, rest := serviceutil.SplitRegionKey(kv.Key)
-			if !strings.HasPrefix(rest, kmsKeyPrefix) {
-				continue
-			}
-			keyID := strings.TrimPrefix(rest, kmsKeyPrefix)
-			if strings.TrimSpace(keyID) == "" {
-				continue
-			}
-			uri := "oc://kms/keys/" + url.PathEscape(keyID)
-			if strings.TrimSpace(region) != "" {
-				uri = "oc://kms/keys/" + url.PathEscape(region) + "/" + url.PathEscape(keyID)
-			}
-			resources = append(resources, map[string]any{
-				"uri":         uri,
-				"name":        keyID,
-				"description": "KMS key " + keyID,
-				"mimeType":    "application/json",
-			})
-		}
-	}
-	if p.isServiceEnabled("stepfunctions") {
-		kvs, err := p.store.Scan(ctx, stepFunctionsStoreNamespace, "")
-		if err != nil {
-			return nil, fmt.Errorf("list stepfunctions resources: %w", err)
-		}
-		for _, kv := range kvs {
-			region, rest := serviceutil.SplitRegionKey(kv.Key)
-			switch {
-			case strings.HasPrefix(rest, stepFunctionsStateMachinePrefix):
-				name := strings.TrimPrefix(rest, stepFunctionsStateMachinePrefix)
-				if strings.TrimSpace(name) == "" {
-					continue
-				}
-				uri := "oc://stepfunctions/state-machines/" + url.PathEscape(name)
-				if strings.TrimSpace(region) != "" {
-					uri = "oc://stepfunctions/state-machines/" + url.PathEscape(region) + "/" + url.PathEscape(name)
-				}
-				resources = append(resources, map[string]any{
-					"uri":         uri,
-					"name":        name,
-					"description": "Step Functions state machine " + name,
-					"mimeType":    "application/json",
-				})
-			case strings.HasPrefix(rest, stepFunctionsExecutionPrefix):
-				executionARN := strings.TrimPrefix(rest, stepFunctionsExecutionPrefix)
-				if strings.TrimSpace(executionARN) == "" {
-					continue
-				}
-				uri := "oc://stepfunctions/executions/" + url.PathEscape(executionARN)
-				if strings.TrimSpace(region) != "" {
-					uri = "oc://stepfunctions/executions/" + url.PathEscape(region) + "/" + url.PathEscape(executionARN)
-				}
-				resources = append(resources, map[string]any{
-					"uri":         uri,
-					"name":        executionARN,
-					"description": "Step Functions execution " + executionARN,
-					"mimeType":    "application/json",
-				})
-			}
-		}
-	}
-	if p.isServiceEnabled("ssm") {
-		kvs, err := p.store.Scan(ctx, ssmStoreNamespace, "")
-		if err != nil {
-			return nil, fmt.Errorf("list ssm parameters: %w", err)
-		}
-		for _, kv := range kvs {
-			region, rest := serviceutil.SplitRegionKey(kv.Key)
-			if !strings.HasPrefix(rest, ssmParameterPrefix) {
-				continue
-			}
-			name := strings.TrimPrefix(rest, ssmParameterPrefix)
-			if strings.TrimSpace(name) == "" {
-				continue
-			}
-			uri := "oc://ssm/parameters/" + url.PathEscape(name)
-			if strings.TrimSpace(region) != "" {
-				uri = "oc://ssm/parameters/" + url.PathEscape(region) + "/" + url.PathEscape(name)
-			}
-			resources = append(resources, map[string]any{
-				"uri":         uri,
-				"name":        name,
-				"description": "SSM parameter " + name,
-				"mimeType":    "application/json",
-			})
-		}
-	}
-	if p.isServiceEnabled("secretsmanager") {
-		kvs, err := p.store.Scan(ctx, secretsManagerStoreNamespace, "")
-		if err != nil {
-			return nil, fmt.Errorf("list secretsmanager secrets: %w", err)
-		}
-		for _, kv := range kvs {
-			region, name := serviceutil.SplitRegionKey(kv.Key)
-			if strings.TrimSpace(name) == "" {
-				continue
-			}
-			uri := "oc://secretsmanager/secrets/" + url.PathEscape(name)
-			if strings.TrimSpace(region) != "" {
-				uri = "oc://secretsmanager/secrets/" + url.PathEscape(region) + "/" + url.PathEscape(name)
-			}
-			resources = append(resources, map[string]any{
-				"uri":         uri,
-				"name":        name,
-				"description": "Secrets Manager secret " + name,
-				"mimeType":    "application/json",
-			})
-		}
-	}
-	if p.isServiceEnabled("acm") {
-		certs, err := p.listACMCertificates(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, cert := range certs {
-			resources = append(resources, map[string]any{
-				"uri":         "oc://acm/certificates/" + url.PathEscape(cert.CertificateArn),
-				"name":        cert.DomainName,
-				"description": "ACM certificate " + cert.CertificateArn,
-				"mimeType":    "application/json",
-			})
-		}
-	}
-	if p.isServiceEnabled("iam") {
-		users, err := p.listIAMUsers(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, user := range users {
-			resources = append(resources, map[string]any{
-				"uri":         "oc://iam/users/" + url.PathEscape(user.UserName),
-				"name":        user.UserName,
-				"description": "IAM user " + user.UserName,
-				"mimeType":    "application/json",
-			})
-		}
-
-		roles, err := p.listIAMRoles(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, role := range roles {
-			resources = append(resources, map[string]any{
-				"uri":         "oc://iam/roles/" + url.PathEscape(role.RoleName),
-				"name":        role.RoleName,
-				"description": "IAM role " + role.RoleName,
-				"mimeType":    "application/json",
-			})
-		}
-
-		policies, err := p.listIAMPolicies(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, policy := range policies {
-			resources = append(resources, map[string]any{
-				"uri":         "oc://iam/policies/" + url.PathEscape(policy.Arn),
-				"name":        policy.PolicyName,
-				"description": "IAM policy " + policy.PolicyName,
-				"mimeType":    "application/json",
-			})
-		}
-
-		groups, err := p.listIAMGroups(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, group := range groups {
-			resources = append(resources, map[string]any{
-				"uri":         "oc://iam/groups/" + url.PathEscape(group.GroupName),
-				"name":        group.GroupName,
-				"description": "IAM group " + group.GroupName,
-				"mimeType":    "application/json",
-			})
-		}
-
-		profiles, err := p.listIAMInstanceProfiles(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, profile := range profiles {
-			resources = append(resources, map[string]any{
-				"uri":         "oc://iam/instance-profiles/" + url.PathEscape(profile.InstanceProfileName),
-				"name":        profile.InstanceProfileName,
-				"description": "IAM instance profile " + profile.InstanceProfileName,
-				"mimeType":    "application/json",
-			})
-		}
-	}
-	if p.isServiceEnabled("lambda") {
+	sort.Strings(keys)
+	for _, name := range keys {
 		resources = append(resources, map[string]any{
-			"uri":         "oc://lambda/functions",
-			"name":        "Lambda Functions",
-			"description": "Collection of Lambda functions in this running Overcast instance",
+			"uri":         "oc://s3/buckets/" + url.PathEscape(name),
+			"name":        name,
+			"description": "S3 bucket " + name,
 			"mimeType":    "application/json",
 		})
-		kvs, err := p.store.Scan(ctx, lambdaFunctionsStoreNamespace, "")
-		if err != nil {
-			return nil, fmt.Errorf("list lambda functions: %w", err)
-		}
-		for _, kv := range kvs {
-			region, name := serviceutil.SplitRegionKey(kv.Key)
-			if strings.TrimSpace(name) == "" {
-				continue
-			}
-			uri := "oc://lambda/functions/" + url.PathEscape(name)
-			if strings.TrimSpace(region) != "" {
-				uri = "oc://lambda/functions/" + url.PathEscape(region) + "/" + url.PathEscape(name)
-			}
-			resources = append(resources, map[string]any{
-				"uri":         uri,
-				"name":        name,
-				"description": "Lambda function " + name,
-				"mimeType":    "application/json",
-			})
-		}
 	}
-	if p.isServiceEnabled("ecr") {
+	kvs, err := p.store.Scan(ctx, "sqs:queues", "")
+	if err != nil {
+		return nil, fmt.Errorf("list sqs queues: %w", err)
+	}
+	for _, kv := range kvs {
+		region, queueName := serviceutil.SplitRegionKey(kv.Key)
+		if strings.TrimSpace(queueName) == "" {
+			continue
+		}
+		uri := "oc://sqs/queues/" + url.PathEscape(queueName)
+		if strings.TrimSpace(region) != "" {
+			uri = "oc://sqs/queues/" + url.PathEscape(region) + "/" + url.PathEscape(queueName)
+		}
 		resources = append(resources, map[string]any{
-			"uri":         "oc://ecr/repositories",
-			"name":        "ECR Repositories",
-			"description": "Collection of ECR repositories in this running Overcast instance",
+			"uri":         uri,
+			"name":        queueName,
+			"description": "SQS queue " + queueName,
 			"mimeType":    "application/json",
 		})
-		kvs, err := p.store.Scan(ctx, ecrReposStoreNamespace, "")
-		if err != nil {
-			return nil, fmt.Errorf("list ecr repositories: %w", err)
+	}
+	kvs, err = p.store.Scan(ctx, "dynamodb:tables", "")
+	if err != nil {
+		return nil, fmt.Errorf("list dynamodb tables: %w", err)
+	}
+	for _, kv := range kvs {
+		region, tableName := serviceutil.SplitRegionKey(kv.Key)
+		if strings.TrimSpace(tableName) == "" {
+			continue
 		}
-		for _, kv := range kvs {
-			region, name := serviceutil.SplitRegionKey(kv.Key)
+		uri := "oc://dynamodb/tables/" + url.PathEscape(tableName)
+		if strings.TrimSpace(region) != "" {
+			uri = "oc://dynamodb/tables/" + url.PathEscape(region) + "/" + url.PathEscape(tableName)
+		}
+		resources = append(resources, map[string]any{
+			"uri":         uri,
+			"name":        tableName,
+			"description": "DynamoDB table " + tableName,
+			"mimeType":    "application/json",
+		})
+	}
+	kvs, err = p.store.Scan(ctx, "sns:topics", "")
+	if err != nil {
+		return nil, fmt.Errorf("list sns topics: %w", err)
+	}
+	for _, kv := range kvs {
+		region, topicName := serviceutil.SplitRegionKey(kv.Key)
+		if strings.TrimSpace(topicName) == "" {
+			continue
+		}
+		uri := "oc://sns/topics/" + url.PathEscape(topicName)
+		if strings.TrimSpace(region) != "" {
+			uri = "oc://sns/topics/" + url.PathEscape(region) + "/" + url.PathEscape(topicName)
+		}
+		resources = append(resources, map[string]any{
+			"uri":         uri,
+			"name":        topicName,
+			"description": "SNS topic " + topicName,
+			"mimeType":    "application/json",
+		})
+	}
+	kvs, err = p.store.Scan(ctx, kinesisStreamsStoreNamespace, "")
+	if err != nil {
+		return nil, fmt.Errorf("list kinesis streams: %w", err)
+	}
+	for _, kv := range kvs {
+		region, streamName := serviceutil.SplitRegionKey(kv.Key)
+		if strings.TrimSpace(streamName) == "" {
+			continue
+		}
+		uri := "oc://kinesis/streams/" + url.PathEscape(streamName)
+		if strings.TrimSpace(region) != "" {
+			uri = "oc://kinesis/streams/" + url.PathEscape(region) + "/" + url.PathEscape(streamName)
+		}
+		resources = append(resources, map[string]any{
+			"uri":         uri,
+			"name":        streamName,
+			"description": "Kinesis stream " + streamName,
+			"mimeType":    "application/json",
+		})
+	}
+	kvs, err = p.store.Scan(ctx, kmsStoreNamespace, "")
+	if err != nil {
+		return nil, fmt.Errorf("list kms keys: %w", err)
+	}
+	for _, kv := range kvs {
+		region, rest := serviceutil.SplitRegionKey(kv.Key)
+		if !strings.HasPrefix(rest, kmsKeyPrefix) {
+			continue
+		}
+		keyID := strings.TrimPrefix(rest, kmsKeyPrefix)
+		if strings.TrimSpace(keyID) == "" {
+			continue
+		}
+		uri := "oc://kms/keys/" + url.PathEscape(keyID)
+		if strings.TrimSpace(region) != "" {
+			uri = "oc://kms/keys/" + url.PathEscape(region) + "/" + url.PathEscape(keyID)
+		}
+		resources = append(resources, map[string]any{
+			"uri":         uri,
+			"name":        keyID,
+			"description": "KMS key " + keyID,
+			"mimeType":    "application/json",
+		})
+	}
+	kvs, err = p.store.Scan(ctx, stepFunctionsStoreNamespace, "")
+	if err != nil {
+		return nil, fmt.Errorf("list stepfunctions resources: %w", err)
+	}
+	for _, kv := range kvs {
+		region, rest := serviceutil.SplitRegionKey(kv.Key)
+		switch {
+		case strings.HasPrefix(rest, stepFunctionsStateMachinePrefix):
+			name := strings.TrimPrefix(rest, stepFunctionsStateMachinePrefix)
 			if strings.TrimSpace(name) == "" {
 				continue
 			}
-			uri := "oc://ecr/repositories/" + url.PathEscape(name)
+			uri := "oc://stepfunctions/state-machines/" + url.PathEscape(name)
 			if strings.TrimSpace(region) != "" {
-				uri = "oc://ecr/repositories/" + url.PathEscape(region) + "/" + url.PathEscape(name)
+				uri = "oc://stepfunctions/state-machines/" + url.PathEscape(region) + "/" + url.PathEscape(name)
 			}
 			resources = append(resources, map[string]any{
 				"uri":         uri,
 				"name":        name,
-				"description": "ECR repository " + name,
+				"description": "Step Functions state machine " + name,
+				"mimeType":    "application/json",
+			})
+		case strings.HasPrefix(rest, stepFunctionsExecutionPrefix):
+			executionARN := strings.TrimPrefix(rest, stepFunctionsExecutionPrefix)
+			if strings.TrimSpace(executionARN) == "" {
+				continue
+			}
+			uri := "oc://stepfunctions/executions/" + url.PathEscape(executionARN)
+			if strings.TrimSpace(region) != "" {
+				uri = "oc://stepfunctions/executions/" + url.PathEscape(region) + "/" + url.PathEscape(executionARN)
+			}
+			resources = append(resources, map[string]any{
+				"uri":         uri,
+				"name":        executionARN,
+				"description": "Step Functions execution " + executionARN,
 				"mimeType":    "application/json",
 			})
 		}
 	}
-	if p.isServiceEnabled("ecs") {
-		resources = append(resources,
-			map[string]any{
-				"uri":         "oc://ecs/clusters",
-				"name":        "ECS Clusters",
-				"description": "Collection of ECS clusters in this running Overcast instance",
-				"mimeType":    "application/json",
-			},
-			map[string]any{
-				"uri":         "oc://ecs/task-definitions",
-				"name":        "ECS Task Definitions",
-				"description": "Collection of ECS task definitions in this running Overcast instance",
-				"mimeType":    "application/json",
-			},
-		)
-		clusterKVs, err := p.store.Scan(ctx, ecsClustersStoreNamespace, "")
-		if err != nil {
-			return nil, fmt.Errorf("list ecs clusters: %w", err)
+	kvs, err = p.store.Scan(ctx, ssmStoreNamespace, "")
+	if err != nil {
+		return nil, fmt.Errorf("list ssm parameters: %w", err)
+	}
+	for _, kv := range kvs {
+		region, rest := serviceutil.SplitRegionKey(kv.Key)
+		if !strings.HasPrefix(rest, ssmParameterPrefix) {
+			continue
 		}
-		for _, kv := range clusterKVs {
-			region, name := serviceutil.SplitRegionKey(kv.Key)
-			if strings.TrimSpace(name) == "" {
-				continue
-			}
-			uri := "oc://ecs/clusters/" + url.PathEscape(name)
-			if strings.TrimSpace(region) != "" {
-				uri = "oc://ecs/clusters/" + url.PathEscape(region) + "/" + url.PathEscape(name)
-			}
-			resources = append(resources, map[string]any{
-				"uri":         uri,
-				"name":        name,
-				"description": "ECS cluster " + name,
-				"mimeType":    "application/json",
-			})
+		name := strings.TrimPrefix(rest, ssmParameterPrefix)
+		if strings.TrimSpace(name) == "" {
+			continue
 		}
-		tdKVs, err := p.store.Scan(ctx, ecsTaskDefsStoreNamespace, "")
-		if err != nil {
-			return nil, fmt.Errorf("list ecs task definitions: %w", err)
+		uri := "oc://ssm/parameters/" + url.PathEscape(name)
+		if strings.TrimSpace(region) != "" {
+			uri = "oc://ssm/parameters/" + url.PathEscape(region) + "/" + url.PathEscape(name)
 		}
-		for _, kv := range tdKVs {
-			region, key := serviceutil.SplitRegionKey(kv.Key)
-			if strings.TrimSpace(key) == "" {
-				continue
-			}
-			uri := "oc://ecs/task-definitions/" + url.PathEscape(key)
-			if strings.TrimSpace(region) != "" {
-				uri = "oc://ecs/task-definitions/" + url.PathEscape(region) + "/" + url.PathEscape(key)
-			}
-			resources = append(resources, map[string]any{
-				"uri":         uri,
-				"name":        key,
-				"description": "ECS task definition " + key,
-				"mimeType":    "application/json",
-			})
+		resources = append(resources, map[string]any{
+			"uri":         uri,
+			"name":        name,
+			"description": "SSM parameter " + name,
+			"mimeType":    "application/json",
+		})
+	}
+	kvs, err = p.store.Scan(ctx, secretsManagerStoreNamespace, "")
+	if err != nil {
+		return nil, fmt.Errorf("list secretsmanager secrets: %w", err)
+	}
+	for _, kv := range kvs {
+		region, name := serviceutil.SplitRegionKey(kv.Key)
+		if strings.TrimSpace(name) == "" {
+			continue
 		}
+		uri := "oc://secretsmanager/secrets/" + url.PathEscape(name)
+		if strings.TrimSpace(region) != "" {
+			uri = "oc://secretsmanager/secrets/" + url.PathEscape(region) + "/" + url.PathEscape(name)
+		}
+		resources = append(resources, map[string]any{
+			"uri":         uri,
+			"name":        name,
+			"description": "Secrets Manager secret " + name,
+			"mimeType":    "application/json",
+		})
+	}
+	certs, err := p.listACMCertificates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, cert := range certs {
+		resources = append(resources, map[string]any{
+			"uri":         "oc://acm/certificates/" + url.PathEscape(cert.CertificateArn),
+			"name":        cert.DomainName,
+			"description": "ACM certificate " + cert.CertificateArn,
+			"mimeType":    "application/json",
+		})
+	}
+	users, err := p.listIAMUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, user := range users {
+		resources = append(resources, map[string]any{
+			"uri":         "oc://iam/users/" + url.PathEscape(user.UserName),
+			"name":        user.UserName,
+			"description": "IAM user " + user.UserName,
+			"mimeType":    "application/json",
+		})
+	}
+
+	roles, err := p.listIAMRoles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, role := range roles {
+		resources = append(resources, map[string]any{
+			"uri":         "oc://iam/roles/" + url.PathEscape(role.RoleName),
+			"name":        role.RoleName,
+			"description": "IAM role " + role.RoleName,
+			"mimeType":    "application/json",
+		})
+	}
+
+	policies, err := p.listIAMPolicies(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, policy := range policies {
+		resources = append(resources, map[string]any{
+			"uri":         "oc://iam/policies/" + url.PathEscape(policy.Arn),
+			"name":        policy.PolicyName,
+			"description": "IAM policy " + policy.PolicyName,
+			"mimeType":    "application/json",
+		})
+	}
+
+	groups, err := p.listIAMGroups(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, group := range groups {
+		resources = append(resources, map[string]any{
+			"uri":         "oc://iam/groups/" + url.PathEscape(group.GroupName),
+			"name":        group.GroupName,
+			"description": "IAM group " + group.GroupName,
+			"mimeType":    "application/json",
+		})
+	}
+
+	profiles, err := p.listIAMInstanceProfiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, profile := range profiles {
+		resources = append(resources, map[string]any{
+			"uri":         "oc://iam/instance-profiles/" + url.PathEscape(profile.InstanceProfileName),
+			"name":        profile.InstanceProfileName,
+			"description": "IAM instance profile " + profile.InstanceProfileName,
+			"mimeType":    "application/json",
+		})
+	}
+	resources = append(resources, map[string]any{
+		"uri":         "oc://lambda/functions",
+		"name":        "Lambda Functions",
+		"description": "Collection of Lambda functions in this running Overcast instance",
+		"mimeType":    "application/json",
+	})
+	kvs, err = p.store.Scan(ctx, lambdaFunctionsStoreNamespace, "")
+	if err != nil {
+		return nil, fmt.Errorf("list lambda functions: %w", err)
+	}
+	for _, kv := range kvs {
+		region, name := serviceutil.SplitRegionKey(kv.Key)
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		uri := "oc://lambda/functions/" + url.PathEscape(name)
+		if strings.TrimSpace(region) != "" {
+			uri = "oc://lambda/functions/" + url.PathEscape(region) + "/" + url.PathEscape(name)
+		}
+		resources = append(resources, map[string]any{
+			"uri":         uri,
+			"name":        name,
+			"description": "Lambda function " + name,
+			"mimeType":    "application/json",
+		})
+	}
+	resources = append(resources, map[string]any{
+		"uri":         "oc://ecr/repositories",
+		"name":        "ECR Repositories",
+		"description": "Collection of ECR repositories in this running Overcast instance",
+		"mimeType":    "application/json",
+	})
+	kvs, err = p.store.Scan(ctx, ecrReposStoreNamespace, "")
+	if err != nil {
+		return nil, fmt.Errorf("list ecr repositories: %w", err)
+	}
+	for _, kv := range kvs {
+		region, name := serviceutil.SplitRegionKey(kv.Key)
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		uri := "oc://ecr/repositories/" + url.PathEscape(name)
+		if strings.TrimSpace(region) != "" {
+			uri = "oc://ecr/repositories/" + url.PathEscape(region) + "/" + url.PathEscape(name)
+		}
+		resources = append(resources, map[string]any{
+			"uri":         uri,
+			"name":        name,
+			"description": "ECR repository " + name,
+			"mimeType":    "application/json",
+		})
+	}
+	resources = append(resources,
+		map[string]any{
+			"uri":         "oc://ecs/clusters",
+			"name":        "ECS Clusters",
+			"description": "Collection of ECS clusters in this running Overcast instance",
+			"mimeType":    "application/json",
+		},
+		map[string]any{
+			"uri":         "oc://ecs/task-definitions",
+			"name":        "ECS Task Definitions",
+			"description": "Collection of ECS task definitions in this running Overcast instance",
+			"mimeType":    "application/json",
+		},
+	)
+	clusterKVs, err := p.store.Scan(ctx, ecsClustersStoreNamespace, "")
+	if err != nil {
+		return nil, fmt.Errorf("list ecs clusters: %w", err)
+	}
+	for _, kv := range clusterKVs {
+		region, name := serviceutil.SplitRegionKey(kv.Key)
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		uri := "oc://ecs/clusters/" + url.PathEscape(name)
+		if strings.TrimSpace(region) != "" {
+			uri = "oc://ecs/clusters/" + url.PathEscape(region) + "/" + url.PathEscape(name)
+		}
+		resources = append(resources, map[string]any{
+			"uri":         uri,
+			"name":        name,
+			"description": "ECS cluster " + name,
+			"mimeType":    "application/json",
+		})
+	}
+	tdKVs, err := p.store.Scan(ctx, ecsTaskDefsStoreNamespace, "")
+	if err != nil {
+		return nil, fmt.Errorf("list ecs task definitions: %w", err)
+	}
+	for _, kv := range tdKVs {
+		region, key := serviceutil.SplitRegionKey(kv.Key)
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		uri := "oc://ecs/task-definitions/" + url.PathEscape(key)
+		if strings.TrimSpace(region) != "" {
+			uri = "oc://ecs/task-definitions/" + url.PathEscape(region) + "/" + url.PathEscape(key)
+		}
+		resources = append(resources, map[string]any{
+			"uri":         uri,
+			"name":        key,
+			"description": "ECS task definition " + key,
+			"mimeType":    "application/json",
+		})
 	}
 	sort.Slice(resources, func(i, j int) bool {
 		li, _ := resources[i]["uri"].(string)
@@ -2424,9 +2375,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	uri = strings.TrimSpace(uri)
 	if uri == "oc://s3/buckets" {
-		if !p.isServiceEnabled("s3") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		kvs, err := p.store.Scan(ctx, "s3:buckets", "")
 		if err != nil {
 			return nil, fmt.Errorf("scan s3 buckets: %w", err)
@@ -2452,9 +2400,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	const bucketPrefix = "oc://s3/buckets/"
 	if strings.HasPrefix(uri, bucketPrefix) {
-		if !p.isServiceEnabled("s3") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		name, err := url.PathUnescape(strings.TrimPrefix(uri, bucketPrefix))
 		if err != nil || strings.TrimSpace(name) == "" {
 			return nil, fmt.Errorf("invalid bucket resource uri")
@@ -2473,9 +2418,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 		return resourceJSONContents(uri, bucket), nil
 	}
 	if uri == "oc://sqs/queues" {
-		if !p.isServiceEnabled("sqs") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		kvs, err := p.store.Scan(ctx, "sqs:queues", "")
 		if err != nil {
 			return nil, fmt.Errorf("scan sqs queues: %w", err)
@@ -2501,9 +2443,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	const queuePrefix = "oc://sqs/queues/"
 	if strings.HasPrefix(uri, queuePrefix) {
-		if !p.isServiceEnabled("sqs") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		rest := strings.TrimPrefix(uri, queuePrefix)
 		parts := strings.Split(rest, "/")
 		if len(parts) == 0 || len(parts) > 2 {
@@ -2552,9 +2491,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 		return resourceJSONContents(uri, queue), nil
 	}
 	if uri == "oc://dynamodb/tables" {
-		if !p.isServiceEnabled("dynamodb") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		kvs, err := p.store.Scan(ctx, "dynamodb:tables", "")
 		if err != nil {
 			return nil, fmt.Errorf("scan dynamodb tables: %w", err)
@@ -2578,9 +2514,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	const dynamoTablePrefix = "oc://dynamodb/tables/"
 	if strings.HasPrefix(uri, dynamoTablePrefix) {
-		if !p.isServiceEnabled("dynamodb") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		rest := strings.TrimPrefix(uri, dynamoTablePrefix)
 		parts := strings.Split(rest, "/")
 		if len(parts) == 0 || len(parts) > 2 {
@@ -2628,9 +2561,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 		return resourceJSONContents(uri, table), nil
 	}
 	if uri == "oc://sns/topics" {
-		if !p.isServiceEnabled("sns") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		kvs, err := p.store.Scan(ctx, "sns:topics", "")
 		if err != nil {
 			return nil, fmt.Errorf("scan sns topics: %w", err)
@@ -2654,9 +2584,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	const snsTopicPrefix = "oc://sns/topics/"
 	if strings.HasPrefix(uri, snsTopicPrefix) {
-		if !p.isServiceEnabled("sns") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		rest := strings.TrimPrefix(uri, snsTopicPrefix)
 		parts := strings.Split(rest, "/")
 		if len(parts) == 0 || len(parts) > 2 {
@@ -2704,9 +2631,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 		return resourceJSONContents(uri, topic), nil
 	}
 	if uri == "oc://kinesis/streams" {
-		if !p.isServiceEnabled("kinesis") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		streams, err := p.listKinesisStreams(ctx)
 		if err != nil {
 			return nil, err
@@ -2719,9 +2643,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	const kinesisStreamURIPrefix = "oc://kinesis/streams/"
 	if strings.HasPrefix(uri, kinesisStreamURIPrefix) {
-		if !p.isServiceEnabled("kinesis") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		region, streamName, err := parseRegionalResourceURI(strings.TrimPrefix(uri, kinesisStreamURIPrefix), p.defaultRegion(), "kinesis stream")
 		if err != nil {
 			return nil, err
@@ -2740,9 +2661,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 		return resourceJSONContents(uri, stream), nil
 	}
 	if uri == "oc://kms/keys" {
-		if !p.isServiceEnabled("kms") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		keys, err := p.listKMSKeys(ctx)
 		if err != nil {
 			return nil, err
@@ -2755,9 +2673,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	const kmsKeyURIPrefix = "oc://kms/keys/"
 	if strings.HasPrefix(uri, kmsKeyURIPrefix) {
-		if !p.isServiceEnabled("kms") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		region, keyID, err := parseRegionalResourceURI(strings.TrimPrefix(uri, kmsKeyURIPrefix), p.defaultRegion(), "kms key")
 		if err != nil {
 			return nil, err
@@ -2776,9 +2691,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 		return resourceJSONContents(uri, key), nil
 	}
 	if uri == "oc://stepfunctions/state-machines" {
-		if !p.isServiceEnabled("stepfunctions") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		stateMachines, err := p.listStepFunctionsStateMachines(ctx)
 		if err != nil {
 			return nil, err
@@ -2791,9 +2703,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	const stateMachinePrefix = "oc://stepfunctions/state-machines/"
 	if strings.HasPrefix(uri, stateMachinePrefix) {
-		if !p.isServiceEnabled("stepfunctions") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		region, name, err := parseRegionalResourceURI(strings.TrimPrefix(uri, stateMachinePrefix), p.defaultRegion(), "stepfunctions state machine")
 		if err != nil {
 			return nil, err
@@ -2812,9 +2721,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 		return resourceJSONContents(uri, stateMachine), nil
 	}
 	if uri == "oc://stepfunctions/executions" {
-		if !p.isServiceEnabled("stepfunctions") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		executions, err := p.listStepFunctionsExecutions(ctx)
 		if err != nil {
 			return nil, err
@@ -2827,9 +2733,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	const executionPrefix = "oc://stepfunctions/executions/"
 	if strings.HasPrefix(uri, executionPrefix) {
-		if !p.isServiceEnabled("stepfunctions") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		region, executionARN, err := parseRegionalResourceURI(strings.TrimPrefix(uri, executionPrefix), p.defaultRegion(), "stepfunctions execution")
 		if err != nil {
 			return nil, err
@@ -2848,9 +2751,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 		return resourceJSONContents(uri, execution), nil
 	}
 	if uri == "oc://ssm/parameters" {
-		if !p.isServiceEnabled("ssm") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		parameters, err := p.listSSMParameters(ctx)
 		if err != nil {
 			return nil, err
@@ -2863,9 +2763,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	const ssmParameterURIPrefix = "oc://ssm/parameters/"
 	if strings.HasPrefix(uri, ssmParameterURIPrefix) {
-		if !p.isServiceEnabled("ssm") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		region, name, err := parseRegionalResourceURI(strings.TrimPrefix(uri, ssmParameterURIPrefix), p.defaultRegion(), "ssm parameter")
 		if err != nil {
 			return nil, err
@@ -2884,9 +2781,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 		return resourceJSONContents(uri, parameter), nil
 	}
 	if uri == "oc://secretsmanager/secrets" {
-		if !p.isServiceEnabled("secretsmanager") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		secrets, err := p.listSecretsManagerSecrets(ctx)
 		if err != nil {
 			return nil, err
@@ -2899,9 +2793,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	const secretsManagerSecretURIPrefix = "oc://secretsmanager/secrets/"
 	if strings.HasPrefix(uri, secretsManagerSecretURIPrefix) {
-		if !p.isServiceEnabled("secretsmanager") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		region, name, err := parseRegionalResourceURI(strings.TrimPrefix(uri, secretsManagerSecretURIPrefix), p.defaultRegion(), "secretsmanager secret")
 		if err != nil {
 			return nil, err
@@ -2920,9 +2811,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 		return resourceJSONContents(uri, secret), nil
 	}
 	if uri == "oc://acm/certificates" {
-		if !p.isServiceEnabled("acm") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		certs, err := p.listACMCertificates(ctx)
 		if err != nil {
 			return nil, err
@@ -2935,9 +2823,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	const acmCertificateURIPrefix = "oc://acm/certificates/"
 	if strings.HasPrefix(uri, acmCertificateURIPrefix) {
-		if !p.isServiceEnabled("acm") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		arn, err := url.PathUnescape(strings.TrimPrefix(uri, acmCertificateURIPrefix))
 		if err != nil || strings.TrimSpace(arn) == "" {
 			return nil, fmt.Errorf("invalid acm certificate resource uri")
@@ -2963,9 +2848,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 		}), nil
 	}
 	if uri == "oc://iam/users" {
-		if !p.isServiceEnabled("iam") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		users, err := p.listIAMUsers(ctx)
 		if err != nil {
 			return nil, err
@@ -2978,9 +2860,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	const iamUserURIPrefix = "oc://iam/users/"
 	if strings.HasPrefix(uri, iamUserURIPrefix) {
-		if !p.isServiceEnabled("iam") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		name, err := url.PathUnescape(strings.TrimPrefix(uri, iamUserURIPrefix))
 		if err != nil || strings.TrimSpace(name) == "" {
 			return nil, fmt.Errorf("invalid iam user resource uri")
@@ -2999,9 +2878,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 		return resourceJSONContents(uri, user), nil
 	}
 	if uri == "oc://iam/roles" {
-		if !p.isServiceEnabled("iam") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		roles, err := p.listIAMRoles(ctx)
 		if err != nil {
 			return nil, err
@@ -3014,9 +2890,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	const iamRoleURIPrefix = "oc://iam/roles/"
 	if strings.HasPrefix(uri, iamRoleURIPrefix) {
-		if !p.isServiceEnabled("iam") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		name, err := url.PathUnescape(strings.TrimPrefix(uri, iamRoleURIPrefix))
 		if err != nil || strings.TrimSpace(name) == "" {
 			return nil, fmt.Errorf("invalid iam role resource uri")
@@ -3035,9 +2908,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 		return resourceJSONContents(uri, role), nil
 	}
 	if uri == "oc://iam/policies" {
-		if !p.isServiceEnabled("iam") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		policies, err := p.listIAMPolicies(ctx)
 		if err != nil {
 			return nil, err
@@ -3050,9 +2920,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	const iamPolicyURIPrefix = "oc://iam/policies/"
 	if strings.HasPrefix(uri, iamPolicyURIPrefix) {
-		if !p.isServiceEnabled("iam") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		arn, err := url.PathUnescape(strings.TrimPrefix(uri, iamPolicyURIPrefix))
 		if err != nil || strings.TrimSpace(arn) == "" {
 			return nil, fmt.Errorf("invalid iam policy resource uri")
@@ -3071,9 +2938,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 		return resourceJSONContents(uri, policy), nil
 	}
 	if uri == "oc://iam/groups" {
-		if !p.isServiceEnabled("iam") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		groups, err := p.listIAMGroups(ctx)
 		if err != nil {
 			return nil, err
@@ -3086,9 +2950,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	const iamGroupURIPrefix = "oc://iam/groups/"
 	if strings.HasPrefix(uri, iamGroupURIPrefix) {
-		if !p.isServiceEnabled("iam") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		name, err := url.PathUnescape(strings.TrimPrefix(uri, iamGroupURIPrefix))
 		if err != nil || strings.TrimSpace(name) == "" {
 			return nil, fmt.Errorf("invalid iam group resource uri")
@@ -3107,9 +2968,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 		return resourceJSONContents(uri, group), nil
 	}
 	if uri == "oc://iam/instance-profiles" {
-		if !p.isServiceEnabled("iam") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		profiles, err := p.listIAMInstanceProfiles(ctx)
 		if err != nil {
 			return nil, err
@@ -3122,9 +2980,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	const iamInstanceProfileURIPrefix = "oc://iam/instance-profiles/"
 	if strings.HasPrefix(uri, iamInstanceProfileURIPrefix) {
-		if !p.isServiceEnabled("iam") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		name, err := url.PathUnescape(strings.TrimPrefix(uri, iamInstanceProfileURIPrefix))
 		if err != nil || strings.TrimSpace(name) == "" {
 			return nil, fmt.Errorf("invalid iam instance profile resource uri")
@@ -3144,9 +2999,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	// ── Lambda ────────────────────────────────────────────────────────────
 	if uri == "oc://lambda/functions" {
-		if !p.isServiceEnabled("lambda") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		kvs, err := p.store.Scan(ctx, lambdaFunctionsStoreNamespace, "")
 		if err != nil {
 			return nil, fmt.Errorf("scan lambda functions: %w", err)
@@ -3168,9 +3020,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	const lambdaFunctionURIPrefix = "oc://lambda/functions/"
 	if strings.HasPrefix(uri, lambdaFunctionURIPrefix) {
-		if !p.isServiceEnabled("lambda") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		region, name, err := parseRegionalResourceURI(strings.TrimPrefix(uri, lambdaFunctionURIPrefix), p.defaultRegion(), "lambda function")
 		if err != nil {
 			return nil, err
@@ -3196,9 +3045,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	// ── ECR ───────────────────────────────────────────────────────────────
 	if uri == "oc://ecr/repositories" {
-		if !p.isServiceEnabled("ecr") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		kvs, err := p.store.Scan(ctx, ecrReposStoreNamespace, "")
 		if err != nil {
 			return nil, fmt.Errorf("scan ecr repositories: %w", err)
@@ -3220,9 +3066,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	const ecrRepoURIPrefix = "oc://ecr/repositories/"
 	if strings.HasPrefix(uri, ecrRepoURIPrefix) {
-		if !p.isServiceEnabled("ecr") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		region, name, err := parseRegionalResourceURI(strings.TrimPrefix(uri, ecrRepoURIPrefix), p.defaultRegion(), "ecr repository")
 		if err != nil {
 			return nil, err
@@ -3248,9 +3091,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	// ── ECS ───────────────────────────────────────────────────────────────
 	if uri == "oc://ecs/clusters" {
-		if !p.isServiceEnabled("ecs") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		kvs, err := p.store.Scan(ctx, ecsClustersStoreNamespace, "")
 		if err != nil {
 			return nil, fmt.Errorf("scan ecs clusters: %w", err)
@@ -3272,9 +3112,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	const ecsClusterURIPrefix = "oc://ecs/clusters/"
 	if strings.HasPrefix(uri, ecsClusterURIPrefix) {
-		if !p.isServiceEnabled("ecs") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		region, name, err := parseRegionalResourceURI(strings.TrimPrefix(uri, ecsClusterURIPrefix), p.defaultRegion(), "ecs cluster")
 		if err != nil {
 			return nil, err
@@ -3299,9 +3136,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 		return resourceJSONContents(uri, cluster), nil
 	}
 	if uri == "oc://ecs/task-definitions" {
-		if !p.isServiceEnabled("ecs") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		kvs, err := p.store.Scan(ctx, ecsTaskDefsStoreNamespace, "")
 		if err != nil {
 			return nil, fmt.Errorf("scan ecs task definitions: %w", err)
@@ -3327,9 +3161,6 @@ func (p *RuntimeProvider) ReadResource(ctx context.Context, uri string) ([]map[s
 	}
 	const ecsTaskDefURIPrefix = "oc://ecs/task-definitions/"
 	if strings.HasPrefix(uri, ecsTaskDefURIPrefix) {
-		if !p.isServiceEnabled("ecs") {
-			return nil, fmt.Errorf("resource not found")
-		}
 		region, key, err := parseRegionalResourceURI(strings.TrimPrefix(uri, ecsTaskDefURIPrefix), p.defaultRegion(), "ecs task definition")
 		if err != nil {
 			return nil, err
@@ -3364,160 +3195,132 @@ func (p *RuntimeProvider) ListResourceTemplates(_ context.Context) ([]map[string
 		"description": "Inspect resource inventory for an enabled service",
 		"mimeType":    "application/json",
 	})
-	if p.isServiceEnabled("s3") {
-		templates = append(templates, map[string]any{
-			"uriTemplate": "oc://s3/buckets/{bucket}",
-			"name":        "S3 Bucket",
-			"description": "Inspect a specific S3 bucket",
+	templates = append(templates, map[string]any{
+		"uriTemplate": "oc://s3/buckets/{bucket}",
+		"name":        "S3 Bucket",
+		"description": "Inspect a specific S3 bucket",
+		"mimeType":    "application/json",
+	})
+	templates = append(templates, map[string]any{
+		"uriTemplate": "oc://sqs/queues/{region}/{queue}",
+		"name":        "SQS Queue",
+		"description": "Inspect a specific SQS queue",
+		"mimeType":    "application/json",
+	})
+	templates = append(templates, map[string]any{
+		"uriTemplate": "oc://dynamodb/tables/{region}/{table}",
+		"name":        "DynamoDB Table",
+		"description": "Inspect a specific DynamoDB table",
+		"mimeType":    "application/json",
+	})
+	templates = append(templates, map[string]any{
+		"uriTemplate": "oc://sns/topics/{region}/{topic}",
+		"name":        "SNS Topic",
+		"description": "Inspect a specific SNS topic",
+		"mimeType":    "application/json",
+	})
+	templates = append(templates, map[string]any{
+		"uriTemplate": "oc://kinesis/streams/{region}/{stream}",
+		"name":        "Kinesis Stream",
+		"description": "Inspect a specific Kinesis stream",
+		"mimeType":    "application/json",
+	})
+	templates = append(templates, map[string]any{
+		"uriTemplate": "oc://kms/keys/{region}/{keyId}",
+		"name":        "KMS Key",
+		"description": "Inspect a specific KMS key",
+		"mimeType":    "application/json",
+	})
+	templates = append(templates,
+		map[string]any{
+			"uriTemplate": "oc://stepfunctions/state-machines/{region}/{name}",
+			"name":        "Step Functions State Machine",
+			"description": "Inspect a specific Step Functions state machine",
 			"mimeType":    "application/json",
-		})
-	}
-	if p.isServiceEnabled("sqs") {
-		templates = append(templates, map[string]any{
-			"uriTemplate": "oc://sqs/queues/{region}/{queue}",
-			"name":        "SQS Queue",
-			"description": "Inspect a specific SQS queue",
+		},
+		map[string]any{
+			"uriTemplate": "oc://stepfunctions/executions/{region}/{executionArn}",
+			"name":        "Step Functions Execution",
+			"description": "Inspect a specific Step Functions execution",
 			"mimeType":    "application/json",
-		})
-	}
-	if p.isServiceEnabled("dynamodb") {
-		templates = append(templates, map[string]any{
-			"uriTemplate": "oc://dynamodb/tables/{region}/{table}",
-			"name":        "DynamoDB Table",
-			"description": "Inspect a specific DynamoDB table",
+		},
+	)
+	templates = append(templates, map[string]any{
+		"uriTemplate": "oc://ssm/parameters/{region}/{name}",
+		"name":        "SSM Parameter",
+		"description": "Inspect a specific SSM parameter",
+		"mimeType":    "application/json",
+	})
+	templates = append(templates, map[string]any{
+		"uriTemplate": "oc://secretsmanager/secrets/{region}/{name}",
+		"name":        "Secrets Manager Secret",
+		"description": "Inspect a specific Secrets Manager secret",
+		"mimeType":    "application/json",
+	})
+	templates = append(templates, map[string]any{
+		"uriTemplate": "oc://acm/certificates/{certificateArn}",
+		"name":        "ACM Certificate",
+		"description": "Inspect a specific ACM certificate",
+		"mimeType":    "application/json",
+	})
+	templates = append(templates,
+		map[string]any{
+			"uriTemplate": "oc://iam/users/{user}",
+			"name":        "IAM User",
+			"description": "Inspect a specific IAM user",
 			"mimeType":    "application/json",
-		})
-	}
-	if p.isServiceEnabled("sns") {
-		templates = append(templates, map[string]any{
-			"uriTemplate": "oc://sns/topics/{region}/{topic}",
-			"name":        "SNS Topic",
-			"description": "Inspect a specific SNS topic",
+		},
+		map[string]any{
+			"uriTemplate": "oc://iam/roles/{role}",
+			"name":        "IAM Role",
+			"description": "Inspect a specific IAM role",
 			"mimeType":    "application/json",
-		})
-	}
-	if p.isServiceEnabled("kinesis") {
-		templates = append(templates, map[string]any{
-			"uriTemplate": "oc://kinesis/streams/{region}/{stream}",
-			"name":        "Kinesis Stream",
-			"description": "Inspect a specific Kinesis stream",
+		},
+		map[string]any{
+			"uriTemplate": "oc://iam/policies/{policyArn}",
+			"name":        "IAM Policy",
+			"description": "Inspect a specific IAM managed policy",
 			"mimeType":    "application/json",
-		})
-	}
-	if p.isServiceEnabled("kms") {
-		templates = append(templates, map[string]any{
-			"uriTemplate": "oc://kms/keys/{region}/{keyId}",
-			"name":        "KMS Key",
-			"description": "Inspect a specific KMS key",
+		},
+		map[string]any{
+			"uriTemplate": "oc://iam/groups/{group}",
+			"name":        "IAM Group",
+			"description": "Inspect a specific IAM group",
 			"mimeType":    "application/json",
-		})
-	}
-	if p.isServiceEnabled("stepfunctions") {
-		templates = append(templates,
-			map[string]any{
-				"uriTemplate": "oc://stepfunctions/state-machines/{region}/{name}",
-				"name":        "Step Functions State Machine",
-				"description": "Inspect a specific Step Functions state machine",
-				"mimeType":    "application/json",
-			},
-			map[string]any{
-				"uriTemplate": "oc://stepfunctions/executions/{region}/{executionArn}",
-				"name":        "Step Functions Execution",
-				"description": "Inspect a specific Step Functions execution",
-				"mimeType":    "application/json",
-			},
-		)
-	}
-	if p.isServiceEnabled("ssm") {
-		templates = append(templates, map[string]any{
-			"uriTemplate": "oc://ssm/parameters/{region}/{name}",
-			"name":        "SSM Parameter",
-			"description": "Inspect a specific SSM parameter",
+		},
+		map[string]any{
+			"uriTemplate": "oc://iam/instance-profiles/{instanceProfile}",
+			"name":        "IAM Instance Profile",
+			"description": "Inspect a specific IAM instance profile",
 			"mimeType":    "application/json",
-		})
-	}
-	if p.isServiceEnabled("secretsmanager") {
-		templates = append(templates, map[string]any{
-			"uriTemplate": "oc://secretsmanager/secrets/{region}/{name}",
-			"name":        "Secrets Manager Secret",
-			"description": "Inspect a specific Secrets Manager secret",
+		},
+	)
+	templates = append(templates, map[string]any{
+		"uriTemplate": "oc://lambda/functions/{region}/{name}",
+		"name":        "Lambda Function",
+		"description": "Inspect a specific Lambda function",
+		"mimeType":    "application/json",
+	})
+	templates = append(templates, map[string]any{
+		"uriTemplate": "oc://ecr/repositories/{region}/{name}",
+		"name":        "ECR Repository",
+		"description": "Inspect a specific ECR repository",
+		"mimeType":    "application/json",
+	})
+	templates = append(templates,
+		map[string]any{
+			"uriTemplate": "oc://ecs/clusters/{region}/{name}",
+			"name":        "ECS Cluster",
+			"description": "Inspect a specific ECS cluster",
 			"mimeType":    "application/json",
-		})
-	}
-	if p.isServiceEnabled("acm") {
-		templates = append(templates, map[string]any{
-			"uriTemplate": "oc://acm/certificates/{certificateArn}",
-			"name":        "ACM Certificate",
-			"description": "Inspect a specific ACM certificate",
+		},
+		map[string]any{
+			"uriTemplate": "oc://ecs/task-definitions/{region}/{key}",
+			"name":        "ECS Task Definition",
+			"description": "Inspect a specific ECS task definition (key is family:revision)",
 			"mimeType":    "application/json",
-		})
-	}
-	if p.isServiceEnabled("iam") {
-		templates = append(templates,
-			map[string]any{
-				"uriTemplate": "oc://iam/users/{user}",
-				"name":        "IAM User",
-				"description": "Inspect a specific IAM user",
-				"mimeType":    "application/json",
-			},
-			map[string]any{
-				"uriTemplate": "oc://iam/roles/{role}",
-				"name":        "IAM Role",
-				"description": "Inspect a specific IAM role",
-				"mimeType":    "application/json",
-			},
-			map[string]any{
-				"uriTemplate": "oc://iam/policies/{policyArn}",
-				"name":        "IAM Policy",
-				"description": "Inspect a specific IAM managed policy",
-				"mimeType":    "application/json",
-			},
-			map[string]any{
-				"uriTemplate": "oc://iam/groups/{group}",
-				"name":        "IAM Group",
-				"description": "Inspect a specific IAM group",
-				"mimeType":    "application/json",
-			},
-			map[string]any{
-				"uriTemplate": "oc://iam/instance-profiles/{instanceProfile}",
-				"name":        "IAM Instance Profile",
-				"description": "Inspect a specific IAM instance profile",
-				"mimeType":    "application/json",
-			},
-		)
-	}
-	if p.isServiceEnabled("lambda") {
-		templates = append(templates, map[string]any{
-			"uriTemplate": "oc://lambda/functions/{region}/{name}",
-			"name":        "Lambda Function",
-			"description": "Inspect a specific Lambda function",
-			"mimeType":    "application/json",
-		})
-	}
-	if p.isServiceEnabled("ecr") {
-		templates = append(templates, map[string]any{
-			"uriTemplate": "oc://ecr/repositories/{region}/{name}",
-			"name":        "ECR Repository",
-			"description": "Inspect a specific ECR repository",
-			"mimeType":    "application/json",
-		})
-	}
-	if p.isServiceEnabled("ecs") {
-		templates = append(templates,
-			map[string]any{
-				"uriTemplate": "oc://ecs/clusters/{region}/{name}",
-				"name":        "ECS Cluster",
-				"description": "Inspect a specific ECS cluster",
-				"mimeType":    "application/json",
-			},
-			map[string]any{
-				"uriTemplate": "oc://ecs/task-definitions/{region}/{key}",
-				"name":        "ECS Task Definition",
-				"description": "Inspect a specific ECS task definition (key is family:revision)",
-				"mimeType":    "application/json",
-			},
-		)
-	}
+		},
+	)
 	return templates, nil
 }
 
@@ -3539,12 +3342,7 @@ func (p *RuntimeProvider) toolInstanceInfo(_ context.Context, _ json.RawMessage)
 			StructuredContent: result,
 		}, nil
 	}
-	services := make([]string, 0, len(p.cfg.Services))
-	for svc, enabled := range p.cfg.Services {
-		if enabled {
-			services = append(services, svc)
-		}
-	}
+	services := config.AllServices()
 	sort.Strings(services)
 	result = map[string]any{
 		"region":           p.cfg.Region,
@@ -3785,7 +3583,7 @@ func (p *RuntimeProvider) toolGetConfig(_ context.Context, _ json.RawMessage) (a
 		"debug_required": false,
 		"host":           p.cfg.Host,
 		"port":           p.cfg.Port,
-		"services":       p.cfg.Services,
+		"services":       config.AllServices(),
 		"state":          string(p.cfg.State),
 		"serviceStates":  svcStates,
 		"data_dir":       p.cfg.DataDir,
@@ -3980,10 +3778,8 @@ func (p *RuntimeProvider) toolStateScan(ctx context.Context, params json.RawMess
 	if args.Service == "" {
 		return nil, fmt.Errorf("service is required")
 	}
-	if p.cfg != nil {
-		if enabled, ok := p.cfg.Services[args.Service]; !ok || !enabled {
-			return nil, fmt.Errorf("service %q is not enabled on this instance", args.Service)
-		}
+	if !isKnownService(args.Service) {
+		return nil, fmt.Errorf("service %q is not one Overcast implements", args.Service)
 	}
 	if args.Limit <= 0 {
 		args.Limit = 50
@@ -4154,9 +3950,6 @@ func (p *RuntimeProvider) toolS3CreateBucket(ctx context.Context, params json.Ra
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("s3") {
-		return nil, fmt.Errorf("service \"s3\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -4207,9 +4000,6 @@ func (p *RuntimeProvider) toolS3PutBucketTags(ctx context.Context, params json.R
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("s3") {
-		return nil, fmt.Errorf("service \"s3\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -4250,9 +4040,6 @@ func (p *RuntimeProvider) toolS3DeleteBucket(ctx context.Context, params json.Ra
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("s3") {
-		return nil, fmt.Errorf("service \"s3\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -4284,9 +4071,6 @@ func (p *RuntimeProvider) toolSQSCreateQueue(ctx context.Context, params json.Ra
 	}
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-	if !p.isServiceEnabled("sqs") {
-		return nil, fmt.Errorf("service \"sqs\" is not enabled on this instance")
 	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
@@ -4342,9 +4126,6 @@ func (p *RuntimeProvider) toolSQSSetQueueAttributes(ctx context.Context, params 
 	}
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-	if !p.isServiceEnabled("sqs") {
-		return nil, fmt.Errorf("service \"sqs\" is not enabled on this instance")
 	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
@@ -4402,9 +4183,6 @@ func (p *RuntimeProvider) toolSQSDeleteQueue(ctx context.Context, params json.Ra
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("sqs") {
-		return nil, fmt.Errorf("service \"sqs\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -4439,9 +4217,6 @@ func (p *RuntimeProvider) toolSQSPurgeQueue(ctx context.Context, params json.Raw
 	}
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-	if !p.isServiceEnabled("sqs") {
-		return nil, fmt.Errorf("service \"sqs\" is not enabled on this instance")
 	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
@@ -4497,9 +4272,6 @@ func (p *RuntimeProvider) toolDynamoDBCreateTable(ctx context.Context, params js
 	}
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-	if !p.isServiceEnabled("dynamodb") {
-		return nil, fmt.Errorf("service \"dynamodb\" is not enabled on this instance")
 	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
@@ -4585,9 +4357,6 @@ func (p *RuntimeProvider) toolDynamoDBUpdateTableTTL(ctx context.Context, params
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("dynamodb") {
-		return nil, fmt.Errorf("service \"dynamodb\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -4643,9 +4412,6 @@ func (p *RuntimeProvider) toolSNSCreateTopic(ctx context.Context, params json.Ra
 	}
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-	if !p.isServiceEnabled("sns") {
-		return nil, fmt.Errorf("service \"sns\" is not enabled on this instance")
 	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
@@ -4706,9 +4472,6 @@ func (p *RuntimeProvider) toolSNSSetTopicAttributes(ctx context.Context, params 
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("sns") {
-		return nil, fmt.Errorf("service \"sns\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -4763,9 +4526,6 @@ func (p *RuntimeProvider) toolSNSDeleteTopic(ctx context.Context, params json.Ra
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("sns") {
-		return nil, fmt.Errorf("service \"sns\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -4801,9 +4561,6 @@ func (p *RuntimeProvider) toolKinesisCreateStream(ctx context.Context, params js
 	}
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-	if !p.isServiceEnabled("kinesis") {
-		return nil, fmt.Errorf("service \"kinesis\" is not enabled on this instance")
 	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
@@ -4873,9 +4630,6 @@ func (p *RuntimeProvider) toolKinesisPutRecord(ctx context.Context, params json.
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("kinesis") {
-		return nil, fmt.Errorf("service \"kinesis\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -4941,9 +4695,6 @@ func (p *RuntimeProvider) toolKinesisDeleteStream(ctx context.Context, params js
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("kinesis") {
-		return nil, fmt.Errorf("service \"kinesis\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -4987,9 +4738,6 @@ func (p *RuntimeProvider) toolKMSCreateKey(ctx context.Context, params json.RawM
 	}
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-	if !p.isServiceEnabled("kms") {
-		return nil, fmt.Errorf("service \"kms\" is not enabled on this instance")
 	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
@@ -5050,9 +4798,6 @@ func (p *RuntimeProvider) toolKMSDisableKey(ctx context.Context, params json.Raw
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("kms") {
-		return nil, fmt.Errorf("service \"kms\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -5100,9 +4845,6 @@ func (p *RuntimeProvider) toolKMSScheduleKeyDeletion(ctx context.Context, params
 	}
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-	if !p.isServiceEnabled("kms") {
-		return nil, fmt.Errorf("service \"kms\" is not enabled on this instance")
 	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
@@ -5161,9 +4903,6 @@ func (p *RuntimeProvider) toolStepFunctionsCreateStateMachine(ctx context.Contex
 	}
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-	if !p.isServiceEnabled("stepfunctions") {
-		return nil, fmt.Errorf("service \"stepfunctions\" is not enabled on this instance")
 	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
@@ -5242,9 +4981,6 @@ func (p *RuntimeProvider) toolStepFunctionsStartExecution(ctx context.Context, p
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("stepfunctions") {
-		return nil, fmt.Errorf("service \"stepfunctions\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -5301,9 +5037,6 @@ func (p *RuntimeProvider) toolStepFunctionsDeleteStateMachine(ctx context.Contex
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("stepfunctions") {
-		return nil, fmt.Errorf("service \"stepfunctions\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -5343,9 +5076,6 @@ func (p *RuntimeProvider) toolSSMPutParameter(ctx context.Context, params json.R
 	}
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-	if !p.isServiceEnabled("ssm") {
-		return nil, fmt.Errorf("service \"ssm\" is not enabled on this instance")
 	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
@@ -5420,9 +5150,6 @@ func (p *RuntimeProvider) toolSSMDeleteParameter(ctx context.Context, params jso
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("ssm") {
-		return nil, fmt.Errorf("service \"ssm\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -5461,9 +5188,6 @@ func (p *RuntimeProvider) toolSecretsManagerCreateSecret(ctx context.Context, pa
 	}
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-	if !p.isServiceEnabled("secretsmanager") {
-		return nil, fmt.Errorf("service \"secretsmanager\" is not enabled on this instance")
 	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
@@ -5532,9 +5256,6 @@ func (p *RuntimeProvider) toolSecretsManagerPutSecretValue(ctx context.Context, 
 	}
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-	if !p.isServiceEnabled("secretsmanager") {
-		return nil, fmt.Errorf("service \"secretsmanager\" is not enabled on this instance")
 	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
@@ -5608,9 +5329,6 @@ func (p *RuntimeProvider) toolSecretsManagerDeleteSecret(ctx context.Context, pa
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("secretsmanager") {
-		return nil, fmt.Errorf("service \"secretsmanager\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -5654,9 +5372,6 @@ func (p *RuntimeProvider) toolIAMCreateUser(ctx context.Context, params json.Raw
 	}
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-	if !p.isServiceEnabled("iam") {
-		return nil, fmt.Errorf("service \"iam\" is not enabled on this instance")
 	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
@@ -5709,9 +5424,6 @@ func (p *RuntimeProvider) toolIAMDeleteUser(ctx context.Context, params json.Raw
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("iam") {
-		return nil, fmt.Errorf("service \"iam\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -5743,9 +5455,6 @@ func (p *RuntimeProvider) toolIAMCreateRole(ctx context.Context, params json.Raw
 	}
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-	if !p.isServiceEnabled("iam") {
-		return nil, fmt.Errorf("service \"iam\" is not enabled on this instance")
 	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
@@ -5803,9 +5512,6 @@ func (p *RuntimeProvider) toolIAMDeleteRole(ctx context.Context, params json.Raw
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("iam") {
-		return nil, fmt.Errorf("service \"iam\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -5836,9 +5542,6 @@ func (p *RuntimeProvider) toolIAMCreatePolicy(ctx context.Context, params json.R
 	}
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-	if !p.isServiceEnabled("iam") {
-		return nil, fmt.Errorf("service \"iam\" is not enabled on this instance")
 	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
@@ -5897,9 +5600,6 @@ func (p *RuntimeProvider) toolIAMDeletePolicy(ctx context.Context, params json.R
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("iam") {
-		return nil, fmt.Errorf("service \"iam\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -5929,9 +5629,6 @@ func (p *RuntimeProvider) toolIAMCreateGroup(ctx context.Context, params json.Ra
 	}
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-	if !p.isServiceEnabled("iam") {
-		return nil, fmt.Errorf("service \"iam\" is not enabled on this instance")
 	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
@@ -5983,9 +5680,6 @@ func (p *RuntimeProvider) toolIAMDeleteGroup(ctx context.Context, params json.Ra
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("iam") {
-		return nil, fmt.Errorf("service \"iam\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -6016,9 +5710,6 @@ func (p *RuntimeProvider) toolIAMCreateInstanceProfile(ctx context.Context, para
 	}
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-	if !p.isServiceEnabled("iam") {
-		return nil, fmt.Errorf("service \"iam\" is not enabled on this instance")
 	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
@@ -6071,9 +5762,6 @@ func (p *RuntimeProvider) toolIAMDeleteInstanceProfile(ctx context.Context, para
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("iam") {
-		return nil, fmt.Errorf("service \"iam\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -6104,9 +5792,6 @@ func (p *RuntimeProvider) toolACMRequestCertificate(ctx context.Context, params 
 	}
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-	if !p.isServiceEnabled("acm") {
-		return nil, fmt.Errorf("service \"acm\" is not enabled on this instance")
 	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
@@ -6161,9 +5846,6 @@ func (p *RuntimeProvider) toolACMDeleteCertificate(ctx context.Context, params j
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("acm") {
-		return nil, fmt.Errorf("service \"acm\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -6194,9 +5876,6 @@ func (p *RuntimeProvider) toolACMAddTagsToCertificate(ctx context.Context, param
 	}
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-	if !p.isServiceEnabled("acm") {
-		return nil, fmt.Errorf("service \"acm\" is not enabled on this instance")
 	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
@@ -6251,9 +5930,6 @@ func (p *RuntimeProvider) toolACMRemoveTagsFromCertificate(ctx context.Context, 
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	if !p.isServiceEnabled("acm") {
-		return nil, fmt.Errorf("service \"acm\" is not enabled on this instance")
-	}
 	if p.store == nil {
 		return nil, fmt.Errorf("runtime store is unavailable")
 	}
@@ -6296,12 +5972,11 @@ func (p *RuntimeProvider) toolACMRemoveTagsFromCertificate(ctx context.Context, 
 	}, nil
 }
 
-func (p *RuntimeProvider) isServiceEnabled(service string) bool {
-	if p.cfg == nil {
-		return true
-	}
-	enabled, ok := p.cfg.Services[strings.ToLower(strings.TrimSpace(service))]
-	return ok && enabled
+// isKnownService reports whether service names a service Overcast implements.
+// Every service is always running, so this is a spelling check on caller input,
+// not an availability check.
+func isKnownService(service string) bool {
+	return slices.Contains(config.AllServices(), strings.ToLower(strings.TrimSpace(service)))
 }
 
 func resourceJSONContents(uri string, payload any) []map[string]any {
@@ -6414,15 +6089,8 @@ func (p *RuntimeProvider) toolRuntimeCapabilities(_ context.Context, params json
 		}
 	}
 
-	// Build sorted list of enabled services.
-	enabled := make([]string, 0)
-	if p.cfg != nil {
-		for svc, on := range p.cfg.Services {
-			if on {
-				enabled = append(enabled, svc)
-			}
-		}
-	}
+	// Build sorted list of services.
+	enabled := config.AllServices()
 	sort.Strings(enabled)
 
 	// Filter if a specific service was requested.
@@ -6739,12 +6407,7 @@ func (p *RuntimeProvider) enabledServices() []string {
 	if p.cfg == nil {
 		return nil
 	}
-	services := make([]string, 0, len(p.cfg.Services))
-	for svc, enabled := range p.cfg.Services {
-		if enabled {
-			services = append(services, svc)
-		}
-	}
+	services := config.AllServices()
 	sort.Strings(services)
 	return services
 }

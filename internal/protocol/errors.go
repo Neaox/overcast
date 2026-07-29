@@ -133,6 +133,17 @@ var (
 		HTTPStatus: http.StatusNotImplemented,
 	}
 
+	// ErrMethodNotAllowed is returned for a method AWS itself rejects on a
+	// resource — not for something Overcast has yet to implement. The two are
+	// different claims: NotImplemented tells a client the emulator is
+	// incomplete and invites a workaround, when real AWS would refuse the same
+	// request. S3's wording, verbatim.
+	ErrMethodNotAllowed = &AWSError{
+		Code:       "MethodNotAllowed",
+		Message:    "The specified method is not allowed against this resource.",
+		HTTPStatus: http.StatusMethodNotAllowed,
+	}
+
 	// ErrInternalError is returned when the emulator itself encounters an
 	// unexpected failure (state backend error, serialisation failure, etc.).
 	// Always Wrap() this with the underlying error for log context.
@@ -140,15 +151,6 @@ var (
 		Code:       "InternalError",
 		Message:    "An internal error occurred.",
 		HTTPStatus: http.StatusInternalServerError,
-	}
-
-	// ErrServiceDisabled is returned when a request targets a service that is
-	// known to the emulator but not enabled in the current configuration.
-	// Callers should add the service name to OVERCAST_SERVICES to enable it.
-	ErrServiceDisabled = &AWSError{
-		Code:       "ServiceDisabled",
-		Message:    "This service is not enabled in this emulator. Add it to OVERCAST_SERVICES to enable it.",
-		HTTPStatus: http.StatusServiceUnavailable,
 	}
 
 	// ErrStorageMigrating is returned by middleware.NotReady while the
@@ -363,6 +365,13 @@ func WriteJSONError(w http.ResponseWriter, r *http.Request, aerr *AWSError) {
 // NotImplementedXML is a convenience handler for unimplemented S3 endpoints.
 func NotImplementedXML(w http.ResponseWriter, r *http.Request) {
 	WriteXMLError(w, r, ErrNotImplemented)
+}
+
+// MethodNotAllowedXML is a convenience handler for a method AWS rejects on a
+// resource, for use as a dispatch fallback where no subresource selects an
+// operation.
+func MethodNotAllowedXML(w http.ResponseWriter, r *http.Request) {
+	WriteXMLError(w, r, ErrMethodNotAllowed)
 }
 
 // NotImplementedJSON is a convenience handler for unimplemented JSON endpoints.

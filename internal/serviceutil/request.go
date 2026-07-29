@@ -139,7 +139,49 @@ func ClientBaseURL(cfg *config.Config, r *http.Request) string {
 	return "http://localhost:4566"
 }
 
+// FoldHostname lowercases an ASCII hostname (a trailing :port is unaffected,
+// being digits). A hostname is case-insensitive — RFC 4343 for DNS, RFC 3986
+// §3.2.2 for the URI authority — so folding loses nothing, and lowercase is the
+// canonical form both that section and RFC 3986 §6.2.2.1 tell producers to emit.
+//
+// Overcast needs this on both sides of a request. Inbound, middleware folds the
+// Host before deciding who owns it, so casing cannot change which service
+// answers. Outbound, the URLs and request-context fields minted here are folded,
+// so what Overcast hands back does not carry the case of whichever caller
+// happened to create the resource.
+//
+// Folding is pay-per-use: an already-lowercase host is returned unchanged with
+// no copy, which is what keeps inbound classification allocation-free on every
+// real request. ASCII-only by construction — DNS names are ASCII, an IDN arrives
+// punycode-encoded, and Unicode case folding carries locale hazards a hostname
+// comparison must not inherit. strings.ToLower has the same no-copy property but
+// measured ~2.4x slower here, because its scan also tracks non-ASCII and cannot
+// stop at the first upper-case byte.
+func FoldHostname(hostname string) string {
+	i := 0
+	for ; i < len(hostname); i++ {
+		if c := hostname[i]; c >= 'A' && c <= 'Z' {
+			break
+		}
+	}
+	if i == len(hostname) {
+		return hostname
+	}
+	b := []byte(hostname)
+	for ; i < len(b); i++ {
+		if c := b[i]; c >= 'A' && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	return string(b)
+}
+
 // RequestBaseURL derives a base URL from proxy headers or the request host.
+//
+// The host is folded to its canonical lowercase form: this is the single funnel
+// every client-facing URL is minted through (via ClientBaseURL), so folding here
+// is what stops a mixed-case request baking its casing into a queue URL, an
+// invoke endpoint or a stack output.
 func RequestBaseURL(r *http.Request) string {
 	if r == nil {
 		return ""
@@ -151,6 +193,7 @@ func RequestBaseURL(r *http.Request) string {
 	if host == "" {
 		return ""
 	}
+	host = FoldHostname(host)
 	scheme := r.Header.Get("X-Forwarded-Proto")
 	if scheme == "" {
 		if r.TLS != nil {
@@ -222,6 +265,9 @@ func DomainPrefix(host string) string {
 	if host == "" {
 		return "localhost"
 	}
+	// requestContext.domainPrefix is data function code can branch on, so it
+	// must not vary with how the caller typed the Host. See FoldHostname.
+	host = FoldHostname(host)
 	if i := strings.IndexByte(host, '.'); i > 0 {
 		return host[:i]
 	}
@@ -342,6 +388,36 @@ func HostRoutedURLFromBase(baseURL, label, id, region, path string) string {
 	u.RawQuery = ""
 	u.Fragment = ""
 	return u.String()
+}
+
+// SupportsHostRouting reports whether a host-routed URL minted on baseURL would
+// actually resolve for the client holding it.
+//
+// Host routing needs the base to carry an arbitrary subdomain. An IP literal
+// cannot, and a bare single-label name — "localhost", a Docker service alias —
+// only resolves under wildcard DNS that Windows and macOS do not provide for
+// *.localhost. Every public domain in config.WildcardDNSDomains is multi-label
+// and so passes, as does any multi-label OVERCAST_HOSTNAME an operator set,
+// which is the operator asserting that their own name resolves.
+//
+// It is the gate for the fields that have a path-style alternative Overcast
+// also serves (AppSync's uris; the console's REST v1 invoke URLs), so those
+// degrade to a URL that works rather than advertising one that will not
+// resolve. Fields with no path-style form — Lambda FunctionUrl, API Gateway v2
+// apiEndpoint — are host-routed unconditionally, because there is nothing to
+// fall back to.
+//
+// web/src/lib/host-routed-url.ts states the same rule for the console.
+func SupportsHostRouting(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	hostname := u.Hostname()
+	if net.ParseIP(hostname) != nil {
+		return false
+	}
+	return strings.Contains(hostname, ".")
 }
 
 // HostRoutedHostname is HostRoutedURL reduced to the bare DNS name, with no

@@ -166,30 +166,27 @@ describe("Sidebar debug navigation", () => {
   })
 })
 
-describe("Sidebar service availability", () => {
+describe("Sidebar pins", () => {
   beforeEach(() => {
     localStorage.clear()
   })
 
-  it("pins the enabled services when the run is narrowed and nothing is pinned", async () => {
-    renderScreen(SidebarOnly, { services: ["s3", "sqs"] })
-
-    expect(await screen.findByRole("link", { name: "S3" })).toBeInTheDocument()
-    expect(screen.getByRole("link", { name: "SQS" })).toBeInTheDocument()
-    expect(screen.queryByRole("link", { name: "DynamoDB" })).not.toBeInTheDocument()
-  })
-
-  it("greys a pinned service the emulator has switched off, but keeps it clickable", async () => {
+  // Availability is gone: every service always runs, so a pinned service is
+  // simply a link. Nothing is dimmed and nothing is inferred from /_health.
+  it("renders the pinned services as plain links", async () => {
     localStorage.setItem("overcast-favourites", JSON.stringify(["/s3", "/dynamodb"]))
 
-    renderScreen(SidebarOnly, { services: ["s3"] })
+    renderScreen(SidebarOnly, {})
 
-    // The dimming must sit on the link, not the row: a pinned row carries an
-    // inline `opacity` from the drag sortable that would override the class.
-    const disabled = await screen.findByRole("link", { name: "DynamoDB" })
-    expect(disabled).toHaveClass("opacity-50")
-    expect(disabled).toHaveAttribute("title", "Disabled in this emulator run.")
-    expect(screen.getByRole("link", { name: "S3" })).not.toHaveClass("opacity-50")
+    expect(await screen.findByRole("link", { name: "S3" })).not.toHaveClass("opacity-50")
+    expect(screen.getByRole("link", { name: "DynamoDB" })).not.toHaveClass("opacity-50")
+  })
+
+  it("pins nothing by default", async () => {
+    renderScreen(SidebarOnly, {})
+
+    await screen.findByRole("link", { name: "Dashboard" })
+    expect(screen.queryByRole("link", { name: "SQS" })).not.toBeInTheDocument()
   })
 })
 

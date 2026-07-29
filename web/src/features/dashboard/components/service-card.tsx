@@ -23,7 +23,7 @@ export function ServiceCard({
         entry={entry}
         onNavigate={onNavigate}
         className="group flex flex-col gap-3 rounded-card border border-border bg-bg-elevated p-3"
-        enabledClassName="transition-colors hover:border-accent focus-visible:outline-accent"
+        interactiveClassName="transition-colors hover:border-accent focus-visible:outline-accent"
       >
         <div className="relative flex h-[30px] items-center justify-between">
           <span className="flex h-[30px] w-[30px] items-center justify-center rounded-control bg-accent-muted text-accent">

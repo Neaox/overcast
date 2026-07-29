@@ -725,9 +725,9 @@ func (s *Service) Stop(ctx context.Context) {
 
 func (s *Service) Name() string { return "lambda" }
 
-// PathPrefixes lists every Lambda API version. The router uses these prefixes
-// only while Lambda is disabled, so each version reports ServiceDisabled rather
-// than falling through to S3's /{bucket}/* wildcard.
+// PathPrefixes lists every Lambda API version, so a router built with only a
+// subset of services (test-only) answers these with a 501 rather than letting
+// them fall through to S3's /{bucket}/* wildcard.
 func (s *Service) PathPrefixes() []string {
 	return []string{
 		"/2015-03-31",

@@ -3325,6 +3325,11 @@ func TestExecuteRestAPI_hostBasedInvokeAcrossResolvableBases(t *testing.T) {
 		{"overcast.sh wildcard with region", apiID + ".execute-api.us-east-1.localhost.overcast.sh:4566"},
 		{"overcast.sh wildcard without region", apiID + ".execute-api.localhost.overcast.sh:4566"},
 		{"localstack.cloud wildcard with region", apiID + ".execute-api.us-east-1.localhost.localstack.cloud:4566"},
+		// A hostname is case-insensitive, so the same address in any case is
+		// the same address. Sent case-sensitively, the label missed
+		// hostRouteLabels and S3 virtual-hosted addressing claimed the Host
+		// instead — an S3 XML error for an API Gateway invoke.
+		{"mixed case", apiID + ".Execute-Api.US-East-1.localhost.overcast.sh:4566"},
 	}
 
 	for _, b := range bases {

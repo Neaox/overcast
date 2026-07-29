@@ -1,3 +1,16 @@
+// Solution-style config: it owns no files itself and only points at the two
+// real projects below.
+//
+// CONSEQUENCE, and it is a trap: `tsc --noEmit` resolves THIS file, finds zero
+// input files, and exits 0 — it reports success no matter how broken the source
+// is. A type error can survive a whole session of "typecheck passed".
+//
+// Use one of these instead:
+//   pnpm run typecheck   # tsconfig.app.json + tsconfig.node.json, explicitly
+//   npx tsc -b           # builds the referenced projects, so it does see them
+//
+// CI runs `pnpm run typecheck` (.github/workflows/test.yml) and catches what
+// `tsc --noEmit` misses.
 {
   "files": [],
   "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.node.json" }]

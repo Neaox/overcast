@@ -59,7 +59,7 @@ func assertJSONError(t *testing.T, resp *http.Response, expectedCode string) {
 
 func TestCreateCluster_success(t *testing.T) {
 	// Given: a fresh MSK service
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 
 	// When: a valid cluster creation request is made
 	resp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
@@ -81,7 +81,7 @@ func TestCreateCluster_success(t *testing.T) {
 
 func TestCreateCluster_missingName(t *testing.T) {
 	// Given: a fresh MSK service
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 
 	// When: a cluster creation request is made without a name
 	resp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
@@ -97,7 +97,7 @@ func TestCreateCluster_missingName(t *testing.T) {
 
 func TestDescribeCluster_success(t *testing.T) {
 	// Given: a cluster has been created
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 	createResp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
 		"clusterName": "describe-test",
 	})
@@ -120,7 +120,7 @@ func TestDescribeCluster_success(t *testing.T) {
 
 func TestDescribeCluster_notFound(t *testing.T) {
 	// Given: a fresh MSK service
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 
 	// When: a non-existent cluster is described
 	resp := mskRequest(t, srv, http.MethodGet, "/v1/clusters/arn:aws:kafka:us-east-1:000000000000:cluster/nonexistent/abc123", nil)
@@ -134,7 +134,7 @@ func TestDescribeCluster_notFound(t *testing.T) {
 
 func TestListClusters_empty(t *testing.T) {
 	// Given: a fresh MSK service with no clusters
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 
 	// When: clusters are listed
 	resp := mskRequest(t, srv, http.MethodGet, "/v1/clusters", nil)
@@ -149,7 +149,7 @@ func TestListClusters_empty(t *testing.T) {
 
 func TestListClusters_multiple(t *testing.T) {
 	// Given: two clusters have been created
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 	for _, name := range []string{"cluster-a", "cluster-b"} {
 		resp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
 			"clusterName": name,
@@ -171,7 +171,7 @@ func TestListClusters_multiple(t *testing.T) {
 
 func TestListClusters_filter(t *testing.T) {
 	// Given: two clusters with different names
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 	for _, name := range []string{"filter-alpha", "filter-beta"} {
 		resp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
 			"clusterName": name,
@@ -197,7 +197,7 @@ func TestListClusters_filter(t *testing.T) {
 
 func TestDeleteCluster_success(t *testing.T) {
 	// Given: a cluster has been created
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 	createResp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
 		"clusterName": "delete-test",
 	})
@@ -219,7 +219,7 @@ func TestDeleteCluster_success(t *testing.T) {
 
 func TestDeleteCluster_notFound(t *testing.T) {
 	// Given: a fresh MSK service
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 
 	// When: a non-existent cluster is deleted
 	resp := mskRequest(t, srv, http.MethodDelete, "/v1/clusters/arn:aws:kafka:us-east-1:000000000000:cluster/nonexistent/abc123", nil)
@@ -232,7 +232,7 @@ func TestDeleteCluster_notFound(t *testing.T) {
 
 func TestGetBootstrapBrokers_success(t *testing.T) {
 	// Given: a cluster has been created
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 	createResp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
 		"clusterName": "brokers-test",
 	})
@@ -254,7 +254,7 @@ func TestGetBootstrapBrokers_success(t *testing.T) {
 
 func TestGetBootstrapBrokers_notFound(t *testing.T) {
 	// Given: a fresh MSK service
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 
 	// When: bootstrap brokers are requested for a non-existent cluster
 	resp := mskRequest(t, srv, http.MethodGet, "/v1/clusters/arn:aws:kafka:us-east-1:000000000000:cluster/nonexistent/abc123/bootstrap-brokers", nil)
@@ -267,7 +267,7 @@ func TestGetBootstrapBrokers_notFound(t *testing.T) {
 
 func TestCreateConfiguration_success(t *testing.T) {
 	// Given: a fresh MSK service
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 
 	// When: a configuration is created
 	resp := mskRequest(t, srv, http.MethodPost, "/v1/configurations", map[string]any{
@@ -291,7 +291,7 @@ func TestCreateConfiguration_success(t *testing.T) {
 
 func TestListConfigurations_empty(t *testing.T) {
 	// Given: a fresh MSK service
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 
 	// When: configurations are listed
 	resp := mskRequest(t, srv, http.MethodGet, "/v1/configurations", nil)
@@ -308,7 +308,7 @@ func TestListConfigurations_empty(t *testing.T) {
 
 func TestDescribeConfiguration_success(t *testing.T) {
 	// Given: a configuration has been created
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 	createResp := mskRequest(t, srv, http.MethodPost, "/v1/configurations", map[string]any{
 		"name": "describe-config",
 	})
@@ -332,7 +332,7 @@ func TestDescribeConfiguration_success(t *testing.T) {
 
 func TestDeleteConfiguration_success(t *testing.T) {
 	// Given: a configuration has been created
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 	createResp := mskRequest(t, srv, http.MethodPost, "/v1/configurations", map[string]any{
 		"name": "delete-config",
 	})
@@ -352,7 +352,7 @@ func TestDeleteConfiguration_success(t *testing.T) {
 
 func TestListKafkaVersions(t *testing.T) {
 	// Given: a fresh MSK service
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 
 	// When: Kafka versions are listed
 	resp := mskRequest(t, srv, http.MethodGet, "/v1/kafka-versions", nil)
@@ -379,7 +379,7 @@ func TestListKafkaVersions(t *testing.T) {
 
 func TestTagResource_success(t *testing.T) {
 	// Given: a cluster has been created
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 	createResp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
 		"clusterName": "tagged-cluster",
 	})
@@ -412,7 +412,7 @@ func TestTagResource_success(t *testing.T) {
 
 func TestUntagResource_success(t *testing.T) {
 	// Given: a cluster with tags
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 	createResp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
 		"clusterName": "untag-cluster",
 	})
@@ -451,7 +451,7 @@ func TestUntagResource_success(t *testing.T) {
 
 func TestCreateClusterV2_provisioned_success(t *testing.T) {
 	// Given: a fresh MSK service
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 
 	// When: a V2 provisioned cluster creation request is made
 	resp := mskRequest(t, srv, http.MethodPost, "/v2/clusters", map[string]any{
@@ -476,7 +476,7 @@ func TestCreateClusterV2_provisioned_success(t *testing.T) {
 
 func TestCreateClusterV2_serverless_success(t *testing.T) {
 	// Given: a fresh MSK service
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 
 	// When: a V2 serverless cluster creation request is made
 	resp := mskRequest(t, srv, http.MethodPost, "/v2/clusters", map[string]any{
@@ -496,7 +496,7 @@ func TestCreateClusterV2_serverless_success(t *testing.T) {
 
 func TestCreateClusterV2_missingName(t *testing.T) {
 	// Given: a fresh MSK service
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 
 	// When: a V2 cluster creation request without a name
 	resp := mskRequest(t, srv, http.MethodPost, "/v2/clusters", map[string]any{
@@ -512,7 +512,7 @@ func TestCreateClusterV2_missingName(t *testing.T) {
 
 func TestDescribeClusterV2_provisioned(t *testing.T) {
 	// Given: a V2 provisioned cluster
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 	createResp := mskRequest(t, srv, http.MethodPost, "/v2/clusters", map[string]any{
 		"clusterName": "v2-describe",
 		"provisioned": map[string]any{
@@ -542,7 +542,7 @@ func TestDescribeClusterV2_provisioned(t *testing.T) {
 
 func TestDescribeClusterV2_notFound(t *testing.T) {
 	// Given: a fresh MSK service
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 
 	// When: describe a non-existent cluster via V2
 	resp := mskRequest(t, srv, http.MethodGet, "/v2/clusters/arn:aws:kafka:us-east-1:000000000000:cluster/nope/abc123", nil)
@@ -556,7 +556,7 @@ func TestDescribeClusterV2_notFound(t *testing.T) {
 
 func TestUpdateClusterConfiguration_success(t *testing.T) {
 	// Given: a cluster and a configuration both exist
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 
 	createCluster := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
 		"clusterName":         "config-target",
@@ -602,7 +602,7 @@ func TestUpdateClusterConfiguration_success(t *testing.T) {
 
 func TestUpdateClusterConfiguration_clusterNotFound(t *testing.T) {
 	// Given: a fresh MSK service
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 
 	// When: update configuration on a non-existent cluster
 	resp := mskRequest(t, srv, http.MethodPut, "/v1/clusters/arn:aws:kafka:us-east-1:000000000000:cluster/nope/abc/configuration", map[string]any{
@@ -618,7 +618,7 @@ func TestUpdateClusterConfiguration_clusterNotFound(t *testing.T) {
 
 func TestUpdateClusterConfiguration_staleVersion(t *testing.T) {
 	// Given: a cluster exists
-	srv := helpers.NewTestServer(t, helpers.WithServices("msk"))
+	srv := helpers.NewTestServer(t)
 	createCluster := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
 		"clusterName": "stale-test",
 	})

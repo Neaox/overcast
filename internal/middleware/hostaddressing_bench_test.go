@@ -24,6 +24,40 @@ import (
 // (extractS3BucketFromHost) and strings.Split on the hostname (ParseHostRoute).
 // Classify must be 0 allocs/op on every row and must not regress on ns/op.
 // See docs/plans/host-routing-precedence.md §7.
+//
+// Case folding (serviceutil.FoldHostname) then added one full pass over the
+// hostname, since any byte could be upper-case and only reaching the end proves
+// none is. Cost measured on the same machine, median of 3, before -> after:
+//
+//	PathStyleLocalhost      29.6 -> 34.1 ns/op   (+4.5)
+//	IPLiteral               15.0 -> 20.1 ns/op   (+5.1)
+//	S3BareVirtualHost       39.8 -> 54.7 ns/op   (+14.9)
+//	S3LabelledVirtualHost   19.6 -> 36.4 ns/op   (+16.8)
+//	HostRouteExecuteAPI      243 ->  268 ns/op   (+25)
+//
+// About 4 ns of the S3 rows is the fold living in serviceutil rather than this
+// package, so it no longer inlines. That is deliberate: minting needs the
+// identical rule on the way out (serviceutil.RequestBaseURL), and two copies of
+// a case rule is precisely how the original defect arose — the base was folded,
+// everything else was not. One implementation, 4 ns.
+//
+// Still 0 allocs/op on every row, and every row remains far inside the
+// pre-consolidation budget above. S3LabelledVirtualHost moves most in relative
+// terms because tier A used to return as soon as it found ".s3." near the front,
+// so it never touched the rest of the hostname; it now pays the full scan first.
+//
+// A word-at-a-time (SWAR) scan was implemented and measured against this, then
+// dropped. End-to-end through Classify it was better on three rows
+// (S3BareVirtualHost 50.2 -> 44.3, S3LabelledVirtualHost 32.7 -> 27.2,
+// HostRouteExecuteAPI 259 -> 248) and worse on PathStyleLocalhost, 33.6 -> 35.7,
+// which is the row that dominates real traffic — the word loop does not pay for
+// its setup on a 9-byte hostname. In isolation it looked like a clear win at
+// every length, but those micro-benchmarks varied by ~2x run to run, so the
+// honest reading is that the difference is at or below the noise floor. That
+// makes it a choice about simplicity, and the byte loop wins: a bit-trick in the
+// code that decides which service answers a request needs a differential test
+// and a fuzz target before anyone can trust it. Revisit only with a profile
+// showing host classification on a real critical path.
 
 var benchHosts = []struct{ name, host string }{
 	{"PathStyleLocalhost", "localhost:4566"},
@@ -31,6 +65,20 @@ var benchHosts = []struct{ name, host string }{
 	{"S3BareVirtualHost", "mybucket.localhost:4566"},
 	{"S3LabelledVirtualHost", "mybucket.s3.us-east-1.localhost:4566"},
 	{"HostRouteExecuteAPI", "abc123.execute-api.us-east-1.localhost.overcast.sh:4566"},
+}
+
+// BenchmarkHostClassifier_ClassifyMixedCase measures the one path that DOES
+// allocate: a host carrying upper-case bytes has to be materialised in its
+// folded form. Kept separate from benchHosts so the 0-allocs/op contract above
+// stays a flat rule with no exceptions, and so the cost of the case that real
+// clients do not send is visible rather than averaged in.
+func BenchmarkHostClassifier_ClassifyMixedCase(b *testing.B) {
+	c := NewHostClassifier("localhost.overcast.sh")
+	const host = "ABC123.Execute-Api.US-East-1.localhost.overcast.sh:4566"
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = c.Classify(host)
+	}
 }
 
 // BenchmarkHostClassifier_Classify measures the consolidated single-pass

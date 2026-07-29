@@ -12,7 +12,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest"
 import React from "react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, renderHook, act, screen } from "@testing-library/react"
-import type { WorkerMessage } from "@/workers/event-stream.protocol"
+import { DISCONNECTED, type WorkerMessage } from "@/workers/event-stream.protocol"
 import type { StreamEvent } from "@/types"
 
 const listeners: ((msg: WorkerMessage) => void)[] = []
@@ -39,6 +39,15 @@ function ev(seconds: number, type = "s3:BucketCreated", source = "s3"): StreamEv
     time: new Date(Date.UTC(2026, 0, 1, 0, 0, seconds)).toISOString(),
     source,
     payload: { seq: seconds },
+  }
+}
+
+/** The worker's opening message: its cached events, on a live connection. */
+function init(events: StreamEvent[]): WorkerMessage {
+  return {
+    type: "init",
+    events,
+    state: { ...DISCONNECTED, connected: true, lastConnectedAt: Date.now() },
   }
 }
 
@@ -78,7 +87,7 @@ describe("useEventStreamSubscription", () => {
     const client = makeClient()
     renderHook(() => useEventStreamSubscription(), { wrapper: wrapperFor(client) })
 
-    emit({ type: "init", events: [], connected: true })
+    emit(init([]))
     emit({ type: "events", events: [ev(1), ev(2)] })
 
     expect(bufferedEvents(client)).toHaveLength(2)
@@ -88,7 +97,7 @@ describe("useEventStreamSubscription", () => {
     const client = makeClient()
     renderHook(() => useEventStreamSubscription(), { wrapper: wrapperFor(client) })
 
-    emit({ type: "init", events: [], connected: true })
+    emit(init([]))
     emit({ type: "events", events: [ev(1)] })
 
     act(() => {
@@ -112,7 +121,7 @@ describe("useEventStreamSubscription", () => {
 
     const view = render(<Shell />, { wrapper: wrapperFor(client) })
 
-    emit({ type: "init", events: [], connected: true })
+    emit(init([]))
     emit({ type: "events", events: [ev(1), ev(2), ev(3)] })
 
     // The user leaves the UI open on some other page long enough for an
@@ -134,7 +143,7 @@ describe("useEventStreamSubscription", () => {
     const client = makeClient()
     renderHook(() => useEventStreamSubscription(), { wrapper: wrapperFor(client) })
 
-    emit({ type: "init", events: [ev(1), ev(2)], connected: true })
+    emit(init([ev(1), ev(2)]))
 
     expect(bufferedEvents(client)).toHaveLength(2)
   })
@@ -143,7 +152,7 @@ describe("useEventStreamSubscription", () => {
     const client = makeClient()
     renderHook(() => useEventStreamSubscription(), { wrapper: wrapperFor(client) })
 
-    emit({ type: "init", events: [ev(2)], connected: true })
+    emit(init([ev(2)]))
     emit({ type: "events", events: [ev(1), ev(3)] })
 
     expect(bufferedEvents(client).map((e) => (e.payload as { seq: number }).seq)).toEqual([1, 2, 3])
@@ -154,7 +163,7 @@ describe("useEventStreamSubscription", () => {
     renderHook(() => useEventStreamSubscription(), { wrapper: wrapperFor(client) })
 
     const noise = Array.from({ length: 10_000 }, (_, i) => ev(i, "request:Received", "request"))
-    emit({ type: "init", events: [ev(0)], connected: true })
+    emit(init([ev(0)]))
     emit({ type: "events", events: noise })
 
     const buffered = bufferedEvents(client)
@@ -166,7 +175,7 @@ describe("useEventStreamSubscription", () => {
     const client = makeClient()
     renderHook(() => useEventStreamSubscription(), { wrapper: wrapperFor(client) })
 
-    emit({ type: "init", events: [ev(1)], connected: true })
+    emit(init([ev(1)]))
     emit({ type: "cleared" })
 
     expect(bufferedEvents(client)).toHaveLength(0)

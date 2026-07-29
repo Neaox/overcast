@@ -49,7 +49,7 @@ func xmlText(t *testing.T, resp *http.Response) string {
 
 func TestCreateLaunchConfiguration_success(t *testing.T) {
 	// Given: an empty store
-	srv := helpers.NewTestServer(t, helpers.WithServices("autoscaling"))
+	srv := helpers.NewTestServer(t)
 
 	// When: CreateLaunchConfiguration is called
 	resp := asCall(t, srv, "CreateLaunchConfiguration", map[string]string{
@@ -65,7 +65,7 @@ func TestCreateLaunchConfiguration_success(t *testing.T) {
 
 func TestDescribeLaunchConfigurations_empty(t *testing.T) {
 	// Given: an empty store
-	srv := helpers.NewTestServer(t, helpers.WithServices("autoscaling"))
+	srv := helpers.NewTestServer(t)
 
 	// When: DescribeLaunchConfigurations is called
 	resp := asCall(t, srv, "DescribeLaunchConfigurations", nil)
@@ -80,7 +80,7 @@ func TestDescribeLaunchConfigurations_empty(t *testing.T) {
 
 func TestDescribeLaunchConfigurations_afterCreate(t *testing.T) {
 	// Given: a launch configuration exists
-	srv := helpers.NewTestServer(t, helpers.WithServices("autoscaling"))
+	srv := helpers.NewTestServer(t)
 	r := asCall(t, srv, "CreateLaunchConfiguration", map[string]string{
 		"LaunchConfigurationName": "my-lc",
 		"ImageId":                 "ami-12345678",
@@ -104,7 +104,7 @@ func TestDescribeLaunchConfigurations_afterCreate(t *testing.T) {
 
 func TestDeleteLaunchConfiguration_success(t *testing.T) {
 	// Given: a launch configuration exists
-	srv := helpers.NewTestServer(t, helpers.WithServices("autoscaling"))
+	srv := helpers.NewTestServer(t)
 	r := asCall(t, srv, "CreateLaunchConfiguration", map[string]string{
 		"LaunchConfigurationName": "my-lc",
 		"ImageId":                 "ami-12345678",
@@ -133,7 +133,7 @@ func TestDeleteLaunchConfiguration_success(t *testing.T) {
 
 func TestCreateAutoScalingGroup_success(t *testing.T) {
 	// Given: a launch configuration exists
-	srv := helpers.NewTestServer(t, helpers.WithServices("autoscaling"))
+	srv := helpers.NewTestServer(t)
 	r := asCall(t, srv, "CreateLaunchConfiguration", map[string]string{
 		"LaunchConfigurationName": "my-lc",
 		"ImageId":                 "ami-12345678",
@@ -158,7 +158,7 @@ func TestCreateAutoScalingGroup_success(t *testing.T) {
 
 func TestDescribeAutoScalingGroups_empty(t *testing.T) {
 	// Given: an empty store
-	srv := helpers.NewTestServer(t, helpers.WithServices("autoscaling"))
+	srv := helpers.NewTestServer(t)
 
 	// When: DescribeAutoScalingGroups is called
 	resp := asCall(t, srv, "DescribeAutoScalingGroups", nil)
@@ -173,7 +173,7 @@ func TestDescribeAutoScalingGroups_empty(t *testing.T) {
 
 func TestDescribeAutoScalingGroups_afterCreate(t *testing.T) {
 	// Given: an ASG exists
-	srv := helpers.NewTestServer(t, helpers.WithServices("autoscaling"))
+	srv := helpers.NewTestServer(t)
 	r := asCall(t, srv, "CreateLaunchConfiguration", map[string]string{
 		"LaunchConfigurationName": "my-lc",
 		"ImageId":                 "ami-12345678",
@@ -203,7 +203,7 @@ func TestDescribeAutoScalingGroups_afterCreate(t *testing.T) {
 
 func TestUpdateAutoScalingGroup_desiredCapacity(t *testing.T) {
 	// Given: an ASG with desired=2
-	srv := helpers.NewTestServer(t, helpers.WithServices("autoscaling"))
+	srv := helpers.NewTestServer(t)
 	r := asCall(t, srv, "CreateLaunchConfiguration", map[string]string{
 		"LaunchConfigurationName": "my-lc",
 		"ImageId":                 "ami-12345678",
@@ -238,7 +238,7 @@ func TestUpdateAutoScalingGroup_desiredCapacity(t *testing.T) {
 
 func TestDeleteAutoScalingGroup_success(t *testing.T) {
 	// Given: an ASG exists
-	srv := helpers.NewTestServer(t, helpers.WithServices("autoscaling"))
+	srv := helpers.NewTestServer(t)
 	r := asCall(t, srv, "CreateLaunchConfiguration", map[string]string{
 		"LaunchConfigurationName": "my-lc",
 		"ImageId":                 "ami-12345678",
@@ -276,7 +276,7 @@ func TestDeleteAutoScalingGroup_success(t *testing.T) {
 
 func TestPutScalingPolicy_success(t *testing.T) {
 	// Given: an ASG exists
-	srv := helpers.NewTestServer(t, helpers.WithServices("autoscaling"))
+	srv := helpers.NewTestServer(t)
 	r := asCall(t, srv, "CreateLaunchConfiguration", map[string]string{
 		"LaunchConfigurationName": "my-lc",
 		"ImageId":                 "ami-12345678",
@@ -311,7 +311,7 @@ func TestPutScalingPolicy_success(t *testing.T) {
 
 func TestDescribePolicies_afterPut(t *testing.T) {
 	// Given: a scaling policy exists
-	srv := helpers.NewTestServer(t, helpers.WithServices("autoscaling"))
+	srv := helpers.NewTestServer(t)
 	r := asCall(t, srv, "CreateLaunchConfiguration", map[string]string{
 		"LaunchConfigurationName": "my-lc",
 		"ImageId":                 "ami-12345678",
@@ -350,7 +350,7 @@ func TestDescribePolicies_afterPut(t *testing.T) {
 
 func TestPutLifecycleHook_success(t *testing.T) {
 	// Given: an ASG exists
-	srv := helpers.NewTestServer(t, helpers.WithServices("autoscaling"))
+	srv := helpers.NewTestServer(t)
 	r := asCall(t, srv, "CreateLaunchConfiguration", map[string]string{
 		"LaunchConfigurationName": "my-lc",
 		"ImageId":                 "ami-12345678",
@@ -382,7 +382,7 @@ func TestPutLifecycleHook_success(t *testing.T) {
 
 func TestDescribeLifecycleHooks_afterPut(t *testing.T) {
 	// Given: a lifecycle hook exists
-	srv := helpers.NewTestServer(t, helpers.WithServices("autoscaling"))
+	srv := helpers.NewTestServer(t)
 	r := asCall(t, srv, "CreateLaunchConfiguration", map[string]string{
 		"LaunchConfigurationName": "my-lc",
 		"ImageId":                 "ami-12345678",
@@ -422,7 +422,7 @@ func TestDescribeLifecycleHooks_afterPut(t *testing.T) {
 
 func TestCreateOrUpdateTags_success(t *testing.T) {
 	// Given: an ASG exists
-	srv := helpers.NewTestServer(t, helpers.WithServices("autoscaling"))
+	srv := helpers.NewTestServer(t)
 	r := asCall(t, srv, "CreateLaunchConfiguration", map[string]string{
 		"LaunchConfigurationName": "my-lc",
 		"ImageId":                 "ami-12345678",
@@ -454,7 +454,7 @@ func TestCreateOrUpdateTags_success(t *testing.T) {
 
 func TestDescribeTags_afterCreate(t *testing.T) {
 	// Given: tags exist on an ASG
-	srv := helpers.NewTestServer(t, helpers.WithServices("autoscaling"))
+	srv := helpers.NewTestServer(t)
 	r := asCall(t, srv, "CreateLaunchConfiguration", map[string]string{
 		"LaunchConfigurationName": "my-lc",
 		"ImageId":                 "ami-12345678",
@@ -493,7 +493,7 @@ func TestDescribeTags_afterCreate(t *testing.T) {
 
 func TestSetDesiredCapacity_success(t *testing.T) {
 	// Given: an ASG with desired=1
-	srv := helpers.NewTestServer(t, helpers.WithServices("autoscaling"))
+	srv := helpers.NewTestServer(t)
 	r := asCall(t, srv, "CreateLaunchConfiguration", map[string]string{
 		"LaunchConfigurationName": "my-lc",
 		"ImageId":                 "ami-12345678",
@@ -530,7 +530,7 @@ func TestSetDesiredCapacity_success(t *testing.T) {
 
 func TestDescribeAutoScalingInstances_empty(t *testing.T) {
 	// Given: an empty store
-	srv := helpers.NewTestServer(t, helpers.WithServices("autoscaling"))
+	srv := helpers.NewTestServer(t)
 
 	// When: DescribeAutoScalingInstances is called
 	resp := asCall(t, srv, "DescribeAutoScalingInstances", nil)
@@ -547,7 +547,7 @@ func TestDescribeAutoScalingInstances_empty(t *testing.T) {
 
 func TestXMLResponseIsWellFormed(t *testing.T) {
 	// Given: an ASG exists
-	srv := helpers.NewTestServer(t, helpers.WithServices("autoscaling"))
+	srv := helpers.NewTestServer(t)
 	r := asCall(t, srv, "CreateLaunchConfiguration", map[string]string{
 		"LaunchConfigurationName": "my-lc",
 		"ImageId":                 "ami-12345678",

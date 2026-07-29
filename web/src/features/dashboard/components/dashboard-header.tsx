@@ -9,12 +9,10 @@ const VIEWS = [
 ] as const satisfies readonly { value: DashboardView; label: string; icon: typeof LayoutGrid }[]
 
 export function DashboardHeader({
-  activeCount,
   totalCount,
   view,
   onViewChange,
 }: {
-  activeCount: number
   totalCount: number
   view: DashboardView
   onViewChange: (view: DashboardView) => void
@@ -23,7 +21,7 @@ export function DashboardHeader({
     <div className="mb-6 flex items-center gap-4">
       <h1 className="font-mono text-[22px] font-bold tracking-[-0.02em] text-fg">Dashboard</h1>
       <span className="font-mono text-xs text-fg-muted">
-        {activeCount} active &middot; {totalCount} services
+        {totalCount} services
       </span>
       <div className="ml-auto flex items-center gap-1 rounded-control border border-border bg-bg-elevated p-[3px]">
         {VIEWS.map(({ value, label, icon: Icon }) => (

@@ -26,7 +26,8 @@ import {
 } from "@tanstack/react-query"
 import { useEndpoint } from "@/hooks/use-endpoint"
 import * as eventStreamClient from "@/workers/event-stream.client"
-import type { WorkerMessage } from "@/workers/event-stream.protocol"
+import { DISCONNECTED } from "@/workers/event-stream.protocol"
+import type { ConnectionState, WorkerMessage } from "@/workers/event-stream.protocol"
 import { EventType } from "@/services/event-types"
 import { s3Keys } from "@/features/s3/data"
 import { sqsKeys } from "@/features/sqs/data"
@@ -69,10 +70,18 @@ const eventStreamKeys = {
   status: ["_eventStream", "status"] as const,
 }
 
-interface EventStreamStatus {
+/**
+ * The connection state as the UI sees it: the worker's own
+ * {@link ConnectionState}, widened so `connected` can be `null` for
+ * "the worker has not reported yet" — the first render of a fresh tab.
+ */
+export type EventStreamStatus = Omit<ConnectionState, "connected"> & {
   /** `null` = connecting (initial), `true` = online, `false` = offline */
   connected: boolean | null
 }
+
+/** What the status query holds until the worker's first message arrives. */
+const UNREPORTED: EventStreamStatus = { ...DISCONNECTED, connected: null }
 
 /**
  * Retention for both stream queries — see installEventStreamDefaults for why
@@ -121,7 +130,7 @@ export function eventStreamQueryOptions() {
 export function eventStreamStatusQueryOptions() {
   return queryOptions({
     queryKey: eventStreamKeys.status,
-    queryFn: (): EventStreamStatus => ({ connected: null }),
+    queryFn: (): EventStreamStatus => UNREPORTED,
     ...RETAIN_FOREVER,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
@@ -165,9 +174,7 @@ export function useEventStreamSubscription() {
         case "init":
           // Bootstrap the cache with the worker's stored events.
           qc.setQueryData<StreamEvent[]>(eventStreamKeys.events, msg.events)
-          qc.setQueryData<EventStreamStatus>(eventStreamKeys.status, {
-            connected: msg.connected,
-          })
+          qc.setQueryData<EventStreamStatus>(eventStreamKeys.status, msg.state)
           break
 
         case "events":
@@ -178,9 +185,7 @@ export function useEventStreamSubscription() {
           break
 
         case "status":
-          qc.setQueryData<EventStreamStatus>(eventStreamKeys.status, {
-            connected: msg.connected,
-          })
+          qc.setQueryData<EventStreamStatus>(eventStreamKeys.status, msg.state)
           break
 
         case "cleared":
@@ -238,6 +243,17 @@ export function useEventStream(opts: UseEventStreamOptions = {}): UseEventStream
   }, [])
 
   return { events, connected: status?.connected ?? false, clear }
+}
+
+/**
+ * Brings the scheduled reconnect forward to now — what "retry now" on the
+ * reconnecting toast calls. A no-op while an attempt is already in flight.
+ *
+ * Lives here so nothing above the hooks layer has to reach into the worker
+ * client directly.
+ */
+export function reconnectEventStream(): void {
+  eventStreamClient.reconnect()
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────

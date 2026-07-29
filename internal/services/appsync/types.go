@@ -146,7 +146,7 @@ type DomainNameConfig struct {
 	DomainName        string `json:"domainName"`
 	Description       string `json:"description,omitempty"`
 	CertificateArn    string `json:"certificateArn"`
-	AppsyncDomainName string `json:"appsyncDomainName,omitempty"` // Generated: d-xxxxx.appsync-api.region.amazonaws.com
+	AppsyncDomainName string `json:"appsyncDomainName,omitempty"` // Generated: d-xxxxx.appsync-api.{region}.{configured host}
 	HostedZoneId      string `json:"hostedZoneId,omitempty"`      // Synthetic hosted zone ID.
 }
 

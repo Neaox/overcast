@@ -27,6 +27,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
@@ -139,9 +140,14 @@ func (h *Handler) CreateDomainName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate synthetic appsyncDomainName and hostedZoneId.
-	req.AppsyncDomainName = fmt.Sprintf("d-%s.appsync-api.%s.amazonaws.com",
-		generateDomainHex(7), h.cfg.Region)
+	// Generate synthetic appsyncDomainName and hostedZoneId. Real AWS returns
+	// d-{hex}.appsync-api.{region}.amazonaws.com — the name a CNAME for the
+	// custom domain points at. Minting the amazonaws.com form here advertised a
+	// name that resolves to real AWS and can never reach the emulator, the same
+	// defect dns.GRAPHQL carried; it goes through the shared host-routed helper
+	// so the grammar is stated once. See docs/plans/host-routing-precedence.md §8.
+	req.AppsyncDomainName = serviceutil.HostRoutedHostname(
+		h.cfg, r, middleware.LabelAppSyncAPI, "d-"+generateDomainHex(7), h.region(r))
 	req.HostedZoneId = "Z" + generateDomainHex(10)
 
 	if storeErr := h.store.PutDomainName(r.Context(), &req); storeErr != nil {

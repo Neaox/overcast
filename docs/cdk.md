@@ -97,7 +97,7 @@ they create real state that you can query via the AWS APIs.
 ### Real handlers (resources are fully provisioned)
 
 | Service         | Resource Types                                                                                                                                                                                                                                             |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | -------------- | ------------------------------------------------------------------------------------------------ |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | S3              | `AWS::S3::Bucket`, `AWS::S3::BucketPolicy`                                                                                                                                                                                                                 |
 | SQS             | `AWS::SQS::Queue`                                                                                                                                                                                                                                          |
 | SNS             | `AWS::SNS::Topic`, `AWS::SNS::Subscription`                                                                                                                                                                                                                |
@@ -113,7 +113,8 @@ they create real state that you can query via the AWS APIs.
 | Step Functions  | `AWS::StepFunctions::StateMachine`                                                                                                                                                                                                                         |
 | CloudWatch Logs | `AWS::Logs::LogGroup`, `AWS::Logs::LogStream`                                                                                                                                                                                                              |
 | SSM             | `AWS::SSM::Parameter`                                                                                                                                                                                                                                      |
-| Secrets Manager | `AWS::SecretsManager::Secret`                                                                                                                                                                                                                              |     | CloudFormation | `AWS::CloudFormation::Stack` (nested stacks), `AWS::CloudFormation::CustomResource`, `Custom::*` |
+| Secrets Manager | `AWS::SecretsManager::Secret`                                                                                                                                                                                                                              |
+| CloudFormation  | `AWS::CloudFormation::Stack` (nested stacks), `AWS::CloudFormation::CustomResource`, `Custom::*` |
 
 ### Stubs (succeed silently, no real state)
 

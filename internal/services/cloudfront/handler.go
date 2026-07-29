@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -27,15 +28,31 @@ type Handler struct {
 	clk   clock.Clock
 	bus   *events.Bus
 	cache *cfCache
+
+	// originHosts decides whether an origin's DomainName is one this emulator
+	// serves. It is the same classifier the router uses on inbound requests, so
+	// origin resolution and request routing cannot disagree about a hostname.
+	originHosts *middleware.HostClassifier
+
+	// tlsPolicyWarnOnce guards the one-time warning emitted when a
+	// distribution asks for an HTTPS-only viewer protocol that this server
+	// cannot serve. Once per process, not per request: a proxied page pulls
+	// dozens of assets through the same distribution.
+	tlsPolicyWarnOnce sync.Once
 }
 
 func newHandler(cfg *config.Config, store *Store, log *serviceutil.ServiceLogger, clk clock.Clock) *Handler {
+	var hostname string
+	if cfg != nil {
+		hostname = cfg.Hostname
+	}
 	return &Handler{
-		cfg:   cfg,
-		store: store,
-		log:   log,
-		clk:   clk,
-		cache: newCFCache(clk),
+		cfg:         cfg,
+		store:       store,
+		log:         log,
+		clk:         clk,
+		cache:       newCFCache(clk),
+		originHosts: middleware.NewHostClassifier(hostname),
 	}
 }
 
