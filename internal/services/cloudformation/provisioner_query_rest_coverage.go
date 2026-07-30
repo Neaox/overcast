@@ -485,11 +485,13 @@ func (h *route53HostedZoneHandler) Update(ctx context.Context, router http.Handl
 
 type route53RecordSetHandler struct{}
 
-func (h *route53RecordSetHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	hostedZoneID, _ := props["HostedZoneId"].(string)
-	recordName, _ := props["Name"].(string)
-	recordType, _ := props["Type"].(string)
-
+// route53RecordSetKey resolves the record's identifying triple from template
+// properties, applying the same defaults and trailing-dot normalisation the
+// physical ID ("zone/name/type") is built from.
+func route53RecordSetKey(props map[string]any, rCtx *resolveContext) (hostedZoneID, recordName, recordType string) {
+	hostedZoneID, _ = props["HostedZoneId"].(string)
+	recordName, _ = props["Name"].(string)
+	recordType, _ = props["Type"].(string)
 	if recordName == "" {
 		recordName = fmt.Sprintf("%s.example.com", rCtx.StackName)
 	}
@@ -499,7 +501,12 @@ func (h *route53RecordSetHandler) Create(ctx context.Context, router http.Handle
 	if recordType == "" {
 		recordType = "A"
 	}
+	return hostedZoneID, recordName, recordType
+}
 
+// changeRecordSet issues a single-change ChangeResourceRecordSets batch built
+// from template properties. Create and Update differ only in the action.
+func (h *route53RecordSetHandler) changeRecordSet(ctx context.Context, router http.Handler, rCtx *resolveContext, action, hostedZoneID, recordName, recordType string, props map[string]any) error {
 	ttl := int64(300)
 	if v := fmtPropInt(props, "TTL"); v != 0 {
 		ttl = v
@@ -515,17 +522,24 @@ func (h *route53RecordSetHandler) Create(ctx context.Context, router http.Handle
 	}
 
 	record := route53RecordSetRequestFromCFN(props, recordName, recordType, ttl, resourceRecords)
-	batch := map[string]any{"ChangeBatch": map[string]any{"Changes": []any{map[string]any{"Action": "CREATE", "ResourceRecordSet": record}}}}
+	batch := map[string]any{"ChangeBatch": map[string]any{"Changes": []any{map[string]any{"Action": action, "ResourceRecordSet": record}}}}
 	xmlBytes, err := marshalCFNXML("ChangeResourceRecordSetsRequest", batch, nil, route53ItemName, route53ListWrapper)
 	if err != nil {
-		return "", nil, fmt.Errorf("Route53: marshal ChangeResourceRecordSets: %w", err)
+		return fmt.Errorf("Route53: marshal ChangeResourceRecordSets: %w", err)
 	}
 
 	path := fmt.Sprintf("/2013-04-01/hostedzone/%s/rrset", hostedZoneID)
 	if _, err := internalRequest(ctx, router, rCtx.Region, http.MethodPost, path, "application/xml", xmlBytes); err != nil {
-		return "", nil, fmt.Errorf("ChangeResourceRecordSets: %w", err)
+		return fmt.Errorf("ChangeResourceRecordSets: %w", err)
 	}
+	return nil
+}
 
+func (h *route53RecordSetHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	hostedZoneID, recordName, recordType := route53RecordSetKey(props, rCtx)
+	if err := h.changeRecordSet(ctx, router, rCtx, "CREATE", hostedZoneID, recordName, recordType, props); err != nil {
+		return "", nil, err
+	}
 	physicalID := fmt.Sprintf("%s/%s/%s", hostedZoneID, recordName, recordType)
 	return physicalID, nil, nil
 }
@@ -583,7 +597,23 @@ func (h *route53RecordSetHandler) Delete(ctx context.Context, router http.Handle
 }
 
 func (h *route53RecordSetHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return "", nil, errReplacementRequired
+	parts := strings.SplitN(physicalID, "/", 3)
+	if len(parts) < 3 {
+		return "", nil, errReplacementRequired
+	}
+
+	// Zone, name and type identify the record — a change to any of them is a
+	// different record (Replacement: Yes on real AWS). Everything else (TTL,
+	// ResourceRecords, alias target) updates the record in place.
+	hostedZoneID, recordName, recordType := route53RecordSetKey(props, rCtx)
+	if hostedZoneID != parts[0] || recordName != parts[1] || recordType != parts[2] {
+		return "", nil, errReplacementRequired
+	}
+
+	if err := h.changeRecordSet(ctx, router, rCtx, "UPSERT", hostedZoneID, recordName, recordType, props); err != nil {
+		return "", nil, err
+	}
+	return physicalID, nil, nil
 }
 
 func route53RecordSetRequestFromCFN(props map[string]any, recordName, recordType string, ttl int64, resourceRecords []string) map[string]any {
@@ -696,7 +726,37 @@ func (h *eksClusterHandler) Delete(ctx context.Context, router http.Handler, cfg
 }
 
 func (h *eksClusterHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return "", nil, errReplacementRequired
+	// Physical ID is the cluster ARN, "arn:…:cluster/{name}". Name and
+	// RoleArn replace on real AWS; CreateCluster rejects duplicate names, so
+	// replacing under an unchanged name can never succeed.
+	oldName := physicalID
+	if idx := strings.LastIndex(oldName, "/"); idx >= 0 {
+		oldName = oldName[idx+1:]
+	}
+	if n, ok := props["Name"].(string); ok && n != "" && n != oldName {
+		return "", nil, errReplacementRequired
+	}
+	if r, ok := props["RoleArn"].(string); ok && r != "" {
+		if or, _ := oldProps["RoleArn"].(string); or != "" && or != r {
+			return "", nil, errReplacementRequired
+		}
+	}
+
+	if v, ok := props["ResourcesVpcConfig"].(map[string]any); ok && v != nil {
+		body := map[string]any{"name": oldName, "resourcesVpcConfig": v}
+		if _, err := internalJSON(ctx, router, rCtx.Region, "EKS.UpdateClusterConfig", body); err != nil {
+			return "", nil, fmt.Errorf("UpdateClusterConfig: %w", err)
+		}
+	}
+	if v, ok := props["Version"].(string); ok && v != "" {
+		if ov, _ := oldProps["Version"].(string); ov != v {
+			body := map[string]any{"name": oldName, "version": v}
+			if _, err := internalJSON(ctx, router, rCtx.Region, "EKS.UpdateClusterVersion", body); err != nil {
+				return "", nil, fmt.Errorf("UpdateClusterVersion: %w", err)
+			}
+		}
+	}
+	return physicalID, nil, nil
 }
 
 // ── AWS::EKS::Nodegroup ────────────────────────────────────────────────────
@@ -766,7 +826,36 @@ func (h *eksNodegroupHandler) Delete(ctx context.Context, router http.Handler, c
 }
 
 func (h *eksNodegroupHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return "", nil, errReplacementRequired
+	// Physical ID is "{clusterName}/{nodegroupName}"; both replace on real
+	// AWS, as do NodeRole and Subnets. CreateNodegroup rejects duplicates, so
+	// replacing under an unchanged pair can never succeed.
+	parts := strings.SplitN(physicalID, "/", 2)
+	if len(parts) < 2 {
+		return "", nil, errReplacementRequired
+	}
+	if cn, ok := props["ClusterName"].(string); ok && cn != "" && cn != parts[0] {
+		return "", nil, errReplacementRequired
+	}
+	if ngn, ok := props["NodegroupName"].(string); ok && ngn != "" && ngn != parts[1] {
+		return "", nil, errReplacementRequired
+	}
+	if nr, ok := props["NodeRole"].(string); ok && nr != "" {
+		if or, _ := oldProps["NodeRole"].(string); or != "" && or != nr {
+			return "", nil, errReplacementRequired
+		}
+	}
+
+	if v, ok := props["ScalingConfig"].(map[string]any); ok && v != nil {
+		body := map[string]any{
+			"name":          parts[0],
+			"nodegroupName": parts[1],
+			"scalingConfig": v,
+		}
+		if _, err := internalJSON(ctx, router, rCtx.Region, "EKS.UpdateNodegroupConfig", body); err != nil {
+			return "", nil, fmt.Errorf("UpdateNodegroupConfig: %w", err)
+		}
+	}
+	return physicalID, nil, nil
 }
 
 // ── AWS::EKS::FargateProfile ───────────────────────────────────────────────
@@ -913,7 +1002,36 @@ func (h *eksAccessEntryHandler) Delete(ctx context.Context, router http.Handler,
 }
 
 func (h *eksAccessEntryHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return "", nil, errReplacementRequired
+	// Physical ID is "{clusterName}/{principalArn}"; both replace on real
+	// AWS, and CreateAccessEntry rejects a duplicate principal, so replacing
+	// under an unchanged pair can never succeed.
+	parts := strings.SplitN(physicalID, "/", 2)
+	if len(parts) < 2 {
+		return "", nil, errReplacementRequired
+	}
+	if cn, ok := props["ClusterName"].(string); ok && cn != "" && cn != parts[0] {
+		return "", nil, errReplacementRequired
+	}
+	if pa, ok := props["PrincipalArn"].(string); ok && pa != "" && pa != parts[1] {
+		return "", nil, errReplacementRequired
+	}
+
+	body := map[string]any{"name": parts[0], "principalArn": parts[1]}
+	send := false
+	if v, _ := props["Username"].(string); v != "" {
+		body["username"] = v
+		send = true
+	}
+	if v, ok := props["KubernetesGroups"].([]any); ok {
+		body["kubernetesGroups"] = v
+		send = true
+	}
+	if send {
+		if _, err := internalJSON(ctx, router, rCtx.Region, "EKS.UpdateAccessEntry", body); err != nil {
+			return "", nil, fmt.Errorf("UpdateAccessEntry: %w", err)
+		}
+	}
+	return physicalID, nil, nil
 }
 
 // ── AWS::EKS::PodIdentityAssociation ───────────────────────────────────────
@@ -963,7 +1081,30 @@ func (h *eksPodIdentityAssociationHandler) Delete(ctx context.Context, router ht
 }
 
 func (h *eksPodIdentityAssociationHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return "", nil, errReplacementRequired
+	// Physical ID is the opaque association ID; the identifying triple
+	// (cluster, namespace, service account — all Replacement: Yes) lives in
+	// the stored properties. CreatePodIdentityAssociation rejects a duplicate
+	// binding, so replacing under an unchanged triple can never succeed.
+	for _, key := range []string{"ClusterName", "Namespace", "ServiceAccount"} {
+		nv, _ := props[key].(string)
+		ov, _ := oldProps[key].(string)
+		if nv != ov {
+			return "", nil, errReplacementRequired
+		}
+	}
+
+	clusterName, _ := props["ClusterName"].(string)
+	if v, _ := props["RoleArn"].(string); v != "" {
+		body := map[string]any{
+			"name":          clusterName,
+			"associationId": physicalID,
+			"roleArn":       v,
+		}
+		if _, err := internalJSON(ctx, router, rCtx.Region, "EKS.UpdatePodIdentityAssociation", body); err != nil {
+			return "", nil, fmt.Errorf("UpdatePodIdentityAssociation: %w", err)
+		}
+	}
+	return physicalID, nil, nil
 }
 
 // ── AWS::MSK::Cluster ──────────────────────────────────────────────────────
@@ -1135,7 +1276,41 @@ func (h *pipesPipeHandler) Delete(ctx context.Context, router http.Handler, cfg 
 }
 
 func (h *pipesPipeHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return "", nil, errReplacementRequired
+	// Physical ID is the pipe ARN, "arn:…:pipe/{name}" (or the bare name).
+	// Name and Source replace on real AWS; CreatePipe rejects duplicates, so
+	// replacing under an unchanged name can never succeed.
+	oldName := physicalID
+	if idx := strings.LastIndex(oldName, "/"); idx >= 0 {
+		oldName = oldName[idx+1:]
+	}
+	if n, ok := props["Name"].(string); ok && n != "" && n != oldName {
+		return "", nil, errReplacementRequired
+	}
+	if src, ok := props["Source"].(string); ok && src != "" {
+		if osrc, _ := oldProps["Source"].(string); osrc != "" && osrc != src {
+			return "", nil, errReplacementRequired
+		}
+	}
+
+	// The emulated pipe PATCHes state and description; the other mutable
+	// properties (Target, RoleArn, enrichment) have no update surface yet.
+	body := map[string]any{}
+	if v, _ := props["DesiredState"].(string); v != "" {
+		body["DesiredState"] = v
+	}
+	if v, _ := props["Description"].(string); v != "" {
+		body["Description"] = v
+	}
+	if len(body) > 0 {
+		jsonBytes, err := json.Marshal(body)
+		if err != nil {
+			return "", nil, fmt.Errorf("Pipes: marshal update request: %w", err)
+		}
+		if _, err := internalRequest(ctx, router, rCtx.Region, http.MethodPatch, "/v1/pipes/"+oldName, "application/json", jsonBytes); err != nil {
+			return "", nil, fmt.Errorf("UpdatePipe: %w", err)
+		}
+	}
+	return physicalID, nil, nil
 }
 
 // ── AWS::IAM::User ─────────────────────────────────────────────────────────
