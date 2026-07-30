@@ -1,24 +1,30 @@
 {
-  "version": 1,
-  "comment": "Compat tests that give different answers on identical input. Quarantined from the baseline gate in BOTH directions: a flaky test never fails a PR, and never gets promoted on the run where it happened to pass. These are bugs to fix, not a resting state — this list only shrinks. Remove an entry in the PR that fixes it. See compat/AGENTS.md § Baseline & uniformity policy.",
+  "version": 2,
+  "comment": "Compat tests that give different answers on identical input. Quarantined from the baseline gate in BOTH directions: a flaky test never fails a PR, and never gets promoted on the run where it happened to pass. Quarantine is a STOP-GAP — every entry needs a tracking issue and a date, goes overdue after 14 days (the nightly flake-detection job fails), and blocks pull requests after 30 (the PR lint fails). Fix the test and delete the entry. See compat/AGENTS.md § Stabilising a flaky test.",
   "flaky": [
     {
       "suite": "dotnet-sdk",
       "group": "sns-subscriptions",
       "test": "PublishDeliveredToSQS",
-      "reason": "Intermittent 'Topic does not exist: oc-<run>-dn-sns-sub'. The same topic was used successfully by SubscribeSQS earlier in the group, so the topic is being lost between calls rather than never created — suspect a race in the emulator's SNS topic store or in the suite's setup ordering. Observed passing and failing on consecutive CI runs of an unchanged tree."
+      "since": "2026-07-29",
+      "issue": "https://github.com/Neaox/overcast/issues/388",
+      "reason": "Intermittent 'Topic does not exist: oc-<run>-dn-sns-sub'. The same topic was used successfully by SubscribeSQS earlier in the group, so the topic is being lost between calls rather than never created — suspect write visibility in internal/state, or a handler reading a snapshot taken before the write landed. Observed passing and failing on consecutive CI runs of an unchanged tree."
     },
     {
       "suite": "dotnet-sdk",
       "group": "sns-subscriptions",
       "test": "Unsubscribe",
-      "reason": "Cascades from PublishDeliveredToSQS: skipped as 'dependency failed' whenever that test fails. Remove this entry together with the one above."
+      "since": "2026-07-29",
+      "issue": "https://github.com/Neaox/overcast/issues/388",
+      "reason": "Cascades from PublishDeliveredToSQS: reported 'skip — dependency failed' on some runs and 'fail' on others. Not flaky in itself; remove it together with the entry above."
     },
     {
       "suite": "cli",
       "group": "eventbridge-buses",
       "test": "DeleteEventBus",
-      "reason": "Downstream of the cli/eventbridge-buses/ListEventBuses failure (plan R7), whose cascade is not deterministic: DeleteEventBus is reported 'skip — dependency failed: ListEventBuses' on some runs and 'fail' on others, on trees that do not touch EventBridge. Quarantined so an unrelated PR is not blocked by which side of that coin lands. Remove it with the ListEventBuses fix."
+      "since": "2026-07-29",
+      "issue": "https://github.com/Neaox/overcast/issues/388",
+      "reason": "Downstream of the stable cli/eventbridge-buses/ListEventBuses failure (plan R7), whose knock-on is not deterministic: 'skip — dependency failed' on some runs, 'fail' on others, on trees that do not touch EventBridge. Not flaky in itself; remove it with the ListEventBuses fix. Same shape as the SNS race above — a resource is created, and the next call cannot find it — which is why one issue covers both."
     }
   ]
 }
