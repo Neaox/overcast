@@ -1113,6 +1113,29 @@ func (h *Handler) scheduleHealthCheck(instanceID string, host string, port int) 
 	h.scheduler.After(instanceID+":health", 1*time.Second, check)
 }
 
+// teardownOrphanedContainer removes a container whose DB instance record was
+// deleted while the container was still starting. DeleteDBInstance could not
+// stop it — the container ID had not been persisted yet — so the start
+// goroutine owns the cleanup, including the port it allocated.
+func (h *Handler) teardownOrphanedContainer(ctx context.Context, instanceID, containerID string, hostPort int) {
+	h.log.Info("RDS: instance deleted while its container was starting — removing container",
+		zap.String("instance", instanceID), zap.String("container", containerID))
+	if containerID != "" {
+		if h.gc != nil {
+			h.gc.StopNow(containerID)
+			h.gc.ScheduleRemove(containerID)
+		} else if h.docker != nil {
+			_ = h.docker.RemoveContainerForce(containerID)
+		}
+	}
+	if hostPort > 0 {
+		if aerr := h.store.releasePort(ctx, hostPort); aerr != nil {
+			h.log.Warn("RDS cleanup: release port",
+				zap.String("instance", instanceID), zap.Int("port", hostPort), zap.Error(aerr))
+		}
+	}
+}
+
 // cleanupDBContainer releases the port reservation for a DB instance that had
 // no Docker container (e.g. it was created before Docker was available).
 // Docker container stop/remove is handled by the GC — this function is only

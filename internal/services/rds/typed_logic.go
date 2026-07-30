@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 )
 
@@ -258,7 +259,7 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 		h.dockerWg.Add(1)
 		go func() {
 			defer h.dockerWg.Done()
-			bgCtx := context.Background()
+			bgCtx := middleware.ContextWithRegion(context.Background(), h.store.region(ctx))
 			got, aerr := h.store.getDBInstance(bgCtx, instID)
 			if aerr != nil || got == nil {
 				return
@@ -268,12 +269,36 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 					zap.String("instance", instID), zap.Error(err))
 				return
 			}
-			if aerr := h.store.putDBInstance(bgCtx, got); aerr != nil {
+			// The container start took real time, so the instance may have been
+			// stopped or deleted meanwhile. Persisting the pre-start snapshot
+			// would overwrite those transitions (StartDBInstance then rejects a
+			// "stopped" instance whose status reverted), so merge the container
+			// fields into a fresh read instead.
+			fresh, aerr := h.store.getDBInstance(bgCtx, instID)
+			if aerr != nil || fresh == nil || fresh.DBInstanceStatus == "deleting" {
+				h.teardownOrphanedContainer(bgCtx, instID, got.DockerContainerID, got.HostPort)
+				return
+			}
+			fresh.DockerContainerID = got.DockerContainerID
+			fresh.HostPort = got.HostPort
+			fresh.Endpoint = got.Endpoint
+			if aerr := h.store.putDBInstance(bgCtx, fresh); aerr != nil {
 				h.log.Warn("RDS: persist post-start instance",
 					zap.String("instance", instID), zap.String("error", aerr.Message))
 				return
 			}
-			h.scheduleHealthCheck(instID, got.Endpoint.Address, got.Endpoint.Port)
+			switch fresh.DBInstanceStatus {
+			case "stopping", "stopped":
+				// Instance was stopped while the container was starting — bring
+				// the container down to match; it restarts on StartDBInstance.
+				if h.gc != nil {
+					h.gc.StopNow(fresh.DockerContainerID)
+				} else {
+					_ = h.docker.StopContainer(bgCtx, fresh.DockerContainerID, 10)
+				}
+			default:
+				h.scheduleHealthCheck(instID, fresh.Endpoint.Address, fresh.Endpoint.Port)
+			}
 		}()
 	}
 

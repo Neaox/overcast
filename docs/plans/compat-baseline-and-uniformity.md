@@ -110,6 +110,21 @@ Quarantine is containment. The plan to actually remove it:
    [internal/state](../../internal/state) and at any handler that reads through
    a snapshot taken before the write landed. One fix plausibly clears both
    quarantines *and* R7.
+
+   **Not every flake is that pattern, though — check for stale-snapshot
+   write-backs too.** `cli/rds-instances/StartDBInstance` failed the gate twice
+   on 2026-07-30 (`InvalidDBInstanceState`, with the `DeleteDBInstance`
+   cascade) and turned out to be RDS-local, not the shared visibility race: the
+   background goroutine that starts the DB container read the instance record,
+   spent seconds starting the container, then wrote the stale snapshot back —
+   clobbering any Stop/Delete transition that landed meanwhile. Only the cli
+   suite paces Stop→Start slowly enough (~1 s per aws-cli invocation) to
+   overlap the container-start window, which is why the SDK suites never saw
+   it. Fixed at the root (merge container fields into a fresh read; tear down
+   the container when the instance was deleted mid-start) with a deterministic
+   repro in `internal/services/rds/handler_docker_race_test.go`, so it was
+   never quarantined. Any other service that persists state from a goroutine
+   spanning a slow external operation deserves the same audit.
 3. **Weight cascades in the burn-down.** Neither quarantined test is flaky in
    itself: both are dependants of a *stable* failure whose cascade is
    non-deterministic (`dependency failed` one run, `fail` the next). Any
