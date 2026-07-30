@@ -618,6 +618,11 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	apigwSvc.InitBus(bus)
 	apigwSvc.InitDomainRegistry(domainReg)
 	apigwSvc.InitLambdaInvoker(lambdaSvc.SyncInvoker())
+	// Lambda ← API GW / AppSync: proactive-init trigger evidence — these
+	// services can attest a function is wired to receive traffic. Queried
+	// only when a function's configuration settles after a deploy.
+	lambdaSvc.AddTriggerSource(apigwSvc)
+	lambdaSvc.AddTriggerSource(appsyncSvc)
 	apigwSvc.InitCognitoValidator(cognitoSvc)
 	// DynamoDB Streams → SQS via Pipes: subscribe to stream events and enqueue.
 	pipesSvc.InitDelivery(bus, sqsSvc.Enqueuer())

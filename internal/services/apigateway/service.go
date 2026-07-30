@@ -21,7 +21,9 @@
 package apigateway
 
 import (
+	"context"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -41,6 +43,34 @@ const serviceName = "apigateway"
 type Service struct {
 	log     *serviceutil.ServiceLogger
 	handler *Handler
+}
+
+// ReferencesFunction implements the Lambda service's TriggerSource: it
+// reports whether any REST method integration or HTTP API integration
+// targets the given Lambda function. The check is a raw substring scan over
+// the stored records — integration URIs embed the full function ARN, the
+// check runs only when a function settles after a deploy (never per
+// request), and decoding every record for a boolean would be pure overhead.
+// The ARN is matched with its following delimiter (`/invocations` in v1
+// URIs, a closing quote in v2), so `…function:app` never matches an
+// integration for `…function:app-2`.
+func (s *Service) ReferencesFunction(ctx context.Context, functionARN string) bool {
+	if functionARN == "" {
+		return false
+	}
+	region := serviceutil.ARNRegion(functionARN)
+	for _, ns := range []string{nsResources, nsV2Integ} {
+		pairs, err := s.handler.store.store.Scan(ctx, ns, serviceutil.RegionKey(region, ""))
+		if err != nil {
+			continue
+		}
+		for _, p := range pairs {
+			if strings.Contains(p.Value, functionARN+"/") || strings.Contains(p.Value, functionARN+`"`) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // New returns a configured API Gateway Service.

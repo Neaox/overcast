@@ -455,14 +455,18 @@ until settle (injected clock); no trigger evidence → zero environments;
 contended capacity → busy, never queued; already-warm / provisioned /
 throttled-to-zero functions skipped.
 
-**v1 deviations / follow-ups before the default flips on:**
-- Trigger evidence is lambda-local only (invoked-this-process, URL, ESM).
-  Detecting API GW / AppSync / CloudFront wiring lives in those services'
-  state — the planned event-driven "this ARN is referenced" signal is the
-  main gap; until then, the first-ever request of an API GW-wired function
-  in a fresh process is still a (now ~300 ms) cold start, and proactive init
-  covers every redeploy after it.
-- The §2.2 background tar pre-fill can now hook the same settle signal.
+**v1 deviations / follow-ups — closed 2026-07-31:**
+- Cross-service trigger evidence landed as a **pull** design rather than the
+  sketched bus events: `lambda.TriggerSource` (router-wired; API Gateway and
+  AppSync implement `ReferencesFunction`) answers "does any integration or
+  data source target this ARN" with a raw substring scan of stored records —
+  delimiter-guarded so `…:app` never matches `…:app-2` — queried only at
+  settle time. First requests of API GW/AppSync-wired functions now land
+  warm in a fresh process too. CloudFront needs no source of its own: its
+  local origins route through function URLs or API Gateway, both covered.
+- The §2.2 background tar pre-fill hooks the same settle signal (landed).
+- Remaining before the default flips on: a release of soak with
+  `LAMBDA_PROACTIVE_INIT=true`.
 
 ---
 
