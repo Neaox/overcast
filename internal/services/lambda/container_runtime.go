@@ -64,6 +64,9 @@ type ContainerRuntime struct {
 	layerFetcher     LayerContentFetcher                // resolves a layer ARN to zip bytes for /opt injection
 	remoteFetcher    *RemoteLayerFetcher                // optional — fetches layers from real AWS
 	codeFetcher      CodeFetcher                        // populates fn.CodeZip at cold start; nil in tests
+	tarCache         *tarCache                          // pre-built code/layer tars; nil = disabled
+	imageVerified    sync.Map                           // pull key → struct{}{}: image confirmed present, skip the per-acquire daemon check
+	caTarOnce        func() ([]byte, error)             // CA bundle tar built once (certs are minted before the runtime exists)
 	coldStartSem     chan struct{}                      // bounds concurrent container creation/INIT bursts
 
 	// initBurst tracks containers that are still in the INIT phase with burst
@@ -178,6 +181,7 @@ func NewContainerRuntime(
 		limit = 1
 	}
 
+	endpoint := containerendpoint.New(cfg, overcastEndpoint).WithPublishedPort(cfg.PublishedPort)
 	return &ContainerRuntime{
 		cfg:              cfg,
 		clk:              clk,
@@ -190,9 +194,14 @@ func NewContainerRuntime(
 		// The Runtime API address is already an address Lambda containers can
 		// route to, so it is used directly rather than re-resolved. The mapper
 		// applies the shared rewriting and /etc/hosts rules on top of it.
-		endpoint:     containerendpoint.New(cfg, overcastEndpoint).WithPublishedPort(cfg.PublishedPort),
+		endpoint:     endpoint,
 		exitNotify:   newExitNotifier(),
 		coldStartSem: make(chan struct{}, limit),
+		tarCache:     newTarCache(int64(cfg.LambdaTarCacheMB) * 1024 * 1024),
+		// The trust root is minted before the Lambda runtime exists and never
+		// rotates within a process, so the tar (a disk read per call
+		// otherwise) is built once.
+		caTarOnce: sync.OnceValues(endpoint.CABundleTar),
 	}
 }
 
@@ -347,16 +356,22 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	}
 	platform := dockerPlatformForLambdaArchitectures(fn.Architectures)
 
-	// Ensure the image is pulled (lazy, once per image).
-	exists, _ := cr.docker.ImageMatchesPlatform(ctx, image, platform)
-	if !exists {
-		progress("Pulling image " + image)
-	}
-	if err := cr.ensureImage(ctx, image, platform); err != nil {
-		return nil, fmt.Errorf("pull image: %w", err)
-	}
-	if !exists {
-		progress("Image ready")
+	// Ensure the image is present (lazy, once per image). Once verified, later
+	// acquires skip this daemon round trip entirely; the create-time
+	// missing-image retry below covers an image removed behind our back.
+	pullKey := imagePullKey(image, platform)
+	if _, verified := cr.imageVerified.Load(pullKey); !verified {
+		exists, _ := cr.docker.ImageMatchesPlatform(ctx, image, platform)
+		if !exists {
+			progress("Pulling image " + image)
+		}
+		if err := cr.ensureImage(ctx, image, platform); err != nil {
+			return nil, fmt.Errorf("pull image: %w", err)
+		}
+		if !exists {
+			progress("Image ready")
+		}
+		cr.imageVerified.Store(pullKey, struct{}{})
 	}
 	mark("image_check")
 
@@ -382,16 +397,29 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	var codeTar []byte
 	if !isImage && hotReloadPath == "" {
 		progress("Preparing function code")
-		// The function record travels without its package; materialize the
-		// stored bytes now — the one place on the invoke path that needs them.
-		if len(fn.CodeZip) == 0 && cr.codeFetcher != nil {
-			if err := cr.codeFetcher(ctx, fn); err != nil {
-				return nil, fmt.Errorf("fetch function code: %w", err)
-			}
+		cacheKey := ""
+		if fn.CodeHash != "" {
+			cacheKey = "code:" + fn.CodeHash
 		}
-		codeTar, err = zipToTar(fn.CodeZip)
-		if err != nil {
-			return nil, fmt.Errorf("build code tar: %w", explainUnreadablePackage(fn, err))
+		if cached, ok := cr.tarCache.get(cacheKey); ok {
+			// A hit skips both materializing the package from the store and
+			// the zip→tar conversion.
+			codeTar = cached.data
+		} else {
+			// The function record travels without its package; materialize the
+			// stored bytes now — the one place on the invoke path that needs them.
+			if len(fn.CodeZip) == 0 && cr.codeFetcher != nil {
+				if err := cr.codeFetcher(ctx, fn); err != nil {
+					return nil, fmt.Errorf("fetch function code: %w", err)
+				}
+			}
+			codeTar, err = zipToTar(fn.CodeZip)
+			if err != nil {
+				return nil, fmt.Errorf("build code tar: %w", explainUnreadablePackage(fn, err))
+			}
+			if cacheKey != "" {
+				cr.tarCache.put(&tarCacheEntry{key: cacheKey, data: codeTar})
+			}
 		}
 	}
 	mark("code_prep")
@@ -441,6 +469,20 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	}
 
 	id, err := cr.docker.CreateContainer(ctx, containerName, req)
+	if err != nil && isImageMissingErr(err) {
+		// The image vanished after verification (docker rmi / prune). Drop
+		// both caches — pullOnce too, or ensureImage's spent sync.Once would
+		// skip the pull and this function could never run again without a
+		// restart — then re-pull and retry the create once.
+		cr.imageVerified.Delete(pullKey)
+		cr.pullOnce.Delete(pullKey)
+		cr.logger.Info("lambda image missing at container create — re-pulling",
+			zap.String("image", image), zap.String("function", fn.Name))
+		if pullErr := cr.ensureImage(ctx, image, platform); pullErr == nil {
+			cr.imageVerified.Store(pullKey, struct{}{})
+			id, err = cr.docker.CreateContainer(ctx, containerName, req)
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("create container: %w", decorateHotReloadMountError(err, hotReloadPath))
 	}
@@ -484,7 +526,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	// certificate before its first SDK call — otherwise every AWS call from
 	// inside the function fails certificate verification. Injected by the same
 	// mechanism as code: a dockerized Overcast has no host path to bind-mount.
-	if caTar, caErr := cr.endpoint.CABundleTar(); caErr != nil {
+	if caTar, caErr := cr.caBundleTar(); caErr != nil {
 		cr.logger.Warn("CA bundle unavailable; function TLS calls to Overcast will fail verification", zap.Error(caErr))
 	} else if caTar != nil {
 		progress("Injecting TLS trust root")
@@ -771,6 +813,21 @@ func (cr *ContainerRuntime) SeedImages() {
 	close(jobs)
 }
 
+// imagePullKey identifies an image+platform pair in the pullOnce and
+// imageVerified maps — the same key must be used to seed and to invalidate.
+func imagePullKey(image, platform string) string {
+	if platform == "" {
+		return image
+	}
+	return image + "@" + platform
+}
+
+// isImageMissingErr reports whether a container-create failure means the
+// image is gone from the daemon (removed after it was verified present).
+func isImageMissingErr(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "no such image")
+}
+
 func (cr *ContainerRuntime) ensureImage(ctx context.Context, image, platform string) error {
 	// Check if already pulled.
 	exists, err := cr.docker.ImageMatchesPlatform(ctx, image, platform)
@@ -780,10 +837,7 @@ func (cr *ContainerRuntime) ensureImage(ctx context.Context, image, platform str
 
 	// Use sync.Once per image+platform to avoid concurrent pulls while still
 	// allowing arm64 and x86_64 variants of the same Lambda tag to be requested.
-	pullKey := image
-	if platform != "" {
-		pullKey += "@" + platform
-	}
+	pullKey := imagePullKey(image, platform)
 	once, _ := cr.pullOnce.LoadOrStore(pullKey, &sync.Once{})
 	var pullErr error
 	once.(*sync.Once).Do(func() {
@@ -2210,6 +2264,17 @@ func (cr *ContainerRuntime) copyLayersToContainer(ctx context.Context, container
 		if arn == "" {
 			continue
 		}
+		// Layer versions are immutable, so ARN-keyed tars (and the extension
+		// scan) are cached across cold starts and functions.
+		if cached, ok := cr.tarCache.get("layer:" + arn); ok {
+			if err := cr.docker.CopyToContainer(ctx, containerID, "/opt", bytes.NewReader(cached.data)); err != nil {
+				return nil, nil, fmt.Errorf("copy layer %s to /opt: %w", arn, err)
+			}
+			for _, name := range cached.extensions {
+				extensionSet[name] = true
+			}
+			continue
+		}
 		zipData, err := cr.layerFetcher(ctx, arn)
 		if err != nil {
 			// Try remote fetch if enabled.
@@ -2236,9 +2301,11 @@ func (cr *ContainerRuntime) copyLayersToContainer(ctx context.Context, container
 		if err := cr.docker.CopyToContainer(ctx, containerID, "/opt", bytes.NewReader(layerTar)); err != nil {
 			return nil, nil, fmt.Errorf("copy layer %s to /opt: %w", arn, err)
 		}
-		for _, name := range discoverExternalExtensions(zipData) {
+		discovered := discoverExternalExtensions(zipData)
+		for _, name := range discovered {
 			extensionSet[name] = true
 		}
+		cr.tarCache.put(&tarCacheEntry{key: "layer:" + arn, data: layerTar, extensions: discovered})
 	}
 	if len(extensionSet) == 0 {
 		return nil, skippedLayerLogLines, nil
@@ -2284,7 +2351,20 @@ func discoverExternalExtensions(zipData []byte) []string {
 	return extensions
 }
 
-func (cr *ContainerRuntime) copyLambdaBootstrapToContainer(ctx context.Context, containerID string) error {
+// caBundleTar returns the cached TLS trust-root tar. Falls back to a direct
+// build for runtimes constructed without the cache (struct-literal tests).
+func (cr *ContainerRuntime) caBundleTar() ([]byte, error) {
+	if cr.caTarOnce != nil {
+		return cr.caTarOnce()
+	}
+	return cr.endpoint.CABundleTar()
+}
+
+// lambdaBootstrapTar is the static bootstrap archive, built once — its
+// content never varies between cold starts.
+var lambdaBootstrapTar = sync.OnceValues(buildLambdaBootstrapTar)
+
+func buildLambdaBootstrapTar() ([]byte, error) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	script := lambdaBootstrapScript()
@@ -2293,22 +2373,30 @@ func (cr *ContainerRuntime) copyLambdaBootstrapToContainer(ctx context.Context, 
 		Mode:     0o755,
 		Typeflag: tar.TypeDir,
 	}); err != nil {
-		return err
+		return nil, err
 	}
 	if err := tw.WriteHeader(&tar.Header{
 		Name: "var/overcast/bootstrap",
 		Size: int64(len(script)),
 		Mode: 0o755,
 	}); err != nil {
-		return err
+		return nil, err
 	}
 	if _, err := tw.Write(script); err != nil {
-		return err
+		return nil, err
 	}
 	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func (cr *ContainerRuntime) copyLambdaBootstrapToContainer(ctx context.Context, containerID string) error {
+	data, err := lambdaBootstrapTar()
+	if err != nil {
 		return err
 	}
-	return cr.docker.CopyToContainer(ctx, containerID, "/", bytes.NewReader(buf.Bytes()))
+	return cr.docker.CopyToContainer(ctx, containerID, "/", bytes.NewReader(data))
 }
 
 func lambdaBootstrapScript() []byte {
