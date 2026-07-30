@@ -464,8 +464,7 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		fn.Environment = req.Environment.Variables
 	}
 	if req.Code != nil {
-		fn.CodeZip = req.Code.ZipFile
-		fn.CodeSize = int64(len(req.Code.ZipFile))
+		fn.setCode(req.Code.ZipFile)
 		fn.CodeS3Bucket = req.Code.S3Bucket
 		fn.CodeS3Key = req.Code.S3Key
 		fn.ImageUri = req.Code.ImageUri
@@ -477,8 +476,7 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		// and the function would invoke with an empty zip.
 		if len(fn.CodeZip) == 0 && fn.CodeS3Bucket != "" && fn.CodeS3Key != "" && h.s3Fetch != nil {
 			if zip, err := h.s3Fetch(ctx, fn.CodeS3Bucket, fn.CodeS3Key); err == nil {
-				fn.CodeZip = zip
-				fn.CodeSize = int64(len(zip))
+				fn.setCode(zip)
 			} else {
 				h.log.Warn("lambda: create function: s3 fetch failed",
 					zap.String("function", fn.Name),
@@ -841,8 +839,7 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	fn.CodeZip = req.ZipFile
-	fn.CodeSize = int64(len(req.ZipFile))
+	fn.setCode(req.ZipFile)
 	if req.S3Bucket != "" {
 		fn.CodeS3Bucket = req.S3Bucket
 		fn.CodeS3Key = req.S3Key
@@ -855,8 +852,7 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 	// inline ZipFile). See CreateFunction for the same rationale.
 	if len(fn.CodeZip) == 0 && fn.CodeS3Bucket != "" && fn.CodeS3Key != "" && h.s3Fetch != nil {
 		if zip, err := h.s3Fetch(ctx, fn.CodeS3Bucket, fn.CodeS3Key); err == nil {
-			fn.CodeZip = zip
-			fn.CodeSize = int64(len(zip))
+			fn.setCode(zip)
 		} else {
 			h.log.Warn("lambda: update function code: s3 fetch failed",
 				zap.String("function", fn.Name),

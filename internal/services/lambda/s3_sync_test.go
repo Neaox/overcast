@@ -71,6 +71,9 @@ func TestS3SyncWatcher_matchingObjectUpdatesCodeZip(t *testing.T) {
 	if fn.CodeSize != int64(len(newZip)) {
 		t.Errorf("CodeSize = %d, want %d", fn.CodeSize, len(newZip))
 	}
+	if fn.CodeHash != sha256hex(newZip) {
+		t.Errorf("CodeHash = %q, want sha256 of the synced package — identity would miss this code change", fn.CodeHash)
+	}
 }
 
 func TestS3SyncWatcher_nonMatchingObjectLeavesCodeZipUnchanged(t *testing.T) {

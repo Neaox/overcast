@@ -86,6 +86,12 @@ type listAliasesResponse struct {
 // deployment package. If no zip is stored we hash the ARN + last-modified as a
 // stable stand-in (matches real-ish behaviour for functions with no code zip).
 func codeSha256(fn *Function) string {
+	// The hash setCode stored when the package was written — same value as
+	// hashing CodeZip here, without rehashing the package on every
+	// configuration read.
+	if fn.CodeHash != "" && fn.CodeSize > 0 {
+		return fn.CodeHash
+	}
 	h := sha256.New()
 	if len(fn.CodeZip) > 0 {
 		h.Write(fn.CodeZip)

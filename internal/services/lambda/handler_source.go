@@ -528,8 +528,7 @@ func (h *Handler) PutFunctionSource(w http.ResponseWriter, r *http.Request) {
 
 	fn.SourceCode = req.Source
 	fn.SourceFilename = req.Filename
-	fn.CodeZip = zipBytes
-	fn.CodeSize = int64(len(zipBytes))
+	fn.setCode(zipBytes)
 	fn.RevisionId = uuid.NewString()
 	fn.LastModified = h.clk.Now().UTC().Format(time.RFC3339)
 
