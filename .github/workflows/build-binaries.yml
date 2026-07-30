@@ -1,0 +1,100 @@
+# build-binaries.yml — the one definition of Overcast's native binary set.
+#
+# Called from test.yml (PR checks, version "ci") and release.yml (publishing,
+# the real version). The asset matrix lived in both workflows and they were
+# drifting apart one edit at a time; a workflow_call is GitHub's mechanism for
+# stating it once.
+#
+# Expects the calling run to have uploaded a "web-dist" artifact first — both
+# callers build the SPA in their own `web` job.
+name: Build binaries
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version string embedded in the binaries.
+        type: string
+        required: true
+      upload-artifacts:
+        description: Upload each binary as a workflow artifact named after the asset.
+        type: boolean
+        default: false
+      retention-days:
+        description: Artifact retention when upload-artifacts is true.
+        type: number
+        default: 90
+
+jobs:
+  binary:
+    name: ${{ matrix.asset }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - asset: overcast-linux-amd64
+            goos: linux
+            goarch: amd64
+            tags: ""
+          - asset: overcast-linux-arm64
+            goos: linux
+            goarch: arm64
+            tags: ""
+          - asset: overcast-darwin-amd64
+            goos: darwin
+            goarch: amd64
+            tags: ""
+          - asset: overcast-darwin-arm64
+            goos: darwin
+            goarch: arm64
+            tags: ""
+          - asset: overcast-windows-amd64.exe
+            goos: windows
+            goarch: amd64
+            tags: ""
+          - asset: overcastd-linux-amd64
+            goos: linux
+            goarch: amd64
+            tags: slim,nosqlite
+          - asset: overcastd-linux-arm64
+            goos: linux
+            goarch: arm64
+            tags: slim,nosqlite
+          - asset: overcastd-darwin-amd64
+            goos: darwin
+            goarch: amd64
+            tags: slim,nosqlite
+          - asset: overcastd-darwin-arm64
+            goos: darwin
+            goarch: arm64
+            tags: slim,nosqlite
+          - asset: overcastd-windows-amd64.exe
+            goos: windows
+            goarch: amd64
+            tags: slim,nosqlite
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-go@v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: web-dist
+          path: web/dist
+      - uses: ./.github/actions/build-overcast-binary
+        with:
+          asset: ${{ matrix.asset }}
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          tags: ${{ matrix.tags }}
+          version: ${{ inputs.version }}
+      - name: Upload binary artifact
+        if: inputs.upload-artifacts
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          retention-days: ${{ inputs.retention-days }}
+          if-no-files-found: error
