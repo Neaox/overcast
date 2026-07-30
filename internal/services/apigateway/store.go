@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
@@ -385,10 +386,75 @@ type ApiMapping struct {
 type apigatewayStore struct {
 	store         state.Store
 	defaultRegion string
+	// routes caches the execution path's routing state. Management reads keep
+	// hitting the store; only the request-serving handlers use the cached
+	// variants.
+	routes routeCache
 }
 
 func newAPIGatewayStore(store state.Store, defaultRegion string) *apigatewayStore {
 	return &apigatewayStore{store: store, defaultRegion: defaultRegion}
+}
+
+// routeCache holds each API's routing state for the execution path, which
+// otherwise re-Scans and re-unmarshals every resource (with its embedded
+// methods and integrations) or route on every proxied request. Entries are
+// keyed by the region-scoped API ID and dropped whenever any write lands for
+// that API's resources or routes — the write methods below are the only
+// funnels, so a stale route cannot outlive the request that changed it.
+//
+// Cached slices and the objects they point at are shared across concurrent
+// requests: the execution handlers treat them as read-only (stage-variable
+// substitution already copies before mutating). Do not hand them to
+// management handlers, which mutate.
+type routeCache struct {
+	mu        sync.Mutex
+	resources map[string][]*Resource
+	v2Routes  map[string][]*RouteV2
+}
+
+func (c *routeCache) getResources(key string) ([]*Resource, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	rs, ok := c.resources[key]
+	return rs, ok
+}
+
+func (c *routeCache) setResources(key string, rs []*Resource) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.resources == nil {
+		c.resources = make(map[string][]*Resource)
+	}
+	c.resources[key] = rs
+}
+
+func (c *routeCache) dropResources(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.resources, key)
+}
+
+func (c *routeCache) getV2Routes(key string) ([]*RouteV2, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	rs, ok := c.v2Routes[key]
+	return rs, ok
+}
+
+func (c *routeCache) setV2Routes(key string, rs []*RouteV2) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.v2Routes == nil {
+		c.v2Routes = make(map[string][]*RouteV2)
+	}
+	c.v2Routes[key] = rs
+}
+
+func (c *routeCache) dropV2Routes(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.v2Routes, key)
 }
 
 // region extracts the per-request region from context, falling back to the default.
@@ -501,6 +567,7 @@ func (s *apigatewayStore) putResource(ctx context.Context, apiID string, res *Re
 	if err := s.store.Set(ctx, nsResources, key, string(raw)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
+	s.routes.dropResources(serviceutil.RegionKey(s.region(ctx), apiID))
 	return nil
 }
 
@@ -525,6 +592,7 @@ func (s *apigatewayStore) deleteResource(ctx context.Context, apiID, resourceID 
 	if err := s.store.Delete(ctx, nsResources, key); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
+	s.routes.dropResources(serviceutil.RegionKey(s.region(ctx), apiID))
 	return nil
 }
 
@@ -547,11 +615,28 @@ func (s *apigatewayStore) listResources(ctx context.Context, apiID string) ([]*R
 	return resources, nil
 }
 
+// listResourcesCached is listResources behind the route cache, for the
+// execution path only: the result is shared across concurrent requests and
+// must be treated as read-only (see routeCache).
+func (s *apigatewayStore) listResourcesCached(ctx context.Context, apiID string) ([]*Resource, *protocol.AWSError) {
+	key := serviceutil.RegionKey(s.region(ctx), apiID)
+	if rs, ok := s.routes.getResources(key); ok {
+		return rs, nil
+	}
+	rs, aerr := s.listResources(ctx, apiID)
+	if aerr != nil {
+		return nil, aerr
+	}
+	s.routes.setResources(key, rs)
+	return rs, nil
+}
+
 // deleteAllResources removes every resource belonging to an API. Uses
 // PrefixDeleter for a single ranged delete when the store supports it
 // (storage-plan.md item 3.1), falling back to List+Delete otherwise —
 // mirroring sqs.deleteMessagesByQueuePrefix.
 func (s *apigatewayStore) deleteAllResources(ctx context.Context, apiID string) *protocol.AWSError {
+	defer s.routes.dropResources(serviceutil.RegionKey(s.region(ctx), apiID))
 	prefix := serviceutil.RegionKey(s.region(ctx), apiID+"/")
 	if deleter, ok := s.store.(state.PrefixDeleter); ok {
 		if err := deleter.DeletePrefix(ctx, nsResources, prefix); err != nil {
@@ -783,6 +868,7 @@ func (s *apigatewayStore) putV2Route(ctx context.Context, apiID string, route *R
 	if err := s.store.Set(ctx, nsV2Routes, key, string(raw)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
+	s.routes.dropV2Routes(serviceutil.RegionKey(s.region(ctx), apiID))
 	return nil
 }
 
@@ -807,6 +893,7 @@ func (s *apigatewayStore) deleteV2Route(ctx context.Context, apiID, routeID stri
 	if err := s.store.Delete(ctx, nsV2Routes, key); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
+	s.routes.dropV2Routes(serviceutil.RegionKey(s.region(ctx), apiID))
 	return nil
 }
 
@@ -829,10 +916,27 @@ func (s *apigatewayStore) listV2Routes(ctx context.Context, apiID string) ([]*Ro
 	return routes, nil
 }
 
+// listV2RoutesCached is listV2Routes behind the route cache, for the
+// execution path only: the result is shared across concurrent requests and
+// must be treated as read-only (see routeCache).
+func (s *apigatewayStore) listV2RoutesCached(ctx context.Context, apiID string) ([]*RouteV2, *protocol.AWSError) {
+	key := serviceutil.RegionKey(s.region(ctx), apiID)
+	if rs, ok := s.routes.getV2Routes(key); ok {
+		return rs, nil
+	}
+	rs, aerr := s.listV2Routes(ctx, apiID)
+	if aerr != nil {
+		return nil, aerr
+	}
+	s.routes.setV2Routes(key, rs)
+	return rs, nil
+}
+
 // deleteAllV2Routes removes every route belonging to a v2 API. Uses
 // PrefixDeleter for a single ranged delete when the store supports it
 // (storage-plan.md item 3.1), falling back to List+Delete otherwise.
 func (s *apigatewayStore) deleteAllV2Routes(ctx context.Context, apiID string) *protocol.AWSError {
+	defer s.routes.dropV2Routes(serviceutil.RegionKey(s.region(ctx), apiID))
 	prefix := serviceutil.RegionKey(s.region(ctx), apiID+"/")
 	if deleter, ok := s.store.(state.PrefixDeleter); ok {
 		if err := deleter.DeletePrefix(ctx, nsV2Routes, prefix); err != nil {

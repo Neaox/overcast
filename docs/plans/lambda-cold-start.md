@@ -3,10 +3,11 @@
 > Status: investigation complete 2026-07-31. Landed so far (all 2026-07-31):
 > Phase 1.3's first half (one-shot Docker stats + real instance memory/CPU in
 > the UI, PR #403), Phase 1.1 (stored CodeHash — no per-acquire package
-> rehash, PR #404), and Phase 1.2 (deployment package split out of the
-> function record — no per-invoke package decode, this commit). Phase 1 items
-> are landing as separate, individually green PRs; everything else not
-> started.
+> rehash, PR #404), Phase 1.2 (deployment package split out of the function
+> record — no per-invoke package decode, PR #405), and Phase 1.4 (API Gateway
+> execution route cache, this commit). Phase 1 items are landing as separate,
+> individually green PRs; remaining in Phase 1: 1.3's second half and 1.5
+> (optional-by-measurement); everything else not started.
 > Goal: cut Lambda cold-start latency (especially via API Gateway / AppSync /
 > function URLs / CloudFront) and shave per-invoke overhead on the warm path,
 > **without** sacrificing fidelity — all observable behavior must keep matching
@@ -263,20 +264,23 @@ cgroup peak (the code comments already accept best-effort here). Keep the
 per-instance last-known cache updated on every resolved query so warm invokes
 converge. Verify REPORT ordering tests still pass.
 
-### 1.4 API Gateway compiled route table
-Cache a compiled per-API routing structure (resources+methods+integrations
-for v1; routes+integrations for v2, plus the matcher's precomputed segments)
-keyed (region, apiID), built on first execution request, invalidated on any
-write to that API's resources/methods/integrations/routes/stages/deployments
-(the store methods are the funnel — add an invalidation hook where they
-write). Stage variables and authorizer checks keep reading live state (cheap
-single gets; correctness over speed there).
-*Risk:* a write path that forgets to invalidate serves a stale route until
-process restart. Mitigate by (a) centralizing invalidation in the store write
-helpers, not the handlers, and (b) an execution test per mutation type
-(create/update/delete resource, method, integration, route) asserting the
-next request sees the change. The existing cross-region fallback continues to
-work — cache per resolved region.
+### 1.4 API Gateway route cache — DONE (2026-07-31)
+Landed: the execution path's per-request `Scan` + unmarshal of an API's
+routing state is cached (`routeCache` in the apigateway store) — v1 resources
+(methods and integrations are embedded in the resource records) and v2
+routes, keyed by region-scoped API ID. Invalidation is centralized in the
+only write funnels (`putResource`/`deleteResource`/`deleteAllResources`,
+`putV2Route`/`deleteV2Route`/`deleteAllV2Routes`; verified no other
+production writer touches those namespaces). Cached slices are shared across
+requests and treated as read-only — the execution handlers already
+copy-before-mutate for stage-variable substitution, and management handlers
+keep using the uncached lists. Stage variables, v2 integrations, API records,
+and authorizers still read live state per request (single cheap gets).
+Deviation from the sketch: no precompiled matcher segments — the matcher
+runs on the cached slice as-is; the Scan+unmarshal was the measured-shape
+cost. Pinned by `route_cache_test.go`: end-to-end v1 and v2 execution
+through every mutation type (repoint, add, delete, delete-all), each
+asserting the very next request observes the change.
 
 ### 1.5 CloudFront local-origin in-process dispatch
 For origins classified as served-locally

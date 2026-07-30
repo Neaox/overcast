@@ -81,8 +81,9 @@ func (h *Handler) ExecuteRestAPI(w http.ResponseWriter, r *http.Request) {
 		stageVars = stage.Variables
 	}
 
-	// 2. Find matching resource by path.
-	resources, aerr := h.store.listResources(r.Context(), api.ID)
+	// 2. Find matching resource by path. Served from the route cache — this
+	// runs per proxied request, and the resource tree only moves on writes.
+	resources, aerr := h.store.listResourcesCached(r.Context(), api.ID)
 	if aerr != nil {
 		writeGatewayError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
@@ -330,8 +331,9 @@ func (h *Handler) ExecuteV2API(w http.ResponseWriter, r *http.Request) {
 		stageVars = stg.StageVariables
 	}
 
-	// 2. Find matching route.
-	routes, aerr := h.store.listV2Routes(r.Context(), api.ApiID)
+	// 2. Find matching route. Served from the route cache — this runs per
+	// proxied request, and routes only move on writes.
+	routes, aerr := h.store.listV2RoutesCached(r.Context(), api.ApiID)
 	if aerr != nil {
 		writeGatewayError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
