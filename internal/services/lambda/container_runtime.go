@@ -220,6 +220,28 @@ func (cr *ContainerRuntime) acquireColdStartSlot(ctx context.Context) (func(), e
 	}
 }
 
+// errColdStartBusy reports that no cold-start slot was immediately free.
+// Only proactive acquisition returns it — real invocations wait instead.
+var errColdStartBusy = errors.New("lambda cold-start capacity busy")
+
+// tryAcquireColdStartSlot is acquireColdStartSlot without the wait: proactive
+// environment creation must never hold a queue position that a real
+// invocation could have taken.
+func (cr *ContainerRuntime) tryAcquireColdStartSlot() (func(), error) {
+	if cr.coldStartSem == nil {
+		return func() {}, nil
+	}
+	select {
+	case cr.coldStartSem <- struct{}{}:
+		var once sync.Once
+		return func() {
+			once.Do(func() { <-cr.coldStartSem })
+		}, nil
+	default:
+		return nil, errColdStartBusy
+	}
+}
+
 // ProgressFunc is called by AcquireWithProgress to report lifecycle steps to
 // the caller (e.g. an SSE endpoint streaming progress to the UI).
 type ProgressFunc func(step string)
@@ -310,14 +332,26 @@ const (
 // Acquire creates and starts a Docker container for fn, then returns a
 // containerInstance that can invoke the function via the Runtime API.
 func (cr *ContainerRuntime) Acquire(ctx context.Context, fn *Function) (RuntimeInstance, error) {
-	return cr.acquireContainer(ctx, fn, func(string) {}, initTypeOnDemand)
+	return cr.acquireContainer(ctx, fn, func(string) {}, initTypeOnDemand, false)
 }
 
 // AcquireProvisioned creates an environment for a provisioned concurrency
 // reservation. Identical to Acquire except that the container reports
 // AWS_LAMBDA_INITIALIZATION_TYPE=provisioned-concurrency, as it would on AWS.
 func (cr *ContainerRuntime) AcquireProvisioned(ctx context.Context, fn *Function) (RuntimeInstance, error) {
-	return cr.acquireContainer(ctx, fn, func(string) {}, initTypeProvisioned)
+	return cr.acquireContainer(ctx, fn, func(string) {}, initTypeProvisioned, false)
+}
+
+// AcquireProactive creates an environment ahead of any invocation, mirroring
+// AWS's documented proactive initialization. Two deliberate differences from
+// Acquire: cold-start capacity is try-acquired (errColdStartBusy instead of
+// waiting — proactive work never queues ahead of real invocations), and the
+// environment records no invoke-triggered init start, so its first REPORT
+// line omits Init Duration — exactly what a proactively initialized
+// environment looks like on AWS. AWS_LAMBDA_INITIALIZATION_TYPE stays
+// "on-demand", also matching AWS.
+func (cr *ContainerRuntime) AcquireProactive(ctx context.Context, fn *Function) (RuntimeInstance, error) {
+	return cr.acquireContainer(ctx, fn, func(string) {}, initTypeOnDemand, true)
 }
 
 // Release is a no-op for ContainerRuntime itself — InstancePool wraps it and
@@ -327,7 +361,7 @@ func (cr *ContainerRuntime) Release(_ context.Context, _ RuntimeInstance, _ bool
 // AcquireWithProgress is like Acquire but calls progress at each lifecycle step
 // so callers (e.g. the SSE invoke endpoint) can stream status to the UI.
 func (cr *ContainerRuntime) AcquireWithProgress(ctx context.Context, fn *Function, progress ProgressFunc) (RuntimeInstance, error) {
-	return cr.acquireContainer(ctx, fn, progress, initTypeOnDemand)
+	return cr.acquireContainer(ctx, fn, progress, initTypeOnDemand, false)
 }
 
 // acquireContainer is the single implementation behind Acquire and
@@ -338,7 +372,7 @@ func (cr *ContainerRuntime) AcquireWithProgress(ctx context.Context, fn *Functio
 // "lambda container started" line, so where a cold start spends its time is
 // always visible — the measurement Phase 0 of docs/plans/lambda-cold-start.md
 // requires before any cold-path change.
-func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, progress ProgressFunc, initType string) (RuntimeInstance, error) {
+func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, progress ProgressFunc, initType string, proactive bool) (RuntimeInstance, error) {
 	isImage := fn.PackageType == "Image"
 
 	acquireStart := cr.clk.Now()
@@ -376,7 +410,12 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	mark("image_check")
 
 	progress("Waiting for cold-start capacity")
-	releaseColdStart, err := cr.acquireColdStartSlot(ctx)
+	var releaseColdStart func()
+	if proactive {
+		releaseColdStart, err = cr.tryAcquireColdStartSlot()
+	} else {
+		releaseColdStart, err = cr.acquireColdStartSlot(ctx)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("wait for lambda cold-start slot: %w", err)
 	}
@@ -598,11 +637,13 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		return nil, fmt.Errorf("start container: %w", decorateHotReloadMountError(err, hotReloadPath))
 	}
 	// Init Duration is measured from here to the RIC's first GET /next. Only
-	// on-demand environments report it: their init was triggered by an invoke,
-	// so the first REPORT line carries the cost, exactly as on AWS. Provisioned
-	// environments initialise proactively and never report it.
+	// environments whose init was triggered by an invoke report it, exactly as
+	// on AWS: provisioned environments never do, and neither do proactively
+	// initialized ones — their init ran ahead of any invocation, so the first
+	// REPORT line carries no Init Duration even though the environment still
+	// reports AWS_LAMBDA_INITIALIZATION_TYPE=on-demand.
 	var initStartedAt time.Time
-	if initType == initTypeOnDemand {
+	if initType == initTypeOnDemand && !proactive {
 		initStartedAt = cr.clk.Now()
 	}
 

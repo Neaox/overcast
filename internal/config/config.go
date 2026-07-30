@@ -307,6 +307,12 @@ type Config struct {
 	// Corresponds to env var LAMBDA_TAR_CACHE_MB. Default 256.
 	LambdaTarCacheMB int
 
+	// LambdaProactiveInit pre-initializes one execution environment after a
+	// function's configuration settles, mirroring AWS's documented proactive
+	// initialization, so the next request lands warm. Corresponds to env var
+	// LAMBDA_PROACTIVE_INIT. Default false while the feature beds in.
+	LambdaProactiveInit bool
+
 	// LambdaHotReload enables bind-mount based source reload for functions that
 	// opt in via the overcast:hot-reload-path function tag.
 	// Corresponds to env var OVERCAST_LAMBDA_HOT_RELOAD. Default false.
@@ -1082,6 +1088,7 @@ func Load() (*Config, error) {
 	if cfg.LambdaTarCacheMB < 0 {
 		cfg.LambdaTarCacheMB = 0
 	}
+	cfg.LambdaProactiveInit = envBool("LAMBDA_PROACTIVE_INIT", false)
 	cfg.LambdaHotReload = envBool("OVERCAST_LAMBDA_HOT_RELOAD", false)
 	cfg.LambdaFetchRemoteLayers = envBool("LAMBDA_FETCH_REMOTE_LAYERS", false)
 	cfg.LambdaLayerCacheDir = envOr("LAMBDA_LAYER_CACHE_DIR", "")

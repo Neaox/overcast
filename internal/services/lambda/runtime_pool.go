@@ -32,6 +32,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -151,6 +152,10 @@ type InstancePool struct {
 	// environment that no longer exists. Set once during wiring, before the
 	// pool is used.
 	observer InstanceObserver
+	// onInvoked, when set, is told the function name of every admitted
+	// invocation — the proactive initializer's evidence that a function is
+	// actually in use. Set once during wiring, before the pool is used.
+	onInvoked func(functionName string)
 	// warmWG tracks background provisioning goroutines so Stop can wait.
 	warmWG sync.WaitGroup
 }
@@ -362,6 +367,9 @@ func (p *InstancePool) acquire(ctx context.Context, fn *Function, progress Progr
 
 	if err := p.admit(admitCtx, fn); err != nil {
 		return nil, err
+	}
+	if p.onInvoked != nil {
+		p.onInvoked(fn.Name)
 	}
 	if inst := p.takeWarm(fn); inst != nil {
 		return inst, nil
@@ -899,6 +907,103 @@ func (p *InstancePool) replenishProvisioned(name string) {
 				zap.String("function", fn.Name))
 		}
 	}()
+}
+
+// ─── Proactive initialization ────────────────────────────────────────────────
+
+// proactiveOutcome is what ProactiveInit decided.
+type proactiveOutcome int
+
+const (
+	// proactiveStarted: an environment is being created in the background.
+	proactiveStarted proactiveOutcome = iota
+	// proactiveAlreadyWarm: the function already has an environment (warm,
+	// in flight, or covered by provisioned concurrency) — nothing to do.
+	proactiveAlreadyWarm
+	// proactiveBusy: capacity is contended right now; the caller may retry
+	// later. Proactive work never queues for capacity.
+	proactiveBusy
+	// proactiveUnavailable: the pool is stopped, the runtime cannot create
+	// proactive environments, or the function is throttled to zero.
+	proactiveUnavailable
+)
+
+// proactiveAcquirer is implemented by runtimes that can create an environment
+// ahead of an invocation without blocking on cold-start capacity, and without
+// the environment reporting an invoke-triggered Init Duration.
+type proactiveAcquirer interface {
+	AcquireProactive(ctx context.Context, fn *Function) (RuntimeInstance, error)
+}
+
+// ProactiveInit creates one execution environment for fn ahead of traffic,
+// mirroring AWS's documented proactive initialization. It is strictly
+// best-effort: every budget a real invocation would consume (per-function
+// slot, instance count, memory — including the high-water margin) is checked
+// non-blockingly, and contention returns proactiveBusy instead of queueing,
+// so proactive work can never delay a real invocation. The environment lands
+// in the warm set as an ordinary on-demand instance: it is swept on idleness,
+// retired on updates, and never counted toward provisioned reservations.
+func (p *InstancePool) ProactiveInit(fn *Function) proactiveOutcome {
+	pr, ok := p.rt.(proactiveAcquirer)
+	if !ok || fn == nil {
+		return proactiveUnavailable
+	}
+	if reservedConcurrencyOf(fn) == 0 {
+		return proactiveUnavailable // throttled to zero — AWS runs nothing either
+	}
+	name := fn.Name
+	memMB := functionMemoryMB(fn)
+
+	p.mu.Lock()
+	switch {
+	case p.entries == nil:
+		p.mu.Unlock()
+		return proactiveUnavailable
+	case p.provisioned[name] != nil:
+		// Provisioned concurrency already keeps environments ready.
+		p.mu.Unlock()
+		return proactiveAlreadyWarm
+	case len(p.entries[name]) > 0 || p.checkedOut[name] > 0:
+		p.mu.Unlock()
+		return proactiveAlreadyWarm
+	case p.totalLiveLocked()+1 > p.maxInstances,
+		!p.memoryFitsLocked(memMB),
+		p.overMemoryHighWaterLocked():
+		p.mu.Unlock()
+		return proactiveBusy
+	}
+	// Reserve the slot and memory exactly as admit/admitContainer would, so
+	// concurrent real invocations see the capacity as taken.
+	p.checkedOut[name]++
+	p.pendingMemMB += memMB
+	p.reservedMemMB += memMB
+	p.mu.Unlock()
+
+	snapshot := *fn
+	p.warmWG.Add(1)
+	go func() {
+		defer p.warmWG.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		inst, err := pr.AcquireProactive(ctx, &snapshot)
+		if err != nil || inst == nil {
+			p.unreservePendingMem(memMB)
+			p.releaseSlot(name)
+			if err != nil && !errors.Is(err, errColdStartBusy) {
+				p.log.Debug("lambda pool: proactive init failed",
+					zap.String("function", name), zap.Error(err))
+			}
+			return
+		}
+		p.commitPendingMem(inst.InstanceID(), memMB)
+		if p.observer != nil {
+			p.observer.InstanceWarmed(name, inst.InstanceID(), inst.ContainerID(), false)
+		}
+		// Release decrements the slot reserved above and pools the instance.
+		p.Release(context.Background(), inst, true)
+		p.log.Debug("lambda pool: proactive environment ready", zap.String("function", name))
+	}()
+	return proactiveStarted
 }
 
 // ─── Lifecycle ───────────────────────────────────────────────────────────────

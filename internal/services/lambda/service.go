@@ -276,6 +276,7 @@ type Service struct {
 	docker           *docker.Client    // nil until Docker init completes
 	containerRuntime *ContainerRuntime // nil until Docker init completes
 	pool             *InstancePool     // nil until Docker init completes
+	proactive        *proactiveIniter  // nil unless LAMBDA_PROACTIVE_INIT is enabled
 	// dockerEventsSubscribed guards subscribeDockerEvents, which InitBus and
 	// initDockerRuntime both call because either may complete first.
 	dockerEventsSubscribed bool
@@ -603,6 +604,28 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 		return nil
 	})
 
+	// Proactive initialization (opt-in): pre-create one environment after a
+	// function's configuration settles so the next request lands warm — see
+	// proactive.go for the candidacy and fidelity rules.
+	if cfg.LambdaProactiveInit {
+		wired := func(ctx context.Context, name string) bool {
+			if urls, aerr := s.handler.ls.listFunctionURLConfigs(ctx, name); aerr == nil && len(urls) > 0 {
+				return true
+			}
+			if esms, aerr := s.handler.esm.listESMs(ctx, name, ""); aerr == nil && len(esms) > 0 {
+				return true
+			}
+			return false
+		}
+		proactive := newProactiveIniter(func() *InstancePool { return pool }, s.handler.ls, wired, log, clk)
+		s.handler.proactive = proactive
+		pool.onInvoked = proactive.NoteInvoked
+		s.mu.Lock()
+		s.proactive = proactive
+		s.mu.Unlock()
+		s.log.Info("lambda proactive initialization enabled")
+	}
+
 	// Store references for Shutdown/InitLogWriter to use.
 	s.mu.Lock()
 	s.docker = dc
@@ -741,7 +764,11 @@ func (s *Service) Stop(ctx context.Context) {
 	rapi := s.runtimeAPI
 	pool := s.pool
 	gc := s.gc
+	proactive := s.proactive
 	s.mu.Unlock()
+	// Cancel pending proactive-init timers before the pool stops; in-flight
+	// creations are tracked by the pool's own WaitGroup.
+	proactive.Stop()
 	// (Docker watcher is owned by the router; no cancel needed here.)
 	if pool != nil {
 		pool.Stop()

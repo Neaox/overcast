@@ -12,9 +12,11 @@
 > dispatch): measured API GW gateway overhead is now sub-ms, so 1.5's ceiling
 > is a few ms per request — low priority, keep gated on a dedicated
 > measurement. Phase 2: 2.2 + 2.3 (artifact and image-presence caches,
-> PR #408) and 2.1 (single-tar provisioning, this commit — cold p50
+> PR #408) and 2.1 (single-tar provisioning, PR #409 — cold p50
 > ~355 → ~300 ms) landed 2026-07-31; 2.4 stays open only if the phase timers
-> ever show it. Then Phase 3. Phase 4 not started.
+> ever show it. Phase 3 (proactive initialization, opt-in via
+> LAMBDA_PROACTIVE_INIT) landed 2026-07-31 (this commit) — see §7 for the
+> v1 scope and the follow-ups gating the default flip. Phase 4 not started.
 > Goal: cut Lambda cold-start latency (especially via API Gateway / AppSync /
 > function URLs / CloudFront) and shave per-invoke overhead on the warm path,
 > **without** sacrificing fidelity — all observable behavior must keep matching
@@ -414,64 +416,43 @@ runtime image bricked that runtime until restart (the spent `sync.Once` made
 
 ---
 
-## 7. Phase 3 — proactive initialization (the AWS-matching lever)
+## 7. Phase 3 — proactive initialization — DONE v1 (2026-07-31, opt-in)
 
-Emulate AWS's documented proactive init so the *first* request through API
-GW/AppSync/function URL usually lands on an already-initialized environment.
+Landed (`proactive.go`, `InstancePool.ProactiveInit`,
+`ContainerRuntime.AcquireProactive`; opt-in via `LAMBDA_PROACTIVE_INIT`,
+default off): 10 s after a function's last identity-changing write
+(`retireExecutionEnvironment` and CreateFunction's Active transition feed the
+debounce; deletes cancel it), one environment is created in the background
+when there is trigger evidence — invoked this process (the pool reports every
+admitted invocation), or a function URL or ESM exists.
 
-**Trigger model.** A function becomes a proactive-init candidate when **both**:
-1. It has settled (§3 debounce — critical for CDK deploy churn), and
-2. There is evidence it will be invoked: it is referenced by an API GW
-   integration, function URL, AppSync data source, ESM, or CloudFront-routed
-   path, **or** it has been invoked at least once this process lifetime.
-   (AWS keys proactive init off traffic patterns; "wired to a trigger" is our
-   equivalent. A helper that answers "is this ARN referenced anywhere" needs
-   read-only lookups into apigateway/appsync/lambda-URL/ESM state — keep it
-   event-driven: those services already know when an integration is created;
-   emit/observe a bus event rather than polling.)
+**Mechanics as landed.** `ProactiveInit` reserves the slot and memory exactly
+as admission would, but strictly non-blockingly — contention (instance count,
+memory budget incl. high-water, cold-start semaphore) returns busy and the
+initer reschedules (+15 s); proactive work can never queue ahead of a real
+invocation. The environment Releases into the warm set as an ordinary
+on-demand instance (idle-swept, retired on updates, never counted toward
+provisioned reservations; functions with provisioned concurrency or an
+existing environment are skipped, as are functions throttled to zero).
 
-**Mechanics.** On candidacy, a background goroutine (owned by the pool,
-tracked by `warmWG`, cancelled on Stop/update/delete):
-- try-acquires the cold-start semaphore and admission budgets
-  (non-blocking; reschedules after a delay if contended — never queues ahead
-  of real work);
-- creates **one** environment via the normal `Acquire` path with
-  `initType = on-demand` (NOT provisioned — that's the fidelity-critical
-  bit), then Releases it into the warm set exactly like
-  `replenishProvisioned` does (borrow a checkedOut slot, `InstanceWarmed`
-  observer with `provisioned=false` — check the tracker renders that state
-  sensibly in the UI);
-- respects the memory budget: skip entirely while over the high-water mark.
+**Fidelity as landed.** `AWS_LAMBDA_INITIALIZATION_TYPE=on-demand`; init code
+runs at environment creation; the first REPORT omits `Init Duration`
+(`AcquireProactive` records no invoke-triggered init start); idle sweep
+applies normally. All matching AWS's documented proactive initialization.
 
-**Fidelity checklist.**
-- `AWS_LAMBDA_INITIALIZATION_TYPE=on-demand` ✔ (matches AWS proactive init).
-- Init code runs at environment creation, before first invoke ✔ (matches).
-- First invoke on a proactively-initialized env must **omit** `Init
-  Duration` in its REPORT — coordinate with the in-flight Init Duration task:
-  its "init was triggered by this invoke" condition must be false for
-  pool-created environments. Agree on the mechanism (e.g. the instance
-  records whether an invoke was already waiting when INIT started).
-- Idle sweep applies normally (15 min TTL) ✔ — AWS also reclaims these.
+**Pinned by `proactive_test.go`:** deploy churn produces zero environments
+until settle (injected clock); no trigger evidence → zero environments;
+contended capacity → busy, never queued; already-warm / provisioned /
+throttled-to-zero functions skipped.
 
-**Config.** `LAMBDA_PROACTIVE_INIT` (bool). Ship default **off** for one
-release (observe churn/resource reports), then default **on** with
-`LAMBDA_PROACTIVE_INIT=false` as the escape hatch. Document in
-docs/services/lambda.md's env-var table either way.
-
-**Regression risks (the ones to actively test):**
-- *Deploy churn:* a CDK deploy updating a function 4× must produce **zero**
-  proactive containers until the debounce elapses after the last write —
-  test with the injected clock.
-- *Update while proactive env exists:* identity change → `InvalidateFunction`
-  retires it; must not trigger an immediate rebuild loop (rebuild only after
-  re-settle).
-- *Provisioned concurrency interplay:* a function with PC must not get an
-  extra proactive env (PC already covers it); proactive envs must never be
-  counted toward `provisionedInstances`.
-- *Resource ceiling:* with N functions all wired to an API, proactive init
-  must respect `MaxInstances`/memory budget and simply stop, not queue.
-- *Never-invoked functions:* stay at zero containers unless wired to a
-  trigger.
+**v1 deviations / follow-ups before the default flips on:**
+- Trigger evidence is lambda-local only (invoked-this-process, URL, ESM).
+  Detecting API GW / AppSync / CloudFront wiring lives in those services'
+  state — the planned event-driven "this ARN is referenced" signal is the
+  main gap; until then, the first-ever request of an API GW-wired function
+  in a fresh process is still a (now ~300 ms) cold start, and proactive init
+  covers every redeploy after it.
+- The §2.2 background tar pre-fill can now hook the same settle signal.
 
 ---
 

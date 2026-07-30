@@ -45,6 +45,11 @@ type Handler struct {
 	// CodeZip populated — the s3SyncWatcher only fires on subsequent
 	// PutObject events. Wired by Service.InitS3Sync.
 	s3Fetch S3FetchFunc
+	// proactive, when set, pre-initializes execution environments after a
+	// function's configuration settles (see proactive.go). Wired by
+	// Service.initDockerRuntime when LAMBDA_PROACTIVE_INIT is enabled; nil —
+	// and safe to call — otherwise.
+	proactive *proactiveIniter
 }
 
 func (h *Handler) setVPCResolver(r VPCNetworkResolver) {
