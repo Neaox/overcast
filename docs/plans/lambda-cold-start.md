@@ -193,9 +193,10 @@ await_ip + acquire_total), a per-invoke TRACE timing line (`lambda invoke
 timings`: handler, log_wait, mem_wait, total), and `scripts/bench-lambda.go`
 (paced; see its header for method). Sequenced after Phase 1 at the user's
 direction — the baseline below therefore brackets Phase 1 (alpha.26 vs this
-branch) rather than preceding it. The large-zip variant (item 3) and
-recording INIT split per runtime remain available as follow-ups when Phase 2
-needs them.
+branch) rather than preceding it. The large-zip variant landed 2026-07-31 as
+`bench-lambda -pad-mb N` (incompressible padding, stored uncompressed so the
+harness's own CPU stays out of the measurement); recording its numbers and
+the per-runtime INIT split remain open until a quiet-machine run.
 
 1. **Phase timers in `acquireContainer`.** Wrap each step (image check, tar
    build, create, copies, start, VPC, await-IP, await-ready) and log a single
