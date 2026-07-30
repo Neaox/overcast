@@ -1,33 +1,24 @@
 # Lambda cold-start & invoke-path latency — plan
 
-> Status: investigation complete 2026-07-31. Landed so far (all 2026-07-31):
-> Phase 1.3's first half (one-shot Docker stats + real instance memory/CPU in
-> the UI, PR #403), Phase 1.1 (stored CodeHash — no per-acquire package
-> rehash, PR #404), Phase 1.2 (deployment package split out of the function
-> record — no per-invoke package decode, PR #405), Phase 1.4 + 1.3's second
-> half (API Gateway route cache; REPORT memory off the response path,
-> PR #406), and Phase 0 (cold-start phase timers, per-invoke TRACE timings,
-> `scripts/bench-lambda.go`, and the before/after baseline below — this
-> commit). Phase 1 is complete except 1.5 (CloudFront in-process origin
-> dispatch): measured API GW gateway overhead is now sub-ms, so 1.5's ceiling
-> is a few ms per request — low priority, keep gated on a dedicated
-> measurement. Phase 2: 2.2 + 2.3 (artifact and image-presence caches,
-> PR #408) and 2.1 (single-tar provisioning, PR #409 — cold p50
-> ~355 → ~300 ms) landed 2026-07-31; 2.4 stays open only if the phase timers
-> ever show it. Phase 3 (proactive initialization, opt-in via
-> LAMBDA_PROACTIVE_INIT) landed 2026-07-31 (this commit) — see §7 for the
-> v1 scope and the follow-ups gating the default flip. Phase 4 not started.
-> Goal: cut Lambda cold-start latency (especially via API Gateway / AppSync /
-> function URLs / CloudFront) and shave per-invoke overhead on the warm path,
-> **without** sacrificing fidelity — all observable behavior must keep matching
-> AWS — and **without** granting functions more memory/CPU than AWS would.
-> Guiding principle: move work to **deploy time or idle time**; never add work
+> Status: **complete** 2026-07-31 (PRs #403–#411, #413; investigation and
+> every phase executed the same day). Phase 0 (instrumentation + paced bench
+> harness + baselines), Phase 1 (warm-path hot spots; 1.5 measured and
+> dropped — the CloudFront loopback hop costs less than run noise), Phase 2
+> (cold-path Docker work; 2.4 measured and closed — nothing marginal left),
+> Phase 3 (proactive initialization, opt-in `LAMBDA_PROACTIVE_INIT`, with
+> cross-service trigger evidence). Measured on the same machine and
+> protocol throughout: hello-world cold p50 ~1.5–2.1 s → **~300 ms**
+> (decomposed in the cold-start anatomy table — the remainder is inherent
+> daemon create/start plus real INIT), warm p50 2004 ms → **~6 ms**; 30 MiB
+> packages cold 4007 → 1601 ms with warm flat at ~5 ms. Remaining, in order:
+> flip `LAMBDA_PROACTIVE_INIT` on by default after a release of opt-in soak;
+> Phase 4 (pre-created containers) stays deferred unless post-flip cold
+> starts are still judged too slow.
+> Goal (as executed): cut Lambda cold-start latency and per-invoke overhead
+> **without** sacrificing fidelity — all observable behavior keeps matching
+> AWS — and **without** granting functions more memory/CPU than AWS does.
+> Guiding principle: move work to deploy time or idle time; never add work
 > to the invoke hot path.
-
-Related in-flight work: a separate agent is adding the missing `Init Duration`
-field to cold-start REPORT lines (task "Emit Init Duration in cold-start
-REPORT lines"). Phase 3 below depends on its semantics; coordinate before
-starting Phase 3.
 
 ---
 
@@ -196,8 +187,9 @@ direction — the baseline below therefore brackets Phase 1 (alpha.26 vs this
 branch) rather than preceding it. The large-zip variant landed 2026-07-31 as
 `bench-lambda -pad-mb N` (incompressible padding, stored uncompressed so the
 harness's own CPU stays out of the measurement), and its quiet-machine
-numbers are recorded under Measured evidence. Only the per-runtime INIT
-split (from the phase timers) remains unrecorded.
+numbers, along with the per-runtime cold-start anatomy (phase timers + INIT
+split), are recorded under Measured evidence. Nothing in this phase remains
+open.
 
 1. **Phase timers in `acquireContainer`.** Wrap each step (image check, tar
    build, create, copies, start, VPC, await-IP, await-ready) and log a single
@@ -291,6 +283,25 @@ large-package cold budget is dominated by uploading the ~30 MiB provisioning
 archive into the container plus INIT — the honest floor for this transport,
 and Phase 4's target if it ever needs to shrink.
 
+**Cold-start anatomy (2026-07-31, quiet machine, `main@2c16a7a3` dockerized
+slim, hello-world zips, images and caches warm):** from the per-phase fields
+on `lambda container started` plus REPORT `Init Duration`, per cold start:
+
+| phase | nodejs22.x | python3.13 |
+|---|---|---|
+| `image_check` (after 2.3 cache) | ~0 ms (37 ms first acquire per runtime) | same |
+| `code_prep` (after 2.2 cache) | ~0 ms | ~0 ms |
+| `create` (container + inspect) | 68–146 ms | 68–94 ms |
+| `copy` (single provisioning archive) | 7–14 ms | 9–14 ms |
+| `start` (StartContainer) | 161–218 ms | 166–200 ms |
+| `await_ip` | ~3 ms | ~3 ms |
+| **acquire total** | 260–413 ms | 260–312 ms |
+| **INIT** (REPORT `Init Duration`) | ~41 ms (158 ms first-ever) | ~27 ms (84 ms first-ever) |
+
+`create` + `start` — inherent Docker daemon work — are ~85 % of acquire;
+INIT is real runtime bootstrap. This is the ~300 ms floor decomposed, and
+the input that closed 2.4 (nothing marginal left worth touching).
+
 ---
 
 ## 5. Phase 1 — warm-path (and cold-path) hot-spot removal
@@ -373,22 +384,28 @@ cost. Pinned by `route_cache_test.go`: end-to-end v1 and v2 execution
 through every mutation type (repoint, add, delete, delete-all), each
 asserting the very next request observes the change.
 
-### 1.5 CloudFront local-origin in-process dispatch
-For origins classified as served-locally
-([handler_proxy.go:380](../../internal/services/cloudfront/handler_proxy.go)),
-replace the loopback TCP hop with an in-process `http.RoundTripper` that
-invokes the router's `Handler.ServeHTTP` against a cloned request. Same
-request/response semantics (same URL, Host header, header forwarding), minus
-TCP connect + kernel round trips + duplicate middleware entry cost (access
-logging middleware must still run — it's part of the second pass today;
-verify which middlewares are semantically load-bearing for origin requests:
-host classification, region binding).
-*Risk:* subtle divergence between "real HTTP request" and in-process request
-(e.g. `RemoteAddr`, TLS state, `Content-Length` handling on retried
-failover). Implement behind a flag defaulting on, with the TCP path kept as
-fallback for one release; port the origin-failover tests to run against both.
-This one is optional polish — measure first (likely ~1–3 ms/request); do it
-last within Phase 1 or drop if the win doesn't justify the risk.
+### 1.5 CloudFront local-origin in-process dispatch — MEASURED AND DROPPED (2026-07-31)
+The sketch was to replace the loopback TCP hop with an in-process
+`http.RoundTripper`, gated on measurement. The measurement came back empty:
+on a quiet machine (dockerized slim `main@2c16a7a3`, port 4590), a CloudFront
+distribution fronting a local S3 origin
+(`bench-cf-origin.s3.localhost.overcast.sh`, created via the real
+`aws cloudfront create-distribution` shape) was compared against direct S3
+GETs of the same object — 50 sequential requests per pass, two interleaved
+passes, reused HTTP client:
+
+| path | p50 (pass 1 / 2) | p95 (pass 1 / 2) |
+|---|---|---|
+| direct S3            | 0.69 / 0.54 ms | 1.02 / 0.71 ms |
+| via CloudFront proxy | 0.58 / 0.52 ms | 0.68 / 0.68 ms |
+
+The proxied path is statistically indistinguishable from direct — the
+proxy's keep-alive client means no per-request TCP connect, so the loopback
+hop plus duplicate middleware pass costs less than run-to-run noise.
+**Dropped**: there is nothing for an in-process dispatch to save, and its
+divergence risks (`RemoteAddr`, TLS state, failover re-reads) buy nothing.
+Re-open only if a future measurement of a heavier origin path (large bodies,
+TLS-on) shows a real cost.
 
 ---
 
@@ -442,11 +459,15 @@ runtime image bricked that runtime until restart (the spent `sync.Once` made
 `tar_cache_test.go`.
 *Risk:* only the `docker rmi` race, and the retry closes it.
 
-### 2.4 Micro-cleanups (do only if Phase 0 shows them)
-- The duplicate `RegisterContainerConfig` calls per cold start (pre-start,
-  post-layer-discovery, post-IP) are lock-cheap; leave unless measured.
-- `awaitContainerIP` backoff already usually short-circuits via the pre-start
-  inspect; leave.
+### 2.4 Micro-cleanups — MEASURED, NOTHING TO CLEAN (2026-07-31)
+Collection is passive: every cold start logs its per-phase breakdown on the
+`lambda container started` line; read it off the instance logs after any
+workload. The steady-state split (see Measured evidence, "cold-start
+anatomy") shows `create` + `start` — inherent daemon costs — are ~85 % of
+acquire, while every micro-cleanup candidate is marginal: `copy` ~8–14 ms
+(already a single archive), `await_ip` ~3 ms, `image_check`/`code_prep`/
+`slot_wait` ~0 after the caches. Nothing here justifies a change; re-visit
+only if a future phase-timer reading disagrees.
 
 ---
 
