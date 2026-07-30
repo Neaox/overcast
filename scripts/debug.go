@@ -38,10 +38,10 @@ func init() {
 }
 
 type command struct {
-	name  string
-	args  string
-	desc  string
-	run   func(args []string)
+	name string
+	args string
+	desc string
+	run  func(args []string)
 }
 
 var commands = []command{

@@ -4,12 +4,15 @@
 > Phase 1.3's first half (one-shot Docker stats + real instance memory/CPU in
 > the UI, PR #403), Phase 1.1 (stored CodeHash — no per-acquire package
 > rehash, PR #404), Phase 1.2 (deployment package split out of the function
-> record — no per-invoke package decode, PR #405), Phase 1.4 (API Gateway
-> execution route cache), and Phase 1.3's second half (REPORT memory sampling
-> off the invoke response path, monotonic-peak semantics). Phase 1 is
-> complete except 1.5 (CloudFront in-process origin dispatch), which the plan
-> gates on measurement — do it, or drop it, only with Phase 0 numbers in
-> hand. Phases 0, 2, 3, 4 not started.
+> record — no per-invoke package decode, PR #405), Phase 1.4 + 1.3's second
+> half (API Gateway route cache; REPORT memory off the response path,
+> PR #406), and Phase 0 (cold-start phase timers, per-invoke TRACE timings,
+> `scripts/bench-lambda.go`, and the before/after baseline below — this
+> commit). Phase 1 is complete except 1.5 (CloudFront in-process origin
+> dispatch): measured API GW gateway overhead is now sub-ms, so 1.5's ceiling
+> is a few ms per request — low priority, keep gated on a dedicated
+> measurement. Next: Phase 2 (cold-path Docker overhead), then Phase 3.
+> Phases 2, 3, 4 not started.
 > Goal: cut Lambda cold-start latency (especially via API Gateway / AppSync /
 > function URLs / CloudFront) and shave per-invoke overhead on the warm path,
 > **without** sacrificing fidelity — all observable behavior must keep matching
@@ -177,9 +180,18 @@ scope here.
 
 ---
 
-## 4. Phase 0 — instrumentation & baseline (do first)
+## 4. Phase 0 — instrumentation & baseline — DONE (2026-07-31)
 
 No behavior change; establishes the numbers every later item is judged by.
+Landed: per-phase cold-start durations on the `lambda container started`
+line (image_check / slot_wait / code_prep / create / copy / start /
+await_ip + acquire_total), a per-invoke TRACE timing line (`lambda invoke
+timings`: handler, log_wait, mem_wait, total), and `scripts/bench-lambda.go`
+(paced; see its header for method). Sequenced after Phase 1 at the user's
+direction — the baseline below therefore brackets Phase 1 (alpha.26 vs this
+branch) rather than preceding it. The large-zip variant (item 3) and
+recording INIT split per runtime remain available as follow-ups when Phase 2
+needs them.
 
 1. **Phase timers in `acquireContainer`.** Wrap each step (image check, tar
    build, create, copies, start, VPC, await-IP, await-ready) and log a single
@@ -202,8 +214,45 @@ No behavior change; establishes the numbers every later item is judged by.
 
 ### Measured evidence
 
-_(fill in when Phase 0 lands; per docs/dev/performance.md include metric,
-method, environment)_
+**What:** wall-clock latency of `POST /2015-03-31/functions/{name}/invocations`
+(direct) and `GET /restapis/{id}/{stage}/_user_request_/bench` (API GW v1
+AWS_PROXY), measured client-side by `scripts/bench-lambda.go`. A cold sample
+= identity-changing env update (retires the warm set) → wait Active → settle
+500 ms → one invoke; warm samples = sequential invokes on the warm container.
+5 cold rounds × (1 cold + 4 warm + 4 API GW) per runtime, 2 s cooldown
+between rounds, fully sequential.
+
+**Environment (both runs identical):** Windows 11 Pro, Docker Desktop
+(WSL2), repo on SSD; overcast dockerized (slim image,
+`-v /var/run/docker.sock`, port 4590), hybrid store, hello-world inline-zip
+functions at 128 MB, runtime images pre-cached; bench client in a
+`golang:1.24` container via `host.docker.internal`. 2026-07-31.
+
+**Before — `ghcr.io/neaox/overcast-slim:0.0.1-alpha.26` (pre-#402…#406):**
+
+| Runtime    | cold p50 | cold p95 | cold max | warm p50  | warm p95  | apigw p50 | apigw p95 |
+|------------|---------:|---------:|---------:|----------:|----------:|----------:|----------:|
+| nodejs22.x | 1508 ms  | 2263 ms  | 3468 ms  | 2004.6 ms | 2005.2 ms | 2004.2 ms | 2005.2 ms |
+| python3.13 | 2064 ms  | 2082 ms  | 2577 ms  | 2004.3 ms | 2005.2 ms | 2004.4 ms | 2005.2 ms |
+
+Every warm and API GW invoke sat at ~2004 ms: the pre-one-shot Docker stats
+call hit its 2 s timeout on every invocation in dockerized overcast — the
+warm path was entirely gated on the stats stall (§2.2 item 3).
+
+**After — this branch (Phase 1 complete: #403, #404, #405, #406):**
+
+| Runtime    | cold p50 | cold p95 | cold max | warm p50 | warm p95 | apigw p50 | apigw p95 |
+|------------|---------:|---------:|---------:|---------:|---------:|----------:|----------:|
+| nodejs22.x | 359 ms   | 368 ms   | 383 ms   | 6.2 ms   | 11.3 ms  | 5.8 ms    | 7.1 ms    |
+| python3.13 | 353 ms   | 511 ms   | 1339 ms  | 6.0 ms   | 19.7 ms  | 5.9 ms    | 50.6 ms   |
+
+Warm p50 2004 ms → ~6 ms (~330×), API Gateway adds no measurable overhead
+over direct invoke, cold p50 ~1.5–2.1 s → ~355 ms (~4–6×), and cold jitter
+collapsed (nodejs p95 2263 → 368 ms). The remaining cold-start budget is the
+Docker create/copy/start sequence plus INIT — the per-phase breakdown now
+logged on every `lambda container started` line is the input for Phase 2.
+(The python cold-max outlier, 1339 ms, was a single round on a busy daemon;
+re-run before reading anything into it.)
 
 ---
 

@@ -40,6 +40,7 @@ import (
 	"github.com/Neaox/overcast/internal/containerendpoint"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/logging"
 	"github.com/Neaox/overcast/internal/middleware"
 )
 
@@ -323,8 +324,22 @@ func (cr *ContainerRuntime) AcquireWithProgress(ctx context.Context, fn *Functio
 // acquireContainer is the single implementation behind Acquire and
 // AcquireWithProgress. The progress callback is called at each lifecycle step;
 // callers that don't need progress pass a no-op.
+//
+// Each phase's duration is captured (phases/mark) and reported on the
+// "lambda container started" line, so where a cold start spends its time is
+// always visible — the measurement Phase 0 of docs/plans/lambda-cold-start.md
+// requires before any cold-path change.
 func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, progress ProgressFunc, initType string) (RuntimeInstance, error) {
 	isImage := fn.PackageType == "Image"
+
+	acquireStart := cr.clk.Now()
+	phaseStart := acquireStart
+	var phases []zap.Field
+	mark := func(name string) {
+		now := cr.clk.Now()
+		phases = append(phases, zap.Duration(name, now.Sub(phaseStart)))
+		phaseStart = now
+	}
 
 	image, err := imageForFunction(fn)
 	if err != nil {
@@ -343,6 +358,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	if !exists {
 		progress("Image ready")
 	}
+	mark("image_check")
 
 	progress("Waiting for cold-start capacity")
 	releaseColdStart, err := cr.acquireColdStartSlot(ctx)
@@ -350,6 +366,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		return nil, fmt.Errorf("wait for lambda cold-start slot: %w", err)
 	}
 	defer releaseColdStart()
+	mark("slot_wait")
 
 	hotReloadPath, err := hotReloadBindPath(fn, cr.cfg.LambdaHotReload)
 	if err != nil {
@@ -377,6 +394,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 			return nil, fmt.Errorf("build code tar: %w", explainUnreadablePackage(fn, err))
 		}
 	}
+	mark("code_prep")
 
 	logStream := lambdaLogStreamName(cr.clk)
 	env := cr.buildEnv(fn, logStream, initType)
@@ -443,6 +461,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	} else {
 		cr.logger.Debug("inspect lambda container before start", zap.String("container", id[:12]), zap.Error(inspectErr))
 	}
+	mark("create")
 
 	// cleanup removes the container on any error after creation.
 	cleanup := func() {
@@ -498,6 +517,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 			return nil, fmt.Errorf("copy lambda bootstrap to container: %w", err)
 		}
 	}
+	mark("copy")
 
 	progress("Starting container")
 	if err := cr.docker.StartContainer(ctx, id); err != nil {
@@ -521,6 +541,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 
 	// Register for INIT-burst throttle-down when the RIC first polls /next.
 	cr.registerInitBurst(fn.ARN, id, fn.MemorySize)
+	mark("start")
 
 	progress("Waiting for runtime to initialize")
 	if containerIP == "" {
@@ -539,12 +560,19 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		registeredIP = containerIP
 	}
 
+	mark("await_ip")
+	// One line per cold start carrying the phase breakdown; INIT time (runtime
+	// bootstrap to first GET /next) is reported separately as the REPORT line's
+	// Init Duration.
 	cr.logger.Info("lambda container started",
-		zap.String("function", fn.Name),
-		zap.String("container", id[:12]),
-		zap.String("image", image),
-		zap.String("container_ip", containerIP),
-		zap.String("log_stream", logStream),
+		append([]zap.Field{
+			zap.String("function", fn.Name),
+			zap.String("container", id[:12]),
+			zap.String("image", image),
+			zap.String("container_ip", containerIP),
+			zap.String("log_stream", logStream),
+			zap.Duration("acquire_total", cr.clk.Now().Sub(acquireStart)),
+		}, phases...)...,
 	)
 
 	ci := cr.newContainerInstance(id, containerIP, fn, logStream)
@@ -1194,17 +1222,33 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte) (*InvokeR
 	// NOT wait for CloudWatch flushes — those happen asynchronously after
 	// Invoke returns. This matches AWS / LocalStack semantics: invoke
 	// latency is decoupled from log delivery.
+	logWaitStart := ci.clk.Now()
 	if ci.logWriter != nil {
 		ci.waitForScannerIdle()
 	}
+	logWait := ci.clk.Now().Sub(logWaitStart)
 
 	// Emit END + REPORT lines that real Lambda writes after every invocation.
 	// These are enqueued onto the synth channel for async batching alongside
 	// handler output — Invoke does not wait for their CWL delivery.
+	memWaitStart := ci.clk.Now()
+	memMB := ci.reportMemoryMB(memSample)
+	memWait := ci.clk.Now().Sub(memWaitStart)
 	ci.writeLogLine(ctx, fmt.Sprintf("END RequestId: %s", reqID))
 	ci.writeLogLine(ctx, fmt.Sprintf(
 		"REPORT RequestId: %s\tDuration: %.2f ms\tBilled Duration: %d ms\tMemory Size: %d MB\tMax Memory Used: %d MB%s",
-		reqID, float64(elapsed.Microseconds())/1000.0, billedDuration(elapsed), ci.memorySize, ci.reportMemoryMB(memSample), ci.initDurationField()))
+		reqID, float64(elapsed.Microseconds())/1000.0, billedDuration(elapsed), ci.memorySize, memMB, ci.initDurationField()))
+
+	// Per-invocation timing breakdown (Phase 0 of
+	// docs/plans/lambda-cold-start.md): what the emulator added around the
+	// handler's own runtime. TRACE — it fires on every invoke.
+	ci.logger.Log(logging.TraceLevel, "lambda invoke timings",
+		zap.String("container", shortContainerID(ci.id)),
+		zap.Duration("handler", elapsed),
+		zap.Duration("log_wait", logWait),
+		zap.Duration("mem_wait", memWait),
+		zap.Duration("total", ci.clk.Now().Sub(start)),
+	)
 
 	// Snapshot the tail buffer for X-Amz-Log-Result.
 	if ci.logWriter != nil {
