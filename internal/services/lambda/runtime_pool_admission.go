@@ -44,6 +44,21 @@ const (
 	// defaultFunctionTimeout matches AWS's default function timeout, used when
 	// a function does not set one.
 	defaultFunctionTimeout = 3 * time.Second
+	// defaultFunctionMemoryMB is AWS's default MemorySize, applied by
+	// CreateFunction; the budget uses it for any Function value that predates
+	// that defaulting so nothing is ever admitted as costing nothing.
+	defaultFunctionMemoryMB = 128
+	// memoryHighWaterPercent is the share of the memory budget above which
+	// Release prefers destroying a finished container over keeping it warm.
+	memoryHighWaterPercent = 90
+)
+
+// Memory-pressure regime edge log lines. The per-container destruction stays
+// at Debug; these mark the episode itself so the default log level shows why
+// every invocation suddenly cold starts.
+const (
+	memPressureEnterMsg = "lambda pool: memory budget above high water — finished containers will be destroyed instead of kept warm (expect cold starts)"
+	memPressureExitMsg  = "lambda pool: memory budget back under high water — resuming warm container pooling"
 )
 
 // Throttle reasons. These are the values real Lambda puts in the Reason field
@@ -177,21 +192,29 @@ func (p *InstancePool) admit(ctx context.Context, fn *Function) error {
 // admitContainer is the global counterpart to admit, called only when the warm
 // set could not satisfy the invocation and a new container must be created.
 // The caller's slot is already counted, so capacity is checked against what
-// creating this container would bring the total to.
+// creating this container would bring the total to. Two budgets gate creation:
+// the instance count and the aggregate memory budget (Σ MemorySize of live
+// containers). On success the function's MemorySize is reserved as pending
+// memory; the caller must commit it to the created instance
+// (commitPendingMem) or give it back (unreservePendingMem).
 //
 // Order of preference: reclaim an idle container, then wait for one to free,
 // then throttle.
 func (p *InstancePool) admitContainer(ctx context.Context, fn *Function) error {
+	memMB := functionMemoryMB(fn)
 	for {
 		p.mu.Lock()
 		if p.entries == nil { // pool stopped
 			p.mu.Unlock()
 			return errThrottled(reasonConcurrencyLimit)
 		}
-		if p.totalLiveLocked() <= p.maxInstances {
+		if p.totalLiveLocked() <= p.maxInstances && p.memoryFitsLocked(memMB) {
+			p.pendingMemMB += memMB
+			p.reservedMemMB += memMB
 			p.mu.Unlock()
 			return nil
 		}
+		overMemory := !p.memoryFitsLocked(memMB)
 		// Over capacity: reclaim the least-recently-used idle container. An
 		// idle container is doing nothing, so taking it costs the next
 		// invocation of that function a cold start and nothing else.
@@ -200,9 +223,19 @@ func (p *InstancePool) admitContainer(ctx context.Context, fn *Function) error {
 		p.mu.Unlock()
 
 		if reclaimed != nil {
-			p.log.Info("lambda pool: instance limit reached — reclaiming an idle instance",
+			// A count-cap reclaim is routine pool behaviour (Info); a
+			// memory-bound one means the host budget is the constraint and the
+			// operator should act — raise LAMBDA_MAX_MEMORY_MB or lower the
+			// functions' MemorySize — so it surfaces at Warn. Same pattern as
+			// the sweep's leveled p.log.Log call.
+			msg, level := "lambda pool: instance limit reached — reclaiming an idle instance", zap.InfoLevel
+			if overMemory {
+				msg, level = "lambda pool: memory budget reached — reclaiming an idle instance", zap.WarnLevel
+			}
+			p.log.Log(level, msg,
 				zap.String("for_function", fn.Name),
 				zap.String("reclaimed_from", victim),
+				zap.Bool("memory_bound", overMemory),
 				zap.Int("max_instances", p.maxInstances),
 			)
 			p.closeInstance(victim, reclaimed, "close reclaimed instance failed")
@@ -212,14 +245,111 @@ func (p *InstancePool) admitContainer(ctx context.Context, fn *Function) error {
 
 		// Everything is busy. Queue until a slot frees or the caller's deadline
 		// (the function timeout) expires, then throttle like AWS.
+		if overMemory {
+			// Once per process, not per invocation: tell the operator which
+			// knob raises the budget.
+			p.memWarnOnce.Do(func() {
+				p.log.Warn("lambda pool: aggregate memory budget exhausted — invocations queue until containers free; raise the budget to allow more",
+					zap.String("env_var", "LAMBDA_MAX_MEMORY_MB"),
+					zap.Int("budget_mb", p.maxMemoryMB),
+					zap.Int("reserved_mb", p.memReservedMB()),
+					zap.Int("requested_mb", memMB),
+				)
+			})
+		}
 		p.log.Debug("lambda pool: instance limit reached — queueing invocation",
 			zap.String("function", fn.Name),
+			zap.Bool("memory_bound", overMemory),
 			zap.Int("max_instances", p.maxInstances),
 		)
 		if err := waitForSlot(ctx, waiter); err != nil {
 			return err
 		}
 	}
+}
+
+// ─── Memory budget bookkeeping ───────────────────────────────────────────────
+//
+// Memory is attributed to containers, not invocations: a container holds its
+// function's MemorySize from the moment admitContainer reserves it (pending),
+// through its life warm or executing (live, keyed by instance ID), until
+// closeInstance releases it. Warm reuse moves nothing — the container never
+// stopped existing.
+
+// functionMemoryMB is the memory a container for fn is created with, in MB.
+func functionMemoryMB(fn *Function) int {
+	if fn == nil || fn.MemorySize < 1 {
+		return defaultFunctionMemoryMB
+	}
+	return fn.MemorySize
+}
+
+// memoryFitsLocked reports whether a container of memMB fits the budget.
+// Caller must hold p.mu.
+func (p *InstancePool) memoryFitsLocked(memMB int) bool {
+	return p.maxMemoryMB < 1 || p.reservedMemMB+memMB <= p.maxMemoryMB
+}
+
+// overMemoryHighWaterLocked reports whether reserved memory has crossed the
+// high-water mark of the budget. Caller must hold p.mu.
+func (p *InstancePool) overMemoryHighWaterLocked() bool {
+	return p.maxMemoryMB > 0 && p.reservedMemMB*100 >= p.maxMemoryMB*memoryHighWaterPercent
+}
+
+// commitPendingMem converts a pending reservation into a live one owned by
+// instanceID, after a cold start produced a container.
+func (p *InstancePool) commitPendingMem(instanceID string, memMB int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.liveMemMB == nil { // pool stopped; Release will close the instance
+		return
+	}
+	p.pendingMemMB -= memMB
+	p.liveMemMB[instanceID] = memMB
+}
+
+// unreservePendingMem gives back a pending reservation whose cold start
+// produced nothing, and wakes anything queued on memory.
+func (p *InstancePool) unreservePendingMem(memMB int) {
+	p.mu.Lock()
+	if p.liveMemMB != nil {
+		p.pendingMemMB -= memMB
+		p.reservedMemMB -= memMB
+		p.signalSlotFreedLocked()
+	}
+	p.mu.Unlock()
+}
+
+// registerLiveMem counts an instance created outside admission (provisioned
+// concurrency) against the budget.
+func (p *InstancePool) registerLiveMem(instanceID string, memMB int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.liveMemMB == nil || instanceID == "" {
+		return
+	}
+	p.liveMemMB[instanceID] = memMB
+	p.reservedMemMB += memMB
+}
+
+// releaseLiveMemLocked returns instanceID's memory to the budget and wakes
+// anything queued on it. Instances the pool never admitted have no entry and
+// free nothing. Caller must hold p.mu.
+func (p *InstancePool) releaseLiveMemLocked(instanceID string) {
+	memMB, ok := p.liveMemMB[instanceID]
+	if !ok {
+		return
+	}
+	delete(p.liveMemMB, instanceID)
+	p.reservedMemMB -= memMB
+	p.signalSlotFreedLocked()
+}
+
+// memReservedMB reports the memory currently counted against the budget.
+func (p *InstancePool) memReservedMB() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.reservedMemMB
 }
 
 // waitForSlot blocks until waiter is signalled or ctx ends. A ctx that ends

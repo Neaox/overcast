@@ -266,6 +266,44 @@ function evictOldest(events: StreamEvent[], count: number): StreamEvent[] {
 export const FLUSH_INTERVAL_MS = 50
 
 /**
+ * Ceiling for burst-widened flush windows: 50 → 100 → 200 → 400 ms.
+ *
+ * Each flush costs a postMessage, a cache merge and an invalidation pass in
+ * every tab, so during a sustained burst — a Lambda load test emits hundreds
+ * of events a second — a 50 ms cadence keeps the main thread busy doing
+ * bookkeeping instead of painting. 400 ms is still comfortably "live" for a
+ * console someone is watching under load.
+ */
+export const MAX_FLUSH_INTERVAL_MS = 400
+
+/** Event rate (events/second) at which the flush window starts widening. */
+const BURST_HIGH_WATER = 200
+/** Event rate below which the window narrows back towards FLUSH_INTERVAL_MS. */
+const BURST_LOW_WATER = 40
+
+/**
+ * The flush window the batcher should use after delivering a batch of
+ * `batchSize` events over a `currentMs` window. Pure, so the policy is
+ * testable without waiting out real flush windows.
+ *
+ * Same hysteresis shape as {@link capacityFor}: halve/double between water
+ * marks rather than jumping to either bound, so a stream hovering near one
+ * threshold does not oscillate between extremes on every flush. Sparse
+ * traffic therefore walks back to the 50 ms baseline within a couple of
+ * flushes of a burst ending.
+ */
+export function flushIntervalFor(batchSize: number, currentMs: number): number {
+  const perSecond = (batchSize * 1000) / currentMs
+  if (perSecond >= BURST_HIGH_WATER) {
+    return Math.min(MAX_FLUSH_INTERVAL_MS, currentMs * 2)
+  }
+  if (perSecond <= BURST_LOW_WATER) {
+    return Math.max(FLUSH_INTERVAL_MS, currentMs / 2)
+  }
+  return currentMs
+}
+
+/**
  * A capacity-bounded event store that hands new events to `onFlush` in
  * batches. Used by the SharedWorker and by the no-SharedWorker fallback.
  *
@@ -278,6 +316,7 @@ export class EventBatcher {
   #events: StreamEvent[] = []
   #pending: StreamEvent[] = []
   #timer: ReturnType<typeof setTimeout> | null = null
+  #intervalMs = FLUSH_INTERVAL_MS
   readonly #onFlush: (batch: StreamEvent[]) => void
 
   constructor(onFlush: (batch: StreamEvent[]) => void) {
@@ -288,7 +327,7 @@ export class EventBatcher {
   push(event: StreamEvent): void {
     this.#pending.push(event)
     if (this.#timer === null) {
-      this.#timer = setTimeout(() => this.flush(), FLUSH_INTERVAL_MS)
+      this.#timer = setTimeout(() => this.flush(), this.#intervalMs)
     }
   }
 
@@ -302,6 +341,9 @@ export class EventBatcher {
 
     const batch = this.#pending
     this.#pending = []
+    // Adapt the next window to what this one carried, so a burst coalesces
+    // into fewer, larger batches and quiet traffic stays near-live.
+    this.#intervalMs = flushIntervalFor(batch.length, this.#intervalMs)
     // Heartbeats are forwarded so the UI can show connection liveness, but
     // never retained: replaying a ping to a tab that connects later says
     // nothing about a connection that tab does not share.
@@ -325,5 +367,6 @@ export class EventBatcher {
     }
     this.#events = []
     this.#pending = []
+    this.#intervalMs = FLUSH_INTERVAL_MS
   }
 }

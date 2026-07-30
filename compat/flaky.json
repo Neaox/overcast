@@ -17,6 +17,14 @@
       "since": "2026-07-29",
       "issue": "https://github.com/Neaox/overcast/issues/388",
       "reason": "Cascades from PublishDeliveredToSQS: reported 'skip — dependency failed' on some runs and 'fail' on others. Not flaky in itself; remove it together with the entry above."
+    },
+    {
+      "suite": "cli",
+      "group": "eventbridge-buses",
+      "test": "DeleteEventBus",
+      "since": "2026-07-29",
+      "issue": "https://github.com/Neaox/overcast/issues/388",
+      "reason": "Downstream of the stable cli/eventbridge-buses/ListEventBuses failure (plan R7), whose knock-on is not deterministic: 'skip — dependency failed' on some runs, 'fail' on others, on trees that do not touch EventBridge. Not flaky in itself; remove it with the ListEventBuses fix. Same shape as the SNS race above — a resource is created, and the next call cannot find it — which is why one issue covers both."
     }
   ]
 }

@@ -13,6 +13,8 @@ package bff
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -77,6 +79,16 @@ type UIConfig struct {
 	Region string
 	// Debug indicates whether OVERCAST_DEBUG is enabled for the emulator.
 	Debug bool
+	// TLS indicates the emulator API (and this UI server) are served over
+	// HTTPS. The SPA bootstrap then derives an https API base URL — an https
+	// page cannot call an http API (mixed content) — and the BFF's own proxy
+	// clients dial https.
+	TLS bool
+	// TLSTrustPEM holds PEM certificates the BFF's proxy clients trust in
+	// addition to the system roots when TLS is set — the local overcast CA
+	// in auto mode, or the configured certificate chain in explicit mode.
+	// Without it the BFF could not verify the very server it fronts.
+	TLSTrustPEM []byte
 }
 
 // browserPort returns the port the SPA should be told to use.
@@ -99,8 +111,13 @@ func (c UIConfig) browserPort() int {
 // don't embed the UI.
 func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	if cfg.APIPort > 0 {
-		defaultAPIURL = fmt.Sprintf("http://localhost:%d", cfg.APIPort)
+		scheme := "http"
+		if cfg.TLS {
+			scheme = "https"
+		}
+		defaultAPIURL = fmt.Sprintf("%s://localhost:%d", scheme, cfg.APIPort)
 	}
+	configureAPITransports(cfg)
 	// Only meaningful when the two differ; equal ports need no rewriting.
 	if cfg.BrowserAPIPort > 0 && cfg.BrowserAPIPort != cfg.APIPort {
 		publishedAPIPort = cfg.BrowserAPIPort
@@ -159,6 +176,33 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	r.Get("/*", spaHandlerFunc(staticFS, cfg))
 
 	return r
+}
+
+// configureAPITransports points the BFF's proxy clients at the emulator API's
+// scheme. With TLS on, both clients get a transport whose root pool is the
+// system pool plus cfg.TLSTrustPEM (the local overcast CA, or the operator's
+// own chain) — the leaf covers "localhost", which is what the BFF dials.
+// Without TLS the default transports are restored, so tests and dev callers
+// that build multiple handlers can flip modes freely.
+func configureAPITransports(cfg UIConfig) {
+	if !cfg.TLS {
+		bffHTTPClient.Transport = nil
+		bffStreamingClient.Transport = nil
+		return
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	pool.AppendCertsFromPEM(cfg.TLSTrustPEM)
+	tr, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		tr = &http.Transport{}
+	}
+	tr = tr.Clone()
+	tr.TLSClientConfig = &tls.Config{RootCAs: pool}
+	bffHTTPClient.Transport = tr
+	bffStreamingClient.Transport = tr.Clone()
 }
 
 // ── Middleware ─────────────────────────────────────────────────────────────
@@ -497,8 +541,11 @@ func deriveAPIBaseURL(r *http.Request, cfg UIConfig) string {
 		hostname = h
 		hasPort = true
 	}
+	// https when Overcast itself serves TLS (both listeners share one mode,
+	// so a TLS UI implies a TLS API) or when this request arrived over TLS
+	// (a terminating proxy in front of us); never a downgrade.
 	scheme := "http"
-	if r.TLS != nil {
+	if cfg.TLS || r.TLS != nil {
 		scheme = "https"
 	}
 	if !hasPort {
@@ -1083,7 +1130,9 @@ func handleLambdaTestEventDelete(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("%s/2015-03-31/functions/%s/test-events/%s",
 			ep, url.PathEscape(name), url.PathEscape(eventName)), nil)
 	forwardRegion(req, r)
-	resp, err := http.DefaultClient.Do(req)
+	// bffHTTPClient, not http.DefaultClient: the shared client carries the
+	// TLS trust configuration when the emulator API is served over HTTPS.
+	resp, err := bffHTTPClient.Do(req)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
 		return

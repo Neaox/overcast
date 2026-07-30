@@ -38,12 +38,17 @@ public final class Ec2Group implements ServiceGroup {
                 Map.entry("TerminateInstances",             this::terminateInstances),
                 Map.entry("CreateVpc",                      this::createVpc),
                 Map.entry("DescribeVpcs",                   this::describeVpcs),
+                Map.entry("CreateVpnGateway",               this::createVpnGateway),
+                Map.entry("AttachVpnGateway",               this::attachVpnGateway),
+                Map.entry("DescribeVpnGateways",            this::describeVpnGateways),
                 Map.entry("CreateSubnet",                   this::createSubnet),
                 Map.entry("DescribeSubnets",                this::describeSubnets),
                 Map.entry("CreateSecurityGroup",            this::createSecurityGroup),
                 Map.entry("DeleteSecurityGroup",            this::deleteSecurityGroup),
                 Map.entry("CreateInternetGateway",          this::createInternetGateway),
                 Map.entry("AttachInternetGateway",          this::attachInternetGateway),
+                Map.entry("DetachVpnGateway",               this::detachVpnGateway),
+                Map.entry("DeleteVpnGateway",               this::deleteVpnGateway),
                 Map.entry("DeleteSubnet",                   this::deleteSubnet),
                 Map.entry("DeleteVpc",                      this::deleteVpc),
                 Map.entry("AuthorizeSecurityGroupIngress",  this::authorizeSecurityGroupIngress),
@@ -143,6 +148,11 @@ public final class Ec2Group implements ServiceGroup {
             try { ec2().detachInternetGateway(r -> r.internetGatewayId(igwId).vpcId(vpcId)); } catch (Exception ignored) {}
             try { ec2().deleteInternetGateway(r -> r.internetGatewayId(igwId)); } catch (Exception ignored) {}
         }
+        String vpnGatewayId = ctx.getString("ec2VpnGatewayId");
+        if (vpnGatewayId != null && vpcId != null) {
+            try { ec2().detachVpnGateway(r -> r.vpcId(vpcId).vpnGatewayId(vpnGatewayId)); } catch (Exception ignored) {}
+            try { ec2().deleteVpnGateway(r -> r.vpnGatewayId(vpnGatewayId)); } catch (Exception ignored) {}
+        }
         String subnetId = ctx.getString("ec2SubnetId");
         if (subnetId != null) {
             try { ec2().deleteSubnet(r -> r.subnetId(subnetId)); } catch (Exception ignored) {}
@@ -188,6 +198,51 @@ public final class Ec2Group implements ServiceGroup {
         String igwId = ctx.getString("ec2IgwId");
         String vpcId = ctx.getString("ec2VpcId");
         ec2().attachInternetGateway(r -> r.internetGatewayId(igwId).vpcId(vpcId));
+    }
+
+    private void createVpnGateway(TestContext ctx) throws Exception {
+        var resp = ec2().createVpnGateway(r -> r
+                .type("ipsec.1")
+                .amazonSideAsn(65001L));
+        Assertions.assertNotBlank(resp.vpnGateway().vpnGatewayId(),
+                "CreateVpnGateway: vpnGatewayId is blank");
+        ctx.set("ec2VpnGatewayId", resp.vpnGateway().vpnGatewayId());
+    }
+
+    private void attachVpnGateway(TestContext ctx) throws Exception {
+        String vpcId = ctx.getString("ec2VpcId");
+        String vpnGatewayId = ctx.getString("ec2VpnGatewayId");
+        if (vpcId == null) throw new AssertionError("AttachVpnGateway: no VPC from CreateVpc");
+        if (vpnGatewayId == null) throw new AssertionError("AttachVpnGateway: no gateway from CreateVpnGateway");
+        var resp = ec2().attachVpnGateway(r -> r.vpcId(vpcId).vpnGatewayId(vpnGatewayId));
+        Assertions.assertEquals(resp.vpcAttachment().vpcId(), vpcId,
+                "AttachVpnGateway: VpcAttachment VpcId mismatch");
+    }
+
+    private void describeVpnGateways(TestContext ctx) throws Exception {
+        String vpcId = ctx.getString("ec2VpcId");
+        String vpnGatewayId = ctx.getString("ec2VpnGatewayId");
+        if (vpcId == null) throw new AssertionError("DescribeVpnGateways: no VPC from CreateVpc");
+        if (vpnGatewayId == null) throw new AssertionError("DescribeVpnGateways: no gateway from CreateVpnGateway");
+        var resp = ec2().describeVpnGateways(r -> r
+                .filters(Filter.builder().name("attachment.vpc-id").values(vpcId).build(),
+                         Filter.builder().name("attachment.state").values("attached").build(),
+                         Filter.builder().name("state").values("available").build()));
+        Assertions.assertEquals(resp.vpnGateways().size(), 1,
+                "DescribeVpnGateways: expected one VPN gateway");
+    }
+
+    private void detachVpnGateway(TestContext ctx) throws Exception {
+        String vpcId = ctx.getString("ec2VpcId");
+        String vpnGatewayId = ctx.getString("ec2VpnGatewayId");
+        if (vpcId == null || vpnGatewayId == null) return;
+        ec2().detachVpnGateway(r -> r.vpcId(vpcId).vpnGatewayId(vpnGatewayId));
+    }
+
+    private void deleteVpnGateway(TestContext ctx) throws Exception {
+        String vpnGatewayId = ctx.getString("ec2VpnGatewayId");
+        if (vpnGatewayId == null) return;
+        ec2().deleteVpnGateway(r -> r.vpnGatewayId(vpnGatewayId));
     }
 
     private void deleteVpc(TestContext ctx) throws Exception {

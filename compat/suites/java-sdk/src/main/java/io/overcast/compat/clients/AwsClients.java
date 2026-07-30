@@ -14,6 +14,7 @@ import software.amazon.awssdk.services.cognitoidentityprovider.CognitoIdentityPr
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.ec2.Ec2Client;
 import software.amazon.awssdk.services.ecs.EcsClient;
+import software.amazon.awssdk.services.elasticache.ElastiCacheClient;
 import software.amazon.awssdk.services.eventbridge.EventBridgeClient;
 import software.amazon.awssdk.services.iam.IamClient;
 import software.amazon.awssdk.services.kinesis.KinesisClient;
@@ -74,6 +75,7 @@ public final class AwsClients {
     private volatile CloudFormationClient cloudFormation;
     private volatile Ec2Client ec2;
     private volatile EcsClient ecs;
+    private volatile ElastiCacheClient elasticache;
     private volatile CognitoIdentityProviderClient cognito;
     private volatile AppSyncClient appSync;
     private volatile ApiGatewayClient apiGateway;
@@ -380,6 +382,22 @@ public final class AwsClients {
             }
         }
         return ecs;
+    }
+
+    public ElastiCacheClient elasticache() {
+        if (elasticache == null) {
+            synchronized (this) {
+                if (elasticache == null) {
+                    elasticache = ElastiCacheClient.builder()
+                            .endpointOverride(endpoint)
+                            .region(region)
+                            .credentialsProvider(credentials)
+                            .httpClient(UrlConnectionHttpClient.create())
+                            .build();
+                }
+            }
+        }
+        return elasticache;
     }
 
     public CognitoIdentityProviderClient cognito() {
