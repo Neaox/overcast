@@ -413,7 +413,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 					return nil, fmt.Errorf("fetch function code: %w", err)
 				}
 			}
-			codeTar, err = zipToTar(fn.CodeZip)
+			codeTar, err = zipToTarPrefixed(fn.CodeZip, "var/task/")
 			if err != nil {
 				return nil, fmt.Errorf("build code tar: %w", explainUnreadablePackage(fn, err))
 			}
@@ -513,37 +513,74 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		_ = cr.docker.RemoveContainerForce(id)
 	}
 
-	// Copy code into the container before starting it (zip deployments only).
+	// Provision the container filesystem with ONE archive extracted at "/" —
+	// code (var/task/…), TLS trust root, layer contents (opt/…, in layer
+	// order, so later layers overwrite earlier ones exactly as with the
+	// previous per-layer copies and as on AWS), and the bootstrap. One daemon
+	// round trip instead of up to four sequential tar uploads. Directories the
+	// base image owns (/var, /var/task, /opt, /etc) are never emitted as
+	// headers, so extraction cannot reset their modes.
+	progress("Provisioning container filesystem")
+	layerTars, expectedExtensions, skippedLayerLogLines, layerErr := cr.resolveLayerTars(ctx, fn)
+	if layerErr != nil {
+		cleanup()
+		return nil, fmt.Errorf("prepare layers: %w", layerErr)
+	}
+	var prov bytes.Buffer
+	tw := tar.NewWriter(&prov)
+	hasEntries := false
+	appendComponent := func(what string, component []byte) error {
+		if len(component) == 0 {
+			return nil
+		}
+		if err := appendTarEntries(tw, component); err != nil {
+			return fmt.Errorf("assemble %s entries: %w", what, err)
+		}
+		hasEntries = true
+		return nil
+	}
 	if !isImage && hotReloadPath == "" {
-		progress("Copying code to container")
-		if err := cr.docker.CopyToContainer(ctx, id, "/var/task", bytes.NewReader(codeTar)); err != nil {
+		if err := appendComponent("code", codeTar); err != nil {
 			cleanup()
-			return nil, fmt.Errorf("copy code to container: %w", err)
+			return nil, err
 		}
 	}
-
 	// With TLS on, the function must trust the CA that minted Overcast's
 	// certificate before its first SDK call — otherwise every AWS call from
 	// inside the function fails certificate verification. Injected by the same
 	// mechanism as code: a dockerized Overcast has no host path to bind-mount.
 	if caTar, caErr := cr.caBundleTar(); caErr != nil {
 		cr.logger.Warn("CA bundle unavailable; function TLS calls to Overcast will fail verification", zap.Error(caErr))
-	} else if caTar != nil {
-		progress("Injecting TLS trust root")
-		if err := cr.docker.CopyToContainer(ctx, id, "/", bytes.NewReader(caTar)); err != nil {
+	} else if err := appendComponent("CA bundle", caTar); err != nil {
+		cleanup()
+		return nil, err
+	}
+	for _, layerTar := range layerTars {
+		if err := appendComponent("layer", layerTar); err != nil {
 			cleanup()
-			return nil, fmt.Errorf("inject CA bundle: %w", err)
+			return nil, err
 		}
 	}
-
-	// Copy attached layer contents into /opt before starting the container.
-	if len(fn.Layers) > 0 {
-		progress("Injecting layer content")
+	if !isImage {
+		bootTar, bootErr := lambdaBootstrapTar()
+		if bootErr != nil {
+			cleanup()
+			return nil, fmt.Errorf("build bootstrap tar: %w", bootErr)
+		}
+		if err := appendComponent("bootstrap", bootTar); err != nil {
+			cleanup()
+			return nil, err
+		}
 	}
-	expectedExtensions, skippedLayerLogLines, err := cr.copyLayersToContainer(ctx, id, fn)
-	if err != nil {
+	if err := tw.Close(); err != nil {
 		cleanup()
-		return nil, fmt.Errorf("copy layers to container: %w", err)
+		return nil, fmt.Errorf("close provisioning tar: %w", err)
+	}
+	if hasEntries {
+		if err := cr.docker.CopyToContainer(ctx, id, "/", bytes.NewReader(prov.Bytes())); err != nil {
+			cleanup()
+			return nil, fmt.Errorf("provision container filesystem: %w", err)
+		}
 	}
 	if containerIP != "" {
 		cr.runtimeAPI.RegisterContainerConfig(containerIP, runtimeContainerConfig{
@@ -552,12 +589,6 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 			Handler:            fn.Handler,
 			ExpectedExtensions: expectedExtensions,
 		})
-	}
-	if !isImage {
-		if err := cr.copyLambdaBootstrapToContainer(ctx, id); err != nil {
-			cleanup()
-			return nil, fmt.Errorf("copy lambda bootstrap to container: %w", err)
-		}
 	}
 	mark("copy")
 
@@ -2248,15 +2279,20 @@ func sanitizeName(name string) string {
 	}, name)
 }
 
-// copyLayersToContainer expands each attached layer zip and copies it into
-// /opt, matching Lambda's layer filesystem semantics.
-func (cr *ContainerRuntime) copyLayersToContainer(ctx context.Context, containerID string, fn *Function) ([]string, []string, error) {
+// resolveLayerTars fetches (or serves from cache) each attached layer as an
+// opt/-prefixed tar for the single provisioning archive, in layer order —
+// later layers overwrite earlier ones at extraction, matching AWS layer
+// merge semantics. No Docker calls happen here; assembly is pure CPU.
+// Returns the ordered tars, discovered external extension names, and one
+// synthesized warning log line per layer that had to be skipped.
+func (cr *ContainerRuntime) resolveLayerTars(ctx context.Context, fn *Function) ([][]byte, []string, []string, error) {
 	if len(fn.Layers) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	if cr.layerFetcher == nil {
-		return nil, nil, fmt.Errorf("layer content fetcher is not configured")
+		return nil, nil, nil, fmt.Errorf("layer content fetcher is not configured")
 	}
+	tars := make([][]byte, 0, len(fn.Layers))
 	extensionSet := make(map[string]bool)
 	skippedLayerLogLines := make([]string, 0)
 	for _, layer := range fn.Layers {
@@ -2267,9 +2303,7 @@ func (cr *ContainerRuntime) copyLayersToContainer(ctx context.Context, container
 		// Layer versions are immutable, so ARN-keyed tars (and the extension
 		// scan) are cached across cold starts and functions.
 		if cached, ok := cr.tarCache.get("layer:" + arn); ok {
-			if err := cr.docker.CopyToContainer(ctx, containerID, "/opt", bytes.NewReader(cached.data)); err != nil {
-				return nil, nil, fmt.Errorf("copy layer %s to /opt: %w", arn, err)
-			}
+			tars = append(tars, cached.data)
 			for _, name := range cached.extensions {
 				extensionSet[name] = true
 			}
@@ -2294,28 +2328,26 @@ func (cr *ContainerRuntime) copyLayersToContainer(ctx context.Context, container
 				continue
 			}
 		}
-		layerTar, err := zipToTar(zipData)
+		layerTar, err := zipToTarPrefixed(zipData, "opt/")
 		if err != nil {
-			return nil, nil, fmt.Errorf("build tar for layer %s: %w", arn, err)
+			return nil, nil, nil, fmt.Errorf("build tar for layer %s: %w", arn, err)
 		}
-		if err := cr.docker.CopyToContainer(ctx, containerID, "/opt", bytes.NewReader(layerTar)); err != nil {
-			return nil, nil, fmt.Errorf("copy layer %s to /opt: %w", arn, err)
-		}
+		tars = append(tars, layerTar)
 		discovered := discoverExternalExtensions(zipData)
 		for _, name := range discovered {
 			extensionSet[name] = true
 		}
 		cr.tarCache.put(&tarCacheEntry{key: "layer:" + arn, data: layerTar, extensions: discovered})
 	}
-	if len(extensionSet) == 0 {
-		return nil, skippedLayerLogLines, nil
-	}
 	extensions := make([]string, 0, len(extensionSet))
 	for name := range extensionSet {
 		extensions = append(extensions, name)
 	}
 	slices.Sort(extensions)
-	return extensions, skippedLayerLogLines, nil
+	if len(extensions) == 0 {
+		extensions = nil
+	}
+	return tars, extensions, skippedLayerLogLines, nil
 }
 
 func skippedLayerWarningLogLine(layerVersionARN string, cause error) string {
@@ -2391,12 +2423,26 @@ func buildLambdaBootstrapTar() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (cr *ContainerRuntime) copyLambdaBootstrapToContainer(ctx context.Context, containerID string) error {
-	data, err := lambdaBootstrapTar()
-	if err != nil {
-		return err
+// appendTarEntries re-writes every entry of a component tar into tw, so
+// independently built (and cached) component archives can be merged into the
+// single provisioning archive without re-reading their sources.
+func appendTarEntries(tw *tar.Writer, component []byte) error {
+	tr := tar.NewReader(bytes.NewReader(component))
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		if _, err := io.Copy(tw, tr); err != nil {
+			return err
+		}
 	}
-	return cr.docker.CopyToContainer(ctx, containerID, "/", bytes.NewReader(data))
 }
 
 func lambdaBootstrapScript() []byte {
@@ -2438,12 +2484,15 @@ func classifyRuntimeLogLine(line string) (string, string) {
 // directory, which breaks when running inside a devcontainer (the Docker daemon
 // runs on the host and cannot see the devcontainer's filesystem).
 func zipToTar(zipData []byte) ([]byte, error) {
-	return zipToTarFiltered(zipData, nil)
+	return zipToTarPrefixed(zipData, "")
 }
 
-// zipToTarFiltered converts a zip archive to a tar archive, optionally
-// skipping entries where skip(name) returns true.
-func zipToTarFiltered(zipData []byte, skip func(string) bool) ([]byte, error) {
+// zipToTarPrefixed converts a zip archive to a tar archive whose entry names
+// carry prefix (e.g. "var/task/"), so the result can be extracted at the
+// container root as part of the single provisioning archive. The prefix root
+// itself is never emitted as a directory header — the base image owns those
+// directories, and a header would reset their modes on extraction.
+func zipToTarPrefixed(zipData []byte, prefix string) ([]byte, error) {
 	zr, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
 	if err != nil {
 		return nil, fmt.Errorf("open zip: %w", err)
@@ -2453,16 +2502,19 @@ func zipToTarFiltered(zipData []byte, skip func(string) bool) ([]byte, error) {
 	tw := tar.NewWriter(&buf)
 
 	for _, f := range zr.File {
-		if skip != nil && skip(f.Name) {
-			continue
+		// Zip tools sometimes emit "./"-relative names; normalize before
+		// prefixing so "./index.js" becomes "var/task/index.js", not
+		// "var/task/./index.js".
+		name := prefix + strings.TrimPrefix(f.Name, "./")
+		if name == prefix || name == "" {
+			continue // a bare "./" entry would emit the prefix root itself
 		}
-
 		mode := int64(f.FileInfo().Mode().Perm())
 		if mode == 0 {
 			mode = 0o644
 		}
 		header := &tar.Header{
-			Name:    f.Name,
+			Name:    name,
 			Size:    int64(f.UncompressedSize64),
 			Mode:    mode,
 			ModTime: f.Modified,

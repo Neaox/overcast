@@ -306,12 +306,15 @@ func TestContainerRuntimeCopyLayersToContainer_missingRemoteLayerReturnsLambdaLo
 	runtime.SetRemoteLayerFetcher(NewRemoteLayerFetcher(runtime.cfg, zap.NewNop(), runtime.clk))
 	fn := &Function{Layers: []LayerVersionLink{{ARN: "arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:11"}}}
 
-	// When: layers are injected before container start.
-	extensions, logLines, err := runtime.copyLayersToContainer(context.Background(), "container-id", fn)
+	// When: layers are resolved for the provisioning archive.
+	tars, extensions, logLines, err := runtime.resolveLayerTars(context.Background(), fn)
 
 	// Then: the missing layer is skipped and a warning line is available for the Lambda logs.
 	if err != nil {
-		t.Fatalf("copyLayersToContainer: %v", err)
+		t.Fatalf("resolveLayerTars: %v", err)
+	}
+	if len(tars) != 0 {
+		t.Fatalf("tars = %d, want none for a skipped layer", len(tars))
 	}
 	if len(extensions) != 0 {
 		t.Fatalf("extensions = %#v, want none", extensions)

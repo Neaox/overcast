@@ -11,9 +11,10 @@
 > commit). Phase 1 is complete except 1.5 (CloudFront in-process origin
 > dispatch): measured API GW gateway overhead is now sub-ms, so 1.5's ceiling
 > is a few ms per request — low priority, keep gated on a dedicated
-> measurement. Phase 2: 2.2 (artifact caches) and 2.3 (image-presence cache)
-> landed 2026-07-31 (this commit); 2.1 (single-tar provisioning) and 2.4
-> remain. Then Phase 3. Phase 4 not started.
+> measurement. Phase 2: 2.2 + 2.3 (artifact and image-presence caches,
+> PR #408) and 2.1 (single-tar provisioning, this commit — cold p50
+> ~355 → ~300 ms) landed 2026-07-31; 2.4 stays open only if the phase timers
+> ever show it. Then Phase 3. Phase 4 not started.
 > Goal: cut Lambda cold-start latency (especially via API Gateway / AppSync /
 > function URLs / CloudFront) and shave per-invoke overhead on the warm path,
 > **without** sacrificing fidelity — all observable behavior must keep matching
@@ -359,20 +360,20 @@ last within Phase 1 or drop if the win doesn't justify the risk.
 
 ## 6. Phase 2 — cold-path Docker overhead
 
-### 2.1 Single-tar container provisioning
-Merge the up-to-4 `CopyToContainer` calls into **one** tar extracted at `/`:
-entries prefixed `var/task/…` (code), `opt/…` (layers),
-`var/overcast/bootstrap`, plus the CA bundle path. Extend
-`zipToTarFiltered` with a path-prefix option.
-**Do not emit parent-directory headers** (`var/`, `opt/`, `etc/`) — a dir
-header would chmod the image's existing directories; only emit leaf dirs the
-image doesn't own (`var/task/` subtree, `var/overcast/`). Preserve the layer
-skip-warnings and extension discovery exactly (they operate on the zip, not
-the tar).
-*Risk:* permission/ownership drift inside the container ⇒ run the full
-integration suite (`tests/integration/lambda`) incl. layers + extensions +
-TLS-on (CA injection) before/after; add a test asserting `/var` and `/opt`
-modes are untouched.
+### 2.1 Single-tar container provisioning — DONE (2026-07-31)
+Landed: one provisioning archive extracted at `/` — code entries prefixed
+`var/task/` (`zipToTarPrefixed`, which also normalizes `./`-relative zip
+names), layer tars prefixed `opt/` in layer order (later layers overwrite
+earlier ones at extraction, matching AWS merge semantics and the previous
+per-layer copies), the CA trust root, and the bootstrap — replacing up to
+four sequential `CopyToContainer` round trips with one. Cached component
+tars (2.2) are merged by entry re-copy (`appendTarEntries`); layer
+resolution (`resolveLayerTars`) is now pure CPU with skip-warnings and
+extension discovery unchanged. No directory the base image owns (`var/`,
+`var/task/`, `opt/`, `etc/`) is ever emitted as a header, so extraction
+cannot reset their modes — pinned by `provisioning_tar_test.go` along with
+layer overwrite order. Verified live (bench-lambda, same protocol): cold
+p50 ~355 ms → **~300 ms** (nodejs 300 / python 304), warm unchanged.
 
 ### 2.2 Pre-built artifacts — DONE (2026-07-31)
 Landed (`tar_cache.go`, container_runtime.go):
