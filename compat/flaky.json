@@ -25,6 +25,46 @@
       "since": "2026-07-29",
       "issue": "https://github.com/Neaox/overcast/issues/388",
       "reason": "Downstream of the stable cli/eventbridge-buses/ListEventBuses failure (plan R7), whose knock-on is not deterministic: 'skip — dependency failed' on some runs, 'fail' on others, on trees that do not touch EventBridge. Not flaky in itself; remove it with the ListEventBuses fix. Same shape as the SNS race above — a resource is created, and the next call cannot find it — which is why one issue covers both."
+    },
+    {
+      "suite": "dotnet-sdk",
+      "group": "sns-subscriptions",
+      "test": "SubscribeSQS",
+      "since": "2026-07-30",
+      "issue": "https://github.com/Neaox/overcast/issues/388",
+      "reason": "Same lost-resource race as PublishDeliveredToSQS, one call earlier in the group: failed pass->fail on the alpha.26 release-merge run of a tree whose changes were CI-only, then the same commit's neighbouring runs passed. Second SNS-subscription manifestation today across two suites (see the cdk entry), which strengthens the write-visibility suspicion on the shared state layer rather than anything suite-local."
+    },
+    {
+      "suite": "dotnet-sdk",
+      "group": "sns-subscriptions",
+      "test": "GetSubscriptionAttributes",
+      "since": "2026-07-30",
+      "issue": "https://github.com/Neaox/overcast/issues/388",
+      "reason": "Cascades from SubscribeSQS: 'skip — dependency failed' when it fails. Not flaky in itself; remove together with the SubscribeSQS entry."
+    },
+    {
+      "suite": "dotnet-sdk",
+      "group": "sns-subscriptions",
+      "test": "ListSubscriptionsByTopic",
+      "since": "2026-07-30",
+      "issue": "https://github.com/Neaox/overcast/issues/388",
+      "reason": "Cascades from SubscribeSQS: 'skip — dependency failed' when it fails. Not flaky in itself; remove together with the SubscribeSQS entry."
+    },
+    {
+      "suite": "dotnet-sdk",
+      "group": "sns-subscriptions",
+      "test": "SetSubscriptionAttributes",
+      "since": "2026-07-30",
+      "issue": "https://github.com/Neaox/overcast/issues/388",
+      "reason": "Cascades from SubscribeSQS: 'skip — dependency failed' when it fails. Not flaky in itself; remove together with the SubscribeSQS entry."
+    },
+    {
+      "suite": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyTopicSubscription",
+      "since": "2026-07-30",
+      "issue": "https://github.com/Neaox/overcast/issues/388",
+      "reason": "Failed pass->fail once on a CI-only PR (#391) while five adjacent main runs and six local lifecycle runs of the same code passed 35/0. Same functional area as the dotnet-sdk sns-subscriptions race — an SNS subscription created and then not found — so one issue covers the class."
     }
   ]
 }
