@@ -150,6 +150,15 @@ For an alpha release:
    python3 scripts/check-release-changelog.py x.y.z-alpha.n
    ```
 6. Commit the release-prep changes on the release branch and open a PR.
+   CI treats any same-repo PR whose `VERSION` has no `v<VERSION>` tag yet as
+   a **release candidate** (`scripts/release-candidate-check.sh` — this also
+   covers follow-up PRs after a failed release workflow, when the unreleased
+   version already sits on `main`). Each candidate build publishes
+   `ghcr.io/neaox/overcast[-slim]:<version>-rc.<n>` (linux/amd64, `<n>`
+   increments per build), uploads the ten native binaries as workflow
+   artifacts, and maintains one bot comment on the PR with pull commands,
+   image digests, and the artifact table. Smoke test the RC image — the
+   exact bits CI built — rather than a local rebuild.
 7. Merge the release-prep PR to `main`.
 8. Watch the `Release` workflow until all jobs pass.
 9. Verify the GitHub release `v<VERSION>` exists and contains native

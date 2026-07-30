@@ -257,75 +257,54 @@ jobs:
           path: web/dist
           if-no-files-found: error
 
-  cross-build:
-    name: Cross-build ${{ matrix.asset }}
-    needs: web
+  # release-gate decides, once, whether this build is a release candidate:
+  # a same-repo PR whose checked-out VERSION has no v<VERSION> tag yet. That
+  # covers the PR that bumps VERSION and — where a release/* branch-name test
+  # would go blind — a follow-up PR after a failed release workflow, when the
+  # unreleased version already sits on main. The script never fails (errors
+  # degrade to rc=false with a warning), so the jobs that hang off this output
+  # cannot be skip-cascaded by an infrastructure hiccup.
+  release-gate:
+    name: Release candidate gate
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - asset: overcast-linux-amd64
-            goos: linux
-            goarch: amd64
-            tags: ""
-          - asset: overcast-linux-arm64
-            goos: linux
-            goarch: arm64
-            tags: ""
-          - asset: overcast-darwin-amd64
-            goos: darwin
-            goarch: amd64
-            tags: ""
-          - asset: overcast-darwin-arm64
-            goos: darwin
-            goarch: arm64
-            tags: ""
-          - asset: overcast-windows-amd64.exe
-            goos: windows
-            goarch: amd64
-            tags: ""
-          - asset: overcastd-linux-amd64
-            goos: linux
-            goarch: amd64
-            tags: slim,nosqlite
-          - asset: overcastd-linux-arm64
-            goos: linux
-            goarch: arm64
-            tags: slim,nosqlite
-          - asset: overcastd-darwin-amd64
-            goos: darwin
-            goarch: amd64
-            tags: slim,nosqlite
-          - asset: overcastd-darwin-arm64
-            goos: darwin
-            goarch: arm64
-            tags: slim,nosqlite
-          - asset: overcastd-windows-amd64.exe
-            goos: windows
-            goarch: amd64
-            tags: slim,nosqlite
+    outputs:
+      rc: ${{ steps.check.outputs.rc }}
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.5.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: actions/download-artifact@v8.0.1
-        with:
-          name: web-dist
-          path: web/dist
-      - uses: ./.github/actions/build-overcast-binary
-        with:
-          asset: ${{ matrix.asset }}
-          goos: ${{ matrix.goos }}
-          goarch: ${{ matrix.goarch }}
-          tags: ${{ matrix.tags }}
-          version: ci
+      - id: check
+        env:
+          IS_SAME_REPO_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          rc=false
+          if [ "$IS_SAME_REPO_PR" = "true" ]; then
+            rc=$(bash scripts/release-candidate-check.sh)
+          fi
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          echo "release candidate: $rc"
+
+  # The binary set is defined once in build-binaries.yml and shared with
+  # release.yml, so the PR check builds exactly what a release would ship.
+  # On a release-candidate build the binaries are also uploaded as artifacts;
+  # on every other PR this stays a pure build check.
+  cross-build:
+    name: Cross-build
+    needs: [web, release-gate]
+    uses: ./.github/workflows/build-binaries.yml
+    with:
+      version: ci
+      upload-artifacts: ${{ needs.release-gate.outputs.rc == 'true' }}
+      retention-days: 14
 
   docker:
     name: Docker build (${{ matrix.image }})
+    needs: release-gate
     runs-on: ubuntu-latest
+    # contents: read restates the default that adding a job-level block would
+    # otherwise drop; packages: write is exercised only on same-repo release
+    # PRs, where the freshly built image is pushed as a release candidate.
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -355,3 +334,115 @@ jobs:
           sleep 2
           curl -sf http://localhost:4566/_health
           docker rm -f oc-smoke
+      # On a release PR, publish this exact image to GHCR as a release
+      # candidate: {version}-rc.{run_number}. run_number increments per CI
+      # run, so every push to the release branch mints a fresh RC and earlier
+      # ones stay pullable for comparison. linux/amd64 only — the multi-arch
+      # manifest is built at publish time; the RC exists so the candidate
+      # bits themselves can be smoke tested before stamping.
+      - name: Push release-candidate image
+        id: rc-push
+        if: needs.release-gate.outputs.rc == 'true'
+        env:
+          IMAGE_SUFFIX: ${{ matrix.image == 'slim' && '-slim' || '' }}
+          RUN_NUMBER: ${{ github.run_number }}
+          SOURCE_TAG: ${{ matrix.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          version=$(cat VERSION)
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          rc_image="ghcr.io/${owner}/overcast${IMAGE_SUFFIX}:${version}-rc.${RUN_NUMBER}"
+          docker tag "$SOURCE_TAG" "$rc_image"
+          docker push "$rc_image"
+          digest=$(docker inspect --format='{{index .RepoDigests 0}}' "$rc_image")
+          mkdir -p rc-meta
+          {
+            echo "$rc_image"
+            echo "$digest"
+          } > "rc-meta/rc-image-${{ matrix.image }}.txt"
+      - name: Record release-candidate image reference
+        if: steps.rc-push.outcome == 'success'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: rc-image-${{ matrix.image }}
+          path: rc-meta/rc-image-${{ matrix.image }}.txt
+          retention-days: 14
+
+  # rc-comment maintains one bot comment on a release PR — release-notes
+  # shaped: the RC images with pull commands and digests, and a table of the
+  # binary artifacts — so the candidate CI built is one click away. The
+  # comment is updated in place on every build rather than posted again.
+  rc-comment:
+    name: Release candidate summary
+    needs: [release-gate, cross-build, docker]
+    if: needs.release-gate.outputs.rc == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: rc-image-*
+          path: rc-meta
+          merge-multiple: true
+      - name: Upsert RC comment
+        uses: actions/github-script@v8.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- overcast-rc-build -->';
+
+            const images = [];
+            for (const image of ['console', 'slim']) {
+              const f = `rc-meta/rc-image-${image}.txt`;
+              if (fs.existsSync(f)) {
+                const [ref, withDigest] = fs.readFileSync(f, 'utf8').trim().split(/\r?\n/);
+                images.push({ ref, digest: (withDigest || '').split('@')[1] || '' });
+              }
+            }
+
+            const { data: arts } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner, repo: context.repo.repo,
+              run_id: context.runId, per_page: 100,
+            });
+            const mb = (n) => (n / (1024 * 1024)).toFixed(1) + ' MB';
+            const binaries = arts.artifacts
+              .filter(a => a.name.startsWith('overcast'))
+              .sort((a, b) => a.name.localeCompare(b.name));
+
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const sha = context.payload.pull_request.head.sha;
+            const rcName = images[0] ? images[0].ref.split(':').pop() : `rc.${context.runNumber}`;
+
+            let body = `${marker}\n## Release candidate \`${rcName}\`\n\n`;
+            body += `Built from ${sha} — [workflow run](${runUrl}). `;
+            body += `Every push to this branch mints a new RC; earlier RCs stay pullable.\n\n`;
+            body += `### Images (linux/amd64)\n\n`;
+            for (const i of images) {
+              body += '```\ndocker pull ' + i.ref + '\n```\n';
+              if (i.digest) body += `<sub>digest \`${i.digest}\`</sub>\n\n`;
+            }
+            body += `### Binaries\n\n| Asset | Size |\n| --- | --- |\n`;
+            for (const a of binaries) {
+              body += `| [${a.name}](${runUrl}#artifacts) | ${mb(a.size_in_bytes)} |\n`;
+            }
+            body += `\n<sub>Binary artifacts expire after 14 days. RC image tags are transient pre-release builds.</sub>\n`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.issue.number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: existing.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number, body,
+              });
+            }
