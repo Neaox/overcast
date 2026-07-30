@@ -65,6 +65,22 @@
       "since": "2026-07-30",
       "issue": "https://github.com/Neaox/overcast/issues/388",
       "reason": "Failed pass->fail once on a CI-only PR (#391) while five adjacent main runs and six local lifecycle runs of the same code passed 35/0. Same functional area as the dotnet-sdk sns-subscriptions race — an SNS subscription created and then not found — so one issue covers the class."
+    },
+    {
+      "suite": "cli",
+      "group": "ses-identities",
+      "test": "ListIdentities",
+      "since": "2026-07-30",
+      "issue": "https://github.com/Neaox/overcast/issues/388",
+      "reason": "Third surface of #388's created-then-not-found race in one day, after sns-subscriptions (dotnet-sdk, cdk): an identity verified earlier in the group is missing from the next ListIdentities. Failed pass->fail on CI-only #393 while the adjacent main runs passed. The spread across SNS, EventBridge and now SES strengthens the case that the race lives in the shared state layer, not in any one service."
+    },
+    {
+      "suite": "cli",
+      "group": "ses-identities",
+      "test": "DeleteIdentity",
+      "since": "2026-07-30",
+      "issue": "https://github.com/Neaox/overcast/issues/388",
+      "reason": "Cascades from ListIdentities: 'skip — dependency failed' when it fails. Not flaky in itself; remove together with the ListIdentities entry."
     }
   ]
 }
