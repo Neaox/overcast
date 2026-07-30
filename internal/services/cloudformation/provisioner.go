@@ -732,6 +732,18 @@ func (p *provisioner) updateResource(ctx context.Context, logicalID string, res 
 		return resourceUpdateOutcome{}, err
 	}
 
+	// A "replacement" that hands back the original's physical ID is not a
+	// replacement — there is only one resource. Services whose create is an
+	// upsert keyed by a caller-pinned name (CloudWatch PutMetricAlarm, Route53
+	// UPSERT-shaped records) do exactly this. Reporting it as replaced would
+	// hand that one ID to the post-success cleanup and to rollback, both of
+	// which delete it — destroying the resource behind a stack that claims
+	// UPDATE_COMPLETE. Real CloudFormation cannot reach this state: it refuses
+	// to replace a custom-named resource whose name did not change.
+	if newPhysID == oldPhysicalID {
+		return resourceUpdateOutcome{PhysicalID: newPhysID}, nil
+	}
+
 	outcome := resourceUpdateOutcome{PhysicalID: newPhysID, ReplacedPhysicalID: oldPhysicalID}
 	if oldResource != nil && oldResource.shouldRetainOnReplace() {
 		// UpdateReplacePolicy=Retain orphans the original instead of deleting

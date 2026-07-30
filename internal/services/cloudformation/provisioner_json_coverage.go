@@ -379,7 +379,19 @@ func (h *backupBackupVaultHandler) Delete(ctx context.Context, router http.Handl
 }
 
 func (h *backupBackupVaultHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return "", nil, errReplacementRequired
+	// Physical ID is the vault ARN, "arn:…:backup-vault:{name}".
+	oldName := physicalID
+	if idx := strings.LastIndex(oldName, ":"); idx >= 0 {
+		oldName = oldName[idx+1:]
+	}
+	if n, ok := props["BackupVaultName"].(string); ok && n != "" && n != oldName {
+		return "", nil, errReplacementRequired
+	}
+	// BackupVaultName is the only replacement property on real AWS, and
+	// CreateBackupVault rejects duplicates, so replacing under an unchanged
+	// name can never succeed. Nothing else this handler provisions is mutable
+	// (EncryptionKeyArn is create-only), so keeping the vault is the update.
+	return physicalID, nil, nil
 }
 
 // ── AWS::Backup::BackupPlan ─────────────────────────────────────────────────
@@ -544,7 +556,37 @@ func (h *transferUserHandler) Delete(ctx context.Context, router http.Handler, c
 }
 
 func (h *transferUserHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return "", nil, errReplacementRequired
+	// Physical ID is "{serverID}/{userName}"; both replace on real AWS, and
+	// CreateUser rejects duplicates, so replacing under an unchanged pair can
+	// never succeed.
+	parts := strings.SplitN(physicalID, "/", 2)
+	if len(parts) != 2 {
+		return "", nil, errReplacementRequired
+	}
+	if sid, ok := props["ServerId"].(string); ok && sid != "" && sid != parts[0] {
+		return "", nil, errReplacementRequired
+	}
+	if un, ok := props["UserName"].(string); ok && un != "" && un != parts[1] {
+		return "", nil, errReplacementRequired
+	}
+
+	body := map[string]any{
+		"ServerId": parts[0],
+		"UserName": parts[1],
+	}
+	if v, _ := props["Role"].(string); v != "" {
+		body["Role"] = v
+	}
+	if v, _ := props["HomeDirectory"].(string); v != "" {
+		body["HomeDirectory"] = v
+	}
+	if v, _ := props["Policy"].(string); v != "" {
+		body["Policy"] = v
+	}
+	if _, err := internalJSON(ctx, router, rCtx.Region, "TransferService.UpdateUser", body); err != nil {
+		return "", nil, fmt.Errorf("UpdateUser: %w", err)
+	}
+	return physicalID, nil, nil
 }
 
 // ── AWS::Shield::Protection ─────────────────────────────────────────────────
@@ -780,8 +822,10 @@ func (h *glueTableHandler) Update(ctx context.Context, router http.Handler, _ *c
 
 type cloudwatchAlarmHandler struct{}
 
-func (h *cloudwatchAlarmHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	alarmName, _ := props["AlarmName"].(string)
+// putMetricAlarm issues PutMetricAlarm for the given alarm name and template
+// properties, and returns the physical ID and attributes. Shared by Create and
+// Update: PutMetricAlarm is itself an upsert, so the two are the same call.
+func (h *cloudwatchAlarmHandler) putMetricAlarm(ctx context.Context, router http.Handler, rCtx *resolveContext, alarmName string, props map[string]any) (string, map[string]string, error) {
 	metricName, _ := props["MetricName"].(string)
 	namespace, _ := props["Namespace"].(string)
 	statistic, _ := props["Statistic"].(string)
@@ -794,35 +838,14 @@ func (h *cloudwatchAlarmHandler) Create(ctx context.Context, router http.Handler
 		"Statistic":          statistic,
 		"ComparisonOperator": comparisonOperator,
 	}
-	if v, ok := props["Period"]; ok {
-		body["Period"] = v
-	}
-	if v, ok := props["EvaluationPeriods"]; ok {
-		body["EvaluationPeriods"] = v
-	}
-	if v, ok := props["Threshold"]; ok {
-		body["Threshold"] = v
-	}
-	if v, ok := props["AlarmDescription"]; ok {
-		body["AlarmDescription"] = v
-	}
-	if v, ok := props["ActionsEnabled"]; ok {
-		body["ActionsEnabled"] = v
-	}
-	if v, ok := props["OKActions"]; ok {
-		body["OKActions"] = v
-	}
-	if v, ok := props["AlarmActions"]; ok {
-		body["AlarmActions"] = v
-	}
-	if v, ok := props["InsufficientDataActions"]; ok {
-		body["InsufficientDataActions"] = v
-	}
-	if v, ok := props["Unit"]; ok {
-		body["Unit"] = v
-	}
-	if v, ok := props["Dimensions"]; ok {
-		body["Dimensions"] = v
+	for _, name := range []string{
+		"Period", "EvaluationPeriods", "Threshold", "AlarmDescription",
+		"ActionsEnabled", "OKActions", "AlarmActions",
+		"InsufficientDataActions", "Unit", "Dimensions",
+	} {
+		if v, ok := props[name]; ok {
+			body[name] = v
+		}
 	}
 
 	_, err := internalJSON(ctx, router, rCtx.Region, "GraniteServiceVersion20100801.PutMetricAlarm", body)
@@ -837,6 +860,11 @@ func (h *cloudwatchAlarmHandler) Create(ctx context.Context, router http.Handler
 	return alarmName, attrs, nil
 }
 
+func (h *cloudwatchAlarmHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	alarmName, _ := props["AlarmName"].(string)
+	return h.putMetricAlarm(ctx, router, rCtx, alarmName, props)
+}
+
 func (h *cloudwatchAlarmHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	body := map[string]any{
 		"AlarmNames": []string{physicalID},
@@ -846,7 +874,11 @@ func (h *cloudwatchAlarmHandler) Delete(ctx context.Context, router http.Handler
 }
 
 func (h *cloudwatchAlarmHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return "", nil, errReplacementRequired
+	// Physical ID is the alarm name; only AlarmName replaces on real AWS.
+	if n, ok := props["AlarmName"].(string); ok && n != "" && n != physicalID {
+		return "", nil, errReplacementRequired
+	}
+	return h.putMetricAlarm(ctx, router, rCtx, physicalID, props)
 }
 
 // ── AWS::Scheduler::Schedule ────────────────────────────────────────────────
@@ -924,8 +956,21 @@ func (h *schedulerScheduleGroupHandler) Create(ctx context.Context, router http.
 	body := map[string]any{
 		"Name": name,
 	}
-	if v, ok := props["Tags"]; ok {
-		body["Tags"] = v
+	// The template carries tags as [{Key,Value}]; the emulated scheduler API
+	// takes a flat map.
+	if tags, ok := props["Tags"].([]any); ok {
+		m := map[string]string{}
+		for _, t := range tags {
+			if tm, ok := t.(map[string]any); ok {
+				if k, _ := tm["Key"].(string); k != "" {
+					v, _ := tm["Value"].(string)
+					m[k] = v
+				}
+			}
+		}
+		if len(m) > 0 {
+			body["Tags"] = m
+		}
 	}
 
 	rec, err := internalJSON(ctx, router, rCtx.Region, "Scheduler.CreateScheduleGroup", body)
@@ -959,7 +1004,18 @@ func (h *schedulerScheduleGroupHandler) Delete(ctx context.Context, router http.
 }
 
 func (h *schedulerScheduleGroupHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return "", nil, errReplacementRequired
+	// Physical ID is the group ARN, "arn:…:schedule-group/{name}".
+	oldName := physicalID
+	if idx := strings.LastIndex(oldName, "/"); idx >= 0 {
+		oldName = oldName[idx+1:]
+	}
+	if n, ok := props["Name"].(string); ok && n != "" && n != oldName {
+		return "", nil, errReplacementRequired
+	}
+	// Name is the only replacement property on real AWS (the rest is Tags),
+	// and CreateScheduleGroup rejects duplicates, so replacing under an
+	// unchanged name can never succeed. Keep the group.
+	return physicalID, nil, nil
 }
 
 // ── AWS::OpenSearchService::Domain ──────────────────────────────────────────

@@ -337,7 +337,15 @@ func (h *rdsDBSubnetGroupHandler) Delete(ctx context.Context, router http.Handle
 }
 
 func (h *rdsDBSubnetGroupHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return "", nil, errReplacementRequired
+	// Physical ID is the group name. DBSubnetGroupName is the only
+	// replacement property on real AWS, and CreateDBSubnetGroup rejects
+	// duplicates, so replacing under an unchanged name can never succeed.
+	// The emulated RDS has no ModifyDBSubnetGroup, so keeping the group is
+	// the closest available in-place update.
+	if n, ok := props["DBSubnetGroupName"].(string); ok && n != "" && n != physicalID {
+		return "", nil, errReplacementRequired
+	}
+	return physicalID, nil, nil
 }
 
 // ── AWS::RDS::DBParameterGroup ────────────────────────────────────────────
@@ -2303,7 +2311,15 @@ func (h *elastiCacheSubnetGroupHandler) Delete(ctx context.Context, router http.
 }
 
 func (h *elastiCacheSubnetGroupHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return "", nil, errReplacementRequired
+	// Physical ID is the group name. CacheSubnetGroupName is the only
+	// replacement property on real AWS, and CreateCacheSubnetGroup rejects
+	// duplicates, so replacing under an unchanged name can never succeed.
+	// The emulated ElastiCache has no ModifyCacheSubnetGroup, so keeping the
+	// group is the closest available in-place update.
+	if n, ok := props["CacheSubnetGroupName"].(string); ok && n != "" && n != physicalID {
+		return "", nil, errReplacementRequired
+	}
+	return physicalID, nil, nil
 }
 
 // ── fmtPropString ──────────────────────────────────────────────────────────────
