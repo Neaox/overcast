@@ -185,6 +185,72 @@ def AttachInternetGateway(ctx: TestContext) -> None:
     ec2.attach_internet_gateway(InternetGatewayId=igw_id, VpcId=vpc_id)
 
 
+def CreateVpnGateway(ctx: TestContext) -> None:
+    ec2 = _ec2(ctx)
+    resp = ec2.create_vpn_gateway(
+        Type="ipsec.1",
+        AmazonSideAsn=65001,
+    )
+    vpn_gateway = resp.get("VpnGateway", {})
+    if not vpn_gateway.get("VpnGatewayId"):
+        raise AssertionError("CreateVpnGateway: missing VpnGatewayId")
+    ctx["ec2_vpn_gateway_id"] = vpn_gateway["VpnGatewayId"]
+
+
+def AttachVpnGateway(ctx: TestContext) -> None:
+    ec2 = _ec2(ctx)
+    vpc_id = ctx.get("ec2_vpc_id")
+    vpn_gateway_id = ctx.get("ec2_vpn_gateway_id")
+    if not vpc_id:
+        raise AssertionError("AttachVpnGateway: no VPC from CreateVpc")
+    if not vpn_gateway_id:
+        raise AssertionError("AttachVpnGateway: no gateway from CreateVpnGateway")
+    resp = ec2.attach_vpn_gateway(
+        VpcId=vpc_id,
+        VpnGatewayId=vpn_gateway_id,
+    )
+    vpc_attachment = resp.get("VpcAttachment", {})
+    if vpc_attachment.get("VpcId") != vpc_id:
+        raise AssertionError("AttachVpnGateway: VpcAttachment VpcId mismatch")
+
+
+def DescribeVpnGateways(ctx: TestContext) -> None:
+    ec2 = _ec2(ctx)
+    vpc_id = ctx.get("ec2_vpc_id")
+    vpn_gateway_id = ctx.get("ec2_vpn_gateway_id")
+    if not vpc_id:
+        raise AssertionError("DescribeVpnGateways: no VPC from CreateVpc")
+    if not vpn_gateway_id:
+        raise AssertionError("DescribeVpnGateways: no gateway from CreateVpnGateway")
+    resp = ec2.describe_vpn_gateways(
+        Filters=[
+            {"Name": "attachment.vpc-id", "Values": [vpc_id]},
+            {"Name": "attachment.state", "Values": ["attached"]},
+            {"Name": "state", "Values": ["available"]},
+        ],
+    )
+    vpn_gateways = resp.get("VpnGateways", [])
+    if len(vpn_gateways) != 1:
+        raise AssertionError(f"DescribeVpnGateways: expected one VPN gateway, got {len(vpn_gateways)}")
+
+
+def DetachVpnGateway(ctx: TestContext) -> None:
+    ec2 = _ec2(ctx)
+    vpc_id = ctx.get("ec2_vpc_id")
+    vpn_gateway_id = ctx.get("ec2_vpn_gateway_id")
+    if not vpc_id or not vpn_gateway_id:
+        return
+    ec2.detach_vpn_gateway(VpcId=vpc_id, VpnGatewayId=vpn_gateway_id)
+
+
+def DeleteVpnGateway(ctx: TestContext) -> None:
+    ec2 = _ec2(ctx)
+    vpn_gateway_id = ctx.get("ec2_vpn_gateway_id")
+    if not vpn_gateway_id:
+        return
+    ec2.delete_vpn_gateway(VpnGatewayId=vpn_gateway_id)
+
+
 # ── ec2-security-group-rules ────────────────────────────────────────────────
 
 def AuthorizeSecurityGroupIngress(ctx: TestContext) -> None:
@@ -272,12 +338,17 @@ IMPLS = {
     "TerminateInstances": TerminateInstances,
     "CreateVpc": CreateVpc,
     "DescribeVpcs": DescribeVpcs,
+    "CreateVpnGateway": CreateVpnGateway,
+    "AttachVpnGateway": AttachVpnGateway,
+    "DescribeVpnGateways": DescribeVpnGateways,
     "CreateSubnet": CreateSubnet,
     "DescribeSubnets": DescribeSubnets,
     "CreateSecurityGroup": CreateSecurityGroup,
     "DeleteSecurityGroup": DeleteSecurityGroup,
     "CreateInternetGateway": CreateInternetGateway,
     "AttachInternetGateway": AttachInternetGateway,
+    "DetachVpnGateway": DetachVpnGateway,
+    "DeleteVpnGateway": DeleteVpnGateway,
     "DeleteSubnet": DeleteSubnet,
     "DeleteVpc": DeleteVpc,
     "AuthorizeSecurityGroupIngress": AuthorizeSecurityGroupIngress,
@@ -316,6 +387,16 @@ def _teardown_vpc(ctx: TestContext) -> None:
             pass
         try:
             ec2.delete_internet_gateway(InternetGatewayId=igw_id)
+        except Exception:
+            pass
+    vpn_gateway_id = ctx.get("ec2_vpn_gateway_id")
+    if vpn_gateway_id and vpc_id:
+        try:
+            ec2.detach_vpn_gateway(VpcId=vpc_id, VpnGatewayId=vpn_gateway_id)
+        except Exception:
+            pass
+        try:
+            ec2.delete_vpn_gateway(VpnGatewayId=vpn_gateway_id)
         except Exception:
             pass
     subnet_id = ctx.get("ec2_subnet_id")

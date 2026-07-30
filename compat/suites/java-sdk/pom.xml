@@ -56,6 +56,7 @@
     <dependency><groupId>software.amazon.awssdk</groupId><artifactId>sfn</artifactId></dependency>
     <dependency><groupId>software.amazon.awssdk</groupId><artifactId>wafv2</artifactId></dependency>
     <dependency><groupId>software.amazon.awssdk</groupId><artifactId>shield</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>elasticache</artifactId></dependency>
     <!-- URL connection client (no Apache HTTP, keeps image small) -->
     <dependency><groupId>software.amazon.awssdk</groupId><artifactId>url-connection-client</artifactId></dependency>
     <!-- Async HTTP client — required by LambdaAsyncClient (InvokeWithResponseStream) -->
