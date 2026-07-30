@@ -59,7 +59,55 @@ func (h *acmCertificateHandler) Update(ctx context.Context, router http.Handler,
 
 // ── AWS::ECR::Repository ────────────────────────────────────────────────────
 
+const ecrTargetPrefix = "AmazonEC2ContainerRegistry_V20150921."
+
 type ecrRepositoryHandler struct{}
+
+// ecrPolicyText renders a policy property as the JSON text the ECR API takes.
+// Templates supply the policy either inline as an object or pre-rendered as a
+// string.
+func ecrPolicyText(v any) (string, bool) {
+	switch p := v.(type) {
+	case string:
+		return p, p != ""
+	case map[string]any:
+		b, err := json.Marshal(p)
+		if err != nil {
+			return "", false
+		}
+		return string(b), true
+	}
+	return "", false
+}
+
+// ecrApplyRepositoryPolicies pushes the mutable policy properties
+// (RepositoryPolicyText, LifecyclePolicy) onto an existing repository.
+// oldProps is consulted only to remove a policy the previous template carried
+// and the new one dropped.
+func ecrApplyRepositoryPolicies(ctx context.Context, router http.Handler, rCtx *resolveContext, name string, props, oldProps map[string]any) error {
+	if text, ok := ecrPolicyText(props["RepositoryPolicyText"]); ok {
+		body := map[string]any{"repositoryName": name, "policyText": text}
+		if _, err := internalJSON(ctx, router, rCtx.Region, ecrTargetPrefix+"SetRepositoryPolicy", body); err != nil {
+			return fmt.Errorf("SetRepositoryPolicy: %w", err)
+		}
+	} else if _, had := oldProps["RepositoryPolicyText"]; had {
+		_, _ = internalJSON(ctx, router, rCtx.Region, ecrTargetPrefix+"DeleteRepositoryPolicy", map[string]any{"repositoryName": name})
+	}
+
+	lifecycleText := ""
+	if lp, ok := props["LifecyclePolicy"].(map[string]any); ok {
+		lifecycleText, _ = lp["LifecyclePolicyText"].(string)
+	}
+	if lifecycleText != "" {
+		body := map[string]any{"repositoryName": name, "lifecyclePolicyText": lifecycleText}
+		if _, err := internalJSON(ctx, router, rCtx.Region, ecrTargetPrefix+"PutLifecyclePolicy", body); err != nil {
+			return fmt.Errorf("PutLifecyclePolicy: %w", err)
+		}
+	} else if _, had := oldProps["LifecyclePolicy"]; had {
+		_, _ = internalJSON(ctx, router, rCtx.Region, ecrTargetPrefix+"DeleteLifecyclePolicy", map[string]any{"repositoryName": name})
+	}
+	return nil
+}
 
 func (h *ecrRepositoryHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["RepositoryName"].(string)
@@ -71,9 +119,13 @@ func (h *ecrRepositoryHandler) Create(ctx context.Context, router http.Handler, 
 		"repositoryName": name,
 	}
 
-	rec, err := internalJSON(ctx, router, rCtx.Region, "AmazonEC2ContainerRegistry_V20150921.CreateRepository", body)
+	rec, err := internalJSON(ctx, router, rCtx.Region, ecrTargetPrefix+"CreateRepository", body)
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateRepository: %w", err)
+	}
+
+	if err := ecrApplyRepositoryPolicies(ctx, router, rCtx, name, props, nil); err != nil {
+		return "", nil, err
 	}
 
 	var resp struct {
@@ -121,12 +173,53 @@ func (h *ecrRepositoryHandler) Delete(ctx context.Context, router http.Handler, 
 		"repositoryName": name,
 		"force":          true,
 	}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "AmazonEC2ContainerRegistry_V20150921.DeleteRepository", body)
+	_, _ = internalJSON(ctx, router, rCtx.Region, ecrTargetPrefix+"DeleteRepository", body)
 	return nil
 }
 
 func (h *ecrRepositoryHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return "", nil, errReplacementRequired
+	// Physical ID is the repository ARN, "arn:…:repository/{name}".
+	oldName := physicalID
+	if idx := strings.LastIndex(physicalID, "/"); idx >= 0 {
+		oldName = physicalID[idx+1:]
+	}
+
+	// RepositoryName is the only AWS::ECR::Repository property real
+	// CloudFormation replaces on. Answering "replace" for anything else breaks
+	// re-running `cdk bootstrap` after a CDK upgrade: the toolkit stack pins
+	// the repository name, so the replacement re-creates the same name and
+	// fails with RepositoryAlreadyExistsException.
+	if n, ok := props["RepositoryName"].(string); ok && n != "" && n != oldName {
+		return "", nil, errReplacementRequired
+	}
+
+	if err := ecrApplyRepositoryPolicies(ctx, router, rCtx, oldName, props, oldProps); err != nil {
+		return "", nil, err
+	}
+
+	// Same reason as in Create: RepositoryUri must be the one ECR minted, so
+	// re-read it rather than synthesising the amazonaws.com form.
+	uri := ""
+	if rec, err := internalJSON(ctx, router, rCtx.Region, ecrTargetPrefix+"DescribeRepositories", map[string]any{"repositoryNames": []string{oldName}}); err == nil {
+		var resp struct {
+			Repositories []struct {
+				RepositoryUri string `json:"repositoryUri"`
+			} `json:"repositories"`
+		}
+		if json.Unmarshal(rec.Body.Bytes(), &resp) == nil && len(resp.Repositories) == 1 {
+			uri = resp.Repositories[0].RepositoryUri
+		}
+	}
+	if uri == "" {
+		uri = fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com/%s", rCtx.AccountID, rCtx.Region, oldName)
+	}
+
+	attrs := map[string]string{
+		"Arn":            physicalID,
+		"RepositoryUri":  uri,
+		"RepositoryName": oldName,
+	}
+	return physicalID, attrs, nil
 }
 
 // ── AWS::CloudTrail::Trail ──────────────────────────────────────────────────
