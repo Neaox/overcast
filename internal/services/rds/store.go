@@ -140,6 +140,61 @@ func (s *rdsStore) deleteDBInstance(ctx context.Context, id string) *protocol.AW
 	return nil
 }
 
+// findDBInstance scans every region for the instance with the given ID and
+// returns it along with the region it is stored under. Docker event callbacks
+// only carry a resource ID and run outside any request context, so they cannot
+// resolve the region the instance was created under.
+func (s *rdsStore) findDBInstance(ctx context.Context, id string) (*DBInstance, string, *protocol.AWSError) {
+	pairs, err := s.store.Scan(ctx, nsDBInstances, "")
+	if err != nil {
+		return nil, "", protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	for _, p := range pairs {
+		region, rest := serviceutil.SplitRegionKey(p.Key)
+		if rest != id {
+			continue
+		}
+		var inst DBInstance
+		if err := json.Unmarshal([]byte(p.Value), &inst); err != nil {
+			continue
+		}
+		if region == "" {
+			region = s.defaultRegion
+		}
+		return &inst, region, nil
+	}
+	return nil, "", errDBInstanceNotFound(id)
+}
+
+// regionedDBInstance pairs a DB instance with the region it is stored under.
+type regionedDBInstance struct {
+	region string
+	inst   *DBInstance
+}
+
+// listDBInstancesAllRegions returns every DB instance across all regions.
+// Used by startup reconciliation, which must correct status drift for
+// instances regardless of which region they were created in.
+func (s *rdsStore) listDBInstancesAllRegions(ctx context.Context) ([]regionedDBInstance, *protocol.AWSError) {
+	pairs, err := s.store.Scan(ctx, nsDBInstances, "")
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	instances := make([]regionedDBInstance, 0, len(pairs))
+	for _, p := range pairs {
+		var inst DBInstance
+		if err := json.Unmarshal([]byte(p.Value), &inst); err != nil {
+			continue
+		}
+		region, _ := serviceutil.SplitRegionKey(p.Key)
+		if region == "" {
+			region = s.defaultRegion
+		}
+		instances = append(instances, regionedDBInstance{region: region, inst: &inst})
+	}
+	return instances, nil
+}
+
 func (s *rdsStore) listDBInstances(ctx context.Context) ([]*DBInstance, *protocol.AWSError) {
 	pairs, err := s.store.Scan(ctx, nsDBInstances, serviceutil.RegionKey(s.region(ctx), ""))
 	if err != nil {
