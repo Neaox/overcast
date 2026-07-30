@@ -485,6 +485,14 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		cleanup()
 		return nil, fmt.Errorf("start container: %w", decorateHotReloadMountError(err, hotReloadPath))
 	}
+	// Init Duration is measured from here to the RIC's first GET /next. Only
+	// on-demand environments report it: their init was triggered by an invoke,
+	// so the first REPORT line carries the cost, exactly as on AWS. Provisioned
+	// environments initialise proactively and never report it.
+	var initStartedAt time.Time
+	if initType == initTypeOnDemand {
+		initStartedAt = cr.clk.Now()
+	}
 
 	// Connect to VPC Docker network if the function has a VpcConfig.
 	if err := cr.connectVPCNetworks(ctx, id, fn); err != nil {
@@ -521,6 +529,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	)
 
 	ci := cr.newContainerInstance(id, containerIP, fn, logStream)
+	ci.initStartedAt = initStartedAt
 	for _, line := range skippedLayerLogLines {
 		ci.writeLogLine(ctx, line)
 	}
@@ -906,6 +915,13 @@ type containerInstance struct {
 	endpoint       *containerendpoint.Mapper // re-points Overcast URLs inside invoke payloads
 	healthy        bool
 	keepContainers bool // when true, Close only stops the container instead of removing it
+
+	// initStartedAt is when the container was started, for environments whose
+	// init was triggered by an invoke (on-demand cold starts). Zero for
+	// proactively initialised environments (provisioned concurrency), which —
+	// like real Lambda — never report an Init Duration.
+	initStartedAt time.Time
+	initReported  bool // true once Init Duration has been written to a REPORT line
 }
 
 func (ci *containerInstance) AwaitReady(ctx context.Context) error {
@@ -1077,8 +1093,8 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte) (*InvokeR
 		ci.writeLogLine(context.Background(),
 			fmt.Sprintf("END RequestId: %s", reqID))
 		ci.writeLogLine(context.Background(),
-			fmt.Sprintf("REPORT RequestId: %s\tDuration: %.2f ms\tBilled Duration: %d ms\tMemory Size: %d MB\tMax Memory Used: %d MB\tStatus: error",
-				reqID, float64(elapsed.Microseconds())/1000.0, billedDuration(elapsed), ci.memorySize, ci.currentMemoryMB()))
+			fmt.Sprintf("REPORT RequestId: %s\tDuration: %.2f ms\tBilled Duration: %d ms\tMemory Size: %d MB\tMax Memory Used: %d MB%s\tStatus: error",
+				reqID, float64(elapsed.Microseconds())/1000.0, billedDuration(elapsed), ci.memorySize, ci.currentMemoryMB(), ci.initDurationField()))
 		return nil, fmt.Errorf("lambda container exited unexpectedly (exit code %s) — check container logs for details", exitCode)
 	case <-ctx.Done():
 		if waitCancel != nil {
@@ -1109,8 +1125,8 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte) (*InvokeR
 		ci.writeLogLine(context.Background(),
 			fmt.Sprintf("END RequestId: %s", reqID))
 		ci.writeLogLine(context.Background(),
-			fmt.Sprintf("REPORT RequestId: %s\tDuration: %.2f ms\tBilled Duration: %d ms\tMemory Size: %d MB\tMax Memory Used: %d MB\tStatus: %s",
-				reqID, float64(elapsed.Microseconds())/1000.0, billedDuration(elapsed), ci.memorySize, ci.currentMemoryMB(), status))
+			fmt.Sprintf("REPORT RequestId: %s\tDuration: %.2f ms\tBilled Duration: %d ms\tMemory Size: %d MB\tMax Memory Used: %d MB%s\tStatus: %s",
+				reqID, float64(elapsed.Microseconds())/1000.0, billedDuration(elapsed), ci.memorySize, ci.currentMemoryMB(), ci.initDurationField(), status))
 		if timedOut {
 			return nil, &invokeTimeoutError{RequestID: reqID, Timeout: deadline.Sub(start), At: ci.clk.Now()}
 		}
@@ -1164,8 +1180,8 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte) (*InvokeR
 	// handler output — Invoke does not wait for their CWL delivery.
 	ci.writeLogLine(ctx, fmt.Sprintf("END RequestId: %s", reqID))
 	ci.writeLogLine(ctx, fmt.Sprintf(
-		"REPORT RequestId: %s\tDuration: %.2f ms\tBilled Duration: %d ms\tMemory Size: %d MB\tMax Memory Used: %d MB",
-		reqID, float64(elapsed.Microseconds())/1000.0, billedDuration(elapsed), ci.memorySize, ci.currentMemoryMB()))
+		"REPORT RequestId: %s\tDuration: %.2f ms\tBilled Duration: %d ms\tMemory Size: %d MB\tMax Memory Used: %d MB%s",
+		reqID, float64(elapsed.Microseconds())/1000.0, billedDuration(elapsed), ci.memorySize, ci.currentMemoryMB(), ci.initDurationField()))
 
 	// Snapshot the tail buffer for X-Amz-Log-Result.
 	if ci.logWriter != nil {
@@ -1206,6 +1222,30 @@ func (ci *containerInstance) currentMemoryMB() int {
 		return 0
 	}
 	return int(bytes / (1024 * 1024))
+}
+
+// initDurationField returns the "\tInit Duration: X.XX ms" REPORT field for
+// the invocation that triggered this environment's init, and "" thereafter.
+// Real Lambda appends Init Duration only to the REPORT line of the cold-start
+// invocation; warm invokes and proactively initialised (provisioned)
+// environments omit it. The duration runs from container start to the RIC's
+// first GET /next — the same signal that drives readiness and the INIT-burst
+// throttle — so an environment whose RIC never polled (init failure) reports
+// nothing.
+func (ci *containerInstance) initDurationField() string {
+	if ci.initReported || ci.initStartedAt.IsZero() {
+		return ""
+	}
+	firstNext, ok := ci.runtimeAPI.FirstNextAt(ci.containerIP)
+	if !ok {
+		return ""
+	}
+	ci.initReported = true
+	initDur := firstNext.Sub(ci.initStartedAt)
+	if initDur < 0 {
+		initDur = 0
+	}
+	return fmt.Sprintf("\tInit Duration: %.2f ms", float64(initDur.Microseconds())/1000.0)
 }
 
 // waitForScannerIdle waits briefly for the Docker log reader to go idle so
