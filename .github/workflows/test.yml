@@ -257,6 +257,34 @@ jobs:
           path: web/dist
           if-no-files-found: error
 
+  # version-guard replaces the push ruleset GitHub does not offer public
+  # repos: VERSION may only change in a PR authored by the repository owner.
+  # Fork PRs run this with a read-only token — it only reads the diff — and a
+  # release PR by the owner passes untouched. Enforced by being a required
+  # status check ("VERSION guard") on main.
+  version-guard:
+    name: VERSION guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          fetch-depth: 2
+      - name: VERSION changes only by the repository owner
+        if: github.event_name == 'pull_request'
+        env:
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          if git diff --name-only HEAD^1 HEAD | grep -qx 'VERSION'; then
+            if [ "$AUTHOR" != "$OWNER" ]; then
+              echo "::error::VERSION may only be changed by @$OWNER (release PRs). Author of this PR: @$AUTHOR." >&2
+              exit 1
+            fi
+            echo "VERSION changed by the repository owner — allowed."
+          else
+            echo "VERSION untouched."
+          fi
+
   # release-gate decides, once, whether this build is a release candidate:
   # a same-repo PR whose checked-out VERSION has no v<VERSION> tag yet. That
   # covers the PR that bumps VERSION and — where a release/* branch-name test

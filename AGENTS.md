@@ -275,6 +275,21 @@ When you need to understand an unfamiliar part of the codebase (e.g. "how does t
 
 ---
 
+## Merging — no `--admin`, ever
+
+Merge with plain `gh pr merge --squash` (or `--rebase`). The main ruleset now
+enforces what used to be convention: required status checks, PR-only changes,
+linear history — and it has **no bypass actors**, so `--admin` cannot skip
+anything and must not be attempted. A quarantine PR under the compat flake flow
+still merges normally: its deliberate "Aggregate Compatibility Results" red is
+not a required check.
+
+While `VERSION` on main names an **untagged** version (a release is pending or
+a release workflow has failed), merge only changes needed to get that release
+out — `scripts/release-candidate-check.sh` printing `true` is the definition of
+this window. Publishing itself always waits for the maintainer's approval of
+the `release` environment.
+
 ## Reserved ports — 4566 and 4567 belong to the user
 
 Agents must **not** start their own test instances of Overcast on port **4566** (API) or **4567** (web UI) — those are reserved for the user's own running instance, unless the user explicitly directs otherwise. Starting a test instance on those ports silently breaks whatever the user is doing with their instance, or fails confusingly when theirs is already bound.

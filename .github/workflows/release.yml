@@ -210,6 +210,10 @@ jobs:
 
   release-assets:
     name: Publish release assets
+    # Publishing requires a one-click approval of this exact SHA in the
+    # 'release' environment (required reviewer: the maintainer). Everything
+    # before this point runs unattended; nothing ships without a human.
+    environment: release
     needs: [check-version, binaries]
     if: needs.check-version.outputs.should_release == 'true' && needs.binaries.result == 'success'
     runs-on: ubuntu-latest
@@ -349,6 +353,10 @@ jobs:
 
   publish-console:
     name: Publish console Docker image
+    # Publishing requires a one-click approval of this exact SHA in the
+    # 'release' environment (required reviewer: the maintainer). Everything
+    # before this point runs unattended; nothing ships without a human.
+    environment: release
     needs: [check-version, test, web]
     if: needs.check-version.outputs.should_release == 'true' && needs.test.result == 'success' && needs.web.result == 'success'
     runs-on: ubuntu-latest
@@ -391,6 +399,10 @@ jobs:
 
   publish-slim:
     name: Publish slim Docker image
+    # Publishing requires a one-click approval of this exact SHA in the
+    # 'release' environment (required reviewer: the maintainer). Everything
+    # before this point runs unattended; nothing ships without a human.
+    environment: release
     needs: [check-version, test, web]
     if: needs.check-version.outputs.should_release == 'true' && needs.test.result == 'success' && needs.web.result == 'success'
     runs-on: ubuntu-latest
@@ -434,6 +446,10 @@ jobs:
 
   finalize-release:
     name: Finalize GitHub release
+    # Publishing requires a one-click approval of this exact SHA in the
+    # 'release' environment (required reviewer: the maintainer). Everything
+    # before this point runs unattended; nothing ships without a human.
+    environment: release
     needs: [check-version, release-assets, publish-console, publish-slim]
     if: needs.check-version.outputs.should_release == 'true' && needs.release-assets.result == 'success' && needs.publish-console.result == 'success' && needs.publish-slim.result == 'success'
     runs-on: ubuntu-latest
