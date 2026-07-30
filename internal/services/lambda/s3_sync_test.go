@@ -57,10 +57,14 @@ func TestS3SyncWatcher_matchingObjectUpdatesCodeZip(t *testing.T) {
 		},
 	})
 
-	// Then: the stored function's CodeZip is updated.
+	// Then: the stored function's package is updated (records travel without
+	// bytes; loadFunctionCode materializes them).
 	fn, aerr := ls.getFunction(context.Background(), "my-fn")
 	if aerr != nil {
 		t.Fatalf("getFunction: %v", aerr)
+	}
+	if aerr := ls.loadFunctionCode(context.Background(), fn); aerr != nil {
+		t.Fatalf("loadFunctionCode: %v", aerr)
 	}
 	if string(fn.CodeZip) != string(newZip) {
 		t.Errorf("CodeZip = %q, want %q", fn.CodeZip, newZip)
@@ -142,10 +146,16 @@ func TestS3SyncWatcher_onlyMatchingFunctionUpdated(t *testing.T) {
 
 	// Then: fn-a is updated, fn-b is not.
 	fnA, _ := ls.getFunction(context.Background(), "fn-a")
+	if aerr := ls.loadFunctionCode(context.Background(), fnA); aerr != nil {
+		t.Fatalf("loadFunctionCode fn-a: %v", aerr)
+	}
 	if string(fnA.CodeZip) != string(newZip) {
 		t.Errorf("fn-a CodeZip = %q, want %q", fnA.CodeZip, newZip)
 	}
 	fnB, _ := ls.getFunction(context.Background(), "fn-b")
+	if aerr := ls.loadFunctionCode(context.Background(), fnB); aerr != nil {
+		t.Fatalf("loadFunctionCode fn-b: %v", aerr)
+	}
 	if len(fnB.CodeZip) != 0 {
 		t.Errorf("fn-b CodeZip should be unchanged, got %d bytes", len(fnB.CodeZip))
 	}

@@ -62,6 +62,7 @@ type ContainerRuntime struct {
 	vpcResolver      atomic.Pointer[VPCNetworkResolver] // resolves subnet → VPC → Docker network
 	layerFetcher     LayerContentFetcher                // resolves a layer ARN to zip bytes for /opt injection
 	remoteFetcher    *RemoteLayerFetcher                // optional — fetches layers from real AWS
+	codeFetcher      CodeFetcher                        // populates fn.CodeZip at cold start; nil in tests
 	coldStartSem     chan struct{}                      // bounds concurrent container creation/INIT bursts
 
 	// initBurst tracks containers that are still in the INIT phase with burst
@@ -88,6 +89,17 @@ func (cr *ContainerRuntime) SetVPCResolver(r VPCNetworkResolver) {
 // LayerContentFetcher returns layer zip bytes for a layer version ARN.
 // The returned bytes should be an immutable copy owned by the caller.
 type LayerContentFetcher func(ctx context.Context, layerVersionARN string) ([]byte, error)
+
+// CodeFetcher populates fn.CodeZip with the stored deployment package. The
+// package lives under its own store key (see lambdaStore.loadFunctionCode) so
+// the invoke path never carries it; a cold start is the point where the bytes
+// are actually needed.
+type CodeFetcher func(ctx context.Context, fn *Function) error
+
+// SetCodeFetcher wires deployment-package retrieval for container cold starts.
+func (cr *ContainerRuntime) SetCodeFetcher(fetcher CodeFetcher) {
+	cr.codeFetcher = fetcher
+}
 
 // SetLayerContentFetcher wires layer content retrieval for runtime injection.
 func (cr *ContainerRuntime) SetLayerContentFetcher(fetcher LayerContentFetcher) {
@@ -353,6 +365,13 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	var codeTar []byte
 	if !isImage && hotReloadPath == "" {
 		progress("Preparing function code")
+		// The function record travels without its package; materialize the
+		// stored bytes now — the one place on the invoke path that needs them.
+		if len(fn.CodeZip) == 0 && cr.codeFetcher != nil {
+			if err := cr.codeFetcher(ctx, fn); err != nil {
+				return nil, fmt.Errorf("fetch function code: %w", err)
+			}
+		}
 		codeTar, err = zipToTar(fn.CodeZip)
 		if err != nil {
 			return nil, fmt.Errorf("build code tar: %w", explainUnreadablePackage(fn, err))

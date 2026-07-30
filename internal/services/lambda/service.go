@@ -150,10 +150,13 @@ type Function struct {
 	Timeout     int               `json:"timeout"`
 	MemorySize  int               `json:"memory_size"`
 	Environment map[string]string `json:"environment,omitempty"`
-	// CodeZip is the deployment package. Never assign it directly — go through
-	// setCode, which keeps CodeSize and CodeHash in step. Identity checks trust
-	// CodeHash, so a bare CodeZip assignment would leave warm containers
-	// serving stale code.
+	// CodeZip is the deployment package. Only two writers are legitimate:
+	// setCode when the package *changes* (it keeps CodeSize and CodeHash in
+	// step — identity checks trust CodeHash, so a bare assignment would leave
+	// warm containers serving stale code), and lambdaStore.loadFunctionCode
+	// when materializing the already-stored package. The package is persisted
+	// under its own store key, so records read on the invoke path carry no
+	// bytes here — call loadFunctionCode before paths that need them.
 	CodeZip  []byte `json:"code_zip,omitempty"` // base64-decoded zip
 	CodeSize int64  `json:"code_size,omitempty"`
 	// CodeHash is the hex SHA-256 of CodeZip, maintained by setCode. It is what
@@ -590,6 +593,15 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 	// Wire the image prewarmer so CreateFunction can kick off image pulls
 	// in the background instead of paying the cost on the first Invoke.
 	s.handler.prewarmer = containerRuntime.PrewarmFunction
+
+	// Cold starts materialize the deployment package from its own store key —
+	// function records travel without the bytes (see lambdaStore.putFunction).
+	containerRuntime.SetCodeFetcher(func(ctx context.Context, fn *Function) error {
+		if aerr := s.handler.ls.loadFunctionCode(ctx, fn); aerr != nil {
+			return fmt.Errorf("%s", aerr.Message)
+		}
+		return nil
+	})
 
 	// Store references for Shutdown/InitLogWriter to use.
 	s.mu.Lock()

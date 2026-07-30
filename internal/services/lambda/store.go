@@ -7,6 +7,7 @@ package lambda
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -25,6 +26,14 @@ const (
 	// nsFunctions is the state store namespace for Lambda function definitions.
 	// Keys are function names.
 	nsFunctions = "lambda:functions"
+
+	// nsFunctionCode holds each function's deployment package (base64 of the
+	// zip), split from the function record: the record is read on every invoke,
+	// and embedding the package made each of those reads decode the whole zip.
+	// Keys are function names. Written by putFunction, read by
+	// loadFunctionCode — only the paths that need the actual bytes (cold
+	// start, source viewing/patching) ever touch it.
+	nsFunctionCode = "lambda:function-code"
 
 	// nsInvocations is the state store namespace for invocation records.
 	// Keys are "{functionName}:{timestamp_ns}" so each invocation is distinct.
@@ -68,21 +77,72 @@ func (s *lambdaStore) getFunction(ctx context.Context, name string) (*Function, 
 	return &fn, nil
 }
 
-// putFunction stores a function definition.
+// putFunction stores a function definition. The deployment package is stored
+// under its own key (nsFunctionCode) and stripped from the record, so reads
+// that only need configuration — every invoke — never decode the package.
+// The package key is written only when fn actually carries bytes; a put of a
+// record whose code was never loaded (the usual state-transition update)
+// leaves the stored package untouched.
 func (s *lambdaStore) putFunction(ctx context.Context, fn *Function) *protocol.AWSError {
-	raw, err := json.Marshal(fn)
+	record := *fn
+	record.CodeZip = nil
+	raw, err := json.Marshal(&record)
 	if err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	if err := s.store.Set(ctx, nsFunctions, serviceutil.RegionKey(s.region(ctx), fn.Name), string(raw)); err != nil {
+	key := serviceutil.RegionKey(s.region(ctx), fn.Name)
+	// Package before record: if the second write fails, a stored record never
+	// points at code that was not stored.
+	if len(fn.CodeZip) > 0 {
+		if err := s.store.Set(ctx, nsFunctionCode, key, base64.StdEncoding.EncodeToString(fn.CodeZip)); err != nil {
+			return protocol.Wrap(protocol.ErrInternalError, err)
+		}
+	}
+	if err := s.store.Set(ctx, nsFunctions, key, string(raw)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil
 }
 
-// deleteFunction removes a function from the store.
+// loadFunctionCode populates fn.CodeZip from the stored package. Call it on
+// the paths that need the actual bytes — cold start, source viewing and
+// patching — never on the invoke path, which reads CodeHash alone. A record
+// that already carries bytes (fresh setCode, or a legacy record with the
+// package embedded) is left as is.
+func (s *lambdaStore) loadFunctionCode(ctx context.Context, fn *Function) *protocol.AWSError {
+	if fn == nil || len(fn.CodeZip) > 0 {
+		return nil
+	}
+	// The function's own region, not the caller's: cold starts triggered off a
+	// request (provisioned-concurrency replenish, ESM delivery) run on a bare
+	// context, and the package must still resolve to the partition the
+	// function was written to.
+	region := regionFromFunctionARN(fn.ARN)
+	if region == "" {
+		region = s.region(ctx)
+	}
+	raw, found, err := s.store.Get(ctx, nsFunctionCode, serviceutil.RegionKey(region, fn.Name))
+	if err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if !found || raw == "" {
+		return nil // image function, hot reload, or no code deployed
+	}
+	zip, decErr := base64.StdEncoding.DecodeString(raw)
+	if decErr != nil {
+		return protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("lambda: decode stored package for %q: %w", fn.Name, decErr))
+	}
+	fn.CodeZip = zip
+	return nil
+}
+
+// deleteFunction removes a function and its stored package.
 func (s *lambdaStore) deleteFunction(ctx context.Context, name string) *protocol.AWSError {
-	if err := s.store.Delete(ctx, nsFunctions, serviceutil.RegionKey(s.region(ctx), name)); err != nil {
+	key := serviceutil.RegionKey(s.region(ctx), name)
+	if err := s.store.Delete(ctx, nsFunctions, key); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if err := s.store.Delete(ctx, nsFunctionCode, key); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil

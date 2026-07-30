@@ -427,6 +427,13 @@ func (h *Handler) GetFunctionSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The package is stored apart from the record; the source viewer is one of
+	// the few readers of the actual bytes.
+	if aerr := h.ls.loadFunctionCode(r.Context(), fn); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
 	// Build the file list from the deployment zip (if any).
 	var files []sourceFile
 	if len(fn.CodeZip) > 0 {
@@ -489,6 +496,12 @@ func (h *Handler) PutFunctionSource(w http.ResponseWriter, r *http.Request) {
 			Message:    "Function not found: " + name,
 			HTTPStatus: http.StatusNotFound,
 		})
+		return
+	}
+
+	// Patching a single file needs the existing archive's other entries.
+	if aerr := h.ls.loadFunctionCode(ctx, fn); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
