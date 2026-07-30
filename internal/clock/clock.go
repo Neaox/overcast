@@ -42,6 +42,9 @@ type Clock = clock.Clock
 // No goroutines are started; all operations are synchronous.
 type Mock = clock.Mock
 
+// Timer is the handle returned by Clock.AfterFunc / Clock.Timer.
+type Timer = clock.Timer
+
 // New returns a real wall-clock backed Clock.
 // Use this in production NewXxx constructors and in main.go.
 func New() Clock { return clock.New() }

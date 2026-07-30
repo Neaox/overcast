@@ -563,6 +563,9 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 			const maxAttempts = 5
 			for i := range maxAttempts {
 				if err := h.ls.putFunction(bgCtx, &updated); err == nil {
+					if updated.State == "Active" {
+						h.proactive.NoteFunctionChanged(&updated)
+					}
 					return
 				}
 				if i < maxAttempts-1 {
@@ -577,6 +580,7 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		fn.StateReason = ""
 		fn.StateReasonCode = ""
 		_ = h.ls.putFunction(ctx, fn)
+		h.proactive.NoteFunctionChanged(fn)
 	}
 
 	// Auto-create CloudWatch Logs log group (idempotent). The log stream is
@@ -1022,9 +1026,11 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 //
 // An idle instance is destroyed immediately; one that is serving an invocation
 // is left to finish and destroyed on release, matching AWS, which never
-// interrupts an in-flight invocation to apply an update. Nothing is started in
-// its place — Overcast does not emulate provisioned concurrency, the only case
-// where AWS pre-warms an environment before an invocation arrives.
+// interrupts an in-flight invocation to apply an update. No on-demand
+// replacement is started immediately — a function with provisioned concurrency
+// is re-provisioned by the pool, and when proactive initialization is enabled
+// a fresh environment is created once the configuration settles (see
+// proactive.go), matching AWS's own behaviors.
 //
 // previousIdentity is fn's identity before the update was applied; when the
 // update changes nothing the container can observe (e.g. only the description),
@@ -1040,6 +1046,7 @@ func (h *Handler) retireExecutionEnvironment(fn *Function, previousIdentity stri
 		}
 	}
 	h.tracker.Invalidate(fn.Name)
+	h.proactive.NoteFunctionChanged(fn)
 }
 
 // DeleteFunction handles DELETE /2015-03-31/functions/{name}.
@@ -1072,6 +1079,7 @@ func (h *Handler) DeleteFunction(w http.ResponseWriter, r *http.Request) {
 		pool.EvictFunction(name)
 	}
 	h.tracker.Evict(name)
+	h.proactive.NoteFunctionDeleted(name)
 
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{

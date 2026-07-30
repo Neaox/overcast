@@ -561,6 +561,7 @@ cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
 | `LAMBDA_MAX_WARM_INSTANCES`           | `10`             | Idle containers kept warm per function                  |
 | `LAMBDA_SEED_RUNTIME_IMAGES`          | `false`          | Pre-pull every managed runtime image at startup         |
 | `LAMBDA_TAR_CACHE_MB`                 | `256`            | In-memory cache of pre-built code/layer tars (0 = off)  |
+| `LAMBDA_PROACTIVE_INIT`               | `false`          | Pre-initialize an environment after config settles      |
 | `LAMBDA_INIT_TIMEOUT_SECONDS`         | `10`             | Max seconds to wait for runtime INIT before invocation  |
 | `LAMBDA_REMOTE_AWS_ACCESS_KEY_ID`     | —                | AWS access key for remote layer downloads               |
 | `LAMBDA_REMOTE_AWS_SECRET_ACCESS_KEY` | —                | AWS secret key for remote layer downloads               |
@@ -571,6 +572,21 @@ cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
 
 \*\* Derived from the Docker host when unset — see
 [Limits](#limits) for the formulas and fixed fallbacks.
+
+### Proactive initialization
+
+AWS documents that Lambda "may proactively initialize execution
+environments" ahead of traffic; with `LAMBDA_PROACTIVE_INIT=true` Overcast
+mirrors that. Ten seconds after a function's code or configuration stops
+changing (so a CDK deploy's create-then-update burst collapses into one
+attempt), one execution environment is created in the background — for
+functions that have been invoked this session or have a function URL or
+event source mapping — so the next request lands warm. The environment
+reports `AWS_LAMBDA_INITIALIZATION_TYPE=on-demand` and its first REPORT line
+carries no `Init Duration`, exactly like a proactively initialized
+environment on AWS. Creation only proceeds when capacity is idle: it never
+queues ahead of a real invocation, respects the instance and memory budgets,
+and the environment ages out through the normal idle sweep.
 
 <!-- BEGIN overcast:capabilities -->
 
