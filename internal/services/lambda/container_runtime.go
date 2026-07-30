@@ -928,6 +928,7 @@ type containerInstance struct {
 	tailBuf        []byte        // last ≤4096 bytes of stdout+stderr for X-Amz-Log-Result
 	logReadAt      atomic.Int64  // UnixNano of last Docker log read; 0 until first read
 	logInFlight    atomic.Int64  // lines parsed by scanner but not yet flushed to CWL
+	peakMemMB      atomic.Int64  // running peak memory (MB) — what REPORT's Max Memory Used reads
 	logCursor      logCursor     // exact Docker timestamp cursor used for reconnect/reconcile deduplication
 	logDone        chan struct{} // closed when streamLogs goroutine exits
 	readyCh        <-chan struct{}
@@ -1056,6 +1057,9 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte) (*InvokeR
 
 	start := ci.clk.Now()
 	reqID, resultCh := ci.runtimeAPI.SubmitInvocation(ci.functionARN, event, deadline)
+	// Overlap the memory sample with handler execution; REPORT waits on it
+	// only briefly (see reportMemoryMB).
+	memSample := ci.startMemorySample()
 
 	ci.logger.Debug("invoke submitted",
 		zap.String("container", ci.id[:12]),
@@ -1113,7 +1117,7 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte) (*InvokeR
 			fmt.Sprintf("END RequestId: %s", reqID))
 		ci.writeLogLine(context.Background(),
 			fmt.Sprintf("REPORT RequestId: %s\tDuration: %.2f ms\tBilled Duration: %d ms\tMemory Size: %d MB\tMax Memory Used: %d MB%s\tStatus: error",
-				reqID, float64(elapsed.Microseconds())/1000.0, billedDuration(elapsed), ci.memorySize, ci.currentMemoryMB(), ci.initDurationField()))
+				reqID, float64(elapsed.Microseconds())/1000.0, billedDuration(elapsed), ci.memorySize, ci.reportMemoryMB(memSample), ci.initDurationField()))
 		return nil, fmt.Errorf("lambda container exited unexpectedly (exit code %s) — check container logs for details", exitCode)
 	case <-ctx.Done():
 		if waitCancel != nil {
@@ -1145,7 +1149,7 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte) (*InvokeR
 			fmt.Sprintf("END RequestId: %s", reqID))
 		ci.writeLogLine(context.Background(),
 			fmt.Sprintf("REPORT RequestId: %s\tDuration: %.2f ms\tBilled Duration: %d ms\tMemory Size: %d MB\tMax Memory Used: %d MB%s\tStatus: %s",
-				reqID, float64(elapsed.Microseconds())/1000.0, billedDuration(elapsed), ci.memorySize, ci.currentMemoryMB(), ci.initDurationField(), status))
+				reqID, float64(elapsed.Microseconds())/1000.0, billedDuration(elapsed), ci.memorySize, ci.reportMemoryMB(memSample), ci.initDurationField(), status))
 		if timedOut {
 			return nil, &invokeTimeoutError{RequestID: reqID, Timeout: deadline.Sub(start), At: ci.clk.Now()}
 		}
@@ -1200,7 +1204,7 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte) (*InvokeR
 	ci.writeLogLine(ctx, fmt.Sprintf("END RequestId: %s", reqID))
 	ci.writeLogLine(ctx, fmt.Sprintf(
 		"REPORT RequestId: %s\tDuration: %.2f ms\tBilled Duration: %d ms\tMemory Size: %d MB\tMax Memory Used: %d MB%s",
-		reqID, float64(elapsed.Microseconds())/1000.0, billedDuration(elapsed), ci.memorySize, ci.currentMemoryMB(), ci.initDurationField()))
+		reqID, float64(elapsed.Microseconds())/1000.0, billedDuration(elapsed), ci.memorySize, ci.reportMemoryMB(memSample), ci.initDurationField()))
 
 	// Snapshot the tail buffer for X-Amz-Log-Result.
 	if ci.logWriter != nil {
@@ -1226,9 +1230,56 @@ func extensionInvokeError(reason string) *InvokeResult {
 	return &InvokeResult{StatusCode: 200, Payload: payload, FunctionError: "Unhandled"}
 }
 
-// currentMemoryMB queries Docker for the container's current memory usage (RSS)
-// and returns it in megabytes. More representative per-invocation than max_usage
-// which is a lifetime cgroup peak. Returns 0 on error (best-effort).
+// reportMemoryWaitMax bounds how long a REPORT line waits for the in-flight
+// memory sample before falling back to the peak recorded so far.
+const reportMemoryWaitMax = 50 * time.Millisecond
+
+// startMemorySample kicks off an asynchronous memory read that folds into the
+// instance's running peak. AWS's Max Memory Used is the execution
+// environment's monotonic peak across warm reuses, so REPORT reads the peak,
+// never a lone point sample. Started at invocation submit so the stats round
+// trip overlaps handler execution instead of sitting on the response path.
+// The returned channel closes once the sample has been folded in.
+func (ci *containerInstance) startMemorySample() <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		m := int64(ci.currentMemoryMB())
+		if m <= 0 {
+			return // best-effort: a failed sample never lowers the peak
+		}
+		for {
+			cur := ci.peakMemMB.Load()
+			if m <= cur || ci.peakMemMB.CompareAndSwap(cur, m) {
+				return
+			}
+		}
+	}()
+	return done
+}
+
+// reportMemoryMB waits briefly for the in-flight sample and returns the peak
+// memory recorded for this environment. The wait is capped so writing the
+// REPORT line never stalls the invoke response on a slow stats endpoint
+// (pre-one-shot this was 1–2 s, and Docker-in-Docker hosts can still take
+// hundreds of ms); an unresolved sample reports the previous peak, and the
+// still-running goroutine folds its result in for the next invocation.
+func (ci *containerInstance) reportMemoryMB(sample <-chan struct{}) int {
+	if sample != nil {
+		timer := ci.clk.Timer(reportMemoryWaitMax)
+		defer timer.Stop()
+		select {
+		case <-sample:
+		case <-timer.C:
+		}
+	}
+	return int(ci.peakMemMB.Load())
+}
+
+// currentMemoryMB queries Docker for the container's current memory usage
+// and returns it in megabytes. Returns 0 on error (best-effort). Callers on
+// the invoke path go through startMemorySample/reportMemoryMB rather than
+// calling this synchronously.
 func (ci *containerInstance) currentMemoryMB() int {
 	// The stats call uses one-shot=true, so it returns the current sample
 	// immediately instead of waiting a daemon collection cycle (~1–2 s) —

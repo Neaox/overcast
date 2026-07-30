@@ -4,10 +4,12 @@
 > Phase 1.3's first half (one-shot Docker stats + real instance memory/CPU in
 > the UI, PR #403), Phase 1.1 (stored CodeHash — no per-acquire package
 > rehash, PR #404), Phase 1.2 (deployment package split out of the function
-> record — no per-invoke package decode, PR #405), and Phase 1.4 (API Gateway
-> execution route cache, this commit). Phase 1 items are landing as separate,
-> individually green PRs; remaining in Phase 1: 1.3's second half and 1.5
-> (optional-by-measurement); everything else not started.
+> record — no per-invoke package decode, PR #405), Phase 1.4 (API Gateway
+> execution route cache), and Phase 1.3's second half (REPORT memory sampling
+> off the invoke response path, monotonic-peak semantics). Phase 1 is
+> complete except 1.5 (CloudFront in-process origin dispatch), which the plan
+> gates on measurement — do it, or drop it, only with Phase 0 numbers in
+> hand. Phases 0, 2, 3, 4 not started.
 > Goal: cut Lambda cold-start latency (especially via API Gateway / AppSync /
 > function URLs / CloudFront) and shave per-invoke overhead on the warm path,
 > **without** sacrificing fidelity — all observable behavior must keep matching
@@ -243,26 +245,21 @@ Pinned by `store_code_test.go`: record carries no bytes, package
 round-trips, config-only puts leave the package untouched, delete removes
 it, ARN-region resolution.
 
-### 1.3 Take the remaining Docker stats round trip off the invoke critical path
-*Status: the expensive half landed 2026-07-31* — `ContainerStatsOneShot`
-(`one-shot=true`) removed the daemon's ~1–2 s two-cycle wait from
-`currentMemoryMB`, and the instance tracker now samples real memory/CPU for
-the UI on the snapshot path (`refreshStats`, throttled, never on the invoke
-path). Remaining work: one fast stats round trip (~5–30 ms typical) still
-runs serially before `Invoke` returns.
-`Max Memory Used` must still be real (fidelity), but the query need not run
-*after* completion, serially:
-- Kick off the stats query **concurrently** when the invocation is submitted
-  (or at ~80 % of timeout for long invokes), so the value is usually resolved
-  by the time the result arrives; if not yet resolved, wait with a small cap
-  (e.g. 50 ms) then fall back to the container's last-known value (cached per
-  instance), else 0 as today.
-- REPORT line content and its presence in the tail snapshot are unchanged.
-*Risk:* memory value may occasionally reflect a sample taken slightly before
-peak; today's value is a point-read *after* completion which is also not the
-cgroup peak (the code comments already accept best-effort here). Keep the
-per-instance last-known cache updated on every resolved query so warm invokes
-converge. Verify REPORT ordering tests still pass.
+### 1.3 Take the Docker stats round trip off the invoke critical path — DONE (2026-07-31)
+Landed in two halves (both 2026-07-31):
+- `ContainerStatsOneShot` (`one-shot=true`) removed the daemon's ~1–2 s
+  two-cycle wait from the stats call, and the instance tracker samples real
+  memory/CPU for the UI on the snapshot path only (`refreshStats`, throttled).
+- The remaining serial round trip moved off the response path: the sample is
+  kicked off at invocation **submit** (overlapping handler execution), REPORT
+  waits on it at most 50 ms (`reportMemoryMB`), and an unresolved sample
+  reports the previous value while the goroutine folds its result in for the
+  next invocation. `Max Memory Used` now reads the environment's **monotonic
+  peak** across warm reuses — which is what AWS reports — rather than a
+  post-completion point read, so this was a fidelity improvement as well as a
+  latency one. Pinned by `report_memory_test.go` (monotonic peak, bounded
+  wait, unreachable-daemon fallback) alongside the existing REPORT-shape
+  tests.
 
 ### 1.4 API Gateway route cache — DONE (2026-07-31)
 Landed: the execution path's per-request `Scan` + unmarshal of an API's
