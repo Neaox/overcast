@@ -100,24 +100,26 @@ and ask before committing. The protected workflow is branch PR -> merge to
 
 Before merging the release-prep PR to `main`:
 
-1. Confirm `main` is green for the standard test workflow.
-2. Confirm the compatibility workflow completed and uploaded `compat-results.json`.
-3. Review `compat-results.json` for unexpected regressions:
-   ```sh
-   go run ./cmd/compat --report --results-file compat-results.json
-   go run ./cmd/compat --compare-baseline --results-file compat-results.json
-   ```
-4. Move release-worthy notes from `[Unreleased]` into a versioned section that
+1. Confirm `main` is green for the standard test workflow. (The required
+   status checks on `main` enforce most of this per merge already.)
+2. Confirm **Aggregate Compatibility Results** is green on the latest `main`
+   run — the baseline gate does the regression comparison automatically and
+   lists any `pass -> fail` as annotations. Two readings of a red matter:
+   regressions in areas your release touches are blockers; a red whose only
+   cause is new `compat/flaky.json` entries is the quarantine sign-off from
+   the flake flow, not a regression (see compat/AGENTS.md § Stabilising a
+   flaky test).
+3. Move release-worthy notes from `[Unreleased]` into a versioned section that
    exactly matches `VERSION`, for example `## [x.y.z-alpha.n] - YYYY-MM-DD`.
-5. Set `VERSION` to the exact release version without the leading `v`.
-6. Ensure `[Unreleased]` exists but has no entries. The workflow fails if
+4. Set `VERSION` to the exact release version without the leading `v`.
+5. Ensure `[Unreleased]` exists but has no entries. The workflow fails if
    `[Unreleased]` contains release notes.
-7. Run local scoped checks for release metadata changes:
+6. Run local scoped checks for release metadata changes:
    ```sh
    go test -count=1 ./cmd/compat
    go vet ./cmd/compat ./compat
    ```
-8. Open a PR containing the release-prep change and merge it through GitHub.
+7. Open a PR containing the release-prep change and merge it through GitHub.
    The merge commit on `main` starts the automated release. Do not push the
    release-prep commit directly to `main`.
 
@@ -198,6 +200,13 @@ If creating a GitHub release manually:
 ## If The Release Workflow Fails
 
 Do not reuse a published tag for a different commit.
+
+While a release is pending or failed — that is, while `VERSION` on `main`
+has no `v<VERSION>` tag — every same-repo PR is treated as a release
+candidate (`scripts/release-candidate-check.sh`): changelog validation runs,
+RC images publish, and the merge discipline in AGENTS.md applies. Re-running
+the release workflow pauses at the `release` environment for approval again,
+like any other publish.
 
 If the workflow created a GitHub release but artifacts failed:
 
