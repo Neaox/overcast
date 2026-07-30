@@ -322,13 +322,14 @@ func (m *Mapper) RewriteURLs(value string) string {
 	if !strings.Contains(value, "//") {
 		return value
 	}
+	target := m.rewriteTarget()
 	for _, p := range m.rewritePorts() {
 		port := strconv.Itoa(p)
 		for _, scheme := range []string{"http", "https"} {
 			for _, host := range loopbackHostnames {
 				origin := fmt.Sprintf("%s://%s:%s", scheme, host, port)
 				if strings.Contains(value, origin) {
-					value = strings.ReplaceAll(value, origin, m.endpoint)
+					value = strings.ReplaceAll(value, origin, target)
 				}
 			}
 		}

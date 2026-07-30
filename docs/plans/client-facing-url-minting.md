@@ -127,6 +127,31 @@ copy-paste of a URL across a port remap, which no rewrite can see.
 7. Verify per `docs/dev/manual-testing.md`: real SDK, **remapped** port, no explicit
    endpoint, from inside a container where relevant.
 
+## TLS across the container boundary
+
+Found in alpha.26 pre-release testing, immediately after OVERCAST_TLS landed: with the API
+listener serving only TLS, containers still received `http://` endpoints, and every SDK call
+from every Lambda failed with Go's plaintext rejection surfaced as deserialization garbage.
+
+The rule extends across the boundary in three parts, all keyed on `cfg.TLSEnabled()`:
+
+1. **Scheme follows the listener** — `containerendpoint.BaseURL` is the one place the
+   container-facing scheme is decided; both the Lambda and ECS runtimes build their endpoint
+   through it.
+2. **The minting CA travels with the code** — `Mapper.CABundleTar` is injected via
+   `CopyToContainer` (a dockerized Overcast has no host path to bind-mount), and
+   `Mapper.CABundleEnv` points `AWS_CA_BUNDLE` / `NODE_EXTRA_CA_CERTS` / `SSL_CERT_FILE` /
+   `REQUESTS_CA_BUNDLE` at it. Java's SDK reads only its truststore — documented caveat in
+   docs/https.md, not fixable from environment.
+3. **Rewrites target a SAN-covered name** — under TLS, `RewriteURLs` substitutes the named
+   client endpoint rather than the raw address: the leaf's SANs cover Overcast's names, never
+   a container-network IP, so an address target would trade a scheme error for a certificate
+   error.
+
+Verified live under OVERCAST_TLS=auto with a remapped port: every bare-SDK call from inside a
+function passes over https, and plain-HTTP mode is byte-identical to before (no CA env, http
+endpoint).
+
 ## Performance
 
 Two paths change; neither is the routing hot path (which stays allocation-free and untouched):

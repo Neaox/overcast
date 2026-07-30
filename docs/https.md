@@ -185,6 +185,26 @@ Approve the confirmation dialog. WSL2's localhost forwarding then makes
   `overcast https enable` / `overcast trust install` report this; install
   `rootCA.pem` by hand instead (see [Doing it manually](#doing-it-manually)).
 
+## Lambda functions and ECS tasks — wired automatically
+
+Containers Overcast starts trust its TLS with no configuration. When TLS is
+on, every function and task container receives:
+
+- an **https** `AWS_ENDPOINT_URL` (the API listener serves only TLS, so an
+  http endpoint would be a hard failure, not a degraded mode);
+- the trust root at `/opt/overcast/ca.pem` — the local CA in auto mode, your
+  own certificate chain in explicit mode — injected by the same mechanism as
+  function code, so it works when Overcast itself runs in Docker;
+- `AWS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE` and
+  `REQUESTS_CA_BUNDLE` pointing at it, which covers the AWS CLI, botocore,
+  and the Go, JavaScript, Ruby and python-requests stacks.
+
+The one caveat is the **Java SDK**, which reads only its own truststore and
+ignores those variables. Java function code that calls back into Overcast
+over TLS needs the CA imported into its truststore (`keytool -importcert
+-file /opt/overcast/ca.pem …`) — or keep Overcast on plain HTTP for
+Java-heavy stacks.
+
 ## Doing it manually
 
 For users who want control — or whose environment blocks trust-store writes.

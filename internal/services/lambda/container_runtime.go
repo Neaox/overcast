@@ -156,7 +156,9 @@ func NewContainerRuntime(
 	// API on cfg.Port. Setting AWS_ENDPOINT_URL lets function code call S3,
 	// SQS, DynamoDB, etc. back into Overcast without any SDK configuration.
 	runtimeHost, _, _ := net.SplitHostPort(runtimeAPI.Addr())
-	overcastEndpoint := fmt.Sprintf("http://%s:%d", runtimeHost, cfg.Port)
+	// BaseURL rather than a hand-built string: the scheme must follow the
+	// listener (https under OVERCAST_TLS), which only config knows.
+	overcastEndpoint := containerendpoint.BaseURL(cfg, runtimeHost)
 
 	limit := maxConcurrentStarts
 	if limit < 1 {
@@ -437,6 +439,20 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		if err := cr.docker.CopyToContainer(ctx, id, "/var/task", bytes.NewReader(codeTar)); err != nil {
 			cleanup()
 			return nil, fmt.Errorf("copy code to container: %w", err)
+		}
+	}
+
+	// With TLS on, the function must trust the CA that minted Overcast's
+	// certificate before its first SDK call — otherwise every AWS call from
+	// inside the function fails certificate verification. Injected by the same
+	// mechanism as code: a dockerized Overcast has no host path to bind-mount.
+	if caTar, caErr := cr.endpoint.CABundleTar(); caErr != nil {
+		cr.logger.Warn("CA bundle unavailable; function TLS calls to Overcast will fail verification", zap.Error(caErr))
+	} else if caTar != nil {
+		progress("Injecting TLS trust root")
+		if err := cr.docker.CopyToContainer(ctx, id, "/", bytes.NewReader(caTar)); err != nil {
+			cleanup()
+			return nil, fmt.Errorf("inject CA bundle: %w", err)
 		}
 	}
 
@@ -826,6 +842,12 @@ func (cr *ContainerRuntime) buildEnv(fn *Function, logStream, initType string) [
 		// (2026-07-14): SSM and Secrets Manager requests honor these vars.
 		"AWS_ENDPOINT_URL_SSM":             clientEndpoint,
 		"AWS_ENDPOINT_URL_SECRETS_MANAGER": clientEndpoint,
+	}
+	// With TLS on, point every SDK TLS stack at the injected CA bundle
+	// (AWS_CA_BUNDLE for botocore/Go/CLI, NODE_EXTRA_CA_CERTS for the Node
+	// runtimes, SSL_CERT_FILE/REQUESTS_CA_BUNDLE for OpenSSL and requests).
+	for k, v := range cr.endpoint.CABundleEnv() {
+		runtimeEnv[k] = v
 	}
 	for k, v := range runtimeEnv {
 		env[k] = v
