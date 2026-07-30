@@ -30,6 +30,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/clock"
+	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/logging"
 )
@@ -56,6 +57,17 @@ type trackerEntry struct {
 	triggerEvent         []byte
 	lastInvocationStatus string
 	lastInvocationError  string
+	// containerID is the Docker container backing this environment; empty for
+	// runtimes that are not container-backed, in which case no resource stats
+	// are sampled.
+	containerID string
+	// memUsedMB / cpuPercent are the most recent resource sample (refreshStats).
+	// A CPU rate needs two samples, so cpuPercent stays 0 until the second one;
+	// the cumulative counters from the previous sample are kept for the delta.
+	memUsedMB     int
+	cpuPercent    float64
+	lastCPUTotal  uint64
+	lastSystemCPU uint64
 	// provisioned marks an environment held open by a provisioned concurrency
 	// reservation. Exempt from the idle sweep.
 	provisioned bool
@@ -80,8 +92,8 @@ func (e *trackerEntry) toPayload() events.LambdaInstancePayload {
 		LastInvocationError:  e.lastInvocationError,
 		TriggerEvent:         e.triggerEvent,
 		Provisioned:          e.provisioned,
-		MemoryUsedMB:         0,   // TODO(priority:P3): collect via /proc or container stats
-		CPUPercent:           0.0, // TODO(priority:P3): collect via /proc or container stats
+		MemoryUsedMB:         e.memUsedMB,
+		CPUPercent:           e.cpuPercent,
 	}
 	if e.provisioned {
 		// A provisioned environment never expires on idleness.
@@ -97,10 +109,28 @@ type instanceTracker struct {
 	// acquired yet are keyed by a provisional ID until Bind rekeys them.
 	entries map[string]*trackerEntry
 
+	// statsFn samples resource usage for a container, wired by SetStatsFunc
+	// when the Docker runtime comes up; nil means no stats (NodeRuntime, tests).
+	statsFn func(ctx context.Context, containerID string) (docker.ContainerStats, error)
+	// lastStatsRefresh throttles refreshStats so several UI clients polling the
+	// snapshot endpoint do not multiply Docker stats calls.
+	lastStatsRefresh time.Time
+
 	bus    *events.Bus
 	clk    clock.Clock
 	log    *zap.Logger
 	stopCh chan struct{}
+}
+
+// SetStatsFunc wires container resource sampling. Called once during Docker
+// runtime wiring, before any UI traffic depends on it; nil-safe receiver.
+func (t *instanceTracker) SetStatsFunc(fn func(ctx context.Context, containerID string) (docker.ContainerStats, error)) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.statsFn = fn
 }
 
 func newInstanceTracker(clk clock.Clock, log *zap.Logger) *instanceTracker {
@@ -215,6 +245,7 @@ func (i *trackedInvocation) Bind(inst RuntimeInstance) {
 		// that already represents the container, and discard the provisional.
 		existing.status = instanceStatusRunning
 		existing.lastUsed = t.clk.Now()
+		existing.containerID = inst.ContainerID()
 		existing.lastInvocationStatus = ""
 		existing.lastInvocationError = ""
 		if len(pending.triggerEvent) > 0 {
@@ -232,6 +263,7 @@ func (i *trackedInvocation) Bind(inst RuntimeInstance) {
 		// under the instance's own ID.
 		delete(t.entries, i.key)
 		pending.instanceID = id
+		pending.containerID = inst.ContainerID()
 		t.entries[id] = pending
 		i.key, i.bound = id, true
 		t.mu.Unlock()
@@ -382,7 +414,8 @@ func invocationOutcome(err error, result *InvokeResult) (bool, string) {
 
 // InstanceWarmed records an execution environment created outside an
 // invocation — today, only provisioned concurrency pre-warming. Idempotent.
-func (t *instanceTracker) InstanceWarmed(functionName, instanceID string, provisioned bool) {
+// containerID may be empty for runtimes that are not container-backed.
+func (t *instanceTracker) InstanceWarmed(functionName, instanceID, containerID string, provisioned bool) {
 	if t == nil || instanceID == "" {
 		return
 	}
@@ -401,6 +434,9 @@ func (t *instanceTracker) InstanceWarmed(functionName, instanceID string, provis
 			status:       instanceStatusIdle,
 		}
 		t.entries[instanceID] = entry
+	}
+	if containerID != "" {
+		entry.containerID = containerID
 	}
 	entry.provisioned = provisioned
 	entry.lastUsed = now
@@ -485,11 +521,13 @@ func (t *instanceTracker) Evict(functionName string) {
 	}
 }
 
-// Instances returns a point-in-time snapshot of all tracked instances.
+// Instances returns a point-in-time snapshot of all tracked instances,
+// refreshing per-container resource stats first (best-effort).
 func (t *instanceTracker) Instances() []events.LambdaInstancePayload {
 	if t == nil {
 		return nil
 	}
+	t.refreshStats()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	out := make([]events.LambdaInstancePayload, 0, len(t.entries))
@@ -497,6 +535,94 @@ func (t *instanceTracker) Instances() []events.LambdaInstancePayload {
 		out = append(out, e.toPayload())
 	}
 	return out
+}
+
+// statsRefreshMinInterval throttles refreshStats: snapshot requests arriving
+// closer together than this reuse the previous sample instead of hitting the
+// Docker daemon again.
+const statsRefreshMinInterval = time.Second
+
+// refreshStats samples memory/CPU for every container-backed entry and stores
+// the results on the entries. Runs only on the snapshot (UI) path — never on
+// the invoke path — and is best-effort: a failed sample keeps the previous
+// values rather than zeroing them.
+//
+// CPU% is derived docker-CLI-style from the delta between this sample's and
+// the previous sample's cumulative counters, so it reads as "since the last
+// snapshot request" and is 0 on the first sample of an instance.
+func (t *instanceTracker) refreshStats() {
+	type target struct {
+		key         string
+		containerID string
+	}
+	t.mu.Lock()
+	statsFn := t.statsFn
+	if statsFn == nil || t.entries == nil {
+		t.mu.Unlock()
+		return
+	}
+	now := t.clk.Now()
+	if now.Sub(t.lastStatsRefresh) < statsRefreshMinInterval {
+		t.mu.Unlock()
+		return
+	}
+	t.lastStatsRefresh = now
+	targets := make([]target, 0, len(t.entries))
+	for key, e := range t.entries {
+		if e.containerID != "" {
+			targets = append(targets, target{key: key, containerID: e.containerID})
+		}
+	}
+	t.mu.Unlock()
+	if len(targets) == 0 {
+		return
+	}
+
+	// One bounded window for the whole batch; the Docker client caps its own
+	// request concurrency, so per-target goroutines are safe.
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	samples := make([]*docker.ContainerStats, len(targets))
+	var wg sync.WaitGroup
+	for i, tgt := range targets {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			stats, err := statsFn(ctx, tgt.containerID)
+			if err != nil {
+				return // keep the entry's previous values
+			}
+			samples[i] = &stats
+		}()
+	}
+	wg.Wait()
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for i, tgt := range targets {
+		stats := samples[i]
+		if stats == nil {
+			continue
+		}
+		entry, ok := t.entries[tgt.key]
+		if !ok || entry.containerID != tgt.containerID {
+			continue // evicted or rebound while sampling
+		}
+		entry.memUsedMB = int(stats.MemoryUsageBytes / (1024 * 1024))
+		if entry.lastCPUTotal > 0 && stats.CPUTotalUsage >= entry.lastCPUTotal &&
+			stats.SystemCPUUsage > entry.lastSystemCPU {
+			cpuDelta := float64(stats.CPUTotalUsage - entry.lastCPUTotal)
+			sysDelta := float64(stats.SystemCPUUsage - entry.lastSystemCPU)
+			cpus := stats.OnlineCPUs
+			if cpus < 1 {
+				cpus = 1
+			}
+			// Round to 0.1 pp so the UI doesn't jitter through noise digits.
+			entry.cpuPercent = float64(int(cpuDelta/sysDelta*float64(cpus)*1000+0.5)) / 10
+		}
+		entry.lastCPUTotal = stats.CPUTotalUsage
+		entry.lastSystemCPU = stats.SystemCPUUsage
+	}
 }
 
 // Stop shuts down the background sweeper.

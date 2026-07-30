@@ -560,6 +560,8 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 	pool := NewInstancePool(containerRuntime, log, clk, limits.pool)
 	// Keep the instance tracker in step with the containers that actually exist.
 	pool.observer = s.tracker
+	// Let the tracker sample per-container memory/CPU for the instances UI.
+	s.tracker.SetStatsFunc(dc.ContainerStatsOneShot)
 	// Rebuild provisioned concurrency reservations from the store — an
 	// allocation must survive a restart, or a function configured for
 	// provisioned concurrency would silently cold start until someone

@@ -63,8 +63,10 @@ const (
 // Implemented by instanceTracker.
 type InstanceObserver interface {
 	// InstanceWarmed reports an environment created without an invocation —
-	// today, only provisioned concurrency pre-warming.
-	InstanceWarmed(functionName, instanceID string, provisioned bool)
+	// today, only provisioned concurrency pre-warming. containerID identifies
+	// the backing Docker container ("" when not container-backed) so the
+	// tracker can sample its resource usage.
+	InstanceWarmed(functionName, instanceID, containerID string, provisioned bool)
 	// InstanceLost reports an environment that no longer exists, for any
 	// reason: idle sweep, reclaimed for capacity, retired after an update,
 	// died in Docker, or its function was deleted.
@@ -883,7 +885,7 @@ func (p *InstancePool) replenishProvisioned(name string) {
 			if p.observer != nil {
 				// Announce before pooling: if Release decides to close this
 				// instance instead, closeInstance's InstanceLost retracts it.
-				p.observer.InstanceWarmed(fn.Name, inst.InstanceID(), true)
+				p.observer.InstanceWarmed(fn.Name, inst.InstanceID(), inst.ContainerID(), true)
 			}
 			// Release decrements the in-flight count, so borrow a slot first to
 			// keep the books level — this environment was never checked out.
