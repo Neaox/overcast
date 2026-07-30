@@ -71,6 +71,7 @@ var (
 
 	lintBaselineFrom = flag.String("lint-baseline-from", "", "Old compatibility baseline file for downgrade linting")
 	lintBaselineTo   = flag.String("lint-baseline-to", "", "New compatibility baseline file for downgrade linting")
+	reportFlakyAge   = flag.Bool("report-flaky-overdue", false, "Report quarantined tests older than the soft deadline, then exit")
 	lintFlakyFrom    = flag.String("lint-flaky-from", "", "Old flaky list for growth linting")
 	lintFlakyTo      = flag.String("lint-flaky-to", "", "New flaky list for growth linting")
 	interactive      = flag.Bool("interactive", false, "Start in interactive mode (long-lived suite processes)")
@@ -137,6 +138,14 @@ func main() {
 		if err := updateParityDebtFile(*registryFile, *parityDebtFilePath, *resultsFile); err != nil {
 			fmt.Fprintf(os.Stderr, "compat: update parity debt: %v\n", err)
 			os.Exit(2)
+		}
+		return
+	}
+
+	if *reportFlakyAge {
+		if err := reportFlakyOverdue(*flakyFilePath); err != nil {
+			fmt.Fprintf(os.Stderr, "compat: %v\n", err)
+			os.Exit(1)
 		}
 		return
 	}

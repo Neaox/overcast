@@ -89,6 +89,42 @@ auto-promotion on merge; nothing to hand-edit.
 
 R2 (CDK ESM) is done — it resolved the moment CI stopped skipping Docker.
 
+## Outstanding — stabilise the flaky tests
+
+Quarantine is containment. The plan to actually remove it:
+
+1. **Detect systematically, not by luck.**
+   [compat-flake-detection.yml](../../.github/workflows/compat-flake-detection.yml)
+   runs every suite 3× nightly against unchanged `main` and fails on any test
+   that answers inconsistently and is not already quarantined. Both flakes so
+   far were found by accident; this is the fix for that.
+2. **Chase the shared root cause first.** Every flake found so far is the same
+   shape — a resource is created, and the next call cannot find it:
+
+   | Quarantined | Symptom |
+   | --- | --- |
+   | `dotnet-sdk/sns-subscriptions/PublishDeliveredToSQS` | Topic gone between `SubscribeSQS` and publish |
+   | `cli/eventbridge-buses/DeleteEventBus` (via R7) | Bus gone between create and `ListEventBuses` |
+
+   Two services, one pattern. Start at write visibility in
+   [internal/state](../../internal/state) and at any handler that reads through
+   a snapshot taken before the write landed. One fix plausibly clears both
+   quarantines *and* R7.
+3. **Weight cascades in the burn-down.** Neither quarantined test is flaky in
+   itself: both are dependants of a *stable* failure whose cascade is
+   non-deterministic (`dependency failed` one run, `fail` the next). Any
+   baseline failure with dependants is therefore a latent intermittent gate
+   failure, which moves R7 and R1 up the queue.
+4. **Empty the list.** Each fix deletes its entry in the same PR; the lint
+   allows removals freely and blocks additions.
+
+Out of scope here but worth naming: the Go suite has its own instability —
+`TestHostClassifier_lowercaseHostStaysAllocationFree` asserts an exact
+allocation count via `testing.AllocsPerRun` under `-race`, which is
+environment-sensitive and has failed spuriously on an unrelated PR. It needs the
+same treatment (assert a ceiling, or drop `-race` for that test), tracked
+separately from compat.
+
 ## Outstanding — fix the quarantined flake
 
 [compat/flaky.json](../../compat/flaky.json) holds one real flake, found by

@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Neaox/overcast/compat"
 )
@@ -108,13 +109,40 @@ type flakyFile struct {
 }
 
 type flakyEntry struct {
-	Suite  string `json:"suite"`
-	Group  string `json:"group"`
-	Test   string `json:"test"`
+	Suite string `json:"suite"`
+	Group string `json:"group"`
+	Test  string `json:"test"`
+	// Since is the date the test was quarantined (YYYY-MM-DD). It is what makes
+	// an entry age out instead of becoming permanent.
+	Since string `json:"since"`
+	// Issue is the tracking issue for the investigation. Quarantine is a
+	// stop-gap; without somewhere to record the investigation it is just a
+	// silenced test.
+	Issue  string `json:"issue"`
 	Reason string `json:"reason"`
 }
 
 func (e flakyEntry) key() string { return e.Suite + "/" + e.Group + "/" + e.Test }
+
+// since parses the quarantine date.
+func (e flakyEntry) since() (time.Time, error) {
+	return time.Parse(flakyDateLayout, strings.TrimSpace(e.Since))
+}
+
+const (
+	// flakyVersion is the schema version of compat/flaky.json. v2 added the
+	// `since` and `issue` fields that make quarantine a tracked stop-gap
+	// rather than an open-ended exemption.
+	flakyVersion    = 2
+	flakyDateLayout = "2006-01-02"
+	// flakySoftDeadlineDays is when the nightly flake-detection job starts
+	// reporting an entry as overdue.
+	flakySoftDeadlineDays = 14
+	// flakyHardDeadlineDays is when the PR lint starts failing on it. Past this
+	// point the gate has effectively stopped covering the test, so continuing
+	// has to be a conscious, re-argued decision rather than drift.
+	flakyHardDeadlineDays = 30
+)
 
 // lintFlakyChange rejects growth of the quarantine list.
 //
@@ -124,7 +152,7 @@ func (e flakyEntry) key() string { return e.Suite + "/" + e.Group + "/" + e.Test
 // Adding an entry is therefore a deliberate act that has to be argued for in
 // review, not something CI waves through. Removing one — the fix — is always
 // allowed, and seeding an empty list mirrors the baseline's own exemption.
-func lintFlakyChange(oldFlaky, newFlaky *flakyFile) []string {
+func lintFlakyChange(oldFlaky, newFlaky *flakyFile, now time.Time) []string {
 	oldByKey := make(map[string]flakyEntry, len(oldFlaky.Flaky))
 	for _, e := range oldFlaky.Flaky {
 		oldByKey[e.key()] = e
@@ -136,6 +164,28 @@ func lintFlakyChange(oldFlaky, newFlaky *flakyFile) []string {
 			issues = append(issues, fmt.Sprintf(
 				"compat flaky entry has no reason: %s — record what was observed, so the next person can tell a real flake from a silenced failure",
 				e.key()))
+		}
+		if strings.TrimSpace(e.Issue) == "" {
+			issues = append(issues, fmt.Sprintf(
+				"compat flaky entry has no tracking issue: %s — quarantine is a stop-gap, and without an issue nobody is investigating it",
+				e.key()))
+		}
+		since, err := e.since()
+		switch {
+		case strings.TrimSpace(e.Since) == "":
+			issues = append(issues, fmt.Sprintf(
+				"compat flaky entry has no since date: %s — without one the entry cannot age out, and a stop-gap becomes permanent",
+				e.key()))
+		case err != nil:
+			issues = append(issues, fmt.Sprintf(
+				"compat flaky entry has an unparseable since date: %s (%q, want %s)",
+				e.key(), e.Since, flakyDateLayout))
+		default:
+			if days := int(now.Sub(since).Hours() / 24); days > flakyHardDeadlineDays {
+				issues = append(issues, fmt.Sprintf(
+					"compat flaky entry is overdue: %s has been quarantined for %d days (limit %d) — fix it, or say in %s why it still cannot be and re-date the entry",
+					e.key(), days, flakyHardDeadlineDays, issueOrPlaceholder(e.Issue)))
+			}
 		}
 		if len(oldFlaky.Flaky) == 0 {
 			continue
@@ -150,6 +200,32 @@ func lintFlakyChange(oldFlaky, newFlaky *flakyFile) []string {
 	return issues
 }
 
+// flakyOverdue names entries quarantined longer than days. The nightly job uses
+// the soft deadline to nag well before the hard one starts blocking pull
+// requests.
+func flakyOverdue(file *flakyFile, now time.Time, days int) []string {
+	var out []string
+	for _, e := range file.Flaky {
+		since, err := e.since()
+		if err != nil {
+			continue
+		}
+		if age := int(now.Sub(since).Hours() / 24); age > days {
+			out = append(out, fmt.Sprintf("%s — quarantined %d days ago, tracked in %s",
+				e.key(), age, issueOrPlaceholder(e.Issue)))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func issueOrPlaceholder(issue string) string {
+	if strings.TrimSpace(issue) == "" {
+		return "its tracking issue"
+	}
+	return issue
+}
+
 func lintFlakyChangeFiles(oldPath, newPath string) error {
 	oldFlaky, err := readFlakyFileRaw(oldPath)
 	if err != nil {
@@ -159,7 +235,7 @@ func lintFlakyChangeFiles(oldPath, newPath string) error {
 	if err != nil {
 		return err
 	}
-	issues := lintFlakyChange(oldFlaky, newFlaky)
+	issues := lintFlakyChange(oldFlaky, newFlaky, time.Now())
 	if len(issues) > 0 {
 		for _, issue := range issues {
 			fmt.Fprintln(os.Stderr, issue)
@@ -171,6 +247,31 @@ func lintFlakyChangeFiles(oldPath, newPath string) error {
 	}
 	fmt.Printf("compat: flaky list check passed (%d quarantined test(s))\n", len(newFlaky.Flaky))
 	return nil
+}
+
+// reportFlakyOverdue is the --report-flaky-overdue entry point: the nightly
+// job's nag, well before the PR lint's hard deadline starts blocking people.
+func reportFlakyOverdue(path string) error {
+	file, err := readFlakyFileRaw(path)
+	if err != nil {
+		return err
+	}
+	overdue := flakyOverdue(file, time.Now(), flakySoftDeadlineDays)
+	if len(overdue) == 0 {
+		fmt.Printf("compat: no quarantine older than %d days (%d entr(ies) total)\n",
+			flakySoftDeadlineDays, len(file.Flaky))
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "compat: %d quarantined test(s) older than %d days:\n",
+		len(overdue), flakySoftDeadlineDays)
+	for _, line := range overdue {
+		fmt.Fprintln(os.Stderr, "  "+line)
+		fmt.Printf("::warning title=Compat quarantine overdue::%s\n", escapeAnnotationData(line))
+	}
+	fmt.Fprintf(os.Stderr,
+		"compat: quarantine is a stop-gap — these block pull requests once they pass %d days\n",
+		flakyHardDeadlineDays)
+	return fmt.Errorf("%d overdue quarantine entr(ies)", len(overdue))
 }
 
 func readFlakyFileRaw(path string) (*flakyFile, error) {

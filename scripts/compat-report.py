@@ -28,11 +28,17 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
+from datetime import date
 from pathlib import Path
 
 RESULTS = Path("compat-results.json")
 BASELINE = Path("compat/baseline.json")
 PARITY_DEBT = Path("compat/parity-debt.json")
+FLAKY = Path("compat/flaky.json")
+
+# Mirrors the deadlines in cmd/compat/baseline.go — keep them in step.
+FLAKY_SOFT_DEADLINE_DAYS = 14
+FLAKY_HARD_DEADLINE_DAYS = 30
 REGRESSIONS_LOG = Path("baseline-regressions.txt")
 PARITY_LOG = Path("parity-issues.txt")
 
@@ -200,6 +206,41 @@ def build(results, baseline, debt, regressions, parity_issues) -> tuple[str, str
                 )
             )
             S.append("\nRegistry tests a suite has not implemented yet. This only shrinks — see `compat/parity-debt.json`.\n")
+
+    # Quarantine is a stop-gap, so it is reported on every run with its age.
+    # An entry nobody can see is an entry nobody fixes.
+    flaky = read_json(FLAKY)
+    entries = (flaky or {}).get("flaky") or []
+    if entries:
+        today = date.today()
+        rows = []
+        overdue = 0
+        for e in entries:
+            try:
+                age = (today - date.fromisoformat(e.get("since", ""))).days
+                age_text = f"{age} day{'s' if age != 1 else ''}"
+                if age > FLAKY_HARD_DEADLINE_DAYS:
+                    age_text = f"⛔ {age_text} — blocking PRs"
+                    overdue += 1
+                elif age > FLAKY_SOFT_DEADLINE_DAYS:
+                    age_text = f"⚠️ {age_text} — overdue"
+                    overdue += 1
+            except (TypeError, ValueError):
+                age_text = "⚠️ no date"
+                overdue += 1
+            issue = e.get("issue", "")
+            issue_text = f"[track]({issue})" if issue else "⚠️ untracked"
+            rows.append([f"`{e['suite']}/{e['group']}/{e['test']}`", age_text, issue_text])
+        heading = f"\n### Quarantined as flaky — {len(entries)}"
+        if overdue:
+            heading += f" ({overdue} needing attention)"
+        S.append(heading + "\n")
+        S.append(md_table(rows, ["Test", "Quarantined", "Issue"], ["----", "----------", "-----"]))
+        S.append(
+            f"\nExempt from the gate in both directions while quarantined. Overdue after "
+            f"{FLAKY_SOFT_DEADLINE_DAYS} days, blocking after {FLAKY_HARD_DEADLINE_DAYS} — "
+            "fix the test and delete the entry.\n"
+        )
 
     # ---- PR comment digest ----------------------------------------------
     C: list[str] = ["### Compatibility Tests\n"]

@@ -1,0 +1,190 @@
+name: Compat Flake Detection
+
+# Runs each compat suite repeatedly against the same code and reports any test
+# that does not answer the same way every time.
+#
+# Both flaky tests found so far were found by accident — someone happened to run
+# an unchanged tree through CI twice and noticed the answer had changed. That is
+# not a detection strategy, and the cost of missing one is a gate that fails
+# unrelated pull requests until somebody investigates. This makes the check
+# deliberate and scheduled.
+#
+# It does not gate anything: it runs nightly on main, and on demand.
+
+on:
+  schedule:
+    # 03:00 UTC — after the day's merges, before anyone starts.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Suite(s) to check — comma-separated (empty = all)"
+        required: false
+        default: ""
+      runs:
+        description: "How many times to run each suite"
+        required: false
+        default: "3"
+
+permissions:
+  contents: read
+  # A detected flake raises its own tracking issue — quarantine without an
+  # investigation is just a silenced test.
+  issues: write
+
+jobs:
+  prepare-matrix:
+    name: Prepare suite matrix
+    runs-on: ubuntu-latest
+    outputs:
+      suites: ${{ steps.suites.outputs.suites }}
+    steps:
+      - name: Resolve suites
+        id: suites
+        env:
+          SUITE_INPUT: ${{ github.event.inputs.suite }}
+        run: |
+          python3 <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, sys
+
+          all_suites = [
+              "node-js-sdk",
+              "python-sdk",
+              "go-sdk",
+              "cli",
+              "cdk",
+              "java-sdk",
+              "dotnet-sdk",
+              "rust-sdk",
+          ]
+          raw = os.environ.get("SUITE_INPUT", "")
+          if raw.strip():
+              requested = [s.strip() for s in raw.split(",") if s.strip()]
+              unknown = [s for s in requested if s not in all_suites]
+              if unknown:
+                  print(f"Unknown compat suite(s): {', '.join(unknown)}", file=sys.stderr)
+                  sys.exit(1)
+              suites = [s for s in all_suites if s in requested]
+          else:
+              suites = all_suites
+          print(f"suites={json.dumps(suites)}")
+          PY
+
+  detect:
+    name: Flake detection (${{ matrix.suite }})
+    needs: prepare-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: ${{ fromJson(needs.prepare-matrix.outputs.suites) }}
+
+    steps:
+      - uses: actions/checkout@v7.0.0
+
+      - uses: actions/setup-go@v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            compat/suites/go-sdk/go.sum
+
+      - uses: actions/setup-node@v6.4.0
+        if: contains(fromJson('["node-js-sdk", "cdk"]'), matrix.suite)
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            compat/suites/node-js-sdk/package-lock.json
+            compat/suites/cdk/package-lock.json
+
+      - uses: actions/setup-python@v6.3.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: compat/suites/python-sdk/requirements.txt
+
+      - name: Install Node.js deps
+        if: contains(fromJson('["node-js-sdk", "cdk"]'), matrix.suite)
+        run: npm ci
+        working-directory: compat/suites/${{ matrix.suite }}
+
+      - name: Install Python deps
+        if: matrix.suite == 'python-sdk'
+        run: pip install --quiet -r requirements.txt
+        working-directory: compat/suites/python-sdk
+
+      - name: Build binaries
+        run: |
+          mkdir -p bin
+          go build -tags slim,nosqlite -o bin/overcast ./cmd/overcast
+          go build -o bin/compat ./cmd/compat
+
+      - name: Pre-pull the Lambda runtime image
+        run: docker pull --quiet public.ecr.aws/lambda/nodejs:20 || true
+
+      # Each iteration gets a freshly started emulator, so state left by the
+      # previous run cannot mask — or cause — the variance being looked for.
+      - name: Run the suite repeatedly
+        env:
+          RUNS: ${{ github.event.inputs.runs || '3' }}
+        run: |
+          set -u
+          for i in $(seq 1 "${RUNS}"); do
+            echo "── run $i of ${RUNS}"
+            OVERCAST_PORT=4566 OVERCAST_STATE=memory OVERCAST_LOG_LEVEL=warn ./bin/overcast serve &
+            pid=$!
+            for _ in $(seq 1 30); do
+              curl -sf http://localhost:4566/_health > /dev/null && break
+              sleep 1
+            done
+            ./bin/compat \
+              --endpoint http://localhost:4566 \
+              --format pretty \
+              --suite "${{ matrix.suite }}" \
+              --results-file "flake-run-$i.json" || true
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+          done
+
+      - name: Compare the runs
+        id: compare
+        continue-on-error: true
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: python3 scripts/compat-flake-detect.py flake-run-*.json
+
+      # Detecting a flake and leaving it in a job log achieves nothing: nobody
+      # reads a green-by-default nightly. Each cluster of related tests — same
+      # suite, same group, so almost certainly one root cause — gets one issue,
+      # reopened and re-commented rather than duplicated if it recurs.
+      - name: Raise a tracking issue for new flakes
+        if: steps.compare.outcome == 'failure' && hashFiles('flake-findings.json') != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SUITE: ${{ matrix.suite }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/compat-flake-issue.py flake-findings.json
+
+      - name: Report quarantine that has gone stale
+        if: always()
+        run: |
+          go run ./cmd/compat --report-flaky-overdue || true
+
+      - name: Upload the runs
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: flake-runs-${{ matrix.suite }}-${{ github.run_id }}
+          path: |
+            flake-run-*.json
+            flake-findings.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Fail if new flakes were found
+        if: steps.compare.outcome == 'failure'
+        run: |
+          echo "New flaky test(s) detected — see the job summary and the tracking issue." >&2
+          exit 1
