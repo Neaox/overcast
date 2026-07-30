@@ -391,10 +391,12 @@ Landed (`tar_cache.go`, container_runtime.go):
   (`LAMBDA_TAR_CACHE_MB`, default 256, 0 disables; oversized artifacts are
   never cached). A hit also skips materializing the package from the store.
   Content-addressed keys mean code updates need no invalidation — old
-  entries age out. *Deviation:* entries fill **on demand** at cold start
-  only; the background pre-fill after deploy settle is deferred until
-  Phase 3 introduces the settle debounce, and the debug-endpoint cache-size
-  metric is deferred with it.
+  entries age out. *Deviation closed 2026-07-31:* Phase 3's settle debounce
+  now always runs (independent of `LAMBDA_PROACTIVE_INIT`) and drives
+  `PrefillArtifacts` — code and layer tars are pre-built in the background
+  once a deploy settles, so even the **first** cold start of a new code
+  version skips the fetch and conversion. The cache's entry count, bytes,
+  and budget are reported on `GET /_lambda/instances` (`tarCache`).
 - **Bootstrap tar**: built once (`sync.OnceValues`).
 - **CA bundle tar**: built once per process — certs are minted before the
   Lambda runtime exists and never rotate within a process (verified).

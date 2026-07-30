@@ -70,8 +70,15 @@ type proactiveIniter struct {
 	ls   *lambdaStore
 	// wired reports trigger evidence beyond in-process invocations.
 	wired func(ctx context.Context, name string) bool
-	log   *zap.Logger
-	clk   clock.Clock
+	// prefill, when set, pre-builds cold-start artifacts for a settled
+	// function. Runs regardless of createEnvs — a warmed tar cache costs a
+	// bounded slice of memory and needs no trigger evidence.
+	prefill func(ctx context.Context, fn *Function)
+	// createEnvs gates actual environment creation (LAMBDA_PROACTIVE_INIT).
+	// The initer itself always runs, driving the artifact pre-fill.
+	createEnvs bool
+	log        *zap.Logger
+	clk        clock.Clock
 }
 
 func newProactiveIniter(pool func() *InstancePool, ls *lambdaStore, wired func(ctx context.Context, name string) bool, log *zap.Logger, clk clock.Clock) *proactiveIniter {
@@ -188,6 +195,15 @@ func (pi *proactiveIniter) attempt(name string, self *pendingInit) {
 	}
 	fn, aerr := pi.ls.getFunction(ctx, name)
 	if aerr != nil || fn == nil || fn.State != "Active" {
+		return
+	}
+	// Pre-build the cold-start artifacts either way: the tar cache is
+	// byte-bounded and needs no trigger evidence, and this is exactly the
+	// settled-deploy moment the cache wants to be filled at.
+	if pi.prefill != nil {
+		pi.prefill(ctx, fn)
+	}
+	if !pi.createEnvs {
 		return
 	}
 	if !invoked && (pi.wired == nil || !pi.wired(ctx, name)) {

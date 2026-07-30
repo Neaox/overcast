@@ -611,25 +611,29 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 		return nil
 	})
 
-	// Proactive initialization (opt-in): pre-create one environment after a
-	// function's configuration settles so the next request lands warm — see
-	// proactive.go for the candidacy and fidelity rules.
-	if cfg.LambdaProactiveInit {
-		wired := func(ctx context.Context, name string) bool {
-			if urls, aerr := s.handler.ls.listFunctionURLConfigs(ctx, name); aerr == nil && len(urls) > 0 {
-				return true
-			}
-			if esms, aerr := s.handler.esm.listESMs(ctx, name, ""); aerr == nil && len(esms) > 0 {
-				return true
-			}
-			return false
+	// The settle debounce always runs: it drives the cold-start artifact
+	// pre-fill after every deploy. Environment creation on top of it is the
+	// opt-in proactive initialization — see proactive.go for the candidacy
+	// and fidelity rules.
+	wired := func(ctx context.Context, name string) bool {
+		if urls, aerr := s.handler.ls.listFunctionURLConfigs(ctx, name); aerr == nil && len(urls) > 0 {
+			return true
 		}
-		proactive := newProactiveIniter(func() *InstancePool { return pool }, s.handler.ls, wired, log, clk)
-		s.handler.proactive = proactive
-		pool.onInvoked = proactive.NoteInvoked
-		s.mu.Lock()
-		s.proactive = proactive
-		s.mu.Unlock()
+		if esms, aerr := s.handler.esm.listESMs(ctx, name, ""); aerr == nil && len(esms) > 0 {
+			return true
+		}
+		return false
+	}
+	proactive := newProactiveIniter(func() *InstancePool { return pool }, s.handler.ls, wired, log, clk)
+	proactive.prefill = containerRuntime.PrefillArtifacts
+	proactive.createEnvs = cfg.LambdaProactiveInit
+	s.handler.proactive = proactive
+	s.handler.tarCacheStats = containerRuntime.TarCacheStats
+	pool.onInvoked = proactive.NoteInvoked
+	s.mu.Lock()
+	s.proactive = proactive
+	s.mu.Unlock()
+	if cfg.LambdaProactiveInit {
 		s.log.Info("lambda proactive initialization enabled")
 	}
 

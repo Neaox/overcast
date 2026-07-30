@@ -65,6 +65,17 @@ func (c *tarCache) get(key string) (*tarCacheEntry, bool) {
 	return el.Value.(*tarCacheEntry), true
 }
 
+// stats reports the cache's current entry count, resident bytes, and budget.
+// A nil cache reports zeros.
+func (c *tarCache) stats() (entries int, bytes, maxBytes int64) {
+	if c == nil {
+		return 0, 0, 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.entries), c.curBytes, c.maxBytes
+}
+
 // put stores entry, evicting least-recently-used entries past the byte
 // budget. An entry bigger than the whole budget is not cached at all — it
 // would only evict everything else for a single-function benefit.
