@@ -97,8 +97,19 @@ func TestLoad_defaults(t *testing.T) {
 	if cfg.LambdaHotReload {
 		t.Error("LambdaHotReload: expected false by default")
 	}
-	if cfg.LambdaDockerMaxConcurrentStarts != 4 {
-		t.Errorf("LambdaDockerMaxConcurrentStarts: expected 4, got %d", cfg.LambdaDockerMaxConcurrentStarts)
+	// 0 means "unset": the Lambda runtime derives these from the Docker host
+	// (falling back to 4/25/10 when /info is unavailable).
+	if cfg.LambdaDockerMaxConcurrentStarts != 0 {
+		t.Errorf("LambdaDockerMaxConcurrentStarts: expected 0 (auto), got %d", cfg.LambdaDockerMaxConcurrentStarts)
+	}
+	if cfg.LambdaMaxInstances != 0 {
+		t.Errorf("LambdaMaxInstances: expected 0 (auto), got %d", cfg.LambdaMaxInstances)
+	}
+	if cfg.LambdaMaxInstancesPerFunction != 0 {
+		t.Errorf("LambdaMaxInstancesPerFunction: expected 0 (auto), got %d", cfg.LambdaMaxInstancesPerFunction)
+	}
+	if cfg.LambdaMaxMemoryMB != 0 {
+		t.Errorf("LambdaMaxMemoryMB: expected 0 (auto), got %d", cfg.LambdaMaxMemoryMB)
 	}
 	if cfg.LambdaSeedRuntimeImages {
 		t.Error("LambdaSeedRuntimeImages: expected false by default")
@@ -172,6 +183,23 @@ func TestLoad_lambdaDockerMaxConcurrentStarts(t *testing.T) {
 	}
 	if cfg.LambdaDockerMaxConcurrentStarts != 7 {
 		t.Fatalf("LambdaDockerMaxConcurrentStarts = %d, want 7", cfg.LambdaDockerMaxConcurrentStarts)
+	}
+}
+
+func TestLoad_lambdaMaxMemoryMB(t *testing.T) {
+	// Given: LAMBDA_MAX_MEMORY_MB is set.
+	clearEnv(t)
+	t.Setenv("LAMBDA_MAX_MEMORY_MB", "2048")
+
+	// When: we load config.
+	cfg, err := config.Load()
+
+	// Then: the aggregate Lambda memory budget is parsed.
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LambdaMaxMemoryMB != 2048 {
+		t.Fatalf("LambdaMaxMemoryMB = %d, want 2048", cfg.LambdaMaxMemoryMB)
 	}
 }
 
@@ -741,6 +769,164 @@ func TestLoad_tlsEnabled(t *testing.T) {
 	}
 }
 
+// TestLoad_tlsAutoMode verifies OVERCAST_TLS=auto enables TLS without
+// explicit cert/key paths.
+func TestLoad_tlsAutoMode(t *testing.T) {
+	// Given: auto TLS mode, no cert/key
+	clearEnv(t)
+	t.Setenv("OVERCAST_TLS", "auto")
+
+	// When: we load config
+	cfg, err := config.Load()
+
+	// Then: TLS is on and recognised as the auto flavour
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.TLSEnabled() {
+		t.Error("expected TLSEnabled() with OVERCAST_TLS=auto")
+	}
+	if !cfg.TLSAuto() {
+		t.Error("expected TLSAuto() with OVERCAST_TLS=auto")
+	}
+}
+
+// TestLoad_tlsAutoCaseInsensitive verifies "AUTO" is accepted too.
+func TestLoad_tlsAutoCaseInsensitive(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_TLS", "AUTO")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.TLSAuto() {
+		t.Error("expected TLSAuto() with OVERCAST_TLS=AUTO")
+	}
+}
+
+// TestLoad_tlsRejectsUnknownMode verifies a typo'd OVERCAST_TLS fails loudly
+// rather than silently serving plain HTTP.
+func TestLoad_tlsRejectsUnknownMode(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_TLS", "yes-please")
+
+	if _, err := config.Load(); err == nil {
+		t.Error("expected error for unknown OVERCAST_TLS value, got nil")
+	}
+}
+
+// TestLoad_tlsAutoConflictsWithExplicitCert verifies that combining
+// OVERCAST_TLS=auto with OVERCAST_TLS_CERT/KEY is rejected: the two are
+// different answers to the same question and silently preferring one would
+// hide a configuration mistake.
+func TestLoad_tlsAutoConflictsWithExplicitCert(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_TLS", "auto")
+	t.Setenv("OVERCAST_TLS_CERT", "/path/to/cert.pem")
+	t.Setenv("OVERCAST_TLS_KEY", "/path/to/key.pem")
+
+	if _, err := config.Load(); err == nil {
+		t.Error("expected error when OVERCAST_TLS=auto is combined with explicit cert/key, got nil")
+	}
+}
+
+// TestLoad_tlsOffValuesAccepted verifies the explicit "off" spellings keep
+// TLS disabled rather than erroring.
+func TestLoad_tlsOffValuesAccepted(t *testing.T) {
+	for _, v := range []string{"", "off", "false", "0"} {
+		t.Run("value="+v, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("OVERCAST_TLS", v)
+
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("Load with OVERCAST_TLS=%q: %v", v, err)
+			}
+			if cfg.TLSEnabled() || cfg.TLSAuto() {
+				t.Errorf("OVERCAST_TLS=%q unexpectedly enabled TLS", v)
+			}
+		})
+	}
+}
+
+// TestTLSAutoSANs verifies the SAN set the auto-minted certificate covers:
+// loopback, every built-in wildcard DNS domain (apex, one-level wildcard, and
+// the S3 virtual-host level), plus operator-configured names.
+func TestTLSAutoSANs(t *testing.T) {
+	// Given: a config with a custom hostname and an extra split-horizon host
+	clearEnv(t)
+	t.Setenv("OVERCAST_HOSTNAME", "overcast.internal")
+	t.Setenv("OVERCAST_SPLIT_HORIZON_HOSTS", "dev.example.test")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// When: the SAN set is derived
+	sans := cfg.TLSAutoSANs()
+	has := func(want string) bool {
+		for _, s := range sans {
+			if s == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Then: loopback names and addresses are covered
+	for _, want := range []string{"localhost", "127.0.0.1", "::1"} {
+		if !has(want) {
+			t.Errorf("TLSAutoSANs missing %q (got %v)", want, sans)
+		}
+	}
+	// And: each built-in wildcard DNS domain gets apex + wildcard + S3 level
+	for _, base := range config.WildcardDNSDomains {
+		for _, want := range []string{base, "*." + base, "*.s3." + base} {
+			if !has(want) {
+				t.Errorf("TLSAutoSANs missing %q (got %v)", want, sans)
+			}
+		}
+	}
+	// And: operator-configured names are covered the same way
+	for _, want := range []string{
+		"overcast.internal", "*.overcast.internal",
+		"dev.example.test", "*.dev.example.test",
+	} {
+		if !has(want) {
+			t.Errorf("TLSAutoSANs missing %q (got %v)", want, sans)
+		}
+	}
+}
+
+// TestTLSAutoSANs_ipHostname verifies an IP-literal OVERCAST_HOSTNAME becomes
+// a SAN itself without nonsensical wildcard variants.
+func TestTLSAutoSANs_ipHostname(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_HOSTNAME", "192.168.1.50")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	sans := cfg.TLSAutoSANs()
+	foundIP, foundWildcard := false, false
+	for _, s := range sans {
+		if s == "192.168.1.50" {
+			foundIP = true
+		}
+		if s == "*.192.168.1.50" {
+			foundWildcard = true
+		}
+	}
+	if !foundIP {
+		t.Errorf("TLSAutoSANs missing IP hostname (got %v)", sans)
+	}
+	if foundWildcard {
+		t.Errorf("TLSAutoSANs contains a wildcard over an IP literal (got %v)", sans)
+	}
+}
+
 // TestLoad_debugEnabled verifies debug mode is enabled via env var.
 func TestLoad_debugEnabled(t *testing.T) {
 	// Given: OVERCAST_DEBUG=true
@@ -1099,7 +1285,7 @@ func clearEnv(t *testing.T) {
 		"OVERCAST_DATA_DIR", "OVERCAST_DATA_DIR_SOURCE", "OVERCAST_DEFAULT_REGION", "OVERCAST_ACCOUNT_ID",
 		"OVERCAST_SIGV4_VALIDATE", "OVERCAST_ENFORCE_IAM", "OVERCAST_PROTOCOL_STRICT", "OVERCAST_LOG_LEVEL", "OVERCAST_SHUTDOWN_TIMEOUT",
 		"OVERCAST_LAMBDA_HOT_RELOAD",
-		"OVERCAST_LAMBDA_NODE_BIN", "OVERCAST_DEBUG", "OVERCAST_TLS_CERT", "OVERCAST_TLS_KEY",
+		"OVERCAST_LAMBDA_NODE_BIN", "OVERCAST_DEBUG", "OVERCAST_TLS", "OVERCAST_TLS_CERT", "OVERCAST_TLS_KEY",
 		"OVERCAST_HOSTNAME", "OVERCAST_SPLIT_HORIZON_HOSTS", "OVERCAST_EKS_MODE", "OVERCAST_EC2_VPC_STRATEGY",
 		"OVERCAST_MCP_REPLAY_LIMIT", "OVERCAST_MCP_REMOTE_EXPOSURE", "OVERCAST_MCP_AUTH_TOKEN",
 		"EKS_DOCKER_SOCKET", "EKS_NETWORK",

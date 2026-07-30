@@ -136,8 +136,12 @@ ENV OVERCAST_PORT=4566 \
 
 EXPOSE 4566
 
+# The https fallback keeps the probe working when the daemon serves TLS
+# (OVERCAST_TLS=auto or OVERCAST_TLS_CERT/KEY). --no-check-certificate is
+# fine here: this is a liveness probe against our own loopback, not a
+# trust decision.
 HEALTHCHECK --interval=5s --timeout=3s --start-period=2s --retries=3 \
-    CMD wget -qO- http://localhost:4566/_health || exit 1
+    CMD wget -qO- http://localhost:4566/_health || wget -qO- --no-check-certificate https://localhost:4566/_health || exit 1
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 

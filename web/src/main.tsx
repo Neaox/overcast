@@ -5,7 +5,9 @@ import { createRouter, RouterProvider } from "@tanstack/react-router"
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { routeTree } from "./routeTree.gen"
 import { ToastContextProvider, useToast } from "@/components/ui/toast"
+import { RoutePending } from "@/components/layout/route-pending"
 import { DevToolsContext } from "@/hooks/use-dev-tools"
+import { preloadRouteChunksWhenIdle } from "@/lib/preload-route-chunks"
 import { endpointStore } from "@/services/endpoint-store"
 import { hasPersistedRegion, fetchServerRegion } from "@/services/discovery"
 import "@/styles/global.css"
@@ -39,6 +41,14 @@ const router = createRouter({
   routeTree,
   context: {},
   defaultPreload: "intent",
+  // A navigation must never read as a dropped click. Routes are code-split,
+  // so when a chunk or loader is still in flight the pending skeleton takes
+  // over the content area almost immediately (50 ms filters the loads that
+  // resolve within a frame or two) and, once shown, holds for 300 ms so a
+  // fast resolution doesn't read as a flash.
+  defaultPendingComponent: RoutePending,
+  defaultPendingMs: 50,
+  defaultPendingMinMs: 300,
 })
 
 declare module "@tanstack/react-router" {
@@ -117,3 +127,9 @@ function App() {
 
 const root = document.getElementById("root")!
 createRoot(root).render(<App />)
+
+// After first paint, warm every route's code chunk in the background so a
+// later navigation never has to compete for a socket with the SSE stream,
+// invoke progress streams or S3 transfers. Code only — loaders and queries
+// still run on intent/navigation. See preload-route-chunks.ts.
+preloadRouteChunksWhenIdle(router)

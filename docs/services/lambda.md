@@ -56,9 +56,11 @@ the 15-minute idle sweep.
 
 | Limit | Env var | Default | Behaviour when reached |
 | --- | --- | --- | --- |
-| Containers across all functions | `LAMBDA_MAX_INSTANCES` | 25 | Reclaim an idle container → queue → throttle |
-| Containers for one function | `LAMBDA_MAX_INSTANCES_PER_FUNCTION` | 10 | Queue → throttle |
+| Containers across all functions | `LAMBDA_MAX_INSTANCES` | auto (host-derived; 25 fallback) | Reclaim an idle container → queue → throttle |
+| Containers for one function | `LAMBDA_MAX_INSTANCES_PER_FUNCTION` | auto (host-derived; 10 fallback) | Queue → throttle |
+| Aggregate container memory (Σ `MemorySize`, MB) | `LAMBDA_MAX_MEMORY_MB` | auto (host-derived; unlimited fallback) | Reclaim an idle container → queue → throttle |
 | Idle containers kept per function | `LAMBDA_MAX_WARM_INSTANCES` | 10 | Surplus destroyed on release |
+| Concurrent container starts | `LAMBDA_DOCKER_MAX_CONCURRENT_STARTS` | auto (host-derived; 4 fallback) | Starts queue behind the semaphore |
 | `ReservedConcurrentExecutions` | (per function, AWS API) | unset | Throttle immediately |
 
 The instance limits protect your machine; they are not an emulation of AWS's
@@ -68,6 +70,42 @@ is still waiting when the function's timeout expires it is throttled**, with
 AWS's 429 `TooManyRequestsException` and `Reason: ConcurrentInvocationLimitExceeded`.
 If you hit this in normal use, raise the limit rather than treating it as AWS
 behaviour.
+
+When an env var above is unset, the limit is sized to the machine that actually
+runs the containers — Docker's own host, read from `GET /info` (`NCPU`,
+`MemTotal`), which is the Docker Desktop VM or the remote daemon, not
+necessarily where the Overcast process runs:
+
+- `LAMBDA_DOCKER_MAX_CONCURRENT_STARTS` = `clamp(NCPU/2, 2, 8)` — every cold
+  start bursts to ~2 CPUs during INIT, so this is the point where INIT alone
+  could claim every core.
+- `LAMBDA_MAX_INSTANCES` = `clamp(MemTotal×0.65 / 256 MiB, 4, 32)` — 65% of
+  host memory at an assumed ~256 MiB per container.
+- `LAMBDA_MAX_INSTANCES_PER_FUNCTION` = `clamp(maxInstances/2, 2, maxInstances)`.
+- `LAMBDA_MAX_MEMORY_MB` = `MemTotal×0.65`, in MB.
+
+The derived values are logged at startup
+(`lambda: derived instance limits from the Docker host`). Setting an env var
+pins that limit exactly as before; if `GET /info` fails, the previous fixed
+defaults (25 / 10 / 4) apply and the memory budget is unlimited.
+
+The memory budget counts bytes, not just containers: a new container is
+admitted only while `Σ MemorySize` of live containers (warm and executing)
+plus its own `MemorySize` stays inside the budget. Each container is
+hard-capped at its function's `MemorySize` with swap disabled, so the sum is
+a real bound on host memory, not an estimate. Exhausting the budget follows
+the same ladder as the instance limits — reclaim the least-recently-used idle
+container, queue, throttle at the function's timeout — and logs one warning
+(naming `LAMBDA_MAX_MEMORY_MB`) the first time it forces an invocation to
+queue. A reclaim forced by the memory budget is logged at `WARN` (the routine
+instance-count reclaim stays `INFO`). While the pool sits above ~90% of the
+budget, a container whose invocation just finished is destroyed instead of
+kept warm, so queued work regains budget without waiting for the idle sweep;
+provisioned environments are always kept, and a running invocation is never
+interrupted. Entering that regime is logged once at `WARN` (budget, reserved
+memory, and the high-water threshold — expect cold starts while it lasts) and
+leaving it once at `INFO` with how many containers were shed and for how
+long, rather than one line per destroyed container.
 
 `ReservedConcurrentExecutions` is enforced with AWS's semantics instead: no
 queueing, an immediate 429 with
@@ -516,7 +554,11 @@ cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
 | ------------------------------------- | ---------------- | ------------------------------------------------------- |
 | `LAMBDA_LAYER_CACHE_DIR`              | `/data/layers`\* | Directory to look up / store cached layer zips          |
 | `LAMBDA_FETCH_REMOTE_LAYERS`          | `false`          | Enable automatic fetching from real AWS                 |
-| `LAMBDA_DOCKER_MAX_CONCURRENT_STARTS` | `4`              | Max concurrent Docker-backed Lambda container starts    |
+| `LAMBDA_DOCKER_MAX_CONCURRENT_STARTS` | _(auto)_\*\*     | Max concurrent Docker-backed Lambda container starts    |
+| `LAMBDA_MAX_INSTANCES`                | _(auto)_\*\*     | Max containers across all functions                     |
+| `LAMBDA_MAX_INSTANCES_PER_FUNCTION`   | _(auto)_\*\*     | Max concurrent containers for one function              |
+| `LAMBDA_MAX_MEMORY_MB`                | _(auto)_\*\*     | Aggregate Σ `MemorySize` budget for live containers, MB |
+| `LAMBDA_MAX_WARM_INSTANCES`           | `10`             | Idle containers kept warm per function                  |
 | `LAMBDA_SEED_RUNTIME_IMAGES`          | `false`          | Pre-pull every managed runtime image at startup         |
 | `LAMBDA_INIT_TIMEOUT_SECONDS`         | `10`             | Max seconds to wait for runtime INIT before invocation  |
 | `LAMBDA_REMOTE_AWS_ACCESS_KEY_ID`     | —                | AWS access key for remote layer downloads               |
@@ -525,6 +567,9 @@ cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
 
 \* Resolves to `{OVERCAST_DATA_DIR}/layers`. In the standard Docker image
 `OVERCAST_DATA_DIR=/data`, so layers are read from `/data/layers`.
+
+\*\* Derived from the Docker host when unset — see
+[Limits](#limits) for the formulas and fixed fallbacks.
 
 <!-- BEGIN overcast:capabilities -->
 

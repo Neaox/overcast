@@ -384,6 +384,28 @@ func (d *Client) Ping(ctx context.Context) error {
 	return nil
 }
 
+// SystemInfo is the subset of GET /info Overcast reads: the resources of the
+// machine the daemon runs containers on. That machine is not necessarily the
+// one the Overcast process runs on — with Docker Desktop it is the desktop VM,
+// with a DinD sidecar or a tcp:// endpoint it is another host entirely — so
+// sizing decisions about containers must come from here, never from
+// runtime.NumCPU() or the process's own view of memory.
+type SystemInfo struct {
+	// NCPU is the number of logical CPUs available to the daemon.
+	NCPU int `json:"NCPU"`
+	// MemTotal is the total memory available to the daemon, in bytes.
+	MemTotal int64 `json:"MemTotal"`
+}
+
+// Info returns the daemon's system information (GET /info).
+func (d *Client) Info(ctx context.Context) (*SystemInfo, error) {
+	var info SystemInfo
+	if err := d.doJSON(ctx, http.MethodGet, "/v1.45/info", nil, &info); err != nil {
+		return nil, fmt.Errorf("docker info: %w", err)
+	}
+	return &info, nil
+}
+
 // CreateContainer creates a container (does not start it).
 func (d *Client) CreateContainer(ctx context.Context, name string, req *CreateContainerRequest) (string, error) {
 	if err := d.acquireOp(ctx); err != nil {
