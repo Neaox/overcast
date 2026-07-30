@@ -703,26 +703,88 @@ func (d *Client) WaitContainer(ctx context.Context, id string) (int, error) {
 	return result.StatusCode, nil
 }
 
-// ContainerMemoryUsage returns the current memory usage (in bytes) of a container.
-// Uses the one-shot stats endpoint (stream=false) so it returns immediately.
-func (d *Client) ContainerMemoryUsage(ctx context.Context, id string) (usageBytes int64, err error) {
-	resp, err := d.doRequest(ctx, http.MethodGet, "/v1.45/containers/"+id+"/stats?stream=false", nil)
+// ContainerStats is a single point-in-time resource sample for a container.
+// CPU counters are cumulative; a rate needs two samples
+// (see the docker CLI formula: Δcpu_total / Δsystem_cpu × online_cpus × 100).
+type ContainerStats struct {
+	// MemoryUsageBytes is cgroup usage minus inactive file cache — the same
+	// number `docker stats` shows, and closer to what a process actually
+	// occupies than the raw cgroup counter, which grows with page cache.
+	MemoryUsageBytes int64
+	// CPUTotalUsage is cumulative container CPU time in nanoseconds.
+	CPUTotalUsage uint64
+	// SystemCPUUsage is cumulative host CPU time in nanoseconds.
+	SystemCPUUsage uint64
+	// OnlineCPUs is the number of CPUs available to the container.
+	OnlineCPUs int
+}
+
+// ContainerStatsOneShot returns one stats sample for a container.
+//
+// one-shot=true matters: with stream=false alone the daemon waits an extra
+// collection cycle (~1–2 s) to pre-fill the CPU delta fields, which both put
+// seconds on any synchronous caller and overran short caller timeouts on slow
+// (Docker-in-Docker) hosts — surfacing as memory "0" everywhere it was used.
+// One-shot returns the current sample immediately; the precpu fields it leaves
+// zeroed are ones this client never read anyway.
+func (d *Client) ContainerStatsOneShot(ctx context.Context, id string) (ContainerStats, error) {
+	resp, err := d.doRequest(ctx, http.MethodGet, "/v1.45/containers/"+id+"/stats?stream=false&one-shot=true", nil)
 	if err != nil {
-		return 0, fmt.Errorf("container stats %s: %w", id, err)
+		return ContainerStats{}, fmt.Errorf("container stats %s: %w", id, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("container stats %s: status %d", id, resp.StatusCode)
+		return ContainerStats{}, fmt.Errorf("container stats %s: status %d", id, resp.StatusCode)
 	}
 	var stats struct {
 		MemoryStats struct {
 			Usage int64 `json:"usage"`
+			Stats struct {
+				// cgroup v2 name; v1 reports total_inactive_file instead.
+				InactiveFile      int64 `json:"inactive_file"`
+				TotalInactiveFile int64 `json:"total_inactive_file"`
+			} `json:"stats"`
 		} `json:"memory_stats"`
+		CPUStats struct {
+			CPUUsage struct {
+				TotalUsage uint64 `json:"total_usage"`
+				// cgroup v1 fallback for OnlineCPUs.
+				PercpuUsage []uint64 `json:"percpu_usage"`
+			} `json:"cpu_usage"`
+			SystemCPUUsage uint64 `json:"system_cpu_usage"`
+			OnlineCPUs     int    `json:"online_cpus"`
+		} `json:"cpu_stats"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
-		return 0, fmt.Errorf("container stats %s: decode: %w", id, err)
+		return ContainerStats{}, fmt.Errorf("container stats %s: decode: %w", id, err)
 	}
-	return stats.MemoryStats.Usage, nil
+	mem := stats.MemoryStats.Usage
+	inactive := stats.MemoryStats.Stats.InactiveFile
+	if inactive == 0 {
+		inactive = stats.MemoryStats.Stats.TotalInactiveFile
+	}
+	if inactive > 0 && inactive <= mem {
+		mem -= inactive
+	}
+	cpus := stats.CPUStats.OnlineCPUs
+	if cpus == 0 {
+		cpus = len(stats.CPUStats.CPUUsage.PercpuUsage)
+	}
+	return ContainerStats{
+		MemoryUsageBytes: mem,
+		CPUTotalUsage:    stats.CPUStats.CPUUsage.TotalUsage,
+		SystemCPUUsage:   stats.CPUStats.SystemCPUUsage,
+		OnlineCPUs:       cpus,
+	}, nil
+}
+
+// ContainerMemoryUsage returns the current memory usage (in bytes) of a container.
+func (d *Client) ContainerMemoryUsage(ctx context.Context, id string) (usageBytes int64, err error) {
+	stats, err := d.ContainerStatsOneShot(ctx, id)
+	if err != nil {
+		return 0, err
+	}
+	return stats.MemoryUsageBytes, nil
 }
 
 // ─── Image operations ──────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -137,6 +138,71 @@ func TestConnectNetworkWithAliases_sendsEndpointConfig(t *testing.T) {
 	}
 	if got.EndpointConfig == nil || !slices.Equal(got.EndpointConfig.Aliases, []string{"cache.localhost"}) {
 		t.Fatalf("EndpointConfig = %#v, want aliases", got.EndpointConfig)
+	}
+}
+
+func TestContainerStatsOneShot_usesOneShotAndParsesSample(t *testing.T) {
+	// Given: a fake Docker daemon that records the stats query and returns a
+	// single stats sample.
+	var gotQuery url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1.45/containers/abc123/stats" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		gotQuery = r.URL.Query()
+		_, _ = w.Write([]byte(`{
+			"memory_stats": {"usage": 134217728, "stats": {"inactive_file": 33554432}},
+			"cpu_stats": {"cpu_usage": {"total_usage": 5000000}, "system_cpu_usage": 100000000, "online_cpus": 4}
+		}`))
+	}))
+	defer server.Close()
+	client := &Client{httpClient: server.Client(), host: server.URL, logger: zap.NewNop(), sem: make(chan struct{}, maxConcurrentOps)}
+
+	// When: a stats sample is fetched.
+	stats, err := client.ContainerStatsOneShot(context.Background(), "abc123")
+
+	// Then: one-shot=true is requested — stream=false alone makes the daemon
+	// wait an extra collection cycle (~1–2 s), which is what used to overrun
+	// caller timeouts on slow hosts and surface as "memory used: 0".
+	if err != nil {
+		t.Fatalf("ContainerStatsOneShot: %v", err)
+	}
+	if gotQuery.Get("stream") != "false" || gotQuery.Get("one-shot") != "true" {
+		t.Fatalf("stats query = %v, want stream=false and one-shot=true", gotQuery)
+	}
+	// Memory follows docker-CLI semantics: usage minus inactive file cache.
+	if stats.MemoryUsageBytes != 134217728-33554432 {
+		t.Fatalf("MemoryUsageBytes = %d, want %d", stats.MemoryUsageBytes, 134217728-33554432)
+	}
+	if stats.CPUTotalUsage != 5000000 || stats.SystemCPUUsage != 100000000 || stats.OnlineCPUs != 4 {
+		t.Fatalf("cpu sample = %+v, want total=5000000 system=100000000 cpus=4", stats)
+	}
+}
+
+func TestContainerStatsOneShot_cgroupV1Fallbacks(t *testing.T) {
+	// Given: a daemon shaped like cgroup v1 — total_inactive_file instead of
+	// inactive_file, per-CPU usage array instead of online_cpus.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"memory_stats": {"usage": 67108864, "stats": {"total_inactive_file": 16777216}},
+			"cpu_stats": {"cpu_usage": {"total_usage": 1, "percpu_usage": [1, 2]}, "system_cpu_usage": 2}
+		}`))
+	}))
+	defer server.Close()
+	client := &Client{httpClient: server.Client(), host: server.URL, logger: zap.NewNop(), sem: make(chan struct{}, maxConcurrentOps)}
+
+	// When: a stats sample is fetched.
+	stats, err := client.ContainerStatsOneShot(context.Background(), "abc123")
+
+	// Then: both v1 field spellings are honoured.
+	if err != nil {
+		t.Fatalf("ContainerStatsOneShot: %v", err)
+	}
+	if stats.MemoryUsageBytes != 67108864-16777216 {
+		t.Fatalf("MemoryUsageBytes = %d, want %d", stats.MemoryUsageBytes, 67108864-16777216)
+	}
+	if stats.OnlineCPUs != 2 {
+		t.Fatalf("OnlineCPUs = %d, want 2 (from percpu_usage length)", stats.OnlineCPUs)
 	}
 }
 

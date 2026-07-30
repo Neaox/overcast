@@ -1195,9 +1195,10 @@ func extensionInvokeError(reason string) *InvokeResult {
 // and returns it in megabytes. More representative per-invocation than max_usage
 // which is a lifetime cgroup peak. Returns 0 on error (best-effort).
 func (ci *containerInstance) currentMemoryMB() int {
-	// The Docker stats endpoint (stream=false) needs two cgroup reads, which
-	// can take >500 ms in Docker-in-Docker / devcontainer setups. Use a 2 s
-	// timeout so we don't log spurious errors on slower hosts.
+	// The stats call uses one-shot=true, so it returns the current sample
+	// immediately instead of waiting a daemon collection cycle (~1–2 s) —
+	// which used to blow this timeout in Docker-in-Docker setups and report 0.
+	// The 2 s timeout stays as a bound for genuinely slow daemons.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	bytes, err := ci.docker.ContainerMemoryUsage(ctx, ci.id)

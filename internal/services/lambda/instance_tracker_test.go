@@ -2,12 +2,14 @@ package lambda
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/clock"
+	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 )
 
@@ -202,4 +204,94 @@ func trackedFor(t *instanceTracker, functionName string, payload []byte) *tracke
 	inv := t.Begin(functionName, payload)
 	inv.Bind(newPoolTestInstance(functionName))
 	return inv
+}
+
+func TestInstanceTracker_instancesReportContainerStats(t *testing.T) {
+	// Given: a tracker whose stats function returns a fixed memory usage and
+	// CPU counters that grow by 0.2 s of container time per 1 s of host time.
+	clk := clock.NewMock()
+	tracker := newInstanceTracker(clk, zap.NewNop())
+	t.Cleanup(tracker.Stop)
+
+	var calls atomic.Int64
+	tracker.SetStatsFunc(func(_ context.Context, containerID string) (docker.ContainerStats, error) {
+		if containerID != "container-1" {
+			t.Errorf("stats sampled for unexpected container %q", containerID)
+		}
+		n := calls.Add(1)
+		return docker.ContainerStats{
+			MemoryUsageBytes: 96 * 1024 * 1024,
+			CPUTotalUsage:    uint64(n) * 200_000_000,
+			SystemCPUUsage:   uint64(n) * 1_000_000_000,
+			OnlineCPUs:       2,
+		}, nil
+	})
+
+	inv := tracker.Begin("my-fn", nil)
+	inst := newPoolTestInstance("my-fn")
+	inst.containerID = "container-1"
+	inv.Bind(inst)
+
+	// When: the snapshot is served, twice in quick succession, then again
+	// after the refresh throttle window has passed.
+	first := tracker.Instances()
+	throttled := tracker.Instances()
+	callsAfterThrottle := calls.Load()
+	clk.Add(2 * time.Second)
+	second := tracker.Instances()
+
+	// Then: memory comes from the first sample; CPU% needs a delta between two
+	// samples, so it appears on the later snapshot: 0.2 s CPU over 1 s host
+	// time on 2 CPUs = 40 % by the docker-CLI formula.
+	if len(first) != 1 || len(throttled) != 1 || len(second) != 1 {
+		t.Fatalf("expected 1 instance per snapshot, got %d/%d/%d", len(first), len(throttled), len(second))
+	}
+	if first[0].MemoryUsedMB != 96 {
+		t.Fatalf("first MemoryUsedMB = %d, want 96", first[0].MemoryUsedMB)
+	}
+	if first[0].CPUPercent != 0 {
+		t.Fatalf("first CPUPercent = %v, want 0 (no delta yet)", first[0].CPUPercent)
+	}
+	if callsAfterThrottle != 1 {
+		t.Fatalf("stats calls after back-to-back snapshots = %d, want 1 (throttled)", callsAfterThrottle)
+	}
+	if second[0].CPUPercent != 40 {
+		t.Fatalf("second CPUPercent = %v, want 40", second[0].CPUPercent)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("stats calls after throttle window = %d, want 2", got)
+	}
+}
+
+func TestInstanceTracker_statsErrorKeepsPreviousValues(t *testing.T) {
+	// Given: a tracker whose stats function succeeds once and then fails.
+	clk := clock.NewMock()
+	tracker := newInstanceTracker(clk, zap.NewNop())
+	t.Cleanup(tracker.Stop)
+
+	var calls atomic.Int64
+	tracker.SetStatsFunc(func(_ context.Context, _ string) (docker.ContainerStats, error) {
+		if calls.Add(1) > 1 {
+			return docker.ContainerStats{}, context.DeadlineExceeded
+		}
+		return docker.ContainerStats{MemoryUsageBytes: 64 * 1024 * 1024}, nil
+	})
+
+	inv := tracker.Begin("my-fn", nil)
+	inst := newPoolTestInstance("my-fn")
+	inst.containerID = "container-1"
+	inv.Bind(inst)
+
+	// When: a successful sample is followed by a failing one.
+	first := tracker.Instances()
+	clk.Add(2 * time.Second)
+	second := tracker.Instances()
+
+	// Then: the failed sample keeps the previous value instead of zeroing it.
+	if first[0].MemoryUsedMB != 64 {
+		t.Fatalf("first MemoryUsedMB = %d, want 64", first[0].MemoryUsedMB)
+	}
+	if second[0].MemoryUsedMB != 64 {
+		t.Fatalf("MemoryUsedMB after failed sample = %d, want 64 (kept)", second[0].MemoryUsedMB)
+	}
 }
