@@ -54,6 +54,18 @@ need it than accidentally ship a breaking change as a patch.
 
 ## [Unreleased]
 
+## [0.0.1-alpha.27] - 2026-07-30
+
+### Changed
+
+- **Release process (changelog)** — unreleased changes are now recorded as one fragment file per PR under `.changelog/` instead of direct edits to `CHANGELOG.md`'s `[Unreleased]` section, which every concurrent PR used to merge-conflict over. CI lints the fragments and keeps `[Unreleased]` empty (`scripts/changelog.py check`); release prep assembles the fragments into the versioned section (`scripts/changelog.py assemble`), and the release gate fails if any fragment is left unconsumed.
+
+- **CI (release safety)** — publishing now requires the maintainer's one-click approval: the release workflow's four publish jobs run in a `release` environment with a required reviewer, so builds and tests stay unattended while nothing ships without a human seeing the exact SHA. Alongside the repository ruleset changes (required status checks, no bypass actors), routine merges no longer use `--admin` — the rules that were previously convention are now enforced, including on automation.
+
+### Fixed
+
+- **CloudFormation (stack updates)** — stack updates no longer destroy live resources behind pinned names, and resources whose services reject duplicate creates can now actually be updated. Two related engine/handler defects: first, a replacement whose create is an upsert keyed by a pinned name handed back the original physical ID, and both the post-success cleanup and the rollback path then deleted that ID — destroying the one live resource behind a stack that reported `UPDATE_COMPLETE` (confirmed with CloudWatch alarms); the engine now reports a same-ID replacement as an in-place update, which also makes the create-overwrite of every upsert-style service (Athena, Glue, Firehose, OpenSearch, MSK, ECS, WAFv2) the correct in-place behaviour. Second, pinned-name resources on services that 409 duplicate creates could not be updated at all, because replacement re-created the same name; their handlers now replace only on the properties real CloudFormation replaces on and apply the rest through the service's own update API (CloudWatch `PutMetricAlarm`, Route53 `UPSERT`, EKS `UpdateClusterConfig`/`UpdateClusterVersion`/`UpdateNodegroupConfig`/`UpdateAccessEntry`/`UpdatePodIdentityAssociation`, Transfer `UpdateUser`, Pipes `PATCH`), while backup vaults, scheduler schedule groups, and the RDS/ElastiCache subnet groups — which have no modify operation — keep the live resource via a name-guarded identity update instead of a guaranteed 409. `AWS::ECR::Repository`, the original symptom, now updates `RepositoryPolicyText` and lifecycle rules in place instead of replacing on any property change, so re-running `cdk bootstrap` after a CDK upgrade succeeds instead of dying with `RepositoryAlreadyExistsException`, and `GetAtt`'s `RepositoryUri` is re-read from ECR so it reflects the registry this environment actually serves. Scheduler schedule groups with tags also create correctly now — CloudFormation-shaped tag lists were passed to the emulated API's map form, failing every tagged create. Replacement-on-any-change is deliberately kept where it is real CloudFormation behaviour (Shield, ACM, LaunchConfiguration, IAM AccessKey, EKS FargateProfile).
+
 ## [0.0.1-alpha.26] - 2026-07-30
 
 ### Added
@@ -508,7 +520,8 @@ need it than accidentally ship a breaking change as a patch.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.26...HEAD
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.27...HEAD
+[0.0.1-alpha.27]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.26...v0.0.1-alpha.27
 [0.0.1-alpha.26]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.25...v0.0.1-alpha.26
 [0.0.1-alpha.25]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.24...v0.0.1-alpha.25
 [0.0.1-alpha.24]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.23...v0.0.1-alpha.24
