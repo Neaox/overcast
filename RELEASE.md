@@ -160,7 +160,10 @@ For an alpha release:
    image digests, and the artifact table. Smoke test the RC image — the
    exact bits CI built — rather than a local rebuild.
 7. Merge the release-prep PR to `main`.
-8. Watch the `Release` workflow until all jobs pass.
+8. Watch the `Release` workflow. It builds and tests unattended, then
+   **pauses at the `release` environment** before publishing anything —
+   approve the deployment (one click, shows the exact SHA) to let the
+   publish jobs run. Then watch until all jobs pass.
 9. Verify the GitHub release `v<VERSION>` exists and contains native
    binaries plus `SHA256SUMS`.
 10. Verify the Docker images exist:
