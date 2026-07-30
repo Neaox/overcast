@@ -4,6 +4,7 @@ package trust
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -26,11 +27,11 @@ func newStore(log *zap.Logger, caDir string) (Store, error) {
 }
 
 func (s *winStore) Install(ctx context.Context) error {
-	ca, err := LoadOrCreateCA(s.dir)
+	cert, _, err := requireTrustAnchor(s.dir)
 	if err != nil {
 		return err
 	}
-	if installed, err := s.installed(ctx, ca); err != nil {
+	if installed, err := s.installed(ctx, cert); err != nil {
 		return err
 	} else if installed {
 		s.log.Info("overcast CA already installed", zap.String("store", "CurrentUser\\Root"))
@@ -46,16 +47,16 @@ func (s *winStore) Install(ctx context.Context) error {
 }
 
 func (s *winStore) Uninstall(ctx context.Context) error {
-	ca, absent, err := loadInstalledCA(s.dir)
+	cert, _, absent, err := loadTrustAnchor(s.dir)
 	if err != nil || absent {
 		return err
 	}
-	if installed, err := s.installed(ctx, ca); err != nil {
+	if installed, err := s.installed(ctx, cert); err != nil {
 		return err
 	} else if !installed {
 		return nil
 	}
-	out, err := s.run(ctx, "certutil", "-user", "-delstore", "Root", caFingerprint(ca))
+	out, err := s.run(ctx, "certutil", "-user", "-delstore", "Root", certFingerprint(cert))
 	if err != nil {
 		return fmt.Errorf("trust: certutil -delstore failed: %w\n%s", err, out)
 	}
@@ -64,18 +65,18 @@ func (s *winStore) Uninstall(ctx context.Context) error {
 }
 
 func (s *winStore) Installed(ctx context.Context) (bool, error) {
-	ca, absent, err := loadInstalledCA(s.dir)
+	cert, _, absent, err := loadTrustAnchor(s.dir)
 	if err != nil || absent {
 		return false, err
 	}
-	return s.installed(ctx, ca)
+	return s.installed(ctx, cert)
 }
 
 // installed looks the CA up by SHA-1 thumbprint. certutil exits non-zero
 // when the entry is absent, so a command error with the usual "not found"
 // output means "not installed" rather than a real failure.
-func (s *winStore) installed(ctx context.Context, ca *CA) (bool, error) {
-	out, err := s.run(ctx, "certutil", "-user", "-store", "Root", caFingerprint(ca))
+func (s *winStore) installed(ctx context.Context, cert *x509.Certificate) (bool, error) {
+	out, err := s.run(ctx, "certutil", "-user", "-store", "Root", certFingerprint(cert))
 	if err == nil {
 		return true, nil
 	}

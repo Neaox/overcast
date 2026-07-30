@@ -130,6 +130,10 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 
 	// ── Simple JSON proxies ────────────────────────────────────────────────
 	r.Get("/api/health", proxyJSONHandler("/_health"))
+	// The daemon's CA certificate (PEM, public half only) — mirrored on the
+	// UI origin for symmetry with the API's /_overcast/ca.pem, so either
+	// port can hand a browser or script the cert to trust.
+	r.Get("/api/ca.pem", handleCACert)
 	r.Get("/api/metrics", proxyJSONHandler("/_metrics"))
 	r.Get("/api/topology", handleTopology)
 	r.Get("/api/debug/state", handleDebugState)
@@ -561,6 +565,26 @@ func deriveAPIBaseURL(r *http.Request, cfg UIConfig) string {
 }
 
 // ── Route handlers ─────────────────────────────────────────────────────────
+
+// handleCACert proxies GET /_overcast/ca.pem — the emulator's local CA
+// certificate — preserving status and content type verbatim (this is the one
+// BFF route that is deliberately not JSON).
+func handleCACert(w http.ResponseWriter, r *http.Request) {
+	ep := resolveEndpoint(r)
+	resp, err := doGet(r.Context(), ep+"/_overcast/ca.pem")
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
+		return
+	}
+	defer resp.Body.Close()
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	w.WriteHeader(resp.StatusCode)
+	if !copyResponseBody(w, resp.Body) {
+		return
+	}
+}
 
 func handleTopology(w http.ResponseWriter, r *http.Request) {
 	ep := resolveEndpoint(r)

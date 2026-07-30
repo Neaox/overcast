@@ -24,6 +24,7 @@ import (
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/domainregistry"
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/hostbridge/trust"
 	"github.com/Neaox/overcast/internal/inithooks"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
@@ -184,6 +185,12 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	}
 	r.Get("/_overcast/init", initStatusHandler(initRunner))
 	r.Get("/_overcast/init/{stage}", initStageStatusHandler(initRunner))
+
+	// ---- Local CA certificate (always available) ---------------------------
+	// GET /_overcast/ca.pem — the daemon's CA certificate, so a host-side
+	// `overcast https enable --endpoint ...` can trust a containerized
+	// daemon without a shared volume. 404 until a CA exists (OVERCAST_TLS=auto).
+	r.Get(trust.CAPemPath, caCertHandler(cfg))
 
 	// ---- Debug dependencies ---------------------------------------------------
 	// ec2Svc is constructed before the rest of the services because the debug

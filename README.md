@@ -366,6 +366,17 @@ overcast https status            # report the setup state
 overcast https disable           # remove the CA from the trust store
 ```
 
+Daemon running in Docker? Trust it without a shared volume — the daemon
+serves its CA certificate at `/_overcast/ca.pem` and the CLI fetches it:
+
+```bash
+overcast https enable --endpoint http://localhost:4566
+```
+
+(Loopback endpoints only, unless you acknowledge the trust decision with
+`--trust-remote`. The same `--endpoint` works on `status`/`disable` and on
+the `trust` subcommands.)
+
 ### overcast trust
 
 Lower-level management of the overcast CA in the system trust store (the

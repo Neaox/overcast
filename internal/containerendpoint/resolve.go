@@ -99,6 +99,11 @@ func runningInContainer() bool {
 	return err == nil
 }
 
+// RunningInContainer reports whether this process is itself containerised
+// (Docker's /.dockerenv sentinel) — exported for callers outside the
+// resolver, e.g. cmd/overcast's startup guidance.
+func RunningInContainer() bool { return runningInContainer() }
+
 // networkIP attaches container to network and returns its IP there, or "" if
 // the address cannot be determined. Connecting is idempotent, so this is safe
 // to call when already attached.

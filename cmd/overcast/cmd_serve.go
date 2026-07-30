@@ -193,6 +193,16 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	if err != nil {
 		return err
 	}
+	// Containerized daemons mint their CA where the host cannot read it —
+	// point the operator at the one command that trusts it from outside
+	// (fetches the CA certificate via /_overcast/ca.pem, no shared volume
+	// needed). Once, at startup; browserAPIPort is the port a host-side
+	// caller actually dials when the API port is remapped.
+	if cfg.TLSAuto() && containerendpoint.RunningInContainer() {
+		logger.Info("running in a container with TLS — trust this daemon's CA from the host with one command",
+			zap.String("command", fmt.Sprintf("overcast https enable --endpoint http://localhost:%d", browserAPIPort(cfg))),
+		)
+	}
 	prof.mark("serverTLSConfig")
 
 	// ---- HTTP server -------------------------------------------------------

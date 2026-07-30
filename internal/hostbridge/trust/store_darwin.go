@@ -4,6 +4,7 @@ package trust
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,11 +38,11 @@ func newStore(log *zap.Logger, caDir string) (Store, error) {
 }
 
 func (s *darwinStore) Install(ctx context.Context) error {
-	ca, err := LoadOrCreateCA(s.dir)
+	cert, _, err := requireTrustAnchor(s.dir)
 	if err != nil {
 		return err
 	}
-	if installed, err := s.installed(ctx, ca); err != nil {
+	if installed, err := s.installed(ctx, cert); err != nil {
 		return err
 	} else if installed {
 		s.log.Info("overcast CA already installed", zap.String("keychain", s.keychain))
@@ -57,16 +58,16 @@ func (s *darwinStore) Install(ctx context.Context) error {
 }
 
 func (s *darwinStore) Uninstall(ctx context.Context) error {
-	ca, absent, err := loadInstalledCA(s.dir)
+	cert, _, absent, err := loadTrustAnchor(s.dir)
 	if err != nil || absent {
 		return err
 	}
-	if installed, err := s.installed(ctx, ca); err != nil {
+	if installed, err := s.installed(ctx, cert); err != nil {
 		return err
 	} else if !installed {
 		return nil
 	}
-	out, err := s.run(ctx, "security", "delete-certificate", "-Z", caFingerprint(ca), s.keychain)
+	out, err := s.run(ctx, "security", "delete-certificate", "-Z", certFingerprint(cert), s.keychain)
 	if err != nil {
 		return fmt.Errorf("trust: security delete-certificate failed: %w\n%s", err, out)
 	}
@@ -75,20 +76,20 @@ func (s *darwinStore) Uninstall(ctx context.Context) error {
 }
 
 func (s *darwinStore) Installed(ctx context.Context) (bool, error) {
-	ca, absent, err := loadInstalledCA(s.dir)
+	cert, _, absent, err := loadTrustAnchor(s.dir)
 	if err != nil || absent {
 		return false, err
 	}
-	return s.installed(ctx, ca)
+	return s.installed(ctx, cert)
 }
 
 // installed matches the CA by SHA-1 hash in the keychain listing. `security
 // find-certificate` exits non-zero when nothing matches the common name,
 // which simply means "not installed".
-func (s *darwinStore) installed(ctx context.Context, ca *CA) (bool, error) {
-	out, err := s.run(ctx, "security", "find-certificate", "-a", "-c", caCommonName, "-Z", s.keychain)
+func (s *darwinStore) installed(ctx context.Context, cert *x509.Certificate) (bool, error) {
+	out, err := s.run(ctx, "security", "find-certificate", "-a", "-c", cert.Subject.CommonName, "-Z", s.keychain)
 	if err != nil {
 		return false, nil //nolint:nilerr // non-zero exit = no matching certificate.
 	}
-	return strings.Contains(strings.ToLower(string(out)), caFingerprint(ca)), nil
+	return strings.Contains(strings.ToLower(string(out)), certFingerprint(cert)), nil
 }
