@@ -14,12 +14,22 @@ import (
 )
 
 // ListInstances handles GET /_lambda/instances.
-// Returns all currently tracked instances (running + idle) across all functions.
+// Returns all currently tracked instances (running + idle) across all
+// functions, plus a snapshot of the cold-start artifact cache.
 func (h *Handler) ListInstances(w http.ResponseWriter, r *http.Request) {
 	instances := h.tracker.Instances()
+	body := map[string]any{
+		"instances": instances,
+	}
+	if h.tarCacheStats != nil {
+		entries, bytes, maxBytes := h.tarCacheStats()
+		body["tarCache"] = map[string]any{
+			"entries":  entries,
+			"bytes":    bytes,
+			"maxBytes": maxBytes,
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"instances": instances,
-	})
+	_ = json.NewEncoder(w).Encode(body)
 }

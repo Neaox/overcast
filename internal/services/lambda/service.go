@@ -276,7 +276,11 @@ type Service struct {
 	docker           *docker.Client    // nil until Docker init completes
 	containerRuntime *ContainerRuntime // nil until Docker init completes
 	pool             *InstancePool     // nil until Docker init completes
-	proactive        *proactiveIniter  // nil unless LAMBDA_PROACTIVE_INIT is enabled
+	proactive        *proactiveIniter  // nil until Docker init completes
+	// triggerSources are other services that can attest a function is wired
+	// to traffic (API Gateway integrations, AppSync data sources). Queried
+	// only at proactive-init settle time.
+	triggerSources []TriggerSource
 	// dockerEventsSubscribed guards subscribeDockerEvents, which InitBus and
 	// initDockerRuntime both call because either may complete first.
 	dockerEventsSubscribed bool
@@ -547,6 +551,13 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 		if lv == nil {
 			return nil, fmt.Errorf("layer version not found: %s", layerVersionARN)
 		}
+		// Records travel byte-free; materialize the archive for injection.
+		if aerr := s.ls.loadLayerContent(ctx, lv); aerr != nil {
+			return nil, fmt.Errorf("load layer content %s: %s", layerVersionARN, aerr.Message)
+		}
+		if len(lv.Content) == 0 {
+			return nil, fmt.Errorf("layer version has no content: %s", layerVersionARN)
+		}
 		return append([]byte(nil), lv.Content...), nil
 	})
 
@@ -604,25 +615,43 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 		return nil
 	})
 
-	// Proactive initialization (opt-in): pre-create one environment after a
-	// function's configuration settles so the next request lands warm — see
-	// proactive.go for the candidacy and fidelity rules.
-	if cfg.LambdaProactiveInit {
-		wired := func(ctx context.Context, name string) bool {
-			if urls, aerr := s.handler.ls.listFunctionURLConfigs(ctx, name); aerr == nil && len(urls) > 0 {
-				return true
-			}
-			if esms, aerr := s.handler.esm.listESMs(ctx, name, ""); aerr == nil && len(esms) > 0 {
-				return true
-			}
+	// The settle debounce always runs: it drives the cold-start artifact
+	// pre-fill after every deploy. Environment creation on top of it is the
+	// opt-in proactive initialization — see proactive.go for the candidacy
+	// and fidelity rules.
+	wired := func(ctx context.Context, name string) bool {
+		if urls, aerr := s.handler.ls.listFunctionURLConfigs(ctx, name); aerr == nil && len(urls) > 0 {
+			return true
+		}
+		if esms, aerr := s.handler.esm.listESMs(ctx, name, ""); aerr == nil && len(esms) > 0 {
+			return true
+		}
+		// Other services (API Gateway, AppSync) know their own wiring; ask
+		// them. Runs only on settle attempts — never per invocation.
+		fn, aerr := s.handler.ls.getFunction(ctx, name)
+		if aerr != nil || fn == nil || fn.ARN == "" {
 			return false
 		}
-		proactive := newProactiveIniter(func() *InstancePool { return pool }, s.handler.ls, wired, log, clk)
-		s.handler.proactive = proactive
-		pool.onInvoked = proactive.NoteInvoked
 		s.mu.Lock()
-		s.proactive = proactive
+		sources := s.triggerSources
 		s.mu.Unlock()
+		for _, src := range sources {
+			if src.ReferencesFunction(ctx, fn.ARN) {
+				return true
+			}
+		}
+		return false
+	}
+	proactive := newProactiveIniter(func() *InstancePool { return pool }, s.handler.ls, wired, log, clk)
+	proactive.prefill = containerRuntime.PrefillArtifacts
+	proactive.createEnvs = cfg.LambdaProactiveInit
+	s.handler.proactive = proactive
+	s.handler.tarCacheStats = containerRuntime.TarCacheStats
+	pool.onInvoked = proactive.NoteInvoked
+	s.mu.Lock()
+	s.proactive = proactive
+	s.mu.Unlock()
+	if cfg.LambdaProactiveInit {
 		s.log.Info("lambda proactive initialization enabled")
 	}
 
@@ -749,6 +778,28 @@ func (s *Service) InitESMDelivery(receiver events.MessageReceiver, enqueuer even
 		defer mgr.wg.Done()
 		mgr.ReloadAll(mgr.baseCtx)
 	}()
+}
+
+// TriggerSource is implemented by services that can attest a Lambda function
+// is wired to receive traffic (an API Gateway integration, an AppSync data
+// source, …). Used as proactive-initialization trigger evidence; called only
+// when a function's configuration settles after a deploy, never on the
+// invoke path, so implementations may scan their stored state.
+type TriggerSource interface {
+	// ReferencesFunction reports whether any of the service's routing
+	// configuration targets the given Lambda function ARN.
+	ReferencesFunction(ctx context.Context, functionARN string) bool
+}
+
+// AddTriggerSource registers a service as proactive-init trigger evidence.
+// Called by the router during cross-service wiring.
+func (s *Service) AddTriggerSource(src TriggerSource) {
+	if src == nil {
+		return
+	}
+	s.mu.Lock()
+	s.triggerSources = append(s.triggerSources, src)
+	s.mu.Unlock()
 }
 
 // Stop shuts down the Runtime API server and any background resources.

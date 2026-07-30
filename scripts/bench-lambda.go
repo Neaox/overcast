@@ -31,6 +31,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
@@ -52,6 +53,7 @@ func main() {
 	runtimeCSV := flag.String("runtime", "nodejs22.x,python3.13", "comma-separated runtimes")
 	apigw := flag.Bool("apigw", true, "also measure through an API Gateway v1 proxy route")
 	cooldown := flag.Duration("cooldown", 2*time.Second, "pause between cold rounds (pacing)")
+	padMB := flag.Int("pad-mb", 0, "embed N MiB of incompressible padding in the deployment zip — exercises the package-size-dependent paths (store split, tar cache) that hello-world zips cannot show")
 	flag.Parse()
 
 	if err := ping(*endpoint); err != nil {
@@ -67,7 +69,7 @@ func main() {
 		rt = strings.TrimSpace(rt)
 		fmt.Printf("\n── %s: %d cold rounds × (1 cold + %d warm) ──\n", rt, *coldN, *warmN)
 		r := row{runtime: rt}
-		if err := benchRuntime(*endpoint, rt, *coldN, *warmN, *apigw, *cooldown, &r.cold, &r.warm, &r.apigwW); err != nil {
+		if err := benchRuntime(*endpoint, rt, *coldN, *warmN, *apigw, *cooldown, *padMB, &r.cold, &r.warm, &r.apigwW); err != nil {
 			fmt.Fprintf(os.Stderr, "  %s FAILED: %v\n", rt, err)
 			continue
 		}
@@ -84,9 +86,9 @@ func main() {
 	}
 }
 
-func benchRuntime(endpoint, rt string, coldN, warmN int, apigw bool, cooldown time.Duration, cold, warm, apigwW *[]float64) error {
+func benchRuntime(endpoint, rt string, coldN, warmN int, apigw bool, cooldown time.Duration, padMB int, cold, warm, apigwW *[]float64) error {
 	name := fmt.Sprintf("bench-lambda-%s-%d", strings.ReplaceAll(rt, ".", "-"), time.Now().Unix())
-	if err := createFunction(endpoint, name, rt); err != nil {
+	if err := createFunction(endpoint, name, rt, padMB); err != nil {
 		return fmt.Errorf("create function: %w", err)
 	}
 	defer func() {
@@ -180,7 +182,7 @@ func ping(endpoint string) error {
 	return nil
 }
 
-func helloZip(rt string) ([]byte, string, error) {
+func helloZip(rt string, padMB int) ([]byte, string, error) {
 	var filename, source string
 	switch {
 	case strings.HasPrefix(rt, "nodejs"):
@@ -201,14 +203,30 @@ func helloZip(rt string) ([]byte, string, error) {
 	if _, err := f.Write([]byte(source)); err != nil {
 		return nil, "", err
 	}
+	if padMB > 0 {
+		// Store the padding uncompressed: random bytes don't deflate, and
+		// Store keeps the harness's own CPU out of the measurement.
+		hdr := &zip.FileHeader{Name: "padding.bin", Method: zip.Store}
+		w, err := zw.CreateHeader(hdr)
+		if err != nil {
+			return nil, "", err
+		}
+		pad := make([]byte, padMB<<20)
+		if _, err := rand.Read(pad); err != nil {
+			return nil, "", err
+		}
+		if _, err := w.Write(pad); err != nil {
+			return nil, "", err
+		}
+	}
 	if err := zw.Close(); err != nil {
 		return nil, "", err
 	}
 	return buf.Bytes(), "index.handler", nil
 }
 
-func createFunction(endpoint, name, rt string) error {
-	zipBytes, handler, err := helloZip(rt)
+func createFunction(endpoint, name, rt string, padMB int) error {
+	zipBytes, handler, err := helloZip(rt, padMB)
 	if err != nil {
 		return err
 	}

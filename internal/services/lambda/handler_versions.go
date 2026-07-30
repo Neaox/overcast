@@ -13,6 +13,7 @@ package lambda
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -82,15 +83,33 @@ type listAliasesResponse struct {
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
-// codeSha256 returns a deterministic SHA-256 hex digest for the function's
-// deployment package. If no zip is stored we hash the ARN + last-modified as a
-// stable stand-in (matches real-ish behaviour for functions with no code zip).
+// wireSha256 converts an internally stored hex SHA-256 digest to the base64
+// form AWS uses in CodeSha256 wire fields. Returns "" for "" or a malformed
+// digest, so callers can fall through to computing one.
+func wireSha256(hexDigest string) string {
+	raw, err := hex.DecodeString(hexDigest)
+	if err != nil || len(raw) == 0 {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(raw)
+}
+
+// codeSha256 returns the function's CodeSha256 exactly as AWS reports it:
+// the **base64**-encoded SHA-256 of the deployment package. The encoding is
+// load-bearing, not cosmetic — CDK compares this value against the base64
+// hash it computes locally when deciding whether deployed code changed, so a
+// hex digest here makes every function look permanently drifted. The stored
+// CodeHash keeps its hex form: it doubles as the instance-identity input and
+// tar-cache key and never reaches the wire.
+// If no zip is stored we hash the ARN + last-modified as a stable stand-in.
 func codeSha256(fn *Function) string {
-	// The hash setCode stored when the package was written — same value as
+	// The hash setCode stored when the package was written — same digest as
 	// hashing CodeZip here, without rehashing the package on every
 	// configuration read.
 	if fn.CodeHash != "" && fn.CodeSize > 0 {
-		return fn.CodeHash
+		if b64 := wireSha256(fn.CodeHash); b64 != "" {
+			return b64
+		}
 	}
 	h := sha256.New()
 	if len(fn.CodeZip) > 0 {
@@ -99,7 +118,7 @@ func codeSha256(fn *Function) string {
 		// Stable placeholder so repeat calls return the same value.
 		h.Write([]byte(fn.ARN + fn.LastModified))
 	}
-	return hex.EncodeToString(h.Sum(nil))
+	return base64.StdEncoding.EncodeToString(h.Sum(nil))
 }
 
 // versionARN returns the qualified ARN for a specific version number.

@@ -100,7 +100,10 @@ func layerToWireResponse(lv *LayerVersion) layerVersionWireResponse {
 		CompatibleRuntimes:      lv.CompatibleRuntimes,
 		CompatibleArchitectures: lv.CompatibleArchitectures,
 		Content: layerVersionContentResponse{
-			CodeSize: lv.CodeSize,
+			// AWS's wire form: base64 SHA-256 of the layer zip. Empty (and
+			// omitted) for records published before the hash was stored.
+			CodeSha256: wireSha256(lv.CodeHash),
+			CodeSize:   lv.CodeSize,
 		},
 	}
 }
@@ -157,9 +160,8 @@ func (h *Handler) PublishLayerVersion(w http.ResponseWriter, r *http.Request) {
 		CreatedDate:             h.clk.Now().UTC().Format(time.RFC3339),
 		CompatibleRuntimes:      req.CompatibleRuntimes,
 		CompatibleArchitectures: req.CompatibleArchitectures,
-		Content:                 content,
-		CodeSize:                int64(len(content)),
 	}
+	lv.setContent(content)
 
 	if aerr := h.ls.putLayerVersion(ctx, lv); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -225,6 +227,11 @@ func (h *Handler) GetLayerVersionMetadata(w http.ResponseWriter, r *http.Request
 			Message:    "Layer version not found: " + layerName + ":" + versionStr,
 			HTTPStatus: http.StatusNotFound,
 		})
+		return
+	}
+	// The extension scan needs the actual archive; records travel byte-free.
+	if aerr := h.ls.loadLayerContent(r.Context(), lv); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	extensions := discoverExternalExtensions(lv.Content)

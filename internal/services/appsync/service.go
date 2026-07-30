@@ -12,6 +12,7 @@ package appsync
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -52,6 +53,29 @@ func (s *Service) InitBus(bus *events.Bus) {
 // InitLambdaInvoker wires the Lambda invoker for AWS_LAMBDA data source dispatch.
 func (s *Service) InitLambdaInvoker(invoker events.FunctionSyncInvoker) {
 	s.handler.invoker = invoker
+}
+
+// ReferencesFunction implements the Lambda service's TriggerSource: it
+// reports whether any AWS_LAMBDA data source targets the given function.
+// A raw substring scan of the stored data-source records is deliberate —
+// lambdaConfig embeds the full function ARN, the check runs only when a
+// function settles after a deploy, and the closing-quote delimiter keeps
+// `…function:app` from matching `…function:app-2`.
+func (s *Service) ReferencesFunction(ctx context.Context, functionARN string) bool {
+	if functionARN == "" {
+		return false
+	}
+	region := serviceutil.ARNRegion(functionARN)
+	pairs, err := s.handler.store.s.Scan(ctx, storeNS, serviceutil.RegionKey(region, prefixDS))
+	if err != nil {
+		return false
+	}
+	for _, p := range pairs {
+		if strings.Contains(p.Value, functionARN+`"`) || strings.Contains(p.Value, functionARN+`\"`) {
+			return true
+		}
+	}
+	return false
 }
 
 // InitDynamoDBInvoker wires the DynamoDB invoker for AMAZON_DYNAMODB data source dispatch.

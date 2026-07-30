@@ -89,6 +89,7 @@ func TestProactiveIniter_debouncesChurnIntoOneEnvironment(t *testing.T) {
 	ls := newLambdaStore(state.NewMemoryStore(), "us-east-1", clk)
 	fn := seedProactiveFunction(t, ls, "churn-fn")
 	pi := newProactiveIniter(func() *InstancePool { return pool }, ls, nil, zap.NewNop(), clk)
+	pi.createEnvs = true
 	defer pi.Stop()
 	pi.NoteInvoked("churn-fn")
 
@@ -119,6 +120,7 @@ func TestProactiveIniter_noTriggerEvidenceMeansNoEnvironment(t *testing.T) {
 	fn := seedProactiveFunction(t, ls, "idle-fn")
 	wired := func(context.Context, string) bool { return false }
 	pi := newProactiveIniter(func() *InstancePool { return pool }, ls, wired, zap.NewNop(), clk)
+	pi.createEnvs = true
 	defer pi.Stop()
 
 	// When: it settles after an update.
@@ -130,6 +132,41 @@ func TestProactiveIniter_noTriggerEvidenceMeansNoEnvironment(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // give a wrong implementation time to act
 	if got := rt.proactiveCount(); got != 0 {
 		t.Fatalf("proactive creations = %d, want 0 for a function with no trigger evidence", got)
+	}
+}
+
+func TestProactiveIniter_prefillRunsWithoutEnvironmentCreation(t *testing.T) {
+	// Given: environment creation disabled (the default) and a prefill hook.
+	clk := clock.NewMock()
+	rt := &proactiveTestRuntime{}
+	pool := NewInstancePool(rt, zap.NewNop(), clk, PoolLimits{})
+	defer pool.Stop()
+	ls := newLambdaStore(state.NewMemoryStore(), "us-east-1", clk)
+	fn := seedProactiveFunction(t, ls, "prefill-fn")
+	var prefilled []string
+	var mu sync.Mutex
+	pi := newProactiveIniter(func() *InstancePool { return pool }, ls, nil, zap.NewNop(), clk)
+	pi.prefill = func(_ context.Context, fn *Function) {
+		mu.Lock()
+		prefilled = append(prefilled, fn.Name)
+		mu.Unlock()
+	}
+	defer pi.Stop()
+
+	// When: the function settles after a deploy.
+	pi.NoteFunctionChanged(fn)
+	clk.Add(proactiveSettleDelay + time.Second)
+
+	// Then: artifacts were pre-built exactly once — no trigger evidence
+	// needed — and no environment was created.
+	mu.Lock()
+	got := len(prefilled)
+	mu.Unlock()
+	if got != 1 {
+		t.Fatalf("prefill calls = %d, want 1", got)
+	}
+	if rt.proactiveCount() != 0 {
+		t.Fatal("environment created despite LAMBDA_PROACTIVE_INIT being off")
 	}
 }
 

@@ -461,6 +461,15 @@ const (
 	// in numeric order.
 	nsLayers = "lambda:layers"
 
+	// nsLayerContent holds each layer version's zip (base64), split from the
+	// record for the same reason function packages are (nsFunctionCode):
+	// ListLayers / ListLayerVersions decode every record they scan, and with
+	// the zip embedded that decoded every layer's full archive per call.
+	// Keys match nsLayers. Layer versions are immutable, so records written
+	// before the split simply keep their embedded content — readers handle
+	// both shapes.
+	nsLayerContent = "lambda:layer-content"
+
 	// nsLayerCounters stores the next version number per layer name.
 	// Keys are "{layerName}", values are decimal integers.
 	nsLayerCounters = "lambda:layer-counters"
@@ -476,10 +485,25 @@ type LayerVersion struct {
 	CreatedDate             string   `json:"created_date"`
 	CompatibleRuntimes      []string `json:"compatible_runtimes,omitempty"`
 	CompatibleArchitectures []string `json:"compatible_architectures,omitempty"`
-	// Content stores the raw zip bytes.
+	// Content is the layer zip. Persisted under its own key (nsLayerContent)
+	// and stripped from the record by putLayerVersion; call loadLayerContent
+	// before paths that need the bytes. Records persisted before the split
+	// still carry it inline.
 	Content []byte `json:"content,omitempty"`
 	// CodeSize is the byte length of Content.
 	CodeSize int64 `json:"code_size"`
+	// CodeHash is the hex SHA-256 of Content, set at publish. Wire responses
+	// report it in AWS's base64 form (Content.CodeSha256); "" on records
+	// published before the field existed.
+	CodeHash string `json:"code_hash,omitempty"`
+}
+
+// setContent installs the layer zip, keeping CodeSize and CodeHash in step —
+// the layer twin of Function.setCode.
+func (lv *LayerVersion) setContent(zip []byte) {
+	lv.Content = zip
+	lv.CodeSize = int64(len(zip))
+	lv.CodeHash = codeHashOf(zip)
 }
 
 // layerVersionKey returns the store key for a layer version, zero-padded for
@@ -514,13 +538,50 @@ func (s *lambdaStore) nextLayerVersion(ctx context.Context, layerName string) (i
 
 // putLayerVersion stores a layer version.
 func (s *lambdaStore) putLayerVersion(ctx context.Context, lv *LayerVersion) *protocol.AWSError {
-	raw, err := json.Marshal(lv)
+	record := *lv
+	record.Content = nil
+	raw, err := json.Marshal(&record)
 	if err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	if err := s.store.Set(ctx, nsLayers, serviceutil.RegionKey(s.region(ctx), layerVersionKey(lv.LayerName, lv.Version)), string(raw)); err != nil {
+	key := serviceutil.RegionKey(s.region(ctx), layerVersionKey(lv.LayerName, lv.Version))
+	// Content before record, as with function packages: a stored record must
+	// never point at content that was not stored.
+	if len(lv.Content) > 0 {
+		if err := s.store.Set(ctx, nsLayerContent, key, base64.StdEncoding.EncodeToString(lv.Content)); err != nil {
+			return protocol.Wrap(protocol.ErrInternalError, err)
+		}
+	}
+	if err := s.store.Set(ctx, nsLayers, key, string(raw)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
+	return nil
+}
+
+// loadLayerContent populates lv.Content from the stored zip. Records written
+// before the split still embed their content and are left as is.
+func (s *lambdaStore) loadLayerContent(ctx context.Context, lv *LayerVersion) *protocol.AWSError {
+	if lv == nil || len(lv.Content) > 0 {
+		return nil
+	}
+	// The layer's own region: cold starts can run on a bare context, and the
+	// version ARN always carries the partition the layer was published to.
+	region := serviceutil.ARNRegion(lv.LayerVersionARN)
+	if region == "" {
+		region = s.region(ctx)
+	}
+	raw, found, err := s.store.Get(ctx, nsLayerContent, serviceutil.RegionKey(region, layerVersionKey(lv.LayerName, lv.Version)))
+	if err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if !found || raw == "" {
+		return nil
+	}
+	zip, decErr := base64.StdEncoding.DecodeString(raw)
+	if decErr != nil {
+		return protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("lambda: decode stored layer content %s v%d: %w", lv.LayerName, lv.Version, decErr))
+	}
+	lv.Content = zip
 	return nil
 }
 
@@ -574,7 +635,11 @@ func (s *lambdaStore) listAllLayerNames(ctx context.Context) ([]string, *protoco
 
 // deleteLayerVersion removes a specific layer version.
 func (s *lambdaStore) deleteLayerVersion(ctx context.Context, layerName string, version int64) *protocol.AWSError {
-	if err := s.store.Delete(ctx, nsLayers, serviceutil.RegionKey(s.region(ctx), layerVersionKey(layerName, version))); err != nil {
+	key := serviceutil.RegionKey(s.region(ctx), layerVersionKey(layerName, version))
+	if err := s.store.Delete(ctx, nsLayers, key); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if err := s.store.Delete(ctx, nsLayerContent, key); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil

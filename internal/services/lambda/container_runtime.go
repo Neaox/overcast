@@ -105,6 +105,39 @@ func (cr *ContainerRuntime) SetCodeFetcher(fetcher CodeFetcher) {
 	cr.codeFetcher = fetcher
 }
 
+// TarCacheStats reports the artifact cache's entry count, resident bytes,
+// and byte budget, for the lambda debug endpoint.
+func (cr *ContainerRuntime) TarCacheStats() (entries int, bytes, maxBytes int64) {
+	return cr.tarCache.stats()
+}
+
+// PrefillArtifacts builds and caches fn's cold-start artifacts (code tar and
+// layer tars) ahead of the next cold start. Called from the settle debounce
+// after deploys — never on the invoke path — so the first cold start of a
+// new code version skips the package fetch and conversion the same way later
+// ones do. Best-effort: on any miss the cold start simply builds the
+// artifact itself, as before.
+func (cr *ContainerRuntime) PrefillArtifacts(ctx context.Context, fn *Function) {
+	if cr.tarCache == nil || fn == nil || fn.PackageType == "Image" {
+		return
+	}
+	if hotPath, err := hotReloadBindPath(fn, cr.cfg.LambdaHotReload); err == nil && hotPath == "" && fn.CodeHash != "" {
+		if _, ok := cr.tarCache.get("code:" + fn.CodeHash); !ok {
+			if len(fn.CodeZip) == 0 && cr.codeFetcher != nil {
+				_ = cr.codeFetcher(ctx, fn)
+			}
+			if len(fn.CodeZip) > 0 {
+				if tarData, err := zipToTarPrefixed(fn.CodeZip, "var/task/"); err == nil {
+					cr.tarCache.put(&tarCacheEntry{key: "code:" + fn.CodeHash, data: tarData})
+				}
+			}
+		}
+	}
+	// resolveLayerTars fills the layer cache as a side effect; skip-warnings
+	// here are advisory only — the cold start re-resolves and reports them.
+	_, _, _, _ = cr.resolveLayerTars(ctx, fn)
+}
+
 // SetLayerContentFetcher wires layer content retrieval for runtime injection.
 func (cr *ContainerRuntime) SetLayerContentFetcher(fetcher LayerContentFetcher) {
 	cr.layerFetcher = fetcher

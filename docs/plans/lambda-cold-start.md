@@ -193,9 +193,10 @@ await_ip + acquire_total), a per-invoke TRACE timing line (`lambda invoke
 timings`: handler, log_wait, mem_wait, total), and `scripts/bench-lambda.go`
 (paced; see its header for method). Sequenced after Phase 1 at the user's
 direction — the baseline below therefore brackets Phase 1 (alpha.26 vs this
-branch) rather than preceding it. The large-zip variant (item 3) and
-recording INIT split per runtime remain available as follow-ups when Phase 2
-needs them.
+branch) rather than preceding it. The large-zip variant landed 2026-07-31 as
+`bench-lambda -pad-mb N` (incompressible padding, stored uncompressed so the
+harness's own CPU stays out of the measurement); recording its numbers and
+the per-runtime INIT split remain open until a quiet-machine run.
 
 1. **Phase timers in `acquireContainer`.** Wrap each step (image check, tar
    build, create, copies, start, VPC, await-IP, await-ready) and log a single
@@ -306,6 +307,14 @@ the zip out of the record, per-invoke unmarshal cost is negligible.
 Pinned by `store_code_test.go`: record carries no bytes, package
 round-trips, config-only puts leave the package untouched, delete removes
 it, ARN-region resolution.
+*Follow-up (2026-07-31):* layer archives got the same split
+(`nsLayerContent`; layer versions are immutable, so pre-split records simply
+keep their embedded content and readers handle both shapes), which also
+stopped ListLayers/ListLayerVersions decoding every archive per call. In the
+same change, `CodeSha256` wire fields (functions, versions, and the
+previously empty layer `Content.CodeSha256`) switched to AWS's base64
+encoding — the hex form made CDK-style local-hash comparisons see permanent
+drift.
 
 ### 1.3 Take the Docker stats round trip off the invoke critical path — DONE (2026-07-31)
 Landed in two halves (both 2026-07-31):
@@ -383,10 +392,12 @@ Landed (`tar_cache.go`, container_runtime.go):
   (`LAMBDA_TAR_CACHE_MB`, default 256, 0 disables; oversized artifacts are
   never cached). A hit also skips materializing the package from the store.
   Content-addressed keys mean code updates need no invalidation — old
-  entries age out. *Deviation:* entries fill **on demand** at cold start
-  only; the background pre-fill after deploy settle is deferred until
-  Phase 3 introduces the settle debounce, and the debug-endpoint cache-size
-  metric is deferred with it.
+  entries age out. *Deviation closed 2026-07-31:* Phase 3's settle debounce
+  now always runs (independent of `LAMBDA_PROACTIVE_INIT`) and drives
+  `PrefillArtifacts` — code and layer tars are pre-built in the background
+  once a deploy settles, so even the **first** cold start of a new code
+  version skips the fetch and conversion. The cache's entry count, bytes,
+  and budget are reported on `GET /_lambda/instances` (`tarCache`).
 - **Bootstrap tar**: built once (`sync.OnceValues`).
 - **CA bundle tar**: built once per process — certs are minted before the
   Lambda runtime exists and never rotate within a process (verified).
@@ -445,14 +456,18 @@ until settle (injected clock); no trigger evidence → zero environments;
 contended capacity → busy, never queued; already-warm / provisioned /
 throttled-to-zero functions skipped.
 
-**v1 deviations / follow-ups before the default flips on:**
-- Trigger evidence is lambda-local only (invoked-this-process, URL, ESM).
-  Detecting API GW / AppSync / CloudFront wiring lives in those services'
-  state — the planned event-driven "this ARN is referenced" signal is the
-  main gap; until then, the first-ever request of an API GW-wired function
-  in a fresh process is still a (now ~300 ms) cold start, and proactive init
-  covers every redeploy after it.
-- The §2.2 background tar pre-fill can now hook the same settle signal.
+**v1 deviations / follow-ups — closed 2026-07-31:**
+- Cross-service trigger evidence landed as a **pull** design rather than the
+  sketched bus events: `lambda.TriggerSource` (router-wired; API Gateway and
+  AppSync implement `ReferencesFunction`) answers "does any integration or
+  data source target this ARN" with a raw substring scan of stored records —
+  delimiter-guarded so `…:app` never matches `…:app-2` — queried only at
+  settle time. First requests of API GW/AppSync-wired functions now land
+  warm in a fresh process too. CloudFront needs no source of its own: its
+  local origins route through function URLs or API Gateway, both covered.
+- The §2.2 background tar pre-fill hooks the same settle signal (landed).
+- Remaining before the default flips on: a release of soak with
+  `LAMBDA_PROACTIVE_INIT=true`.
 
 ---
 
