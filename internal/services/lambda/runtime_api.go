@@ -132,6 +132,7 @@ type RuntimeAPIServer struct {
 	containerErrors  map[string]string
 	extensions       map[string]*extensionState
 	seenNext         map[string]bool          // container IP → true after first GET /next
+	firstNextAt      map[string]time.Time     // container IP → time of first GET /next
 	ready            map[string]chan struct{} // container IP → closed after first GET /next
 	server           *http.Server
 	listener         net.Listener
@@ -174,6 +175,7 @@ func NewRuntimeAPIServerFromListener(ln net.Listener, containerAddr string, logg
 		containerErrors:  make(map[string]string),
 		extensions:       make(map[string]*extensionState),
 		seenNext:         make(map[string]bool),
+		firstNextAt:      make(map[string]time.Time),
 		ready:            make(map[string]chan struct{}),
 		logger:           logger,
 		addr:             containerAddr,
@@ -252,6 +254,16 @@ func (s *RuntimeAPIServer) ReadyChan(containerIP string) <-chan struct{} {
 	return ch
 }
 
+// FirstNextAt returns when the container's RIC issued its first GET /next —
+// the moment the execution environment finished initialising. ok is false
+// until that first poll arrives (or after the container is unregistered).
+func (s *RuntimeAPIServer) FirstNextAt(containerIP string) (time.Time, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.firstNextAt[containerIP]
+	return t, ok
+}
+
 // UnregisterContainer removes the container IP from the registry.
 func (s *RuntimeAPIServer) UnregisterContainer(containerIP string) {
 	s.mu.Lock()
@@ -261,6 +273,7 @@ func (s *RuntimeAPIServer) UnregisterContainer(containerIP string) {
 	delete(s.containerExts, containerIP)
 	delete(s.containerErrors, containerIP)
 	delete(s.seenNext, containerIP)
+	delete(s.firstNextAt, containerIP)
 	delete(s.ready, containerIP)
 	for id, ext := range s.extensions {
 		if ext.ContainerIP == containerIP {
@@ -788,6 +801,7 @@ func (s *RuntimeAPIServer) handleNext(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	if !s.seenNext[remoteIP] {
 		s.seenNext[remoteIP] = true
+		s.firstNextAt[remoteIP] = s.clk.Now()
 		s.maybeMarkReadyLocked(remoteIP)
 	}
 

@@ -200,3 +200,55 @@ func TestRuntimeAPI_OnFirstNextResetsAfterUnregister(t *testing.T) {
 		t.Fatalf("second cycle: OnFirstNext called %d times, want 2", got)
 	}
 }
+
+func TestRuntimeAPI_FirstNextAtRecordedOncePerRegistration(t *testing.T) {
+	// Given: a RuntimeAPI server with a registered container.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	srv, err := NewRuntimeAPIServerFromListener(ln, addr, zap.NewNop(), clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { srv.Stop(context.Background()) })
+	arn := "arn:aws:lambda:us-east-1:000000000000:function:my-fn"
+	srv.RegisterContainer("127.0.0.1", arn)
+
+	// Then: no timestamp before the RIC's first poll.
+	if _, ok := srv.FirstNextAt("127.0.0.1"); ok {
+		t.Fatal("FirstNextAt set before any GET /next")
+	}
+
+	// When: the container polls GET /next twice.
+	srv.SubmitInvocation(arn, []byte(`{}`), time.Now().Add(30*time.Second))
+	resp, err := http.Get("http://" + addr + "/2018-06-01/runtime/invocation/next")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	first, ok := srv.FirstNextAt("127.0.0.1")
+	if !ok {
+		t.Fatal("FirstNextAt not recorded after first GET /next")
+	}
+
+	srv.SubmitInvocation(arn, []byte(`{}`), time.Now().Add(30*time.Second))
+	resp2, err := http.Get("http://" + addr + "/2018-06-01/runtime/invocation/next")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+
+	// Then: the timestamp pins the FIRST poll — later polls don't move it.
+	if second, _ := srv.FirstNextAt("127.0.0.1"); !second.Equal(first) {
+		t.Fatalf("FirstNextAt moved on second GET /next: %v → %v", first, second)
+	}
+
+	// And: unregistering clears it for the next environment on this IP.
+	srv.UnregisterContainer("127.0.0.1")
+	if _, ok := srv.FirstNextAt("127.0.0.1"); ok {
+		t.Fatal("FirstNextAt survived UnregisterContainer")
+	}
+}
