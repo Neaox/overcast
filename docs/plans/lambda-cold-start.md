@@ -2,9 +2,11 @@
 
 > Status: investigation complete 2026-07-31. Landed so far (all 2026-07-31):
 > Phase 1.3's first half (one-shot Docker stats + real instance memory/CPU in
-> the UI, PR #403) and Phase 1.1 (stored CodeHash — no per-acquire package
-> rehash, this commit). Phase 1 items are landing as separate, individually
-> green PRs; everything else not started.
+> the UI, PR #403), Phase 1.1 (stored CodeHash — no per-acquire package
+> rehash, PR #404), and Phase 1.2 (deployment package split out of the
+> function record — no per-invoke package decode, this commit). Phase 1 items
+> are landing as separate, individually green PRs; everything else not
+> started.
 > Goal: cut Lambda cold-start latency (especially via API Gateway / AppSync /
 > function URLs / CloudFront) and shave per-invoke overhead on the warm path,
 > **without** sacrificing fidelity — all observable behavior must keep matching
@@ -220,29 +222,25 @@ setter invariant, legacy/setCode identity agreement, identity-trusts-hash
 contract, and end-to-end CreateFunction / UpdateFunctionCode / s3-sync hash
 assertions.
 
-### 1.2 Stop decoding the code zip per invoke
-Two coupled changes:
-- **Split `CodeZip` out of the per-invoke record** into its own store key
-  (`nsFunctionCode`, keyed region/name), written by the same mutation paths.
-  `getFunction` then decodes a small record; the zip is fetched by a new
-  `getFunctionCode` **only where actually needed**: cold start
-  (`acquireContainer`), GetFunction API (code URL/export paths), publish
-  version. Backward compatibility: on read, if the legacy record still embeds
-  `code_zip`, use it and migrate lazily on next write (malformed-persisted-
-  state rule: never fail the read).
-- **In-memory decoded-Function cache** keyed (region, name), invalidated in
-  `putFunction`/`deleteFunction` (all writes funnel through them). Single
-  process, so no cross-writer staleness. Callers currently receive a fresh
-  `*Function` each call and some mutate it (state transitions build copies —
-  verify); the cache must hand out either immutable snapshots or defensive
-  copies of mutable maps (`Environment`, `Tags`). Given store writes are
-  in-memory (hybrid), the *decode* is the cost — caching the decoded struct
-  and cloning maps on read is still ~100× cheaper than re-unmarshal for big
-  records, and after the CodeZip split the record is small enough that this
-  cache is optional; measure, and skip if the split alone gets the win.
-*Risk:* persistence-schema change — needs a fallback-read test with a legacy
-record fixture; ESM/seed paths that list functions must tolerate zip-less
-records.
+### 1.2 Stop decoding the code zip per invoke — DONE (2026-07-31)
+Landed: the deployment package lives under its own store key
+(`nsFunctionCode`, keyed region/name, base64). `putFunction` strips the zip
+from the record (and writes the package key only when the in-memory record
+actually carries bytes, so config-only updates never touch it);
+`getFunction` — every invoke — decodes a small record. The bytes are
+materialized by `lambdaStore.loadFunctionCode` only where needed: container
+cold start (via `ContainerRuntime.SetCodeFetcher`, wired in service.go) and
+the source viewer/editor handlers. `loadFunctionCode` resolves the region
+from the function ARN so bare-context cold starts (provisioned-concurrency
+replenish, ESM delivery) hit the right partition. Side win: the s3-sync
+watcher's list-all-functions on every S3 PutObject no longer decodes any
+packages. Legacy records that still embed `code_zip` keep decoding on read
+and migrate to the split automatically on their first write — no data loss,
+no redeploy. The decoded-Function cache sketched below was **skipped**: with
+the zip out of the record, per-invoke unmarshal cost is negligible.
+Pinned by `store_code_test.go`: record carries no bytes, package
+round-trips, config-only puts leave the package untouched, delete removes
+it, ARN-region resolution.
 
 ### 1.3 Take the remaining Docker stats round trip off the invoke critical path
 *Status: the expensive half landed 2026-07-31* — `ContainerStatsOneShot`
