@@ -50,7 +50,9 @@ func TestFunctionInstanceIdentity_changesWithContainerAffectingConfig(t *testing
 		{"timeout", func(fn *Function) { fn.Timeout = 30 }},
 		{"handler", func(fn *Function) { fn.Handler = "index.other" }},
 		{"runtime", func(fn *Function) { fn.Runtime = "nodejs20.x" }},
-		{"code", func(fn *Function) { fn.CodeZip = []byte("new-zip") }},
+		// setCode is the production mutation path: identity trusts the CodeHash
+		// it maintains, so a bare CodeZip assignment would not move it.
+		{"code", func(fn *Function) { fn.setCode([]byte("new-zip")) }},
 		{"layers", func(fn *Function) {
 			fn.Layers = []LayerVersionLink{{ARN: "arn:aws:lambda:us-east-1:000000000000:layer:l:1"}}
 		}},

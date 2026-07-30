@@ -83,6 +83,13 @@ func functionCodeIdentity(fn *Function) string {
 		}
 		return imageHash("hotreload:" + p + ":missing")
 	}
+	// The hash maintained by setCode, so the invoke path does not SHA-256 the
+	// whole package on every acquire. Records persisted before the field
+	// existed carry no hash; computing it here matches what setCode would have
+	// stored, so identities agree across the upgrade.
+	if fn.CodeHash != "" {
+		return fn.CodeHash
+	}
 	return codeHashOf(fn.CodeZip)
 }
 

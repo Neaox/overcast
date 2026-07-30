@@ -141,17 +141,26 @@ type LayerVersionLink struct {
 
 // Function is the domain model for a stored Lambda function definition.
 type Function struct {
-	Name            string             `json:"name"`
-	ARN             string             `json:"arn"`
-	Runtime         string             `json:"runtime"`
-	Handler         string             `json:"handler"`
-	Role            string             `json:"role"`
-	Description     string             `json:"description,omitempty"`
-	Timeout         int                `json:"timeout"`
-	MemorySize      int                `json:"memory_size"`
-	Environment     map[string]string  `json:"environment,omitempty"`
-	CodeZip         []byte             `json:"code_zip,omitempty"` // base64-decoded zip
-	CodeSize        int64              `json:"code_size,omitempty"`
+	Name        string            `json:"name"`
+	ARN         string            `json:"arn"`
+	Runtime     string            `json:"runtime"`
+	Handler     string            `json:"handler"`
+	Role        string            `json:"role"`
+	Description string            `json:"description,omitempty"`
+	Timeout     int               `json:"timeout"`
+	MemorySize  int               `json:"memory_size"`
+	Environment map[string]string `json:"environment,omitempty"`
+	// CodeZip is the deployment package. Never assign it directly — go through
+	// setCode, which keeps CodeSize and CodeHash in step. Identity checks trust
+	// CodeHash, so a bare CodeZip assignment would leave warm containers
+	// serving stale code.
+	CodeZip  []byte `json:"code_zip,omitempty"` // base64-decoded zip
+	CodeSize int64  `json:"code_size,omitempty"`
+	// CodeHash is the hex SHA-256 of CodeZip, maintained by setCode. It is what
+	// functionCodeIdentity and CodeSha256 responses read, so the invoke path
+	// never rehashes the package. "" only on records persisted before the field
+	// existed, where readers fall back to hashing CodeZip.
+	CodeHash        string             `json:"code_hash,omitempty"`
 	CodeS3Bucket    string             `json:"code_s3_bucket,omitempty"`
 	CodeS3Key       string             `json:"code_s3_key,omitempty"`
 	ImageUri        string             `json:"image_uri,omitempty"` // PackageType=Image only
@@ -200,6 +209,15 @@ type VpcConfig struct {
 	SubnetIds        []string `json:"SubnetIds,omitempty"`
 	SecurityGroupIds []string `json:"SecurityGroupIds,omitempty"`
 	VpcId            string   `json:"VpcId,omitempty"`
+}
+
+// setCode replaces the function's deployment package, keeping the derived
+// CodeSize and CodeHash fields in step. Every site that changes CodeZip must
+// go through here — see the CodeZip field comment for why.
+func (f *Function) setCode(zip []byte) {
+	f.CodeZip = zip
+	f.CodeSize = int64(len(zip))
+	f.CodeHash = codeHashOf(zip)
 }
 
 // logGroupName returns the CloudWatch Logs log group for this function.

@@ -1,8 +1,10 @@
 # Lambda cold-start & invoke-path latency — plan
 
-> Status: investigation complete 2026-07-31. Phase 1.3's first half (one-shot
-> Docker stats + real instance memory/CPU in the UI) landed the same day on
-> this branch; everything else not started.
+> Status: investigation complete 2026-07-31. Landed so far (all 2026-07-31):
+> Phase 1.3's first half (one-shot Docker stats + real instance memory/CPU in
+> the UI, PR #403) and Phase 1.1 (stored CodeHash — no per-acquire package
+> rehash, this commit). Phase 1 items are landing as separate, individually
+> green PRs; everything else not started.
 > Goal: cut Lambda cold-start latency (especially via API Gateway / AppSync /
 > function URLs / CloudFront) and shave per-invoke overhead on the warm path,
 > **without** sacrificing fidelity — all observable behavior must keep matching
@@ -205,18 +207,18 @@ method, environment)_
 Ordered by expected win. All are invoke-path subtractions with caches filled
 off-path; none change observable behavior.
 
-### 1.1 Stop rehashing the code zip per acquire
-Use the stored `CodeSha256` in `functionCodeIdentity` when non-empty, falling
-back to `codeHashOf(fn.CodeZip)` (and back-filling) only when absent (old
-persisted records). Audit every code-mutation path to guarantee the invariant
-"CodeZip changes ⇒ CodeSha256 changes": CreateFunction, UpdateFunctionCode,
-s3_sync refresh ([s3_sync.go](../../internal/services/lambda/s3_sync.go)),
-seed/reconcile. Hot-reload functions already bypass the zip hash (mtime-based
-identity). Add a unit test asserting the invariant per mutation path, and one
-asserting stale-warm-container retirement still triggers on code change (the
-identity must still move).
-*Risk:* a mutation path that updates the zip without the hash would leave
-stale warm containers serving old code — the invariant tests are the guard.
+### 1.1 Stop rehashing the code zip per acquire — DONE (2026-07-31)
+Landed: the function record stores `CodeHash` (hex SHA-256 of `CodeZip`),
+maintained by a central `Function.setCode` that every code-mutation site goes
+through (CreateFunction inline + S3-fetch, UpdateFunctionCode inline +
+S3-fetch, source-editor save, s3_sync refresh). `functionCodeIdentity` and
+`codeSha256` read the stored hash; records persisted before the field existed
+fall back to hashing `CodeZip` with the same resulting value, so warm
+containers survive the upgrade. Hot-reload functions keep their mtime-based
+identity, bypassing the hash entirely. Pinned by `code_identity_test.go`:
+setter invariant, legacy/setCode identity agreement, identity-trusts-hash
+contract, and end-to-end CreateFunction / UpdateFunctionCode / s3-sync hash
+assertions.
 
 ### 1.2 Stop decoding the code zip per invoke
 Two coupled changes:

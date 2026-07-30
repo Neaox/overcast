@@ -82,8 +82,7 @@ func (w *s3SyncWatcher) syncFunctionCode(ctx context.Context, fn *Function) {
 		return
 	}
 
-	fn.CodeZip = zip
-	fn.CodeSize = int64(len(zip))
+	fn.setCode(zip)
 	fn.RevisionId = uuid.NewString()
 	fn.LastModified = w.clk.Now().UTC().Format(time.RFC3339)
 
