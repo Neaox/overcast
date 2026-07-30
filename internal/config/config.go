@@ -302,6 +302,11 @@ type Config struct {
 	// Corresponds to env var LAMBDA_KEEP_CONTAINERS. Default false.
 	LambdaKeepContainers bool
 
+	// LambdaTarCacheMB bounds the in-memory cache of pre-built cold-start
+	// artifacts (code and layer tars), in megabytes. 0 disables the cache.
+	// Corresponds to env var LAMBDA_TAR_CACHE_MB. Default 256.
+	LambdaTarCacheMB int
+
 	// LambdaHotReload enables bind-mount based source reload for functions that
 	// opt in via the overcast:hot-reload-path function tag.
 	// Corresponds to env var OVERCAST_LAMBDA_HOT_RELOAD. Default false.
@@ -1073,6 +1078,10 @@ func Load() (*Config, error) {
 		cfg.LambdaInitTimeout = 10 * time.Second
 	}
 	cfg.LambdaKeepContainers = envBool("LAMBDA_KEEP_CONTAINERS", false)
+	cfg.LambdaTarCacheMB = envInt("LAMBDA_TAR_CACHE_MB", 256)
+	if cfg.LambdaTarCacheMB < 0 {
+		cfg.LambdaTarCacheMB = 0
+	}
 	cfg.LambdaHotReload = envBool("OVERCAST_LAMBDA_HOT_RELOAD", false)
 	cfg.LambdaFetchRemoteLayers = envBool("LAMBDA_FETCH_REMOTE_LAYERS", false)
 	cfg.LambdaLayerCacheDir = envOr("LAMBDA_LAYER_CACHE_DIR", "")

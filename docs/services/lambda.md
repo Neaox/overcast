@@ -560,6 +560,7 @@ cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
 | `LAMBDA_MAX_MEMORY_MB`                | _(auto)_\*\*     | Aggregate Σ `MemorySize` budget for live containers, MB |
 | `LAMBDA_MAX_WARM_INSTANCES`           | `10`             | Idle containers kept warm per function                  |
 | `LAMBDA_SEED_RUNTIME_IMAGES`          | `false`          | Pre-pull every managed runtime image at startup         |
+| `LAMBDA_TAR_CACHE_MB`                 | `256`            | In-memory cache of pre-built code/layer tars (0 = off)  |
 | `LAMBDA_INIT_TIMEOUT_SECONDS`         | `10`             | Max seconds to wait for runtime INIT before invocation  |
 | `LAMBDA_REMOTE_AWS_ACCESS_KEY_ID`     | —                | AWS access key for remote layer downloads               |
 | `LAMBDA_REMOTE_AWS_SECRET_ACCESS_KEY` | —                | AWS secret key for remote layer downloads               |

@@ -11,8 +11,9 @@
 > commit). Phase 1 is complete except 1.5 (CloudFront in-process origin
 > dispatch): measured API GW gateway overhead is now sub-ms, so 1.5's ceiling
 > is a few ms per request — low priority, keep gated on a dedicated
-> measurement. Next: Phase 2 (cold-path Docker overhead), then Phase 3.
-> Phases 2, 3, 4 not started.
+> measurement. Phase 2: 2.2 (artifact caches) and 2.3 (image-presence cache)
+> landed 2026-07-31 (this commit); 2.1 (single-tar provisioning) and 2.4
+> remain. Then Phase 3. Phase 4 not started.
 > Goal: cut Lambda cold-start latency (especially via API Gateway / AppSync /
 > function URLs / CloudFront) and shave per-invoke overhead on the warm path,
 > **without** sacrificing fidelity — all observable behavior must keep matching
@@ -254,6 +255,15 @@ logged on every `lambda container started` line is the input for Phase 2.
 (The python cold-max outlier, 1339 ms, was a single round on a busy daemon;
 re-run before reading anything into it.)
 
+**Phase 2.2 + 2.3 verification (2026-07-31, same protocol, 5 cold × 5 warm,
+run immediately after a `docker build` so daemon-noisier than the run
+above):** cold p50 457 ms (nodejs) / 365 ms (python), warm p50 ~6 ms —
+parity with the Phase-1 baseline within noise, i.e. **no regression** on
+hello-world zips, whose tar conversion is ~1 ms to begin with. The caches'
+wins scale with package/layer size and daemon RTT count; quantifying them
+needs the Phase 0 large-zip variant (still a follow-up) rather than this
+workload.
+
 ---
 
 ## 5. Phase 1 — warm-path (and cold-path) hot-spot removal
@@ -364,29 +374,35 @@ integration suite (`tests/integration/lambda`) incl. layers + extensions +
 TLS-on (CA injection) before/after; add a test asserting `/var` and `/opt`
 modes are untouched.
 
-### 2.2 Pre-built artifacts, built at deploy time / idle
-- **zip→tar cache** keyed by `CodeSha256` (+ prefix scheme version): LRU
-  bounded by bytes (default e.g. 256 MB, env-tunable), entries built (a) in
-  the background after the settle debounce (§3) following
-  CreateFunction/UpdateFunctionCode — piggyback on the existing `prewarmer`
-  hook in [handler_functions.go:547](../../internal/services/lambda/handler_functions.go) —
-  and (b) on demand at cold start on miss (cache-fill then, too). Eviction
-  never breaks anything; a miss just costs today's conversion.
-- **Bootstrap tar**: static bytes — build once (`sync.OnceValue`).
-- **CA bundle tar**: cache per cert generation; invalidate if the mapper ever
-  rotates certs (today it doesn't at runtime — verify, then cache forever).
-- **Layer tars**: cache per layer-version ARN (immutable by definition) with
-  the same LRU.
-*Risk:* memory growth — the LRU bound plus metrics (cache size in the debug
-endpoint) covers it. Idle builds follow the try-acquire rule from §3 so they
-never contend with real cold starts for CPU at deploy time.
+### 2.2 Pre-built artifacts — DONE (2026-07-31)
+Landed (`tar_cache.go`, container_runtime.go):
+- **zip→tar cache** keyed `code:{CodeHash}` in a byte-bounded LRU
+  (`LAMBDA_TAR_CACHE_MB`, default 256, 0 disables; oversized artifacts are
+  never cached). A hit also skips materializing the package from the store.
+  Content-addressed keys mean code updates need no invalidation — old
+  entries age out. *Deviation:* entries fill **on demand** at cold start
+  only; the background pre-fill after deploy settle is deferred until
+  Phase 3 introduces the settle debounce, and the debug-endpoint cache-size
+  metric is deferred with it.
+- **Bootstrap tar**: built once (`sync.OnceValues`).
+- **CA bundle tar**: built once per process — certs are minted before the
+  Lambda runtime exists and never rotate within a process (verified).
+- **Layer tars**: cached per layer-version ARN with the discovered
+  extension list, so a hit skips the fetch, the conversion, and the archive
+  scan. Skipped/failed layers are never cached.
+Pinned by `tar_cache_test.go` (LRU byte accounting, replacement, oversized
+rejection, disabled-nil safety).
 
-### 2.3 Image-presence cache
-After `ensureImage` verifies image+platform once, record it and skip the
-`ImageMatchesPlatform` daemon call on subsequent acquires. Invalidate on:
-pull failure, and on `CreateContainer` returning "No such image" (user ran
-`docker rmi` mid-session) — in that error path, drop the cache entry, re-run
-`ensureImage`, and retry the create once before failing.
+### 2.3 Image-presence cache — DONE (2026-07-31)
+Landed: once `ensureImage` verifies an image+platform, later acquires skip
+the per-acquire `ImageMatchesPlatform` daemon call (`imageVerified` map,
+keyed by the same `imagePullKey` the pull-once map uses). A container create
+failing with "No such image" (image removed behind our back) drops both the
+verified entry **and the spent pull-once entry**, re-pulls, and retries the
+create once — which also fixes a pre-existing bug where `docker rmi` of a
+runtime image bricked that runtime until restart (the spent `sync.Once` made
+`ensureImage` return nil without pulling). Matcher pinned in
+`tar_cache_test.go`.
 *Risk:* only the `docker rmi` race, and the retry closes it.
 
 ### 2.4 Micro-cleanups (do only if Phase 0 shows them)
