@@ -254,27 +254,7 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 				h.puller.Prewarm(image)
 			}
 		}
-		instID := id
-		h.dockerWg.Add(1)
-		go func() {
-			defer h.dockerWg.Done()
-			bgCtx := context.Background()
-			got, aerr := h.store.getDBInstance(bgCtx, instID)
-			if aerr != nil || got == nil {
-				return
-			}
-			if err := h.startDBContainer(bgCtx, got); err != nil {
-				h.log.Warn("failed to start Docker container for RDS instance — falling back to metadata-only",
-					zap.String("instance", instID), zap.Error(err))
-				return
-			}
-			if aerr := h.store.putDBInstance(bgCtx, got); aerr != nil {
-				h.log.Warn("RDS: persist post-start instance",
-					zap.String("instance", instID), zap.String("error", aerr.Message))
-				return
-			}
-			h.scheduleHealthCheck(instID, got.Endpoint.Address, got.Endpoint.Port)
-		}()
+		h.launchDBContainerAsync(ctx, id)
 	}
 
 	instID := id
