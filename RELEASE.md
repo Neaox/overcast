@@ -30,6 +30,7 @@ The release workflow:
 - verifies the release tag matches `VERSION`
 - verifies `CHANGELOG.md` has a non-empty section for the release version
 - verifies `[Unreleased]` is empty before publishing
+- verifies no unconsumed changelog fragments remain in `.changelog/`
 - runs `go vet ./...`
 - runs `go test -race -count=1 -coverprofile=coverage.out -timeout=600s ./...`
 - runs `pnpm run typecheck` for the web UI (both `tsconfig.app.json` and `tsconfig.node.json`)
@@ -109,11 +110,19 @@ Before merging the release-prep PR to `main`:
    cause is new `compat/flaky.json` entries is the quarantine sign-off from
    the flake flow, not a regression (see compat/AGENTS.md § Stabilising a
    flaky test).
-3. Move release-worthy notes from `[Unreleased]` into a versioned section that
-   exactly matches `VERSION`, for example `## [x.y.z-alpha.n] - YYYY-MM-DD`.
+3. Assemble the release notes from the changelog fragments:
+   ```sh
+   python3 scripts/changelog.py assemble x.y.z-alpha.n
+   ```
+   Curate the printed draft into a versioned section that exactly matches
+   `VERSION`, for example `## [x.y.z-alpha.n] - YYYY-MM-DD` — merge same-area
+   fragments into single bullets per the house style (see
+   `.changelog/README.md`) — then delete every consumed fragment file
+   (everything in `.changelog/` except `README.md`).
 4. Set `VERSION` to the exact release version without the leading `v`.
-5. Ensure `[Unreleased]` exists but has no entries. The workflow fails if
-   `[Unreleased]` contains release notes.
+5. Ensure `[Unreleased]` exists but has no entries, and `.changelog/` holds
+   only `README.md`. The workflow fails if `[Unreleased]` contains release
+   notes or a fragment was left unconsumed.
 6. Run local scoped checks for release metadata changes:
    ```sh
    go test -count=1 ./cmd/compat
@@ -135,11 +144,14 @@ For an alpha release:
    ```text
    x.y.z-alpha.n
    ```
-3. Move the relevant `CHANGELOG.md` notes out of `[Unreleased]` into:
+3. Assemble and curate the changelog fragments into:
    ```markdown
    ## [x.y.z-alpha.n] - YYYY-MM-DD
    ```
-4. Leave the `[Unreleased]` section present and empty.
+   using `python3 scripts/changelog.py assemble x.y.z-alpha.n` as the starting
+   draft, then delete the consumed fragment files from `.changelog/`.
+4. Leave the `[Unreleased]` section present and empty (it stays empty between
+   releases; fragments are the only unreleased record).
 5. Update the compare links at the bottom of `CHANGELOG.md` — add a
    `[x.y.z-alpha.n]` reference and repoint `[Unreleased]` at the new tag:
    ```markdown
@@ -230,7 +242,9 @@ After the release workflow succeeds:
 4. Confirm `README.md` quick-start commands work with the version tag.
 5. Open a follow-up PR that:
    - sets `VERSION` to the next development version if needed
-   - restores an empty `[Unreleased]` section in `CHANGELOG.md` if it was moved
+   - restores an empty `[Unreleased]` section in `CHANGELOG.md` if it was
+     removed (it must always exist, and stays empty — unreleased changes are
+     fragments under `.changelog/`)
    - updates compare links at the bottom of `CHANGELOG.md`
 
 ## Compatibility Evidence

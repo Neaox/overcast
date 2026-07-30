@@ -131,7 +131,7 @@ Use this path for review findings and regressions caused by the active unmerged 
    - Pure DRY, naming, comment, or dead-code review finding: no artificial failing test is required; rely on the existing behavioural tests and static checks.
 3. **Fix and refactor in the original change.** Keep the implementation coherent with the feature under review. Amend the existing commit when the branch is owned and unshared; otherwise add one focused review-fix commit.
 4. **Run proportional verification.** At minimum, format changed files and run the focused test or benchmark plus tests and vet for affected packages. Before updating the PR, run the branch's existing required checks.
-5. **Fold documentation into the original story.** Correct the existing plan, PR body, tests, and `[Unreleased]` entry where needed. Do not add a second changelog bullet or compatibility-tracker incident for behaviour that never shipped.
+5. **Fold documentation into the original story.** Correct the existing plan, PR body, tests, and the branch's changelog fragment where needed. Do not add a second fragment or compatibility-tracker incident for behaviour that never shipped.
 
 Escalate to the full bug-fix workflow if investigation shows that the defect also exists on the base branch, the fix changes an AWS contract beyond the active PR's established scope, or it expands into independently shippable service, storage, CloudFormation, or UI behaviour.
 
@@ -284,12 +284,15 @@ Documentation MUST stay in sync with behaviour. Skipping this creates drift that
    ```
 2. **Service docs prose:** If there are behaviour notes or caveats outside the `<!-- BEGIN/END overcast:capabilities -->` sentinel markers in `docs/services/<service>.md`, update them. Never edit anything between the sentinel markers — those are auto-generated.
 3. **Compatibility tracker:** If the bug was an AWS compatibility issue, update `docs/dev/compatibility/services/<service>.yaml` with scenarios, evidence, tests, gaps, and handoff. Update `docs/dev/compatibility/matrix.yaml` if the service-level next action or status changed.
-4. **`CHANGELOG.md`:** Add an entry under `[Unreleased]`:
+4. **Changelog fragment:** Add one under `.changelog/` (never edit `CHANGELOG.md`'s `[Unreleased]` — see `.changelog/README.md`):
 
    ```markdown
-   ### Fixed
+   ---
+   section: Fixed
+   area: sqs
+   ---
 
-   - SQS: `ReceiveMessage` now correctly returns empty result for empty queues (#123)
+   - [sqs] `ReceiveMessage` now correctly returns empty result for empty queues (#123)
    ```
 
 5. **`STATUS.md`:** Regenerated automatically by `make docs`. Do not edit by hand.

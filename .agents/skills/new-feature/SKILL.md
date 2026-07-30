@@ -513,14 +513,17 @@ Create `docs/services/<n>.md` using the template:
 
 Run `make docs` to populate the table. **Never edit between the markers.**
 
-### Step 4.4 — Update CHANGELOG
+### Step 4.4 — Add a changelog fragment
+
+Add `.changelog/YYYYMMDD-<slug>.md` (never edit `CHANGELOG.md`'s `[Unreleased]` — see `.changelog/README.md`):
 
 ```markdown
-## [Unreleased]
+---
+section: Added
+area: myservice
+---
 
-### Added
-
-- MyService: `CreateThing`, `GetThing`, `DeleteThing`, `ListThings` endpoints (#123)
+- **MyService** — `CreateThing`, `GetThing`, `DeleteThing`, `ListThings` endpoints (#123)
 ```
 
 ---

@@ -40,7 +40,7 @@ This directory tracks Overcast service fidelity against AWS documentation. It ex
 6. Add failing tests for missing or mismatched behavior.
 7. Implement the smallest correct fix.
 8. Run scoped tests and vet.
-9. Update the service review file, summarize progress in `matrix.yaml`, and update `CHANGELOG.md` when behavior changed.
+9. Update the service review file, summarize progress in `matrix.yaml`, and add a changelog fragment under `.changelog/` when behavior changed (never edit `CHANGELOG.md`'s `[Unreleased]` directly).
 
 ## Tracking Granularity
 

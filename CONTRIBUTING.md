@@ -304,7 +304,7 @@ The order is:
 3. Write the **minimum implementation** to make it pass
 4. Run `make test` — all tests must pass with race detector
 5. Refactor if needed — tests must still pass
-6. Update service-doc prose (behavior notes, caveats) as needed, then regenerate generated docs tables with `make docs`; update `CHANGELOG.md`
+6. Update service-doc prose (behavior notes, caveats) as needed, then regenerate generated docs tables with `make docs`; add a changelog fragment under `.changelog/` (see [Versioning and changelog](#versioning-and-changelog))
 
 See [tests/AGENTS.md](./tests/AGENTS.md) for test conventions.
 
@@ -968,31 +968,35 @@ We use [Semantic Versioning](https://semver.org/). Version bump rules:
 | New endpoint, new service, new feature                       | MINOR |
 | Bug fix, performance improvement, documentation              | PATCH |
 
-**Every PR that changes shipped runtime behaviour must update `CHANGELOG.md`.**
+**Every PR that changes shipped runtime behaviour must add a changelog
+fragment under `.changelog/`.** Do not edit the `[Unreleased]` section of
+`CHANGELOG.md` — it stays empty between releases, and CI
+(`python3 scripts/changelog.py check`) fails any PR that writes into it.
+Fragments are one file per PR, so concurrent PRs can never merge-conflict over
+the changelog; at release time they are curated into the new versioned section
+of `CHANGELOG.md` and deleted.
 
-`CHANGELOG.md` is used as the basis for GitHub release notes. Keep it focused on
+The changelog is used as the basis for GitHub release notes. Keep it focused on
 changes users need to know about when they install or run Overcast: new services,
 new endpoints, AWS compatibility fixes, user-visible bug fixes, config/env var
 changes, Docker/binary packaging changes, performance changes with measured
 conditions, and documentation that materially changes user guidance.
 
-Do not add changelog entries for purely internal development changes unless they
-affect shipped artifacts or runtime behaviour. Examples that usually do not
+Do not add changelog fragments for purely internal development changes unless
+they affect shipped artifacts or runtime behaviour. Examples that usually do not
 belong in release notes: CI-only refactors, test-only changes, local tooling,
 code cleanup, non-user-visible refactors, and workflow maintenance.
 
-Add your entry under `[Unreleased]`:
+Add your fragment as `.changelog/YYYYMMDD-<slug>.md` (full format and naming
+rules in [.changelog/README.md](./.changelog/README.md)):
 
 ```markdown
-## [Unreleased]
+---
+section: Fixed        # Added | Changed | Fixed | Removed | Deprecated | Security
+area: sqs             # optional: service/area slug used for grouping
+---
 
-### Added
-
-- S3: `GetBucketVersioning` endpoint (#42)
-
-### Fixed
-
-- SQS: `ReceiveMessage` now correctly applies `VisibilityTimeout` (#38)
+- [sqs] `ReceiveMessage` now correctly applies `VisibilityTimeout` (#38)
 ```
 
 ---
@@ -1070,7 +1074,7 @@ manifest.
    > **Do not manually edit the table in `docs/services/<service>.md`.** Everything between the `<!-- BEGIN overcast:capabilities -->` and `<!-- END overcast:capabilities -->` markers is overwritten by `make docs`. Edit `capabilities_dev.go` and re-run `make docs` instead.
    >
    > **AWS Docs links** are auto-generated from the `serviceDocsBaseMap` in `cmd/capgen/main.go` — no per-operation `DocsURL` is needed for most operations. If a service is missing from that map, add it. Use the `DocsURL` field on a `Capability` entry only to override the link for a specific operation (e.g. when the URL pattern differs from the service base).
-7. Add entry to `CHANGELOG.md` under `[Unreleased]`
+7. Add a changelog fragment under `.changelog/` (see [Versioning and changelog](#versioning-and-changelog))
 8. Add the operation to `compat/suites/registry.json`, then implement it in **every** SDK/CLI compat suite (node-js-sdk, python-sdk, go-sdk, cli, java-sdk, dotnet-sdk, rust-sdk) — marking it `na` where an SDK has no API for it. `go run ./cmd/compat --check-parity` enforces this; see [compat/AGENTS.md § Baseline & uniformity policy](./compat/AGENTS.md#baseline--uniformity-policy)
 9. **Web UI** — if the new endpoint exposes data the user would want to see or manage:
    - Update the service's list/detail pages in `web/src/features/<service>/` (or create them if they don't exist)
@@ -1135,7 +1139,7 @@ manifest.
    | --------- | ----------- | ----- | ----------- |
    | ...       | ✅/⚠️/🚧/❌ |       | [link](...) |
    ```
-9. Add service to README.md table and `CHANGELOG.md`
+9. Add service to README.md table and add a changelog fragment under `.changelog/`
 10. Add the service's groups and tests to `compat/suites/registry.json` covering all P1 operations, then implement them in **every** SDK/CLI compat suite — the per-suite file and registration table is in [compat/AGENTS.md § When a new Overcast service is implemented](./compat/AGENTS.md#when-a-new-overcast-service-is-implemented). Uniformity is enforced by `go run ./cmd/compat --check-parity`; any suite you cannot complete in the same PR must be declared in `compat/parity-debt.json` with a reason
 11. **Web UI** — consider whether developers using Overcast would find it useful to see or administer this service's resources from the management console (most CRUD-style services qualify; internal plumbing like STS usually does not). If yes:
 
@@ -1462,7 +1466,7 @@ chore(ci): add TODO-to-issue GitHub Action
 - [ ] `make docs-check` passes (no uncommitted doc drift)
 - [ ] `docs/services/<service>.md` — capabilities table regenerated via `make docs` (never edited by hand); any prose/behaviour notes outside the sentinel markers are up to date
 - [ ] CloudFormation resource handlers registered in `resourceHandlers` for every new resource type — see [CloudFormation integration](#cloudformation-integration)
-- [ ] `CHANGELOG.md` updated under `[Unreleased]`
+- [ ] Changelog fragment added under `.changelog/` (never edit `[Unreleased]` directly)
 - [ ] Commit messages follow conventional commits
 - [ ] No debug logging left in production paths
 - [ ] No new global variables

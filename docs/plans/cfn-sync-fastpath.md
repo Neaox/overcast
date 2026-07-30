@@ -169,7 +169,7 @@ policy:
 - [ ] `docs/services/cloudformation.md` — describe the sync fast-path,
       the env var, and the changeset `EXECUTE_COMPLETE` fix (update both
       tables if any endpoint semantics rows change).
-- [ ] `CHANGELOG.md` entry.
+- [ ] Changelog fragment under `.changelog/`.
 - [ ] `make docs` if capability tables changed.
 - [ ] `gofmt -w` → `go vet` on
       `./internal/services/cloudformation/...` and `./internal/config/...`;

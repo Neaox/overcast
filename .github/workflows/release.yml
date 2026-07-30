@@ -7,6 +7,11 @@ on:
     paths:
       - VERSION
       - CHANGELOG.md
+      # During a release-candidate window every same-repo PR must keep the
+      # changelog releasable, and fragments are part of that: a fragment
+      # merged mid-window trips the unconsumed-fragments release gate.
+      # Surface that on the PR that adds it, not on the next release re-run.
+      - ".changelog/**"
       - .github/workflows/release.yml
       - scripts/check-release-changelog.py
   release:

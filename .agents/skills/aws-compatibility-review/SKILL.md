@@ -149,7 +149,7 @@ Before finishing, update:
 - The GitHub issue with progress, evidence, verification commands, remaining gaps, and next-agent handoff.
 - `docs/dev/compatibility/services/<service>.yaml` with operation status, AWS docs URLs, scenario matrix, tests, evidence, gaps, findings, and next-agent handoff.
 - `docs/dev/compatibility/matrix.yaml` with service-level status, priority, claim fields if used, progress counts, focus areas, and next action.
-- `CHANGELOG.md` if behavior changed.
+- A changelog fragment under `.changelog/` if behavior changed (never edit `CHANGELOG.md`'s `[Unreleased]` directly).
 - Service docs/capabilities if support status or caveats changed.
 
 ## Handoff

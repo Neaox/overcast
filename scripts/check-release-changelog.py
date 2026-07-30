@@ -100,7 +100,17 @@ def validate_compare_links(changelog: str, version: str) -> list[str]:
     return errors
 
 
-def validate(changelog_path: Path, version: str) -> list[str]:
+def unconsumed_fragments(fragments_dir: Path) -> list[str]:
+    if not fragments_dir.is_dir():
+        return []
+    return sorted(
+        path.name for path in fragments_dir.iterdir() if path.name != "README.md"
+    )
+
+
+def validate(
+    changelog_path: Path, version: str, fragments_dir: Path | None = None
+) -> list[str]:
     changelog = changelog_path.read_text(encoding="utf-8")
     errors: list[str] = []
 
@@ -121,6 +131,15 @@ def validate(changelog_path: Path, version: str) -> list[str]:
 
     errors.extend(validate_compare_links(changelog, version))
 
+    if fragments_dir is not None:
+        leftover = unconsumed_fragments(fragments_dir)
+        if leftover:
+            errors.append(
+                f"Changelog fragments remain in {fragments_dir}: "
+                f"{', '.join(leftover)}. Fold them into '## [{version}]' and "
+                "delete them before releasing."
+            )
+
     return errors
 
 
@@ -128,9 +147,10 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("version")
     parser.add_argument("--changelog", default="CHANGELOG.md")
+    parser.add_argument("--fragments-dir", default=".changelog")
     args = parser.parse_args()
 
-    errors = validate(Path(args.changelog), args.version)
+    errors = validate(Path(args.changelog), args.version, Path(args.fragments_dir))
     if errors:
         for error in errors:
             print(f"::error::{error}")

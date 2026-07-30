@@ -100,7 +100,7 @@ IAM (ListUsers/Roles/Policies/Groups — 18 hardcoded `IsTruncated: false`, Quer
 
 ## Verification standard
 
-Every item: failing test first (the broken behavior, e.g. token-loop duplication, pinned before the fix); H2 contract walk in the integration suite with the real SDK paginator where one exists; AWS doc citation for the op's default/cap/token names in the PR description; wire-format changes reviewed as compatibility changes per [CONTRIBUTING.md](../../CONTRIBUTING.md). CHANGELOG: one Pagination bullet extended per landing, per its inline rules.
+Every item: failing test first (the broken behavior, e.g. token-loop duplication, pinned before the fix); H2 contract walk in the integration suite with the real SDK paginator where one exists; AWS doc citation for the op's default/cap/token names in the PR description; wire-format changes reviewed as compatibility changes per [CONTRIBUTING.md](../../CONTRIBUTING.md). CHANGELOG: one fragment per landing under `.changelog/` (`section: Fixed`, `area:` the touched service); the fragments merge into a single Pagination bullet at release time.
 
 ## Proposed order of work
 
