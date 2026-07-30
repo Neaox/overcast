@@ -74,6 +74,7 @@ var (
 	reportFlakyAge   = flag.Bool("report-flaky-overdue", false, "Report quarantined tests older than the soft deadline, then exit")
 	lintFlakyFrom    = flag.String("lint-flaky-from", "", "Old flaky list for growth linting")
 	lintFlakyTo      = flag.String("lint-flaky-to", "", "New flaky list for growth linting")
+	flakyGrowthOK    = flag.Bool("flaky-growth-approved", false, "Accept new flaky-list entries: a reviewer has agreed to the quarantine (CI sets this from the PR's quarantine-approved label). Per-entry checks (reason, issue, date, deadline) still apply")
 	interactive      = flag.Bool("interactive", false, "Start in interactive mode (long-lived suite processes)")
 	noUI             = flag.Bool("no-ui", false, "Don't serve embedded UI (use with external Vite dev server)")
 
@@ -155,7 +156,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "compat: both --lint-flaky-from and --lint-flaky-to are required")
 			os.Exit(2)
 		}
-		if err := lintFlakyChangeFiles(*lintFlakyFrom, *lintFlakyTo); err != nil {
+		if err := lintFlakyChangeFiles(*lintFlakyFrom, *lintFlakyTo, *flakyGrowthOK); err != nil {
 			fmt.Fprintf(os.Stderr, "compat: flaky list check failed: %v\n", err)
 			os.Exit(1)
 		}

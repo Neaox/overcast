@@ -132,7 +132,9 @@ Quarantine is containment. The plan to actually remove it:
    baseline failure with dependants is therefore a latent intermittent gate
    failure, which moves R7 and R1 up the queue.
 4. **Empty the list.** Each fix deletes its entry in the same PR; the lint
-   allows removals freely and blocks additions.
+   allows removals freely and blocks additions until a reviewer applies the
+   `quarantine-approved` label to the PR (see AGENTS.md — added when the #414
+   quarantine had no green path after admin merges were retired).
 
 Out of scope here but worth naming: the Go suite has its own instability —
 `TestHostClassifier_lowercaseHostStaysAllocationFree` asserts an exact

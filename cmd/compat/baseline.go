@@ -150,14 +150,13 @@ const (
 // unguarded list is an amnesty file: any inconvenient failure can be silenced
 // by adding a line, and nothing ever notices the gate stopped covering it.
 // Adding an entry is therefore a deliberate act that has to be argued for in
-// review, not something CI waves through. Removing one — the fix — is always
-// allowed, and seeding an empty list mirrors the baseline's own exemption.
-func lintFlakyChange(oldFlaky, newFlaky *flakyFile, now time.Time) []string {
-	oldByKey := make(map[string]flakyEntry, len(oldFlaky.Flaky))
-	for _, e := range oldFlaky.Flaky {
-		oldByKey[e.key()] = e
-	}
-
+// review, not something CI waves through. growthApproved is how that agreement
+// reaches the lint: CI sets it when a reviewer has applied the
+// quarantine-approved label to the pull request. It waves through growth and
+// nothing else — the per-entry accountability checks (reason, issue, date,
+// deadline) apply regardless. Removing an entry — the fix — is always allowed,
+// and seeding an empty list mirrors the baseline's own exemption.
+func lintFlakyChange(oldFlaky, newFlaky *flakyFile, now time.Time, growthApproved bool) []string {
 	var issues []string
 	for _, e := range newFlaky.Flaky {
 		if strings.TrimSpace(e.Reason) == "" {
@@ -187,17 +186,37 @@ func lintFlakyChange(oldFlaky, newFlaky *flakyFile, now time.Time) []string {
 					e.key(), days, flakyHardDeadlineDays, issueOrPlaceholder(e.Issue)))
 			}
 		}
-		if len(oldFlaky.Flaky) == 0 {
-			continue
-		}
-		if _, existed := oldByKey[e.key()]; !existed {
+	}
+	if !growthApproved {
+		for _, key := range flakyGrowth(oldFlaky, newFlaky) {
 			issues = append(issues, fmt.Sprintf(
-				"compat flaky list grew: %s — quarantine removes a test from the baseline gate entirely, so adding one needs a reviewer's agreement, not just a green build",
-				e.key()))
+				"compat flaky list grew: %s — quarantine removes a test from the baseline gate entirely, so adding one needs a reviewer's agreement (the quarantine-approved label on the PR), not just a green build",
+				key))
 		}
 	}
 	sort.Strings(issues)
 	return issues
+}
+
+// flakyGrowth names entries present in newFlaky but absent from oldFlaky.
+// Seeding a previously empty list is not growth, mirroring the baseline's
+// seeding exemption.
+func flakyGrowth(oldFlaky, newFlaky *flakyFile) []string {
+	if len(oldFlaky.Flaky) == 0 {
+		return nil
+	}
+	oldByKey := make(map[string]bool, len(oldFlaky.Flaky))
+	for _, e := range oldFlaky.Flaky {
+		oldByKey[e.key()] = true
+	}
+	var grown []string
+	for _, e := range newFlaky.Flaky {
+		if !oldByKey[e.key()] {
+			grown = append(grown, e.key())
+		}
+	}
+	sort.Strings(grown)
+	return grown
 }
 
 // flakyOverdue names entries quarantined longer than days. The nightly job uses
@@ -226,7 +245,7 @@ func issueOrPlaceholder(issue string) string {
 	return issue
 }
 
-func lintFlakyChangeFiles(oldPath, newPath string) error {
+func lintFlakyChangeFiles(oldPath, newPath string, growthApproved bool) error {
 	oldFlaky, err := readFlakyFileRaw(oldPath)
 	if err != nil {
 		return err
@@ -235,7 +254,7 @@ func lintFlakyChangeFiles(oldPath, newPath string) error {
 	if err != nil {
 		return err
 	}
-	issues := lintFlakyChange(oldFlaky, newFlaky, time.Now())
+	issues := lintFlakyChange(oldFlaky, newFlaky, time.Now(), growthApproved)
 	if len(issues) > 0 {
 		for _, issue := range issues {
 			fmt.Fprintln(os.Stderr, issue)
@@ -244,6 +263,17 @@ func lintFlakyChangeFiles(oldPath, newPath string) error {
 			fmt.Print(baselineAnnotations(issues))
 		}
 		return fmt.Errorf("%d compat flaky list issue(s)", len(issues))
+	}
+	// Approved growth passes, but never silently: name each new quarantine in
+	// the log and as a PR annotation so the decision stays visible.
+	if growthApproved {
+		for _, key := range flakyGrowth(oldFlaky, newFlaky) {
+			fmt.Printf("compat: flaky list grew with reviewer approval: %s\n", key)
+			if *annotate {
+				fmt.Printf("::notice title=Compat flaky list::%s\n",
+					escapeAnnotationData("quarantined with reviewer approval: "+key))
+			}
+		}
 	}
 	fmt.Printf("compat: flaky list check passed (%d quarantined test(s))\n", len(newFlaky.Flaky))
 	return nil
