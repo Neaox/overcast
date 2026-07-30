@@ -306,6 +306,14 @@ the zip out of the record, per-invoke unmarshal cost is negligible.
 Pinned by `store_code_test.go`: record carries no bytes, package
 round-trips, config-only puts leave the package untouched, delete removes
 it, ARN-region resolution.
+*Follow-up (2026-07-31):* layer archives got the same split
+(`nsLayerContent`; layer versions are immutable, so pre-split records simply
+keep their embedded content and readers handle both shapes), which also
+stopped ListLayers/ListLayerVersions decoding every archive per call. In the
+same change, `CodeSha256` wire fields (functions, versions, and the
+previously empty layer `Content.CodeSha256`) switched to AWS's base64
+encoding — the hex form made CDK-style local-hash comparisons see permanent
+drift.
 
 ### 1.3 Take the Docker stats round trip off the invoke critical path — DONE (2026-07-31)
 Landed in two halves (both 2026-07-31):

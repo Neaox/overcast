@@ -7,6 +7,7 @@ package lambda
 
 import (
 	"context"
+	"encoding/base64"
 	"strings"
 	"testing"
 
@@ -112,6 +113,77 @@ func TestDeleteFunction_removesStoredPackage(t *testing.T) {
 	}
 	if found {
 		t.Fatal("stored package survived DeleteFunction")
+	}
+}
+
+func TestPutLayerVersion_recordCarriesNoContentBytes(t *testing.T) {
+	// Given: a published layer version.
+	ls, inner := codeSplitStore(t)
+	zip := []byte("layer-zip-bytes")
+	lv := &LayerVersion{
+		LayerName:       "split-layer",
+		LayerARN:        "arn:aws:lambda:us-east-1:000000000000:layer:split-layer",
+		LayerVersionARN: "arn:aws:lambda:us-east-1:000000000000:layer:split-layer:1",
+		Version:         1,
+	}
+	lv.setContent(zip)
+	if aerr := ls.putLayerVersion(context.Background(), lv); aerr != nil {
+		t.Fatalf("putLayerVersion: %v", aerr)
+	}
+
+	// Then: the record embeds no content but keeps size and hash…
+	raw, found, err := inner.Get(context.Background(), nsLayers, "us-east-1/"+layerVersionKey("split-layer", 1))
+	if err != nil || !found {
+		t.Fatalf("record Get: found=%v err=%v", found, err)
+	}
+	if strings.Contains(raw, "\"content\"") {
+		t.Fatalf("layer record still embeds content — every list decodes the archive again: %s", raw)
+	}
+	got, aerr := ls.getLayerVersion(context.Background(), "split-layer", 1)
+	if aerr != nil || got == nil {
+		t.Fatalf("getLayerVersion: %v", aerr)
+	}
+	if len(got.Content) != 0 || got.CodeSize != int64(len(zip)) || got.CodeHash != sha256hex(zip) {
+		t.Fatalf("record = %d content bytes, size %d, hash %q — want byte-free with size/hash intact", len(got.Content), got.CodeSize, got.CodeHash)
+	}
+
+	// And: loading materializes the archive; deleting removes it.
+	if aerr := ls.loadLayerContent(context.Background(), got); aerr != nil {
+		t.Fatalf("loadLayerContent: %v", aerr)
+	}
+	if string(got.Content) != string(zip) {
+		t.Fatalf("loaded content = %q, want %q", got.Content, zip)
+	}
+	if aerr := ls.deleteLayerVersion(context.Background(), "split-layer", 1); aerr != nil {
+		t.Fatalf("deleteLayerVersion: %v", aerr)
+	}
+	if _, found, _ := inner.Get(context.Background(), nsLayerContent, "us-east-1/"+layerVersionKey("split-layer", 1)); found {
+		t.Fatal("stored layer content survived DeleteLayerVersion")
+	}
+}
+
+func TestLoadLayerContent_legacyEmbeddedRecordIsLeftAsIs(t *testing.T) {
+	// Given: a record persisted before the split, with the zip embedded (layer
+	// versions are immutable, so such records are never rewritten).
+	ls, inner := codeSplitStore(t)
+	legacy := `{"layer_name":"old-layer","layer_version_arn":"arn:aws:lambda:us-east-1:000000000000:layer:old-layer:1","version":1,"content":"` +
+		base64.StdEncoding.EncodeToString([]byte("legacy-zip")) + `","code_size":10}`
+	if err := inner.Set(context.Background(), nsLayers, "us-east-1/"+layerVersionKey("old-layer", 1), legacy); err != nil {
+		t.Fatalf("seed legacy record: %v", err)
+	}
+
+	// When: the record is read and content loaded.
+	lv, aerr := ls.getLayerVersion(context.Background(), "old-layer", 1)
+	if aerr != nil || lv == nil {
+		t.Fatalf("getLayerVersion: %v", aerr)
+	}
+	if aerr := ls.loadLayerContent(context.Background(), lv); aerr != nil {
+		t.Fatalf("loadLayerContent: %v", aerr)
+	}
+
+	// Then: the embedded bytes are used untouched.
+	if string(lv.Content) != "legacy-zip" {
+		t.Fatalf("legacy content = %q, want the embedded bytes", lv.Content)
 	}
 }
 

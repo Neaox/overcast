@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -43,10 +44,13 @@ func TestSetCode_keepsDerivedFieldsInStep(t *testing.T) {
 	if fn.CodeHash != sha256hex(zip) {
 		t.Fatalf("CodeHash = %q, want sha256 of the package", fn.CodeHash)
 	}
-	// And: the CodeSha256 read for API responses is the same stored value —
-	// no rehash on read.
-	if got := codeSha256(fn); got != fn.CodeHash {
-		t.Fatalf("codeSha256 = %q, want stored CodeHash %q", got, fn.CodeHash)
+	// And: the CodeSha256 read for API responses is the stored digest in
+	// AWS's wire encoding — base64, not hex. CDK compares this against the
+	// base64 hash it computes locally, so the encoding decides whether a
+	// no-op deploy sees code drift.
+	sum := sha256.Sum256(zip)
+	if got, want := codeSha256(fn), base64.StdEncoding.EncodeToString(sum[:]); got != want {
+		t.Fatalf("codeSha256 = %q, want base64 digest %q", got, want)
 	}
 }
 

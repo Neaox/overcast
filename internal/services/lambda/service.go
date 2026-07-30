@@ -547,6 +547,13 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 		if lv == nil {
 			return nil, fmt.Errorf("layer version not found: %s", layerVersionARN)
 		}
+		// Records travel byte-free; materialize the archive for injection.
+		if aerr := s.ls.loadLayerContent(ctx, lv); aerr != nil {
+			return nil, fmt.Errorf("load layer content %s: %s", layerVersionARN, aerr.Message)
+		}
+		if len(lv.Content) == 0 {
+			return nil, fmt.Errorf("layer version has no content: %s", layerVersionARN)
+		}
 		return append([]byte(nil), lv.Content...), nil
 	})
 
