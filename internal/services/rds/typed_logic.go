@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 )
 
@@ -258,8 +259,8 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 	}
 
 	instID := id
-	h.scheduler.After(instID+":available", 0, func() {
-		ctx := context.Background()
+	h.scheduler.After(schedKey(region, instID, "available"), 0, func() {
+		ctx := middleware.ContextWithRegion(context.Background(), region)
 		got, aerr := h.store.getDBInstance(ctx, instID)
 		if aerr != nil {
 			return
@@ -360,7 +361,8 @@ func (h *Handler) deleteDBInstanceTyped(ctx context.Context, req *deleteDBInstan
 		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
 	}
 
-	h.scheduler.Cancel(id + ":health")
+	region := h.store.region(ctx)
+	h.scheduler.Cancel(schedKey(region, id, "health"))
 
 	// Stop the container immediately (async, non-blocking).
 	if h.gc != nil && containerID != "" {
@@ -373,8 +375,8 @@ func (h *Handler) deleteDBInstanceTyped(ctx context.Context, req *deleteDBInstan
 		}
 	}
 
-	h.scheduler.After(id+":delete", 50*time.Millisecond, func() {
-		bgCtx := context.Background()
+	h.scheduler.After(schedKey(region, id, "delete"), 50*time.Millisecond, func() {
+		bgCtx := middleware.ContextWithRegion(context.Background(), region)
 		if aerr := h.store.deleteDBInstance(bgCtx, id); aerr != nil {
 			h.log.Warn("failed to delete RDS instance record", zap.String("instance", id), zap.Error(aerr))
 		}
@@ -436,8 +438,9 @@ func (h *Handler) stopDBInstanceTyped(ctx context.Context, req *stopDBInstanceRe
 	}
 
 	instID := id
-	h.scheduler.After(instID+":stopped", 0, func() {
-		ctx := context.Background()
+	region := h.store.region(ctx)
+	h.scheduler.After(schedKey(region, instID, "stopped"), 0, func() {
+		ctx := middleware.ContextWithRegion(context.Background(), region)
 		got, aerr := h.store.getDBInstance(ctx, instID)
 		if aerr != nil {
 			return
@@ -483,15 +486,16 @@ func (h *Handler) startDBInstanceTyped(ctx context.Context, req *startDBInstance
 		return nil, aerr
 	}
 
+	region := h.store.region(ctx)
 	if h.dockerReady.Load() && inst.DockerContainerID != "" {
 		if err := h.docker.StartContainer(ctx, inst.DockerContainerID); err != nil {
 			h.log.Warn("failed to start RDS container", zap.String("instance", id), zap.Error(err))
 		}
-		h.scheduleHealthCheck(id, inst.Endpoint.Address, inst.Endpoint.Port)
+		h.scheduleHealthCheck(region, id, inst.Endpoint.Address, inst.Endpoint.Port)
 	} else {
 		instID2 := id
-		h.scheduler.After(instID2+":available", 0, func() {
-			ctx := context.Background()
+		h.scheduler.After(schedKey(region, instID2, "available"), 0, func() {
+			ctx := middleware.ContextWithRegion(context.Background(), region)
 			got, aerr := h.store.getDBInstance(ctx, instID2)
 			if aerr != nil {
 				return
@@ -556,8 +560,9 @@ func (h *Handler) modifyDBInstanceTyped(ctx context.Context, req *modifyDBInstan
 	}
 
 	instID := id
-	h.scheduler.After(instID+":modified", 500*time.Millisecond, func() {
-		ctx := context.Background()
+	region := h.store.region(ctx)
+	h.scheduler.After(schedKey(region, instID, "modified"), 500*time.Millisecond, func() {
+		ctx := middleware.ContextWithRegion(context.Background(), region)
 		got, aerr := h.store.getDBInstance(ctx, instID)
 		if aerr != nil {
 			return
@@ -893,8 +898,8 @@ func (h *Handler) createDBClusterTyped(ctx context.Context, req *createDBCluster
 	}
 
 	clID := id
-	h.scheduler.After(clID+":available", 500*time.Millisecond, func() {
-		ctx := context.Background()
+	h.scheduler.After(schedKey(region, clID, "available"), 500*time.Millisecond, func() {
+		ctx := middleware.ContextWithRegion(context.Background(), region)
 		got, aerr := h.store.getDBCluster(ctx, clID)
 		if aerr != nil {
 			return
@@ -981,8 +986,9 @@ func (h *Handler) deleteDBClusterTyped(ctx context.Context, req *deleteDBCluster
 	}
 
 	clID := id
-	h.scheduler.After(clID+":delete", 50*time.Millisecond, func() {
-		ctx := context.Background()
+	region := h.store.region(ctx)
+	h.scheduler.After(schedKey(region, clID, "delete"), 50*time.Millisecond, func() {
+		ctx := middleware.ContextWithRegion(context.Background(), region)
 		if aerr := h.store.deleteDBCluster(ctx, clID); aerr != nil {
 			h.log.Warn("failed to delete RDS cluster record",
 				zap.String("cluster", clID), zap.Error(aerr))
@@ -1048,8 +1054,9 @@ func (h *Handler) startDBClusterTyped(ctx context.Context, req *startDBClusterRe
 	}
 
 	clID := id
-	h.scheduler.After(clID+":start", 500*time.Millisecond, func() {
-		ctx := context.Background()
+	region := h.store.region(ctx)
+	h.scheduler.After(schedKey(region, clID, "start"), 500*time.Millisecond, func() {
+		ctx := middleware.ContextWithRegion(context.Background(), region)
 		got, aerr := h.store.getDBCluster(ctx, clID)
 		if aerr != nil {
 			return
@@ -1097,8 +1104,9 @@ func (h *Handler) stopDBClusterTyped(ctx context.Context, req *stopDBClusterReq)
 	}
 
 	clID := id
-	h.scheduler.After(clID+":stop", 500*time.Millisecond, func() {
-		ctx := context.Background()
+	region := h.store.region(ctx)
+	h.scheduler.After(schedKey(region, clID, "stop"), 500*time.Millisecond, func() {
+		ctx := middleware.ContextWithRegion(context.Background(), region)
 		got, aerr := h.store.getDBCluster(ctx, clID)
 		if aerr != nil {
 			return

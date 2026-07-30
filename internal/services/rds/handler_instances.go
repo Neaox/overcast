@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 )
 
@@ -50,34 +51,19 @@ func (h *Handler) StopDBInstance(w http.ResponseWriter, r *http.Request) {
 	// Transition stopping → stopped.  With a real clock the scheduler runs
 	// 0-delay callbacks synchronously; with a mock clock the transition stays
 	// pending until clock.Add is called.
-	if inst.DockerContainerID == "" {
-		instID := id
-		h.scheduler.After(instID+":stopped", 0, func() {
-			ctx := context.Background()
-			got, aerr := h.store.getDBInstance(ctx, instID)
-			if aerr != nil {
-				return
-			}
-			if got.DBInstanceStatus == "stopping" {
-				got.DBInstanceStatus = "stopped"
-				h.store.putDBInstance(ctx, got) //nolint:errcheck
-			}
-		})
-	} else {
-		// Docker: schedule async transition.
-		instID := id
-		h.scheduler.After(instID+":stopped", 0, func() {
-			ctx := context.Background()
-			got, aerr := h.store.getDBInstance(ctx, instID)
-			if aerr != nil {
-				return
-			}
-			if got.DBInstanceStatus == "stopping" {
-				got.DBInstanceStatus = "stopped"
-				h.store.putDBInstance(ctx, got) //nolint:errcheck
-			}
-		})
-	}
+	instID := id
+	region := h.store.region(r.Context())
+	h.scheduler.After(schedKey(region, instID, "stopped"), 0, func() {
+		ctx := middleware.ContextWithRegion(context.Background(), region)
+		got, aerr := h.store.getDBInstance(ctx, instID)
+		if aerr != nil {
+			return
+		}
+		if got.DBInstanceStatus == "stopping" {
+			got.DBInstanceStatus = "stopped"
+			h.store.putDBInstance(ctx, got) //nolint:errcheck
+		}
+	})
 
 	h.publish(r, events.RDSInstanceStopped, events.ResourcePayload{Name: id})
 
@@ -116,18 +102,19 @@ func (h *Handler) StartDBInstance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// If Docker container exists, restart it.
+	region := h.store.region(r.Context())
 	if h.dockerReady.Load() && inst.DockerContainerID != "" {
 		if err := h.docker.StartContainer(r.Context(), inst.DockerContainerID); err != nil {
 			h.log.Warn("failed to start RDS container", zap.String("instance", id), zap.Error(err))
 		}
 		// Schedule health check.
-		h.scheduleHealthCheck(id, inst.Endpoint.Address, inst.Endpoint.Port)
+		h.scheduleHealthCheck(region, id, inst.Endpoint.Address, inst.Endpoint.Port)
 	} else {
 		// Metadata-only: transition starting → available.  Scheduler runs
 		// 0-delay callbacks synchronously with a real clock.
 		instID2 := id
-		h.scheduler.After(instID2+":available", 0, func() {
-			ctx := context.Background()
+		h.scheduler.After(schedKey(region, instID2, "available"), 0, func() {
+			ctx := middleware.ContextWithRegion(context.Background(), region)
 			got, aerr := h.store.getDBInstance(ctx, instID2)
 			if aerr != nil {
 				return
@@ -194,8 +181,9 @@ func (h *Handler) ModifyDBInstance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	instID := id
-	h.scheduler.After(instID+":modified", 500*time.Millisecond, func() {
-		ctx := context.Background()
+	region := h.store.region(r.Context())
+	h.scheduler.After(schedKey(region, instID, "modified"), 500*time.Millisecond, func() {
+		ctx := middleware.ContextWithRegion(context.Background(), region)
 		got, aerr := h.store.getDBInstance(ctx, instID)
 		if aerr != nil {
 			return
