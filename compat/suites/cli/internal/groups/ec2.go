@@ -24,12 +24,17 @@ func EC2() ServiceGroup {
 			"TerminateInstances":            g.TerminateInstances,
 			"CreateVpc":                     g.CreateVpc,
 			"DescribeVpcs":                  g.DescribeVpcs,
+			"CreateVpnGateway":              g.CreateVpnGateway,
+			"AttachVpnGateway":              g.AttachVpnGateway,
+			"DescribeVpnGateways":           g.DescribeVpnGateways,
 			"CreateSubnet":                  g.CreateSubnet,
 			"DescribeSubnets":               g.DescribeSubnets,
 			"CreateSecurityGroup":           g.CreateSecurityGroup,
 			"DeleteSecurityGroup":           g.DeleteSecurityGroup,
 			"CreateInternetGateway":         g.CreateInternetGateway,
 			"AttachInternetGateway":         g.AttachInternetGateway,
+			"DetachVpnGateway":              g.DetachVpnGateway,
+			"DeleteVpnGateway":              g.DeleteVpnGateway,
 			"DeleteSubnet":                  g.DeleteSubnet,
 			"DeleteVpc":                     g.DeleteVpc,
 			"AuthorizeSecurityGroupIngress": g.AuthorizeSecurityGroupIngress,
@@ -77,6 +82,12 @@ func (g *ec2CliGroup) teardownVPC(_ context.Context, t *harness.TestContext) err
 			awscli.Run(t.Endpoint, t.Region, "ec2", "detach-internet-gateway", "--internet-gateway-id", igwID, "--vpc-id", vpcID) //nolint:errcheck
 		}
 		awscli.Run(t.Endpoint, t.Region, "ec2", "delete-internet-gateway", "--internet-gateway-id", igwID) //nolint:errcheck
+	}
+	if vpnGatewayID := t.GetString("vpn_gateway_id"); vpnGatewayID != "" {
+		if vpcID := t.GetString("vpc_id"); vpcID != "" {
+			awscli.Run(t.Endpoint, t.Region, "ec2", "detach-vpn-gateway", "--vpc-id", vpcID, "--vpn-gateway-id", vpnGatewayID) //nolint:errcheck
+		}
+		awscli.Run(t.Endpoint, t.Region, "ec2", "delete-vpn-gateway", "--vpn-gateway-id", vpnGatewayID) //nolint:errcheck
 	}
 	if subnetID := t.GetString("subnet_id"); subnetID != "" {
 		awscli.Run(t.Endpoint, t.Region, "ec2", "delete-subnet", "--subnet-id", subnetID) //nolint:errcheck
@@ -345,6 +356,85 @@ func (g *ec2CliGroup) AttachInternetGateway(_ context.Context, t *harness.TestCo
 	return awscli.Run(t.Endpoint, t.Region, "ec2", "attach-internet-gateway",
 		"--internet-gateway-id", igwID,
 		"--vpc-id", vpcID,
+	)
+}
+
+func (g *ec2CliGroup) CreateVpnGateway(_ context.Context, t *harness.TestContext) error {
+	out, err := awscli.RunOutput(t.Endpoint, t.Region, "ec2", "create-vpn-gateway",
+		"--type", "ipsec.1",
+		"--amazon-side-asn", "65001",
+	)
+	if err != nil {
+		return err
+	}
+	vpnGateway, _ := out["VpnGateway"].(map[string]interface{})
+	vpnGatewayID, _ := vpnGateway["VpnGatewayId"].(string)
+	if vpnGatewayID == "" {
+		return fmt.Errorf("CreateVpnGateway: missing VpnGatewayId")
+	}
+	t.Set("vpn_gateway_id", vpnGatewayID)
+	return nil
+}
+
+func (g *ec2CliGroup) AttachVpnGateway(_ context.Context, t *harness.TestContext) error {
+	vpcID := t.GetString("vpc_id")
+	vpnGatewayID := t.GetString("vpn_gateway_id")
+	if vpcID == "" {
+		return fmt.Errorf("AttachVpnGateway: no vpc_id from CreateVpc")
+	}
+	if vpnGatewayID == "" {
+		return fmt.Errorf("AttachVpnGateway: no vpn_gateway_id from CreateVpnGateway")
+	}
+	return awscli.Run(t.Endpoint, t.Region, "ec2", "attach-vpn-gateway",
+		"--vpc-id", vpcID,
+		"--vpn-gateway-id", vpnGatewayID,
+	)
+}
+
+func (g *ec2CliGroup) DescribeVpnGateways(_ context.Context, t *harness.TestContext) error {
+	vpcID := t.GetString("vpc_id")
+	vpnGatewayID := t.GetString("vpn_gateway_id")
+	if vpcID == "" {
+		return fmt.Errorf("DescribeVpnGateways: no vpc_id from CreateVpc")
+	}
+	if vpnGatewayID == "" {
+		return fmt.Errorf("DescribeVpnGateways: no vpn_gateway_id from CreateVpnGateway")
+	}
+	out, err := awscli.RunOutput(t.Endpoint, t.Region, "ec2", "describe-vpn-gateways",
+		"--filters",
+		fmt.Sprintf("Name=attachment.vpc-id,Values=%s", vpcID),
+		fmt.Sprintf("Name=attachment.state,Values=attached"),
+		fmt.Sprintf("Name=state,Values=available"),
+	)
+	if err != nil {
+		return err
+	}
+	vpnGateways, _ := out["VpnGateways"].([]interface{})
+	if len(vpnGateways) != 1 {
+		return fmt.Errorf("DescribeVpnGateways: expected one VPN gateway, got %d", len(vpnGateways))
+	}
+	return nil
+}
+
+func (g *ec2CliGroup) DetachVpnGateway(_ context.Context, t *harness.TestContext) error {
+	vpcID := t.GetString("vpc_id")
+	vpnGatewayID := t.GetString("vpn_gateway_id")
+	if vpcID == "" || vpnGatewayID == "" {
+		return nil
+	}
+	return awscli.Run(t.Endpoint, t.Region, "ec2", "detach-vpn-gateway",
+		"--vpc-id", vpcID,
+		"--vpn-gateway-id", vpnGatewayID,
+	)
+}
+
+func (g *ec2CliGroup) DeleteVpnGateway(_ context.Context, t *harness.TestContext) error {
+	vpnGatewayID := t.GetString("vpn_gateway_id")
+	if vpnGatewayID == "" {
+		return nil
+	}
+	return awscli.Run(t.Endpoint, t.Region, "ec2", "delete-vpn-gateway",
+		"--vpn-gateway-id", vpnGatewayID,
 	)
 }
 

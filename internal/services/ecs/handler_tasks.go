@@ -3,6 +3,7 @@ package ecs
 // handler_tasks.go — RunTask, StopTask, DescribeTasks, ListTasks handlers.
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -269,6 +270,19 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 			return fmt.Errorf("ecs: create container %s: %w", cd.Name, err)
 		}
 
+		// With TLS on, the task must trust the CA that minted Overcast's
+		// certificate before its first SDK call. Same mechanism as function
+		// code: CopyToContainer, because a dockerized Overcast has no host
+		// path to bind-mount from.
+		if caTar, caErr := endpoint.CABundleTar(); caErr != nil {
+			h.log.ZapLogger().Warn("ecs: CA bundle unavailable; task TLS calls to Overcast will fail verification", zap.Error(caErr))
+		} else if caTar != nil {
+			if err := h.docker.CopyToContainer(ctx, dockerID, "/", bytes.NewReader(caTar)); err != nil {
+				_ = h.docker.RemoveContainerForce(dockerID)
+				return fmt.Errorf("ecs: inject CA bundle into %s: %w", cd.Name, err)
+			}
+		}
+
 		if err := h.docker.StartContainer(ctx, dockerID); err != nil {
 			_ = h.docker.RemoveContainerForce(dockerID)
 			return fmt.Errorf("ecs: start container %s: %w", cd.Name, err)
@@ -317,8 +331,10 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 // network has been created.
 func (h *Handler) containerEndpoint(ctx context.Context) *containerendpoint.Mapper {
 	h.endpointOnce.Do(func() {
-		addr := containerendpoint.Resolve(ctx, h.docker, h.cfg.ECSNetwork, h.cfg.Port, h.log.ZapLogger())
-		h.endpoint = containerendpoint.New(h.cfg, addr).WithPublishedPort(h.cfg.PublishedPort)
+		// ResolveHost + BaseURL rather than Resolve: the endpoint scheme must
+		// follow the listener (https under OVERCAST_TLS), which only config knows.
+		host := containerendpoint.ResolveHost(ctx, h.docker, h.cfg.ECSNetwork, h.log.ZapLogger())
+		h.endpoint = containerendpoint.New(h.cfg, containerendpoint.BaseURL(h.cfg, host)).WithPublishedPort(h.cfg.PublishedPort)
 	})
 	return h.endpoint
 }
@@ -349,6 +365,10 @@ func buildContainerEnv(cd ContainerDefinition, co *ContainerOverride, endpoint *
 	// different address, and it lets an SDK derive virtual-hosted URLs from it.
 	if addr := endpoint.ClientEndpoint(); addr != "" {
 		env = append(env, "AWS_ENDPOINT_URL="+addr)
+	}
+	// With TLS on, point every SDK TLS stack at the injected CA bundle.
+	for k, v := range endpoint.CABundleEnv() {
+		env = append(env, k+"="+v)
 	}
 	return env
 }

@@ -31,7 +31,8 @@ Three things were undermining the compat suites:
   adding them). `--annotate` renders both as `::error` workflow commands.
 - **Baseline populated** — 3,361 entries seeded from the first Docker-enabled CI
   run (the configuration CI now uses): 2,566 `pass`, 766 `skip`, 1 `na`, and
-  **28 `fail` grandfathered for burn-down**.
+  **29 `fail` grandfathered for burn-down** — 28 measured, plus the flaky
+  `PublishDeliveredToSQS` recorded at its worst observed outcome.
 - **Parity checker** ([cmd/compat/parity.go](../../cmd/compat/parity.go)) —
   `--check-parity` / `--update-parity-debt`. Classifies every (suite, registry
   test) pair from a real run: implemented, registry gap, environmental skip,
@@ -62,7 +63,7 @@ told the truth for the first time:
 
 | | Before (stub) | After (real containers) |
 | --- | --- | --- |
-| Total failures | 31 | **28** |
+| Total failures | 31 | **28 measured** (29 recorded — see the flake below) |
 | cdk | 2 | **0** — the ESM assertions pass; R2 is done |
 | java-sdk | 3 | **1** — the function-Active failures were an artefact of the stub |
 | cli | 1 | **3** — two genuine bugs the stub was hiding (R7) |
@@ -72,7 +73,7 @@ passing against a stub that never ran a container. That is exactly the blindspot
 this work existed to close: the suite was green on a code path CI never
 exercised.
 
-## Outstanding — burn down the 28 grandfathered failures
+## Outstanding — burn down the 29 grandfathered failures
 
 One PR per root cause, reproducing test first. The baseline shrinks by
 auto-promotion on merge; nothing to hand-edit.
@@ -81,12 +82,48 @@ auto-promotion on merge; nothing to hand-edit.
 | --- | --- | --- | --- |
 | R1 | `rds-subnet-groups` — "At least one SubnetId is required", plus the Describe cascade | 6 | node, python×2, go×2, cli. Determine whether the suites' subnet setup or the emulator's EC2/RDS path is wrong |
 | R3 | java-sdk Lambda function readiness | 1 | Mostly resolved by real containers; one failure left |
-| R4 | dotnet-sdk suite bugs | 10 | Null-refs (PurgeQueue, DeleteItem, PublishBatch), s3-copy bucket collision, IAM `Get*Policy` URL-decode assertions, BatchGetSecretValue, appsync ordering |
+| R4 | dotnet-sdk suite bugs | 11 | Null-refs (PurgeQueue, DeleteItem, PublishBatch), s3-copy bucket collision, IAM `Get*Policy` URL-decode assertions, BatchGetSecretValue, appsync ordering |
 | R5 | rust-sdk opaque `service error` reporting, then the real bugs | 9 | Fix `SdkError` rendering first — the errors are currently unreadable; ssm masked-value expectation; BatchGetSecretValue |
 | R6 | Suites hardcode `nodejs18.x`, which the emulator now rejects | ~17 cascading skips | appsync-functions and lambda-invoke setup across dotnet/rust — no longer a `fail`, but it masks whole groups |
 | R7 | **New — exposed by running Lambda for real** | 2 | `cli/lambda-invoke/InvokeDryRun` → `InvalidParameterValueException` on Invoke; `cli/eventbridge-buses/ListEventBuses` → created bus not found. Both cascade (3 further skips). Investigate the emulator first: the CLI sends the same wire request the SDKs do, and the SDK suites pass |
 
 R2 (CDK ESM) is done — it resolved the moment CI stopped skipping Docker.
+
+## Outstanding — stabilise the flaky tests
+
+Quarantine is containment. The plan to actually remove it:
+
+1. **Detect systematically, not by luck.**
+   [compat-flake-detection.yml](../../.github/workflows/compat-flake-detection.yml)
+   runs every suite 3× nightly against unchanged `main` and fails on any test
+   that answers inconsistently and is not already quarantined. Both flakes so
+   far were found by accident; this is the fix for that.
+2. **Chase the shared root cause first.** Every flake found so far is the same
+   shape — a resource is created, and the next call cannot find it:
+
+   | Quarantined | Symptom |
+   | --- | --- |
+   | `dotnet-sdk/sns-subscriptions/PublishDeliveredToSQS` | Topic gone between `SubscribeSQS` and publish |
+   | `cli/eventbridge-buses/DeleteEventBus` (via R7) | Bus gone between create and `ListEventBuses` |
+
+   Two services, one pattern. Start at write visibility in
+   [internal/state](../../internal/state) and at any handler that reads through
+   a snapshot taken before the write landed. One fix plausibly clears both
+   quarantines *and* R7.
+3. **Weight cascades in the burn-down.** Neither quarantined test is flaky in
+   itself: both are dependants of a *stable* failure whose cascade is
+   non-deterministic (`dependency failed` one run, `fail` the next). Any
+   baseline failure with dependants is therefore a latent intermittent gate
+   failure, which moves R7 and R1 up the queue.
+4. **Empty the list.** Each fix deletes its entry in the same PR; the lint
+   allows removals freely and blocks additions.
+
+Out of scope here but worth naming: the Go suite has its own instability —
+`TestHostClassifier_lowercaseHostStaysAllocationFree` asserts an exact
+allocation count via `testing.AllocsPerRun` under `-race`, which is
+environment-sensitive and has failed spuriously on an unrelated PR. It needs the
+same treatment (assert a ceiling, or drop `-race` for that test), tracked
+separately from compat.
 
 ## Outstanding — fix the quarantined flake
 

@@ -403,6 +403,21 @@ jobs:
             echo "No baseline exists on origin/main yet; skipping downgrade lint."
           fi
 
+      # Quarantining a test removes it from the baseline gate in both
+      # directions, so growing the list is how a failure gets silenced. That is
+      # a reviewer's call, not CI's.
+      - name: Lint compat flaky list changes
+        id: flaky-lint
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: |
+          git fetch --depth=1 origin main
+          git show origin/main:compat/flaky.json > compat-flaky-main.json 2>/dev/null || echo '{"version":1,"flaky":[]}' > compat-flaky-main.json
+          go run ./cmd/compat \
+            --lint-flaky-from compat-flaky-main.json \
+            --lint-flaky-to compat/flaky.json \
+            --annotate
+
       # One report, three renderings: the job summary (full detail), a digest for
       # the PR comment, and JUnit XML for a check run with per-test history.
       # Regressions become JUnit failures; grandfathered gaps become skips, so
@@ -495,6 +510,10 @@ jobs:
           fi
           if [[ "${{ steps.baseline-lint.outcome }}" == "failure" ]]; then
             echo "Baseline change lint failed — a downgrade or a new fail expectation." >&2
+            failed=1
+          fi
+          if [[ "${{ steps.flaky-lint.outcome }}" == "failure" ]]; then
+            echo "Flaky list check failed — a new quarantine, or an entry without a reason." >&2
             failed=1
           fi
           exit "$failed"

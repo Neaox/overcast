@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Neaox/overcast/compat"
 )
@@ -221,6 +222,182 @@ func TestLintBaselineChange_emptyingAPopulatedBaselineIsRejected(t *testing.T) {
 	issues := lintBaselineChange(oldBaseline, newBaseline)
 	if len(issues) != 2 {
 		t.Fatalf("issues = %#v, want one per removed expectation", issues)
+	}
+}
+
+func TestLintFlakyChange_newQuarantineRejected(t *testing.T) {
+	// Given: a change that adds a test to the flaky list
+	tracked := flakyEntry{
+		Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS",
+		Reason: "known race", Issue: "https://github.com/Neaox/overcast/issues/388",
+		Since: refTime().Format(flakyDateLayout),
+	}
+	oldFlaky := &flakyFile{Version: flakyVersion, Flaky: []flakyEntry{tracked}}
+	newFlaky := &flakyFile{Version: flakyVersion, Flaky: []flakyEntry{tracked, {
+		Suite: "go-sdk", Group: "s3-crud", Test: "CreateBucket",
+		Reason: "sometimes fails", Issue: "https://github.com/Neaox/overcast/issues/999",
+		Since: refTime().Format(flakyDateLayout),
+	}}}
+
+	// When: the change is linted
+	issues := lintFlakyChange(oldFlaky, newFlaky, refTime())
+
+	// Then: it is rejected. Without this the flaky list is an amnesty file —
+	// any failing test can be silenced by adding a line to it, and the baseline
+	// gate quietly stops covering it.
+	if len(issues) != 1 {
+		t.Fatalf("issues = %#v, want 1", issues)
+	}
+	if !strings.Contains(issues[0], "go-sdk/s3-crud/CreateBucket") {
+		t.Errorf("issue message = %q", issues[0])
+	}
+}
+
+func TestLintFlakyChange_removingAQuarantineIsTheGoal(t *testing.T) {
+	// Given: a change that deletes an entry — the test was fixed
+	fixed := flakyEntry{
+		Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS",
+		Reason: "known race", Issue: "https://github.com/Neaox/overcast/issues/388",
+		Since: refTime().Format(flakyDateLayout),
+	}
+	kept := flakyEntry{
+		Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "Unsubscribe",
+		Reason: "cascade", Issue: "https://github.com/Neaox/overcast/issues/388",
+		Since: refTime().Format(flakyDateLayout),
+	}
+	oldFlaky := &flakyFile{Version: flakyVersion, Flaky: []flakyEntry{fixed, kept}}
+	newFlaky := &flakyFile{Version: flakyVersion, Flaky: []flakyEntry{kept}}
+
+	// When/Then: shrinking is always allowed — that is the whole point
+	if issues := lintFlakyChange(oldFlaky, newFlaky, refTime()); len(issues) != 0 {
+		t.Fatalf("issues = %#v, want none when the list shrinks", issues)
+	}
+}
+
+func TestLintFlakyChange_entryNeedsAReason(t *testing.T) {
+	// Given: an existing entry stripped of its reason
+	entry := flakyEntry{
+		Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS",
+		Reason: "known race", Issue: "https://github.com/Neaox/overcast/issues/388",
+		Since: refTime().Format(flakyDateLayout),
+	}
+	oldFlaky := &flakyFile{Version: flakyVersion, Flaky: []flakyEntry{entry}}
+	stripped := entry
+	stripped.Reason = "  "
+	newFlaky := &flakyFile{Version: flakyVersion, Flaky: []flakyEntry{stripped}}
+
+	// When/Then: rejected. An entry without evidence is untriageable, and the
+	// next person cannot tell a real flake from a silenced failure.
+	issues := lintFlakyChange(oldFlaky, newFlaky, refTime())
+	if len(issues) != 1 || !strings.Contains(issues[0], "reason") {
+		t.Fatalf("issues = %#v, want a missing-reason issue", issues)
+	}
+}
+
+func TestLintFlakyChange_entryNeedsATrackingIssueAndDate(t *testing.T) {
+	// Given: an existing entry with no issue and no date
+	oldFlaky := &flakyFile{Version: 2, Flaky: []flakyEntry{
+		{Suite: "cli", Group: "g", Test: "T", Reason: "intermittent"},
+	}}
+	newFlaky := &flakyFile{Version: 2, Flaky: []flakyEntry{
+		{Suite: "cli", Group: "g", Test: "T", Reason: "intermittent"},
+	}}
+
+	// When/Then: both are required. Without a date the entry cannot age out,
+	// and without an issue nobody is investigating — which is how a stop-gap
+	// quietly becomes the permanent state.
+	issues := lintFlakyChange(oldFlaky, newFlaky, refTime())
+	joined := strings.Join(issues, "\n")
+	if !strings.Contains(joined, "issue") {
+		t.Errorf("missing tracking-issue complaint: %q", joined)
+	}
+	if !strings.Contains(joined, "since") {
+		t.Errorf("missing since-date complaint: %q", joined)
+	}
+}
+
+func TestLintFlakyChange_overdueEntryBlocksPullRequests(t *testing.T) {
+	// Given: an entry quarantined longer than the hard deadline
+	stale := &flakyFile{Version: 2, Flaky: []flakyEntry{{
+		Suite: "cli", Group: "g", Test: "T", Reason: "intermittent",
+		Issue: "https://github.com/Neaox/overcast/issues/388",
+		Since: refTime().AddDate(0, 0, -(flakyHardDeadlineDays + 1)).Format(flakyDateLayout),
+	}}}
+
+	// When/Then: it fails the lint. Tolerating it indefinitely would mean the
+	// gate has quietly stopped covering that test for good.
+	issues := lintFlakyChange(stale, stale, refTime())
+	if len(issues) != 1 || !strings.Contains(issues[0], "quarantined for") {
+		t.Fatalf("issues = %#v, want an overdue complaint", issues)
+	}
+	if !strings.Contains(issues[0], "issues/388") {
+		t.Errorf("overdue message should point at the tracking issue: %q", issues[0])
+	}
+}
+
+func TestLintFlakyChange_recentEntryIsFine(t *testing.T) {
+	// Given: an entry quarantined yesterday, properly recorded
+	fresh := &flakyFile{Version: 2, Flaky: []flakyEntry{{
+		Suite: "cli", Group: "g", Test: "T", Reason: "intermittent",
+		Issue: "https://github.com/Neaox/overcast/issues/388",
+		Since: refTime().AddDate(0, 0, -1).Format(flakyDateLayout),
+	}}}
+
+	if issues := lintFlakyChange(fresh, fresh, refTime()); len(issues) != 0 {
+		t.Fatalf("issues = %#v, want none for a fresh, tracked entry", issues)
+	}
+}
+
+func TestFlakyOverdue_reportsSoftDeadlineSeparately(t *testing.T) {
+	// Given: one entry past the soft deadline, one still inside it
+	file := &flakyFile{Version: 2, Flaky: []flakyEntry{
+		{Suite: "a", Group: "g", Test: "Old", Issue: "i", Reason: "r",
+			Since: refTime().AddDate(0, 0, -(flakySoftDeadlineDays + 1)).Format(flakyDateLayout)},
+		{Suite: "b", Group: "g", Test: "New", Issue: "i", Reason: "r",
+			Since: refTime().AddDate(0, 0, -1).Format(flakyDateLayout)},
+	}}
+
+	// When: the nightly job asks what has gone stale
+	// Then: only the older one is named. The soft deadline is what makes the
+	// nightly job nag before the hard deadline blocks anyone.
+	overdue := flakyOverdue(file, refTime(), flakySoftDeadlineDays)
+	if len(overdue) != 1 || !strings.Contains(overdue[0], "a/g/Old") {
+		t.Fatalf("overdue = %#v, want only the stale entry", overdue)
+	}
+}
+
+// refTime is a fixed clock so deadline arithmetic in tests cannot drift.
+func refTime() time.Time {
+	return time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+}
+
+func TestLintFlakyChange_seedingAnEmptyListIsAllowed(t *testing.T) {
+	// Given: the first population of the list, mirroring the baseline's
+	// seeding exemption. The entry still carries a reason, a date and a
+	// tracking issue — seeding exempts growth, not accountability.
+	oldFlaky := &flakyFile{Version: flakyVersion}
+	newFlaky := &flakyFile{Version: flakyVersion, Flaky: []flakyEntry{{
+		Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS",
+		Reason: "known race", Issue: "https://github.com/Neaox/overcast/issues/388",
+		Since: refTime().Format(flakyDateLayout),
+	}}}
+
+	if issues := lintFlakyChange(oldFlaky, newFlaky, refTime()); len(issues) != 0 {
+		t.Fatalf("issues = %#v, want none when seeding", issues)
+	}
+}
+
+func TestLintFlakyChange_seedingStillRequiresAccountability(t *testing.T) {
+	// Given: a first population whose entry has no issue and no date
+	oldFlaky := &flakyFile{Version: flakyVersion}
+	newFlaky := &flakyFile{Version: flakyVersion, Flaky: []flakyEntry{
+		{Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS", Reason: "known race"},
+	}}
+
+	// Then: rejected. The seeding exemption is about not blocking the first
+	// commit of the file, not about letting untracked entries in through it.
+	if issues := lintFlakyChange(oldFlaky, newFlaky, refTime()); len(issues) != 2 {
+		t.Fatalf("issues = %#v, want complaints about the missing issue and date", issues)
 	}
 }
 

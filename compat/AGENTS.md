@@ -496,10 +496,72 @@ lifts it back. Both teach people to re-run the gate instead of reading it.
 List such a test in [compat/flaky.json](./flaky.json) with a reason. It is then
 exempt in **both** directions — never a regression, never promoted — while its
 recorded status stays at the worst outcome observed. The exemption is per test,
-not per group, and the list only shrinks: delete the entry in the PR that fixes
-the underlying bug. Do not reach for this to silence a test that fails
-consistently; that is a `fail` entry in the baseline and belongs in the
-burn-down.
+not per group. Do not reach for this to silence a test that fails consistently;
+that is a `fail` entry in the baseline and belongs in the burn-down.
+
+**Adding an entry is a reviewer's decision, and CI enforces that.** Quarantine
+takes a test out of the gate entirely, so an unguarded list is an amnesty file:
+any inconvenient failure could be silenced by adding a line, and nothing would
+notice the coverage had gone. `--lint-flaky-from/--lint-flaky-to` runs on PRs
+and **fails on any new entry**, and on any entry without a reason. Removing an
+entry — the fix — is always allowed. If you genuinely need a new quarantine, say
+so in the PR description with the evidence: two runs of an unchanged tree
+disagreeing is the bar.
+
+### Stabilising a flaky test
+
+Quarantine buys time; it does not fix anything. The list is a work queue, it is
+meant to empty, and the process makes that happen rather than hoping:
+
+| Stage | What happens | Enforced by |
+| --- | --- | --- |
+| **Detected** | Nightly runs each suite 3× against unchanged `main`; any test that answers inconsistently fails that job | [compat-flake-detection.yml](../.github/workflows/compat-flake-detection.yml) |
+| **Tracked** | An issue is raised automatically — one per (suite, group) cluster, since related tests are almost always one root cause. A recurrence reopens and comments rather than duplicating | [scripts/compat-flake-issue.py](../scripts/compat-flake-issue.py) |
+| **Quarantined** | Only with a `reason`, a tracking `issue`, and a `since` date. Adding an entry fails the PR lint, so it takes a reviewer's agreement | `--lint-flaky-to` |
+| **Nagged (14 days)** | The nightly job reports the entry as overdue and annotates it | `--report-flaky-overdue` |
+| **Blocking (30 days)** | The PR lint fails on the entry. Continuing means fixing it, or re-dating it with a fresh argument in review | `--lint-flaky-to` |
+| **Closed** | The fix deletes the entry; removals are always allowed | — |
+
+The deadlines escalate deliberately: nagging happens where it cannot block
+anyone, and blocking only starts once a month has passed with nobody acting.
+Both are visible in every compat run's job summary, so an entry cannot quietly
+rot.
+
+**Detection is scheduled, not accidental.**
+[compat-flake-detection.yml](../.github/workflows/compat-flake-detection.yml)
+runs every suite three times against an unchanged `main` each night and reports
+any test that did not answer the same way every time. Already-quarantined tests
+are reported separately — they are not news. Anything else is a **new** flake and
+fails that job, because the moment to catch one is before it starts failing
+someone else's pull request. Run it on demand from the Actions tab with
+`workflow_dispatch` (optionally narrowing to one suite) when a result looks
+suspicious.
+
+**Reproducing one locally:**
+
+```sh
+for i in 1 2 3; do go run ./cmd/compat --suite cli --results-file "run-$i.json"; done
+```
+
+```sh
+python3 scripts/compat-flake-detect.py run-1.json run-2.json run-3.json
+```
+
+**What to look for.** Every flake found so far has been an emulator state race
+rather than a test bug, and they rhyme: a resource is created successfully, the
+next call says it does not exist. `dotnet-sdk/sns-subscriptions` loses a topic
+between `SubscribeSQS` and `Publish`; `cli/eventbridge-buses` loses a bus
+between create and `ListEventBuses`. Suspect write visibility in
+[internal/state](../internal/state), or a handler reading through a snapshot
+taken before the write landed — and check whether the fix clears more than one
+entry at once.
+
+**Cascades deserve extra weight.** A failing test does not fail its dependants
+the same way twice: `dependency failed: X` on one run, an outright `fail` on the
+next. Both quarantines added so far were cascades of a *stable* failure, not
+flaky tests in their own right. So a root cause with dependants is worth more
+than its raw failure count suggests — fixing it removes the quarantine and the
+failure together.
 
 **Improvements are promoted for you.** On push to `main`, the aggregate job runs
 `--update-baseline` and commits `compat/baseline.json` when a result improved.
@@ -510,6 +572,21 @@ improvement visible in a PR diff.
 > This automated commit is the **only** exception to the "never push to `main`"
 > rule in the root [AGENTS.md](../AGENTS.md). It is granted to the workflow, not
 > to agents or contributors: it touches `compat/baseline.json` and nothing else.
+
+**Changing what CI measures means re-seeding, not comparing.** The baseline
+records what a particular configuration produces. Change the configuration —
+turn a class of test on, add a suite, change the emulator's defaults — and the
+next run legitimately differs from the baseline in both directions, so comparing
+is meaningless and the gate fires on work that is not a regression. Re-seed
+instead: empty `compat/baseline.json` to `{"version": 1, "entries": []}`, run
+`--update-baseline` against an artifact **from the new configuration**, and say
+in the PR why the seed moved.
+
+This is not hypothetical. Enabling the Docker-dependent tests in CI turned five
+results over: the CDK ESM assertions started passing, and two `cli` Lambda and
+EventBridge tests started failing because they had only ever been measured
+against a stub. A baseline seeded before that change described a configuration
+that no longer existed.
 
 `--lint-baseline-from/--lint-baseline-to` runs on PRs and rejects a baseline
 edit that downgrades an expectation, removes one, or adds a new `fail`.

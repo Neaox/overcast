@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	"github.com/aws/aws-sdk-go-v2/service/elasticache"
 	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/kinesis"
@@ -60,6 +61,7 @@ type Clients struct {
 	cfnC         *cloudformation.Client
 	ec2C         *ec2.Client
 	ecsC         *ecs.Client
+	elasticacheC *elasticache.Client
 	cognitoC     *cognitoidentityprovider.Client
 	appsyncC     *appsync.Client
 	apigwC       *apigateway.Client
@@ -282,6 +284,17 @@ func (c *Clients) ECS() *ecs.Client {
 		c.ecsC = ecs.NewFromConfig(cfg)
 	}
 	return c.ecsC
+}
+
+// ElastiCache returns a lazily-initialised ElastiCache client.
+func (c *Clients) ElastiCache() *elasticache.Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.elasticacheC == nil {
+		cfg := c.awsCfgLocked()
+		c.elasticacheC = elasticache.NewFromConfig(cfg)
+	}
+	return c.elasticacheC
 }
 
 // Cognito returns a lazily-initialised Cognito Identity Provider client.
