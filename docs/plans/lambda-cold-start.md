@@ -195,8 +195,9 @@ timings`: handler, log_wait, mem_wait, total), and `scripts/bench-lambda.go`
 direction — the baseline below therefore brackets Phase 1 (alpha.26 vs this
 branch) rather than preceding it. The large-zip variant landed 2026-07-31 as
 `bench-lambda -pad-mb N` (incompressible padding, stored uncompressed so the
-harness's own CPU stays out of the measurement); recording its numbers and
-the per-runtime INIT split remain open until a quiet-machine run.
+harness's own CPU stays out of the measurement), and its quiet-machine
+numbers are recorded under Measured evidence. Only the per-runtime INIT
+split (from the phase timers) remains unrecorded.
 
 1. **Phase timers in `acquireContainer`.** Wrap each step (image check, tar
    build, create, copies, start, VPC, await-IP, await-ready) and log a single
@@ -265,8 +266,30 @@ above):** cold p50 457 ms (nodejs) / 365 ms (python), warm p50 ~6 ms —
 parity with the Phase-1 baseline within noise, i.e. **no regression** on
 hello-world zips, whose tar conversion is ~1 ms to begin with. The caches'
 wins scale with package/layer size and daemon RTT count; quantifying them
-needs the Phase 0 large-zip variant (still a follow-up) rather than this
-workload.
+needs the large-zip variant below rather than this workload.
+
+**Large-package variant (2026-07-31, quiet machine — no builds or other
+suites running):** `bench-lambda -pad-mb 30` (30 MiB of stored-uncompressed
+random padding), nodejs22.x, 5 cold rounds × 10 warm, same dockerized-slim
+setup on port 4590, sequential back-to-back legs on the same daemon.
+`alpha.26` vs `main@0b253dd0` (post-#411):
+
+| leg                | cold p50 | cold p95 | cold r1 (uncached) | warm p50  | apigw p50 |
+|--------------------|---------:|---------:|-------------------:|----------:|----------:|
+| alpha.26           | 4007 ms  | 4037 ms  | 3512 ms            | 2004.8 ms | 2004.7 ms |
+| main (post-#411)   | 1601 ms  | 1696 ms  | 1995 ms            | 5.3 ms    | 5.8 ms    |
+
+Reads: package size costs alpha.26 ~2.5 s of extra cold start over
+hello-world (per-cold fetch + decode + convert + four copies); on main the
+same package costs ~1.3 s extra, of which the first (cache-cold) round
+carries ~+400 ms of one-time fetch+convert that rounds 2–5 skip via the
+content-addressed tar cache — visible directly in the r1-vs-p50 gap. Warm
+invokes are flat at ~5 ms regardless of package size, confirming the invoke
+path no longer touches the package at all (pre-#404 it hashed and decoded
+all 30 MiB per invocation, under the 2 s stats stall). The remaining ~1.6 s
+large-package cold budget is dominated by uploading the ~30 MiB provisioning
+archive into the container plus INIT — the honest floor for this transport,
+and Phase 4's target if it ever needs to shrink.
 
 ---
 
