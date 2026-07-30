@@ -105,6 +105,7 @@ Quarantine is containment. The plan to actually remove it:
    | --- | --- |
    | `dotnet-sdk/sns-subscriptions/PublishDeliveredToSQS` | Topic gone between `SubscribeSQS` and publish |
    | `cli/eventbridge-buses/DeleteEventBus` (via R7) | Bus gone between create and `ListEventBuses` |
+   | `python-sdk/lambda-crud/DeleteFunction` (#414) | The inverse: function *still exists* on the post-delete read — a deletion visible late, so the write-visibility audit must cover removals too |
 
    Two services, one pattern. Start at write visibility in
    [internal/state](../../internal/state) and at any handler that reads through
