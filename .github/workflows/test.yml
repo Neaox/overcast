@@ -173,6 +173,18 @@ jobs:
           done
           exit "$status"
 
+  # Unreleased changes live as one fragment file per PR under .changelog/
+  # (files at unique paths cannot merge-conflict); CHANGELOG.md's [Unreleased]
+  # section stays empty between releases. This check lints every fragment and
+  # fails any change that writes into [Unreleased] directly.
+  changelog-check:
+    name: Changelog fragments
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Lint fragments and enforce empty [Unreleased]
+        run: python3 scripts/changelog.py check
+
   docs-check:
     name: Docs and capability registry
     runs-on: ubuntu-latest

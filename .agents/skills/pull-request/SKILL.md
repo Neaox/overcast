@@ -1,6 +1,6 @@
 ---
 name: pull-request
-description: "Prepare Overcast pull requests with digestible commit hygiene, concise PR summaries, CHANGELOG management, and AWS compatibility and visual evidence. Use when: creating a PR, preparing a branch for review, splitting commits, writing PR descriptions, screenshotting a visual change for reviewers, or deciding what belongs in CHANGELOG.md."
+description: "Prepare Overcast pull requests with digestible commit hygiene, concise PR summaries, changelog fragment management, and AWS compatibility and visual evidence. Use when: creating a PR, preparing a branch for review, splitting commits, writing PR descriptions, screenshotting a visual change for reviewers, or deciding whether a change needs a changelog fragment under .changelog/."
 compatibility: opencode
 metadata:
   audience: contributors
@@ -14,7 +14,7 @@ license: MIT
 
 Prepare pull requests that are easy for humans to review. Commits should be readable and intentionally scoped; the PR body carries the deeper context, compatibility evidence, and review notes.
 
-All coding standards are in [CONTRIBUTING.md](../../../CONTRIBUTING.md). Agent guardrails are in [AGENTS.md](../../../AGENTS.md). Changelog format and release rules are in [CHANGELOG.md](../../../CHANGELOG.md).
+All coding standards are in [CONTRIBUTING.md](../../../CONTRIBUTING.md). Agent guardrails are in [AGENTS.md](../../../AGENTS.md). Changelog fragment format is in [.changelog/README.md](../../../.changelog/README.md); release rules are in [CHANGELOG.md](../../../CHANGELOG.md).
 
 ---
 
@@ -25,7 +25,7 @@ All coding standards are in [CONTRIBUTING.md](../../../CONTRIBUTING.md). Agent g
 - Reviewing or improving commit structure
 - Deciding whether to split, squash, or reorder commits
 - Writing a PR title/body
-- Updating `CHANGELOG.md`
+- Adding a changelog fragment under `.changelog/`
 - Documenting AWS compatibility evidence for a change
 - Capturing screenshots for a change reviewers have to look at to judge
 
@@ -241,11 +241,13 @@ Name the files for the axis they vary — `after-light.png`, `after-375.png` —
 
 ---
 
-## CHANGELOG Management
+## Changelog Management
 
-`CHANGELOG.md` is release-facing, not a commit log. Update it when the change is notable to users, SDK clients, service compatibility, configuration, deployment, or the web UI.
+The changelog is release-facing, not a commit log. Record a change when it is notable to users, SDK clients, service compatibility, configuration, deployment, or the web UI.
 
-### Update CHANGELOG when
+**Never edit the `[Unreleased]` section of `CHANGELOG.md`.** It stays empty between releases and CI (`python3 scripts/changelog.py check`) fails any PR that writes into it. Instead, add one fragment file per PR under `.changelog/` — new files at unique paths cannot merge-conflict, so PRs never fight over the changelog. At release time the fragments are curated into the new versioned section (see `.changelog/README.md` and RELEASE.md).
+
+### Add a changelog fragment when
 
 - Adding a new service, endpoint, resource type, or UI capability.
 - Changing AWS-visible behavior, response shape, validation, pagination, state transitions, identifiers, or error codes.
@@ -253,7 +255,7 @@ Name the files for the axis they vary — `after-light.png`, `after-375.png` —
 - Adding or changing configuration, Docker/runtime behavior, or CloudFormation support.
 - Improving compatibility in a way users may rely on.
 
-### Usually skip CHANGELOG for
+### Usually skip the fragment for
 
 - Tests only.
 - Internal refactors with no behavior change.
@@ -261,22 +263,20 @@ Name the files for the axis they vary — `after-light.png`, `after-375.png` —
 - CI or build maintenance with no user-facing effect.
 - Follow-up formatting or generated-file churn.
 
-### How to edit `[Unreleased]`
+### How to write a fragment
 
-- Follow the inline instructions already present in `CHANGELOG.md`.
-- Put entries under the correct Keep a Changelog category: `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, or `Security` when present.
+- One file per PR: `.changelog/YYYYMMDD-<slug>.md` (UTC date, lowercase slug — the branch topic usually works). Full format rules are in `.changelog/README.md`; `python3 scripts/changelog.py check` lints them locally.
+- Set `section:` to the correct Keep a Changelog category: `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, or `Security`.
 - Do not use `[service]` prefixes as a substitute for categorization; `[sqs] `ReceiveMessage`` still belongs under `Fixed` if it fixes behavior, or `Added` if it adds new support.
-- Keep `[Unreleased]` tidy: first look for an existing service/area bullet and augment it instead of adding a new list item.
-- Do not add one bullet per commit, endpoint, or tiny behavior tweak.
+- Set `area:` to the service/area slug so related fragments group together at release time; leave it out for changes with no natural area.
+- Write the fragment for this PR only. Do not edit other PRs' fragments and do not pre-aggregate per service — merging related entries into one bullet happens once, at release time.
+- Do not write one bullet per commit, endpoint, or tiny behavior tweak — one fragment with one or two bullets covering the PR's user-visible change is the target.
 - Describe the change with a clear verb: added, changed, removed, fixed, aligned, or updated.
-- For fixes and compatibility changes, mention the old behavior and the new behavior so users know what changed.
+- For fixes and compatibility changes, mention the old behavior and the new behavior so users know what changed; describe the full affected scope discovered during investigation, not only the original repro case.
 - Prefer service-prefixed endpoint phrasing for endpoint-specific changes: `[sqs] `ReceiveMessage` now returns an empty result after long-poll timeout instead of returning an error`.
 - Use service-level phrasing when the change affects many endpoints: `[dynamodb] pagination now preserves index and table keys across Query and Scan responses`.
 - Use area-level phrasing for cross-cutting work: `[cloudformation] nested stacks now cascade deletion to child stacks instead of leaving child resources orphaned`.
 - Keep entries concise and release-note friendly; bullets should not become novellas.
-- Use semicolons to append related capabilities to an existing service bullet.
-- If an existing bullet is becoming too long to scan, rewrite it into a tighter summary rather than blindly appending more clauses.
-- Add a dedicated bullet only for a genuinely new service, cross-cutting feature, distinct user-facing area, or targeted shipped-version fix that needs a commit reference.
 - Do not mention internal file names unless they are the user-facing change.
 
 ### Categorizing changelog items
@@ -288,7 +288,7 @@ Name the files for the axis they vary — `after-light.png`, `after-375.png` —
 - New services: use the existing bold service bullet style when adding a genuinely new service under `Added`.
 - Unsupported or removed behavior: say what no longer happens and what users should expect instead.
 
-Example CHANGELOG style:
+Example bullet style (used in fragment bodies and in the released changelog):
 
 ```markdown
 - **SQS** — ...; `ReceiveMessage` long polling (`WaitTimeSeconds` up to 20 s, returns early when a message arrives)
@@ -296,34 +296,29 @@ Example CHANGELOG style:
 - [sqs] `ReceiveMessage` now returns an empty result after long-poll timeout instead of returning an error
 ```
 
-Reasonable `[Unreleased]` example:
+Reasonable fragment examples:
+
+`.changelog/20260731-glue-data-catalog.md` — a new service uses the bold service summary style:
 
 ```markdown
-## [Unreleased]
-
-### Added
+---
+section: Added
+area: glue
+---
 
 - **Glue Data Catalog** — new service with database and table CRUD via JSON 1.1 (`CreateDatabase`, `GetDatabase`, `GetDatabases`, `DeleteDatabase`, `CreateTable`, `GetTable`, `GetTables`, `DeleteTable`)
-- [sqs] `ReceiveMessage` now supports long polling with `WaitTimeSeconds` up to 20 seconds instead of returning immediately when no messages are available
-- [cloudformation] nested stacks now fetch `TemplateURL` templates and cascade deletion to child stacks instead of leaving child resources unmanaged
-
-### Changed
-
-- [lambda] container invocations now connect functions with `VpcConfig` to synthetic VPC Docker networks instead of running all functions on the default bridge network
-- [web] service detail pages now group unsupported operations separately instead of mixing them into the primary action list
-
-### Fixed
-
-- [dynamodb] `Query` and `Scan` now apply `Limit` before filtering instead of after filtering, matching AWS `ScannedCount` and pagination semantics
-- [s3] `CreateBucket` now rejects malformed `LocationConstraint` values with AWS-compatible errors instead of silently creating the bucket
-- [apigateway] proxy executions now preserve multi-value query parameters instead of collapsing repeated keys to the last value
-
-### Removed
-
-- [sns] `Subscribe` no longer accepts unsupported `application` and `firehose` protocols as pending subscriptions; it now rejects them with `InvalidParameter`
 ```
 
-This example is intentionally mixed: new services use the existing bold service summary style, endpoint-specific changes use `[service] `EndpointName``, and broader service or area changes use `[service]` or `[area]`.
+`.changelog/20260731-dynamodb-limit-before-filter.md` — an endpoint-specific fix uses `[service] `EndpointName`` with before/after behavior:
+
+```markdown
+---
+section: Fixed
+area: dynamodb
+---
+
+- [dynamodb] `Query` and `Scan` now apply `Limit` before filtering instead of after filtering, matching AWS `ScannedCount` and pagination semantics
+```
 
 ---
 
@@ -334,7 +329,7 @@ Before creating the PR:
 1. Check `git status` for untracked and unrelated files.
 2. Review `git diff` and the branch diff against the base branch.
 3. Confirm commits are coherent and readable.
-4. Confirm `CHANGELOG.md` is updated or intentionally skipped.
+4. Confirm a changelog fragment is added under `.changelog/` or intentionally skipped; never edit `CHANGELOG.md`'s `[Unreleased]` section.
 5. Run scoped tests and required docs generation for changed areas.
 6. Run final verification. Prefer `make check` (`fmt vet lint test`) over assembling a subset — "targeted equivalents" is how a required CI job gets skipped. At minimum: `go build ./...`, `go vet ./...`, `make lint-go`, and the scoped tests. Lint is not optional and is not implied by the others: CI runs it as its own job, and staticcheck findings pass build, vet and tests. For `web/` changes add `pnpm run typecheck` and `pnpm run lint` — never bare `tsc --noEmit`, which resolves the solution-style `web/tsconfig.json`, compiles zero files and always exits 0 (`tsc -b` is a correct alternative).
 7. Ensure no secrets, local config, or throwaway debug output are included.

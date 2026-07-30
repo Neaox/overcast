@@ -129,6 +129,69 @@ class CheckReleaseChangelogTest(unittest.TestCase):
 			errors,
 		)
 
+	def test_validate_rejects_unconsumed_fragments(self) -> None:
+		path = write_changelog(
+			"""
+# Changelog
+
+## [Unreleased]
+
+## [0.0.1-alpha.2] - 2026-07-22
+
+### Fixed
+
+- Fix.
+
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.2...HEAD
+[0.0.1-alpha.2]: https://github.com/Neaox/overcast/releases/tag/v0.0.1-alpha.2
+"""
+		)
+		fragments_dir = path.parent / ".changelog"
+		fragments_dir.mkdir()
+		(fragments_dir / "README.md").write_text("docs", encoding="utf-8")
+		(fragments_dir / "20260730-left-behind.md").write_text(
+			"---\nsection: Fixed\n---\n\n- forgotten\n", encoding="utf-8"
+		)
+
+		errors = checker.validate(path, "0.0.1-alpha.2", fragments_dir)
+
+		self.assertTrue(
+			any("20260730-left-behind.md" in error for error in errors),
+			errors,
+		)
+
+	def test_validate_accepts_consumed_fragments_dir(self) -> None:
+		path = write_changelog(
+			"""
+# Changelog
+
+## [Unreleased]
+
+## [0.0.1-alpha.2] - 2026-07-22
+
+### Fixed
+
+- Fix.
+
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.2...HEAD
+[0.0.1-alpha.2]: https://github.com/Neaox/overcast/releases/tag/v0.0.1-alpha.2
+"""
+		)
+		fragments_dir = path.parent / ".changelog"
+		fragments_dir.mkdir()
+		(fragments_dir / "README.md").write_text("docs", encoding="utf-8")
+
+		errors = checker.validate(path, "0.0.1-alpha.2", fragments_dir)
+
+		self.assertEqual([], errors)
+
+		# A missing fragments dir must not fail older checkouts.
+		errors = checker.validate(
+			path, "0.0.1-alpha.2", path.parent / "no-such-dir"
+		)
+
+		self.assertEqual([], errors)
+
 
 if __name__ == "__main__":
 	unittest.main()

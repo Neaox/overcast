@@ -38,38 +38,21 @@ need it than accidentally ship a breaking change as a patch.
 
 ---
 
-<!-- AGENT INSTRUCTIONS — updating this section between releases
-     - Do NOT add a new bullet for every small change.
-     - This file is used as release-note input. Only include shipped/runtime or
-       user-visible changes: service/API behaviour, compatibility fixes,
-       config/env vars, Docker/binary packaging, measured performance changes,
-       or user-facing docs guidance.
-     - Do NOT add entries for CI-only changes, test-only changes, local tooling,
-       internal refactors, or cleanup unless they affect shipped artifacts or
-       runtime behaviour.
-     - Find the existing bullet for the relevant service/area and extend it inline.
-     - Only add a new bullet when introducing a genuinely new service or a cross-cutting
-       feature that has no natural home in an existing bullet.
-     - Exception: if a change must reference a specific commit (e.g. a targeted bug fix
-       for a shipped version), add a dedicated bullet with the commit reference so it
-       can be promoted to a versioned entry cleanly.
-     - Keep bullets concise — one sentence per service is the target; use semicolons to
-       append new capabilities rather than splitting into sub-bullets.
-     - For bug fixes, describe the full affected scope discovered during investigation,
-       not only the original symptom or repro case. If one root cause affected multiple
-       services, resource types, commands, or user-visible paths, mention those impacts
-       in the release note while keeping the entry concise.
-     - The changelog only needs changes that affect shipped artifacts or release
-       notes: runtime behaviour, AWS compatibility, config/env vars, Docker or
-       binary packaging, release process, or user-facing docs.
+<!-- AGENT INSTRUCTIONS — between releases
+     - Do NOT add entries under [Unreleased]. It stays empty between releases;
+       CI (scripts/changelog.py check) fails any change that writes into it.
+     - Record release-note-worthy changes as one fragment file per PR under
+       .changelog/ instead — format, naming, and what qualifies are documented
+       in .changelog/README.md.
+     - At release time the fragments are curated into a new versioned section
+       below and deleted (see RELEASE.md). Bullet style for release sections:
+       one concise bullet per service/area, semicolons to append capabilities,
+       full affected scope for bug fixes, commit references only for targeted
+       fixes to shipped versions.
      - Release section dates use UTC in YYYY-MM-DD format.
 -->
 
 ## [Unreleased]
-
-### Changed
-
-- **CI (release safety)** — publishing now requires the maintainer's one-click approval: the release workflow's four publish jobs run in a `release` environment with a required reviewer, so builds and tests stay unattended while nothing ships without a human seeing the exact SHA. Alongside the repository ruleset changes (required status checks, no bypass actors), routine merges no longer use `--admin` — the rules that were previously convention are now enforced, including on automation.
 
 ## [0.0.1-alpha.26] - 2026-07-30
 

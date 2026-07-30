@@ -177,11 +177,10 @@ If relevant changes are interleaved with unrelated edits in the same file, stop 
 
 ## CHANGELOG Relationship
 
-Commits do not replace `CHANGELOG.md`.
+Commits do not replace the changelog.
 
-- If the change is user-visible, compatibility-visible, config-visible, or release-note-worthy, ensure the branch includes an appropriate `[Unreleased]` entry.
-- Put changelog entries under the correct Keep a Changelog category: `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, or `Security` when present.
-- Keep `[Unreleased]` tidy: augment an existing relevant service/area bullet when one exists.
+- If the change is user-visible, compatibility-visible, config-visible, or release-note-worthy, ensure the branch includes a changelog fragment under `.changelog/` (one file per PR — see `.changelog/README.md`). Never edit `CHANGELOG.md`'s `[Unreleased]` section directly; CI fails the branch if it gains content.
+- Set the fragment's `section:` to the correct Keep a Changelog category: `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, or `Security`.
 - Do not add one changelog bullet per commit, endpoint, or small tweak.
 - Describe the change with a clear verb: added, changed, removed, fixed, aligned, or updated.
 - For fixes and compatibility changes, mention the old behavior and the new behavior so users know what changed.
@@ -190,7 +189,7 @@ Commits do not replace `CHANGELOG.md`.
 - Do not use `[service]` prefixes as a substitute for categorization; choose the category first, then phrase the entry.
 - Keep changelog entries release-facing and concise; do not let bullets become novellas.
 - If a bullet is getting too long, rewrite it into a tighter summary instead of appending indefinitely.
-- Use the `pull-request` skill for detailed CHANGELOG management and a full reasonable `[Unreleased]` example before opening a PR.
+- Use the `pull-request` skill for detailed changelog fragment management and full fragment examples before opening a PR.
 
 ---
 
