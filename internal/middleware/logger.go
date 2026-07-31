@@ -65,6 +65,8 @@ func detectService(r *http.Request) string {
 		strings.HasPrefix(r.URL.Path, "/2021-10-31/"),
 		strings.HasPrefix(r.URL.Path, "/2021-11-15/"):
 		return "lambda"
+	case strings.HasPrefix(r.URL.Path, "/2015-02-01/"):
+		return "efs"
 	case strings.HasPrefix(r.URL.Path, "/v1/pipes"):
 		return "pipes"
 	case strings.HasPrefix(r.URL.Path, "/v1/apis"),
@@ -204,7 +206,8 @@ func detectOperation(r *http.Request) string {
 	if strings.HasPrefix(r.URL.Path, "/v1/apis") ||
 		strings.HasPrefix(r.URL.Path, "/2020-05-31/") ||
 		strings.HasPrefix(r.URL.Path, "/restapis") ||
-		strings.HasPrefix(r.URL.Path, "/v2/apis") {
+		strings.HasPrefix(r.URL.Path, "/v2/apis") ||
+		strings.HasPrefix(r.URL.Path, "/2015-02-01/") {
 		return ""
 	}
 

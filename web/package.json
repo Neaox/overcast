@@ -30,6 +30,7 @@
     "@aws-sdk/client-ec2": "^3.1027.0",
     "@aws-sdk/client-ecr": "^3.1034.0",
     "@aws-sdk/client-ecs": "^3.1027.0",
+    "@aws-sdk/client-efs": "^3.1099.0",
     "@aws-sdk/client-eks": "^3.1035.0",
     "@aws-sdk/client-elasticache": "^3.1032.0",
     "@aws-sdk/client-eventbridge": "^3.1027.0",

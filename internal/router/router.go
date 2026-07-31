@@ -50,6 +50,7 @@ import (
 	"github.com/Neaox/overcast/internal/services/ec2"
 	"github.com/Neaox/overcast/internal/services/ecr"
 	"github.com/Neaox/overcast/internal/services/ecs"
+	"github.com/Neaox/overcast/internal/services/efs"
 	"github.com/Neaox/overcast/internal/services/eks"
 	"github.com/Neaox/overcast/internal/services/elasticache"
 	elbv2svcpkg "github.com/Neaox/overcast/internal/services/elbv2"
@@ -338,6 +339,8 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	prof.mark("  new: backup")
 	transferSvc := transfer.New(cfg, store, logger, clk)
 	prof.mark("  new: transfer")
+	efsSvc := efs.New(cfg, store, logger, clk)
+	prof.mark("  new: efs")
 
 	prof.mark("service constructors (47)")
 
@@ -392,6 +395,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		cloudTrailSvc,
 		backupSvc,
 		transferSvc,
+		efsSvc,
 		s3Svc, // must be last — registers /{bucket}/* wildcard
 	}
 

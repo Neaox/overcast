@@ -1205,18 +1205,6 @@ export const CATALOG: CatalogEntry[] = [
 
   // ── Storage (unsupported) ──────────────────────────────────────────────
   {
-    id: "efs",
-    label: "Amazon EFS",
-    category: "storage",
-    description:
-      "Fully managed elastic NFS file system for use with EC2, ECS, Lambda, and on-premises resources.",
-    awsDocsUrl: "https://docs.aws.amazon.com/efs/latest/ug/",
-    reason:
-      "EFS requires a managed NFS server. Use a local NFS server or bind mounts for development.",
-    tier: "unsupported",
-    goalTier: "unsupported",
-  },
-  {
     id: "fsx",
     label: "Amazon FSx",
     category: "storage",
