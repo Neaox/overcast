@@ -104,6 +104,7 @@ can be applied mechanically rather than reconstructed from memory.
 
 ### Changed
 
+
 - [apigateway] proxied requests no longer re-scan and re-decode the API's entire resource/route set on every request — routing state is cached per API and invalidated on any resource or route write
 
 - [lambda] the invoke path no longer SHA-256s the whole deployment package on every invocation (and every configuration read) — the hash is computed once when code is written and stored on the function record, cutting per-invoke CPU for large packages
@@ -129,6 +130,8 @@ can be applied mechanically rather than reconstructed from memory.
 - [lambda] the tail wait is now paid only by invokes that asked for a log tail (`X-Amz-Log-Type: Tail`, and the console's test tab). Asynchronous invokes, event-source mappings, function URLs and service-to-service calls discard `LogResult` and no longer wait on log delivery to produce it
 
 - [release] the release summary comment lists the entries as they will read in the changelog rather than only counting them, with breaking changes and their migration notes first
+
+- [release] a changelog entry folded into an open release PR is placed next to bullets about the same area instead of at the bottom of its category, so the section stays grouped as it grows. Area is read from the `[sqs]` prefix or from a curated heading like `**SQS (long polling)**`; when nothing matches it goes at the end, as before. Existing bullets are still never rewritten, reordered or removed
 
 - [ci] the release-candidate comment is reposted on each build instead of edited in place, so its own timestamp shows when it last changed — GitHub anchors an edited comment at its original position and hides the update behind an "edited" marker, which made a refreshed RC invisible. The new comment is posted before the old one is removed, so a release PR is never left without a candidate to test, and the header now names the head commit it was built for
 
