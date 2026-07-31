@@ -173,7 +173,8 @@ func (inv *ServiceInvoker) InvokeAsync(ctx context.Context, functionARN string, 
 		}
 	}
 
-	result, err := inst.Invoke(ctx, payload)
+	// No tail: an asynchronous invocation has no caller to hand a LogResult to.
+	result, err := inst.Invoke(ctx, payload, InvokeOptions{})
 	healthy := err == nil
 	rt.Release(ctx, inst, healthy)
 	tracked.Finish(invocationOutcome(err, result))
@@ -289,7 +290,8 @@ func (inv *ServiceInvoker) Invoke(ctx context.Context, functionName string, payl
 		}
 	}
 
-	result, err := inst.Invoke(ctx, payload)
+	// No tail: InvokeOutcome carries no log field, so nothing would read it.
+	result, err := inst.Invoke(ctx, payload, InvokeOptions{})
 	healthy := err == nil
 	rt.Release(ctx, inst, healthy)
 	tracked.Finish(invocationOutcome(err, result))

@@ -1245,20 +1245,17 @@ func (h *Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// RequestResponse (default): synchronous execution — acquire, invoke, release.
-	logType := r.Header.Get("X-Amz-Log-Type") // "Tail" or ""
+	// result.LogResult is filled from the tail buffer the streamLogs goroutine
+	// maintains, but only when the caller explicitly requested a tail
+	// (X-Amz-Log-Type: Tail), matching real AWS. The request travels into the
+	// invoke rather than being filtered out of the result afterwards, because
+	// producing a complete tail costs latency the other callers must not pay.
+	tail := strings.EqualFold(r.Header.Get("X-Amz-Log-Type"), "Tail")
 
-	result := h.invokeSync(ctx, fn, rt, payload, name)
+	result := h.invokeSync(ctx, fn, rt, payload, name, InvokeOptions{LogTail: tail})
 	if result.throttle != nil {
 		writeThrottleError(w, r, result.throttle)
 		return
-	}
-
-	// result.LogResult is populated by containerInstance.Invoke from the tail
-	// buffer maintained by the streamLogs goroutine. Only expose it when the
-	// caller explicitly requested a tail (X-Amz-Log-Type: Tail), matching
-	// real AWS behaviour.
-	if !strings.EqualFold(logType, "Tail") {
-		result.LogResult = ""
 	}
 
 	// Write AWS-style invoke response.
@@ -1407,7 +1404,7 @@ func writeInvokeError(w http.ResponseWriter, layerARN, errorType string) {
 
 // invokeSync acquires a runtime instance, invokes the function, and returns the
 // result, writing an error response and returning nil on failure.
-func (h *Handler) invokeSync(ctx context.Context, fn *Function, rt Runtime, payload []byte, name string) *InvokeResult {
+func (h *Handler) invokeSync(ctx context.Context, fn *Function, rt Runtime, payload []byte, name string, opts InvokeOptions) *InvokeResult {
 	inv := h.tracker.Begin(name, payload)
 	releaseSuccess := false
 	releaseReason := ""
@@ -1435,7 +1432,7 @@ func (h *Handler) invokeSync(ctx context.Context, fn *Function, rt Runtime, payl
 		maxAttempts = 1
 	}
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		result := h.invokeSyncOnce(ctx, fn, rt, payload, name, inv)
+		result := h.invokeSyncOnce(ctx, fn, rt, payload, name, inv, opts)
 		if result.throttle != nil {
 			// A concurrency limit refused the invocation. Never retry — the
 			// caller decides whether to back off, exactly as against AWS.
@@ -1541,7 +1538,7 @@ func (h *Handler) awaitRuntimeReady(ctx context.Context, fn *Function, rt Runtim
 }
 
 // invokeSyncOnce performs a single acquire → invoke → release cycle.
-func (h *Handler) invokeSyncOnce(ctx context.Context, fn *Function, rt Runtime, payload []byte, name string, inv *trackedInvocation) *InvokeResult {
+func (h *Handler) invokeSyncOnce(ctx context.Context, fn *Function, rt Runtime, payload []byte, name string, inv *trackedInvocation, opts InvokeOptions) *InvokeResult {
 	acquireTimeout := 30 * time.Second
 	// For very short function timeouts, keep acquire tighter.
 	if fn.Timeout > 0 && fn.Timeout <= 5 {
@@ -1604,7 +1601,7 @@ func (h *Handler) invokeSyncOnce(ctx context.Context, fn *Function, rt Runtime, 
 	defer cancel()
 
 	h.log.Debug("invoke function: dispatching", zap.String("function", name), zap.Int("payload_bytes", len(payload)))
-	result, invokeErr := inst.Invoke(invokeCtx, payload)
+	result, invokeErr := inst.Invoke(invokeCtx, payload, opts)
 	healthy := invokeErr == nil
 	rt.Release(invokeCtx, inst, healthy)
 
@@ -1700,7 +1697,9 @@ func (h *Handler) invokeAsync(fn *Function, rt Runtime, payload []byte) {
 
 	invokeCtx, cancel := context.WithTimeout(ctx, functionTimeout(fn))
 	defer cancel()
-	result, invokeErr := inst.Invoke(invokeCtx, payload)
+	// No tail: an Event invocation answered 202 long ago and has no caller left
+	// to hand a LogResult to.
+	result, invokeErr := inst.Invoke(invokeCtx, payload, InvokeOptions{})
 	rt.Release(invokeCtx, inst, invokeErr == nil)
 	inv.Finish(invocationOutcome(invokeErr, result))
 	if invokeErr != nil {
@@ -1874,7 +1873,9 @@ func (h *Handler) InvokeFunctionSSE(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	result, invokeErr := inst.Invoke(invokeCtx, payload)
+	// The console's Test tab always renders the log tail, so this path always
+	// asks for one — there is no X-Amz-Log-Type to consult.
+	result, invokeErr := inst.Invoke(invokeCtx, payload, InvokeOptions{LogTail: true})
 	// Join before touching w again: writing to a ResponseWriter after the
 	// handler returns is not allowed, so the goroutine must be gone first.
 	close(stopKeepalive)

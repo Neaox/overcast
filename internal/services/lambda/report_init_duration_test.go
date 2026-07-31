@@ -104,7 +104,7 @@ func TestContainerInstanceInvoke_reportsInitDurationOnColdStartOnly(t *testing.T
 	go serveOneInvocation(t, addr)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if _, err := ci.Invoke(ctx, []byte(`{}`)); err != nil {
+	if _, err := ci.Invoke(ctx, []byte(`{}`), InvokeOptions{}); err != nil {
 		t.Fatalf("first invoke: %v", err)
 	}
 
@@ -116,7 +116,7 @@ func TestContainerInstanceInvoke_reportsInitDurationOnColdStartOnly(t *testing.T
 
 	// When: the same environment serves a warm invocation.
 	go serveOneInvocation(t, addr)
-	if _, err := ci.Invoke(ctx, []byte(`{}`)); err != nil {
+	if _, err := ci.Invoke(ctx, []byte(`{}`), InvokeOptions{}); err != nil {
 		t.Fatalf("second invoke: %v", err)
 	}
 
@@ -138,7 +138,7 @@ func TestContainerInstanceInvoke_provisionedEnvironmentOmitsInitDuration(t *test
 	go serveOneInvocation(t, addr)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if _, err := ci.Invoke(ctx, []byte(`{}`)); err != nil {
+	if _, err := ci.Invoke(ctx, []byte(`{}`), InvokeOptions{}); err != nil {
 		t.Fatalf("invoke: %v", err)
 	}
 
@@ -160,7 +160,7 @@ func TestContainerInstanceInvoke_noInitDurationWhenRICNeverPolled(t *testing.T) 
 	// When: the invocation times out.
 	invokeCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	if _, err := ci.Invoke(invokeCtx, []byte(`{}`)); err == nil {
+	if _, err := ci.Invoke(invokeCtx, []byte(`{}`), InvokeOptions{}); err == nil {
 		t.Fatal("expected timeout error")
 	}
 
