@@ -122,7 +122,14 @@ Before merging the release-prep PR to `main`:
 4. Set `VERSION` to the exact release version without the leading `v`.
 5. Ensure `[Unreleased]` exists but has no entries, and `.changelog/` holds
    only `README.md`. The workflow fails if `[Unreleased]` contains release
-   notes or a fragment was left unconsumed.
+   notes or a fragment was left unconsumed. This is checked twice: once
+   against the PR as pushed, and once against the tree the PR would produce
+   if merged into `main` as it stands right now. The second check exists
+   because a PR merged after this branch was last pushed does not re-trigger
+   anything here — a fragment that lands mid-window would otherwise ride onto
+   `main` through a clean union merge and fail the release after the merge.
+   If it trips, re-curate the new fragment into the release section and push;
+   the update re-runs the gate.
 6. Run local scoped checks for release metadata changes:
    ```sh
    go test -count=1 ./cmd/compat
