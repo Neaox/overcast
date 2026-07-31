@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Neaox/overcast/internal/clock"
@@ -224,5 +226,68 @@ func TestSeedPersistedFunctionImages_ReconcilesCrossRegion(t *testing.T) {
 	}
 	if got.StateReason != "" {
 		t.Errorf("StateReason = %q, want empty", got.StateReason)
+	}
+}
+
+// TestSeedPersistedFunctionImages_deletedDuringPull_staysDeleted: startup
+// reconciliation lists functions once, then pulls images — which can take a
+// long time while requests are already being served. A function deleted
+// during that window must not be written back from the startup snapshot
+// (same stale-snapshot rule as the CreateFunction prewarm callback, #414).
+func TestSeedPersistedFunctionImages_deletedDuringPull_staysDeleted(t *testing.T) {
+	// Given: a Pending function persisted from a previous session,
+	ls := newLambdaStore(state.NewMemoryStore(), "us-east-1", clock.New())
+	fn := &Function{
+		Name:    "pending-del-fn",
+		ARN:     "arn:aws:lambda:us-east-1:000000000000:function:pending-del-fn",
+		Runtime: "nodejs20.x",
+		State:   "Pending",
+	}
+	if aerr := ls.putFunction(context.Background(), fn); aerr != nil {
+		t.Fatalf("seed: %v", aerr)
+	}
+
+	// and a Docker server that blocks the image check until released, so the
+	// pull window is under test control.
+	reached := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1.45/images/") && r.URL.Path != "/v1.45/images/json" {
+			once.Do(func() { close(reached) })
+			<-release
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"Id": "sha256:fake"})
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	dc := docker.NewClient("tcp://"+srv.Listener.Addr().String(), zap.NewNop())
+	cr := &ContainerRuntime{docker: dc, logger: zap.NewNop(), cfg: &config.Config{Region: "us-east-1"}}
+	svc := &Service{ls: ls, log: serviceutil.NewServiceLogger(zap.NewNop(), "lambda")}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		svc.seedPersistedFunctionImages(cr)
+	}()
+
+	// When: the function is deleted while the image check is in flight,
+	<-reached
+	if aerr := ls.deleteFunction(context.Background(), "pending-del-fn"); aerr != nil {
+		t.Fatalf("delete: %v", aerr)
+	}
+	close(release)
+	<-done
+
+	// Then: the delete stays deleted — reconciliation must not resurrect it.
+	got, aerr := ls.getFunction(context.Background(), "pending-del-fn")
+	if aerr != nil {
+		t.Fatalf("getFunction: %v", aerr)
+	}
+	if got != nil {
+		t.Fatalf("function exists in state %q after delete — startup reconciliation wrote back its stale snapshot", got.State)
 	}
 }

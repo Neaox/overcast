@@ -586,35 +586,45 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 	if h.prewarmer != nil {
 		h.prewarmer(fn, func(pullErr error) {
 			bgCtx := middleware.ContextWithRegion(context.Background(), serviceutil.ARNRegion(fn.ARN))
-			updated := *fn
+			nextState, nextReason, nextReasonCode := "Active", "", ""
 			if pullErr != nil {
-				updated.State = "Failed"
-				updated.StateReason = "Failed to pull container image: " + pullErr.Error()
-				updated.StateReasonCode = "ImagePullError"
+				nextState = "Failed"
+				nextReason = "Failed to pull container image: " + pullErr.Error()
+				nextReasonCode = "ImagePullError"
 				h.log.Warn("lambda: background image pull failed",
-					zap.String("function", updated.Name), zap.Error(pullErr))
-			} else {
-				updated.State = "Active"
-				updated.StateReason = ""
-				updated.StateReasonCode = ""
+					zap.String("function", fn.Name), zap.Error(pullErr))
 			}
-			// Retry putFunction since the store may be contended during CDK deploy
-			// (many concurrent S3 PutObject calls). Using the captured function avoids a
-			// re-fetch that would itself fail under the same contention.
+			// The pull outlives the request that started it, so the function may
+			// have been deleted or revised meanwhile. Persisting the create-time
+			// snapshot would resurrect a deleted record (the compat
+			// lambda-crud/DeleteFunction flake, #414) or clobber a concurrent
+			// revision, so the transition is merged into a fresh read instead —
+			// the same rule RDS applies when a container start outlives its
+			// instance. Retried because the store may be contended during CDK
+			// deploy (many concurrent S3 PutObject calls).
 			const maxAttempts = 5
 			for i := range maxAttempts {
-				if err := h.ls.putFunction(bgCtx, &updated); err == nil {
-					if updated.State == "Active" {
-						h.proactive.NoteFunctionChanged(&updated)
+				fresh, aerr := h.ls.getFunction(bgCtx, fn.Name)
+				if aerr == nil {
+					if fresh == nil || fresh.State != "Pending" {
+						return // deleted mid-pull, or already transitioned
 					}
-					return
+					fresh.State = nextState
+					fresh.StateReason = nextReason
+					fresh.StateReasonCode = nextReasonCode
+					if err := h.ls.putFunction(bgCtx, fresh); err == nil {
+						if fresh.State == "Active" {
+							h.proactive.NoteFunctionChanged(fresh)
+						}
+						return
+					}
 				}
 				if i < maxAttempts-1 {
 					time.Sleep(time.Duration(i+1) * 200 * time.Millisecond)
 				}
 			}
 			h.log.Warn("lambda: failed to persist state transition after image pull",
-				zap.String("function", updated.Name))
+				zap.String("function", fn.Name))
 		})
 	} else {
 		fn.State = "Active"

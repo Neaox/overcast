@@ -105,7 +105,15 @@ Quarantine is containment. The plan to actually remove it:
    | --- | --- |
    | `dotnet-sdk/sns-subscriptions/PublishDeliveredToSQS` | Topic gone between `SubscribeSQS` and publish |
    | `cli/eventbridge-buses/DeleteEventBus` (via R7) | Bus gone between create and `ListEventBuses` |
-   | `python-sdk/lambda-crud/DeleteFunction` (#414) | The inverse: function *still exists* on the post-delete read — a deletion visible late, so the write-visibility audit must cover removals too |
+
+   **Fixed: `lambda-crud/DeleteFunction` (#414, un-quarantined).** It was not
+   the shared visibility race but the RDS stale-snapshot mechanism again, in
+   lambda: the CreateFunction prewarm callback persisted the create-time
+   snapshot after the image pull, resurrecting a function deleted mid-pull
+   (also struck cli on PRs #427/#430). The startup Pending-reconciler and the
+   S3 code-sync watcher had the same write; all three now merge into a fresh
+   read (deterministic repros in `handler_functions_test.go`,
+   `seed_reconcile_test.go`, `s3_sync_test.go`).
 
    Two services, one pattern. Start at write visibility in
    [internal/state](../../internal/state) and at any handler that reads through

@@ -81,14 +81,6 @@
       "since": "2026-07-30",
       "issue": "https://github.com/Neaox/overcast/issues/388",
       "reason": "Cascades from ListIdentities: 'skip — dependency failed' when it fails. Not flaky in itself; remove together with the ListIdentities entry."
-    },
-    {
-      "suite": "python-sdk",
-      "group": "lambda-crud",
-      "test": "DeleteFunction",
-      "since": "2026-07-31",
-      "issue": "https://github.com/Neaox/overcast/issues/414",
-      "reason": "Intermittent 'function still exists' on the post-delete verification read: run 30589728398 failed on attempt 1 and passed on attempt 2 of the identical tree (PR #412, whose diff was RDS-only). Inverse direction of the #388 family — a deletion visible late rather than a create — so the delete path needs the same write-visibility audit; also check lambda for background goroutines re-persisting a deleted record (the RDS mechanism fixed in #412)."
     }
   ]
 }
