@@ -1,7 +1,0 @@
----
-section: Changed
-area: lambda
----
-
-- [lambda] cold starts reuse cached artifacts instead of rebuilding them every time: code and layer tars are kept in a byte-bounded in-memory cache (`LAMBDA_TAR_CACHE_MB`, default 256, 0 disables), the bootstrap and TLS trust-root tars are built once, and the per-acquire image-presence check is skipped once an image is verified
-- [lambda] removing a runtime image mid-session (`docker rmi`) no longer breaks that runtime until restart — a container create that finds the image missing re-pulls it and retries

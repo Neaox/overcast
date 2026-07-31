@@ -1,7 +1,0 @@
----
-section: Fixed
-area: docker
----
-
-- [ecs/rds] removing a task or database image mid-session (`docker rmi`) no longer breaks launches until restart: a failed pull is retried on the next launch attempt instead of being cached forever, and a container create that finds its image missing re-pulls and retries once — the same resilience Lambda gained earlier
-- [lambda/ecs] the TLS trust-root archive is built once per process instead of per container launch

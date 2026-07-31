@@ -1,6 +1,0 @@
----
-section: Added
-area: lambda
----
-
-- [lambda] opt-in proactive initialization (`LAMBDA_PROACTIVE_INIT`): once a function's configuration settles after a deploy, one execution environment is pre-created in the background so the next request lands warm — mirroring AWS's documented proactive initialization, including `AWS_LAMBDA_INITIALIZATION_TYPE=on-demand` and no `Init Duration` on the first REPORT line

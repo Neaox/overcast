@@ -1,6 +1,0 @@
----
-section: Fixed
-area: lambda
----
-
-- [lambda] instance memory/CPU in the instances panel are now sampled from Docker instead of always reading 0, and the REPORT line's `Max Memory Used` no longer reads 0 on slow (Docker-in-Docker) hosts — container stats are fetched with `one-shot=true`, which also removes the daemon's ~1–2 s two-cycle stats wait from every invocation's response path
