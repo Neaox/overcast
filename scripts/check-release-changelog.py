@@ -143,7 +143,24 @@ def validate(
     return errors
 
 
+def use_utf8_stdio() -> None:
+    """Write UTF-8 regardless of the ambient console encoding.
+
+    Errors echo changelog paths and fragment file names, neither of which is
+    guaranteed to be cp1252-encodable — the default on Windows consoles.
+    reconfigure() only exists on TextIOWrapper, so guard for it: under a pipe
+    redirect or a test harness these may be another file-like object. Kept
+    local rather than shared with scripts/changelog.py so the release gate
+    stays a standalone stdlib-only script, like every other script here.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8")
+
+
 def main() -> int:
+    use_utf8_stdio()
     parser = argparse.ArgumentParser()
     parser.add_argument("version")
     parser.add_argument("--changelog", default="CHANGELOG.md")

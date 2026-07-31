@@ -168,7 +168,22 @@ def assemble(fragments: list[Fragment], version: str, date: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def use_utf8_stdio() -> None:
+    """Write UTF-8 regardless of the ambient console encoding.
+
+    Fragment bodies carry non-ASCII routinely ('—' in feature entries, '→' in
+    perf entries), and Windows consoles default to cp1252, which cannot encode
+    them. reconfigure() only exists on TextIOWrapper, so guard for it: under a
+    pipe redirect or a test harness these may be another file-like object.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8")
+
+
 def main() -> int:
+    use_utf8_stdio()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fragments-dir", default=".changelog")
     parser.add_argument("--changelog", default="CHANGELOG.md")
