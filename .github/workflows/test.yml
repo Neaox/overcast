@@ -469,7 +469,7 @@ jobs:
             const rcName = images[0] ? images[0].ref.split(':').pop() : `rc.${context.runNumber}`;
 
             let body = `${marker}\n## Release candidate \`${rcName}\`\n\n`;
-            body += `Built from ${sha} — [workflow run](${runUrl}). `;
+            body += `Current for head \`${sha.slice(0, 8)}\` — [workflow run](${runUrl}).\n`;
             body += `Every push to this branch mints a new RC; earlier RCs stay pullable.\n\n`;
             body += `### Images (linux/amd64)\n\n`;
             for (const i of images) {
@@ -486,15 +486,22 @@ jobs:
               owner: context.repo.owner, repo: context.repo.repo,
               issue_number: context.issue.number, per_page: 100,
             });
-            const existing = comments.find(c => c.body && c.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner, repo: context.repo.repo,
-                comment_id: existing.id, body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner, repo: context.repo.repo,
-                issue_number: context.issue.number, body,
+            const stale = comments.filter(c => c.body && c.body.includes(marker));
+
+            // Post first, delete second: the PR is never left without a
+            // candidate to test if the second call fails.
+            //
+            // Reposting rather than editing in place is the whole point.
+            // GitHub anchors an edited comment at its original position and
+            // hides the update behind a small "edited" marker, so a refreshed
+            // RC was invisible unless you went looking for it. A new comment
+            // carries its own timestamp, which is the freshness signal.
+            await github.rest.issues.createComment({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.issue.number, body,
+            });
+            for (const c of stale) {
+              await github.rest.issues.deleteComment({
+                owner: context.repo.owner, repo: context.repo.repo, comment_id: c.id,
               });
             }
