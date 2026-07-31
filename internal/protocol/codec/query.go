@@ -144,6 +144,22 @@ func decodeStruct(values url.Values, rv reflect.Value, prefix string) *protocol.
 	// Collect map entries: {baseKey: map[int]url.Values}
 	mapEntries := map[string][]listMember{}
 
+	// collect records one wire key under base at the given 1-indexed position,
+	// keeping whatever key parts remain for the element decode.
+	collect := func(dst map[string][]listMember, base, idx1 string, rest []string, vals []string) bool {
+		idx, err := strconv.Atoi(idx1)
+		if err != nil {
+			return false
+		}
+		dst[base] = append(dst[base], listMember{idx: idx - 1, values: url.Values{strings.Join(rest, "."): vals}})
+		return true
+	}
+	// isSliceField reports whether the target struct field for base is a slice.
+	isSliceField := func(base string) bool {
+		fieldIdx, ok := fieldByJSON[base]
+		return ok && rv.Field(fieldIdx).Kind() == reflect.Slice
+	}
+
 	for key, vals := range values {
 		if len(vals) == 0 {
 			continue
@@ -159,42 +175,30 @@ func decodeStruct(values url.Values, rv reflect.Value, prefix string) *protocol.
 			continue
 		}
 
-		// Check for list: Foo.member.N or Foo.member.N.Bar
-		if len(parts) >= 2 && strings.HasPrefix(parts[1], "member") && len(parts) > 2 {
-			base := parts[0]
-			idx, err := strconv.Atoi(parts[2])
-			if err != nil {
+		// The four indexed wire forms, most specific first:
+		//   Foo.member.N[.Bar]   standard Query list
+		//   Foo.entry.N.key/…    Query map
+		//   Foo.N[.Bar]          flattened (EC2) list
+		//   Foo.<name>.N[.Bar]   list whose member has a model locationName —
+		//                        RDS sends SubnetIds.SubnetIdentifier.N, never
+		//                        SubnetIds.member.N, and every AWS SDK follows
+		//                        the model. Claimed only when the target field
+		//                        is actually a slice, so nested-struct keys
+		//                        keep flowing to decodeStruct below.
+		switch {
+		case len(parts) > 2 && strings.HasPrefix(parts[1], "member"):
+			if collect(listMembers, parts[0], parts[2], parts[3:], vals) {
 				continue
 			}
-			// 1-indexed → 0-indexed
-			idx--
-			remainingKey := strings.Join(parts[3:], ".")
-			listMembers[base] = append(listMembers[base], listMember{idx: idx, values: url.Values{remainingKey: vals}})
+		case len(parts) >= 3 && strings.HasPrefix(parts[1], "entry"):
+			if collect(mapEntries, parts[0], parts[2], parts[3:], vals) {
+				continue
+			}
+		}
+		if len(parts) >= 2 && collect(listMembers, parts[0], parts[1], parts[2:], vals) {
 			continue
 		}
-
-		// Check for flattened EC2 Query lists: Foo.N or Foo.N.Bar.
-		if len(parts) >= 2 {
-			idx, err := strconv.Atoi(parts[1])
-			if err == nil {
-				base := parts[0]
-				idx--
-				remainingKey := strings.Join(parts[2:], ".")
-				listMembers[base] = append(listMembers[base], listMember{idx: idx, values: url.Values{remainingKey: vals}})
-				continue
-			}
-		}
-
-		// Check for map entry: Attributes.entry.N.key=K and Attributes.entry.N.value=V
-		if len(parts) >= 3 && strings.HasPrefix(parts[1], "entry") {
-			base := parts[0]
-			idx, err := strconv.Atoi(parts[2])
-			if err != nil {
-				continue
-			}
-			idx-- // 1-indexed → 0-indexed
-			remainingKey := strings.Join(parts[3:], ".")
-			mapEntries[base] = append(mapEntries[base], listMember{idx: idx, values: url.Values{remainingKey: vals}})
+		if len(parts) >= 3 && isSliceField(parts[0]) && collect(listMembers, parts[0], parts[2], parts[3:], vals) {
 			continue
 		}
 
@@ -268,10 +272,26 @@ func decodeStruct(values url.Values, rv reflect.Value, prefix string) *protocol.
 		if mapType.Key().Kind() != reflect.String {
 			continue
 		}
-		newMap := reflect.MakeMap(mapType)
+		// Each wire key arrives as its own entry — Attributes.entry.1.key and
+		// Attributes.entry.1.value are collected separately — so merge by
+		// index first. Reading key and value off a single entry loses
+		// whichever half arrived in the other one: the map decoded to
+		// {"K": ""} and the value was silently dropped.
+		merged := map[int]url.Values{}
 		for _, e := range entries {
-			k := e.values.Get("key")
-			v := e.values.Get("value")
+			m := merged[e.idx]
+			if m == nil {
+				m = url.Values{}
+				merged[e.idx] = m
+			}
+			for k, vs := range e.values {
+				m[k] = append(m[k], vs...)
+			}
+		}
+		newMap := reflect.MakeMap(mapType)
+		for _, e := range merged {
+			k := e.Get("key")
+			v := e.Get("value")
 			if k == "" {
 				continue
 			}
