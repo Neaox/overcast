@@ -130,6 +130,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [release] the release summary comment lists the entries as they will read in the changelog rather than only counting them, with breaking changes and their migration notes first
 
+- [ci] the release-candidate comment is reposted on each build instead of edited in place, so its own timestamp shows when it last changed — GitHub anchors an edited comment at its original position and hides the update behind an "edited" marker, which made a refreshed RC invisible. The new comment is posted before the old one is removed, so a release PR is never left without a candidate to test, and the header now names the head commit it was built for
+
 ### Fixed
 
 - [ci] compat baseline auto-promotion works again as a PR-based flow: the old direct push to `main` had been rejected by branch protection on every run since required-check enforcement (#393), silently stranding improvements (#440). The workflow now force-pushes a coalescing `automation/baseline-promotion` branch and auto-merges it through the normal required checks, using GitHub App credentials; until the App secrets are configured it emits an accurate warning instead of the old false "will retry" message
@@ -169,6 +171,14 @@ can be applied mechanically rather than reconstructed from memory.
 - [routing] host classification no longer allocates intermittently on host-routed requests: the region-shape check used a package `regexp`, whose pooled matcher state is only amortized allocation-free (and is deliberately dropped at random under the race detector, which made `TestHostClassifier_lowercaseHostStaysAllocationFree` flake in CI); it is now a hand-rolled matcher pinned to the old regexp by an oracle test
 
 - [lambda] `X-Amz-Log-Result` could come back without the handler's own output — just the `START`/`END`/`REPORT` lines the emulator writes itself. The wait that lets Docker's log stream catch up keyed off a container-lifetime watermark, so it could not tell "nothing read yet" from "nothing to read", and returned early on cold containers and warm reuse alike
+
+- [ci] a release-candidate build is skipped when the build context is unchanged: the image is content-addressed by a hash of the paths `.dockerignore` allowlists plus the build args, carried as a second tag, so an unchanged context is retagged registry-side in seconds instead of rebuilt. Safe because `.dockerignore` ignores everything and then allowlists — anything Docker can see is in the hash, and anything it cannot see cannot affect the image. The candidate comment states which happened
+
+- [ci] release-candidate images are stamped with the release version; they were built without the `VERSION` build arg and so reported `dev`
+
+- [ci] the release-candidate content hash covers only what can actually reach the image — the compiled `cmd/overcast`, the files the runtime stage copies, and what `embed.go` embeds — so a candidate is not rebuilt for a change that cannot alter it. Go test files and `testdata/` are dropped because the toolchain excludes them from `go build`; other `cmd/*` trees because a `package main` cannot be imported; and `docs/plans`, `docs/dev` and `docs/generated` because `embed.go` deliberately does not embed them and the runtime stages copy in nothing but the binary. Measured over 40 commits, half no longer trigger a rebuild
+
+- [ci] release-candidate images are now built for linux/amd64 and linux/arm64, the same platforms a release publishes. They were built only for the CI runner, so pulling one on an arm64 host ran emulated amd64 bits — for an emulator that itself launches containers that is a different environment rather than merely a slower one, and it made a platform problem indistinguishable from a regression
 
 ## [0.0.1-alpha.27] - 2026-07-30
 
