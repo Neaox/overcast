@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -202,6 +205,67 @@ class AssembleTest(unittest.TestCase):
 			"- no-area fix\n",
 			output,
 		)
+
+
+class StdioEncodingTest(unittest.TestCase):
+	# Fragment bodies routinely contain non-cp1252 characters ('→' in perf
+	# entries, '—' in feature entries). Windows consoles default to cp1252, so
+	# the script must not inherit the ambient stdout encoding. PYTHONIOENCODING
+	# reproduces that default on any platform.
+	def test_assemble_writes_non_cp1252_body_to_cp1252_stdout(self) -> None:
+		root = write_dir(
+			{
+				"20260731-perf.md": (
+					"---\n"
+					"section: Changed\n"
+					"area: lambda\n"
+					"---\n"
+					"\n"
+					"- [lambda] cold start p50 ~355 ms → ~300 ms\n"
+				)
+			}
+		)
+		env = dict(os.environ, PYTHONIOENCODING="cp1252")
+
+		result = subprocess.run(
+			[
+				sys.executable,
+				str(Path(__file__).with_name("changelog.py")),
+				"--fragments-dir",
+				str(root),
+				"assemble",
+				"0.0.1-alpha.28",
+				"--date",
+				"2026-07-31",
+			],
+			capture_output=True,
+			env=env,
+		)
+
+		self.assertEqual(0, result.returncode, result.stderr.decode("utf-8", "replace"))
+		self.assertIn("~355 ms → ~300 ms", result.stdout.decode("utf-8"))
+
+	def test_check_reports_non_cp1252_path_to_cp1252_stdout(self) -> None:
+		root = write_dir({"20260731-uni→code.md": VALID_FRAGMENT})
+		changelog_path = write_dir({"CHANGELOG.md": "# Changelog\n\n## [Unreleased]\n"})
+		env = dict(os.environ, PYTHONIOENCODING="cp1252")
+
+		result = subprocess.run(
+			[
+				sys.executable,
+				str(Path(__file__).with_name("changelog.py")),
+				"--fragments-dir",
+				str(root),
+				"--changelog",
+				str(changelog_path / "CHANGELOG.md"),
+				"check",
+			],
+			capture_output=True,
+			env=env,
+		)
+
+		self.assertIn("uni→code.md", result.stdout.decode("utf-8"))
+		self.assertNotIn(b"UnicodeEncodeError", result.stderr)
 
 
 if __name__ == "__main__":

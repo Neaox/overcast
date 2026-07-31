@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -191,6 +194,52 @@ class CheckReleaseChangelogTest(unittest.TestCase):
 		)
 
 		self.assertEqual([], errors)
+
+
+class StdioEncodingTest(unittest.TestCase):
+	# Same reason as scripts/changelog_test.py: error lines echo fragment file
+	# names, which are not guaranteed to be cp1252-encodable, and the Windows
+	# console default is cp1252. PYTHONIOENCODING reproduces it on any platform.
+	def test_reports_non_cp1252_fragment_name_to_cp1252_stdout(self) -> None:
+		path = write_changelog(
+			"""
+# Changelog
+
+## [Unreleased]
+
+## [0.0.1-alpha.2] - 2026-07-22
+
+### Fixed
+
+- Fix.
+
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.2...HEAD
+[0.0.1-alpha.2]: https://github.com/Neaox/overcast/releases/tag/v0.0.1-alpha.2
+"""
+		)
+		fragments_dir = path.parent / ".changelog"
+		fragments_dir.mkdir()
+		(fragments_dir / "20260731-uni→code.md").write_text(
+			"---\nsection: Fixed\n---\n\n- forgotten\n", encoding="utf-8"
+		)
+		env = dict(os.environ, PYTHONIOENCODING="cp1252")
+
+		result = subprocess.run(
+			[
+				sys.executable,
+				str(SCRIPT),
+				"0.0.1-alpha.2",
+				"--changelog",
+				str(path),
+				"--fragments-dir",
+				str(fragments_dir),
+			],
+			capture_output=True,
+			env=env,
+		)
+
+		self.assertIn("uni→code.md", result.stdout.decode("utf-8"))
+		self.assertNotIn(b"UnicodeEncodeError", result.stderr)
 
 
 if __name__ == "__main__":
