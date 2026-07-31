@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"net/http"
-	"regexp"
+	"strings"
 )
 
 // hostroute.go implements ONE general grammar + dispatch table for AWS
@@ -97,10 +97,67 @@ var nonHyphenatedLabelRationale = map[string]string{
 	LabelCloudFront: "AWS brand term; {distributionId}.cloudfront.net is the real distribution address",
 }
 
-// awsRegionPattern matches AWS region shapes: us-east-1, ap-southeast-2,
+// isAWSRegionShaped matches AWS region shapes: us-east-1, ap-southeast-2,
 // us-gov-west-1, us-iso-east-1, etc. Used to decide whether the host segment
 // right after the label is a region or already the start of {base}.
-var awsRegionPattern = regexp.MustCompile(`^[a-z]{2}(-gov|-iso[a-z]*)?-[a-z]+-\d$`)
+//
+// It is the pattern `^[a-z]{2}(-gov|-iso[a-z]*)?-[a-z]+-\d$` evaluated by
+// hand rather than a package-level regexp because it sits on Classify's
+// per-request path, which is specified allocation-free: regexp matching
+// borrows its machine from an internal sync.Pool, so it is only *amortized*
+// allocation-free — and under the race detector sync.Pool deliberately drops
+// items at random, which made the allocation-free regression test flake on CI
+// (-race) runs. Dash-splitting makes the pattern unambiguous (no segment may
+// contain '-', so each alternative fixes the segment count), so no
+// backtracking is needed. TestIsAWSRegionShaped_matchesRegexpOracle pins this
+// function to the regexp it replaced.
+func isAWSRegionShaped(s string) bool {
+	// Split on '-' into at most four segments; more can never match.
+	var segs [4]string
+	n := 0
+	start := 0
+	for i := 0; i <= len(s); i++ {
+		if i < len(s) && s[i] != '-' {
+			continue
+		}
+		if n == len(segs) {
+			return false
+		}
+		segs[n] = s[start:i]
+		n++
+		start = i + 1
+	}
+	if n < 3 {
+		return false
+	}
+	// ^[a-z]{2}, ... -[a-z]+ ... , and -\d$ hold in every alternative.
+	if len(segs[0]) != 2 || !isLowerAlpha(segs[0]) {
+		return false
+	}
+	if last := segs[n-1]; len(last) != 1 || last[0] < '0' || last[0] > '9' {
+		return false
+	}
+	if segs[n-2] == "" || !isLowerAlpha(segs[n-2]) {
+		return false
+	}
+	if n == 3 {
+		return true
+	}
+	// Four segments: the second must be the optional (-gov|-iso[a-z]*) group.
+	return segs[1] == "gov" || (strings.HasPrefix(segs[1], "iso") && isLowerAlpha(segs[1][3:]))
+}
+
+// isLowerAlpha reports whether s is entirely a-z. The empty string is
+// lower-alpha: it is the `[a-z]*` remainder of a bare "iso" group — callers
+// needing `[a-z]+` check non-emptiness themselves.
+func isLowerAlpha(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 'a' || s[i] > 'z' {
+			return false
+		}
+	}
+	return true
+}
 
 // HostRouteMatch is a successfully parsed Host-based AWS endpoint address.
 type HostRouteMatch struct {

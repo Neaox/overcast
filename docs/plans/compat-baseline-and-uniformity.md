@@ -136,12 +136,14 @@ Quarantine is containment. The plan to actually remove it:
    `quarantine-approved` label to the PR (see AGENTS.md — added when the #414
    quarantine had no green path after admin merges were retired).
 
-Out of scope here but worth naming: the Go suite has its own instability —
-`TestHostClassifier_lowercaseHostStaysAllocationFree` asserts an exact
-allocation count via `testing.AllocsPerRun` under `-race`, which is
-environment-sensitive and has failed spuriously on an unrelated PR. It needs the
-same treatment (assert a ceiling, or drop `-race` for that test), tracked
-separately from compat.
+Out of scope here but worth naming: the Go suite had its own instability —
+`TestHostClassifier_lowercaseHostStaysAllocationFree` failed spuriously under
+`-race` on unrelated PRs (#427 most recently). Root cause was in the code, not
+the test: `regionSegment` matched regions with a package `regexp`, whose
+matcher state lives in a `sync.Pool` — under `-race` the pool deliberately
+drops items at random, so Classify allocated on some windows. Fixed by
+hand-rolling the region-shape match (`isAWSRegionShaped`, pinned to the regexp
+by an oracle test); the assertion itself was right and is unchanged.
 
 ## Outstanding — fix the quarantined flake
 

@@ -1,0 +1,6 @@
+---
+section: Fixed
+area: routing
+---
+
+- [routing] host classification no longer allocates intermittently on host-routed requests: the region-shape check used a package `regexp`, whose pooled matcher state is only amortized allocation-free (and is deliberately dropped at random under the race detector, which made `TestHostClassifier_lowercaseHostStaysAllocationFree` flake in CI); it is now a hand-rolled matcher pinned to the old regexp by an oracle test
