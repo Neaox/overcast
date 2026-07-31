@@ -560,7 +560,7 @@ class FoldEntriesTest(unittest.TestCase):
 		self.assertEqual([], errors)
 		return changelog.fold_entries(FOLD_FIXTURE, version, entries)
 
-	def test_appends_under_the_existing_category(self) -> None:
+	def test_adds_under_the_existing_category(self) -> None:
 		result = self.fold("+ [lambda] a new feature\n")
 
 		self.assertIn(
@@ -569,6 +569,28 @@ class FoldEntriesTest(unittest.TestCase):
 			"- [lambda] a new feature\n",
 			result,
 		)
+
+	def test_places_a_bullet_beside_its_own_area(self) -> None:
+		# Otherwise a second [sqs] entry lands at the end of the category,
+		# away from the bullet it belongs with.
+		result = self.fold("+ [sqs] more long polling\n+ [zzz] unrelated\n")
+
+		added = result.index("### Added")
+		fixed = result.index("### Fixed")
+		category = result[added:fixed]
+		self.assertLess(
+			category.index("- [sqs] more long polling"), category.index("- [zzz] unrelated")
+		)
+		self.assertLess(
+			category.index("**SQS (long polling)**"), category.index("- [sqs] more long polling")
+		)
+
+	def test_matches_a_curated_display_heading(self) -> None:
+		# Curated bullets lead with '**Lambda (concurrency)**', not '[lambda]'.
+		self.assertEqual("sqs", changelog.bullet_area("- **SQS (long polling)** — text"))
+		self.assertEqual("lambda", changelog.bullet_area("- [lambda/efs] text"))
+		self.assertEqual("state", changelog.bullet_area("- **BREAKING** [state] text"))
+		self.assertEqual("", changelog.bullet_area("- plain prose with no area"))
 
 	def test_never_rewrites_a_curated_bullet(self) -> None:
 		# The property that makes folding safe to run unattended.

@@ -448,13 +448,64 @@ def insert_category(body: str, name: str, block: str) -> str:
     return body.rstrip("\n") + f"\n\n### {name}\n\n{block}\n"
 
 
-def fold_entries(changelog: str, version: str, entries: list[Entry]) -> str:
-    """Append entries to an existing '## [version]' section.
+# The area a bullet is about, for placing a new one beside its own kind.
+# Two shapes exist in released sections: the generated '- [sqs] …' prefix, and
+# the curated '- **Lambda (concurrency)** — …' display heading.
+BULLET_LEAD = re.compile(
+    r"^- (?:\*\*BREAKING\*\* )?(?:\[(?P<tag>[^\]]+)\]|\*\*(?P<title>[^*]+)\*\*)"
+)
 
-    Existing bullets are never read, reordered or rewritten — new ones are
-    appended to the end of their category. That is what makes this safe to run
-    unattended: curation already done survives, and folding is additive rather
-    than a regeneration that would discard it.
+
+def bullet_area(bullet: str) -> str:
+    """Best-effort area of an existing bullet; '' when it cannot be told."""
+    match = BULLET_LEAD.match(bullet)
+    if match is None:
+        return ""
+    if match.group("tag"):
+        return match.group("tag").split("/")[0].strip().lower()
+    lead = re.split(r"[\s(/,]", match.group("title").strip())[0]
+    return re.sub(r"[^a-z0-9-]", "", lead.lower())
+
+
+def split_bullets(body: str) -> list[str]:
+    """Split a category body into one string per bullet, continuations kept."""
+    starts = [m.start() for m in re.finditer(r"^- ", body, flags=re.M)]
+    if not starts:
+        return []
+    bounds = starts + [len(body)]
+    return [body[bounds[i] : bounds[i + 1]].rstrip("\n") for i in range(len(starts))]
+
+
+def place_in_category(body: str, bullets: list[str]) -> str:
+    """Add bullets to a category body, each beside same-area bullets.
+
+    Existing bullets are never reordered or rewritten — placement only decides
+    where a new one is inserted. A bullet whose area matches nothing existing
+    goes at the end, which is what every bullet did before.
+    """
+    existing = split_bullets(body)
+    if not existing:
+        return body.rstrip("\n") + "\n\n" + "\n\n".join(bullets) + "\n"
+    for bullet in bullets:
+        area = bullet_area(bullet)
+        index = len(existing)
+        if area:
+            matches = [i for i, other in enumerate(existing) if bullet_area(other) == area]
+            if matches:
+                index = matches[-1] + 1
+        existing.insert(index, bullet)
+    return "\n\n".join(existing) + "\n"
+
+
+def fold_entries(changelog: str, version: str, entries: list[Entry]) -> str:
+    """Add entries to an existing '## [version]' section.
+
+    Existing bullets are never rewritten, reordered or removed — a new one is
+    only inserted, next to bullets about the same area when there are any so
+    the section stays grouped as it grows, otherwise at the end of its
+    category. That is what makes this safe to run unattended: curation already
+    done survives, because folding is additive rather than a regeneration that
+    would discard it.
     """
     start, end = section_bounds(changelog, version)
     body = changelog[start:end]
@@ -462,17 +513,20 @@ def fold_entries(changelog: str, version: str, entries: list[Entry]) -> str:
         picked = sort_entries([entry for entry in entries if entry.section == name])
         if not picked:
             continue
-        block = "\n\n".join("\n".join(render_bullet(entry)) for entry in picked)
+        bullets = ["\n".join(render_bullet(entry)) for entry in picked]
         heading = re.search(rf"^### {re.escape(name)}\s*$", body, flags=re.M)
         if heading is None:
-            body = insert_category(body, name, block)
+            body = insert_category(body, name, "\n\n".join(bullets))
             continue
         after = body[heading.end() :]
         following = re.search(r"^### ", after, flags=re.M)
         cut = heading.end() + (following.start() if following else len(after))
+        category = place_in_category(body[heading.end() : cut], bullets)
         body = (
-            body[:cut].rstrip("\n")
-            + f"\n\n{block}\n\n"
+            body[: heading.end()]
+            + "\n\n"
+            + category.strip("\n")
+            + "\n\n"
             + body[cut:].lstrip("\n")
         )
     return changelog[:start] + body + changelog[end:]
