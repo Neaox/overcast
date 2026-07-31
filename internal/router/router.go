@@ -662,6 +662,12 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		dockerServices["eks"] = docker.ServiceConfig{Name: "eks", Socket: cfg.EKSDockerSocket, Network: cfg.EKSNetwork}
 		dockerSetters["eks"] = eksSvc.SetDocker
 	}
+	// EFS live mode manages named volumes only — empty Network skips static
+	// network creation in the Supervisor probe.
+	if cfg.EFSMode == config.EFSModeLive && cfg.EFSDockerSocket != "" {
+		dockerServices["efs"] = docker.ServiceConfig{Name: "efs", Socket: cfg.EFSDockerSocket, Network: ""}
+		dockerSetters["efs"] = efsSvc.SetDocker
+	}
 	if len(dockerServices) > 0 {
 		dockerSup := docker.NewSupervisor(bus, logger)
 		cleanups = append(cleanups, dockerSup.Close)
@@ -669,7 +675,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		go func() {
 			// Collect configs in deterministic order.
 			var configs []docker.ServiceConfig
-			for _, name := range []string{"lambda", "rds", "elasticache", "msk", "ecs", "ec2", "eks"} {
+			for _, name := range []string{"lambda", "rds", "elasticache", "msk", "ecs", "ec2", "eks", "efs"} {
 				if sc, ok := dockerServices[name]; ok {
 					configs = append(configs, sc)
 				}

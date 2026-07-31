@@ -17,12 +17,14 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"sync/atomic"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/lifecycle"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/protocol/codec"
@@ -46,6 +48,11 @@ type Service struct {
 	log       *serviceutil.ServiceLogger
 	scheduler *lifecycle.Scheduler
 	typedOp   map[string]op.Operation
+
+	// docker backs live-mode volumes (OVERCAST_EFS_MODE=live); nil until the
+	// router's Docker probe succeeds. See live_volumes.go.
+	docker      *docker.Client
+	dockerReady atomic.Bool
 }
 
 // New returns a configured EFS service. Pure field assignment — no store

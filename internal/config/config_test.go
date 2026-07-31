@@ -1083,6 +1083,44 @@ func TestLoad_eksModeRejectsInvalidValues(t *testing.T) {
 	}
 }
 
+func TestLoad_efsModeDefaultsToMock(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.EFSMode != config.EFSModeMock {
+		t.Fatalf("EFSMode: expected %q, got %q", config.EFSModeMock, cfg.EFSMode)
+	}
+}
+
+func TestLoad_efsModeLive(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_EFS_MODE", "live")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.EFSMode != config.EFSModeLive {
+		t.Fatalf("EFSMode: expected %q, got %q", config.EFSModeLive, cfg.EFSMode)
+	}
+}
+
+func TestLoad_efsModeRejectsInvalidValues(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_EFS_MODE", "nfs")
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected error for invalid OVERCAST_EFS_MODE, got nil")
+	}
+	if got := err.Error(); got == "" || !containsAll(got, "OVERCAST_EFS_MODE", "mock", "live") {
+		t.Fatalf("unexpected error message: %q", got)
+	}
+}
+
 func TestLoad_eksDockerDefaults(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("LAMBDA_DOCKER_SOCKET", "tcp://dind:2375")
