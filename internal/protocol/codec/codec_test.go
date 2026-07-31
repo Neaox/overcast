@@ -153,6 +153,81 @@ func TestQueryXML_DecodeFormValues(t *testing.T) {
 	}
 }
 
+func TestQueryXML_DecodeNamedListMembers(t *testing.T) {
+	// Given: the Query protocol's renamed-member list form. When a model gives
+	// a list's member a locationName, every AWS SDK serialises
+	// Field.<locationName>.N instead of Field.member.N — RDS SubnetIds is
+	// SubnetIds.SubnetIdentifier.N. This is the wire shape real SDKs send, and
+	// dropping it made every compat suite's CreateDBSubnetGroup fail with
+	// "At least one SubnetId is required".
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(
+		"DBSubnetGroupName=grp"+
+			"&SubnetIds.SubnetIdentifier.1=subnet-00000000"+
+			"&SubnetIds.SubnetIdentifier.2=subnet-00000001"))
+	var in struct {
+		DBSubnetGroupName string   `json:"DBSubnetGroupName"`
+		SubnetIds         []string `json:"SubnetIds"`
+	}
+
+	// When: it is decoded
+	if aerr := QueryXML.Decode(r, &in); aerr != nil {
+		t.Fatalf("unexpected error: %v", aerr)
+	}
+
+	// Then: the list arrives intact and ordered
+	if in.DBSubnetGroupName != "grp" {
+		t.Errorf("DBSubnetGroupName = %q, want grp", in.DBSubnetGroupName)
+	}
+	if len(in.SubnetIds) != 2 || in.SubnetIds[0] != "subnet-00000000" || in.SubnetIds[1] != "subnet-00000001" {
+		t.Errorf("SubnetIds = %#v, want the two subnets in order", in.SubnetIds)
+	}
+}
+
+func TestQueryXML_DecodeNamedListMembersOfStructs(t *testing.T) {
+	// Given: the same renamed-member form carrying struct members
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(
+		"Tags.Tag.1.Key=env&Tags.Tag.1.Value=prod&Tags.Tag.2.Key=team"))
+	var in struct {
+		Tags []struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"Tags"`
+	}
+
+	// When/Then: members decode with their fields
+	if aerr := QueryXML.Decode(r, &in); aerr != nil {
+		t.Fatalf("unexpected error: %v", aerr)
+	}
+	if len(in.Tags) != 2 || in.Tags[0].Key != "env" || in.Tags[0].Value != "prod" || in.Tags[1].Key != "team" {
+		t.Errorf("Tags = %#v", in.Tags)
+	}
+}
+
+func TestQueryXML_NamedMemberFormDoesNotSwallowNestedStructs(t *testing.T) {
+	// Given: a nested struct field whose key shape (Foo.Bar) resembles the
+	// named-member form but has no numeric index, plus a map in entry form
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(
+		"Config.Name=n&Attributes.entry.1.key=K&Attributes.entry.1.value=V"))
+	var in struct {
+		Config struct {
+			Name string `json:"Name"`
+		} `json:"Config"`
+		Attributes map[string]string `json:"Attributes"`
+	}
+
+	// When/Then: both keep decoding through their own paths — the new list
+	// branch only claims keys whose target field is a slice
+	if aerr := QueryXML.Decode(r, &in); aerr != nil {
+		t.Fatalf("unexpected error: %v", aerr)
+	}
+	if in.Config.Name != "n" {
+		t.Errorf("Config.Name = %q, want n", in.Config.Name)
+	}
+	if in.Attributes["K"] != "V" {
+		t.Errorf("Attributes = %#v, want K:V", in.Attributes)
+	}
+}
+
 type queryResp struct {
 	XMLName any    `xml:"ListQueuesResponse"`
 	Result  string `xml:"ListQueuesResult"`

@@ -198,6 +198,24 @@ func decodeStruct(values url.Values, rv reflect.Value, prefix string) *protocol.
 			continue
 		}
 
+		// Check for named list members: Foo.<locationName>.N or
+		// Foo.<locationName>.N.Bar. When a model gives a list's member a
+		// locationName, the Query protocol renames the member key and every
+		// AWS SDK serialises the renamed form — RDS sends
+		// SubnetIds.SubnetIdentifier.N, never SubnetIds.member.N. Claim the
+		// key only when the target field is actually a slice, so nested-struct
+		// keys keep flowing to decodeStruct below.
+		if len(parts) >= 3 {
+			if idx, err := strconv.Atoi(parts[2]); err == nil {
+				if fieldIdx, ok := fieldByJSON[parts[0]]; ok && rv.Field(fieldIdx).Kind() == reflect.Slice {
+					base := parts[0]
+					remainingKey := strings.Join(parts[3:], ".")
+					listMembers[base] = append(listMembers[base], listMember{idx: idx - 1, values: url.Values{remainingKey: vals}})
+					continue
+				}
+			}
+		}
+
 		// Simple field or dot-separated struct field
 		fieldIdx, ok := fieldByJSON[parts[0]]
 		if !ok {
@@ -268,10 +286,26 @@ func decodeStruct(values url.Values, rv reflect.Value, prefix string) *protocol.
 		if mapType.Key().Kind() != reflect.String {
 			continue
 		}
-		newMap := reflect.MakeMap(mapType)
+		// Each wire key arrives as its own entry — Attributes.entry.1.key and
+		// Attributes.entry.1.value are collected separately — so merge by
+		// index first. Reading key and value off a single entry loses
+		// whichever half arrived in the other one: the map decoded to
+		// {"K": ""} and the value was silently dropped.
+		merged := map[int]url.Values{}
 		for _, e := range entries {
-			k := e.values.Get("key")
-			v := e.values.Get("value")
+			m := merged[e.idx]
+			if m == nil {
+				m = url.Values{}
+				merged[e.idx] = m
+			}
+			for k, vs := range e.values {
+				m[k] = append(m[k], vs...)
+			}
+		}
+		newMap := reflect.MakeMap(mapType)
+		for _, e := range merged {
+			k := e.Get("key")
+			v := e.Get("value")
 			if k == "" {
 				continue
 			}
