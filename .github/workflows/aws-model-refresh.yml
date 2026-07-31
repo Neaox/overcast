@@ -27,12 +27,12 @@ jobs:
       MODEL_CHECKOUT: /tmp/overcast-api-models-aws
 
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           token: ${{ secrets.AWS_MODELS_PR_TOKEN || github.token }}
 
-      - uses: actions/setup-go@v6.5.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: true
@@ -100,7 +100,7 @@ jobs:
 
       - name: Restore the verified upstream Git mirror
         if: steps.upstream.outputs.changed == 'true' && steps.branch.outputs.refresh_needed == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.MODEL_MIRROR }}
           key: aws-api-models-${{ runner.os }}-${{ steps.upstream.outputs.latest_revision }}
