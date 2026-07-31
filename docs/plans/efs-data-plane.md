@@ -97,6 +97,21 @@ today's behaviour) vs `OVERCAST_EFS_MODE=live`.
    readiness probing, port publishing, and cleanup discipline (follow the
    RDS container lifecycle patterns).
 
+## Known limitations (accepted or in flight)
+
+- **Access-point root directories are not yet honored by mounts** — Lambda/ECS
+  containers currently see the volume root regardless of the access point's
+  `RootDirectory` (or ECS `rootDirectory`). Docker's `Mounts` API
+  (`VolumeOptions.Subpath`, Engine API v1.45) is the implementation path;
+  being addressed as its own change.
+- **Creation-token idempotency has a check-then-write race** under concurrent
+  identical `CreateFileSystem` calls — the shared `state.Store` has no
+  transactions, and every service carries the same class of race. Accepted.
+- **Volume removal while a container still mounts the volume** fails with 409;
+  the delete path retries a few times (30 s apart) and startup reconciliation
+  is the backstop, so an orphan can outlive a session only if the emulator
+  never restarts.
+
 ## Open questions
 
 - Whether `Backup`/restore should snapshot the volume (probably not; AWS

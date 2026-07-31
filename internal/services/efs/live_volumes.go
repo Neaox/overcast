@@ -63,15 +63,38 @@ func (s *Service) ensureVolume(ctx context.Context, fsID string) {
 	}
 }
 
-// removeVolume removes the backing volume for a deleted file system.
+// Volume removal retry policy: a volume still held by a container (e.g. a
+// task that hasn't exited yet) fails with 409; a few spaced retries cover the
+// normal shutdown window, and startup reconciliation remains the backstop.
+const (
+	volumeRemoveRetries    = 3
+	volumeRemoveRetryDelay = 30 * time.Second
+)
+
+// removeVolume removes the backing volume for a deleted file system,
+// retrying while the volume is still in use.
 func (s *Service) removeVolume(ctx context.Context, fsID string) {
+	s.removeVolumeAttempt(ctx, fsID, 0)
+}
+
+func (s *Service) removeVolumeAttempt(ctx context.Context, fsID string, attempt int) {
 	if !s.volumesActive() {
 		return
 	}
-	if err := s.docker.RemoveVolume(ctx, volumeName(fsID), true); err != nil {
-		s.log.Warn("efs: remove volume failed — volume may be orphaned until reconciliation",
-			zap.String("file_system", fsID), zap.Error(err))
+	err := s.docker.RemoveVolume(ctx, volumeName(fsID), true)
+	if err == nil {
+		return
 	}
+	if attempt >= volumeRemoveRetries {
+		s.log.Warn("efs: remove volume failed after retries — orphaned until next startup reconciliation",
+			zap.String("file_system", fsID), zap.Error(err))
+		return
+	}
+	s.log.Warn("efs: remove volume failed — will retry",
+		zap.String("file_system", fsID), zap.Int("attempt", attempt+1), zap.Error(err))
+	s.scheduler.AfterScoped(s.region(ctx), fsID, "volume-remove", volumeRemoveRetryDelay, func(ctx context.Context) {
+		s.removeVolumeAttempt(ctx, fsID, attempt+1)
+	})
 }
 
 // EFSVolumeForAccessPoint implements the volume-resolver interface consumed
