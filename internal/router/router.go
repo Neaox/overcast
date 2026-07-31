@@ -487,8 +487,10 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	})
 	// Lambda → EC2: VPC resolver so Lambda can connect containers to VPC networks.
 	lambdaSvc.SetVPCResolver(ec2Svc)
-	// EFS → Lambda: FileSystemConfigs mount the backing volume in live mode.
+	// EFS → Lambda/ECS: FileSystemConfigs and efsVolumeConfiguration mount the
+	// backing volume in live mode.
 	lambdaSvc.SetEFSResolver(efsSvc)
+	ecsSvc.SetEFSResolver(efsSvc)
 	// ECS/RDS → EC2: resolve subnet-backed launches against VPC network state.
 	ecsSvc.SetVPCResolver(ec2Svc)
 	rdsSvc.SetVPCResolver(ec2Svc)

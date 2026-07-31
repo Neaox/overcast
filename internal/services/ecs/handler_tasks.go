@@ -253,6 +253,7 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 				Labels:       docker.ManagedLabels("ecs", resourceID),
 			},
 			HostConfig: &docker.HostConfig{AutoRemove: true,
+				Binds:        h.efsBindsForContainer(ctx, td, &td.ContainerDefinitions[i]),
 				NetworkMode:  h.cfg.ECSNetwork,
 				PortBindings: portBindings,
 				ExtraHosts:   endpoint.ExtraHosts(),
@@ -330,6 +331,47 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 // lazily rather than at SetDocker time keeps the ordering honest: the address
 // may be Overcast's own IP on the ECS network, which only exists once the
 // network has been created.
+// efsBindsForContainer resolves a container's mount points against the task
+// definition's EFS-backed volumes, returning Docker named-volume bind entries
+// ("volume:/path[:ro]"). Non-EFS volumes and unresolvable file systems (EFS
+// mock mode, Docker down, unknown ID) are skipped with a warning so the task
+// still starts — mirroring the best-effort posture of EFS live mode.
+func (h *Handler) efsBindsForContainer(ctx context.Context, td *TaskDefinition, cd *ContainerDefinition) []string {
+	if len(cd.MountPoints) == 0 || h.efsResolver == nil {
+		return nil
+	}
+	volumesByName := make(map[string]*TaskVolume, len(td.Volumes))
+	for i := range td.Volumes {
+		volumesByName[td.Volumes[i].Name] = &td.Volumes[i]
+	}
+	binds := make([]string, 0, len(cd.MountPoints))
+	for _, mp := range cd.MountPoints {
+		v := volumesByName[mp.SourceVolume]
+		if v == nil || v.EFSVolumeConfiguration == nil {
+			h.log.Warn("ecs: mount point skipped — source volume is not EFS-backed",
+				zap.String("container", cd.Name), zap.String("volume", mp.SourceVolume))
+			continue
+		}
+		volume, ok := h.efsResolver.EFSVolumeForFileSystem(ctx, v.EFSVolumeConfiguration.FileSystemId)
+		if !ok {
+			h.log.Warn("ecs: EFS mount skipped — file system has no backing volume (mock mode, Docker down, or unknown file system)",
+				zap.String("container", cd.Name),
+				zap.String("file_system", v.EFSVolumeConfiguration.FileSystemId),
+				zap.String("container_path", mp.ContainerPath))
+			continue
+		}
+		bind := volume + ":" + mp.ContainerPath
+		if mp.ReadOnly {
+			bind += ":ro"
+		}
+		binds = append(binds, bind)
+	}
+	if len(binds) == 0 {
+		return nil
+	}
+	return binds
+}
+
 func (h *Handler) containerEndpoint(ctx context.Context) *containerendpoint.Mapper {
 	h.endpointOnce.Do(func() {
 		// ResolveHost + BaseURL rather than Resolve: the endpoint scheme must

@@ -3890,7 +3890,7 @@
           "operation": "RegisterTaskDefinition",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Family:revision versioning; Fargate: validates awsvpc networkMode, cpu/memory required with valid combos"
+          "notes": "Family:revision versioning; Fargate: validates awsvpc networkMode, cpu/memory required with valid combos; volumes with efsVolumeConfiguration and container mountPoints supported (EFS volumes mounted in live mode)"
         },
         {
           "operation": "RunTask",

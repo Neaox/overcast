@@ -52,7 +52,7 @@ today's behaviour) vs `OVERCAST_EFS_MODE=live`.
   never breaks pure-control-plane CI.
 - `EFS_DOCKER_SOCKET` (default: Lambda socket) selects the daemon.
 
-### 2. Compute integration (the high-value step) — Lambda ✅ implemented
+### 2. Compute integration (the high-value step) — Lambda ✅ / ECS ✅ implemented
 
 - **Lambda** (implemented): `FileSystemConfigs [{Arn, LocalMountPath}]` is
   modeled on CreateFunction / UpdateFunctionConfiguration /
@@ -63,8 +63,13 @@ today's behaviour) vs `OVERCAST_EFS_MODE=live`.
   wired in the router) and binds `overcast-efs-<fsID>:<LocalMountPath>`;
   unresolvable configs (mock mode, Docker down, unknown access point) are
   skipped with a warning so the function still runs.
-- **ECS** (step 3, next): task definitions with an `efsVolumeConfiguration`
-  mount the same named volume into task containers.
+- **ECS** (implemented): task definitions model `volumes[]` (with
+  `efsVolumeConfiguration`) and container `mountPoints[]`, validated at
+  registration (mount points must reference a declared volume →
+  `ClientException`). At task start each container's mount points resolve
+  through ECS's own `EFSVolumeResolver` interface (by file system ID, in the
+  request region) and bind `overcast-efs-<fsID>:<containerPath>[:ro]`.
+  Non-EFS volumes are stored/echoed but not mounted.
 - Because both sides mount the *same* named volume, cross-service data
   sharing works without any NFS hop. This is the piece that unlocks real
   application testing (shared caches, model files, upload scratch space).

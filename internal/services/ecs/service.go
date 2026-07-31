@@ -66,6 +66,12 @@ func (s *Service) SetVPCResolver(r VPCNetworkResolver) {
 	s.handler.vpcResolver = r
 }
 
+// SetEFSResolver wires the EFS volume resolver so task containers can mount
+// efsVolumeConfiguration-backed volumes in EFS live mode.
+func (s *Service) SetEFSResolver(r EFSVolumeResolver) {
+	s.handler.efsResolver = r
+}
+
 // InitBus wires the event bus for ECS lifecycle events.
 func (s *Service) InitBus(bus *events.Bus) {
 	s.handler.bus = bus

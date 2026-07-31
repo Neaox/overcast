@@ -41,6 +41,7 @@ type Handler struct {
 	puller        *docker.ImagePuller
 	gc            *docker.GC
 	vpcResolver   VPCNetworkResolver
+	efsResolver   EFSVolumeResolver
 	seedMu        sync.Mutex      // guards seededRegions
 	seededRegions map[string]bool // regions where ensureBuiltinProviders has run
 
@@ -48,6 +49,14 @@ type Handler struct {
 	// containers can dial. Resolved on first task start — see containerEndpoint.
 	endpoint     *containerendpoint.Mapper
 	endpointOnce sync.Once
+}
+
+// EFSVolumeResolver maps an EFS file system ID to the Docker volume backing
+// it. Implemented by the EFS service; ok is false in EFS mock mode, while
+// Docker is unavailable, or for an unknown file system — the task then runs
+// without the mount rather than failing.
+type EFSVolumeResolver interface {
+	EFSVolumeForFileSystem(ctx context.Context, fileSystemID string) (volume string, ok bool)
 }
 
 // VPCNetworkResolver resolves subnet-backed ECS awsvpc placement against EC2.
@@ -346,6 +355,7 @@ func (h *Handler) RegisterTaskDefinition(w http.ResponseWriter, r *http.Request)
 		RequiresCompatibilities []string              `json:"requiresCompatibilities"`
 		Cpu                     string                `json:"cpu"`
 		Memory                  string                `json:"memory"`
+		Volumes                 []TaskVolume          `json:"volumes"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -356,6 +366,10 @@ func (h *Handler) RegisterTaskDefinition(w http.ResponseWriter, r *http.Request)
 			Message:    "Family is required.",
 			HTTPStatus: http.StatusBadRequest,
 		})
+		return
+	}
+	if aerr := validateTaskVolumes(req.Volumes, req.ContainerDefinitions); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
@@ -407,6 +421,7 @@ func (h *Handler) RegisterTaskDefinition(w http.ResponseWriter, r *http.Request)
 		Cpu:                     req.Cpu,
 		Memory:                  req.Memory,
 		ContainerDefinitions:    req.ContainerDefinitions,
+		Volumes:                 req.Volumes,
 	}
 	if aerr := h.store.putTaskDefinition(r.Context(), td); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
