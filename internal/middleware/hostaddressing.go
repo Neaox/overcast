@@ -326,7 +326,7 @@ func regionSegment(rest string) string {
 	if i := strings.IndexByte(rest, '.'); i >= 0 {
 		seg = rest[:i]
 	}
-	if awsRegionPattern.MatchString(seg) {
+	if isAWSRegionShaped(seg) {
 		return seg
 	}
 	return ""

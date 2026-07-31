@@ -130,7 +130,7 @@ func regionFromEndpointHost(hostname string) string {
 	if _, ok := regionalEndpointLabels[parts[1]]; !ok {
 		return ""
 	}
-	if !awsRegionPattern.MatchString(parts[2]) {
+	if !isAWSRegionShaped(parts[2]) {
 		return ""
 	}
 	return parts[2]
