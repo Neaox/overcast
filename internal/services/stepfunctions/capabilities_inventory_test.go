@@ -31,8 +31,16 @@ func TestCapabilities_MatchDispatchInventory(t *testing.T) {
 	// (same package, so it runs before any test).
 	caps := capabilities.Default.ForService("stepfunctions")
 	capsSet := make(map[string]struct{}, len(caps))
+	// docOnly holds capabilities that document AWS operations Overcast does not
+	// dispatch (unsupported operations that return 501 NotImplemented via the
+	// dispatch fallback). They are metadata only and are exempt from the
+	// dispatch cross-check.
+	docOnly := make(map[string]struct{})
 	for _, c := range caps {
 		capsSet[c.Operation] = struct{}{}
+		if c.DocOnly {
+			docOnly[c.Operation] = struct{}{}
+		}
 	}
 
 	// Every dispatch key must have a capability declaration.
@@ -47,15 +55,20 @@ func TestCapabilities_MatchDispatchInventory(t *testing.T) {
 		t.Errorf("operations in initOps but missing from capabilities_dev.go:\n  %v\nAdd a Capability entry for each.", missing)
 	}
 
-	// Every capability declaration must correspond to a real dispatch entry.
+	// Every non-DocOnly capability declaration must correspond to a real
+	// dispatch entry.
 	var phantom []string
 	for op := range capsSet {
-		if _, ok := dispatchSet[op]; !ok {
-			phantom = append(phantom, op)
+		if _, ok := dispatchSet[op]; ok {
+			continue
 		}
+		if _, ok := docOnly[op]; ok {
+			continue
+		}
+		phantom = append(phantom, op)
 	}
 	sort.Strings(phantom)
 	if len(phantom) > 0 {
-		t.Errorf("operations declared in capabilities_dev.go but absent from initOps:\n  %v\nEither add them to initOps (as stubs) or remove the capability entry.", phantom)
+		t.Errorf("operations declared in capabilities_dev.go but absent from initOps:\n  %v\nEither add them to initOps (as stubs), mark them DocOnly, or remove the capability entry.", phantom)
 	}
 }

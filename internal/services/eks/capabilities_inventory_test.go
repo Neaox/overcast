@@ -46,8 +46,15 @@ func TestCapabilities_MatchRouteInventory(t *testing.T) {
 
 	caps := capabilities.Default.ForService("eks")
 	capsSet := make(map[string]struct{}, len(caps))
+	// docOnly holds capabilities that document AWS operations Overcast does not
+	// serve (unsupported operations without a registered route). They are
+	// metadata only and are exempt from the route cross-check.
+	docOnly := make(map[string]struct{})
 	for _, c := range caps {
 		capsSet[c.Operation] = struct{}{}
+		if c.DocOnly {
+			docOnly[c.Operation] = struct{}{}
+		}
 	}
 
 	var inRoutesNotCaps []string
@@ -60,9 +67,13 @@ func TestCapabilities_MatchRouteInventory(t *testing.T) {
 
 	var inCapsNotRoutes []string
 	for op := range capsSet {
-		if _, ok := routeSet[op]; !ok {
-			inCapsNotRoutes = append(inCapsNotRoutes, op)
+		if _, ok := routeSet[op]; ok {
+			continue
 		}
+		if _, ok := docOnly[op]; ok {
+			continue
+		}
+		inCapsNotRoutes = append(inCapsNotRoutes, op)
 	}
 	sort.Strings(inCapsNotRoutes)
 
@@ -70,7 +81,7 @@ func TestCapabilities_MatchRouteInventory(t *testing.T) {
 		t.Errorf("operations in EKS routes but not in capabilities_dev.go:\n  %v\nAdd a Capability entry for each.", inRoutesNotCaps)
 	}
 	if len(inCapsNotRoutes) > 0 {
-		t.Errorf("operations in capabilities_dev.go but not in EKS routes:\n  %v\nRemove the stale Capability entry or add the missing route.", inCapsNotRoutes)
+		t.Errorf("operations in capabilities_dev.go but not in EKS routes:\n  %v\nRemove the stale Capability entry, mark it DocOnly, or add the missing route.", inCapsNotRoutes)
 	}
 }
 

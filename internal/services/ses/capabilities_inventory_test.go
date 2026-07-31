@@ -66,7 +66,7 @@ func TestCapabilities_MatchDispatchInventory(t *testing.T) {
 	}
 
 	// Every non-DocOnly capability declaration must correspond to a real
-	// dispatch entry.
+	// dispatch entry (or be one of the REST-only SES v2 routes above).
 	var phantom []string
 	for op := range capsSet {
 		if _, ok := dispatchSet[op]; ok {
@@ -82,7 +82,7 @@ func TestCapabilities_MatchDispatchInventory(t *testing.T) {
 	}
 	sort.Strings(phantom)
 	if len(phantom) > 0 {
-		t.Errorf("operations declared in capabilities_dev.go but absent from initOps:\n  %v\nEither add them to initOps (as stubs) or remove the capability entry.", phantom)
+		t.Errorf("operations declared in capabilities_dev.go but absent from initOps:\n  %v\nEither add them to initOps (as stubs), mark them DocOnly, or remove the capability entry.", phantom)
 	}
 
 	var missingREST []string
