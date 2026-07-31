@@ -386,35 +386,147 @@ jobs:
           sleep 2
           curl -sf http://localhost:4566/_health
           docker rm -f oc-smoke
-      # On a release PR, publish this exact image to GHCR as a release
-      # candidate: {version}-rc.{run_number}. run_number increments per CI
-      # run, so every push to the release branch mints a fresh RC and earlier
-      # ones stay pullable for comparison. linux/amd64 only — the multi-arch
-      # manifest is built at publish time; the RC exists so the candidate
-      # bits themselves can be smoke tested before stamping.
-      - name: Push release-candidate image
-        id: rc-push
+      # On a release PR, publish this commit to GHCR as a release candidate:
+      # {version}-rc.{run_number}. run_number increments per CI run, so every
+      # push to the release branch mints a fresh RC and earlier ones stay
+      # pullable for comparison.
+      #
+      # Built for the same platforms the release publishes, not just the
+      # runner's. A candidate exists to be smoke tested, and an amd64-only one
+      # left an arm64 maintainer testing emulated bits — which for an emulator
+      # that itself launches containers is a different environment, not merely
+      # a slower one, and makes a platform problem indistinguishable from a
+      # regression. Mirrors the publish job's buildx setup rather than
+      # inventing another: a multi-arch manifest cannot be `docker load`ed, so
+      # this builds and pushes in one step instead of tagging the local image.
+      # The native build above still runs, and is what the slim smoke test
+      # exercises; the amd64 half of this build reuses its layers from cache.
+      - uses: docker/setup-buildx-action@v4.2.0
+        if: needs.release-gate.outputs.rc == 'true'
+      - name: Log in to GHCR
+        if: needs.release-gate.outputs.rc == 'true'
+        uses: docker/login-action@v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # .dockerignore ignores everything and then allowlists, so the build
+      # context is a closed, explicit set of paths. The image is therefore a
+      # pure function of those paths plus the build args — nothing else in the
+      # repository can reach it, because Docker never receives it. Hashing that
+      # set gives a content address the build can be keyed on, which is what
+      # makes skipping safe rather than a guess about which paths "look"
+      # relevant: a change to anything Docker can see changes the hash.
+      #
+      # The hash lands on the image as a second tag, so a later run can ask the
+      # registry "have these exact bits been built?" without keeping state.
+      - name: Name the release candidate
+        id: rc-name
         if: needs.release-gate.outputs.rc == 'true'
         env:
           IMAGE_SUFFIX: ${{ matrix.image == 'slim' && '-slim' || '' }}
           RUN_NUMBER: ${{ github.run_number }}
-          SOURCE_TAG: ${{ matrix.tag }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET: ${{ matrix.target }}
         run: |
-          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          version=$(cat VERSION)
+          set -euo pipefail
+          version=$(tr -d '[:space:]' < VERSION)
           owner="${GITHUB_REPOSITORY_OWNER,,}"
-          rc_image="ghcr.io/${owner}/overcast${IMAGE_SUFFIX}:${version}-rc.${RUN_NUMBER}"
-          docker tag "$SOURCE_TAG" "$rc_image"
-          docker push "$rc_image"
-          digest=$(docker inspect --format='{{index .RepoDigests 0}}' "$rc_image")
+          repo="ghcr.io/${owner}/overcast${IMAGE_SUFFIX}"
+          # There are exactly four routes from the context into the image:
+          # the compiled ./cmd/overcast, the two files the runtime stage COPYs
+          # from docker/, `//go:embed all:web/dist`, and
+          # `//go:embed docs/*.md docs/cdk docs/services`. The paths below are
+          # that list, so anything omitted provably cannot change the image:
+          #
+          #   cmd/overcast only  — every cmd/* is `package main`, and Go cannot
+          #                        import a main package, so no other one can
+          #                        reach this binary.
+          #   docs, partially    — only what embed.go embeds. docs/plans,
+          #                        docs/dev and docs/generated are excluded
+          #                        there deliberately, and the runtime stages
+          #                        copy in nothing but the binary, so an
+          #                        unembedded doc has no way in.
+          #   no *_test.go or testdata/ — the toolchain drops both from
+          #                        `go build`, and non-test code cannot even
+          #                        reference them.
+          #
+          # Web test files are deliberately NOT excluded: nothing stops app
+          # code importing one into the bundle, so it would rest on a habit
+          # rather than a rule.
+          #
+          # These narrowings guard themselves. Building another cmd would
+          # change the Dockerfile; embedding more docs would change embed.go;
+          # both are hashed, so widening the image's inputs forces a rebuild.
+          hash=$(
+            {
+              git ls-tree -r HEAD -- go.mod go.sum embed.go embed_slim.go \
+                cmd/overcast internal web docker Dockerfile .dockerignore \
+                docs/cdk docs/services docs/*.md \
+                | grep -vE '_test\.go$|/testdata/'
+              echo "VERSION=${version}"
+              echo "TARGET=${TARGET}"
+            } | sha256sum | cut -c1-16
+          )
+          {
+            echo "version=${version}"
+            echo "image=${repo}:${version}-rc.${RUN_NUMBER}"
+            echo "context=${repo}:ctx-${hash}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Build context hash: ${hash}"
+
+      # Retagging a manifest is a registry-side operation — no pull, no build,
+      # a couple of seconds — so an unchanged context costs nothing beyond the
+      # lookup. A prose-only push to a release branch takes this path.
+      - name: Reuse an identical candidate when one exists
+        id: rc-reuse
+        if: needs.release-gate.outputs.rc == 'true'
+        env:
+          RC_IMAGE: ${{ steps.rc-name.outputs.image }}
+          CONTEXT_IMAGE: ${{ steps.rc-name.outputs.context }}
+        run: |
+          set -euo pipefail
+          if docker buildx imagetools inspect "$CONTEXT_IMAGE" >/dev/null 2>&1; then
+            echo "Build context unchanged — retagging instead of rebuilding."
+            docker buildx imagetools create -t "$RC_IMAGE" "$CONTEXT_IMAGE"
+            echo "reused=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Build context is new — building."
+            echo "reused=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push release-candidate image
+        id: rc-push
+        if: needs.release-gate.outputs.rc == 'true' && steps.rc-reuse.outputs.reused == 'false'
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          target: ${{ matrix.target }}
+          tags: ${{ steps.rc-name.outputs.image }},${{ steps.rc-name.outputs.context }}
+          build-args: VERSION=${{ steps.rc-name.outputs.version }}
+          cache-from: type=gha,scope=overcast-${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=overcast-${{ matrix.image }}
+
+      # Resolved from the registry either way, so the recorded digest is the
+      # manifest actually tagged whether it was just built or retagged.
+      - name: Record release-candidate image reference
+        id: rc-record
+        if: needs.release-gate.outputs.rc == 'true'
+        env:
+          RC_IMAGE: ${{ steps.rc-name.outputs.image }}
+          REUSED: ${{ steps.rc-reuse.outputs.reused }}
+        run: |
+          set -euo pipefail
+          digest=$(docker buildx imagetools inspect "$RC_IMAGE" --format '{{.Manifest.Digest}}')
           mkdir -p rc-meta
           {
-            echo "$rc_image"
-            echo "$digest"
+            echo "$RC_IMAGE"
+            echo "${RC_IMAGE}@${digest}"
+            echo "reused=${REUSED}"
           } > "rc-meta/rc-image-${{ matrix.image }}.txt"
-      - name: Record release-candidate image reference
-        if: steps.rc-push.outcome == 'success'
+      - name: Upload release-candidate image reference
+        if: steps.rc-record.outcome == 'success'
         uses: actions/upload-artifact@v7.0.1
         with:
           name: rc-image-${{ matrix.image }}
@@ -450,8 +562,12 @@ jobs:
             for (const image of ['console', 'slim']) {
               const f = `rc-meta/rc-image-${image}.txt`;
               if (fs.existsSync(f)) {
-                const [ref, withDigest] = fs.readFileSync(f, 'utf8').trim().split(/\r?\n/);
-                images.push({ ref, digest: (withDigest || '').split('@')[1] || '' });
+                const [ref, withDigest, reused] = fs.readFileSync(f, 'utf8').trim().split(/\r?\n/);
+                images.push({
+                  ref,
+                  digest: (withDigest || '').split('@')[1] || '',
+                  reused: (reused || '') === 'reused=true',
+                });
               }
             }
 
@@ -469,9 +585,15 @@ jobs:
             const rcName = images[0] ? images[0].ref.split(':').pop() : `rc.${context.runNumber}`;
 
             let body = `${marker}\n## Release candidate \`${rcName}\`\n\n`;
-            body += `Built from ${sha} — [workflow run](${runUrl}). `;
-            body += `Every push to this branch mints a new RC; earlier RCs stay pullable.\n\n`;
-            body += `### Images (linux/amd64)\n\n`;
+            body += `Current for head \`${sha.slice(0, 8)}\` — [workflow run](${runUrl}).\n`;
+            // Say which, so "no rebuild" is a stated outcome rather than
+            // something to infer from a fast job.
+            const reused = images.length > 0 && images.every(i => i.reused);
+            body += reused
+              ? `Bit-for-bit identical to the previous candidate — this push changed nothing the image is built from, so it was retagged rather than rebuilt.\n`
+              : `Freshly built: this push changed something the image is built from.\n`;
+            body += `Every push to this branch mints a new RC tag; earlier RCs stay pullable.\n\n`;
+            body += `### Images (linux/amd64, linux/arm64)\n\n`;
             for (const i of images) {
               body += '```\ndocker pull ' + i.ref + '\n```\n';
               if (i.digest) body += `<sub>digest \`${i.digest}\`</sub>\n\n`;
@@ -486,15 +608,22 @@ jobs:
               owner: context.repo.owner, repo: context.repo.repo,
               issue_number: context.issue.number, per_page: 100,
             });
-            const existing = comments.find(c => c.body && c.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner, repo: context.repo.repo,
-                comment_id: existing.id, body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner, repo: context.repo.repo,
-                issue_number: context.issue.number, body,
+            const stale = comments.filter(c => c.body && c.body.includes(marker));
+
+            // Post first, delete second: the PR is never left without a
+            // candidate to test if the second call fails.
+            //
+            // Reposting rather than editing in place is the whole point.
+            // GitHub anchors an edited comment at its original position and
+            // hides the update behind a small "edited" marker, so a refreshed
+            // RC was invisible unless you went looking for it. A new comment
+            // carries its own timestamp, which is the freshness signal.
+            await github.rest.issues.createComment({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.issue.number, body,
+            });
+            for (const c of stale) {
+              await github.rest.issues.deleteComment({
+                owner: context.repo.owner, repo: context.repo.repo, comment_id: c.id,
               });
             }

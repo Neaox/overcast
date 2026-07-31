@@ -296,7 +296,9 @@ For an alpha release:
    a **release candidate** (`scripts/release-candidate-check.sh` — this also
    covers follow-up PRs after a failed release workflow, when the unreleased
    version already sits on `main`). Each candidate build publishes
-   `ghcr.io/neaox/overcast[-slim]:<version>-rc.<n>` (linux/amd64, `<n>`
+   `ghcr.io/neaox/overcast[-slim]:<version>-rc.<n>` (linux/amd64 and
+   linux/arm64, the same platforms the release publishes, so the candidate
+   runs natively wherever it is smoke tested; `<n>`
    increments per build), uploads the ten native binaries as workflow
    artifacts, and maintains one bot comment on the PR with pull commands,
    image digests, and the artifact table. Smoke test the RC image — the
