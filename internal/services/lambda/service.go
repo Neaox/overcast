@@ -753,28 +753,44 @@ func (s *Service) seedPersistedFunctionImages(cr *ContainerRuntime) {
 				zap.Error(pullErr))
 		}
 
-		// Reconcile functions stuck in Pending from a previous session.
+		// Reconcile functions stuck in Pending from a previous session. The
+		// pulls above can take a long time and requests are already being
+		// served, so the startup snapshot may be stale: the function can have
+		// been deleted or revised since the list was taken. Merge the
+		// transition into a fresh read — writing the snapshot back would
+		// resurrect a deleted record (#414) — and only transition a record
+		// that is still Pending.
 		if fn.State == "Pending" {
-			if pullErr != nil {
-				fn.State = "Failed"
-				fn.StateReason = "Failed to pull container image: " + pullErr.Error()
-				fn.StateReasonCode = "ImagePullError"
-			} else {
-				fn.State = "Active"
-				fn.StateReason = ""
-				fn.StateReasonCode = ""
-			}
 			// Use the function's own region for the store key.
 			fnCtx := middleware.ContextWithRegion(ctx, regionFromFunctionARN(fn.ARN))
-			if serr := s.ls.putFunction(fnCtx, fn); serr != nil {
+			fresh, aerr := s.ls.getFunction(fnCtx, fn.Name)
+			if aerr != nil {
+				s.log.Warn("failed to re-read pending function for reconciliation",
+					zap.String("function", fn.Name),
+					zap.String("error", aerr.Message))
+				continue
+			}
+			if fresh == nil || fresh.State != "Pending" {
+				continue // deleted or transitioned while the pulls ran
+			}
+			if pullErr != nil {
+				fresh.State = "Failed"
+				fresh.StateReason = "Failed to pull container image: " + pullErr.Error()
+				fresh.StateReasonCode = "ImagePullError"
+			} else {
+				fresh.State = "Active"
+				fresh.StateReason = ""
+				fresh.StateReasonCode = ""
+			}
+			if serr := s.ls.putFunction(fnCtx, fresh); serr != nil {
 				s.log.Warn("failed to reconcile pending function state",
 					zap.String("function", fn.Name),
-					zap.String("target_state", fn.State),
+					zap.String("target_state", fresh.State),
 					zap.String("error", serr.Message))
 			} else {
 				s.log.Info("reconciled pending function",
 					zap.String("function", fn.Name),
-					zap.String("state", fn.State))
+					zap.String("state", fresh.State))
 			}
 		}
 	}

@@ -194,3 +194,38 @@ func TestS3SyncWatcher_wrongPayloadTypeIgnored(t *testing.T) {
 		t.Error("fetch should not have been called for wrong payload type")
 	}
 }
+
+// TestS3SyncWatcher_functionDeletedDuringFetch_staysDeleted: the watcher
+// lists matching functions, then fetches the object from S3 — a window a
+// DeleteFunction can land in. Writing the pre-fetch snapshot back would
+// resurrect the deleted record (the #414 stale-snapshot family), so the
+// refresh must merge into a fresh read and skip a function that is gone.
+func TestS3SyncWatcher_functionDeletedDuringFetch_staysDeleted(t *testing.T) {
+	// Given: a watcher whose S3 fetch deletes the function mid-flight — the
+	// deterministic stand-in for a delete racing a slow download.
+	var ls *lambdaStore
+	fetch := func(ctx context.Context, _, _ string) ([]byte, error) {
+		if aerr := ls.deleteFunction(ctx, "sync-del-fn"); aerr != nil {
+			return nil, errors.New("delete mid-fetch: " + aerr.Message)
+		}
+		return []byte("fresh-zip"), nil
+	}
+	w, store := testWatcher(t, fetch)
+	ls = store
+	seedFunction(t, ls, "sync-del-fn", "my-bucket", "fn.zip")
+
+	// When: the object event triggers a sync.
+	w.onS3ObjectCreated(context.Background(), events.Event{
+		Type:    events.S3ObjectCreated,
+		Payload: events.S3ObjectPayload{Bucket: "my-bucket", Key: "fn.zip"},
+	})
+
+	// Then: the function stays deleted.
+	got, aerr := ls.getFunction(context.Background(), "sync-del-fn")
+	if aerr != nil {
+		t.Fatalf("getFunction: %v", aerr)
+	}
+	if got != nil {
+		t.Fatalf("function exists after delete — s3 sync wrote back its pre-fetch snapshot")
+	}
+}

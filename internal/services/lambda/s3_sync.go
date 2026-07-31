@@ -69,8 +69,6 @@ func (w *s3SyncWatcher) onS3ObjectCreated(ctx context.Context, e events.Event) {
 // syncFunctionCode fetches the zip from S3, stores it in the function record,
 // bumps the revision, and retires the warm instance still running the old code.
 func (w *s3SyncWatcher) syncFunctionCode(ctx context.Context, fn *Function) {
-	previousIdentity := functionInstanceIdentity(fn)
-
 	zip, err := w.fetch(ctx, fn.CodeS3Bucket, fn.CodeS3Key)
 	if err != nil {
 		w.log.Warn("s3 sync: fetch zip failed",
@@ -82,20 +80,35 @@ func (w *s3SyncWatcher) syncFunctionCode(ctx context.Context, fn *Function) {
 		return
 	}
 
-	fn.setCode(zip)
-	fn.RevisionId = uuid.NewString()
-	fn.LastModified = w.clk.Now().UTC().Format(time.RFC3339)
+	// The fetch may be slow, and fn was read before it started. Merge the new
+	// code into a fresh read: writing the pre-fetch snapshot back would
+	// resurrect a function deleted meanwhile (the #414 stale-snapshot family)
+	// or clobber a concurrent revision — and skip entirely when the function
+	// is gone or no longer bound to this object.
+	fresh, aerr := w.ls.getFunction(ctx, fn.Name)
+	if aerr != nil {
+		w.log.Warn("s3 sync: re-read function", zap.String("function", fn.Name), zap.Error(aerr))
+		return
+	}
+	if fresh == nil || fresh.CodeS3Bucket != fn.CodeS3Bucket || fresh.CodeS3Key != fn.CodeS3Key {
+		return
+	}
+	previousIdentity := functionInstanceIdentity(fresh)
 
-	if aerr := w.ls.putFunction(ctx, fn); aerr != nil {
+	fresh.setCode(zip)
+	fresh.RevisionId = uuid.NewString()
+	fresh.LastModified = w.clk.Now().UTC().Format(time.RFC3339)
+
+	if aerr := w.ls.putFunction(ctx, fresh); aerr != nil {
 		w.log.Warn("s3 sync: persist updated function",
-			zap.String("function", fn.Name),
+			zap.String("function", fresh.Name),
 			zap.Error(aerr),
 		)
 		return
 	}
 
 	if w.retire != nil {
-		w.retire(fn, previousIdentity)
+		w.retire(fresh, previousIdentity)
 	}
 
 	w.log.Info("s3 sync: refreshed function code from S3",

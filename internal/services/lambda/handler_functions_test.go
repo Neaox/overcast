@@ -199,3 +199,101 @@ func TestCreateFunction_prewarmerOnReadySetsFailedOnPullError(t *testing.T) {
 		t.Errorf("StateReasonCode = %q, want ImagePullError", got.StateReasonCode)
 	}
 }
+
+// createPendingTestFunction drives CreateFunction for a zip-less function and
+// asserts the 201. With a prewarmer wired the record is left "Pending" until
+// the captured onReady fires.
+func createPendingTestFunction(t *testing.T, h *Handler, name string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"FunctionName": name,
+		"Runtime":      "nodejs22.x",
+		"Handler":      "index.handler",
+		"Role":         "arn:aws:iam::000000000000:role/lambda-role",
+		"Code":         map[string]any{},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/2015-03-31/functions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.CreateFunction(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateFunction status = %d, want 201; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestDeleteFunction_duringImagePull_staysDeleted reproduces the compat
+// lambda-crud/DeleteFunction flake (#414): CreateFunction kicks off a
+// background image pull, and the function is deleted before the pull
+// completes. The completion callback used to persist the create-time snapshot
+// unconditionally, resurrecting the deleted record as "Active" — exactly what
+// the python-sdk and cli suites observed ("function still exists" on the
+// post-delete verification read).
+func TestDeleteFunction_duringImagePull_staysDeleted(t *testing.T) {
+	// Given: a handler whose image pull completes only when the test fires it.
+	h, _ := lifecycleTestHandler(t)
+	var onReady func(err error)
+	h.prewarmer = func(fn *Function, ready func(err error)) { onReady = ready }
+	createPendingTestFunction(t, h, "pull-fn")
+
+	// When: the function is deleted while the pull is still in flight,
+	req := httptest.NewRequest(http.MethodDelete, "/2015-03-31/functions/pull-fn", nil)
+	req = withFunctionNameParam(req, "pull-fn")
+	rec := httptest.NewRecorder()
+	h.DeleteFunction(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("DeleteFunction status = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+
+	// and the pull then completes.
+	onReady(nil)
+
+	// Then: the delete stays deleted.
+	got, aerr := h.ls.getFunction(context.Background(), "pull-fn")
+	if aerr != nil {
+		t.Fatalf("getFunction: %v", aerr)
+	}
+	if got != nil {
+		t.Fatalf("function exists in state %q after DeleteFunction — pull completion re-persisted the deleted record", got.State)
+	}
+}
+
+// TestCreateFunction_prewarmerOnReadyMergesIntoConcurrentRevision covers the
+// sibling lost-update: the function is revised while the create-time pull is
+// still running (UpdateFunctionCode/Configuration bump RevisionId without
+// touching State). The completion callback must land the Pending→Active
+// transition on the revised record, not write the create-time snapshot over
+// it.
+func TestCreateFunction_prewarmerOnReadyMergesIntoConcurrentRevision(t *testing.T) {
+	// Given: a function created with its image pull held open.
+	h, _ := lifecycleTestHandler(t)
+	var onReady func(err error)
+	h.prewarmer = func(fn *Function, ready func(err error)) { onReady = ready }
+	createPendingTestFunction(t, h, "revised-fn")
+
+	// When: the function is revised mid-pull,
+	ctx := context.Background()
+	fn, aerr := h.ls.getFunction(ctx, "revised-fn")
+	if aerr != nil || fn == nil {
+		t.Fatalf("getFunction: %v, %v", fn, aerr)
+	}
+	fn.Description = "revised while the pull ran"
+	fn.RevisionId = "revised-revision"
+	if aerr := h.ls.putFunction(ctx, fn); aerr != nil {
+		t.Fatalf("putFunction: %v", aerr)
+	}
+
+	// and the pull completes.
+	onReady(nil)
+
+	// Then: the revision survives, and the state transition still lands on it.
+	got, aerr := h.ls.getFunction(ctx, "revised-fn")
+	if aerr != nil || got == nil {
+		t.Fatalf("getFunction: %v, %v", got, aerr)
+	}
+	if got.Description != "revised while the pull ran" || got.RevisionId != "revised-revision" {
+		t.Errorf("Description = %q, RevisionId = %q — pull completion clobbered the concurrent revision", got.Description, got.RevisionId)
+	}
+	if got.State != "Active" {
+		t.Errorf("State = %q, want Active", got.State)
+	}
+}
