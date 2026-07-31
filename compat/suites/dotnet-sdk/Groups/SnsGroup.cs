@@ -91,8 +91,13 @@ public sealed class SnsGroup(AwsClients clients) : IServiceGroup
 
     private async Task TeardownTopicsAsync(TestContext context)
     {
-        var prefix = $"{context.RunId}-sns";
-        await DeleteTopicByPrefixAsync(prefix);
+        // Exactly this group's topics ("-sns-topics" and "-sns-del"). The old
+        // "{RunId}-sns" prefix also matched the LIVE "-sns-sub" and "-sns-pub"
+        // topics of sibling groups running in parallel, deleting them mid-run —
+        // the intermittent "Topic does not exist" failures quarantined under
+        // issue #388.
+        await DeleteTopicByPrefixAsync($"{context.RunId}-sns-topics");
+        await DeleteTopicByPrefixAsync($"{context.RunId}-sns-del");
     }
 
     // ── sns-publish ──

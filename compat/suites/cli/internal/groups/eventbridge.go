@@ -49,8 +49,14 @@ func EventBridge() ServiceGroup {
 
 type ebGroup struct{}
 
-func (g *ebGroup) busName(t *harness.TestContext) string {
-	return fmt.Sprintf("%s-eb", t.RunID)
+// busName returns one group's event bus. Each group gets its OWN bus: groups
+// run in parallel (8 slots), and when the three EventBridge groups shared one
+// name, setupRules/setupEvents re-created the bus the buses group was testing,
+// DeleteEventBus deleted it from under the rules/events groups, and every
+// teardown deleted it from under everyone — the "bus not found" failures
+// behind plan item R7 and the DeleteEventBus quarantine (issue #388).
+func (g *ebGroup) busName(t *harness.TestContext, group string) string {
+	return fmt.Sprintf("%s-eb-%s", t.RunID, group)
 }
 func (g *ebGroup) ruleName(t *harness.TestContext) string {
 	return fmt.Sprintf("%s-rule", t.RunID)
@@ -69,7 +75,7 @@ func (g *ebGroup) setupBuses(_ context.Context, _ *harness.TestContext) error { 
 func (g *ebGroup) CreateEventBus(_ context.Context, t *harness.TestContext) error {
 	out, err := awscli.RunOutput(t.Endpoint, t.Region,
 		"events", "create-event-bus",
-		"--name", g.busName(t),
+		"--name", g.busName(t, "buses"),
 	)
 	if err != nil {
 		return err
@@ -85,13 +91,13 @@ func (g *ebGroup) CreateEventBus(_ context.Context, t *harness.TestContext) erro
 func (g *ebGroup) DescribeEventBus(_ context.Context, t *harness.TestContext) error {
 	out, err := awscli.RunOutput(t.Endpoint, t.Region,
 		"events", "describe-event-bus",
-		"--name", g.busName(t),
+		"--name", g.busName(t, "buses"),
 	)
 	if err != nil {
 		return err
 	}
-	if name, _ := out["Name"].(string); name != g.busName(t) {
-		return fmt.Errorf("eb DescribeEventBus: expected Name=%q, got %q", g.busName(t), name)
+	if name, _ := out["Name"].(string); name != g.busName(t, "buses") {
+		return fmt.Errorf("eb DescribeEventBus: expected Name=%q, got %q", g.busName(t, "buses"), name)
 	}
 	return nil
 }
@@ -103,11 +109,11 @@ func (g *ebGroup) ListEventBuses(_ context.Context, t *harness.TestContext) erro
 	}
 	buses, _ := out["EventBuses"].([]any)
 	for _, raw := range buses {
-		if m, ok := raw.(map[string]any); ok && m["Name"] == g.busName(t) {
+		if m, ok := raw.(map[string]any); ok && m["Name"] == g.busName(t, "buses") {
 			return nil
 		}
 	}
-	return fmt.Errorf("eb ListEventBuses: bus %q not found", g.busName(t))
+	return fmt.Errorf("eb ListEventBuses: bus %q not found", g.busName(t, "buses"))
 }
 
 func (g *ebGroup) TagEventBus(_ context.Context, t *harness.TestContext) error {
@@ -152,7 +158,7 @@ func (g *ebGroup) ListTagsForResource(_ context.Context, t *harness.TestContext)
 }
 
 func (g *ebGroup) DeleteEventBus(_ context.Context, t *harness.TestContext) error {
-	name := g.busName(t)
+	name := g.busName(t, "buses")
 	if err := awscli.Run(t.Endpoint, t.Region,
 		"events", "delete-event-bus",
 		"--name", name,
@@ -173,7 +179,7 @@ func (g *ebGroup) DeleteEventBus(_ context.Context, t *harness.TestContext) erro
 }
 
 func (g *ebGroup) teardownBus(_ context.Context, t *harness.TestContext) error {
-	awscli.Run(t.Endpoint, t.Region, "events", "delete-event-bus", "--name", g.busName(t)) //nolint:errcheck
+	awscli.Run(t.Endpoint, t.Region, "events", "delete-event-bus", "--name", g.busName(t, "buses")) //nolint:errcheck
 	return nil
 }
 
@@ -182,7 +188,7 @@ func (g *ebGroup) teardownBus(_ context.Context, t *harness.TestContext) error {
 func (g *ebGroup) setupRules(_ context.Context, t *harness.TestContext) error {
 	out, err := awscli.RunOutput(t.Endpoint, t.Region,
 		"events", "create-event-bus",
-		"--name", g.busName(t),
+		"--name", g.busName(t, "rules"),
 	)
 	if err != nil {
 		return err
@@ -196,7 +202,7 @@ func (g *ebGroup) PutRule(_ context.Context, t *harness.TestContext) error {
 	out, err := awscli.RunOutput(t.Endpoint, t.Region,
 		"events", "put-rule",
 		"--name", g.ruleName(t),
-		"--event-bus-name", g.busName(t),
+		"--event-bus-name", g.busName(t, "rules"),
 		"--schedule-expression", "rate(5 minutes)",
 		"--state", "ENABLED",
 	)
@@ -213,7 +219,7 @@ func (g *ebGroup) DescribeRule(_ context.Context, t *harness.TestContext) error 
 	out, err := awscli.RunOutput(t.Endpoint, t.Region,
 		"events", "describe-rule",
 		"--name", g.ruleName(t),
-		"--event-bus-name", g.busName(t),
+		"--event-bus-name", g.busName(t, "rules"),
 	)
 	if err != nil {
 		return err
@@ -227,7 +233,7 @@ func (g *ebGroup) DescribeRule(_ context.Context, t *harness.TestContext) error 
 func (g *ebGroup) ListRules(_ context.Context, t *harness.TestContext) error {
 	out, err := awscli.RunOutput(t.Endpoint, t.Region,
 		"events", "list-rules",
-		"--event-bus-name", g.busName(t),
+		"--event-bus-name", g.busName(t, "rules"),
 	)
 	if err != nil {
 		return err
@@ -249,7 +255,7 @@ func (g *ebGroup) PutTargets(_ context.Context, t *harness.TestContext) error {
 	if err := awscli.Run(t.Endpoint, t.Region,
 		"events", "put-targets",
 		"--rule", g.ruleName(t),
-		"--event-bus-name", g.busName(t),
+		"--event-bus-name", g.busName(t, "rules"),
 		"--targets", targets,
 	); err != nil {
 		return err
@@ -257,7 +263,7 @@ func (g *ebGroup) PutTargets(_ context.Context, t *harness.TestContext) error {
 	out, err := awscli.RunOutput(t.Endpoint, t.Region,
 		"events", "list-targets-by-rule",
 		"--rule", g.ruleName(t),
-		"--event-bus-name", g.busName(t),
+		"--event-bus-name", g.busName(t, "rules"),
 	)
 	if err != nil {
 		return fmt.Errorf("eb PutTargets: list-targets failed: %w", err)
@@ -273,7 +279,7 @@ func (g *ebGroup) ListTargetsByRule(_ context.Context, t *harness.TestContext) e
 	out, err := awscli.RunOutput(t.Endpoint, t.Region,
 		"events", "list-targets-by-rule",
 		"--rule", g.ruleName(t),
-		"--event-bus-name", g.busName(t),
+		"--event-bus-name", g.busName(t, "rules"),
 	)
 	if err != nil {
 		return err
@@ -289,14 +295,14 @@ func (g *ebGroup) DisableRule(_ context.Context, t *harness.TestContext) error {
 	if err := awscli.Run(t.Endpoint, t.Region,
 		"events", "disable-rule",
 		"--name", g.ruleName(t),
-		"--event-bus-name", g.busName(t),
+		"--event-bus-name", g.busName(t, "rules"),
 	); err != nil {
 		return err
 	}
 	out, err := awscli.RunOutput(t.Endpoint, t.Region,
 		"events", "describe-rule",
 		"--name", g.ruleName(t),
-		"--event-bus-name", g.busName(t),
+		"--event-bus-name", g.busName(t, "rules"),
 	)
 	if err != nil {
 		return fmt.Errorf("eb DisableRule: describe failed: %w", err)
@@ -311,14 +317,14 @@ func (g *ebGroup) EnableRule(_ context.Context, t *harness.TestContext) error {
 	if err := awscli.Run(t.Endpoint, t.Region,
 		"events", "enable-rule",
 		"--name", g.ruleName(t),
-		"--event-bus-name", g.busName(t),
+		"--event-bus-name", g.busName(t, "rules"),
 	); err != nil {
 		return err
 	}
 	out, err := awscli.RunOutput(t.Endpoint, t.Region,
 		"events", "describe-rule",
 		"--name", g.ruleName(t),
-		"--event-bus-name", g.busName(t),
+		"--event-bus-name", g.busName(t, "rules"),
 	)
 	if err != nil {
 		return fmt.Errorf("eb EnableRule: describe failed: %w", err)
@@ -333,7 +339,7 @@ func (g *ebGroup) RemoveTargets(_ context.Context, t *harness.TestContext) error
 	if err := awscli.Run(t.Endpoint, t.Region,
 		"events", "remove-targets",
 		"--rule", g.ruleName(t),
-		"--event-bus-name", g.busName(t),
+		"--event-bus-name", g.busName(t, "rules"),
 		"--ids", g.targetID(t),
 	); err != nil {
 		return err
@@ -341,7 +347,7 @@ func (g *ebGroup) RemoveTargets(_ context.Context, t *harness.TestContext) error
 	out, err := awscli.RunOutput(t.Endpoint, t.Region,
 		"events", "list-targets-by-rule",
 		"--rule", g.ruleName(t),
-		"--event-bus-name", g.busName(t),
+		"--event-bus-name", g.busName(t, "rules"),
 	)
 	if err != nil {
 		return fmt.Errorf("eb RemoveTargets: list-targets failed: %w", err)
@@ -357,13 +363,13 @@ func (g *ebGroup) DeleteRule(_ context.Context, t *harness.TestContext) error {
 	if err := awscli.Run(t.Endpoint, t.Region,
 		"events", "delete-rule",
 		"--name", g.ruleName(t),
-		"--event-bus-name", g.busName(t),
+		"--event-bus-name", g.busName(t, "rules"),
 	); err != nil {
 		return err
 	}
 	out, err := awscli.RunOutput(t.Endpoint, t.Region,
 		"events", "list-rules",
-		"--event-bus-name", g.busName(t),
+		"--event-bus-name", g.busName(t, "rules"),
 	)
 	if err != nil {
 		return fmt.Errorf("eb DeleteRule: list-rules failed: %w", err)
@@ -380,14 +386,14 @@ func (g *ebGroup) DeleteRule(_ context.Context, t *harness.TestContext) error {
 func (g *ebGroup) teardownRules(_ context.Context, t *harness.TestContext) error {
 	awscli.Run(t.Endpoint, t.Region, "events", "remove-targets", //nolint:errcheck
 		"--rule", g.ruleName(t),
-		"--event-bus-name", g.busName(t),
+		"--event-bus-name", g.busName(t, "rules"),
 		"--ids", g.targetID(t),
 	)
 	awscli.Run(t.Endpoint, t.Region, "events", "delete-rule", //nolint:errcheck
 		"--name", g.ruleName(t),
-		"--event-bus-name", g.busName(t),
+		"--event-bus-name", g.busName(t, "rules"),
 	)
-	awscli.Run(t.Endpoint, t.Region, "events", "delete-event-bus", "--name", g.busName(t)) //nolint:errcheck
+	awscli.Run(t.Endpoint, t.Region, "events", "delete-event-bus", "--name", g.busName(t, "rules")) //nolint:errcheck
 	return nil
 }
 
@@ -396,7 +402,7 @@ func (g *ebGroup) teardownRules(_ context.Context, t *harness.TestContext) error
 func (g *ebGroup) setupEvents(_ context.Context, t *harness.TestContext) error {
 	out, err := awscli.RunOutput(t.Endpoint, t.Region,
 		"events", "create-event-bus",
-		"--name", g.busName(t),
+		"--name", g.busName(t, "events"),
 	)
 	if err != nil {
 		return err
@@ -409,7 +415,7 @@ func (g *ebGroup) setupEvents(_ context.Context, t *harness.TestContext) error {
 func (g *ebGroup) PutEvents(_ context.Context, t *harness.TestContext) error {
 	entries := fmt.Sprintf(
 		`[{"Source":"oc.cli","DetailType":"TestEvent","Detail":"{\"runId\":\"%s\"}","EventBusName":"%s"}]`,
-		t.RunID, g.busName(t),
+		t.RunID, g.busName(t, "events"),
 	)
 	out, err := awscli.RunOutput(t.Endpoint, t.Region,
 		"events", "put-events",
@@ -430,7 +436,7 @@ func (g *ebGroup) PutEventsBatch(_ context.Context, t *harness.TestContext) erro
 			`{"Source":"oc.cli","DetailType":"Event1","Detail":"{\"n\":1}","EventBusName":"%s"},`+
 			`{"Source":"oc.cli","DetailType":"Event2","Detail":"{\"n\":2}","EventBusName":"%s"}`+
 			`]`,
-		g.busName(t), g.busName(t),
+		g.busName(t, "events"), g.busName(t, "events"),
 	)
 	out, err := awscli.RunOutput(t.Endpoint, t.Region,
 		"events", "put-events",
@@ -450,6 +456,6 @@ func (g *ebGroup) PutEventsBatch(_ context.Context, t *harness.TestContext) erro
 }
 
 func (g *ebGroup) teardownEvents(_ context.Context, t *harness.TestContext) error {
-	awscli.Run(t.Endpoint, t.Region, "events", "delete-event-bus", "--name", g.busName(t)) //nolint:errcheck
+	awscli.Run(t.Endpoint, t.Region, "events", "delete-event-bus", "--name", g.busName(t, "events")) //nolint:errcheck
 	return nil
 }

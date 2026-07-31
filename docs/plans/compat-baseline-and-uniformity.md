@@ -85,7 +85,7 @@ auto-promotion on merge; nothing to hand-edit.
 | R4 | dotnet-sdk suite bugs | 11 | Null-refs (PurgeQueue, DeleteItem, PublishBatch), s3-copy bucket collision, IAM `Get*Policy` URL-decode assertions, BatchGetSecretValue, appsync ordering |
 | R5 | rust-sdk opaque `service error` reporting, then the real bugs | 9 | Fix `SdkError` rendering first — the errors are currently unreadable; ssm masked-value expectation; BatchGetSecretValue |
 | R6 | Suites hardcode `nodejs18.x`, which the emulator now rejects | ~17 cascading skips | appsync-functions and lambda-invoke setup across dotnet/rust — no longer a `fail`, but it masks whole groups |
-| R7 | **New — exposed by running Lambda for real** | 2 | `cli/lambda-invoke/InvokeDryRun` → `InvalidParameterValueException` on Invoke; `cli/eventbridge-buses/ListEventBuses` → created bus not found. Both cascade (3 further skips). Investigate the emulator first: the CLI sends the same wire request the SDKs do, and the SDK suites pass |
+| R7 | **New — exposed by running Lambda for real** | 2 | `cli/eventbridge-buses/ListEventBuses` is explained and fixed: all three cli EventBridge groups shared one bus, and sibling setups/teardowns deleted or re-created it mid-run (see the flake section). `cli/lambda-invoke/InvokeDryRun` (`InvalidParameterValueException` on Invoke) passes locally post-#434 — the lambda stale-snapshot fix plausibly covered it (an invoke racing a state transition); confirm via baseline auto-promotion on the next green main runs |
 
 R2 (CDK ESM) is done — it resolved the moment CI stopped skipping Docker.
 
@@ -98,27 +98,38 @@ Quarantine is containment. The plan to actually remove it:
    runs every suite 3× nightly against unchanged `main` and fails on any test
    that answers inconsistently and is not already quarantined. Both flakes so
    far were found by accident; this is the fix for that.
-2. **Chase the shared root cause first.** Every flake found so far is the same
-   shape — a resource is created, and the next call cannot find it:
+2. **Chase the shared root cause first.** Every flake found so far was the same
+   shape — a resource is created, and the next call cannot find it.
 
-   | Quarantined | Symptom |
+   **Resolved (#388, nine entries un-quarantined): the shared root cause was in
+   the suites, not the emulator.** Suite groups run in 8 parallel slots, and
+   three groups violated group isolation, so a sibling group's teardown (or
+   test) deleted a live resource mid-run:
+
+   | Was quarantined | Actual cause |
    | --- | --- |
-   | `dotnet-sdk/sns-subscriptions/PublishDeliveredToSQS` | Topic gone between `SubscribeSQS` and publish |
-   | `cli/eventbridge-buses/DeleteEventBus` (via R7) | Bus gone between create and `ListEventBuses` |
+   | `dotnet-sdk/sns-subscriptions/*` (6 entries) | `sns-topics`' teardown swept topics by prefix `{RunId}-sns`, which also matched the live `-sns-sub`/`-sns-pub` topics of sibling groups |
+   | `cli/ses-identities/*` (2 entries) | all three SES groups shared ONE identity, and every group's teardown deleted it |
+   | `cli/eventbridge-buses/DeleteEventBus` (+ R7's `ListEventBuses`) | all three EventBridge groups shared ONE bus; setups re-created it, `DeleteEventBus` and every teardown deleted it |
 
-   **Fixed: `lambda-crud/DeleteFunction` (#414, un-quarantined).** It was not
-   the shared visibility race but the RDS stale-snapshot mechanism again, in
-   lambda: the CreateFunction prewarm callback persisted the create-time
-   snapshot after the image pull, resurrecting a function deleted mid-pull
-   (also struck cli on PRs #427/#430). The startup Pending-reconciler and the
-   S3 code-sync watcher had the same write; all three now merge into a fresh
-   read (deterministic repros in `handler_functions_test.go`,
+   The `internal/state` write-visibility suspicion was ruled out: the memory
+   backend used by compat CI is strongly consistent (single RWMutex), and the
+   emulator was correctly executing deletes the suites really sent. Fixed by
+   per-group resources (exact-name teardowns); validated 3× cli+dotnet locally
+   with `compat-flake-detect.py` fully consistent.
+
+   **Fixed earlier: `lambda-crud/DeleteFunction` (#414, un-quarantined).** Not
+   the suite pattern but the RDS stale-snapshot mechanism again, in lambda:
+   the CreateFunction prewarm callback persisted the create-time snapshot
+   after the image pull, resurrecting a function deleted mid-pull (also struck
+   cli on PRs #427/#430). The startup Pending-reconciler and the S3 code-sync
+   watcher had the same write; all three now merge into a fresh read
+   (deterministic repros in `handler_functions_test.go`,
    `seed_reconcile_test.go`, `s3_sync_test.go`).
 
-   Two services, one pattern. Start at write visibility in
-   [internal/state](../../internal/state) and at any handler that reads through
-   a snapshot taken before the write landed. One fix plausibly clears both
-   quarantines *and* R7.
+   **Still quarantined: `cdk/cdk-lifecycle/VerifyTopicSubscription` (#435).**
+   It fits neither mechanism — cdk-lifecycle is a single group with no
+   in-suite parallelism — so it keeps its own tracking issue.
 
    **Not every flake is that pattern, though — check for stale-snapshot
    write-backs too.** `cli/rds-instances/StartDBInstance` failed the gate twice
