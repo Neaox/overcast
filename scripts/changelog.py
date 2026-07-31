@@ -586,8 +586,10 @@ def release_summary(
         section: sum(1 for entry in entries if entry.section == section)
         for section in SECTIONS
     }
-    tally = ", ".join(f"{count} {name}" for name, count in counts.items() if count)
-    lines = [heading or f"**{version}** — {len(entries)} entries ({tally})", ""]
+    tally = ", ".join(f"{count} {name.lower()}" for name, count in counts.items() if count)
+    plural = "entry" if len(entries) == 1 else "entries"
+    default = f"### What's in {version}\n\n{len(entries)} {plural} — {tally}."
+    lines = [heading or default, ""]
 
     # Breaking changes lead, in full: while in alpha the version cannot signal
     # a break, so this comment is where a reader finds out one happened.
