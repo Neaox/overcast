@@ -25,8 +25,15 @@ func TestCapabilities_MatchDispatchInventory(t *testing.T) {
 
 	caps := capabilities.Default.ForService("cloudformation")
 	capsSet := make(map[string]struct{}, len(caps))
+	// docOnly holds capabilities that document behavior without a dispatch
+	// entry (intrinsic functions, resource-type stubs). They are metadata only
+	// and are exempt from the dispatch cross-check, mirroring capgen.
+	docOnly := make(map[string]struct{})
 	for _, c := range caps {
 		capsSet[c.Operation] = struct{}{}
+		if c.DocOnly {
+			docOnly[c.Operation] = struct{}{}
+		}
 	}
 
 	var inDispatchNotCaps []string
@@ -39,9 +46,13 @@ func TestCapabilities_MatchDispatchInventory(t *testing.T) {
 
 	var inCapsNotDispatch []string
 	for op := range capsSet {
-		if _, ok := dispatchSet[op]; !ok {
-			inCapsNotDispatch = append(inCapsNotDispatch, op)
+		if _, ok := dispatchSet[op]; ok {
+			continue
 		}
+		if _, ok := docOnly[op]; ok {
+			continue
+		}
+		inCapsNotDispatch = append(inCapsNotDispatch, op)
 	}
 	sort.Strings(inCapsNotDispatch)
 
@@ -49,6 +60,6 @@ func TestCapabilities_MatchDispatchInventory(t *testing.T) {
 		t.Errorf("operations in dispatch but not in capabilities.go (add them to capabilities_dev.go):\n  %v", inDispatchNotCaps)
 	}
 	if len(inCapsNotDispatch) > 0 {
-		t.Errorf("operations in capabilities.go but not in dispatch (add them to initOps() or remove from capabilities_dev.go):\n  %v", inCapsNotDispatch)
+		t.Errorf("operations in capabilities.go but not in dispatch (add them to initOps(), mark DocOnly, or remove from capabilities_dev.go):\n  %v", inCapsNotDispatch)
 	}
 }
