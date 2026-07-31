@@ -66,6 +66,98 @@ can be applied mechanically rather than reconstructed from memory.
 
 ## [Unreleased]
 
+## [0.0.1-alpha.28] - 2026-07-31
+
+### Added
+
+- [cloudformation] `AWS::EFS::FileSystem`, `AWS::EFS::MountTarget`, and `AWS::EFS::AccessPoint` provision end-to-end, including `FileSystemPolicy`, `LifecyclePolicies`, `BackupPolicy`, `FileSystemProtection`, tag sync on update, and AWS-matching replacement semantics
+
+- [docker] the internal Docker client gained volume operations (`CreateVolume`, `RemoveVolume`, `ListVolumes`) with the standard managed labels
+
+- [ecs] task definitions now model `volumes` (including `efsVolumeConfiguration`) and container `mountPoints`, with AWS's undefined-volume validation; when EFS live mode is active, task containers mount the file system's backing Docker volume at each mount point (honoring `readOnly`), sharing real file data with Lambda functions that mount the same file system
+
+- [ecs] `RegisterTaskDefinition` now rejects `efsVolumeConfiguration` combining an `accessPointId` with a `rootDirectory` other than `/`, matching AWS
+
+- [efs] opt-in live mode (`OVERCAST_EFS_MODE=live`): each file system is backed by a named Docker volume (`overcast-efs-<FileSystemId>`), created on `CreateFileSystem`, removed on `DeleteFileSystem`, and reconciled on startup (missing volumes recreated, orphans removed); the control plane degrades gracefully when Docker is unavailable
+
+- [efs] live-mode mounts now honor root directories: Lambda `FileSystemConfigs` mounts are scoped to the access point's `RootDirectory`, and ECS `efsVolumeConfiguration` mounts to the access point's root or the declared `rootDirectory`, via Docker volume subpath mounts (Docker Engine 26+). Access points with `CreationInfo` have the directory created in the volume with the declared ownership and permissions before the first mount; without `CreationInfo` a missing directory fails the mount, matching AWS
+
+- [efs] new service: EFS control-plane emulation under the real `/2015-02-01/` REST-JSON API — file systems (create/describe/update/delete, protection), mount targets (incl. security groups), access points, file-system policies, lifecycle configuration, backup policy, tagging (current + legacy APIs), and account preferences, with `creating` → `available` → `deleting` lifecycle states
+
+- [lambda] `FileSystemConfigs` is now modeled on CreateFunction, UpdateFunctionConfiguration, and GetFunctionConfiguration (one config max, EFS access-point ARN, `/mnt/<name>` mount path — matching AWS validation); when EFS live mode is active, the function's containers mount the backing Docker volume at `LocalMountPath`, so invocations share real file data with each other and with other services mounting the same file system
+
+- [lambda] REPORT log lines now carry `Init Duration` on the cold-start invocation of on-demand execution environments (measured from container start to the runtime's first `GET /next`), in AWS's field order and format; warm invokes and provisioned-concurrency environments omit it, as on AWS
+
+- [lambda] opt-in proactive initialization (`LAMBDA_PROACTIVE_INIT`): once a function's configuration settles after a deploy, one execution environment is pre-created in the background so the next request lands warm — mirroring AWS's documented proactive initialization, including `AWS_LAMBDA_INITIALIZATION_TYPE=on-demand` and no `Init Duration` on the first REPORT line
+
+- [release] changelog entries carry a compatibility marker, so a release bump can be derived rather than chosen. `-` Removed defaults to breaking and everything else to compatible, prose naming an input or output contract ("now requires", "now rejects") forces an explicit answer either way, and a breaking entry must carry a `migration:` note. Calibrated against the entries in flight: 2 of 32 are asked
+
+- [release] a `Release Prep` workflow (`workflow_dispatch`) prepares a release end to end: derives the version, assembles and inserts the changelog section, repoints both compare links, writes `VERSION`, deletes the consumed fragments, opens the PR, and comments a summary listing breaking changes with their migration notes. It never merges — `VERSION` is CODEOWNER-owned and publishing still waits on the `release` environment. Re-running against an open release PR reports the fragments that have landed since rather than rewriting the section, so curation is never discarded
+
+- [release] `changelog.py release` applies the mechanical release-prep edit and `changelog.py next-version` derives the next version. While in alpha that is the prerelease counter incrementing; deriving a stable bump from the entries stays unimplemented until 1.0 rather than guessing the policy
+
+- [route53] Route 53 is now emulated at inert level (25 operations, up from 10). New: `ListHostedZonesByName`, `GetHostedZoneCount`, `UpdateHostedZoneComment`, tags (`ChangeTagsForResource`, `ListTagsForResource`, `ListTagsForResources`), and health check CRUD (`CreateHealthCheck`, `GetHealthCheck`, `ListHealthChecks`, `GetHealthCheckCount`, `UpdateHealthCheck`, `DeleteHealthCheck`). Hosted zones now get default apex NS/SOA records and a delegation set, `CreateHostedZone` enforces caller-reference uniqueness (`HostedZoneAlreadyExists`) and returns the `Location` header, `DeleteHostedZone` enforces `HostedZoneNotEmpty`, `ChangeResourceRecordSets` validates batches atomically with AWS error codes (`InvalidChangeBatch` for duplicate creates, missing/mismatched deletes, out-of-zone names, apex CNAMEs) and stores routing metadata (`SetIdentifier`, `Weight`, `Region`, `Failover`, `GeoLocation`, `MultiValueAnswer`), list operations paginate in DNS order, names are canonicalised to lowercase, and errors use Route 53's `ErrorResponse` envelope. CloudFormation gains `AWS::Route53::HealthCheck` plus hosted-zone tag/VPC pass-through and comment-only in-place updates.
+
+### Changed
+
+- [apigateway] proxied requests no longer re-scan and re-decode the API's entire resource/route set on every request — routing state is cached per API and invalidated on any resource or route write
+
+- [lambda] the invoke path no longer SHA-256s the whole deployment package on every invocation (and every configuration read) — the hash is computed once when code is written and stored on the function record, cutting per-invoke CPU for large packages
+
+- [lambda] deployment packages are stored separately from function records, so invoke-path reads no longer base64-decode the whole zip on every invocation (and S3 code-sync events no longer decode every function's package); existing records migrate automatically on their next write
+
+- [lambda] cold starts reuse cached artifacts instead of rebuilding them every time: code and layer tars are kept in a byte-bounded in-memory cache (`LAMBDA_TAR_CACHE_MB`, default 256, 0 disables), the bootstrap and TLS trust-root tars are built once, and the per-acquire image-presence check is skipped once an image is verified
+
+- [lambda] removing a runtime image mid-session (`docker rmi`) no longer breaks that runtime until restart — a container create that finds the image missing re-pulls it and retries
+
+- [lambda] cold-start artifacts (code and layer tars) are pre-built in the background once a deploy settles, so even the first cold start of a new code version skips the package fetch and conversion; the artifact cache is reported on the `/_lambda/instances` debug endpoint
+
+- [lambda] proactive initialization now counts API Gateway integrations and AppSync Lambda data sources as trigger evidence, so wired functions get a warm environment after a deploy even in a fresh process
+
+- [lambda] REPORT lines' `Max Memory Used` now reports the execution environment's running peak across warm invocations — matching AWS — and is sampled concurrently with handler execution, so writing the REPORT line no longer holds up the invoke response waiting on Docker stats
+
+- [lambda] cold starts provision the container filesystem with a single archive (code, layers, TLS trust root, bootstrap) instead of up to four sequential Docker copy round trips — measured cold-start p50 ~355 ms → ~300 ms for cached-image hello-world functions
+
+- [release] changelog fragments are now entry lines rather than frontmatter documents: one file per PR, and each line carries its own category, scope and compatibility marker (`<+|-|~|*|section>[!|.] [area] prose`). `scripts/changelog.py new` writes them, appending to the branch's file so later commits land alongside earlier entries; `assemble` groups at entry rather than file granularity, so entries about one service sort together even from different PRs
+
+### Fixed
+
+- [ci] compat baseline auto-promotion works again as a PR-based flow: the old direct push to `main` had been rejected by branch protection on every run since required-check enforcement (#393), silently stranding improvements (#440). The workflow now force-pushes a coalescing `automation/baseline-promotion` branch and auto-merges it through the normal required checks, using GitHub App credentials; until the App secrets are configured it emits an accurate warning instead of the old false "will retry" message
+
+- [compat] the last quarantined flake, cdk `VerifyTopicSubscription` (#435), was a suite-side consumer race: the SNS topic fed the same queue the stack's Lambda event source mapping polls, so the ESM intermittently consumed the published message before the test's ReceiveMessage saw it (it would flake identically on real AWS). The topic now feeds a dedicated queue with no competing consumer, and the delivery wait budget rose from 2.5s to 10s; `compat/flaky.json` is empty for the first time
+
+- [compat] the compose path can now run the cdk suite: the CDK asset publisher addresses the bootstrap bucket virtual-hosted (`{bucket}.overcast`), which needed a wildcard-free `/etc/hosts` entry in the runner services plus `OVERCAST_HOSTNAME=overcast` on the emulator so host classification recognises the compose hostname as a virtual-host base
+
+- [compat] the stable `cli/lambda-invoke/InvokeDryRun` CI failure (plan item R7) is fixed: it was the only invoke test that didn't wait for the function to leave `Pending`, and CI never pre-pulled the python runtime image its function uses, so the cold pull outlasted the invoke on every run. The test now waits like its siblings, CI pre-pulls `public.ecr.aws/lambda/python:3.12`, and the Active waiter survives a cold pull and fails fast with the `StateReason` when a function enters `Failed`
+
+- [compat] the #388 "created-then-not-found" flake family was three suite-side group-isolation bugs, not an emulator race: dotnet's `sns-topics` teardown swept sibling groups' live topics via an over-broad name prefix, and the cli SES and EventBridge groups each shared one identity/bus that sibling groups' teardowns deleted mid-run (suite groups run in 8 parallel slots). Each group now owns its resources; nine `compat/flaky.json` entries deleted, and the remaining cdk entry moved to its own issue (#435)
+
+- [ecs/rds] removing a task or database image mid-session (`docker rmi`) no longer breaks launches until restart: a failed pull is retried on the next launch attempt instead of being cached forever, and a container create that finds its image missing re-pulls and retries once — the same resilience Lambda gained earlier
+
+- [efs] `DescribeFileSystems` now rejects requests carrying both `FileSystemId` and `CreationToken` with `BadRequest`, matching AWS
+
+- [efs] `DescribeFileSystems` amortizes one mount-target scan across the whole page instead of scanning per file system
+
+- [efs] deleting a file system whose volume is still held by a running container now retries the volume removal (3 attempts, 30 s apart) before deferring to startup reconciliation
+
+- [lambda] invoking a function still in `Pending` state now returns AWS's 409 `ResourceConflictException` ("The operation cannot be performed at this time…") instead of a 400 `InvalidParameterValueException`, matching real Lambda's state-conflict semantics
+
+- [lambda] `CodeSha256` in function and version responses is now the base64-encoded SHA-256 AWS returns, not hex — tooling that compares its locally computed hash (CDK change detection among them) no longer sees permanent code drift
+
+- [lambda] layer version responses now populate `Content.CodeSha256` (base64, as on AWS); layers published before this release omit it
+
+- [lambda] layer archives are stored separately from layer records, so listing layers no longer base64-decodes every layer's full zip per call
+
+- [lambda] a function deleted while its background image pull was still running could be resurrected as "Active": the pull-completion callback, the startup Pending-reconciler, and the S3 code-sync watcher all wrote back records snapshotted before their slow operation started. All three now merge into a fresh read and skip a function that was deleted (or transitioned) meanwhile — this was the intermittent compat `lambda-crud/DeleteFunction` "function still exists" failure (#414), and the same stale write could silently clobber an `UpdateFunction*` revision landing mid-pull
+
+- [lambda] instance memory/CPU in the instances panel are now sampled from Docker instead of always reading 0, and the REPORT line's `Max Memory Used` no longer reads 0 on slow (Docker-in-Docker) hosts — container stats are fetched with `one-shot=true`, which also removes the daemon's ~1–2 s two-cycle stats wait from every invocation's response path
+
+- [lambda/ecs] the TLS trust-root archive is built once per process instead of per container launch
+
+- [release] the release-prep workflow authenticates with the App client ID; `app-id` is deprecated from `create-github-app-token` v3 and warned on every run
+
+- [routing] host classification no longer allocates intermittently on host-routed requests: the region-shape check used a package `regexp`, whose pooled matcher state is only amortized allocation-free (and is deliberately dropped at random under the race detector, which made `TestHostClassifier_lowercaseHostStaysAllocationFree` flake in CI); it is now a hand-rolled matcher pinned to the old regexp by an oracle test
+
 ## [0.0.1-alpha.27] - 2026-07-30
 
 ### Changed
@@ -532,7 +624,8 @@ can be applied mechanically rather than reconstructed from memory.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.27...HEAD
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.28...HEAD
+[0.0.1-alpha.28]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.27...v0.0.1-alpha.28
 [0.0.1-alpha.27]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.26...v0.0.1-alpha.27
 [0.0.1-alpha.26]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.25...v0.0.1-alpha.26
 [0.0.1-alpha.25]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.24...v0.0.1-alpha.25
