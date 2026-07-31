@@ -1,0 +1,234 @@
+name: Release Prep
+
+# Prepares a release: derives the version, applies the mechanical changelog
+# edit, and opens a release PR.
+#
+# It deliberately stops there. Merging is a human step — VERSION is owned in
+# CODEOWNERS — and publishing waits on the `release` environment's required
+# reviewer. What this removes is only the drudgery that
+# check-release-changelog.py already fails a release for: the section, both
+# compare links, VERSION, and the fragment deletions. Curating the draft into
+# house-style prose stays a human job, which is why an existing release PR is
+# never rewritten without being asked (see `regenerate`).
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (default: derived from VERSION)"
+        required: false
+        type: string
+      regenerate:
+        description: "Rewrite an existing release PR, DISCARDING curation done on it"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Print what would change; push nothing, open nothing"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare release PR
+    runs-on: ubuntu-latest
+    steps:
+      # A PR opened with the default GITHUB_TOKEN does not trigger
+      # pull_request workflows, so a release PR created that way would arrive
+      # with no CI, no RC images and no changelog gate — silently unchecked.
+      # It also needs an author who is not the maintainer, so the CODEOWNERS
+      # review on VERSION is something a human can actually satisfy. Hence a
+      # GitHub App, and hence no `|| github.token` fallback.
+      - name: Require the release App credentials
+        env:
+          APP_ID: ${{ secrets.RELEASE_APP_ID }}
+          APP_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APP_ID" ] || [ -z "$APP_KEY" ]; then
+            echo "::error::RELEASE_APP_ID and RELEASE_APP_PRIVATE_KEY must be set. Opening a release PR with the default token would produce a PR that runs no checks." >&2
+            exit 1
+          fi
+
+      - uses: actions/create-github-app-token@v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v7.0.0
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Determine version and branch
+        id: plan
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version="$VERSION_INPUT"
+          if [ -z "$version" ]; then
+            version="$(python3 scripts/changelog.py next-version)"
+          fi
+          {
+            echo "version=$version"
+            echo "branch=release/$version"
+          } >> "$GITHUB_OUTPUT"
+          echo "Preparing $version"
+
+      - name: Look for an existing release PR
+        id: existing
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ steps.plan.outputs.branch }}
+        run: |
+          set -euo pipefail
+          number="$(gh pr list --state open --base main --head "$BRANCH" \
+            --json number --jq '.[0].number // empty')"
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+          if [ -n "$number" ]; then
+            echo "Release PR #$number is already open for $BRANCH."
+          fi
+
+      # The one thing a machine cannot redo is the prose curation, so an open
+      # release PR is reported against rather than overwritten.
+      #
+      # The question is not "what is in .changelog/ on main" — that still holds
+      # every fragment, including the ones this PR already consumed on its own
+      # branch, because the deletions do not reach main until it merges. It is
+      # "what would still be unconsumed if this PR merged right now", which is
+      # the same recompute the release workflow's changelog gate performs.
+      - name: Report fragments that arrived since the PR was prepared
+        if: steps.existing.outputs.number != '' && inputs.regenerate == false
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ steps.existing.outputs.number }}
+          VERSION: ${{ steps.plan.outputs.version }}
+          BRANCH: ${{ steps.plan.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$BRANCH" main
+          conflicted=false
+          pending=()
+          if tree="$(git merge-tree --write-tree "origin/$BRANCH" origin/main)"; then
+            mapfile -t pending < <(git ls-tree --name-only "$tree" .changelog/ \
+              | sed 's|^\.changelog/||' | grep -v '^README\.md$' | sort || true)
+          else
+            conflicted=true
+          fi
+          {
+            echo "### Release prep re-run for \`$VERSION\`"
+            echo
+            if [ "$conflicted" = true ]; then
+              echo "This PR **conflicts with \`main\`** and cannot be assessed."
+              echo "Update the branch, then re-run."
+            elif [ "${#pending[@]}" -eq 0 ]; then
+              echo "No fragments are waiting — this PR is current with \`main\`."
+            else
+              echo "**${#pending[@]} fragment(s) have landed on \`main\` and are not in this PR's release section:**"
+              echo
+              for name in "${pending[@]}"; do
+                echo "- \`$name\`"
+              done
+              echo
+              echo "Fold them into the release section and push. This workflow will not"
+              echo "rewrite the section, because that would discard the curation already"
+              echo "done here — re-run with \`regenerate: true\` if you do want it replaced."
+            fi
+          } > "$RUNNER_TEMP/stale.md"
+          gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/stale.md"
+          echo "Reported on #$PR_NUMBER; not rewriting it."
+
+      - name: Apply the release edit
+        if: steps.existing.outputs.number == '' || inputs.regenerate
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 scripts/changelog.py release "$VERSION" \
+            --summary-file "$RUNNER_TEMP/summary.md"
+
+      # The same gate the release workflow runs, applied before the PR exists
+      # rather than after it merges.
+      - name: Validate the result
+        if: steps.existing.outputs.number == '' || inputs.regenerate
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: python3 scripts/check-release-changelog.py "$VERSION"
+
+      - name: Show what would change
+        if: (steps.existing.outputs.number == '' || inputs.regenerate) && inputs.dry_run
+        run: |
+          cat "$RUNNER_TEMP/summary.md"
+          git --no-pager diff --stat
+
+      - name: Commit and push the release branch
+        if: (steps.existing.outputs.number == '' || inputs.regenerate) && inputs.dry_run == false
+        env:
+          BRANCH: ${{ steps.plan.outputs.branch }}
+          VERSION: ${{ steps.plan.outputs.version }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${APP_SLUG}[bot]@users.noreply.github.com"
+          git switch -C "$BRANCH"
+          git add -A
+          git commit -m "chore(release): prepare $VERSION"
+          git push --force-with-lease origin "$BRANCH"
+
+      - name: Open or update the release PR
+        id: pr
+        if: (steps.existing.outputs.number == '' || inputs.regenerate) && inputs.dry_run == false
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ steps.plan.outputs.branch }}
+          VERSION: ${{ steps.plan.outputs.version }}
+          EXISTING: ${{ steps.existing.outputs.number }}
+        run: |
+          set -euo pipefail
+          {
+            echo "Release prep for **$VERSION**, generated by the Release Prep workflow."
+            echo
+            echo "## Before merging"
+            echo
+            echo "- [ ] **Curate the release section.** The generated draft is one bullet"
+            echo "      per entry; the house style merges same-area entries and tightens"
+            echo "      prose. See \`.changelog/README.md\` and RELEASE.md § Preflight."
+            echo "- [ ] **Smoke test the RC image**, not a local rebuild — the bot comment"
+            echo "      on this PR carries the pull commands and digests."
+            echo "- [ ] **Re-check if \`main\` moved.** Fragments that land while this is"
+            echo "      open are not in the section; the changelog gate fails the PR until"
+            echo "      they are folded in."
+            echo
+            echo "This workflow does not merge. \`VERSION\` is owned in CODEOWNERS, and"
+            echo "publishing waits on the \`release\` environment's required reviewer."
+          } > "$RUNNER_TEMP/pr-body.md"
+
+          if [ -n "$EXISTING" ]; then
+            gh pr edit "$EXISTING" \
+              --title "chore(release): prepare $VERSION" \
+              --body-file "$RUNNER_TEMP/pr-body.md"
+            number="$EXISTING"
+          else
+            gh pr create --base main --head "$BRANCH" \
+              --title "chore(release): prepare $VERSION" \
+              --body-file "$RUNNER_TEMP/pr-body.md"
+            number="$(gh pr list --state open --base main --head "$BRANCH" \
+              --json number --jq '.[0].number')"
+          fi
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+      # Kept as a comment rather than folded into the body: it is regenerated
+      # on every run, and the breaking-change list is the part a reviewer must
+      # not miss. While in alpha the version cannot signal a break, so this is
+      # where a reader finds out one happened.
+      - name: Comment the release summary
+        if: steps.pr.outputs.number != ''
+        uses: marocchino/sticky-pull-request-comment@v2.9.4
+        with:
+          number: ${{ steps.pr.outputs.number }}
+          header: release-summary
+          path: ${{ runner.temp }}/summary.md
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
