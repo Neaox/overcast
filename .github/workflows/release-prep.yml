@@ -42,18 +42,21 @@ jobs:
       # GitHub App, and hence no `|| github.token` fallback.
       - name: Require the release App credentials
         env:
-          APP_ID: ${{ secrets.RELEASE_APP_ID }}
+          CLIENT_ID: ${{ secrets.RELEASE_APP_CLIENT_ID }}
           APP_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
         run: |
-          if [ -z "$APP_ID" ] || [ -z "$APP_KEY" ]; then
-            echo "::error::RELEASE_APP_ID and RELEASE_APP_PRIVATE_KEY must be set. Opening a release PR with the default token would produce a PR that runs no checks." >&2
+          if [ -z "$CLIENT_ID" ] || [ -z "$APP_KEY" ]; then
+            echo "::error::RELEASE_APP_CLIENT_ID and RELEASE_APP_PRIVATE_KEY must be set. Opening a release PR with the default token would produce a PR that runs no checks. The client ID is on the App's settings page, below the App ID." >&2
             exit 1
           fi
 
+      # client-id rather than app-id: the latter is deprecated from v3 and
+      # warns on every run. Both identify the same App; the client ID sits on
+      # the App's settings page directly below the numeric App ID.
       - uses: actions/create-github-app-token@v3.2.0
         id: app-token
         with:
-          app-id: ${{ secrets.RELEASE_APP_ID }}
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
       - uses: actions/checkout@v7.0.0
