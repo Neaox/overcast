@@ -52,9 +52,17 @@ Three things were undermining the compat suites:
   new vs known failures, parity debt), `::error` annotations, a `Compat Report`
   JUnit check run (regressions are failures, expected gaps are skips), and a
   sticky PR comment. Artifacts unchanged.
-- **Baseline auto-promotion** — on push to `main`, improvements are committed
-  back by the workflow. The sole documented exception to "never push to `main`",
-  granted to the workflow only.
+- **Baseline auto-promotion** — on push to `main`, improvements are published
+  back by the workflow. Originally a direct push to `main`; #393's
+  required-check enforcement rejected that on every run (issue #440, ~50
+  improvements stranded until the hand-promotion in PR #439), so promotion is
+  now a **PR-based flow**: the improvement is force-pushed to the coalescing
+  `automation/baseline-promotion` branch and auto-merged through the same
+  required checks (including the baseline-change lint) as a human edit. It
+  needs GitHub App credentials (`COMPAT_PROMOTION_APP_ID` /
+  `COMPAT_PROMOTION_APP_PRIVATE_KEY`) because `GITHUB_TOKEN`-created PRs
+  start no workflows; until those secrets exist the step warns accurately and
+  promotion is applied by hand (recipe in PR #439).
 
 ## What turning Docker on changed
 

@@ -7,8 +7,8 @@ name: Compatibility Tests
 on:
   push:
     branches: [main]
-    # The baseline-promotion commit this workflow pushes to main must not
-    # trigger another run — see "Promote baseline improvements".
+    # The auto-merged baseline-promotion PR lands a commit touching only this
+    # file; it must not trigger another full run — see "Publish promotion PR".
     paths-ignore:
       - compat/baseline.json
   pull_request:
@@ -483,7 +483,22 @@ jobs:
       # improves entries (updateBaseline keeps the better status), only runs on
       # main, and only commits compat/baseline.json. paths-ignore on the push
       # trigger stops this commit from starting another run.
-      - name: Promote baseline improvements
+      # Promotion is PR-based: branch protection (since #393) rejects any
+      # direct push to main — automation included — so the old direct-push
+      # promotion silently dropped every improvement (issue #440). Instead the
+      # promotion is force-pushed to a fixed branch and lands through a normal
+      # auto-merged PR, validated by the same required checks (including the
+      # baseline-change lint) as a human edit. Successive promotions coalesce
+      # on the fixed branch; a superseded one is simply overwritten.
+      #
+      # The push and the PR need a GitHub App installation token: the default
+      # GITHUB_TOKEN starts no workflows, so a PR it created would wait on
+      # required checks that never run. Until the App credentials exist
+      # (COMPAT_PROMOTION_APP_ID / COMPAT_PROMOTION_APP_PRIVATE_KEY — see
+      # issue #440), the step surfaces an accurate warning instead; the
+      # promotion must then be applied by hand (recipe in PR #439).
+      - name: Compute baseline promotion
+        id: promote-diff
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.baseline.outcome == 'success'
         run: |
           go run ./cmd/compat \
@@ -492,19 +507,62 @@ jobs:
             --results-file compat-results.json
           if git diff --quiet -- compat/baseline.json; then
             echo "Baseline unchanged — nothing to promote."
-            exit 0
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Check promotion App credentials
+        id: app-check
+        if: steps.promote-diff.outputs.changed == 'true'
+        env:
+          APP_ID: ${{ secrets.COMPAT_PROMOTION_APP_ID }}
+          APP_KEY: ${{ secrets.COMPAT_PROMOTION_APP_PRIVATE_KEY }}
+        run: |
+          if [ -n "$APP_ID" ] && [ -n "$APP_KEY" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Compat baseline::Promotion computed but NOT published: branch protection blocks direct pushes and the promotion App credentials (COMPAT_PROMOTION_APP_ID / COMPAT_PROMOTION_APP_PRIVATE_KEY) are not configured — see issue #440. Apply by hand per PR #439 until then."
+          fi
+
+      - name: Mint promotion App token
+        id: promotion-token
+        if: steps.app-check.outputs.available == 'true'
+        uses: actions/create-github-app-token@v2.2.1
+        with:
+          app-id: ${{ secrets.COMPAT_PROMOTION_APP_ID }}
+          private-key: ${{ secrets.COMPAT_PROMOTION_APP_PRIVATE_KEY }}
+
+      - name: Publish promotion PR
+        if: steps.app-check.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${{ steps.promotion-token.outputs.token }}
+        run: |
+          git config user.name "overcast-compat-promotion[bot]"
+          git config user.email "overcast-compat-promotion[bot]@users.noreply.github.com"
           git add compat/baseline.json
           git commit -m "chore(compat): promote baseline improvements" \
-            -m "Automated: compat results on main improved on the recorded baseline." \
-            -m "[skip ci]"
-          # Non-fatal: promotion is an optimisation, not a gate. If main moved on
-          # (or branch protection rejects the push) the next run promotes the
-          # same improvement — failing the build over it would be noise.
-          if ! git push origin HEAD:main; then
-            echo "::warning title=Compat baseline::Could not push the baseline promotion — the next run on main will retry."
+            -m "Automated: compat results on main run ${GITHUB_RUN_ID} (commit ${GITHUB_SHA}) improved on the recorded baseline."
+          # Non-fatal from here down: promotion is an optimisation, not a gate,
+          # and a dropped one is recomputed by the next improved main run.
+          if ! git push --force \
+              "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+              HEAD:automation/baseline-promotion; then
+            echo "::warning title=Compat baseline::Could not push the promotion branch — the next improved main run will recompute it."
+            exit 0
+          fi
+          # One coalescing PR: create if absent (the create fails harmlessly
+          # when it already exists — the force-push above updated it), then
+          # make sure auto-merge is armed either way.
+          gh pr create \
+            --head automation/baseline-promotion \
+            --base main \
+            --title "chore(compat): promote baseline improvements" \
+            --body "Automated: compat results on main improved on the recorded baseline (run ${GITHUB_RUN_ID}, commit ${GITHUB_SHA}). Auto-merges when checks pass; superseded promotions are force-pushed over." \
+            || true
+          if ! gh pr merge automation/baseline-promotion --squash --auto; then
+            echo "::warning title=Compat baseline::Promotion PR exists but auto-merge could not be armed — merge it manually."
           fi
 
       # continue-on-error above kept the surfacing steps running; the gates are
