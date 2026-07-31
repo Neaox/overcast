@@ -503,10 +503,16 @@ that is a `fail` entry in the baseline and belongs in the burn-down.
 takes a test out of the gate entirely, so an unguarded list is an amnesty file:
 any inconvenient failure could be silenced by adding a line, and nothing would
 notice the coverage had gone. `--lint-flaky-from/--lint-flaky-to` runs on PRs
-and **fails on any new entry**, and on any entry without a reason. Removing an
-entry — the fix — is always allowed. If you genuinely need a new quarantine, say
-so in the PR description with the evidence: two runs of an unchanged tree
-disagreeing is the bar.
+and **fails on any new entry until a reviewer applies the `quarantine-approved`
+label** to the pull request, and on any entry without a reason. The label is
+read live from the API, so applying it and re-running the failed `Aggregate
+Compatibility Results` job is enough — no new push needed — and it waives the
+growth check only: entries missing a reason, issue, or date, and overdue
+entries, still fail. Approved additions are named in the job log and as a
+`::notice` annotation so the decision stays visible. Removing an entry — the
+fix — is always allowed. If you genuinely need a new quarantine, say so in the
+PR description with the evidence: two runs of an unchanged tree disagreeing is
+the bar.
 
 ### Stabilising a flaky test
 
@@ -517,7 +523,7 @@ meant to empty, and the process makes that happen rather than hoping:
 | --- | --- | --- |
 | **Detected** | Nightly runs each suite 3× against unchanged `main`; any test that answers inconsistently fails that job | [compat-flake-detection.yml](../.github/workflows/compat-flake-detection.yml) |
 | **Tracked** | An issue is raised automatically — one per (suite, group) cluster, since related tests are almost always one root cause. A recurrence reopens and comments rather than duplicating | [scripts/compat-flake-issue.py](../scripts/compat-flake-issue.py) |
-| **Quarantined** | Only with a `reason`, a tracking `issue`, and a `since` date. Adding an entry fails the PR lint, so it takes a reviewer's agreement | `--lint-flaky-to` |
+| **Quarantined** | Only with a `reason`, a tracking `issue`, and a `since` date. Adding an entry fails the PR lint until a reviewer applies the `quarantine-approved` label, so it takes a reviewer's agreement | `--lint-flaky-to` |
 | **Nagged (14 days)** | The nightly job reports the entry as overdue and annotates it | `--report-flaky-overdue` |
 | **Blocking (30 days)** | The PR lint fails on the entry. Continuing means fixing it, or re-dating it with a fresh argument in review | `--lint-flaky-to` |
 | **Closed** | The fix deletes the entry; removals are always allowed | — |

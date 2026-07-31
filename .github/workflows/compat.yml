@@ -405,18 +405,31 @@ jobs:
 
       # Quarantining a test removes it from the baseline gate in both
       # directions, so growing the list is how a failure gets silenced. That is
-      # a reviewer's call, not CI's.
+      # a reviewer's call, not CI's — and the reviewer expresses it by applying
+      # the quarantine-approved label to the PR. Labels are read live from the
+      # API (the event payload is frozen at trigger time), so applying the
+      # label and re-running this job is enough; no new push needed. The label
+      # waives growth only: entries without a reason/issue/date, and overdue
+      # entries, still fail.
       - name: Lint compat flaky list changes
         id: flaky-lint
         if: github.event_name == 'pull_request'
         continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           git fetch --depth=1 origin main
           git show origin/main:compat/flaky.json > compat-flaky-main.json 2>/dev/null || echo '{"version":1,"flaky":[]}' > compat-flaky-main.json
+          growth=""
+          if gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels" --jq '.[].name' | grep -qx 'quarantine-approved'; then
+            echo "quarantine-approved label present — a reviewer has agreed to the new quarantine(s)."
+            growth="--flaky-growth-approved"
+          fi
           go run ./cmd/compat \
             --lint-flaky-from compat-flaky-main.json \
             --lint-flaky-to compat/flaky.json \
-            --annotate
+            --annotate $growth
 
       # One report, three renderings: the job summary (full detail), a digest for
       # the PR comment, and JUnit XML for a check run with per-test history.

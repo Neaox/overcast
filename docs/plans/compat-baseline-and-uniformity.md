@@ -105,6 +105,7 @@ Quarantine is containment. The plan to actually remove it:
    | --- | --- |
    | `dotnet-sdk/sns-subscriptions/PublishDeliveredToSQS` | Topic gone between `SubscribeSQS` and publish |
    | `cli/eventbridge-buses/DeleteEventBus` (via R7) | Bus gone between create and `ListEventBuses` |
+   | `python-sdk/lambda-crud/DeleteFunction` (#414) | The inverse: function *still exists* on the post-delete read — a deletion visible late, so the write-visibility audit must cover removals too |
 
    Two services, one pattern. Start at write visibility in
    [internal/state](../../internal/state) and at any handler that reads through
@@ -131,7 +132,9 @@ Quarantine is containment. The plan to actually remove it:
    baseline failure with dependants is therefore a latent intermittent gate
    failure, which moves R7 and R1 up the queue.
 4. **Empty the list.** Each fix deletes its entry in the same PR; the lint
-   allows removals freely and blocks additions.
+   allows removals freely and blocks additions until a reviewer applies the
+   `quarantine-approved` label to the PR (see AGENTS.md — added when the #414
+   quarantine had no green path after admin merges were retired).
 
 Out of scope here but worth naming: the Go suite has its own instability —
 `TestHostClassifier_lowercaseHostStaysAllocationFree` asserts an exact
