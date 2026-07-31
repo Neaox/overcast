@@ -432,10 +432,37 @@ jobs:
           version=$(tr -d '[:space:]' < VERSION)
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           repo="ghcr.io/${owner}/overcast${IMAGE_SUFFIX}"
+          # There are exactly four routes from the context into the image:
+          # the compiled ./cmd/overcast, the two files the runtime stage COPYs
+          # from docker/, `//go:embed all:web/dist`, and
+          # `//go:embed docs/*.md docs/cdk docs/services`. The paths below are
+          # that list, so anything omitted provably cannot change the image:
+          #
+          #   cmd/overcast only  — every cmd/* is `package main`, and Go cannot
+          #                        import a main package, so no other one can
+          #                        reach this binary.
+          #   docs, partially    — only what embed.go embeds. docs/plans,
+          #                        docs/dev and docs/generated are excluded
+          #                        there deliberately, and the runtime stages
+          #                        copy in nothing but the binary, so an
+          #                        unembedded doc has no way in.
+          #   no *_test.go or testdata/ — the toolchain drops both from
+          #                        `go build`, and non-test code cannot even
+          #                        reference them.
+          #
+          # Web test files are deliberately NOT excluded: nothing stops app
+          # code importing one into the bundle, so it would rest on a habit
+          # rather than a rule.
+          #
+          # These narrowings guard themselves. Building another cmd would
+          # change the Dockerfile; embedding more docs would change embed.go;
+          # both are hashed, so widening the image's inputs forces a rebuild.
           hash=$(
             {
               git ls-tree -r HEAD -- go.mod go.sum embed.go embed_slim.go \
-                cmd internal docs web docker Dockerfile .dockerignore
+                cmd/overcast internal web docker Dockerfile .dockerignore \
+                docs/cdk docs/services docs/*.md \
+                | grep -vE '_test\.go$|/testdata/'
               echo "VERSION=${version}"
               echo "TARGET=${TARGET}"
             } | sha256sum | cut -c1-16
