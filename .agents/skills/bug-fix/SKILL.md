@@ -307,6 +307,30 @@ Web UI must not be an afterthought. A bug fix may affect it:
 - **Does the fix affect global search?** If resource identifiers or fetch logic changed, update the search contributor in `web/src/lib/search-contributors/<service>.ts`.
 - Run `pnpm run typecheck` in `web/` to confirm no TypeScript regressions.
 
+### Phase 6b — Compat Coverage Question
+
+**A bug CAN indicate missing compat coverage — ask, every time; it often
+doesn't, but the question is mandatory.** The compat suites are the external
+contract check: if this bug was wire-observable through an AWS SDK or the CLI
+(wrong shape, wrong status/error code, wrong state transition, resource
+visible after delete, pagination/idempotency), then a compat test should have
+caught it — and didn't.
+
+- **Was there a compat test for this path?** Check
+  `compat/suites/registry.json` for the operation. If the test exists and
+  passed while the bug shipped, the test under-asserts — strengthen it in
+  every suite (the node-js-sdk no-op-assertion audit is the cautionary tale:
+  eight delete-verifications asserted nothing while the gate stayed green).
+- **If no test exists**, add it registry-first, then to every SDK/CLI suite
+  (or record per-suite debt in `compat/parity-debt.json`), per the uniformity
+  policy in [compat/AGENTS.md](../../../compat/AGENTS.md#baseline--uniformity-policy).
+- **If the bug is not wire-observable** (internal-only, UI, tooling), say so
+  in the PR in one line and move on — the question is mandatory, the test is
+  not.
+
+The integration test from Phase 2 proves the fix; the compat test keeps the
+whole class caught from outside, in every SDK, forever.
+
 ### Phase 7 — Final Verification
 
 1. **Widen the build:**

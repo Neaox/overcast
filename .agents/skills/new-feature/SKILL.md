@@ -738,9 +738,32 @@ The `cacheKey` **must** include `ep.baseUrl` and `ep.region` as the first two el
 
 ## Phase 6 — Compat Tests
 
-For new services, create `compat/suites/node-js-sdk/src/groups/<n>.ts` with tests covering all P1 operations.
+**Ask first: are there missing compat tests related to this feature?** Check
+`compat/suites/registry.json` for the operations the feature adds or changes.
+Three cases:
 
-Register the group in `compat/suites/node-js-sdk/src/index.ts`.
+1. **The operations are not in the registry** (a new service, or new
+   operations on an existing one): add the group/tests to the registry FIRST
+   — it is the single source of truth in both directions, and the parity gate
+   fails any suite result the registry does not know. Then implement the
+   tests in **every SDK/CLI suite**, or record the gap per suite in
+   `compat/parity-debt.json` (the debt file only shrinks; the checker fails
+   on undeclared or stale entries). Not just node-js-sdk — the uniformity
+   policy in [compat/AGENTS.md](../../../compat/AGENTS.md#baseline--uniformity-policy)
+   applies from the first test.
+2. **The operations are registered but recorded `unimplemented` in
+   `compat/baseline.json`**: your feature should flip them. Run the affected
+   suites locally (`go run ./cmd/compat --suite <suite>`) and confirm
+   unimplemented → pass; baseline auto-promotion records the improvement on
+   merge. If they still fail after the feature, the feature is not done — a
+   `fail` is a wire-compatibility defect, not a coverage note.
+3. **The operations are registered and passing**: confirm your change did not
+   regress them (`make -C compat baseline-check` against a local run).
+
+Isolation rules for any new compat test: resource names embed the group token
+(`{runId}-<group>-…`), never another group's resources, exact-name teardowns —
+groups run in 8 parallel slots and violations surface as intermittent
+created-then-not-found failures (#388).
 
 ---
 
