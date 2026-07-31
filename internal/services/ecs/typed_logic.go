@@ -62,6 +62,21 @@ func validateTaskVolumes(volumes []TaskVolume, containers []ContainerDefinition)
 	for _, v := range volumes {
 		names[v.Name] = struct{}{}
 	}
+	for _, v := range volumes {
+		cfg := v.EFSVolumeConfiguration
+		if cfg == nil || cfg.AuthorizationConfig == nil || cfg.AuthorizationConfig.AccessPointId == "" {
+			continue
+		}
+		// AWS: an access point supplies the root directory, so rootDirectory
+		// must be omitted or "/" when accessPointId is set.
+		if cfg.RootDirectory != "" && cfg.RootDirectory != "/" {
+			return &protocol.AWSError{
+				Code:       "ClientException",
+				Message:    fmt.Sprintf("Volume '%s': rootDirectory must be omitted or '/' when an access point is specified.", v.Name),
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
+	}
 	for _, cd := range containers {
 		for _, mp := range cd.MountPoints {
 			if _, ok := names[mp.SourceVolume]; !ok {

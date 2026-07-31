@@ -583,7 +583,8 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		ContainerConfig: ccfg,
 		Platform:        platform,
 		HostConfig: &docker.HostConfig{
-			Binds:       append(bindMountTaskDir(hotReloadPath), cr.efsBinds(ctx, fn)...),
+			Binds:       bindMountTaskDir(hotReloadPath),
+			Mounts:      cr.efsMounts(ctx, fn),
 			NetworkMode: cr.network,
 			Memory:      int64(fn.MemorySize) * 1024 * 1024,
 			MemorySwap:  int64(fn.MemorySize) * 1024 * 1024, // disable swap
@@ -854,12 +855,13 @@ func bindMountTaskDir(hostPath string) []string {
 	return []string{hostPath + ":/var/task:ro"}
 }
 
-// efsBinds resolves the function's FileSystemConfigs to Docker named-volume
-// bind entries ("volume:/mnt/path"). Unresolvable configs — EFS mock mode,
-// Docker unavailable, unknown access point — are skipped with a warning so
-// the function still runs, just without shared storage (mirrors the
-// best-effort posture of the EFS live mode itself).
-func (cr *ContainerRuntime) efsBinds(ctx context.Context, fn *Function) []string {
+// efsMounts resolves the function's FileSystemConfigs to Docker volume
+// mounts, scoped to the access point's root directory via a volume Subpath
+// when one is declared. Unresolvable configs — EFS mock mode, Docker
+// unavailable, unknown access point — are skipped with a warning so the
+// function still runs, just without shared storage (mirrors the best-effort
+// posture of the EFS live mode itself).
+func (cr *ContainerRuntime) efsMounts(ctx context.Context, fn *Function) []docker.Mount {
 	if len(fn.FileSystemConfigs) == 0 {
 		return nil
 	}
@@ -867,9 +869,9 @@ func (cr *ContainerRuntime) efsBinds(ctx context.Context, fn *Function) []string
 	if rp == nil {
 		return nil
 	}
-	binds := make([]string, 0, len(fn.FileSystemConfigs))
+	mounts := make([]docker.Mount, 0, len(fn.FileSystemConfigs))
 	for _, fsc := range fn.FileSystemConfigs {
-		volume, ok := (*rp).EFSVolumeForAccessPoint(ctx, fsc.Arn)
+		volume, subpath, ok := (*rp).EFSVolumeForAccessPoint(ctx, fsc.Arn)
 		if !ok {
 			cr.logger.Warn("lambda: EFS mount skipped — access point has no backing volume (mock mode, Docker down, or unknown access point)",
 				zap.String("function", fn.Name),
@@ -877,9 +879,22 @@ func (cr *ContainerRuntime) efsBinds(ctx context.Context, fn *Function) []string
 				zap.String("mount_path", fsc.LocalMountPath))
 			continue
 		}
-		binds = append(binds, volume+":"+fsc.LocalMountPath)
+		mounts = append(mounts, volumeMount(volume, subpath, fsc.LocalMountPath, false))
 	}
-	return binds
+	if len(mounts) == 0 {
+		return nil
+	}
+	return mounts
+}
+
+// volumeMount builds a named-volume Mount, attaching a Subpath option only
+// when the mount is scoped below the volume root.
+func volumeMount(volume, subpath, target string, readOnly bool) docker.Mount {
+	m := docker.Mount{Type: "volume", Source: volume, Target: target, ReadOnly: readOnly}
+	if subpath != "" {
+		m.VolumeOptions = &docker.MountVolumeOptions{Subpath: subpath}
+	}
+	return m
 }
 
 // ─── Image management ──────────────────────────────────────────────────────

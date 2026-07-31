@@ -26,7 +26,9 @@ type fakeVolumeDaemon struct {
 	removed []string
 	// listed is the canned response for GET /volumes.
 	listed []docker.VolumeSummary
-	srv    *httptest.Server
+	// helperScripts records the Cmd of each materialization helper container.
+	helperScripts []string
+	srv           *httptest.Server
 }
 
 func newFakeVolumeDaemon(t *testing.T) *fakeVolumeDaemon {
@@ -56,12 +58,33 @@ func newFakeVolumeDaemon(t *testing.T) *fakeVolumeDaemon {
 			}{Volumes: fd.listed}
 			fd.mu.Unlock()
 			_ = json.NewEncoder(w).Encode(resp)
+		// Root-directory materialization helper container lifecycle.
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/images/create"):
+			w.WriteHeader(http.StatusOK) // pull succeeds with empty progress stream
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/containers/create"):
+			var req struct {
+				Cmd []string `json:"Cmd"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			fd.mu.Lock()
+			fd.helperScripts = append(fd.helperScripts, strings.Join(req.Cmd, " "))
+			fd.mu.Unlock()
+			w.Write([]byte(`{"Id":"helper1"}`)) //nolint:errcheck
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/containers/helper1/json"):
+			w.Write([]byte(`{"Id":"helper1","State":{"Status":"exited","Running":false,"ExitCode":0}}`)) //nolint:errcheck
 		default:
+			// image pull, container start/remove, etc.
 			w.WriteHeader(http.StatusNoContent)
 		}
 	}))
 	t.Cleanup(fd.srv.Close)
 	return fd
+}
+
+func (fd *fakeVolumeDaemon) helperRuns() []string {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	return append([]string(nil), fd.helperScripts...)
 }
 
 func (fd *fakeVolumeDaemon) createdVolumes() []string {
@@ -86,7 +109,11 @@ func newLiveTestService(t *testing.T, fd *fakeVolumeDaemon, mode config.EFSMode)
 		state.NewMemoryStore(), zap.NewNop(), clock.New(),
 	)
 	if fd != nil {
-		svc.docker = docker.NewClient("tcp://"+fd.srv.Listener.Addr().String(), zap.NewNop())
+		// Wired directly (not via SetDocker) so the startup reconciliation
+		// goroutine cannot race the per-test assertions on recorded calls.
+		dc := docker.NewClient("tcp://"+fd.srv.Listener.Addr().String(), zap.NewNop())
+		svc.docker = dc
+		svc.puller = docker.NewImagePuller(dc)
 		svc.dockerReady.Store(true)
 	}
 	t.Cleanup(func() {
@@ -164,23 +191,24 @@ func TestEFSVolumeForAccessPoint(t *testing.T) {
 		t.Fatalf("CreateAccessPoint: %v", aerr)
 	}
 
-	// Live mode resolves the access-point ARN to the backing volume.
-	volume, ok := svc.EFSVolumeForAccessPoint(ctx, ap.AccessPointArn)
-	if !ok || volume != volumeName(fs.FileSystemId) {
-		t.Fatalf("expected volume %q, got %q ok=%v", volumeName(fs.FileSystemId), volume, ok)
+	// Live mode resolves the access-point ARN to the backing volume; the
+	// default root directory "/" yields no subpath.
+	volume, subpath, ok := svc.EFSVolumeForAccessPoint(ctx, ap.AccessPointArn)
+	if !ok || volume != volumeName(fs.FileSystemId) || subpath != "" {
+		t.Fatalf("expected volume %q with no subpath, got %q/%q ok=%v", volumeName(fs.FileSystemId), volume, subpath, ok)
 	}
 
 	// Unknown access points and non-AP ARNs do not resolve.
-	if _, ok := svc.EFSVolumeForAccessPoint(ctx, "arn:aws:elasticfilesystem:us-east-1:000000000000:access-point/fsap-00000000000000000"); ok {
+	if _, _, ok := svc.EFSVolumeForAccessPoint(ctx, "arn:aws:elasticfilesystem:us-east-1:000000000000:access-point/fsap-00000000000000000"); ok {
 		t.Fatal("unknown access point must not resolve")
 	}
-	if _, ok := svc.EFSVolumeForAccessPoint(ctx, fs.FileSystemArn); ok {
+	if _, _, ok := svc.EFSVolumeForAccessPoint(ctx, fs.FileSystemArn); ok {
 		t.Fatal("file-system ARN must not resolve")
 	}
 
 	// Mock mode never resolves.
 	mockSvc := newLiveTestService(t, fd, config.EFSModeMock)
-	if _, ok := mockSvc.EFSVolumeForAccessPoint(ctx, ap.AccessPointArn); ok {
+	if _, _, ok := mockSvc.EFSVolumeForAccessPoint(ctx, ap.AccessPointArn); ok {
 		t.Fatal("mock mode must not resolve volumes")
 	}
 
@@ -194,6 +222,52 @@ func TestEFSVolumeForAccessPoint(t *testing.T) {
 	}
 	if _, ok := mockSvc.EFSVolumeForFileSystem(ctx, fs.FileSystemId); ok {
 		t.Fatal("mock mode must not resolve file systems")
+	}
+}
+
+func TestAccessPointRootDirectory_subpathAndMaterialization(t *testing.T) {
+	fd := newFakeVolumeDaemon(t)
+	svc := newLiveTestService(t, fd, config.EFSModeLive)
+	ctx := context.Background()
+
+	fs, aerr := svc.createFileSystemTyped(ctx, &createFileSystemRequest{CreationToken: "subdir"})
+	if aerr != nil {
+		t.Fatalf("CreateFileSystem: %v", aerr)
+	}
+	uid, gid := int64(1000), int64(1000)
+	ap, aerr := svc.createAccessPointTyped(ctx, &createAccessPointRequest{
+		ClientToken:  "sub-1",
+		FileSystemId: fs.FileSystemId,
+		RootDirectory: &RootDirectory{
+			Path:         "/app/data",
+			CreationInfo: &CreationInfo{OwnerUid: &uid, OwnerGid: &gid, Permissions: "0755"},
+		},
+	})
+	if aerr != nil {
+		t.Fatalf("CreateAccessPoint: %v", aerr)
+	}
+
+	// Resolution returns the subpath and materializes the directory once.
+	volume, subpath, ok := svc.EFSVolumeForAccessPoint(ctx, ap.AccessPointArn)
+	if !ok || subpath != "app/data" || volume != volumeName(fs.FileSystemId) {
+		t.Fatalf("expected subpath app/data on %q, got %q/%q ok=%v", volumeName(fs.FileSystemId), volume, subpath, ok)
+	}
+	runs := fd.helperRuns()
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 materialization helper run, got %v", runs)
+	}
+	for _, want := range []string{"mkdir -p '/v/app/data'", "chown 1000:1000", "chmod '0755'"} {
+		if !strings.Contains(runs[0], want) {
+			t.Fatalf("helper script missing %q: %s", want, runs[0])
+		}
+	}
+
+	// Repeat resolution is deduplicated — no second helper run.
+	if _, _, ok := svc.EFSVolumeForAccessPointID(ctx, ap.AccessPointId); !ok {
+		t.Fatal("expected access-point ID resolution to succeed")
+	}
+	if runs := fd.helperRuns(); len(runs) != 1 {
+		t.Fatalf("expected materialization to be deduplicated, got %d runs", len(runs))
 	}
 }
 

@@ -32,6 +32,9 @@ func volumeName(fsID string) string { return volumeNamePrefix + fsID }
 // volumes and orphaned volumes are removed.
 func (s *Service) SetDocker(dc *docker.Client) {
 	s.docker = dc
+	if dc != nil {
+		s.puller = docker.NewImagePuller(dc)
+	}
 	s.dockerReady.Store(dc != nil)
 	if dc != nil && s.liveModeEnabled() {
 		go func() {
@@ -98,27 +101,48 @@ func (s *Service) removeVolumeAttempt(ctx context.Context, fsID string, attempt 
 }
 
 // EFSVolumeForAccessPoint implements the volume-resolver interface consumed
-// by Lambda (and later ECS): it maps an access-point ARN to the Docker volume
-// backing its file system. ok is false outside live mode, while Docker is
+// by Lambda: it maps an access-point ARN to the Docker volume backing its
+// file system, plus the access point's root directory as a volume subpath
+// ("" for the volume root). ok is false outside live mode, while Docker is
 // unavailable, or for an unknown access point — the caller then runs the
 // workload without the mount rather than failing it.
-func (s *Service) EFSVolumeForAccessPoint(ctx context.Context, accessPointARN string) (string, bool) {
-	if !s.volumesActive() {
-		return "", false
-	}
+func (s *Service) EFSVolumeForAccessPoint(ctx context.Context, accessPointARN string) (string, string, bool) {
 	region := serviceutil.ARNRegion(accessPointARN)
 	if region == "" {
 		region = s.cfg.Region
 	}
-	id := resourceIDFromARN(accessPointARN)
-	if !strings.HasPrefix(id, "fsap-") {
-		return "", false
+	return s.accessPointVolume(ctx, region, resourceIDFromARN(accessPointARN))
+}
+
+// EFSVolumeForAccessPointID is EFSVolumeForAccessPoint for callers that hold
+// the bare access-point ID (ECS authorizationConfig); the access point is
+// resolved in the caller's request region.
+func (s *Service) EFSVolumeForAccessPointID(ctx context.Context, accessPointID string) (string, string, bool) {
+	return s.accessPointVolume(ctx, s.region(ctx), accessPointID)
+}
+
+// accessPointVolume resolves an access point to (volume, subpath). When the
+// access point declares a root directory with CreationInfo, the directory is
+// materialized in the volume first (AWS creates it on first mount) — without
+// CreationInfo a missing directory makes the Docker mount fail, which mirrors
+// AWS's mount failure.
+func (s *Service) accessPointVolume(ctx context.Context, region, accessPointID string) (string, string, bool) {
+	if !s.volumesActive() || !strings.HasPrefix(accessPointID, "fsap-") {
+		return "", "", false
 	}
-	ap, found, err := s.getAccessPoint(ctx, region, id)
+	ap, found, err := s.getAccessPoint(ctx, region, accessPointID)
 	if err != nil || !found {
-		return "", false
+		return "", "", false
 	}
-	return volumeName(ap.FileSystemId), true
+	volume := volumeName(ap.FileSystemId)
+	subpath := ""
+	if ap.RootDirectory != nil {
+		subpath = strings.Trim(ap.RootDirectory.Path, "/")
+	}
+	if subpath != "" && ap.RootDirectory.CreationInfo != nil {
+		s.ensureVolumeSubdir(ctx, volume, subpath, ap.RootDirectory.CreationInfo)
+	}
+	return volume, subpath, true
 }
 
 // EFSVolumeForFileSystem implements the volume-resolver interface consumed by

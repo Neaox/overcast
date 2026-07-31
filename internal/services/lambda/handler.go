@@ -85,11 +85,12 @@ func (h *Handler) getEFSResolver() EFSVolumeResolver {
 }
 
 // EFSVolumeResolver maps an EFS access-point ARN to the Docker volume backing
-// its file system. Implemented by the EFS service; ok is false in mock mode,
-// while Docker is unavailable, or for an unknown access point — callers then
-// skip the mount and the function runs without shared storage.
+// its file system plus the access point's root directory as a volume subpath
+// ("" for the volume root). Implemented by the EFS service; ok is false in
+// mock mode, while Docker is unavailable, or for an unknown access point —
+// callers then skip the mount and the function runs without shared storage.
 type EFSVolumeResolver interface {
-	EFSVolumeForAccessPoint(ctx context.Context, accessPointARN string) (volume string, ok bool)
+	EFSVolumeForAccessPoint(ctx context.Context, accessPointARN string) (volume, subpath string, ok bool)
 }
 
 // VPCNetworkResolver resolves VPC configuration for Lambda functions.

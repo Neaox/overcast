@@ -38,8 +38,14 @@ EFS supports two modes:
 - **No NFS data plane in either mode.** File systems are not mountable over
   NFS; mount targets exist as metadata with deterministic synthesized network
   fields (availability zone, IP address, ENI ID derived from the subnet ID).
-  In `live` mode the backing volume is the substrate that later phases mount
-  into Lambda and ECS containers (see `docs/plans/efs-data-plane.md`).
+  In `live` mode the backing volume is mounted into Lambda containers
+  (`FileSystemConfigs`) and ECS task containers (`efsVolumeConfiguration`),
+  scoped to the access point's root directory (or the ECS `rootDirectory`)
+  via Docker volume subpaths — Docker Engine 26+ required for subpath mounts.
+  Access points with `CreationInfo` have their root directory created in the
+  volume with the declared ownership and permissions before the first mount;
+  without `CreationInfo`, a missing directory makes the mount fail, as on
+  AWS (see `docs/plans/efs-data-plane.md`).
 - Resources follow the real lifecycle (`creating` → `available` → `deleting`).
   Transitions complete inline with a real clock, so a resource is usable as
   soon as its create call returns; under a mock clock the intermediate states
