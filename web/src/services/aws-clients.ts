@@ -40,6 +40,7 @@ import { KMSClient } from "@aws-sdk/client-kms"
 import { SSMClient } from "@aws-sdk/client-ssm"
 import { STSClient } from "@aws-sdk/client-sts"
 import { ECRClient } from "@aws-sdk/client-ecr"
+import { EFSClient } from "@aws-sdk/client-efs"
 import { EKSClient } from "@aws-sdk/client-eks"
 import { endpointResolver } from "./discovery"
 
@@ -94,5 +95,6 @@ export const awsClients = {
   ssm: () => new SSMClient(baseConfig()),
   sts: () => new STSClient(baseConfig()),
   ecr: () => new ECRClient(baseConfig()),
+  efs: () => new EFSClient(baseConfig()),
   eks: () => new EKSClient(baseConfig()),
 }

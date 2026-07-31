@@ -42,6 +42,7 @@ import {
   SlidersHorizontal,
   Fingerprint,
   Network,
+  HardDrive,
   type LucideIcon,
 } from "lucide-react"
 
@@ -173,6 +174,21 @@ export const SERVICES = {
     description: "Object storage",
     dashboardDescription: "Object storage — buckets, upload, download, and browse files.",
     docKey: "s3",
+  },
+  efs: {
+    label: "EFS",
+    icon: HardDrive,
+    color: "text-emerald-400",
+    bg: "bg-emerald-400/10",
+    border: "border-emerald-400/30",
+    hex: "#34d399",
+    letter: "Ef",
+    to: "/efs",
+    category: "storage",
+    description: "Elastic file systems",
+    dashboardDescription:
+      "Elastic file systems — file systems, mount targets, and access points (control plane).",
+    docKey: "efs",
   },
   dynamodb: {
     label: "DynamoDB",

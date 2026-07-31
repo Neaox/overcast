@@ -1,0 +1,424 @@
+// Package efs provides Amazon Elastic File System (EFS) control-plane
+// emulation.
+//
+// The REST-JSON API is served under the real AWS path prefix /2015-02-01/
+// (file systems, mount targets, access points, policies, lifecycle and backup
+// configuration, tagging, account preferences). The same operations are also
+// reachable through the typed dispatcher (X-Amz-Target "EFS.<Operation>" and
+// Smithy RPCv2), which CloudFormation's resource handlers use internally.
+//
+// Emulation is metadata-only: no NFS data plane exists, so file systems are
+// not mountable. Resources follow the real lifecycle (creating → available →
+// deleting) via the shared lifecycle scheduler — transitions are inline with a
+// real clock and observable under a mock clock.
+package efs
+
+import (
+	"context"
+	"io"
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
+
+	"github.com/Neaox/overcast/internal/clock"
+	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/lifecycle"
+	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/protocol/codec"
+	"github.com/Neaox/overcast/internal/protocol/op"
+	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/Neaox/overcast/internal/state"
+)
+
+const (
+	serviceName  = "efs"
+	targetPrefix = "EFS."
+	// apiPrefix is the versioned REST path prefix every EFS operation uses.
+	apiPrefix = "/2015-02-01"
+)
+
+// Service implements router.Service for EFS.
+type Service struct {
+	cfg       *config.Config
+	store     state.Store
+	clk       clock.Clock
+	log       *serviceutil.ServiceLogger
+	scheduler *lifecycle.Scheduler
+	typedOp   map[string]op.Operation
+}
+
+// New returns a configured EFS service. Pure field assignment — no store
+// reads or I/O (startup-budget rule).
+func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock) *Service {
+	s := &Service{
+		cfg:       cfg,
+		store:     st,
+		clk:       clk,
+		log:       serviceutil.NewServiceLogger(logger, serviceName),
+		scheduler: lifecycle.NewScheduler(clk),
+	}
+	s.typedOp = s.typedOps()
+	return s
+}
+
+func (s *Service) Name() string { return serviceName }
+
+func (s *Service) TargetPrefix() string { return targetPrefix }
+
+// PathPrefixes satisfies router.PathPrefixService.
+func (s *Service) PathPrefixes() []string { return []string{apiPrefix} }
+
+// Stop satisfies router.Stopper: cancels pending lifecycle transitions and
+// waits for in-flight callbacks.
+func (s *Service) Stop(ctx context.Context) {
+	s.scheduler.Stop(ctx)
+}
+
+// Dispatch handles typed-protocol requests (X-Amz-Target JSON, Smithy RPCv2).
+func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
+	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {
+		if codec.Supports(s.SupportedProtocols(), c) {
+			if typed, ok := s.typedOp[opName]; ok {
+				typed.Invoke(w, r, c)
+				return
+			}
+		}
+		c.WriteError(w, r, protocol.ErrNotImplemented)
+		return
+	}
+	protocol.NotImplementedJSON(w, r)
+}
+
+// RegisterRoutes mounts the EFS REST-JSON API under /2015-02-01, mirroring the
+// real AWS HTTP bindings. Routes are registered as absolute paths (not a
+// chi.Route sub-router) so that modeled-but-unimplemented EFS paths (e.g.
+// replication configuration) fall through to the router's generated 501
+// fallback instead of a subrouter's bare 404.
+func (s *Service) RegisterRoutes(r chi.Router) {
+	// File systems
+	r.Post(apiPrefix+"/file-systems", s.restCreateFileSystem)
+	r.Get(apiPrefix+"/file-systems", s.restDescribeFileSystems)
+	r.Put(apiPrefix+"/file-systems/{FileSystemId}", s.restUpdateFileSystem)
+	r.Delete(apiPrefix+"/file-systems/{FileSystemId}", s.restDeleteFileSystem)
+	r.Put(apiPrefix+"/file-systems/{FileSystemId}/protection", s.restUpdateFileSystemProtection)
+	// File-system policy
+	r.Put(apiPrefix+"/file-systems/{FileSystemId}/policy", s.restPutFileSystemPolicy)
+	r.Get(apiPrefix+"/file-systems/{FileSystemId}/policy", s.restDescribeFileSystemPolicy)
+	r.Delete(apiPrefix+"/file-systems/{FileSystemId}/policy", s.restDeleteFileSystemPolicy)
+	// Lifecycle configuration
+	r.Put(apiPrefix+"/file-systems/{FileSystemId}/lifecycle-configuration", s.restPutLifecycleConfiguration)
+	r.Get(apiPrefix+"/file-systems/{FileSystemId}/lifecycle-configuration", s.restDescribeLifecycleConfiguration)
+	// Backup policy
+	r.Put(apiPrefix+"/file-systems/{FileSystemId}/backup-policy", s.restPutBackupPolicy)
+	r.Get(apiPrefix+"/file-systems/{FileSystemId}/backup-policy", s.restDescribeBackupPolicy)
+	// Mount targets
+	r.Post(apiPrefix+"/mount-targets", s.restCreateMountTarget)
+	r.Get(apiPrefix+"/mount-targets", s.restDescribeMountTargets)
+	r.Delete(apiPrefix+"/mount-targets/{MountTargetId}", s.restDeleteMountTarget)
+	r.Get(apiPrefix+"/mount-targets/{MountTargetId}/security-groups", s.restDescribeMountTargetSecurityGroups)
+	r.Put(apiPrefix+"/mount-targets/{MountTargetId}/security-groups", s.restModifyMountTargetSecurityGroups)
+	// Access points
+	r.Post(apiPrefix+"/access-points", s.restCreateAccessPoint)
+	r.Get(apiPrefix+"/access-points", s.restDescribeAccessPoints)
+	r.Delete(apiPrefix+"/access-points/{AccessPointId}", s.restDeleteAccessPoint)
+	// Tagging
+	r.Post(apiPrefix+"/resource-tags/{ResourceId}", s.restTagResource)
+	r.Delete(apiPrefix+"/resource-tags/{ResourceId}", s.restUntagResource)
+	r.Get(apiPrefix+"/resource-tags/{ResourceId}", s.restListTagsForResource)
+	// Legacy tagging. DescribeTags' modeled URI carries a trailing slash;
+	// register both forms so hand-written clients work too.
+	r.Post(apiPrefix+"/create-tags/{FileSystemId}", s.restCreateTags)
+	r.Post(apiPrefix+"/delete-tags/{FileSystemId}", s.restDeleteTags)
+	r.Get(apiPrefix+"/tags/{FileSystemId}", s.restDescribeTags)
+	r.Get(apiPrefix+"/tags/{FileSystemId}/", s.restDescribeTags)
+	// Account preferences
+	r.Get(apiPrefix+"/account-preferences", s.restDescribeAccountPreferences)
+	r.Put(apiPrefix+"/account-preferences", s.restPutAccountPreferences)
+}
+
+// ─── REST adapters ────────────────────────────────────────────────────────────
+//
+// Each adapter binds URI/query/body members onto the shared typed request
+// struct, invokes the same core handler the typed dispatcher uses, and writes
+// the operation's documented success status. Business logic lives only in
+// typed_logic.go.
+
+// writeRESTResult writes the shared (out, aerr) handler result with the
+// operation's REST success status. A nil out writes an empty body (AWS's 204
+// responses).
+func writeRESTResult(w http.ResponseWriter, r *http.Request, status int, out any, aerr *protocol.AWSError) {
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if out == nil {
+		// Empty-body success (AWS's 200/204 void responses). Drain the request
+		// body so the HTTP/1.1 connection can be reused by SDK clients.
+		if r.Body != nil {
+			_, _ = io.Copy(io.Discard, r.Body)
+			_ = r.Body.Close()
+		}
+		w.WriteHeader(status)
+		return
+	}
+	protocol.WriteJSON(w, r, status, out)
+}
+
+func (s *Service) restCreateFileSystem(w http.ResponseWriter, r *http.Request) {
+	var req createFileSystemRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	out, aerr := s.createFileSystemTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusCreated, outOrNil(out), aerr)
+}
+
+func (s *Service) restDescribeFileSystems(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	req := describeFileSystemsRequest{
+		MaxItems:      serviceutil.QueryInt(r, "MaxItems", 0),
+		Marker:        q.Get("Marker"),
+		CreationToken: q.Get("CreationToken"),
+		FileSystemId:  q.Get("FileSystemId"),
+	}
+	out, aerr := s.describeFileSystemsTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusOK, outOrNil(out), aerr)
+}
+
+func (s *Service) restUpdateFileSystem(w http.ResponseWriter, r *http.Request) {
+	var req updateFileSystemRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	req.FileSystemId = chi.URLParam(r, "FileSystemId")
+	out, aerr := s.updateFileSystemTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusAccepted, outOrNil(out), aerr)
+}
+
+func (s *Service) restDeleteFileSystem(w http.ResponseWriter, r *http.Request) {
+	req := deleteFileSystemRequest{FileSystemId: chi.URLParam(r, "FileSystemId")}
+	out, aerr := s.deleteFileSystemTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusNoContent, out, aerr)
+}
+
+func (s *Service) restUpdateFileSystemProtection(w http.ResponseWriter, r *http.Request) {
+	var req updateFileSystemProtectionRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	req.FileSystemId = chi.URLParam(r, "FileSystemId")
+	out, aerr := s.updateFileSystemProtectionTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusOK, outOrNil(out), aerr)
+}
+
+func (s *Service) restPutFileSystemPolicy(w http.ResponseWriter, r *http.Request) {
+	var req putFileSystemPolicyRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	req.FileSystemId = chi.URLParam(r, "FileSystemId")
+	out, aerr := s.putFileSystemPolicyTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusOK, outOrNil(out), aerr)
+}
+
+func (s *Service) restDescribeFileSystemPolicy(w http.ResponseWriter, r *http.Request) {
+	req := describeFileSystemPolicyRequest{FileSystemId: chi.URLParam(r, "FileSystemId")}
+	out, aerr := s.describeFileSystemPolicyTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusOK, outOrNil(out), aerr)
+}
+
+func (s *Service) restDeleteFileSystemPolicy(w http.ResponseWriter, r *http.Request) {
+	req := describeFileSystemPolicyRequest{FileSystemId: chi.URLParam(r, "FileSystemId")}
+	out, aerr := s.deleteFileSystemPolicyTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusOK, out, aerr)
+}
+
+func (s *Service) restPutLifecycleConfiguration(w http.ResponseWriter, r *http.Request) {
+	var req putLifecycleConfigurationRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	req.FileSystemId = chi.URLParam(r, "FileSystemId")
+	out, aerr := s.putLifecycleConfigurationTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusOK, outOrNil(out), aerr)
+}
+
+func (s *Service) restDescribeLifecycleConfiguration(w http.ResponseWriter, r *http.Request) {
+	req := describeLifecycleConfigurationRequest{FileSystemId: chi.URLParam(r, "FileSystemId")}
+	out, aerr := s.describeLifecycleConfigurationTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusOK, outOrNil(out), aerr)
+}
+
+func (s *Service) restPutBackupPolicy(w http.ResponseWriter, r *http.Request) {
+	var req putBackupPolicyRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	req.FileSystemId = chi.URLParam(r, "FileSystemId")
+	out, aerr := s.putBackupPolicyTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusOK, outOrNil(out), aerr)
+}
+
+func (s *Service) restDescribeBackupPolicy(w http.ResponseWriter, r *http.Request) {
+	req := describeBackupPolicyRequest{FileSystemId: chi.URLParam(r, "FileSystemId")}
+	out, aerr := s.describeBackupPolicyTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusOK, outOrNil(out), aerr)
+}
+
+func (s *Service) restCreateMountTarget(w http.ResponseWriter, r *http.Request) {
+	var req createMountTargetRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	out, aerr := s.createMountTargetTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusOK, outOrNil(out), aerr)
+}
+
+func (s *Service) restDescribeMountTargets(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	req := describeMountTargetsRequest{
+		MaxItems:      serviceutil.QueryInt(r, "MaxItems", 0),
+		Marker:        q.Get("Marker"),
+		FileSystemId:  q.Get("FileSystemId"),
+		MountTargetId: q.Get("MountTargetId"),
+		AccessPointId: q.Get("AccessPointId"),
+	}
+	out, aerr := s.describeMountTargetsTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusOK, outOrNil(out), aerr)
+}
+
+func (s *Service) restDeleteMountTarget(w http.ResponseWriter, r *http.Request) {
+	req := deleteMountTargetRequest{MountTargetId: chi.URLParam(r, "MountTargetId")}
+	out, aerr := s.deleteMountTargetTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusNoContent, out, aerr)
+}
+
+func (s *Service) restDescribeMountTargetSecurityGroups(w http.ResponseWriter, r *http.Request) {
+	req := mountTargetSecurityGroupsRequest{MountTargetId: chi.URLParam(r, "MountTargetId")}
+	out, aerr := s.describeMountTargetSecurityGroupsTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusOK, outOrNil(out), aerr)
+}
+
+func (s *Service) restModifyMountTargetSecurityGroups(w http.ResponseWriter, r *http.Request) {
+	var req mountTargetSecurityGroupsRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	req.MountTargetId = chi.URLParam(r, "MountTargetId")
+	out, aerr := s.modifyMountTargetSecurityGroupsTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusNoContent, out, aerr)
+}
+
+func (s *Service) restCreateAccessPoint(w http.ResponseWriter, r *http.Request) {
+	var req createAccessPointRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	out, aerr := s.createAccessPointTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusOK, outOrNil(out), aerr)
+}
+
+func (s *Service) restDescribeAccessPoints(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	req := describeAccessPointsRequest{
+		MaxResults:    serviceutil.QueryInt(r, "MaxResults", 0),
+		NextToken:     q.Get("NextToken"),
+		AccessPointId: q.Get("AccessPointId"),
+		FileSystemId:  q.Get("FileSystemId"),
+	}
+	out, aerr := s.describeAccessPointsTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusOK, outOrNil(out), aerr)
+}
+
+func (s *Service) restDeleteAccessPoint(w http.ResponseWriter, r *http.Request) {
+	req := deleteAccessPointRequest{AccessPointId: chi.URLParam(r, "AccessPointId")}
+	out, aerr := s.deleteAccessPointTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusNoContent, out, aerr)
+}
+
+func (s *Service) restTagResource(w http.ResponseWriter, r *http.Request) {
+	var req tagResourceRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	req.ResourceId = chi.URLParam(r, "ResourceId")
+	out, aerr := s.tagResourceTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusOK, out, aerr)
+}
+
+func (s *Service) restUntagResource(w http.ResponseWriter, r *http.Request) {
+	req := untagResourceRequest{
+		ResourceId: chi.URLParam(r, "ResourceId"),
+		TagKeys:    r.URL.Query()["tagKeys"],
+	}
+	out, aerr := s.untagResourceTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusOK, out, aerr)
+}
+
+func (s *Service) restListTagsForResource(w http.ResponseWriter, r *http.Request) {
+	req := listTagsForResourceRequest{
+		ResourceId: chi.URLParam(r, "ResourceId"),
+		MaxResults: serviceutil.QueryInt(r, "MaxResults", 0),
+		NextToken:  r.URL.Query().Get("NextToken"),
+	}
+	out, aerr := s.listTagsForResourceTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusOK, outOrNil(out), aerr)
+}
+
+func (s *Service) restCreateTags(w http.ResponseWriter, r *http.Request) {
+	var req createTagsRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	req.FileSystemId = chi.URLParam(r, "FileSystemId")
+	out, aerr := s.createTagsTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusNoContent, out, aerr)
+}
+
+func (s *Service) restDeleteTags(w http.ResponseWriter, r *http.Request) {
+	var req deleteTagsRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	req.FileSystemId = chi.URLParam(r, "FileSystemId")
+	out, aerr := s.deleteTagsTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusNoContent, out, aerr)
+}
+
+func (s *Service) restDescribeTags(w http.ResponseWriter, r *http.Request) {
+	req := describeTagsRequest{
+		FileSystemId: chi.URLParam(r, "FileSystemId"),
+		MaxItems:     serviceutil.QueryInt(r, "MaxItems", 0),
+		Marker:       r.URL.Query().Get("Marker"),
+	}
+	out, aerr := s.describeTagsTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusOK, outOrNil(out), aerr)
+}
+
+func (s *Service) restDescribeAccountPreferences(w http.ResponseWriter, r *http.Request) {
+	req := describeAccountPreferencesRequest{
+		NextToken:  r.URL.Query().Get("NextToken"),
+		MaxResults: serviceutil.QueryInt(r, "MaxResults", 0),
+	}
+	out, aerr := s.describeAccountPreferencesTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusOK, outOrNil(out), aerr)
+}
+
+func (s *Service) restPutAccountPreferences(w http.ResponseWriter, r *http.Request) {
+	var req putAccountPreferencesRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	out, aerr := s.putAccountPreferencesTyped(r.Context(), &req)
+	writeRESTResult(w, r, http.StatusOK, outOrNil(out), aerr)
+}
+
+// outOrNil collapses a typed nil pointer into an untyped nil so
+// writeRESTResult's nil check works for any response type.
+func outOrNil[T any](out *T) any {
+	if out == nil {
+		return nil
+	}
+	return out
+}

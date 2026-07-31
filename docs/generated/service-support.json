@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1287,
+  "total_ops": 1318,
   "services": [
     {
       "service": "s3",
@@ -5314,6 +5314,189 @@
           "category": "General",
           "status": "✅ Supported",
           "notes": "Removes specific tag keys"
+        }
+      ]
+    },
+    {
+      "service": "efs",
+      "display_name": "EFS",
+      "total_ops": 31,
+      "implemented_ops": 28,
+      "operations": [
+        {
+          "operation": "CreateFileSystem",
+          "category": "File systems",
+          "status": "✅ Supported",
+          "notes": "Creation-token idempotency, performance/throughput mode validation, One Zone metadata, optional Backup flag and inline tags; lifecycle creating → available"
+        },
+        {
+          "operation": "DescribeFileSystems",
+          "category": "File systems",
+          "status": "✅ Supported",
+          "notes": "Filters by FileSystemId or CreationToken; Marker/MaxItems pagination"
+        },
+        {
+          "operation": "UpdateFileSystem",
+          "category": "File systems",
+          "status": "✅ Supported",
+          "notes": "Updates ThroughputMode and ProvisionedThroughputInMibps with pairing validation"
+        },
+        {
+          "operation": "DeleteFileSystem",
+          "category": "File systems",
+          "status": "✅ Supported",
+          "notes": "Rejects deletion while mount targets exist (FileSystemInUse); cascades access points, tags, and policy"
+        },
+        {
+          "operation": "UpdateFileSystemProtection",
+          "category": "File systems",
+          "status": "✅ Supported",
+          "notes": "Stores ReplicationOverwriteProtection"
+        },
+        {
+          "operation": "CreateMountTarget",
+          "category": "Mount targets",
+          "status": "✅ Supported",
+          "notes": "Metadata only — no NFS data plane. One mount target per AZ/subnet enforced; AZ and IP are synthesized deterministically from the subnet ID"
+        },
+        {
+          "operation": "DescribeMountTargets",
+          "category": "Mount targets",
+          "status": "✅ Supported",
+          "notes": "Lookup by FileSystemId, MountTargetId, or AccessPointId; Marker/MaxItems pagination"
+        },
+        {
+          "operation": "DeleteMountTarget",
+          "category": "Mount targets",
+          "status": "✅ Supported",
+          "notes": "Lifecycle deleting → removed"
+        },
+        {
+          "operation": "DescribeMountTargetSecurityGroups",
+          "category": "Mount targets",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "ModifyMountTargetSecurityGroups",
+          "category": "Mount targets",
+          "status": "✅ Supported",
+          "notes": "Enforces the 5-security-group limit; groups are stored, not validated against EC2"
+        },
+        {
+          "operation": "CreateAccessPoint",
+          "category": "Access points",
+          "status": "✅ Supported",
+          "notes": "Client-token idempotency conflict, PosixUser/RootDirectory stored, inline tags; lifecycle creating → available"
+        },
+        {
+          "operation": "DescribeAccessPoints",
+          "category": "Access points",
+          "status": "✅ Supported",
+          "notes": "Filters by AccessPointId or FileSystemId (mutually exclusive); NextToken/MaxResults pagination"
+        },
+        {
+          "operation": "DeleteAccessPoint",
+          "category": "Access points",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "PutLifecycleConfiguration",
+          "category": "Lifecycle",
+          "status": "✅ Supported",
+          "notes": "Validates transition enums and the one-transition-per-policy rule; storage-class transitions are metadata only"
+        },
+        {
+          "operation": "DescribeLifecycleConfiguration",
+          "category": "Lifecycle",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "PutBackupPolicy",
+          "category": "Backup",
+          "status": "✅ Supported",
+          "notes": "Stores ENABLED/DISABLED directly (no ENABLING/DISABLING transitional states); no AWS Backup integration"
+        },
+        {
+          "operation": "DescribeBackupPolicy",
+          "category": "Backup",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "PutFileSystemPolicy",
+          "category": "Policy",
+          "status": "✅ Supported",
+          "notes": "Stores the policy document (JSON-validated); not enforced on requests"
+        },
+        {
+          "operation": "DescribeFileSystemPolicy",
+          "category": "Policy",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "DeleteFileSystemPolicy",
+          "category": "Policy",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "TagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Accepts file-system and access-point IDs or ARNs"
+        },
+        {
+          "operation": "UntagResource",
+          "category": "Tags",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "ListTagsForResource",
+          "category": "Tags",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "CreateTags",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Legacy alias of TagResource (file systems only)"
+        },
+        {
+          "operation": "DeleteTags",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Legacy alias of UntagResource (file systems only)"
+        },
+        {
+          "operation": "DescribeTags",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Legacy alias of ListTagsForResource (file systems only)"
+        },
+        {
+          "operation": "DescribeAccountPreferences",
+          "category": "Account",
+          "status": "✅ Supported",
+          "notes": "Defaults to LONG_ID"
+        },
+        {
+          "operation": "PutAccountPreferences",
+          "category": "Account",
+          "status": "✅ Supported",
+          "notes": "Stores the preference; generated IDs are always long-form"
+        },
+        {
+          "operation": "CreateReplicationConfiguration",
+          "category": "Replication",
+          "status": "❌ Unsupported"
+        },
+        {
+          "operation": "DeleteReplicationConfiguration",
+          "category": "Replication",
+          "status": "❌ Unsupported"
+        },
+        {
+          "operation": "DescribeReplicationConfigurations",
+          "category": "Replication",
+          "status": "❌ Unsupported"
         }
       ]
     },

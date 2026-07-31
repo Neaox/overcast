@@ -120,6 +120,10 @@ const (
 	tNsCacheReplicationGroups = "elasticache:replication-groups"
 	tNsServerlessCaches       = "elasticache:serverless-caches"
 
+	// EFS resource tracking.
+	tNsEFSFileSystems  = "efs:filesystems"
+	tNsEFSAccessPoints = "efs:accesspoints"
+
 	// MSK resource tracking.
 	tNsMSKClusters = "msk:clusters"
 
@@ -309,6 +313,17 @@ type tServerlessCache struct {
 	Status string `json:"Status"`
 }
 
+// EFS resources.
+type tEFSFileSystem struct {
+	ID     string `json:"FileSystemId"`
+	Status string `json:"LifeCycleState"`
+}
+type tEFSAccessPoint struct {
+	ID           string `json:"AccessPointId"`
+	FileSystemID string `json:"FileSystemId"`
+	Status       string `json:"LifeCycleState"`
+}
+
 // MSK resources.
 type tMSKCluster struct {
 	ClusterArn  string `json:"clusterArn"`
@@ -439,6 +454,7 @@ func newTopologyHandler(cfg *config.Config, store state.Store) http.HandlerFunc 
 			tNsAppSync,
 			tNsCognitoPools,
 			tNsMSKClusters,
+			tNsEFSFileSystems, tNsEFSAccessPoints,
 		}
 
 		results := make([]scanResult, len(namespaces))
@@ -917,6 +933,43 @@ func buildTopology(cfg *config.Config, byNS map[string][]state.KV, regionFilter 
 			Label:   label,
 			Region:  region,
 			Status:  c.State,
+		})
+	}
+
+	// EFS file systems and access points. Mount targets are metadata-only and
+	// have no node of their own (subnets are not topology nodes).
+	for _, kv := range byNS[tNsEFSFileSystems] {
+		var fs tEFSFileSystem
+		if json.Unmarshal([]byte(kv.Value), &fs) != nil || fs.ID == "" {
+			continue
+		}
+		region := defaultRegion
+		if i := strings.IndexByte(kv.Key, '/'); i > 0 {
+			region = kv.Key[:i]
+		}
+		addNode(topologyNode{
+			ID:      region + "::efs::" + fs.ID,
+			Service: "efs",
+			Label:   fs.ID,
+			Region:  region,
+			Status:  fs.Status,
+		})
+	}
+	for _, kv := range byNS[tNsEFSAccessPoints] {
+		var ap tEFSAccessPoint
+		if json.Unmarshal([]byte(kv.Value), &ap) != nil || ap.ID == "" {
+			continue
+		}
+		region := defaultRegion
+		if i := strings.IndexByte(kv.Key, '/'); i > 0 {
+			region = kv.Key[:i]
+		}
+		addNode(topologyNode{
+			ID:      region + "::efs::" + ap.ID,
+			Service: "efs",
+			Label:   ap.ID,
+			Region:  region,
+			Status:  ap.Status,
 		})
 	}
 
@@ -1624,6 +1677,27 @@ func buildTopology(cfg *config.Config, byNS map[string][]state.KV, regionFilter 
 			Source: srcID,
 			Target: tgtID,
 			Type:   "vpc-member",
+		})
+	}
+
+	// EFS access point → file system edges.
+	for _, kv := range byNS[tNsEFSAccessPoints] {
+		var ap tEFSAccessPoint
+		if json.Unmarshal([]byte(kv.Value), &ap) != nil || ap.ID == "" || ap.FileSystemID == "" {
+			continue
+		}
+		region := defaultRegion
+		if i := strings.IndexByte(kv.Key, '/'); i > 0 {
+			region = kv.Key[:i]
+		}
+		srcID := region + "::efs::" + ap.ID
+		tgtID := region + "::efs::" + ap.FileSystemID
+		addEdge(topologyEdge{
+			ID:     "efs-ap::" + srcID + "→" + tgtID,
+			Source: srcID,
+			Target: tgtID,
+			Type:   "vpc-attachment",
+			Label:  "access point",
 		})
 	}
 

@@ -8,7 +8,7 @@
 
 ## Service coverage
 
-49 AWS services are registered. Coverage varies from comprehensive to stub.
+50 AWS services are registered. Coverage varies from comprehensive to stub.
 
 ### Comprehensive — core + advanced features
 
@@ -85,6 +85,7 @@
 | CloudFormation  | 48  |
 | RDS             | 33  |
 | ElastiCache     | 24  |
+| EFS             | 31  |
 | AppConfig       | 12  |
 | AppConfigData   | 3   |
 | Secrets Manager | 21  |

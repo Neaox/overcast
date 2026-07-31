@@ -1767,6 +1767,10 @@ var resourceHandlers = map[string]resourceHandler{
 	// Transfer
 	"AWS::Transfer::Server": &transferServerHandler{},
 	"AWS::Transfer::User":   &transferUserHandler{},
+	// EFS
+	"AWS::EFS::FileSystem":  &efsFileSystemHandler{},
+	"AWS::EFS::MountTarget": &efsMountTargetHandler{},
+	"AWS::EFS::AccessPoint": &efsAccessPointHandler{},
 	// Shield
 	"AWS::Shield::Protection": &shieldProtectionHandler{},
 	// Firehose

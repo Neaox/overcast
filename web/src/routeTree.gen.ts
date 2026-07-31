@@ -36,6 +36,7 @@ import { Route as KinesisIndexRouteImport } from './routes/kinesis/index'
 import { Route as EventbridgeIndexRouteImport } from './routes/eventbridge/index'
 import { Route as ElasticacheIndexRouteImport } from './routes/elasticache/index'
 import { Route as EksIndexRouteImport } from './routes/eks/index'
+import { Route as EfsIndexRouteImport } from './routes/efs/index'
 import { Route as EcsIndexRouteImport } from './routes/ecs/index'
 import { Route as EcrIndexRouteImport } from './routes/ecr/index'
 import { Route as Ec2IndexRouteImport } from './routes/ec2/index'
@@ -225,6 +226,11 @@ const ElasticacheIndexRoute = ElasticacheIndexRouteImport.update({
 const EksIndexRoute = EksIndexRouteImport.update({
   id: '/eks/',
   path: '/eks/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EfsIndexRoute = EfsIndexRouteImport.update({
+  id: '/efs/',
+  path: '/efs/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const EcsIndexRoute = EcsIndexRouteImport.update({
@@ -561,6 +567,7 @@ export interface FileRoutesByFullPath {
   '/ec2/': typeof Ec2IndexRoute
   '/ecr/': typeof EcrIndexRoute
   '/ecs/': typeof EcsIndexRoute
+  '/efs/': typeof EfsIndexRoute
   '/eks/': typeof EksIndexRoute
   '/elasticache/': typeof ElasticacheIndexRoute
   '/eventbridge/': typeof EventbridgeIndexRoute
@@ -641,6 +648,7 @@ export interface FileRoutesByTo {
   '/ec2': typeof Ec2IndexRoute
   '/ecr': typeof EcrIndexRoute
   '/ecs': typeof EcsIndexRoute
+  '/efs': typeof EfsIndexRoute
   '/eks': typeof EksIndexRoute
   '/elasticache': typeof ElasticacheIndexRoute
   '/eventbridge': typeof EventbridgeIndexRoute
@@ -726,6 +734,7 @@ export interface FileRoutesById {
   '/ec2/': typeof Ec2IndexRoute
   '/ecr/': typeof EcrIndexRoute
   '/ecs/': typeof EcsIndexRoute
+  '/efs/': typeof EfsIndexRoute
   '/eks/': typeof EksIndexRoute
   '/elasticache/': typeof ElasticacheIndexRoute
   '/eventbridge/': typeof EventbridgeIndexRoute
@@ -812,6 +821,7 @@ export interface FileRouteTypes {
     | '/ec2/'
     | '/ecr/'
     | '/ecs/'
+    | '/efs/'
     | '/eks/'
     | '/elasticache/'
     | '/eventbridge/'
@@ -892,6 +902,7 @@ export interface FileRouteTypes {
     | '/ec2'
     | '/ecr'
     | '/ecs'
+    | '/efs'
     | '/eks'
     | '/elasticache'
     | '/eventbridge'
@@ -976,6 +987,7 @@ export interface FileRouteTypes {
     | '/ec2/'
     | '/ecr/'
     | '/ecs/'
+    | '/efs/'
     | '/eks/'
     | '/elasticache/'
     | '/eventbridge/'
@@ -1061,6 +1073,7 @@ export interface RootRouteChildren {
   Ec2IndexRoute: typeof Ec2IndexRoute
   EcrIndexRoute: typeof EcrIndexRoute
   EcsIndexRoute: typeof EcsIndexRoute
+  EfsIndexRoute: typeof EfsIndexRoute
   EksIndexRoute: typeof EksIndexRoute
   ElasticacheIndexRoute: typeof ElasticacheIndexRoute
   EventbridgeIndexRoute: typeof EventbridgeIndexRoute
@@ -1278,6 +1291,13 @@ declare module '@tanstack/react-router' {
       path: '/eks'
       fullPath: '/eks/'
       preLoaderRoute: typeof EksIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/efs/': {
+      id: '/efs/'
+      path: '/efs'
+      fullPath: '/efs/'
+      preLoaderRoute: typeof EfsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/ecs/': {
@@ -1785,6 +1805,7 @@ const rootRouteChildren: RootRouteChildren = {
   Ec2IndexRoute: Ec2IndexRoute,
   EcrIndexRoute: EcrIndexRoute,
   EcsIndexRoute: EcsIndexRoute,
+  EfsIndexRoute: EfsIndexRoute,
   EksIndexRoute: EksIndexRoute,
   ElasticacheIndexRoute: ElasticacheIndexRoute,
   EventbridgeIndexRoute: EventbridgeIndexRoute,

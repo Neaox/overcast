@@ -116,6 +116,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | CloudFormation   | [cloudformation.md](./services/cloudformation.md)   | 48  | Core CRUD + common workflows  |
 | RDS              | [rds.md](./services/rds.md)                         | 33  | Core CRUD + common workflows  |
 | ElastiCache      | [elasticache.md](./services/elasticache.md)         | 24  | Core CRUD + common workflows  |
+| EFS              | [efs.md](./services/efs.md)                         | 31  | Core CRUD + common workflows  |
 | AppConfig        | [appconfig.md](./services/appconfig.md)             | 12  | Core CRUD + common workflows  |
 | AppConfigData    | [appconfigdata.md](./services/appconfigdata.md)     | 3   | Core CRUD + common workflows  |
 | Secrets Manager  | [secretsmanager.md](./services/secretsmanager.md)   | 21  | Core CRUD + common workflows  |
@@ -253,6 +254,7 @@ above.
 | `cloudformation`  | CloudFormation   | `aws-cloudformation`                               |
 | `rds`             | RDS              | `aws-rds`                                          |
 | `elasticache`     | ElastiCache      | `aws-elasticache`                                  |
+| `efs`             | EFS              | `aws-efs`                                          |
 | `appconfig`       | AppConfig        | `aws-appconfig`                                    |
 | `appconfigdata`   | AppConfigData    | — (runtime data plane; no constructs)              |
 | `secretsmanager`  | Secrets Manager  | `aws-secretsmanager`                               |

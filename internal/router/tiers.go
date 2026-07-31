@@ -85,6 +85,9 @@ var ServiceTiers = map[string]EmulationTier{
 	"cloudtrail":  TierInert,
 	"backup":      TierInert,
 	"transfer":    TierInert,
+	// efs is a full control-plane emulation with lifecycle states, but has no
+	// NFS data plane — file systems are not mountable.
+	"efs": TierPartial,
 }
 
 // ServiceGoalTiers maps each service to its aspirational emulation tier — the
