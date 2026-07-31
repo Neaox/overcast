@@ -85,7 +85,7 @@ auto-promotion on merge; nothing to hand-edit.
 | R4 | dotnet-sdk suite bugs | 11 | Null-refs (PurgeQueue, DeleteItem, PublishBatch), s3-copy bucket collision, IAM `Get*Policy` URL-decode assertions, BatchGetSecretValue, appsync ordering |
 | R5 | rust-sdk opaque `service error` reporting, then the real bugs | 9 | Fix `SdkError` rendering first — the errors are currently unreadable; ssm masked-value expectation; BatchGetSecretValue |
 | R6 | Suites hardcode `nodejs18.x`, which the emulator now rejects | ~17 cascading skips | appsync-functions and lambda-invoke setup across dotnet/rust — no longer a `fail`, but it masks whole groups |
-| R7 | **New — exposed by running Lambda for real** | 2 | `cli/eventbridge-buses/ListEventBuses` is explained and fixed: all three cli EventBridge groups shared one bus, and sibling setups/teardowns deleted or re-created it mid-run (see the flake section). `cli/lambda-invoke/InvokeDryRun` (`InvalidParameterValueException` on Invoke) passes locally post-#434 — the lambda stale-snapshot fix plausibly covered it (an invoke racing a state transition); confirm via baseline auto-promotion on the next green main runs |
+| R7 | **New — exposed by running Lambda for real** | 1 | `cli/eventbridge-buses/ListEventBuses` fixed (shared-bus suite bug, see the flake section) and cleared from the baseline. `cli/lambda-invoke/InvokeDryRun` (`InvalidParameterValueException` on Invoke) **remains**: it still failed on the post-#438 green-main run despite passing locally, so it is a stable CI-environment failure, not the #414 race — it cascades InvokeSync/InvokeAsync and needs its own investigation |
 
 R2 (CDK ESM) is done — it resolved the moment CI stopped skipping Docker.
 
