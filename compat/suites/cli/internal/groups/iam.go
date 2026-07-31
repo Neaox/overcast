@@ -14,18 +14,18 @@ func IAM() ServiceGroup {
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
 			// iam-users
-			"CreateUser":       g.CreateUser,
-			"GetUser":          g.GetUser,
-			"ListUsers":        g.ListUsers,
+			"CreateUser":          g.CreateUser,
+			"GetUser":             g.GetUser,
+			"ListUsers":           g.ListUsers,
 			"iam-users:ListUsers": g.ListUsers, // group-qualified to avoid collision with cognito-userpools:ListUsers
-			"CreateAccessKey":  g.CreateAccessKey,
-			"DeleteAccessKey":  g.DeleteAccessKey,
-			"PutUserPolicy":    g.PutUserPolicy,
-			"GetUserPolicy":    g.GetUserPolicy,
-			"DeleteUserPolicy": g.DeleteUserPolicy,
-			"UpdateUser":       g.UpdateUser,
-			"ListAccessKeys":   g.ListAccessKeys,
-			"DeleteUser":       g.DeleteUser,
+			"CreateAccessKey":     g.CreateAccessKey,
+			"DeleteAccessKey":     g.DeleteAccessKey,
+			"PutUserPolicy":       g.PutUserPolicy,
+			"GetUserPolicy":       g.GetUserPolicy,
+			"DeleteUserPolicy":    g.DeleteUserPolicy,
+			"UpdateUser":          g.UpdateUser,
+			"ListAccessKeys":      g.ListAccessKeys,
+			"DeleteUser":          g.DeleteUser,
 			// iam-roles
 			"CreateRole":               g.CreateRole,
 			"GetRole":                  g.GetRole,

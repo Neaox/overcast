@@ -506,12 +506,25 @@ func (h *Handler) createCacheClusterTyped(ctx context.Context, req *ecCreateCach
 				h.clusterFallbackAvailable(region, clusterID)
 				return
 			}
-			if aerr := h.store.putCacheCluster(bgCtx, got); aerr != nil {
+			// The start took real time; the cluster may have been deleted
+			// meanwhile. Delete could not stop this container — its ID was
+			// not persisted yet — so the start goroutine owns the teardown.
+			// Merge the container fields into a fresh read rather than
+			// persisting the pre-start snapshot.
+			fresh, aerr := h.store.getCacheCluster(bgCtx, clusterID)
+			if aerr != nil || fresh == nil || fresh.CacheClusterStatus == "deleting" {
+				h.teardownOrphanedContainer(bgCtx, "cache cluster", clusterID, got.DockerContainerID, got.HostPort)
+				return
+			}
+			fresh.DockerContainerID = got.DockerContainerID
+			fresh.HostPort = got.HostPort
+			fresh.ConfigurationEndpoint = got.ConfigurationEndpoint
+			if aerr := h.store.putCacheCluster(bgCtx, fresh); aerr != nil {
 				h.log.Warn("ElastiCache: persist post-start cluster",
 					zap.String("cluster", clusterID), zap.String("error", aerr.Message))
 				return
 			}
-			h.scheduleHealthCheck(region, clusterID, got.ConfigurationEndpoint.Address, got.ConfigurationEndpoint.Port)
+			h.scheduleHealthCheck(region, clusterID, fresh.ConfigurationEndpoint.Address, fresh.ConfigurationEndpoint.Port)
 		}()
 	} else {
 		h.scheduler.AfterScoped(h.store.region(ctx), clusterID, "available", 0, func(bgCtx context.Context) {
@@ -658,12 +671,26 @@ func (h *Handler) createReplicationGroupTyped(ctx context.Context, req *ecCreate
 				h.rgFallbackAvailable(region, rgID)
 				return
 			}
-			if aerr := h.store.putReplicationGroup(bgCtx, got); aerr != nil {
+			// The start took real time; the group may have been deleted
+			// meanwhile. Delete could not stop this container — its ID was
+			// not persisted yet — so the start goroutine owns the teardown,
+			// or the container outlives its resource (the compat teardowns
+			// hit this window on every run). Merge the container fields into
+			// a fresh read rather than persisting the pre-start snapshot.
+			fresh, aerr := h.store.getReplicationGroup(bgCtx, rgID)
+			if aerr != nil || fresh == nil || fresh.Status == "deleting" {
+				h.teardownOrphanedContainer(bgCtx, "replication group", rgID, got.DockerContainerID, got.HostPort)
+				return
+			}
+			fresh.DockerContainerID = got.DockerContainerID
+			fresh.HostPort = got.HostPort
+			fresh.ConfigurationEndpoint = got.ConfigurationEndpoint
+			if aerr := h.store.putReplicationGroup(bgCtx, fresh); aerr != nil {
 				h.log.Warn("ElastiCache: persist post-start replication group",
 					zap.String("rg", rgID), zap.String("error", aerr.Message))
 				return
 			}
-			h.scheduleReplicationGroupHealthCheck(region, rgID, got.ConfigurationEndpoint.Address, got.ConfigurationEndpoint.Port)
+			h.scheduleReplicationGroupHealthCheck(region, rgID, fresh.ConfigurationEndpoint.Address, fresh.ConfigurationEndpoint.Port)
 		}()
 	} else {
 		h.scheduler.AfterScoped(h.store.region(ctx), rgID, "rg-available", 0, func(bgCtx context.Context) {

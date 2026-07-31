@@ -751,6 +751,29 @@ func (h *Handler) scheduleHealthCheck(region, clusterID, host string, port int) 
 
 // clusterFallbackAvailable sets a cluster to "available" if it is still in
 // "creating" or "starting". Used when Docker start fails.
+// teardownOrphanedContainer removes a container whose resource record was
+// deleted while the container was still starting. The delete path could not
+// stop it — the container ID had not been persisted yet — so the start
+// goroutine owns the cleanup, including the port it allocated. Mirrors the
+// RDS fix for the same race (#412); the compat teardowns create-and-delete
+// fast enough to hit this window on every run.
+func (h *Handler) teardownOrphanedContainer(ctx context.Context, kind, id, containerID string, hostPort int) {
+	h.log.Info("ElastiCache: "+kind+" deleted while its container was starting — removing container",
+		zap.String("id", id), zap.String("container", containerID))
+	if containerID != "" {
+		if h.gc != nil {
+			h.gc.StopNow(containerID)
+			h.gc.ScheduleRemove(containerID)
+		} else {
+			_ = h.docker.StopContainer(ctx, containerID, 10)     //nolint:errcheck
+			_ = h.docker.RemoveContainer(ctx, containerID, true) //nolint:errcheck
+		}
+	}
+	if hostPort > 0 {
+		_ = h.store.releasePort(ctx, hostPort) //nolint:errcheck
+	}
+}
+
 func (h *Handler) clusterFallbackAvailable(region, clusterID string) {
 	ctx := middleware.ContextWithRegion(context.Background(), region)
 	got, aerr := h.store.getCacheCluster(ctx, clusterID)
