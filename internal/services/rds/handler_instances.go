@@ -8,7 +8,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/events"
-	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 )
 
@@ -53,8 +52,7 @@ func (h *Handler) StopDBInstance(w http.ResponseWriter, r *http.Request) {
 	// pending until clock.Add is called.
 	instID := id
 	region := h.store.region(r.Context())
-	h.scheduler.After(schedKey(region, instID, "stopped"), 0, func() {
-		ctx := middleware.ContextWithRegion(context.Background(), region)
+	h.scheduler.AfterScoped(region, instID, "stopped", 0, func(ctx context.Context) {
 		got, aerr := h.store.getDBInstance(ctx, instID)
 		if aerr != nil {
 			return
@@ -113,8 +111,7 @@ func (h *Handler) StartDBInstance(w http.ResponseWriter, r *http.Request) {
 		// Metadata-only: transition starting → available.  Scheduler runs
 		// 0-delay callbacks synchronously with a real clock.
 		instID2 := id
-		h.scheduler.After(schedKey(region, instID2, "available"), 0, func() {
-			ctx := middleware.ContextWithRegion(context.Background(), region)
+		h.scheduler.AfterScoped(region, instID2, "available", 0, func(ctx context.Context) {
 			got, aerr := h.store.getDBInstance(ctx, instID2)
 			if aerr != nil {
 				return
@@ -182,8 +179,7 @@ func (h *Handler) ModifyDBInstance(w http.ResponseWriter, r *http.Request) {
 
 	instID := id
 	region := h.store.region(r.Context())
-	h.scheduler.After(schedKey(region, instID, "modified"), 500*time.Millisecond, func() {
-		ctx := middleware.ContextWithRegion(context.Background(), region)
+	h.scheduler.AfterScoped(region, instID, "modified", 500*time.Millisecond, func(ctx context.Context) {
 		got, aerr := h.store.getDBInstance(ctx, instID)
 		if aerr != nil {
 			return

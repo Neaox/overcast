@@ -10,6 +10,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // --- CreateCluster ---
@@ -70,7 +71,7 @@ func (s *Service) createClusterTyped(ctx context.Context, req *createClusterRequ
 		s.handler.dockerWg.Add(1)
 		go func() {
 			defer s.handler.dockerWg.Done()
-			bgCtx := context.Background()
+			bgCtx := clusterRegionCtx(clusterARNCopy)
 			if err := s.handler.startClusterContainer(bgCtx, clusterARNCopy); err != nil {
 				s.handler.log.Warn("failed to start Docker container for MSK cluster — falling back to metadata-only",
 					zap.String("cluster", clusterARNCopy), zap.Error(err))
@@ -78,8 +79,7 @@ func (s *Service) createClusterTyped(ctx context.Context, req *createClusterRequ
 			}
 		}()
 	} else {
-		s.handler.scheduler.After(clusterARNCopy+":active", 0, func() {
-			bgCtx := context.Background()
+		s.handler.scheduler.AfterScoped(serviceutil.ARNRegion(clusterARNCopy), clusterARNCopy, "active", 0, func(bgCtx context.Context) {
 			got, aerr := s.handler.store.getCluster(bgCtx, clusterARNCopy)
 			if aerr != nil {
 				return
@@ -163,7 +163,7 @@ func (s *Service) deleteClusterTyped(ctx context.Context, req *deleteClusterRequ
 	}
 
 	clusterARNCopy := req.ClusterArn
-	s.handler.scheduler.Cancel(clusterARNCopy + ":health")
+	s.handler.scheduler.CancelScoped(serviceutil.ARNRegion(clusterARNCopy), clusterARNCopy, "health")
 
 	id := cluster.DockerContainerID
 	if s.handler.gc != nil && id != "" {
@@ -174,8 +174,7 @@ func (s *Service) deleteClusterTyped(ctx context.Context, req *deleteClusterRequ
 		_ = s.handler.store.releasePort(ctx, cluster.HostPort) //nolint:errcheck
 	}
 
-	s.handler.scheduler.After(clusterARNCopy+":delete", 50*time.Millisecond, func() {
-		bgCtx := context.Background()
+	s.handler.scheduler.AfterScoped(serviceutil.ARNRegion(clusterARNCopy), clusterARNCopy, "delete", 50*time.Millisecond, func(bgCtx context.Context) {
 		if aerr := s.handler.store.deleteCluster(bgCtx, clusterARNCopy); aerr != nil {
 			s.handler.log.Warn("failed to delete MSK cluster record", zap.String("cluster", clusterARNCopy), zap.Error(aerr))
 		}
@@ -503,7 +502,7 @@ func (s *Service) createClusterV2Typed(ctx context.Context, req *createClusterV2
 			s.handler.dockerWg.Add(1)
 			go func() {
 				defer s.handler.dockerWg.Done()
-				bgCtx := context.Background()
+				bgCtx := clusterRegionCtx(clusterARNCopy)
 				if err := s.handler.startClusterContainer(bgCtx, clusterARNCopy); err != nil {
 					s.handler.log.Warn("failed to start Docker container for MSK V2 cluster — falling back to metadata-only",
 						zap.String("cluster", clusterARNCopy), zap.Error(err))
@@ -511,8 +510,7 @@ func (s *Service) createClusterV2Typed(ctx context.Context, req *createClusterV2
 				}
 			}()
 		} else {
-			s.handler.scheduler.After(clusterARNCopy+":active", 0, func() {
-				bgCtx := context.Background()
+			s.handler.scheduler.AfterScoped(serviceutil.ARNRegion(clusterARNCopy), clusterARNCopy, "active", 0, func(bgCtx context.Context) {
 				got, aerr := s.handler.store.getCluster(bgCtx, clusterARNCopy)
 				if aerr != nil {
 					return

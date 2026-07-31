@@ -13,7 +13,6 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 )
 
@@ -161,8 +160,7 @@ func (h *Handler) CreateDBCluster(w http.ResponseWriter, r *http.Request) {
 
 	// Schedule the metadata-only creating → available transition.
 	clID := id
-	h.scheduler.After(schedKey(region, clID, "available"), 500*time.Millisecond, func() {
-		ctx := middleware.ContextWithRegion(context.Background(), region)
+	h.scheduler.AfterScoped(region, clID, "available", 500*time.Millisecond, func(ctx context.Context) {
 		got, aerr := h.store.getDBCluster(ctx, clID)
 		if aerr != nil {
 			return
@@ -259,8 +257,7 @@ func (h *Handler) DeleteDBCluster(w http.ResponseWriter, r *http.Request) {
 	// Remove the cluster record asynchronously.
 	clID := id
 	region := h.store.region(r.Context())
-	h.scheduler.After(schedKey(region, clID, "delete"), 50*time.Millisecond, func() {
-		ctx := middleware.ContextWithRegion(context.Background(), region)
+	h.scheduler.AfterScoped(region, clID, "delete", 50*time.Millisecond, func(ctx context.Context) {
 		if aerr := h.store.deleteDBCluster(ctx, clID); aerr != nil {
 			h.log.Warn("failed to delete RDS cluster record",
 				zap.String("cluster", clID), zap.Error(aerr))
@@ -343,8 +340,7 @@ func (h *Handler) StartDBCluster(w http.ResponseWriter, r *http.Request) {
 	// Transition starting → available.
 	clID := id
 	region := h.store.region(r.Context())
-	h.scheduler.After(schedKey(region, clID, "start"), 500*time.Millisecond, func() {
-		ctx := middleware.ContextWithRegion(context.Background(), region)
+	h.scheduler.AfterScoped(region, clID, "start", 500*time.Millisecond, func(ctx context.Context) {
 		got, aerr := h.store.getDBCluster(ctx, clID)
 		if aerr != nil {
 			return
@@ -403,8 +399,7 @@ func (h *Handler) StopDBCluster(w http.ResponseWriter, r *http.Request) {
 	// Transition stopping → stopped.
 	clID := id
 	region := h.store.region(r.Context())
-	h.scheduler.After(schedKey(region, clID, "stop"), 500*time.Millisecond, func() {
-		ctx := middleware.ContextWithRegion(context.Background(), region)
+	h.scheduler.AfterScoped(region, clID, "stop", 500*time.Millisecond, func(ctx context.Context) {
 		got, aerr := h.store.getDBCluster(ctx, clID)
 		if aerr != nil {
 			return

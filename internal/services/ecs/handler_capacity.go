@@ -18,7 +18,7 @@ import (
 
 // CreateCapacityProvider handles AmazonEC2ContainerServiceV20141113.CreateCapacityProvider.
 func (h *Handler) CreateCapacityProvider(w http.ResponseWriter, r *http.Request) {
-	h.ensureBuiltinProviders()
+	h.ensureBuiltinProviders(r.Context())
 	var req struct {
 		Name string `json:"name"`
 		Tags []Tag  `json:"tags"`
@@ -73,7 +73,7 @@ func (h *Handler) CreateCapacityProvider(w http.ResponseWriter, r *http.Request)
 
 // DescribeCapacityProviders handles AmazonEC2ContainerServiceV20141113.DescribeCapacityProviders.
 func (h *Handler) DescribeCapacityProviders(w http.ResponseWriter, r *http.Request) {
-	h.ensureBuiltinProviders()
+	h.ensureBuiltinProviders(r.Context())
 	var req struct {
 		CapacityProviders []string `json:"capacityProviders"`
 	}
@@ -124,7 +124,7 @@ func (h *Handler) DescribeCapacityProviders(w http.ResponseWriter, r *http.Reque
 
 // UpdateCapacityProvider handles AmazonEC2ContainerServiceV20141113.UpdateCapacityProvider.
 func (h *Handler) UpdateCapacityProvider(w http.ResponseWriter, r *http.Request) {
-	h.ensureBuiltinProviders()
+	h.ensureBuiltinProviders(r.Context())
 	var req struct {
 		Name string `json:"name"`
 	}
@@ -173,7 +173,7 @@ func (h *Handler) UpdateCapacityProvider(w http.ResponseWriter, r *http.Request)
 
 // PutClusterCapacityProviders handles AmazonEC2ContainerServiceV20141113.PutClusterCapacityProviders.
 func (h *Handler) PutClusterCapacityProviders(w http.ResponseWriter, r *http.Request) {
-	h.ensureBuiltinProviders()
+	h.ensureBuiltinProviders(r.Context())
 	var req struct {
 		Cluster                         string                         `json:"cluster"`
 		CapacityProviders               []string                       `json:"capacityProviders"`

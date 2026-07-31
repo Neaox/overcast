@@ -819,8 +819,16 @@ func (s *Service) tick() {
 			continue
 		}
 
-		// Fire and update last-fire timestamp.
-		s.fire(ctx, &sc, now)
+		// Fire and update last-fire timestamp. The store keys schedules per
+		// region ("region:group/name" — see scheduleKey) and fire's targets
+		// (SQS queues) resolve from region-keyed stores, so pin the schedule's
+		// own region on the delivery context — otherwise schedules outside the
+		// default region deliver into the default region's queues.
+		region, _, hasRegion := strings.Cut(kv.Key, ":")
+		if !hasRegion || region == "" {
+			region = s.cfg.Region
+		}
+		s.fire(middleware.ContextWithRegion(ctx, region), &sc, now)
 		s.setLastFire(ctx, kv.Key, now)
 	}
 }

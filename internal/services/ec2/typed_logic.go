@@ -1490,8 +1490,7 @@ func (h *Handler) runInstancesTyped(ctx context.Context, req *runInstancesReq) (
 			return nil, aerr
 		}
 		id := instID
-		h.scheduler.After(id+":start", 0, func() {
-			bgCtx := context.Background()
+		h.scheduler.AfterScoped(h.store.region(ctx), id, "start", 0, func(bgCtx context.Context) {
 			got, aerr := h.store.getInstance(bgCtx, id)
 			if aerr != nil {
 				return

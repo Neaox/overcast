@@ -564,7 +564,7 @@ func (h *Handler) reconcile(ctx context.Context, clusterName, serviceName string
 			}
 
 			// Schedule PROVISIONING → RUNNING transition.
-			h.scheduleMetadataTransition(clusterName, taskID)
+			h.scheduleMetadataTransition(h.store.region(ctx), clusterName, taskID)
 		}
 
 		h.addServiceEvent(svc, fmt.Sprintf("(service %s) has started %d tasks.", serviceName, deficit))
@@ -579,7 +579,7 @@ func (h *Handler) reconcile(ctx context.Context, clusterName, serviceName string
 			taskID := extractTaskID(t.TaskArn)
 
 			// Cancel pending scheduler transitions.
-			h.scheduler.Cancel(taskID + ":pending")
+			h.scheduler.CancelScoped(h.store.region(ctx), taskID, "pending")
 
 			// Stop Docker containers if available.
 			if h.dockerReady.Load() {

@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 )
 
@@ -170,7 +171,7 @@ func (h *Handler) CreateReplicationGroup(w http.ResponseWriter, r *http.Request)
 		h.dockerWg.Add(1)
 		go func() {
 			defer h.dockerWg.Done()
-			bgCtx := context.Background()
+			bgCtx := middleware.ContextWithRegion(context.Background(), region)
 			got, aerr := h.store.getReplicationGroup(bgCtx, rgID)
 			if aerr != nil || got == nil {
 				return
@@ -178,7 +179,7 @@ func (h *Handler) CreateReplicationGroup(w http.ResponseWriter, r *http.Request)
 			if err := h.startReplicationGroupContainer(bgCtx, got); err != nil {
 				h.log.Warn("failed to start Docker container for replication group — falling back to metadata-only",
 					zap.String("rg", rgID), zap.Error(err))
-				h.rgFallbackAvailable(rgID)
+				h.rgFallbackAvailable(region, rgID)
 				return
 			}
 			if aerr := h.store.putReplicationGroup(bgCtx, got); aerr != nil {
@@ -186,12 +187,11 @@ func (h *Handler) CreateReplicationGroup(w http.ResponseWriter, r *http.Request)
 					zap.String("rg", rgID), zap.String("error", aerr.Message))
 				return
 			}
-			h.scheduleReplicationGroupHealthCheck(rgID, got.ConfigurationEndpoint.Address, got.ConfigurationEndpoint.Port)
+			h.scheduleReplicationGroupHealthCheck(region, rgID, got.ConfigurationEndpoint.Address, got.ConfigurationEndpoint.Port)
 		}()
 	} else {
 		// No Docker — metadata-only transition (0 delay = synchronous on real clock).
-		h.scheduler.After(rgID+":rg-available", 0, func() {
-			ctx := context.Background()
+		h.scheduler.AfterScoped(h.store.region(r.Context()), rgID, "rg-available", 0, func(ctx context.Context) {
 			got, aerr := h.store.getReplicationGroup(ctx, rgID)
 			if aerr != nil {
 				return
@@ -281,7 +281,7 @@ func (h *Handler) DeleteReplicationGroup(w http.ResponseWriter, r *http.Request)
 		ResponseMetadata: protocol.QueryResponseMetadata(r),
 	})
 
-	h.scheduler.Cancel(id + ":rg-health")
+	h.scheduler.CancelScoped(h.store.region(r.Context()), id, "rg-health")
 
 	if h.gc != nil && containerID != "" {
 		h.gc.StopNow(containerID)
@@ -291,8 +291,7 @@ func (h *Handler) DeleteReplicationGroup(w http.ResponseWriter, r *http.Request)
 		_ = h.store.releasePort(r.Context(), hostPort) //nolint:errcheck
 	}
 
-	h.scheduler.After(id+":rg-delete", 50*time.Millisecond, func() {
-		ctx := context.Background()
+	h.scheduler.AfterScoped(h.store.region(r.Context()), id, "rg-delete", 50*time.Millisecond, func(ctx context.Context) {
 		if aerr := h.store.deleteReplicationGroup(ctx, id); aerr != nil {
 			h.log.Warn("failed to delete replication group record", zap.String("rg", id), zap.Error(aerr))
 		}
@@ -345,8 +344,7 @@ func (h *Handler) ModifyReplicationGroup(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Schedule transition back to available.
-	h.scheduler.After(id+":rg-available", 0, func() {
-		ctx := context.Background()
+	h.scheduler.AfterScoped(h.store.region(r.Context()), id, "rg-available", 0, func(ctx context.Context) {
 		got, aerr := h.store.getReplicationGroup(ctx, id)
 		if aerr != nil {
 			return
