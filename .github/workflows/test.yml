@@ -76,7 +76,10 @@ jobs:
         # released overcastd binary (the cross-build matrix below) and the slim
         # Docker image (`build-slim` in the Makefile) are built with it. Gating
         # only the untagged suite left the shipped tag set ungated.
-        tags: [slim, "slim,nosqlite"]
+        # `slim,dev` compiles in the per-service capabilities_dev.go inventories
+        # and their //go:build dev cross-check tests (capabilities vs initOps
+        # dispatch); without it that drift is invisible to CI.
+        tags: [slim, "slim,nosqlite", "slim,dev"]
 
     steps:
       - uses: actions/checkout@v7.0.0
