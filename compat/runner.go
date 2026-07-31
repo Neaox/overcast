@@ -265,6 +265,10 @@ func (r *Runner) Run(ctx context.Context) (*RunReport, error) {
 
 	// Post-run cleanup: delete any resources left behind by suite teardowns.
 	sweepOrphans(ctx, r.cfg.Endpoint, r.logWriter)
+	// Every resource is gone now, so no emulator-owned container for this run
+	// should exist. Any that does was leaked by the emulator — report loudly
+	// and remove it.
+	sweepLeakedContainers(ctx, r.cfg.RunID, r.logWriter)
 
 	for _, sr := range results {
 		if sr != nil {

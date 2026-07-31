@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
+	"sort"
 	"strings"
 	"time"
 )
@@ -34,6 +36,7 @@ func sweepOrphans(ctx context.Context, endpoint string, w io.Writer) {
 		{"ecs", sweepECSClusters},
 		{"rds", sweepRDSInstances},
 		{"elasticache", sweepElastiCacheClusters},
+		{"elasticache-rg", sweepElastiCacheReplicationGroups},
 	}
 
 	total := 0
@@ -531,4 +534,124 @@ func sweepElastiCacheClusters(ctx context.Context, client *http.Client, endpoint
 		}
 	}
 	return deleted, nil
+}
+
+type ecDescribeReplicationGroupsResult struct {
+	XMLName xml.Name             `xml:"DescribeReplicationGroupsResponse"`
+	Groups  []ecReplicationGroup `xml:"DescribeReplicationGroupsResult>ReplicationGroups>ReplicationGroup"`
+}
+
+type ecReplicationGroup struct {
+	ReplicationGroupId string `xml:"ReplicationGroupId"`
+}
+
+// sweepElastiCacheReplicationGroups mirrors the cache-cluster sweep for
+// replication groups. The gap was real: replication groups were the one
+// container-backed ElastiCache resource the sweep never covered, so an
+// API-level orphan — and its redis container — survived every run.
+func sweepElastiCacheReplicationGroups(ctx context.Context, client *http.Client, endpoint string) (int, error) {
+	resp, err := sendQuery(client, ctx, endpoint, map[string]string{
+		"Action":  "DescribeReplicationGroups",
+		"Version": "2015-02-02",
+	})
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, nil
+	}
+	var result ecDescribeReplicationGroupsResult
+	if err := xml.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+	deleted := 0
+	for _, rg := range result.Groups {
+		id := rg.ReplicationGroupId
+		if !isOrphan(id) {
+			continue
+		}
+		delResp, _ := sendQuery(client, ctx, endpoint, map[string]string{
+			"Action":             "DeleteReplicationGroup",
+			"ReplicationGroupId": id,
+			"Version":            "2015-02-02",
+		})
+		if delResp != nil {
+			delResp.Body.Close()
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
+// ── Leaked-container detection ───────────────────────────────────────────────
+//
+// The emulator owns the containers it starts, and deleting a resource must
+// stop its container. When that fails — a delete landing while a container is
+// still starting is the recurring cause — the container outlives the run and
+// quietly eats the host. The runner knows the run ID and knows when the run is
+// over, so it is the natural place to notice: anything overcast-prefixed that
+// mentions this run's ID (or the generic compat prefixes) should not exist
+// once the post-run sweep has deleted every resource.
+//
+// Strays are reported loudly AND removed: the report is the bug signal — a
+// leak here is an emulator defect, not housekeeping — and the removal keeps
+// CI and dev machines from accumulating orphans while the defect is fixed.
+
+// leakedContainerNames filters `docker ps` output down to containers the
+// emulator started for this run. Emulator containers are named
+// "overcast-<service>-<resource>-…" where the resource carries the run prefix;
+// generic compat prefixes are included so resources created without a run
+// prefix are still caught.
+func leakedContainerNames(names []string, runID string) []string {
+	var out []string
+	for _, name := range names {
+		if !strings.HasPrefix(name, "overcast-") {
+			continue
+		}
+		rest := strings.TrimPrefix(name, "overcast-")
+		// Never touch infrastructure containers the runner itself relies on
+		// (the emulator under test is typically "overcast" or a compose name,
+		// not overcast-<service>-…; those have no oc-/compat- marker anyway).
+		if (runID != "" && strings.Contains(rest, runID)) ||
+			strings.Contains(rest, "-oc-") || strings.Contains(rest, "-compat-") {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sweepLeakedContainers lists the Docker daemon's containers and reports and
+// removes any the emulator leaked for this run. Docker being unavailable is
+// not an error — the runner may be targeting a remote endpoint.
+func sweepLeakedContainers(ctx context.Context, runID string, w io.Writer) {
+	dockerBin, err := exec.LookPath("docker")
+	if err != nil {
+		return
+	}
+	listCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(listCtx, dockerBin, "ps", "--all", "--format", "{{.Names}}").Output()
+	if err != nil {
+		return
+	}
+	leaked := leakedContainerNames(strings.Fields(string(out)), runID)
+	if len(leaked) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "compat: LEAKED CONTAINERS: %d container(s) outlived their deleted resources — this is an emulator cleanup bug, not compat housekeeping:\n", len(leaked))
+	for _, name := range leaked {
+		fmt.Fprintf(w, "compat:   leaked: %s\n", name)
+		// GitHub annotation so CI surfaces each leak on the PR.
+		fmt.Fprintf(w, "::warning title=Leaked container::%s outlived its deleted resource (run %s)\n", name, runID)
+	}
+	rmCtx, cancelRm := context.WithTimeout(ctx, 60*time.Second)
+	defer cancelRm()
+	args := append([]string{"rm", "-f"}, leaked...)
+	if err := exec.CommandContext(rmCtx, dockerBin, args...).Run(); err != nil {
+		fmt.Fprintf(w, "compat: failed to remove leaked containers: %v\n", err)
+		return
+	}
+	fmt.Fprintf(w, "compat: removed %d leaked container(s)\n", len(leaked))
 }

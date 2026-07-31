@@ -330,6 +330,6 @@ func (g *sesGroup) DeleteTemplate(_ context.Context, t *harness.TestContext) err
 
 func (g *sesGroup) teardownTemplates(_ context.Context, t *harness.TestContext) error {
 	awscli.Run(t.Endpoint, t.Region, "ses", "delete-template", "--template-name", g.templateName(t)) //nolint:errcheck
-	awscli.Run(t.Endpoint, t.Region, "ses", "delete-identity", "--identity", g.email(t, "tpl"))             //nolint:errcheck
+	awscli.Run(t.Endpoint, t.Region, "ses", "delete-identity", "--identity", g.email(t, "tpl"))      //nolint:errcheck
 	return nil
 }
