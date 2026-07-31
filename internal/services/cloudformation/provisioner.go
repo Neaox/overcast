@@ -1797,8 +1797,9 @@ var resourceHandlers = map[string]resourceHandler{
 	"AWS::AutoScaling::AutoScalingGroup":    &autoscalingASGHandler{},
 	"AWS::AutoScaling::LaunchConfiguration": &autoscalingLaunchConfigHandler{},
 	// Route53
-	"AWS::Route53::HostedZone": &route53HostedZoneHandler{},
-	"AWS::Route53::RecordSet":  &route53RecordSetHandler{},
+	"AWS::Route53::HostedZone":  &route53HostedZoneHandler{},
+	"AWS::Route53::RecordSet":   &route53RecordSetHandler{},
+	"AWS::Route53::HealthCheck": &route53HealthCheckHandler{},
 	// EKS
 	"AWS::EKS::Cluster":                &eksClusterHandler{},
 	"AWS::EKS::Nodegroup":              &eksNodegroupHandler{},

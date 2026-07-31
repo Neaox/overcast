@@ -1407,11 +1407,11 @@ var statusTableOrder = []string{
 	"cognito", "ec2", "sns",
 	"iam", "ecs", "ecr", "kms", "kinesis", "eventbridge", "scheduler",
 	"cloudformation", "rds", "elasticache", "appconfig", "appconfigdata",
-	"secretsmanager", "ssm", "cloudwatch-logs", "ses", "sts",
+	"secretsmanager", "ssm", "cloudwatch-logs", "ses", "sts", "route53",
 	"stepfunctions", "pipes", "waf", "shield", "acm", "athena", "bedrock",
 	"cloudwatch", "dynamodbstreams", "firehose", "glue", "opensearch",
 	"appregistry", "autoscaling", "backup", "cloudtrail", "eks", "elbv2", "msk",
-	"organizations", "route53", "transfer",
+	"organizations", "transfer",
 }
 
 var serviceIndexTiers = map[string]string{
@@ -1442,6 +1442,7 @@ var serviceIndexTiers = map[string]string{
 	"cloudwatch-logs": "Core CRUD + common workflows",
 	"ses":             "Core CRUD + common workflows",
 	"sts":             "Core CRUD + common workflows",
+	"route53":         "Core CRUD + common workflows",
 	"stepfunctions":   "Minimal / targeted support",
 	"pipes":           "Minimal / targeted support",
 	"waf":             "Minimal / targeted support",
@@ -1462,7 +1463,6 @@ var serviceIndexTiers = map[string]string{
 	"elbv2":           "IaC/discovery-oriented stub",
 	"msk":             "IaC/discovery-oriented stub",
 	"organizations":   "IaC/discovery-oriented stub",
-	"route53":         "IaC/discovery-oriented stub",
 	"transfer":        "IaC/discovery-oriented stub",
 }
 
@@ -1841,7 +1841,6 @@ func updateDocsReadmeServiceNames(root string) (bool, error) {
 		formatTable([]string{"Name", "Service", "CDK module (`aws-cdk-lib/…`)"}, rows),
 	)
 }
-
 
 func updateRootReadmeServiceList(root string, allCaps []CapabilityDecl) (bool, error) {
 	const beginMarker = "<!-- BEGIN overcast:root-service-list -->"

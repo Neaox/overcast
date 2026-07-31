@@ -274,12 +274,18 @@ func TestListResourceRecordSets_afterChange(t *testing.T) {
 	}
 	decodeXML(t, resp, &out)
 
-	// Then: one record is returned
-	if len(out.ResourceRecordSets) != 1 {
-		t.Errorf("expected 1 record set, got %d", len(out.ResourceRecordSets))
+	// Then: the upserted record is returned alongside the default NS + SOA
+	if len(out.ResourceRecordSets) != 3 {
+		t.Errorf("expected 3 record sets (NS, SOA, A), got %d", len(out.ResourceRecordSets))
 	}
-	if out.ResourceRecordSets[0].Name != "www.example.com." {
-		t.Errorf("expected Name=www.example.com., got %q", out.ResourceRecordSets[0].Name)
+	var foundA bool
+	for _, rr := range out.ResourceRecordSets {
+		if rr.Type == "A" && rr.Name == "www.example.com." {
+			foundA = true
+		}
+	}
+	if !foundA {
+		t.Error("expected www.example.com. A record in listing")
 	}
 }
 

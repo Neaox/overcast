@@ -6,7 +6,10 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
+
+	"github.com/google/uuid"
 
 	"github.com/Neaox/overcast/internal/config"
 )
@@ -431,7 +434,10 @@ func (h *autoscalingLaunchConfigHandler) Update(ctx context.Context, router http
 
 type route53HostedZoneHandler struct{}
 
-func (h *route53HostedZoneHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+// route53ZoneName resolves and normalises the zone name from template
+// properties, mirroring the service's canonical form (trailing dot; the
+// service also lowercases).
+func route53ZoneName(props map[string]any, rCtx *resolveContext) string {
 	name, _ := props["Name"].(string)
 	if name == "" {
 		name = fmt.Sprintf("%s.example.com", rCtx.StackName)
@@ -439,12 +445,28 @@ func (h *route53HostedZoneHandler) Create(ctx context.Context, router http.Handl
 	if !strings.HasSuffix(name, ".") {
 		name += "."
 	}
+	return name
+}
+
+func (h *route53HostedZoneHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	name := route53ZoneName(props, rCtx)
 
 	req := copyStringAnyMap(props)
 	req["Name"] = name
 	if _, ok := req["CallerReference"].(string); !ok {
-		req["CallerReference"] = fmt.Sprintf("%s-%d", rCtx.StackName, len(rCtx.Resources))
+		// CloudFormation itself generates a unique caller reference per
+		// create; a stack-derived value would collide with the service's
+		// caller-reference dedupe on re-creates.
+		req["CallerReference"] = uuid.NewString()
 	}
+	// The CloudFormation property is a VPCs list; CreateHostedZone takes a
+	// single VPC element (further associations use AssociateVPCWithHostedZone).
+	if vpcs, ok := req["VPCs"].([]any); ok && len(vpcs) > 0 {
+		req["VPC"] = vpcs[0]
+	}
+	delete(req, "VPCs")
+	tags, _ := req["HostedZoneTags"].([]any)
+	delete(req, "HostedZoneTags")
 	xmlBytes, err := marshalCFNXML("CreateHostedZoneRequest", req, nil, route53ItemName, cfnXMLItemsWrapper)
 	if err != nil {
 		return "", nil, fmt.Errorf("Route53: marshal request: %w", err)
@@ -462,6 +484,14 @@ func (h *route53HostedZoneHandler) Create(ctx context.Context, router http.Handl
 		zoneID = id[idx+1:]
 	}
 
+	if len(tags) > 0 {
+		if err := route53ChangeTags(ctx, router, rCtx, "hostedzone", zoneID, tags); err != nil {
+			return "", nil, err
+		}
+	}
+
+	// NameServers is not exposed as an attribute: Fn::GetAtt attributes are
+	// scalar strings here, and NameServers is list-valued on real AWS.
 	attrs := map[string]string{
 		"Id":   id,
 		"Name": name,
@@ -478,7 +508,38 @@ func (h *route53HostedZoneHandler) Delete(ctx context.Context, router http.Handl
 }
 
 func (h *route53HostedZoneHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return "", nil, errReplacementRequired
+	// Name identifies the zone — changing it is a replacement on real AWS.
+	// A comment-only change updates in place via UpdateHostedZoneComment.
+	name := route53ZoneName(props, rCtx)
+	if !strings.EqualFold(name, route53ZoneName(oldProps, rCtx)) {
+		return "", nil, errReplacementRequired
+	}
+	var comment string
+	if hzc, ok := props["HostedZoneConfig"].(map[string]any); ok {
+		comment, _ = hzc["Comment"].(string)
+	}
+	xmlBytes, err := marshalCFNXML("UpdateHostedZoneCommentRequest", map[string]any{"Comment": comment}, nil, route53ItemName, cfnXMLItemsWrapper)
+	if err != nil {
+		return "", nil, fmt.Errorf("Route53: marshal UpdateHostedZoneComment: %w", err)
+	}
+	if _, err := internalRequest(ctx, router, rCtx.Region, http.MethodPost, "/2013-04-01/hostedzone/"+physicalID, "application/xml", xmlBytes); err != nil {
+		return "", nil, fmt.Errorf("UpdateHostedZoneComment: %w", err)
+	}
+	return physicalID, map[string]string{"Id": "/hostedzone/" + physicalID, "Name": name}, nil
+}
+
+// route53ChangeTags applies CloudFormation HostedZoneTags/HealthCheckTags
+// entries ({Key, Value} maps) through ChangeTagsForResource.
+func route53ChangeTags(ctx context.Context, router http.Handler, rCtx *resolveContext, resourceType, resourceID string, tags []any) error {
+	xmlBytes, err := marshalCFNXML("ChangeTagsForResourceRequest", map[string]any{"AddTags": tags}, nil, route53ItemName, route53ListWrapper)
+	if err != nil {
+		return fmt.Errorf("Route53: marshal ChangeTagsForResource: %w", err)
+	}
+	path := fmt.Sprintf("/2013-04-01/tags/%s/%s", resourceType, resourceID)
+	if _, err := internalRequest(ctx, router, rCtx.Region, http.MethodPost, path, "application/xml", xmlBytes); err != nil {
+		return fmt.Errorf("ChangeTagsForResource: %w", err)
+	}
+	return nil
 }
 
 // ── AWS::Route53::RecordSet ────────────────────────────────────────────────
@@ -551,38 +612,17 @@ func (h *route53RecordSetHandler) Delete(ctx context.Context, router http.Handle
 	}
 	hostedZoneID, recordName, recordType := parts[0], parts[1], parts[2]
 
-	type rrXML struct {
-		Value string `xml:"Value"`
-	}
-	type rrsXML struct {
-		Name            string  `xml:"Name"`
-		Type            string  `xml:"Type"`
-		TTL             int64   `xml:"TTL"`
-		ResourceRecords []rrXML `xml:"ResourceRecords>ResourceRecord"`
-	}
-	type changeXML struct {
-		Action            string `xml:"Action"`
-		ResourceRecordSet rrsXML `xml:"ResourceRecordSet"`
-	}
-	type batchXML struct {
-		XMLName xml.Name    `xml:"ChangeResourceRecordSetsRequest"`
-		Xmlns   string      `xml:"xmlns,attr"`
-		Changes []changeXML `xml:"ChangeBatch>Changes>Change"`
+	// The service enforces AWS's exact-match delete contract, so fetch the
+	// stored record first and delete precisely what exists. A record that is
+	// already gone (or a zone already deleted) counts as deleted.
+	stored, found, err := route53FetchRecordSet(ctx, router, rCtx, hostedZoneID, recordName, recordType)
+	if err != nil || !found {
+		return err
 	}
 
-	batch := batchXML{
-		Xmlns: "https://route53.amazonaws.com/doc/2013-04-01/",
-		Changes: []changeXML{
-			{
-				Action: "DELETE",
-				ResourceRecordSet: rrsXML{
-					Name:            recordName,
-					Type:            recordType,
-					TTL:             300,
-					ResourceRecords: nil,
-				},
-			},
-		},
+	batch := route53ChangeBatchXML{
+		Xmlns:   "https://route53.amazonaws.com/doc/2013-04-01/",
+		Changes: []route53ChangeXML{{Action: "DELETE", ResourceRecordSet: *stored}},
 	}
 	xmlBytes, err := xml.Marshal(batch)
 	if err != nil {
@@ -594,6 +634,62 @@ func (h *route53RecordSetHandler) Delete(ctx context.Context, router http.Handle
 		return fmt.Errorf("ChangeResourceRecordSets (delete): %w", err)
 	}
 	return nil
+}
+
+// route53RecordSetXML is the wire shape shared by the record fetch and the
+// exact-match delete.
+type route53RecordSetXML struct {
+	Name            string `xml:"Name"`
+	Type            string `xml:"Type"`
+	SetIdentifier   string `xml:"SetIdentifier,omitempty"`
+	TTL             *int64 `xml:"TTL,omitempty"`
+	ResourceRecords []struct {
+		Value string `xml:"Value"`
+	} `xml:"ResourceRecords>ResourceRecord,omitempty"`
+	AliasTarget *struct {
+		HostedZoneId         string `xml:"HostedZoneId"`
+		DNSName              string `xml:"DNSName"`
+		EvaluateTargetHealth bool   `xml:"EvaluateTargetHealth"`
+	} `xml:"AliasTarget,omitempty"`
+}
+
+type route53ChangeXML struct {
+	Action            string              `xml:"Action"`
+	ResourceRecordSet route53RecordSetXML `xml:"ResourceRecordSet"`
+}
+
+type route53ChangeBatchXML struct {
+	XMLName xml.Name           `xml:"ChangeResourceRecordSetsRequest"`
+	Xmlns   string             `xml:"xmlns,attr"`
+	Changes []route53ChangeXML `xml:"ChangeBatch>Changes>Change"`
+}
+
+// route53FetchRecordSet looks up one record set by name and type. It returns
+// found=false (with no error) when the record or its zone no longer exists.
+func route53FetchRecordSet(ctx context.Context, router http.Handler, rCtx *resolveContext, hostedZoneID, recordName, recordType string) (*route53RecordSetXML, bool, error) {
+	path := fmt.Sprintf("/2013-04-01/hostedzone/%s/rrset?name=%s&type=%s&maxitems=1",
+		hostedZoneID, url.QueryEscape(recordName), url.QueryEscape(recordType))
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodGet, path, "", nil)
+	if err != nil {
+		if rec != nil && rec.Code == http.StatusNotFound {
+			return nil, false, nil // zone already deleted
+		}
+		return nil, false, fmt.Errorf("ListResourceRecordSets: %w", err)
+	}
+	var out struct {
+		ResourceRecordSets []route53RecordSetXML `xml:"ResourceRecordSets>ResourceRecordSet"`
+	}
+	if err := xml.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		return nil, false, fmt.Errorf("Route53: decode ListResourceRecordSets: %w", err)
+	}
+	if len(out.ResourceRecordSets) == 0 {
+		return nil, false, nil
+	}
+	got := out.ResourceRecordSets[0]
+	if !strings.EqualFold(strings.TrimSuffix(got.Name, "."), strings.TrimSuffix(recordName, ".")) || got.Type != recordType {
+		return nil, false, nil // listing continued past the requested record: it does not exist
+	}
+	return &got, true, nil
 }
 
 func (h *route53RecordSetHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -651,16 +747,92 @@ func route53ItemName(parent string) string {
 		return "Change"
 	case "ResourceRecords":
 		return "ResourceRecord"
+	case "AddTags":
+		return "Tag"
+	case "ChildHealthChecks":
+		return "ChildHealthCheck"
+	case "Regions":
+		return "Region"
 	}
 	return "Item"
 }
 
 func route53ListWrapper(parent string) string {
 	switch parent {
-	case "Changes", "ResourceRecords":
+	case "Changes", "ResourceRecords", "AddTags", "ChildHealthChecks", "Regions":
 		return ""
 	}
 	return "Items"
+}
+
+// ── AWS::Route53::HealthCheck ──────────────────────────────────────────────
+
+type route53HealthCheckHandler struct{}
+
+// route53HealthCheckRequest builds the CreateHealthCheck/UpdateHealthCheck
+// payload from the CloudFormation HealthCheckConfig property.
+func route53HealthCheckConfig(props map[string]any) map[string]any {
+	cfg, _ := props["HealthCheckConfig"].(map[string]any)
+	return cfg
+}
+
+func (h *route53HealthCheckHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	req := map[string]any{
+		// CloudFormation generates a unique caller reference per create.
+		"CallerReference":   uuid.NewString(),
+		"HealthCheckConfig": route53HealthCheckConfig(props),
+	}
+	xmlBytes, err := marshalCFNXML("CreateHealthCheckRequest", req, nil, route53ItemName, route53ListWrapper)
+	if err != nil {
+		return "", nil, fmt.Errorf("Route53: marshal CreateHealthCheck: %w", err)
+	}
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPost, "/2013-04-01/healthcheck", "application/xml", xmlBytes)
+	if err != nil {
+		return "", nil, fmt.Errorf("CreateHealthCheck: %w", err)
+	}
+	id := extractXMLValue(rec.Body.String(), "Id")
+
+	if tags, _ := props["HealthCheckTags"].([]any); len(tags) > 0 {
+		if err := route53ChangeTags(ctx, router, rCtx, "healthcheck", id, tags); err != nil {
+			return "", nil, err
+		}
+	}
+	return id, map[string]string{"HealthCheckId": id}, nil
+}
+
+func (h *route53HealthCheckHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/2013-04-01/healthcheck/"+physicalID, "", nil)
+	if err != nil {
+		if rec != nil && rec.Code == http.StatusNotFound {
+			return nil // already deleted
+		}
+		return fmt.Errorf("DeleteHealthCheck: %w", err)
+	}
+	return nil
+}
+
+func (h *route53HealthCheckHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	// UpdateHealthCheck accepts the mutable HealthCheckConfig fields
+	// directly; Type is immutable (replacement on real AWS).
+	newCfg := route53HealthCheckConfig(props)
+	oldCfg := route53HealthCheckConfig(oldProps)
+	newType, _ := newCfg["Type"].(string)
+	oldType, _ := oldCfg["Type"].(string)
+	if newType != oldType {
+		return "", nil, errReplacementRequired
+	}
+	req := copyStringAnyMap(newCfg)
+	delete(req, "Type")
+	delete(req, "MeasureLatency") // immutable on real AWS
+	delete(req, "RequestInterval")
+	xmlBytes, err := marshalCFNXML("UpdateHealthCheckRequest", req, nil, route53ItemName, route53ListWrapper)
+	if err != nil {
+		return "", nil, fmt.Errorf("Route53: marshal UpdateHealthCheck: %w", err)
+	}
+	if _, err := internalRequest(ctx, router, rCtx.Region, http.MethodPost, "/2013-04-01/healthcheck/"+physicalID, "application/xml", xmlBytes); err != nil {
+		return "", nil, fmt.Errorf("UpdateHealthCheck: %w", err)
+	}
+	return physicalID, map[string]string{"HealthCheckId": physicalID}, nil
 }
 
 func copyStringAnyMap(in map[string]any) map[string]any {

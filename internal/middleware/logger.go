@@ -77,6 +77,8 @@ func detectService(r *http.Request) string {
 		return "ses"
 	case strings.HasPrefix(r.URL.Path, "/2020-05-31/"):
 		return "cloudfront"
+	case strings.HasPrefix(r.URL.Path, "/2013-04-01/"):
+		return "route53"
 	case strings.HasPrefix(r.URL.Path, "/v2/apis"):
 		if svc := serviceFromAuthCredential(r); svc == "appsync" {
 			return "appsync"

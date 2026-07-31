@@ -123,6 +123,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | CloudWatch Logs  | [cloudwatch-logs.md](./services/cloudwatch-logs.md) | 19  | Core CRUD + common workflows  |
 | SES              | [ses.md](./services/ses.md)                         | 42  | Core CRUD + common workflows  |
 | STS              | [sts.md](./services/sts.md)                         | 11  | Core CRUD + common workflows  |
+| Route 53         | [route53.md](./services/route53.md)                 | 25  | Core CRUD + common workflows  |
 | Step Functions   | [stepfunctions.md](./services/stepfunctions.md)     | 5   | Minimal / targeted support    |
 | Pipes            | [pipes.md](./services/pipes.md)                     | 5   | Minimal / targeted support    |
 | WAF v2           | [waf.md](./services/waf.md)                         | 4   | Minimal / targeted support    |
@@ -143,7 +144,6 @@ For a shorter overview, start with the [service reference index](./services/READ
 | ELBv2            | [elb.md](./services/elb.md)                         | 15  | IaC/discovery-oriented stub   |
 | MSK              | [msk.md](./services/msk.md)                         | 29  | IaC/discovery-oriented stub   |
 | Organizations    | [organizations.md](./services/organizations.md)     | 1   | IaC/discovery-oriented stub   |
-| Route 53         | [route53.md](./services/route53.md)                 | 10  | IaC/discovery-oriented stub   |
 | Transfer Family  | [transfer.md](./services/transfer.md)               | 10  | IaC/discovery-oriented stub   |
 
 <!-- END overcast:service-index -->
@@ -260,6 +260,7 @@ above.
 | `logs`            | CloudWatch Logs  | `aws-logs`                                         |
 | `ses`             | SES              | `aws-ses`                                          |
 | `sts`             | STS              | — (used by the CDK CLI itself)                     |
+| `route53`         | Route 53         | `aws-route53`, `aws-route53-targets`               |
 | `stepfunctions`   | Step Functions   | `aws-stepfunctions`, `aws-stepfunctions-tasks`     |
 | `pipes`           | Pipes            | `aws-pipes`                                        |
 | `waf`             | WAF v2           | `aws-wafv2`                                        |
@@ -280,7 +281,6 @@ above.
 | `elbv2`           | ELBv2            | `aws-elasticloadbalancingv2`                       |
 | `msk`             | MSK              | `aws-msk`                                          |
 | `organizations`   | Organizations    | — (no constructs)                                  |
-| `route53`         | Route 53         | `aws-route53`, `aws-route53-targets`               |
 | `transfer`        | Transfer Family  | `aws-transfer`                                     |
 
 <!-- END overcast:service-names -->
