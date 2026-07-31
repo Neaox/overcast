@@ -61,6 +61,6 @@ func TestCapabilities_MatchDispatchInventory(t *testing.T) {
 		t.Errorf("operations in dispatch but not in capabilities.go (add them to capabilities_dev.go):\n  %v", inDispatchNotCaps)
 	}
 	if len(inCapsNotDispatch) > 0 {
-		t.Errorf("operations in capabilities.go but not in dispatch (add them to initOps() or remove from capabilities_dev.go):\n  %v", inCapsNotDispatch)
+		t.Errorf("operations in capabilities.go but not in dispatch (add them to initOps(), mark them DocOnly, or remove from capabilities_dev.go):\n  %v", inCapsNotDispatch)
 	}
 }
