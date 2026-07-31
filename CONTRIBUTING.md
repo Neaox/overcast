@@ -1007,9 +1007,13 @@ We use [Semantic Versioning](https://semver.org/). Version bump rules:
 fragment under `.changelog/`.** Do not edit the `[Unreleased]` section of
 `CHANGELOG.md` — it stays empty between releases, and CI
 (`python3 scripts/changelog.py check`) fails any PR that writes into it.
-Fragments are one file per PR, so concurrent PRs can never merge-conflict over
-the changelog; at release time they are curated into the new versioned section
-of `CHANGELOG.md` and deleted.
+Fragments are one file per PR at a unique path, so concurrent PRs can never
+merge-conflict over the changelog; at release time they are curated into the
+new versioned section of `CHANGELOG.md` and deleted. Each line is one entry —
+`<+|-|~|*|section>[!|.] [area] <prose>` — and carries its own category, scope
+and compatibility marker. Write them with `python3 scripts/changelog.py new`
+rather than by hand; `.changelog/README.md` documents the grammar, and in
+particular when a change has to be marked breaking.
 
 The changelog is used as the basis for GitHub release notes. Keep it focused on
 changes users need to know about when they install or run Overcast: new services,

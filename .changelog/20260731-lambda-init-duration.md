@@ -1,6 +1,1 @@
----
-section: Added
-area: lambda
----
-
-- [lambda] REPORT log lines now carry `Init Duration` on the cold-start invocation of on-demand execution environments (measured from container start to the runtime's first `GET /next`), in AWS's field order and format; warm invokes and provisioned-concurrency environments omit it, as on AWS
++ [lambda] REPORT log lines now carry `Init Duration` on the cold-start invocation of on-demand execution environments (measured from container start to the runtime's first `GET /next`), in AWS's field order and format; warm invokes and provisioned-concurrency environments omit it, as on AWS

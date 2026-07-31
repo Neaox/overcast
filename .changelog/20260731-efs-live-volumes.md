@@ -1,7 +1,2 @@
----
-section: Added
-area: efs
----
-
-- [efs] opt-in live mode (`OVERCAST_EFS_MODE=live`): each file system is backed by a named Docker volume (`overcast-efs-<FileSystemId>`), created on `CreateFileSystem`, removed on `DeleteFileSystem`, and reconciled on startup (missing volumes recreated, orphans removed); the control plane degrades gracefully when Docker is unavailable
-- [docker] the internal Docker client gained volume operations (`CreateVolume`, `RemoveVolume`, `ListVolumes`) with the standard managed labels
++ [efs] opt-in live mode (`OVERCAST_EFS_MODE=live`): each file system is backed by a named Docker volume (`overcast-efs-<FileSystemId>`), created on `CreateFileSystem`, removed on `DeleteFileSystem`, and reconciled on startup (missing volumes recreated, orphans removed); the control plane degrades gracefully when Docker is unavailable
++ [docker] the internal Docker client gained volume operations (`CreateVolume`, `RemoveVolume`, `ListVolumes`) with the standard managed labels
