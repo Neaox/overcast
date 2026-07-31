@@ -273,6 +273,15 @@ func (g *lambdaGroup) setupInvoke(_ context.Context, t *harness.TestContext) err
 }
 
 func (g *lambdaGroup) InvokeDryRun(_ context.Context, t *harness.TestContext) error {
+	// Wait like every other invoke test: a function is Pending until its
+	// runtime image is available, and invoking a Pending function is an
+	// InvalidParameterValueException on the emulator (a 409 on real AWS —
+	// AWS's own guidance is to use the function-active waiter). DryRun was
+	// the only invoke without the wait, and as the group's first test it hit
+	// the cold-pull window on every CI run (plan item R7).
+	if err := g.waitFunctionActive(t); err != nil {
+		return err
+	}
 	return awscli.Run(t.Endpoint, t.Region,
 		"lambda", "invoke",
 		"--function-name", g.currentFnName(t),
@@ -282,7 +291,11 @@ func (g *lambdaGroup) InvokeDryRun(_ context.Context, t *harness.TestContext) er
 }
 
 func (g *lambdaGroup) waitFunctionActive(t *harness.TestContext) error {
-	for i := 0; i < 20; i++ {
+	// 60 x 500ms of sleep, plus ~1s of aws-cli startup per probe: enough to
+	// sit out a cold runtime-image pull on a loaded CI runner. AWS's own
+	// function-active-v2 waiter allows five minutes; the previous 20 x 200ms
+	// budget could be outlived by any pull the runner had not cached.
+	for i := 0; i < 60; i++ {
 		out, err := awscli.RunOutput(t.Endpoint, t.Region,
 			"lambda", "get-function",
 			"--function-name", g.currentFnName(t),
@@ -295,7 +308,13 @@ func (g *lambdaGroup) waitFunctionActive(t *harness.TestContext) error {
 		if state == "Active" {
 			return nil
 		}
-		time.Sleep(200 * time.Millisecond)
+		// Failed is terminal — waiting out the rest of the budget just buries
+		// the real error, so surface the state reason immediately.
+		if state == "Failed" {
+			reason, _ := cfg["StateReason"].(string)
+			return fmt.Errorf("lambda: function %s entered Failed state: %s", g.currentFnName(t), reason)
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
 	return fmt.Errorf("lambda: function %s did not become Active", g.currentFnName(t))
 }
