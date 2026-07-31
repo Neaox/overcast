@@ -30,6 +30,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/Neaox/overcast/internal/config"
 )
@@ -69,6 +70,11 @@ type Mapper struct {
 	// Built once in WithPublishedPort because RewriteURLs runs on every invoke
 	// payload, and rebuilding the patterns there would allocate per invoke.
 	publishedRewrites [][2]string
+	// caTarOnce caches the TLS trust-root tar (see CABundleTar): built once
+	// per Mapper, reused for every container launch.
+	caTarOnce sync.Once
+	caTar     []byte
+	caTarErr  error
 }
 
 // New returns a Mapper for containers that reach Overcast at endpoint (an

@@ -265,7 +265,9 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 			},
 		}
 
-		dockerID, err := h.docker.CreateContainer(ctx, containerName, ccfg)
+		// The puller retries once when the image was removed behind our back
+		// (docker rmi after the recorded pull) instead of failing until restart.
+		dockerID, err := h.puller.CreateContainerWithRetry(ctx, containerName, ccfg)
 		if err != nil {
 			return fmt.Errorf("ecs: create container %s: %w", cd.Name, err)
 		}

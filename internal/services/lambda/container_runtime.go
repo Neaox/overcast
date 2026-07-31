@@ -66,7 +66,6 @@ type ContainerRuntime struct {
 	codeFetcher      CodeFetcher                        // populates fn.CodeZip at cold start; nil in tests
 	tarCache         *tarCache                          // pre-built code/layer tars; nil = disabled
 	imageVerified    sync.Map                           // pull key → struct{}{}: image confirmed present, skip the per-acquire daemon check
-	caTarOnce        func() ([]byte, error)             // CA bundle tar built once (certs are minted before the runtime exists)
 	coldStartSem     chan struct{}                      // bounds concurrent container creation/INIT bursts
 
 	// initBurst tracks containers that are still in the INIT phase with burst
@@ -231,10 +230,6 @@ func NewContainerRuntime(
 		exitNotify:   newExitNotifier(),
 		coldStartSem: make(chan struct{}, limit),
 		tarCache:     newTarCache(int64(cfg.LambdaTarCacheMB) * 1024 * 1024),
-		// The trust root is minted before the Lambda runtime exists and never
-		// rotates within a process, so the tar (a disk read per call
-		// otherwise) is built once.
-		caTarOnce: sync.OnceValues(endpoint.CABundleTar),
 	}
 }
 
@@ -494,6 +489,64 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 			}
 		}
 	}
+
+	// Assemble the whole provisioning archive — code (var/task/…), TLS trust
+	// root, layer contents (opt/…, in layer order, so later layers overwrite
+	// earlier ones exactly as with the previous per-layer copies and as on
+	// AWS), and the bootstrap — BEFORE the container exists: it is pure CPU
+	// plus store reads, an error here wastes nothing, and it keeps the
+	// create→start critical section as short as possible. Directories the
+	// base image owns (/var, /var/task, /opt, /etc) are never emitted as
+	// headers, so extraction cannot reset their modes.
+	layerTars, expectedExtensions, skippedLayerLogLines, layerErr := cr.resolveLayerTars(ctx, fn)
+	if layerErr != nil {
+		return nil, fmt.Errorf("prepare layers: %w", layerErr)
+	}
+	var prov bytes.Buffer
+	tw := tar.NewWriter(&prov)
+	hasEntries := false
+	appendComponent := func(what string, component []byte) error {
+		if len(component) == 0 {
+			return nil
+		}
+		if err := appendTarEntries(tw, component); err != nil {
+			return fmt.Errorf("assemble %s entries: %w", what, err)
+		}
+		hasEntries = true
+		return nil
+	}
+	if !isImage && hotReloadPath == "" {
+		if err := appendComponent("code", codeTar); err != nil {
+			return nil, err
+		}
+	}
+	// With TLS on, the function must trust the CA that minted Overcast's
+	// certificate before its first SDK call — otherwise every AWS call from
+	// inside the function fails certificate verification. Injected by the same
+	// mechanism as code: a dockerized Overcast has no host path to bind-mount.
+	// The Mapper caches the trust-root tar after the first build.
+	if caTar, caErr := cr.endpoint.CABundleTar(); caErr != nil {
+		cr.logger.Warn("CA bundle unavailable; function TLS calls to Overcast will fail verification", zap.Error(caErr))
+	} else if err := appendComponent("CA bundle", caTar); err != nil {
+		return nil, err
+	}
+	for _, layerTar := range layerTars {
+		if err := appendComponent("layer", layerTar); err != nil {
+			return nil, err
+		}
+	}
+	if !isImage {
+		bootTar, bootErr := lambdaBootstrapTar()
+		if bootErr != nil {
+			return nil, fmt.Errorf("build bootstrap tar: %w", bootErr)
+		}
+		if err := appendComponent("bootstrap", bootTar); err != nil {
+			return nil, err
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return nil, fmt.Errorf("close provisioning tar: %w", err)
+	}
 	mark("code_prep")
 
 	logStream := lambdaLogStreamName(cr.clk)
@@ -541,7 +594,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	}
 
 	id, err := cr.docker.CreateContainer(ctx, containerName, req)
-	if err != nil && isImageMissingErr(err) {
+	if err != nil && docker.IsImageMissingErr(err) {
 		// The image vanished after verification (docker rmi / prune). Drop
 		// both caches — pullOnce too, or ensureImage's spent sync.Once would
 		// skip the pull and this function could never run again without a
@@ -561,14 +614,14 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 
 	var containerIP string
 	var registeredIP string
-	var expectedExtensions []string
 	if inspect, inspectErr := cr.docker.InspectContainer(ctx, id); inspectErr == nil {
 		containerIP = cr.extractContainerIP(inspect)
 		if containerIP != "" {
 			cr.runtimeAPI.RegisterContainerConfig(containerIP, runtimeContainerConfig{
-				FunctionARN:  fn.ARN,
-				FunctionName: fn.Name,
-				Handler:      fn.Handler,
+				FunctionARN:        fn.ARN,
+				FunctionName:       fn.Name,
+				Handler:            fn.Handler,
+				ExpectedExtensions: expectedExtensions,
 			})
 			registeredIP = containerIP
 		}
@@ -585,82 +638,14 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		_ = cr.docker.RemoveContainerForce(id)
 	}
 
-	// Provision the container filesystem with ONE archive extracted at "/" —
-	// code (var/task/…), TLS trust root, layer contents (opt/…, in layer
-	// order, so later layers overwrite earlier ones exactly as with the
-	// previous per-layer copies and as on AWS), and the bootstrap. One daemon
-	// round trip instead of up to four sequential tar uploads. Directories the
-	// base image owns (/var, /var/task, /opt, /etc) are never emitted as
-	// headers, so extraction cannot reset their modes.
+	// One daemon round trip provisions the whole filesystem (assembled above,
+	// before the container existed).
 	progress("Provisioning container filesystem")
-	layerTars, expectedExtensions, skippedLayerLogLines, layerErr := cr.resolveLayerTars(ctx, fn)
-	if layerErr != nil {
-		cleanup()
-		return nil, fmt.Errorf("prepare layers: %w", layerErr)
-	}
-	var prov bytes.Buffer
-	tw := tar.NewWriter(&prov)
-	hasEntries := false
-	appendComponent := func(what string, component []byte) error {
-		if len(component) == 0 {
-			return nil
-		}
-		if err := appendTarEntries(tw, component); err != nil {
-			return fmt.Errorf("assemble %s entries: %w", what, err)
-		}
-		hasEntries = true
-		return nil
-	}
-	if !isImage && hotReloadPath == "" {
-		if err := appendComponent("code", codeTar); err != nil {
-			cleanup()
-			return nil, err
-		}
-	}
-	// With TLS on, the function must trust the CA that minted Overcast's
-	// certificate before its first SDK call — otherwise every AWS call from
-	// inside the function fails certificate verification. Injected by the same
-	// mechanism as code: a dockerized Overcast has no host path to bind-mount.
-	if caTar, caErr := cr.caBundleTar(); caErr != nil {
-		cr.logger.Warn("CA bundle unavailable; function TLS calls to Overcast will fail verification", zap.Error(caErr))
-	} else if err := appendComponent("CA bundle", caTar); err != nil {
-		cleanup()
-		return nil, err
-	}
-	for _, layerTar := range layerTars {
-		if err := appendComponent("layer", layerTar); err != nil {
-			cleanup()
-			return nil, err
-		}
-	}
-	if !isImage {
-		bootTar, bootErr := lambdaBootstrapTar()
-		if bootErr != nil {
-			cleanup()
-			return nil, fmt.Errorf("build bootstrap tar: %w", bootErr)
-		}
-		if err := appendComponent("bootstrap", bootTar); err != nil {
-			cleanup()
-			return nil, err
-		}
-	}
-	if err := tw.Close(); err != nil {
-		cleanup()
-		return nil, fmt.Errorf("close provisioning tar: %w", err)
-	}
 	if hasEntries {
 		if err := cr.docker.CopyToContainer(ctx, id, "/", bytes.NewReader(prov.Bytes())); err != nil {
 			cleanup()
 			return nil, fmt.Errorf("provision container filesystem: %w", err)
 		}
-	}
-	if containerIP != "" {
-		cr.runtimeAPI.RegisterContainerConfig(containerIP, runtimeContainerConfig{
-			FunctionARN:        fn.ARN,
-			FunctionName:       fn.Name,
-			Handler:            fn.Handler,
-			ExpectedExtensions: expectedExtensions,
-		})
 	}
 	mark("copy")
 
@@ -925,12 +910,6 @@ func imagePullKey(image, platform string) string {
 		return image
 	}
 	return image + "@" + platform
-}
-
-// isImageMissingErr reports whether a container-create failure means the
-// image is gone from the daemon (removed after it was verified present).
-func isImageMissingErr(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), "no such image")
 }
 
 func (cr *ContainerRuntime) ensureImage(ctx context.Context, image, platform string) error {
@@ -2455,15 +2434,6 @@ func discoverExternalExtensions(zipData []byte) []string {
 	}
 	slices.Sort(extensions)
 	return extensions
-}
-
-// caBundleTar returns the cached TLS trust-root tar. Falls back to a direct
-// build for runtimes constructed without the cache (struct-literal tests).
-func (cr *ContainerRuntime) caBundleTar() ([]byte, error) {
-	if cr.caTarOnce != nil {
-		return cr.caTarOnce()
-	}
-	return cr.endpoint.CABundleTar()
 }
 
 // lambdaBootstrapTar is the static bootstrap archive, built once — its

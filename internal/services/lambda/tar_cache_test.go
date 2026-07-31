@@ -1,7 +1,6 @@
 package lambda
 
 import (
-	"errors"
 	"testing"
 )
 
@@ -78,20 +77,5 @@ func TestTarCache_disabledIsNilAndSafe(t *testing.T) {
 	}
 	if _, ok := c.get(""); ok {
 		t.Fatal("empty key must never hit")
-	}
-}
-
-func TestIsImageMissingErr(t *testing.T) {
-	// The daemon's create error for a removed image must be recognized so the
-	// runtime re-pulls instead of failing until restart; unrelated failures
-	// must not trigger a re-pull.
-	if !isImageMissingErr(errors.New(`create container: status 404: {"message":"No such image: public.ecr.aws/lambda/nodejs:22"}`)) {
-		t.Fatal("daemon no-such-image error not recognized")
-	}
-	if isImageMissingErr(errors.New("create container: connection refused")) {
-		t.Fatal("unrelated error misclassified as missing image")
-	}
-	if isImageMissingErr(nil) {
-		t.Fatal("nil error misclassified")
 	}
 }

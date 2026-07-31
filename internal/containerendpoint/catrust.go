@@ -72,6 +72,17 @@ func (m *Mapper) CABundleTar() ([]byte, error) {
 	if m == nil || m.cfg == nil || !m.cfg.TLSEnabled() {
 		return nil, nil
 	}
+	// The trust root is minted before any container-running service starts
+	// and never rotates within a process, so the tar (a disk read + build
+	// otherwise) is produced once per Mapper and reused for every container
+	// launch — Lambda cold starts and ECS tasks alike.
+	m.caTarOnce.Do(func() {
+		m.caTar, m.caTarErr = m.buildCABundleTar()
+	})
+	return m.caTar, m.caTarErr
+}
+
+func (m *Mapper) buildCABundleTar() ([]byte, error) {
 	pemPath := m.cfg.TLSCertFile
 	if m.cfg.TLSAuto() {
 		pemPath = filepath.Join(trust.DirFor(m.cfg.DataDir), trust.CACertFile)
