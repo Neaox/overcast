@@ -49,8 +49,13 @@ func SES() ServiceGroup {
 
 type sesGroup struct{}
 
-func (g *sesGroup) email(t *harness.TestContext) string {
-	return fmt.Sprintf("test-%s@example.com", t.RunID)
+// email returns the identity a group verifies and tears down. Each group
+// gets its OWN address: groups run in parallel (8 slots), and when the three
+// SES groups shared one identity, any group's teardown (or DeleteIdentity's
+// happy path) deleted it out from under the others mid-run — the intermittent
+// cli/ses-identities failures quarantined under issue #388.
+func (g *sesGroup) email(t *harness.TestContext, group string) string {
+	return fmt.Sprintf("test-%s-%s@example.com", t.RunID, group)
 }
 func (g *sesGroup) templateName(t *harness.TestContext) string {
 	return fmt.Sprintf("%s-tpl", t.RunID)
@@ -63,7 +68,7 @@ func (g *sesGroup) setupIdentities(_ context.Context, _ *harness.TestContext) er
 func (g *sesGroup) VerifyEmailIdentity(_ context.Context, t *harness.TestContext) error {
 	return awscli.Run(t.Endpoint, t.Region,
 		"ses", "verify-email-identity",
-		"--email-address", g.email(t),
+		"--email-address", g.email(t, "ident"),
 	)
 }
 
@@ -73,7 +78,7 @@ func (g *sesGroup) ListIdentities(_ context.Context, t *harness.TestContext) err
 		return err
 	}
 	identities, _ := out["Identities"].([]any)
-	want := g.email(t)
+	want := g.email(t, "ident")
 	for _, v := range identities {
 		if v == want {
 			return nil
@@ -85,7 +90,7 @@ func (g *sesGroup) ListIdentities(_ context.Context, t *harness.TestContext) err
 func (g *sesGroup) GetIdentityVerificationAttributes(_ context.Context, t *harness.TestContext) error {
 	out, err := awscli.RunOutput(t.Endpoint, t.Region,
 		"ses", "get-identity-verification-attributes",
-		"--identities", g.email(t),
+		"--identities", g.email(t, "ident"),
 	)
 	if err != nil {
 		return err
@@ -112,7 +117,7 @@ func (g *sesGroup) ListVerifiedEmailAddresses(_ context.Context, t *harness.Test
 }
 
 func (g *sesGroup) DeleteIdentity(_ context.Context, t *harness.TestContext) error {
-	email := g.email(t)
+	email := g.email(t, "ident")
 	if err := awscli.Run(t.Endpoint, t.Region,
 		"ses", "delete-identity",
 		"--identity", email,
@@ -133,7 +138,7 @@ func (g *sesGroup) DeleteIdentity(_ context.Context, t *harness.TestContext) err
 }
 
 func (g *sesGroup) teardownIdentities(_ context.Context, t *harness.TestContext) error {
-	awscli.Run(t.Endpoint, t.Region, "ses", "delete-identity", "--identity", g.email(t)) //nolint:errcheck
+	awscli.Run(t.Endpoint, t.Region, "ses", "delete-identity", "--identity", g.email(t, "ident")) //nolint:errcheck
 	return nil
 }
 
@@ -152,7 +157,7 @@ func (g *sesGroup) GetSendQuota(_ context.Context, t *harness.TestContext) error
 func (g *sesGroup) SetIdentityFeedbackForwardingEnabled(_ context.Context, t *harness.TestContext) error {
 	return awscli.Run(t.Endpoint, t.Region,
 		"ses", "set-identity-feedback-forwarding-enabled",
-		"--identity", g.email(t),
+		"--identity", g.email(t, "ident"),
 		"--forwarding-enabled",
 	)
 }
@@ -162,15 +167,15 @@ func (g *sesGroup) SetIdentityFeedbackForwardingEnabled(_ context.Context, t *ha
 func (g *sesGroup) setupSend(_ context.Context, t *harness.TestContext) error {
 	return awscli.Run(t.Endpoint, t.Region,
 		"ses", "verify-email-identity",
-		"--email-address", g.email(t),
+		"--email-address", g.email(t, "send"),
 	)
 }
 
 func (g *sesGroup) SendEmail(_ context.Context, t *harness.TestContext) error {
 	return awscli.Run(t.Endpoint, t.Region,
 		"ses", "send-email",
-		"--from", g.email(t),
-		"--destination", fmt.Sprintf(`{"ToAddresses":["%s"]}`, g.email(t)),
+		"--from", g.email(t, "send"),
+		"--destination", fmt.Sprintf(`{"ToAddresses":["%s"]}`, g.email(t, "send")),
 		"--message",
 		`{"Subject":{"Data":"Test"},"Body":{"Text":{"Data":"Hello from CLI"}}}`,
 	)
@@ -179,7 +184,7 @@ func (g *sesGroup) SendEmail(_ context.Context, t *harness.TestContext) error {
 func (g *sesGroup) SendRawEmail(_ context.Context, t *harness.TestContext) error {
 	raw := fmt.Sprintf(
 		"From: %s\r\nTo: %s\r\nSubject: Raw\r\n\r\nRaw body",
-		g.email(t), g.email(t),
+		g.email(t, "send"), g.email(t, "send"),
 	)
 	rawMsg := fmt.Sprintf(`{"Data":"%s"}`, encodeBase64([]byte(raw)))
 	return awscli.Run(t.Endpoint, t.Region,
@@ -191,16 +196,16 @@ func (g *sesGroup) SendRawEmail(_ context.Context, t *harness.TestContext) error
 func (g *sesGroup) SendEmailWithReplyTo(_ context.Context, t *harness.TestContext) error {
 	return awscli.Run(t.Endpoint, t.Region,
 		"ses", "send-email",
-		"--from", g.email(t),
-		"--destination", fmt.Sprintf(`{"ToAddresses":["%s"]}`, g.email(t)),
+		"--from", g.email(t, "send"),
+		"--destination", fmt.Sprintf(`{"ToAddresses":["%s"]}`, g.email(t, "send")),
 		"--message",
 		`{"Subject":{"Data":"ReplyTo Test"},"Body":{"Text":{"Data":"body"}}}`,
-		"--reply-to-addresses", g.email(t),
+		"--reply-to-addresses", g.email(t, "send"),
 	)
 }
 
 func (g *sesGroup) teardownSend(_ context.Context, t *harness.TestContext) error {
-	awscli.Run(t.Endpoint, t.Region, "ses", "delete-identity", "--identity", g.email(t)) //nolint:errcheck
+	awscli.Run(t.Endpoint, t.Region, "ses", "delete-identity", "--identity", g.email(t, "send")) //nolint:errcheck
 	return nil
 }
 
@@ -209,7 +214,7 @@ func (g *sesGroup) teardownSend(_ context.Context, t *harness.TestContext) error
 func (g *sesGroup) setupTemplates(_ context.Context, t *harness.TestContext) error {
 	return awscli.Run(t.Endpoint, t.Region,
 		"ses", "verify-email-identity",
-		"--email-address", g.email(t),
+		"--email-address", g.email(t, "tpl"),
 	)
 }
 
@@ -296,8 +301,8 @@ func (g *sesGroup) ListTemplates(_ context.Context, t *harness.TestContext) erro
 func (g *sesGroup) SendTemplatedEmail(_ context.Context, t *harness.TestContext) error {
 	return awscli.Run(t.Endpoint, t.Region,
 		"ses", "send-templated-email",
-		"--source", g.email(t),
-		"--destination", fmt.Sprintf(`{"ToAddresses":["%s"]}`, g.email(t)),
+		"--source", g.email(t, "tpl"),
+		"--destination", fmt.Sprintf(`{"ToAddresses":["%s"]}`, g.email(t, "tpl")),
 		"--template", g.templateName(t),
 		"--template-data", `{"name":"CliTest"}`,
 	)
@@ -325,6 +330,6 @@ func (g *sesGroup) DeleteTemplate(_ context.Context, t *harness.TestContext) err
 
 func (g *sesGroup) teardownTemplates(_ context.Context, t *harness.TestContext) error {
 	awscli.Run(t.Endpoint, t.Region, "ses", "delete-template", "--template-name", g.templateName(t)) //nolint:errcheck
-	awscli.Run(t.Endpoint, t.Region, "ses", "delete-identity", "--identity", g.email(t))             //nolint:errcheck
+	awscli.Run(t.Endpoint, t.Region, "ses", "delete-identity", "--identity", g.email(t, "tpl"))             //nolint:errcheck
 	return nil
 }

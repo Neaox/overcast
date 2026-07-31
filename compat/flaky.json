@@ -3,84 +3,12 @@
   "comment": "Compat tests that give different answers on identical input. Quarantined from the baseline gate in BOTH directions: a flaky test never fails a PR, and never gets promoted on the run where it happened to pass. Quarantine is a STOP-GAP — every entry needs a tracking issue and a date, goes overdue after 14 days (the nightly flake-detection job fails), and blocks pull requests after 30 (the PR lint fails). Fix the test and delete the entry. See compat/AGENTS.md § Stabilising a flaky test.",
   "flaky": [
     {
-      "suite": "dotnet-sdk",
-      "group": "sns-subscriptions",
-      "test": "PublishDeliveredToSQS",
-      "since": "2026-07-29",
-      "issue": "https://github.com/Neaox/overcast/issues/388",
-      "reason": "Intermittent 'Topic does not exist: oc-<run>-dn-sns-sub'. The same topic was used successfully by SubscribeSQS earlier in the group, so the topic is being lost between calls rather than never created — suspect write visibility in internal/state, or a handler reading a snapshot taken before the write landed. Observed passing and failing on consecutive CI runs of an unchanged tree."
-    },
-    {
-      "suite": "dotnet-sdk",
-      "group": "sns-subscriptions",
-      "test": "Unsubscribe",
-      "since": "2026-07-29",
-      "issue": "https://github.com/Neaox/overcast/issues/388",
-      "reason": "Cascades from PublishDeliveredToSQS: reported 'skip — dependency failed' on some runs and 'fail' on others. Not flaky in itself; remove it together with the entry above."
-    },
-    {
-      "suite": "cli",
-      "group": "eventbridge-buses",
-      "test": "DeleteEventBus",
-      "since": "2026-07-29",
-      "issue": "https://github.com/Neaox/overcast/issues/388",
-      "reason": "Downstream of the stable cli/eventbridge-buses/ListEventBuses failure (plan R7), whose knock-on is not deterministic: 'skip — dependency failed' on some runs, 'fail' on others, on trees that do not touch EventBridge. Not flaky in itself; remove it with the ListEventBuses fix. Same shape as the SNS race above — a resource is created, and the next call cannot find it — which is why one issue covers both."
-    },
-    {
-      "suite": "dotnet-sdk",
-      "group": "sns-subscriptions",
-      "test": "SubscribeSQS",
-      "since": "2026-07-30",
-      "issue": "https://github.com/Neaox/overcast/issues/388",
-      "reason": "Same lost-resource race as PublishDeliveredToSQS, one call earlier in the group: failed pass->fail on the alpha.26 release-merge run of a tree whose changes were CI-only, then the same commit's neighbouring runs passed. Second SNS-subscription manifestation today across two suites (see the cdk entry), which strengthens the write-visibility suspicion on the shared state layer rather than anything suite-local."
-    },
-    {
-      "suite": "dotnet-sdk",
-      "group": "sns-subscriptions",
-      "test": "GetSubscriptionAttributes",
-      "since": "2026-07-30",
-      "issue": "https://github.com/Neaox/overcast/issues/388",
-      "reason": "Cascades from SubscribeSQS: 'skip — dependency failed' when it fails. Not flaky in itself; remove together with the SubscribeSQS entry."
-    },
-    {
-      "suite": "dotnet-sdk",
-      "group": "sns-subscriptions",
-      "test": "ListSubscriptionsByTopic",
-      "since": "2026-07-30",
-      "issue": "https://github.com/Neaox/overcast/issues/388",
-      "reason": "Cascades from SubscribeSQS: 'skip — dependency failed' when it fails. Not flaky in itself; remove together with the SubscribeSQS entry."
-    },
-    {
-      "suite": "dotnet-sdk",
-      "group": "sns-subscriptions",
-      "test": "SetSubscriptionAttributes",
-      "since": "2026-07-30",
-      "issue": "https://github.com/Neaox/overcast/issues/388",
-      "reason": "Cascades from SubscribeSQS: 'skip — dependency failed' when it fails. Not flaky in itself; remove together with the SubscribeSQS entry."
-    },
-    {
       "suite": "cdk",
       "group": "cdk-lifecycle",
       "test": "VerifyTopicSubscription",
       "since": "2026-07-30",
-      "issue": "https://github.com/Neaox/overcast/issues/388",
-      "reason": "Failed pass->fail once on a CI-only PR (#391) while five adjacent main runs and six local lifecycle runs of the same code passed 35/0. Same functional area as the dotnet-sdk sns-subscriptions race — an SNS subscription created and then not found — so one issue covers the class."
-    },
-    {
-      "suite": "cli",
-      "group": "ses-identities",
-      "test": "ListIdentities",
-      "since": "2026-07-30",
-      "issue": "https://github.com/Neaox/overcast/issues/388",
-      "reason": "Third surface of #388's created-then-not-found race in one day, after sns-subscriptions (dotnet-sdk, cdk): an identity verified earlier in the group is missing from the next ListIdentities. Failed pass->fail on CI-only #393 while the adjacent main runs passed. The spread across SNS, EventBridge and now SES strengthens the case that the race lives in the shared state layer, not in any one service."
-    },
-    {
-      "suite": "cli",
-      "group": "ses-identities",
-      "test": "DeleteIdentity",
-      "since": "2026-07-30",
-      "issue": "https://github.com/Neaox/overcast/issues/388",
-      "reason": "Cascades from ListIdentities: 'skip — dependency failed' when it fails. Not flaky in itself; remove together with the ListIdentities entry."
+      "issue": "https://github.com/Neaox/overcast/issues/435",
+      "reason": "Subscription missing on the post-deploy verification read, seen once (PR #391 run) against five adjacent green runs. Does NOT fit the #388 suite-teardown mechanism fixed alongside the other entries: cdk-lifecycle is a single group with no in-suite parallelism. Suspect CFN provisioner ordering (Subscribe racing CreateTopic/queue under CI load) — see the issue for the remaining hypotheses."
     }
   ]
 }
