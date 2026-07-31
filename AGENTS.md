@@ -291,6 +291,20 @@ out — `scripts/release-candidate-check.sh` printing `true` is the definition o
 this window. Publishing itself always waits for the maintainer's approval of
 the `release` environment.
 
+**Never enable auto-merge on a release-prep PR.** Do not run `gh pr merge --auto`
+against a PR that changes `VERSION`, and do not enable auto-merge on it through
+the web UI. Auto-merge is fine for ordinary PRs, where letting the required
+checks gate the merge is exactly the point. A release-prep PR is different: its
+merge to `main` is what opens the release window and starts the release
+workflow, and it should happen only after a human has smoke tested the RC image
+that the PR itself published (see [RELEASE.md](./RELEASE.md) § Creating An Alpha
+Release, step 6). Green checks say the build is sound; they do not say the
+release is ready. Merge it as a deliberate, separate step.
+
+This is a merge-timing rule, not a publishing safeguard — the `release`
+environment's required reviewer already means nothing ships without the
+maintainer approving the exact SHA.
+
 ## Reserved ports — 4566 and 4567 belong to the user
 
 Agents must **not** start their own test instances of Overcast on port **4566** (API) or **4567** (web UI) — those are reserved for the user's own running instance, unless the user explicitly directs otherwise. Starting a test instance on those ports silently breaks whatever the user is doing with their instance, or fails confusingly when theirs is already bound.
