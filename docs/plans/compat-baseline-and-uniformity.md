@@ -102,6 +102,40 @@ The incidence pattern generalises: **a test failing identically in many suites
 is an emulator bug (R1); a test failing in exactly one suite is a suite bug
 (R4/R5)** — the report's lone-suite classification should exploit this.
 
+## Dashboard QOL — reviewed 2026-08-01, scoped, not yet started
+
+The dashboard works and the fundamentals are right (registry-driven matrix,
+distinct fail/unimplemented states, SSE with catch-up buffering, results
+persisted across restarts). The review found stability and usability gaps, in
+priority order:
+
+1. **SSE drops are invisible and unrecovered.** `use-event-stream.ts` opens an
+   `EventSource` with no `onerror`/`onopen` handling: the browser auto-
+   reconnects, but events missed during the outage are never back-filled, so
+   the matrix silently drifts stale — and nothing tells the user the
+   connection died. Fix: on reconnect, re-fetch `/results` and re-seed (the
+   catch-up buffer logic already exists for startup); add a connection pill.
+   The main web UI just built exactly this pattern (#369/#382) — mirror it.
+2. **Failed run triggers are silent.** `use-run.ts` returns `{ok:false}` on a
+   409 (run already active) or network error; no component surfaces it. A
+   click that does nothing is indistinguishable from a broken UI. Fix: inline
+   feedback on the run controls.
+3. **compat/ui is invisible to CI.** No typecheck, no tests, no build runs in
+   any workflow (the Web UI job covers `web/` only; CI never embeds the
+   dashboard because compat runs headless there). Type rot lands silently.
+   Fix: add `tsc -b` + `npm run build` for compat/ui to the compat workflow's
+   build job (~40s, cached), and stand up vitest — the SSE reducer and
+   registry-join logic are pure functions begging for tests. `web/` has the
+   harness conventions to copy.
+4. **No preference persistence.** Status filters, suite selection and scroll
+   state reset on every reload; during a burn-down session the fail-filter is
+   re-applied by hand each visit. Fix: localStorage for filter/selection
+   state.
+5. **Registry×suite scoping in the matrix**: with `suites` scoping now in the
+   registry (cdk-lifecycle), the matrix should render out-of-scope cells as
+   structurally absent rather than "not run", so per-suite pass rates exclude
+   cells a suite can never fill.
+
 ## Stabilising flaky tests (pipeline live; list currently empty)
 
 Quarantine is containment. The plan to actually remove it:
