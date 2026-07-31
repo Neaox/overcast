@@ -52,6 +52,28 @@ type registerTaskDefinitionRequest struct {
 	RequiresCompatibilities []string              `json:"requiresCompatibilities" cbor:"requiresCompatibilities"`
 	Cpu                     string                `json:"cpu" cbor:"cpu"`
 	Memory                  string                `json:"memory" cbor:"memory"`
+	Volumes                 []TaskVolume          `json:"volumes" cbor:"volumes"`
+}
+
+// validateTaskVolumes rejects container mount points that reference a volume
+// the task definition does not declare, matching AWS's ClientException.
+func validateTaskVolumes(volumes []TaskVolume, containers []ContainerDefinition) *protocol.AWSError {
+	names := make(map[string]struct{}, len(volumes))
+	for _, v := range volumes {
+		names[v.Name] = struct{}{}
+	}
+	for _, cd := range containers {
+		for _, mp := range cd.MountPoints {
+			if _, ok := names[mp.SourceVolume]; !ok {
+				return &protocol.AWSError{
+					Code:       "ClientException",
+					Message:    fmt.Sprintf("Container '%s' references undefined volume '%s'.", cd.Name, mp.SourceVolume),
+					HTTPStatus: http.StatusBadRequest,
+				}
+			}
+		}
+	}
+	return nil
 }
 
 type taskDefinitionRefRequest struct {
@@ -565,6 +587,9 @@ func (h *Handler) registerTaskDefinitionTyped(ctx context.Context, req *register
 			req.NetworkMode = "awsvpc"
 		}
 	}
+	if aerr := validateTaskVolumes(req.Volumes, req.ContainerDefinitions); aerr != nil {
+		return nil, aerr
+	}
 	rev, aerr := h.store.nextRevision(ctx, req.Family)
 	if aerr != nil {
 		return nil, aerr
@@ -579,6 +604,7 @@ func (h *Handler) registerTaskDefinitionTyped(ctx context.Context, req *register
 		Cpu:                     req.Cpu,
 		Memory:                  req.Memory,
 		ContainerDefinitions:    req.ContainerDefinitions,
+		Volumes:                 req.Volumes,
 	}
 	if aerr := h.store.putTaskDefinition(ctx, td); aerr != nil {
 		return nil, aerr

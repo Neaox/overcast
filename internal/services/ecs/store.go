@@ -96,6 +96,36 @@ type TaskDefinition struct {
 	Cpu                     string                `json:"cpu,omitempty"`
 	Memory                  string                `json:"memory,omitempty"`
 	ContainerDefinitions    []ContainerDefinition `json:"containerDefinitions"`
+	Volumes                 []TaskVolume          `json:"volumes,omitempty"`
+}
+
+// TaskVolume is a named volume in a task definition. Only EFS-backed volumes
+// have runtime behaviour in Overcast (mounted in EFS live mode); other volume
+// types are stored and echoed.
+type TaskVolume struct {
+	Name                   string                  `json:"name"`
+	EFSVolumeConfiguration *EFSVolumeConfiguration `json:"efsVolumeConfiguration,omitempty"`
+}
+
+// EFSVolumeConfiguration mirrors the AWS shape referencing an EFS file system.
+type EFSVolumeConfiguration struct {
+	FileSystemId        string                  `json:"fileSystemId"`
+	RootDirectory       string                  `json:"rootDirectory,omitempty"`
+	TransitEncryption   string                  `json:"transitEncryption,omitempty"`
+	AuthorizationConfig *EFSAuthorizationConfig `json:"authorizationConfig,omitempty"`
+}
+
+// EFSAuthorizationConfig mirrors the AWS access-point/IAM authorization shape.
+type EFSAuthorizationConfig struct {
+	AccessPointId string `json:"accessPointId,omitempty"`
+	IAM           string `json:"iam,omitempty"`
+}
+
+// MountPoint mounts a task volume into a container.
+type MountPoint struct {
+	SourceVolume  string `json:"sourceVolume"`
+	ContainerPath string `json:"containerPath"`
+	ReadOnly      bool   `json:"readOnly,omitempty"`
 }
 
 // ContainerDefinition represents a container within a task definition.
@@ -109,6 +139,7 @@ type ContainerDefinition struct {
 	Environment      []KeyValuePair    `json:"environment,omitempty"`
 	Command          []string          `json:"command,omitempty"`
 	LogConfiguration *LogConfiguration `json:"logConfiguration,omitempty"`
+	MountPoints      []MountPoint      `json:"mountPoints,omitempty"`
 }
 
 // PortMapping maps a container port to a host port.

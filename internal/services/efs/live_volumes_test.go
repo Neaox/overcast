@@ -183,6 +183,18 @@ func TestEFSVolumeForAccessPoint(t *testing.T) {
 	if _, ok := mockSvc.EFSVolumeForAccessPoint(ctx, ap.AccessPointArn); ok {
 		t.Fatal("mock mode must not resolve volumes")
 	}
+
+	// The file-system-ID resolver (ECS path) follows the same rules.
+	volume, ok = svc.EFSVolumeForFileSystem(ctx, fs.FileSystemId)
+	if !ok || volume != volumeName(fs.FileSystemId) {
+		t.Fatalf("expected file-system resolver to return %q, got %q ok=%v", volumeName(fs.FileSystemId), volume, ok)
+	}
+	if _, ok := svc.EFSVolumeForFileSystem(ctx, "fs-00000000000000000"); ok {
+		t.Fatal("unknown file system must not resolve")
+	}
+	if _, ok := mockSvc.EFSVolumeForFileSystem(ctx, fs.FileSystemId); ok {
+		t.Fatal("mock mode must not resolve file systems")
+	}
 }
 
 func TestReconcileVolumes_healsAndSweeps(t *testing.T) {

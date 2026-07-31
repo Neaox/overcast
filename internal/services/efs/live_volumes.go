@@ -98,6 +98,21 @@ func (s *Service) EFSVolumeForAccessPoint(ctx context.Context, accessPointARN st
 	return volumeName(ap.FileSystemId), true
 }
 
+// EFSVolumeForFileSystem implements the volume-resolver interface consumed by
+// ECS: it maps a file system ID (resolved in the caller's request region) to
+// its backing Docker volume. Same ok=false semantics as
+// EFSVolumeForAccessPoint.
+func (s *Service) EFSVolumeForFileSystem(ctx context.Context, fileSystemID string) (string, bool) {
+	if !s.volumesActive() {
+		return "", false
+	}
+	rec, found, err := s.getFileSystem(ctx, s.region(ctx), fileSystemID)
+	if err != nil || !found {
+		return "", false
+	}
+	return volumeName(rec.FileSystemId), true
+}
+
 // reconcileVolumes aligns Docker volumes with persisted file systems across
 // every region: file systems missing their volume get one, and managed
 // volumes whose file system no longer exists are removed. Idempotent.
