@@ -373,7 +373,7 @@ jobs:
           Path("release-metadata/release-body.md").write_text(body, encoding="utf-8")
           EOF
       - name: Upload assets to release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ needs.check-version.outputs.tag }}
           target_commitish: ${{ github.sha }}
@@ -502,7 +502,7 @@ jobs:
           name: release-metadata
           path: release-metadata
       - name: Update release notes
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ needs.check-version.outputs.tag }}
           target_commitish: ${{ github.sha }}
