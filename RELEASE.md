@@ -212,12 +212,31 @@ the house style merges same-area entries into single bullets and tightens the
 prose. Treat the PR as a draft to edit, not as finished notes.
 
 Re-running it against an open release PR **does not rewrite the section**. It
-comments with the fragments that have landed on `main` since — which is also
-the staleness notification described in
-[Keeping The Release PR Current](#keeping-the-release-pr-current) — because
-regenerating would discard curation already done. Pass `regenerate: true` only
-when you genuinely want the section replaced wholesale. `dry_run: true` prints
-the summary and diffstat without pushing or opening anything.
+comments with the entries that have landed on `main` since, rendered as they
+will read in the changelog, because regenerating would discard curation already
+done. Pass `regenerate: true` only when you genuinely want the section replaced
+wholesale. `dry_run: true` prints the summary and diffstat without pushing or
+opening anything.
+
+**Exactly one release may be in flight.** Dispatching while a release PR is
+open for a different version fails rather than opening a second: two would race
+for the same fragments and produce two sections claiming the same entries.
+
+### Automatic refresh
+
+The same workflow runs on **every push to `main`**. When a release PR is open it
+merges `main` into the release branch, pushes, and comments with the entries
+that still have to be curated. When none is open it exits immediately.
+
+Merging `main` in is the part that matters. A `pull_request` run is not
+re-triggered by base movement, so without it the PR sits green while going
+stale; refreshing the branch re-runs its checks, and the changelog gate then
+correctly fails while fragments are unconsumed. Each push gets its own comment,
+because each reports a distinct event on `main` — unlike the release summary,
+which is a sticky comment describing the whole release.
+
+If `main` conflicts with the release branch, it comments saying so and leaves
+the branch alone.
 
 It requires the `RELEASE_APP_CLIENT_ID` and `RELEASE_APP_PRIVATE_KEY` secrets and
 fails without them, deliberately: a PR opened with the default `GITHUB_TOKEN`

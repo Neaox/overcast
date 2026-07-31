@@ -505,30 +505,44 @@ def update_links(changelog: str, version: str, previous: str | None) -> str:
     return pattern.sub(lambda _: f"{unreleased}\n{added}", changelog, count=1)
 
 
-def release_summary(fragments: list[Fragment], version: str) -> str:
-    """Markdown summary of what a release contains, breaking changes first."""
+def release_summary(
+    fragments: list[Fragment], version: str, date: str = "", heading: str = ""
+) -> str:
+    """Markdown summary of a release: the tally, breaking changes, the entries.
+
+    The entries are rendered exactly as `assemble` will write them into
+    CHANGELOG.md, because the point of the comment is to show what the release
+    notes will say — a count tells a reader nothing they can act on.
+    """
     entries = [entry for fragment in fragments for entry in fragment.entries]
     counts = {
         section: sum(1 for entry in entries if entry.section == section)
         for section in SECTIONS
     }
     tally = ", ".join(f"{count} {name}" for name, count in counts.items() if count)
-    lines = [f"**{version}** — {len(entries)} entries ({tally})", ""]
+    lines = [heading or f"**{version}** — {len(entries)} entries ({tally})", ""]
 
+    # Breaking changes lead, in full: while in alpha the version cannot signal
+    # a break, so this comment is where a reader finds out one happened.
     breaking = [entry for entry in entries if entry.breaking]
-    if not breaking:
+    if breaking:
+        lines.append(f"### Breaking changes ({len(breaking)})")
+        lines.append("")
+        for entry in breaking:
+            areas = f"[{'/'.join(entry.areas)}] " if entry.areas else ""
+            lines.append(f"- {areas}{entry.prose}")
+            if entry.migration:
+                lines.append(f"  - **migration:** {entry.migration}")
+        lines.append("")
+    else:
         lines.append("No breaking changes.")
-        return "\n".join(lines) + "\n"
+        lines.append("")
 
-    # Listed first and in full: the version cannot signal a break while in
-    # alpha, so this comment is where a reader finds out.
-    lines.append(f"### Breaking changes ({len(breaking)})")
-    lines.append("")
-    for entry in breaking:
-        areas = f"[{'/'.join(entry.areas)}] " if entry.areas else ""
-        lines.append(f"- {areas}{entry.prose}")
-        if entry.migration:
-            lines.append(f"  - **migration:** {entry.migration}")
+    date = date or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    # Drop assemble's own '## [version] - date' heading: this is a comment, not
+    # a changelog section, and it already has one.
+    body = assemble(fragments, version, date).split("\n", 1)[1].strip()
+    lines.append(body)
     return "\n".join(lines) + "\n"
 
 
@@ -677,6 +691,32 @@ def command_release(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_summary(args: argparse.Namespace) -> int:
+    """Print the release summary for whatever is currently in .changelog/.
+
+    Used by the release-prep workflow to comment on an open release PR: run in
+    a release-branch checkout, .changelog/ holds exactly the entries that have
+    not been curated yet, so this renders what still has to be folded in.
+    """
+    fragments, errors = load_fragments(Path(args.fragments_dir))
+    if errors:
+        for error in errors:
+            print(f"::error::{error}", file=sys.stderr)
+        return 1
+    if not fragments:
+        print(args.empty)
+        return 0
+
+    version = args.version
+    if version is None:
+        try:
+            version = next_version(Path(args.version_file).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            version = ""
+    sys.stdout.write(release_summary(fragments, version, heading=args.heading))
+    return 0
+
+
 def command_next_version(args: argparse.Namespace) -> int:
     try:
         print(next_version(Path(args.version_file).read_text(encoding="utf-8")))
@@ -740,6 +780,21 @@ def main() -> int:
     release_parser.add_argument(
         "--dry-run", action="store_true", help="print what would be written"
     )
+    summary_parser = subparsers.add_parser(
+        "summary", help="print a markdown summary of the current fragments"
+    )
+    summary_parser.add_argument(
+        "version", nargs="?", default=None, help="default: derived from VERSION"
+    )
+    summary_parser.add_argument("--version-file", default="VERSION")
+    summary_parser.add_argument(
+        "--heading", default="", help="replace the default tally heading"
+    )
+    summary_parser.add_argument(
+        "--empty",
+        default="No changelog entries.",
+        help="text to print when there are no fragments",
+    )
     version_parser = subparsers.add_parser(
         "next-version", help="print the version after the current one"
     )
@@ -750,6 +805,8 @@ def main() -> int:
     # unrelated fragment on disk is mid-edit and failing the linter.
     if args.command == "new":
         return command_new(args)
+    if args.command == "summary":
+        return command_summary(args)
     if args.command == "next-version":
         return command_next_version(args)
     if args.command == "release":

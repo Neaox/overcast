@@ -497,6 +497,24 @@ class ReleaseSummaryTest(unittest.TestCase):
 		self.assertIn("3 entries (1 Added, 2 Fixed)", text)
 		self.assertIn("No breaking changes.", text)
 
+	def test_renders_the_entries_as_they_will_appear_in_the_changelog(self) -> None:
+		# A count tells a reader nothing they can act on; the comment exists to
+		# show what the release notes will say.
+		text = self.summary("+ [sqs] long polling\n* [efs] a mount fix\n")
+
+		self.assertIn("### Added\n\n- [sqs] long polling", text)
+		self.assertIn("### Fixed\n\n- [efs] a mount fix", text)
+		self.assertNotIn("## [0.0.1-alpha.2]", text)
+
+	def test_heading_can_be_replaced(self) -> None:
+		root = write_dir({"20260801-x.md": "+ [sqs] a thing\n"})
+		fragments, _ = changelog.load_fragments(root)
+
+		text = changelog.release_summary(fragments, "1.0.0", heading="### Custom")
+
+		self.assertTrue(text.startswith("### Custom\n"))
+		self.assertNotIn("1 entries", text)
+
 	def test_lists_breaking_changes_with_their_migrations(self) -> None:
 		text = self.summary(
 			"+ [sqs] a feature\n"
@@ -507,6 +525,40 @@ class ReleaseSummaryTest(unittest.TestCase):
 		self.assertIn("### Breaking changes (1)", text)
 		self.assertIn("- [state] the v1 layout", text)
 		self.assertIn("**migration:** export before upgrading", text)
+
+
+class CommandSummaryTest(unittest.TestCase):
+	def run_summary(self, root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
+		return subprocess.run(
+			[
+				sys.executable,
+				str(Path(__file__).with_name("changelog.py")),
+				"--fragments-dir",
+				str(root),
+				"summary",
+				"0.0.1-alpha.2",
+				*args,
+			],
+			capture_output=True,
+		)
+
+	def test_prints_the_entries(self) -> None:
+		root = write_dir({"20260801-x.md": "+ [sqs] long polling\n"})
+
+		result = self.run_summary(root)
+
+		self.assertEqual(0, result.returncode, result.stderr.decode("utf-8", "replace"))
+		self.assertIn("- [sqs] long polling", result.stdout.decode("utf-8"))
+
+	def test_prints_the_empty_text_when_no_fragments_remain(self) -> None:
+		# The release-prep workflow uses this to say "nothing to curate"
+		# rather than posting an empty comment.
+		root = write_dir({"README.md": "# not a fragment"})
+
+		result = self.run_summary(root, "--empty", "Nothing to curate.")
+
+		self.assertEqual(0, result.returncode, result.stderr.decode("utf-8", "replace"))
+		self.assertEqual("Nothing to curate.", result.stdout.decode("utf-8").strip())
 
 
 class CommandReleaseTest(unittest.TestCase):
