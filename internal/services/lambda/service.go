@@ -193,8 +193,13 @@ type Function struct {
 	VpcConfig *VpcConfig `json:"vpc_config,omitempty"`
 	// ImageConfig overrides the container image's EntryPoint, Command, and
 	// WorkingDirectory. Only applicable when PackageType=Image.
-	ImageConfig *ImageConfig      `json:"image_config,omitempty"`
-	Tags        map[string]string `json:"tags,omitempty"`
+	ImageConfig *ImageConfig `json:"image_config,omitempty"`
+	// FileSystemConfigs are the EFS access points mounted into the function.
+	// Stored and echoed on the wire in every mode; when EFS live mode is
+	// active, the container runtime binds each backing volume at
+	// LocalMountPath so invocations share real file data.
+	FileSystemConfigs []FileSystemConfig `json:"file_system_configs,omitempty"`
+	Tags              map[string]string  `json:"tags,omitempty"`
 	// ReservedConcurrency is the reserved concurrency limit. nil = unreserved,
 	// 0 = throttled (no executions).
 	ReservedConcurrency *int `json:"reserved_concurrency,omitempty"`
@@ -212,6 +217,14 @@ type VpcConfig struct {
 	SubnetIds        []string `json:"SubnetIds,omitempty"`
 	SecurityGroupIds []string `json:"SecurityGroupIds,omitempty"`
 	VpcId            string   `json:"VpcId,omitempty"`
+}
+
+// FileSystemConfig mirrors the AWS FileSystemConfig shape: an EFS access
+// point mounted at a /mnt path inside the function's execution environment.
+// https://docs.aws.amazon.com/lambda/latest/api/API_FileSystemConfig.html
+type FileSystemConfig struct {
+	Arn            string `json:"Arn"`
+	LocalMountPath string `json:"LocalMountPath"`
 }
 
 // setCode replaces the function's deployment package, keeping the derived
@@ -436,6 +449,18 @@ func (s *Service) SetVPCResolver(r VPCNetworkResolver) {
 	}
 }
 
+// SetEFSResolver wires the EFS volume resolver so the container runtime can
+// bind file-system volumes declared in FileSystemConfigs.
+func (s *Service) SetEFSResolver(r EFSVolumeResolver) {
+	s.handler.setEFSResolver(r)
+	s.mu.Lock()
+	cr := s.containerRuntime
+	s.mu.Unlock()
+	if cr != nil {
+		cr.SetEFSResolver(r)
+	}
+}
+
 // New returns a configured Lambda Service with all supported runtimes registered.
 // Docker availability is checked in the background — the service starts
 // immediately using the stub NodeRuntime and upgrades to ContainerRuntime once
@@ -587,6 +612,11 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 	// Wire the VPC resolver if SetVPCResolver was already called.
 	if r := s.handler.getVPCResolver(); r != nil {
 		containerRuntime.SetVPCResolver(r)
+	}
+
+	// Wire the EFS resolver if SetEFSResolver was already called.
+	if r := s.handler.getEFSResolver(); r != nil {
+		containerRuntime.SetEFSResolver(r)
 	}
 
 	// Atomically upgrade to ContainerRuntime. NodeRuntime stays as fallback.

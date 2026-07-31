@@ -47,29 +47,30 @@ import (
 //
 // https://docs.aws.amazon.com/lambda/latest/api/API_FunctionConfiguration.html
 type functionConfiguration struct {
-	FunctionName    string             `json:"FunctionName"`
-	FunctionArn     string             `json:"FunctionArn"`
-	Runtime         string             `json:"Runtime,omitempty"`
-	Handler         string             `json:"Handler,omitempty"`
-	Role            string             `json:"Role,omitempty"`
-	Description     string             `json:"Description,omitempty"`
-	Timeout         int                `json:"Timeout,omitempty"`
-	MemorySize      int                `json:"MemorySize,omitempty"`
-	CodeSize        int64              `json:"CodeSize,omitempty"`
-	LastModified    string             `json:"LastModified,omitempty"`
-	RevisionId      string             `json:"RevisionId,omitempty"`
-	PackageType     string             `json:"PackageType,omitempty"`
-	Architectures   []string           `json:"Architectures,omitempty"`
-	State           string             `json:"State,omitempty"`
-	StateReason     string             `json:"StateReason,omitempty"`
-	StateReasonCode string             `json:"StateReasonCode,omitempty"`
-	CodeSha256      string             `json:"CodeSha256,omitempty"`
-	Environment     *functionEnvConf   `json:"Environment,omitempty"`
-	LoggingConfig   *loggingConfig     `json:"LoggingConfig,omitempty"`
-	Layers          []LayerVersionLink `json:"Layers,omitempty"`
-	ImageUri        string             `json:"ImageUri,omitempty"`
-	ImageConfig     *imageConfigWire   `json:"ImageConfig,omitempty"`
-	VpcConfig       *vpcConfigResponse `json:"VpcConfig,omitempty"`
+	FunctionName      string             `json:"FunctionName"`
+	FunctionArn       string             `json:"FunctionArn"`
+	Runtime           string             `json:"Runtime,omitempty"`
+	Handler           string             `json:"Handler,omitempty"`
+	Role              string             `json:"Role,omitempty"`
+	Description       string             `json:"Description,omitempty"`
+	Timeout           int                `json:"Timeout,omitempty"`
+	MemorySize        int                `json:"MemorySize,omitempty"`
+	CodeSize          int64              `json:"CodeSize,omitempty"`
+	LastModified      string             `json:"LastModified,omitempty"`
+	RevisionId        string             `json:"RevisionId,omitempty"`
+	PackageType       string             `json:"PackageType,omitempty"`
+	Architectures     []string           `json:"Architectures,omitempty"`
+	State             string             `json:"State,omitempty"`
+	StateReason       string             `json:"StateReason,omitempty"`
+	StateReasonCode   string             `json:"StateReasonCode,omitempty"`
+	CodeSha256        string             `json:"CodeSha256,omitempty"`
+	Environment       *functionEnvConf   `json:"Environment,omitempty"`
+	LoggingConfig     *loggingConfig     `json:"LoggingConfig,omitempty"`
+	Layers            []LayerVersionLink `json:"Layers,omitempty"`
+	ImageUri          string             `json:"ImageUri,omitempty"`
+	ImageConfig       *imageConfigWire   `json:"ImageConfig,omitempty"`
+	VpcConfig         *vpcConfigResponse `json:"VpcConfig,omitempty"`
+	FileSystemConfigs []FileSystemConfig `json:"FileSystemConfigs,omitempty"`
 }
 
 // imageConfigWire is the AWS wire format for ImageConfig.
@@ -107,6 +108,8 @@ type createFunctionRequest struct {
 	LoggingConfig *loggingConfig    `json:"LoggingConfig,omitempty"`
 	VpcConfig     *vpcConfigRequest `json:"VpcConfig,omitempty"`
 	ImageConfig   *imageConfigWire  `json:"ImageConfig,omitempty"`
+	// FileSystemConfigs mount EFS access points into the execution environment.
+	FileSystemConfigs []FileSystemConfig `json:"FileSystemConfigs,omitempty"`
 	// Optional; AWS requires only FunctionName, Role and Code.
 	CodeSigningConfigArn string `json:"CodeSigningConfigArn,omitempty"`
 	// Layers is a list of layer version ARNs to attach to the function at creation.
@@ -147,6 +150,9 @@ type updateFunctionConfigurationRequest struct {
 	Layers      []string          `json:"Layers,omitempty"`
 	VpcConfig   *vpcConfigRequest `json:"VpcConfig,omitempty"`
 	ImageConfig *imageConfigWire  `json:"ImageConfig,omitempty"`
+	// FileSystemConfigs replaces the function's EFS mounts. An empty slice
+	// clears them; a nil field means "no change".
+	FileSystemConfigs []FileSystemConfig `json:"FileSystemConfigs,omitempty"`
 }
 
 // getFunctionResponse matches AWS GetFunction response body.
@@ -187,6 +193,31 @@ func lambdaInvalidParameter(message string) *protocol.AWSError {
 		Message:    message,
 		HTTPStatus: http.StatusBadRequest,
 	}
+}
+
+// localMountPathRe matches AWS's LocalMountPath constraint: an absolute path
+// directly under /mnt.
+var localMountPathRe = regexp.MustCompile(`^/mnt/[a-zA-Z0-9-_.]+$`)
+
+// validateFileSystemConfigs enforces the AWS FileSystemConfig rules shared by
+// CreateFunction and UpdateFunctionConfiguration: at most one config, an EFS
+// access-point ARN, and a /mnt/<name> mount path.
+// https://docs.aws.amazon.com/lambda/latest/api/API_FileSystemConfig.html
+func validateFileSystemConfigs(configs []FileSystemConfig) *protocol.AWSError {
+	if len(configs) == 0 {
+		return nil
+	}
+	if len(configs) > 1 {
+		return lambdaInvalidParameter("FileSystemConfigs can contain at most 1 config.")
+	}
+	fsc := configs[0]
+	if !strings.Contains(fsc.Arn, ":elasticfilesystem:") || !strings.Contains(fsc.Arn, ":access-point/fsap-") {
+		return lambdaInvalidParameter("FileSystemConfigs[0].Arn must be an EFS access point ARN.")
+	}
+	if !localMountPathRe.MatchString(fsc.LocalMountPath) {
+		return lambdaInvalidParameter("LocalMountPath must be an absolute path under /mnt (for example /mnt/efs).")
+	}
+	return nil
 }
 
 // ─── runtime metadata ────────────────────────────────────────────────────────
@@ -267,6 +298,9 @@ func functionToConfig(fn *Function) *functionConfiguration {
 			Command:          fn.ImageConfig.Command,
 			WorkingDirectory: fn.ImageConfig.WorkingDirectory,
 		}
+	}
+	if len(fn.FileSystemConfigs) > 0 {
+		cfg.FileSystemConfigs = fn.FileSystemConfigs
 	}
 	return cfg
 }
@@ -496,6 +530,13 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		if resolver := h.getVPCResolver(); resolver != nil && len(req.VpcConfig.SubnetIds) > 0 {
 			fn.VpcConfig.VpcId = resolver.VpcIDForSubnet(ctx, req.VpcConfig.SubnetIds[0])
 		}
+	}
+	if len(req.FileSystemConfigs) > 0 {
+		if aerr := validateFileSystemConfigs(req.FileSystemConfigs); aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
+		fn.FileSystemConfigs = req.FileSystemConfigs
 	}
 	if req.ImageConfig != nil {
 		fn.ImageConfig = &ImageConfig{
@@ -981,6 +1022,18 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		}
 		if resolver := h.getVPCResolver(); resolver != nil && len(req.VpcConfig.SubnetIds) > 0 {
 			fn.VpcConfig.VpcId = resolver.VpcIDForSubnet(ctx, req.VpcConfig.SubnetIds[0])
+		}
+	}
+	if req.FileSystemConfigs != nil {
+		// An empty list clears the mounts; a populated one replaces them.
+		if len(req.FileSystemConfigs) == 0 {
+			fn.FileSystemConfigs = nil
+		} else {
+			if aerr := validateFileSystemConfigs(req.FileSystemConfigs); aerr != nil {
+				protocol.WriteJSONError(w, r, aerr)
+				return
+			}
+			fn.FileSystemConfigs = req.FileSystemConfigs
 		}
 	}
 	if req.ImageConfig != nil {

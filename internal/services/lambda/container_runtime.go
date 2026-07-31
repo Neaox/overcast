@@ -61,6 +61,7 @@ type ContainerRuntime struct {
 	bus              atomic.Pointer[events.Bus]         // nil until SetBus is called
 	exitNotify       *exitNotifier                      // routes Docker watcher die events to per-container channels
 	vpcResolver      atomic.Pointer[VPCNetworkResolver] // resolves subnet → VPC → Docker network
+	efsResolver      atomic.Pointer[EFSVolumeResolver]  // resolves EFS access point → Docker volume
 	layerFetcher     LayerContentFetcher                // resolves a layer ARN to zip bytes for /opt injection
 	remoteFetcher    *RemoteLayerFetcher                // optional — fetches layers from real AWS
 	codeFetcher      CodeFetcher                        // populates fn.CodeZip at cold start; nil in tests
@@ -87,6 +88,12 @@ func (cr *ContainerRuntime) SetBus(b *events.Bus) { cr.bus.Store(b) }
 // to VPC Docker networks.
 func (cr *ContainerRuntime) SetVPCResolver(r VPCNetworkResolver) {
 	cr.vpcResolver.Store(&r)
+}
+
+// SetEFSResolver wires the EFS volume resolver for mounting file-system
+// volumes declared in FileSystemConfigs.
+func (cr *ContainerRuntime) SetEFSResolver(r EFSVolumeResolver) {
+	cr.efsResolver.Store(&r)
 }
 
 // LayerContentFetcher returns layer zip bytes for a layer version ARN.
@@ -576,7 +583,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		ContainerConfig: ccfg,
 		Platform:        platform,
 		HostConfig: &docker.HostConfig{
-			Binds:       bindMountTaskDir(hotReloadPath),
+			Binds:       append(bindMountTaskDir(hotReloadPath), cr.efsBinds(ctx, fn)...),
 			NetworkMode: cr.network,
 			Memory:      int64(fn.MemorySize) * 1024 * 1024,
 			MemorySwap:  int64(fn.MemorySize) * 1024 * 1024, // disable swap
@@ -845,6 +852,34 @@ func bindMountTaskDir(hostPath string) []string {
 		return nil
 	}
 	return []string{hostPath + ":/var/task:ro"}
+}
+
+// efsBinds resolves the function's FileSystemConfigs to Docker named-volume
+// bind entries ("volume:/mnt/path"). Unresolvable configs — EFS mock mode,
+// Docker unavailable, unknown access point — are skipped with a warning so
+// the function still runs, just without shared storage (mirrors the
+// best-effort posture of the EFS live mode itself).
+func (cr *ContainerRuntime) efsBinds(ctx context.Context, fn *Function) []string {
+	if len(fn.FileSystemConfigs) == 0 {
+		return nil
+	}
+	rp := cr.efsResolver.Load()
+	if rp == nil {
+		return nil
+	}
+	binds := make([]string, 0, len(fn.FileSystemConfigs))
+	for _, fsc := range fn.FileSystemConfigs {
+		volume, ok := (*rp).EFSVolumeForAccessPoint(ctx, fsc.Arn)
+		if !ok {
+			cr.logger.Warn("lambda: EFS mount skipped — access point has no backing volume (mock mode, Docker down, or unknown access point)",
+				zap.String("function", fn.Name),
+				zap.String("access_point", fsc.Arn),
+				zap.String("mount_path", fsc.LocalMountPath))
+			continue
+		}
+		binds = append(binds, volume+":"+fsc.LocalMountPath)
+	}
+	return binds
 }
 
 // ─── Image management ──────────────────────────────────────────────────────

@@ -10,7 +10,7 @@ func init() {
 		capabilities.Capability{Service: "lambda", Operation: "ListFunctions", Category: "Function management",
 			Status: capabilities.StatusSupported, Notes: "Returns all stored functions; empty list if none"},
 		capabilities.Capability{Service: "lambda", Operation: "CreateFunction", Category: "Function management",
-			Status: capabilities.StatusSupported, Notes: "Stores metadata; validates runtime; deprecated runtimes rejected; auto-creates CWL log group; VpcConfig and ImageConfig supported"},
+			Status: capabilities.StatusSupported, Notes: "Stores metadata; validates runtime; deprecated runtimes rejected; auto-creates CWL log group; VpcConfig, ImageConfig, and FileSystemConfigs supported (EFS volumes mounted in live mode)"},
 		capabilities.Capability{Service: "lambda", Operation: "DeleteFunction", Category: "Function management",
 			Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "lambda", Operation: "GetFunction", Category: "Function management",
