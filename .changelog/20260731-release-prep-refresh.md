@@ -1,3 +1,0 @@
-+ [release] the release-prep workflow now runs on every push to `main`: when a release PR is open it merges `main` into the release branch, pushes, and comments with the entries still to curate. Refreshing the branch is what re-runs the PR checks, so a release PR can no longer sit green while going stale
-~. [release] the release summary comment lists the entries as they will read in the changelog rather than only counting them, with breaking changes and their migration notes first
-~ [ci] the VERSION guard accepts the release App as well as the repository owner, so a generated release PR can bump `VERSION`. Dispatching the workflow already needs write access, so the set of people who can produce a `VERSION` change is unchanged

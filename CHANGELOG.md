@@ -98,6 +98,10 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [route53] Route 53 is now emulated at inert level (25 operations, up from 10). New: `ListHostedZonesByName`, `GetHostedZoneCount`, `UpdateHostedZoneComment`, tags (`ChangeTagsForResource`, `ListTagsForResource`, `ListTagsForResources`), and health check CRUD (`CreateHealthCheck`, `GetHealthCheck`, `ListHealthChecks`, `GetHealthCheckCount`, `UpdateHealthCheck`, `DeleteHealthCheck`). Hosted zones now get default apex NS/SOA records and a delegation set, `CreateHostedZone` enforces caller-reference uniqueness (`HostedZoneAlreadyExists`) and returns the `Location` header, `DeleteHostedZone` enforces `HostedZoneNotEmpty`, `ChangeResourceRecordSets` validates batches atomically with AWS error codes (`InvalidChangeBatch` for duplicate creates, missing/mismatched deletes, out-of-zone names, apex CNAMEs) and stores routing metadata (`SetIdentifier`, `Weight`, `Region`, `Failover`, `GeoLocation`, `MultiValueAnswer`), list operations paginate in DNS order, names are canonicalised to lowercase, and errors use Route 53's `ErrorResponse` envelope. CloudFormation gains `AWS::Route53::HealthCheck` plus hosted-zone tag/VPC pass-through and comment-only in-place updates.
 
+- [release] a release PR now keeps itself mergeable: every push to `main` merges into the release branch and appends any new changelog entries to the version section already there, deleting their fragment files, so the changelog gate goes green without anyone editing anything. Folding is additive — no bullet already in the section is read, reordered or rewritten — so curation done by hand survives, and rewording the appended bullets is optional polish rather than a chore every merge forces
+
+- [release] the release-prep workflow now runs on every push to `main`: when a release PR is open it merges `main` into the release branch, pushes, and comments with the entries still to curate. Refreshing the branch is what re-runs the PR checks, so a release PR can no longer sit green while going stale
+
 ### Changed
 
 - [apigateway] proxied requests no longer re-scan and re-decode the API's entire resource/route set on every request — routing state is cached per API and invalidated on any resource or route write
@@ -119,6 +123,12 @@ can be applied mechanically rather than reconstructed from memory.
 - [lambda] cold starts provision the container filesystem with a single archive (code, layers, TLS trust root, bootstrap) instead of up to four sequential Docker copy round trips — measured cold-start p50 ~355 ms → ~300 ms for cached-image hello-world functions
 
 - [release] changelog fragments are now entry lines rather than frontmatter documents: one file per PR, and each line carries its own category, scope and compatibility marker (`<+|-|~|*|section>[!|.] [area] prose`). `scripts/changelog.py new` writes them, appending to the branch's file so later commits land alongside earlier entries; `assemble` groups at entry rather than file granularity, so entries about one service sort together even from different PRs
+
+- [ci] the VERSION guard accepts the release App as well as the repository owner, so a generated release PR can bump `VERSION`. Dispatching the workflow already needs write access, so the set of people who can produce a `VERSION` change is unchanged
+
+- [lambda] the tail wait is now paid only by invokes that asked for a log tail (`X-Amz-Log-Type: Tail`, and the console's test tab). Asynchronous invokes, event-source mappings, function URLs and service-to-service calls discard `LogResult` and no longer wait on log delivery to produce it
+
+- [release] the release summary comment lists the entries as they will read in the changelog rather than only counting them, with breaking changes and their migration notes first
 
 ### Fixed
 
@@ -157,6 +167,8 @@ can be applied mechanically rather than reconstructed from memory.
 - [release] the release-prep workflow authenticates with the App client ID; `app-id` is deprecated from `create-github-app-token` v3 and warned on every run
 
 - [routing] host classification no longer allocates intermittently on host-routed requests: the region-shape check used a package `regexp`, whose pooled matcher state is only amortized allocation-free (and is deliberately dropped at random under the race detector, which made `TestHostClassifier_lowercaseHostStaysAllocationFree` flake in CI); it is now a hand-rolled matcher pinned to the old regexp by an oracle test
+
+- [lambda] `X-Amz-Log-Result` could come back without the handler's own output — just the `START`/`END`/`REPORT` lines the emulator writes itself. The wait that lets Docker's log stream catch up keyed off a container-lifetime watermark, so it could not tell "nothing read yet" from "nothing to read", and returned early on cold containers and warm reuse alike
 
 ## [0.0.1-alpha.27] - 2026-07-30
 
