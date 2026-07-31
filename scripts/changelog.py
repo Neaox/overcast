@@ -402,13 +402,80 @@ def assemble(fragments: list[Fragment], version: str, date: str) -> str:
         lines.append("")
         lines.append(f"### {section}")
         for entry in picked:
-            prefix = f"[{'/'.join(entry.areas)}] " if entry.areas else ""
-            flag = "**BREAKING** " if entry.breaking else ""
             lines.append("")
-            lines.append(f"- {flag}{prefix}{entry.prose}")
-            if entry.migration:
-                lines.append(f"  migration: {entry.migration}")
+            lines.extend(render_bullet(entry))
     return "\n".join(lines) + "\n"
+
+
+def render_bullet(entry: Entry) -> list[str]:
+    """The CHANGELOG.md lines for one entry.
+
+    Shared by assemble and fold so a folded entry is indistinguishable from
+    one the original draft carried.
+    """
+    prefix = f"[{'/'.join(entry.areas)}] " if entry.areas else ""
+    flag = "**BREAKING** " if entry.breaking else ""
+    lines = [f"- {flag}{prefix}{entry.prose}"]
+    if entry.migration:
+        lines.append(f"  migration: {entry.migration}")
+    return lines
+
+
+def sort_entries(entries: list[Entry]) -> list[Entry]:
+    return sorted(entries, key=lambda e: (e.area or "~", e.source, e.line))
+
+
+def section_bounds(changelog: str, version: str) -> tuple[int, int]:
+    """Character range of a release section's body, heading excluded."""
+    head = re.search(rf"^## \[{re.escape(version)}\].*?$", changelog, flags=re.M)
+    if head is None:
+        raise ValueError(f"CHANGELOG.md has no '## [{version}]' section.")
+    rest = changelog[head.end() :]
+    following = re.search(r"^## ", rest, flags=re.M)
+    return head.end(), head.end() + (following.start() if following else len(rest))
+
+
+def insert_category(body: str, name: str, block: str) -> str:
+    """Add a '### name' heading in Keep a Changelog order, with its bullets."""
+    for later in SECTIONS[SECTIONS.index(name) + 1 :]:
+        heading = re.search(rf"^### {re.escape(later)}\s*$", body, flags=re.M)
+        if heading is not None:
+            return (
+                body[: heading.start()].rstrip("\n")
+                + f"\n\n### {name}\n\n{block}\n\n"
+                + body[heading.start() :]
+            )
+    return body.rstrip("\n") + f"\n\n### {name}\n\n{block}\n"
+
+
+def fold_entries(changelog: str, version: str, entries: list[Entry]) -> str:
+    """Append entries to an existing '## [version]' section.
+
+    Existing bullets are never read, reordered or rewritten — new ones are
+    appended to the end of their category. That is what makes this safe to run
+    unattended: curation already done survives, and folding is additive rather
+    than a regeneration that would discard it.
+    """
+    start, end = section_bounds(changelog, version)
+    body = changelog[start:end]
+    for name in SECTIONS:
+        picked = sort_entries([entry for entry in entries if entry.section == name])
+        if not picked:
+            continue
+        block = "\n\n".join("\n".join(render_bullet(entry)) for entry in picked)
+        heading = re.search(rf"^### {re.escape(name)}\s*$", body, flags=re.M)
+        if heading is None:
+            body = insert_category(body, name, block)
+            continue
+        after = body[heading.end() :]
+        following = re.search(r"^### ", after, flags=re.M)
+        cut = heading.end() + (following.start() if following else len(after))
+        body = (
+            body[:cut].rstrip("\n")
+            + f"\n\n{block}\n\n"
+            + body[cut:].lstrip("\n")
+        )
+    return changelog[:start] + body + changelog[end:]
 
 
 def render_entry(entry: Entry) -> str:
@@ -691,6 +758,62 @@ def command_release(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_fold(args: argparse.Namespace) -> int:
+    """Fold outstanding fragments into an existing release section.
+
+    This is what lets a release PR stay mergeable while main keeps moving: the
+    entries are appended to the section that already exists and their fragment
+    files are deleted, so the changelog gate goes green without anyone editing
+    anything. Wording stays a human job, but an optional one — nothing here
+    rewrites a bullet that is already in the section.
+    """
+    changelog_path = Path(args.changelog)
+    fragments, errors = load_fragments(Path(args.fragments_dir))
+    if errors:
+        for error in errors:
+            print(f"::error::{error}", file=sys.stderr)
+        return 1
+    if not fragments:
+        print(f"{args.fragments_dir}: no fragments to fold.")
+        return 0
+
+    version = args.version
+    if version is None:
+        try:
+            version = Path(args.version_file).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            print(f"::error::{exc}", file=sys.stderr)
+            return 1
+
+    entries = [entry for fragment in fragments for entry in fragment.entries]
+    changelog = changelog_path.read_text(encoding="utf-8")
+    try:
+        updated = fold_entries(changelog, version, entries)
+    except ValueError as exc:
+        print(f"::error::{exc}", file=sys.stderr)
+        return 1
+
+    if args.summary_file:
+        Path(args.summary_file).write_text(
+            release_summary(fragments, version, heading=args.heading),
+            encoding="utf-8",
+            newline="\n",
+        )
+
+    if args.dry_run:
+        print(f"--- would fold {len(entries)} entries into '## [{version}]':")
+        for entry in sort_entries(entries):
+            print(f"    {entry.section}: {render_bullet(entry)[0][:88]}")
+        return 0
+
+    changelog_path.write_text(updated, encoding="utf-8", newline="\n")
+    for fragment in fragments:
+        fragment.path.unlink()
+    print(f"{changelog_path}: folded {len(entries)} entries into '## [{version}]'")
+    print(f"{args.fragments_dir}: removed {len(fragments)} fragments")
+    return 0
+
+
 def command_summary(args: argparse.Namespace) -> int:
     """Print the release summary for whatever is currently in .changelog/.
 
@@ -780,6 +903,22 @@ def main() -> int:
     release_parser.add_argument(
         "--dry-run", action="store_true", help="print what would be written"
     )
+    fold_parser = subparsers.add_parser(
+        "fold", help="append outstanding fragments to an existing release section"
+    )
+    fold_parser.add_argument(
+        "version", nargs="?", default=None, help="default: the contents of VERSION"
+    )
+    fold_parser.add_argument("--version-file", default="VERSION")
+    fold_parser.add_argument(
+        "--summary-file", default=None, help="write the markdown summary here"
+    )
+    fold_parser.add_argument(
+        "--heading", default="", help="replace the summary's default tally heading"
+    )
+    fold_parser.add_argument(
+        "--dry-run", action="store_true", help="print what would be folded"
+    )
     summary_parser = subparsers.add_parser(
         "summary", help="print a markdown summary of the current fragments"
     )
@@ -805,6 +944,8 @@ def main() -> int:
     # unrelated fragment on disk is mid-edit and failing the linter.
     if args.command == "new":
         return command_new(args)
+    if args.command == "fold":
+        return command_fold(args)
     if args.command == "summary":
         return command_summary(args)
     if args.command == "next-version":

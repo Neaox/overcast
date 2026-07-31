@@ -114,27 +114,28 @@ jobs:
           if ! git merge --no-edit origin/main; then
             git merge --abort
             printf '%s\n' \
-              '### Release prep' \
+              "### Could not update for \`main\`" \
               '' \
-              "\`main\` has moved and **conflicts with this branch**, so it could not be" \
-              'refreshed automatically. Resolve the conflict locally and push; the' \
-              'changelog gate will then report what still needs curating.' \
+              "\`main\` has moved and **conflicts with this branch**, so nothing was" \
+              'changed here.' \
+              '' \
+              "**Needs you:** merge \`main\` locally, resolve the conflict, and push." \
               > "$RUNNER_TEMP/conflict.md"
             gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/conflict.md"
             echo "refreshed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
-          git push origin "$BRANCH"
           echo "refreshed=true" >> "$GITHUB_OUTPUT"
 
-      # Run from the release-branch checkout, so .changelog/ holds exactly the
-      # entries that have NOT been curated into the release section yet.
-      - name: Comment the entries still to curate
+      # Fold rather than report. Appending the new entries to the section that
+      # already exists is additive — no bullet already in it is read, reordered
+      # or rewritten — so curation survives and the changelog gate goes green
+      # without anyone editing anything. Wording stays a human job, but an
+      # optional one, done whenever rather than on every merge to main.
+      - name: Fold new entries into the release section
+        id: fold
         if: steps.merge.outputs.refreshed == 'true'
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_NUMBER: ${{ steps.find.outputs.number }}
           BRANCH: ${{ steps.find.outputs.branch }}
           SHA: ${{ github.sha }}
         run: |
@@ -142,18 +143,44 @@ jobs:
           version="${BRANCH#release/}"
           short="${SHA:0:8}"
           heading="$(printf '%s\n' \
-            "### \`main\` moved — these entries are not in the release section yet" \
+            "### Updated for \`main\`" \
             '' \
-            "Merged \`$short\` into this branch. Fold the entries below into" \
-            "\`## [$version]\` and delete their fragment files; the changelog gate" \
-            "stays red until \`.changelog/\` holds only \`README.md\`.")"
+            "Merged \`$short\` and added the entries below to \`## [$version]\` in" \
+            "\`CHANGELOG.md\`, deleting the fragment files they came from." \
+            '' \
+            '**Nothing to do.** They were added verbatim, so reword them or merge them' \
+            'into neighbouring bullets whenever suits — this workflow only ever appends,' \
+            'and never edits what is already there.')"
           empty="$(printf '%s\n' \
-            '### Release prep' \
+            "### Updated for \`main\`" \
             '' \
-            "Merged \`$short\` into this branch. No new changelog entries — nothing to curate.")"
-          python3 scripts/changelog.py summary "$version" \
-            --heading "$heading" --empty "$empty" > "$RUNNER_TEMP/summary.md"
-          gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/summary.md"
+            "Merged \`$short\`. No new changelog entries came with it, so" \
+            "\`CHANGELOG.md\` is unchanged.")"
+          python3 scripts/changelog.py fold "$version" \
+            --summary-file "$RUNNER_TEMP/summary.md" --heading "$heading"
+          if [ ! -s "$RUNNER_TEMP/summary.md" ]; then
+            printf '%s\n' "$empty" > "$RUNNER_TEMP/summary.md"
+          fi
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git add -A
+            git commit -m "chore(release): fold entries from ${short} into ${version}"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push the refreshed branch
+        if: steps.merge.outputs.refreshed == 'true'
+        env:
+          BRANCH: ${{ steps.find.outputs.branch }}
+        run: git push origin "$BRANCH"
+
+      - name: Comment what changed
+        if: steps.merge.outputs.refreshed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ steps.find.outputs.number }}
+        run: gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/summary.md"
 
   prepare:
     name: Prepare release PR
