@@ -127,9 +127,17 @@ Quarantine is containment. The plan to actually remove it:
    (deterministic repros in `handler_functions_test.go`,
    `seed_reconcile_test.go`, `s3_sync_test.go`).
 
-   **Still quarantined: `cdk/cdk-lifecycle/VerifyTopicSubscription` (#435).**
-   It fits neither mechanism — cdk-lifecycle is a single group with no
-   in-suite parallelism — so it keeps its own tracking issue.
+   **Resolved: `cdk/cdk-lifecycle/VerifyTopicSubscription` (#435) — the
+   quarantine list is now empty.** No parallelism needed: the stack's SNS
+   topic fed the same queue the Lambda event source mapping polls, so the
+   ESM's once-per-second poller intermittently consumed the published message
+   before the test's ReceiveMessage saw it (the recorded CI failure is the
+   delivery assert, "published SNS message was not delivered to SQS queue").
+   The race would flake identically against real AWS. The topic now feeds a
+   dedicated queue with no competing consumer, and the delivery budget rose
+   from 2.5s to 10s. Validated 3× locally via the compose path, which needed
+   two environment fixes to run cdk at all (asset-bucket `/etc/hosts` entry +
+   `OVERCAST_HOSTNAME=overcast`).
 
    **Not every flake is that pattern, though — check for stale-snapshot
    write-backs too.** `cli/rds-instances/StartDBInstance` failed the gate twice

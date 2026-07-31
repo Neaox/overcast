@@ -148,9 +148,11 @@ async function verifyTopicSubscription(ctx: TestContext): Promise<void> {
   const outputs = ((ctx as Record<string, unknown>)["_outputs"] ??
     (await fetchOutputs(ctx))) as Record<string, string>;
   const topicArn = outputs["TopicArn"];
-  const queueArn = outputs["QueueArn"];
+  const snsQueueName = outputs["SnsQueueName"];
+  const snsQueueArn = outputs["SnsQueueArn"];
   assert.ok(topicArn, "missing TopicArn output");
-  assert.ok(queueArn, "missing QueueArn output");
+  assert.ok(snsQueueName, "missing SnsQueueName output");
+  assert.ok(snsQueueArn, "missing SnsQueueArn output");
 
   const { sns, sqs } = makeClients(ctx.endpoint, ctx.region);
 
@@ -158,9 +160,12 @@ async function verifyTopicSubscription(ctx: TestContext): Promise<void> {
     new ListSubscriptionsByTopicCommand({ TopicArn: topicArn }),
   );
   const hasSub = subs.Subscriptions?.some(
-    (s) => s.Endpoint === queueArn && s.Protocol === "sqs",
+    (s) => s.Endpoint === snsQueueArn && s.Protocol === "sqs",
   );
-  assert.ok(hasSub, `topic ${topicArn} has no SQS subscription to ${queueArn}`);
+  assert.ok(
+    hasSub,
+    `topic ${topicArn} has no SQS subscription to ${snsQueueArn}`,
+  );
 
   await sns.send(
     new PublishCommand({
@@ -169,15 +174,19 @@ async function verifyTopicSubscription(ctx: TestContext): Promise<void> {
     }),
   );
 
-  const queueUrl = ((ctx as Record<string, unknown>)["_queueUrl"] ??
-    "") as string;
-  assert.ok(queueUrl, "queue url missing from prior queue verification");
+  // The topic's dedicated queue has no other consumer (the main queue is
+  // polled by the Lambda event source mapping, which used to intermittently
+  // eat this message — issue #435), so the only wait here is for the async
+  // SNS fan-out itself. 40 x 250ms keeps the happy path fast while giving a
+  // loaded CI runner a 10s budget.
+  const q = await sqs.send(new GetQueueUrlCommand({ QueueName: snsQueueName }));
+  assert.ok(q.QueueUrl, `QueueUrl missing for ${snsQueueName}`);
 
   let delivered = false;
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 40; i++) {
     const recv = await sqs.send(
       new ReceiveMessageCommand({
-        QueueUrl: queueUrl,
+        QueueUrl: q.QueueUrl,
         WaitTimeSeconds: 0,
         MaxNumberOfMessages: 1,
       }),

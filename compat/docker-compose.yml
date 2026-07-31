@@ -39,6 +39,12 @@ services:
       OVERCAST_PORT: "4566"
       OVERCAST_STATE: memory
       OVERCAST_LOG_LEVEL: ${OVERCAST_LOG_LEVEL:-warn}
+      # The suites reach this container as "overcast", and the CDK asset
+      # publisher addresses S3 buckets virtual-hosted ("{bucket}.overcast").
+      # Registering the compose hostname as a virtual-host base is what lets
+      # host classification put the bucket subdomain back in front of the
+      # path (pairs with the /etc/hosts entry in the runner services below).
+      OVERCAST_HOSTNAME: overcast
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:4566/_health"]
       interval: 3s
@@ -116,6 +122,14 @@ services:
     # managed (PEP 668); this is a throwaway container, so system-wide is fine.
     # go-sdk, cli: 'go run' handles deps automatically.
     #
+    # /etc/hosts: the CDK asset publisher addresses the bootstrap bucket
+    # virtual-hosted ("cdk-hnb659fds-assets-….overcast"), and Docker's DNS has
+    # no wildcard subdomains for service aliases, so cdk deploys fail with
+    # ENOTFOUND on any asset upload. The bucket name is deterministic
+    # (fixed account + region), so one hosts entry pointing it at the
+    # overcast service fixes the compose path; CI is unaffected — it targets
+    # localhost, whose subdomains already resolve.
+    #
     # A suite whose dependencies fail to install must not abort the run — it
     # reports as a failing suite, which is the honest result.
     command:
@@ -124,6 +138,7 @@ services:
       - >
         sudo -n chown vscode:vscode compat/suites/node-js-sdk/node_modules compat/suites/cdk/node_modules;
         sudo -n chgrp "$$(id -g)" /var/run/docker.sock 2>/dev/null && sudo -n chmod g+rw /var/run/docker.sock || echo "compat: no Docker socket — java-sdk, dotnet-sdk, rust-sdk and cdk will not run" >&2;
+        getent hosts overcast | awk '{print $$1 " cdk-hnb659fds-assets-000000000000-us-east-1.overcast"}' | sudo -n tee -a /etc/hosts >/dev/null || echo "compat: could not add CDK asset-bucket hosts entry" >&2;
         for d in compat/suites/node-js-sdk compat/suites/cdk; do ( if [ -z "$$(ls -A $$d/node_modules)" ]; then npm ci --prefix "$$d" --silent; else npm install --prefix "$$d" --silent --no-audit --no-fund; fi || echo "compat: $$d dependencies failed to install" >&2 ) & done;
         ( pip install --break-system-packages --quiet -r compat/suites/python-sdk/requirements.txt || echo "compat: python-sdk dependencies failed to install" >&2 ) &
         wait;
@@ -184,6 +199,7 @@ services:
       - >
         sudo -n chown vscode:vscode compat/ui/node_modules compat/ui/dist compat/suites/node-js-sdk/node_modules compat/suites/cdk/node_modules;
         sudo -n chgrp "$$(id -g)" /var/run/docker.sock 2>/dev/null && sudo -n chmod g+rw /var/run/docker.sock || echo "compat: no Docker socket — java-sdk, dotnet-sdk, rust-sdk and cdk will not run" >&2;
+        getent hosts overcast | awk '{print $$1 " cdk-hnb659fds-assets-000000000000-us-east-1.overcast"}' | sudo -n tee -a /etc/hosts >/dev/null || echo "compat: could not add CDK asset-bucket hosts entry" >&2;
         touch compat/ui/dist/.gitkeep;
         for d in compat/suites/node-js-sdk compat/suites/cdk; do ( if [ -z "$$(ls -A $$d/node_modules)" ]; then npm ci --prefix "$$d" --silent; else npm install --prefix "$$d" --silent --no-audit --no-fund; fi || echo "compat: $$d dependencies failed to install" >&2 ) & done;
         ( pip install --break-system-packages --quiet -r compat/suites/python-sdk/requirements.txt || echo "compat: python-sdk dependencies failed to install" >&2 ) &
