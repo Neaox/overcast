@@ -494,7 +494,8 @@ class ReleaseSummaryTest(unittest.TestCase):
 	def test_counts_entries_by_section(self) -> None:
 		text = self.summary("+ [sqs] one\n* [sqs] two\n* [efs] three\n")
 
-		self.assertIn("3 entries (1 Added, 2 Fixed)", text)
+		self.assertIn("### What's in 0.0.1-alpha.2", text)
+		self.assertIn("3 entries — 1 added, 2 fixed.", text)
 		self.assertIn("No breaking changes.", text)
 
 	def test_renders_the_entries_as_they_will_appear_in_the_changelog(self) -> None:
