@@ -96,7 +96,7 @@ func (i *nodeRuntimeInstance) InstanceID() string { return i.instanceID }
 // Invoke returns an error payload indicating that Docker is required for real
 // Lambda execution. The ContainerRuntime handles actual invocations when Docker
 // is available.
-func (i *nodeRuntimeInstance) Invoke(_ context.Context, _ []byte) (*InvokeResult, error) {
+func (i *nodeRuntimeInstance) Invoke(_ context.Context, _ []byte, _ InvokeOptions) (*InvokeResult, error) {
 	i.healthy = true
 	const msg = "Docker is not available. Lambda invocation requires Docker — mount /var/run/docker.sock into the container or install Docker on the host. If Docker was started after the emulator, restart the emulator."
 	i.logger.Warn("lambda: invocation attempted but Docker is not available — returning stub error",

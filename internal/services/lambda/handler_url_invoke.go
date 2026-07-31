@@ -141,7 +141,8 @@ func (h *Handler) InvokeFunctionURL(w http.ResponseWriter, r *http.Request) {
 		h.log.Warn("function url invoke: record invocation", zap.String("function", fn.Name), zap.Error(err))
 	}
 
-	result := h.invokeSync(ctx, fn, rt, payload, fn.Name)
+	// A function URL response has no X-Amz-Log-Result field, so no tail.
+	result := h.invokeSync(ctx, fn, rt, payload, fn.Name, InvokeOptions{})
 	if result.throttle != nil {
 		writeThrottleError(w, r, result.throttle)
 		return

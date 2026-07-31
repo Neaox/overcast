@@ -86,7 +86,7 @@ func TestContainerInstanceInvoke_callerCancellationIsNotAFunctionTimeout(t *test
 		time.Sleep(20 * time.Millisecond)
 		cancelCaller()
 	}()
-	result, err := ci.Invoke(invokeCtx, []byte(`{}`))
+	result, err := ci.Invoke(invokeCtx, []byte(`{}`), InvokeOptions{})
 
 	// Then: the error says the caller went away, not that the function timed out.
 	if result != nil {
@@ -117,7 +117,7 @@ func TestContainerInstanceInvoke_timeoutReportsAWSShapedError(t *testing.T) {
 	defer cancel()
 
 	// When: the function never answers.
-	result, err := ci.Invoke(invokeCtx, []byte(`{}`))
+	result, err := ci.Invoke(invokeCtx, []byte(`{}`), InvokeOptions{})
 
 	// Then: the error carries the request ID and the configured timeout.
 	if result != nil {

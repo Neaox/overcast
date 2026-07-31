@@ -93,7 +93,9 @@ func (h *Handler) InvokeWithResponseStream(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	result := h.invokeSync(ctx, fn, rt, payload, name)
+	tail := strings.EqualFold(r.Header.Get("X-Amz-Log-Type"), "Tail")
+
+	result := h.invokeSync(ctx, fn, rt, payload, name, InvokeOptions{LogTail: tail})
 	if result.throttle != nil {
 		writeThrottleError(w, r, result.throttle)
 		return
@@ -102,8 +104,7 @@ func (h *Handler) InvokeWithResponseStream(w http.ResponseWriter, r *http.Reques
 	// Begin streaming response.
 	w.Header().Set("Content-Type", eventstream.ContentType)
 	w.Header().Set("X-Amz-Executed-Version", "$LATEST")
-	logType := r.Header.Get("X-Amz-Log-Type")
-	if result != nil && result.LogResult != "" && strings.EqualFold(logType, "Tail") {
+	if result != nil && result.LogResult != "" {
 		w.Header().Set("X-Amz-Log-Result", result.LogResult)
 	}
 	w.WriteHeader(http.StatusOK)

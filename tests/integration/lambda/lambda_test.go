@@ -3492,22 +3492,12 @@ exports.handler = async () => {
 	}
 }
 
-func TestInvoke_logTail(t *testing.T) {
-	skipIfNoDocker(t)
+// invokeForLogTail invokes fn with X-Amz-Log-Type: Tail and returns the decoded
+// X-Amz-Log-Result.
+func invokeForLogTail(t *testing.T, srv *helpers.TestServer, fn string, payload []byte) []byte {
+	t.Helper()
 
-	// Given a function that logs output
-	srv := helpers.NewTestServer(t, helpers.WithLambdaDocker())
-	code := makeZip(t, "index.js", `
-exports.handler = async (event) => {
-  console.log("hello from lambda");
-  return { ok: true };
-};
-`)
-	createFunctionWithCode(t, srv, "log-fn", "nodejs20.x", "index.handler", code)
-	waitForFunctionActive(t, srv, "log-fn")
-
-	// When InvokeFunction is called with X-Amz-Log-Type: Tail
-	req, err := http.NewRequest(http.MethodPost, lambdaURL(srv, "/functions/log-fn/invocations"), bytes.NewReader([]byte("{}")))
+	req, err := http.NewRequest(http.MethodPost, lambdaURL(srv, "/functions/"+fn+"/invocations"), bytes.NewReader(payload))
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
@@ -3519,19 +3509,60 @@ exports.handler = async (event) => {
 	}
 	defer resp.Body.Close()
 
-	// Then 200 + X-Amz-Log-Result contains base64-encoded logs
 	helpers.AssertStatus(t, resp, http.StatusOK)
 	logResult := resp.Header.Get("X-Amz-Log-Result")
 	if logResult == "" {
-		t.Error("expected X-Amz-Log-Result header when X-Amz-Log-Type: Tail")
-		return
+		t.Fatal("expected X-Amz-Log-Result header when X-Amz-Log-Type: Tail")
 	}
 	decoded, err := base64.StdEncoding.DecodeString(logResult)
 	if err != nil {
 		t.Fatalf("decode X-Amz-Log-Result: %v", err)
 	}
-	if !bytes.Contains(decoded, []byte("hello from lambda")) {
-		t.Errorf("log tail %q does not contain expected log line", decoded)
+	return decoded
+}
+
+// TestInvoke_logTail covers both halves of the tail's timing problem. The
+// handler's stdout is the only part of the tail that travels through Docker's
+// log stream — START / END / REPORT are written straight into the buffer by
+// the emulator — so it is the only part that can be missing if the snapshot is
+// taken too early.
+//
+// The first invocation is a cold start, where nothing has ever been read from
+// the log stream. The second is a warm reuse of the same container, where the
+// read watermark already holds the first invocation's timestamp; that case
+// went uncovered for a long time and hid a wait that had become a no-op.
+func TestInvoke_logTail(t *testing.T) {
+	skipIfNoDocker(t)
+
+	// Given a function that echoes a caller-supplied marker
+	srv := helpers.NewTestServer(t, helpers.WithLambdaDocker())
+	code := makeZip(t, "index.js", `
+exports.handler = async (event) => {
+  console.log("hello from lambda " + (event.marker || ""));
+  return { ok: true };
+};
+`)
+	createFunctionWithCode(t, srv, "log-fn", "nodejs20.x", "index.handler", code)
+	waitForFunctionActive(t, srv, "log-fn")
+
+	// When the function is invoked cold with X-Amz-Log-Type: Tail
+	decoded := invokeForLogTail(t, srv, "log-fn", []byte(`{"marker":"cold"}`))
+
+	// Then the tail carries the handler's own output, not just the platform lines
+	if !bytes.Contains(decoded, []byte("hello from lambda cold")) {
+		t.Errorf("cold-start log tail %q does not contain expected log line", decoded)
+	}
+
+	// When the same warm container serves a second invocation
+	decoded = invokeForLogTail(t, srv, "log-fn", []byte(`{"marker":"warm"}`))
+
+	// Then the tail carries *that* invocation's output — a watermark left by
+	// the first invocation must not satisfy the wait for the second's
+	if !bytes.Contains(decoded, []byte("hello from lambda warm")) {
+		t.Errorf("warm-invoke log tail %q does not contain expected log line", decoded)
+	}
+	if bytes.Contains(decoded, []byte("hello from lambda cold")) {
+		t.Errorf("warm-invoke log tail leaked the previous invocation's output: %q", decoded)
 	}
 }
 
