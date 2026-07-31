@@ -481,10 +481,18 @@ jobs:
 
   finalize-release:
     name: Finalize GitHub release
-    # Publishing requires a one-click approval of this exact SHA in the
-    # 'release' environment (required reviewer: the maintainer). Everything
-    # before this point runs unattended; nothing ships without a human.
-    environment: release
+    # Deliberately NOT in the 'release' environment, unlike every job above.
+    #
+    # The environment's approval covers publishing, and by the time this runs
+    # everything has already been published: assets uploaded, both images
+    # pushed, the release created. All this does is fill in the release
+    # description from a file the release-assets job already generated.
+    #
+    # It also depends on those three jobs, so gating it would put it in a
+    # second approval wave — the maintainer approves once, the release
+    # completes and looks finished, and this sits waiting for an approval
+    # nobody knows to give. That is exactly what left v0.0.1-alpha.27 and
+    # v0.0.1-alpha.28 published with empty release notes.
     needs: [check-version, release-assets, publish-console, publish-slim]
     if: needs.check-version.outputs.should_release == 'true' && needs.release-assets.result == 'success' && needs.publish-console.result == 'success' && needs.publish-slim.result == 'success'
     runs-on: ubuntu-latest
