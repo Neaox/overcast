@@ -419,6 +419,189 @@ class CommandNewTest(unittest.TestCase):
 		self.assertEqual([], list(root.iterdir()))
 
 
+CHANGELOG_FIXTURE = """# Changelog
+
+## [Unreleased]
+
+## [0.0.1-alpha.1] - 2026-07-01
+
+### Fixed
+
+- [sqs] an older fix
+
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.1...HEAD
+[0.0.1-alpha.1]: https://github.com/Neaox/overcast/releases/tag/v0.0.1-alpha.1
+"""
+
+
+class NextVersionTest(unittest.TestCase):
+	def test_increments_the_prerelease_counter(self) -> None:
+		self.assertEqual("0.0.1-alpha.28", changelog.next_version("0.0.1-alpha.27"))
+		self.assertEqual("1.2.3-beta.1", changelog.next_version("1.2.3-beta.0\n"))
+
+	def test_refuses_a_stable_version_rather_than_guessing(self) -> None:
+		# The breaking/added -> major/minor mapping is an open policy decision
+		# that takes effect at 1.0; guessing it here would be worse than a gap.
+		with self.assertRaises(ValueError) as caught:
+			changelog.next_version("1.0.0")
+
+		self.assertIn("unimplemented until", str(caught.exception))
+
+
+class ChangelogEditTest(unittest.TestCase):
+	def test_inserts_the_section_below_unreleased(self) -> None:
+		result = changelog.insert_release_section(
+			CHANGELOG_FIXTURE, "## [0.0.1-alpha.2] - 2026-08-01\n\n### Added\n\n- a thing\n"
+		)
+
+		self.assertIn("## [Unreleased]\n\n## [0.0.1-alpha.2] - 2026-08-01\n", result)
+		self.assertIn("- a thing\n\n## [0.0.1-alpha.1] - 2026-07-01", result)
+
+	def test_rejects_a_changelog_without_unreleased(self) -> None:
+		with self.assertRaises(ValueError):
+			changelog.insert_release_section("# Changelog\n", "## [x] - y\n")
+
+	def test_repoints_unreleased_and_adds_the_new_reference(self) -> None:
+		result = changelog.update_links(CHANGELOG_FIXTURE, "0.0.1-alpha.2", "0.0.1-alpha.1")
+
+		self.assertIn(
+			"[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.2...HEAD",
+			result,
+		)
+		self.assertIn(
+			"[0.0.1-alpha.2]: https://github.com/Neaox/overcast/compare/"
+			"v0.0.1-alpha.1...v0.0.1-alpha.2",
+			result,
+		)
+		self.assertIn("[0.0.1-alpha.1]: https://github.com/Neaox/overcast/releases/tag/", result)
+
+	def test_first_release_links_to_the_tag(self) -> None:
+		result = changelog.update_links(CHANGELOG_FIXTURE, "0.0.1-alpha.0", None)
+
+		self.assertIn(
+			"[0.0.1-alpha.0]: https://github.com/Neaox/overcast/releases/tag/v0.0.1-alpha.0",
+			result,
+		)
+
+
+class ReleaseSummaryTest(unittest.TestCase):
+	def summary(self, fragment_text: str) -> str:
+		root = write_dir({"20260801-x.md": fragment_text})
+		fragments, errors = changelog.load_fragments(root)
+		self.assertEqual([], errors)
+		return changelog.release_summary(fragments, "0.0.1-alpha.2")
+
+	def test_counts_entries_by_section(self) -> None:
+		text = self.summary("+ [sqs] one\n* [sqs] two\n* [efs] three\n")
+
+		self.assertIn("3 entries (1 Added, 2 Fixed)", text)
+		self.assertIn("No breaking changes.", text)
+
+	def test_lists_breaking_changes_with_their_migrations(self) -> None:
+		text = self.summary(
+			"+ [sqs] a feature\n"
+			"-! [state] the v1 layout\n"
+			"  migration: export before upgrading\n"
+		)
+
+		self.assertIn("### Breaking changes (1)", text)
+		self.assertIn("- [state] the v1 layout", text)
+		self.assertIn("**migration:** export before upgrading", text)
+
+
+class CommandReleaseTest(unittest.TestCase):
+	def prepare(self) -> Path:
+		root = Path(tempfile.mkdtemp())
+		(root / ".changelog").mkdir()
+		(root / ".changelog" / "20260801-a.md").write_text(
+			"+ [sqs] long polling\n"
+			"-! [state] the v1 layout\n"
+			"  migration: export before upgrading\n",
+			encoding="utf-8",
+		)
+		(root / "CHANGELOG.md").write_text(CHANGELOG_FIXTURE, encoding="utf-8")
+		(root / "VERSION").write_text("0.0.1-alpha.1\n", encoding="utf-8")
+		return root
+
+	def run_release(self, root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
+		return subprocess.run(
+			[
+				sys.executable,
+				str(Path(__file__).with_name("changelog.py")),
+				"--fragments-dir",
+				str(root / ".changelog"),
+				"--changelog",
+				str(root / "CHANGELOG.md"),
+				"release",
+				"--version-file",
+				str(root / "VERSION"),
+				"--date",
+				"2026-08-01",
+				*args,
+			],
+			capture_output=True,
+		)
+
+	def test_writes_version_section_links_and_removes_fragments(self) -> None:
+		root = self.prepare()
+
+		result = self.run_release(root)
+
+		self.assertEqual(0, result.returncode, result.stderr.decode("utf-8", "replace"))
+		self.assertEqual("0.0.1-alpha.2\n", (root / "VERSION").read_text(encoding="utf-8"))
+		text = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+		self.assertIn("## [0.0.1-alpha.2] - 2026-08-01", text)
+		self.assertIn("- **BREAKING** [state] the v1 layout", text)
+		self.assertIn("compare/v0.0.1-alpha.2...HEAD", text)
+		self.assertEqual([], list((root / ".changelog").iterdir()))
+
+	def test_result_satisfies_the_release_validator(self) -> None:
+		# The workflow gates on this script, so the generated tree has to pass
+		# it — that is the whole point of doing the edit mechanically.
+		root = self.prepare()
+		self.run_release(root)
+
+		validated = subprocess.run(
+			[
+				sys.executable,
+				str(Path(__file__).with_name("check-release-changelog.py")),
+				"0.0.1-alpha.2",
+				"--changelog",
+				str(root / "CHANGELOG.md"),
+				"--fragments-dir",
+				str(root / ".changelog"),
+			],
+			capture_output=True,
+		)
+
+		self.assertEqual(0, validated.returncode, validated.stdout.decode("utf-8", "replace"))
+
+	def test_writes_a_summary_file(self) -> None:
+		root = self.prepare()
+
+		self.run_release(root, "--summary-file", str(root / "summary.md"))
+
+		summary = (root / "summary.md").read_text(encoding="utf-8")
+		self.assertIn("### Breaking changes (1)", summary)
+
+	def test_dry_run_changes_nothing(self) -> None:
+		root = self.prepare()
+
+		result = self.run_release(root, "--dry-run")
+
+		self.assertEqual(0, result.returncode, result.stderr.decode("utf-8", "replace"))
+		self.assertEqual("0.0.1-alpha.1\n", (root / "VERSION").read_text(encoding="utf-8"))
+		self.assertEqual(1, len(list((root / ".changelog").iterdir())))
+
+	def test_refuses_to_release_a_version_already_in_the_changelog(self) -> None:
+		root = self.prepare()
+
+		result = self.run_release(root, "0.0.1-alpha.1")
+
+		self.assertEqual(1, result.returncode)
+		self.assertIn("already has a", result.stderr.decode("utf-8"))
+
+
 class StdioEncodingTest(unittest.TestCase):
 	# Fragment bodies routinely contain non-cp1252 characters ('→' in perf
 	# entries, '—' in feature entries). Windows consoles default to cp1252, so

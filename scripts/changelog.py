@@ -448,6 +448,90 @@ def branch_slug() -> str:
     return slugify(name.rsplit("/", 1)[-1])
 
 
+REPO_URL = "https://github.com/Neaox/overcast"
+PRERELEASE = re.compile(
+    r"^(?P<base>\d+\.\d+\.\d+)-(?P<channel>[0-9A-Za-z-]+)\.(?P<counter>\d+)$"
+)
+
+
+def next_version(current: str) -> str:
+    """The version after `current`.
+
+    While in alpha this is arithmetic, not a judgement: the prerelease counter
+    increments and the base version stays put whatever the release contains.
+    Deriving a stable bump from the entries is deliberately NOT implemented —
+    the mapping from breaking/added to major/minor is an open policy decision
+    that takes effect at 1.0 (see RELEASE.md, Version Format). An honest gap
+    beats untested code pretending to make a decision nobody is making yet.
+    """
+    match = PRERELEASE.match(current.strip())
+    if match is None:
+        raise ValueError(
+            f"cannot derive the next version from '{current.strip()}': it is not "
+            "a prerelease, and the stable bump rules are unimplemented until "
+            "1.0. Pass the version explicitly."
+        )
+    counter = int(match.group("counter")) + 1
+    return f"{match.group('base')}-{match.group('channel')}.{counter}"
+
+
+def release_versions(changelog: str) -> list[str]:
+    """Released versions, newest first."""
+    return [
+        match.group(1)
+        for match in re.finditer(r"^## \[([^\]]+)\]", changelog, flags=re.M)
+        if match.group(1) != "Unreleased"
+    ]
+
+
+def insert_release_section(changelog: str, section: str) -> str:
+    match = re.search(r"^## \[Unreleased\].*?$", changelog, flags=re.M)
+    if match is None:
+        raise ValueError("CHANGELOG.md has no '## [Unreleased]' section.")
+    return f"{changelog[: match.end()]}\n\n{section.strip()}{changelog[match.end() :]}"
+
+
+def update_links(changelog: str, version: str, previous: str | None) -> str:
+    """Repoint [Unreleased] at the new tag and add the new version's link."""
+    pattern = re.compile(r"^\[Unreleased\]:.*$", flags=re.M)
+    if pattern.search(changelog) is None:
+        raise ValueError("CHANGELOG.md has no '[Unreleased]' link reference.")
+    unreleased = f"[Unreleased]: {REPO_URL}/compare/v{version}...HEAD"
+    if previous:
+        added = f"[{version}]: {REPO_URL}/compare/v{previous}...v{version}"
+    else:
+        added = f"[{version}]: {REPO_URL}/releases/tag/v{version}"
+    # A lambda replacement, so a URL is never read as a backreference.
+    return pattern.sub(lambda _: f"{unreleased}\n{added}", changelog, count=1)
+
+
+def release_summary(fragments: list[Fragment], version: str) -> str:
+    """Markdown summary of what a release contains, breaking changes first."""
+    entries = [entry for fragment in fragments for entry in fragment.entries]
+    counts = {
+        section: sum(1 for entry in entries if entry.section == section)
+        for section in SECTIONS
+    }
+    tally = ", ".join(f"{count} {name}" for name, count in counts.items() if count)
+    lines = [f"**{version}** — {len(entries)} entries ({tally})", ""]
+
+    breaking = [entry for entry in entries if entry.breaking]
+    if not breaking:
+        lines.append("No breaking changes.")
+        return "\n".join(lines) + "\n"
+
+    # Listed first and in full: the version cannot signal a break while in
+    # alpha, so this comment is where a reader finds out.
+    lines.append(f"### Breaking changes ({len(breaking)})")
+    lines.append("")
+    for entry in breaking:
+        areas = f"[{'/'.join(entry.areas)}] " if entry.areas else ""
+        lines.append(f"- {areas}{entry.prose}")
+        if entry.migration:
+            lines.append(f"  - **migration:** {entry.migration}")
+    return "\n".join(lines) + "\n"
+
+
 def use_utf8_stdio() -> None:
     """Write UTF-8 regardless of the ambient console encoding.
 
@@ -522,6 +606,86 @@ def command_new(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_release(args: argparse.Namespace) -> int:
+    """Perform the mechanical half of release prep.
+
+    Everything here is what `check-release-changelog.py` fails a release for
+    and what a human otherwise hand-writes: the section, both compare links,
+    VERSION, and the fragment deletions. Curation stays a human job — this
+    produces the draft, not the finished notes.
+    """
+    changelog_path = Path(args.changelog)
+    version_path = Path(args.version_file)
+
+    fragments, errors = load_fragments(Path(args.fragments_dir))
+    if errors:
+        for error in errors:
+            print(f"::error::{error}", file=sys.stderr)
+        return 1
+    if not fragments:
+        print(
+            f"::error::{args.fragments_dir}: no fragments to release.", file=sys.stderr
+        )
+        return 1
+
+    version = args.version
+    if version is None:
+        try:
+            version = next_version(version_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(f"::error::{exc}", file=sys.stderr)
+            return 1
+
+    date = args.date or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    changelog = changelog_path.read_text(encoding="utf-8")
+    versions = release_versions(changelog)
+    if version in versions:
+        print(
+            f"::error::CHANGELOG.md already has a '## [{version}]' section.",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        updated = insert_release_section(
+            changelog, assemble(fragments, version, date)
+        )
+        updated = update_links(updated, version, versions[0] if versions else None)
+    except ValueError as exc:
+        print(f"::error::{exc}", file=sys.stderr)
+        return 1
+
+    summary = release_summary(fragments, version)
+    if args.summary_file:
+        Path(args.summary_file).write_text(summary, encoding="utf-8", newline="\n")
+
+    if args.dry_run:
+        sys.stdout.write(summary)
+        print(f"\n--- would write {version_path} and {changelog_path}, and delete:")
+        for fragment in fragments:
+            print(f"    {fragment.path}")
+        return 0
+
+    changelog_path.write_text(updated, encoding="utf-8", newline="\n")
+    version_path.write_text(f"{version}\n", encoding="utf-8", newline="\n")
+    for fragment in fragments:
+        fragment.path.unlink()
+
+    print(f"{version_path}: {version}")
+    print(f"{changelog_path}: added '## [{version}] - {date}'")
+    print(f"{args.fragments_dir}: removed {len(fragments)} fragments")
+    return 0
+
+
+def command_next_version(args: argparse.Namespace) -> int:
+    try:
+        print(next_version(Path(args.version_file).read_text(encoding="utf-8")))
+    except (OSError, ValueError) as exc:
+        print(f"::error::{exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main() -> int:
     use_utf8_stdio()
     parser = argparse.ArgumentParser(description=__doc__)
@@ -560,12 +724,36 @@ def main() -> int:
     new_parser.add_argument(
         "--dry-run", action="store_true", help="print what would be written"
     )
+    release_parser = subparsers.add_parser(
+        "release", help="apply the mechanical release-prep edit"
+    )
+    release_parser.add_argument(
+        "version", nargs="?", default=None, help="default: derived from VERSION"
+    )
+    release_parser.add_argument("--version-file", default="VERSION")
+    release_parser.add_argument(
+        "--date", default=None, help="release date (UTC, YYYY-MM-DD; default today)"
+    )
+    release_parser.add_argument(
+        "--summary-file", default=None, help="write the markdown summary here"
+    )
+    release_parser.add_argument(
+        "--dry-run", action="store_true", help="print what would be written"
+    )
+    version_parser = subparsers.add_parser(
+        "next-version", help="print the version after the current one"
+    )
+    version_parser.add_argument("--version-file", default="VERSION")
     args = parser.parse_args()
 
     # `new` writes fragments rather than reading them, and must work while an
     # unrelated fragment on disk is mid-edit and failing the linter.
     if args.command == "new":
         return command_new(args)
+    if args.command == "next-version":
+        return command_next_version(args)
+    if args.command == "release":
+        return command_release(args)
 
     fragments, errors = load_fragments(Path(args.fragments_dir))
 

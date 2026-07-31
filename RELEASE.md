@@ -194,6 +194,40 @@ Before merging the release-prep PR to `main`:
 
 ## Creating An Alpha Release
 
+### Automated prep
+
+The **Release Prep** workflow
+([`.github/workflows/release-prep.yml`](.github/workflows/release-prep.yml),
+`workflow_dispatch`) does the mechanical half of steps 1-5 below: derives the
+version, assembles and inserts the release section, repoints both compare
+links, writes `VERSION`, deletes the consumed fragments, opens the PR, and
+comments a summary that lists any breaking changes with their migration notes.
+
+It stops there by design. It never merges — `VERSION` is owned in
+[CODEOWNERS](.github/CODEOWNERS) — and publishing still waits on the `release`
+environment's required reviewer.
+
+What it cannot do is **curate**. The generated section is one bullet per entry;
+the house style merges same-area entries into single bullets and tightens the
+prose. Treat the PR as a draft to edit, not as finished notes.
+
+Re-running it against an open release PR **does not rewrite the section**. It
+comments with the fragments that have landed on `main` since — which is also
+the staleness notification described in
+[Keeping The Release PR Current](#keeping-the-release-pr-current) — because
+regenerating would discard curation already done. Pass `regenerate: true` only
+when you genuinely want the section replaced wholesale. `dry_run: true` prints
+the summary and diffstat without pushing or opening anything.
+
+It requires the `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY` secrets and
+fails without them, deliberately: a PR opened with the default `GITHUB_TOKEN`
+triggers no `pull_request` workflows, so it would arrive with no CI, no RC
+images and no changelog gate. The App is also what makes the PR author someone
+other than the maintainer, so the CODEOWNERS review on `VERSION` is a check a
+human can actually satisfy.
+
+The steps below remain the manual path, and describe what the workflow does.
+
 For an alpha release:
 
 1. Create and work on a release branch, not `main`:
