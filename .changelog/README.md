@@ -152,6 +152,14 @@ release process, measured performance changes, or user-facing docs guidance.
 Skip fragments for CI-only changes, test-only changes, local tooling, internal
 refactors, or cleanup that does not affect shipped artifacts.
 
+**`compat/` changes never get a fragment on their own.** The compat suites are
+an external observer of the emulator: they decide nothing about what is
+released and change no behaviour a user can observe, however large the diff.
+The `compat` scope exists for the other direction — a change to **runtime
+code** made so that a compat test passes (an emulator fix the suites caught).
+That is a real behaviour change and gets a fragment describing the runtime
+effect, not the test.
+
 ## Release time
 
 Release prep runs:
