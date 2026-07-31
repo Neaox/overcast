@@ -1,15 +1,21 @@
 name: Release Prep
 
-# Prepares a release: derives the version, applies the mechanical changelog
-# edit, and opens a release PR.
+# Two jobs, one per trigger.
 #
-# It deliberately stops there. Merging is a human step — VERSION is owned in
-# CODEOWNERS — and publishing waits on the `release` environment's required
-# reviewer. What this removes is only the drudgery that
-# check-release-changelog.py already fails a release for: the section, both
-# compare links, VERSION, and the fragment deletions. Curating the draft into
-# house-style prose stays a human job, which is why an existing release PR is
-# never rewritten without being asked (see `regenerate`).
+# workflow_dispatch -> prepare: derive the version, apply the mechanical
+# changelog edit, open the release PR.
+#
+# push to main -> refresh: if a release PR is open, merge main into its branch
+# and comment with the entries that still have to be curated. Merging main in
+# is the part that matters — a pull_request run is not re-triggered by base
+# movement, so without it the PR sits green while going stale. Refreshing the
+# branch re-runs its checks, and the changelog gate then correctly fails while
+# fragments are unconsumed.
+#
+# Neither job merges or publishes. VERSION is owned in CODEOWNERS and every
+# publish job waits on the `release` environment's required reviewer. Curation
+# is never rewritten without being asked (see `regenerate`), because it is the
+# one part of release prep a machine cannot redo.
 on:
   workflow_dispatch:
     inputs:
@@ -25,13 +31,133 @@ on:
         description: "Print what would change; push nothing, open nothing"
         type: boolean
         default: false
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
+  # Keeps an open release PR current with main and says what that costs in
+  # curation. Runs on every push to main; exits immediately when no release is
+  # in flight, which is most of the time.
+  refresh:
+    name: Refresh the open release PR
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the release App credentials
+        env:
+          CLIENT_ID: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          APP_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$CLIENT_ID" ] || [ -z "$APP_KEY" ]; then
+            echo "::error::RELEASE_APP_CLIENT_ID and RELEASE_APP_PRIVATE_KEY must be set." >&2
+            exit 1
+          fi
+
+      - uses: actions/create-github-app-token@v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v7.0.0
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Find the open release PR
+        id: find
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          open="$(gh pr list --state open --base main --json number,headRefName \
+            --jq '[.[] | select(.headRefName | startswith("release/"))]')"
+          count="$(jq 'length' <<<"$open")"
+          if [ "$count" -gt 1 ]; then
+            echo "::error::More than one release PR is open; there must be exactly one. $(jq -c '[.[].headRefName]' <<<"$open")" >&2
+            exit 1
+          fi
+          if [ "$count" -eq 0 ]; then
+            echo "No release PR open — nothing to refresh."
+            echo "number=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          {
+            echo "number=$(jq -r '.[0].number' <<<"$open")"
+            echo "branch=$(jq -r '.[0].headRefName' <<<"$open")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Merge main into the release branch
+        id: merge
+        if: steps.find.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ steps.find.outputs.branch }}
+          PR_NUMBER: ${{ steps.find.outputs.number }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${APP_SLUG}[bot]@users.noreply.github.com"
+          git fetch --no-tags origin "$BRANCH"
+          git switch -c "$BRANCH" "origin/$BRANCH"
+
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "Release branch already contains main — nothing to do."
+            echo "refreshed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! git merge --no-edit origin/main; then
+            git merge --abort
+            printf '%s\n' \
+              '### Release prep' \
+              '' \
+              "\`main\` has moved and **conflicts with this branch**, so it could not be" \
+              'refreshed automatically. Resolve the conflict locally and push; the' \
+              'changelog gate will then report what still needs curating.' \
+              > "$RUNNER_TEMP/conflict.md"
+            gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/conflict.md"
+            echo "refreshed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git push origin "$BRANCH"
+          echo "refreshed=true" >> "$GITHUB_OUTPUT"
+
+      # Run from the release-branch checkout, so .changelog/ holds exactly the
+      # entries that have NOT been curated into the release section yet.
+      - name: Comment the entries still to curate
+        if: steps.merge.outputs.refreshed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ steps.find.outputs.number }}
+          BRANCH: ${{ steps.find.outputs.branch }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          version="${BRANCH#release/}"
+          short="${SHA:0:8}"
+          heading="$(printf '%s\n' \
+            "### \`main\` moved — these entries are not in the release section yet" \
+            '' \
+            "Merged \`$short\` into this branch. Fold the entries below into" \
+            "\`## [$version]\` and delete their fragment files; the changelog gate" \
+            "stays red until \`.changelog/\` holds only \`README.md\`.")"
+          empty="$(printf '%s\n' \
+            '### Release prep' \
+            '' \
+            "Merged \`$short\` into this branch. No new changelog entries — nothing to curate.")"
+          python3 scripts/changelog.py summary "$version" \
+            --heading "$heading" --empty "$empty" > "$RUNNER_TEMP/summary.md"
+          gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/summary.md"
+
   prepare:
     name: Prepare release PR
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       # A PR opened with the default GITHUB_TOKEN does not trigger
@@ -50,9 +176,6 @@ jobs:
             exit 1
           fi
 
-      # client-id rather than app-id: the latter is deprecated from v3 and
-      # warns on every run. Both identify the same App; the client ID sits on
-      # the App's settings page directly below the numeric App ID.
       - uses: actions/create-github-app-token@v3.2.0
         id: app-token
         with:
@@ -80,6 +203,8 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Preparing $version"
 
+      # Exactly one release may be in flight. Two would race for the same
+      # fragments and produce two release sections claiming the same entries.
       - name: Look for an existing release PR
         id: existing
         env:
@@ -87,22 +212,32 @@ jobs:
           BRANCH: ${{ steps.plan.outputs.branch }}
         run: |
           set -euo pipefail
-          number="$(gh pr list --state open --base main --head "$BRANCH" \
-            --json number --jq '.[0].number // empty')"
-          echo "number=$number" >> "$GITHUB_OUTPUT"
-          if [ -n "$number" ]; then
+          open="$(gh pr list --state open --base main --json number,headRefName \
+            --jq '[.[] | select(.headRefName | startswith("release/"))]')"
+          count="$(jq 'length' <<<"$open")"
+          if [ "$count" -gt 1 ]; then
+            echo "::error::More than one release PR is open; there must be exactly one. $(jq -c '[.[].headRefName]' <<<"$open")" >&2
+            exit 1
+          fi
+          number=""
+          if [ "$count" -eq 1 ]; then
+            head="$(jq -r '.[0].headRefName' <<<"$open")"
+            if [ "$head" != "$BRANCH" ]; then
+              echo "::error::A release PR is already open for '$head'. Close it before preparing '$BRANCH' — only one release may be in flight at a time." >&2
+              exit 1
+            fi
+            number="$(jq -r '.[0].number' <<<"$open")"
             echo "Release PR #$number is already open for $BRANCH."
           fi
+          echo "number=$number" >> "$GITHUB_OUTPUT"
 
-      # The one thing a machine cannot redo is the prose curation, so an open
-      # release PR is reported against rather than overwritten.
-      #
-      # The question is not "what is in .changelog/ on main" — that still holds
-      # every fragment, including the ones this PR already consumed on its own
-      # branch, because the deletions do not reach main until it merges. It is
-      # "what would still be unconsumed if this PR merged right now", which is
-      # the same recompute the release workflow's changelog gate performs.
-      - name: Report fragments that arrived since the PR was prepared
+      # Curation is the one part a machine cannot redo, so an open release PR
+      # is reported against rather than overwritten. What matters is not what
+      # is in .changelog/ on main — that still holds every fragment, including
+      # the ones this PR already consumed, because its deletions do not reach
+      # main until it merges — but what would still be unconsumed if the PR
+      # merged now. Same recompute the release workflow's changelog gate does.
+      - name: Report entries that arrived since the PR was prepared
         if: steps.existing.outputs.number != '' && inputs.regenerate == false
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -112,36 +247,31 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --no-tags origin "$BRANCH" main
-          conflicted=false
-          pending=()
-          if tree="$(git merge-tree --write-tree "origin/$BRANCH" origin/main)"; then
-            mapfile -t pending < <(git ls-tree --name-only "$tree" .changelog/ \
-              | sed 's|^\.changelog/||' | grep -v '^README\.md$' | sort || true)
-          else
-            conflicted=true
+          if ! tree="$(git merge-tree --write-tree "origin/$BRANCH" origin/main)"; then
+            printf '%s\n' \
+              '### Release prep re-run' \
+              '' \
+              "This PR **conflicts with \`main\`** and cannot be assessed. Update the" \
+              'branch, then re-run.' \
+              > "$RUNNER_TEMP/conflict.md"
+            gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/conflict.md"
+            exit 0
           fi
-          {
-            echo "### Release prep re-run for \`$VERSION\`"
-            echo
-            if [ "$conflicted" = true ]; then
-              echo "This PR **conflicts with \`main\`** and cannot be assessed."
-              echo "Update the branch, then re-run."
-            elif [ "${#pending[@]}" -eq 0 ]; then
-              echo "No fragments are waiting — this PR is current with \`main\`."
-            else
-              echo "**${#pending[@]} fragment(s) have landed on \`main\` and are not in this PR's release section:**"
-              echo
-              for name in "${pending[@]}"; do
-                echo "- \`$name\`"
-              done
-              echo
-              echo "Fold them into the release section and push. This workflow will not"
-              echo "rewrite the section, because that would discard the curation already"
-              echo "done here — re-run with \`regenerate: true\` if you do want it replaced."
-            fi
-          } > "$RUNNER_TEMP/stale.md"
-          gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/stale.md"
-          echo "Reported on #$PR_NUMBER; not rewriting it."
+          rm -rf "$RUNNER_TEMP/pending"
+          mkdir -p "$RUNNER_TEMP/pending"
+          git archive "$tree" .changelog | tar -x -C "$RUNNER_TEMP/pending"
+          empty="$(printf '%s\n' \
+            '### Release prep re-run' \
+            '' \
+            "No entries are waiting — this PR is current with \`main\`.")"
+          python3 scripts/changelog.py \
+            --fragments-dir "$RUNNER_TEMP/pending/.changelog" \
+            summary "$VERSION" \
+            --heading '### Release prep re-run — entries not in the release section yet' \
+            --empty "$empty" \
+            > "$RUNNER_TEMP/pending.md"
+          gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/pending.md"
+          echo "Reported on #$PR_NUMBER; the release section was not rewritten."
 
       - name: Apply the release edit
         if: steps.existing.outputs.number == '' || inputs.regenerate
@@ -192,21 +322,23 @@ jobs:
         run: |
           set -euo pipefail
           {
-            echo "Release prep for **$VERSION**, generated by the Release Prep workflow."
+            echo "Release prep for **$VERSION**. The release section, both compare links,"
+            echo "\`VERSION\` and the fragment deletions were generated; the prose was not."
             echo
             echo "## Before merging"
             echo
-            echo "- [ ] **Curate the release section.** The generated draft is one bullet"
-            echo "      per entry; the house style merges same-area entries and tightens"
-            echo "      prose. See \`.changelog/README.md\` and RELEASE.md § Preflight."
-            echo "- [ ] **Smoke test the RC image**, not a local rebuild — the bot comment"
-            echo "      on this PR carries the pull commands and digests."
-            echo "- [ ] **Re-check if \`main\` moved.** Fragments that land while this is"
-            echo "      open are not in the section; the changelog gate fails the PR until"
-            echo "      they are folded in."
+            echo "- [ ] **Curate the release section.** The draft is one bullet per entry;"
+            echo "      the house style merges same-area entries and tightens prose. See"
+            echo "      \`.changelog/README.md\` and RELEASE.md § Preflight."
+            echo "- [ ] **Smoke test the RC image**, not a local rebuild — the release"
+            echo "      candidate comment below carries the pull commands and digests."
+            echo "- [ ] **Fold in anything that landed since.** Every push to \`main\`"
+            echo "      merges into this branch and comments with the entries still to"
+            echo "      curate. The changelog gate stays red until they are."
             echo
-            echo "This workflow does not merge. \`VERSION\` is owned in CODEOWNERS, and"
-            echo "publishing waits on the \`release\` environment's required reviewer."
+            echo "Nothing merges or publishes on its own: \`VERSION\` is owned in"
+            echo "CODEOWNERS, and every publish job waits on the \`release\` environment's"
+            echo "required reviewer."
           } > "$RUNNER_TEMP/pr-body.md"
 
           if [ -n "$EXISTING" ]; then
@@ -223,10 +355,10 @@ jobs:
           fi
           echo "number=$number" >> "$GITHUB_OUTPUT"
 
-      # Kept as a comment rather than folded into the body: it is regenerated
-      # on every run, and the breaking-change list is the part a reviewer must
-      # not miss. While in alpha the version cannot signal a break, so this is
-      # where a reader finds out one happened.
+      # Sticky rather than a new comment: this describes the whole release and
+      # is regenerated whenever the PR is, so a reader wants the current one,
+      # not a history. The refresh job posts new comments instead, because each
+      # of those reports a distinct event on main.
       - name: Comment the release summary
         if: steps.pr.outputs.number != ''
         uses: marocchino/sticky-pull-request-comment@v2.9.4
