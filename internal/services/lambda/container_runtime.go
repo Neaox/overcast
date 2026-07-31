@@ -1245,7 +1245,7 @@ func (e *invokeTimeoutError) Payload() []byte {
 // The caller is responsible for bounding ctx with the function's configured
 // Timeout; this method trusts ctx.Deadline() to derive the Lambda-Runtime-Deadline-Ms
 // header, which is what the RIC uses to implement context.getRemainingTimeInMillis().
-func (ci *containerInstance) Invoke(ctx context.Context, event []byte) (*InvokeResult, error) {
+func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts InvokeOptions) (*InvokeResult, error) {
 	// A payload can carry Overcast URLs a host-side caller minted — a queue URL
 	// passed to Invoke is the usual one. AWS SDKs resolve the service endpoint
 	// from such a URL rather than from AWS_ENDPOINT_URL, so an origin this
@@ -1263,9 +1263,13 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte) (*InvokeR
 
 	// Reset tail buffer so this invocation's output starts fresh
 	// (important for warm-container reuse across multiple invocations).
+	// logReadAt is the other half of that boundary: it is a container-lifetime
+	// watermark, so the value it holds *now* is what "before this invocation"
+	// means to waitForScannerIdle later.
 	ci.tailMu.Lock()
 	ci.tailBuf = ci.tailBuf[:0]
 	ci.tailMu.Unlock()
+	logReadBase := ci.logReadAt.Load()
 	if reason, ok := ci.runtimeAPI.ContainerError(ci.containerIP); ok {
 		ci.healthy = false
 		return extensionInvokeError(reason), nil
@@ -1326,7 +1330,7 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte) (*InvokeR
 		// the container — otherwise any logs the function emitted before
 		// crashing would be lost when logCtx is cancelled.
 		if ci.logWriter != nil {
-			ci.waitForLogDrain(context.Background())
+			ci.waitForLogDrain(context.Background(), logDrainFirstReadGrace)
 		}
 		elapsed := ci.clk.Now().Sub(start)
 		ci.writeLogLine(context.Background(),
@@ -1348,7 +1352,7 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte) (*InvokeR
 		// the timeout would be lost when logCtx is cancelled. Use a fresh
 		// context (the invocation ctx is already done).
 		if ci.logWriter != nil {
-			ci.waitForLogDrain(context.Background())
+			ci.waitForLogDrain(context.Background(), logDrainFirstReadGrace)
 		}
 		elapsed := ci.clk.Now().Sub(start)
 		// Only a deadline is a Lambda timeout. A plain cancellation means the
@@ -1405,14 +1409,16 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte) (*InvokeR
 		}
 	}
 
-	// Wait briefly for the scanner to catch up on handler stdout so the
-	// X-Amz-Log-Result tail snapshot includes the function's output. We do
-	// NOT wait for CloudWatch flushes — those happen asynchronously after
-	// Invoke returns. This matches AWS / LocalStack semantics: invoke
-	// latency is decoupled from log delivery.
+	// Wait for the scanner to catch up on handler stdout so the
+	// X-Amz-Log-Result tail snapshot includes the function's output. Only
+	// callers that asked for a tail pay this: every other path discards
+	// LogResult, and warm p50 is ~6 ms, so an unconditional wait here would
+	// dominate it. We do NOT wait for CloudWatch flushes — those happen
+	// asynchronously after Invoke returns. This matches AWS / LocalStack
+	// semantics: invoke latency is decoupled from log delivery.
 	logWaitStart := ci.clk.Now()
-	if ci.logWriter != nil {
-		ci.waitForScannerIdle()
+	if opts.LogTail && ci.logWriter != nil {
+		ci.waitForScannerIdle(logReadBase)
 	}
 	logWait := ci.clk.Now().Sub(logWaitStart)
 
@@ -1439,7 +1445,7 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte) (*InvokeR
 	)
 
 	// Snapshot the tail buffer for X-Amz-Log-Result.
-	if ci.logWriter != nil {
+	if opts.LogTail && ci.logWriter != nil {
 		ci.tailMu.Lock()
 		if n := len(ci.tailBuf); n > 0 {
 			snap := ci.tailBuf
@@ -1551,26 +1557,49 @@ func (ci *containerInstance) initDurationField() string {
 	return fmt.Sprintf("\tInit Duration: %.2f ms", float64(initDur.Microseconds())/1000.0)
 }
 
-// waitForScannerIdle waits briefly for the Docker log reader to go idle so
-// the rolling tail buffer is up-to-date with handler output. Unlike
+// waitForScannerIdle waits for *this* invocation's container output to reach
+// the rolling tail buffer, then for the Docker log reader to go quiet, so the
+// X-Amz-Log-Result snapshot taken immediately afterwards is complete. Unlike
 // waitForLogDrain it does NOT wait for CloudWatch writes to complete — those
 // are batched asynchronously by streamLogs and are not on the invoke critical
 // path.
 //
-// This is called on the invoke success path before snapshotting tailBuf for
-// X-Amz-Log-Result. The cap is intentionally small (100 ms) because:
-//   - typical Docker pipe flush latency is sub-millisecond on Linux,
-//   - the scanner must have already produced output for logReadAt to be set,
-//     which happens for every invocation that emits a non-empty stdout line,
-//   - capping at 100 ms bounds worst-case invoke latency from log machinery.
+// It runs on the invoke success path only when the caller asked for a tail
+// (InvokeOptions.LogTail); see the call site for why that gate matters.
 //
-// If the function emits no stdout (logReadAt == 0), this returns immediately.
-func (ci *containerInstance) waitForScannerIdle() {
+// base is ci.logReadAt as it stood when the invocation started, and it is what
+// makes the wait per-invocation. logReadAt is a container-lifetime watermark
+// that streamLogs bumps on every successful read and never resets, so on its
+// own it says nothing about *whose* output set it:
+//
+//   - Cold container: logReadAt is still 0 while the handler's stdout sits
+//     undelivered in Docker's pipe. Reading that as "the function emitted
+//     nothing" — which is what this function used to do — snapshots a tail
+//     holding only the START/END/REPORT lines writeLogLine puts there directly.
+//   - Warm container: logReadAt still holds the *previous* invocation's
+//     timestamp, already older than idleThreshold, so the idle test passed
+//     instantly and the wait was effectively a no-op.
+//
+// Comparing against base collapses both: only a read newer than the start of
+// this invocation counts as this invocation's output.
+//
+// Three bounds shape the wait:
+//   - firstReadMax caps how long we wait for evidence that this invocation
+//     produced anything at all. A handler that prints nothing is
+//     indistinguishable from one whose output has not arrived yet, so silence
+//     costs this much — paid only by tail-requesting invokes.
+//   - idleThreshold is how long the reader must stay quiet after a read before
+//     the output is treated as complete; a handler's lines can span reads.
+//   - deadlineMax bounds the whole thing, so a wedged log pipeline can never
+//     hold up the invoke response.
+func (ci *containerInstance) waitForScannerIdle(base int64) {
 	const (
 		idleThreshold = 5 * time.Millisecond
+		firstReadMax  = 25 * time.Millisecond
 		deadlineMax   = 100 * time.Millisecond
 		tickInterval  = 1 * time.Millisecond
 	)
+	start := ci.clk.Now()
 	deadline := ci.clk.Timer(deadlineMax)
 	defer deadline.Stop()
 	tick := ci.clk.Ticker(tickInterval)
@@ -1580,13 +1609,20 @@ func (ci *containerInstance) waitForScannerIdle() {
 		case <-deadline.C:
 			return
 		case <-tick.C:
+			// Lines parsed but not yet flushed mean output exists and is still
+			// moving, whatever the read watermark currently says.
 			if ci.logInFlight.Load() > 0 {
 				continue
 			}
 			last := ci.logReadAt.Load()
-			if last == 0 {
-				// Function emitted nothing this invocation — nothing to wait for.
-				return
+			if last <= base {
+				// Nothing has been read since this invocation started. Give
+				// Docker a bounded grace period before concluding the handler
+				// was simply silent.
+				if ci.clk.Since(start) >= firstReadMax {
+					return
+				}
+				continue
 			}
 			if ci.clk.Since(time.Unix(0, last)) >= idleThreshold {
 				return
@@ -1594,6 +1630,13 @@ func (ci *containerInstance) waitForScannerIdle() {
 		}
 	}
 }
+
+// logDrainFirstReadGrace is how long a teardown that follows a failed
+// invocation waits for a log stream that has produced nothing yet, before
+// accepting that the container really did print nothing. Bounded small: it is
+// only ever paid once per dying container, and only when there is no output at
+// all to go on.
+const logDrainFirstReadGrace = 25 * time.Millisecond
 
 // waitForLogDrain blocks until the streamLogs pipeline is fully quiescent —
 // i.e. every byte Docker has so far delivered has been parsed into a line AND
@@ -1612,14 +1655,31 @@ func (ci *containerInstance) waitForScannerIdle() {
 //
 // The 2 s safety-net only matters when something is genuinely stuck (slow
 // CWL writer, stalled Docker connection); the common case completes in
-// 10–15 ms. The function returns immediately if the stream has never
-// produced any output (logReadAt == 0 AND inFlight == 0).
-func (ci *containerInstance) waitForLogDrain(ctx context.Context) {
+// 10–15 ms.
+//
+// firstReadGrace says how long to keep waiting when the stream has never
+// produced anything at all (logReadAt == 0 AND inFlight == 0). That state is
+// ambiguous in the same way waitForScannerIdle's is — a container that logged
+// nothing all its life looks exactly like one whose first bytes are still in
+// Docker's pipe — but here the stakes and the costs differ by caller, so the
+// choice is theirs:
+//
+//   - A container that died mid-invocation, or an invocation that timed out,
+//     passes logDrainFirstReadGrace. Whatever it printed on the way out is the
+//     output most worth keeping and the likeliest to be in flight, and logCtx
+//     is cancelled moments later, which loses it from CloudWatch for good.
+//   - Close passes 0. Pool eviction closes stale instances on the acquire path
+//     (InstancePool.takeWarm), so a grace there is charged to the next cold
+//     start; and a container that produced no reads across its whole lifetime,
+//     having already drained through one of the paths above on any failed
+//     invocation, has nothing left to wait for.
+func (ci *containerInstance) waitForLogDrain(ctx context.Context, firstReadGrace time.Duration) {
 	const (
 		idleThreshold = 10 * time.Millisecond
 		deadlineMax   = 2 * time.Second
 		tickInterval  = 2 * time.Millisecond
 	)
+	start := ci.clk.Now()
 	deadline := ci.clk.Timer(deadlineMax)
 	defer deadline.Stop()
 	tick := ci.clk.Ticker(tickInterval)
@@ -1634,15 +1694,12 @@ func (ci *containerInstance) waitForLogDrain(ctx context.Context) {
 				continue
 			}
 			last := ci.logReadAt.Load()
-			// Reader has never produced anything: nothing to drain unless
-			// the function is still in cold start. We can't distinguish
-			// these cases without an exit signal, so return — callers in
-			// the invoke success path call drain after the runtime API
-			// has already returned a result, so any output the function
-			// produced before responding will have triggered at least one
-			// read by then.
+			// Reader has never produced anything — see firstReadGrace above.
 			if last == 0 {
-				return
+				if ci.clk.Since(start) >= firstReadGrace {
+					return
+				}
+				continue
 			}
 			// Reader has been idle long enough that no further bytes are
 			// expected from Docker, AND inFlight is 0 — fully drained.
@@ -1756,7 +1813,7 @@ func (ci *containerInstance) Healthy() bool { return ci.healthy }
 func (ci *containerInstance) Close() error {
 	ci.logger.Debug("stopping lambda container", zap.String("container", ci.id[:12]))
 	if ci.logWriter != nil {
-		ci.waitForLogDrain(context.Background())
+		ci.waitForLogDrain(context.Background(), 0)
 	}
 	if ci.containerIP != "" {
 		if queued := ci.runtimeAPI.EnqueueExtensionShutdown(ci.containerIP, "SPINDOWN", ci.clk.Now().Add(2*time.Second)); queued > 0 {

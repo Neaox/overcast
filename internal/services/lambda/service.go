@@ -44,9 +44,9 @@ import (
 //
 // Sequence:
 //
-//	inst, err := runtime.Acquire(ctx, fn)  // get or start a warm container
-//	result, err := inst.Invoke(ctx, event) // run the handler
-//	runtime.Release(ctx, inst, err == nil) // return or discard the instance
+//	inst, err := runtime.Acquire(ctx, fn)        // get or start a warm container
+//	result, err := inst.Invoke(ctx, event, opts) // run the handler
+//	runtime.Release(ctx, inst, err == nil)       // return or discard the instance
 type Runtime interface {
 	// CanHandle returns true if this runtime can execute functions with the
 	// given runtime identifier (e.g. "nodejs20.x", "nodejs22.x").
@@ -66,7 +66,7 @@ type Runtime interface {
 type RuntimeInstance interface {
 	// Invoke sends the event payload to the function handler and returns the
 	// result. The instance is exclusive to the caller for the duration.
-	Invoke(ctx context.Context, event []byte) (*InvokeResult, error)
+	Invoke(ctx context.Context, event []byte, opts InvokeOptions) (*InvokeResult, error)
 
 	// LogStreamName returns the CloudWatch Logs stream name for this container
 	// instance. The name is assigned when the instance starts and remains fixed
@@ -99,6 +99,23 @@ type RuntimeInstance interface {
 
 	// Close shuts down and removes the underlying container or process.
 	Close() error
+}
+
+// InvokeOptions carries per-invocation switches that change what the execution
+// environment does around the handler call, as opposed to configuration that
+// belongs to the function itself.
+type InvokeOptions struct {
+	// LogTail asks for InvokeResult.LogResult to be populated. It costs invoke
+	// latency: the container's stdout reaches the tail buffer through Docker's
+	// log stream, which lands after the handler's response comes back over the
+	// Runtime API, so producing a complete tail means waiting for it (see
+	// containerInstance.waitForScannerIdle).
+	//
+	// Only two callers want it — InvokeFunction with X-Amz-Log-Type: Tail, and
+	// the console's SSE invoke, which always renders the tail. Asynchronous
+	// invokes, event-source mappings, function URLs and service-to-service
+	// calls all discard LogResult, so they leave this false and pay nothing.
+	LogTail bool
 }
 
 // InvokeResult holds the outcome of a Lambda invocation.

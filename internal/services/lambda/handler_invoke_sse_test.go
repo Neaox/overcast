@@ -61,7 +61,7 @@ type blockingInstance struct {
 	release  chan struct{}
 }
 
-func (b *blockingInstance) Invoke(ctx context.Context, _ []byte) (*InvokeResult, error) {
+func (b *blockingInstance) Invoke(ctx context.Context, _ []byte, _ InvokeOptions) (*InvokeResult, error) {
 	close(b.invoking)
 	select {
 	case <-b.release:

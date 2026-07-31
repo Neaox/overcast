@@ -42,13 +42,15 @@ func newPoolTestInstance(functionName string) *poolTestInstance {
 	}
 }
 
-func (i *poolTestInstance) Invoke(context.Context, []byte) (*InvokeResult, error) { return nil, nil }
-func (i *poolTestInstance) LogStreamName() string                                 { return "stream" }
-func (i *poolTestInstance) Healthy() bool                                         { return i.healthy }
-func (i *poolTestInstance) FunctionName() string                                  { return i.functionName }
-func (i *poolTestInstance) ConfigIdentity() string                                { return i.configIdentity }
-func (i *poolTestInstance) ContainerID() string                                   { return i.containerID }
-func (i *poolTestInstance) InstanceID() string                                    { return i.instanceID }
+func (i *poolTestInstance) Invoke(context.Context, []byte, InvokeOptions) (*InvokeResult, error) {
+	return nil, nil
+}
+func (i *poolTestInstance) LogStreamName() string  { return "stream" }
+func (i *poolTestInstance) Healthy() bool          { return i.healthy }
+func (i *poolTestInstance) FunctionName() string   { return i.functionName }
+func (i *poolTestInstance) ConfigIdentity() string { return i.configIdentity }
+func (i *poolTestInstance) ContainerID() string    { return i.containerID }
+func (i *poolTestInstance) InstanceID() string     { return i.instanceID }
 
 func (i *poolTestInstance) Close() error {
 	i.mu.Lock()
