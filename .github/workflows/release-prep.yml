@@ -92,23 +92,39 @@ jobs:
           fi
 
       # The one thing a machine cannot redo is the prose curation, so an open
-      # release PR is reported against rather than overwritten. This is also
-      # the staleness notification: the fragments still sitting in .changelog/
-      # are exactly the ones missing from its release section.
+      # release PR is reported against rather than overwritten.
+      #
+      # The question is not "what is in .changelog/ on main" — that still holds
+      # every fragment, including the ones this PR already consumed on its own
+      # branch, because the deletions do not reach main until it merges. It is
+      # "what would still be unconsumed if this PR merged right now", which is
+      # the same recompute the release workflow's changelog gate performs.
       - name: Report fragments that arrived since the PR was prepared
         if: steps.existing.outputs.number != '' && inputs.regenerate == false
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_NUMBER: ${{ steps.existing.outputs.number }}
           VERSION: ${{ steps.plan.outputs.version }}
+          BRANCH: ${{ steps.plan.outputs.branch }}
         run: |
           set -euo pipefail
-          mapfile -t pending < <(find .changelog -maxdepth 1 -name '*.md' ! -name README.md -printf '%f\n' | sort)
+          git fetch --no-tags origin "$BRANCH" main
+          conflicted=false
+          pending=()
+          if tree="$(git merge-tree --write-tree "origin/$BRANCH" origin/main)"; then
+            mapfile -t pending < <(git ls-tree --name-only "$tree" .changelog/ \
+              | sed 's|^\.changelog/||' | grep -v '^README\.md$' | sort || true)
+          else
+            conflicted=true
+          fi
           {
             echo "### Release prep re-run for \`$VERSION\`"
             echo
-            if [ "${#pending[@]}" -eq 0 ]; then
-              echo "No fragments are waiting on \`main\` — this PR is current."
+            if [ "$conflicted" = true ]; then
+              echo "This PR **conflicts with \`main\`** and cannot be assessed."
+              echo "Update the branch, then re-run."
+            elif [ "${#pending[@]}" -eq 0 ]; then
+              echo "No fragments are waiting — this PR is current with \`main\`."
             else
               echo "**${#pending[@]} fragment(s) have landed on \`main\` and are not in this PR's release section:**"
               echo
@@ -155,8 +171,8 @@ jobs:
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
         run: |
           set -euo pipefail
-          git config user.name "$APP_SLUG[bot]"
-          git config user.email "$APP_SLUG[bot]@users.noreply.github.com"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${APP_SLUG}[bot]@users.noreply.github.com"
           git switch -C "$BRANCH"
           git add -A
           git commit -m "chore(release): prepare $VERSION"
