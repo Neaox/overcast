@@ -82,6 +82,12 @@ breaking: a newly *required* field or config key (an addition), stricter
 validation, a changed default, and state or config formats old data cannot
 survive.
 
+**While in alpha the marker does not move the version** — the version is an
+incrementing prerelease counter either way. Mark it so users are *told* what
+broke and handed a migration, not to trigger version arithmetic. Marking
+honestly now is also what lets the versioning rules be applied mechanically
+from 1.0 onwards.
+
 ## Cross-cutting changes
 
 A change spanning several services stays **one** entry naming them all, primary
