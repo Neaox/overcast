@@ -32,6 +32,9 @@ type Handler struct {
 	asyncWg       sync.WaitGroup // tracks in-flight async invocations
 	vpcResolverMu sync.RWMutex
 	vpcResolver   VPCNetworkResolver
+
+	efsResolverMu sync.RWMutex
+	efsResolver   EFSVolumeResolver
 	// prewarmer, when set, starts a background Docker image pull for fn so
 	// the first Invoke does not pay the cold-pull cost on the request path.
 	// Wired by Service.initDockerRuntime once ContainerRuntime is up; nil
@@ -66,6 +69,27 @@ func (h *Handler) getVPCResolver() VPCNetworkResolver {
 	r := h.vpcResolver
 	h.vpcResolverMu.RUnlock()
 	return r
+}
+
+func (h *Handler) setEFSResolver(r EFSVolumeResolver) {
+	h.efsResolverMu.Lock()
+	h.efsResolver = r
+	h.efsResolverMu.Unlock()
+}
+
+func (h *Handler) getEFSResolver() EFSVolumeResolver {
+	h.efsResolverMu.RLock()
+	r := h.efsResolver
+	h.efsResolverMu.RUnlock()
+	return r
+}
+
+// EFSVolumeResolver maps an EFS access-point ARN to the Docker volume backing
+// its file system. Implemented by the EFS service; ok is false in mock mode,
+// while Docker is unavailable, or for an unknown access point — callers then
+// skip the mount and the function runs without shared storage.
+type EFSVolumeResolver interface {
+	EFSVolumeForAccessPoint(ctx context.Context, accessPointARN string) (volume string, ok bool)
 }
 
 // VPCNetworkResolver resolves VPC configuration for Lambda functions.

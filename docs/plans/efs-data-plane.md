@@ -52,14 +52,19 @@ today's behaviour) vs `OVERCAST_EFS_MODE=live`.
   never breaks pure-control-plane CI.
 - `EFS_DOCKER_SOCKET` (default: Lambda socket) selects the daemon.
 
-### 2. Compute integration (the high-value step)
+### 2. Compute integration (the high-value step) — Lambda ✅ implemented
 
-- **Lambda**: functions created with `FileSystemConfigs` (already accepted by
-  the Lambda control plane as metadata) get the file system's named volume
-  mounted at `LocalMountPath` when their runtime container starts. Root
-  directory + POSIX identity come from the referenced access point ARN.
-- **ECS**: task definitions with an `efsVolumeConfiguration` mount the same
-  named volume into task containers.
+- **Lambda** (implemented): `FileSystemConfigs [{Arn, LocalMountPath}]` is
+  modeled on CreateFunction / UpdateFunctionConfiguration /
+  GetFunctionConfiguration with AWS's validation rules (one config max,
+  access-point ARN, `/mnt/<name>` path) — this closed a control-plane gap
+  that existed in every mode. The container runtime resolves each config
+  through the `EFSVolumeResolver` interface (implemented by the EFS service,
+  wired in the router) and binds `overcast-efs-<fsID>:<LocalMountPath>`;
+  unresolvable configs (mock mode, Docker down, unknown access point) are
+  skipped with a warning so the function still runs.
+- **ECS** (step 3, next): task definitions with an `efsVolumeConfiguration`
+  mount the same named volume into task containers.
 - Because both sides mount the *same* named volume, cross-service data
   sharing works without any NFS hop. This is the piece that unlocks real
   application testing (shared caches, model files, upload scratch space).

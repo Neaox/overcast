@@ -2,6 +2,7 @@ package efs
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -71,6 +72,30 @@ func (s *Service) removeVolume(ctx context.Context, fsID string) {
 		s.log.Warn("efs: remove volume failed — volume may be orphaned until reconciliation",
 			zap.String("file_system", fsID), zap.Error(err))
 	}
+}
+
+// EFSVolumeForAccessPoint implements the volume-resolver interface consumed
+// by Lambda (and later ECS): it maps an access-point ARN to the Docker volume
+// backing its file system. ok is false outside live mode, while Docker is
+// unavailable, or for an unknown access point — the caller then runs the
+// workload without the mount rather than failing it.
+func (s *Service) EFSVolumeForAccessPoint(ctx context.Context, accessPointARN string) (string, bool) {
+	if !s.volumesActive() {
+		return "", false
+	}
+	region := serviceutil.ARNRegion(accessPointARN)
+	if region == "" {
+		region = s.cfg.Region
+	}
+	id := resourceIDFromARN(accessPointARN)
+	if !strings.HasPrefix(id, "fsap-") {
+		return "", false
+	}
+	ap, found, err := s.getAccessPoint(ctx, region, id)
+	if err != nil || !found {
+		return "", false
+	}
+	return volumeName(ap.FileSystemId), true
 }
 
 // reconcileVolumes aligns Docker volumes with persisted file systems across

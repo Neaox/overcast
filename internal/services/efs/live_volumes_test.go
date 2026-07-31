@@ -150,6 +150,41 @@ func TestLiveMode_dockerUnavailableStaysControlPlaneOnly(t *testing.T) {
 	}
 }
 
+func TestEFSVolumeForAccessPoint(t *testing.T) {
+	fd := newFakeVolumeDaemon(t)
+	svc := newLiveTestService(t, fd, config.EFSModeLive)
+	ctx := context.Background()
+
+	fs, aerr := svc.createFileSystemTyped(ctx, &createFileSystemRequest{CreationToken: "resolver"})
+	if aerr != nil {
+		t.Fatalf("CreateFileSystem: %v", aerr)
+	}
+	ap, aerr := svc.createAccessPointTyped(ctx, &createAccessPointRequest{ClientToken: "r-1", FileSystemId: fs.FileSystemId})
+	if aerr != nil {
+		t.Fatalf("CreateAccessPoint: %v", aerr)
+	}
+
+	// Live mode resolves the access-point ARN to the backing volume.
+	volume, ok := svc.EFSVolumeForAccessPoint(ctx, ap.AccessPointArn)
+	if !ok || volume != volumeName(fs.FileSystemId) {
+		t.Fatalf("expected volume %q, got %q ok=%v", volumeName(fs.FileSystemId), volume, ok)
+	}
+
+	// Unknown access points and non-AP ARNs do not resolve.
+	if _, ok := svc.EFSVolumeForAccessPoint(ctx, "arn:aws:elasticfilesystem:us-east-1:000000000000:access-point/fsap-00000000000000000"); ok {
+		t.Fatal("unknown access point must not resolve")
+	}
+	if _, ok := svc.EFSVolumeForAccessPoint(ctx, fs.FileSystemArn); ok {
+		t.Fatal("file-system ARN must not resolve")
+	}
+
+	// Mock mode never resolves.
+	mockSvc := newLiveTestService(t, fd, config.EFSModeMock)
+	if _, ok := mockSvc.EFSVolumeForAccessPoint(ctx, ap.AccessPointArn); ok {
+		t.Fatal("mock mode must not resolve volumes")
+	}
+}
+
 func TestReconcileVolumes_healsAndSweeps(t *testing.T) {
 	fd := newFakeVolumeDaemon(t)
 	svc := newLiveTestService(t, fd, config.EFSModeLive)
