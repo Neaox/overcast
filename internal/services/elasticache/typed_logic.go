@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 
 	"go.uber.org/zap"
@@ -494,7 +495,7 @@ func (h *Handler) createCacheClusterTyped(ctx context.Context, req *ecCreateCach
 		h.dockerWg.Add(1)
 		go func() {
 			defer h.dockerWg.Done()
-			bgCtx := context.Background()
+			bgCtx := middleware.ContextWithRegion(context.Background(), region)
 			got, aerr := h.store.getCacheCluster(bgCtx, clusterID)
 			if aerr != nil || got == nil {
 				return
@@ -502,7 +503,7 @@ func (h *Handler) createCacheClusterTyped(ctx context.Context, req *ecCreateCach
 			if err := h.startCacheContainer(bgCtx, got); err != nil {
 				h.log.Warn("failed to start Docker container for ElastiCache cluster — falling back to metadata-only",
 					zap.String("cluster", clusterID), zap.Error(err))
-				h.clusterFallbackAvailable(clusterID)
+				h.clusterFallbackAvailable(region, clusterID)
 				return
 			}
 			if aerr := h.store.putCacheCluster(bgCtx, got); aerr != nil {
@@ -510,11 +511,10 @@ func (h *Handler) createCacheClusterTyped(ctx context.Context, req *ecCreateCach
 					zap.String("cluster", clusterID), zap.String("error", aerr.Message))
 				return
 			}
-			h.scheduleHealthCheck(clusterID, got.ConfigurationEndpoint.Address, got.ConfigurationEndpoint.Port)
+			h.scheduleHealthCheck(region, clusterID, got.ConfigurationEndpoint.Address, got.ConfigurationEndpoint.Port)
 		}()
 	} else {
-		h.scheduler.After(clusterID+":available", 0, func() {
-			bgCtx := context.Background()
+		h.scheduler.AfterScoped(h.store.region(ctx), clusterID, "available", 0, func(bgCtx context.Context) {
 			got, aerr := h.store.getCacheCluster(bgCtx, clusterID)
 			if aerr != nil {
 				return
@@ -567,7 +567,7 @@ func (h *Handler) deleteCacheClusterTyped(ctx context.Context, req *ecDeleteCach
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.ElastiCacheClusterDeleted, Time: h.clk.Now(), Source: "elasticache", Payload: events.ResourcePayload{Name: req.CacheClusterId, ARN: cluster.ARN}})
 	}
-	h.scheduler.Cancel(req.CacheClusterId + ":health")
+	h.scheduler.CancelScoped(h.store.region(ctx), req.CacheClusterId, "health")
 
 	if h.gc != nil && containerID != "" {
 		h.gc.StopNow(containerID)
@@ -577,8 +577,7 @@ func (h *Handler) deleteCacheClusterTyped(ctx context.Context, req *ecDeleteCach
 		_ = h.store.releasePort(ctx, hostPort) //nolint:errcheck
 	}
 
-	h.scheduler.After(req.CacheClusterId+":delete", 50*time.Millisecond, func() {
-		bgCtx := context.Background()
+	h.scheduler.AfterScoped(h.store.region(ctx), req.CacheClusterId, "delete", 50*time.Millisecond, func(bgCtx context.Context) {
 		if aerr := h.store.deleteCacheCluster(bgCtx, req.CacheClusterId); aerr != nil {
 			h.log.Warn("failed to delete cache cluster record", zap.String("cluster", req.CacheClusterId), zap.Error(aerr))
 		}
@@ -648,7 +647,7 @@ func (h *Handler) createReplicationGroupTyped(ctx context.Context, req *ecCreate
 		h.dockerWg.Add(1)
 		go func() {
 			defer h.dockerWg.Done()
-			bgCtx := context.Background()
+			bgCtx := middleware.ContextWithRegion(context.Background(), region)
 			got, aerr := h.store.getReplicationGroup(bgCtx, rgID)
 			if aerr != nil || got == nil {
 				return
@@ -656,7 +655,7 @@ func (h *Handler) createReplicationGroupTyped(ctx context.Context, req *ecCreate
 			if err := h.startReplicationGroupContainer(bgCtx, got); err != nil {
 				h.log.Warn("failed to start Docker container for replication group — falling back to metadata-only",
 					zap.String("rg", rgID), zap.Error(err))
-				h.rgFallbackAvailable(rgID)
+				h.rgFallbackAvailable(region, rgID)
 				return
 			}
 			if aerr := h.store.putReplicationGroup(bgCtx, got); aerr != nil {
@@ -664,11 +663,10 @@ func (h *Handler) createReplicationGroupTyped(ctx context.Context, req *ecCreate
 					zap.String("rg", rgID), zap.String("error", aerr.Message))
 				return
 			}
-			h.scheduleReplicationGroupHealthCheck(rgID, got.ConfigurationEndpoint.Address, got.ConfigurationEndpoint.Port)
+			h.scheduleReplicationGroupHealthCheck(region, rgID, got.ConfigurationEndpoint.Address, got.ConfigurationEndpoint.Port)
 		}()
 	} else {
-		h.scheduler.After(rgID+":rg-available", 0, func() {
-			bgCtx := context.Background()
+		h.scheduler.AfterScoped(h.store.region(ctx), rgID, "rg-available", 0, func(bgCtx context.Context) {
 			got, aerr := h.store.getReplicationGroup(bgCtx, rgID)
 			if aerr != nil {
 				return
@@ -721,7 +719,7 @@ func (h *Handler) deleteReplicationGroupTyped(ctx context.Context, req *ecDelete
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.ElastiCacheReplicationGroupDeleted, Time: h.clk.Now(), Source: "elasticache", Payload: events.ResourcePayload{Name: req.ReplicationGroupId, ARN: rg.ARN}})
 	}
-	h.scheduler.Cancel(req.ReplicationGroupId + ":rg-health")
+	h.scheduler.CancelScoped(h.store.region(ctx), req.ReplicationGroupId, "rg-health")
 
 	if h.gc != nil && containerID != "" {
 		h.gc.StopNow(containerID)
@@ -731,8 +729,7 @@ func (h *Handler) deleteReplicationGroupTyped(ctx context.Context, req *ecDelete
 		_ = h.store.releasePort(ctx, hostPort) //nolint:errcheck
 	}
 
-	h.scheduler.After(req.ReplicationGroupId+":rg-delete", 50*time.Millisecond, func() {
-		bgCtx := context.Background()
+	h.scheduler.AfterScoped(h.store.region(ctx), req.ReplicationGroupId, "rg-delete", 50*time.Millisecond, func(bgCtx context.Context) {
 		if aerr := h.store.deleteReplicationGroup(bgCtx, req.ReplicationGroupId); aerr != nil {
 			h.log.Warn("failed to delete replication group record", zap.String("rg", req.ReplicationGroupId), zap.Error(aerr))
 		}
@@ -925,8 +922,7 @@ func (h *Handler) modifyCacheClusterTyped(ctx context.Context, req *ecModifyCach
 		h.bus.Publish(ctx, events.Event{Type: events.ElastiCacheClusterModified, Time: h.clk.Now(), Source: "elasticache", Payload: events.ResourcePayload{Name: req.CacheClusterId, ARN: cluster.ARN}})
 	}
 	id := req.CacheClusterId
-	h.scheduler.After(id+":available", 0, func() {
-		bgCtx := context.Background()
+	h.scheduler.AfterScoped(h.store.region(ctx), id, "available", 0, func(bgCtx context.Context) {
 		got, aerr := h.store.getCacheCluster(bgCtx, id)
 		if aerr != nil {
 			return
@@ -975,8 +971,7 @@ func (h *Handler) modifyReplicationGroupTyped(ctx context.Context, req *ecModify
 		return nil, aerr
 	}
 	id := req.ReplicationGroupId
-	h.scheduler.After(id+":rg-available", 0, func() {
-		bgCtx := context.Background()
+	h.scheduler.AfterScoped(h.store.region(ctx), id, "rg-available", 0, func(bgCtx context.Context) {
 		got, aerr := h.store.getReplicationGroup(bgCtx, id)
 		if aerr != nil {
 			return

@@ -8,6 +8,7 @@ import (
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // ── Docker container event handlers ──────────────────────────────────────────
@@ -30,8 +31,8 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 		return
 	}
 
-	inst, region, aerr := h.store.findDBInstance(context.Background(), p.ResourceID)
-	if aerr != nil || inst == nil {
+	inst, region, found, err := serviceutil.FindRegioned[DBInstance](context.Background(), h.store.store, nsDBInstances, p.ResourceID, h.store.defaultRegion)
+	if err != nil || !found {
 		return
 	}
 	ctx := middleware.ContextWithRegion(context.Background(), region)
@@ -56,8 +57,8 @@ func (h *Handler) handleContainerStarted(_ context.Context, e events.Event) {
 		return
 	}
 
-	inst, region, aerr := h.store.findDBInstance(context.Background(), p.ResourceID)
-	if aerr != nil || inst == nil {
+	inst, region, found, err := serviceutil.FindRegioned[DBInstance](context.Background(), h.store.store, nsDBInstances, p.ResourceID, h.store.defaultRegion)
+	if err != nil || !found {
 		return
 	}
 
@@ -80,18 +81,18 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 		}
 	}
 
-	regioned, aerr := h.store.listDBInstancesAllRegions(ctx)
-	if aerr != nil {
-		h.log.Warn("reconcile: failed to list instances", zap.Error(aerr))
+	regioned, err := serviceutil.ScanRegions[DBInstance](ctx, h.store.store, nsDBInstances, h.store.defaultRegion)
+	if err != nil {
+		h.log.Warn("reconcile: failed to list instances", zap.Error(err))
 		return
 	}
 
 	for _, ri := range regioned {
-		inst := ri.inst
+		inst := ri.Value
 		if inst.DockerContainerID == "" {
 			continue // metadata-only instance — no container expected
 		}
-		rctx := middleware.ContextWithRegion(ctx, ri.region)
+		rctx := middleware.ContextWithRegion(ctx, ri.Region)
 
 		c := byResource[inst.DBInstanceIdentifier]
 		switch {
@@ -113,7 +114,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 			h.store.putDBInstance(rctx, inst) //nolint:errcheck
 
 			if inst.DBInstanceStatus == "creating" || inst.DBInstanceStatus == "starting" || inst.DBInstanceStatus == "stopped" || inst.DBInstanceStatus == "available" {
-				h.scheduleHealthCheck(ri.region, inst.DBInstanceIdentifier, inst.Endpoint.Address, inst.Endpoint.Port)
+				h.scheduleHealthCheck(ri.Region, inst.DBInstanceIdentifier, inst.Endpoint.Address, inst.Endpoint.Port)
 				h.log.Info("reconcile: container running — scheduling health check",
 					zap.String("instance", inst.DBInstanceIdentifier),
 					zap.String("endpoint", inst.Endpoint.Address),

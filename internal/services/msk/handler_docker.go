@@ -13,6 +13,8 @@ import (
 
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 const redpandaImage = "docker.redpanda.com/redpandadata/redpanda"
@@ -188,14 +190,14 @@ func (h *Handler) cleanupClusterContainer(ctx context.Context, clusterARN string
 // "ACTIVE" once Redpanda responds. Falls back to "ACTIVE" after maxRetries.
 func (h *Handler) scheduleHealthCheck(clusterARN, addr string, port int) {
 	const maxRetries = 60
+	region := serviceutil.ARNRegion(clusterARN)
 	var attempt int
-	var check func()
-	check = func() {
+	var check func(ctx context.Context)
+	check = func(ctx context.Context) {
 		attempt++
 		conn, err := net.DialTimeout("tcp", net.JoinHostPort(addr, strconv.Itoa(port)), 2*time.Second)
 		if err == nil {
 			conn.Close()
-			ctx := context.Background()
 			got, aerr := h.store.getCluster(ctx, clusterARN)
 			if aerr != nil {
 				return
@@ -207,10 +209,9 @@ func (h *Handler) scheduleHealthCheck(clusterARN, addr string, port int) {
 			return
 		}
 		if attempt < maxRetries {
-			h.scheduler.After(clusterARN+":health", 2*time.Second, check)
+			h.scheduler.AfterScoped(region, clusterARN, "health", 2*time.Second, check)
 		} else {
 			h.log.Warn("MSK health check timed out", zap.String("cluster", clusterARN), zap.Int("attempts", attempt))
-			ctx := context.Background()
 			got, aerr := h.store.getCluster(ctx, clusterARN)
 			if aerr != nil {
 				return
@@ -221,7 +222,7 @@ func (h *Handler) scheduleHealthCheck(clusterARN, addr string, port int) {
 			}
 		}
 	}
-	h.scheduler.After(clusterARN+":health", 1*time.Second, check)
+	h.scheduler.AfterScoped(region, clusterARN, "health", 1*time.Second, check)
 }
 
 // ── Docker container event handlers ──────────────────────────────────────────
@@ -232,7 +233,7 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 	if !ok || p.Service != serviceName {
 		return
 	}
-	ctx := context.Background()
+	ctx := clusterRegionCtx(p.ResourceID)
 	cluster, aerr := h.store.getCluster(ctx, p.ResourceID)
 	if aerr != nil || cluster == nil {
 		return
@@ -252,7 +253,7 @@ func (h *Handler) handleContainerStarted(_ context.Context, e events.Event) {
 	if !ok || p.Service != serviceName {
 		return
 	}
-	ctx := context.Background()
+	ctx := clusterRegionCtx(p.ResourceID)
 	cluster, aerr := h.store.getCluster(ctx, p.ResourceID)
 	if aerr != nil || cluster == nil {
 		return
@@ -276,27 +277,29 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 		}
 	}
 
-	clusters, aerr := h.store.listClusters(ctx)
-	if aerr != nil {
-		h.log.Warn("reconcile: failed to list MSK clusters", zap.Error(aerr))
+	regioned, err := serviceutil.ScanRegions[Cluster](ctx, h.store.store, nsClusters, h.store.defaultRegion)
+	if err != nil {
+		h.log.Warn("reconcile: failed to list MSK clusters", zap.Error(err))
 		return
 	}
-	for _, cluster := range clusters {
+	for _, rc := range regioned {
+		cluster := rc.Value
 		if cluster.DockerContainerID == "" {
 			continue
 		}
+		rctx := middleware.ContextWithRegion(ctx, rc.Region)
 		c := byResource[cluster.ClusterArn]
 		network := h.cfg.MSKNetwork
 		switch {
 		case c == nil:
 			if cluster.State == "ACTIVE" || cluster.State == "STARTING" || cluster.State == "CREATING" {
 				cluster.State = "FAILED"
-				h.store.putCluster(ctx, cluster) //nolint:errcheck
+				h.store.putCluster(rctx, cluster) //nolint:errcheck
 				h.log.Info("reconcile: MSK container missing — marked FAILED",
 					zap.String("cluster", cluster.ClusterArn))
 			}
 		case c.State == "running":
-			addr, port := h.clusterEndpointAddr(ctx, cluster.DockerContainerID, cluster.HostPort, network)
+			addr, port := h.clusterEndpointAddr(rctx, cluster.DockerContainerID, cluster.HostPort, network)
 			if cluster.State == "CREATING" || cluster.State == "STARTING" || cluster.State == "FAILED" || cluster.State == "ACTIVE" {
 				h.scheduleHealthCheck(cluster.ClusterArn, addr, port)
 				h.log.Info("reconcile: MSK container running — scheduling health check",
@@ -305,7 +308,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 		default:
 			if cluster.State == "ACTIVE" || cluster.State == "STARTING" {
 				cluster.State = "FAILED"
-				h.store.putCluster(ctx, cluster) //nolint:errcheck
+				h.store.putCluster(rctx, cluster) //nolint:errcheck
 				h.log.Info("reconcile: MSK container not running — marked FAILED",
 					zap.String("cluster", cluster.ClusterArn),
 					zap.String("containerState", c.State))

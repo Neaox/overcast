@@ -156,10 +156,10 @@ func (h *Handler) RunTask(w http.ResponseWriter, r *http.Request) {
 				h.log.Warn("ecs: failed to start Docker containers, falling back to metadata-only",
 					zap.String("task", taskID), zap.Error(err))
 				// Fall through to metadata-only behaviour.
-				h.scheduleMetadataTransition(clusterName, taskID)
+				h.scheduleMetadataTransition(h.store.region(r.Context()), clusterName, taskID)
 			}
 		} else {
-			h.scheduleMetadataTransition(clusterName, taskID)
+			h.scheduleMetadataTransition(h.store.region(r.Context()), clusterName, taskID)
 		}
 
 		if aerr := h.store.putTask(r.Context(), &task); aerr != nil {
@@ -301,8 +301,7 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 	// Schedule PROVISIONING → RUNNING transition with a short delay.
 	capturedCluster := clusterName
 	capturedTaskID := taskID
-	h.scheduler.After(taskID+":pending", 200*time.Millisecond, func() {
-		bgCtx := context.Background()
+	h.scheduler.AfterScoped(h.store.region(ctx), taskID, "pending", 200*time.Millisecond, func(bgCtx context.Context) {
 		got, aerr := h.store.getTask(bgCtx, capturedCluster, capturedTaskID)
 		if aerr != nil || got == nil {
 			return
@@ -374,12 +373,12 @@ func buildContainerEnv(cd ContainerDefinition, co *ContainerOverride, endpoint *
 }
 
 // scheduleMetadataTransition sets up the PROVISIONING → RUNNING transition for
-// metadata-only tasks (no Docker).
-func (h *Handler) scheduleMetadataTransition(clusterName, taskID string) {
+// metadata-only tasks (no Docker). region is the region the task is stored
+// under, resolved from the request context at schedule time.
+func (h *Handler) scheduleMetadataTransition(region, clusterName, taskID string) {
 	capturedCluster := clusterName
 	capturedTaskID := taskID
-	h.scheduler.After(taskID+":pending", 200*time.Millisecond, func() {
-		ctx := context.Background()
+	h.scheduler.AfterScoped(region, taskID, "pending", 200*time.Millisecond, func(ctx context.Context) {
 		got, aerr := h.store.getTask(ctx, capturedCluster, capturedTaskID)
 		if aerr != nil || got == nil {
 			return
@@ -431,7 +430,7 @@ func (h *Handler) StopTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Cancel any pending scheduler transition.
-	h.scheduler.Cancel(taskID + ":pending")
+	h.scheduler.CancelScoped(h.store.region(r.Context()), taskID, "pending")
 
 	// Stop Docker containers if Docker is available.
 	if h.dockerReady.Load() {

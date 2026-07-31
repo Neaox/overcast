@@ -7,6 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/Neaox/overcast/internal/middleware"
 )
 
 func (s *Service) startEngine() {
@@ -58,8 +60,12 @@ func (s *Service) tickSchedules() {
 			continue
 		}
 		eventID := uuid.NewString()
-		event := scheduledEvent(rule, eventID, now, s.cfg.AccountID, regionFromRuleKey(kv.Key, s.cfg.Region))
-		s.deliverTargets(ctx, rule, event)
+		region := regionFromRuleKey(kv.Key, s.cfg.Region)
+		event := scheduledEvent(rule, eventID, now, s.cfg.AccountID, region)
+		// deliverTargets resolves the rule's targets (and downstream queues)
+		// from region-keyed stores — pin the rule's own region on the context,
+		// or a rule outside the default region fires with no targets.
+		s.deliverTargets(middleware.ContextWithRegion(ctx, region), rule, event)
 		s.setLastFire(ctx, kv.Key, now)
 		s.setNextFire(ctx, kv.Key, rule.ScheduleExpr, now, now)
 	}

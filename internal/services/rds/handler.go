@@ -524,8 +524,7 @@ func (h *Handler) CreateDBInstance(w http.ResponseWriter, r *http.Request) {
 	// 0-delay callbacks synchronously; with a mock clock the transition stays
 	// pending until clock.Add is called.
 	instID := id
-	h.scheduler.After(schedKey(region, instID, "available"), 0, func() {
-		ctx := middleware.ContextWithRegion(context.Background(), region)
+	h.scheduler.AfterScoped(region, instID, "available", 0, func(ctx context.Context) {
 		got, aerr := h.store.getDBInstance(ctx, instID)
 		if aerr != nil {
 			return
@@ -638,7 +637,7 @@ func (h *Handler) DeleteDBInstance(w http.ResponseWriter, r *http.Request) {
 
 	// Cancel any in-flight health check so it doesn't race with cleanup.
 	region := h.store.region(r.Context())
-	h.scheduler.Cancel(schedKey(region, id, "health"))
+	h.scheduler.CancelScoped(region, id, "health")
 
 	// Stop the container immediately (async, non-blocking).
 	if h.gc != nil && containerID != "" {
@@ -652,8 +651,7 @@ func (h *Handler) DeleteDBInstance(w http.ResponseWriter, r *http.Request) {
 
 	// Schedule async store record deletion. The GC handles the Docker
 	// container cleanup independently — this just removes the DB record.
-	h.scheduler.After(schedKey(region, id, "delete"), 50*time.Millisecond, func() {
-		ctx := middleware.ContextWithRegion(context.Background(), region)
+	h.scheduler.AfterScoped(region, id, "delete", 50*time.Millisecond, func(ctx context.Context) {
 		if aerr := h.store.deleteDBInstance(ctx, id); aerr != nil {
 			h.log.Warn("failed to delete RDS instance record", zap.String("instance", id), zap.Error(aerr))
 		}
@@ -706,14 +704,6 @@ func (h *Handler) DescribeDBEngineVersions(w http.ResponseWriter, r *http.Reques
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-// schedKey builds a region-scoped scheduler key for a resource transition.
-// The store keys instances per region, so two regions can hold resources with
-// the same identifier — an unscoped key would let one region's transition
-// cancel or replace the other's.
-func schedKey(region, id, transition string) string {
-	return region + "/" + id + ":" + transition
-}
 
 // toXMLDBInstance converts a stored DBInstance to the XML response type.
 // MasterUserPassword is intentionally omitted (AWS never returns it).
@@ -1069,14 +1059,13 @@ func (h *Handler) network() string {
 func (h *Handler) scheduleHealthCheck(region, instanceID, host string, port int) {
 	const maxRetries = 30
 	var attempt int
-	var check func()
-	check = func() {
+	var check func(ctx context.Context)
+	check = func(ctx context.Context) {
 		attempt++
 		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 2*time.Second)
 		if err == nil {
 			conn.Close()
 			// DB is ready — transition to available.
-			ctx := middleware.ContextWithRegion(context.Background(), region)
 			got, aerr := h.store.getDBInstance(ctx, instanceID)
 			if aerr != nil {
 				return
@@ -1088,11 +1077,10 @@ func (h *Handler) scheduleHealthCheck(region, instanceID, host string, port int)
 			return
 		}
 		if attempt < maxRetries {
-			h.scheduler.After(schedKey(region, instanceID, "health"), 2*time.Second, check)
+			h.scheduler.AfterScoped(region, instanceID, "health", 2*time.Second, check)
 		} else {
 			h.log.Warn("RDS health check timed out", zap.String("instance", instanceID), zap.Int("attempts", attempt))
 			// Transition to available anyway so the API is usable.
-			ctx := middleware.ContextWithRegion(context.Background(), region)
 			got, aerr := h.store.getDBInstance(ctx, instanceID)
 			if aerr != nil {
 				return
@@ -1103,7 +1091,7 @@ func (h *Handler) scheduleHealthCheck(region, instanceID, host string, port int)
 			}
 		}
 	}
-	h.scheduler.After(schedKey(region, instanceID, "health"), 1*time.Second, check)
+	h.scheduler.AfterScoped(region, instanceID, "health", 1*time.Second, check)
 }
 
 // launchDBContainerAsync starts the instance's DB container in the background

@@ -28,20 +28,21 @@ import (
 
 // Handler holds ECS handler dependencies.
 type Handler struct {
-	cfg         *config.Config
-	store       *ecsStore
-	log         *serviceutil.ServiceLogger
-	clk         clock.Clock
-	bus         *events.Bus
-	scheduler   *lifecycle.Scheduler
-	ops         map[string]http.HandlerFunc
-	typedOp     map[string]op.Operation
-	docker      *docker.Client
-	dockerReady atomic.Bool
-	puller      *docker.ImagePuller
-	gc          *docker.GC
-	vpcResolver VPCNetworkResolver
-	seedOnce    sync.Once // guards ensureBuiltinProviders
+	cfg           *config.Config
+	store         *ecsStore
+	log           *serviceutil.ServiceLogger
+	clk           clock.Clock
+	bus           *events.Bus
+	scheduler     *lifecycle.Scheduler
+	ops           map[string]http.HandlerFunc
+	typedOp       map[string]op.Operation
+	docker        *docker.Client
+	dockerReady   atomic.Bool
+	puller        *docker.ImagePuller
+	gc            *docker.GC
+	vpcResolver   VPCNetworkResolver
+	seedMu        sync.Mutex      // guards seededRegions
+	seededRegions map[string]bool // regions where ensureBuiltinProviders has run
 
 	// endpoint maps AWS resource URLs and hostnames onto an address task
 	// containers can dial. Resolved on first task start — see containerEndpoint.
@@ -60,22 +61,32 @@ type VPCNetworkResolver interface {
 // ensureBuiltinProviders lazily seeds FARGATE and FARGATE_SPOT capacity
 // providers so they are discoverable without explicit creation, matching
 // real AWS behaviour. Called on first capacity-provider-touching request.
-func (h *Handler) ensureBuiltinProviders() {
-	h.seedOnce.Do(func() {
-		ctx := context.Background()
-		for _, name := range []string{"FARGATE", "FARGATE_SPOT"} {
-			existing, err := h.store.getCapacityProvider(ctx, name)
-			if err != nil || existing != nil {
-				continue
-			}
-			cp := &CapacityProvider{
-				CapacityProviderArn: h.capacityProviderARN(ctx, name),
-				Name:                name,
-				Status:              "ACTIVE",
-			}
-			_ = h.store.putCapacityProvider(ctx, cp)
+// The store keys providers per region, so seeding happens once per region
+// the caller's request context resolves to — a single global seed would
+// leave every other region without the builtin providers.
+func (h *Handler) ensureBuiltinProviders(ctx context.Context) {
+	region := h.store.region(ctx)
+	h.seedMu.Lock()
+	defer h.seedMu.Unlock()
+	if h.seededRegions == nil {
+		h.seededRegions = make(map[string]bool)
+	}
+	if h.seededRegions[region] {
+		return
+	}
+	h.seededRegions[region] = true
+	for _, name := range []string{"FARGATE", "FARGATE_SPOT"} {
+		existing, err := h.store.getCapacityProvider(ctx, name)
+		if err != nil || existing != nil {
+			continue
 		}
-	})
+		cp := &CapacityProvider{
+			CapacityProviderArn: h.capacityProviderARN(ctx, name),
+			Name:                name,
+			Status:              "ACTIVE",
+		}
+		_ = h.store.putCapacityProvider(ctx, cp)
+	}
 }
 
 func newHandler(cfg *config.Config, store *ecsStore, log *serviceutil.ServiceLogger, clk clock.Clock) *Handler {
@@ -219,7 +230,7 @@ func validateFargateCPUMemory(cpu, memory string) error {
 
 // CreateCluster handles AmazonEC2ContainerServiceV20141113.CreateCluster.
 func (h *Handler) CreateCluster(w http.ResponseWriter, r *http.Request) {
-	h.ensureBuiltinProviders()
+	h.ensureBuiltinProviders(r.Context())
 	var req struct {
 		ClusterName                     string                         `json:"clusterName"`
 		CapacityProviders               []string                       `json:"capacityProviders"`

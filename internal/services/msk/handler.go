@@ -97,7 +97,7 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
 		h.dockerWg.Add(1)
 		go func() {
 			defer h.dockerWg.Done()
-			bgCtx := context.Background()
+			bgCtx := clusterRegionCtx(clusterARNCopy)
 			if err := h.startClusterContainer(bgCtx, clusterARNCopy); err != nil {
 				h.log.Warn("failed to start Docker container for MSK cluster — falling back to metadata-only",
 					zap.String("cluster", clusterARNCopy), zap.Error(err))
@@ -105,8 +105,7 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 	} else {
-		h.scheduler.After(clusterARNCopy+":active", 0, func() {
-			ctx := context.Background()
+		h.scheduler.AfterScoped(serviceutil.ARNRegion(clusterARNCopy), clusterARNCopy, "active", 0, func(ctx context.Context) {
 			got, aerr := h.store.getCluster(ctx, clusterARNCopy)
 			if aerr != nil {
 				return
@@ -194,7 +193,7 @@ func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	clusterARNCopy := clusterArn
-	h.scheduler.Cancel(clusterArn + ":health")
+	h.scheduler.CancelScoped(serviceutil.ARNRegion(clusterArn), clusterArn, "health")
 
 	id := cluster.DockerContainerID
 	if h.gc != nil && id != "" {
@@ -205,8 +204,7 @@ func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request) {
 		_ = h.store.releasePort(r.Context(), cluster.HostPort) //nolint:errcheck
 	}
 
-	h.scheduler.After(clusterArn+":delete", 50*time.Millisecond, func() {
-		ctx := context.Background()
+	h.scheduler.AfterScoped(serviceutil.ARNRegion(clusterArn), clusterArn, "delete", 50*time.Millisecond, func(ctx context.Context) {
 		if aerr := h.store.deleteCluster(ctx, clusterARNCopy); aerr != nil {
 			h.log.Warn("failed to delete MSK cluster record", zap.String("cluster", clusterARNCopy), zap.Error(aerr))
 		}
@@ -538,7 +536,7 @@ func (h *Handler) createClusterV2(w http.ResponseWriter, r *http.Request) {
 			h.dockerWg.Add(1)
 			go func() {
 				defer h.dockerWg.Done()
-				bgCtx := context.Background()
+				bgCtx := clusterRegionCtx(clusterARNCopy)
 				if err := h.startClusterContainer(bgCtx, clusterARNCopy); err != nil {
 					h.log.Warn("failed to start Docker container for MSK V2 cluster — falling back to metadata-only",
 						zap.String("cluster", clusterARNCopy), zap.Error(err))
@@ -546,8 +544,7 @@ func (h *Handler) createClusterV2(w http.ResponseWriter, r *http.Request) {
 				}
 			}()
 		} else {
-			h.scheduler.After(clusterARNCopy+":active", 0, func() {
-				ctx := context.Background()
+			h.scheduler.AfterScoped(serviceutil.ARNRegion(clusterARNCopy), clusterARNCopy, "active", 0, func(ctx context.Context) {
 				got, aerr := h.store.getCluster(ctx, clusterARNCopy)
 				if aerr != nil {
 					return
@@ -693,9 +690,18 @@ func (h *Handler) updateClusterConfiguration(w http.ResponseWriter, r *http.Requ
 
 // ── clusterFallbackActive ─────────────────────────────────────────────────────
 
+// clusterRegionCtx returns a background context carrying the region embedded
+// in the cluster ARN — the same region the store keys the cluster under. MSK
+// background callbacks (container starts, health checks, Docker events) run
+// outside any request context, where a bare context.Background() would
+// resolve to the default region and miss clusters created elsewhere.
+func clusterRegionCtx(clusterARN string) context.Context {
+	return middleware.ContextWithRegion(context.Background(), serviceutil.ARNRegion(clusterARN))
+}
+
 // clusterFallbackActive sets a cluster to "ACTIVE" if it is still in "CREATING".
 func (h *Handler) clusterFallbackActive(clusterARN string) {
-	ctx := context.Background()
+	ctx := clusterRegionCtx(clusterARN)
 	got, aerr := h.store.getCluster(ctx, clusterARN)
 	if aerr != nil {
 		return

@@ -8,6 +8,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // handleContainerDied is a bus handler for DockerContainerDied events targeting
@@ -27,13 +29,16 @@ func (h *Handler) handleContainerDied(_ context.Context, e events.Event) {
 			zap.String("containerId", p.ContainerID))
 		return
 	}
-	clusterName, taskID := parts[0], parts[1]
+	taskID := parts[1]
 
-	ctx := context.Background()
-	task, aerr := h.store.getTask(ctx, clusterName, taskID)
-	if aerr != nil || task == nil {
+	// The event only carries "cluster/task" — not the region the task was
+	// stored under — so locate it with a cross-region scan and pin that
+	// region on the context for the write-back.
+	task, region, found, err := serviceutil.FindRegioned[Task](context.Background(), h.store.store, nsTasks, p.ResourceID, h.store.defaultRegion)
+	if err != nil || !found {
 		return
 	}
+	ctx := middleware.ContextWithRegion(context.Background(), region)
 
 	exitCode, _ := strconv.Atoi(p.ExitCode)
 
@@ -63,7 +68,7 @@ func (h *Handler) handleContainerDied(_ context.Context, e events.Event) {
 		task.StoppedAt = &stoppedAt
 
 		// Cancel any pending scheduler transition.
-		h.scheduler.Cancel(taskID + ":pending")
+		h.scheduler.CancelScoped(region, taskID, "pending")
 	}
 
 	h.store.putTask(ctx, task) //nolint:errcheck

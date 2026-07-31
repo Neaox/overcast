@@ -445,7 +445,7 @@ type deleteAccountSettingResponse struct {
 // ---- Typed handler functions ----
 
 func (h *Handler) createClusterTyped(ctx context.Context, req *createClusterRequest) (*createClusterResponse, *protocol.AWSError) {
-	h.ensureBuiltinProviders()
+	h.ensureBuiltinProviders(ctx)
 	if req.ClusterName == "" {
 		req.ClusterName = "default"
 	}
@@ -768,10 +768,10 @@ func (h *Handler) runTaskTyped(ctx context.Context, req *runTaskRequest) (*runTa
 		}
 		if useDocker {
 			if err := h.startTaskContainers(ctx, &task, td, clusterName, taskID, awsvpcNetworkID); err != nil {
-				h.scheduleMetadataTransition(clusterName, taskID)
+				h.scheduleMetadataTransition(h.store.region(ctx), clusterName, taskID)
 			}
 		} else {
-			h.scheduleMetadataTransition(clusterName, taskID)
+			h.scheduleMetadataTransition(h.store.region(ctx), clusterName, taskID)
 		}
 		if aerr := h.store.putTask(ctx, &task); aerr != nil {
 			return nil, aerr
@@ -796,7 +796,7 @@ func (h *Handler) stopTaskTyped(ctx context.Context, req *stopTaskRequest) (*sto
 			Code: "InvalidParameterException", Message: "The referenced task was not found.", HTTPStatus: http.StatusBadRequest,
 		}
 	}
-	h.scheduler.Cancel(taskID + ":pending")
+	h.scheduler.CancelScoped(h.store.region(ctx), taskID, "pending")
 	if h.dockerReady.Load() {
 		for _, c := range task.Containers {
 			if c.DockerID == "" {
@@ -1198,7 +1198,7 @@ func (h *Handler) listTagsForResourceTyped(ctx context.Context, req *listTagsFor
 }
 
 func (h *Handler) createCapacityProviderTyped(ctx context.Context, req *createCapacityProviderRequest) (*createCapacityProviderResponse, *protocol.AWSError) {
-	h.ensureBuiltinProviders()
+	h.ensureBuiltinProviders(ctx)
 	if req.Name == "" {
 		return nil, &protocol.AWSError{
 			Code: "InvalidParameterException", Message: "The name must not be null or empty.", HTTPStatus: http.StatusBadRequest,
@@ -1231,7 +1231,7 @@ func (h *Handler) createCapacityProviderTyped(ctx context.Context, req *createCa
 }
 
 func (h *Handler) describeCapacityProvidersTyped(ctx context.Context, req *describeCapacityProvidersRequest) (*describeCapacityProvidersResponse, *protocol.AWSError) {
-	h.ensureBuiltinProviders()
+	h.ensureBuiltinProviders(ctx)
 	var cps []CapacityProvider
 	var failures []capacityFailureResp
 	if len(req.CapacityProviders) == 0 {
@@ -1262,7 +1262,7 @@ func (h *Handler) describeCapacityProvidersTyped(ctx context.Context, req *descr
 }
 
 func (h *Handler) updateCapacityProviderTyped(ctx context.Context, req *updateCapacityProviderRequest) (*updateCapacityProviderResponse, *protocol.AWSError) {
-	h.ensureBuiltinProviders()
+	h.ensureBuiltinProviders(ctx)
 	if req.Name == "" {
 		return nil, &protocol.AWSError{
 			Code: "InvalidParameterException", Message: "The name must not be null or empty.", HTTPStatus: http.StatusBadRequest,
@@ -1289,7 +1289,7 @@ func (h *Handler) updateCapacityProviderTyped(ctx context.Context, req *updateCa
 }
 
 func (h *Handler) putClusterCapacityProvidersTyped(ctx context.Context, req *putClusterCapacityProvidersRequest) (*putClusterCapacityProvidersResponse, *protocol.AWSError) {
-	h.ensureBuiltinProviders()
+	h.ensureBuiltinProviders(ctx)
 	clusterName := extractClusterName(req.Cluster)
 	cluster, aerr := h.store.getCluster(ctx, clusterName)
 	if aerr != nil {

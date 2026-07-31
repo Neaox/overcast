@@ -185,8 +185,7 @@ func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
 		// Schedule pending → running transition.  Scheduler runs 0-delay
 		// callbacks synchronously with a real clock.
 		id := instID // capture for closure
-		h.scheduler.After(id+":start", 0, func() {
-			ctx := context.Background()
+		h.scheduler.AfterScoped(h.store.region(r.Context()), id, "start", 0, func(ctx context.Context) {
 			got, aerr := h.store.getInstance(ctx, id)
 			if aerr != nil {
 				return
@@ -332,8 +331,7 @@ func (h *Handler) TerminateInstances(w http.ResponseWriter, r *http.Request) {
 
 		// Schedule async shutting-down → terminated transition.
 		instID := id // capture
-		h.scheduler.After(instID+":terminate", 500*time.Millisecond, func() {
-			ctx := context.Background()
+		h.scheduler.AfterScoped(h.store.region(r.Context()), instID, "terminate", 500*time.Millisecond, func(ctx context.Context) {
 			got, aerr := h.store.getInstance(ctx, instID)
 			if aerr != nil {
 				return
@@ -401,8 +399,7 @@ func (h *Handler) StopInstances(w http.ResponseWriter, r *http.Request) {
 		// Schedule stopping → stopped transition.  Scheduler runs 0-delay
 		// callbacks synchronously with a real clock.
 		instID := id
-		h.scheduler.After(instID+":stop", 0, func() {
-			ctx := context.Background()
+		h.scheduler.AfterScoped(h.store.region(r.Context()), instID, "stop", 0, func(ctx context.Context) {
 			got, aerr := h.store.getInstance(ctx, instID)
 			if aerr != nil {
 				return
@@ -470,8 +467,7 @@ func (h *Handler) StartInstances(w http.ResponseWriter, r *http.Request) {
 		// Schedule pending → running transition.  Scheduler runs 0-delay
 		// callbacks synchronously with a real clock.
 		instID := id
-		h.scheduler.After(instID+":start", 0, func() {
-			ctx := context.Background()
+		h.scheduler.AfterScoped(h.store.region(r.Context()), instID, "start", 0, func(ctx context.Context) {
 			got, aerr := h.store.getInstance(ctx, instID)
 			if aerr != nil {
 				return
