@@ -410,44 +410,96 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # .dockerignore ignores everything and then allowlists, so the build
+      # context is a closed, explicit set of paths. The image is therefore a
+      # pure function of those paths plus the build args — nothing else in the
+      # repository can reach it, because Docker never receives it. Hashing that
+      # set gives a content address the build can be keyed on, which is what
+      # makes skipping safe rather than a guess about which paths "look"
+      # relevant: a change to anything Docker can see changes the hash.
+      #
+      # The hash lands on the image as a second tag, so a later run can ask the
+      # registry "have these exact bits been built?" without keeping state.
       - name: Name the release candidate
         id: rc-name
         if: needs.release-gate.outputs.rc == 'true'
         env:
           IMAGE_SUFFIX: ${{ matrix.image == 'slim' && '-slim' || '' }}
           RUN_NUMBER: ${{ github.run_number }}
+          TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
           version=$(tr -d '[:space:]' < VERSION)
           owner="${GITHUB_REPOSITORY_OWNER,,}"
-          echo "image=ghcr.io/${owner}/overcast${IMAGE_SUFFIX}:${version}-rc.${RUN_NUMBER}" \
-            >> "$GITHUB_OUTPUT"
+          repo="ghcr.io/${owner}/overcast${IMAGE_SUFFIX}"
+          hash=$(
+            {
+              git ls-tree -r HEAD -- go.mod go.sum embed.go embed_slim.go \
+                cmd internal docs web docker Dockerfile .dockerignore
+              echo "VERSION=${version}"
+              echo "TARGET=${TARGET}"
+            } | sha256sum | cut -c1-16
+          )
+          {
+            echo "version=${version}"
+            echo "image=${repo}:${version}-rc.${RUN_NUMBER}"
+            echo "context=${repo}:ctx-${hash}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Build context hash: ${hash}"
+
+      # Retagging a manifest is a registry-side operation — no pull, no build,
+      # a couple of seconds — so an unchanged context costs nothing beyond the
+      # lookup. A prose-only push to a release branch takes this path.
+      - name: Reuse an identical candidate when one exists
+        id: rc-reuse
+        if: needs.release-gate.outputs.rc == 'true'
+        env:
+          RC_IMAGE: ${{ steps.rc-name.outputs.image }}
+          CONTEXT_IMAGE: ${{ steps.rc-name.outputs.context }}
+        run: |
+          set -euo pipefail
+          if docker buildx imagetools inspect "$CONTEXT_IMAGE" >/dev/null 2>&1; then
+            echo "Build context unchanged — retagging instead of rebuilding."
+            docker buildx imagetools create -t "$RC_IMAGE" "$CONTEXT_IMAGE"
+            echo "reused=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Build context is new — building."
+            echo "reused=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Push release-candidate image
         id: rc-push
-        if: needs.release-gate.outputs.rc == 'true'
+        if: needs.release-gate.outputs.rc == 'true' && steps.rc-reuse.outputs.reused == 'false'
         uses: docker/build-push-action@v7.3.0
         with:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
           target: ${{ matrix.target }}
-          tags: ${{ steps.rc-name.outputs.image }}
+          tags: ${{ steps.rc-name.outputs.image }},${{ steps.rc-name.outputs.context }}
+          build-args: VERSION=${{ steps.rc-name.outputs.version }}
           cache-from: type=gha,scope=overcast-${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=overcast-${{ matrix.image }}
+
+      # Resolved from the registry either way, so the recorded digest is the
+      # manifest actually tagged whether it was just built or retagged.
       - name: Record release-candidate image reference
-        if: steps.rc-push.outcome == 'success'
+        id: rc-record
+        if: needs.release-gate.outputs.rc == 'true'
         env:
           RC_IMAGE: ${{ steps.rc-name.outputs.image }}
-          RC_DIGEST: ${{ steps.rc-push.outputs.digest }}
+          REUSED: ${{ steps.rc-reuse.outputs.reused }}
         run: |
           set -euo pipefail
+          digest=$(docker buildx imagetools inspect "$RC_IMAGE" --format '{{.Manifest.Digest}}')
           mkdir -p rc-meta
           {
             echo "$RC_IMAGE"
-            echo "${RC_IMAGE}@${RC_DIGEST}"
+            echo "${RC_IMAGE}@${digest}"
+            echo "reused=${REUSED}"
           } > "rc-meta/rc-image-${{ matrix.image }}.txt"
       - name: Upload release-candidate image reference
-        if: steps.rc-push.outcome == 'success'
+        if: steps.rc-record.outcome == 'success'
         uses: actions/upload-artifact@v7.0.1
         with:
           name: rc-image-${{ matrix.image }}
@@ -483,8 +535,12 @@ jobs:
             for (const image of ['console', 'slim']) {
               const f = `rc-meta/rc-image-${image}.txt`;
               if (fs.existsSync(f)) {
-                const [ref, withDigest] = fs.readFileSync(f, 'utf8').trim().split(/\r?\n/);
-                images.push({ ref, digest: (withDigest || '').split('@')[1] || '' });
+                const [ref, withDigest, reused] = fs.readFileSync(f, 'utf8').trim().split(/\r?\n/);
+                images.push({
+                  ref,
+                  digest: (withDigest || '').split('@')[1] || '',
+                  reused: (reused || '') === 'reused=true',
+                });
               }
             }
 
@@ -503,7 +559,13 @@ jobs:
 
             let body = `${marker}\n## Release candidate \`${rcName}\`\n\n`;
             body += `Current for head \`${sha.slice(0, 8)}\` — [workflow run](${runUrl}).\n`;
-            body += `Every push to this branch mints a new RC; earlier RCs stay pullable.\n\n`;
+            // Say which, so "no rebuild" is a stated outcome rather than
+            // something to infer from a fast job.
+            const reused = images.length > 0 && images.every(i => i.reused);
+            body += reused
+              ? `Bit-for-bit identical to the previous candidate — this push changed nothing the image is built from, so it was retagged rather than rebuilt.\n`
+              : `Freshly built: this push changed something the image is built from.\n`;
+            body += `Every push to this branch mints a new RC tag; earlier RCs stay pullable.\n\n`;
             body += `### Images (linux/amd64, linux/arm64)\n\n`;
             for (const i of images) {
               body += '```\ndocker pull ' + i.ref + '\n```\n';
