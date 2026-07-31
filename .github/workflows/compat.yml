@@ -271,8 +271,14 @@ jobs:
       # front: a cold pull inside a test's function-Active wait is what used to
       # time out. Best-effort — a pull failure shows up as the test failing,
       # which is the honest result.
-      - name: Pre-pull the Lambda runtime image
-        run: docker pull --quiet public.ecr.aws/lambda/nodejs:20 || true
+      # Both images the suites' functions actually use: node for the JS/CDK
+      # groups, python for the cli and python-sdk lambda groups. Without the
+      # python pre-pull, cli/lambda-invoke's function sat in Pending behind a
+      # cold pull for its whole invoke sequence (the R7 InvokeDryRun failure).
+      - name: Pre-pull the Lambda runtime images
+        run: |
+          docker pull --quiet public.ecr.aws/lambda/nodejs:20 || true
+          docker pull --quiet public.ecr.aws/lambda/python:3.12 || true
 
       - name: Start Overcast
         run: |

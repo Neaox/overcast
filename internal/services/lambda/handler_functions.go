@@ -1288,10 +1288,14 @@ func (h *Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 func checkInvokableState(fn *Function) *protocol.AWSError {
 	switch fn.State {
 	case "Pending":
+		// Real AWS answers state conflicts with 409 ResourceConflictException
+		// (as the Inactive arm below already does); this arm used to return
+		// InvalidParameterValueException, which mislabelled a retryable
+		// state condition as a caller error.
 		return &protocol.AWSError{
-			Code:       "InvalidParameterValueException",
-			Message:    "The function could not be created. Function is still being created.",
-			HTTPStatus: http.StatusBadRequest,
+			Code:       "ResourceConflictException",
+			Message:    "The operation cannot be performed at this time. The function is currently in the following state: Pending",
+			HTTPStatus: http.StatusConflict,
 		}
 	case "Failed":
 		return &protocol.AWSError{
