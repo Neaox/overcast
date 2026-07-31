@@ -143,6 +143,36 @@ jobs:
         run: |
           python3 scripts/check-release-changelog.py "$VERSION"
 
+      # The step above sees the base as it stood when the head branch last
+      # moved: merging another PR into main re-triggers nothing on an open PR.
+      # A fragment that lands mid-window is invisible to it — the release PR
+      # deleted a disjoint set of fragments, so the merge is a clean union and
+      # the new fragment rides onto main next to the VERSION bump, failing the
+      # release only after it merges. Re-run the same gate against the tree
+      # this PR would actually produce. Deliberately narrower than requiring
+      # the branch be up to date: a merge that touches no changelog files
+      # leaves this green rather than demanding a pointless rebase.
+      - name: Validate changelog against current main
+        if: steps.pr-changes.outputs.release_candidate == 'true'
+        env:
+          VERSION: ${{ steps.read.outputs.version }}
+        run: |
+          set -o pipefail
+          git fetch --no-tags origin main
+          if ! tree=$(git merge-tree --write-tree HEAD FETCH_HEAD); then
+            echo "::error::Release PR conflicts with current main; update the branch."
+            exit 1
+          fi
+          merged="$RUNNER_TEMP/merged"
+          mkdir -p "$merged"
+          git archive "$tree" CHANGELOG.md .changelog | tar -x -C "$merged"
+          if ! python3 scripts/check-release-changelog.py "$VERSION" \
+            --changelog "$merged/CHANGELOG.md" \
+            --fragments-dir "$merged/.changelog"; then
+            echo "::error::Errors above are against main as of now, not this PR's base — the $merged paths mirror the post-merge tree. main moved since this branch was last updated; re-curate and update the branch."
+            exit 1
+          fi
+
   test:
     name: Test
     needs: [check-version, web]
