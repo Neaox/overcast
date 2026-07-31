@@ -160,6 +160,10 @@ code** made so that a compat test passes (an emulator fix the suites caught).
 That is a real behaviour change and gets a fragment describing the runtime
 effect, not the test.
 
+No fragment does not mean no record: compat changes are described fully in the
+commit message and pull request like any other change — the fragment is only
+the release-notes feed, and compat work has no release-notes audience.
+
 ## Release time
 
 Release prep runs:
