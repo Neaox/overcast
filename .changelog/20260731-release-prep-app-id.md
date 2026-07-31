@@ -1,0 +1,1 @@
+* [release] release prep authenticates with the numeric App ID again; GitHub rejects a client-ID JWT issuer on the installation endpoint with `401 "Issuer claim (iss) must be an Integer"`, so the `client-id` input cannot mint a token

@@ -219,7 +219,7 @@ regenerating would discard curation already done. Pass `regenerate: true` only
 when you genuinely want the section replaced wholesale. `dry_run: true` prints
 the summary and diffstat without pushing or opening anything.
 
-It requires the `RELEASE_APP_CLIENT_ID` and `RELEASE_APP_PRIVATE_KEY` secrets and
+It requires the `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY` secrets and
 fails without them, deliberately: a PR opened with the default `GITHUB_TOKEN`
 triggers no `pull_request` workflows, so it would arrive with no CI, no RC
 images and no changelog gate. The App is also what makes the PR author someone

@@ -42,21 +42,23 @@ jobs:
       # GitHub App, and hence no `|| github.token` fallback.
       - name: Require the release App credentials
         env:
-          CLIENT_ID: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          APP_ID: ${{ secrets.RELEASE_APP_ID }}
           APP_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
         run: |
-          if [ -z "$CLIENT_ID" ] || [ -z "$APP_KEY" ]; then
-            echo "::error::RELEASE_APP_CLIENT_ID and RELEASE_APP_PRIVATE_KEY must be set. Opening a release PR with the default token would produce a PR that runs no checks. The client ID is on the App's settings page, below the App ID." >&2
+          if [ -z "$APP_ID" ] || [ -z "$APP_KEY" ]; then
+            echo "::error::RELEASE_APP_ID and RELEASE_APP_PRIVATE_KEY must be set. Opening a release PR with the default token would produce a PR that runs no checks. RELEASE_APP_ID is the numeric App ID from the App's settings page, not the client ID." >&2
             exit 1
           fi
 
-      # client-id rather than app-id: the latter is deprecated from v3 and
-      # warns on every run. Both identify the same App; the client ID sits on
-      # the App's settings page directly below the numeric App ID.
+      # app-id, despite v3 deprecating it in favour of client-id: GitHub
+      # rejects a client-ID issuer on GET /repos/{owner}/{repo}/installation
+      # with 401 "'Issuer' claim ('iss') must be an Integer", so the client-ID
+      # path cannot mint a token at all. The deprecation warning on every run
+      # is the lesser cost. Revisit when that endpoint accepts a client ID.
       - uses: actions/create-github-app-token@v3.2.0
         id: app-token
         with:
-          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
       - uses: actions/checkout@v7.0.0
