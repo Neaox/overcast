@@ -92,11 +92,12 @@ All coding standards are in [CONTRIBUTING.md](./CONTRIBUTING.md). This section i
 
 ### Error format by service
 
-| Service                    | Format                     | Helper                                  |
-| -------------------------- | -------------------------- | --------------------------------------- |
-| S3                         | XML                        | `protocol.WriteXMLError(w, r, aerr)`    |
-| SQS, SNS, DynamoDB, Lambda | JSON                       | `protocol.WriteJSONError(w, r, aerr)`   |
-| Unimplemented              | Same format as the service | `protocol.NotImplementedXML/JSON(w, r)` |
+| Service                    | Format                     | Helper                                    |
+| -------------------------- | -------------------------- | ----------------------------------------- |
+| S3                         | XML (bare `<Error>`)       | `protocol.WriteXMLError(w, r, aerr)`      |
+| Route 53                   | XML (`ErrorResponse` env.) | `protocol.WriteQueryXMLError(w, r, aerr)` |
+| SQS, SNS, DynamoDB, Lambda | JSON                       | `protocol.WriteJSONError(w, r, aerr)`     |
+| Unimplemented              | Same format as the service | `protocol.NotImplementedXML/JSON(w, r)`   |
 
 501 responses get `x-emulator-unsupported: true` and all responses get a request ID — both automatically. Never set either manually.
 

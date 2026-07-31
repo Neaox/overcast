@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1272,
+  "total_ops": 1287,
   "services": [
     {
       "service": "s3",
@@ -6134,6 +6134,139 @@
       ]
     },
     {
+      "service": "route53",
+      "display_name": "Route 53",
+      "total_ops": 25,
+      "implemented_ops": 19,
+      "operations": [
+        {
+          "operation": "CreateHostedZone",
+          "category": "Hosted Zones",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "ListHostedZones",
+          "category": "Hosted Zones",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "ListHostedZonesByName",
+          "category": "Hosted Zones",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "GetHostedZone",
+          "category": "Hosted Zones",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "GetHostedZoneCount",
+          "category": "Hosted Zones",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "UpdateHostedZoneComment",
+          "category": "Hosted Zones",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "DeleteHostedZone",
+          "category": "Hosted Zones",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "ChangeResourceRecordSets",
+          "category": "Resource Records",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "ListResourceRecordSets",
+          "category": "Resource Records",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "GetChange",
+          "category": "Change Management",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "ChangeTagsForResource",
+          "category": "Tags",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "ListTagsForResource",
+          "category": "Tags",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "ListTagsForResources",
+          "category": "Tags",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "CreateHealthCheck",
+          "category": "Health Checks",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "GetHealthCheck",
+          "category": "Health Checks",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "ListHealthChecks",
+          "category": "Health Checks",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "GetHealthCheckCount",
+          "category": "Health Checks",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "UpdateHealthCheck",
+          "category": "Health Checks",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "DeleteHealthCheck",
+          "category": "Health Checks",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "GetHealthCheckStatus",
+          "category": "Health Checks",
+          "status": "❌ Unsupported"
+        },
+        {
+          "operation": "GetHealthCheckLastFailureReason",
+          "category": "Health Checks",
+          "status": "❌ Unsupported"
+        },
+        {
+          "operation": "CreateTrafficPolicy",
+          "category": "Traffic Policies",
+          "status": "❌ Unsupported"
+        },
+        {
+          "operation": "AssociateVPCWithHostedZone",
+          "category": "VPC Associations",
+          "status": "❌ Unsupported"
+        },
+        {
+          "operation": "DisassociateVPCFromHostedZone",
+          "category": "VPC Associations",
+          "status": "❌ Unsupported"
+        },
+        {
+          "operation": "ListHostedZonesByVPC",
+          "category": "VPC Associations",
+          "status": "❌ Unsupported"
+        }
+      ]
+    },
+    {
       "service": "stepfunctions",
       "display_name": "Step Functions",
       "total_ops": 5,
@@ -7559,64 +7692,6 @@
         {
           "operation": "DescribeOrganization",
           "status": "🧊 Inert"
-        }
-      ]
-    },
-    {
-      "service": "route53",
-      "display_name": "Route 53",
-      "total_ops": 10,
-      "implemented_ops": 7,
-      "operations": [
-        {
-          "operation": "CreateHostedZone",
-          "category": "Hosted Zones",
-          "status": "✅ Supported"
-        },
-        {
-          "operation": "ListHostedZones",
-          "category": "Hosted Zones",
-          "status": "✅ Supported"
-        },
-        {
-          "operation": "GetHostedZone",
-          "category": "Hosted Zones",
-          "status": "✅ Supported"
-        },
-        {
-          "operation": "DeleteHostedZone",
-          "category": "Hosted Zones",
-          "status": "✅ Supported"
-        },
-        {
-          "operation": "ListHostedZonesByName",
-          "category": "Hosted Zones",
-          "status": "❌ Unsupported"
-        },
-        {
-          "operation": "ChangeResourceRecordSets",
-          "category": "Resource Records",
-          "status": "✅ Supported"
-        },
-        {
-          "operation": "ListResourceRecordSets",
-          "category": "Resource Records",
-          "status": "✅ Supported"
-        },
-        {
-          "operation": "GetChange",
-          "category": "Change Management",
-          "status": "✅ Supported"
-        },
-        {
-          "operation": "CreateTrafficPolicy",
-          "category": "Traffic Policies",
-          "status": "❌ Unsupported"
-        },
-        {
-          "operation": "CreateHealthCheck",
-          "category": "Health Checks",
-          "status": "❌ Unsupported"
         }
       ]
     },

@@ -46,6 +46,7 @@
 | CloudWatch Logs | 19  | Log groups, streams, events, FilterLogEvents, DeleteLogStream                                                                                                                                              |
 | SES             | 42  | v1 + v2: SendEmail, SendRawEmail, identities, mail capture                                                                                                                                                 |
 | STS             | 11  | GetCallerIdentity, AssumeRole, GetSessionToken, temp credentials                                                                                                                                           |
+| Route 53        | 25  | Hosted zones (default NS/SOA, delegation sets), validated change batches, DNS-order pagination, tags, health checks — inert (no DNS served)                                                                |
 
 ### Minimal / Stub
 
@@ -91,6 +92,7 @@
 | CloudWatch Logs | 19  |
 | SES             | 42  |
 | STS             | 11  |
+| Route 53        | 25  |
 | Step Functions  | 5   |
 | Pipes           | 5   |
 | WAF v2          | 4   |
@@ -111,7 +113,6 @@
 | ELBv2           | 15  |
 | MSK             | 29  |
 | Organizations   | 1   |
-| Route 53        | 10  |
 | Transfer Family | 10  |
 
 <!-- END overcast:status -->

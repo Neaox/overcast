@@ -362,6 +362,117 @@ func TestCreateStack_Route53RecordSetAliasTarget(t *testing.T) {
 	}
 }
 
+func TestCreateStack_Route53HealthCheckAndZoneTags(t *testing.T) {
+	// Given: a template with a tagged hosted zone and a health check
+	srv := helpers.NewTestServer(t)
+	template := `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "Zone": {
+      "Type": "AWS::Route53::HostedZone",
+      "Properties": {
+        "Name": "tagged.example.com.",
+        "HostedZoneTags": [{"Key": "env", "Value": "dev"}]
+      }
+    },
+    "Check": {
+      "Type": "AWS::Route53::HealthCheck",
+      "Properties": {
+        "HealthCheckConfig": {
+          "Type": "HTTP",
+          "IPAddress": "192.0.2.44",
+          "ResourcePath": "/health"
+        }
+      }
+    }
+  }
+}`
+
+	// When: CreateStack provisions both resources through the CFN handlers
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"route53-health-stack"},
+		"TemplateBody": []string{template},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, "route53-health-stack", "CREATE_COMPLETE")
+
+	// Then: the hosted zone carries the template's tags
+	listResp := cfnRoute53Request(t, srv, http.MethodGet, "/2013-04-01/hostedzone", "")
+	defer listResp.Body.Close()
+	helpers.AssertStatus(t, listResp, http.StatusOK)
+	zoneID := extractBetween(string(readBody(t, listResp)), "<Id>/hostedzone/", "</Id>")
+	if zoneID == "" {
+		t.Fatal("expected hosted zone to exist")
+	}
+	tagsResp := cfnRoute53Request(t, srv, http.MethodGet, "/2013-04-01/tags/hostedzone/"+zoneID, "")
+	defer tagsResp.Body.Close()
+	helpers.AssertStatus(t, tagsResp, http.StatusOK)
+	tagsBody := string(readBody(t, tagsResp))
+	if !strings.Contains(tagsBody, "<Key>env</Key>") || !strings.Contains(tagsBody, "<Value>dev</Value>") {
+		t.Fatalf("expected env=dev tag on hosted zone, got: %s", tagsBody)
+	}
+
+	// And: the health check exists with the template's configuration
+	hcResp := cfnRoute53Request(t, srv, http.MethodGet, "/2013-04-01/healthcheck", "")
+	defer hcResp.Body.Close()
+	helpers.AssertStatus(t, hcResp, http.StatusOK)
+	hcBody := string(readBody(t, hcResp))
+	if !strings.Contains(hcBody, "<IPAddress>192.0.2.44</IPAddress>") || !strings.Contains(hcBody, "<Type>HTTP</Type>") {
+		t.Fatalf("expected provisioned health check, got: %s", hcBody)
+	}
+}
+
+func TestDeleteStack_route53RecordThenZone(t *testing.T) {
+	// Given: a stack with a hosted zone and an A record. Deleting it walks
+	// the reverse dependency order: the record first (which must satisfy the
+	// service's exact-match delete contract), then the zone (which must pass
+	// HostedZoneNotEmpty once only the default NS/SOA remain).
+	srv := helpers.NewTestServer(t)
+	template := `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "Zone": {
+      "Type": "AWS::Route53::HostedZone",
+      "Properties": {"Name": "teardown.example.com."}
+    },
+    "Record": {
+      "Type": "AWS::Route53::RecordSet",
+      "Properties": {
+        "HostedZoneId": {"Ref": "Zone"},
+        "Name": "app.teardown.example.com.",
+        "Type": "A",
+        "TTL": "60",
+        "ResourceRecords": ["192.0.2.7"]
+      }
+    }
+  }
+}`
+	create := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"route53-teardown-stack"},
+		"TemplateBody": []string{template},
+	})
+	defer create.Body.Close()
+	helpers.AssertStatus(t, create, http.StatusOK)
+	waitForStackStatus(t, srv, "route53-teardown-stack", "CREATE_COMPLETE")
+
+	// When: the stack is deleted
+	del := cfnQuery(t, srv, "DeleteStack", url.Values{
+		"StackName": []string{"route53-teardown-stack"},
+	})
+	defer del.Body.Close()
+	helpers.AssertStatus(t, del, http.StatusOK)
+	waitForStackStatus(t, srv, "route53-teardown-stack", "DELETE_COMPLETE")
+
+	// Then: the hosted zone (and with it the record) is gone
+	listResp := cfnRoute53Request(t, srv, http.MethodGet, "/2013-04-01/hostedzone", "")
+	defer listResp.Body.Close()
+	helpers.AssertStatus(t, listResp, http.StatusOK)
+	if body := string(readBody(t, listResp)); strings.Contains(body, "teardown.example.com.") {
+		t.Fatalf("expected hosted zone to be deleted with the stack, got: %s", body)
+	}
+}
+
 func TestDescribeChangeSet_changeSetArn(t *testing.T) {
 	// Given: a CREATE change set exists
 	srv := helpers.NewTestServer(t)

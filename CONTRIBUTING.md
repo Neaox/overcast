@@ -17,6 +17,7 @@ AI agents using this repo should also read [AGENTS.md](./AGENTS.md) for agent-sp
   - [Contents](#contents)
   - [Project goals](#project-goals)
   - [Design philosophy: match real AWS](#design-philosophy-match-real-aws)
+  - [Service implementation tiers](#service-implementation-tiers)
   - [Core principles](#core-principles)
   - [Supported platforms](#supported-platforms)
   - [Prerequisites](#prerequisites)
@@ -111,6 +112,40 @@ known divergence is unavoidable, document it explicitly (in the service doc and 
 comments) so users aren't caught off guard. Never silently return a `200` with wrong
 behaviour — a `501` that says "not implemented" is always preferable to a response that
 looks right but acts wrong.
+
+---
+
+## Service implementation tiers
+
+Every service sits at one of four tiers. The tier names appear throughout this document,
+in STATUS.md, and in plan docs — this section is their canonical definition. When a task
+says "bring service X to inert level", this is the contract it refers to.
+
+| Tier | Contract | Example |
+| --- | --- | --- |
+| **stub** | Operations are routed and answer with protocol-correct responses, but resources are synthetic or incomplete. Exists to satisfy discovery/IaC calls (CDK lookups, CloudFormation scaffolding). Unrouted operations return `501`. | Shield |
+| **inert** | Resources exist as real metadata: they can be created, read, listed, updated, and deleted **exactly as real AWS would** — same validation rules, error codes, defaults, derived/auto-created child resources, pagination, and tagging. They just don't *do* anything: no side effects (no email actually sent, no container provisioned, no DNS actually served). | Route 53 |
+| **partial** | Inert plus real side effects for the most-used subset of the service (e.g. Docker-backed execution, actual message delivery), with the rest of the surface still inert or `501`. | RDS, ElastiCache |
+| **full** | The emulated 20%-most-used surface is behaviourally complete, side effects included. Remaining exotic operations may still be `501`, honestly reported. | S3, SQS |
+
+What each tier obligates:
+
+- **stub → inert:** implement the resource lifecycle against `state.Store` with
+  AWS-faithful wire behaviour (see [Design philosophy](#design-philosophy-match-real-aws)).
+  Auto-created companion resources (e.g. a hosted zone's default NS/SOA records, a queue's
+  default attributes) must exist, because real-world code reads them back. CloudFormation
+  handlers must create real resources through the emulated service — not synthetic stub
+  IDs (see [CloudFormation integration](#cloudformation-integration)). The service must
+  register a web-UI search contributor (see [Global search](#global-search)).
+- **inert → partial/full:** side effects appear; CF handlers pass through all relevant
+  configuration; documented divergences shrink.
+
+The code-level source of truth is `ServiceTiers` in
+[internal/router/tiers.go](./internal/router/tiers.go) (surfaced via `/_health` and the
+web UI, with `ServiceGoalTiers` marking work-in-progress services) — update it in the
+same commit that graduates a service. The per-operation inventory lives in each
+service's `capabilities_dev.go`. Report operations honestly: `StatusSupported` means
+"behaves like AWS at inert level or above", never "returns a plausible-looking 200".
 
 ---
 
@@ -922,9 +957,9 @@ for the most recently added handlers.
 
 **Service implementation tiers and CF handler requirements:** Every service that reports
 itself as `StatusSupported` or `StatusPartial` in `capabilities_dev.go` must be at least
-**inert tier** — resources exist as metadata, can be created/listed/updated/deleted
-as real AWS would, but don't "do" anything (no side effects like actually sending email
-or provisioning containers). The CF provisioner must keep pace: when a service reaches
+**inert tier** (defined in [Service implementation tiers](#service-implementation-tiers) —
+resources exist as metadata, can be created/listed/updated/deleted as real AWS would, but
+don't "do" anything). The CF provisioner must keep pace: when a service reaches
 inert tier, its CF handlers must create real resources through the emulated service,
 not just return synthetic stub IDs. When a service advances to **partial** or **full**
 tier (resources have real side effects — e.g. Docker containers, actual message
@@ -1385,8 +1420,9 @@ any existing service page that is missing it.
 
 ### Global search
 
-Every service at **inert tier or above** must register a search contributor so its
-resources appear in the global search (⌘K / Ctrl+K).
+Every service at **inert tier or above** (see
+[Service implementation tiers](#service-implementation-tiers)) must register a search
+contributor so its resources appear in the global search (⌘K / Ctrl+K).
 
 1. Create `web/src/lib/search-contributors/<service>.ts` using `createSearchContributor`:
 
