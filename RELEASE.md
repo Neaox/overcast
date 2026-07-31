@@ -23,6 +23,38 @@ In every trigger path, the workflow reads `VERSION`, derives the tag as
 `v<VERSION>` unless a release event supplied a tag, and rejects mismatches between
 the tag and `VERSION`.
 
+## End To End
+
+Day to day, PRs merge to `main` and each records its release notes as entry
+lines in a fragment file under `.changelog/` — written with
+`python3 scripts/changelog.py new`, documented in
+[.changelog/README.md](.changelog/README.md). `CHANGELOG.md`'s `[Unreleased]`
+section stays empty; nothing accumulates there, so concurrent PRs never
+conflict over the changelog.
+
+When a release is wanted:
+
+1. **Branch** (never `main`) and set `VERSION` to the new version.
+2. **Curate.** `changelog.py assemble` prints a draft section built from every
+   fragment currently in `.changelog/`, grouped by category then area, with
+   breaking entries flagged `**BREAKING**` and their `migration:` notes
+   attached. Edit that draft into `CHANGELOG.md` in the house style, then
+   delete every fragment file.
+3. **Open the PR.** CI treats any same-repo PR whose `VERSION` carries no tag
+   as a release candidate: it publishes RC images and the native binaries and
+   maintains one bot comment linking them. Smoke test those bits — they are
+   what CI built, not a local rebuild.
+4. **Re-curate whenever `main` moves.** A PR merged after this branch last
+   changed does not re-trigger anything here, and its fragments would ride
+   onto `main` through a clean union merge. The changelog gate fails the PR
+   until the new entries are folded into the release section — see
+   [Keeping The Release PR Current](#keeping-the-release-pr-current).
+5. **Merge.** The `Release` workflow builds and tests unattended, then pauses
+   at the `release` environment for a one-click approval of the exact SHA.
+6. **Approve.** Binaries, `SHA256SUMS`, both Docker images and the GitHub
+   release publish, with release notes generated from the `CHANGELOG.md`
+   section.
+
 ## Release Artifacts
 
 The release workflow:
@@ -72,6 +104,21 @@ For prereleases, the Docker channel tag is derived from the prerelease suffix.
 `0.0.1-alpha.0` publishes `ghcr.io/neaox/overcast:alpha` and
 `ghcr.io/neaox/overcast-slim:alpha`.
 
+**Choosing the number is not a judgement call while in alpha.** The prerelease
+counter increments and the base version stays put, whatever the release
+contains — a breaking change does not move it. Nothing is guaranteed stable
+yet, and although we do not break things on purpose, things are changeable
+enough that changing them may break you. So `0.0.1-alpha.27` is followed by
+`0.0.1-alpha.28` whether the release adds a service, fixes a bug, or removes
+an endpoint.
+
+That does not make breakage unimportant, it makes *saying so* the job: a
+breaking entry is marked in its fragment and carries a `migration:` note, and
+curation must land both in the release section (see below). The versioning
+rules in [CHANGELOG.md](./CHANGELOG.md) — where breaking means MAJOR — take
+effect at 1.0, and the markers accumulated through alpha are what will let
+them be applied mechanically rather than reconstructed from memory.
+
 ## Branch Safety
 
 Release prep must happen on a dedicated branch and be merged through a pull
@@ -116,9 +163,15 @@ Before merging the release-prep PR to `main`:
    ```
    Curate the printed draft into a versioned section that exactly matches
    `VERSION`, for example `## [x.y.z-alpha.n] - YYYY-MM-DD` — merge same-area
-   fragments into single bullets per the house style (see
+   entries into single bullets per the house style (see
    `.changelog/README.md`) — then delete every consumed fragment file
    (everything in `.changelog/` except `README.md`).
+
+   Entries the draft flags `**BREAKING**` need care: each carries a
+   `migration:` note, and both the fact of the break and what to do about it
+   must survive into the release section. They are the part of the notes a
+   user cannot work out for themselves, so lead with them rather than letting
+   them dissolve into a merged bullet.
 4. Set `VERSION` to the exact release version without the leading `v`.
 5. Ensure `[Unreleased]` exists but has no entries, and `.changelog/` holds
    only `README.md`. The workflow fails if `[Unreleased]` contains release
@@ -156,7 +209,9 @@ For an alpha release:
    ## [x.y.z-alpha.n] - YYYY-MM-DD
    ```
    using `python3 scripts/changelog.py assemble x.y.z-alpha.n` as the starting
-   draft, then delete the consumed fragment files from `.changelog/`.
+   draft, then delete the consumed fragment files from `.changelog/`. Carry
+   every `**BREAKING**` entry and its `migration:` note into the section — see
+   Preflight step 3.
 4. Leave the `[Unreleased]` section present and empty (it stays empty between
    releases; fragments are the only unreleased record).
 5. Update the compare links at the bottom of `CHANGELOG.md` — add a
@@ -200,6 +255,41 @@ For an alpha release:
    curl -sf http://localhost:4566/_health
    docker stop overcast-smoke
    ```
+
+## Keeping The Release PR Current
+
+A release PR is a snapshot of `.changelog/` as it stood when the branch last
+changed, and `main` keeps moving underneath it. This is the normal case, not
+an edge one: late fixes are exactly what a release window attracts.
+
+GitHub does not help here. A `pull_request` run is triggered by pushes to the
+*head* branch, so merging something else into `main` re-runs nothing and the
+PR's green checks stay green while going stale. The failure that follows is
+quiet: the release PR deleted one set of fragments and the new PR added
+another, so the merge is a clean union, the new fragment rides onto `main`
+next to the `VERSION` bump, and the release fails *after* merging.
+
+Two mechanisms catch it:
+
+- The `Release` workflow re-runs `check-release-changelog.py` against the tree
+  the PR **would produce if merged into `main` as it stands now**, not against
+  the PR's stale base. A fragment that landed mid-window fails the PR by name.
+- The compat and baseline gates compare against `origin/main` fetched at job
+  time, so a `compat/flaky.json` or baseline change on `main` shows up as a
+  spurious diff on any branch that has not caught up.
+
+When either trips, the fix is the same:
+
+1. Update the branch from `main` (merge or rebase — the repository
+   squash-merges, so the branch's own history does not reach `main`).
+2. Curate the newly arrived entries into the release section and delete their
+   fragment files.
+3. Push. That re-runs every check and re-publishes the RC images and binaries,
+   so the bot comment describes the candidate you would actually ship.
+
+A release PR that has been open across several merges is often cheaper to
+recut than to reconcile: `assemble` regenerates the whole draft, and the
+curation already done can be pasted back over it.
 
 ## Manual Release Trigger
 
