@@ -19,6 +19,18 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 **When in doubt, bump MINOR.** We would rather ship a minor bump that didn't
 need it than accidentally ship a breaking change as a patch.
 
+**These rules take effect at 1.0.** While Overcast is in alpha the version is
+an incrementing prerelease counter and a breaking change does not move it:
+nothing is guaranteed stable yet, and although we do not break things on
+purpose, things are changeable enough that changing them may break you.
+
+That does not make breakage unimportant — it makes *saying so* the whole job.
+A changelog entry still marks it (`!`, see [.changelog/README.md](.changelog/README.md))
+and still carries a `migration:` note, because in a fast-moving alpha knowing
+what broke and what to do about it matters more than it would in a stable
+series, not less. The markers also mean that when 1.0 arrives the table above
+can be applied mechanically rather than reconstructed from memory.
+
 ### What counts as a breaking change
 
 - Removing or renaming an environment variable

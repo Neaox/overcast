@@ -1,6 +1,1 @@
----
-section: Fixed
-area: lambda
----
-
-- [lambda] a function deleted while its background image pull was still running could be resurrected as "Active": the pull-completion callback, the startup Pending-reconciler, and the S3 code-sync watcher all wrote back records snapshotted before their slow operation started. All three now merge into a fresh read and skip a function that was deleted (or transitioned) meanwhile — this was the intermittent compat `lambda-crud/DeleteFunction` "function still exists" failure (#414), and the same stale write could silently clobber an `UpdateFunction*` revision landing mid-pull
+* [lambda] a function deleted while its background image pull was still running could be resurrected as "Active": the pull-completion callback, the startup Pending-reconciler, and the S3 code-sync watcher all wrote back records snapshotted before their slow operation started. All three now merge into a fresh read and skip a function that was deleted (or transitioned) meanwhile — this was the intermittent compat `lambda-crud/DeleteFunction` "function still exists" failure (#414), and the same stale write could silently clobber an `UpdateFunction*` revision landing mid-pull

@@ -265,10 +265,12 @@ The changelog is release-facing, not a commit log. Record a change when it is no
 
 ### How to write a fragment
 
-- One file per PR: `.changelog/YYYYMMDD-<slug>.md` (UTC date, lowercase slug — the branch topic usually works). Full format rules are in `.changelog/README.md`; `python3 scripts/changelog.py check` lints them locally.
-- Set `section:` to the correct Keep a Changelog category: `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, or `Security`.
-- Do not use `[service]` prefixes as a substitute for categorization; `[sqs] `ReceiveMessage`` still belongs under `Fixed` if it fixes behavior, or `Added` if it adds new support.
-- Set `area:` to the service/area slug so related fragments group together at release time; leave it out for changes with no natural area.
+- Write them with `python3 scripts/changelog.py new -e '<entry>'` rather than by hand — it names the file after the branch and appends, so neither the filename nor the syntax can be wrong. `--dry-run` shows the result without writing. Fragments have no frontmatter: every line stands alone.
+- Entry grammar, one entry per line: `<+|-|~|*|section>[!|.] [area[/area...]] <prose>`. `+` Added, `-` Removed, `~` Changed, `*` Fixed; `deprecated` and `security` are spelled out. An indented line continues the entry above it.
+- One file per PR, holding as many entries as the PR needs. Full format rules are in `.changelog/README.md`; `python3 scripts/changelog.py check` lints them locally.
+- Choose the category for what the change *is*, not the service it touches; `[sqs] `ReceiveMessage`` still belongs under `Fixed` if it fixes behavior, or `Added` if it adds new support.
+- Put the service/area slugs in `[...]`, primary first — it sorts related entries together at release time; omit for changes with no natural area. A change spanning several services stays one entry naming them all (`[efs/ecs]`), never one entry per service.
+- Compatibility is an axis of its own, not a category. Unmarked means not breaking, **except `-` Removed, which means breaking unless written `-.`**. Mark `!` when existing code, config, or stored state stops working — including a newly *required* field or config key (an addition), stricter validation, a changed default, or a state format old data cannot survive. A `!` entry needs an indented `migration:` line. The linter also demands an explicit `!` or `.` when the prose reads like a break ("now requires", "now rejects", "no longer accepts", …).
 - Write the fragment for this PR only. Do not edit other PRs' fragments and do not pre-aggregate per service — merging related entries into one bullet happens once, at release time.
 - Do not write one bullet per commit, endpoint, or tiny behavior tweak — one fragment with one or two bullets covering the PR's user-visible change is the target.
 - Describe the change with a clear verb: added, changed, removed, fixed, aligned, or updated.
