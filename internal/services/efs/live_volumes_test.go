@@ -197,6 +197,70 @@ func TestEFSVolumeForAccessPoint(t *testing.T) {
 	}
 }
 
+// failingRemoveDaemon wraps the fake daemon so volume removal fails with 409
+// (volume in use) a configurable number of times before succeeding.
+func TestRemoveVolume_retriesWhileInUse(t *testing.T) {
+	var mu sync.Mutex
+	removeCalls := 0
+	failures := 2
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/volumes/") {
+			mu.Lock()
+			removeCalls++
+			busy := removeCalls <= failures
+			mu.Unlock()
+			if busy {
+				w.WriteHeader(http.StatusConflict)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+
+	mock := clock.NewMock()
+	svc := New(
+		&config.Config{Region: "us-east-1", AccountID: "000000000000", EFSMode: config.EFSModeLive},
+		state.NewMemoryStore(), zap.NewNop(), mock,
+	)
+	svc.docker = docker.NewClient("tcp://"+srv.Listener.Addr().String(), zap.NewNop())
+	svc.dockerReady.Store(true)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		svc.Stop(ctx)
+	})
+	ctx := context.Background()
+
+	svc.removeVolume(ctx, "fs-busy0000000000000")
+	mu.Lock()
+	first := removeCalls
+	mu.Unlock()
+	if first != 1 {
+		t.Fatalf("expected 1 immediate attempt, got %d", first)
+	}
+
+	// Advance the mock clock until every retry has fired. Repeated Adds are
+	// harmless — they just fire pending timers as they appear, absorbing the
+	// scheduling races between timer goroutines and this loop.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		mu.Lock()
+		calls := removeCalls
+		mu.Unlock()
+		if calls == failures+1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected %d attempts, got %d", failures+1, calls)
+		}
+		mock.Add(volumeRemoveRetryDelay + time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func TestReconcileVolumes_healsAndSweeps(t *testing.T) {
 	fd := newFakeVolumeDaemon(t)
 	svc := newLiveTestService(t, fd, config.EFSModeLive)

@@ -354,6 +354,20 @@ func (s *Service) listMountTargetsForFileSystem(ctx context.Context, region, fsI
 	return out, nil
 }
 
+// countMountTargetsByFileSystem returns the number of mount targets per file
+// system in one scan, for list paths that would otherwise scan per item.
+func (s *Service) countMountTargetsByFileSystem(ctx context.Context, region string) (map[string]int, error) {
+	all, err := s.listMountTargets(ctx, region)
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int, len(all))
+	for _, mt := range all {
+		counts[mt.FileSystemId]++
+	}
+	return counts, nil
+}
+
 // ─── Access-point helpers ─────────────────────────────────────────────────────
 
 func (s *Service) getAccessPoint(ctx context.Context, region, id string) (*accessPointRecord, bool, error) {

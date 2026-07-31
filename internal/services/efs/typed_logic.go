@@ -331,13 +331,20 @@ func (s *Service) advanceFileSystem(region, fsID string) {
 // fileSystemDescription builds the wire description for a record, resolving
 // the Name tag and current mount-target count.
 func (s *Service) fileSystemDescription(ctx context.Context, region string, rec *fileSystemRecord) *FileSystemDescription {
-	tags := s.loadTags(ctx, region, rec.FileSystemId)
-	if tags == nil {
-		tags = []Tag{}
-	}
 	mountTargets := 0
 	if mts, err := s.listMountTargetsForFileSystem(ctx, region, rec.FileSystemId); err == nil {
 		mountTargets = len(mts)
+	}
+	return s.fileSystemDescriptionWithCounts(ctx, region, rec, mountTargets)
+}
+
+// fileSystemDescriptionWithCounts is fileSystemDescription with the
+// mount-target count precomputed, so list paths can amortize one scan across
+// the whole page.
+func (s *Service) fileSystemDescriptionWithCounts(ctx context.Context, region string, rec *fileSystemRecord, mountTargets int) *FileSystemDescription {
+	tags := s.loadTags(ctx, region, rec.FileSystemId)
+	if tags == nil {
+		tags = []Tag{}
 	}
 	return &FileSystemDescription{
 		OwnerId:              s.accountID(),
@@ -382,6 +389,9 @@ type describeFileSystemsResponse struct {
 
 func (s *Service) describeFileSystemsTyped(ctx context.Context, req *describeFileSystemsRequest) (*describeFileSystemsResponse, *protocol.AWSError) {
 	region := s.region(ctx)
+	if req.FileSystemId != "" && req.CreationToken != "" {
+		return nil, errBadRequest("Provide either FileSystemId or CreationToken, not both.")
+	}
 
 	var records []*fileSystemRecord
 	switch {
@@ -415,9 +425,15 @@ func (s *Service) describeFileSystemsTyped(ctx context.Context, req *describeFil
 	if err != nil {
 		return nil, errBadRequest("The provided Marker is not valid.")
 	}
+	// One mount-target scan for the whole page instead of one per file system.
+	mountTargetCounts, err := s.countMountTargetsByFileSystem(ctx, region)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
 	out := make([]*FileSystemDescription, 0, len(page.Items))
 	for _, rec := range page.Items {
-		out = append(out, s.fileSystemDescription(ctx, region, rec))
+		desc := s.fileSystemDescriptionWithCounts(ctx, region, rec, mountTargetCounts[rec.FileSystemId])
+		out = append(out, desc)
 	}
 	return &describeFileSystemsResponse{
 		Marker:      req.Marker,

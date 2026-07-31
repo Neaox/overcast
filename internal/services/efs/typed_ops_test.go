@@ -508,6 +508,10 @@ func TestDescribeFileSystems_pagination(t *testing.T) {
 
 	_, aerr = svc.describeFileSystemsTyped(ctx, &describeFileSystemsRequest{Marker: "garbage"})
 	expectAWSError(t, aerr, "BadRequest")
+
+	// Both lookup filters together are rejected, as on real AWS.
+	_, aerr = svc.describeFileSystemsTyped(ctx, &describeFileSystemsRequest{FileSystemId: "fs-x", CreationToken: "p1"})
+	expectAWSError(t, aerr, "BadRequest")
 }
 
 func TestAccountPreferences(t *testing.T) {
