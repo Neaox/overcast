@@ -234,10 +234,16 @@ release PR is open it exits immediately.
 entries are appended to the section that already exists, so the changelog gate
 goes green without anyone editing anything.
 
-Folding is strictly additive. No bullet already in the section is read,
-reordered or rewritten, so curation done by hand survives untouched — which is
-what makes it safe to run unattended. Reword the appended bullets or merge them
-into neighbouring ones whenever it suits; the next refresh will not undo it.
+Folding is strictly additive. No bullet already in the section is rewritten,
+reordered or removed, so curation done by hand survives untouched — which is
+what makes it safe to run unattended. Reword the new bullets or merge them into
+neighbouring ones whenever it suits; the next refresh will not undo it.
+
+A new bullet is placed **next to bullets about the same area** when the section
+already has any, so it stays grouped as it grows rather than collecting at the
+bottom. Area is read from the `[sqs]` prefix, or from a curated display heading
+like `**SQS (long polling)**`. When nothing matches, it goes at the end of its
+category.
 
 Merging `main` in matters for a second reason: a `pull_request` run is not
 re-triggered by base movement, so without it the PR would sit green while going
