@@ -22,8 +22,10 @@ package lambda
 //     when idle, on Release when an invocation is in flight, and as a backstop
 //     on the next Acquire.
 //
-// Retiring an on-demand instance never starts a replacement — the next
-// invocation cold starts one. Retiring a provisioned instance does, because
+// Retiring an on-demand instance starts no immediate replacement — the next
+// invocation cold starts one, or, when proactive initialization is enabled,
+// one is created in the background after the configuration settles (see
+// ProactiveInit). Retiring a provisioned instance always starts one, because
 // that is what provisioned concurrency means.
 //
 // Thread safety: all public methods are safe for concurrent use.

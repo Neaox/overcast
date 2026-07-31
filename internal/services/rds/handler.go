@@ -967,7 +967,9 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 		},
 	}
 
-	containerID, err := h.docker.CreateContainer(ctx, containerName, req)
+	// The puller retries once when the image was removed behind our back
+	// (docker rmi after the recorded pull) instead of failing until restart.
+	containerID, err := h.puller.CreateContainerWithRetry(ctx, containerName, req)
 	if err != nil {
 		// A conflict means the name appeared between our GetContainerByName check
 		// and CreateContainer — race condition. Retry once by inspecting and reusing.
