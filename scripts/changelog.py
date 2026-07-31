@@ -152,8 +152,15 @@ def breaking_hint(prose: str) -> str:
     return next((hint for hint in BREAKING_HINTS if hint in lowered), "")
 
 
-def parse_entries(text: str, origin: str = "") -> tuple[list[Entry], list[str]]:
-    """Parse entry lines. `origin` prefixes errors with the source file."""
+def parse_entries(
+    text: str, origin: str = "", require_migration: bool = True
+) -> tuple[list[Entry], list[str]]:
+    """Parse entry lines. `origin` prefixes errors with the source file.
+
+    `require_migration` is off when validating a single line as it is typed:
+    a breaking entry's migration note arrives on the *next* line, so demanding
+    it per-line would reject input that is about to become correct.
+    """
     where = f"{origin}: " if origin else ""
     entries: list[Entry] = []
     errors: list[str] = []
@@ -243,14 +250,74 @@ def parse_entries(text: str, origin: str = "") -> tuple[list[Entry], list[str]]:
     # Marking a change breaking has to cost something, or '!' becomes noise:
     # the release notes need the upgrade instructions anyway, and requiring
     # them here keeps the marker a deliberate act rather than a checkbox.
-    for entry in entries:
-        if entry.breaking and not entry.migration:
-            errors.append(
-                f"{where}line {entry.line}: a breaking entry needs an indented "
-                "'migration:' line saying what a user has to do about it."
-            )
+    if require_migration:
+        for entry in entries:
+            if entry.breaking and not entry.migration:
+                errors.append(
+                    f"{where}line {entry.line}: a breaking entry needs an indented "
+                    "'migration:' line saying what a user has to do about it."
+                )
 
     return entries, errors
+
+
+PROMPT_BANNER = """\
+One entry per line, blank line to finish.
+
+  +  Added      -  Removed     ~  Changed     *  Fixed
+  !  breaking   .  not breaking (only needed when the default is wrong)
+  indent to continue the entry above, or to add a 'migration:' note
+
+  e.g.  + [sqs] long polling on `ReceiveMessage`
+"""
+
+
+def prompt_entries() -> str:
+    """Collect entry lines interactively, validating each as it is typed.
+
+    Upgrades itself to the prompt_toolkit prompt — highlighting, area
+    completion, a status bar — when that module is importable. This file stays
+    stdlib-only because CI runs it on every push; the rich layer is a local
+    convenience and lives in changelog_prompt.py.
+    """
+    try:
+        from changelog_prompt import rich_prompt_entries
+    except ImportError:
+        print("(pip install prompt_toolkit for highlighting and completion)\n")
+    else:
+        return rich_prompt_entries()
+
+    print(PROMPT_BANNER)
+    lines: list[str] = []
+    while True:
+        try:
+            raw = input("> ")
+        except EOFError:
+            print()
+            break
+
+        if not raw.strip():
+            if not lines:
+                continue
+            # Whole-buffer check: this is where a breaking entry missing its
+            # migration note surfaces, and another line can still fix it.
+            _, errors = parse_entries("\n".join(lines))
+            if not errors:
+                break
+            for error in errors:
+                print(f"  ! {error}")
+            print("  (add a line to fix it, or Ctrl+C to abort)")
+            continue
+
+        if not raw[0].isspace():
+            _, errors = parse_entries(raw, require_migration=False)
+            if errors:
+                for error in errors:
+                    print(f"  ! {error}")
+                continue
+        lines.append(raw)
+
+    return "\n".join(lines)
 
 
 def parse_fragment(path: Path) -> tuple[Fragment | None, list[str]]:
@@ -402,10 +469,16 @@ def command_new(args: argparse.Namespace) -> int:
             if args.file == "-"
             else Path(args.file).read_text(encoding="utf-8")
         )
+    elif args.entry:
+        text = "\n".join(args.entry)
+    elif sys.stdin.isatty():
+        # No entries and a terminal to ask on: prompt. Piped input still works
+        # without -f, so `... new < entries.txt` behaves as expected too.
+        text = prompt_entries()
     else:
-        text = "\n".join(args.entry or ())
+        text = sys.stdin.read()
     if not text.strip():
-        print("::error::no entry lines given; use --entry or --file.", file=sys.stderr)
+        print("::error::no entry lines given.", file=sys.stderr)
         return 1
 
     date = args.date or datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d")

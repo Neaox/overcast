@@ -99,7 +99,29 @@ service is primary, use a concept area — `networking`, `tls`, `release`.
 ## Writing them
 
 `scripts/changelog.py new` appends correctly-formatted entries to this PR's
-fragment file, so neither the filename nor the syntax is yours to get right:
+fragment file, so neither the filename nor the syntax is yours to get right.
+Run it with no arguments and it prompts:
+
+```sh
+python3 scripts/changelog.py new
+```
+
+Each line is checked before it is accepted, so an unknown kind, a malformed
+line, or an unmarked hint phrase is caught as you type rather than at commit
+time. Install `prompt_toolkit` and the prompt gains syntax highlighting,
+completion for area slugs (drawn from `internal/services/`, so it is never out
+of date), and a status bar reading back how the line parsed — `Added | sqs |
+compatible` — which makes the compatibility marker visible rather than
+inferred:
+
+```sh
+pip install prompt_toolkit
+```
+
+It is entirely optional; `changelog.py` itself stays stdlib-only because CI
+runs it on every push, and the plain prompt works without it.
+
+Entries can also come from arguments, which is what agents use:
 
 ```sh
 python3 scripts/changelog.py new \
