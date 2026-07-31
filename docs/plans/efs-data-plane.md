@@ -1,9 +1,22 @@
 # EFS data plane — Docker-volume-backed live mode
 
-Status: **planned** (phase 2 of EFS support; not started).
-Phase 1 — the full control plane (`internal/services/efs`, CloudFormation
-handlers, docs, tests) — is merged; this document scopes what "more than
-metadata" means for EFS and how it should be built.
+Status: **step 1 implemented** (volumes as the storage primitive); steps 2–4
+planned. Phase 1 — the full control plane (`internal/services/efs`,
+CloudFormation handlers, docs, tests) — merged in #421.
+
+Findings that shaped the implementation (recorded when step 1 landed):
+
+- `internal/docker` had no volume APIs; `CreateVolume`/`RemoveVolume`/
+  `ListVolumes` were added with the standard managed labels so
+  reconciliation and sweeps can find EFS volumes.
+- Lambda has **no `FileSystemConfigs` modeling at all** (step 2 adds the
+  wire fields as well as the mount), and ECS has no
+  `efsVolumeConfiguration`; both have a single container-creation site
+  (`lambda/container_runtime.go`, `ecs/handler_tasks.go`) where a named
+  volume can be appended to `HostConfig.Binds` as `volume-name:/path`.
+- Docker named volumes are directly usable in `Binds`; no bind-mount host
+  paths are involved, so the same volume is shared by any container that
+  names it.
 
 ## Goal
 
@@ -25,17 +38,19 @@ bytes, and (opt-in) host/сontainer clients can mount the file system over NFS.
 Mirrors the EKS live-mode pattern: `OVERCAST_EFS_MODE=mock` (default,
 today's behaviour) vs `OVERCAST_EFS_MODE=live`.
 
-### 1. Named Docker volume per file system (foundation)
+### 1. Named Docker volume per file system (foundation) — ✅ implemented
 
 - `CreateFileSystem` (live mode, Docker available) creates a named volume
-  `overcast-efs-<FileSystemId>`; `DeleteFileSystem` removes it.
-- Service gains `SetDocker(*docker.Client)` + `dockerReady` (EKS pattern) and
-  implements `router.ContainerReconciler`-style startup reconciliation for
-  volumes (`serviceutil.ScanRegions` over persisted file systems: recreate
-  missing volumes, mark orphans).
+  `overcast-efs-<FileSystemId>`; the `DeleteFileSystem` deletion callback
+  removes it (`internal/services/efs/live_volumes.go`).
+- `SetDocker(*docker.Client)` + `dockerReady` (EKS pattern), wired in the
+  router's Docker-probe block behind `OVERCAST_EFS_MODE=live`; the setter
+  kicks off asynchronous volume reconciliation (recreate missing volumes
+  across all regions, remove orphaned managed volumes).
 - Docker unavailable ⇒ `CreateFileSystem` still succeeds metadata-only and
   logs a warning (same degradation the ECS/RDS services use), so live mode
   never breaks pure-control-plane CI.
+- `EFS_DOCKER_SOCKET` (default: Lambda socket) selects the daemon.
 
 ### 2. Compute integration (the high-value step)
 

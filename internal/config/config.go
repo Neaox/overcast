@@ -47,6 +47,18 @@ const (
 	EKSModeLive EKSMode = "live"
 )
 
+// EFSMode identifies how the EFS service behaves.
+type EFSMode string
+
+const (
+	// EFSModeMock keeps EFS metadata-only: file systems have no backing storage.
+	EFSModeMock EFSMode = "mock"
+
+	// EFSModeLive backs each file system with a named Docker volume so
+	// emulated compute (Lambda, ECS) can share real file data.
+	EFSModeLive EFSMode = "live"
+)
+
 // Config holds all runtime configuration for the emulator.
 // Zero value is not valid — always construct via Load().
 type Config struct {
@@ -184,6 +196,10 @@ type Config struct {
 	// EKSMode controls whether the EKS service stays metadata-only (`mock`) or
 	// enables the live k3s-backed control plane path (`live`).
 	EKSMode EKSMode
+
+	// EFSMode controls whether the EFS service stays metadata-only (`mock`) or
+	// backs each file system with a named Docker volume (`live`).
+	EFSMode EFSMode
 
 	// SigV4Validate enables SigV4 signature verification.
 	SigV4Validate bool
@@ -415,6 +431,10 @@ type Config struct {
 	// EKSNetwork is the Docker network name that EKS live-mode containers are
 	// attached to. Defaults to "overcast_eks".
 	EKSNetwork string
+
+	// EFSDockerSocket is the path to the Docker daemon socket used to manage
+	// EFS live-mode volumes. Defaults to the same value as LambdaDockerSocket.
+	EFSDockerSocket string
 
 	// EC2VPCNetworkStrategy selects the policy used to map stored VPCs onto
 	// Docker networks. Docker bridges share one host address space, so two
@@ -802,6 +822,7 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_DEFAULT_REGION             us-east-1
 //	OVERCAST_ACCOUNT_ID                000000000000
 //	OVERCAST_EKS_MODE                  mock    (mock | live)
+//	OVERCAST_EFS_MODE                  mock    (mock | live)
 //	OVERCAST_SIGV4_VALIDATE            false
 //	OVERCAST_ENFORCE_IAM              false
 //	OVERCAST_CFN_SYNC_WAIT_MS          1000
@@ -1024,6 +1045,13 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: OVERCAST_EKS_MODE %q is invalid (expected mock or live)", rawEKSMode)
 	}
 
+	// EFS mode
+	rawEFSMode := strings.ToLower(strings.TrimSpace(envOr("OVERCAST_EFS_MODE", string(EFSModeMock))))
+	cfg.EFSMode = EFSMode(rawEFSMode)
+	if cfg.EFSMode != EFSModeMock && cfg.EFSMode != EFSModeLive {
+		return nil, fmt.Errorf("config: OVERCAST_EFS_MODE %q is invalid (expected mock or live)", rawEFSMode)
+	}
+
 	// SigV4 validation
 	cfg.SigV4Validate = envBool("OVERCAST_SIGV4_VALIDATE", false)
 
@@ -1129,6 +1157,9 @@ func Load() (*Config, error) {
 	// EKS live-mode container runtime — defaults fall back to Lambda socket
 	cfg.EKSDockerSocket = envOr("EKS_DOCKER_SOCKET", cfg.LambdaDockerSocket)
 	cfg.EKSNetwork = envOr("EKS_NETWORK", "overcast_eks")
+
+	// EFS live-mode volume runtime — defaults fall back to Lambda socket
+	cfg.EFSDockerSocket = envOr("EFS_DOCKER_SOCKET", cfg.LambdaDockerSocket)
 
 	// EC2 VPC network strategy — unknown values fall back to "shared" at
 	// service construction with a logged warning. "netns" is explicitly

@@ -21,11 +21,25 @@ legacy APIs), and account preferences. The REST-JSON API is served under the
 real AWS `/2015-02-01/` path prefix, so unmodified AWS SDKs and the AWS CLI
 work as-is.
 
+EFS supports two modes:
+
+- `mock` (default): metadata-only control plane.
+- `live` (opt-in via `OVERCAST_EFS_MODE=live`): each file system is backed by
+  a named Docker volume (`overcast-efs-<FileSystemId>`), created on
+  `CreateFileSystem` and removed on `DeleteFileSystem`. On startup, volumes
+  are reconciled against persisted file systems (missing volumes are
+  recreated; orphaned managed volumes are removed). `EFS_DOCKER_SOCKET`
+  overrides the Docker socket (defaults to the Lambda socket). Volume
+  operations are best-effort: the control plane keeps working when Docker is
+  unavailable, and reconciliation heals the gap when it returns.
+
 ## Behavior notes
 
-- **Metadata only — no NFS data plane.** File systems are not mountable;
-  mount targets exist as metadata with deterministic synthesized network
+- **No NFS data plane in either mode.** File systems are not mountable over
+  NFS; mount targets exist as metadata with deterministic synthesized network
   fields (availability zone, IP address, ENI ID derived from the subnet ID).
+  In `live` mode the backing volume is the substrate that later phases mount
+  into Lambda and ECS containers (see `docs/plans/efs-data-plane.md`).
 - Resources follow the real lifecycle (`creating` → `available` → `deleting`).
   Transitions complete inline with a real clock, so a resource is usable as
   soon as its create call returns; under a mock clock the intermediate states

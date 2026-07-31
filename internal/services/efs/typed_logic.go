@@ -301,6 +301,10 @@ func (s *Service) createFileSystemTyped(ctx context.Context, req *createFileSyst
 		}
 	}
 
+	// Live mode: back the file system with a named Docker volume (no-op in
+	// mock mode or while Docker is unavailable — see live_volumes.go).
+	s.ensureVolume(ctx, rec.FileSystemId)
+
 	// creating → available. Zero delay: inline with a real clock so the file
 	// system is usable as soon as the create call returns, still observable as
 	// "creating" under a mock clock (and in this response) — see
@@ -462,6 +466,7 @@ func (s *Service) deleteFileSystemTyped(ctx context.Context, req *deleteFileSyst
 		if err := deleteRecord(ctx, s, nsFileSystems, region, fsID); err != nil {
 			s.log.Error("efs: file system deletion failed: " + fsID)
 		}
+		s.removeVolume(ctx, fsID)
 	})
 	return nil, nil
 }

@@ -910,6 +910,83 @@ func (d *Client) ImageMatchesPlatform(ctx context.Context, image, platform strin
 	return inspect.OS == osName && inspect.Architecture == arch, nil
 }
 
+// ─── Volume operations ─────────────────────────────────────────────────────
+
+// VolumeSummary is one entry from GET /volumes.
+type VolumeSummary struct {
+	Name   string            `json:"Name"`
+	Labels map[string]string `json:"Labels"`
+}
+
+// Service returns the owning service name from the managed labels.
+func (v *VolumeSummary) Service() string { return v.Labels[LabelService] }
+
+// ResourceID returns the owning resource ID from the managed labels.
+func (v *VolumeSummary) ResourceID() string { return v.Labels[LabelResourceID] }
+
+type createVolumeRequest struct {
+	Name   string            `json:"Name"`
+	Labels map[string]string `json:"Labels,omitempty"`
+}
+
+// CreateVolume creates a named Docker volume. Creating an existing name is a
+// no-op on the daemon side (Docker returns the existing volume), which makes
+// this safe to call from reconciliation paths.
+func (d *Client) CreateVolume(ctx context.Context, name string, labels map[string]string) error {
+	if err := d.acquireOp(ctx); err != nil {
+		return fmt.Errorf("create volume %s: %w", name, err)
+	}
+	defer d.releaseOp()
+
+	req := createVolumeRequest{Name: name, Labels: labels}
+	if err := d.doJSON(ctx, http.MethodPost, "/v1.45/volumes/create", req, nil); err != nil {
+		return fmt.Errorf("create volume %s: %w", name, err)
+	}
+	return nil
+}
+
+// RemoveVolume removes a named Docker volume. A missing volume is not an
+// error, mirroring RemoveContainer's cleanup-friendly semantics.
+func (d *Client) RemoveVolume(ctx context.Context, name string, force bool) error {
+	if err := d.acquireOp(ctx); err != nil {
+		return fmt.Errorf("remove volume %s: %w", name, err)
+	}
+	defer d.releaseOp()
+
+	path := fmt.Sprintf("/v1.45/volumes/%s?force=%t", url.PathEscape(name), force)
+	resp, err := d.doRequest(ctx, http.MethodDelete, path, nil)
+	if err != nil {
+		return fmt.Errorf("remove volume %s: %w", name, err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+		return fmt.Errorf("remove volume %s: status %d", name, resp.StatusCode)
+	}
+	return nil
+}
+
+// ListVolumes returns managed volumes, optionally filtered to one service.
+func (d *Client) ListVolumes(ctx context.Context, service string) ([]VolumeSummary, error) {
+	filterMap := map[string][]string{
+		"label": {LabelManaged + "=true"},
+	}
+	if service != "" {
+		filterMap["label"] = append(filterMap["label"], LabelService+"="+service)
+	}
+	filterJSON, err := json.Marshal(filterMap)
+	if err != nil {
+		return nil, fmt.Errorf("list volumes: marshal filters: %w", err)
+	}
+	path := "/v1.45/volumes?filters=" + url.QueryEscape(string(filterJSON))
+	var out struct {
+		Volumes []VolumeSummary `json:"Volumes"`
+	}
+	if err := d.doJSON(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, fmt.Errorf("list volumes: %w", err)
+	}
+	return out.Volumes, nil
+}
+
 // ─── Network operations ────────────────────────────────────────────────────
 
 type createNetworkRequest struct {
