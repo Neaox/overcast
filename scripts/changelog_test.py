@@ -494,7 +494,8 @@ class ReleaseSummaryTest(unittest.TestCase):
 	def test_counts_entries_by_section(self) -> None:
 		text = self.summary("+ [sqs] one\n* [sqs] two\n* [efs] three\n")
 
-		self.assertIn("3 entries (1 Added, 2 Fixed)", text)
+		self.assertIn("### What's in 0.0.1-alpha.2", text)
+		self.assertIn("3 entries — 1 added, 2 fixed.", text)
 		self.assertIn("No breaking changes.", text)
 
 	def test_renders_the_entries_as_they_will_appear_in_the_changelog(self) -> None:
@@ -525,6 +526,165 @@ class ReleaseSummaryTest(unittest.TestCase):
 		self.assertIn("### Breaking changes (1)", text)
 		self.assertIn("- [state] the v1 layout", text)
 		self.assertIn("**migration:** export before upgrading", text)
+
+
+FOLD_FIXTURE = """# Changelog
+
+## [Unreleased]
+
+## [0.0.1-alpha.2] - 2026-08-01
+
+### Added
+
+- **SQS (long polling)** — a curated bullet somebody wrote by hand
+
+### Fixed
+
+- **EFS (mounts)** — another curated bullet
+
+## [0.0.1-alpha.1] - 2026-07-01
+
+### Fixed
+
+- [sqs] an older fix
+
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.2...HEAD
+[0.0.1-alpha.2]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.1...v0.0.1-alpha.2
+[0.0.1-alpha.1]: https://github.com/Neaox/overcast/releases/tag/v0.0.1-alpha.1
+"""
+
+
+class FoldEntriesTest(unittest.TestCase):
+	def fold(self, source: str, version: str = "0.0.1-alpha.2") -> str:
+		entries, errors = changelog.parse_entries(source)
+		self.assertEqual([], errors)
+		return changelog.fold_entries(FOLD_FIXTURE, version, entries)
+
+	def test_appends_under_the_existing_category(self) -> None:
+		result = self.fold("+ [lambda] a new feature\n")
+
+		self.assertIn(
+			"- **SQS (long polling)** — a curated bullet somebody wrote by hand\n"
+			"\n"
+			"- [lambda] a new feature\n",
+			result,
+		)
+
+	def test_never_rewrites_a_curated_bullet(self) -> None:
+		# The property that makes folding safe to run unattended.
+		result = self.fold("+ [lambda] a new feature\n* [s3] a new fix\n")
+
+		for curated in (
+			"- **SQS (long polling)** — a curated bullet somebody wrote by hand",
+			"- **EFS (mounts)** — another curated bullet",
+		):
+			self.assertIn(curated, result)
+		before = FOLD_FIXTURE.splitlines()
+		self.assertTrue(set(before).issubset(set(result.splitlines())))
+
+	def test_creates_a_missing_category_in_keep_a_changelog_order(self) -> None:
+		result = self.fold("~ [web] a change\n")
+
+		section = result[result.index("## [0.0.1-alpha.2]") : result.index("## [0.0.1-alpha.1]")]
+		self.assertLess(section.index("### Added"), section.index("### Changed"))
+		self.assertLess(section.index("### Changed"), section.index("### Fixed"))
+
+	def test_leaves_other_releases_untouched(self) -> None:
+		result = self.fold("+ [lambda] a new feature\n")
+
+		older = result[result.index("## [0.0.1-alpha.1]") :]
+		self.assertIn("- [sqs] an older fix", older)
+		self.assertNotIn("a new feature", older)
+
+	def test_carries_breaking_flag_and_migration(self) -> None:
+		result = self.fold("-! [state] the v1 layout\n  migration: export first\n")
+
+		self.assertIn("- **BREAKING** [state] the v1 layout\n  migration: export first", result)
+
+	def test_rejects_a_missing_release_section(self) -> None:
+		entries, _ = changelog.parse_entries("+ [sqs] a thing\n")
+
+		with self.assertRaises(ValueError):
+			changelog.fold_entries(FOLD_FIXTURE, "9.9.9", entries)
+
+
+class CommandFoldTest(unittest.TestCase):
+	def prepare(self) -> Path:
+		root = Path(tempfile.mkdtemp())
+		(root / ".changelog").mkdir()
+		(root / ".changelog" / "20260802-new.md").write_text(
+			"+ [lambda] arrived after the release PR was opened\n", encoding="utf-8"
+		)
+		(root / "CHANGELOG.md").write_text(FOLD_FIXTURE, encoding="utf-8")
+		(root / "VERSION").write_text("0.0.1-alpha.2\n", encoding="utf-8")
+		return root
+
+	def run_fold(self, root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
+		return subprocess.run(
+			[
+				sys.executable,
+				str(Path(__file__).with_name("changelog.py")),
+				"--fragments-dir",
+				str(root / ".changelog"),
+				"--changelog",
+				str(root / "CHANGELOG.md"),
+				"fold",
+				"--version-file",
+				str(root / "VERSION"),
+				*args,
+			],
+			capture_output=True,
+		)
+
+	def test_folds_and_removes_the_fragments(self) -> None:
+		root = self.prepare()
+
+		result = self.run_fold(root)
+
+		self.assertEqual(0, result.returncode, result.stderr.decode("utf-8", "replace"))
+		text = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+		self.assertIn("- [lambda] arrived after the release PR was opened", text)
+		self.assertEqual([], list((root / ".changelog").iterdir()))
+
+	def test_result_satisfies_the_release_validator(self) -> None:
+		# The whole point: the gate goes green without anyone editing anything.
+		root = self.prepare()
+		self.run_fold(root)
+
+		validated = subprocess.run(
+			[
+				sys.executable,
+				str(Path(__file__).with_name("check-release-changelog.py")),
+				"0.0.1-alpha.2",
+				"--changelog",
+				str(root / "CHANGELOG.md"),
+				"--fragments-dir",
+				str(root / ".changelog"),
+			],
+			capture_output=True,
+		)
+
+		self.assertEqual(0, validated.returncode, validated.stdout.decode("utf-8", "replace"))
+
+	def test_is_a_no_op_when_nothing_is_waiting(self) -> None:
+		root = self.prepare()
+		(root / ".changelog" / "20260802-new.md").unlink()
+		before = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+
+		result = self.run_fold(root)
+
+		self.assertEqual(0, result.returncode, result.stderr.decode("utf-8", "replace"))
+		self.assertEqual(before, (root / "CHANGELOG.md").read_text(encoding="utf-8"))
+
+	def test_dry_run_changes_nothing(self) -> None:
+		root = self.prepare()
+		before = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+
+		result = self.run_fold(root, "--dry-run")
+
+		self.assertEqual(0, result.returncode, result.stderr.decode("utf-8", "replace"))
+		self.assertEqual(before, (root / "CHANGELOG.md").read_text(encoding="utf-8"))
+		self.assertEqual(1, len(list((root / ".changelog").iterdir())))
 
 
 class CommandSummaryTest(unittest.TestCase):

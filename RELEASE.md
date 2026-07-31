@@ -224,19 +224,32 @@ for the same fragments and produce two sections claiming the same entries.
 
 ### Automatic refresh
 
-The same workflow runs on **every push to `main`**. When a release PR is open it
-merges `main` into the release branch, pushes, and comments with the entries
-that still have to be curated. When none is open it exits immediately.
+The same workflow runs on **every push to `main`**. When a release PR is open
+it merges `main` into the release branch, **folds any new changelog entries
+into the `## [x.y.z-alpha.n]` section of `CHANGELOG.md`**, deletes the fragment
+files they came from, pushes, and comments saying what it added. When no
+release PR is open it exits immediately.
 
-Merging `main` in is the part that matters. A `pull_request` run is not
-re-triggered by base movement, so without it the PR sits green while going
-stale; refreshing the branch re-runs its checks, and the changelog gate then
-correctly fails while fragments are unconsumed. Each push gets its own comment,
-because each reports a distinct event on `main` — unlike the release summary,
-which is a sticky comment describing the whole release.
+**This needs nothing from you.** The release PR stays mergeable on its own: the
+entries are appended to the section that already exists, so the changelog gate
+goes green without anyone editing anything.
 
-If `main` conflicts with the release branch, it comments saying so and leaves
-the branch alone.
+Folding is strictly additive. No bullet already in the section is read,
+reordered or rewritten, so curation done by hand survives untouched — which is
+what makes it safe to run unattended. Reword the appended bullets or merge them
+into neighbouring ones whenever it suits; the next refresh will not undo it.
+
+Merging `main` in matters for a second reason: a `pull_request` run is not
+re-triggered by base movement, so without it the PR would sit green while going
+stale. Refreshing the branch re-runs its checks against what will actually
+merge.
+
+Each push gets its own comment, because each reports a distinct event on `main`
+— unlike the release summary, which is a sticky comment describing the whole
+release.
+
+If `main` conflicts with the release branch, nothing is changed and the comment
+says so; resolve it locally and push.
 
 It requires the `RELEASE_APP_CLIENT_ID` and `RELEASE_APP_PRIVATE_KEY` secrets and
 fails without them, deliberately: a PR opened with the default `GITHUB_TOKEN`
