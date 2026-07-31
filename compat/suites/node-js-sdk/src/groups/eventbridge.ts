@@ -113,7 +113,7 @@ export function makeEventBridgeGroups(suite: string): TestGroup[] {
             const resp = await eventbridge.send(
               new ListEventBusesCommand({ NamePrefix: ctx.runId }),
             );
-            assert.notStrictEqual(resp.EventBuses?.some((b) => b.Name, busName), `DeleteEventBus: event bus ${busName} still present after delete`);
+            assert.ok(!resp.EventBuses?.some((b) => b.Name === busName), `DeleteEventBus: event bus ${busName} still present after delete`);
           },
         },
       ],
@@ -249,7 +249,7 @@ export function makeEventBridgeGroups(suite: string): TestGroup[] {
             const resp = await eventbridge.send(
               new ListRulesCommand({ NamePrefix: ctx.runId }),
             );
-            assert.notStrictEqual(resp.Rules?.some((r) => r.Name, `${ctx.runId}-rule`), `DeleteRule: rule ${ctx.runId}-rule still present after delete`);
+            assert.ok(!resp.Rules?.some((r) => r.Name === `${ctx.runId}-rule`), `DeleteRule: rule ${ctx.runId}-rule still present after delete`);
           },
         },
       ],

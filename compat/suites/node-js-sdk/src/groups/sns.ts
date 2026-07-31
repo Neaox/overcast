@@ -112,7 +112,7 @@ export function makeSNSGroups(suite: string): TestGroup[] {
             assert.ok(arn, "DeleteTopic: topic not found");
             await sns.send(new DeleteTopicCommand({ TopicArn: arn }));
             const after = await sns.send(new ListTopicsCommand({}));
-            assert.notStrictEqual(after.Topics?.some((t) => t.TopicArn, arn), "DeleteTopic: topic still present after delete");
+            assert.ok(!after.Topics?.some((t) => t.TopicArn === arn), "DeleteTopic: topic still present after delete");
           },
         },
       ],

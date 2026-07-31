@@ -1,6 +1,7 @@
 # Compat baseline, CI enforcement & cross-suite uniformity
 
-> Status: enforcement and CI surfacing landed. Burn-down and parity backfill outstanding.
+> Status: enforcement, CI surfacing, flake pipeline, and the framework audit landed.
+> 26 grandfathered failures and the dotnet/rust parity backfill outstanding.
 >
 > The policy this plan implements is documented for contributors in
 > [compat/AGENTS.md § Baseline & uniformity policy](../../compat/AGENTS.md#baseline--uniformity-policy).
@@ -81,23 +82,61 @@ passing against a stub that never ran a container. That is exactly the blindspot
 this work existed to close: the suite was green on a code path CI never
 exercised.
 
-## Outstanding — burn down the 29 grandfathered failures
+## Outstanding — burn down the 26 grandfathered failures
 
 One PR per root cause, reproducing test first. The baseline shrinks by
 auto-promotion on merge; nothing to hand-edit.
 
 | # | Root cause | Fails | Notes |
 | --- | --- | --- | --- |
-| R1 | `rds-subnet-groups` — "At least one SubnetId is required", plus the Describe cascade | 6 | node, python×2, go×2, cli. Determine whether the suites' subnet setup or the emulator's EC2/RDS path is wrong |
-| R3 | java-sdk Lambda function readiness | 1 | Mostly resolved by real containers; one failure left |
-| R4 | dotnet-sdk suite bugs | 11 | Null-refs (PurgeQueue, DeleteItem, PublishBatch), s3-copy bucket collision, IAM `Get*Policy` URL-decode assertions, BatchGetSecretValue, appsync ordering |
-| R5 | rust-sdk opaque `service error` reporting, then the real bugs | 9 | Fix `SdkError` rendering first — the errors are currently unreadable; ssm masked-value expectation; BatchGetSecretValue |
-| R6 | Suites hardcode `nodejs18.x`, which the emulator now rejects | ~17 cascading skips | appsync-functions and lambda-invoke setup across dotnet/rust — no longer a `fail`, but it masks whole groups |
-| R7 | **New — exposed by running Lambda for real** | 0 | Both halves resolved. `ListEventBuses`: shared-bus suite bug (see the flake section), cleared from the baseline. `InvokeDryRun`: the group's function is `python3.12` but CI pre-pulled only the nodejs image, so the function sat Pending behind a cold pull — and `InvokeDryRun` was the one invoke test that did not `waitFunctionActive` first (it runs first in the group). Fixed by waiting like its siblings, pre-pulling `python:3.12` in CI, and widening the waiter to survive a cold pull (fail-fast on `Failed` with the StateReason). The emulator's Pending-invoke error also corrected to AWS's 409 `ResourceConflictException` (was a 400 `InvalidParameterValueException`). Baseline entries clear via promotion on the next green main run |
+| R1 | `rds-subnet-groups` — "At least one SubnetId is required", plus the Describe cascade | 7 | node, python×2, go×2, cli, java. Fails identically in five suites, which points at the emulator's EC2/RDS path, not the suites. Largest single cluster; reproduces locally |
+| R4 | dotnet-sdk suite bugs | 10 | Null-refs (PurgeQueue, DeleteItem, PublishBatch), s3-copy bucket collision, IAM `Get*Policy` URL-decode assertions, BatchGetSecretValue, appsync ordering, s3-multipart AbortMultipartUpload |
+| R5 | rust-sdk opaque `service error` reporting, then the real bugs | 9 | Fix `SdkError` rendering first — the errors are currently unreadable. Then: dynamodb conditional-check expectations ×2, lambda-crud CreateFunction, s3-copy, BatchGetSecretValue, ssm masked-value ×2, appsync ×2 |
+| R6 | Suites hardcode `nodejs18.x`, which the emulator now rejects | (inside R4/R5 counts) | The 4 appsync fails (dotnet+rust `CreateFunction`/`TagResource`) and rust `lambda-crud/CreateFunction` trace to `Runtime::Nodejs18x` in rust setups and the dotnet equivalent — bump to nodejs20.x and several fails + setup-skips clear at once |
 
 R2 (CDK ESM) is done — it resolved the moment CI stopped skipping Docker.
+R3 (java function readiness) and R7 (cli InvokeDryRun + eventbridge) are done —
+#442 fixed the readiness wait and the Pending-invoke status code, and a 3×
+workflow_dispatch flake-detection run of cli confirmed it (issue #398 closed).
+The incidence pattern generalises: **a test failing identically in many suites
+is an emulator bug (R1); a test failing in exactly one suite is a suite bug
+(R4/R5)** — the report's lone-suite classification should exploit this.
 
-## Outstanding — stabilise the flaky tests
+## Dashboard QOL — reviewed 2026-08-01, scoped, not yet started
+
+The dashboard works and the fundamentals are right (registry-driven matrix,
+distinct fail/unimplemented states, SSE with catch-up buffering, results
+persisted across restarts). The review found stability and usability gaps, in
+priority order:
+
+1. **SSE drops are invisible and unrecovered.** `use-event-stream.ts` opens an
+   `EventSource` with no `onerror`/`onopen` handling: the browser auto-
+   reconnects, but events missed during the outage are never back-filled, so
+   the matrix silently drifts stale — and nothing tells the user the
+   connection died. Fix: on reconnect, re-fetch `/results` and re-seed (the
+   catch-up buffer logic already exists for startup); add a connection pill.
+   The main web UI just built exactly this pattern (#369/#382) — mirror it.
+2. **Failed run triggers are silent.** `use-run.ts` returns `{ok:false}` on a
+   409 (run already active) or network error; no component surfaces it. A
+   click that does nothing is indistinguishable from a broken UI. Fix: inline
+   feedback on the run controls.
+3. **compat/ui is invisible to CI.** No typecheck, no tests, no build runs in
+   any workflow (the Web UI job covers `web/` only; CI never embeds the
+   dashboard because compat runs headless there). Type rot lands silently.
+   Fix: add `tsc -b` + `npm run build` for compat/ui to the compat workflow's
+   build job (~40s, cached), and stand up vitest — the SSE reducer and
+   registry-join logic are pure functions begging for tests. `web/` has the
+   harness conventions to copy.
+4. **No preference persistence.** Status filters, suite selection and scroll
+   state reset on every reload; during a burn-down session the fail-filter is
+   re-applied by hand each visit. Fix: localStorage for filter/selection
+   state.
+5. **Registry×suite scoping in the matrix**: with `suites` scoping now in the
+   registry (cdk-lifecycle), the matrix should render out-of-scope cells as
+   structurally absent rather than "not run", so per-suite pass rates exclude
+   cells a suite can never fill.
+
+## Stabilising flaky tests (pipeline live; list currently empty)
 
 Quarantine is containment. The plan to actually remove it:
 
@@ -180,43 +219,91 @@ drops items at random, so Classify allocated on some windows. Fixed by
 hand-rolling the region-shape match (`isAWSRegionShaped`, pinned to the regexp
 by an oracle test); the assertion itself was right and is unchanged.
 
-## Outstanding — fix the quarantined flake
+## Framework audit (2026-08-01) — findings and hygiene
 
-[compat/flaky.json](../../compat/flaky.json) holds one real flake, found by
-running the same tree through CI twice:
+A full end-to-end review of the framework — isolation, assertions, sync
+methodology, runner, CI, and UI — before expanding the suites. State at review
+time: **26 grandfathered failures, quarantine list empty, R2/R3/R7 closed.**
 
-- **`dotnet-sdk/sns-subscriptions/PublishDeliveredToSQS`** — intermittently
-  reports `Topic does not exist: oc-<run>-dn-sns-sub`, on a topic
-  `SubscribeSQS` used successfully moments earlier in the same group. So the
-  topic is being *lost between calls*, not never created. Suspect a race in the
-  emulator's SNS topic store, or setup ordering in the suite.
-  `Unsubscribe` cascades from it.
+**Fixed during the audit:**
 
-Quarantine is a holding pen, not a resolution: the entry stays out of the gate
-in both directions until someone fixes the bug and deletes it. It is worth
-treating as high priority — an intermittent emulator bug is exactly the kind of
-thing users hit and cannot reproduce.
+- **Eight assertions in node-js-sdk could never fail.** The idiom
+  `list?.some((x) => x.Y, val)` passes `val` as `thisArg` — it tests "some
+  entry has a truthy field", not membership — and several sat inside
+  `assert.notStrictEqual(x, "message")`, which compares against the *message
+  string*. Every post-delete verification for S3 buckets, SNS topics,
+  EventBridge buses/rules, CloudWatch log groups, EC2 VPCs and Step Functions
+  state machines asserted nothing. This is the worst defect class for a compat
+  suite: a fidelity blind spot that stays green. All eight repaired; running
+  node+python locally against the current emulator surfaced **zero new
+  failures** — the emulator actually implements these paths correctly, so the
+  fix is pure coverage.
+- **Latent #388-pattern isolation bug in `sts-assume`** (node-js + python):
+  `AssumeRole` targeted `role/{runId}-role` — the exact role `iam-roles`
+  creates, exercises `DeleteRole` on, and tears down in a sibling parallel
+  slot. Benign today only because the emulator does not validate the role's
+  existence; the day it does, this becomes an intermittent cross-group
+  failure. Both suites now use `-sts-assume-role`.
+- **Parity was one-directional.** The checker verified registry→suites but a
+  suite could invent tests the registry never heard of — cdk shipped
+  `VerifyFilteredDdbEsm` and `VerifyFilteredEsmDelivery` outside the registry
+  and nothing noticed. `computeParity` now flags any result absent from the
+  registry (honouring `suites` scoping), and the two cdk tests are registered
+  (cdk-lifecycle: 33 → 35).
 
-Cascade skips must shrink with their root cause — check the skip clusters, not
-just the fail count. End state: zero `fail` entries, plus a CI guard asserting
-it stays that way (flips the grandfather clause off permanently).
+**Verified clean:**
+
+- No prefix-based teardowns remain in any suite (the #436 class).
+- rust-sdk lambda naming is per-group (scanner false positive: setups/teardowns
+  maps); python logs/kinesis share tails across *different services* (no
+  collision); cli kinesis and dotnet ssm hits were file-top helpers and the
+  group's own teardown section.
+- Parallelism is uniform: 8 slots in every harness checked (node Semaphore,
+  go/cli buffered channel, python ThreadPoolExecutor), overridable via
+  `OVERCAST_COMPAT_PARALLEL_SLOTS`.
+- UI: joins on `/registry`, renders Pass / Fail / **Not impl.** / Skip / N/A as
+  distinct states (true failures never conflated with unimplemented), persists
+  the last run across restarts, streams live over SSE.
+
+**Known local-env quirk (documented in memory, worth a docs note):** the first
+compat run after `compose up` fails all Lambda invokes ("function is in a
+failed state") until `overcast` is restarted once — a socket-gid issue, not an
+emulator or suite bug.
+
+**Remaining tidy-up so new tests are easy to add** (mechanical, per-suite PRs):
+
+1. **Name hygiene rule, enforced by review not tooling:** every resource name
+   embeds its group token (`{runId}-<group-token>-…`). The audit's scanner
+   (banner-section + name-tail analysis) found the violations above; making it
+   a CI lint needs per-language parsing and is not worth the fragility yet —
+   re-run the scan when a suite gains groups.
+2. **Assertion-parity is unenforced.** The registry syncs *names*; nothing
+   keeps eight implementations asserting the same thing (dotnet's IAM
+   `Get*Policy` URL-decode failures are suites disagreeing about assertions).
+   Cheap first step: the report already knows a test's cross-suite incidence —
+   surface "fails in exactly one suite" as a suite-bug-candidate list in the
+   job summary. A shared behaviour spec is not worth it at this scale.
+3. **Go/py/java assert idiom sweep:** the TS `.some(thisArg)` class does not
+   exist in Go (explicit ifs), but python `assert x, msg`-style truthiness and
+   java assertion helpers deserve the same 30-minute audit next time either
+   suite is touched.
+4. **cli suite runtime** (4m16s in CI, the slowest matrix job): one process
+   spawn per aws-cli call. Acceptable; revisit only if the matrix wall-time
+   starts to bind.
 
 ## Outstanding — parity backfill to zero
 
-602 registry tests of debt across 126 groups
+558 registry tests of debt across 112 groups
 ([compat/parity-debt.json](../../compat/parity-debt.json)):
 
 | Suite | Debt | Shape |
 | --- | --- | --- |
 | rust-sdk | 297 | Missing iam (35) plus most non-core services |
 | dotnet-sdk | 261 | Missing most non-core services |
-| go-sdk | 17 | elasticache (12) + ec2-vpc (5) |
-| java-sdk | 17 | elasticache (12) + ec2-vpc (5) |
-| python-sdk | 5 | ec2-vpc |
-| cli | 5 | ec2-vpc |
 
-Order: the small suites first (go-sdk, java-sdk, python-sdk, cli — mirror the
-existing implementations), then dotnet-sdk and rust-sdk one service per PR:
+go-sdk, java-sdk, python-sdk and cli reached **zero debt** in #344.
+
+Order: dotnet-sdk and rust-sdk one service per PR:
 sts, logs, ses, kinesis, eventbridge, cloudformation, ec2, ecs, cognito, rds,
 sfn, waf, shield, apigateway, elasticache, cloudfront (47), appsync (50); rust
 additionally iam (35). Both harnesses are registry-driven `TestName → impl`

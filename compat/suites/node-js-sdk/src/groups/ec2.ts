@@ -482,8 +482,8 @@ export function makeEC2Groups(suite: string): TestGroup[] {
             if (!vpcId) return;
             await ec2.send(new DeleteVpcCommand({ VpcId: vpcId }));
             const resp = await ec2.send(new DescribeVpcsCommand({}));
-            assert.notStrictEqual(
-              resp.Vpcs?.some((v) => v.VpcId, vpcId),
+            assert.ok(
+              !resp.Vpcs?.some((v) => v.VpcId === vpcId),
               `DeleteVpc: VPC ${vpcId} still present after delete`,
             );
           },

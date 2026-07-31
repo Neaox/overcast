@@ -12,41 +12,60 @@
         },
         {
           "name": "PutObject",
-          "depends": ["CreateBucket"]
+          "depends": [
+            "CreateBucket"
+          ]
         },
         {
           "name": "HeadObject",
-          "depends": ["PutObject"]
+          "depends": [
+            "PutObject"
+          ]
         },
         {
           "name": "GetObject",
-          "depends": ["PutObject"]
+          "depends": [
+            "PutObject"
+          ]
         },
         {
           "name": "ListObjectsV2",
-          "depends": ["PutObject"]
+          "depends": [
+            "PutObject"
+          ]
         },
         {
           "name": "PutObjectMultipleKeys",
           "op": "PutObject",
-          "depends": ["CreateBucket"]
+          "depends": [
+            "CreateBucket"
+          ]
         },
         {
           "name": "ListObjectsV2Delimiter",
           "op": "ListObjectsV2",
-          "depends": ["PutObjectMultipleKeys"]
+          "depends": [
+            "PutObjectMultipleKeys"
+          ]
         },
         {
           "name": "DeleteObject",
-          "depends": ["PutObject"]
+          "depends": [
+            "PutObject"
+          ]
         },
         {
           "name": "DeleteObjects",
-          "depends": ["PutObjectMultipleKeys"]
+          "depends": [
+            "PutObjectMultipleKeys"
+          ]
         },
         {
           "name": "DeleteBucket",
-          "depends": ["DeleteObject", "DeleteObjects"]
+          "depends": [
+            "DeleteObject",
+            "DeleteObjects"
+          ]
         }
       ]
     },
@@ -60,11 +79,15 @@
         },
         {
           "name": "PutSourceObject",
-          "depends": ["CreateSourceBucket"]
+          "depends": [
+            "CreateSourceBucket"
+          ]
         },
         {
           "name": "CopyObject",
-          "depends": ["PutSourceObject"]
+          "depends": [
+            "PutSourceObject"
+          ]
         }
       ]
     },
@@ -77,15 +100,21 @@
         },
         {
           "name": "UploadPart",
-          "depends": ["CreateMultipartUpload"]
+          "depends": [
+            "CreateMultipartUpload"
+          ]
         },
         {
           "name": "CompleteMultipartUpload",
-          "depends": ["UploadPart"]
+          "depends": [
+            "UploadPart"
+          ]
         },
         {
           "name": "AbortMultipartUpload",
-          "depends": ["CreateMultipartUpload"]
+          "depends": [
+            "CreateMultipartUpload"
+          ]
         }
       ]
     },
@@ -98,7 +127,9 @@
         },
         {
           "name": "GetBucketVersioning",
-          "depends": ["PutBucketVersioning"]
+          "depends": [
+            "PutBucketVersioning"
+          ]
         }
       ]
     },
@@ -111,14 +142,18 @@
         },
         {
           "name": "GetObjectTagging",
-          "depends": ["PutObjectTagging"]
+          "depends": [
+            "PutObjectTagging"
+          ]
         },
         {
           "name": "PutBucketTagging"
         },
         {
           "name": "GetBucketTagging",
-          "depends": ["PutBucketTagging"]
+          "depends": [
+            "PutBucketTagging"
+          ]
         }
       ]
     },
@@ -131,7 +166,9 @@
         },
         {
           "name": "GetBucketWebsite",
-          "depends": ["PutBucketWebsite"]
+          "depends": [
+            "PutBucketWebsite"
+          ]
         }
       ]
     },
@@ -144,7 +181,9 @@
         },
         {
           "name": "GetBucketCors",
-          "depends": ["PutBucketCors"]
+          "depends": [
+            "PutBucketCors"
+          ]
         }
       ]
     },
@@ -157,27 +196,39 @@
         },
         {
           "name": "GetQueueUrl",
-          "depends": ["CreateQueue"]
+          "depends": [
+            "CreateQueue"
+          ]
         },
         {
           "name": "ListQueues",
-          "depends": ["CreateQueue"]
+          "depends": [
+            "CreateQueue"
+          ]
         },
         {
           "name": "SetQueueAttributes",
-          "depends": ["CreateQueue"]
+          "depends": [
+            "CreateQueue"
+          ]
         },
         {
           "name": "GetQueueAttributes",
-          "depends": ["SetQueueAttributes"]
+          "depends": [
+            "SetQueueAttributes"
+          ]
         },
         {
           "name": "TagQueue",
-          "depends": ["CreateQueue"]
+          "depends": [
+            "CreateQueue"
+          ]
         },
         {
           "name": "UntagQueue",
-          "depends": ["TagQueue"]
+          "depends": [
+            "TagQueue"
+          ]
         },
         {
           "name": "DeleteQueue",
@@ -199,27 +250,39 @@
         },
         {
           "name": "SendMessageBatch",
-          "depends": ["SendMessage"]
+          "depends": [
+            "SendMessage"
+          ]
         },
         {
           "name": "ReceiveMessage",
-          "depends": ["SendMessageBatch"]
+          "depends": [
+            "SendMessageBatch"
+          ]
         },
         {
           "name": "DeleteMessage",
-          "depends": ["ReceiveMessage"]
+          "depends": [
+            "ReceiveMessage"
+          ]
         },
         {
           "name": "ChangeMessageVisibility",
-          "depends": ["SendMessage"]
+          "depends": [
+            "SendMessage"
+          ]
         },
         {
           "name": "DeleteMessageBatch",
-          "depends": ["SendMessageBatch"]
+          "depends": [
+            "SendMessageBatch"
+          ]
         },
         {
           "name": "PurgeQueue",
-          "depends": ["SendMessage"]
+          "depends": [
+            "SendMessage"
+          ]
         }
       ]
     },
@@ -234,12 +297,16 @@
         {
           "name": "SetRedrivePolicy",
           "op": "SetQueueAttributes",
-          "depends": ["CreateDLQ"]
+          "depends": [
+            "CreateDLQ"
+          ]
         },
         {
           "name": "GetRedrivePolicy",
           "op": "GetQueueAttributes",
-          "depends": ["SetRedrivePolicy"]
+          "depends": [
+            "SetRedrivePolicy"
+          ]
         }
       ]
     },
@@ -254,12 +321,16 @@
         {
           "name": "SendFifoMessage",
           "op": "SendMessage",
-          "depends": ["CreateFifoQueue"]
+          "depends": [
+            "CreateFifoQueue"
+          ]
         },
         {
           "name": "ReceiveFifoMessage",
           "op": "ReceiveMessage",
-          "depends": ["SendFifoMessage"]
+          "depends": [
+            "SendFifoMessage"
+          ]
         }
       ]
     },
@@ -272,19 +343,29 @@
         },
         {
           "name": "DescribeTable",
-          "depends": ["CreateTable"]
+          "depends": [
+            "CreateTable"
+          ]
         },
         {
           "name": "ListTables",
-          "depends": ["CreateTable"]
+          "depends": [
+            "CreateTable"
+          ]
         },
         {
           "name": "UpdateTable",
-          "depends": ["CreateTable"]
+          "depends": [
+            "CreateTable"
+          ]
         },
         {
           "name": "DeleteTable",
-          "depends": ["DescribeTable", "ListTables", "UpdateTable"]
+          "depends": [
+            "DescribeTable",
+            "ListTables",
+            "UpdateTable"
+          ]
         }
       ]
     },
@@ -297,20 +378,28 @@
         },
         {
           "name": "GetItem",
-          "depends": ["PutItem"]
+          "depends": [
+            "PutItem"
+          ]
         },
         {
           "name": "UpdateItem",
-          "depends": ["PutItem"]
+          "depends": [
+            "PutItem"
+          ]
         },
         {
           "name": "PutItemConditionFail",
           "op": "PutItem",
-          "depends": ["PutItem"]
+          "depends": [
+            "PutItem"
+          ]
         },
         {
           "name": "DeleteItem",
-          "depends": ["PutItem"]
+          "depends": [
+            "PutItem"
+          ]
         }
       ]
     },
@@ -324,17 +413,23 @@
         {
           "name": "QueryWithFilterExpression",
           "op": "Query",
-          "depends": ["Query"]
+          "depends": [
+            "Query"
+          ]
         },
         {
           "name": "QueryWithLimit",
           "op": "Query",
-          "depends": ["Query"]
+          "depends": [
+            "Query"
+          ]
         },
         {
           "name": "QueryPagination",
           "op": "Query",
-          "depends": ["Query"]
+          "depends": [
+            "Query"
+          ]
         },
         {
           "name": "Scan"
@@ -342,7 +437,9 @@
         {
           "name": "ScanWithFilter",
           "op": "Scan",
-          "depends": ["Scan"]
+          "depends": [
+            "Scan"
+          ]
         }
       ]
     },
@@ -355,7 +452,9 @@
         },
         {
           "name": "BatchGetItem",
-          "depends": ["BatchWriteItem"]
+          "depends": [
+            "BatchWriteItem"
+          ]
         }
       ]
     },
@@ -368,12 +467,16 @@
         },
         {
           "name": "TransactGetItems",
-          "depends": ["TransactWriteItems"]
+          "depends": [
+            "TransactWriteItems"
+          ]
         },
         {
           "name": "TransactWriteConditionFail",
           "op": "TransactWriteItems",
-          "depends": ["TransactWriteItems"]
+          "depends": [
+            "TransactWriteItems"
+          ]
         }
       ]
     },
@@ -386,7 +489,9 @@
         },
         {
           "name": "DescribeTimeToLive",
-          "depends": ["UpdateTimeToLive"]
+          "depends": [
+            "UpdateTimeToLive"
+          ]
         }
       ]
     },
@@ -399,19 +504,29 @@
         },
         {
           "name": "ListTopics",
-          "depends": ["CreateTopic"]
+          "depends": [
+            "CreateTopic"
+          ]
         },
         {
           "name": "GetTopicAttributes",
-          "depends": ["CreateTopic"]
+          "depends": [
+            "CreateTopic"
+          ]
         },
         {
           "name": "SetTopicAttributes",
-          "depends": ["CreateTopic"]
+          "depends": [
+            "CreateTopic"
+          ]
         },
         {
           "name": "DeleteTopic",
-          "depends": ["ListTopics", "GetTopicAttributes", "SetTopicAttributes"]
+          "depends": [
+            "ListTopics",
+            "GetTopicAttributes",
+            "SetTopicAttributes"
+          ]
         }
       ]
     },
@@ -425,11 +540,15 @@
         {
           "name": "PublishWithAttributes",
           "op": "Publish",
-          "depends": ["Publish"]
+          "depends": [
+            "Publish"
+          ]
         },
         {
           "name": "PublishBatch",
-          "depends": ["Publish"]
+          "depends": [
+            "Publish"
+          ]
         }
       ]
     },
@@ -442,20 +561,28 @@
         },
         {
           "name": "ListSubscriptionsByTopic",
-          "depends": ["SubscribeSQS"]
+          "depends": [
+            "SubscribeSQS"
+          ]
         },
         {
           "name": "GetSubscriptionAttributes",
-          "depends": ["SubscribeSQS"]
+          "depends": [
+            "SubscribeSQS"
+          ]
         },
         {
           "name": "PublishDeliveredToSQS",
           "op": "Publish",
-          "depends": ["SubscribeSQS"]
+          "depends": [
+            "SubscribeSQS"
+          ]
         },
         {
           "name": "SetSubscriptionAttributes",
-          "depends": ["SubscribeSQS"]
+          "depends": [
+            "SubscribeSQS"
+          ]
         },
         {
           "name": "Unsubscribe",
@@ -477,19 +604,27 @@
         },
         {
           "name": "GetFunction",
-          "depends": ["CreateFunction"]
+          "depends": [
+            "CreateFunction"
+          ]
         },
         {
           "name": "ListFunctions",
-          "depends": ["CreateFunction"]
+          "depends": [
+            "CreateFunction"
+          ]
         },
         {
           "name": "UpdateFunctionCode",
-          "depends": ["CreateFunction"]
+          "depends": [
+            "CreateFunction"
+          ]
         },
         {
           "name": "UpdateFunctionConfiguration",
-          "depends": ["CreateFunction"]
+          "depends": [
+            "CreateFunction"
+          ]
         },
         {
           "name": "DeleteFunction",
@@ -513,14 +648,22 @@
         {
           "name": "InvokeSync",
           "op": "Invoke",
-          "requires": ["docker"],
-          "depends": ["InvokeDryRun"]
+          "requires": [
+            "docker"
+          ],
+          "depends": [
+            "InvokeDryRun"
+          ]
         },
         {
           "name": "InvokeAsync",
           "op": "Invoke",
-          "requires": ["docker"],
-          "depends": ["InvokeDryRun"]
+          "requires": [
+            "docker"
+          ],
+          "depends": [
+            "InvokeDryRun"
+          ]
         }
       ]
     },
@@ -531,7 +674,9 @@
         {
           "name": "InvokeWithResponseStream",
           "op": "InvokeWithResponseStream",
-          "requires": ["docker"]
+          "requires": [
+            "docker"
+          ]
         }
       ]
     },
@@ -544,27 +689,41 @@
         },
         {
           "name": "ListVersionsByFunction",
-          "depends": ["PublishVersion"]
+          "depends": [
+            "PublishVersion"
+          ]
         },
         {
           "name": "CreateAlias",
-          "depends": ["PublishVersion"]
+          "depends": [
+            "PublishVersion"
+          ]
         },
         {
           "name": "GetAlias",
-          "depends": ["CreateAlias"]
+          "depends": [
+            "CreateAlias"
+          ]
         },
         {
           "name": "ListAliases",
-          "depends": ["CreateAlias"]
+          "depends": [
+            "CreateAlias"
+          ]
         },
         {
           "name": "UpdateAlias",
-          "depends": ["CreateAlias"]
+          "depends": [
+            "CreateAlias"
+          ]
         },
         {
           "name": "DeleteAlias",
-          "depends": ["GetAlias", "ListAliases", "UpdateAlias"]
+          "depends": [
+            "GetAlias",
+            "ListAliases",
+            "UpdateAlias"
+          ]
         }
       ]
     },
@@ -577,11 +736,15 @@
         },
         {
           "name": "ListLayers",
-          "depends": ["PublishLayerVersion"]
+          "depends": [
+            "PublishLayerVersion"
+          ]
         },
         {
           "name": "DeleteLayerVersion",
-          "depends": ["ListLayers"]
+          "depends": [
+            "ListLayers"
+          ]
         }
       ]
     },
@@ -594,20 +757,28 @@
         },
         {
           "name": "DescribeLogGroups",
-          "depends": ["CreateLogGroup"]
+          "depends": [
+            "CreateLogGroup"
+          ]
         },
         {
           "name": "PutRetentionPolicy",
-          "depends": ["CreateLogGroup"]
+          "depends": [
+            "CreateLogGroup"
+          ]
         },
         {
           "name": "VerifyRetentionPolicy",
           "op": null,
-          "depends": ["PutRetentionPolicy"]
+          "depends": [
+            "PutRetentionPolicy"
+          ]
         },
         {
           "name": "DeleteRetentionPolicy",
-          "depends": ["VerifyRetentionPolicy"]
+          "depends": [
+            "VerifyRetentionPolicy"
+          ]
         },
         {
           "name": "DeleteLogGroup",
@@ -620,11 +791,15 @@
         },
         {
           "name": "CreateLogStream",
-          "depends": ["CreateLogGroup"]
+          "depends": [
+            "CreateLogGroup"
+          ]
         },
         {
           "name": "TagLogGroup",
-          "depends": ["CreateLogGroup"]
+          "depends": [
+            "CreateLogGroup"
+          ]
         }
       ]
     },
@@ -637,19 +812,29 @@
         },
         {
           "name": "GetLogEvents",
-          "depends": ["PutLogEvents"]
+          "depends": [
+            "PutLogEvents"
+          ]
         },
         {
           "name": "FilterLogEvents",
-          "depends": ["PutLogEvents"]
+          "depends": [
+            "PutLogEvents"
+          ]
         },
         {
           "name": "DescribeLogStreams",
-          "depends": ["PutLogEvents"]
+          "depends": [
+            "PutLogEvents"
+          ]
         },
         {
           "name": "DeleteLogStream",
-          "depends": ["GetLogEvents", "FilterLogEvents", "DescribeLogStreams"]
+          "depends": [
+            "GetLogEvents",
+            "FilterLogEvents",
+            "DescribeLogStreams"
+          ]
         }
       ]
     },
@@ -662,12 +847,16 @@
         },
         {
           "name": "SendRawEmail",
-          "depends": ["SendEmail"]
+          "depends": [
+            "SendEmail"
+          ]
         },
         {
           "name": "SendEmailWithReplyTo",
           "op": "SendEmail",
-          "depends": ["SendEmail"]
+          "depends": [
+            "SendEmail"
+          ]
         },
         {
           "name": "GetSendQuota"
@@ -683,19 +872,27 @@
         },
         {
           "name": "ListIdentities",
-          "depends": ["VerifyEmailIdentity"]
+          "depends": [
+            "VerifyEmailIdentity"
+          ]
         },
         {
           "name": "GetIdentityVerificationAttributes",
-          "depends": ["VerifyEmailIdentity"]
+          "depends": [
+            "VerifyEmailIdentity"
+          ]
         },
         {
           "name": "VerifyEmailAddress",
-          "depends": ["VerifyEmailIdentity"]
+          "depends": [
+            "VerifyEmailIdentity"
+          ]
         },
         {
           "name": "ListVerifiedEmailAddresses",
-          "depends": ["VerifyEmailAddress"]
+          "depends": [
+            "VerifyEmailAddress"
+          ]
         },
         {
           "name": "DeleteIdentity",
@@ -707,7 +904,9 @@
         },
         {
           "name": "SetIdentityFeedbackForwardingEnabled",
-          "depends": ["VerifyEmailIdentity"]
+          "depends": [
+            "VerifyEmailIdentity"
+          ]
         }
       ]
     },
@@ -720,19 +919,27 @@
         },
         {
           "name": "GetTemplate",
-          "depends": ["CreateTemplate"]
+          "depends": [
+            "CreateTemplate"
+          ]
         },
         {
           "name": "UpdateTemplate",
-          "depends": ["CreateTemplate"]
+          "depends": [
+            "CreateTemplate"
+          ]
         },
         {
           "name": "ListTemplates",
-          "depends": ["CreateTemplate"]
+          "depends": [
+            "CreateTemplate"
+          ]
         },
         {
           "name": "SendTemplatedEmail",
-          "depends": ["CreateTemplate"]
+          "depends": [
+            "CreateTemplate"
+          ]
         },
         {
           "name": "DeleteTemplate",
@@ -754,39 +961,57 @@
         },
         {
           "name": "GetUser",
-          "depends": ["CreateUser"]
+          "depends": [
+            "CreateUser"
+          ]
         },
         {
           "name": "ListUsers",
-          "depends": ["CreateUser"]
+          "depends": [
+            "CreateUser"
+          ]
         },
         {
           "name": "CreateAccessKey",
-          "depends": ["CreateUser"]
+          "depends": [
+            "CreateUser"
+          ]
         },
         {
           "name": "DeleteAccessKey",
-          "depends": ["CreateAccessKey"]
+          "depends": [
+            "CreateAccessKey"
+          ]
         },
         {
           "name": "PutUserPolicy",
-          "depends": ["CreateUser"]
+          "depends": [
+            "CreateUser"
+          ]
         },
         {
           "name": "GetUserPolicy",
-          "depends": ["PutUserPolicy"]
+          "depends": [
+            "PutUserPolicy"
+          ]
         },
         {
           "name": "DeleteUserPolicy",
-          "depends": ["GetUserPolicy"]
+          "depends": [
+            "GetUserPolicy"
+          ]
         },
         {
           "name": "UpdateUser",
-          "depends": ["CreateUser"]
+          "depends": [
+            "CreateUser"
+          ]
         },
         {
           "name": "ListAccessKeys",
-          "depends": ["CreateUser"]
+          "depends": [
+            "CreateUser"
+          ]
         },
         {
           "name": "DeleteUser",
@@ -808,35 +1033,51 @@
         },
         {
           "name": "GetRole",
-          "depends": ["CreateRole"]
+          "depends": [
+            "CreateRole"
+          ]
         },
         {
           "name": "ListRoles",
-          "depends": ["CreateRole"]
+          "depends": [
+            "CreateRole"
+          ]
         },
         {
           "name": "AttachRolePolicy",
-          "depends": ["CreateRole"]
+          "depends": [
+            "CreateRole"
+          ]
         },
         {
           "name": "ListAttachedRolePolicies",
-          "depends": ["AttachRolePolicy"]
+          "depends": [
+            "AttachRolePolicy"
+          ]
         },
         {
           "name": "DetachRolePolicy",
-          "depends": ["ListAttachedRolePolicies"]
+          "depends": [
+            "ListAttachedRolePolicies"
+          ]
         },
         {
           "name": "CreateInstanceProfile",
-          "depends": ["CreateRole"]
+          "depends": [
+            "CreateRole"
+          ]
         },
         {
           "name": "AddRoleToInstanceProfile",
-          "depends": ["CreateInstanceProfile"]
+          "depends": [
+            "CreateInstanceProfile"
+          ]
         },
         {
           "name": "GetInstanceProfile",
-          "depends": ["AddRoleToInstanceProfile"]
+          "depends": [
+            "AddRoleToInstanceProfile"
+          ]
         },
         {
           "name": "DeleteRole",
@@ -848,19 +1089,28 @@
         },
         {
           "name": "PutRolePolicy",
-          "depends": ["CreateRole"]
+          "depends": [
+            "CreateRole"
+          ]
         },
         {
           "name": "GetRolePolicy",
-          "depends": ["PutRolePolicy"]
+          "depends": [
+            "PutRolePolicy"
+          ]
         },
         {
           "name": "ListRolePolicies",
-          "depends": ["PutRolePolicy"]
+          "depends": [
+            "PutRolePolicy"
+          ]
         },
         {
           "name": "DeleteRolePolicy",
-          "depends": ["GetRolePolicy", "ListRolePolicies"]
+          "depends": [
+            "GetRolePolicy",
+            "ListRolePolicies"
+          ]
         }
       ]
     },
@@ -873,15 +1123,22 @@
         },
         {
           "name": "GetPolicy",
-          "depends": ["CreatePolicy"]
+          "depends": [
+            "CreatePolicy"
+          ]
         },
         {
           "name": "ListPolicies",
-          "depends": ["CreatePolicy"]
+          "depends": [
+            "CreatePolicy"
+          ]
         },
         {
           "name": "DeletePolicy",
-          "depends": ["GetPolicy", "ListPolicies"]
+          "depends": [
+            "GetPolicy",
+            "ListPolicies"
+          ]
         }
       ]
     },
@@ -894,23 +1151,33 @@
         },
         {
           "name": "AddUserToGroup",
-          "depends": ["CreateGroup"]
+          "depends": [
+            "CreateGroup"
+          ]
         },
         {
           "name": "ListGroupsForUser",
-          "depends": ["AddUserToGroup"]
+          "depends": [
+            "AddUserToGroup"
+          ]
         },
         {
           "name": "RemoveUserFromGroup",
-          "depends": ["ListGroupsForUser"]
+          "depends": [
+            "ListGroupsForUser"
+          ]
         },
         {
           "name": "GetGroup",
-          "depends": ["CreateGroup"]
+          "depends": [
+            "CreateGroup"
+          ]
         },
         {
           "name": "DeleteGroup",
-          "depends": ["GetGroup"]
+          "depends": [
+            "GetGroup"
+          ]
         }
       ]
     },
@@ -950,42 +1217,60 @@
         },
         {
           "name": "GetSecretValue",
-          "depends": ["CreateSecret"]
+          "depends": [
+            "CreateSecret"
+          ]
         },
         {
           "name": "DescribeSecret",
-          "depends": ["CreateSecret"]
+          "depends": [
+            "CreateSecret"
+          ]
         },
         {
           "name": "PutSecretValue",
-          "depends": ["CreateSecret"]
+          "depends": [
+            "CreateSecret"
+          ]
         },
         {
           "name": "ListSecretVersionIds",
-          "depends": ["PutSecretValue"]
+          "depends": [
+            "PutSecretValue"
+          ]
         },
         {
           "name": "UpdateSecret",
-          "depends": ["CreateSecret"]
+          "depends": [
+            "CreateSecret"
+          ]
         },
         {
           "name": "TagResource",
-          "depends": ["CreateSecret"]
+          "depends": [
+            "CreateSecret"
+          ]
         },
         {
           "name": "UntagResource",
-          "depends": ["TagResource"]
+          "depends": [
+            "TagResource"
+          ]
         },
         {
           "name": "GetRandomPassword"
         },
         {
           "name": "BatchGetSecretValue",
-          "depends": ["CreateSecret"]
+          "depends": [
+            "CreateSecret"
+          ]
         },
         {
           "name": "ListSecrets",
-          "depends": ["CreateSecret"]
+          "depends": [
+            "CreateSecret"
+          ]
         },
         {
           "name": "DeleteSecret",
@@ -1010,7 +1295,9 @@
         },
         {
           "name": "CancelRotateSecret",
-          "depends": ["RotateSecret"]
+          "depends": [
+            "RotateSecret"
+          ]
         }
       ]
     },
@@ -1023,50 +1310,72 @@
         },
         {
           "name": "DescribeKey",
-          "depends": ["CreateKey"]
+          "depends": [
+            "CreateKey"
+          ]
         },
         {
           "name": "CreateKmsAlias",
-          "depends": ["CreateKey"]
+          "depends": [
+            "CreateKey"
+          ]
         },
         {
           "name": "ListKmsAliases",
-          "depends": ["CreateKmsAlias"]
+          "depends": [
+            "CreateKmsAlias"
+          ]
         },
         {
           "name": "ListKeys",
-          "depends": ["CreateKey"]
+          "depends": [
+            "CreateKey"
+          ]
         },
         {
           "name": "DisableKey",
-          "depends": ["CreateKey"]
+          "depends": [
+            "CreateKey"
+          ]
         },
         {
           "name": "EnableKey",
-          "depends": ["DisableKey"]
+          "depends": [
+            "DisableKey"
+          ]
         },
         {
           "name": "ScheduleKeyDeletion",
-          "depends": ["EnableKey"]
+          "depends": [
+            "EnableKey"
+          ]
         },
         {
           "name": "CancelKeyDeletion",
-          "depends": ["ScheduleKeyDeletion"]
+          "depends": [
+            "ScheduleKeyDeletion"
+          ]
         },
         {
           "name": "TagKMSResource",
           "op": "TagResource",
-          "depends": ["CreateKey"]
+          "depends": [
+            "CreateKey"
+          ]
         },
         {
           "name": "ListKMSResourceTags",
           "op": "ListResourceTags",
-          "depends": ["TagKMSResource"]
+          "depends": [
+            "TagKMSResource"
+          ]
         },
         {
           "name": "UntagKMSResource",
           "op": "UntagResource",
-          "depends": ["ListKMSResourceTags"]
+          "depends": [
+            "ListKMSResourceTags"
+          ]
         }
       ]
     },
@@ -1079,7 +1388,9 @@
         },
         {
           "name": "Decrypt",
-          "depends": ["Encrypt"]
+          "depends": [
+            "Encrypt"
+          ]
         },
         {
           "name": "GenerateDataKey"
@@ -1098,7 +1409,9 @@
         },
         {
           "name": "Verify",
-          "depends": ["Sign"]
+          "depends": [
+            "Sign"
+          ]
         }
       ]
     },
@@ -1111,38 +1424,54 @@
         },
         {
           "name": "GetParameter",
-          "depends": ["PutParameter"]
+          "depends": [
+            "PutParameter"
+          ]
         },
         {
           "name": "PutParameterOverwrite",
           "op": "PutParameter",
-          "depends": ["PutParameter"]
+          "depends": [
+            "PutParameter"
+          ]
         },
         {
           "name": "GetParameterHistory",
-          "depends": ["PutParameterOverwrite"]
+          "depends": [
+            "PutParameterOverwrite"
+          ]
         },
         {
           "name": "PutMultipleParameters",
           "op": "PutParameter",
-          "depends": ["PutParameter"]
+          "depends": [
+            "PutParameter"
+          ]
         },
         {
           "name": "GetParameters",
-          "depends": ["PutMultipleParameters"]
+          "depends": [
+            "PutMultipleParameters"
+          ]
         },
         {
           "name": "DescribeParameters",
-          "depends": ["PutParameter"]
+          "depends": [
+            "PutParameter"
+          ]
         },
         {
           "name": "TagParameter",
           "op": "AddTagsToResource",
-          "depends": ["PutParameter"]
+          "depends": [
+            "PutParameter"
+          ]
         },
         {
           "name": "ListSSMTagsForResource",
-          "depends": ["TagParameter"]
+          "depends": [
+            "TagParameter"
+          ]
         },
         {
           "name": "DeleteParameters",
@@ -1167,12 +1496,16 @@
         {
           "name": "GetSecureStringParameter",
           "op": "GetParameter",
-          "depends": ["PutSecureStringParameter"]
+          "depends": [
+            "PutSecureStringParameter"
+          ]
         },
         {
           "name": "GetSecureStringWithoutDecryption",
           "op": "GetParameter",
-          "depends": ["PutSecureStringParameter"]
+          "depends": [
+            "PutSecureStringParameter"
+          ]
         }
       ]
     },
@@ -1186,12 +1519,16 @@
         {
           "name": "GetParametersByPathRecursive",
           "op": "GetParametersByPath",
-          "depends": ["GetParametersByPath"]
+          "depends": [
+            "GetParametersByPath"
+          ]
         },
         {
           "name": "GetParametersByPathPaginated",
           "op": "GetParametersByPath",
-          "depends": ["GetParametersByPath"]
+          "depends": [
+            "GetParametersByPath"
+          ]
         }
       ]
     },
@@ -1204,23 +1541,33 @@
         },
         {
           "name": "DescribeStream",
-          "depends": ["CreateStream"]
+          "depends": [
+            "CreateStream"
+          ]
         },
         {
           "name": "DescribeStreamSummary",
-          "depends": ["CreateStream"]
+          "depends": [
+            "CreateStream"
+          ]
         },
         {
           "name": "ListStreams",
-          "depends": ["CreateStream"]
+          "depends": [
+            "CreateStream"
+          ]
         },
         {
           "name": "AddTagsToStream",
-          "depends": ["CreateStream"]
+          "depends": [
+            "CreateStream"
+          ]
         },
         {
           "name": "ListTagsForStream",
-          "depends": ["AddTagsToStream"]
+          "depends": [
+            "AddTagsToStream"
+          ]
         },
         {
           "name": "DeleteStream",
@@ -1242,15 +1589,21 @@
         },
         {
           "name": "PutRecords",
-          "depends": ["PutRecord"]
+          "depends": [
+            "PutRecord"
+          ]
         },
         {
           "name": "GetShardIterator",
-          "depends": ["PutRecord"]
+          "depends": [
+            "PutRecord"
+          ]
         },
         {
           "name": "GetRecords",
-          "depends": ["GetShardIterator"]
+          "depends": [
+            "GetShardIterator"
+          ]
         }
       ]
     },
@@ -1263,11 +1616,15 @@
         },
         {
           "name": "SplitShard",
-          "depends": ["ListShards"]
+          "depends": [
+            "ListShards"
+          ]
         },
         {
           "name": "MergeShards",
-          "depends": ["SplitShard"]
+          "depends": [
+            "SplitShard"
+          ]
         }
       ]
     },
@@ -1280,20 +1637,28 @@
         },
         {
           "name": "DescribeEventBus",
-          "depends": ["CreateEventBus"]
+          "depends": [
+            "CreateEventBus"
+          ]
         },
         {
           "name": "ListEventBuses",
-          "depends": ["CreateEventBus"]
+          "depends": [
+            "CreateEventBus"
+          ]
         },
         {
           "name": "TagEventBus",
           "op": "TagResource",
-          "depends": ["CreateEventBus"]
+          "depends": [
+            "CreateEventBus"
+          ]
         },
         {
           "name": "ListEventBridgeTagsForResource",
-          "depends": ["TagEventBus"]
+          "depends": [
+            "TagEventBus"
+          ]
         },
         {
           "name": "DeleteEventBus",
@@ -1314,35 +1679,52 @@
         },
         {
           "name": "DescribeRule",
-          "depends": ["PutRule"]
+          "depends": [
+            "PutRule"
+          ]
         },
         {
           "name": "ListRules",
-          "depends": ["PutRule"]
+          "depends": [
+            "PutRule"
+          ]
         },
         {
           "name": "PutTargets",
-          "depends": ["PutRule"]
+          "depends": [
+            "PutRule"
+          ]
         },
         {
           "name": "ListTargetsByRule",
-          "depends": ["PutTargets"]
+          "depends": [
+            "PutTargets"
+          ]
         },
         {
           "name": "DisableRule",
-          "depends": ["PutRule"]
+          "depends": [
+            "PutRule"
+          ]
         },
         {
           "name": "EnableRule",
-          "depends": ["DisableRule"]
+          "depends": [
+            "DisableRule"
+          ]
         },
         {
           "name": "RemoveTargets",
-          "depends": ["ListTargetsByRule", "EnableRule"]
+          "depends": [
+            "ListTargetsByRule",
+            "EnableRule"
+          ]
         },
         {
           "name": "DeleteRule",
-          "depends": ["RemoveTargets"]
+          "depends": [
+            "RemoveTargets"
+          ]
         }
       ]
     },
@@ -1356,7 +1738,9 @@
         {
           "name": "PutEventsBatch",
           "op": "PutEvents",
-          "depends": ["PutEvents"]
+          "depends": [
+            "PutEvents"
+          ]
         }
       ]
     },
@@ -1369,22 +1753,32 @@
         },
         {
           "name": "DescribeStacks",
-          "depends": ["CreateStack"]
+          "depends": [
+            "CreateStack"
+          ]
         },
         {
           "name": "ListStacks",
-          "depends": ["CreateStack"]
+          "depends": [
+            "CreateStack"
+          ]
         },
         {
           "name": "DeleteStack",
-          "depends": ["DescribeStacks", "ListStacks", "UpdateStack"]
+          "depends": [
+            "DescribeStacks",
+            "ListStacks",
+            "UpdateStack"
+          ]
         },
         {
           "name": "ValidateTemplate"
         },
         {
           "name": "UpdateStack",
-          "depends": ["CreateStack"]
+          "depends": [
+            "CreateStack"
+          ]
         }
       ]
     },
@@ -1409,19 +1803,28 @@
         },
         {
           "name": "DescribeInstances",
-          "depends": ["RunInstances"]
+          "depends": [
+            "RunInstances"
+          ]
         },
         {
           "name": "StopInstances",
-          "depends": ["RunInstances"]
+          "depends": [
+            "RunInstances"
+          ]
         },
         {
           "name": "StartInstances",
-          "depends": ["StopInstances"]
+          "depends": [
+            "StopInstances"
+          ]
         },
         {
           "name": "TerminateInstances",
-          "depends": ["DescribeInstances", "StartInstances"]
+          "depends": [
+            "DescribeInstances",
+            "StartInstances"
+          ]
         }
       ]
     },
@@ -1437,50 +1840,74 @@
         },
         {
           "name": "DescribeVpcs",
-          "depends": ["CreateVpc"]
+          "depends": [
+            "CreateVpc"
+          ]
         },
         {
           "name": "CreateVpnGateway"
         },
         {
           "name": "AttachVpnGateway",
-          "depends": ["CreateVpc", "CreateVpnGateway"]
+          "depends": [
+            "CreateVpc",
+            "CreateVpnGateway"
+          ]
         },
         {
           "name": "DescribeVpnGateways",
-          "depends": ["AttachVpnGateway"]
+          "depends": [
+            "AttachVpnGateway"
+          ]
         },
         {
           "name": "CreateSubnet",
-          "depends": ["CreateVpc"]
+          "depends": [
+            "CreateVpc"
+          ]
         },
         {
           "name": "CreateSecurityGroup",
-          "depends": ["CreateVpc"]
+          "depends": [
+            "CreateVpc"
+          ]
         },
         {
           "name": "AttachInternetGateway",
-          "depends": ["CreateVpc", "CreateInternetGateway"]
+          "depends": [
+            "CreateVpc",
+            "CreateInternetGateway"
+          ]
         },
         {
           "name": "DescribeSubnets",
-          "depends": ["CreateSubnet"]
+          "depends": [
+            "CreateSubnet"
+          ]
         },
         {
           "name": "DeleteSecurityGroup",
-          "depends": ["CreateSecurityGroup"]
+          "depends": [
+            "CreateSecurityGroup"
+          ]
         },
         {
           "name": "DetachVpnGateway",
-          "depends": ["DescribeVpnGateways"]
+          "depends": [
+            "DescribeVpnGateways"
+          ]
         },
         {
           "name": "DeleteVpnGateway",
-          "depends": ["DetachVpnGateway"]
+          "depends": [
+            "DetachVpnGateway"
+          ]
         },
         {
           "name": "DeleteSubnet",
-          "depends": ["DescribeSubnets"]
+          "depends": [
+            "DescribeSubnets"
+          ]
         },
         {
           "name": "DeleteVpc",
@@ -1502,11 +1929,15 @@
         },
         {
           "name": "DescribeSecurityGroups",
-          "depends": ["AuthorizeSecurityGroupIngress"]
+          "depends": [
+            "AuthorizeSecurityGroupIngress"
+          ]
         },
         {
           "name": "RevokeSecurityGroupIngress",
-          "depends": ["DescribeSecurityGroups"]
+          "depends": [
+            "DescribeSecurityGroups"
+          ]
         }
       ]
     },
@@ -1519,11 +1950,15 @@
         },
         {
           "name": "DescribeKeyPairs",
-          "depends": ["CreateKeyPair"]
+          "depends": [
+            "CreateKeyPair"
+          ]
         },
         {
           "name": "DeleteKeyPair",
-          "depends": ["DescribeKeyPairs"]
+          "depends": [
+            "DescribeKeyPairs"
+          ]
         }
       ]
     },
@@ -1536,23 +1971,33 @@
         },
         {
           "name": "DescribeClusters",
-          "depends": ["CreateCluster"]
+          "depends": [
+            "CreateCluster"
+          ]
         },
         {
           "name": "ListClusters",
-          "depends": ["CreateCluster"]
+          "depends": [
+            "CreateCluster"
+          ]
         },
         {
           "name": "RegisterTaskDefinition",
-          "depends": ["CreateCluster"]
+          "depends": [
+            "CreateCluster"
+          ]
         },
         {
           "name": "ListTaskDefinitions",
-          "depends": ["RegisterTaskDefinition"]
+          "depends": [
+            "RegisterTaskDefinition"
+          ]
         },
         {
           "name": "DeregisterTaskDefinition",
-          "depends": ["ListTaskDefinitions"]
+          "depends": [
+            "ListTaskDefinitions"
+          ]
         },
         {
           "name": "DeleteCluster",
@@ -1573,15 +2018,22 @@
         },
         {
           "name": "DescribeTasks",
-          "depends": ["RunTask"]
+          "depends": [
+            "RunTask"
+          ]
         },
         {
           "name": "ListTasks",
-          "depends": ["RunTask"]
+          "depends": [
+            "RunTask"
+          ]
         },
         {
           "name": "StopTask",
-          "depends": ["DescribeTasks", "ListTasks"]
+          "depends": [
+            "DescribeTasks",
+            "ListTasks"
+          ]
         }
       ]
     },
@@ -1594,19 +2046,29 @@
         },
         {
           "name": "DescribeServices",
-          "depends": ["CreateService"]
+          "depends": [
+            "CreateService"
+          ]
         },
         {
           "name": "ListServices",
-          "depends": ["CreateService"]
+          "depends": [
+            "CreateService"
+          ]
         },
         {
           "name": "UpdateService",
-          "depends": ["CreateService"]
+          "depends": [
+            "CreateService"
+          ]
         },
         {
           "name": "DeleteService",
-          "depends": ["DescribeServices", "ListServices", "UpdateService"]
+          "depends": [
+            "DescribeServices",
+            "ListServices",
+            "UpdateService"
+          ]
         }
       ]
     },
@@ -1619,11 +2081,15 @@
         },
         {
           "name": "DescribeCacheClusters",
-          "depends": ["CreateCacheCluster"]
+          "depends": [
+            "CreateCacheCluster"
+          ]
         },
         {
           "name": "DeleteCacheCluster",
-          "depends": ["DescribeCacheClusters"]
+          "depends": [
+            "DescribeCacheClusters"
+          ]
         }
       ]
     },
@@ -1648,7 +2114,9 @@
         },
         {
           "name": "DescribeReplicationGroups",
-          "depends": ["CreateReplicationGroup"]
+          "depends": [
+            "CreateReplicationGroup"
+          ]
         }
       ]
     },
@@ -1661,7 +2129,9 @@
         },
         {
           "name": "DescribeCacheSubnetGroups",
-          "depends": ["CreateCacheSubnetGroup"]
+          "depends": [
+            "CreateCacheSubnetGroup"
+          ]
         }
       ]
     },
@@ -1674,11 +2144,15 @@
         },
         {
           "name": "DescribeCacheParameterGroups",
-          "depends": ["CreateCacheParameterGroup"]
+          "depends": [
+            "CreateCacheParameterGroup"
+          ]
         },
         {
           "name": "DeleteCacheParameterGroup",
-          "depends": ["DescribeCacheParameterGroups"]
+          "depends": [
+            "DescribeCacheParameterGroups"
+          ]
         }
       ]
     },
@@ -1691,35 +2165,52 @@
         },
         {
           "name": "DescribeUserPool",
-          "depends": ["CreateUserPool"]
+          "depends": [
+            "CreateUserPool"
+          ]
         },
         {
           "name": "ListUserPools",
-          "depends": ["CreateUserPool"]
+          "depends": [
+            "CreateUserPool"
+          ]
         },
         {
           "name": "CreateUserPoolClient",
-          "depends": ["CreateUserPool"]
+          "depends": [
+            "CreateUserPool"
+          ]
         },
         {
           "name": "ListUserPoolClients",
-          "depends": ["CreateUserPoolClient"]
+          "depends": [
+            "CreateUserPoolClient"
+          ]
         },
         {
           "name": "AdminCreateUser",
-          "depends": ["CreateUserPool"]
+          "depends": [
+            "CreateUserPool"
+          ]
         },
         {
           "name": "ListUsers",
-          "depends": ["AdminCreateUser"]
+          "depends": [
+            "AdminCreateUser"
+          ]
         },
         {
           "name": "AdminDeleteUser",
-          "depends": ["ListUsers"]
+          "depends": [
+            "ListUsers"
+          ]
         },
         {
           "name": "DeleteUserPool",
-          "depends": ["ListUserPoolClients", "AdminDeleteUser"]
+          "depends": [
+            "ListUserPoolClients",
+            "AdminDeleteUser"
+          ]
         }
       ]
     },
@@ -1734,16 +2225,22 @@
         {
           "name": "DescribeUserPoolClientTokenValidity",
           "op": "DescribeUserPoolClient",
-          "depends": ["CreateUserPoolClientWithTokenValidity"]
+          "depends": [
+            "CreateUserPoolClientWithTokenValidity"
+          ]
         },
         {
           "name": "UpdateUserPoolClientTokenValidity",
           "op": "UpdateUserPoolClient",
-          "depends": ["DescribeUserPoolClientTokenValidity"]
+          "depends": [
+            "DescribeUserPoolClientTokenValidity"
+          ]
         },
         {
           "name": "DeleteUserPoolClient",
-          "depends": ["UpdateUserPoolClientTokenValidity"]
+          "depends": [
+            "UpdateUserPoolClientTokenValidity"
+          ]
         }
       ]
     },
@@ -1756,19 +2253,29 @@
         },
         {
           "name": "GetGraphqlApi",
-          "depends": ["CreateGraphqlApi"]
+          "depends": [
+            "CreateGraphqlApi"
+          ]
         },
         {
           "name": "UpdateGraphqlApi",
-          "depends": ["CreateGraphqlApi"]
+          "depends": [
+            "CreateGraphqlApi"
+          ]
         },
         {
           "name": "ListGraphqlApis",
-          "depends": ["CreateGraphqlApi"]
+          "depends": [
+            "CreateGraphqlApi"
+          ]
         },
         {
           "name": "DeleteGraphqlApi",
-          "depends": ["GetGraphqlApi", "UpdateGraphqlApi", "ListGraphqlApis"]
+          "depends": [
+            "GetGraphqlApi",
+            "UpdateGraphqlApi",
+            "ListGraphqlApis"
+          ]
         }
       ]
     },
@@ -1781,7 +2288,9 @@
         },
         {
           "name": "GetSchemaCreationStatus",
-          "depends": ["StartSchemaCreation"]
+          "depends": [
+            "StartSchemaCreation"
+          ]
         }
       ]
     },
@@ -1794,15 +2303,22 @@
         },
         {
           "name": "ListApiKeys",
-          "depends": ["CreateApiKey"]
+          "depends": [
+            "CreateApiKey"
+          ]
         },
         {
           "name": "UpdateApiKey",
-          "depends": ["CreateApiKey"]
+          "depends": [
+            "CreateApiKey"
+          ]
         },
         {
           "name": "DeleteApiKey",
-          "depends": ["ListApiKeys", "UpdateApiKey"]
+          "depends": [
+            "ListApiKeys",
+            "UpdateApiKey"
+          ]
         }
       ]
     },
@@ -1815,19 +2331,29 @@
         },
         {
           "name": "GetDataSource",
-          "depends": ["CreateDataSource"]
+          "depends": [
+            "CreateDataSource"
+          ]
         },
         {
           "name": "UpdateDataSource",
-          "depends": ["CreateDataSource"]
+          "depends": [
+            "CreateDataSource"
+          ]
         },
         {
           "name": "ListDataSources",
-          "depends": ["CreateDataSource"]
+          "depends": [
+            "CreateDataSource"
+          ]
         },
         {
           "name": "DeleteDataSource",
-          "depends": ["GetDataSource", "UpdateDataSource", "ListDataSources"]
+          "depends": [
+            "GetDataSource",
+            "UpdateDataSource",
+            "ListDataSources"
+          ]
         }
       ]
     },
@@ -1840,19 +2366,29 @@
         },
         {
           "name": "GetFunction",
-          "depends": ["CreateFunction"]
+          "depends": [
+            "CreateFunction"
+          ]
         },
         {
           "name": "UpdateFunction",
-          "depends": ["CreateFunction"]
+          "depends": [
+            "CreateFunction"
+          ]
         },
         {
           "name": "ListFunctions",
-          "depends": ["CreateFunction"]
+          "depends": [
+            "CreateFunction"
+          ]
         },
         {
           "name": "DeleteFunction",
-          "depends": ["GetFunction", "UpdateFunction", "ListFunctions"]
+          "depends": [
+            "GetFunction",
+            "UpdateFunction",
+            "ListFunctions"
+          ]
         }
       ]
     },
@@ -1865,19 +2401,27 @@
         },
         {
           "name": "GetResolver",
-          "depends": ["CreateResolver"]
+          "depends": [
+            "CreateResolver"
+          ]
         },
         {
           "name": "UpdateResolver",
-          "depends": ["CreateResolver"]
+          "depends": [
+            "CreateResolver"
+          ]
         },
         {
           "name": "ListResolvers",
-          "depends": ["CreateResolver"]
+          "depends": [
+            "CreateResolver"
+          ]
         },
         {
           "name": "ListResolversByFunction",
-          "depends": ["CreateResolver"]
+          "depends": [
+            "CreateResolver"
+          ]
         },
         {
           "name": "DeleteResolver",
@@ -1899,19 +2443,29 @@
         },
         {
           "name": "GetType",
-          "depends": ["CreateType"]
+          "depends": [
+            "CreateType"
+          ]
         },
         {
           "name": "UpdateType",
-          "depends": ["CreateType"]
+          "depends": [
+            "CreateType"
+          ]
         },
         {
           "name": "ListTypes",
-          "depends": ["CreateType"]
+          "depends": [
+            "CreateType"
+          ]
         },
         {
           "name": "DeleteType",
-          "depends": ["GetType", "UpdateType", "ListTypes"]
+          "depends": [
+            "GetType",
+            "UpdateType",
+            "ListTypes"
+          ]
         }
       ]
     },
@@ -1924,11 +2478,15 @@
         },
         {
           "name": "ListTagsForResource",
-          "depends": ["TagResource"]
+          "depends": [
+            "TagResource"
+          ]
         },
         {
           "name": "UntagResource",
-          "depends": ["ListTagsForResource"]
+          "depends": [
+            "ListTagsForResource"
+          ]
         }
       ]
     },
@@ -1941,7 +2499,9 @@
         },
         {
           "name": "GetGraphqlApiEnvironmentVariables",
-          "depends": ["PutGraphqlApiEnvironmentVariables"]
+          "depends": [
+            "PutGraphqlApiEnvironmentVariables"
+          ]
         }
       ]
     },
@@ -1954,31 +2514,47 @@
         },
         {
           "name": "GetDomainName",
-          "depends": ["CreateDomainName"]
+          "depends": [
+            "CreateDomainName"
+          ]
         },
         {
           "name": "UpdateDomainName",
-          "depends": ["CreateDomainName"]
+          "depends": [
+            "CreateDomainName"
+          ]
         },
         {
           "name": "ListDomainNames",
-          "depends": ["CreateDomainName"]
+          "depends": [
+            "CreateDomainName"
+          ]
         },
         {
           "name": "AssociateApi",
-          "depends": ["CreateDomainName"]
+          "depends": [
+            "CreateDomainName"
+          ]
         },
         {
           "name": "GetApiAssociation",
-          "depends": ["AssociateApi"]
+          "depends": [
+            "AssociateApi"
+          ]
         },
         {
           "name": "DisassociateApi",
-          "depends": ["GetApiAssociation"]
+          "depends": [
+            "GetApiAssociation"
+          ]
         },
         {
           "name": "DeleteDomainName",
-          "depends": ["UpdateDomainName", "ListDomainNames", "DisassociateApi"]
+          "depends": [
+            "UpdateDomainName",
+            "ListDomainNames",
+            "DisassociateApi"
+          ]
         }
       ]
     },
@@ -1991,19 +2567,29 @@
         },
         {
           "name": "GetApiCache",
-          "depends": ["CreateApiCache"]
+          "depends": [
+            "CreateApiCache"
+          ]
         },
         {
           "name": "UpdateApiCache",
-          "depends": ["CreateApiCache"]
+          "depends": [
+            "CreateApiCache"
+          ]
         },
         {
           "name": "FlushApiCache",
-          "depends": ["CreateApiCache"]
+          "depends": [
+            "CreateApiCache"
+          ]
         },
         {
           "name": "DeleteApiCache",
-          "depends": ["GetApiCache", "UpdateApiCache", "FlushApiCache"]
+          "depends": [
+            "GetApiCache",
+            "UpdateApiCache",
+            "FlushApiCache"
+          ]
         }
       ]
     },
@@ -2016,11 +2602,15 @@
         },
         {
           "name": "GetRestApis",
-          "depends": ["CreateRestApi"]
+          "depends": [
+            "CreateRestApi"
+          ]
         },
         {
           "name": "DeleteRestApi",
-          "depends": ["GetRestApis"]
+          "depends": [
+            "GetRestApis"
+          ]
         }
       ]
     },
@@ -2033,11 +2623,15 @@
         },
         {
           "name": "GetApis",
-          "depends": ["CreateApi"]
+          "depends": [
+            "CreateApi"
+          ]
         },
         {
           "name": "DeleteApi",
-          "depends": ["GetApis"]
+          "depends": [
+            "GetApis"
+          ]
         }
       ]
     },
@@ -2050,15 +2644,21 @@
         },
         {
           "name": "GetOriginAccessControl",
-          "depends": ["CreateOriginAccessControl"]
+          "depends": [
+            "CreateOriginAccessControl"
+          ]
         },
         {
           "name": "UpdateOriginAccessControl",
-          "depends": ["CreateOriginAccessControl"]
+          "depends": [
+            "CreateOriginAccessControl"
+          ]
         },
         {
           "name": "ListOriginAccessControls",
-          "depends": ["CreateOriginAccessControl"]
+          "depends": [
+            "CreateOriginAccessControl"
+          ]
         },
         {
           "name": "DeleteOriginAccessControl",
@@ -2079,19 +2679,27 @@
         },
         {
           "name": "GetCachePolicy",
-          "depends": ["CreateCachePolicy"]
+          "depends": [
+            "CreateCachePolicy"
+          ]
         },
         {
           "name": "GetCachePolicyConfig",
-          "depends": ["CreateCachePolicy"]
+          "depends": [
+            "CreateCachePolicy"
+          ]
         },
         {
           "name": "UpdateCachePolicy",
-          "depends": ["CreateCachePolicy"]
+          "depends": [
+            "CreateCachePolicy"
+          ]
         },
         {
           "name": "ListCachePolicies",
-          "depends": ["CreateCachePolicy"]
+          "depends": [
+            "CreateCachePolicy"
+          ]
         },
         {
           "name": "DeleteCachePolicy",
@@ -2113,19 +2721,27 @@
         },
         {
           "name": "GetKeyGroup",
-          "depends": ["CreateKeyGroup"]
+          "depends": [
+            "CreateKeyGroup"
+          ]
         },
         {
           "name": "GetKeyGroupConfig",
-          "depends": ["CreateKeyGroup"]
+          "depends": [
+            "CreateKeyGroup"
+          ]
         },
         {
           "name": "UpdateKeyGroup",
-          "depends": ["CreateKeyGroup"]
+          "depends": [
+            "CreateKeyGroup"
+          ]
         },
         {
           "name": "ListKeyGroups",
-          "depends": ["CreateKeyGroup"]
+          "depends": [
+            "CreateKeyGroup"
+          ]
         },
         {
           "name": "DeleteKeyGroup",
@@ -2147,15 +2763,21 @@
         },
         {
           "name": "GetRealtimeLogConfig",
-          "depends": ["CreateRealtimeLogConfig"]
+          "depends": [
+            "CreateRealtimeLogConfig"
+          ]
         },
         {
           "name": "UpdateRealtimeLogConfig",
-          "depends": ["CreateRealtimeLogConfig"]
+          "depends": [
+            "CreateRealtimeLogConfig"
+          ]
         },
         {
           "name": "ListRealtimeLogConfigs",
-          "depends": ["CreateRealtimeLogConfig"]
+          "depends": [
+            "CreateRealtimeLogConfig"
+          ]
         },
         {
           "name": "DeleteRealtimeLogConfig",
@@ -2176,11 +2798,15 @@
         },
         {
           "name": "GetMonitoringSubscription",
-          "depends": ["CreateMonitoringSubscription"]
+          "depends": [
+            "CreateMonitoringSubscription"
+          ]
         },
         {
           "name": "DeleteMonitoringSubscription",
-          "depends": ["GetMonitoringSubscription"]
+          "depends": [
+            "GetMonitoringSubscription"
+          ]
         }
       ]
     },
@@ -2193,19 +2819,27 @@
         },
         {
           "name": "GetFieldLevelEncryption",
-          "depends": ["CreateFieldLevelEncryptionConfig"]
+          "depends": [
+            "CreateFieldLevelEncryptionConfig"
+          ]
         },
         {
           "name": "GetFieldLevelEncryptionConfig",
-          "depends": ["CreateFieldLevelEncryptionConfig"]
+          "depends": [
+            "CreateFieldLevelEncryptionConfig"
+          ]
         },
         {
           "name": "UpdateFieldLevelEncryptionConfig",
-          "depends": ["CreateFieldLevelEncryptionConfig"]
+          "depends": [
+            "CreateFieldLevelEncryptionConfig"
+          ]
         },
         {
           "name": "ListFieldLevelEncryptionConfigs",
-          "depends": ["CreateFieldLevelEncryptionConfig"]
+          "depends": [
+            "CreateFieldLevelEncryptionConfig"
+          ]
         },
         {
           "name": "DeleteFieldLevelEncryption",
@@ -2227,19 +2861,27 @@
         },
         {
           "name": "GetFieldLevelEncryptionProfile",
-          "depends": ["CreateFieldLevelEncryptionProfile"]
+          "depends": [
+            "CreateFieldLevelEncryptionProfile"
+          ]
         },
         {
           "name": "GetFieldLevelEncryptionProfileConfig",
-          "depends": ["CreateFieldLevelEncryptionProfile"]
+          "depends": [
+            "CreateFieldLevelEncryptionProfile"
+          ]
         },
         {
           "name": "UpdateFieldLevelEncryptionProfile",
-          "depends": ["CreateFieldLevelEncryptionProfile"]
+          "depends": [
+            "CreateFieldLevelEncryptionProfile"
+          ]
         },
         {
           "name": "ListFieldLevelEncryptionProfiles",
-          "depends": ["CreateFieldLevelEncryptionProfile"]
+          "depends": [
+            "CreateFieldLevelEncryptionProfile"
+          ]
         },
         {
           "name": "DeleteFieldLevelEncryptionProfile",
@@ -2261,19 +2903,27 @@
         },
         {
           "name": "GetContinuousDeploymentPolicy",
-          "depends": ["CreateContinuousDeploymentPolicy"]
+          "depends": [
+            "CreateContinuousDeploymentPolicy"
+          ]
         },
         {
           "name": "GetContinuousDeploymentPolicyConfig",
-          "depends": ["CreateContinuousDeploymentPolicy"]
+          "depends": [
+            "CreateContinuousDeploymentPolicy"
+          ]
         },
         {
           "name": "UpdateContinuousDeploymentPolicy",
-          "depends": ["CreateContinuousDeploymentPolicy"]
+          "depends": [
+            "CreateContinuousDeploymentPolicy"
+          ]
         },
         {
           "name": "ListContinuousDeploymentPolicies",
-          "depends": ["CreateContinuousDeploymentPolicy"]
+          "depends": [
+            "CreateContinuousDeploymentPolicy"
+          ]
         },
         {
           "name": "DeleteContinuousDeploymentPolicy",
@@ -2295,15 +2945,22 @@
         },
         {
           "name": "GetDistribution",
-          "depends": ["CreateDistribution"]
+          "depends": [
+            "CreateDistribution"
+          ]
         },
         {
           "name": "ListDistributions",
-          "depends": ["CreateDistribution"]
+          "depends": [
+            "CreateDistribution"
+          ]
         },
         {
           "name": "DeleteDistribution",
-          "depends": ["GetDistribution", "ListDistributions"]
+          "depends": [
+            "GetDistribution",
+            "ListDistributions"
+          ]
         }
       ]
     },
@@ -2320,19 +2977,27 @@
         },
         {
           "name": "DescribeDBInstances",
-          "depends": ["CreateDBInstance"]
+          "depends": [
+            "CreateDBInstance"
+          ]
         },
         {
           "name": "ModifyDBInstance",
-          "depends": ["CreateDBInstance"]
+          "depends": [
+            "CreateDBInstance"
+          ]
         },
         {
           "name": "StopDBInstance",
-          "depends": ["CreateDBInstance"]
+          "depends": [
+            "CreateDBInstance"
+          ]
         },
         {
           "name": "StartDBInstance",
-          "depends": ["StopDBInstance"]
+          "depends": [
+            "StopDBInstance"
+          ]
         },
         {
           "name": "DeleteDBInstance",
@@ -2353,11 +3018,15 @@
         },
         {
           "name": "DescribeDBSubnetGroups",
-          "depends": ["CreateDBSubnetGroup"]
+          "depends": [
+            "CreateDBSubnetGroup"
+          ]
         },
         {
           "name": "DeleteDBSubnetGroup",
-          "depends": ["DescribeDBSubnetGroups"]
+          "depends": [
+            "DescribeDBSubnetGroups"
+          ]
         }
       ]
     },
@@ -2370,11 +3039,15 @@
         },
         {
           "name": "DescribeDBParameterGroups",
-          "depends": ["CreateDBParameterGroup"]
+          "depends": [
+            "CreateDBParameterGroup"
+          ]
         },
         {
           "name": "DeleteDBParameterGroup",
-          "depends": ["DescribeDBParameterGroups"]
+          "depends": [
+            "DescribeDBParameterGroups"
+          ]
         }
       ]
     },
@@ -2387,15 +3060,21 @@
         },
         {
           "name": "DescribeStateMachine",
-          "depends": ["CreateStateMachine"]
+          "depends": [
+            "CreateStateMachine"
+          ]
         },
         {
           "name": "ListStateMachines",
-          "depends": ["CreateStateMachine"]
+          "depends": [
+            "CreateStateMachine"
+          ]
         },
         {
           "name": "StartExecution",
-          "depends": ["CreateStateMachine"]
+          "depends": [
+            "CreateStateMachine"
+          ]
         },
         {
           "name": "DeleteStateMachine",
@@ -2416,15 +3095,22 @@
         },
         {
           "name": "GetWebACL",
-          "depends": ["CreateWebACL"]
+          "depends": [
+            "CreateWebACL"
+          ]
         },
         {
           "name": "ListWebACLs",
-          "depends": ["CreateWebACL"]
+          "depends": [
+            "CreateWebACL"
+          ]
         },
         {
           "name": "DeleteWebACL",
-          "depends": ["GetWebACL", "ListWebACLs"]
+          "depends": [
+            "GetWebACL",
+            "ListWebACLs"
+          ]
         }
       ]
     },
@@ -2437,60 +3123,245 @@
         },
         {
           "name": "CreateProtection",
-          "depends": ["DescribeSubscription"]
+          "depends": [
+            "DescribeSubscription"
+          ]
         },
         {
           "name": "ListProtections",
-          "depends": ["CreateProtection"]
+          "depends": [
+            "CreateProtection"
+          ]
         },
         {
           "name": "DescribeProtection",
-          "depends": ["CreateProtection"]
+          "depends": [
+            "CreateProtection"
+          ]
         },
         {
           "name": "DeleteProtection",
-          "depends": ["DescribeProtection"]
+          "depends": [
+            "DescribeProtection"
+          ]
         }
       ]
     },
     {
       "service": "cdk",
       "name": "cdk-lifecycle",
-      "suites": ["cdk"],
+      "suites": [
+        "cdk"
+      ],
       "tests": [
-        {"name": "Bootstrap"},
-        {"name": "Synth", "depends": ["Bootstrap"]},
-        {"name": "Deploy", "depends": ["Synth"]},
-        {"name": "VerifyStackStatus", "depends": ["Deploy"]},
-        {"name": "VerifyBucket", "depends": ["VerifyStackStatus"]},
-        {"name": "VerifyQueues", "depends": ["VerifyStackStatus"]},
-        {"name": "VerifyTopicSubscription", "depends": ["VerifyQueues"]},
-        {"name": "VerifyTable", "depends": ["VerifyStackStatus"]},
-        {"name": "VerifyRole", "depends": ["VerifyStackStatus"]},
-        {"name": "VerifyFunctionConfig", "depends": ["VerifyStackStatus", "VerifyRole"]},
-        {"name": "VerifyEventSourceMapping", "depends": ["VerifyQueues", "VerifyFunctionConfig"]},
-        {"name": "VerifyDynamoDBStream", "depends": ["VerifyStackStatus"]},
-        {"name": "VerifyDynamoDBEsm", "depends": ["VerifyDynamoDBStream", "VerifyFunctionConfig"]},
-        {"name": "PutStreamTriggerItem", "depends": ["VerifyDynamoDBEsm"]},
-        {"name": "VerifyLambdaInvokedByStream", "depends": ["PutStreamTriggerItem"]},
-        {"name": "VerifyLogGroup", "depends": ["VerifyStackStatus"]},
-        {"name": "VerifyKmsKey", "depends": ["VerifyStackStatus"]},
-        {"name": "VerifySecret", "depends": ["VerifyStackStatus"]},
-        {"name": "VerifyParameter", "depends": ["VerifyStackStatus"]},
-        {"name": "VerifyPolicy", "depends": ["VerifyStackStatus"]},
-        {"name": "VerifyVpc", "depends": ["VerifyStackStatus"]},
-        {"name": "VerifySecurityGroup", "depends": ["VerifyVpc"]},
-        {"name": "VerifyRestApi", "depends": ["VerifyStackStatus"]},
-        {"name": "VerifyEventBus", "depends": ["VerifyStackStatus"]},
-        {"name": "VerifyStateMachine", "depends": ["VerifyStackStatus"]},
-        {"name": "VerifyStateMachineStatus", "depends": ["VerifyStateMachine"]},
-        {"name": "VerifyNestedStack", "depends": ["VerifyStackStatus"]},
-        {"name": "VerifyNestedQueue", "depends": ["VerifyNestedStack"]},
-        {"name": "UpdateLambdaTimeout", "depends": ["VerifyFunctionConfig"]},
-        {"name": "VerifyUpdateStatus", "depends": ["UpdateLambdaTimeout"]},
-        {"name": "VerifyUpdatedFunctionConfig", "depends": ["VerifyUpdateStatus"]},
-        {"name": "Destroy"},
-        {"name": "VerifyDestroyed", "depends": ["Destroy"]}
+        {
+          "name": "Bootstrap"
+        },
+        {
+          "name": "Synth",
+          "depends": [
+            "Bootstrap"
+          ]
+        },
+        {
+          "name": "Deploy",
+          "depends": [
+            "Synth"
+          ]
+        },
+        {
+          "name": "VerifyStackStatus",
+          "depends": [
+            "Deploy"
+          ]
+        },
+        {
+          "name": "VerifyBucket",
+          "depends": [
+            "VerifyStackStatus"
+          ]
+        },
+        {
+          "name": "VerifyQueues",
+          "depends": [
+            "VerifyStackStatus"
+          ]
+        },
+        {
+          "name": "VerifyTopicSubscription",
+          "depends": [
+            "VerifyQueues"
+          ]
+        },
+        {
+          "name": "VerifyTable",
+          "depends": [
+            "VerifyStackStatus"
+          ]
+        },
+        {
+          "name": "VerifyRole",
+          "depends": [
+            "VerifyStackStatus"
+          ]
+        },
+        {
+          "name": "VerifyFunctionConfig",
+          "depends": [
+            "VerifyStackStatus",
+            "VerifyRole"
+          ]
+        },
+        {
+          "name": "VerifyEventSourceMapping",
+          "depends": [
+            "VerifyQueues",
+            "VerifyFunctionConfig"
+          ]
+        },
+        {
+          "name": "VerifyDynamoDBStream",
+          "depends": [
+            "VerifyStackStatus"
+          ]
+        },
+        {
+          "name": "VerifyDynamoDBEsm",
+          "depends": [
+            "VerifyDynamoDBStream",
+            "VerifyFunctionConfig"
+          ]
+        },
+        {
+          "name": "PutStreamTriggerItem",
+          "depends": [
+            "VerifyDynamoDBEsm"
+          ]
+        },
+        {
+          "name": "VerifyLambdaInvokedByStream",
+          "depends": [
+            "PutStreamTriggerItem"
+          ]
+        },
+        {
+          "name": "VerifyFilteredDdbEsm",
+          "depends": [
+            "VerifyLambdaInvokedByStream"
+          ]
+        },
+        {
+          "name": "VerifyFilteredEsmDelivery",
+          "depends": [
+            "VerifyFilteredDdbEsm",
+            "PutStreamTriggerItem"
+          ]
+        },
+        {
+          "name": "VerifyLogGroup",
+          "depends": [
+            "VerifyStackStatus"
+          ]
+        },
+        {
+          "name": "VerifyKmsKey",
+          "depends": [
+            "VerifyStackStatus"
+          ]
+        },
+        {
+          "name": "VerifySecret",
+          "depends": [
+            "VerifyStackStatus"
+          ]
+        },
+        {
+          "name": "VerifyParameter",
+          "depends": [
+            "VerifyStackStatus"
+          ]
+        },
+        {
+          "name": "VerifyPolicy",
+          "depends": [
+            "VerifyStackStatus"
+          ]
+        },
+        {
+          "name": "VerifyVpc",
+          "depends": [
+            "VerifyStackStatus"
+          ]
+        },
+        {
+          "name": "VerifySecurityGroup",
+          "depends": [
+            "VerifyVpc"
+          ]
+        },
+        {
+          "name": "VerifyRestApi",
+          "depends": [
+            "VerifyStackStatus"
+          ]
+        },
+        {
+          "name": "VerifyEventBus",
+          "depends": [
+            "VerifyStackStatus"
+          ]
+        },
+        {
+          "name": "VerifyStateMachine",
+          "depends": [
+            "VerifyStackStatus"
+          ]
+        },
+        {
+          "name": "VerifyStateMachineStatus",
+          "depends": [
+            "VerifyStateMachine"
+          ]
+        },
+        {
+          "name": "VerifyNestedStack",
+          "depends": [
+            "VerifyStackStatus"
+          ]
+        },
+        {
+          "name": "VerifyNestedQueue",
+          "depends": [
+            "VerifyNestedStack"
+          ]
+        },
+        {
+          "name": "UpdateLambdaTimeout",
+          "depends": [
+            "VerifyFunctionConfig"
+          ]
+        },
+        {
+          "name": "VerifyUpdateStatus",
+          "depends": [
+            "UpdateLambdaTimeout"
+          ]
+        },
+        {
+          "name": "VerifyUpdatedFunctionConfig",
+          "depends": [
+            "VerifyUpdateStatus"
+          ]
+        },
+        {
+          "name": "Destroy"
+        },
+        {
+          "name": "VerifyDestroyed",
+          "depends": [
+            "Destroy"
+          ]
+        }
       ]
     }
   ]

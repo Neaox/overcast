@@ -59,7 +59,9 @@ def GetFederationToken(ctx: TestContext) -> None:
 def AssumeRole(ctx: TestContext) -> None:
     sts = _sts(ctx)
     resp = sts.assume_role(
-        RoleArn=f"arn:aws:iam::000000000000:role/{ctx.run_id}-role",
+        # Not a real role — and deliberately not iam-roles' "-role", which a
+        # sibling parallel group deletes mid-run (the #388 pattern).
+        RoleArn=f"arn:aws:iam::000000000000:role/{ctx.run_id}-sts-assume-role",
         RoleSessionName=f"compat-{ctx.run_id}",
         DurationSeconds=900,
     )
