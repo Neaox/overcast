@@ -226,8 +226,8 @@ export function makeS3Groups(suite: string): TestGroup[] {
             const bucket = `${ctx.runId}-s3-crud`;
             await s3.send(new DeleteBucketCommand({ Bucket: bucket }));
             const { Buckets = [] } = await s3.send(new ListBucketsCommand({}));
-            assert.notStrictEqual(
-              Buckets.some((b) => b.Name, bucket),
+            assert.ok(
+              !Buckets.some((b) => b.Name === bucket),
               `bucket ${bucket} still present after DeleteBucket`,
             );
           },

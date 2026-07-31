@@ -194,8 +194,8 @@ export function makeCloudWatchLogsGroups(suite: string): TestGroup[] {
             const resp = await logs.send(
               new DescribeLogGroupsCommand({ logGroupNamePrefix: groupName }),
             );
-            assert.notStrictEqual(
-              resp.logGroups?.some((g) => g.logGroupName, groupName),
+            assert.ok(
+              !resp.logGroups?.some((g) => g.logGroupName === groupName),
               `DeleteLogGroup: ${groupName} still present`,
             );
           },

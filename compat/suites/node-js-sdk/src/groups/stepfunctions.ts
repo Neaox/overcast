@@ -69,7 +69,7 @@ export function makeStepFunctionsGroups(suite: string): TestGroup[] {
             const { sfn } = makeClients(ctx);
             const smArn = (ctx as Record<string, unknown>)["_smArn"] as string;
             const resp = await sfn.send(new ListStateMachinesCommand({}));
-            assert.notStrictEqual(smArn && !resp.stateMachines?.some((s) => s.stateMachineArn, smArn), `ListStateMachines: state machine ${smArn} not found`);
+            assert.ok(resp.stateMachines?.some((s) => s.stateMachineArn === smArn), `ListStateMachines: state machine ${smArn} not found`);
           },
         },
         {
@@ -98,7 +98,7 @@ export function makeStepFunctionsGroups(suite: string): TestGroup[] {
               new DeleteStateMachineCommand({ stateMachineArn: smArn }),
             );
             const resp = await sfn.send(new ListStateMachinesCommand({}));
-            assert.notStrictEqual(resp.stateMachines?.some((s) => s.stateMachineArn, smArn), `DeleteStateMachine: ${smArn} still present after delete`);
+            assert.ok(!resp.stateMachines?.some((s) => s.stateMachineArn === smArn), `DeleteStateMachine: ${smArn} still present after delete`);
           },
         },
       ],

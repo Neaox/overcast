@@ -37,6 +37,49 @@ func TestParityClassifiesRegistryGapsAsDebt(t *testing.T) {
 	}
 }
 
+func TestParityFlagsResultsAbsentFromRegistry(t *testing.T) {
+	// Given: a suite emitting a test the registry has never heard of. This is
+	// not hypothetical — cdk shipped VerifyFilteredEsmDelivery and
+	// VerifyFilteredDdbEsm outside the registry and nothing noticed: the
+	// checker only walked registry->suites, so a test invented by one suite
+	// never joined the cross-suite matrix and uniformity silently eroded.
+	report := reportWithResults(
+		resultSpec{suite: "rust-sdk", service: "s3", group: "s3-crud", test: "CreateBucket", status: compat.StatusPass},
+		resultSpec{suite: "rust-sdk", service: "s3", group: "s3-crud", test: "DeleteBucket", status: compat.StatusPass},
+		resultSpec{suite: "rust-sdk", service: "s3", group: "s3-crud", test: "FrobnicateBucket", status: compat.StatusPass},
+	)
+
+	// When: parity is computed
+	got := computeParity(testRegistry(), report, []string{"rust-sdk"})
+
+	// Then: the invented test is named. The registry is the single source of
+	// truth in both directions — a suite neither under- nor over-implements it.
+	if len(got.Unregistered) != 1 {
+		t.Fatalf("unregistered = %#v, want 1 entry", got.Unregistered)
+	}
+	if !strings.Contains(got.Unregistered[0], "rust-sdk/s3-crud/FrobnicateBucket") {
+		t.Errorf("unregistered entry = %q", got.Unregistered[0])
+	}
+}
+
+func TestParityUnregisteredHonoursSuiteScope(t *testing.T) {
+	// Given: cdk emitting a test from a group scoped to cdk, plus a suite
+	// filter that excludes the result's suite entirely
+	report := reportWithResults(
+		resultSpec{suite: "cdk", service: "cdk", group: "cdk-lifecycle", test: "Deploy", status: compat.StatusPass},
+		resultSpec{suite: "go-sdk", service: "s3", group: "s3-crud", test: "NotInRegistry", status: compat.StatusPass},
+	)
+
+	// When: parity is computed for cdk only
+	got := computeParity(testRegistry(), report, []string{"cdk"})
+
+	// Then: cdk's scoped test is fine, and go-sdk's stray result is not
+	// reported because that suite was not asked about
+	if len(got.Unregistered) != 0 {
+		t.Fatalf("unregistered = %#v, want none", got.Unregistered)
+	}
+}
+
 func TestParityIgnoresEnvironmentalAndCascadeSkips(t *testing.T) {
 	// Given: skips that are not registry gaps — an environmental skip and a
 	// cascade from a failed dependency

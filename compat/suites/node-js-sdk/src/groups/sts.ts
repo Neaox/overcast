@@ -81,7 +81,11 @@ export function makeSTSGroups(suite: string): TestGroup[] {
             // STS assume-role API to return valid temporary credentials.
             const resp = await sts.send(
               new AssumeRoleCommand({
-                RoleArn: `arn:aws:iam::000000000000:role/${ctx.runId}-role`,
+                // Not a real role — and deliberately NOT iam-roles' `-role`, which a
+                // sibling parallel group deletes mid-run. If the emulator ever
+                // validates AssumeRole against IAM, a shared name becomes an
+                // intermittent cross-group failure (the #388 pattern).
+                RoleArn: `arn:aws:iam::000000000000:role/${ctx.runId}-sts-assume-role`,
                 RoleSessionName: `compat-${ctx.runId}`,
                 DurationSeconds: 900,
               }),

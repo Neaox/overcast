@@ -136,6 +136,12 @@ type parityResult struct {
 	Cascades int
 	// Unclassified lists skips whose reason matches no known category.
 	Unclassified []string
+	// Unregistered lists results whose (group, test) the registry does not
+	// contain. The registry is the source of truth in both directions: a test
+	// invented by one suite never joins the cross-suite matrix, is invisible
+	// to the uniformity policy, and erodes exactly the guarantee the registry
+	// exists to give — cdk shipped two such tests before this was checked.
+	Unregistered []string
 	// Implemented counts (suite, test) pairs the suite actually exercises.
 	Implemented int
 	// Expected counts (suite, test) pairs the registry requires.
@@ -208,8 +214,37 @@ func computeParity(reg *parityRegistry, report *compat.RunReport, suites []strin
 	for _, entry := range debtByKey {
 		out.Debt = append(out.Debt, *entry)
 	}
+
+	// The reverse direction: every result must be a registry test. Walk the
+	// asked-about suites' results and flag any (group, test) the registry does
+	// not contain — respecting group scoping, so a cdk-only group does not make
+	// cdk's results look foreign.
+	registered := make(map[string]map[string]bool, len(reg.Groups))
+	for _, group := range reg.Groups {
+		tests := make(map[string]bool, len(group.Tests))
+		for _, test := range group.Tests {
+			tests[test.Name] = true
+		}
+		registered[group.Name] = tests
+	}
+	asked := make(map[string]bool, len(suites))
+	for _, s := range suites {
+		asked[s] = true
+	}
+	for key := range results {
+		if !asked[key.suite] {
+			continue
+		}
+		if !registered[key.group][key.test] {
+			out.Unregistered = append(out.Unregistered, fmt.Sprintf(
+				"result not in registry: %s/%s/%s — add it to compat/suites/registry.json first, so every suite implements it (or records debt), or rename it to the registry entry it corresponds to",
+				key.suite, key.group, key.test))
+		}
+	}
+
 	sortParityDebt(out.Debt)
 	sort.Strings(out.Unclassified)
+	sort.Strings(out.Unregistered)
 	return out
 }
 
@@ -357,6 +392,7 @@ func checkParityFiles(registryPath, debtPath, resultsPath string, annotateOut bo
 	result := computeParity(reg, report, suites)
 	issues := diffParityDebt(recorded, result.Debt)
 	issues = append(issues, result.Unclassified...)
+	issues = append(issues, result.Unregistered...)
 	sort.Strings(issues)
 
 	printParitySummary(result, suites)
