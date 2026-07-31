@@ -2358,21 +2358,21 @@
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeAsync",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "cli",
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeDryRun",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "cli",
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeSync",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "cli",
