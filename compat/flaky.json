@@ -1,14 +1,5 @@
 {
   "version": 2,
   "comment": "Compat tests that give different answers on identical input. Quarantined from the baseline gate in BOTH directions: a flaky test never fails a PR, and never gets promoted on the run where it happened to pass. Quarantine is a STOP-GAP — every entry needs a tracking issue and a date, goes overdue after 14 days (the nightly flake-detection job fails), and blocks pull requests after 30 (the PR lint fails). Fix the test and delete the entry. See compat/AGENTS.md § Stabilising a flaky test.",
-  "flaky": [
-    {
-      "suite": "cdk",
-      "group": "cdk-lifecycle",
-      "test": "VerifyTopicSubscription",
-      "since": "2026-07-30",
-      "issue": "https://github.com/Neaox/overcast/issues/435",
-      "reason": "Subscription missing on the post-deploy verification read, seen once (PR #391 run) against five adjacent green runs. Does NOT fit the #388 suite-teardown mechanism fixed alongside the other entries: cdk-lifecycle is a single group with no in-suite parallelism. Suspect CFN provisioner ordering (Subscribe racing CreateTopic/queue under CI load) — see the issue for the remaining hypotheses."
-    }
-  ]
+  "flaky": []
 }

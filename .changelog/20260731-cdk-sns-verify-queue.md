@@ -1,0 +1,7 @@
+---
+section: Fixed
+area: compat
+---
+
+- [compat] the last quarantined flake, cdk `VerifyTopicSubscription` (#435), was a suite-side consumer race: the SNS topic fed the same queue the stack's Lambda event source mapping polls, so the ESM intermittently consumed the published message before the test's ReceiveMessage saw it (it would flake identically on real AWS). The topic now feeds a dedicated queue with no competing consumer, and the delivery wait budget rose from 2.5s to 10s; `compat/flaky.json` is empty for the first time
+- [compat] the compose path can now run the cdk suite: the CDK asset publisher addresses the bootstrap bucket virtual-hosted (`{bucket}.overcast`), which needed a wildcard-free `/etc/hosts` entry in the runner services plus `OVERCAST_HOSTNAME=overcast` on the emulator so host classification recognises the compose hostname as a virtual-host base

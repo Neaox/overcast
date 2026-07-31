@@ -53,7 +53,16 @@ export class CdkCompatStack extends cdk.Stack {
     const topic = new sns.Topic(this, "CompatTopic", {
       topicName: `${runId}-cdk-topic`,
     });
-    topic.addSubscription(new snsSubs.SqsSubscription(queue));
+    // The topic feeds its OWN queue, not the ESM-consumed main queue.
+    // VerifyTopicSubscription publishes and asserts the message arrives; when
+    // the subscription pointed at CompatQueue, the Lambda event source mapping
+    // was polling the same queue and intermittently consumed the message
+    // before the test's ReceiveMessage saw it (issue #435) — a race that
+    // would flake identically against real AWS.
+    const snsQueue = new sqs.Queue(this, "CompatSnsQueue", {
+      queueName: `${runId}-cdk-sns`,
+    });
+    topic.addSubscription(new snsSubs.SqsSubscription(snsQueue));
 
     const table = new dynamodb.Table(this, "CompatTable", {
       tableName: `${runId}-cdk-table`,
@@ -238,6 +247,8 @@ export class CdkCompatStack extends cdk.Stack {
     new cdk.CfnOutput(this, "QueueArn", { value: queue.queueArn });
     new cdk.CfnOutput(this, "DlqArn", { value: dlq.queueArn });
     new cdk.CfnOutput(this, "TopicArn", { value: topic.topicArn });
+    new cdk.CfnOutput(this, "SnsQueueName", { value: snsQueue.queueName });
+    new cdk.CfnOutput(this, "SnsQueueArn", { value: snsQueue.queueArn });
     new cdk.CfnOutput(this, "TableName", { value: table.tableName });
     new cdk.CfnOutput(this, "RoleArn", { value: role.roleArn });
     new cdk.CfnOutput(this, "FunctionName", { value: fn.functionName });
