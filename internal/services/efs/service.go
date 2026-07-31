@@ -17,6 +17,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"sync"
 	"sync/atomic"
 
 	"github.com/go-chi/chi/v5"
@@ -53,6 +54,12 @@ type Service struct {
 	// router's Docker probe succeeds. See live_volumes.go.
 	docker      *docker.Client
 	dockerReady atomic.Bool
+	// puller fetches the root-directory materialization helper image; wired
+	// with docker in SetDocker. See live_subdir.go.
+	puller *docker.ImagePuller
+	// materialized dedupes successful root-directory creations
+	// ("volume/subpath" → struct{}) so repeat mounts skip the helper run.
+	materialized sync.Map
 }
 
 // New returns a configured EFS service. Pure field assignment — no store

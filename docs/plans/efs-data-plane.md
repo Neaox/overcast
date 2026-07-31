@@ -97,13 +97,16 @@ today's behaviour) vs `OVERCAST_EFS_MODE=live`.
    readiness probing, port publishing, and cleanup discipline (follow the
    RDS container lifecycle patterns).
 
-## Known limitations (accepted or in flight)
+## Known limitations (accepted)
 
-- **Access-point root directories are not yet honored by mounts** — Lambda/ECS
-  containers currently see the volume root regardless of the access point's
-  `RootDirectory` (or ECS `rootDirectory`). Docker's `Mounts` API
-  (`VolumeOptions.Subpath`, Engine API v1.45) is the implementation path;
-  being addressed as its own change.
+- ~~Access-point root directories not honored~~ — **implemented**: mounts now
+  use Docker's `Mounts` API with `VolumeOptions.Subpath` (Engine API v1.45).
+  Access points with `CreationInfo` have their root directory materialized in
+  the volume (mkdir/chown/chmod via a one-shot busybox helper container,
+  deduplicated per process) before the first subpath mount; without
+  `CreationInfo` — or for a plain ECS `rootDirectory` — a missing directory
+  makes the mount fail, matching AWS. Requires Docker Engine 26+ (API v1.45)
+  for subpath mounts.
 - **Creation-token idempotency has a check-then-write race** under concurrent
   identical `CreateFileSystem` calls — the shared `state.Store` has no
   transactions, and every service carries the same class of race. Accepted.

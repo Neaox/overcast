@@ -51,12 +51,17 @@ type Handler struct {
 	endpointOnce sync.Once
 }
 
-// EFSVolumeResolver maps an EFS file system ID to the Docker volume backing
-// it. Implemented by the EFS service; ok is false in EFS mock mode, while
-// Docker is unavailable, or for an unknown file system — the task then runs
-// without the mount rather than failing.
+// EFSVolumeResolver maps EFS references to the Docker volume backing them.
+// Implemented by the EFS service; ok is false in EFS mock mode, while Docker
+// is unavailable, or for an unknown resource — the task then runs without
+// the mount rather than failing.
 type EFSVolumeResolver interface {
+	// EFSVolumeForFileSystem resolves a bare file system ID (plain
+	// efsVolumeConfiguration; any rootDirectory is applied by the caller).
 	EFSVolumeForFileSystem(ctx context.Context, fileSystemID string) (volume string, ok bool)
+	// EFSVolumeForAccessPointID resolves an authorizationConfig access point,
+	// returning the access point's root directory as the volume subpath.
+	EFSVolumeForAccessPointID(ctx context.Context, accessPointID string) (volume, subpath string, ok bool)
 }
 
 // VPCNetworkResolver resolves subnet-backed ECS awsvpc placement against EC2.

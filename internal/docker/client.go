@@ -156,6 +156,29 @@ type HostConfig struct {
 	// claim are answered by them, including wildcard subdomains that ExtraHosts
 	// cannot express. See internal/dns.
 	Dns []string `json:"Dns,omitempty"`
+	// Mounts is the structured alternative to Binds. Required for named-volume
+	// mounts that need VolumeOptions (e.g. Subpath); plain binds can stay in
+	// Binds — Docker merges both.
+	Mounts []Mount `json:"Mounts,omitempty"`
+}
+
+// Mount is one entry of HostConfig.Mounts (Engine API mounts specification).
+type Mount struct {
+	// Type is "volume", "bind", or "tmpfs"; Overcast uses "volume".
+	Type     string `json:"Type"`
+	Source   string `json:"Source"` // volume name (for Type "volume")
+	Target   string `json:"Target"` // absolute path inside the container
+	ReadOnly bool   `json:"ReadOnly,omitempty"`
+	// VolumeOptions apply when Type is "volume".
+	VolumeOptions *MountVolumeOptions `json:"VolumeOptions,omitempty"`
+}
+
+// MountVolumeOptions holds volume-mount-specific options.
+type MountVolumeOptions struct {
+	// Subpath mounts only the named subdirectory of the volume (Engine API
+	// v1.45+). The subdirectory must already exist in the volume — the daemon
+	// rejects the mount otherwise.
+	Subpath string `json:"Subpath,omitempty"`
 }
 
 // PortBinding represents a host-to-container port mapping.

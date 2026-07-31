@@ -253,7 +253,7 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 				Labels:       docker.ManagedLabels("ecs", resourceID),
 			},
 			HostConfig: &docker.HostConfig{AutoRemove: true,
-				Binds:        h.efsBindsForContainer(ctx, td, &td.ContainerDefinitions[i]),
+				Mounts:       h.efsMountsForContainer(ctx, td, &td.ContainerDefinitions[i]),
 				NetworkMode:  h.cfg.ECSNetwork,
 				PortBindings: portBindings,
 				ExtraHosts:   endpoint.ExtraHosts(),
@@ -331,12 +331,16 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 // lazily rather than at SetDocker time keeps the ordering honest: the address
 // may be Overcast's own IP on the ECS network, which only exists once the
 // network has been created.
-// efsBindsForContainer resolves a container's mount points against the task
-// definition's EFS-backed volumes, returning Docker named-volume bind entries
-// ("volume:/path[:ro]"). Non-EFS volumes and unresolvable file systems (EFS
-// mock mode, Docker down, unknown ID) are skipped with a warning so the task
-// still starts — mirroring the best-effort posture of EFS live mode.
-func (h *Handler) efsBindsForContainer(ctx context.Context, td *TaskDefinition, cd *ContainerDefinition) []string {
+// efsMountsForContainer resolves a container's mount points against the task
+// definition's EFS-backed volumes, returning Docker volume mounts. The mount
+// is scoped by a volume Subpath from either the authorization access point's
+// root directory or the efsVolumeConfiguration's rootDirectory. Non-EFS
+// volumes and unresolvable references (EFS mock mode, Docker down, unknown
+// IDs) are skipped with a warning so the task still starts — mirroring the
+// best-effort posture of EFS live mode. A rootDirectory subpath that does not
+// exist in the volume makes the container start fail, which mirrors AWS's
+// mount failure for missing root directories.
+func (h *Handler) efsMountsForContainer(ctx context.Context, td *TaskDefinition, cd *ContainerDefinition) []docker.Mount {
 	if len(cd.MountPoints) == 0 || h.efsResolver == nil {
 		return nil
 	}
@@ -344,7 +348,7 @@ func (h *Handler) efsBindsForContainer(ctx context.Context, td *TaskDefinition, 
 	for i := range td.Volumes {
 		volumesByName[td.Volumes[i].Name] = &td.Volumes[i]
 	}
-	binds := make([]string, 0, len(cd.MountPoints))
+	mounts := make([]docker.Mount, 0, len(cd.MountPoints))
 	for _, mp := range cd.MountPoints {
 		v := volumesByName[mp.SourceVolume]
 		if v == nil || v.EFSVolumeConfiguration == nil {
@@ -352,24 +356,32 @@ func (h *Handler) efsBindsForContainer(ctx context.Context, td *TaskDefinition, 
 				zap.String("container", cd.Name), zap.String("volume", mp.SourceVolume))
 			continue
 		}
-		volume, ok := h.efsResolver.EFSVolumeForFileSystem(ctx, v.EFSVolumeConfiguration.FileSystemId)
+		cfg := v.EFSVolumeConfiguration
+		var volume, subpath string
+		var ok bool
+		if cfg.AuthorizationConfig != nil && cfg.AuthorizationConfig.AccessPointId != "" {
+			volume, subpath, ok = h.efsResolver.EFSVolumeForAccessPointID(ctx, cfg.AuthorizationConfig.AccessPointId)
+		} else {
+			volume, ok = h.efsResolver.EFSVolumeForFileSystem(ctx, cfg.FileSystemId)
+			subpath = strings.Trim(cfg.RootDirectory, "/")
+		}
 		if !ok {
-			h.log.Warn("ecs: EFS mount skipped — file system has no backing volume (mock mode, Docker down, or unknown file system)",
+			h.log.Warn("ecs: EFS mount skipped — no backing volume (mock mode, Docker down, or unknown reference)",
 				zap.String("container", cd.Name),
-				zap.String("file_system", v.EFSVolumeConfiguration.FileSystemId),
+				zap.String("file_system", cfg.FileSystemId),
 				zap.String("container_path", mp.ContainerPath))
 			continue
 		}
-		bind := volume + ":" + mp.ContainerPath
-		if mp.ReadOnly {
-			bind += ":ro"
+		m := docker.Mount{Type: "volume", Source: volume, Target: mp.ContainerPath, ReadOnly: mp.ReadOnly}
+		if subpath != "" {
+			m.VolumeOptions = &docker.MountVolumeOptions{Subpath: subpath}
 		}
-		binds = append(binds, bind)
+		mounts = append(mounts, m)
 	}
-	if len(binds) == 0 {
+	if len(mounts) == 0 {
 		return nil
 	}
-	return binds
+	return mounts
 }
 
 func (h *Handler) containerEndpoint(ctx context.Context) *containerendpoint.Mapper {
