@@ -1378,7 +1378,7 @@
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "AttachVpnGateway",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "cli",
@@ -1413,7 +1413,7 @@
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "CreateVpnGateway",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "cli",
@@ -1434,14 +1434,14 @@
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "DeleteVpc",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "cli",
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "DeleteVpnGateway",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "cli",
@@ -1462,14 +1462,14 @@
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "DescribeVpnGateways",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "cli",
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "DetachVpnGateway",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "cli",
@@ -1679,7 +1679,7 @@
       "service": "eventbridge",
       "group": "eventbridge-buses",
       "test": "DeleteEventBus",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "cli",
@@ -1700,7 +1700,7 @@
       "service": "eventbridge",
       "group": "eventbridge-buses",
       "test": "ListEventBuses",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "cli",
@@ -6551,7 +6551,7 @@
       "service": "sns",
       "group": "sns-subscriptions",
       "test": "PublishDeliveredToSQS",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
@@ -6572,7 +6572,7 @@
       "service": "sns",
       "group": "sns-subscriptions",
       "test": "Unsubscribe",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
@@ -8063,7 +8063,7 @@
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "AttachVpnGateway",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
@@ -8098,7 +8098,7 @@
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "CreateVpnGateway",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
@@ -8126,7 +8126,7 @@
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "DeleteVpnGateway",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
@@ -8147,14 +8147,14 @@
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "DescribeVpnGateways",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "DetachVpnGateway",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
@@ -8273,84 +8273,84 @@
       "service": "elasticache",
       "group": "elasticache-clusters",
       "test": "CreateCacheCluster",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
       "service": "elasticache",
       "group": "elasticache-clusters",
       "test": "DeleteCacheCluster",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
       "service": "elasticache",
       "group": "elasticache-clusters",
       "test": "DescribeCacheClusters",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
       "service": "elasticache",
       "group": "elasticache-modify",
       "test": "ModifyCacheCluster",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
       "service": "elasticache",
       "group": "elasticache-modify",
       "test": "ModifyReplicationGroup",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
       "service": "elasticache",
       "group": "elasticache-parameter-groups",
       "test": "CreateCacheParameterGroup",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
       "service": "elasticache",
       "group": "elasticache-parameter-groups",
       "test": "DeleteCacheParameterGroup",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
       "service": "elasticache",
       "group": "elasticache-parameter-groups",
       "test": "DescribeCacheParameterGroups",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
       "service": "elasticache",
       "group": "elasticache-replication-groups",
       "test": "CreateReplicationGroup",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
       "service": "elasticache",
       "group": "elasticache-replication-groups",
       "test": "DescribeReplicationGroups",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
       "service": "elasticache",
       "group": "elasticache-subnet-groups",
       "test": "CreateCacheSubnetGroup",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
       "service": "elasticache",
       "group": "elasticache-subnet-groups",
       "test": "DescribeCacheSubnetGroups",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
@@ -11521,7 +11521,7 @@
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "AttachVpnGateway",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
@@ -11556,7 +11556,7 @@
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "CreateVpnGateway",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
@@ -11577,14 +11577,14 @@
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "DeleteVpc",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "DeleteVpnGateway",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
@@ -11605,14 +11605,14 @@
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "DescribeVpnGateways",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "DetachVpnGateway",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
@@ -11731,84 +11731,84 @@
       "service": "elasticache",
       "group": "elasticache-clusters",
       "test": "CreateCacheCluster",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
       "service": "elasticache",
       "group": "elasticache-clusters",
       "test": "DeleteCacheCluster",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
       "service": "elasticache",
       "group": "elasticache-clusters",
       "test": "DescribeCacheClusters",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
       "service": "elasticache",
       "group": "elasticache-modify",
       "test": "ModifyCacheCluster",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
       "service": "elasticache",
       "group": "elasticache-modify",
       "test": "ModifyReplicationGroup",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
       "service": "elasticache",
       "group": "elasticache-parameter-groups",
       "test": "CreateCacheParameterGroup",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
       "service": "elasticache",
       "group": "elasticache-parameter-groups",
       "test": "DeleteCacheParameterGroup",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
       "service": "elasticache",
       "group": "elasticache-parameter-groups",
       "test": "DescribeCacheParameterGroups",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
       "service": "elasticache",
       "group": "elasticache-replication-groups",
       "test": "CreateReplicationGroup",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
       "service": "elasticache",
       "group": "elasticache-replication-groups",
       "test": "DescribeReplicationGroups",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
       "service": "elasticache",
       "group": "elasticache-subnet-groups",
       "test": "CreateCacheSubnetGroup",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
       "service": "elasticache",
       "group": "elasticache-subnet-groups",
       "test": "DescribeCacheSubnetGroups",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
@@ -18021,7 +18021,7 @@
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "AttachVpnGateway",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "python-sdk",
@@ -18056,7 +18056,7 @@
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "CreateVpnGateway",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "python-sdk",
@@ -18084,7 +18084,7 @@
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "DeleteVpnGateway",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "python-sdk",
@@ -18105,14 +18105,14 @@
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "DescribeVpnGateways",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "python-sdk",
       "service": "ec2",
       "group": "ec2-vpc",
       "test": "DetachVpnGateway",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "python-sdk",
