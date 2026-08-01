@@ -150,8 +150,33 @@ public final class LambdaGroup implements ServiceGroup {
 
     private void invokeDryRun(TestContext ctx) throws Exception {
         String name = ctx.getString("lambdaInvokeName");
+        // Runs first in the group, so nothing has waited for the function yet.
+        // A create is not instantly invocable — the emulator answers a Pending
+        // invoke with AWS's 409 ResourceConflictException — and a cold runtime
+        // image pull widens that window to seconds. Same fix as cli in #442.
+        awaitFunctionActive(name);
         var resp = lambda().invoke(r -> r.functionName(name).invocationType(InvocationType.DRY_RUN));
         Assertions.assertEquals(204, resp.statusCode(), "InvokeDryRun: expected 204 status");
+    }
+
+    /**
+     * Waits for a function to leave Pending. AWS's own function-active-v2
+     * waiter allows five minutes; 60 x 500ms is enough to sit out a cold
+     * runtime-image pull without hanging a suite if the function never starts.
+     */
+    private void awaitFunctionActive(String name) throws Exception {
+        for (int i = 0; i < 60; i++) {
+            var cfg = lambda().getFunction(r -> r.functionName(name)).configuration();
+            String state = cfg.stateAsString();
+            if (state == null || "Active".equals(state)) {
+                return;
+            }
+            if ("Failed".equals(state)) {
+                throw new AssertionError("function " + name + " failed to start: " + cfg.stateReason());
+            }
+            Thread.sleep(500);
+        }
+        throw new AssertionError("function " + name + " did not become Active in time");
     }
 
     private void invokeSync(TestContext ctx) throws Exception {
