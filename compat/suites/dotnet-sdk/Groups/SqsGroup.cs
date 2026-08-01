@@ -285,7 +285,9 @@ public sealed class SqsGroup(AwsClients clients) : IServiceGroup
             MaxNumberOfMessages = 10,
             WaitTimeSeconds = 0,
         });
-        Assertions.Equal(0, recv.Messages.Count, "PurgeQueue: expected no messages after purge");
+        // The AWS SDK for .NET v4 leaves response collections null when the
+        // service returns none, so ".Count" throws rather than reading 0.
+        Assertions.Equal(0, recv.Messages?.Count ?? 0, "PurgeQueue: expected no messages after purge");
     }
 
     private async Task TeardownMessagesAsync(TestContext context)

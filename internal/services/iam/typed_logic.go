@@ -3,7 +3,6 @@ package iam
 import (
 	"context"
 	"encoding/json"
-	"net/url"
 	"strings"
 
 	"github.com/Neaox/overcast/internal/events"
@@ -1045,7 +1044,7 @@ func (h *Handler) getUserPolicyTyped(ctx context.Context, req *getUserPolicyReq)
 		return nil, errNoSuchEntity("policy", req.PolicyName)
 	}
 	return &getUserPolicyResp{Xmlns: iamXMLNS, Result: getUserPolicyResult{
-		UserName: req.UserName, PolicyName: req.PolicyName, PolicyDocument: url.QueryEscape(doc),
+		UserName: req.UserName, PolicyName: req.PolicyName, PolicyDocument: encodePolicyDocument(doc),
 	}, Meta: metaFromCtx(ctx)}, nil
 }
 
@@ -1147,7 +1146,7 @@ func (h *Handler) getRolePolicyTyped(ctx context.Context, req *getRolePolicyReq)
 		return nil, errNoSuchEntity("policy", req.PolicyName)
 	}
 	return &getRolePolicyResp{Xmlns: iamXMLNS, Result: getRolePolicyResult{
-		RoleName: req.RoleName, PolicyName: req.PolicyName, PolicyDocument: url.QueryEscape(doc),
+		RoleName: req.RoleName, PolicyName: req.PolicyName, PolicyDocument: encodePolicyDocument(doc),
 	}, Meta: metaFromCtx(ctx)}, nil
 }
 
@@ -1497,7 +1496,7 @@ func (h *Handler) getGroupPolicyTyped(ctx context.Context, req *getGroupPolicyRe
 		return nil, errNoSuchEntity("policy", req.PolicyName)
 	}
 	return &getGroupPolicyResp{Xmlns: iamXMLNS, Result: getGroupPolicyResult{
-		GroupName: req.GroupName, PolicyName: req.PolicyName, PolicyDocument: url.QueryEscape(doc),
+		GroupName: req.GroupName, PolicyName: req.PolicyName, PolicyDocument: encodePolicyDocument(doc),
 	}, Meta: metaFromCtx(ctx)}, nil
 }
 

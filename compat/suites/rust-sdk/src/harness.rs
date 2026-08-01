@@ -12,6 +12,19 @@ use tokio::sync::Semaphore;
 pub type TestFuture = Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
 pub type TestFn = Arc<dyn Fn(TestContext) -> TestFuture + Send + Sync>;
 
+/// Render an AWS SDK error with everything the service actually said.
+///
+/// `SdkError`'s own `Display` is the single word "service error" — the error
+/// code, message and request id all live further down the `source()` chain.
+/// Reporting only the head made every rust-sdk failure in the compat baseline
+/// unactionable: nine tests said "service error" and nothing else, so the one
+/// thing a compat suite exists to tell you — how the emulator diverged — was
+/// exactly what got dropped. `DisplayErrorContext` walks the chain, which is
+/// what the AWS SDK's own examples use for logging.
+pub fn sdk_error(err: impl std::error::Error + Send + Sync + 'static) -> String {
+    format!("{}", aws_smithy_types::error::display::DisplayErrorContext(&err))
+}
+
 #[derive(Clone)]
 pub struct TestContext {
     pub endpoint: Arc<String>,

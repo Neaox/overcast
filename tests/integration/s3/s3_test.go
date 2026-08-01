@@ -50,16 +50,61 @@ func TestCreateBucket_success(t *testing.T) {
 	}
 }
 
-func TestCreateBucket_alreadyExists(t *testing.T) {
+func TestCreateBucket_alreadyExistsInUSEast1IsOK(t *testing.T) {
+	// Given: a bucket this account already owns, in us-east-1
 	srv := helpers.NewTestServer(t)
 	createBucket(t, srv, "my-bucket")
 
+	// When: it is created again
 	resp, err := http.DefaultClient.Do(put(srv, "/my-bucket", nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
 
+	// Then: 200, not a conflict. S3 documents BucketAlreadyOwnedByYou as
+	// returned "in all AWS Regions except in the North Virginia Region. For
+	// legacy compatibility, if you re-create an existing bucket that you
+	// already own in the North Virginia Region, Amazon S3 returns 200 OK".
+	// us-east-1 is the default region, so a suite that creates its bucket
+	// idempotently — as the dotnet and rust compat suites do — hits this on
+	// every run.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	if loc := resp.Header.Get("Location"); loc != "/my-bucket" {
+		t.Errorf("Location = %q, want /my-bucket", loc)
+	}
+}
+
+// sigV4For builds an Authorization header that targets a region, which is how
+// the request region reaches the handler in these tests.
+func sigV4For(region string) string {
+	return "AWS4-HMAC-SHA256 Credential=test/20250101/" + region +
+		"/s3/aws4_request, SignedHeaders=host, Signature=fake"
+}
+
+func TestCreateBucket_alreadyExistsOutsideUSEast1Conflicts(t *testing.T) {
+	// Given: a bucket this account already owns, in a region that is not
+	// North Virginia
+	srv := helpers.NewTestServer(t)
+	region := "eu-west-1"
+	req := put(srv, "/my-bucket", nil, nil)
+	req.Header.Set("Authorization", sigV4For(region))
+	first, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Body.Close()
+
+	// When: it is created again in that same region
+	req = put(srv, "/my-bucket", nil, nil)
+	req.Header.Set("Authorization", sigV4For(region))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the documented conflict, which every region but us-east-1 returns
 	helpers.AssertStatus(t, resp, http.StatusConflict)
 	helpers.AssertXMLError(t, resp, "BucketAlreadyOwnedByYou")
 }
@@ -665,6 +710,61 @@ func TestCopyObject_success(t *testing.T) {
 	if string(body) != "original content" {
 		t.Errorf("expected 'original content', got %q", string(body))
 	}
+}
+
+func TestCopyObject_urlEncodedSource(t *testing.T) {
+	// Given: a source object whose key needs encoding, copied with a
+	// URL-encoded x-amz-copy-source. AWS requires that header to be
+	// URL-encoded and decodes it; the AWS SDK for .NET encodes the whole
+	// value, separator included, which the emulator used to reject as
+	// "Invalid copy source" — it split on "/" before decoding, and an encoded
+	// separator leaves nothing to split on.
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "src-bucket")
+	createBucket(t, srv, "dst-bucket")
+	putObject(t, srv, "src-bucket", "my file.txt", []byte("encoded content"), "text/plain")
+
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/dst-bucket/copy.txt", nil)
+	req.Header.Set("x-amz-copy-source", "%2Fsrc-bucket%2Fmy%20file.txt")
+
+	// When: the copy is requested
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: it succeeds and the body came across
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	got, err := http.DefaultClient.Do(get(srv, "/dst-bucket/copy.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer got.Body.Close()
+	helpers.AssertStatus(t, got, http.StatusOK)
+	body, _ := io.ReadAll(got.Body)
+	if string(body) != "encoded content" {
+		t.Errorf("body = %q, want %q", string(body), "encoded content")
+	}
+}
+
+func TestCopyObject_encodedKeyKeepsItsSlashes(t *testing.T) {
+	// Given: a key containing a slash — the bucket/key separator is the first
+	// unencoded one, so a nested key must survive intact
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "src-bucket")
+	createBucket(t, srv, "dst-bucket")
+	putObject(t, srv, "src-bucket", "dir/nested.txt", []byte("nested"), "text/plain")
+
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/dst-bucket/copy.txt", nil)
+	req.Header.Set("x-amz-copy-source", "/src-bucket/dir/nested.txt")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
 }
 
 // ---- GetBucketLocation -----------------------------------------------------

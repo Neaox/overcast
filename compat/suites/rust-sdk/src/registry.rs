@@ -37,6 +37,7 @@ pub fn build_groups(
 ) -> Result<Vec<TestGroup>, String> {
     let registry = load()?;
     validate_impls(&registry, impls, suite);
+    let ambiguous = ambiguous_test_names(&registry);
 
     Ok(registry
         .groups
@@ -47,12 +48,39 @@ pub fn build_groups(
             name: group.name.clone(),
             tests: topo_sort(group.tests)
                 .into_iter()
-                .map(|test| build_test_case(suite, &group.name, test, impls, capabilities))
+                .map(|test| build_test_case(suite, &group.name, test, impls, capabilities, &ambiguous))
                 .collect(),
             setup: setups.get(&group.name).cloned(),
             teardown: teardowns.get(&group.name).cloned(),
         })
         .collect())
+}
+
+/// Test names that appear in more than one registry group.
+///
+/// A bare-name implementation cannot serve these: `CreateFunction` belongs to
+/// both `lambda-crud` and `appsync-functions`, so falling back to the bare name
+/// runs whichever group registered it last. That is how rust-sdk — which has no
+/// AppSync implementation at all — reported results for `appsync-functions`,
+/// answering with Lambda's CreateFunction. A suite must register the
+/// group-qualified key for these; anything else is not implemented.
+fn ambiguous_test_names(registry: &RegistryRoot) -> HashSet<String> {
+    let mut seen: HashMap<&str, &str> = HashMap::new();
+    let mut ambiguous = HashSet::new();
+    for group in &registry.groups {
+        for test in &group.tests {
+            match seen.get(test.name.as_str()) {
+                Some(first) if *first != group.name.as_str() => {
+                    ambiguous.insert(test.name.clone());
+                }
+                Some(_) => {}
+                None => {
+                    seen.insert(test.name.as_str(), group.name.as_str());
+                }
+            }
+        }
+    }
+    ambiguous
 }
 
 fn build_test_case(
@@ -61,6 +89,7 @@ fn build_test_case(
     test: RegistryTest,
     impls: &HashMap<String, TestFn>,
     capabilities: &HashSet<String>,
+    ambiguous: &HashSet<String>,
 ) -> TestCase {
     let noop: TestFn = std::sync::Arc::new(|_| Box::pin(async { Ok(()) }));
 
@@ -92,13 +121,22 @@ fn build_test_case(
         };
     }
 
+    // A name shared by several groups may only be resolved by its qualified
+    // key — a bare-name match would run another group's implementation.
     let qualified = format!("{}:{}", group_name, test.name);
+    let bare = if ambiguous.contains(&test.name) {
+        None
+    } else {
+        impls.get(&test.name).cloned()
+    };
     let implementation = impls
         .get(&qualified)
         .cloned()
-        .or_else(|| impls.get(&test.name).cloned())
+        .or(bare)
         .unwrap_or_else(|| noop.clone());
-    let skip = if impls.contains_key(&qualified) || impls.contains_key(&test.name) {
+    let implemented = impls.contains_key(&qualified)
+        || (!ambiguous.contains(&test.name) && impls.contains_key(&test.name));
+    let skip = if implemented {
         None
     } else {
         Some(format!("not yet implemented in {suite} test suite"))

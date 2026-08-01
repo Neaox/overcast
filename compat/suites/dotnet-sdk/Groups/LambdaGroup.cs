@@ -10,12 +10,12 @@ public sealed class LambdaGroup(AwsClients clients) : IServiceGroup
 {
     public IReadOnlyDictionary<string, TestFn> Impls() => new Dictionary<string, TestFn>(StringComparer.Ordinal)
     {
-        ["CreateFunction"] = CreateFunctionAsync,
-        ["GetFunction"] = GetFunctionAsync,
-        ["ListFunctions"] = ListFunctionsAsync,
+        ["lambda-crud:CreateFunction"] = CreateFunctionAsync,
+        ["lambda-crud:GetFunction"] = GetFunctionAsync,
+        ["lambda-crud:ListFunctions"] = ListFunctionsAsync,
         ["UpdateFunctionCode"] = UpdateFunctionCodeAsync,
         ["UpdateFunctionConfiguration"] = UpdateFunctionConfigurationAsync,
-        ["DeleteFunction"] = DeleteFunctionAsync,
+        ["lambda-crud:DeleteFunction"] = DeleteFunctionAsync,
         ["InvokeDryRun"] = InvokeDryRunAsync,
         ["InvokeSync"] = InvokeSyncAsync,
         ["InvokeAsync"] = InvokeAsyncAsync,
@@ -56,7 +56,7 @@ public sealed class LambdaGroup(AwsClients clients) : IServiceGroup
         return await clients.Lambda().CreateFunctionAsync(new CreateFunctionRequest
         {
             FunctionName = name,
-            Runtime = Runtime.Nodejs18X,
+            Runtime = Runtime.Nodejs20X,
             Handler = "index.handler",
             Role = "arn:aws:iam::000000000000:role/lambda-role",
             Code = new FunctionCode { ZipFile = DummyZip() },
@@ -338,7 +338,7 @@ public sealed class LambdaGroup(AwsClients clients) : IServiceGroup
         {
             LayerName = layerName,
             Content = new LayerVersionContentInput { ZipFile = DummyZip() },
-            CompatibleRuntimes = new List<string> { "nodejs18.x" },
+            CompatibleRuntimes = new List<string> { "nodejs20.x" },
         });
         Assertions.NotBlank(response.LayerVersionArn, "PublishLayerVersion: LayerVersionArn");
         Assertions.GreaterThan(0, response.Version ?? 0, "PublishLayerVersion: Version");
@@ -349,7 +349,7 @@ public sealed class LambdaGroup(AwsClients clients) : IServiceGroup
     private async Task ListLayersAsync(TestContext context)
     {
         var layerName = context.GetString("LambdaLayerName") ?? throw new InvalidOperationException("LambdaLayerName not set");
-        var response = await clients.Lambda().ListLayersAsync(new ListLayersRequest { CompatibleRuntime = "nodejs18.x" });
+        var response = await clients.Lambda().ListLayersAsync(new ListLayersRequest { CompatibleRuntime = "nodejs20.x" });
         Assertions.True(response.Layers.Any(l => l.LayerName == layerName), $"ListLayers: layer {layerName} not found (runId={context.RunId})");
     }
 

@@ -421,7 +421,7 @@ func (h *Handler) GetUserPolicy(w http.ResponseWriter, r *http.Request) {
 	}{
 		UserName:       name,
 		PolicyName:     policyName,
-		PolicyDocument: url.QueryEscape(doc),
+		PolicyDocument: encodePolicyDocument(doc),
 	})
 }
 
@@ -1078,7 +1078,7 @@ func (h *Handler) GetRolePolicy(w http.ResponseWriter, r *http.Request) {
 	}{
 		RoleName:       roleName,
 		PolicyName:     policyName,
-		PolicyDocument: url.QueryEscape(doc),
+		PolicyDocument: encodePolicyDocument(doc),
 	})
 }
 
@@ -1251,7 +1251,7 @@ func (h *Handler) GetGroupPolicy(w http.ResponseWriter, r *http.Request) {
 	}{
 		GroupName:      groupName,
 		PolicyName:     policyName,
-		PolicyDocument: url.QueryEscape(doc),
+		PolicyDocument: encodePolicyDocument(doc),
 	})
 }
 
@@ -2179,4 +2179,15 @@ func policyNameFromARN(arn string) string {
 		}
 	}
 	return arn
+}
+
+// encodePolicyDocument URL-encodes an inline policy document the way IAM does.
+//
+// AWS documents the returned document as "URL-encoded compliant with RFC 3986"
+// and tells callers to URL-decode it. Go's url.QueryEscape is form encoding,
+// which renders a space as "+" — a client decoding per RFC 3986 then gets a
+// literal "+" where the space belonged, corrupting any policy document that is
+// not minified JSON. Percent-encoding the space keeps the round trip exact.
+func encodePolicyDocument(doc string) string {
+	return strings.ReplaceAll(url.QueryEscape(doc), "+", "%20")
 }

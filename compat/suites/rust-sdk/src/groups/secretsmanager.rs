@@ -35,7 +35,7 @@ impl ServiceGroup for SecretsManagerGroup {
                         .secret_string("create-test-value")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let arn = response.arn().unwrap_or_default();
                     if arn.is_empty() {
                         return Err("CreateSecret: ARN missing".to_string());
@@ -67,7 +67,7 @@ impl ServiceGroup for SecretsManagerGroup {
                         .secret_id(&name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let secret_string = response.secret_string().unwrap_or_default();
                     (secret_string == "initial-value")
                         .then_some(())
@@ -96,7 +96,7 @@ impl ServiceGroup for SecretsManagerGroup {
                         .secret_id(&name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let secret_name = response.name().unwrap_or_default();
                     (secret_name == name)
                         .then_some(())
@@ -121,7 +121,7 @@ impl ServiceGroup for SecretsManagerGroup {
                         .secret_string("updated-value")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     if response.version_id().unwrap_or_default().is_empty() {
                         return Err("PutSecretValue: versionId missing".to_string());
                     }
@@ -145,7 +145,7 @@ impl ServiceGroup for SecretsManagerGroup {
                         .secret_id(&name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     (response.versions().len() >= 2)
                         .then_some(())
                         .ok_or_else(|| "ListSecretVersionIds: expected >= 2 versions".to_string())
@@ -169,14 +169,14 @@ impl ServiceGroup for SecretsManagerGroup {
                         .description("updated desc")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let response = clients
                         .secretsmanager()
                         .describe_secret()
                         .secret_id(&name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let desc = response.description().unwrap_or_default();
                     (desc == "updated desc")
                         .then_some(())
@@ -192,7 +192,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "TagResource".to_string(),
+            "secretsmanager-crud:TagResource".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -215,14 +215,14 @@ impl ServiceGroup for SecretsManagerGroup {
                         .tags(tag_env)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let response = clients
                         .secretsmanager()
                         .describe_secret()
                         .secret_id(&name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let tags = response.tags();
                     let has_project = tags.iter().any(|tag| {
                         tag.key().unwrap_or_default() == "project"
@@ -237,7 +237,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "UntagResource".to_string(),
+            "secretsmanager-crud:UntagResource".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -251,14 +251,14 @@ impl ServiceGroup for SecretsManagerGroup {
                         .tag_keys("env")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let response = clients
                         .secretsmanager()
                         .describe_secret()
                         .secret_id(&name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let tags = response.tags();
                     let has_env = tags
                         .iter()
@@ -282,7 +282,7 @@ impl ServiceGroup for SecretsManagerGroup {
                         .password_length(20)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let password = response.random_password().unwrap_or_default();
                     (password.len() >= 20)
                         .then_some(())
@@ -315,7 +315,7 @@ impl ServiceGroup for SecretsManagerGroup {
                         .filters(filter)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let values = response.secret_values();
                     (!values.is_empty())
                         .then_some(())
@@ -340,7 +340,7 @@ impl ServiceGroup for SecretsManagerGroup {
                         .list_secrets()
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let found = response
                         .secret_list()
                         .iter()
@@ -372,13 +372,13 @@ impl ServiceGroup for SecretsManagerGroup {
                         .force_delete_without_recovery(true)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let response = clients
                         .secretsmanager()
                         .list_secrets()
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let found = response
                         .secret_list()
                         .iter()
@@ -408,7 +408,7 @@ impl ServiceGroup for SecretsManagerGroup {
                         .secret_id(&name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     if response.arn().unwrap_or_default().is_empty() {
                         return Err("RotateSecret: ARN missing".to_string());
                     }
@@ -432,7 +432,7 @@ impl ServiceGroup for SecretsManagerGroup {
                         .secret_id(&name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     if response.arn().unwrap_or_default().is_empty() {
                         return Err("CancelRotateSecret: ARN missing".to_string());
                     }
@@ -461,7 +461,7 @@ impl ServiceGroup for SecretsManagerGroup {
                         .secret_string("initial-value")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     ctx.set("smCrudSecret", name);
                     Ok(())
                 })
@@ -482,7 +482,7 @@ impl ServiceGroup for SecretsManagerGroup {
                         .secret_string("rotate-test-value")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     ctx.set("smRotateSecret", name);
                     Ok(())
                 })

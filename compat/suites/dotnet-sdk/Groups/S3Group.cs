@@ -246,18 +246,16 @@ public sealed class S3Group(AwsClients clients) : IServiceGroup
     {
         var src = $"{context.RunId}-s3-copy-src";
         var dst = $"{context.RunId}-s3-copy-dst";
+        // The group's setup already created these; creating them again is
+        // idempotent in us-east-1, which is what this test asserts. It must NOT
+        // delete them afterwards: PutSourceObject and CopyObject run next and
+        // need the same buckets, and the group teardown owns their removal.
+        // The deletion used to be unreachable — PutBucket failed first — so it
+        // sat here masked until the emulator started answering correctly.
         await clients.S3().PutBucketAsync(new PutBucketRequest { BucketName = src });
         await clients.S3().PutBucketAsync(new PutBucketRequest { BucketName = dst });
-        try
-        {
-            var response = await clients.S3().ListBucketsAsync();
-            Assertions.True(response.Buckets.Any(b => b.BucketName == src) && response.Buckets.Any(b => b.BucketName == dst), $"CreateSourceBucket: buckets not found in ListBuckets (runId={context.RunId})");
-        }
-        finally
-        {
-            await EmptyAndDeleteBucketAsync(src);
-            await EmptyAndDeleteBucketAsync(dst);
-        }
+        var response = await clients.S3().ListBucketsAsync();
+        Assertions.True(response.Buckets.Any(b => b.BucketName == src) && response.Buckets.Any(b => b.BucketName == dst), $"CreateSourceBucket: buckets not found in ListBuckets (runId={context.RunId})");
     }
 
     private async Task PutSourceObjectAsync(TestContext context)
@@ -337,7 +335,8 @@ public sealed class S3Group(AwsClients clients) : IServiceGroup
         var uploadId = create.UploadId;
         await clients.S3().AbortMultipartUploadAsync(new AbortMultipartUploadRequest { BucketName = bucket, Key = "large-file", UploadId = uploadId });
         var list = await clients.S3().ListMultipartUploadsAsync(new ListMultipartUploadsRequest { BucketName = bucket });
-        Assertions.False(list.MultipartUploads.Any(u => u.UploadId == uploadId), "AbortMultipartUpload: upload still present after abort");
+        // Null, not empty, once the last upload is aborted (SDK v4).
+        Assertions.False(list.MultipartUploads?.Any(u => u.UploadId == uploadId) ?? false, "AbortMultipartUpload: upload still present after abort");
     }
 
     private async Task PutBucketVersioningAsync(TestContext context)

@@ -390,7 +390,7 @@ public sealed class DynamoDbGroup(AwsClients clients) : IServiceGroup
             TableName = tableName,
             Key = Key("user-1", "profile"),
         });
-        Assertions.True(getResponse.Item.Count == 0,
+        Assertions.True((getResponse.Item?.Count ?? 0) == 0,
             $"DeleteItem: item still present after deletion (runId={context.RunId})");
     }
 

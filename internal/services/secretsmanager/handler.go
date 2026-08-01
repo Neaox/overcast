@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -710,13 +711,41 @@ func containsRune(s string, r rune) bool {
 
 func (h *Handler) BatchGetSecretValue(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		SecretIdList []string `json:"SecretIdList"`
+		SecretIdList []string       `json:"SecretIdList"`
+		Filters      []secretFilter `json:"Filters"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
 
+	// AWS: "You must include Filters or SecretIdList, but not both."
+	if len(req.Filters) > 0 && len(req.SecretIdList) > 0 {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code:       "InvalidParameterException",
+			Message:    "You must include Filters or SecretIdList, but not both.",
+			HTTPStatus: http.StatusBadRequest,
+		})
+		return
+	}
+
 	ctx := r.Context()
+
+	// The filter form selects the secrets to fetch, exactly as ListSecrets
+	// does. Ignoring it — as this handler used to — returned an empty result
+	// for a request AWS answers, which is worse than a 501: the caller sees a
+	// successful lookup that found nothing.
+	if len(req.Filters) > 0 {
+		secrets, aerr := h.store.listSecrets(ctx)
+		if aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
+		for _, sec := range secrets {
+			if secretMatchesFilters(sec, req.Filters) {
+				req.SecretIdList = append(req.SecretIdList, sec.Name)
+			}
+		}
+	}
 	type secretEntry struct {
 		ARN           string   `json:"ARN"`
 		Name          string   `json:"Name"`
@@ -777,4 +806,65 @@ func (h *Handler) BatchGetSecretValue(w http.ResponseWriter, r *http.Request) {
 		"SecretValues": secretValues,
 		"Errors":       errors,
 	})
+}
+
+// secretFilter is one entry of BatchGetSecretValue/ListSecrets Filters.
+type secretFilter struct {
+	Key    string   `json:"Key"`
+	Values []string `json:"Values"`
+}
+
+// secretMatchesFilters reports whether a secret satisfies every filter, which
+// is how AWS combines them: filters AND together, values within one filter OR
+// together. Matching is a case-insensitive prefix test, which is what AWS
+// documents for name and description.
+func secretMatchesFilters(sec Secret, filters []secretFilter) bool {
+	for _, f := range filters {
+		if !secretMatchesFilter(sec, f.Key, f.Values) {
+			return false
+		}
+	}
+	return true
+}
+
+func secretMatchesFilter(sec Secret, key string, values []string) bool {
+	matchAny := func(candidates ...string) bool {
+		for _, v := range values {
+			needle := strings.ToLower(strings.TrimPrefix(v, "!"))
+			for _, c := range candidates {
+				if strings.HasPrefix(strings.ToLower(c), needle) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	switch strings.ToLower(key) {
+	case "name":
+		return matchAny(sec.Name)
+	case "description":
+		return matchAny(sec.Description)
+	case "tag-key":
+		keys := make([]string, 0, len(sec.Tags))
+		for _, tag := range sec.Tags {
+			keys = append(keys, tag.Key)
+		}
+		return matchAny(keys...)
+	case "tag-value":
+		vals := make([]string, 0, len(sec.Tags))
+		for _, tag := range sec.Tags {
+			vals = append(vals, tag.Value)
+		}
+		return matchAny(vals...)
+	case "all":
+		candidates := []string{sec.Name, sec.Description}
+		for _, tag := range sec.Tags {
+			candidates = append(candidates, tag.Key, tag.Value)
+		}
+		return matchAny(candidates...)
+	default:
+		// An unknown key matches nothing rather than everything: a filter the
+		// emulator does not understand must not silently widen the result.
+		return false
+	}
 }

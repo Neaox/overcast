@@ -37,7 +37,7 @@ impl ServiceGroup for SnsGroup {
                         .name(&topic_name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let topic_arn = response
                         .topic_arn()
                         .ok_or_else(|| "CreateTopic: topic_arn missing".to_string())?;
@@ -66,7 +66,7 @@ impl ServiceGroup for SnsGroup {
                         .list_topics()
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let found = response
                         .topics()
                         .iter()
@@ -97,7 +97,7 @@ impl ServiceGroup for SnsGroup {
                         .topic_arn(&topic_arn)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let attrs = response
                         .attributes()
                         .ok_or_else(|| "GetTopicAttributes: attributes missing".to_string())?;
@@ -127,14 +127,14 @@ impl ServiceGroup for SnsGroup {
                         .attribute_value("compat-test")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let response = clients
                         .sns()
                         .get_topic_attributes()
                         .topic_arn(&topic_arn)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let attrs = response
                         .attributes()
                         .ok_or_else(|| "SetTopicAttributes: attributes missing".to_string())?;
@@ -165,13 +165,13 @@ impl ServiceGroup for SnsGroup {
                         .topic_arn(&topic_arn)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let response = clients
                         .sns()
                         .list_topics()
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let found = response
                         .topics()
                         .iter()
@@ -202,7 +202,7 @@ impl ServiceGroup for SnsGroup {
                         .message("hello-sns")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let message_id = response
                         .message_id()
                         .ok_or_else(|| "Publish: message_id missing".to_string())?;
@@ -230,7 +230,7 @@ impl ServiceGroup for SnsGroup {
                             .data_type("String")
                             .string_value("red")
                             .build()
-                            .map_err(|e| e.to_string())?,
+                            .map_err(crate::harness::sdk_error)?,
                     );
                     message_attributes.insert(
                         "count".to_string(),
@@ -238,7 +238,7 @@ impl ServiceGroup for SnsGroup {
                             .data_type("Number")
                             .string_value("5")
                             .build()
-                            .map_err(|e| e.to_string())?,
+                            .map_err(crate::harness::sdk_error)?,
                     );
                     let response = clients
                         .sns()
@@ -249,7 +249,7 @@ impl ServiceGroup for SnsGroup {
                         .set_message_attributes(Some(message_attributes))
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let message_id = response
                         .message_id()
                         .ok_or_else(|| "PublishWithAttributes: message_id missing".to_string())?;
@@ -274,12 +274,12 @@ impl ServiceGroup for SnsGroup {
                         .id("1")
                         .message("batch-msg-1")
                         .build()
-                        .map_err(|e| e.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let entry2 = PublishBatchRequestEntry::builder()
                         .id("2")
                         .message("batch-msg-2")
                         .build()
-                        .map_err(|e| e.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let response = clients
                         .sns()
                         .publish_batch()
@@ -288,7 +288,7 @@ impl ServiceGroup for SnsGroup {
                         .publish_batch_request_entries(entry2)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let count = response.successful().len();
                     (count >= 2).then_some(()).ok_or_else(|| {
                         format!("PublishBatch: expected >= 2 successful, got {count}")
@@ -319,7 +319,7 @@ impl ServiceGroup for SnsGroup {
                         .attribute_names(QueueAttributeName::QueueArn)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let queue_arn = q_attrs
                         .attributes()
                         .ok_or_else(|| "SubscribeSQS: queue attributes missing".to_string())?
@@ -334,7 +334,7 @@ impl ServiceGroup for SnsGroup {
                         .endpoint(&queue_arn)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let sub_arn = response
                         .subscription_arn()
                         .ok_or_else(|| "SubscribeSQS: subscription_arn missing".to_string())?;
@@ -363,7 +363,7 @@ impl ServiceGroup for SnsGroup {
                         .topic_arn(&topic_arn)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let count = response.subscriptions().len();
                     (count >= 1).then_some(()).ok_or_else(|| {
                         format!("ListSubscriptionsByTopic: expected >= 1 subscription, got {count}")
@@ -387,7 +387,7 @@ impl ServiceGroup for SnsGroup {
                         .subscription_arn(&sub_arn)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let attrs = response
                         .attributes()
                         .ok_or_else(|| "GetSubscriptionAttributes: attributes missing".to_string())?;
@@ -422,7 +422,7 @@ impl ServiceGroup for SnsGroup {
                         .message("delivery-test")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     for _ in 0..10 {
                         let recv = clients
                             .sqs()
@@ -432,7 +432,7 @@ impl ServiceGroup for SnsGroup {
                             .wait_time_seconds(1)
                             .send()
                             .await
-                            .map_err(|err| err.to_string())?;
+                            .map_err(crate::harness::sdk_error)?;
                         if !recv.messages().is_empty() {
                             return Ok(());
                         }
@@ -459,14 +459,14 @@ impl ServiceGroup for SnsGroup {
                         .attribute_value("true")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let response = clients
                         .sns()
                         .get_subscription_attributes()
                         .subscription_arn(&sub_arn)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let attrs = response.attributes().ok_or_else(|| {
                         "SetSubscriptionAttributes: attributes missing".to_string()
                     })?;
@@ -500,14 +500,14 @@ impl ServiceGroup for SnsGroup {
                         .subscription_arn(&sub_arn)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let response = clients
                         .sns()
                         .list_subscriptions_by_topic()
                         .topic_arn(&topic_arn)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let found = response
                         .subscriptions()
                         .iter()
@@ -540,7 +540,7 @@ impl ServiceGroup for SnsGroup {
                         .name(&topic_name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let topic_arn = response
                         .topic_arn()
                         .ok_or_else(|| "setup(sns-publish): topic_arn missing".to_string())?;
@@ -569,7 +569,7 @@ impl ServiceGroup for SnsGroup {
                         .name(&topic_name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let topic_arn = topic_resp
                         .topic_arn()
                         .ok_or_else(|| "setup(sns-subscriptions): topic_arn missing".to_string())?;
@@ -582,7 +582,7 @@ impl ServiceGroup for SnsGroup {
                         .queue_name(&queue_name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let queue_url = queue_resp
                         .queue_url()
                         .ok_or_else(|| "setup(sns-subscriptions): queue_url missing".to_string())?;
@@ -695,7 +695,7 @@ async fn find_topic_arn(clients: &AwsClients, topic_name: &str) -> Result<String
         .list_topics()
         .send()
         .await
-        .map_err(|err| err.to_string())?;
+        .map_err(crate::harness::sdk_error)?;
     for topic in response.topics() {
         let arn = topic.topic_arn().unwrap_or_default();
         if arn.contains(topic_name) {

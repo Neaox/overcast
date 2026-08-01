@@ -29,7 +29,7 @@ impl ServiceGroup for StsGroup {
                         .get_caller_identity()
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     if response.account().unwrap_or_default().is_empty() {
                         return Err("GetCallerIdentity: account missing".to_string());
                     }
@@ -55,7 +55,7 @@ impl ServiceGroup for StsGroup {
                         .get_session_token()
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let credentials = response
                         .credentials()
                         .ok_or_else(|| "GetSessionToken: credentials missing".to_string())?;
@@ -79,7 +79,7 @@ impl ServiceGroup for StsGroup {
                         .name("compat-user")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let credentials = response
                         .credentials()
                         .ok_or_else(|| "GetFederationToken: credentials missing".to_string())?;
@@ -104,7 +104,7 @@ impl ServiceGroup for StsGroup {
                         .role_session_name("rust-sdk-compat")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let credentials = response
                         .credentials()
                         .ok_or_else(|| "AssumeRole: credentials missing".to_string())?;
@@ -130,7 +130,7 @@ impl ServiceGroup for StsGroup {
                         .web_identity_token("fake-web-identity-token")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let credentials = response.credentials().ok_or_else(|| {
                         "AssumeRoleWithWebIdentity: credentials missing".to_string()
                     })?;

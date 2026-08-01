@@ -112,6 +112,10 @@ func (h *Handler) initBucketRoutes() {
 
 // CreateBucket handles PUT /{bucket}
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateBucket.html
+// usEast1 is the one region where re-creating a bucket you already own is not
+// an error — see CreateBucket.
+const usEast1 = "us-east-1"
+
 func (h *Handler) CreateBucket(w http.ResponseWriter, r *http.Request) {
 	bucket := chi.URLParam(r, "bucket")
 
@@ -128,14 +132,26 @@ func (h *Handler) CreateBucket(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteXMLError(w, r, aerr)
 		return
 	}
+	region := middleware.RegionFromContext(r.Context(), h.cfg.Region)
 	if exists {
-		protocol.WriteXMLError(w, r, errBucketAlreadyExists(bucket))
+		// S3 documents BucketAlreadyOwnedByYou as returned "in all AWS Regions
+		// except in the North Virginia Region. For legacy compatibility, if you
+		// re-create an existing bucket that you already own in the North
+		// Virginia Region, Amazon S3 returns 200 OK". us-east-1 is the default
+		// region, so any client that creates its bucket idempotently — which
+		// the AWS SDKs' own examples do — depends on this.
+		if region != usEast1 {
+			protocol.WriteXMLError(w, r, errBucketAlreadyExists(bucket))
+			return
+		}
+		w.Header().Set("Location", "/"+bucket)
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 
 	b := &Bucket{
 		Name:         bucket,
-		Region:       middleware.RegionFromContext(r.Context(), h.cfg.Region),
+		Region:       region,
 		CreationDate: h.clk.Now().UTC(),
 	}
 	if aerr := h.store.putBucket(r.Context(), b); aerr != nil {
