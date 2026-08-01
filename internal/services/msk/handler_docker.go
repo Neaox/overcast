@@ -137,14 +137,42 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 
 // setClusterEndpoint stores the container ID and host port on the cluster,
 // and sets the bootstrap endpoint based on Docker-vs-native detection.
+// setClusterEndpoint records the container ID and host port on the cluster.
+//
+// The container start takes real time, so the cluster may have been deleted
+// meanwhile. deleteCluster stops the container ID it finds on the record —
+// which is empty until this call — so a delete landing mid-start leaves the
+// Redpanda container running with nothing left to reclaim it. The start
+// goroutine is the only party holding the ID, so it owns the teardown.
+// Same race as RDS (#412) and ElastiCache (#459).
 func (h *Handler) setClusterEndpoint(ctx context.Context, clusterARN, containerID string, hostPort int) {
 	got, aerr := h.store.getCluster(ctx, clusterARN)
-	if aerr != nil {
+	if aerr != nil || got == nil || got.State == "DELETING" {
+		h.teardownOrphanedContainer(ctx, clusterARN, containerID, hostPort)
 		return
 	}
 	got.DockerContainerID = containerID
 	got.HostPort = hostPort
 	h.store.putCluster(ctx, got) //nolint:errcheck
+}
+
+// teardownOrphanedContainer removes a container whose cluster record was
+// deleted while the container was still starting, and releases its port.
+func (h *Handler) teardownOrphanedContainer(ctx context.Context, clusterARN, containerID string, hostPort int) {
+	h.log.Info("MSK: cluster deleted while its container was starting — removing container",
+		zap.String("cluster", clusterARN), zap.String("container", containerID))
+	if containerID != "" {
+		if h.gc != nil {
+			h.gc.StopNow(containerID)
+			h.gc.ScheduleRemove(containerID)
+		} else {
+			_ = h.docker.StopContainer(ctx, containerID, 10)     //nolint:errcheck
+			_ = h.docker.RemoveContainer(ctx, containerID, true) //nolint:errcheck
+		}
+	}
+	if hostPort > 0 {
+		_ = h.store.releasePort(ctx, hostPort) //nolint:errcheck
+	}
 }
 
 // clusterEndpointAddr returns the address and port to health-check.

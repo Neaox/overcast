@@ -136,3 +136,57 @@ func TestInstancePoolRelease_afterStop(t *testing.T) {
 		t.Fatalf("close calls = %d, want 1", inst.CloseCalls())
 	}
 }
+
+func TestInstancePoolRelease_afterEvictionDoesNotPoolForADeletedFunction(t *testing.T) {
+	// Given: a function with one invocation in flight — its instance is checked
+	// out of the pool, not idle in the warm set.
+	pool := NewInstancePool(poolTestRuntime{}, zap.NewNop(), clock.NewMock(), PoolLimits{})
+	defer pool.Stop()
+	inFlight := newPoolTestInstance("fn")
+	pool.mu.Lock()
+	pool.expected["fn"] = inFlight.ConfigIdentity()
+	pool.mu.Unlock()
+
+	// When: DeleteFunction evicts the function, and only then does the
+	// invocation finish and release its instance.
+	pool.EvictFunction("fn")
+	pool.Release(context.Background(), inFlight, true)
+
+	// Then: the container is destroyed. EvictFunction can only close the idle
+	// instances it can see; an in-flight one used to come back to a pool that
+	// had forgotten the function, take the "never admitted" branch (expected is
+	// empty for both cases), and be pooled for a function that no longer
+	// exists — leaving a container running with nothing to ever reclaim it.
+	if got := inFlight.CloseCalls(); got != 1 {
+		t.Fatalf("close calls = %d, want 1 — the instance was pooled for a deleted function", got)
+	}
+	pool.mu.Lock()
+	warm := len(pool.entries["fn"])
+	pool.mu.Unlock()
+	if warm != 0 {
+		t.Fatalf("warm instances = %d, want 0 for a deleted function", warm)
+	}
+}
+
+func TestInstancePoolRelease_recreatedFunctionPoolsAgain(t *testing.T) {
+	// Given: a function that was deleted and then recreated with the same name
+	pool := NewInstancePool(poolTestRuntime{}, zap.NewNop(), clock.NewMock(), PoolLimits{})
+	defer pool.Stop()
+	pool.EvictFunction("fn")
+
+	// When: the recreated function is admitted and its instance released
+	revived, err := pool.Acquire(context.Background(), &Function{Name: "fn"})
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	pool.Release(context.Background(), revived, true)
+
+	// Then: it pools normally. The eviction marker must not outlive the
+	// function it was about, or every recreated function cold starts forever.
+	pool.mu.Lock()
+	warm := len(pool.entries["fn"])
+	pool.mu.Unlock()
+	if warm != 1 {
+		t.Fatalf("warm instances = %d, want 1", warm)
+	}
+}

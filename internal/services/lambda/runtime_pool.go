@@ -103,6 +103,15 @@ type InstancePool struct {
 	// with, so Release can retire an instance that was checked out before a
 	// code or configuration update landed.
 	expected map[string]string
+	// evicted names functions whose environments have been retired wholesale —
+	// DeleteFunction, or a region reset. EvictFunction can only close the idle
+	// instances it can see; an invocation still in flight releases afterwards,
+	// and without this marker it takes the same "expected is empty" branch a
+	// never-admitted function does and gets pooled for a function that no
+	// longer exists, leaving a container nothing will ever reclaim. Cleared
+	// when the function is admitted again, so a recreated function pools
+	// normally.
+	evicted map[string]bool
 	// provisioned holds the provisioned-concurrency target per function.
 	provisioned map[string]*provisionedState
 	// provisionedInstances records which execution environments hold each
@@ -204,6 +213,7 @@ func NewInstancePool(rt Runtime, log *zap.Logger, clk clock.Clock, limits PoolLi
 		entries:              make(map[string][]*poolEntry),
 		checkedOut:           make(map[string]int),
 		expected:             make(map[string]string),
+		evicted:              make(map[string]bool),
 		provisioned:          make(map[string]*provisionedState),
 		provisionedInstances: make(map[string]map[string]bool),
 		provisionedPending:   make(map[string]int),
@@ -297,6 +307,7 @@ func (p *InstancePool) takeWarm(fn *Function) RuntimeInstance {
 		return nil
 	}
 	p.expected[fn.Name] = identity
+	delete(p.evicted, fn.Name)
 
 	var stale []RuntimeInstance
 	var chosen RuntimeInstance
@@ -474,6 +485,11 @@ func (p *InstancePool) Release(_ context.Context, inst RuntimeInstance, healthy 
 		disposition = closeUnhealthy
 	case p.entries == nil:
 		disposition = closeAfterStop
+	// The function was deleted while this invocation was in flight. Its
+	// environments were retired; this one is simply late, so destroy it rather
+	// than pooling a container for a function that no longer exists.
+	case p.evicted[name]:
+		disposition = closeRetired
 	// The function's code or configuration changed while this invocation was in
 	// flight. AWS lets the in-flight invocation finish in the old environment
 	// and then retires it, so destroy the instance now rather than pooling one
@@ -613,6 +629,9 @@ func (p *InstancePool) EvictFunction(name string) {
 	delete(p.expected, name)
 	delete(p.provisioned, name)
 	delete(p.provisionedInstances, name)
+	if p.evicted != nil {
+		p.evicted[name] = true
+	}
 	p.mu.Unlock()
 
 	for _, entry := range warm {
@@ -649,6 +668,7 @@ func (p *InstancePool) InvalidateFunction(fn *Function) int {
 		return 0
 	}
 	p.expected[name] = identity
+	delete(p.evicted, name)
 	warm := p.entries[name]
 	var retire []RuntimeInstance
 	kept := warm[:0]
