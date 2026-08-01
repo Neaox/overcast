@@ -54,7 +54,7 @@
       "suite": "dotnet-sdk",
       "service": "appsync",
       "group": "appsync-functions",
-      "tests": 1
+      "tests": 5
     },
     {
       "suite": "dotnet-sdk",
@@ -72,7 +72,7 @@
       "suite": "dotnet-sdk",
       "service": "appsync",
       "group": "appsync-tags",
-      "tests": 1
+      "tests": 3
     },
     {
       "suite": "dotnet-sdk",
@@ -150,7 +150,7 @@
       "suite": "dotnet-sdk",
       "service": "cognito",
       "group": "cognito-userpools",
-      "tests": 8
+      "tests": 9
     },
     {
       "suite": "dotnet-sdk",
@@ -378,7 +378,7 @@
       "suite": "rust-sdk",
       "service": "appsync",
       "group": "appsync-functions",
-      "tests": 1
+      "tests": 5
     },
     {
       "suite": "rust-sdk",
@@ -396,7 +396,7 @@
       "suite": "rust-sdk",
       "service": "appsync",
       "group": "appsync-tags",
-      "tests": 1
+      "tests": 3
     },
     {
       "suite": "rust-sdk",

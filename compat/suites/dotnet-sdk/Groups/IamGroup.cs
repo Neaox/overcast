@@ -11,7 +11,7 @@ public sealed class IamGroup(AwsClients clients) : IServiceGroup
         // iam-users
         ["CreateUser"] = CreateUserAsync,
         ["GetUser"] = GetUserAsync,
-        ["ListUsers"] = ListUsersAsync,
+        ["iam-users:ListUsers"] = ListUsersAsync,
         ["CreateAccessKey"] = CreateAccessKeyAsync,
         ["DeleteAccessKey"] = DeleteAccessKeyAsync,
         ["PutUserPolicy"] = PutUserPolicyAsync,

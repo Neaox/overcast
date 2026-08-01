@@ -29,7 +29,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "CreateFunction".to_string(),
+            "lambda-crud:CreateFunction".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -39,7 +39,7 @@ impl ServiceGroup for LambdaGroup {
                         .lambda()
                         .create_function()
                         .function_name(&name)
-                        .runtime(Runtime::Nodejs18x)
+                        .runtime(Runtime::Nodejs20x)
                         .handler("index.handler")
                         .role(role)
                         .code(
@@ -49,7 +49,7 @@ impl ServiceGroup for LambdaGroup {
                         )
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     if response.function_arn().unwrap_or_default().is_empty() {
                         return Err("CreateFunction: FunctionArn missing".to_string());
                     }
@@ -69,7 +69,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetFunction".to_string(),
+            "lambda-crud:GetFunction".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -80,7 +80,7 @@ impl ServiceGroup for LambdaGroup {
                         .function_name(&name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let config = response
                         .configuration()
                         .ok_or_else(|| "GetFunction: Configuration missing".to_string())?;
@@ -94,7 +94,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ListFunctions".to_string(),
+            "lambda-crud:ListFunctions".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -104,7 +104,7 @@ impl ServiceGroup for LambdaGroup {
                         .list_functions()
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let found = response
                         .functions()
                         .iter()
@@ -130,7 +130,7 @@ impl ServiceGroup for LambdaGroup {
                         .zip_file(Blob::new(dummy_zip()))
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     if response.function_arn().unwrap_or_default().is_empty() {
                         return Err("UpdateFunctionCode: FunctionArn missing".to_string());
                     }
@@ -161,7 +161,7 @@ impl ServiceGroup for LambdaGroup {
                         )
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     if response.timeout().unwrap_or_default() != 30 {
                         return Err(format!(
                             "UpdateFunctionConfiguration: expected Timeout=30, got {}",
@@ -175,7 +175,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DeleteFunction".to_string(),
+            "lambda-crud:DeleteFunction".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -186,13 +186,13 @@ impl ServiceGroup for LambdaGroup {
                         .function_name(&name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let response = clients
                         .lambda()
                         .list_functions()
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let found = response
                         .functions()
                         .iter()
@@ -220,7 +220,7 @@ impl ServiceGroup for LambdaGroup {
                         .invocation_type(InvocationType::DryRun)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     if response.status_code() != 204 {
                         return Err(format!(
                             "InvokeDryRun: expected StatusCode=204, got {}",
@@ -247,7 +247,7 @@ impl ServiceGroup for LambdaGroup {
                         .payload(Blob::new(b"{\"test\":true}".to_vec()))
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     if response.status_code() != 200 {
                         return Err(format!(
                             "InvokeSync: expected StatusCode=200, got {}",
@@ -284,7 +284,7 @@ impl ServiceGroup for LambdaGroup {
                         .payload(Blob::new(b"{}".to_vec()))
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     if response.status_code() != 202 {
                         return Err(format!(
                             "InvokeAsync: expected StatusCode=202, got {}",
@@ -313,7 +313,7 @@ impl ServiceGroup for LambdaGroup {
                         .payload(Blob::new(b"{\"test\":true}".to_vec()))
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     if response.status_code() != 200 {
                         return Err(format!(
                             "InvokeWithResponseStream: expected StatusCode=200, got {}",
@@ -372,7 +372,7 @@ impl ServiceGroup for LambdaGroup {
                         .function_name(&name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     if response.version().unwrap_or_default().is_empty() {
                         return Err("PublishVersion: Version missing".to_string());
                     }
@@ -398,7 +398,7 @@ impl ServiceGroup for LambdaGroup {
                         .function_name(&name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let count = response.versions().len();
                     (count > 0).then_some(()).ok_or_else(|| {
                         "ListVersionsByFunction: expected at least one version".to_string()
@@ -423,7 +423,7 @@ impl ServiceGroup for LambdaGroup {
                         .function_version(&version)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     if response.alias_arn().unwrap_or_default().is_empty() {
                         return Err("CreateAlias: AliasArn missing".to_string());
                     }
@@ -446,7 +446,7 @@ impl ServiceGroup for LambdaGroup {
                         .name("live")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     if response.name().unwrap_or_default() != "live" {
                         return Err(format!(
                             "GetAlias: expected Name=live, got {}",
@@ -471,7 +471,7 @@ impl ServiceGroup for LambdaGroup {
                         .function_name(&name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let found = response
                         .aliases()
                         .iter()
@@ -498,7 +498,7 @@ impl ServiceGroup for LambdaGroup {
                         .description("production alias")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     if response.description().unwrap_or_default() != "production alias" {
                         return Err(format!(
                             "UpdateAlias: expected Description=\"production alias\", got {}",
@@ -524,14 +524,14 @@ impl ServiceGroup for LambdaGroup {
                         .name("live")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let response = clients
                         .lambda()
                         .list_aliases()
                         .function_name(&name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let found = response
                         .aliases()
                         .iter()
@@ -561,10 +561,10 @@ impl ServiceGroup for LambdaGroup {
                                 .zip_file(Blob::new(dummy_zip()))
                                 .build(),
                         )
-                        .compatible_runtimes(Runtime::Nodejs18x)
+                        .compatible_runtimes(Runtime::Nodejs20x)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     if response.layer_version_arn().unwrap_or_default().is_empty() {
                         return Err("PublishLayerVersion: LayerVersionArn missing".to_string());
                     }
@@ -584,10 +584,10 @@ impl ServiceGroup for LambdaGroup {
                     let response = clients
                         .lambda()
                         .list_layers()
-                        .compatible_runtime(Runtime::Nodejs18x)
+                        .compatible_runtime(Runtime::Nodejs20x)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let found = response
                         .layers()
                         .iter()
@@ -617,7 +617,7 @@ impl ServiceGroup for LambdaGroup {
                         .version_number(version)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     Ok(())
                 })
             }),
@@ -641,7 +641,7 @@ impl ServiceGroup for LambdaGroup {
                         .lambda()
                         .create_function()
                         .function_name(&name)
-                        .runtime(Runtime::Nodejs18x)
+                        .runtime(Runtime::Nodejs20x)
                         .handler("index.handler")
                         .role(role)
                         .timeout(30)
@@ -652,7 +652,7 @@ impl ServiceGroup for LambdaGroup {
                         )
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     wait_function_active(&clients, &name, 30).await?;
                     Ok(())
                 })
@@ -671,7 +671,7 @@ impl ServiceGroup for LambdaGroup {
                         .lambda()
                         .create_function()
                         .function_name(&name)
-                        .runtime(Runtime::Nodejs18x)
+                        .runtime(Runtime::Nodejs20x)
                         .handler("index.handler")
                         .role(role)
                         .timeout(30)
@@ -682,7 +682,7 @@ impl ServiceGroup for LambdaGroup {
                         )
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     wait_function_active(&clients, &name, 30).await?;
                     Ok(())
                 })
@@ -701,7 +701,7 @@ impl ServiceGroup for LambdaGroup {
                         .lambda()
                         .create_function()
                         .function_name(&name)
-                        .runtime(Runtime::Nodejs18x)
+                        .runtime(Runtime::Nodejs20x)
                         .handler("index.handler")
                         .role(role)
                         .code(
@@ -711,7 +711,7 @@ impl ServiceGroup for LambdaGroup {
                         )
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     Ok(())
                 })
             }),
@@ -842,7 +842,7 @@ async fn wait_function_active(
             .function_name(name)
             .send()
             .await
-            .map_err(|err| err.to_string())?;
+            .map_err(crate::harness::sdk_error)?;
         let state = response.configuration().and_then(|c| c.state().cloned());
         match state {
             Some(s) if s.as_str() == "Active" => return Ok(()),

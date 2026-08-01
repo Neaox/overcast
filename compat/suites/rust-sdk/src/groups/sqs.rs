@@ -38,7 +38,7 @@ impl ServiceGroup for SqsGroup {
                         .queue_name(&queue_name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let url = response
                         .queue_url()
                         .ok_or_else(|| "CreateQueue: queue_url missing".to_string())?;
@@ -53,7 +53,7 @@ impl ServiceGroup for SqsGroup {
                         .queue_name_prefix(&queue_name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let found = list_resp.queue_urls().iter().any(|u| u == url);
                     let _ = clients.sqs().delete_queue().queue_url(url).send().await;
                     found.then_some(()).ok_or_else(|| {
@@ -81,7 +81,7 @@ impl ServiceGroup for SqsGroup {
                         .queue_name(&queue_name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let url = response
                         .queue_url()
                         .ok_or_else(|| "GetQueueUrl: queue_url missing".to_string())?;
@@ -111,7 +111,7 @@ impl ServiceGroup for SqsGroup {
                         .queue_name_prefix(&queue_name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let found = response
                         .queue_urls()
                         .iter()
@@ -142,7 +142,7 @@ impl ServiceGroup for SqsGroup {
                         .attributes(QueueAttributeName::VisibilityTimeout, "60")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     Ok(())
                 })
             }),
@@ -164,7 +164,7 @@ impl ServiceGroup for SqsGroup {
                         .attribute_names(QueueAttributeName::VisibilityTimeout)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let attrs = response
                         .attributes()
                         .ok_or_else(|| "GetQueueAttributes: attributes missing".to_string())?;
@@ -196,14 +196,14 @@ impl ServiceGroup for SqsGroup {
                         .tags("env", "test")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let list_resp = clients
                         .sqs()
                         .list_queue_tags()
                         .queue_url(&queue_url)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let response_tags = list_resp
                         .tags()
                         .ok_or_else(|| "TagQueue: tags missing".to_string())?;
@@ -234,14 +234,14 @@ impl ServiceGroup for SqsGroup {
                         .tag_keys("env")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let list_resp = clients
                         .sqs()
                         .list_queue_tags()
                         .queue_url(&queue_url)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let response_tags = list_resp
                         .tags()
                         .ok_or_else(|| "UntagQueue: tags missing".to_string())?;
@@ -267,7 +267,7 @@ impl ServiceGroup for SqsGroup {
                         .queue_name(&queue_name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let queue_url = url_resp
                         .queue_url()
                         .ok_or_else(|| "DeleteQueue: queue_url missing".to_string())?;
@@ -277,14 +277,14 @@ impl ServiceGroup for SqsGroup {
                         .queue_url(queue_url)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let list_resp = clients
                         .sqs()
                         .list_queues()
                         .queue_name_prefix(&queue_name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let found = list_resp
                         .queue_urls()
                         .iter()
@@ -314,7 +314,7 @@ impl ServiceGroup for SqsGroup {
                         .message_body("hello-sqs")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let message_id = response
                         .message_id()
                         .ok_or_else(|| "SendMessage: message_id missing".to_string())?;
@@ -338,12 +338,12 @@ impl ServiceGroup for SqsGroup {
                         .id("1")
                         .message_body("batch-1")
                         .build()
-                        .map_err(|e| e.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let entry2 = SendMessageBatchRequestEntry::builder()
                         .id("2")
                         .message_body("batch-2")
                         .build()
-                        .map_err(|e| e.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let response = clients
                         .sqs()
                         .send_message_batch()
@@ -352,7 +352,7 @@ impl ServiceGroup for SqsGroup {
                         .entries(entry2)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let count = response.successful().len();
                     (count >= 2).then_some(()).ok_or_else(|| {
                         format!("SendMessageBatch: expected >= 2 successful, got {count}")
@@ -379,7 +379,7 @@ impl ServiceGroup for SqsGroup {
                             .wait_time_seconds(1)
                             .send()
                             .await
-                            .map_err(|err| err.to_string())?;
+                            .map_err(crate::harness::sdk_error)?;
                         if !response.messages().is_empty() {
                             return Ok(());
                         }
@@ -405,7 +405,7 @@ impl ServiceGroup for SqsGroup {
                         .message_body("to-delete")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let recv = clients
                         .sqs()
                         .receive_message()
@@ -414,7 +414,7 @@ impl ServiceGroup for SqsGroup {
                         .wait_time_seconds(5)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let msg = recv
                         .messages()
                         .first()
@@ -429,7 +429,7 @@ impl ServiceGroup for SqsGroup {
                         .receipt_handle(receipt_handle)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     Ok(())
                 })
             }),
@@ -451,7 +451,7 @@ impl ServiceGroup for SqsGroup {
                         .message_body("visibility-test")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let first_recv = clients
                         .sqs()
                         .receive_message()
@@ -460,7 +460,7 @@ impl ServiceGroup for SqsGroup {
                         .wait_time_seconds(5)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let msg = first_recv
                         .messages()
                         .first()
@@ -476,7 +476,7 @@ impl ServiceGroup for SqsGroup {
                         .visibility_timeout(0)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let second_recv = clients
                         .sqs()
                         .receive_message()
@@ -485,7 +485,7 @@ impl ServiceGroup for SqsGroup {
                         .wait_time_seconds(5)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     (!second_recv.messages().is_empty())
                         .then_some(())
                         .ok_or_else(|| "ChangeMessageVisibility: message did not become re-visible after visibility_timeout=0".to_string())
@@ -509,7 +509,7 @@ impl ServiceGroup for SqsGroup {
                         .message_body("batch-del-1")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     clients
                         .sqs()
                         .send_message()
@@ -517,7 +517,7 @@ impl ServiceGroup for SqsGroup {
                         .message_body("batch-del-2")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let recv = clients
                         .sqs()
                         .receive_message()
@@ -526,7 +526,7 @@ impl ServiceGroup for SqsGroup {
                         .wait_time_seconds(5)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let msgs = recv.messages();
                     if msgs.len() < 2 {
                         return Err(format!(
@@ -554,7 +554,7 @@ impl ServiceGroup for SqsGroup {
                         .set_entries(Some(entries))
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     Ok(())
                 })
             }),
@@ -575,7 +575,7 @@ impl ServiceGroup for SqsGroup {
                         .queue_url(&queue_url)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let response = clients
                         .sqs()
                         .get_queue_attributes()
@@ -583,7 +583,7 @@ impl ServiceGroup for SqsGroup {
                         .attribute_names(QueueAttributeName::ApproximateNumberOfMessages)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let attrs = response
                         .attributes()
                         .ok_or_else(|| "PurgeQueue: attributes missing".to_string())?;
@@ -613,7 +613,7 @@ impl ServiceGroup for SqsGroup {
                         .queue_name(&queue_name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let url = response
                         .queue_url()
                         .ok_or_else(|| "CreateDLQ: queue_url missing".to_string())?;
@@ -628,7 +628,7 @@ impl ServiceGroup for SqsGroup {
                         .queue_name_prefix(&queue_name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let found = list_resp.queue_urls().iter().any(|u| u == url);
                     let _ = clients.sqs().delete_queue().queue_url(url).send().await;
                     found.then_some(()).ok_or_else(|| {
@@ -660,7 +660,7 @@ impl ServiceGroup for SqsGroup {
                         .attribute_names(QueueAttributeName::QueueArn)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let dlq_arn = dlq_attrs
                         .attributes()
                         .ok_or_else(|| "SetRedrivePolicy: DLQ attributes missing".to_string())?
@@ -678,7 +678,7 @@ impl ServiceGroup for SqsGroup {
                         .attributes(QueueAttributeName::RedrivePolicy, redrive_policy)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     Ok(())
                 })
             }),
@@ -700,7 +700,7 @@ impl ServiceGroup for SqsGroup {
                         .attribute_names(QueueAttributeName::RedrivePolicy)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let attrs = response
                         .attributes()
                         .ok_or_else(|| "GetRedrivePolicy: attributes missing".to_string())?;
@@ -734,7 +734,7 @@ impl ServiceGroup for SqsGroup {
                         )
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let url = response
                         .queue_url()
                         .ok_or_else(|| "CreateFifoQueue: queue_url missing".to_string())?;
@@ -766,7 +766,7 @@ impl ServiceGroup for SqsGroup {
                         .message_group_id("grp1")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let message_id = response
                         .message_id()
                         .ok_or_else(|| "SendFifoMessage: message_id missing".to_string())?;
@@ -794,7 +794,7 @@ impl ServiceGroup for SqsGroup {
                         .wait_time_seconds(5)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let msg = response
                         .messages()
                         .first()
@@ -828,7 +828,7 @@ impl ServiceGroup for SqsGroup {
                         .queue_name(&queue_name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let url = response
                         .queue_url()
                         .ok_or_else(|| "setup(sqs-queues): queue_url missing".to_string())?;
@@ -854,7 +854,7 @@ impl ServiceGroup for SqsGroup {
                         .queue_name(&queue_name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let url = response
                         .queue_url()
                         .ok_or_else(|| "setup(sqs-messages): queue_url missing".to_string())?;
@@ -881,7 +881,7 @@ impl ServiceGroup for SqsGroup {
                         .queue_name(&src_name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let src_url = src_resp
                         .queue_url()
                         .ok_or_else(|| "setup(sqs-dlq): src queue_url missing".to_string())?;
@@ -891,7 +891,7 @@ impl ServiceGroup for SqsGroup {
                         .queue_name(&dlq_name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let dlq_url = dlq_resp
                         .queue_url()
                         .ok_or_else(|| "setup(sqs-dlq): dlq queue_url missing".to_string())?;

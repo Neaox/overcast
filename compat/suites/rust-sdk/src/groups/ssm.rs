@@ -39,14 +39,14 @@ impl ServiceGroup for SsmGroup {
                         .overwrite(false)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let get = clients
                         .ssm()
                         .get_parameter()
                         .name(&name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let param = get.parameter().ok_or_else(|| {
                         "PutParameter: parameter not found after create".to_string()
                     })?;
@@ -74,7 +74,7 @@ impl ServiceGroup for SsmGroup {
                         .name(&name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let param = response
                         .parameter()
                         .ok_or_else(|| "GetParameter: parameter missing".to_string())?;
@@ -108,14 +108,14 @@ impl ServiceGroup for SsmGroup {
                         .overwrite(true)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let get = clients
                         .ssm()
                         .get_parameter()
                         .name(&name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let param = get
                         .parameter()
                         .ok_or_else(|| "PutParameterOverwrite: parameter missing".to_string())?;
@@ -146,7 +146,7 @@ impl ServiceGroup for SsmGroup {
                         .name(&name)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     (response.parameters().len() >= 2)
                         .then_some(())
                         .ok_or_else(|| {
@@ -176,7 +176,7 @@ impl ServiceGroup for SsmGroup {
                         .overwrite(false)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     clients
                         .ssm()
                         .put_parameter()
@@ -186,7 +186,7 @@ impl ServiceGroup for SsmGroup {
                         .overwrite(false)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let response = clients
                         .ssm()
                         .get_parameters()
@@ -194,7 +194,7 @@ impl ServiceGroup for SsmGroup {
                         .names(&name2)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     (response.parameters().len() >= 2)
                         .then_some(())
                         .ok_or_else(|| {
@@ -226,7 +226,7 @@ impl ServiceGroup for SsmGroup {
                         .names(&name2)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     (response.parameters().len() >= 2)
                         .then_some(())
                         .ok_or_else(|| {
@@ -251,14 +251,14 @@ impl ServiceGroup for SsmGroup {
                         .option("Contains")
                         .values(prefix)
                         .build()
-                        .map_err(|e| e.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let response = clients
                         .ssm()
                         .describe_parameters()
                         .parameter_filters(filter)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     (!response.parameters().is_empty())
                         .then_some(())
                         .ok_or_else(|| "DescribeParameters: no parameters found".to_string())
@@ -279,12 +279,12 @@ impl ServiceGroup for SsmGroup {
                         .key("project")
                         .value("overcast")
                         .build()
-                        .map_err(|e| e.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let tag_env = aws_sdk_ssm::types::Tag::builder()
                         .key("env")
                         .value("test")
                         .build()
-                        .map_err(|e| e.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     clients
                         .ssm()
                         .add_tags_to_resource()
@@ -294,7 +294,7 @@ impl ServiceGroup for SsmGroup {
                         .tags(tag_env)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     Ok(())
                 })
             }),
@@ -316,7 +316,7 @@ impl ServiceGroup for SsmGroup {
                         .resource_type(ResourceTypeForTagging::Parameter)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     (!response.tag_list().is_empty())
                         .then_some(())
                         .ok_or_else(|| "ListSSMTagsForResource: no tags returned".to_string())
@@ -343,21 +343,21 @@ impl ServiceGroup for SsmGroup {
                     for name in &names {
                         request = request.names(name);
                     }
-                    request.send().await.map_err(|err| err.to_string())?;
+                    request.send().await.map_err(crate::harness::sdk_error)?;
                     let prefix = format!("{}-ssm-param", ctx.run_id.as_ref());
                     let filter = ParameterStringFilter::builder()
                         .key("Name")
                         .option("Contains")
                         .values(prefix)
                         .build()
-                        .map_err(|e| e.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let response = clients
                         .ssm()
                         .describe_parameters()
                         .parameter_filters(filter)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     for param in response.parameters() {
                         let param_name = param.name().unwrap_or_default();
                         if names.contains(&param_name.to_string()) {
@@ -389,7 +389,7 @@ impl ServiceGroup for SsmGroup {
                         .overwrite(false)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let get = clients
                         .ssm()
                         .get_parameter()
@@ -397,7 +397,7 @@ impl ServiceGroup for SsmGroup {
                         .with_decryption(true)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let param = get.parameter().ok_or_else(|| {
                         "PutSecureStringParameter: parameter not found".to_string()
                     })?;
@@ -426,7 +426,7 @@ impl ServiceGroup for SsmGroup {
                         .with_decryption(true)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let param = response
                         .parameter()
                         .ok_or_else(|| "GetSecureStringParameter: parameter missing".to_string())?;
@@ -458,7 +458,7 @@ impl ServiceGroup for SsmGroup {
                         .with_decryption(false)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let param = response.parameter().ok_or_else(|| {
                         "GetSecureStringWithoutDecryption: parameter missing".to_string()
                     })?;
@@ -494,7 +494,7 @@ impl ServiceGroup for SsmGroup {
                         .recursive(false)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     (!response.parameters().is_empty())
                         .then_some(())
                         .ok_or_else(|| "GetParametersByPath: no parameters returned".to_string())
@@ -518,7 +518,7 @@ impl ServiceGroup for SsmGroup {
                         .recursive(true)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     (response.parameters().len() >= 2)
                         .then_some(())
                         .ok_or_else(|| {
@@ -548,7 +548,7 @@ impl ServiceGroup for SsmGroup {
                         .max_results(1)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let next_token = response.next_token().unwrap_or_default();
                     (!next_token.is_empty()).then_some(()).ok_or_else(|| {
                         "GetParametersByPathPaginated: expected NextToken to be present".to_string()
@@ -579,7 +579,7 @@ impl ServiceGroup for SsmGroup {
                         .overwrite(false)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     ctx.set("ssmParam", name);
                     Ok(())
                 })
@@ -602,7 +602,7 @@ impl ServiceGroup for SsmGroup {
                         .overwrite(false)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     ctx.set("ssmSecureParam", name);
                     Ok(())
                 })
@@ -627,7 +627,7 @@ impl ServiceGroup for SsmGroup {
                         .overwrite(false)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     clients
                         .ssm()
                         .put_parameter()
@@ -637,7 +637,7 @@ impl ServiceGroup for SsmGroup {
                         .overwrite(false)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     ctx.set("ssmPathPrefix", format!("{}/", prefix));
                     ctx.set("ssmPathParam1", name1);
                     ctx.set("ssmPathParam2", name2);

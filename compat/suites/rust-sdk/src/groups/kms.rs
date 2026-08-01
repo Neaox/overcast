@@ -35,7 +35,7 @@ impl ServiceGroup for KmsGroup {
                         .create_key()
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let metadata = response
                         .key_metadata()
                         .ok_or_else(|| "CreateKey: key_metadata missing".to_string())?;
@@ -69,7 +69,7 @@ impl ServiceGroup for KmsGroup {
                         .key_id(&key_id)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let metadata = response
                         .key_metadata()
                         .ok_or_else(|| "DescribeKey: key_metadata missing".to_string())?;
@@ -98,7 +98,7 @@ impl ServiceGroup for KmsGroup {
                         .target_key_id(&key_id)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     ctx.set("aliasName", alias_name);
                     Ok(())
                 })
@@ -123,7 +123,7 @@ impl ServiceGroup for KmsGroup {
                         .key_id(&key_id)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let found = response
                         .aliases()
                         .iter()
@@ -149,7 +149,7 @@ impl ServiceGroup for KmsGroup {
                         .list_keys()
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let found = response
                         .keys()
                         .iter()
@@ -176,7 +176,7 @@ impl ServiceGroup for KmsGroup {
                         .key_id(&key_id)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     Ok(())
                 })
             }),
@@ -197,7 +197,7 @@ impl ServiceGroup for KmsGroup {
                         .key_id(&key_id)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     Ok(())
                 })
             }),
@@ -219,7 +219,7 @@ impl ServiceGroup for KmsGroup {
                         .pending_window_in_days(7)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     Ok(())
                 })
             }),
@@ -240,7 +240,7 @@ impl ServiceGroup for KmsGroup {
                         .key_id(&key_id)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     Ok(())
                 })
             }),
@@ -259,12 +259,12 @@ impl ServiceGroup for KmsGroup {
                         .tag_key("project")
                         .tag_value("overcast")
                         .build()
-                        .map_err(|e| e.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let tag_env = Tag::builder()
                         .tag_key("env")
                         .tag_value("test")
                         .build()
-                        .map_err(|e| e.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     clients
                         .kms()
                         .tag_resource()
@@ -273,7 +273,7 @@ impl ServiceGroup for KmsGroup {
                         .tags(tag_env)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     Ok(())
                 })
             }),
@@ -294,7 +294,7 @@ impl ServiceGroup for KmsGroup {
                         .key_id(&key_id)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let tags = response.tags();
                     let project = tags
                         .iter()
@@ -324,14 +324,14 @@ impl ServiceGroup for KmsGroup {
                         .tag_keys("env")
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let response = clients
                         .kms()
                         .list_resource_tags()
                         .key_id(&key_id)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let has_env = response.tags().iter().any(|t| t.tag_key() == "env");
                     (!has_env)
                         .then_some(())
@@ -358,7 +358,7 @@ impl ServiceGroup for KmsGroup {
                         .plaintext(Blob::new(b"hello"))
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let ciphertext = response
                         .ciphertext_blob()
                         .ok_or_else(|| "Encrypt: ciphertext_blob missing".to_string())?;
@@ -386,7 +386,7 @@ impl ServiceGroup for KmsGroup {
                         .plaintext(Blob::new(b"hello"))
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let ciphertext = encrypt_response
                         .ciphertext_blob()
                         .ok_or_else(|| "Decrypt: ciphertext_blob from encrypt missing".to_string())?
@@ -398,7 +398,7 @@ impl ServiceGroup for KmsGroup {
                         .ciphertext_blob(ciphertext)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let plaintext = decrypt_response
                         .plaintext()
                         .ok_or_else(|| "Decrypt: plaintext missing".to_string())?;
@@ -427,7 +427,7 @@ impl ServiceGroup for KmsGroup {
                         .key_spec(DataKeySpec::Aes256)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let ciphertext = response
                         .ciphertext_blob()
                         .ok_or_else(|| "GenerateDataKey: ciphertext_blob missing".to_string())?;
@@ -461,7 +461,7 @@ impl ServiceGroup for KmsGroup {
                         .key_spec(DataKeySpec::Aes256)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let ciphertext = response.ciphertext_blob().ok_or_else(|| {
                         "GenerateDataKeyWithoutPlaintext: ciphertext_blob missing".to_string()
                     })?;
@@ -494,7 +494,7 @@ impl ServiceGroup for KmsGroup {
                         .signing_algorithm(SigningAlgorithmSpec::RsassaPkcs1V15Sha256)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let signature = response
                         .signature()
                         .ok_or_else(|| "Sign: signature missing".to_string())?;
@@ -523,7 +523,7 @@ impl ServiceGroup for KmsGroup {
                         .signing_algorithm(SigningAlgorithmSpec::RsassaPkcs1V15Sha256)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let signature = sign_response
                         .signature()
                         .ok_or_else(|| "Verify: signature from sign missing".to_string())?
@@ -537,7 +537,7 @@ impl ServiceGroup for KmsGroup {
                         .signing_algorithm(SigningAlgorithmSpec::RsassaPkcs1V15Sha256)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let valid = verify_response.signature_valid();
                     valid
                         .then_some(())
@@ -565,7 +565,7 @@ impl ServiceGroup for KmsGroup {
                         .create_key()
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let metadata = response
                         .key_metadata()
                         .ok_or_else(|| "setup(kms-keys): key_metadata missing".to_string())?;
@@ -594,7 +594,7 @@ impl ServiceGroup for KmsGroup {
                         .create_key()
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let metadata = response
                         .key_metadata()
                         .ok_or_else(|| "setup(kms-crypto): key_metadata missing".to_string())?;
@@ -623,7 +623,7 @@ impl ServiceGroup for KmsGroup {
                         .key_usage(KeyUsageType::SignVerify)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(crate::harness::sdk_error)?;
                     let metadata = response
                         .key_metadata()
                         .ok_or_else(|| "setup(kms-asymmetric): key_metadata missing".to_string())?;
