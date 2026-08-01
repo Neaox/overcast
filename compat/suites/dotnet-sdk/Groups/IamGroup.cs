@@ -135,7 +135,10 @@ public sealed class IamGroup(AwsClients clients) : IServiceGroup
         var userName = RequireString(context, "IamUserName");
         var response = await clients.IAM().GetUserPolicyAsync(new GetUserPolicyRequest { UserName = userName, PolicyName = "inline-user-policy" });
         Assertions.NotBlank(response.PolicyDocument, "GetUserPolicy: PolicyDocument");
-        Assertions.True(response.PolicyDocument.Contains("s3:GetObject"), "GetUserPolicy: PolicyDocument missing s3:GetObject");
+        // IAM returns the document "URL-encoded compliant with RFC 3986" and
+        // documents that callers decode it; the .NET SDK does not do it for
+        // you, unlike boto3.
+        Assertions.True(Uri.UnescapeDataString(response.PolicyDocument).Contains("s3:GetObject"), "GetUserPolicy: PolicyDocument missing s3:GetObject");
     }
 
     private async Task DeleteUserPolicyAsync(TestContext context)
@@ -318,7 +321,7 @@ public sealed class IamGroup(AwsClients clients) : IServiceGroup
         var roleName = RequireString(context, "IamRoleName");
         var response = await clients.IAM().GetRolePolicyAsync(new GetRolePolicyRequest { RoleName = roleName, PolicyName = "inline-role-policy" });
         Assertions.NotBlank(response.PolicyDocument, "GetRolePolicy: PolicyDocument");
-        Assertions.True(response.PolicyDocument.Contains("logs:*"), "GetRolePolicy: PolicyDocument missing logs:*");
+        Assertions.True(Uri.UnescapeDataString(response.PolicyDocument).Contains("logs:*"), "GetRolePolicy: PolicyDocument missing logs:*");
     }
 
     private async Task ListRolePoliciesAsync(TestContext context)

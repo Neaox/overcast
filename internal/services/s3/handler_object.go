@@ -10,6 +10,7 @@ import (
 	"encoding/xml"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -461,15 +462,11 @@ func (h *Handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 	destBucket := chi.URLParam(r, "bucket")
 	destKey := objectKey(r)
 
-	// Copy source format: /sourceBucket/sourceKey (leading slash is optional).
-	copySource := r.Header.Get("x-amz-copy-source")
-	copySource = strings.TrimPrefix(copySource, "/")
-	parts := strings.SplitN(copySource, "/", 2)
-	if len(parts) != 2 {
+	srcBucket, srcKey, ok := parseCopySource(r.Header.Get("x-amz-copy-source"))
+	if !ok {
 		protocol.WriteXMLError(w, r, protocol.ErrInvalidArgument("Invalid copy source"))
 		return
 	}
-	srcBucket, srcKey := parts[0], parts[1]
 
 	// Load source metadata only — body is streamed via copyBody.
 	src, aerr := h.store.getObjectMeta(r.Context(), srcBucket, srcKey)
@@ -524,4 +521,47 @@ func (h *Handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 		LastModified: now,
 		ETag:         etag,
 	})
+}
+
+// parseCopySource splits an x-amz-copy-source header into bucket and key.
+//
+// AWS documents the value as "the name of the source bucket and key name of
+// the source object, separated by a slash (/)" and requires it URL-encoded,
+// which it decodes. Clients differ in how much they encode: most send an
+// unencoded separator with an encoded key, while the AWS SDK for .NET encodes
+// the whole value — separator included. Splitting before decoding therefore
+// rejected a request AWS accepts ("Invalid copy source"), which is what the
+// dotnet compat suite's CopyObject hit.
+//
+// The separator is the first unencoded slash, so the split comes first and the
+// parts are decoded afterwards, keeping slashes inside a key intact. When
+// there is no unencoded slash the whole value is decoded and split again,
+// which is the fully-encoded form.
+func parseCopySource(header string) (bucket, key string, ok bool) {
+	split := func(s string) (string, string, bool) {
+		s = strings.TrimPrefix(s, "/")
+		parts := strings.SplitN(s, "/", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return "", "", false
+		}
+		return parts[0], parts[1], true
+	}
+
+	if b, k, found := split(header); found {
+		return decodeCopyPart(b), decodeCopyPart(k), true
+	}
+	decoded, err := url.QueryUnescape(header)
+	if err != nil {
+		return "", "", false
+	}
+	return split(decoded)
+}
+
+// decodeCopyPart URL-decodes one component, leaving it unchanged when it is not
+// valid encoding — a key may legitimately contain a bare '%'.
+func decodeCopyPart(s string) string {
+	if decoded, err := url.QueryUnescape(s); err == nil {
+		return decoded
+	}
+	return s
 }

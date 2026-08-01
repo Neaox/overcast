@@ -335,7 +335,8 @@ public sealed class S3Group(AwsClients clients) : IServiceGroup
         var uploadId = create.UploadId;
         await clients.S3().AbortMultipartUploadAsync(new AbortMultipartUploadRequest { BucketName = bucket, Key = "large-file", UploadId = uploadId });
         var list = await clients.S3().ListMultipartUploadsAsync(new ListMultipartUploadsRequest { BucketName = bucket });
-        Assertions.False(list.MultipartUploads.Any(u => u.UploadId == uploadId), "AbortMultipartUpload: upload still present after abort");
+        // Null, not empty, once the last upload is aborted (SDK v4).
+        Assertions.False(list.MultipartUploads?.Any(u => u.UploadId == uploadId) ?? false, "AbortMultipartUpload: upload still present after abort");
     }
 
     private async Task PutBucketVersioningAsync(TestContext context)

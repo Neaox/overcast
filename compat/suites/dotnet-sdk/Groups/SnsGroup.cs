@@ -149,8 +149,8 @@ public sealed class SnsGroup(AwsClients clients) : IServiceGroup
                 new PublishBatchRequestEntry { Id = "2", Message = "batch-2" },
             ],
         });
-        Assertions.GreaterThanOrEqual(2, response.Successful.Count, "PublishBatch: expected >= 2 successful");
-        Assertions.True(response.Failed.Count == 0, "PublishBatch: expected 0 failed");
+        Assertions.GreaterThanOrEqual(2, response.Successful?.Count ?? 0, "PublishBatch: expected >= 2 successful");
+        Assertions.True((response.Failed?.Count ?? 0) == 0, "PublishBatch: expected 0 failed");
     }
 
     private async Task TeardownPublishAsync(TestContext context)

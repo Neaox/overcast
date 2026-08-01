@@ -712,6 +712,61 @@ func TestCopyObject_success(t *testing.T) {
 	}
 }
 
+func TestCopyObject_urlEncodedSource(t *testing.T) {
+	// Given: a source object whose key needs encoding, copied with a
+	// URL-encoded x-amz-copy-source. AWS requires that header to be
+	// URL-encoded and decodes it; the AWS SDK for .NET encodes the whole
+	// value, separator included, which the emulator used to reject as
+	// "Invalid copy source" — it split on "/" before decoding, and an encoded
+	// separator leaves nothing to split on.
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "src-bucket")
+	createBucket(t, srv, "dst-bucket")
+	putObject(t, srv, "src-bucket", "my file.txt", []byte("encoded content"), "text/plain")
+
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/dst-bucket/copy.txt", nil)
+	req.Header.Set("x-amz-copy-source", "%2Fsrc-bucket%2Fmy%20file.txt")
+
+	// When: the copy is requested
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: it succeeds and the body came across
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	got, err := http.DefaultClient.Do(get(srv, "/dst-bucket/copy.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer got.Body.Close()
+	helpers.AssertStatus(t, got, http.StatusOK)
+	body, _ := io.ReadAll(got.Body)
+	if string(body) != "encoded content" {
+		t.Errorf("body = %q, want %q", string(body), "encoded content")
+	}
+}
+
+func TestCopyObject_encodedKeyKeepsItsSlashes(t *testing.T) {
+	// Given: a key containing a slash — the bucket/key separator is the first
+	// unencoded one, so a nested key must survive intact
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "src-bucket")
+	createBucket(t, srv, "dst-bucket")
+	putObject(t, srv, "src-bucket", "dir/nested.txt", []byte("nested"), "text/plain")
+
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/dst-bucket/copy.txt", nil)
+	req.Header.Set("x-amz-copy-source", "/src-bucket/dir/nested.txt")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
 // ---- GetBucketLocation -----------------------------------------------------
 
 func TestGetBucketLocation_success(t *testing.T) {
