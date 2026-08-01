@@ -889,6 +889,62 @@ func TestBatchGetSecretValue_success(t *testing.T) {
 	}
 }
 
+func TestBatchGetSecretValue_filterByName(t *testing.T) {
+	// Given: several secrets, only some matching a name prefix
+	srv := helpers.NewTestServer(t)
+	createSecret(t, srv, "app-db-password", "hunter2")
+	createSecret(t, srv, "app-api-key", "abc123")
+	createSecret(t, srv, "other-secret", "nope")
+
+	// When: BatchGetSecretValue selects by filter instead of SecretIdList.
+	// AWS takes either — "You must include Filters or SecretIdList, but not
+	// both" — and the AWS SDKs' own examples reach for the filter form, which
+	// is what the rust and dotnet compat suites do.
+	resp := smCall(t, srv, "BatchGetSecretValue", map[string]any{
+		"Filters": []map[string]any{{"Key": "name", "Values": []string{"app-"}}},
+	})
+	defer resp.Body.Close()
+
+	// Then: the matching secrets come back with their values
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		SecretValues []struct {
+			Name         string `json:"Name"`
+			SecretString string `json:"SecretString"`
+		} `json:"SecretValues"`
+		Errors []any `json:"Errors"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if len(result.SecretValues) != 2 {
+		t.Fatalf("SecretValues = %d, want 2 (the app- prefixed secrets): %+v", len(result.SecretValues), result.SecretValues)
+	}
+	byName := map[string]string{}
+	for _, v := range result.SecretValues {
+		byName[v.Name] = v.SecretString
+	}
+	if byName["app-db-password"] != "hunter2" || byName["app-api-key"] != "abc123" {
+		t.Errorf("values = %+v, want both app- secrets with their strings", byName)
+	}
+	if len(result.Errors) != 0 {
+		t.Errorf("Errors = %d, want none", len(result.Errors))
+	}
+}
+
+func TestBatchGetSecretValue_rejectsBothFiltersAndIdList(t *testing.T) {
+	// Given: a request carrying both selectors
+	srv := helpers.NewTestServer(t)
+	createSecret(t, srv, "some-secret", "v")
+
+	// When/Then: AWS documents these as mutually exclusive, so this is an
+	// InvalidParameterException rather than a silent preference for one.
+	resp := smCall(t, srv, "BatchGetSecretValue", map[string]any{
+		"SecretIdList": []string{"some-secret"},
+		"Filters":      []map[string]any{{"Key": "name", "Values": []string{"some"}}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+}
+
 func TestBatchGetSecretValue_partialMiss(t *testing.T) {
 	// Given: only one secret exists
 	srv := helpers.NewTestServer(t)

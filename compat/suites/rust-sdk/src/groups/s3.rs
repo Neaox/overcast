@@ -395,8 +395,11 @@ impl ServiceGroup for S3Group {
                     let response = clients.s3().list_buckets().send().await.map_err(crate::harness::sdk_error)?;
                     let found_src = response.buckets().iter().any(|b| b.name().unwrap_or_default() == src);
                     let found_dst = response.buckets().iter().any(|b| b.name().unwrap_or_default() == dst);
-                    cleanup_bucket(&clients, &src).await;
-                    cleanup_bucket(&clients, &dst).await;
+                    // Deliberately not cleaned up here: the group's setup owns
+                    // these buckets and PutSourceObject/CopyObject run next
+                    // against them; the teardown removes them. The deletes used
+                    // to be unreachable — create_bucket errored first — so they
+                    // sat here masked until the emulator answered correctly.
                     (found_src && found_dst).then_some(()).ok_or_else(|| {
                         format!("CreateSourceBucket: buckets not found in ListBuckets (runId={})", ctx.run_id)
                     })

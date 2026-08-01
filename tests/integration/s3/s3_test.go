@@ -50,16 +50,61 @@ func TestCreateBucket_success(t *testing.T) {
 	}
 }
 
-func TestCreateBucket_alreadyExists(t *testing.T) {
+func TestCreateBucket_alreadyExistsInUSEast1IsOK(t *testing.T) {
+	// Given: a bucket this account already owns, in us-east-1
 	srv := helpers.NewTestServer(t)
 	createBucket(t, srv, "my-bucket")
 
+	// When: it is created again
 	resp, err := http.DefaultClient.Do(put(srv, "/my-bucket", nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
 
+	// Then: 200, not a conflict. S3 documents BucketAlreadyOwnedByYou as
+	// returned "in all AWS Regions except in the North Virginia Region. For
+	// legacy compatibility, if you re-create an existing bucket that you
+	// already own in the North Virginia Region, Amazon S3 returns 200 OK".
+	// us-east-1 is the default region, so a suite that creates its bucket
+	// idempotently — as the dotnet and rust compat suites do — hits this on
+	// every run.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	if loc := resp.Header.Get("Location"); loc != "/my-bucket" {
+		t.Errorf("Location = %q, want /my-bucket", loc)
+	}
+}
+
+// sigV4For builds an Authorization header that targets a region, which is how
+// the request region reaches the handler in these tests.
+func sigV4For(region string) string {
+	return "AWS4-HMAC-SHA256 Credential=test/20250101/" + region +
+		"/s3/aws4_request, SignedHeaders=host, Signature=fake"
+}
+
+func TestCreateBucket_alreadyExistsOutsideUSEast1Conflicts(t *testing.T) {
+	// Given: a bucket this account already owns, in a region that is not
+	// North Virginia
+	srv := helpers.NewTestServer(t)
+	region := "eu-west-1"
+	req := put(srv, "/my-bucket", nil, nil)
+	req.Header.Set("Authorization", sigV4For(region))
+	first, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Body.Close()
+
+	// When: it is created again in that same region
+	req = put(srv, "/my-bucket", nil, nil)
+	req.Header.Set("Authorization", sigV4For(region))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: the documented conflict, which every region but us-east-1 returns
 	helpers.AssertStatus(t, resp, http.StatusConflict)
 	helpers.AssertXMLError(t, resp, "BucketAlreadyOwnedByYou")
 }
