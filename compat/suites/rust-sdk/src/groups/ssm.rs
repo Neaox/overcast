@@ -462,16 +462,16 @@ impl ServiceGroup for SsmGroup {
                     let param = response.parameter().ok_or_else(|| {
                         "GetSecureStringWithoutDecryption: parameter missing".to_string()
                     })?;
+                    // AWS returns the KMS ciphertext, not a mask, so the
+                    // portable assertion is that the plaintext did not come
+                    // back — which is what node-js-sdk and go-sdk assert. This
+                    // used to demand a literal "***", matching neither AWS nor
+                    // the emulator, and so failed a behaviour that is correct.
                     let value = param.value().unwrap_or_default();
-                    value
-                        .contains("***")
-                        .then_some(())
-                        .ok_or_else(|| {
-                            format!(
-                                "GetSecureStringWithoutDecryption: expected masked value (***), got '{}'",
-                                value
-                            )
-                        })
+                    (value != "my-secret").then_some(()).ok_or_else(|| {
+                        "GetSecureStringWithoutDecryption: plaintext returned for an encrypted parameter"
+                            .to_string()
+                    })
                 })
             }),
         );
@@ -615,9 +615,15 @@ impl ServiceGroup for SsmGroup {
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
-                    let prefix = "/overcast-compat/ssm-path";
-                    let name1 = format!("{}/a/value1", prefix);
-                    let name2 = format!("{}/b/value2", prefix);
+                    // Run-scoped: a fixed path collides between concurrent
+                    // runs, and overwrite(false) then fails the second one.
+                    // value1 sits directly under the prefix so the
+                    // non-recursive query can see it — AWS returns only direct
+                    // children there — while value2 is nested for the
+                    // recursive query, mirroring node-js-sdk's layout.
+                    let prefix = format!("/{}/ssm-path", ctx.run_id.as_ref());
+                    let name1 = format!("{}/value1", prefix);
+                    let name2 = format!("{}/nested/value2", prefix);
                     clients
                         .ssm()
                         .put_parameter()
@@ -638,7 +644,7 @@ impl ServiceGroup for SsmGroup {
                         .send()
                         .await
                         .map_err(crate::harness::sdk_error)?;
-                    ctx.set("ssmPathPrefix", format!("{}/", prefix));
+                    ctx.set("ssmPathPrefix", format!("{prefix}/"));
                     ctx.set("ssmPathParam1", name1);
                     ctx.set("ssmPathParam2", name2);
                     Ok(())
