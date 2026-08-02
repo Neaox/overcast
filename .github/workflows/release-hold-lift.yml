@@ -1,0 +1,85 @@
+name: Release hold lift
+
+# Unlocks the PRs that were waiting for a release, the moment it stops being
+# in flight — merged and shipping, or closed and abandoned.
+#
+# It does not decide anything. It re-runs release-hold.yml on the PRs whose
+# hold check is failing, and that workflow re-evaluates from scratch: one
+# place makes the decision, one place speaks. So this cannot leave a PR green
+# on a stale answer, and running it when nothing has changed is a no-op.
+#
+# Held PRs are found by looking for a failed hold run, not by a label. A label
+# cannot be applied to a fork PR (no write token on that run), so half the
+# held PRs would be unfindable by it, and the other half would leave a label
+# to garbage-collect. A failing run is the state — nothing to keep in sync.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  lift:
+    name: Lift the hold
+    # Only a release PR closing changes anything. Merged or not: either way
+    # there is no longer a curated release section on the way out that a
+    # breaking change could land in behind its reviewer's back.
+    if: >-
+      github.event_name != 'pull_request' ||
+      startsWith(github.event.pull_request.head.ref, 'release/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the release App credentials
+        env:
+          CLIENT_ID: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          APP_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$CLIENT_ID" ] || [ -z "$APP_KEY" ]; then
+            echo "::error::RELEASE_APP_CLIENT_ID and RELEASE_APP_PRIVATE_KEY must be set. Without them the held PRs stay red until someone re-runs their checks by hand." >&2
+            exit 1
+          fi
+
+      # Needs Actions: write on top of what release-prep.yml uses — re-running
+      # a workflow run is an Actions write. See .github/release-bot/README.md.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - name: Re-run the hold check on every held PR
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const { owner, repo } = context.repo;
+            const workflow_id = 'release-hold.yml';
+
+            const prs = await github.paginate(github.rest.pulls.list, {
+              owner, repo, state: 'open', base: 'main', per_page: 100,
+            });
+
+            const lifted = [];
+            for (const pr of prs) {
+              const { data: runs } = await github.rest.actions.listWorkflowRuns({
+                owner, repo, workflow_id, head_sha: pr.head.sha, per_page: 20,
+              });
+              // Newest first: an earlier attempt on the same head may have
+              // failed and been superseded by a green re-run already.
+              const [latest] = runs.workflow_runs.sort(
+                (a, b) => new Date(b.created_at) - new Date(a.created_at),
+              );
+              if (!latest || latest.conclusion !== 'failure') continue;
+
+              await github.rest.actions.reRunWorkflow({ owner, repo, run_id: latest.id });
+              lifted.push(pr.number);
+            }
+
+            const summary = lifted.length
+              ? `Re-ran the hold check on ${lifted.map(n => '#' + n).join(', ')}.`
+              : 'No PR was held — nothing to lift.';
+            core.info(summary);
+            await core.summary.addRaw(summary).write();
