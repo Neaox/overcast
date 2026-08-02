@@ -278,14 +278,30 @@ func corpusRESTRequest(uri string) (path, query string) {
 }
 
 func TestOvercastService_alias(t *testing.T) {
-	// Given: a normalized Smithy identity that differs from Overcast's key.
+	// Given: normalized Smithy identities whose Overcast keys differ.
+	tests := []struct {
+		modelService string
+		want         string
+	}{
+		{modelService: "secrets-manager", want: "secretsmanager"},
+		{modelService: "sesv2", want: "ses"},
+		{modelService: "wafv2", want: "waf"},
+		// WAF Classic is unimplemented and must not share the v2-implementing
+		// "waf" key despite its overlapping operation names.
+		{modelService: "waf", want: "waf-classic"},
+		// Identity pools are a separate unimplemented service; the identity
+		// must not collapse into the user-pool-backed "cognito" key.
+		{modelService: "cognito-identity", want: "cognito-identity"},
+	}
 
-	// When: the registry reports the service identity.
-	got := overcastService("secrets-manager")
+	// When: the registry reports each service identity.
+	for _, test := range tests {
+		got := overcastService(test.modelService)
 
-	// Then: it preserves the established router key explicitly.
-	if got != "secretsmanager" {
-		t.Errorf("overcastService() = %q, want secretsmanager", got)
+		// Then: it preserves the established router key explicitly.
+		if got != test.want {
+			t.Errorf("overcastService(%q) = %q, want %q", test.modelService, got, test.want)
+		}
 	}
 }
 
@@ -309,12 +325,57 @@ func TestHasOperation_resolvesLegacyServiceFamilies(t *testing.T) {
 	}{
 		{service: "bedrock", operation: "InvokeModel"},
 		{service: "cognito", operation: "ListUsers"},
+		// CreateEmailIdentity exists only in the sesv2 model.
+		{service: "ses", operation: "CreateEmailIdentity"},
+		// AssociateWebACL exists only in the wafv2 model.
+		{service: "waf", operation: "AssociateWebACL"},
 	}
 
 	// When: build tooling validates their capabilities against the corpus.
 	for _, test := range tests {
 		if !HasOperation(test.service, test.operation) {
 			t.Errorf("HasOperation(%q, %q) = false, want true", test.service, test.operation)
+		}
+	}
+}
+
+func TestHasOperation_rejectsMisattributedServiceFamilies(t *testing.T) {
+	// Given: operations modeled only by a related-but-distinct AWS service
+	// that Overcast does not implement.
+	tests := []struct {
+		service   string
+		operation string
+		reason    string
+	}{
+		// GetChangeToken is WAF Classic only; the v2-implementing waf key
+		// must not validate against the classic model.
+		{service: "waf", operation: "GetChangeToken", reason: "WAF Classic operation"},
+		// CreateIdentityPool belongs to cognito-identity (identity pools),
+		// not the user-pool service behind the cognito key.
+		{service: "cognito", operation: "CreateIdentityPool", reason: "Cognito Federated Identities operation"},
+	}
+
+	// When: build tooling validates capability declarations against the corpus.
+	for _, test := range tests {
+		if HasOperation(test.service, test.operation) {
+			t.Errorf("HasOperation(%q, %q) = true, want false (%s)", test.service, test.operation, test.reason)
+		}
+	}
+}
+
+func TestServiceAliases_referenceModeledIdentities(t *testing.T) {
+	// Given: the set of modeled service identities in the corpus.
+	identities := map[string]bool{}
+	for _, op := range manifest {
+		identities[op.Service] = true
+	}
+
+	// When: each alias names its source identity.
+	for _, alias := range serviceAliases {
+		// Then: the source exists in the corpus — a model refresh that drops
+		// or renames an identity must fail here, not silently orphan the alias.
+		if !identities[alias.ModelService] {
+			t.Errorf("serviceAliases maps %q, which is not a modeled identity", alias.ModelService)
 		}
 	}
 }

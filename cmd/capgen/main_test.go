@@ -24,3 +24,20 @@ func TestCheckCapabilitiesInManifest_allowsDocOnlyAndRejectsUnknown(t *testing.T
 		t.Errorf("checkCapabilitiesInManifest() = %d violations, want 1", violations)
 	}
 }
+
+func TestCheckServiceKeysInManifest_requiresKeyOrAliasResolution(t *testing.T) {
+	// Given: service keys that resolve directly, via an alias, and not at all.
+	services := []string{"sqs", "stepfunctions", "cloudwatch-logs"}
+	caps := []CapabilityDecl{
+		{Service: "waf", Operation: "CreateWebACL"},
+		{Service: "not-an-aws-service", Operation: "DoThing"},
+	}
+
+	// When: capgen validates every key against the generated corpus.
+	violations := checkServiceKeysInManifest(services, caps)
+
+	// Then: only the key no manifest identity resolves to is rejected.
+	if violations != 1 {
+		t.Errorf("checkServiceKeysInManifest() = %d violations, want 1", violations)
+	}
+}

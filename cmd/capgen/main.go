@@ -144,6 +144,10 @@ func main() {
 		}
 	}
 
+	if *checkModel {
+		failures += checkServiceKeysInManifest(services, allCaps)
+	}
+
 	if *generate {
 		if err := generateAllGenGo(root, allCaps); err != nil {
 			fatalf("writing all.gen.go: %v", err)
@@ -300,6 +304,45 @@ var capabilityManifestExemptions = map[string]string{
 
 func capabilityManifestExemption(cap CapabilityDecl) string {
 	return capabilityManifestExemptions[cap.Service+"/"+cap.Operation]
+}
+
+// checkServiceKeysInManifest enforces that every service key — directory name
+// or capability declaration — resolves to at least one modeled AWS identity
+// through awsapi's key-or-alias mapping. A key that resolves to nothing means
+// the alias table in internal/awsapi/registry_data.go is missing an entry (or
+// a key is misspelled), which would silently detach that service's capability
+// rows from the model gate — or worse, leave them validating against a
+// related-but-wrong service family (WAF Classic vs WAF v2 share operation
+// names, for example).
+func checkServiceKeysInManifest(services []string, caps []CapabilityDecl) int {
+	backed := map[string]bool{}
+	awsapi.WalkOperations(func(op awsapi.Operation) bool {
+		backed[awsapi.ServiceKey(op.Service)] = true
+		return true
+	})
+
+	keys := map[string]bool{}
+	for _, svc := range services {
+		keys[svc] = true
+	}
+	for _, cap := range caps {
+		keys[cap.Service] = true
+	}
+
+	sorted := make([]string, 0, len(keys))
+	for key := range keys {
+		sorted = append(sorted, key)
+	}
+	sort.Strings(sorted)
+
+	violations := 0
+	for _, key := range sorted {
+		if !backed[key] {
+			fmt.Printf("SERVICE_KEY_NOT_IN_MODEL %s  (no manifest identity resolves to this key; add a serviceAliases entry in internal/awsapi/registry_data.go or fix the key)\n", key)
+			violations++
+		}
+	}
+	return violations
 }
 
 func fatalf(format string, args ...any) {
