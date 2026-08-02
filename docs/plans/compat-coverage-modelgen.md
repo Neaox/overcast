@@ -49,9 +49,21 @@ Two constraints are non-negotiable and shape every decision below:
    behind a mechanical soak, not straight into the gate.
 
 Non-goals: generating *emulator* code (that is
-[level2-codegen.md](./level2-codegen.md) Track 3); replacing hand-written
-behavioural groups; generating IaC stacks (§3.8); testing services Overcast will
-never route at full operation depth (§3.9).
+[level2-codegen.md](./level2-codegen.md) Track 3); *synthesizing behavioural
+tests from the model* (behaviour cannot be derived from shapes — it is ported to
+**hand-authored IR scenarios**, written once and executed by every backend,
+§3.11); generating IaC stacks (§3.8); testing services Overcast will never route
+at full operation depth (§3.9).
+
+> **Owner decision, 2026-08-03:** the endgame is **IR-first for all compat
+> tests**, not "generation as a floor beneath hand-written groups". The existing
+> hand-written groups document *what* to test; how it is executed is not
+> precious, provided the result is reliable and genuinely exercises the SUT
+> through each suite's real SDK path. Per-language test code becomes the
+> audited exception (§3.11), because at this volume, manual maintenance that
+> scales with coverage will simply be ignored. Sections below that describe
+> generated coverage as "additive" describe the **rollout posture**, not the
+> steady state.
 
 ---
 
@@ -190,17 +202,19 @@ generation *cannot* express, and that is what hand-written groups keep doing.
 
 Three consequences:
 
-- Generated coverage is **additive and clearly marked**. It never displaces a
-  hand-written group; where both cover an operation, the hand-written one is the
-  richer test and the generated one is the shape/lifecycle floor.
+- During rollout, generated coverage is **additive and clearly marked**: it does
+  not displace a hand-written group until that group is deliberately ported and
+  proven equivalent (§3.11); where both cover an operation meanwhile, the
+  hand-written one is the richer test and the generated one is the
+  shape/lifecycle floor.
 - A generated group written against a Tier 0 service records `unimplemented`
   today and **starts passing the day the service reaches Tier 1, with no test
   edit**. That is the payoff: `inert-tier-rollout.md` gets its acceptance gate
   for free, per service, in eight clients.
-- Generated tests are the mechanism by which `services-never-emulated.md` stays
-  honest: those services keep a small generated probe group whose permanent
-  `unimplemented` verdict is the accurate reflection of reality that compat
-  exists to publish.
+- [services-never-emulated.md](./services-never-emulated.md) services get **no**
+  generated groups (§3.9): their honesty mechanism is the server-side 501 corpus
+  plus the `NeverEmulated` policy marker on the dashboard, not permanent
+  `unimplemented` rows.
 
 ### 3.2 D1 — Generation target: a scenario IR with two backend families (hybrid)
 
@@ -602,6 +616,65 @@ Both are explicit repo values and both bite here.
   the model cannot mechanically express — it is far more valuable than a test
   that passes for the wrong reason.
 
+### 3.11 Endgame — IR-first; native test code is the audited exception
+
+Steady state has **three layers**, in strictly decreasing volume and strictly
+increasing human involvement:
+
+| Layer | Authored by | Volume | Human touch |
+| --- | --- | --- | --- |
+| **Model-generated scenarios** | `cmd/compatgen` from shapes + recipes | thousands | recipe/values review once per service; regeneration is free |
+| **Authored scenarios** | a human, **in the IR**, once | hundreds | the scenario file itself is the review artifact — one spec replaces eight per-language implementations |
+| **Native per-suite tests** | a human, per language | tens, capped | each entry requires a reason in a checked-in exceptions file |
+
+Behavioural intent that the model cannot know (send a message, receive it,
+assert the body; publish to a topic subscribed to a queue and poll; FIFO
+ordering; DLQ redrive) is not lost and not machine-guessed — it is written **by
+hand in the IR**, where the existing step/assertion vocabulary (`eventually`,
+`readback`, `errorCode`, cross-resource `$ref`s across recipes) already
+expresses most of today's hand-written groups. The economics change from
+"behavioural test = 8 implementations to keep in sync" to "behavioural test =
+1 spec, executed by every backend".
+
+**The native exception list** is for what the IR structurally cannot express,
+and it must stay short. Expected categories, each requiring a listed reason:
+streaming/chunked request bodies; presigned-URL flows exercised outside the SDK
+client; deliberately malformed wire traffic below the SDK's public surface; and
+a small deliberate **idiom suite** — paginators, waiters, high-level layers
+like boto3 resources or the DynamoDB DocumentClient — kept native *because*
+those exercise SDK client code paths the interpreter/generated-source path does
+not touch. An entry without a reason, or a reason the IR has since learned to
+express, fails the lint.
+
+**Migration of the existing 94 groups / 496 tests**, group by group, any time
+after the relevant backends exist (G3):
+
+1. Author the IR scenario under the **same registry group/test names** — the
+   names are the join keys, so baseline history, dashboard history, and
+   flaky/debt bookkeeping survive untouched.
+2. Run both implementations in parallel through one nightly soak cycle; every
+   (suite, test) result must match its native predecessor exactly.
+3. Delete the per-language implementations in the same PR that flips the group's
+   resolution to the scenario. A divergence blocks the deletion — never the
+   gate — and is triaged as either an IR expressiveness gap (extend the IR or
+   add a native exception) or a latent bug in one of the eight copies (fix it;
+   this migration is precisely how such divergences get found).
+4. A ported group implemented by scenario counts as implemented in **every**
+   suite with a backend — which is how `rust-sdk`'s 297 and `dotnet-sdk`'s 261
+   parity-debt entries are burned down without anyone hand-porting them
+   (resolving §7.5 in favour of "generation lands first").
+
+**The human-input budget is a design constraint, not a hope.** Humans author
+recipes, values, authored scenarios, and the exceptions file; review
+concentrates on those four artifacts and on `gaps.json` as the exception queue.
+Everything else — regeneration, soak, promotion, coverage accounting — is
+mechanical. Two tripwires keep the budget honest: a per-service ceiling on
+`gaps.json` entries (a service whose refusal list keeps growing means the
+generator is missing a capability — fix the generator, don't grind the queue),
+and the exceptions-file lint above. When a new operation appears in a model
+refresh, the intended cost is zero human actions for shape coverage and one
+reviewed scenario only if it warrants behavioural coverage.
+
 ---
 
 ## 4. First milestone — pilot (Phase G2)
@@ -679,6 +752,7 @@ after.
 | **G3** Typed backends | Source emitters for `go-sdk`, then `java-sdk`, `dotnet-sdk`, `rust-sdk` (one suite per PR); member→field naming rules per language | L each | Generated source compiles in the suite's normal build; the pilot groups produce **identical** results to the interpreter suites; generated `suites` scoping widens automatically on regeneration |
 | **G4** Tier-1 fleet rollout | One service per PR, ordered by [inert-tier-rollout.md](./inert-tier-rollout.md) then [full-emulation-priority.md](./full-emulation-priority.md); capped probe groups for [services-never-emulated.md](./services-never-emulated.md) | L, parallelizable per service | Per service: recipe reviewed, no unexplained refusal in `gaps.json`, soak passed, CI wall-clock within budget, coverage metric moves |
 | **G5** Steady state | Weekly model-refresh PR regenerates scenarios; coverage becomes the dashboard headline; `--slowest N` latency census | S | A model-refresh PR shows added/removed operations per service and cannot break the gate; coverage per service/tier is published |
+| **G6** Native-group migration (§3.11; overlaps G4/G5, starts any time after G3) | Port the existing 94 hand-written groups to authored IR scenarios, group by group: same registry names, one parallel soak cycle, results must match, then delete the per-language code. Exceptions file + lint for what stays native (streaming, presigned flows, the idiom suite). | L, parallelizable per group | Per group: soak-parity with the native predecessor, native code deleted, registry names unchanged; fleet-wide: rust/dotnet parity debt reaches zero via backends, the exceptions file is the only remaining native test code and every entry carries a reason |
 
 Every phase begins with a failing check, lands as small independently
 reviewable PRs, and leaves `main` green under both existing gates.
@@ -703,9 +777,11 @@ Done means all of the following hold simultaneously:
 5. **The gate is still absolute and still trusted.** `--max-failures 0` holds,
    `flaky.json` is still empty or shrinking, and no generated test was ever
    quarantined to make a run green.
-6. **Hand-written groups are undiminished.** Behavioural depth still lives in
-   hand-written tests; generated groups are the marked, additive shape and
-   lifecycle floor beneath them.
+6. **Native per-suite test code is the audited exception, not the medium.**
+   Behavioural depth lives in authored IR scenarios (written once, executed by
+   every backend); the exceptions file is short, linted, and every entry has a
+   reason. No test exists in eight hand-maintained copies, and adding a
+   behavioural test costs one reviewed scenario, not eight implementations.
 7. **The boundary is intact.** Nothing under `compat/` imports emulator Go code;
    the generator is a build-time tool whose output is committed data.
 
@@ -733,11 +809,13 @@ Done means all of the following hold simultaneously:
    operation, the registry wants `na`. That is partly mechanical (botocore knows
    what the CLI exposes) and partly not. Deriving it would remove a class of
    hand-maintained divergence; getting it wrong would silently erase coverage.
-5. **Generated backends versus outstanding parity debt.** `rust-sdk` (297) and
-   `dotnet-sdk` (261) still owe hand-written groups. Does a suite have to reach
-   zero debt before it gets a generated backend, or does generation land first
-   and shrink the debt as a side effect? Mixing the flows would make the
-   debt-only-shrinks invariant hard to read.
+5. **Generated backends versus outstanding parity debt — resolved by §3.11.**
+   Generation lands first; the G6 migration then burns `rust-sdk`'s 297 and
+   `dotnet-sdk`'s 261 debt entries down as groups are ported to scenarios, since
+   a scenario-backed group is implemented in every suite with a backend. Nobody
+   hand-ports those 558 tests. The residual question is only sequencing detail:
+   whether the debt file should distinguish "awaiting backend" from "awaiting
+   port" while G6 is in flight.
 6. **Baseline format at 10× scale.** Sharding buys headroom; it may not be
    enough at full Tier-1 coverage. Compressing, or making `pass` the implied
    default, both weaken the "failing and absent from the baseline" check that
