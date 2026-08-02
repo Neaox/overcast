@@ -238,6 +238,20 @@ func BenchmarkDynamoDB_GSIQueryPageLimit25_SQL_{0,500,1500}Items(b *testing.B)
 
 Preload N items spread across many *distinct* index-hash values (so a single GSI Query only ever touches a small, page-sized slice of the index regardless of table size — the flat-curve property being proven), then benchmark a `Limit=25` GSI Query for one index-hash value across table sizes. Flat allocs/op across preload sizes is the accept criterion, identical framing to A3's own acceptance bar ("Scan Limit=25 flat vs table size"). Per this session's constraints, **no benchmark is run here** — this is the specified shape for whoever implements A7 to execute under the storage-test-plan.md discipline (container-native FS, exclusive machine).
 
+**Parallel-scan segmentation benchmark (recorded 2026-08-03, the §5 follow-up).** `BenchmarkDynamoDB_ParallelScan*` in [parallel_scan_bench_test.go](../../internal/services/dynamodb/parallel_scan_bench_test.go) times one `Limit=25` page of segment 0 of a 4-way parallel Scan at the handler entry point (`scanTyped`), because the full materialization and Go sort being removed lived there and the same benchmark then runs unmodified against the pre-change code to produce the before column. Command: `go test -run '^$' -bench 'BenchmarkDynamoDB_ParallelScan' -benchmem -benchtime 200x ./internal/services/dynamodb/`, three runs each side, in a `golang:1.24-bookworm` container on container-native filesystem (`scripts/docker-go.sh`), Go 1.24, host Ryzen 9 5900X / Windows 11, no other load. Run-to-run spread was under 10% on every row; the figures below are run 1 and the other two agree.
+
+| Benchmark | Before ns/op | After ns/op | Before B/op | After B/op | Before allocs/op | After allocs/op |
+|---|---|---|---|---|---|---|
+| Base table, memory, 2 000 items | 205,374 | 15,977 | 18,375 | 4,550 | 32 | 43 |
+| Base table, memory, 8 000 items | 852,199 | 16,024 | 67,526 | 4,550 | 32 | 43 |
+| Base table, SQL, 500 items | 1,627,141 | 394,153 | 1,033,247 | 210,550 | 19,078 | 3,880 |
+| Base table, SQL, 1 500 items | 4,924,183 | 409,450 | 3,093,749 | 210,551 | 57,080 | 3,880 |
+| GSI, memory, 2 000 items | 236,660 | 22,912 | 34,692 | 4,550 | 33 | 43 |
+| GSI, memory, 8 000 items | 1,023,954 | 57,796 | 133,034 | 8,881 | 33 | 59 |
+| GSI, SQL, 1 500 items | 4,773,707 | 865,439 | 3,106,021 | 417,654 | 57,081 | 7,711 |
+
+The accept criterion is the same flat-curve one A3 used, and the base-table rows meet it exactly: 2 000 and 8 000 items produce identical bytes and allocs after the change (4,550 B, 43 allocs) where before they scaled with table size. Allocs/op rises slightly at the small end (32 → 43) because the walk fetches in chunks instead of one slab — the bytes moved, which is what the table-sized cost was made of, fall by an order of magnitude. The GSI rows improve by 5–18× but are not perfectly flat: segmenting by the *index's* partition key (the faithful analogue of AWS's hash-space division) means index entries sharing a segment sit in contiguous runs, so the walk to the segment's first run grows with partition size rather than table size. That is inherent to hashing by partition key over a partition-ordered structure, and bounded by the same "typical GSI tables are small" premise as A7's own gate.
+
 **Failing-first strategy:** every test above should be written and confirmed to fail against the *current* fallback implementation before any index-structure code exists — several of them already fail today (the projection-fidelity test, the numeric-ordering test) which is useful evidence this design is fixing real bugs, not just adding an optimization.
 
 ---
