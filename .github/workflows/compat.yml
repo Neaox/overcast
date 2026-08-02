@@ -526,12 +526,13 @@ jobs:
       #
       # Identify the App by its Client ID, not its App ID: `app-id` carries a
       # deprecationMessage as of the action's v3, and GitHub recommends the
-      # client ID as the JWT `iss` claim. The client ID is not a secret, so it
-      # lives in a repository variable; only the private key is a secret.
-      # Until both exist (vars.COMPAT_PROMOTION_CLIENT_ID /
-      # secrets.COMPAT_PROMOTION_PRIVATE_KEY — see issue #440), the step
-      # surfaces an accurate warning instead; the promotion must then be applied
-      # by hand (recipe in PR #439).
+      # client ID as the JWT `iss` claim. A client ID is not sensitive and could
+      # live in a repository variable, but every other App-authenticated
+      # workflow here keeps it in secrets alongside the key
+      # (secrets.RELEASE_APP_CLIENT_ID) — one place to look beats one fewer
+      # secret. If either is missing the step surfaces an accurate warning
+      # instead of failing, and the promotion is applied by hand (recipe in
+      # PR #439, issue #440).
       - name: Compute baseline promotion
         id: promote-diff
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.baseline.outcome == 'success'
@@ -551,14 +552,14 @@ jobs:
         id: app-check
         if: steps.promote-diff.outputs.changed == 'true'
         env:
-          CLIENT_ID: ${{ vars.COMPAT_PROMOTION_CLIENT_ID }}
+          CLIENT_ID: ${{ secrets.COMPAT_PROMOTION_CLIENT_ID }}
           APP_KEY: ${{ secrets.COMPAT_PROMOTION_PRIVATE_KEY }}
         run: |
           if [ -n "$CLIENT_ID" ] && [ -n "$APP_KEY" ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::warning title=Compat baseline::Promotion computed but NOT published: branch protection blocks direct pushes and the promotion App credentials (vars.COMPAT_PROMOTION_CLIENT_ID / secrets.COMPAT_PROMOTION_PRIVATE_KEY) are not configured — see issue #440. Apply by hand per PR #439 until then."
+            echo "::warning title=Compat baseline::Promotion computed but NOT published: branch protection blocks direct pushes and the promotion App credentials (secrets.COMPAT_PROMOTION_CLIENT_ID / secrets.COMPAT_PROMOTION_PRIVATE_KEY) are not configured — see issue #440. Apply by hand per PR #439 until then."
           fi
 
       - name: Mint promotion App token
@@ -566,7 +567,7 @@ jobs:
         if: steps.app-check.outputs.available == 'true'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          client-id: ${{ vars.COMPAT_PROMOTION_CLIENT_ID }}
+          client-id: ${{ secrets.COMPAT_PROMOTION_CLIENT_ID }}
           private-key: ${{ secrets.COMPAT_PROMOTION_PRIVATE_KEY }}
 
       - name: Publish promotion PR
