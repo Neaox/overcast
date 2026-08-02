@@ -1,7 +1,8 @@
 # Compat baseline, CI enforcement & cross-suite uniformity
 
 > Status: enforcement, CI surfacing, flake pipeline, and the framework audit landed.
-> 26 grandfathered failures and the dotnet/rust parity backfill outstanding.
+> The burn-down is finished — **zero grandfathered failures**, and CI now asserts
+> that absolutely. The dotnet/rust parity backfill is outstanding.
 >
 > The policy this plan implements is documented for contributors in
 > [compat/AGENTS.md § Baseline & uniformity policy](../../compat/AGENTS.md#baseline--uniformity-policy).
@@ -82,10 +83,30 @@ passing against a stub that never ran a container. That is exactly the blindspot
 this work existed to close: the suite was green on a code path CI never
 exercised.
 
-## Outstanding — burn down the 26 grandfathered failures
+## Done — the 26 grandfathered failures are burned down
 
-One PR per root cause, reproducing test first. The baseline shrinks by
-auto-promotion on merge; nothing to hand-edit.
+Cleared by #457–#462, one PR per root cause with a reproducing test first. The
+last main run recorded **2,690 `pass`, 0 `fail`, 676 `skip`, 1 `na`**; every
+remaining `skip` is a suite that has not implemented the registry group yet
+(rust-sdk 338, dotnet-sdk 303, java-sdk 35), which the parity backfill below
+covers.
+
+Two things then closed the loop, because a zero that only lives in a file is not
+a guarantee:
+
+- **The baseline was promoted to zero `fail`.** Auto-promotion had computed the
+  same change on every main run since #462 and refused to publish it — branch
+  protection blocks direct pushes and the promotion App credentials are still
+  missing (issue #440) — so the recorded fail set sat 26 entries behind reality.
+  Promoted by hand from the run-30693624750 artifact, per the recipe in #439.
+- **An absolute gate now sits beside the relative one.** `--max-failures 0`
+  ([cmd/compat/baseline.go](../../cmd/compat/baseline.go) `failuresOverLimit`),
+  asserted in the aggregate job. `--compare-baseline` asks whether anything got
+  worse than the file records; this asks whether anything failed at all. While
+  the file could record a `fail` those were different questions, and the gap was
+  exactly the stale-baseline window above. Quarantined flaky tests stay exempt.
+
+The root causes, for the record:
 
 | # | Root cause | Fails | Notes |
 | --- | --- | --- | --- |

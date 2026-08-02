@@ -173,7 +173,7 @@ Agents most often trip on these — check before finishing:
 - **Testing only with raw HTTP** — prefer AWS SDK clients for management-plane validation where possible
 - **Forgetting `make docs-index`** after editing `docs/` — the committed docs search index goes stale and CI fails
 - **Adding a compat test to one suite only** — every SDK/CLI suite tests the same operations; add to `compat/suites/registry.json` first, then implement everywhere. `go run ./cmd/compat --check-parity` fails the build otherwise. See [compat/AGENTS.md § Baseline & uniformity policy](./compat/AGENTS.md#baseline--uniformity-policy)
-- **Leaving a compat test failing** — `compat/baseline.json` is a ratchet: a result that gets worse, or a new failing test, fails CI. Never hand-edit the baseline to record a fix; improvements are promoted automatically on `main`
+- **Leaving a compat test failing** — the baseline is at zero failures and CI enforces that absolutely: *any* failing test fails the build, as does a result that gets worse than `compat/baseline.json` records. Never hand-edit the baseline to record a fix; improvements are promoted automatically on `main`
 
 ---
 

@@ -2561,21 +2561,21 @@
       "service": "rds",
       "group": "rds-subnet-groups",
       "test": "CreateDBSubnetGroup",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "cli",
       "service": "rds",
       "group": "rds-subnet-groups",
       "test": "DeleteDBSubnetGroup",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "cli",
       "service": "rds",
       "group": "rds-subnet-groups",
       "test": "DescribeDBSubnetGroups",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "cli",
@@ -3723,7 +3723,7 @@
       "service": "appsync",
       "group": "appsync-functions",
       "test": "CreateFunction",
-      "status": "fail"
+      "status": "skip"
     },
     {
       "suite": "dotnet-sdk",
@@ -3821,7 +3821,7 @@
       "service": "appsync",
       "group": "appsync-tags",
       "test": "TagResource",
-      "status": "fail"
+      "status": "skip"
     },
     {
       "suite": "dotnet-sdk",
@@ -3947,6 +3947,20 @@
       "service": "cdk",
       "group": "cdk-lifecycle",
       "test": "VerifyEventSourceMapping",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyFilteredDdbEsm",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyFilteredEsmDelivery",
       "status": "skip"
     },
     {
@@ -4577,7 +4591,7 @@
       "service": "dynamodb",
       "group": "dynamodb-items",
       "test": "DeleteItem",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
@@ -5347,14 +5361,14 @@
       "service": "iam",
       "group": "iam-roles",
       "test": "DeleteRole",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
       "service": "iam",
       "group": "iam-roles",
       "test": "DeleteRolePolicy",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
@@ -5382,7 +5396,7 @@
       "service": "iam",
       "group": "iam-roles",
       "test": "GetRolePolicy",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
@@ -5438,14 +5452,14 @@
       "service": "iam",
       "group": "iam-users",
       "test": "DeleteUser",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
       "service": "iam",
       "group": "iam-users",
       "test": "DeleteUserPolicy",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
@@ -5459,7 +5473,7 @@
       "service": "iam",
       "group": "iam-users",
       "test": "GetUserPolicy",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
@@ -5718,119 +5732,119 @@
       "service": "lambda",
       "group": "lambda-aliases",
       "test": "CreateAlias",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
       "service": "lambda",
       "group": "lambda-aliases",
       "test": "DeleteAlias",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
       "service": "lambda",
       "group": "lambda-aliases",
       "test": "GetAlias",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
       "service": "lambda",
       "group": "lambda-aliases",
       "test": "ListAliases",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
       "service": "lambda",
       "group": "lambda-aliases",
       "test": "ListVersionsByFunction",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
       "service": "lambda",
       "group": "lambda-aliases",
       "test": "PublishVersion",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
       "service": "lambda",
       "group": "lambda-aliases",
       "test": "UpdateAlias",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
       "service": "lambda",
       "group": "lambda-crud",
       "test": "CreateFunction",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
       "service": "lambda",
       "group": "lambda-crud",
       "test": "DeleteFunction",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
       "service": "lambda",
       "group": "lambda-crud",
       "test": "GetFunction",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
       "service": "lambda",
       "group": "lambda-crud",
       "test": "ListFunctions",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
       "service": "lambda",
       "group": "lambda-crud",
       "test": "UpdateFunctionCode",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
       "service": "lambda",
       "group": "lambda-crud",
       "test": "UpdateFunctionConfiguration",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
       "service": "lambda",
       "group": "lambda-invoke-stream",
       "test": "InvokeWithResponseStream",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeAsync",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeDryRun",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeSync",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
@@ -6040,21 +6054,21 @@
       "service": "s3",
       "group": "s3-copy",
       "test": "CopyObject",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
       "service": "s3",
       "group": "s3-copy",
       "test": "CreateSourceBucket",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
       "service": "s3",
       "group": "s3-copy",
       "test": "PutSourceObject",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
@@ -6145,7 +6159,7 @@
       "service": "s3",
       "group": "s3-multipart",
       "test": "AbortMultipartUpload",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
@@ -6229,7 +6243,7 @@
       "service": "secretsmanager",
       "group": "secretsmanager-crud",
       "test": "BatchGetSecretValue",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
@@ -6243,7 +6257,7 @@
       "service": "secretsmanager",
       "group": "secretsmanager-crud",
       "test": "DeleteSecret",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
@@ -6523,7 +6537,7 @@
       "service": "sns",
       "group": "sns-publish",
       "test": "PublishBatch",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
@@ -6677,7 +6691,7 @@
       "service": "sqs",
       "group": "sqs-messages",
       "test": "PurgeQueue",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "dotnet-sdk",
@@ -9246,7 +9260,7 @@
       "service": "rds",
       "group": "rds-subnet-groups",
       "test": "CreateDBSubnetGroup",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
@@ -9260,7 +9274,7 @@
       "service": "rds",
       "group": "rds-subnet-groups",
       "test": "DescribeDBSubnetGroups",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "go-sdk",
@@ -10632,6 +10646,20 @@
       "service": "cdk",
       "group": "cdk-lifecycle",
       "test": "VerifyEventSourceMapping",
+      "status": "skip"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyFilteredDdbEsm",
+      "status": "skip"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyFilteredEsmDelivery",
       "status": "skip"
     },
     {
@@ -12704,21 +12732,21 @@
       "service": "rds",
       "group": "rds-subnet-groups",
       "test": "CreateDBSubnetGroup",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
       "service": "rds",
       "group": "rds-subnet-groups",
       "test": "DeleteDBSubnetGroup",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
       "service": "rds",
       "group": "rds-subnet-groups",
       "test": "DescribeDBSubnetGroups",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "java-sdk",
@@ -15949,21 +15977,21 @@
       "service": "rds",
       "group": "rds-subnet-groups",
       "test": "CreateDBSubnetGroup",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "node-js-sdk",
       "service": "rds",
       "group": "rds-subnet-groups",
       "test": "DeleteDBSubnetGroup",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "node-js-sdk",
       "service": "rds",
       "group": "rds-subnet-groups",
       "test": "DescribeDBSubnetGroups",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "node-js-sdk",
@@ -19213,7 +19241,7 @@
       "service": "rds",
       "group": "rds-subnet-groups",
       "test": "CreateDBSubnetGroup",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "python-sdk",
@@ -19227,7 +19255,7 @@
       "service": "rds",
       "group": "rds-subnet-groups",
       "test": "DescribeDBSubnetGroups",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "python-sdk",
@@ -20394,7 +20422,7 @@
       "service": "appsync",
       "group": "appsync-functions",
       "test": "CreateFunction",
-      "status": "fail"
+      "status": "skip"
     },
     {
       "suite": "rust-sdk",
@@ -20492,7 +20520,7 @@
       "service": "appsync",
       "group": "appsync-tags",
       "test": "TagResource",
-      "status": "fail"
+      "status": "skip"
     },
     {
       "suite": "rust-sdk",
@@ -20618,6 +20646,20 @@
       "service": "cdk",
       "group": "cdk-lifecycle",
       "test": "VerifyEventSourceMapping",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyFilteredDdbEsm",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyFilteredEsmDelivery",
       "status": "skip"
     },
     {
@@ -21269,7 +21311,7 @@
       "service": "dynamodb",
       "group": "dynamodb-items",
       "test": "PutItemConditionFail",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
@@ -21381,7 +21423,7 @@
       "service": "dynamodb",
       "group": "dynamodb-txn",
       "test": "TransactWriteConditionFail",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
@@ -22389,119 +22431,119 @@
       "service": "lambda",
       "group": "lambda-aliases",
       "test": "CreateAlias",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
       "service": "lambda",
       "group": "lambda-aliases",
       "test": "DeleteAlias",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
       "service": "lambda",
       "group": "lambda-aliases",
       "test": "GetAlias",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
       "service": "lambda",
       "group": "lambda-aliases",
       "test": "ListAliases",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
       "service": "lambda",
       "group": "lambda-aliases",
       "test": "ListVersionsByFunction",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
       "service": "lambda",
       "group": "lambda-aliases",
       "test": "PublishVersion",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
       "service": "lambda",
       "group": "lambda-aliases",
       "test": "UpdateAlias",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
       "service": "lambda",
       "group": "lambda-crud",
       "test": "CreateFunction",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
       "service": "lambda",
       "group": "lambda-crud",
       "test": "DeleteFunction",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
       "service": "lambda",
       "group": "lambda-crud",
       "test": "GetFunction",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
       "service": "lambda",
       "group": "lambda-crud",
       "test": "ListFunctions",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
       "service": "lambda",
       "group": "lambda-crud",
       "test": "UpdateFunctionCode",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
       "service": "lambda",
       "group": "lambda-crud",
       "test": "UpdateFunctionConfiguration",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
       "service": "lambda",
       "group": "lambda-invoke-stream",
       "test": "InvokeWithResponseStream",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeAsync",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeDryRun",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
       "service": "lambda",
       "group": "lambda-invoke",
       "test": "InvokeSync",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
@@ -22711,21 +22753,21 @@
       "service": "s3",
       "group": "s3-copy",
       "test": "CopyObject",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
       "service": "s3",
       "group": "s3-copy",
       "test": "CreateSourceBucket",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
       "service": "s3",
       "group": "s3-copy",
       "test": "PutSourceObject",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
@@ -22900,7 +22942,7 @@
       "service": "secretsmanager",
       "group": "secretsmanager-crud",
       "test": "BatchGetSecretValue",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
@@ -22914,7 +22956,7 @@
       "service": "secretsmanager",
       "group": "secretsmanager-crud",
       "test": "DeleteSecret",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
@@ -23502,21 +23544,21 @@
       "service": "ssm",
       "group": "ssm-path",
       "test": "GetParametersByPath",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
       "service": "ssm",
       "group": "ssm-path",
       "test": "GetParametersByPathPaginated",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
       "service": "ssm",
       "group": "ssm-path",
       "test": "GetParametersByPathRecursive",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
@@ -23530,7 +23572,7 @@
       "service": "ssm",
       "group": "ssm-secure",
       "test": "GetSecureStringWithoutDecryption",
-      "status": "fail"
+      "status": "pass"
     },
     {
       "suite": "rust-sdk",
