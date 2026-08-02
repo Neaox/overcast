@@ -60,7 +60,7 @@ func main() {
 	var (
 		workspace  = flag.String("workspace", ".", "workspace root (directory with go.mod)")
 		check      = flag.Bool("check", false, "check capabilities against handler ops; exit 1 on mismatch")
-		checkModel = flag.Bool("check-model", false, "check capabilities against the generated AWS operation corpus")
+		checkModel = flag.Bool("check-model", false, "check capabilities, service keys, and compat registry groups against the generated AWS operation corpus")
 		generate   = flag.Bool("generate", false, "generate internal/capabilities/all.gen.go")
 		initCaps   = flag.Bool("init", false, "generate missing capabilities_dev.go files from detected handler ops")
 		writeDocs  = flag.Bool("write-docs", false, "regenerate sentinel-bracketed tables in docs/services/*.md")
@@ -146,6 +146,7 @@ func main() {
 
 	if *checkModel {
 		failures += checkServiceKeysInManifest(services, allCaps)
+		failures += checkCompatRegistryServiceKeys(root, allCaps)
 	}
 
 	if *generate {
@@ -341,6 +342,65 @@ func checkServiceKeysInManifest(services []string, caps []CapabilityDecl) int {
 			fmt.Printf("SERVICE_KEY_NOT_IN_MODEL %s  (no manifest identity resolves to this key; add a serviceAliases entry in internal/awsapi/registry_data.go or fix the key)\n", key)
 			violations++
 		}
+	}
+	return violations
+}
+
+// compatRegistryServiceExemptions names the compat groups whose "service" is
+// deliberately not an AWS service. Keep an explicit reason here rather than
+// letting any unrecognized string through: the whole point of the check is
+// that a typo cannot quietly invent a service.
+var compatRegistryServiceExemptions = map[string]string{
+	"cdk": "IaC tool suite, not an AWS service; scoped to the cdk suite via the group's suites field",
+}
+
+// checkCompatRegistryServiceKeys holds hand-written compat groups to the same
+// service vocabulary the capability table uses. Generated groups will use a
+// capability key by construction; nothing stops a hand-written one from
+// inventing a key that no service answers to, which silently detaches its
+// results from the coverage accounting. Composed with
+// checkServiceKeysInManifest, this also transitively guarantees every compat
+// group's service resolves to a modeled AWS identity via key-or-alias — which
+// is what makes the "cognito" group legitimate (it resolves only through the
+// cognito-identity-provider alias).
+func checkCompatRegistryServiceKeys(root string, caps []CapabilityDecl) int {
+	path := filepath.Join(root, "compat", "suites", "registry.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		fmt.Fprintf(os.Stderr, "capgen: read compat registry: %v\n", err)
+		return 1
+	}
+	var registry struct {
+		Groups []struct {
+			Service string `json:"service"`
+			Name    string `json:"name"`
+		} `json:"groups"`
+	}
+	if err := json.Unmarshal(raw, &registry); err != nil {
+		fmt.Fprintf(os.Stderr, "capgen: parse compat registry: %v\n", err)
+		return 1
+	}
+
+	capabilityKeys := map[string]bool{}
+	for _, cap := range caps {
+		capabilityKeys[cap.Service] = true
+	}
+
+	violations := 0
+	reported := map[string]bool{}
+	for _, group := range registry.Groups {
+		if capabilityKeys[group.Service] || compatRegistryServiceExemptions[group.Service] != "" {
+			continue
+		}
+		if reported[group.Service] {
+			continue
+		}
+		reported[group.Service] = true
+		fmt.Printf("COMPAT_REGISTRY_UNKNOWN_SERVICE %s  (group %q; not a capability service key — fix the key or add an explicit exemption)\n", group.Service, group.Name)
+		violations++
 	}
 	return violations
 }
