@@ -7,7 +7,8 @@
 > [inert-tier-rollout.md](./inert-tier-rollout.md)'s Tier 1 floor (every registered service reaches
 > correct-shape metadata CRUD) and orders the climb from there to Tier 2 (full behavioral emulation).
 > Measurement plumbing is covered by [compat-coverage-modelgen.md](./compat-coverage-modelgen.md).
-> In-flight Tier-2 work (EFS data plane, DynamoDB GSI) is **not replanned here** — see §5.
+> Separately-tracked Tier-2 work (EFS data plane, still in flight; DynamoDB GSI, closed 2026-08-03) is
+> **not replanned here** — see §5.
 
 Tier vocabulary used throughout (repo-wide, not invented for this doc):
 
@@ -289,13 +290,15 @@ than 501).
 
 **11. DynamoDB PartiQL (`ExecuteStatement`/`ExecuteTransaction`/`BatchExecuteStatement`)** — not
 registered at all today → Core addition
-Score: usage 2, leverage 2, fit 4, cost M, dep-ready 5 (once GSI phase 3 lands — see dependency note),
-risk low.
-Sequenced explicitly **after** the in-flight [dynamodb-gsi-design.md](./dynamodb-gsi-design.md) work
+Score: usage 2, leverage 2, fit 4, cost M, dep-ready 5, risk low.
+Sequenced explicitly **after** the [dynamodb-gsi-design.md](./dynamodb-gsi-design.md) work
 finishes, not because PartiQL needs the new index structure to *exist*, but because it's the same
 query-planning surface (`WHERE` clause → key-condition-or-scan decision) and building it twice against two
-different storage backends is wasted work. Do not start this before GSI phase 3 + the deferred follow-ups
-listed in that doc (LSI routing, ConsistentRead-on-GSI validation, parallel-scan segmentation) are closed.
+different storage backends is wasted work. **That dependency is satisfied as of 2026-08-03**: GSI phases
+1–3 and all three deferred follow-ups (LSI routing, ConsistentRead-on-GSI validation, parallel-scan
+segmentation) are closed, so this item is now free to start. Whoever picks it up inherits a settled query
+path to build against — `queryTyped`'s index branches and `scan_segments.go` are the shapes a PartiQL
+`WHERE` clause should compile down onto rather than a second planner.
 
 ### Wave 4 — Secondary inert promotions & lower-confidence items
 
@@ -361,9 +364,10 @@ Per the task's instruction to triangulate 3+ independent signals — what was ac
   live mode step 1 landed; steps 2–4 (Lambda `FileSystemConfigs` mount, ECS `efsVolumeConfiguration`, — the
   ECS half already shipped per #426 — and remaining steps) in progress. This plan's Lambda/ECS items assume
   that work lands independently; no overlap.
-- **DynamoDB GSI ordered index structure** ([dynamodb-gsi-design.md](./dynamodb-gsi-design.md)) — phases
-  1–3 implemented; deferred follow-ups (LSI routing, ConsistentRead-on-GSI validation, parallel-scan
-  segmentation) open. Wave 3 item 11 (PartiQL) is explicitly sequenced after this closes.
+- **DynamoDB GSI ordered index structure** ([dynamodb-gsi-design.md](./dynamodb-gsi-design.md)) —
+  **closed 2026-08-03.** Phases 1–3 implemented (#283/#287/#300), and the three deferred follow-ups
+  (LSI routing, ConsistentRead-on-GSI validation, parallel-scan segmentation) all landed in #488.
+  Nothing from that design remains open, so Wave 3 item 11 (PartiQL) is no longer blocked by it.
 
 ## 6. STATUS.md discrepancies found during this audit
 
