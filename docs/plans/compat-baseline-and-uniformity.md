@@ -61,10 +61,22 @@ Three things were undermining the compat suites:
   now a **PR-based flow**: the improvement is force-pushed to the coalescing
   `automation/baseline-promotion` branch and auto-merged through the same
   required checks (including the baseline-change lint) as a human edit. It
-  needs GitHub App credentials (`COMPAT_PROMOTION_APP_ID` /
-  `COMPAT_PROMOTION_APP_PRIVATE_KEY`) because `GITHUB_TOKEN`-created PRs
-  start no workflows; until those secrets exist the step warns accurately and
+  needs GitHub App credentials (`vars.COMPAT_PROMOTION_CLIENT_ID` /
+  `secrets.COMPAT_PROMOTION_PRIVATE_KEY`) because `GITHUB_TOKEN`-created PRs
+  start no workflows; until those exist the step warns accurately and
   promotion is applied by hand (recipe in PR #439).
+
+  **Setting the App up** (still outstanding — this is all that blocks #440):
+  a repository-owned GitHub App, installed on this repo only, with exactly two
+  repository permissions — **Contents: read & write** (force-push
+  `automation/baseline-promotion`; merge once checks pass) and **Pull requests:
+  read & write** (open the PR, arm auto-merge). No Workflows permission: the
+  promotion commit touches `compat/baseline.json` and nothing else. No
+  Administration, and no branch-protection bypass — the PR is meant to clear
+  the same required checks as a human edit, and `main` requires no approving
+  review, so auto-merge lands it unaided. Identify the App by **Client ID**,
+  not App ID: the action deprecated `app-id` in v3, and a client ID is not
+  secret, so it belongs in a repository variable.
 
 ## What turning Docker on changed
 
