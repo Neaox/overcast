@@ -35,8 +35,28 @@ class RenderTest(unittest.TestCase):
 
 	def test_every_shipped_template_renders_with_the_documented_values(self) -> None:
 		# Guards against a template gaining a placeholder the workflow does not
-		# export, which would post a comment with a raw $NAME in it.
-		known = {"VERSION": "0.0.1-alpha.28", "SHORT_SHA": "9ba7564c"}
+		# export, which would post a comment with a raw $NAME in it. Every name
+		# here is set by the workflow named against the template in
+		# .github/release-bot/README.md.
+		known = {
+			# release-prep.yml
+			"VERSION": "0.0.1-alpha.28",
+			"SHORT_SHA": "9ba7564c",
+			# release-hold.yml
+			"RELEASE_VERSION": "1.2.0",
+			"RELEASE_LINK": "#463",
+			"RELEASE_KIND": "minor",
+			"NEXT_MAJOR": "2.0.0",
+			"BREAKING_ENTRIES": "- **BREAKING** [state] the v1 on-disk layout",
+			# retarget.yml. CREATED_NOTE is empty whenever the branch already
+			# existed, which is the case this substitution has to survive.
+			"TARGET_BRANCH": "v2.0.0",
+			"PREVIOUS_BASE": "main",
+			"CURRENT_BASE": "main",
+			"CREATED_NOTE": "",
+			"REQUESTED_BY": "Neaox",
+			"REASON": "`v2..0` is not a branch name I will create or target.",
+		}
 		folder = Path(__file__).resolve().parent.parent / ".github" / "release-bot"
 		templates = [p for p in folder.glob("*.md") if p.name != "README.md"]
 		self.assertTrue(templates)

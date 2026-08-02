@@ -1,0 +1,211 @@
+name: Release hold
+
+# Breaking changes wait while a minor or patch release is being prepared.
+#
+# The release PR's section of CHANGELOG.md is written and reviewed while the PR
+# sits open, and every push to main is folded into it automatically. A breaking
+# change merged in that window therefore lands in a release whose notes were
+# already read and whose version number promised nothing would break.
+#
+# Scope is deliberately the window where the release PR is *open*. Once it has
+# merged, the version on main is untagged and release.yml's changelog gate
+# already fails any PR carrying a fragment at all — breaking or not — until the
+# tag is out. The two gates are complementary; neither needs to know about the
+# other. See RELEASE.md.
+#
+# 0.x is exempt: it promises no compatibility, and Overcast spends its whole
+# alpha there. The policy, with its reasoning, is in scripts/release-hold.py.
+#
+# A separate workflow file rather than a job in test.yml, because lifting the
+# hold re-runs this workflow — and a re-run re-runs every job in the run. One
+# tiny job is cheap to replay; the CI matrix is not.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: release-hold-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  hold:
+    # This name is the required status check on main. Renaming it silently
+    # stops enforcing the hold, because branch protection matches by name.
+    name: Breaking-change hold
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # The PR's own changes are a three-dot diff from the base, so the
+          # merge base has to be in the clone.
+          fetch-depth: 0
+
+      # Fork PRs get no secrets, so they get no comment. The check still runs
+      # and still fails with its reasons in the job summary — a fork PR cannot
+      # be merged without a maintainer, who can read them there.
+      - name: Look for the release App credentials
+        id: app
+        env:
+          CLIENT_ID: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+        run: |
+          if [ -n "$CLIENT_ID" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No release App credentials on this run (fork PR); the verdict goes to the job summary instead of a comment."
+          fi
+
+      - name: Find the release in flight
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+
+          # The release PR carries the release; it cannot be held by it.
+          if [ "${HEAD_REF#release/}" != "$HEAD_REF" ]; then
+            echo "This is the release PR itself — nothing to hold."
+            echo "version=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # release-prep.yml enforces that at most one is open. If that ever
+          # slips, take the first rather than failing: this check exists to
+          # protect a release, not to police the release process.
+          release_pr="$(gh pr list --state open --base main \
+            --json number,headRefName \
+            --jq '[.[] | select(.headRefName | startswith("release/"))] | .[0] // empty')"
+          if [ -z "$release_pr" ]; then
+            echo "No release PR open."
+            echo "version=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          branch="$(jq -r '.headRefName' <<<"$release_pr")"
+          {
+            echo "version=${branch#release/}"
+            echo "link=#$(jq -r '.number' <<<"$release_pr")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Decide
+        id: decide
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          # Added or modified only: a fragment this PR deletes is not its
+          # breaking change, and neither is one already sitting on main.
+          #
+          # Two steps, not one pipeline: '|| true' for grep finding nothing
+          # would also swallow a failing diff, and an empty list reads as "no
+          # breaking changes" — the gate would come off without saying so.
+          git diff --name-only --diff-filter=AM "$BASE_SHA...HEAD" -- .changelog > changed.txt
+          readarray -t fragments < <(grep -v '^\.changelog/README\.md$' changed.txt || true)
+
+          verdict="$(python3 scripts/release-hold.py check \
+            --release-version "$RELEASE_VERSION" \
+            --entries-file entries.md \
+            "${fragments[@]}")"
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+          echo "Verdict: $verdict"
+
+      - name: Render the message
+        if: steps.decide.outputs.verdict == 'held'
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_LINK: ${{ steps.release.outputs.link }}
+        run: |
+          set -euo pipefail
+          RELEASE_KIND="$(python3 scripts/release-hold.py describe "$RELEASE_VERSION" kind)"
+          NEXT_MAJOR="$(python3 scripts/release-hold.py describe "$RELEASE_VERSION" next-major)"
+          BREAKING_ENTRIES="$(cat entries.md)"
+          export RELEASE_KIND NEXT_MAJOR BREAKING_ENTRIES
+          python3 scripts/render-template.py .github/release-bot/hold.md > hold-comment.md
+          cat hold-comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        if: steps.app.outputs.available == 'true'
+        id: app-token
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - name: Say so on the PR
+        if: steps.app.outputs.available == 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          VERDICT: ${{ steps.decide.outputs.verdict }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- overcast-breaking-hold -->';
+            const verdict = process.env.VERDICT;
+            const issue = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            };
+
+            const { data: all } = await github.rest.issues.listComments({
+              ...issue, per_page: 100,
+            });
+            const stale = all.filter(c => c.body && c.body.includes(marker));
+
+            // Post first, delete second, so the PR is never briefly left
+            // holding a failing check with no explanation on it.
+            const replace = async (body) => {
+              await github.rest.issues.createComment({ ...issue, body });
+              for (const c of stale) {
+                await github.rest.issues.deleteComment({
+                  owner: issue.owner, repo: issue.repo, comment_id: c.id,
+                });
+              }
+            };
+
+            if (verdict === 'held') {
+              const body = marker + '\n' + fs.readFileSync('hold-comment.md', 'utf8');
+              // Every push re-runs this. Only speak when something changed —
+              // an unchanged hold does not need saying twice.
+              if (stale.some(c => c.body.trim() === body.trim())) {
+                core.info('Hold unchanged; leaving the existing comment alone.');
+                return;
+              }
+              await replace(body);
+              return;
+            }
+
+            if (stale.length === 0) {
+              core.info('Not held, and never was — nothing to say.');
+              return;
+            }
+
+            // The hold is over. Announce it only when the release moved on:
+            // for the other verdicts the author changed something themselves
+            // and can see the check go green, so removing the stale comment
+            // is the whole of the news.
+            if (verdict === 'no-release') {
+              await replace(fs.readFileSync('.github/release-bot/hold-lifted.md', 'utf8'));
+              return;
+            }
+            for (const c of stale) {
+              await github.rest.issues.deleteComment({
+                owner: issue.owner, repo: issue.repo, comment_id: c.id,
+              });
+            }
+
+      - name: Hold
+        if: steps.decide.outputs.verdict == 'held'
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          echo "::error::This PR contains a breaking change and $RELEASE_VERSION is being prepared, which promises none. It clears itself when the release ships — see the hold comment on the PR for the entries and the ways out."
+          exit 1

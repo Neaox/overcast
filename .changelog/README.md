@@ -88,6 +88,13 @@ broke and handed a migration, not to trigger version arithmetic. Marking
 honestly now is also what lets the versioning rules be applied mechanically
 from 1.0 onwards.
 
+From 1.0 the marker gains one more consequence: a marked entry holds its PR
+while a minor or patch release is being prepared, because that release promises
+nothing in it breaks. The hold clears itself when the release goes out, and the
+bot's comment says what the alternatives are. See "Breaking Changes During A
+Release Window" in [RELEASE.md](../RELEASE.md). Nothing about it fires below
+1.0.
+
 ## Cross-cutting changes
 
 A change spanning several services stays **one** entry naming them all, primary

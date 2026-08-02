@@ -365,6 +365,77 @@ A release PR that has been open across several merges is often cheaper to
 recut than to reconcile: `assemble` regenerates the whole draft, and the
 curation already done can be pasted back over it.
 
+## Breaking Changes During A Release Window
+
+A minor or patch release promises that nothing in it breaks. Because every
+push to `main` is folded into the open release PR automatically, a breaking
+change merged during the window lands in a section that was already written
+and reviewed, and ships under a version number that said it was safe. So
+while such a release is in flight, breaking changes wait.
+
+**`0.x` is exempt.** Pre-1.0 makes no compatibility promise, and Overcast
+spends its whole alpha there bumping a prerelease counter, so a hold would fire
+on every release without protecting a promise anyone was given. Breaking
+entries are still marked and still carry a `migration:` note — the marker is
+there to tell users what broke, not to move a version number
+(`.changelog/README.md`). The policy is one function,
+`holds()` in `scripts/release-hold.py`, with unit tests next to it.
+
+Two gates cover the window, and only one is ever red at a time:
+
+| While | Gate | Catches |
+| --- | --- | --- |
+| the release PR is open | `Breaking-change hold` (`release-hold.yml`) | breaking entries only |
+| it has merged, tag not yet published | `Check release version` (`release.yml`) | any unconsumed fragment |
+
+The hold reads the fragments a PR **adds**, so an entry already on `main` never
+holds anything, and the marker decides: `!`, or a `-` (Removed) line that does
+not say `-.`.
+
+A held PR gets one comment from the bot listing the entries and the ways out —
+wait, `/retarget` onto a next-major branch, split the compatible part out, or
+correct an entry that is not really a break. There is no override label. If a
+hold is genuinely wrong and cannot wait, that is an admin merge, deliberately:
+the alternative is a label whose whole purpose is to be applied under time
+pressure.
+
+### Lifting the hold
+
+Nobody has to remember to unblock anything. When the release PR closes —
+merged or abandoned — `release-hold-lift.yml` re-runs the hold check on every
+PR whose run is failing, and that check re-evaluates from scratch. One place
+decides, one place speaks, so a lift cannot leave a PR green on a stale answer.
+
+Held PRs are found by looking for a failed hold run rather than by a label: a
+fork PR's run has no write token and could never be labelled, so half of them
+would be invisible to a label sweep.
+
+This needs **Actions: write** on the release App, which is a permission it did
+not originally have (`.github/release-bot/README.md`). Without it the lift
+workflow fails loudly and held PRs stay red until someone re-runs their checks
+by hand — a delay, not a hole.
+
+### `/retarget`
+
+Commented on any open PR by the repository owner, a member or a collaborator:
+
+```
+/retarget v2.0.0
+```
+
+The bot repoints the PR at that branch, **creating it off `main` if it does not
+exist yet** — which is usually the case, since the next-major branch tends not
+to be there when the first breaking change wants it. It refuses `release/*`
+targets: moving a breaking change onto the release branch would put it in the
+release, which is the thing the hold exists to prevent. `/retarget main` puts
+it back.
+
+### Branch protection
+
+`Breaking-change hold` must be a required status check on `main`. It runs on
+every PR — no path filter — so it always reports, and a rename silently stops
+enforcing it.
+
 ## Manual Release Trigger
 
 Manual GitHub release creation is optional. Use it only when the PR-merge

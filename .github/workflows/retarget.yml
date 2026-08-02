@@ -1,0 +1,144 @@
+name: Retarget
+
+# `/retarget <branch>` on a pull request, for the way out of a release hold
+# that does not involve waiting: move the breaking change onto a next-major
+# branch and merge it there.
+#
+# GitHub has no link that changes a PR's base — only the Edit control on the
+# title, or the API — and the branch usually does not exist yet, which is the
+# real obstacle. So the bot does both: creates the branch off `main` if it is
+# missing, then repoints the PR.
+#
+# Only the repository owner, an organisation member or a collaborator can ask.
+# That is checked from author_association in the event payload, which GitHub
+# computes — not from anything the commenter can set. Everyone else is ignored
+# entirely rather than refused, so the command is not a way to make the bot
+# talk.
+
+on:
+  issue_comment:
+    types: [created]
+
+# contents: read is for actions/checkout only — every write below is the App's.
+permissions:
+  contents: read
+
+jobs:
+  retarget:
+    name: Retarget the pull request
+    if: >-
+      github.event.issue.pull_request &&
+      github.event.issue.state == 'open' &&
+      startsWith(github.event.comment.body, '/retarget') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the release App credentials
+        env:
+          CLIENT_ID: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          APP_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$CLIENT_ID" ] || [ -z "$APP_KEY" ]; then
+            echo "::error::RELEASE_APP_CLIENT_ID and RELEASE_APP_PRIVATE_KEY must be set." >&2
+            exit 1
+          fi
+
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      # Only the bot's message templates and render-template.py are needed —
+      # never the PR's code, which this workflow must not run.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Retarget
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # Through the environment, never interpolated into the script: a
+          # comment body is arbitrary text written by whoever commented.
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          PR: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+          REQUESTED_BY: ${{ github.event.comment.user.login }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          react() {
+            gh api --silent -X POST \
+              "repos/$REPO/issues/comments/$COMMENT_ID/reactions" \
+              -f content="$1" || true
+          }
+          react eyes
+
+          CURRENT_BASE="$(gh pr view "$PR" --repo "$REPO" --json baseRefName --jq '.baseRefName')"
+          export CURRENT_BASE
+
+          refuse() {
+            REASON="$1" python3 scripts/render-template.py \
+              .github/release-bot/retarget-refused.md > reply.md
+            gh pr comment "$PR" --repo "$REPO" --body-file reply.md
+            react "-1"
+            exit 0
+          }
+
+          # The command is the first line: '/retarget <branch>'. Anything
+          # after the branch is ignored, so a command with a note after it
+          # still works.
+          read -r command TARGET _rest < <(printf '%s\n' "$COMMENT_BODY" | head -n 1) || true
+
+          if [ "$command" != "/retarget" ]; then
+            echo "First word is '$command', not '/retarget' — ignoring."
+            exit 0
+          fi
+          if [ -z "${TARGET:-}" ]; then
+            refuse "\`/retarget\` needs a branch name."
+          fi
+          # Deliberately strict. This value is about to name a git ref: no
+          # spaces, no '..', no leading '-' or '/', nothing exotic.
+          if ! printf '%s' "$TARGET" | grep -qE '^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$' \
+            || printf '%s' "$TARGET" | grep -qE '\.\.|//|/$'; then
+            refuse "\`$TARGET\` is not a branch name I will create or target."
+          fi
+          if [ "${TARGET#release/}" != "$TARGET" ]; then
+            refuse "\`release/*\` branches carry the release itself — moving a breaking change onto one would put it in that release, which is the thing the hold exists to prevent."
+          fi
+          if [ "$TARGET" = "$CURRENT_BASE" ]; then
+            refuse "That is already the base branch."
+          fi
+
+          CREATED_NOTE=""
+          if ! gh api --silent "repos/$REPO/git/ref/heads/$TARGET" 2>/dev/null; then
+            base_sha="$(gh api "repos/$REPO/git/ref/heads/$DEFAULT_BRANCH" --jq '.object.sha')"
+            if ! gh api --silent -X POST "repos/$REPO/git/refs" \
+              -f ref="refs/heads/$TARGET" -f sha="$base_sha"; then
+              refuse "I could not create \`$TARGET\`. Create it yourself and ask again."
+            fi
+            CREATED_NOTE=", created off \`$DEFAULT_BRANCH\` at \`${base_sha:0:8}\`"
+          fi
+
+          if ! gh api --silent -X PATCH "repos/$REPO/pulls/$PR" -f base="$TARGET"; then
+            refuse "GitHub refused the change of base. \`$TARGET\` exists, so this is usually a PR that has just been closed or merged."
+          fi
+
+          TARGET_BRANCH="$TARGET" PREVIOUS_BASE="$CURRENT_BASE" \
+            CREATED_NOTE="$CREATED_NOTE" \
+            python3 scripts/render-template.py \
+              .github/release-bot/retarget-done.md > reply.md
+          gh pr comment "$PR" --repo "$REPO" --body-file reply.md
+          react rocket
+
+          # The hold comment is now answered, and release-hold.yml will not run
+          # again to clear it up: the PR no longer targets main, so the event
+          # that posted it no longer fires. Marker string is shared with that
+          # workflow — change both together.
+          gh api "repos/$REPO/issues/$PR/comments" --paginate \
+            --jq '.[] | select(.body | contains("<!-- overcast-breaking-hold -->")) | .id' \
+            | while read -r id; do
+                gh api --silent -X DELETE "repos/$REPO/issues/comments/$id" || true
+              done
