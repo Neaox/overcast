@@ -812,6 +812,31 @@ func (d *Client) ContainerMemoryUsage(ctx context.Context, id string) (usageByte
 
 // ─── Image operations ──────────────────────────────────────────────────────
 
+// splitImageRef separates an image reference into the name and the tag-or-
+// digest that `POST /images/create` expects as separate query parameters.
+//
+// Docker's API takes the version in `tag`, not as part of `fromImage`:
+// passing "repo@sha256:…" whole means the daemon looks for a repository by
+// that literal name. With the classic image store the pull then reports
+// success while storing nothing under the digest, and the next container
+// create fails with "No such image" — a pull that lies. (Docker Desktop's
+// containerd store is forgiving, which is why this only shows up on some
+// daemons.) Digest-pinned images are the case that breaks; plain tags happen
+// to work either way, and are split here too so one code path serves both.
+//
+// A registry host may carry a port ("localhost:5000/repo"), so only a colon
+// after the last slash is a tag separator.
+func splitImageRef(image string) (name, tag string) {
+	if at := strings.LastIndexByte(image, '@'); at >= 0 {
+		return image[:at], image[at+1:]
+	}
+	slash := strings.LastIndexByte(image, '/')
+	if colon := strings.LastIndexByte(image, ':'); colon > slash {
+		return image[:colon], image[colon+1:]
+	}
+	return image, ""
+}
+
 // PullImage pulls an image. This blocks until the pull is complete.
 func (d *Client) PullImage(ctx context.Context, image string) error {
 	return d.PullImageForPlatform(ctx, image, "")
@@ -821,8 +846,12 @@ func (d *Client) PullImage(ctx context.Context, image string) error {
 // linux/amd64. Docker Engine expects platform in the images/create query string,
 // not in a JSON body.
 func (d *Client) PullImageForPlatform(ctx context.Context, image, platform string) error {
+	name, tag := splitImageRef(image)
 	query := url.Values{}
-	query.Set("fromImage", image)
+	query.Set("fromImage", name)
+	if tag != "" {
+		query.Set("tag", tag)
+	}
 	if platform != "" {
 		query.Set("platform", platform)
 	}
@@ -856,19 +885,26 @@ func (d *Client) PullImageForPlatform(ctx context.Context, image, platform strin
 		}
 	}
 
-	// Best-effort: reclaim disk from <none> layers left behind when a newer
-	// version of the same tag is pulled. Failures are not fatal.
-	if err := d.PruneDanglingImages(ctx); err != nil && d.logger != nil {
-		d.logger.Debug("prune dangling images after pull", zap.String("image", image), zap.Error(err))
-	}
-
 	return nil
 }
 
 // PruneDanglingImages removes all dangling (untagged) images. Equivalent to
-// `docker image prune -f`. Safe to call after any pull or image retag — it
-// only removes images that have no tag and are not referenced by a running
-// container, so it cannot break in-use resources.
+// `docker image prune -f`.
+//
+// Do NOT call this after a pull. "Dangling" means untagged, and an image
+// pulled by digest ("repo@sha256:…") is untagged by definition, so a prune
+// deletes the image the pull just fetched — the pull reports success and the
+// container create that follows fails with "No such image". This used to run
+// after every pull and made EFS's digest-pinned NFS export image unusable on
+// any daemon with the classic image store (Docker Desktop's containerd store
+// does not report digest-referenced images as dangling, so it only ever
+// failed in CI).
+//
+// The blast radius is wider than that one case: the filter is daemon-wide, so
+// it also deletes the *user's* untagged images, which Overcast does not own,
+// and it can race any service that has pulled an image but not yet created
+// its container. Reclaiming disk is not worth either. Call it explicitly, if
+// ever, and never on a path that is about to use an image.
 func (d *Client) PruneDanglingImages(ctx context.Context) error {
 	if err := d.acquireOp(ctx); err != nil {
 		return fmt.Errorf("prune images: %w", err)

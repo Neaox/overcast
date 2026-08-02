@@ -59,6 +59,16 @@ const (
 	EFSModeLive EFSMode = "live"
 )
 
+// DefaultEFSNFSImage is the digest-pinned NFS-Ganesha image used for
+// mount-target exports when OVERCAST_EFS_NFS is on. Pinned rather than
+// floating so an upstream retag cannot change what a mount target runs.
+//
+// The image is Kubernetes SIG-Storage's NFS provisioner build; Overcast uses
+// it only as a carrier for ganesha.nfsd and its VFS FSAL, replacing the
+// entrypoint with its own configuration. It is multi-arch (amd64, arm64,
+// ppc64le, s390x) and runs unprivileged.
+const DefaultEFSNFSImage = "registry.k8s.io/sig-storage/nfs-provisioner@sha256:c825f3d5e28bde099bd7a3daace28772d412c9157ad47fa752a9ad0baafc118d"
+
 // Config holds all runtime configuration for the emulator.
 // Zero value is not valid — always construct via Load().
 type Config struct {
@@ -435,6 +445,28 @@ type Config struct {
 	// EFSDockerSocket is the path to the Docker daemon socket used to manage
 	// EFS live-mode volumes. Defaults to the same value as LambdaDockerSocket.
 	EFSDockerSocket string
+
+	// EFSNFSExport opts into the NFS data plane: in live mode each mount
+	// target starts an NFS-Ganesha container exporting its file system's
+	// volume. Off by default — the volume mounts Lambda and ECS use need no
+	// NFS hop, and an export costs a container plus a published port per
+	// mount target. Corresponds to OVERCAST_EFS_NFS.
+	EFSNFSExport bool
+
+	// EFSNFSPortBase is the starting host port for NFS-Ganesha export
+	// containers. Each mount target publishes container port 2049 on the
+	// first free port at or above this.
+	EFSNFSPortBase int
+
+	// EFSNFSImage is the NFS-Ganesha image used for mount-target exports,
+	// pinned by digest. Override to run a different build.
+	EFSNFSImage string
+
+	// EFSNetwork is the Docker network mount-target export containers are
+	// attached to, so a containerized Overcast and sibling NFS clients can
+	// reach them without going through a published host port. Defaults to
+	// "overcast_efs"; unused unless EFSNFSExport is on.
+	EFSNetwork string
 
 	// EC2VPCNetworkStrategy selects the policy used to map stored VPCs onto
 	// Docker networks. Docker bridges share one host address space, so two
@@ -862,6 +894,11 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	MSK_KEEP_CONTAINERS                false
 //	EKS_DOCKER_SOCKET                  <LAMBDA_DOCKER_SOCKET>
 //	EKS_NETWORK                        overcast_eks
+//	EFS_DOCKER_SOCKET                  <LAMBDA_DOCKER_SOCKET>
+//	OVERCAST_EFS_NFS                   false (true = one NFS-Ganesha export container per mount target, live mode only)
+//	EFS_NFS_PORT_BASE                  22049
+//	EFS_NFS_IMAGE                      registry.k8s.io/sig-storage/nfs-provisioner@sha256:c825f3d5… (digest-pinned)
+//	EFS_NETWORK                        overcast_efs (export containers; unused unless OVERCAST_EFS_NFS is on)
 //	OVERCAST_SMTP_MOCK                 true  (false when SMTP_HOST is set)
 //	OVERCAST_SMTP_PORT                 1025
 //	OVERCAST_SMTP_HOST                 ""    (set to use an external relay)
@@ -1160,6 +1197,10 @@ func Load() (*Config, error) {
 
 	// EFS live-mode volume runtime — defaults fall back to Lambda socket
 	cfg.EFSDockerSocket = envOr("EFS_DOCKER_SOCKET", cfg.LambdaDockerSocket)
+	cfg.EFSNFSExport = envBool("OVERCAST_EFS_NFS", false)
+	cfg.EFSNFSPortBase = envInt("EFS_NFS_PORT_BASE", 22049)
+	cfg.EFSNFSImage = envOr("EFS_NFS_IMAGE", DefaultEFSNFSImage)
+	cfg.EFSNetwork = envOr("EFS_NETWORK", "overcast_efs")
 
 	// EC2 VPC network strategy — unknown values fall back to "shared" at
 	// service construction with a logged warning. "netns" is explicitly

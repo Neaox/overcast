@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"sort"
 	"strings"
@@ -37,6 +38,7 @@ func sweepOrphans(ctx context.Context, endpoint string, w io.Writer) {
 		{"rds", sweepRDSInstances},
 		{"elasticache", sweepElastiCacheClusters},
 		{"elasticache-rg", sweepElastiCacheReplicationGroups},
+		{"efs", sweepEFSFileSystems},
 	}
 
 	total := 0
@@ -578,6 +580,91 @@ func sweepElastiCacheReplicationGroups(ctx context.Context, client *http.Client,
 		})
 		if delResp != nil {
 			delResp.Body.Close()
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
+// --- EFS ---
+//
+// EFS resource IDs are generated (fs-…, fsmt-…), so the orphan marker is the
+// file system's creation token, which the compat groups prefix with the run
+// ID. Mount targets must go first: DeleteFileSystem answers FileSystemInUse
+// while any remain.
+
+type efsDescribeFileSystemsResult struct {
+	FileSystems []efsFileSystem `json:"FileSystems"`
+}
+
+type efsFileSystem struct {
+	FileSystemId  string `json:"FileSystemId"`
+	CreationToken string `json:"CreationToken"`
+}
+
+type efsDescribeMountTargetsResult struct {
+	MountTargets []efsMountTarget `json:"MountTargets"`
+}
+
+type efsMountTarget struct {
+	MountTargetId string `json:"MountTargetId"`
+}
+
+// efsGet issues a REST-JSON GET against the EFS API prefix.
+func efsGet(ctx context.Context, client *http.Client, endpoint, path string, out any) (int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/2015-02-01"+path, nil)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return resp.StatusCode, nil
+	}
+	return resp.StatusCode, json.NewDecoder(resp.Body).Decode(out)
+}
+
+// efsDelete issues a REST-JSON DELETE and reports whether it was accepted.
+func efsDelete(ctx context.Context, client *http.Client, endpoint, path string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint+"/2015-02-01"+path, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode < 300
+}
+
+func sweepEFSFileSystems(ctx context.Context, client *http.Client, endpoint string) (int, error) {
+	var result efsDescribeFileSystemsResult
+	status, err := efsGet(ctx, client, endpoint, "/file-systems", &result)
+	if err != nil {
+		return 0, err
+	}
+	if status != http.StatusOK {
+		return 0, nil
+	}
+	deleted := 0
+	for _, fs := range result.FileSystems {
+		if !isOrphan(fs.CreationToken) {
+			continue
+		}
+		var mts efsDescribeMountTargetsResult
+		if _, err := efsGet(ctx, client, endpoint,
+			"/mount-targets?FileSystemId="+url.QueryEscape(fs.FileSystemId), &mts); err == nil {
+			for _, mt := range mts.MountTargets {
+				if efsDelete(ctx, client, endpoint, "/mount-targets/"+url.PathEscape(mt.MountTargetId)) {
+					deleted++
+				}
+			}
+		}
+		if efsDelete(ctx, client, endpoint, "/file-systems/"+url.PathEscape(fs.FileSystemId)) {
 			deleted++
 		}
 	}

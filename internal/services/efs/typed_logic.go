@@ -650,16 +650,24 @@ func (s *Service) createMountTargetTyped(ctx context.Context, req *createMountTa
 	}
 
 	mtID := rec.MountTargetId
-	s.scheduler.AfterScoped(region, mtID, stateAvailable, 0, func(ctx context.Context) {
-		mt, found, err := s.getMountTarget(ctx, region, mtID)
-		if err != nil || !found || mt.LifeCycleState != stateCreating {
-			return
-		}
-		mt.LifeCycleState = stateAvailable
-		if err := s.putMountTarget(ctx, region, mt); err != nil {
-			s.log.Error("efs: mount target transition to available failed: " + mtID)
-		}
-	})
+	if s.nfsActive() {
+		// The NFS data plane owns the transition: the mount target becomes
+		// available once its export answers (or once the readiness retries run
+		// out). Starting the container can involve an image pull, so it never
+		// runs on the request path.
+		s.startExportAsync(region, mtID, fs.FileSystemId)
+	} else {
+		s.scheduler.AfterScoped(region, mtID, stateAvailable, 0, func(ctx context.Context) {
+			mt, found, err := s.getMountTarget(ctx, region, mtID)
+			if err != nil || !found || mt.LifeCycleState != stateCreating {
+				return
+			}
+			mt.LifeCycleState = stateAvailable
+			if err := s.putMountTarget(ctx, region, mt); err != nil {
+				s.log.Error("efs: mount target transition to available failed: " + mtID)
+			}
+		})
+	}
 
 	return s.mountTargetDescription(rec), nil
 }
@@ -768,6 +776,11 @@ func (s *Service) deleteMountTargetTyped(ctx context.Context, req *deleteMountTa
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	s.scheduler.CancelScoped(region, rec.MountTargetId, stateAvailable)
+	s.scheduler.CancelScoped(region, rec.MountTargetId, "nfs-ready")
+	// Tear the export down from the record we still hold: it carries the only
+	// copy of the container ID. A start still in flight finds the record
+	// "deleting" (or gone) and cleans up its own container — see recordExport.
+	s.stopExportAsync(rec)
 	mtID := rec.MountTargetId
 	s.scheduler.AfterScoped(region, mtID, "deleted", 0, func(ctx context.Context) {
 		if err := deleteRecord(ctx, s, nsMountTargets, region, mtID); err != nil {

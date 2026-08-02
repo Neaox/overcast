@@ -44,5 +44,6 @@ func All(c *clients.Clients) []ServiceGroup {
 		WAF(c),
 		Shield(c),
 		ElastiCache(c),
+		EFS(c),
 	}
 }

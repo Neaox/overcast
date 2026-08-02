@@ -43,5 +43,6 @@ func All() []ServiceGroup {
 		WAF(),
 		Shield(),
 		ElastiCache(),
+		EFS(),
 	}
 }

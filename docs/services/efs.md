@@ -33,19 +33,28 @@ EFS supports two modes:
   operations are best-effort: the control plane keeps working when Docker is
   unavailable, and reconciliation heals the gap when it returns.
 
+Within `live` mode, `OVERCAST_EFS_NFS=true` additionally opts into the NFS
+data plane: each mount target runs an NFS-Ganesha container exporting its file
+system's volume. See [Mounting over NFS](#mounting-over-nfs).
+
 ## Behavior notes
 
-- **No NFS data plane in either mode.** File systems are not mountable over
-  NFS; mount targets exist as metadata with deterministic synthesized network
-  fields (availability zone, IP address, ENI ID derived from the subnet ID).
-  In `live` mode the backing volume is mounted into Lambda containers
-  (`FileSystemConfigs`) and ECS task containers (`efsVolumeConfiguration`),
-  scoped to the access point's root directory (or the ECS `rootDirectory`)
-  via Docker volume subpaths — Docker Engine 26+ required for subpath mounts.
+- **Data sharing works without NFS.** In `live` mode the backing volume is
+  mounted into Lambda containers (`FileSystemConfigs`) and ECS task containers
+  (`efsVolumeConfiguration`), scoped to the access point's root directory (or
+  the ECS `rootDirectory`) via Docker volume subpaths — Docker Engine 26+
+  required for subpath mounts. Because both sides mount the same named volume,
+  a Lambda function and an ECS task genuinely share bytes with no NFS hop.
   Access points with `CreationInfo` have their root directory created in the
   volume with the declared ownership and permissions before the first mount;
   without `CreationInfo`, a missing directory makes the mount fail, as on
   AWS (see `docs/plans/efs-data-plane.md`).
+- In `mock` mode there is no data plane at all: mount targets are metadata
+  with deterministic synthesized network fields (availability zone, IP
+  address, ENI ID derived from the subnet ID).
+- `DescribeMountTargets.IpAddress` is always synthetic, including with NFS
+  exports on — the export is reached through its published host port or the
+  export network, never through that address.
 - Resources follow the real lifecycle (`creating` → `available` → `deleting`).
   Transitions complete inline with a real clock, so a resource is usable as
   soon as its create call returns; under a mock clock the intermediate states
@@ -67,6 +76,48 @@ EFS supports two modes:
 - Replication configuration APIs are not implemented and return `501`.
 - Generated resource IDs are always long-form (`fs-`/`fsmt-`/`fsap-` +
   17 hex chars) regardless of the account preference.
+
+## Mounting over NFS
+
+`OVERCAST_EFS_NFS=true` (live mode only) gives every mount target a real,
+mountable NFSv4 export. `CreateMountTarget` starts one NFS-Ganesha container
+named `overcast-efs-nfs-<MountTargetId>` that exports the file system's volume
+and publishes container port 2049 on a free host port at or above
+`EFS_NFS_PORT_BASE`; `DeleteMountTarget` removes it. Ganesha runs entirely in
+userspace — no `--privileged`, no added capabilities, no kernel modules — so
+the export works on Linux, macOS and Windows Docker hosts alike.
+
+It is opt-in because most testing does not need it: Lambda and ECS already
+share bytes through the volume, and an export costs a container and a port per
+mount target.
+
+The mount target stays `creating` until the export answers an NFSv4 call, then
+becomes `available` — so a successful `DescribeMountTargets` means the export
+is genuinely serving. If the export never comes up, the mount target becomes
+`available` anyway and a warning is logged, rather than stranding the resource.
+
+Where to mount from:
+
+| Client | Address |
+| --- | --- |
+| The Docker host | `localhost:<published port>` (`DescribeMountTargets` does not report it — read it from `docker ps`) |
+| A sibling container | The export container's IP on `EFS_NETWORK` (default `overcast_efs`) |
+
+Pseudo-paths follow the file system's access points: `/` is the volume root,
+and `/<AccessPointId>` is that access point's root directory, squashed onto
+its `PosixUser` when it declares one. Exports are fixed when the mount target
+starts, so an access point created afterwards needs the mount target recreated
+before it gets a pseudo-path.
+
+Mounting the export requires `CAP_SYS_ADMIN` on the *client*, which is the
+client's business — the server side needs no privileges.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `OVERCAST_EFS_NFS` | `false` | Opt into exports (requires `OVERCAST_EFS_MODE=live`) |
+| `EFS_NFS_PORT_BASE` | `22049` | First host port considered for publishing 2049 |
+| `EFS_NFS_IMAGE` | digest-pinned NFS-Ganesha | Override the export image |
+| `EFS_NETWORK` | `overcast_efs` | Docker network the export containers join |
 
 ## CloudFormation
 

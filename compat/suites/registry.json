@@ -3148,6 +3148,39 @@
       ]
     },
     {
+      "service": "efs",
+      "name": "efs-mount-targets",
+      "tests": [
+        {
+          "name": "CreateMountTarget"
+        },
+        {
+          "name": "DescribeMountTargets",
+          "depends": [
+            "CreateMountTarget"
+          ]
+        },
+        {
+          "name": "DescribeMountTargetSecurityGroups",
+          "depends": [
+            "CreateMountTarget"
+          ]
+        },
+        {
+          "name": "ModifyMountTargetSecurityGroups",
+          "depends": [
+            "CreateMountTarget"
+          ]
+        },
+        {
+          "name": "DeleteMountTarget",
+          "depends": [
+            "DescribeMountTargets"
+          ]
+        }
+      ]
+    },
+    {
       "service": "cdk",
       "name": "cdk-lifecycle",
       "suites": [
