@@ -392,6 +392,30 @@ The hold reads the fragments a PR **adds**, so an entry already on `main` never
 holds anything, and the marker decides: `!`, or a `-` (Removed) line that does
 not say `-.`.
 
+A third check, `Changelog entry` (`changelog-required.yml`), asks every PR that
+adds no fragment to say the omission was deliberate. It is not a release gate,
+but it tracks the same two windows, because the right answer differs between
+them and a late fix is exactly what a release window attracts:
+
+- **Row 1, release PR open.** A fragment is the answer and nothing else is
+  needed — the `refresh` job folds it into the `## [x.y.z]` section on the next
+  push to `main` and deletes the fragment as it goes.
+  `release-candidate-check.sh` is false here, because `main` still carries the
+  last tagged version, so the check asks for a fragment exactly as usual.
+- **Row 2, merged and untagged.** There is no release PR left to fold into and
+  an unconsumed fragment fails the release, so the ask changes wording: wait for
+  the tag, or waive and add the fragment once it is out. It does not go quiet —
+  this is the window where a shipping bug fix is most likely.
+
+**Neither row accepts a `CHANGELOG.md` edit**, and the check will not take one
+in place of a fragment. Only the release PR touches that file: the `refresh` job
+merges `main` into its branch on every push, and a second hand editing the same
+section aborts that merge (`conflict.md`) and stops the release PR keeping
+itself current. That is the whole reason fragments are one file per PR.
+
+See [.changelog/README.md § When a change needs no
+fragment](./.changelog/README.md#when-a-change-needs-no-fragment).
+
 A held PR gets one comment from the bot listing the entries and the ways out —
 wait, `/retarget` onto a next-major branch, split the compatible part out, or
 correct an entry that is not really a break. There is no override label. If a
@@ -432,9 +456,9 @@ it back.
 
 ### Branch protection
 
-`Breaking-change hold` must be a required status check on `main`. It runs on
-every PR — no path filter — so it always reports, and a rename silently stops
-enforcing it.
+`Breaking-change hold` and `Changelog entry` must both be required status checks
+on `main`. Each runs on every PR — no path filter — so they always report, and
+renaming either silently stops enforcing it.
 
 ## Manual Release Trigger
 

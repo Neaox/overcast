@@ -56,6 +56,12 @@ class RenderTest(unittest.TestCase):
 			"CREATED_NOTE": "",
 			"REQUESTED_BY": "Neaox",
 			"REASON": "`v2..0` is not a branch name I will create or target.",
+			# changelog-required.yml
+			"WAIVED_BY": "Neaox",
+			"WAIVER_URL": "https://github.com/Neaox/overcast/pull/463#issuecomment-1",
+			"WAIVER_REASON": "CI-only: pins the release action to a digest",
+			# changelog-waiver.yml
+			"PROBLEM": "`/no-changelog` needs a reason after it.",
 		}
 		folder = Path(__file__).resolve().parent.parent / ".github" / "release-bot"
 		templates = [p for p in folder.glob("*.md") if p.name != "README.md"]

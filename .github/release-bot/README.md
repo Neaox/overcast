@@ -21,11 +21,15 @@ sentence.
 | `hold-lifted.md` | that release left flight, so the hold came off on its own | `release-hold.yml` |
 | `retarget-done.md` | `/retarget <branch>` repointed a PR | `retarget.yml` |
 | `retarget-refused.md` | `/retarget` was asked for but not carried out | `retarget.yml` |
+| `changelog-missing.md` | a PR adds no fragment under `.changelog/` and has not said that is deliberate | `changelog-required.yml` |
+| `changelog-missing-release-window.md` | the same, while `VERSION` is prepared but untagged — where a fragment would fail the release, so the ask is "wait for the tag or waive" | `changelog-required.yml` |
+| `changelog-waived.md` | `/no-changelog <reason>` recorded that a PR needs no fragment | `changelog-required.yml` |
+| `changelog-waiver-refused.md` | `/no-changelog` was asked for but not carried out | `changelog-waiver.yml` |
 
-`retarget-refused.md`'s `$REASON` is the exception to prose living here: it is
-one short sentence per failure, set where the failure is detected, because a
-sentence naming the branch that was rejected does not survive being moved away
-from the check that rejected it.
+`retarget-refused.md`'s `$REASON` and `changelog-waiver-refused.md`'s `$PROBLEM`
+are the exception to prose living here: they are one short sentence per failure,
+set where the failure is detected, because a sentence naming the branch that was
+rejected does not survive being moved away from the check that rejected it.
 
 ## Voice
 
@@ -52,9 +56,11 @@ Its installation needs:
 | --- | --- |
 | Contents: write | pushing release branches; creating a branch for `/retarget` |
 | Pull requests: write | opening and editing the release PR; comments; changing a PR's base |
-| Actions: write | re-running the hold check on a held PR once the release is out |
+| Actions: write | re-running the hold check on a held PR once the release is out; re-running the changelog gate when a waiver is commented |
 
 **Actions: write is the one to add** — the App predates it. Without it
-`release-hold-lift.yml` fails and held PRs stay red until someone re-runs their
-checks by hand. That is a delay, not a hole: the check re-evaluates the same way
-whoever triggers it.
+`release-hold-lift.yml` and `changelog-waiver.yml` fail, and the PRs they would
+have cleared stay red until someone re-runs their checks by hand. That is a
+delay, not a hole: both checks re-evaluate the same way whoever triggers them,
+and the changelog gate reads the waiver comment itself rather than being told
+about it.
