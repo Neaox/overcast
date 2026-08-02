@@ -73,6 +73,15 @@ func segmentWalkChunk(limit, totalSegments int) int {
 // output) so that a Number-typed key hashes by the same bytes the ordered
 // structure is keyed by — one representation, one segment, whichever call
 // site asks.
+//
+// The result is always in [0, totalSegments), so a request whose Segment
+// falls outside that range matches nothing and returns an empty page. AWS
+// rejects such a request with a ValidationException instead; returning
+// nothing is the closer of the two available behaviours, and notably closer
+// than what this replaced — a negative Segment used to be clamped to 0, so a
+// client bug silently read segment 0's items believing they were another
+// segment's. Adding the validation itself is a separate request-validation
+// item, not this one.
 func segmentForKey(encodedHashKey string, totalSegments int) int {
 	if totalSegments <= 1 {
 		return 0
@@ -110,6 +119,7 @@ func (s *dynamoStore) scanItemsSegmentPage(ctx context.Context, table *Table, ex
 		if err != nil {
 			return nil, false, protocol.Wrap(protocol.ErrInternalError, err)
 		}
+		advanced := false
 		for _, item := range fetched {
 			h, sk, kerr := resolveStorageKeys(table, item)
 			if kerr != nil {
@@ -119,13 +129,20 @@ func (s *dynamoStore) scanItemsSegmentPage(ctx context.Context, table *Table, ex
 				return items, true, nil
 			}
 			hasAfter, afterHash, afterSort = true, h, sk
+			advanced = true
 			if segmentForKey(h, totalSegments) != segment {
 				continue
 			}
 			items = append(items, item)
 		}
-		if len(fetched) < chunk {
-			return items, false, nil // structure exhausted
+		if len(fetched) < chunk || !advanced {
+			// Exhausted, or a whole chunk of items none of which yields a
+			// cursor to seek past — without the second condition that would
+			// re-fetch the same chunk forever. A stored item that cannot
+			// produce its own storage key should be impossible (writes
+			// validate keys), so this bounds the damage of a corrupt record
+			// to a short page rather than a hung request.
+			return items, false, nil
 		}
 	}
 }
@@ -159,6 +176,7 @@ func (s *dynamoStore) scanIndexSegmentPage(ctx context.Context, table *Table, id
 		if err != nil {
 			return nil, false, protocol.Wrap(protocol.ErrInternalError, err)
 		}
+		advanced := false
 		for _, entry := range fetched {
 			ih, is, ok := indexKeyComponents(table, idx, entry)
 			if !ok {
@@ -173,13 +191,14 @@ func (s *dynamoStore) scanIndexSegmentPage(ctx context.Context, table *Table, id
 			}
 			hasAfter = true
 			afterIndexHash, afterIndexSort, afterBaseHash, afterBaseSort = ih, is, bh, bs
+			advanced = true
 			if segmentForKey(ih, totalSegments) != segment {
 				continue
 			}
 			items = append(items, entry)
 		}
-		if len(fetched) < chunk {
-			return items, false, nil // structure exhausted
+		if len(fetched) < chunk || !advanced {
+			return items, false, nil // exhausted, or no cursor to advance past — see scanItemsSegmentPage
 		}
 	}
 }

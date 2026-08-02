@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 )
 
 func segmentScanTable() *Table {
@@ -190,6 +191,49 @@ func TestScanSegmentPage_SparseItemsAreNotInAnyIndexSegment(t *testing.T) {
 						t.Fatalf("segment %d returned the sparse item, which is not in the index", seg)
 					}
 				}
+			}
+		})
+	}
+}
+
+// TestScanSegmentPage_TerminatesOnItemsWithoutResolvableKeys: the walk seeks
+// past each row using that row's own storage key, so a row that cannot
+// produce one gives it nothing to advance past. Without an explicit
+// no-progress guard the same chunk is fetched forever and the request hangs
+// — the worst possible failure mode for one corrupt record, and the
+// opposite of what CLAUDE.md's isolation rule asks for. Rows are written
+// through the backend directly because the item write path validates keys
+// and would reject them, which is also why this state should never occur in
+// practice.
+func TestScanSegmentPage_TerminatesOnItemsWithoutResolvableKeys(t *testing.T) {
+	for name, store := range newTestDynamoStores(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			table := segmentScanTable()
+			if aerr := store.putTable(ctx, table); aerr != nil {
+				t.Fatalf("putTable: %v", aerr)
+			}
+			// More than one chunk's worth of rows stored without the table's
+			// key attribute (the walk below asks for limit*totalSegments =
+			// 100 per fetch), so the first fetch comes back full and yields
+			// no cursor at all — the shape that spins.
+			for i := 0; i < 150; i++ {
+				keyless := Item{"payload": attrValue{"S": fmt.Sprintf("v%03d", i)}}
+				if err := store.items.put(ctx, table.TableName, fmt.Sprintf("k%03d", i), "", keyless); err != nil {
+					t.Fatalf("put: %v", err)
+				}
+			}
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				//nolint:errcheck // the assertion is that this returns at all
+				_, _, _ = store.scanItemsSegmentPage(ctx, table, nil, 25, 0, 4)
+			}()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("scanItemsSegmentPage did not terminate on rows whose keys cannot be resolved")
 			}
 		})
 	}
