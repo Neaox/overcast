@@ -471,6 +471,19 @@ func (s *dynamoStore) scanItemsPage(ctx context.Context, table *Table, exclusive
 	return fetched, false, nil
 }
 
+// errIndexCursorMissingKeys is the rejection for an ExclusiveStartKey that
+// does not carry the index's own key attributes. AWS requires an index
+// query's cursor to name both the table's primary key and the index key,
+// because the index key alone is not unique — without it there is no
+// position in the index to resume from.
+func errIndexCursorMissingKeys(idx *SecondaryIndex) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "ValidationException",
+		Message:    fmt.Sprintf("The provided starting key is missing required keys for index %q", idx.IndexName),
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
 // scanIndexPage returns up to limit entries from a GSI's ordered index
 // structure via a single keyset-paginated backend call
 // (dynamodb-gsi-design.md §4) — the GSI-Scan analogue of scanItemsPage.
@@ -486,11 +499,7 @@ func (s *dynamoStore) scanIndexPage(ctx context.Context, table *Table, idx *Seco
 	if exclusiveStartKey != nil {
 		ih, is, ok := indexKeyComponents(table, idx, exclusiveStartKey)
 		if !ok {
-			return nil, false, &protocol.AWSError{
-				Code:       "ValidationException",
-				Message:    fmt.Sprintf("The provided starting key is missing required keys for index %q", idx.IndexName),
-				HTTPStatus: http.StatusBadRequest,
-			}
+			return nil, false, errIndexCursorMissingKeys(idx)
 		}
 		bh, bs, aerr := resolveStorageKeys(table, exclusiveStartKey)
 		if aerr != nil {

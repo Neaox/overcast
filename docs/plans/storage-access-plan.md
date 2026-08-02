@@ -120,6 +120,8 @@ One codec for opaque continuation tokens: encode/decode a storage cursor (string
 
 **Gate.** Fixing it properly means a real secondary-index structure in the item store (rows or an index table maintained on write), not a pagination change — a design of its own, with write-amplification and backfill questions. Write the short design (index shape, maintenance on Put/Update/Delete, backfill migration via the runner) **before** any code; treat like storage-plan's benchmark-gated items: only proceed if a workload actually exercises GSI queries at depth (the emulator's typical GSI tables are small).
 
+**Follow-ups closed (2026-08-03).** The three items [dynamodb-gsi-design.md](./dynamodb-gsi-design.md) deferred as separable from A7 acceptance have all landed: LSI Query routing onto the partition-scoped read (design §5), `ConsistentRead=true`-on-GSI `ValidationException` (§2), and parallel-scan segmentation over the ordered structure (§5). Nothing from the A7 design remains open.
+
 ---
 
 ## Keep-as-is register (documented decisions, not oversights)
