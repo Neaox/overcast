@@ -201,6 +201,11 @@ paperwork against a real payer account. None of these gate a `cdk deploy` of
 application infrastructure; none appear as dependencies of other services'
 control planes the way Shield does for WAF/CloudFront.
 
+**C — (not a never category).** Criterion C — third-party SaaS/telephony
+bridges — was downgraded from "never" to "deferred" by owner decision
+2026-08-03 and no longer contributes to this list. Its 24 services are
+enumerated in §4.2c below; the criterion itself is defined in §3.3.
+
 **D — Pure console/internal-plumbing product with no customer dev-loop API surface (6)**
 
 `signin`, `uxc`, `repostspace`, `launch-wizard`, `lambda-core`, `lambda-microvms`
