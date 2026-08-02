@@ -702,12 +702,26 @@ func (h *Handler) scanTyped(ctx context.Context, req *scanRequest) (any, *protoc
 		}
 
 		if scanIdx != nil {
+			// Sparse-index rule: an item is only in the index when every
+			// index key attribute exists on it — the hash key AND the sort
+			// key, when the index has one (dynamodb-gsi-design.md §3's
+			// sparse-write rule, applied here as a read-time filter since
+			// this fallback has no index storage to consult). For an LSI
+			// the hash key is the table's own and always present, so the
+			// sort-key check is the one doing the work.
 			hashKey := indexHashKeyName(scanIdx)
+			sortKey := indexSortKeyName(scanIdx)
 			filtered := make([]Item, 0, len(allItems))
 			for _, item := range allItems {
-				if _, ok := item[hashKey]; ok {
-					filtered = append(filtered, item)
+				if _, ok := item[hashKey]; !ok {
+					continue
 				}
+				if sortKey != "" {
+					if _, ok := item[sortKey]; !ok {
+						continue
+					}
+				}
+				filtered = append(filtered, item)
 			}
 			allItems = filtered
 		}
@@ -957,16 +971,44 @@ func (h *Handler) queryTyped(ctx context.Context, req *queryRequest) (any, *prot
 			matched = candidates
 		}
 
+	case req.IndexName != "" && idxHashKeyName == table.hashKeyName():
+		// LSI query: partition-scoped read of the base partition
+		// (dynamodb-gsi-design.md §5's routing follow-up). An LSI shares the
+		// base table's hash key by definition, so the same O(k)
+		// scanItemsByHashKey primitive base-table Query uses already returns
+		// exactly the candidate set — no separate index structure needed,
+		// and no full-table scan. LSIs are sparse the same way GSIs are: an
+		// item without the LSI's sort key attribute is not in the index at
+		// all, so it is excluded here even when no sort-key condition was
+		// supplied (the pre-routing fallback missed this — its only
+		// presence check was the hash key, which an LSI item always has).
+		candidates, aerr := h.store.scanItemsByHashKey(ctx, table, hashVal)
+		if aerr != nil {
+			return nil, aerr
+		}
+		for _, item := range candidates {
+			if idxSortKeyName != "" {
+				if _, ok := item[idxSortKeyName]; !ok {
+					continue // sparse: not propagated to the LSI
+				}
+			}
+			if kc.sortCond != nil {
+				sc := *kc.sortCond
+				sc.attr = sortAttrName
+				if !sc.matchItem(item) {
+					continue
+				}
+			}
+			matched = append(matched, item)
+		}
+
 	case req.IndexName != "":
-		// LSI query: no separate ordered structure exists for LSIs — an LSI
-		// shares the base table's hash key by definition, so a correct fix
-		// would express this as a partition-scoped scanItemsByHashKey read
-		// filtered by the LSI's sort key, but dynamodb-gsi-design.md §5
-		// explicitly calls that out as separable follow-up work, not
-		// bundled into this flip (index_maintenance.go's diffIndexMutations
-		// never populates index storage for LocalSecondaryIndexes, so there
-		// is nothing for an LSI query to read from yet). Keeps today's
-		// full-scan-and-filter behavior unchanged.
+		// Defensive-only: an index whose hash key differs from the table's
+		// and isn't a GSI. Real AWS rejects such an LSI at CreateTable
+		// (LSIs must reuse the table's partition key), so this branch only
+		// serves malformed/legacy table records — per the isolation rule it
+		// degrades to the old full-scan-and-filter behavior instead of
+		// returning wrong partitions from a hash-key mismatch.
 		allItems, aerr := h.store.scanItems(ctx, req.TableName)
 		if aerr != nil {
 			return nil, aerr
