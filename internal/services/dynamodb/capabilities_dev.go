@@ -22,10 +22,10 @@ func init() {
 		capabilities.Capability{Service: "dynamodb", Operation: "BatchGetItem", Category: "Item operations", Status: capabilities.StatusSupported, Notes: "Up to 100 items across tables"},
 		capabilities.Capability{Service: "dynamodb", Operation: "BatchWriteItem", Category: "Item operations", Status: capabilities.StatusSupported, Notes: "Up to 25 put/delete operations"},
 		// Query & scan
-		capabilities.Capability{Service: "dynamodb", Operation: "Query", Category: "Query & scan", Status: capabilities.StatusSupported, Notes: "`KeyConditionExpression`, `FilterExpression`, `Limit` (applied before `FilterExpression` per AWS semantics), `ExclusiveStartKey`/`LastEvaluatedKey` pagination, `ScanIndexForward`, `Select=COUNT`"},
+		capabilities.Capability{Service: "dynamodb", Operation: "Query", Category: "Query & scan", Status: capabilities.StatusSupported, Notes: "`KeyConditionExpression`, `FilterExpression`, `Limit` (applied before `FilterExpression` per AWS semantics), `ExclusiveStartKey`/`LastEvaluatedKey` pagination, `ScanIndexForward`, `Select=COUNT`; `ConsistentRead=true` on a GSI is rejected as AWS does"},
 		capabilities.Capability{Service: "dynamodb", Operation: "Scan", Category: "Query & scan", Status: capabilities.StatusSupported, Notes:
 		// Transactions
-		"`FilterExpression`, `Limit` (applied before `FilterExpression` per AWS semantics), `ExclusiveStartKey`/`LastEvaluatedKey` pagination, parallel scan (`Segment`/`TotalSegments`), `Select=COUNT`"},
+		"`FilterExpression`, `Limit` (applied before `FilterExpression` per AWS semantics), `ExclusiveStartKey`/`LastEvaluatedKey` pagination, parallel scan (`Segment`/`TotalSegments`), `Select=COUNT`; `ConsistentRead=true` on a GSI is rejected as AWS does"},
 
 		capabilities.Capability{Service: "dynamodb", Operation: "TransactGetItems", Category: "Transactions", Status: capabilities.StatusSupported, Notes: "Up to 100 items across tables"},
 		capabilities.Capability{Service: "dynamodb", Operation: "TransactWriteItems", Category: "Transactions", Status: capabilities.StatusSupported, Notes: "Put, Update, Delete, ConditionCheck; all-or-nothing"},

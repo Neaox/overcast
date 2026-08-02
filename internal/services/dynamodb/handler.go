@@ -147,6 +147,7 @@ type scanRequest struct {
 	Segment                   int                  `json:"Segment,omitempty"`
 	TotalSegments             int                  `json:"TotalSegments,omitempty"`
 	Select                    string               `json:"Select,omitempty"`
+	ConsistentRead            bool                 `json:"ConsistentRead,omitempty"`
 }
 
 type scanResponse struct {
@@ -175,6 +176,7 @@ type queryRequest struct {
 	ExclusiveStartKey         Item                 `json:"ExclusiveStartKey,omitempty"`
 	ScanIndexForward          *bool                `json:"ScanIndexForward,omitempty"`
 	Select                    string               `json:"Select,omitempty"`
+	ConsistentRead            bool                 `json:"ConsistentRead,omitempty"`
 }
 
 type queryResponse struct {
@@ -642,8 +644,12 @@ func (h *Handler) scanTyped(ctx context.Context, req *scanRequest) (any, *protoc
 		}
 	}
 
-	limit := effectivePageLimit(req.Limit)
 	isGSIScan := scanIdx != nil && table.isGSI(req.IndexName)
+	if req.ConsistentRead && isGSIScan {
+		return nil, errConsistentReadOnGSI()
+	}
+
+	limit := effectivePageLimit(req.Limit)
 
 	var items []Item
 	var lastKey Item
@@ -686,28 +692,70 @@ func (h *Handler) scanTyped(ctx context.Context, req *scanRequest) (any, *protoc
 			lastKey = extractItemKeysWithIndex(items[len(items)-1], table, scanIdx)
 		}
 
+	case scanIdx == nil:
+		// Parallel base-table scan (TotalSegments > 1): a bounded keyset
+		// walk that keeps only its own segment's items, instead of reading
+		// and sorting the whole table once per segment
+		// (dynamodb-gsi-design.md §5's segmentation follow-up — see
+		// scan_segments.go for why segment membership is hashed from the
+		// item's own key rather than sliced out of a materialized list).
+		pageItems, hasMore, aerr := h.store.scanItemsSegmentPage(ctx, table, req.ExclusiveStartKey, limit, req.Segment, req.TotalSegments)
+		if aerr != nil {
+			return nil, aerr
+		}
+		items = pageItems
+		if hasMore && len(items) > 0 {
+			lastKey = extractItemKeys(items[len(items)-1], table)
+		}
+
+	case isGSIScan:
+		// Parallel GSI scan: the same segment walk over the GSI's own
+		// ordered index structure, so a segmented index scan is
+		// projection-faithful and sparse-correct exactly like the
+		// unsegmented one (it previously fell through to the base-table
+		// fallback below and could return attributes outside the index's
+		// projection).
+		pageItems, hasMore, aerr := h.store.scanIndexSegmentPage(ctx, table, scanIdx, req.ExclusiveStartKey, limit, req.Segment, req.TotalSegments)
+		if aerr != nil {
+			return nil, aerr
+		}
+		items = pageItems
+		if hasMore && len(items) > 0 {
+			lastKey = extractItemKeysWithIndex(items[len(items)-1], table, scanIdx)
+		}
+
 	default:
-		// LSI scan and/or parallel scan (TotalSegments > 1, with or without
-		// an index): no ordered storage structure exists for these cases —
-		// LSIs have no index storage at all (dynamodb-gsi-design.md §5,
-		// separable follow-up work), and per-segment ranges over an ordered
-		// structure are explicitly out of scope for this design (§5) — so
-		// this path still reads the whole table and paginates in memory. It
-		// still gets G2's position-based cursor fix: ExclusiveStartKey is
-		// resolved by where it falls in (hash, sort) order, not by
-		// searching for an exact item match.
+		// LSI scan, segmented or not: LSIs have no index storage at all
+		// (dynamodb-gsi-design.md §5), so this path still reads the whole
+		// table and paginates in memory. It still gets G2's position-based
+		// cursor fix: ExclusiveStartKey is resolved by where it falls in
+		// (hash, sort) order, not by searching for an exact item match.
 		allItems, aerr := h.store.scanItems(ctx, req.TableName)
 		if aerr != nil {
 			return nil, aerr
 		}
 
 		if scanIdx != nil {
+			// Sparse-index rule: an item is only in the index when every
+			// index key attribute exists on it — the hash key AND the sort
+			// key, when the index has one (dynamodb-gsi-design.md §3's
+			// sparse-write rule, applied here as a read-time filter since
+			// this fallback has no index storage to consult). For an LSI
+			// the hash key is the table's own and always present, so the
+			// sort-key check is the one doing the work.
 			hashKey := indexHashKeyName(scanIdx)
+			sortKey := indexSortKeyName(scanIdx)
 			filtered := make([]Item, 0, len(allItems))
 			for _, item := range allItems {
-				if _, ok := item[hashKey]; ok {
-					filtered = append(filtered, item)
+				if _, ok := item[hashKey]; !ok {
+					continue
 				}
+				if sortKey != "" {
+					if _, ok := item[sortKey]; !ok {
+						continue
+					}
+				}
+				filtered = append(filtered, item)
 			}
 			allItems = filtered
 		}
@@ -735,24 +783,23 @@ func (h *Handler) scanTyped(ctx context.Context, req *scanRequest) (any, *protoc
 			return compareKeyAttr(sortKeyType, iv, jv) < 0
 		})
 
-		// Parallel scan: slice items by segment.
+		// Parallel scan: keep only this segment's items. An LSI shares the
+		// base table's partition key, so the segment is hashed from that
+		// key — the same assignment the index-backed paths above use, so a
+		// client sees one segmentation rule whichever index it scans
+		// (scan_segments.go).
 		if req.TotalSegments > 1 {
-			seg := req.Segment
-			if seg < 0 {
-				seg = 0
-			}
-			n := len(allItems)
-			segSize := (n + req.TotalSegments - 1) / req.TotalSegments
-			start := seg * segSize
-			if start >= n {
-				allItems = []Item{}
-			} else {
-				end := start + segSize
-				if end > n {
-					end = n
+			segmented := make([]Item, 0, len(allItems))
+			for _, item := range allItems {
+				h, _, kerr := resolveStorageKeys(table, item)
+				if kerr != nil {
+					continue
 				}
-				allItems = allItems[start:end]
+				if segmentForKey(h, req.TotalSegments) == req.Segment {
+					segmented = append(segmented, item)
+				}
 			}
+			allItems = segmented
 		}
 
 		// Apply ExclusiveStartKey by position, not identity (pagination-plan.md G2).
@@ -903,6 +950,9 @@ func (h *Handler) queryTyped(ctx context.Context, req *queryRequest) (any, *prot
 		}
 		idxHashKeyName = indexHashKeyName(activeIdx)
 		idxSortKeyName = indexSortKeyName(activeIdx)
+		if req.ConsistentRead && table.isGSI(req.IndexName) {
+			return nil, errConsistentReadOnGSI()
+		}
 	}
 
 	// Parse the KeyConditionExpression using the full expression parser.
@@ -957,16 +1007,44 @@ func (h *Handler) queryTyped(ctx context.Context, req *queryRequest) (any, *prot
 			matched = candidates
 		}
 
+	case req.IndexName != "" && idxHashKeyName == table.hashKeyName():
+		// LSI query: partition-scoped read of the base partition
+		// (dynamodb-gsi-design.md §5's routing follow-up). An LSI shares the
+		// base table's hash key by definition, so the same O(k)
+		// scanItemsByHashKey primitive base-table Query uses already returns
+		// exactly the candidate set — no separate index structure needed,
+		// and no full-table scan. LSIs are sparse the same way GSIs are: an
+		// item without the LSI's sort key attribute is not in the index at
+		// all, so it is excluded here even when no sort-key condition was
+		// supplied (the pre-routing fallback missed this — its only
+		// presence check was the hash key, which an LSI item always has).
+		candidates, aerr := h.store.scanItemsByHashKey(ctx, table, hashVal)
+		if aerr != nil {
+			return nil, aerr
+		}
+		for _, item := range candidates {
+			if idxSortKeyName != "" {
+				if _, ok := item[idxSortKeyName]; !ok {
+					continue // sparse: not propagated to the LSI
+				}
+			}
+			if kc.sortCond != nil {
+				sc := *kc.sortCond
+				sc.attr = sortAttrName
+				if !sc.matchItem(item) {
+					continue
+				}
+			}
+			matched = append(matched, item)
+		}
+
 	case req.IndexName != "":
-		// LSI query: no separate ordered structure exists for LSIs — an LSI
-		// shares the base table's hash key by definition, so a correct fix
-		// would express this as a partition-scoped scanItemsByHashKey read
-		// filtered by the LSI's sort key, but dynamodb-gsi-design.md §5
-		// explicitly calls that out as separable follow-up work, not
-		// bundled into this flip (index_maintenance.go's diffIndexMutations
-		// never populates index storage for LocalSecondaryIndexes, so there
-		// is nothing for an LSI query to read from yet). Keeps today's
-		// full-scan-and-filter behavior unchanged.
+		// Defensive-only: an index whose hash key differs from the table's
+		// and isn't a GSI. Real AWS rejects such an LSI at CreateTable
+		// (LSIs must reuse the table's partition key), so this branch only
+		// serves malformed/legacy table records — per the isolation rule it
+		// degrades to the old full-scan-and-filter behavior instead of
+		// returning wrong partitions from a hash-key mismatch.
 		allItems, aerr := h.store.scanItems(ctx, req.TableName)
 		if aerr != nil {
 			return nil, aerr
@@ -1773,6 +1851,22 @@ func effectivePageLimit(requested int) int {
 		return dynamoDefaultPageLimit
 	}
 	return requested
+}
+
+// errConsistentReadOnGSI is AWS's rejection of a strongly consistent read
+// against a global secondary index. The Query API reference is categorical
+// about it — a GSI is maintained eventually consistently and has no
+// strongly-consistent read mode to ask for — so this is a request-validation
+// error, not a capability the emulator could choose to honour
+// (docs/plans/dynamodb-gsi-design.md §2). LSIs are the deliberate contrast:
+// they live in the base table's own partition and do support
+// ConsistentRead=true, so only GSI reads are rejected here.
+func errConsistentReadOnGSI() *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "ValidationException",
+		Message:    "Consistent reads are not supported on global secondary indexes",
+		HTTPStatus: http.StatusBadRequest,
+	}
 }
 
 // resolveCursorPosition returns the index of the first item in items — which
