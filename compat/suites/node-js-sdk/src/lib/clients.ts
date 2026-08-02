@@ -30,6 +30,7 @@ import { APIGatewayClient } from "@aws-sdk/client-api-gateway"
 import { ApiGatewayV2Client } from "@aws-sdk/client-apigatewayv2"
 import { RDSClient } from "@aws-sdk/client-rds"
 import { ElastiCacheClient } from "@aws-sdk/client-elasticache"
+import { EFSClient } from "@aws-sdk/client-efs"
 import { SFNClient } from "@aws-sdk/client-sfn"
 import { WAFV2Client } from "@aws-sdk/client-wafv2"
 import { ShieldClient } from "@aws-sdk/client-shield"
@@ -80,6 +81,7 @@ export interface Clients {
   apigatewayv2: ApiGatewayV2Client
   rds: RDSClient
   elasticache: ElastiCacheClient
+  efs: EFSClient
   sfn: SFNClient
   wafv2: WAFV2Client
   shield: ShieldClient
@@ -119,6 +121,7 @@ export function makeClients(ctx: Pick<TestContext, "endpoint" | "region">): Clie
     apigatewayv2: new ApiGatewayV2Client(cfg),
     rds: new RDSClient(cfg),
     elasticache: new ElastiCacheClient(cfg),
+    efs: new EFSClient(cfg),
     sfn: new SFNClient(cfg),
     wafv2: new WAFV2Client(cfg),
     shield: new ShieldClient(cfg),

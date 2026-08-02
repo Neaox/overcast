@@ -73,7 +73,8 @@ public final class Main {
                 new StepFunctionsGroup(clients),
                 new WafGroup(clients),
                 new ShieldGroup(clients),
-                new ElastiCacheGroup(clients)
+                new ElastiCacheGroup(clients),
+                new EfsGroup(clients)
         );
 
         for (ServiceGroup sg : serviceGroups) {

@@ -59,6 +59,7 @@ import { makeElastiCacheGroups } from "./groups/elasticache.js";
 import { makeStepFunctionsGroups } from "./groups/stepfunctions.js";
 import { makeWAFGroups } from "./groups/waf.js";
 import { makeShieldGroups } from "./groups/shield.js";
+import { makeEFSGroups } from "./groups/efs.js";
 
 const SUITE = "node-js-sdk";
 
@@ -123,6 +124,7 @@ const existingGroups: TestGroup[] = [
   ...makeStepFunctionsGroups(SUITE),
   ...makeWAFGroups(SUITE),
   ...makeShieldGroups(SUITE),
+  ...makeEFSGroups(SUITE),
 ];
 
 // Extract impls map (name → fn) from existing groups, skipping already-skipped tests.

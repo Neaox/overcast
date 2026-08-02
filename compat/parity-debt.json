@@ -196,6 +196,12 @@
     },
     {
       "suite": "dotnet-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "tests": 5
+    },
+    {
+      "suite": "dotnet-sdk",
       "service": "elasticache",
       "group": "elasticache-clusters",
       "tests": 3
@@ -517,6 +523,12 @@
       "service": "ecs",
       "group": "ecs-tasks",
       "tests": 4
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "tests": 5
     },
     {
       "suite": "rust-sdk",

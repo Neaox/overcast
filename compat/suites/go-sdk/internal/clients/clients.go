@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	"github.com/aws/aws-sdk-go-v2/service/efs"
 	"github.com/aws/aws-sdk-go-v2/service/elasticache"
 	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
@@ -71,6 +72,7 @@ type Clients struct {
 	sfnC         *sfn.Client
 	wafv2C       *wafv2.Client
 	shieldC      *shield.Client
+	efsC         *efs.Client
 }
 
 // New creates a Clients bundle for the given endpoint and region.
@@ -295,6 +297,17 @@ func (c *Clients) ElastiCache() *elasticache.Client {
 		c.elasticacheC = elasticache.NewFromConfig(cfg)
 	}
 	return c.elasticacheC
+}
+
+// EFS returns a lazily-initialised Elastic File System client.
+func (c *Clients) EFS() *efs.Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.efsC == nil {
+		cfg := c.awsCfgLocked()
+		c.efsC = efs.NewFromConfig(cfg)
+	}
+	return c.efsC
 }
 
 // Cognito returns a lazily-initialised Cognito Identity Provider client.
