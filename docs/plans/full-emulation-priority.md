@@ -1,6 +1,7 @@
 # Full-emulation priority — which services/operations get Tier 2, and in what order
 
 > Status: proposal, 2026-08-03. Owner: TBD.
+> Tracking issue: #484; sub-issues per item.
 > Scope: everything Tier 2-eligible. [services-never-emulated.md](./services-never-emulated.md) (if present)
 > defines what is permanently out of scope; this document's ranking starts from
 > [inert-tier-rollout.md](./inert-tier-rollout.md)'s Tier 1 floor (every registered service reaches
@@ -446,4 +447,7 @@ triggers:
    each time one of the above triggers fires a re-prioritization. Completed waves should be marked done
    inline (matching the `cf-update.md`/`dynamodb-gsi-design.md` convention of a status line that tracks
    per-item completion) rather than deleted, so the "why was this ordered this way" reasoning survives past
-   the work landing.
+   the work landing. The backlog is also **mirrored to tracking issue #484** (one GitHub sub-issue per
+   §3/Wave-4 item, in priority order); the two are mirrors and **must be updated together** — a
+   re-prioritization that changes this document without re-ordering or re-scoping the tracked sub-issues is
+   incomplete, and vice versa.
