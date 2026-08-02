@@ -52,9 +52,14 @@ const (
 	nfsReadyInterval = 500 * time.Millisecond
 	nfsReadyAttempts = 60
 	nfsProbeTimeout  = 2 * time.Second
-	// nfsStartTimeout bounds one export start (image pull excluded — the
-	// puller has its own discipline).
+	// nfsStartTimeout bounds creating and starting the container, once the
+	// image is local.
 	nfsStartTimeout = 2 * time.Minute
+	// nfsPullTimeout bounds the image pull on its own, because the first one
+	// on a machine fetches a few hundred megabytes and legitimately outlasts
+	// any sane container-start budget. Sharing one deadline meant a slow cold
+	// pull silently downgraded the mount target to metadata-only.
+	nfsPullTimeout = 15 * time.Minute
 )
 
 func nfsContainerName(mountTargetID string) string { return nfsContainerPrefix + mountTargetID }
@@ -267,14 +272,16 @@ func ganeshaStartScript(conf string) string {
 
 // startExportAsync launches the export for a new mount target off the request
 // path — an image pull must never delay CreateMountTarget.
+// The phases carry their own deadlines rather than one budget for the whole
+// call — an image pull and a container start differ by orders of magnitude,
+// and a single deadline generous enough for the first is useless for the
+// second.
 func (s *Service) startExportAsync(region, mountTargetID, fsID string) {
 	s.nfsWg.Add(1)
 	go func() {
 		defer s.nfsWg.Done()
-		ctx, cancel := context.WithTimeout(
-			middleware.ContextWithRegion(context.Background(), region), nfsStartTimeout)
-		defer cancel()
-		s.startExport(ctx, region, mountTargetID, fsID)
+		s.startExport(middleware.ContextWithRegion(context.Background(), region),
+			region, mountTargetID, fsID)
 	}()
 }
 
@@ -337,7 +344,10 @@ func (s *Service) startExport(ctx context.Context, region, mountTargetID, fsID s
 		s.markMountTargetAvailable(ctx, region, mountTargetID)
 		return
 	}
-	if err := s.puller.Ensure(ctx, s.cfg.EFSNFSImage); err != nil {
+	pullCtx, cancelPull := context.WithTimeout(ctx, nfsPullTimeout)
+	err = s.puller.Ensure(pullCtx, s.cfg.EFSNFSImage)
+	cancelPull()
+	if err != nil {
 		s.log.Warn("efs: pull NFS image — mount target stays metadata-only",
 			zap.String("image", s.cfg.EFSNFSImage), zap.Error(err))
 		s.releaseNFSPort(ctx, hostPort)
@@ -345,12 +355,16 @@ func (s *Service) startExport(ctx context.Context, region, mountTargetID, fsID s
 		return
 	}
 
+	// The image is local now, so the rest is fast: bound it tightly.
+	startCtx, cancelStart := context.WithTimeout(ctx, nfsStartTimeout)
+	defer cancelStart()
+
 	// Exports also join a user-defined network so a containerized Overcast and
 	// sibling NFS clients can reach them by container IP; the published host
 	// port serves clients on the host itself.
 	network := s.cfg.EFSNetwork
 	if network != "" {
-		if _, err := s.docker.CreateNetwork(ctx, network); err != nil {
+		if _, err := s.docker.CreateNetwork(startCtx, network); err != nil {
 			s.log.Debug("efs: create export network (may already exist)",
 				zap.String("network", network), zap.Error(err))
 		}
@@ -377,7 +391,7 @@ func (s *Service) startExport(ctx context.Context, region, mountTargetID, fsID s
 			EndpointsConfig: map[string]*docker.EndpointSettings{network: {}},
 		}
 	}
-	containerID, err := s.docker.CreateContainer(ctx, name, req)
+	containerID, err := s.docker.CreateContainer(startCtx, name, req)
 	if err != nil {
 		s.log.Warn("efs: create export container — mount target stays metadata-only",
 			zap.String("mount_target", mountTargetID), zap.Error(err))
@@ -386,7 +400,7 @@ func (s *Service) startExport(ctx context.Context, region, mountTargetID, fsID s
 		return
 	}
 
-	if err := s.docker.StartContainer(ctx, containerID); err != nil {
+	if err := s.docker.StartContainer(startCtx, containerID); err != nil {
 		s.log.Warn("efs: start export container — mount target stays metadata-only",
 			zap.String("mount_target", mountTargetID), zap.Error(err))
 		if rmErr := s.docker.RemoveContainer(context.Background(), containerID, true); rmErr != nil {
