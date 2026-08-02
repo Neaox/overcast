@@ -25,7 +25,7 @@ serialisation round-trip issues.
 
 ## Known limitations
 
-- **GSI consistency**: real DynamoDB GSIs are eventually consistent; the emulator is immediately consistent — items are visible in GSI queries the instant they are written.
+- **GSI consistency**: real DynamoDB GSIs are eventually consistent; the emulator is immediately consistent — items are visible in GSI queries the instant they are written. Asking for a strongly consistent read on a GSI (`ConsistentRead=true` with a GSI `IndexName`) is still rejected with a `ValidationException`, exactly as AWS does, so code written against the emulator cannot come to depend on a read mode AWS has no way to serve.
 - **TTL expiry** is not enforced in real-time. Items with expired TTL are removed by a background sweeper (runs hourly), not lazily on read.
 - **PartiQL** (`ExecuteStatement`, `ExecuteTransaction`, `BatchExecuteStatement`) is explicitly out of scope for v1.
 
@@ -71,10 +71,10 @@ serialisation round-trip issues.
 
 ### Query & scan
 
-| Operation | Status       | Notes                                                                                                                                                                                              | AWS Docs                                                                              |
-| --------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `Query`   | ✅ Supported | `KeyConditionExpression`, `FilterExpression`, `Limit` (applied before `FilterExpression` per AWS semantics), `ExclusiveStartKey`/`LastEvaluatedKey` pagination, `ScanIndexForward`, `Select=COUNT` | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Query.html) |
-| `Scan`    | ✅ Supported | `FilterExpression`, `Limit` (applied before `FilterExpression` per AWS semantics), `ExclusiveStartKey`/`LastEvaluatedKey` pagination, parallel scan (`Segment`/`TotalSegments`), `Select=COUNT`    | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Scan.html)  |
+| Operation | Status       | Notes                                                                                                                                                                                                                                                      | AWS Docs                                                                              |
+| --------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `Query`   | ✅ Supported | `KeyConditionExpression`, `FilterExpression`, `Limit` (applied before `FilterExpression` per AWS semantics), `ExclusiveStartKey`/`LastEvaluatedKey` pagination, `ScanIndexForward`, `Select=COUNT`; `ConsistentRead=true` on a GSI is rejected as AWS does | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Query.html) |
+| `Scan`    | ✅ Supported | `FilterExpression`, `Limit` (applied before `FilterExpression` per AWS semantics), `ExclusiveStartKey`/`LastEvaluatedKey` pagination, parallel scan (`Segment`/`TotalSegments`), `Select=COUNT`; `ConsistentRead=true` on a GSI is rejected as AWS does    | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Scan.html)  |
 
 ### Transactions
 

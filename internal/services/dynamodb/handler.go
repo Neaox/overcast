@@ -147,6 +147,7 @@ type scanRequest struct {
 	Segment                   int                  `json:"Segment,omitempty"`
 	TotalSegments             int                  `json:"TotalSegments,omitempty"`
 	Select                    string               `json:"Select,omitempty"`
+	ConsistentRead            bool                 `json:"ConsistentRead,omitempty"`
 }
 
 type scanResponse struct {
@@ -175,6 +176,7 @@ type queryRequest struct {
 	ExclusiveStartKey         Item                 `json:"ExclusiveStartKey,omitempty"`
 	ScanIndexForward          *bool                `json:"ScanIndexForward,omitempty"`
 	Select                    string               `json:"Select,omitempty"`
+	ConsistentRead            bool                 `json:"ConsistentRead,omitempty"`
 }
 
 type queryResponse struct {
@@ -642,8 +644,12 @@ func (h *Handler) scanTyped(ctx context.Context, req *scanRequest) (any, *protoc
 		}
 	}
 
-	limit := effectivePageLimit(req.Limit)
 	isGSIScan := scanIdx != nil && table.isGSI(req.IndexName)
+	if req.ConsistentRead && isGSIScan {
+		return nil, errConsistentReadOnGSI()
+	}
+
+	limit := effectivePageLimit(req.Limit)
 
 	var items []Item
 	var lastKey Item
@@ -917,6 +923,9 @@ func (h *Handler) queryTyped(ctx context.Context, req *queryRequest) (any, *prot
 		}
 		idxHashKeyName = indexHashKeyName(activeIdx)
 		idxSortKeyName = indexSortKeyName(activeIdx)
+		if req.ConsistentRead && table.isGSI(req.IndexName) {
+			return nil, errConsistentReadOnGSI()
+		}
 	}
 
 	// Parse the KeyConditionExpression using the full expression parser.
@@ -1815,6 +1824,22 @@ func effectivePageLimit(requested int) int {
 		return dynamoDefaultPageLimit
 	}
 	return requested
+}
+
+// errConsistentReadOnGSI is AWS's rejection of a strongly consistent read
+// against a global secondary index. The Query API reference is categorical
+// about it — a GSI is maintained eventually consistently and has no
+// strongly-consistent read mode to ask for — so this is a request-validation
+// error, not a capability the emulator could choose to honour
+// (docs/plans/dynamodb-gsi-design.md §2). LSIs are the deliberate contrast:
+// they live in the base table's own partition and do support
+// ConsistentRead=true, so only GSI reads are rejected here.
+func errConsistentReadOnGSI() *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "ValidationException",
+		Message:    "Consistent reads are not supported on global secondary indexes",
+		HTTPStatus: http.StatusBadRequest,
+	}
 }
 
 // resolveCursorPosition returns the index of the first item in items — which
