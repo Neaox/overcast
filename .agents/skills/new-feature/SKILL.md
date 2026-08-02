@@ -758,7 +758,9 @@ Three cases:
    merge. If they still fail after the feature, the feature is not done — a
    `fail` is a wire-compatibility defect, not a coverage note.
 3. **The operations are registered and passing**: confirm your change did not
-   regress them (`make -C compat baseline-check` against a local run).
+   regress them (`make -C compat baseline-check` against a local run, and
+   `make -C compat failures-check` — the baseline is at zero failures, so any
+   failing test fails CI whatever the baseline records).
 
 Isolation rules for any new compat test: resource names embed the group token
 (`{runId}-<group>-…`), never another group's resources, exact-name teardowns —

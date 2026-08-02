@@ -63,6 +63,7 @@ var (
 	annotate            = flag.Bool("annotate", false, "Emit GitHub workflow ::error commands for baseline regressions so they surface as PR annotations")
 	flakyFilePath       = flag.String("flaky-file", "compat/flaky.json", "Tests quarantined as intermittent: exempt from the baseline gate in both directions")
 	updateBaselineFlag  = flag.Bool("update-baseline", false, "Update --baseline-file from --results-file with improvements only, then exit")
+	maxFailures         = flag.Int("max-failures", -1, "Fail if --results-file holds more than N failing tests, whatever the baseline records (-1 disables). Quarantined flaky tests are excluded")
 
 	registryFile       = flag.String("registry-file", "compat/suites/registry.json", "Shared compat test registry")
 	parityDebtFilePath = flag.String("parity-debt-file", "compat/parity-debt.json", "Cross-suite parity debt file")
@@ -114,6 +115,14 @@ func main() {
 	if *compareBaselineFlag {
 		if err := compareBaselineFile(*baselineFile, *resultsFile); err != nil {
 			fmt.Fprintf(os.Stderr, "compat: baseline check failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *maxFailures >= 0 {
+		if err := enforceMaxFailuresFile(*resultsFile, *maxFailures); err != nil {
+			fmt.Fprintf(os.Stderr, "compat: failure gate failed: %v\n", err)
 			os.Exit(1)
 		}
 		return

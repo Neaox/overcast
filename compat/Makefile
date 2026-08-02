@@ -12,7 +12,7 @@
 
 COMPOSE = docker compose -f docker-compose.yml
 
-.PHONY: run json ci build clean dev serve ui baseline-check baseline-update baseline-lint
+.PHONY: run json ci build clean dev serve ui baseline-check failures-check baseline-update baseline-lint
 
 ## dev — dashboard with a hot-reloading UI, on free ports, opened in a browser
 dev:
@@ -54,6 +54,10 @@ report:
 ## baseline-check — fail if compat-results.json regresses against compat/baseline.json
 baseline-check:
 	go run ../cmd/compat --compare-baseline --baseline-file baseline.json --results-file ../compat-results.json
+
+## failures-check — fail if compat-results.json holds any failing test, baseline or no baseline
+failures-check:
+	go run ../cmd/compat --max-failures 0 --results-file ../compat-results.json
 
 ## baseline-update — update compat/baseline.json with improvements from compat-results.json
 baseline-update:

@@ -558,6 +558,80 @@ func TestBaselineAnnotations_escapesMultilineDetail(t *testing.T) {
 	}
 }
 
+func TestFailuresOverLimit_namesEveryFailure(t *testing.T) {
+	// Given: a run in which two tests failed outright.
+	report := reportWithResults(
+		resultSpec{suite: "go-sdk", service: "s3", group: "s3-crud", test: "CreateBucket", status: compat.StatusPass},
+		resultSpec{suite: "go-sdk", service: "rds", group: "rds-subnet-groups", test: "CreateDBSubnetGroup", status: compat.StatusFail},
+		resultSpec{suite: "rust-sdk", service: "ssm", group: "ssm-path", test: "GetParametersByPath", status: compat.StatusFail},
+	)
+
+	// When: the absolute failure gate runs with no failures allowed.
+	failures := failuresOverLimit(report, flakySet{}, 0)
+
+	// Then: both are named. This gate consults no baseline, so a failure the
+	// baseline happens to grandfather is reported like any other.
+	if len(failures) != 2 {
+		t.Fatalf("failures = %#v, want 2", failures)
+	}
+	if !strings.Contains(failures[0], "go-sdk/rds-subnet-groups/CreateDBSubnetGroup") {
+		t.Errorf("failures[0] = %q", failures[0])
+	}
+	if !strings.Contains(failures[1], "rust-sdk/ssm-path/GetParametersByPath") {
+		t.Errorf("failures[1] = %q", failures[1])
+	}
+}
+
+func TestFailuresOverLimit_onlyFailCounts(t *testing.T) {
+	// Given: a run whose non-passing results are all legitimate resting states —
+	// an emulator gap, an environmental skip, an API the SDK does not have.
+	report := reportWithResults(
+		resultSpec{suite: "cli", service: "s3", group: "s3-crud", test: "CreateBucket", status: compat.StatusPass},
+		resultSpec{suite: "cli", service: "s3", group: "s3-crud", test: "PutBucketAcl", status: compat.StatusUnimplemented},
+		resultSpec{suite: "cli", service: "lambda", group: "lambda-invoke", test: "Invoke", status: compat.StatusSkip},
+		resultSpec{suite: "cli", service: "sts", group: "sts-identity", test: "AssumeRole", status: compat.StatusNA},
+	)
+
+	// When/Then: none of them trips the gate. "No failures" means no wrong
+	// answers, not full coverage.
+	if failures := failuresOverLimit(report, flakySet{}, 0); len(failures) != 0 {
+		t.Fatalf("failures = %#v, want none", failures)
+	}
+}
+
+func TestFailuresOverLimit_ignoresQuarantinedTests(t *testing.T) {
+	// Given: a failing test that a reviewer has quarantined as intermittent.
+	report := reportWithResults(
+		resultSpec{suite: "dotnet-sdk", service: "sns", group: "sns-subscriptions", test: "PublishDeliveredToSQS", status: compat.StatusFail},
+		resultSpec{suite: "dotnet-sdk", service: "sqs", group: "sqs-messages", test: "PurgeQueue", status: compat.StatusFail},
+	)
+	flaky := flakySet{"dotnet-sdk/sns-subscriptions/PublishDeliveredToSQS": true}
+
+	// When/Then: the quarantine holds here too — otherwise this gate would red
+	// the build at random and undo the whole point of the flaky list — but it is
+	// per test, not a blanket amnesty.
+	failures := failuresOverLimit(report, flaky, 0)
+	if len(failures) != 1 || !strings.Contains(failures[0], "PurgeQueue") {
+		t.Fatalf("failures = %#v, want only PurgeQueue", failures)
+	}
+}
+
+func TestFailuresOverLimit_underLimitPasses(t *testing.T) {
+	// Given: one failure and a limit that tolerates it.
+	report := reportWithResults(
+		resultSpec{suite: "go-sdk", service: "rds", group: "rds-subnet-groups", test: "CreateDBSubnetGroup", status: compat.StatusFail},
+	)
+
+	// When/Then: at or under the limit nothing is reported; over it, everything
+	// is — a partial list would understate the damage.
+	if failures := failuresOverLimit(report, flakySet{}, 1); len(failures) != 0 {
+		t.Fatalf("failures = %#v, want none at limit 1", failures)
+	}
+	if failures := failuresOverLimit(report, flakySet{}, 0); len(failures) != 1 {
+		t.Fatalf("failures = %#v, want 1 at limit 0", failures)
+	}
+}
+
 type resultSpec struct {
 	suite   string
 	service string

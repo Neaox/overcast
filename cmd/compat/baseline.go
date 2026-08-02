@@ -57,6 +57,66 @@ func compareBaselineFile(baselinePath, resultsPath string) error {
 	return nil
 }
 
+// enforceMaxFailuresFile is the --max-failures entry point: the absolute
+// failure gate, asserted alongside the relative one.
+func enforceMaxFailuresFile(resultsPath string, limit int) error {
+	report, err := readRunReportFile(resultsPath)
+	if err != nil {
+		return err
+	}
+	flaky, err := readFlakyFile(*flakyFilePath)
+	if err != nil {
+		return err
+	}
+	failures := failuresOverLimit(report, flaky, limit)
+	if len(failures) > 0 {
+		for _, failure := range failures {
+			fmt.Fprintln(os.Stderr, failure)
+		}
+		if *annotate {
+			fmt.Print(errorAnnotations("Compat failures", failures))
+		}
+		return fmt.Errorf("%d compat failure(s), limit %d", len(failures), limit)
+	}
+	fmt.Printf("compat: failure gate passed (at most %d failure(s) allowed)\n", limit)
+	return nil
+}
+
+// failuresOverLimit names every test that failed outright, once quarantined
+// ones are set aside, when there are more of them than limit allows.
+//
+// This is deliberately not a baseline comparison. The baseline gate asks a
+// relative question — did anything get worse than recorded — which was the
+// right shape while the grandfathered fail set was being burned down, but it
+// leaves a `fail` the baseline still records passing CI. That set reached zero
+// in #462, so the invariant is now absolute: any failure is a regression,
+// whatever any file says. Asking it directly also means a stale baseline can no
+// longer weaken the gate, which is not hypothetical — promotion could not
+// publish for weeks (issue #440) and the recorded fail set sat 26 entries
+// behind reality the whole time.
+//
+// Quarantined tests are exempt here as everywhere else: a gate that reds the
+// build at random is one people learn to re-run rather than read. That
+// exemption is reviewer-approved per test, and the flaky list is itself linted.
+func failuresOverLimit(report *compat.RunReport, flaky flakySet, limit int) []string {
+	var failures []string
+	for _, entry := range baselineEntriesFromReport(report).Entries {
+		if entry.Status != compat.StatusFail {
+			continue
+		}
+		key := baselineKey(entry)
+		if flaky[key] {
+			continue
+		}
+		failures = append(failures, "compat failure: "+key)
+	}
+	if len(failures) <= limit {
+		return nil
+	}
+	sort.Strings(failures)
+	return failures
+}
+
 func updateBaselineFile(baselinePath, resultsPath string) error {
 	baseline, err := readBaselineFileIfExists(baselinePath)
 	if err != nil {
@@ -462,10 +522,19 @@ func lintBaselineChange(oldBaseline, newBaseline *compatBaseline) []string {
 //
 // https://docs.github.com/actions/reference/workflow-commands-for-github-actions
 func baselineAnnotations(regressions []string) string {
+	return errorAnnotations("Compat baseline", regressions)
+}
+
+// errorAnnotations renders messages under a title naming the gate that produced
+// them, so a reader on the checks tab can tell a baseline regression from an
+// outright failure without opening the log.
+func errorAnnotations(title string, messages []string) string {
 	var b strings.Builder
-	for _, regression := range regressions {
-		b.WriteString("::error title=Compat baseline::")
-		b.WriteString(escapeAnnotationData(regression))
+	for _, message := range messages {
+		b.WriteString("::error title=")
+		b.WriteString(title)
+		b.WriteString("::")
+		b.WriteString(escapeAnnotationData(message))
 		b.WriteString("\n")
 	}
 	return b.String()

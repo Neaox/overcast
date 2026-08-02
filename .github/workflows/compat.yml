@@ -383,6 +383,25 @@ jobs:
             --results-file compat-results.json \
             2>baseline-regressions.txt
 
+      # The absolute gate, next to the relative one. --compare-baseline asks
+      # whether anything got worse than compat/baseline.json records; this asks
+      # whether anything failed at all. They are not the same question while the
+      # baseline can record a `fail`: the recorded fail set reached zero in
+      # #462, and this step is what stops it growing again through a stale or
+      # hand-edited file. Quarantined flaky tests stay exempt.
+      #
+      # Unlike the steps around it, stderr stays in the step log: nothing
+      # downstream reads it, and with the baseline at zero these failures are
+      # baseline regressions too, so the job summary and JUnit report already
+      # render them from baseline-regressions.txt.
+      - name: Enforce zero compat failures
+        id: failures
+        continue-on-error: true
+        run: |
+          go run ./cmd/compat \
+            --max-failures 0 --annotate \
+            --results-file compat-results.json
+
       - name: Check cross-suite parity
         id: parity
         continue-on-error: true
@@ -579,6 +598,10 @@ jobs:
           failed=0
           if [[ "${{ steps.baseline.outcome }}" == "failure" ]]; then
             echo "Baseline comparison failed — see the annotations and job summary." >&2
+            failed=1
+          fi
+          if [[ "${{ steps.failures.outcome }}" == "failure" ]]; then
+            echo "Compat failures — every failing test is a regression; see the annotations." >&2
             failed=1
           fi
           if [[ "${{ steps.parity.outcome }}" == "failure" ]]; then

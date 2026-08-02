@@ -471,6 +471,16 @@ and pull request by `.github/workflows/compat.yml`, and both fail the build.
 Adding tests is always welcome: a new test that passes, is `unimplemented`,
 `skip`, or `na` never blocks a PR.
 
+**The burn-down is over: any failure is a regression.** The grandfathered set
+reached zero in #462, so `go run ./cmd/compat --max-failures 0` runs as a second
+gate and fails on *any* failing test, whatever the baseline says. The two gates
+ask different questions — `--compare-baseline` asks whether a result got worse
+than recorded, `--max-failures` asks whether anything failed at all — and only
+the second one is immune to the baseline file being stale or hand-edited. That
+is not a theoretical worry: promotion could not publish for weeks (issue #440)
+and the recorded fail set sat 26 entries behind reality the whole time. Both
+gates skip tests quarantined in [flaky.json](./flaky.json).
+
 **Legitimate non-passing states.** A test may sit at:
 
 | Status | Means | Example |
@@ -480,9 +490,10 @@ Adding tests is always welcome: a new test that passes, is `unimplemented`,
 | `na` | The SDK or tool **has no API** for the operation. Not a gap in Overcast or in the suite. | An operation the AWS CLI does not expose |
 | `fail` | The emulator answered, and answered **wrongly**. Always a bug — in the emulator or in the test. | Wrong field, wrong error, assertion failure |
 
-`fail` is never an acceptable resting state. Entries recorded as `fail` are
-grandfathered failures being burned down; that set only ever shrinks. Once it
-reaches zero, CI asserts it stays there.
+`fail` is never an acceptable resting state, and as of #462 no entry is at one.
+The baseline records no `fail` and CI asserts it stays that way, so a failing
+test is a bug to fix or a change to revert — there is no longer a "record it and
+move on" path.
 
 **Cascades are not gaps.** A skip reading `setup failed: …` or
 `dependency failed: X` is a symptom of another failure in the same group. Fix
