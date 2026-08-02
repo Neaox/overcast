@@ -812,6 +812,31 @@ func (d *Client) ContainerMemoryUsage(ctx context.Context, id string) (usageByte
 
 // ─── Image operations ──────────────────────────────────────────────────────
 
+// splitImageRef separates an image reference into the name and the tag-or-
+// digest that `POST /images/create` expects as separate query parameters.
+//
+// Docker's API takes the version in `tag`, not as part of `fromImage`:
+// passing "repo@sha256:…" whole means the daemon looks for a repository by
+// that literal name. With the classic image store the pull then reports
+// success while storing nothing under the digest, and the next container
+// create fails with "No such image" — a pull that lies. (Docker Desktop's
+// containerd store is forgiving, which is why this only shows up on some
+// daemons.) Digest-pinned images are the case that breaks; plain tags happen
+// to work either way, and are split here too so one code path serves both.
+//
+// A registry host may carry a port ("localhost:5000/repo"), so only a colon
+// after the last slash is a tag separator.
+func splitImageRef(image string) (name, tag string) {
+	if at := strings.LastIndexByte(image, '@'); at >= 0 {
+		return image[:at], image[at+1:]
+	}
+	slash := strings.LastIndexByte(image, '/')
+	if colon := strings.LastIndexByte(image, ':'); colon > slash {
+		return image[:colon], image[colon+1:]
+	}
+	return image, ""
+}
+
 // PullImage pulls an image. This blocks until the pull is complete.
 func (d *Client) PullImage(ctx context.Context, image string) error {
 	return d.PullImageForPlatform(ctx, image, "")
@@ -821,8 +846,12 @@ func (d *Client) PullImage(ctx context.Context, image string) error {
 // linux/amd64. Docker Engine expects platform in the images/create query string,
 // not in a JSON body.
 func (d *Client) PullImageForPlatform(ctx context.Context, image, platform string) error {
+	name, tag := splitImageRef(image)
 	query := url.Values{}
-	query.Set("fromImage", image)
+	query.Set("fromImage", name)
+	if tag != "" {
+		query.Set("tag", tag)
+	}
 	if platform != "" {
 		query.Set("platform", platform)
 	}

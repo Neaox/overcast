@@ -1,0 +1,1 @@
+* [docker/efs] pulling a digest-pinned image (`repo@sha256:…`) no longer reports success while storing nothing — the digest was sent to Docker as part of `fromImage` rather than as the `tag` parameter, so the pull appeared to work and the next container create failed with `No such image`

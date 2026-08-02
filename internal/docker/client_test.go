@@ -298,10 +298,12 @@ func TestPullImageForPlatform_sendsPlatformQuery(t *testing.T) {
 	// Given: a fake Docker daemon that records image pull query parameters.
 	var gotImage string
 	var gotPlatform string
+	var gotTag string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1.45/images/create":
 			gotImage = r.URL.Query().Get("fromImage")
+			gotTag = r.URL.Query().Get("tag")
 			gotPlatform = r.URL.Query().Get("platform")
 			_, _ = w.Write([]byte(`{"status":"done"}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1.45/images/prune":
@@ -320,8 +322,13 @@ func TestPullImageForPlatform_sendsPlatformQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PullImageForPlatform: %v", err)
 	}
-	if gotImage != "public.ecr.aws/lambda/nodejs:22" {
-		t.Fatalf("fromImage query = %q", gotImage)
+	// Docker takes the version in `tag`, never folded into `fromImage` — see
+	// splitImageRef and TestPullImage_sendsTagSeparately.
+	if gotImage != "public.ecr.aws/lambda/nodejs" {
+		t.Fatalf("fromImage query = %q, want public.ecr.aws/lambda/nodejs", gotImage)
+	}
+	if gotTag != "22" {
+		t.Fatalf("tag query = %q, want 22", gotTag)
 	}
 	if gotPlatform != "linux/amd64" {
 		t.Fatalf("platform query = %q, want linux/amd64", gotPlatform)
@@ -394,5 +401,87 @@ func TestContainerLogsStream_doesNotStarveCreateContainer(t *testing.T) {
 	// Then: the request succeeds instead of waiting behind long-lived log streams.
 	if err != nil {
 		t.Fatalf("CreateContainer while log streams are open: %v", err)
+	}
+}
+
+// TestPullImage_sendsTagSeparately guards the wire shape of the pull request.
+// Docker takes the version in `tag`, not folded into `fromImage`: sending a
+// digest-pinned reference whole makes the daemon report a successful pull and
+// store nothing under that digest, so the next container create fails with
+// "No such image".
+func TestPullImage_sendsTagSeparately(t *testing.T) {
+	tests := []struct {
+		name         string
+		image        string
+		wantFrom     string
+		wantTag      string
+		wantPlatform string
+	}{
+		{
+			name:     "digest pin",
+			image:    "registry.k8s.io/sig-storage/nfs-provisioner@sha256:c825f3d5",
+			wantFrom: "registry.k8s.io/sig-storage/nfs-provisioner",
+			wantTag:  "sha256:c825f3d5",
+		},
+		{
+			name:     "plain tag",
+			image:    "busybox:1.36",
+			wantFrom: "busybox",
+			wantTag:  "1.36",
+		},
+		{
+			name:     "registry port is not a tag",
+			image:    "localhost:5000/team/app",
+			wantFrom: "localhost:5000/team/app",
+			wantTag:  "",
+		},
+		{
+			name:     "registry port with tag",
+			image:    "localhost:5000/team/app:v2",
+			wantFrom: "localhost:5000/team/app",
+			wantTag:  "v2",
+		},
+		{
+			name:     "no version",
+			image:    "alpine",
+			wantFrom: "alpine",
+			wantTag:  "",
+		},
+		{
+			name:         "platform is preserved",
+			image:        "alpine:3.20",
+			wantFrom:     "alpine",
+			wantTag:      "3.20",
+			wantPlatform: "linux/amd64",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotQuery url.Values
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/images/create") {
+					gotQuery = r.URL.Query()
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				w.WriteHeader(http.StatusOK) // prune after pull
+			}))
+			defer srv.Close()
+
+			c := NewClient("tcp://"+srv.Listener.Addr().String(), zap.NewNop())
+			if err := c.PullImageForPlatform(context.Background(), tc.image, tc.wantPlatform); err != nil {
+				t.Fatalf("PullImageForPlatform: %v", err)
+			}
+			if got := gotQuery.Get("fromImage"); got != tc.wantFrom {
+				t.Errorf("fromImage: want %q, got %q", tc.wantFrom, got)
+			}
+			if got := gotQuery.Get("tag"); got != tc.wantTag {
+				t.Errorf("tag: want %q, got %q", tc.wantTag, got)
+			}
+			if got := gotQuery.Get("platform"); got != tc.wantPlatform {
+				t.Errorf("platform: want %q, got %q", tc.wantPlatform, got)
+			}
+		})
 	}
 }
