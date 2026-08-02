@@ -68,6 +68,12 @@ type operationCollision struct {
 	Services []string
 }
 
+// serviceAliases must stay strictly sorted by ModelService for binary search.
+//
+// "cognito-identity" (Cognito Federated Identities, identity pools) is
+// deliberately absent: Overcast's cognito service implements only
+// cognito-identity-provider (user pools), so identity-pool operations must
+// keep their own identity rather than validate against the cognito key.
 var serviceAliases = []serviceAlias{
 	{ModelService: "api-gateway", OvercastService: "apigateway"},
 	{ModelService: "apigatewayv2", OvercastService: "apigateway"},
@@ -80,5 +86,16 @@ var serviceAliases = []serviceAlias{
 	{ModelService: "route-53", OvercastService: "route53"},
 	{ModelService: "secrets-manager", OvercastService: "secretsmanager"},
 	{ModelService: "service-catalog-appregistry", OvercastService: "appregistry"},
+	// Overcast's ses service implements both SES v1 (Query) and SES v2
+	// (REST-JSON) operations under the single "ses" key.
+	{ModelService: "sesv2", OvercastService: "ses"},
 	{ModelService: "sfn", OvercastService: "stepfunctions"},
+	// Overcast's waf service implements WAF v2 (AWSWAF_20190729), which the
+	// model names "wafv2". The model's "waf" identity is WAF *Classic*
+	// (AWSWAF_20150824) — unimplemented, and its operation names overlap with
+	// v2 (CreateWebACL et al.), so it is diverted to the deliberately
+	// unregistered "waf-classic" key to keep classic operations from silently
+	// validating capability rows declared against the v2-implementing "waf".
+	{ModelService: "waf", OvercastService: "waf-classic"},
+	{ModelService: "wafv2", OvercastService: "waf"},
 }

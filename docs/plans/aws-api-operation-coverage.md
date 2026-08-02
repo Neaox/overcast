@@ -72,7 +72,7 @@ Do not generate clients, every request/response type, or a handler per operation
 
 The A1 corpus is private and is not a runtime lookup structure. A2/A3 generate immutable target, Query, and REST-trie indexes from it; neither phase may linearly scan it per request or construct model-sized maps during router startup. The `Service` field is a normalized Smithy SDK identity, not an Overcast router key. A2 introduces an explicit alias table for the non-identical names (for example, Smithy `cloudwatch-logs` to Overcast `logs`).
 
-The initial alias audit has nine intentional mappings: Overcast `apigateway`, `appregistry`, `autoscaling`, `dynamodbstreams`, `elbv2`, `msk`, `route53`, `secretsmanager`, and `stepfunctions` map respectively to manifest `api-gateway`, `service-catalog-appregistry`, `auto-scaling`, `dynamodb-streams`, `elastic-load-balancing-v2`, `kafka`, `route-53`, `secrets-manager`, and `sfn`. `lambda-core` is a separate modeled AWS service (`Lambda Core`, version `2026-04-30`), not an alias of Lambda; preserve it as distinct.
+The alias audit now has fifteen intentional mappings. The initial nine: Overcast `apigateway`, `appregistry`, `autoscaling`, `dynamodbstreams`, `elbv2`, `msk`, `route53`, `secretsmanager`, and `stepfunctions` map respectively to manifest `api-gateway`, `service-catalog-appregistry`, `auto-scaling`, `dynamodb-streams`, `elastic-load-balancing-v2`, `kafka`, `route-53`, `secrets-manager`, and `sfn`. Later additions fold separately modeled families into the implementing key: `apigatewayv2` → `apigateway`, `bedrock-runtime` → `bedrock`, `cognito-identity-provider` → `cognito`, `sesv2` → `ses`, and `wafv2` → `waf`. One divert runs the other direction: manifest `waf` is WAF *Classic* (unimplemented, with operation names overlapping v2), so it maps to the deliberately unregistered key `waf-classic` to keep classic operations from validating capability rows declared against the v2-implementing `waf` key. `cognito-identity` (Federated Identities, identity pools) is deliberately *not* aliased — Overcast's cognito implements only user pools. `lambda-core` is a separate modeled AWS service (`Lambda Core`, version `2026-04-30`), not an alias of Lambda; preserve it as distinct. `capgen --check-model` enforces the audit mechanically: every service key (directory or capability declaration) must resolve to at least one manifest identity via key-or-alias (`SERVICE_KEY_NOT_IN_MODEL`).
 
 ### 4.2 Registry
 
@@ -97,7 +97,7 @@ service dispatchers decline ownership. This is deliberately
 not a broad service-prefix interceptor: it preserves existing implementations,
 explicit service stubs, and S3 controls. REST URI-template and RPC v2 matching
 remain A3 work, where the generated trie can provide sufficient evidence rather
-than guessing from a path prefix. The nine service-key aliases live beside the
+than guessing from a path prefix. The service-key aliases live beside the
 registry and are tested as explicit data, never inferred from a naming rule.
 When multiple modeled services share one target or `(Version, Action)` key, the
 generator emits a collision record and marks the registry claim ambiguous rather
