@@ -885,19 +885,26 @@ func (d *Client) PullImageForPlatform(ctx context.Context, image, platform strin
 		}
 	}
 
-	// Best-effort: reclaim disk from <none> layers left behind when a newer
-	// version of the same tag is pulled. Failures are not fatal.
-	if err := d.PruneDanglingImages(ctx); err != nil && d.logger != nil {
-		d.logger.Debug("prune dangling images after pull", zap.String("image", image), zap.Error(err))
-	}
-
 	return nil
 }
 
 // PruneDanglingImages removes all dangling (untagged) images. Equivalent to
-// `docker image prune -f`. Safe to call after any pull or image retag — it
-// only removes images that have no tag and are not referenced by a running
-// container, so it cannot break in-use resources.
+// `docker image prune -f`.
+//
+// Do NOT call this after a pull. "Dangling" means untagged, and an image
+// pulled by digest ("repo@sha256:…") is untagged by definition, so a prune
+// deletes the image the pull just fetched — the pull reports success and the
+// container create that follows fails with "No such image". This used to run
+// after every pull and made EFS's digest-pinned NFS export image unusable on
+// any daemon with the classic image store (Docker Desktop's containerd store
+// does not report digest-referenced images as dangling, so it only ever
+// failed in CI).
+//
+// The blast radius is wider than that one case: the filter is daemon-wide, so
+// it also deletes the *user's* untagged images, which Overcast does not own,
+// and it can race any service that has pulled an image but not yet created
+// its container. Reclaiming disk is not worth either. Call it explicitly, if
+// ever, and never on a path that is about to use an image.
 func (d *Client) PruneDanglingImages(ctx context.Context) error {
 	if err := d.acquireOp(ctx); err != nil {
 		return fmt.Errorf("prune images: %w", err)

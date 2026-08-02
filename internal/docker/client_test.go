@@ -485,3 +485,28 @@ func TestPullImage_sendsTagSeparately(t *testing.T) {
 		})
 	}
 }
+
+// TestPullImage_doesNotPrune guards against reintroducing the prune-after-pull
+// that made digest-pinned images unusable. "Dangling" means untagged, and an
+// image pulled by digest has no tag, so pruning after a pull deletes exactly
+// what was just fetched — the pull reports success and the next container
+// create fails with "No such image".
+func TestPullImage_doesNotPrune(t *testing.T) {
+	var pruned atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/images/prune") {
+			pruned.Store(true)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := NewClient("tcp://"+srv.Listener.Addr().String(), zap.NewNop())
+	if err := c.PullImage(context.Background(),
+		"registry.k8s.io/sig-storage/nfs-provisioner@sha256:c825f3d5"); err != nil {
+		t.Fatalf("PullImage: %v", err)
+	}
+	if pruned.Load() {
+		t.Fatal("PullImage pruned dangling images; that deletes digest-pinned images it just pulled")
+	}
+}
