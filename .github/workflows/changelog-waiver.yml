@@ -1,0 +1,157 @@
+name: Changelog waiver
+
+# `/no-changelog <reason>` and `/needs-changelog` on a pull request, for the
+# change that genuinely has nothing a user would read in the release notes.
+#
+# It decides nothing. changelog-required.yml reads the PR's comments when it
+# makes its verdict, so the waiver is already in force the next time that
+# workflow runs; all this does is make "the next time" be now, by re-running
+# it. One place decides, one place speaks — so a comment posted before the
+# gate has run needs nothing from here at all, and this is a no-op in that
+# case rather than a second opinion.
+#
+# Only the repository owner, an organisation member or a collaborator can ask.
+# That is checked from author_association in the event payload, which GitHub
+# computes — not from anything the commenter can set. Everyone else is ignored
+# entirely rather than refused, so the command is not a way to make the bot
+# talk.
+
+on:
+  issue_comment:
+    types: [created]
+
+# contents: read is for actions/checkout only — every write below is the App's.
+permissions:
+  contents: read
+
+jobs:
+  waiver:
+    name: Record the changelog waiver
+    if: >-
+      github.event.issue.pull_request &&
+      github.event.issue.state == 'open' &&
+      (startsWith(github.event.comment.body, '/no-changelog') ||
+       startsWith(github.event.comment.body, '/needs-changelog')) &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the release App credentials
+        env:
+          CLIENT_ID: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          APP_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$CLIENT_ID" ] || [ -z "$APP_KEY" ]; then
+            echo "::error::RELEASE_APP_CLIENT_ID and RELEASE_APP_PRIVATE_KEY must be set. Without them a waiver stands but the check stays red until someone re-runs it by hand." >&2
+            exit 1
+          fi
+
+      # Needs Actions: write on top of pull-request writes — re-running a
+      # workflow run is an Actions write. See .github/release-bot/README.md.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      # Only the parser and the bot's message templates are needed — never the
+      # PR's code, which this workflow must not run.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Read the command
+        id: command
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # Through the environment and a file, never interpolated into the
+          # script: a comment body is arbitrary text written by whoever
+          # commented.
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          PR: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          react() {
+            gh api --silent -X POST \
+              "repos/$REPO/issues/comments/$COMMENT_ID/reactions" \
+              -f content="$1" || true
+          }
+          react eyes
+
+          printf '%s' "$COMMENT_BODY" > body.txt
+          kind="$(python3 scripts/changelog-required.py parse \
+            --body-file body.txt --problem-file problem.txt)"
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+          echo "Command: $kind"
+
+          # The gate ignores a malformed command rather than letting it revoke
+          # a waiver already standing, so saying so here is the only way the
+          # author finds out the typo did nothing.
+          if [ "$kind" = "invalid" ]; then
+            PROBLEM="$(cat problem.txt)" python3 scripts/render-template.py \
+              .github/release-bot/changelog-waiver-refused.md > reply.md
+            gh pr comment "$PR" --repo "$REPO" --body-file reply.md
+            react "-1"
+            exit 0
+          fi
+          react "+1"
+
+      # Re-runs the gate, which re-reads every comment and decides again. It
+      # cannot leave the PR green on a stale answer, and running it when
+      # nothing has changed is a no-op.
+      - name: Re-run the changelog gate
+        if: steps.command.outputs.kind == 'waive' || steps.command.outputs.kind == 'revoke'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const { owner, repo } = context.repo;
+            const workflow_id = 'changelog-required.yml';
+            const commentedAt = new Date(context.payload.comment.created_at);
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner, repo, pull_number: context.issue.number,
+            });
+            const head_sha = pr.head.sha;
+
+            const latestRun = async () => {
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                owner, repo, workflow_id, head_sha, per_page: 20,
+              });
+              // Newest first: an earlier attempt on the same head may already
+              // have been superseded.
+              return data.workflow_runs.sort(
+                (a, b) => new Date(b.created_at) - new Date(a.created_at),
+              )[0];
+            };
+
+            // A run still in progress cannot be re-run, and one that started
+            // before this comment existed did not see it — so wait it out
+            // rather than leaving the check red on an answer that has since
+            // changed. Bounded: the next push re-evaluates anyway.
+            const deadline = Date.now() + 6 * 60 * 1000;
+            for (;;) {
+              const run = await latestRun();
+              if (!run) {
+                core.info('No run on this head yet — it will read the comment when it starts.');
+                return;
+              }
+              if (new Date(run.run_started_at) > commentedAt) {
+                core.info(`${run.html_url} started after the comment, so it already read it.`);
+                return;
+              }
+              if (run.status === 'completed') {
+                await github.rest.actions.reRunWorkflow({ owner, repo, run_id: run.id });
+                const summary = `Re-ran the changelog gate: ${run.html_url}`;
+                core.info(summary);
+                await core.summary.addRaw(summary).write();
+                return;
+              }
+              if (Date.now() > deadline) {
+                core.warning('The changelog gate is still running; it will be re-evaluated on the next push.');
+                return;
+              }
+              await new Promise(resolve => setTimeout(resolve, 15000));
+            }

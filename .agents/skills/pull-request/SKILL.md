@@ -262,6 +262,30 @@ The changelog is release-facing, not a commit log. Record a change when it is no
 - Comment-only changes.
 - CI or build maintenance with no user-facing effect.
 - Follow-up formatting or generated-file churn.
+- Anything under `compat/`. The suites observe the emulator rather than change it, however large the diff.
+
+### Skipping it is an explicit act
+
+The `Changelog entry` check fails any PR that adds nothing under `.changelog/` — a forgotten fragment and a fragment nobody needed are the same empty diff, so the check asks rather than guesses. When the PR genuinely needs none, say so on the PR and the check clears itself:
+
+```sh
+gh pr comment <number> --body '/no-changelog CI-only: pins the release action to a digest, nothing shipped changes'
+```
+
+- The reason is required and is kept as the record of the decision — write the actual reason, not a placeholder. `n/a` is refused.
+- Comment it as soon as the PR is opened. The check reads the PR's comments when it runs, so a waiver already there means it passes first time instead of going red and being cleared.
+- `/needs-changelog` puts the question back. Do that yourself if you push work to the PR afterwards that users would want to read about: the waiver covers the PR, not the commit it was written on.
+- No comment is needed when **every** file the PR touches is in an area that never produces a release note: `compat/`, `cmd/compat/`, `tests/`, test files anywhere (`*_test.go`, `*_test.py`, `*.test.tsx`, `*.spec.ts`), `docs/plans/`, `docs/dev/`, `.agents/`, `.claude/`, `.vscode/`, `.devcontainer/`, contributor docs (`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`), and local tooling (`.golangci.yml`, `.air.toml`, `opencode.json`, `.gitignore`, `.gitattributes`). One file outside them and the check asks.
+- Adding the fragment is always the better answer when the change is release-note-worthy. Do not waive to make a red check go away.
+
+### During a release window
+
+**Never edit `CHANGELOG.md` to answer the check.** That file belongs to the release PR — the bot merges `main` into the release branch on every push, and a second hand in the same section aborts that merge and stops the release PR refreshing itself. The check does not accept a `CHANGELOG.md` edit in place of a fragment.
+
+Where the note goes depends on how far the release has got:
+
+- **Release PR open.** Add a fragment exactly as usual. On the next push to `main` the bot folds it into the `## [x.y.z]` section and deletes the fragment; nothing else is needed.
+- **Release PR merged, tag not yet published** (`bash scripts/release-candidate-check.sh` prints `true`). A fragment fails the release and there is nothing left to fold into. Wait for the tag if the change can wait — `main` in this state should be taking only what is needed to get the release out. If it cannot, waive with a reason saying the fragment is coming, and add it after the tag.
 
 ### How to write a fragment
 

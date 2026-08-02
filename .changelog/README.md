@@ -171,6 +171,81 @@ No fragment does not mean no record: compat changes are described fully in the
 commit message and pull request like any other change — the fragment is only
 the release-notes feed, and compat work has no release-notes audience.
 
+## When a change needs no fragment
+
+Say so on the pull request. The `Changelog entry` check fails any PR that adds
+nothing here, because the two cases it cannot tell apart are exactly the ones
+that matter: a change that needed no release note, and a change whose release
+note was forgotten. Both are an empty `.changelog/` diff, and only the author
+knows which. So the answer is asked for rather than assumed:
+
+```
+/no-changelog CI-only: pins the release action to a digest, nothing shipped changes
+```
+
+The reason is required, and it is kept. A bare acknowledgement would become a
+reflex, and a reflex is indistinguishable from forgetting — the same reasoning
+that keeps the breaking-change marker off every line. What is wanted is not the
+tick but the sentence a reviewer reads instead of guessing.
+
+- `/needs-changelog` puts the question back. Do that yourself if later commits
+  on the PR add something users would want to read about: the waiver covers the
+  PR, not the commit it was written on.
+- Only the repository owner, an organisation member or a collaborator can
+  waive. An outside contributor should say in a comment why no fragment is
+  needed and ask a maintainer to run the command.
+- The comment is read when the check runs, so commenting before CI has got
+  there works — the check comes back green first time rather than going red and
+  being cleared.
+
+### Areas that are never asked
+
+A PR is passed without a word when **every** file it touches is somewhere whose
+contents cannot reach a user: `compat/` and `cmd/compat/`, `tests/` and test
+files anywhere (`*_test.go`, `*_test.py`, `*.test.tsx`, `*.spec.ts`),
+`docs/plans/` and `docs/dev/`, `.agents/`, `.claude/`, `.vscode/`,
+`.devcontainer/`, this README, the contributor and agent guidance
+(`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `.github/copilot-instructions.md`),
+and local tooling (`.golangci.yml`, `.air.toml`, `opencode.json`, `.codex`,
+`.gitignore`, `.gitattributes`).
+
+Every file: one path outside them puts the whole PR back in scope, because that
+path is the one that might ship. The list is deliberately short of things it
+could plausibly hold — `.github/workflows/` builds and publishes the artifacts,
+`scripts/` runs the release, published `docs/` is user-facing guidance, and
+`Makefile`, `Dockerfile` and `.dockerignore` decide what an artifact contains.
+A wrong entry there would ship a change with no note and nobody asked; a missing
+one costs a comment.
+
+### During a release window
+
+**Never edit `CHANGELOG.md` to answer this.** That file belongs to the release
+PR. While one is open, `release-prep.yml` merges `main` into its branch on every
+push, so a second hand in the same section does not merely conflict — the bot
+aborts the merge and the release PR stops refreshing itself until somebody
+untangles it. Fragments exist so that concurrent PRs never meet in one file, and
+the check does not accept a `CHANGELOG.md` edit in place of one.
+
+Which answer *is* right depends on where the release has got to:
+
+| While | Do | Because |
+| --- | --- | --- |
+| the release PR is **open** | add a fragment exactly as usual | on every push to `main` the bot merges `main` into the release branch, folds your entries into the `## [x.y.z]` section and deletes the consumed fragments. Nothing is needed from you |
+| it has **merged**, tag not out | wait for the tag, or waive and add the fragment afterwards | there is no release PR left to fold into, and `check-release-changelog.py` fails the release while any unconsumed fragment remains |
+
+Only the second row is awkward, and it is meant to be rare: `main` in that state
+should be taking only what is needed to get the release out. If a change that
+belongs in the notes has to merge anyway, waive with a reason that says the
+fragment is coming — it will land in the next release's section describing
+something that shipped in the previous one, and whoever curates it needs to know
+that.
+
+The policy is the section above; the check only enforces that somebody applied
+it on purpose. [scripts/changelog-required.py](../scripts/changelog-required.py)
+holds the reasoning, and
+[.github/workflows/changelog-required.yml](../.github/workflows/changelog-required.yml)
+the wiring.
+
 ## Release time
 
 Release prep runs:

@@ -1,0 +1,221 @@
+name: Changelog required
+
+# Every PR either records a release note or records that it needs none.
+#
+# A forgotten fragment and a fragment nobody needed are the same empty
+# `.changelog/` diff, so the gap cannot be spotted by looking at the change —
+# only the author knows which it is. This asks, and takes the answer as a
+# comment: `/no-changelog <reason>`, kept as the record of the decision. The
+# reasoning, and why a reason is required rather than a bare acknowledgement,
+# is in scripts/changelog-required.py.
+#
+# The waiver is read from the PR's comments *here*, when the verdict is made —
+# not applied by whatever workflow the comment triggered. So a `/no-changelog`
+# posted before this ever runs is already in force by the time it does, and one
+# posted afterwards is picked up by changelog-waiver.yml re-running this. One
+# place decides; the other only replays it.
+#
+# A separate workflow file rather than a job in test.yml, for the same reason
+# as release-hold.yml: a re-run re-runs every job in the run, and replaying one
+# tiny job is cheap where replaying the CI matrix is not.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: changelog-required-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  entry:
+    # This name is the required status check on main. Renaming it silently
+    # stops enforcing the gate, because branch protection matches by name.
+    name: Changelog entry
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # The PR's own changes are a three-dot diff from the base, so the
+          # merge base has to be in the clone.
+          fetch-depth: 0
+
+      # Fork PRs get no secrets, so they get no comment. The check still runs
+      # and still fails with the whole message in the job summary — a fork PR
+      # cannot be merged without a maintainer, who can read it there and run
+      # the command themselves.
+      - name: Look for the release App credentials
+        id: app
+        env:
+          CLIENT_ID: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+        run: |
+          if [ -n "$CLIENT_ID" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No release App credentials on this run (fork PR); the verdict goes to the job summary instead of a comment."
+          fi
+
+      # Shared predicate with release.yml and the CI release gate: the
+      # checked-out VERSION has no tag yet. It covers the release PR itself and
+      # any follow-up after a failed release run, which a release/* branch-name
+      # test would miss.
+      #
+      # It changes only which message is posted, never the verdict. While the
+      # release *PR* is open this is false, and a fragment is asked for as
+      # usual — release-prep.yml folds it into the release section on the next
+      # push to main and deletes the fragment, unattended. Once that PR has
+      # merged there is nothing left to fold into and an unconsumed fragment
+      # fails the release, so the ask has to say "wait for the tag or waive"
+      # rather than "add a fragment". Neither message offers a CHANGELOG.md
+      # edit: that file belongs to the release PR.
+      - name: Check release candidate
+        id: release
+        run: |
+          set -euo pipefail
+          echo "candidate=$(bash scripts/release-candidate-check.sh)" >> "$GITHUB_OUTPUT"
+          echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+
+      # github.token is enough: reading comments needs no App, and a fork PR's
+      # read-only token can still do it. Each page arrives as its own array;
+      # `jq -s add` makes them one.
+      - name: Read the PR's comments
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPO/issues/$PR/comments" --paginate \
+            --jq '[.[] | {id, body, author_association, created_at, html_url, login: .user.login}]' \
+            | jq -s 'add // []' > comments.json
+
+      - name: Decide
+        id: decide
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+
+          # Added or modified only: a fragment this PR deletes is not its
+          # release note, and neither is one already sitting on main.
+          #
+          # Two steps, not one pipeline: '|| true' for grep finding nothing
+          # would also swallow a failing diff, and an empty list reads as "no
+          # fragment" — the PR would be asked for one it already has.
+          git diff --name-only --diff-filter=AM "$BASE_SHA...HEAD" -- .changelog > fragments.txt
+          readarray -t fragments < <(grep -v '^\.changelog/README\.md$' fragments.txt || true)
+
+          # Everything the PR touches, for the never-release-noted areas.
+          # Deletions included; --no-renames so a file moved *into* an exempt
+          # area still shows the path it came from.
+          git diff --name-only --no-renames "$BASE_SHA...HEAD" > changed.txt
+
+          verdict="$(python3 scripts/changelog-required.py check \
+            --changed-files-file changed.txt \
+            --comments-file comments.json \
+            --waiver-file waiver.json \
+            "${fragments[@]}")"
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+          echo "Verdict: $verdict"
+
+      - name: Render the message
+        if: steps.decide.outputs.verdict == 'missing' || steps.decide.outputs.verdict == 'waived'
+        env:
+          VERDICT: ${{ steps.decide.outputs.verdict }}
+          RELEASE_CANDIDATE: ${{ steps.release.outputs.candidate }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$VERDICT" = "waived" ]; then
+            WAIVED_BY="$(jq -r '.by' waiver.json)"
+            WAIVER_REASON="$(jq -r '.reason' waiver.json)"
+            WAIVER_URL="$(jq -r '.url' waiver.json)"
+            export WAIVED_BY WAIVER_REASON WAIVER_URL
+            python3 scripts/render-template.py .github/release-bot/changelog-waived.md > comment.md
+          elif [ "$RELEASE_CANDIDATE" = "true" ]; then
+            # A fragment would fail the release, so the ask has to name the
+            # other place to write it.
+            python3 scripts/render-template.py \
+              .github/release-bot/changelog-missing-release-window.md > comment.md
+          else
+            cp .github/release-bot/changelog-missing.md comment.md
+          fi
+          cat comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Note what answered it
+        if: steps.decide.outputs.verdict == 'not-applicable'
+        run: |
+          echo "::notice::Every file changed here is in an area that never produces a release note (compat/, tests/ and test files, docs/plans/, docs/dev/, agent and editor config, contributor docs, local tooling). The full list is EXEMPT_* in scripts/changelog-required.py."
+
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        if: steps.app.outputs.available == 'true'
+        id: app-token
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - name: Say so on the PR
+        if: steps.app.outputs.available == 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          VERDICT: ${{ steps.decide.outputs.verdict }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- overcast-changelog-gate -->';
+            const verdict = process.env.VERDICT;
+            const issue = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            };
+
+            const { data: all } = await github.rest.issues.listComments({
+              ...issue, per_page: 100,
+            });
+            const stale = all.filter(c => c.body && c.body.includes(marker));
+
+            // Post first, delete second, so the PR is never briefly left
+            // holding a failing check with no explanation on it.
+            const replace = async (body) => {
+              await github.rest.issues.createComment({ ...issue, body });
+              for (const c of stale) {
+                await github.rest.issues.deleteComment({
+                  owner: issue.owner, repo: issue.repo, comment_id: c.id,
+                });
+              }
+            };
+
+            // A fragment appeared, or a release is in flight: the question is
+            // answered by the diff itself, so removing the old ask is the
+            // whole of the news.
+            if (verdict !== 'missing' && verdict !== 'waived') {
+              for (const c of stale) {
+                await github.rest.issues.deleteComment({
+                  owner: issue.owner, repo: issue.repo, comment_id: c.id,
+                });
+              }
+              return;
+            }
+
+            const body = marker + '\n' + fs.readFileSync('comment.md', 'utf8');
+            // Every push re-runs this. Only speak when something changed — an
+            // unchanged question does not need asking twice.
+            if (stale.some(c => c.body.trim() === body.trim())) {
+              core.info('Nothing new to say; leaving the existing comment alone.');
+              return;
+            }
+            await replace(body);
+
+      - name: Ask
+        if: steps.decide.outputs.verdict == 'missing'
+        run: |
+          echo "::error::This PR adds no changelog fragment. Add one with 'python3 scripts/changelog.py new', or comment '/no-changelog <reason>' on the PR to record that it needs none. See the comment on the PR, or the job summary, for the rest."
+          exit 1

@@ -1027,16 +1027,30 @@ belong in release notes: CI-only refactors, test-only changes, local tooling,
 code cleanup, non-user-visible refactors, and workflow maintenance.
 
 Add your fragment as `.changelog/YYYYMMDD-<slug>.md` (full format and naming
-rules in [.changelog/README.md](./.changelog/README.md)):
+rules in [.changelog/README.md](./.changelog/README.md)). Fragments have no
+frontmatter — every line stands alone and carries its own category and scope:
 
 ```markdown
----
-section: Fixed        # Added | Changed | Fixed | Removed | Deprecated | Security
-area: sqs             # optional: service/area slug used for grouping
----
-
-- [sqs] `ReceiveMessage` now correctly applies `VisibilityTimeout` (#38)
+* [sqs] `ReceiveMessage` now applies `VisibilityTimeout` as documented
 ```
+
+**A PR with no fragment has to say that is deliberate.** The `Changelog entry`
+check fails any PR that adds nothing under `.changelog/`, because a forgotten
+fragment and a fragment nobody needed are the same empty diff. Clear it by
+commenting `/no-changelog <reason>` on the PR — the reason is required and is
+kept as the record of the decision. `/needs-changelog` puts the question back.
+
+A PR is passed without being asked when every file it touches is in an area
+whose contents cannot reach a user — `compat/`, `tests/`, test files anywhere,
+`docs/plans/`, `docs/dev/`, `.agents/`, the editor and dev-container config,
+contributor docs, and local tooling. One file outside them and the question is
+asked. Never edit `CHANGELOG.md` to clear the check: that file belongs to the
+release PR, which the bot keeps current by merging `main` into its branch on
+every push, and a second hand in the same section aborts that merge. While a
+release PR is open, add the fragment as usual and the bot folds it in. Both
+rules, with the reasoning, are in
+[.changelog/README.md § When a change needs no
+fragment](./.changelog/README.md#when-a-change-needs-no-fragment).
 
 ---
 
@@ -1506,7 +1520,7 @@ chore(ci): add TODO-to-issue GitHub Action
 - [ ] `make docs-check` passes (no uncommitted doc drift)
 - [ ] `docs/services/<service>.md` — capabilities table regenerated via `make docs` (never edited by hand); any prose/behaviour notes outside the sentinel markers are up to date
 - [ ] CloudFormation resource handlers registered in `resourceHandlers` for every new resource type — see [CloudFormation integration](#cloudformation-integration)
-- [ ] Changelog fragment added under `.changelog/` (never edit `[Unreleased]` directly)
+- [ ] Changelog fragment added under `.changelog/` (never edit `[Unreleased]` directly), or `/no-changelog <reason>` commented on the PR to record that it needs none
 - [ ] Commit messages follow conventional commits
 - [ ] No debug logging left in production paths
 - [ ] No new global variables
