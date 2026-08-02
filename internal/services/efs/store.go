@@ -60,6 +60,13 @@ type mountTargetRecord struct {
 	AvailabilityZoneName string   `json:"AvailabilityZoneName,omitempty"`
 	AvailabilityZoneId   string   `json:"AvailabilityZoneId,omitempty"`
 	SecurityGroups       []string `json:"SecurityGroups,omitempty"`
+	// NFSContainerId and NFSHostPort belong to the opt-in NFS data plane
+	// (OVERCAST_EFS_NFS): the NFS-Ganesha container exporting this mount
+	// target's file system, and the host port its 2049 is published on. Both
+	// are empty in mock mode, in live mode without exports, and while the
+	// container is still starting. See live_nfs.go.
+	NFSContainerId string `json:"NFSContainerId,omitempty"`
+	NFSHostPort    int    `json:"NFSHostPort,omitempty"`
 }
 
 // accessPointRecord is the persisted state of one access point.
