@@ -53,6 +53,18 @@ ENTRY_LINE = re.compile(
     r"(?:\s*\[(?P<areas>[^\]]*)\])?"
     r"\s+(?P<prose>\S.*)$"
 )
+# A marker written after the area instead of after the kind — '~ [autoscaling]!
+# …' — parses, silently and wrongly. The area group is optional and must be
+# followed by whitespace, so a '!' where the whitespace belongs makes the whole
+# group backtrack out: 'areas' comes back None and the brackets land in the
+# prose. Nothing then sees a marker, so the entry loses its breaking flag, is
+# never asked for a 'migration:' note, and sorts away from the entries it
+# belongs with — which is exactly what happened to an Auto Scaling entry in
+# 0.0.1-alpha.29, past a green lint and a green breaking-change hold.
+#
+# The tell is cheap and exact: prose never legitimately begins with '[', because
+# that character means an area was intended and did not parse.
+MISPLACED_MARKER = re.compile(r"^\[(?P<areas>[^\]]*)\](?P<marker>[!.])")
 MIGRATION_PREFIX = "migration:"
 SLUG_MAX = 48
 
@@ -84,10 +96,26 @@ BREAKING_DEFAULT = {
 # entries, nearly all of them "no longer <misbehaves>" — the house idiom for a
 # bug fix or a perf win. The phrases kept are the ones whose object is an input
 # or output contract rather than a behaviour.
+#
+# Refusal is the other half of "now rejects", and the half that got through: a
+# shape the emulator used to store and ignore now comes back as an error, which
+# is a break however it is worded. Present tense only — "was rejected",
+# "rejected every real AWS SDK" and "a service was rejected for having no name"
+# are all how this repo describes the bug an entry is *fixing*, and four of them
+# were in flight when this was calibrated. A bare status code is deliberately
+# not a hint for the same reason: "still return 501" and "instead of returning
+# 501" are the house idiom for saying what an Added entry does not implement
+# yet, which is the opposite of a break.
 BREAKING_HINTS = (
     "now requires",
     "is now required",
     "now rejects",
+    "is rejected",
+    "are rejected",
+    "refuses",
+    "now refused",
+    "is refused",
+    "are refused",
     "no longer accepts",
     "no longer returns",
     "no longer supported",
@@ -152,6 +180,38 @@ def breaking_hint(prose: str) -> str:
     return next((hint for hint in BREAKING_HINTS if hint in lowered), "")
 
 
+def elide(text: str, limit: int = 64) -> str:
+    """`text` cut at a word boundary, short enough to quote inside an error."""
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit].rsplit(' ', 1)[0]} ..."
+
+
+def bracket_prose_error(kind: str, prose: str) -> str:
+    """Why a prose beginning with '[' is always a malformed entry line.
+
+    Two mistakes reach here, and the corrected line is worth spelling out for
+    both: they look nothing alike on the page and neither is obvious from the
+    grammar alone.
+    """
+    misplaced = MISPLACED_MARKER.match(prose)
+    if misplaced is not None:
+        marker = misplaced.group("marker")
+        fixed = (
+            f"{kind}{marker} [{misplaced.group('areas')}] "
+            f"{prose[misplaced.end():].strip()}"
+        )
+        return (
+            f"the '{marker}' marker is after the area, where nothing reads it — "
+            f"the entry parsed as neither breaking nor scoped. It goes "
+            f"immediately after the kind: '{elide(fixed)}'."
+        )
+    return (
+        f"prose cannot begin with '['; an area goes in brackets straight after "
+        f"the kind, as '{kind} [area] text'. Got {elide(prose)!r}."
+    )
+
+
 def parse_entries(
     text: str, origin: str = "", require_migration: bool = True
 ) -> tuple[list[Entry], list[str]]:
@@ -212,6 +272,10 @@ def parse_entries(
             continue
 
         prose = match.group("prose").strip()
+        if prose.startswith("["):
+            errors.append(f"{where}line {number}: {bracket_prose_error(kind, prose)}")
+            continue
+
         marker = match.group("marker")
         default = BREAKING_DEFAULT[section]
         if marker == "!":

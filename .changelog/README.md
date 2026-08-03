@@ -31,7 +31,9 @@ every fragment here and fails if `[Unreleased]` gained content.
   Choose the category for what the change *is*, not for the service it touches:
   a `[sqs]` entry still belongs under Fixed if it fixes behaviour.
 - **Marker** — `!` breaking, `.` explicitly not breaking. Usually omitted; see
-  below.
+  below. It goes **immediately after the kind, before the area** — `~! [sqs] …`,
+  never `~ [sqs]! …`. The other order is rejected: it used to parse as prose,
+  quietly costing the entry both its marker and its area.
 - **Areas** — optional service or area slugs, primary first: `sqs`,
   `cloudformation`, `web`, `router`, `state`, `ci`, `docs`, `compat`, … The
   primary sorts related entries next to each other at assembly time. Leave it
@@ -55,15 +57,17 @@ forgetting — so the friction is spent in one place only:
 | `-` Removed | **breaking** | `-.` for something that never shipped |
 | everything else | not breaking | `+!`, `~!`, `*!` … |
 
-On top of that, prose that *reads* like a break — "now requires", "now
-rejects", "no longer accepts", "renamed", "default is now", … — forces an
-explicit marker either way. The list is deliberately narrow: it names input and
-output contracts, not behaviour, because "no longer &lt;misbehaves&gt;" is just how
-a bug fix is written. That is not an accusation, it is a refusal to guess, and
-it is what
-catches the breaking change nobody would have marked: validation that now
-rejects input it used to accept, or a default that quietly moved, filed under
-Fixed like any other improvement.
+On top of that, prose that *reads* like a break — "now requires", "now rejects",
+"is rejected", "refuses", "no longer accepts", "renamed", "default is now", … —
+forces an explicit marker either way. The list is deliberately narrow: it names
+input and output contracts, not behaviour, because "no longer
+&lt;misbehaves&gt;" is just how a bug fix is written. Present tense only, for the
+same reason: "was rejected" and "rejected every real AWS SDK" describe the bug an
+entry is *fixing*. A bare status code is not a hint either — "still return 501"
+is how an Added entry says what it does not cover yet. That is not an accusation,
+it is a refusal to guess, and it is what catches the breaking change nobody would
+have marked: validation that now rejects input it used to accept, or a default
+that quietly moved, filed under Fixed like any other improvement.
 
 **A breaking entry needs a `migration:` line** saying what a user has to do:
 
