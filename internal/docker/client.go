@@ -146,6 +146,10 @@ type HostConfig struct {
 	PortBindings map[string][]PortBinding `json:"PortBindings,omitempty"`
 	Privileged   bool                     `json:"Privileged,omitempty"` // required by k3s
 	Tmpfs        map[string]string        `json:"Tmpfs,omitempty"`      // tmpfs mounts (path → options)
+	// CapAdd grants individual Linux capabilities on top of Docker's default
+	// set, named without the "CAP_" prefix (e.g. "DAC_READ_SEARCH"). Prefer it
+	// to Privileged: one capability is auditable, --privileged is not.
+	CapAdd []string `json:"CapAdd,omitempty"`
 	// ExtraHosts are "hostname:target" entries written into the container's
 	// /etc/hosts, where target is an IP or Docker's "host-gateway". /etc/hosts
 	// wins over DNS in glibc and musl, so an entry here shadows a public record
