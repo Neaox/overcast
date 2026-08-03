@@ -20,6 +20,14 @@ import (
 // serviceStackTemplate renders the WordPress-shaped stack at a given desired
 // count, so an update can change something the ECS service actually acts on.
 func serviceStackTemplate(desiredCount string) string {
+	return serviceStackTemplateWithImage(desiredCount, "nginx:latest")
+}
+
+// serviceStackTemplateWithImage renders the same stack on a chosen container
+// image. Changing the image replaces the task definition, which is the update
+// that makes the service roll out a new deployment — the shape every real
+// `cdk deploy` of a code change takes.
+func serviceStackTemplateWithImage(desiredCount, image string) string {
 	return `{
   "AWSTemplateFormatVersion": "2010-09-09",
   "Resources": {
@@ -35,7 +43,7 @@ func serviceStackTemplate(desiredCount string) string {
         "Memory": "512",
         "NetworkMode": "awsvpc",
         "RequiresCompatibilities": ["FARGATE"],
-        "ContainerDefinitions": [{ "Name": "app", "Image": "nginx:latest" }]
+        "ContainerDefinitions": [{ "Name": "app", "Image": "` + image + `" }]
       }
     },
     "Service": {
@@ -96,6 +104,101 @@ func TestUpdateStack_ECSServiceDesiredCountChange(t *testing.T) {
 	if described.Services[0].DesiredCount != 2 || described.Services[0].RunningCount != 2 {
 		t.Errorf("expected 2/2 after the update, got %d/%d",
 			described.Services[0].RunningCount, described.Services[0].DesiredCount)
+	}
+}
+
+// TestUpdateStack_ECSServiceTaskDefinitionChange checks that an update swapping
+// in a new task definition is complete only once the new deployment is the one
+// running. UPDATE_COMPLETE around a service still serving the old revision is
+// the failure this guards: the stack says the deploy landed, and nothing that
+// reads the stack can tell that it did not.
+func TestUpdateStack_ECSServiceTaskDefinitionChange(t *testing.T) {
+	// Given: a deployed stack running one task
+	srv := helpers.NewTestServer(t)
+	cr := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"ecs-upd-td-stack"},
+		"TemplateBody": []string{serviceStackTemplateWithImage("1", "nginx:latest")},
+	})
+	cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	waitForStackStatus(t, srv, "ecs-upd-td-stack", "CREATE_COMPLETE")
+
+	// When: the stack is updated to a new container image, replacing the task
+	// definition and so starting a new deployment
+	ur := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName":    []string{"ecs-upd-td-stack"},
+		"TemplateBody": []string{serviceStackTemplateWithImage("1", "nginx:1.27")},
+	})
+	ur.Body.Close()
+	helpers.AssertStatus(t, ur, http.StatusOK)
+	waitForStackStatus(t, srv, "ecs-upd-td-stack", "UPDATE_COMPLETE")
+
+	// Then: by the time the stack says UPDATE_COMPLETE the rollout has already
+	// happened — one deployment left, and the task running is the new revision.
+	resp := awsJSONCall(t, srv, "AmazonEC2ContainerServiceV20141113.", "DescribeServices",
+		"application/x-amz-json-1.1", map[string]any{
+			"cluster": "upd-cluster", "services": []string{"upd-svc"},
+		})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var described struct {
+		Services []struct {
+			TaskDefinition string `json:"taskDefinition"`
+			DesiredCount   int    `json:"desiredCount"`
+			RunningCount   int    `json:"runningCount"`
+			Deployments    []struct {
+				Status       string `json:"status"`
+				RunningCount int    `json:"runningCount"`
+				RolloutState string `json:"rolloutState"`
+			} `json:"deployments"`
+		} `json:"services"`
+	}
+	helpers.DecodeJSON(t, resp, &described)
+	if len(described.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(described.Services))
+	}
+	svc := described.Services[0]
+	if !strings.HasSuffix(svc.TaskDefinition, "upd-task:2") {
+		t.Errorf("expected the service on upd-task:2, got %q", svc.TaskDefinition)
+	}
+	if len(svc.Deployments) != 1 {
+		t.Fatalf("expected the superseded deployment to be gone by UPDATE_COMPLETE, got %#v", svc.Deployments)
+	}
+	if svc.Deployments[0].RolloutState != "COMPLETED" || svc.Deployments[0].RunningCount != 1 {
+		t.Errorf("expected a completed deployment running 1 task, got %#v", svc.Deployments[0])
+	}
+	if svc.RunningCount != 1 {
+		t.Errorf("expected runningCount=1, got %d", svc.RunningCount)
+	}
+
+	// And the task actually running is the new revision, not the old one the
+	// service merely names.
+	listResp := awsJSONCall(t, srv, "AmazonEC2ContainerServiceV20141113.", "ListTasks",
+		"application/x-amz-json-1.1", map[string]any{"cluster": "upd-cluster", "desiredStatus": "RUNNING"})
+	defer listResp.Body.Close()
+	helpers.AssertStatus(t, listResp, http.StatusOK)
+	var listed struct {
+		TaskArns []string `json:"taskArns"`
+	}
+	helpers.DecodeJSON(t, listResp, &listed)
+	if len(listed.TaskArns) != 1 {
+		t.Fatalf("expected 1 running task, got %d", len(listed.TaskArns))
+	}
+	descResp := awsJSONCall(t, srv, "AmazonEC2ContainerServiceV20141113.", "DescribeTasks",
+		"application/x-amz-json-1.1", map[string]any{"cluster": "upd-cluster", "tasks": listed.TaskArns})
+	defer descResp.Body.Close()
+	helpers.AssertStatus(t, descResp, http.StatusOK)
+	var tasks struct {
+		Tasks []struct {
+			TaskDefinitionArn string `json:"taskDefinitionArn"`
+		} `json:"tasks"`
+	}
+	helpers.DecodeJSON(t, descResp, &tasks)
+	if len(tasks.Tasks) != 1 {
+		t.Fatalf("expected 1 described task, got %d", len(tasks.Tasks))
+	}
+	if !strings.HasSuffix(tasks.Tasks[0].TaskDefinitionArn, "upd-task:2") {
+		t.Errorf("expected the running task on upd-task:2, got %q", tasks.Tasks[0].TaskDefinitionArn)
 	}
 }
 
