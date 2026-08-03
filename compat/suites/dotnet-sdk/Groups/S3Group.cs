@@ -547,6 +547,16 @@ public sealed class S3Group(AwsClients clients) : IServiceGroup
         await clients.S3().DeleteLifecycleConfigurationAsync(new DeleteLifecycleConfigurationRequest { BucketName = bucket });
     }
 
+    /// <summary>
+    /// Verifies the configuration is gone after DeleteBucketLifecycle.
+    ///
+    /// The server answers 404 NoSuchLifecycleConfiguration and every other suite
+    /// asserts on that error, but the AWS SDK for .NET does not surface it:
+    /// GetLifecycleConfiguration absorbs the "no configuration" response and
+    /// hands back an empty LifecycleConfiguration instead of throwing. So this
+    /// suite asserts the observable state — no rules — and still demands the
+    /// right error code in the event the SDK does raise one.
+    /// </summary>
     private async Task GetBucketLifecycleConfigurationAfterDeleteAsync(TestContext context)
     {
         var bucket = context.GetString("s3LifecycleBucket") ?? throw new InvalidOperationException("s3LifecycleBucket not set");
@@ -554,8 +564,8 @@ public sealed class S3Group(AwsClients clients) : IServiceGroup
         {
             var resp = await clients.S3().GetLifecycleConfigurationAsync(
                 new GetLifecycleConfigurationRequest { BucketName = bucket });
-            throw new InvalidOperationException(
-                $"GetBucketLifecycleConfigurationAfterDelete: expected an error, got {resp.Configuration?.Rules?.Count ?? 0} rules");
+            Assertions.Equal(0, resp.Configuration?.Rules?.Count ?? 0,
+                "GetBucketLifecycleConfigurationAfterDelete: rules survived DeleteBucketLifecycle");
         }
         catch (AmazonS3Exception e)
         {
