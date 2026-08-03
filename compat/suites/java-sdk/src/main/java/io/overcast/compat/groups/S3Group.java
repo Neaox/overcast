@@ -39,6 +39,8 @@ public final class S3Group implements ServiceGroup {
                 Map.entry("ListObjectsV2",           this::listObjectsV2),
                 Map.entry("PutObjectMultipleKeys",   this::putObjectMultipleKeys),
                 Map.entry("ListObjectsV2Delimiter",  this::listObjectsV2Delimiter),
+                Map.entry("PutObjectFormContentType", this::putObjectFormContentType),
+                Map.entry("PutObjectPlusInKey",      this::putObjectPlusInKey),
                 Map.entry("DeleteObject",            this::deleteObject),
                 Map.entry("DeleteObjects",           this::deleteObjects),
                 Map.entry("DeleteBucket",            this::deleteBucket),
@@ -160,6 +162,54 @@ public final class S3Group implements ServiceGroup {
         var resp = s3().listObjectsV2(r -> r.bucket(bucket).prefix("prefix/").delimiter("/"));
         Assertions.assertGreaterThanOrEqual(2, resp.contents().size(),
                 "ListObjectsV2Delimiter: expected >= 2 objects under prefix/");
+    }
+
+    // Content-Type is metadata on AWS, not a parsing instruction. An emulator
+    // that sniffs it to spot AWS Query traffic can consume the body before the
+    // S3 handler sees it and silently store zero bytes. Every SDK picks a
+    // sensible default type, so only application code that sets this one
+    // explicitly reaches the case.
+    private void putObjectFormContentType(TestContext ctx) throws Exception {
+        String bucket = ctx.getString("s3Bucket");
+        String key = "form-content-type";
+        String body = "hello-body-check";
+        s3().putObject(
+                r -> r.bucket(bucket).key(key).contentType("application/x-www-form-urlencoded"),
+                RequestBody.fromString(body));
+
+        var stored = s3().getObject(r -> r.bucket(bucket).key(key), ResponseTransformer.toBytes());
+        Assertions.assertEquals(body, stored.asString(StandardCharsets.UTF_8),
+                "PutObjectFormContentType: stored body does not match what was sent");
+        Assertions.assertEquals("application/x-www-form-urlencoded", stored.response().contentType(),
+                "PutObjectFormContentType: ContentType was not preserved");
+
+        // Leave the group bucket as it was found: some suites' DeleteBucket
+        // test deletes this shared bucket and needs it empty by then.
+        s3().deleteObject(r -> r.bucket(bucket).key(key));
+    }
+
+    // SDKs percent-encode "+" as %2B in the request path — unlike a space or a
+    // multi-byte character, whose encodings survive a round trip through a
+    // server's URL canonicalisation — so a server that reads the raw path
+    // without decoding stores the literal "%2B" in the key.
+    private void putObjectPlusInKey(TestContext ctx) throws Exception {
+        String bucket = ctx.getString("s3Bucket");
+        String key = "plusonly/a+b.txt";
+        String body = "plus-body";
+        s3().putObject(r -> r.bucket(bucket).key(key), RequestBody.fromString(body));
+
+        var stored = s3().getObject(r -> r.bucket(bucket).key(key), ResponseTransformer.toBytes());
+        Assertions.assertEquals(body, stored.asString(StandardCharsets.UTF_8),
+                "PutObjectPlusInKey: could not read back " + key);
+
+        var listed = s3().listObjectsV2(r -> r.bucket(bucket).prefix("plusonly/"));
+        boolean found = listed.contents().stream().anyMatch(o -> o.key().equals(key));
+        Assertions.assertTrue(found, "PutObjectPlusInKey: expected " + key + " in ListObjectsV2, got "
+                + listed.contents().stream().map(software.amazon.awssdk.services.s3.model.S3Object::key).toList());
+
+        // Leave the group bucket as it was found: some suites' DeleteBucket
+        // test deletes this shared bucket and needs it empty by then.
+        s3().deleteObject(r -> r.bucket(bucket).key(key));
     }
 
     private void deleteObject(TestContext ctx) throws Exception {

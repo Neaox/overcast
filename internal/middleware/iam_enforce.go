@@ -268,7 +268,11 @@ func requestIAMAction(r *http.Request) string {
 		return svc + ":" + action
 	}
 	if strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "application/x-www-form-urlencoded") {
-		_ = r.ParseForm()
+		// Preserving the body matters here: enforcement runs ahead of routing
+		// and this content type is what a bare HTTP client sends by default,
+		// so a plain ParseForm would eat an S3 PutObject payload whenever IAM
+		// enforcement is switched on.
+		_ = protocol.ParseFormPreservingBody(r)
 		if action := strings.TrimSpace(r.Form.Get("Action")); action != "" {
 			return svc + ":" + action
 		}
@@ -1013,7 +1017,8 @@ func (f *iamRequestFieldResolver) field(r *http.Request, key string) string {
 
 	if strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "application/x-www-form-urlencoded") {
 		if !f.formParsed {
-			_ = r.ParseForm()
+			// Body-preserving for the same reason as requestIAMAction above.
+			_ = protocol.ParseFormPreservingBody(r)
 			f.formParsed = true
 		}
 		if v := strings.TrimSpace(r.Form.Get(key)); v != "" {

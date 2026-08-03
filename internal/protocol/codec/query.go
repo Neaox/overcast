@@ -19,12 +19,6 @@ import (
 // RDS, SES, CloudWatch metrics, ELBv2, AutoScaling, Route53, ElastiCache.
 type queryXML struct{}
 
-// maxQueryBodyBytes bounds how much of a Query-protocol form body is ever
-// read into memory by Decode's direct-body-read fallback (below). AWS
-// Query-protocol requests are small parameter forms; this is generous
-// headroom, not a realistic limit for legitimate traffic.
-const maxQueryBodyBytes = 1 << 20
-
 // QueryXML is the singleton AWS Query codec.
 var QueryXML Codec = queryXML{}
 
@@ -46,18 +40,22 @@ func (q queryXML) Decode(r *http.Request, into any) *protocol.AWSError {
 // By the time a Query-protocol request reaches a typed operation's Decode
 // call, r.Form has almost always already been populated — by
 // identifyQuery.Claim resolving Action for dispatch (identify.go), and/or
-// by the router's own QueryDispatcher resolution (OwnsVersion/OwnsAction),
-// both of which call r.ParseForm()/r.FormValue(). r.ParseForm reads and
-// fully drains r.Body the first time it runs and is a cached no-op on
-// every subsequent call — so a second direct read of r.Body here would
-// silently see an empty body and decode every field as absent. Preferring
-// r.Form (once populated) sidesteps that hazard entirely and, as a bonus,
-// guarantees byte-for-byte identical field parsing to legacy handlers,
-// which already read fields via r.FormValue.
+// by the router's own QueryDispatcher resolution (OwnsVersion/OwnsAction).
+// Preferring r.Form (once populated) guarantees byte-for-byte identical
+// field parsing to legacy handlers, which already read fields via
+// r.FormValue, and it costs nothing.
+//
+// It also used to be load-bearing: r.ParseForm drains r.Body, so a second
+// direct read here saw an empty body and decoded every field as absent.
+// identifyQuery now parses through protocol.ParseFormPreservingBody, which
+// puts the bytes back, so the fallback below would survive a double read —
+// but r.Form remains the cheaper and more faithful source.
 //
 // The direct-body-read fallback below only runs for callers that invoke
 // Decode without going through the router at all (e.g. codec-package unit
 // tests constructing a bare *http.Request) — r.Form is nil in that case.
+// It shares protocol.MaxQueryFormBody with the preserving parse: one bound
+// on how large a body is worth treating as a Query form.
 func queryFormValues(r *http.Request) (url.Values, *protocol.AWSError) {
 	if r.Form != nil {
 		return r.Form, nil
@@ -65,7 +63,7 @@ func queryFormValues(r *http.Request) (url.Values, *protocol.AWSError) {
 	if r.Body == nil {
 		return url.Values{}, nil
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxQueryBodyBytes))
+	body, err := io.ReadAll(io.LimitReader(r.Body, protocol.MaxQueryFormBody))
 	if err != nil {
 		return nil, &protocol.AWSError{
 			Code: "SerializationException", Message: "Failed to read request body: " + err.Error(), HTTPStatus: http.StatusBadRequest,

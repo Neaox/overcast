@@ -19,33 +19,35 @@ func S3(c *clients.Clients) ServiceGroup {
 	s := &s3Group{c: c}
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
-			"CreateBucket":            s.CreateBucket,
-			"PutObject":               s.PutObject,
-			"GetObject":               s.GetObject,
-			"HeadObject":              s.HeadObject,
-			"DeleteObject":            s.DeleteObject,
-			"ListObjectsV2":           s.ListObjectsV2,
-			"PutObjectMultipleKeys":   s.PutObjectMultipleKeys,
-			"ListObjectsV2Delimiter":  s.ListObjectsV2Delimiter,
-			"DeleteObjects":           s.DeleteObjects,
-			"DeleteBucket":            s.DeleteBucket,
-			"CopyObject":              s.CopyObject,
-			"CreateSourceBucket":      s.CreateSourceBucket,
-			"PutSourceObject":         s.PutSourceObject,
-			"CreateMultipartUpload":   s.CreateMultipartUpload,
-			"UploadPart":              s.UploadPart,
-			"CompleteMultipartUpload": s.CompleteMultipartUpload,
-			"AbortMultipartUpload":    s.AbortMultipartUpload,
-			"PutBucketVersioning":     s.PutBucketVersioning,
-			"GetBucketVersioning":     s.GetBucketVersioning,
-			"PutBucketTagging":        s.PutBucketTagging,
-			"GetBucketTagging":        s.GetBucketTagging,
-			"PutObjectTagging":        s.PutObjectTagging,
-			"GetObjectTagging":        s.GetObjectTagging,
-			"PutBucketWebsite":        s.PutBucketWebsite,
-			"GetBucketWebsite":        s.GetBucketWebsite,
-			"PutBucketCors":           s.PutBucketCors,
-			"GetBucketCors":           s.GetBucketCors,
+			"CreateBucket":             s.CreateBucket,
+			"PutObject":                s.PutObject,
+			"GetObject":                s.GetObject,
+			"HeadObject":               s.HeadObject,
+			"DeleteObject":             s.DeleteObject,
+			"ListObjectsV2":            s.ListObjectsV2,
+			"PutObjectMultipleKeys":    s.PutObjectMultipleKeys,
+			"ListObjectsV2Delimiter":   s.ListObjectsV2Delimiter,
+			"PutObjectFormContentType": s.PutObjectFormContentType,
+			"PutObjectPlusInKey":       s.PutObjectPlusInKey,
+			"DeleteObjects":            s.DeleteObjects,
+			"DeleteBucket":             s.DeleteBucket,
+			"CopyObject":               s.CopyObject,
+			"CreateSourceBucket":       s.CreateSourceBucket,
+			"PutSourceObject":          s.PutSourceObject,
+			"CreateMultipartUpload":    s.CreateMultipartUpload,
+			"UploadPart":               s.UploadPart,
+			"CompleteMultipartUpload":  s.CompleteMultipartUpload,
+			"AbortMultipartUpload":     s.AbortMultipartUpload,
+			"PutBucketVersioning":      s.PutBucketVersioning,
+			"GetBucketVersioning":      s.GetBucketVersioning,
+			"PutBucketTagging":         s.PutBucketTagging,
+			"GetBucketTagging":         s.GetBucketTagging,
+			"PutObjectTagging":         s.PutObjectTagging,
+			"GetObjectTagging":         s.GetObjectTagging,
+			"PutBucketWebsite":         s.PutBucketWebsite,
+			"GetBucketWebsite":         s.GetBucketWebsite,
+			"PutBucketCors":            s.PutBucketCors,
+			"GetBucketCors":            s.GetBucketCors,
 
 			"PutBucketLifecycleConfiguration":            s.PutBucketLifecycleConfiguration,
 			"GetBucketLifecycleConfiguration":            s.GetBucketLifecycleConfiguration,
@@ -234,6 +236,118 @@ func (s *s3Group) HeadObject(ctx context.Context, t *harness.TestContext) error 
 		return fmt.Errorf("HeadObject: expected ContentLength=%d, got %d", len("hello world"), aws.ToInt64(resp.ContentLength))
 	}
 	return nil
+}
+
+// PutObjectFormContentType writes an object whose Content-Type is the one a
+// bare HTTP client sends when none is set. Content-Type is metadata on AWS, not
+// a parsing instruction, but an emulator that sniffs it to spot AWS Query
+// traffic can consume the body before the S3 handler sees it — silently storing
+// zero bytes. Every SDK picks a sensible default type, so only application code
+// that sets this one explicitly reaches the case.
+func (s *s3Group) PutObjectFormContentType(ctx context.Context, t *harness.TestContext) error {
+	bucket := t.GetString("s3_bucket")
+	const key = "form-content-type"
+	const body = "hello-body-check"
+
+	if _, err := s.client().PutObject(ctx, &s3.PutObjectInput{
+		Bucket:      aws.String(bucket),
+		Key:         aws.String(key),
+		Body:        strings.NewReader(body),
+		ContentType: aws.String("application/x-www-form-urlencoded"),
+	}); err != nil {
+		return err
+	}
+
+	resp, err := s.client().GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return fmt.Errorf("PutObjectFormContentType: GetObject verify failed: %w", err)
+	}
+	defer resp.Body.Close()
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if string(got) != body {
+		return fmt.Errorf("PutObjectFormContentType: expected body %q, got %q", body, string(got))
+	}
+	if ct := aws.ToString(resp.ContentType); ct != "application/x-www-form-urlencoded" {
+		return fmt.Errorf("PutObjectFormContentType: expected ContentType %q, got %q",
+			"application/x-www-form-urlencoded", ct)
+	}
+	// Leave the group bucket as it was found: some suites' DeleteBucket test
+	// deletes this shared bucket and needs it empty by then.
+	return s.deleteCrudKey(ctx, bucket, key)
+}
+
+// deleteCrudKey removes a key a test added to the shared s3-crud bucket, so
+// the group's later DeleteBucket still sees an empty bucket.
+func (s *s3Group) deleteCrudKey(ctx context.Context, bucket, key string) error {
+	if _, err := s.client().DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	}); err != nil {
+		return fmt.Errorf("cleanup: DeleteObject %q: %w", key, err)
+	}
+	return nil
+}
+
+// PutObjectPlusInKey writes an object whose key contains "+". SDKs percent-encode
+// it as %2B in the request path — unlike a space or a multi-byte character, whose
+// encodings survive a round trip through Go's URL canonicalisation — so a server
+// that reads the raw path without decoding stores the literal three characters
+// "%2B" as part of the key.
+func (s *s3Group) PutObjectPlusInKey(ctx context.Context, t *harness.TestContext) error {
+	bucket := t.GetString("s3_bucket")
+	const key = "plusonly/a+b.txt"
+	const body = "plus-body"
+
+	if _, err := s.client().PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+		Body:   strings.NewReader(body),
+	}); err != nil {
+		return err
+	}
+
+	resp, err := s.client().GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return fmt.Errorf("PutObjectPlusInKey: GetObject verify failed: %w", err)
+	}
+	defer resp.Body.Close()
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if string(got) != body {
+		return fmt.Errorf("PutObjectPlusInKey: expected body %q, got %q", body, string(got))
+	}
+
+	listed, err := s.client().ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucket),
+		Prefix: aws.String("plusonly/"),
+	})
+	if err != nil {
+		return fmt.Errorf("PutObjectPlusInKey: ListObjectsV2 verify failed: %w", err)
+	}
+	keys := make([]string, 0, len(listed.Contents))
+	found := false
+	for _, obj := range listed.Contents {
+		k := aws.ToString(obj.Key)
+		keys = append(keys, k)
+		if k == key {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("PutObjectPlusInKey: expected key %q in ListObjectsV2, got %v", key, keys)
+	}
+	return s.deleteCrudKey(ctx, bucket, key)
 }
 
 func (s *s3Group) DeleteObject(ctx context.Context, t *harness.TestContext) error {

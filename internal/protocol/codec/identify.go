@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"strings"
+
+	"github.com/Neaox/overcast/internal/protocol"
 )
 
 // Identifier inspects a request and, if it matches the protocol's
@@ -17,12 +19,14 @@ import (
 // identifyQuery is the sole, documented exception: the AWS Query protocol
 // encodes Action into the POST body for the overwhelming majority of real
 // SDK traffic, so resolving an operation name at all requires reading the
-// body. It does so via r.FormValue, which parses (and caches on the
-// request) exactly once via the standard library's idempotent
-// r.ParseForm — every later read of Action/other fields, whether by the
-// router's own QueryDispatcher resolution, a legacy handler's
-// r.FormValue calls, or the typed codec's Decode pass, reuses that same
-// cached r.Form instead of re-reading (and re-draining) r.Body. See
+// body. It reads it through protocol.ParseFormPreservingBody, which caches
+// the fields on r.Form — every later read of Action/other fields, whether by
+// the router's own QueryDispatcher resolution, a legacy handler's r.FormValue
+// calls, or the typed codec's Decode pass, reuses that cached r.Form — and
+// puts the bytes back on r.Body so a request that only *looked* like Query
+// traffic still reaches its own handler with its payload. Identifiers run
+// ahead of routing, so "this content type means Query" is a guess, and a
+// wrong guess must not cost the request its body. See
 // docs/plans/level2-codegen.md Track 1.1.
 //
 // The order in which identifiers are tried matters; see the Smithy AWS
@@ -115,14 +119,23 @@ func (identifyQuery) Claim(r *http.Request) (Codec, string, bool) {
 	if !hasContentTypePrefix(r, "application/x-www-form-urlencoded") {
 		return nil, "", false
 	}
-	// r.FormValue parses the URL query string and, for POST bodies, the
-	// form-encoded body — via the standard library's r.ParseForm, which
-	// caches its result on the request (r.Form) and is a no-op on any
-	// later call. Content-Type is already confirmed above, so the body
-	// read here is exactly the parse the codec's Decode pass (and any
-	// legacy handler) needs anyway; nothing downstream re-reads r.Body
-	// directly, so there is no double-consumption hazard.
-	return QueryXML, r.FormValue("Action"), true
+	// The AWS Query protocol puts Action in the body only on POST. Every
+	// other method carrying this content type is some other service's
+	// request wearing a default header — an S3 PutObject above all, since
+	// that is what a bare HTTP client sends when no content type is set —
+	// so its body is the payload and must not be touched here.
+	if r.Method != http.MethodPost {
+		return QueryXML, r.URL.Query().Get("Action"), true
+	}
+	// ParseFormPreservingBody caches the parsed fields on r.Form, which the
+	// codec's Decode pass and any legacy handler's r.FormValue calls reuse,
+	// and it hands the body back readable so a request that turns out not to
+	// be Query traffic still reaches its handler intact. An oversized body is
+	// not a Query request at all; Action then comes from the URL, if anywhere.
+	if err := protocol.ParseFormPreservingBody(r); err != nil {
+		return QueryXML, r.URL.Query().Get("Action"), true
+	}
+	return QueryXML, r.Form.Get("Action"), true
 }
 
 // --- helpers ----------------------------------------------------------

@@ -2,6 +2,7 @@ package s3
 
 import (
 	"net/http"
+	"net/url"
 
 	"github.com/go-chi/chi/v5"
 
@@ -16,8 +17,26 @@ import (
 // objectKey extracts the object key from a chi wildcard route.
 // chi's "*" param returns the path after /{bucket}/, so "/my-bucket/a/b/c"
 // yields "a/b/c". This is needed because chi's {key:.+} doesn't match slashes.
+//
+// chi routes on r.URL.RawPath whenever that is set, and net/url sets it only
+// when Go's canonical escaping of the decoded path differs from what the client
+// sent. So the wildcard arrives already decoded for `%20` or multi-byte UTF-8 —
+// Go re-escapes those identically — but still percent-encoded for characters Go
+// leaves bare in a path, notably `+`, `=` and `&`. Unescaping exactly when
+// RawPath is set is what keeps `a%2Bb.txt` from being stored under the literal
+// key `a%2Bb.txt`, without double-decoding a key that really does contain a
+// percent sign (`a%2520b` decodes to `a%20b` and stops there, because net/url
+// re-escapes that back to what the client sent and so leaves RawPath empty).
 func objectKey(r *http.Request) string {
-	return chi.URLParam(r, "*")
+	key := chi.URLParam(r, "*")
+	if r.URL.RawPath == "" {
+		return key
+	}
+	decoded, err := url.PathUnescape(key)
+	if err != nil {
+		return key
+	}
+	return decoded
 }
 
 // Handler holds the dependencies for S3 HTTP handlers.
