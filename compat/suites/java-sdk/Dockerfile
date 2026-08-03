@@ -9,7 +9,12 @@ COPY java-sdk/pom.xml .
 RUN mvn dependency:go-offline -q
 
 COPY java-sdk/src/ src/
-RUN mvn package -q -DskipTests
+# The registry loader's unit tests resolve the suite's impl keys against the
+# real registry.json, which WORKDIR /build finds at ../registry.json. Running
+# them here means an unusable registration fails the image build rather than
+# surfacing as a wrong result in a compat run.
+COPY registry.json /registry.json
+RUN mvn package -q
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM eclipse-temurin:17-jre-alpine

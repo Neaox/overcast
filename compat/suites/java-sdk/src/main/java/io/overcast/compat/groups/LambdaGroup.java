@@ -36,12 +36,12 @@ public final class LambdaGroup implements ServiceGroup {
     @Override
     public Map<String, TestFn> impls() {
         return Map.ofEntries(
-                Map.entry("lambda-crud/CreateFunction",             this::createFunction),
-                Map.entry("lambda-crud/GetFunction",                this::getFunction),
-                Map.entry("lambda-crud/ListFunctions",              this::listFunctions),
+                Map.entry("lambda-crud:CreateFunction",             this::createFunction),
+                Map.entry("lambda-crud:GetFunction",                this::getFunction),
+                Map.entry("lambda-crud:ListFunctions",              this::listFunctions),
                 Map.entry("UpdateFunctionCode",         this::updateFunctionCode),
                 Map.entry("UpdateFunctionConfiguration",this::updateFunctionConfiguration),
-                Map.entry("lambda-crud/DeleteFunction",             this::deleteFunction),
+                Map.entry("lambda-crud:DeleteFunction",             this::deleteFunction),
                 Map.entry("InvokeDryRun",               this::invokeDryRun),
                 Map.entry("InvokeSync",                 this::invokeSync),
                 Map.entry("InvokeAsync",                this::invokeAsync),

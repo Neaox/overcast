@@ -33,7 +33,7 @@ public final class CognitoGroup implements ServiceGroup {
                 Map.entry("CreateUserPoolClient", this::createUserPoolClient),
                 Map.entry("ListUserPoolClients",  this::listUserPoolClients),
                 Map.entry("AdminCreateUser",      this::adminCreateUser),
-                Map.entry("cognito-userpools/ListUsers", this::listUsers),
+                Map.entry("cognito-userpools:ListUsers", this::listUsers),
                 Map.entry("AdminDeleteUser",      this::adminDeleteUser),
                 Map.entry("DeleteUserPool",       this::deleteUserPool),
                 Map.entry("CreateUserPoolClientWithTokenValidity", this::createClientTokenValidity),

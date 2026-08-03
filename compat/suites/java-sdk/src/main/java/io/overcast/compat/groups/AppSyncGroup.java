@@ -51,11 +51,11 @@ public final class AppSyncGroup implements ServiceGroup {
                 Map.entry("ListDataSources",  this::listDataSources),
                 Map.entry("DeleteDataSource", this::deleteDataSource),
                 // appsync-functions — group-qualified to avoid colliding with Lambda
-                Map.entry("appsync-functions/CreateFunction", this::createFunction),
-                Map.entry("appsync-functions/GetFunction",    this::getFunction),
-                Map.entry("appsync-functions/UpdateFunction", this::updateFunction),
-                Map.entry("appsync-functions/ListFunctions",  this::listFunctions),
-                Map.entry("appsync-functions/DeleteFunction", this::deleteFunction),
+                Map.entry("appsync-functions:CreateFunction", this::createFunction),
+                Map.entry("appsync-functions:GetFunction",    this::getFunction),
+                Map.entry("appsync-functions:UpdateFunction", this::updateFunction),
+                Map.entry("appsync-functions:ListFunctions",  this::listFunctions),
+                Map.entry("appsync-functions:DeleteFunction", this::deleteFunction),
                 // appsync-resolvers
                 Map.entry("CreateResolver",          this::createResolver),
                 Map.entry("GetResolver",             this::getResolver),
@@ -70,9 +70,9 @@ public final class AppSyncGroup implements ServiceGroup {
                 Map.entry("ListTypes",  this::listTypes),
                 Map.entry("DeleteType", this::deleteType),
                 // appsync-tags — group-qualified to avoid colliding with SecretsManager
-                Map.entry("appsync-tags/TagResource",         this::tagResource),
-                Map.entry("appsync-tags/ListTagsForResource", this::listTagsForResource),
-                Map.entry("appsync-tags/UntagResource",       this::untagResource),
+                Map.entry("appsync-tags:TagResource",         this::tagResource),
+                Map.entry("appsync-tags:ListTagsForResource", this::listTagsForResource),
+                Map.entry("appsync-tags:UntagResource",       this::untagResource),
                 // appsync-env-vars
                 Map.entry("PutGraphqlApiEnvironmentVariables", this::putEnvVars),
                 Map.entry("GetGraphqlApiEnvironmentVariables", this::getEnvVars),
