@@ -17,6 +17,11 @@ const (
 	stateCreating  = "creating"
 	stateAvailable = "available"
 	stateDeleting  = "deleting"
+	// stateError is only reachable for mount targets, and only with the NFS
+	// data plane on: an export container that never answered leaves the mount
+	// target in the same state AWS reports for a mount target that failed to
+	// come up, rather than claiming it is serving.
+	stateError = "error"
 )
 
 // AWS-documented limits.

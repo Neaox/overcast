@@ -21,9 +21,10 @@ import (
 // The NFS data plane (OVERCAST_EFS_NFS=true, live mode only) gives each mount
 // target a userspace NFS server: one NFS-Ganesha container per mount target,
 // exporting the file system's Docker volume with container port 2049 published
-// on a dynamic host port. Nothing here is privileged and no kernel module is
-// involved — Ganesha is a plain userspace daemon, so the export works the same
-// on Linux, macOS and Windows Docker hosts.
+// on a dynamic host port. No kernel module is involved and the container is
+// not privileged — Ganesha is a plain userspace daemon needing exactly one
+// capability beyond Docker's default set (see nfsExportCapability), so the
+// export works the same on Linux, macOS and Windows Docker hosts.
 //
 // This is opt-in because it is not needed for the common case: Lambda and ECS
 // mount the same named volume directly (steps 2 and 3), so cross-service data
@@ -43,11 +44,22 @@ const (
 	nsNFSPorts = "efs:nfsports"
 	// nfsPortRange bounds the search above EFSNFSPortBase.
 	nfsPortRange = 1000
+	// nfsExportCapability is the single Linux capability the export container
+	// needs on top of Docker's default set. Ganesha's VFS FSAL resolves NFS
+	// file handles with open_by_handle_at(), which the kernel gates on
+	// CAP_DAC_READ_SEARCH — Docker's default set clears it (bit 2 of CapEff).
+	// Without it the daemon starts and accepts one mount, then serves nothing:
+	// readdir comes back empty, writes fail with EPERM, and every later mount
+	// is refused, with Ganesha logging "Failed to get attrs for referral …
+	// Forbidden action". One capability keeps the container unprivileged;
+	// --privileged would grant the same thing and forty more.
+	nfsExportCapability = "DAC_READ_SEARCH"
 )
 
 // Readiness polling: bounded retries, no fixed sleeps. An export that never
-// answers falls back to "available" rather than wedging the mount target —
-// same degradation the rest of live mode uses when Docker misbehaves.
+// answers settles the mount target in "error" rather than leaving it
+// "creating" forever — the resource is never wedged, but it never claims to
+// serve data it cannot serve either.
 const (
 	nfsReadyInterval = 500 * time.Millisecond
 	nfsReadyAttempts = 60
@@ -58,7 +70,7 @@ const (
 	// nfsPullTimeout bounds the image pull on its own, because the first one
 	// on a machine fetches a few hundred megabytes and legitimately outlasts
 	// any sane container-start budget. Sharing one deadline meant a slow cold
-	// pull silently downgraded the mount target to metadata-only.
+	// pull cost the mount target its export.
 	nfsPullTimeout = 15 * time.Minute
 )
 
@@ -249,20 +261,54 @@ func buildGaneshaConfig(exports []ganeshaExport) string {
 	return b.String()
 }
 
+// pseudoAnchors returns the directories that must exist inside the volume
+// before ganesha.nfsd parses the configuration — one per non-root pseudo path.
+//
+// Ganesha builds its pseudo-filesystem by grafting every export's Pseudo path
+// onto the tree, and it can only create the intermediate nodes on a PSEUDO
+// FSAL. The volume root is a VFS export at "/", so an access point's
+// "/fsap-…" node has a VFS parent: Ganesha looks the name up instead, and a
+// miss is fatal for the whole daemon, not just that export ("can't create
+// directory on non-PSEUDO FSAL" → "Could not complete creating PseudoFS").
+// An empty directory of the same name in the volume makes the lookup succeed;
+// the graft then shadows it, so its contents never show through.
+//
+// Rooting the tree on a PSEUDO export instead would avoid the anchors, but it
+// would also stop "<mount target>:/" being the file system root — which is
+// exactly what a client mounts on real EFS — so the anchors are the cheaper
+// trade. Their one visible cost is that a listing of the file system root
+// shows an empty directory per access point.
+func pseudoAnchors(exports []ganeshaExport) []string {
+	anchors := make([]string, 0, len(exports))
+	for _, e := range exports {
+		if e.Pseudo == "" || e.Pseudo == "/" {
+			continue
+		}
+		anchors = append(anchors, nfsExportRoot+e.Pseudo)
+	}
+	return anchors
+}
+
 // ganeshaStartScript writes the configuration into the container and execs the
 // daemon. The image is used purely as a carrier for ganesha.nfsd and its VFS
 // FSAL, so the entrypoint is replaced rather than configured: writing the file
 // from the command line keeps the whole export self-contained, with no host
 // bind mount and no dependence on the image's own entrypoint.
-func ganeshaStartScript(conf string) string {
+func ganeshaStartScript(exports []ganeshaExport) string {
 	const confPath = "/etc/overcast-ganesha.conf"
 	var b strings.Builder
 	b.WriteString("set -e\n")
 	// ganesha.nfsd writes a pid file and callback credentials here and exits
 	// if the directory is missing.
 	b.WriteString("mkdir -p /usr/local/var/run/ganesha " + shQuote(nfsExportRoot) + "\n")
+	// Anchor every access point's pseudo path in the volume. mkdir -p keeps
+	// this idempotent across restarts and harmless when the directory is
+	// already there.
+	for _, anchor := range pseudoAnchors(exports) {
+		b.WriteString("mkdir -p " + shQuote(anchor) + "\n")
+	}
 	b.WriteString("cat > " + confPath + " <<'OVERCAST_GANESHA_EOF'\n")
-	b.WriteString(conf)
+	b.WriteString(buildGaneshaConfig(exports))
 	b.WriteString("\nOVERCAST_GANESHA_EOF\n")
 	b.WriteString("exec ganesha.nfsd -F -L /dev/stdout -f " + confPath + " -N NIV_EVENT\n")
 	return b.String()
@@ -286,9 +332,11 @@ func (s *Service) startExportAsync(region, mountTargetID, fsID string) {
 }
 
 // startExport creates and starts one mount target's NFS-Ganesha container,
-// then hands off to the readiness probe. Every failure path leaves the mount
-// target usable as metadata and transitions it to "available" — live mode
-// degrades, it does not fail the control plane.
+// then hands off to the readiness probe. The control plane never fails:
+// CreateMountTarget has already answered and the mount target keeps working as
+// metadata. What it does not do is claim to be serving — a mount target whose
+// export could not be brought up settles in "error", so DescribeMountTargets
+// tells the truth about a data plane the caller explicitly asked for.
 func (s *Service) startExport(ctx context.Context, region, mountTargetID, fsID string) {
 	if !s.nfsActive() {
 		return
@@ -301,7 +349,7 @@ func (s *Service) startExport(ctx context.Context, region, mountTargetID, fsID s
 		if !existing.HasOvercastLabels(serviceName, mountTargetID) {
 			s.log.Warn("efs: container name taken by a container we do not manage — skipping export",
 				zap.String("mount_target", mountTargetID), zap.String("container", name))
-			s.markMountTargetAvailable(ctx, region, mountTargetID)
+			s.markExportFailed(ctx, region, mountTargetID)
 			return
 		}
 		hostPort := publishedPort(existing.NetworkSettings.Ports[nfsContainerPort])
@@ -325,33 +373,35 @@ func (s *Service) startExport(ctx context.Context, region, mountTargetID, fsID s
 
 	exports, err := s.ganeshaExportsFor(ctx, region, fsID)
 	if err != nil {
-		s.log.Warn("efs: build exports — mount target stays metadata-only",
+		s.log.Warn("efs: build exports — mount target has no export",
 			zap.String("mount_target", mountTargetID), zap.Error(err))
-		s.markMountTargetAvailable(ctx, region, mountTargetID)
+		s.markExportFailed(ctx, region, mountTargetID)
 		return
 	}
 
 	hostPort, err := s.allocateNFSPort(ctx, mountTargetID)
 	if err != nil {
-		s.log.Warn("efs: allocate NFS port — mount target stays metadata-only",
+		s.log.Warn("efs: allocate NFS port — mount target has no export",
 			zap.String("mount_target", mountTargetID), zap.Error(err))
-		s.markMountTargetAvailable(ctx, region, mountTargetID)
+		s.markExportFailed(ctx, region, mountTargetID)
 		return
 	}
 
 	if s.puller == nil {
+		s.log.Warn("efs: no image puller wired — mount target has no export",
+			zap.String("mount_target", mountTargetID))
 		s.releaseNFSPort(ctx, hostPort)
-		s.markMountTargetAvailable(ctx, region, mountTargetID)
+		s.markExportFailed(ctx, region, mountTargetID)
 		return
 	}
 	pullCtx, cancelPull := context.WithTimeout(ctx, nfsPullTimeout)
 	err = s.puller.Ensure(pullCtx, s.cfg.EFSNFSImage)
 	cancelPull()
 	if err != nil {
-		s.log.Warn("efs: pull NFS image — mount target stays metadata-only",
+		s.log.Warn("efs: pull NFS image — mount target has no export",
 			zap.String("image", s.cfg.EFSNFSImage), zap.Error(err))
 		s.releaseNFSPort(ctx, hostPort)
-		s.markMountTargetAvailable(ctx, region, mountTargetID)
+		s.markExportFailed(ctx, region, mountTargetID)
 		return
 	}
 
@@ -374,7 +424,7 @@ func (s *Service) startExport(ctx context.Context, region, mountTargetID, fsID s
 		ContainerConfig: &docker.ContainerConfig{
 			Image:        s.cfg.EFSNFSImage,
 			Entrypoint:   []string{"/bin/sh", "-c"},
-			Cmd:          []string{ganeshaStartScript(buildGaneshaConfig(exports))},
+			Cmd:          []string{ganeshaStartScript(exports)},
 			ExposedPorts: map[string]struct{}{nfsContainerPort: {}},
 			Labels:       docker.ManagedLabels(serviceName, mountTargetID),
 		},
@@ -383,6 +433,7 @@ func (s *Service) startExport(ctx context.Context, region, mountTargetID, fsID s
 			PortBindings: map[string][]docker.PortBinding{
 				nfsContainerPort: {{HostIP: "0.0.0.0", HostPort: strconv.Itoa(hostPort)}},
 			},
+			CapAdd: []string{nfsExportCapability},
 		},
 	}
 	if network != "" {
@@ -393,21 +444,21 @@ func (s *Service) startExport(ctx context.Context, region, mountTargetID, fsID s
 	}
 	containerID, err := s.docker.CreateContainer(startCtx, name, req)
 	if err != nil {
-		s.log.Warn("efs: create export container — mount target stays metadata-only",
+		s.log.Warn("efs: create export container — mount target has no export",
 			zap.String("mount_target", mountTargetID), zap.Error(err))
 		s.releaseNFSPort(ctx, hostPort)
-		s.markMountTargetAvailable(ctx, region, mountTargetID)
+		s.markExportFailed(ctx, region, mountTargetID)
 		return
 	}
 
 	if err := s.docker.StartContainer(startCtx, containerID); err != nil {
-		s.log.Warn("efs: start export container — mount target stays metadata-only",
+		s.log.Warn("efs: start export container — mount target has no export",
 			zap.String("mount_target", mountTargetID), zap.Error(err))
 		if rmErr := s.docker.RemoveContainer(context.Background(), containerID, true); rmErr != nil {
 			s.log.Warn("efs: remove failed export container", zap.String("container", containerID), zap.Error(rmErr))
 		}
 		s.releaseNFSPort(ctx, hostPort)
-		s.markMountTargetAvailable(ctx, region, mountTargetID)
+		s.markExportFailed(ctx, region, mountTargetID)
 		return
 	}
 
@@ -498,25 +549,47 @@ func (s *Service) stopExport(ctx context.Context, rec *mountTargetRecord) {
 }
 
 // markMountTargetAvailable completes the creating → available transition for a
-// mount target whose export could not be started.
+// mount target whose export is serving.
 func (s *Service) markMountTargetAvailable(ctx context.Context, region, mountTargetID string) {
+	s.settleMountTarget(ctx, region, mountTargetID, stateAvailable)
+}
+
+// markExportFailed settles a mount target whose export could not be brought up
+// into "error". The mount target still exists and still deletes normally — it
+// simply stops advertising a data plane it does not have. AWS uses the same
+// state for a mount target that failed to come up, so a caller polling
+// DescribeMountTargets for "available" sees a terminal answer either way
+// instead of a silent lie.
+func (s *Service) markExportFailed(ctx context.Context, region, mountTargetID string) {
+	s.settleMountTarget(ctx, region, mountTargetID, stateError)
+}
+
+// settleMountTarget moves a mount target out of "creating" — or out of
+// "error", so a mount target whose export failed once recovers when
+// reconciliation starts a working one after a restart. A mount target that is
+// already available is never downgraded by a straggling goroutine, and one
+// that is deleting is left alone entirely.
+func (s *Service) settleMountTarget(ctx context.Context, region, mountTargetID, state string) {
 	rec, found, err := s.getMountTarget(ctx, region, mountTargetID)
-	if err != nil || !found || rec.LifeCycleState != stateCreating {
+	if err != nil || !found || rec.LifeCycleState == state {
 		return
 	}
-	rec.LifeCycleState = stateAvailable
+	if rec.LifeCycleState != stateCreating && rec.LifeCycleState != stateError {
+		return
+	}
+	rec.LifeCycleState = state
 	if err := s.putMountTarget(ctx, region, rec); err != nil {
-		s.log.Warn("efs: mount target transition to available failed",
-			zap.String("mount_target", mountTargetID), zap.Error(err))
+		s.log.Warn("efs: mount target transition failed",
+			zap.String("mount_target", mountTargetID), zap.String("state", state), zap.Error(err))
 	}
 }
 
 // ─── Readiness ────────────────────────────────────────────────────────────────
 
 // scheduleExportReadiness polls the export with bounded retries and marks the
-// mount target available once it answers an NFSv4 NULL call — or once the
-// retries run out, so a wedged export cannot leave a mount target "creating"
-// forever.
+// mount target available once it answers an NFSv4 NULL call. When the retries
+// run out it settles in "error" instead, so a wedged export neither leaves the
+// mount target "creating" forever nor passes itself off as a working one.
 func (s *Service) scheduleExportReadiness(region, mountTargetID, containerID string, hostPort int) {
 	if s.skipNFSReadiness {
 		s.markMountTargetAvailable(
@@ -540,9 +613,13 @@ func (s *Service) scheduleExportReadiness(region, mountTargetID, containerID str
 			return
 		}
 		if attempt >= nfsReadyAttempts {
-			s.log.Warn("efs: NFS export never answered — mount target available without a working export",
-				zap.String("mount_target", mountTargetID), zap.String("addr", addr), zap.Int("attempts", attempt))
-			s.markMountTargetAvailable(ctx, region, mountTargetID)
+			// The container exists but never served: a configuration the daemon
+			// rejected, an image that is not Ganesha, a port that never bound.
+			// Its logs are the only place the reason lives, so name it here.
+			s.log.Warn("efs: NFS export never answered — mount target reports error",
+				zap.String("mount_target", mountTargetID), zap.String("addr", addr),
+				zap.Int("attempts", attempt), zap.String("container", containerID))
+			s.markExportFailed(ctx, region, mountTargetID)
 			return
 		}
 		s.scheduler.AfterScoped(region, mountTargetID, "nfs-ready", nfsReadyInterval, probe)
