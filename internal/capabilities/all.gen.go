@@ -1190,7 +1190,7 @@ var AllCapabilities = []Capability{
 	{Service: "secretsmanager", Operation: "DeleteResourcePolicy", Category: "Policy/Misc", Status: StatusSupported, Notes: "Removes the stored policy", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "secretsmanager", Operation: "DeleteSecret", Category: "Secret CRUD", Status: StatusSupported, Notes: "Immediate (ForceDelete) only", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "secretsmanager", Operation: "DescribeSecret", Category: "Secret CRUD", Status: StatusSupported, Notes: "Metadata, tags, versions, rotation dates", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
-	{Service: "secretsmanager", Operation: "GetRandomPassword", Category: "Password", Status: StatusSupported, Notes: "Configurable length + exclusions", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "secretsmanager", Operation: "GetRandomPassword", Category: "Password", Status: StatusSupported, Notes: "Length, exclusions, RequireEachIncludedType", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "secretsmanager", Operation: "GetResourcePolicy", Category: "Policy/Misc", Status: StatusSupported, Notes: "Stored policy; not evaluated (#496)", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "secretsmanager", Operation: "GetSecretValue", Category: "Secret CRUD", Status: StatusSupported, Notes: "By name, ARN, version ID, or stage", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "secretsmanager", Operation: "ListSecretVersionIds", Category: "Secret CRUD", Status: StatusSupported, Notes: "All versions with staging labels", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},

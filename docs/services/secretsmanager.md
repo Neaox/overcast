@@ -58,7 +58,7 @@ rpc-v2-cbor`.
 | ReplicateSecretToRegions     | ❌     | Returns 501                        | [link](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_ReplicateSecretToRegions.html)     |
 | RemoveRegionsFromReplication | ❌     | Returns 501                        | [link](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_RemoveRegionsFromReplication.html) |
 | ValidateResourcePolicy       | ✅     | Syntax + schema checks, no evaluation | [link](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_ValidateResourcePolicy.html)    |
-| GetRandomPassword            | ✅     | Configurable length + exclusions   | [link](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetRandomPassword.html)            |
+| GetRandomPassword            | ✅     | Length, exclusions, RequireEachIncludedType | [link](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetRandomPassword.html)   |
 | BatchGetSecretValue          | ✅     | Partial results on missing secrets | [link](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_BatchGetSecretValue.html)          |
 
 ## SDK compatibility
@@ -76,6 +76,7 @@ rpc-v2-cbor`.
 - **Versioning**: `PutSecretValue` honours `ClientRequestToken` (which becomes the version ID) and `VersionStages` (default `AWSCURRENT`). Taking `AWSCURRENT` off a version moves `AWSPREVIOUS` onto it. Versions carrying a staging label are never pruned. A version that exists but holds no value — the state a rotation leaves between staging `AWSPENDING` and the function writing to it — is listed by `DescribeSecret` but reported as `ResourceNotFoundException` by `GetSecretValue`, and `PutSecretValue` under that token fills it rather than answering `ResourceExistsException`.
 - **Deletion**: `ForceDeleteWithoutRecovery` is always treated as immediate deletion. Recovery window scheduling is not implemented, which is why `RestoreSecret` is still a 501.
 - **Lookup**: Secrets resolve by name, by full ARN, or by the partial ARN without the six-character random suffix — all three, as on AWS.
+- **Password generation**: `GetRandomPassword` honours `PasswordLength` (default 32), the `Exclude*` settings, `IncludeSpace`, and `RequireEachIncludedType` — which, as on AWS, defaults to true, so a generated password holds at least one character of every type the exclusions left available. CloudFormation's `AWS::SecretsManager::Secret` `GenerateSecretString` generates through this same operation rather than carrying its own generator; see [CloudFormation § Notes](./cloudformation.md).
 
 ### Rotation
 
@@ -174,9 +175,9 @@ in AWS's shape but are not a stable identifier to branch on — read the
 
 ### Password
 
-| Operation           | Status       | Notes                            | AWS Docs                                                                                          |
-| ------------------- | ------------ | -------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `GetRandomPassword` | ✅ Supported | Configurable length + exclusions | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetRandomPassword.html) |
+| Operation           | Status       | Notes                                       | AWS Docs                                                                                          |
+| ------------------- | ------------ | ------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `GetRandomPassword` | ✅ Supported | Length, exclusions, RequireEachIncludedType | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetRandomPassword.html) |
 
 ### Policy/Misc
 

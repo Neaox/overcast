@@ -1936,6 +1936,27 @@ func internalQuery(ctx context.Context, router http.Handler, region string, para
 
 type sqsQueueHandler struct{}
 
+// cfnFloatProp reads a numeric CFN property, which may arrive as float64,
+// json.Number, or the string form a raw template is free to write.
+func cfnFloatProp(props map[string]any, name string) (float64, bool) {
+	v, ok := props[name]
+	if !ok || v == nil {
+		return 0, false
+	}
+	switch t := v.(type) {
+	case float64:
+		return t, true
+	case json.Number:
+		f, err := t.Float64()
+		return f, err == nil
+	case string:
+		f, err := strconv.ParseFloat(t, 64)
+		return f, err == nil
+	default:
+		return 0, false
+	}
+}
+
 func cfnScalarString(v any) string {
 	switch t := v.(type) {
 	case string:
@@ -2922,6 +2943,9 @@ func (h *secretsManagerSecretHandler) Update(ctx context.Context, router http.Ha
 		}
 	}
 
+	// GenerateSecretString is deliberately absent here: AWS generates the value
+	// once, at create, and an update that changes the generation settings does
+	// not re-roll the live secret out from under whatever is already using it.
 	body := map[string]any{"SecretId": physicalID}
 	haveMutable := false
 	if v, ok := props["Description"]; ok {
@@ -2955,8 +2979,30 @@ func (h *secretsManagerSecretHandler) Create(ctx context.Context, router http.Ha
 		name = rCtx.generatedName()
 	}
 	body := map[string]any{"Name": name}
-	if sv, ok := props["SecretString"]; ok {
+	sv, haveLiteral := props["SecretString"]
+	haveLiteral = haveLiteral && sv != nil
+	genRaw, haveGenerated := props["GenerateSecretString"]
+	haveGenerated = haveGenerated && genRaw != nil
+	switch {
+	case haveLiteral && haveGenerated:
+		return "", nil, fmt.Errorf("you can't specify both the SecretString and GenerateSecretString properties")
+	case haveLiteral:
 		body["SecretString"] = sv
+	case haveGenerated:
+		// Without this the secret is created with an AWSCURRENT version holding
+		// nothing, and every GetSecretValue against it answers
+		// ResourceNotFoundException — a value-less staged version is what an
+		// in-flight rotation looks like. Failing the resource on a malformed
+		// property beats falling back to that.
+		gen, ok := genRaw.(map[string]any)
+		if !ok {
+			return "", nil, fmt.Errorf("GenerateSecretString must be an object, got %T", genRaw)
+		}
+		value, err := generatedSecretString(ctx, router, rCtx, gen)
+		if err != nil {
+			return "", nil, err
+		}
+		body["SecretString"] = value
 	}
 	if desc, ok := props["Description"]; ok {
 		body["Description"] = desc
@@ -2973,6 +3019,71 @@ func (h *secretsManagerSecretHandler) Create(ctx context.Context, router http.Ha
 		}
 	}
 	return name, map[string]string{"Name": name}, nil
+}
+
+// generatedSecretString resolves AWS::SecretsManager::Secret's
+// GenerateSecretString into the value CloudFormation stores as the secret's
+// first version. The password itself comes from the service's own
+// GetRandomPassword, so the exclusion rules live in one place.
+func generatedSecretString(ctx context.Context, router http.Handler, rCtx *resolveContext, gen map[string]any) (string, error) {
+	tmpl, _ := gen["SecretStringTemplate"].(string)
+	key, _ := gen["GenerateStringKey"].(string)
+	if (tmpl == "") != (key == "") {
+		return "", fmt.Errorf("GenerateSecretString: SecretStringTemplate and GenerateStringKey must be specified together")
+	}
+
+	body := map[string]any{}
+	if length, ok := cfnFloatProp(gen, "PasswordLength"); ok {
+		body["PasswordLength"] = int64(length)
+	}
+	if excluded, ok := gen["ExcludeCharacters"].(string); ok {
+		body["ExcludeCharacters"] = excluded
+	}
+	// Template values may arrive as JSON booleans or as the strings a raw
+	// template writes, which is what asBool exists to smooth over.
+	for _, flag := range []string{
+		"ExcludeNumbers",
+		"ExcludePunctuation",
+		"ExcludeUppercase",
+		"ExcludeLowercase",
+		"IncludeSpace",
+		"RequireEachIncludedType",
+	} {
+		if v, ok := gen[flag]; ok {
+			body[flag] = asBool(v)
+		}
+	}
+
+	rec, err := internalJSON(ctx, router, rCtx.Region, "secretsmanager.GetRandomPassword", body)
+	if err != nil {
+		return "", fmt.Errorf("secretsmanager GetRandomPassword: %w", err)
+	}
+	var resp struct {
+		RandomPassword string `json:"RandomPassword"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		return "", fmt.Errorf("secretsmanager GetRandomPassword: %w", err)
+	}
+	if resp.RandomPassword == "" {
+		return "", fmt.Errorf("secretsmanager GetRandomPassword returned no password")
+	}
+	if tmpl == "" {
+		return resp.RandomPassword, nil
+	}
+
+	// With a template the secret is that JSON object with the generated
+	// password added under GenerateStringKey, which is how the CDK's
+	// `{ username, password }` database credentials are built.
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(tmpl), &fields); err != nil {
+		return "", fmt.Errorf("GenerateSecretString: SecretStringTemplate is not a JSON object: %w", err)
+	}
+	fields[key] = resp.RandomPassword
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return "", fmt.Errorf("GenerateSecretString: %w", err)
+	}
+	return string(out), nil
 }
 
 func (h *secretsManagerSecretHandler) Delete(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, rCtx *resolveContext) error {

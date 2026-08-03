@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -39,7 +38,7 @@ func (h *efsFileSystemHandler) Create(ctx context.Context, router http.Handler, 
 	if v, _ := props["ThroughputMode"].(string); v != "" {
 		body["ThroughputMode"] = v
 	}
-	if v, ok := efsFloatProp(props, "ProvisionedThroughputInMibps"); ok {
+	if v, ok := cfnFloatProp(props, "ProvisionedThroughputInMibps"); ok {
 		body["ProvisionedThroughputInMibps"] = v
 	}
 	if v, _ := props["AvailabilityZoneName"].(string); v != "" {
@@ -92,8 +91,8 @@ func (h *efsFileSystemHandler) Update(ctx context.Context, router http.Handler, 
 
 	newMode, _ := props["ThroughputMode"].(string)
 	oldMode, _ := oldProps["ThroughputMode"].(string)
-	newTP, hasNewTP := efsFloatProp(props, "ProvisionedThroughputInMibps")
-	oldTP, hasOldTP := efsFloatProp(oldProps, "ProvisionedThroughputInMibps")
+	newTP, hasNewTP := cfnFloatProp(props, "ProvisionedThroughputInMibps")
+	oldTP, hasOldTP := cfnFloatProp(oldProps, "ProvisionedThroughputInMibps")
 	if newMode != oldMode || hasNewTP != hasOldTP || newTP != oldTP {
 		body := map[string]any{"FileSystemId": physicalID}
 		if newMode != "" {
@@ -306,27 +305,6 @@ func efsBackupPolicyStatus(props map[string]any) string {
 	return status
 }
 
-// efsFloatProp reads a numeric CFN property that may arrive as float64,
-// json.Number, or string.
-func efsFloatProp(props map[string]any, name string) (float64, bool) {
-	v, ok := props[name]
-	if !ok || v == nil {
-		return 0, false
-	}
-	switch t := v.(type) {
-	case float64:
-		return t, true
-	case json.Number:
-		f, err := t.Float64()
-		return f, err == nil
-	case string:
-		f, err := strconv.ParseFloat(t, 64)
-		return f, err == nil
-	default:
-		return 0, false
-	}
-}
-
 // efsPropEqual compares two resolved CFN property values structurally.
 func efsPropEqual(a, b any) bool {
 	if a == nil && b == nil {
@@ -393,14 +371,14 @@ func efsSyncTags(ctx context.Context, router http.Handler, region, resourceID st
 func efsNumericPosix(in map[string]any) map[string]any {
 	out := copyStringAnyMap(in)
 	for _, key := range []string{"Uid", "Gid"} {
-		if v, ok := efsFloatProp(out, key); ok {
+		if v, ok := cfnFloatProp(out, key); ok {
 			out[key] = v
 		}
 	}
 	if gids, ok := out["SecondaryGids"].([]any); ok {
 		converted := make([]any, 0, len(gids))
 		for _, g := range gids {
-			if f, ok := efsFloatProp(map[string]any{"v": g}, "v"); ok {
+			if f, ok := cfnFloatProp(map[string]any{"v": g}, "v"); ok {
 				converted = append(converted, f)
 			}
 		}
@@ -416,7 +394,7 @@ func efsNumericRootDirectory(in map[string]any) map[string]any {
 	if ci, ok := out["CreationInfo"].(map[string]any); ok {
 		converted := copyStringAnyMap(ci)
 		for _, key := range []string{"OwnerUid", "OwnerGid"} {
-			if v, ok := efsFloatProp(converted, key); ok {
+			if v, ok := cfnFloatProp(converted, key); ok {
 				converted[key] = v
 			}
 		}
