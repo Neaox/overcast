@@ -2,8 +2,15 @@ import { useMemo, useState, useRef } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { useScrollTrigger } from "@/hooks/use-scroll-trigger"
 import { cn } from "@/lib/utils"
-import Prism from "@/lib/prism"
 import { stripAnsi } from "@/lib/ansi"
+import {
+  detectLogLevel,
+  formatLogTime,
+  highlightJSON,
+  logLevelRowClass,
+  stringifyJSON,
+  tryParseJSON,
+} from "@/lib/log-format"
 import { AnsiText } from "./ansi-text"
 
 export interface LogViewerEvent {
@@ -24,56 +31,6 @@ interface LogViewerProps {
   defaultMode?: "table" | "plain"
   showModeToggle?: boolean
   className?: string
-}
-
-function formatTimestamp(ts?: number): string {
-  if (ts == null) return "-"
-  const d = new Date(ts)
-  const hh = String(d.getHours()).padStart(2, "0")
-  const mm = String(d.getMinutes()).padStart(2, "0")
-  const ss = String(d.getSeconds()).padStart(2, "0")
-  const ms = String(d.getMilliseconds()).padStart(3, "0")
-  return `${hh}:${mm}:${ss}.${ms}`
-}
-
-/** Detect log level from message content. */
-function detectLogLevel(msg: string): "error" | "warn" | "info" | "debug" | null {
-  const levelMatch = msg.match(/"level"\s*:\s*"(\w+)"/i)
-  if (levelMatch) {
-    const l = levelMatch[1].toLowerCase()
-    if (l === "error" || l === "fatal" || l === "critical") return "error"
-    if (l === "warn" || l === "warning") return "warn"
-    if (l === "info") return "info"
-    if (l === "debug" || l === "trace") return "debug"
-  }
-  const prefix = msg.slice(0, 80).toUpperCase()
-  if (/\bERROR\b|\bFATAL\b|\bCRITICAL\b/.test(prefix)) return "error"
-  if (/\bWARN(ING)?\b/.test(prefix)) return "warn"
-  if (/\bDEBUG\b|\bTRACE\b/.test(prefix)) return "debug"
-  return null
-}
-
-const levelRowColors: Record<string, string> = {
-  error: "border-l-red-500/60 bg-red-500/5",
-  warn: "border-l-yellow-500/60 bg-yellow-500/5",
-  debug: "border-l-fg-muted/30",
-}
-
-/** Try to parse structured JSON from a log message. */
-function tryParseJSON(msg: string): object | null {
-  const trimmed = msg.trim()
-  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null
-  try {
-    return JSON.parse(trimmed) as object
-  } catch {
-    return null
-  }
-}
-
-/** Format and highlight JSON with PrismJS. */
-function formatJSON(obj: object): string {
-  const formatted = JSON.stringify(obj, null, 2)
-  return Prism.highlight(formatted, Prism.languages.json, "json")
 }
 
 export function LogViewer({
@@ -202,19 +159,21 @@ export function LogViewer({
                   ref={virtualizer.measureElement}
                   className={cn(
                     "absolute top-0 left-0 w-full border-l-2 border-l-transparent",
-                    event.level && levelRowColors[event.level],
+                    event.level && logLevelRowClass[event.level],
                   )}
                   style={{ transform: `translateY(${virtualRow.start}px)` }}
                 >
                   {mode === "plain" ? (
                     <div className="flex gap-2 py-0.5 font-mono text-[10px] text-fg-subtle">
                       <span className="shrink-0 font-mono text-fg-muted tabular-nums">
-                        {formatTimestamp(event.timestamp)}
+                        {formatLogTime(event.timestamp)}
                       </span>
                       {showHighlighted ? (
                         <pre
                           className="min-w-0 leading-relaxed wrap-break-word whitespace-pre-wrap text-fg"
-                          dangerouslySetInnerHTML={{ __html: formatJSON(event.json!) }}
+                          dangerouslySetInnerHTML={{
+                            __html: highlightJSON(stringifyJSON(event.json!, true)),
+                          }}
                         />
                       ) : (
                         <span className="min-w-0 wrap-break-word whitespace-pre-wrap text-fg">
@@ -225,13 +184,15 @@ export function LogViewer({
                   ) : (
                     <div className="flex border-b border-border-muted">
                       <div className="w-20 shrink-0 py-1 pr-2 font-mono text-[10px] text-fg-muted tabular-nums">
-                        {formatTimestamp(event.timestamp)}
+                        {formatLogTime(event.timestamp)}
                       </div>
                       <div className="min-w-0 flex-1 py-1 pr-2">
                         {showHighlighted ? (
                           <pre
                             className="font-mono text-[10px] leading-relaxed wrap-break-word whitespace-pre-wrap text-fg"
-                            dangerouslySetInnerHTML={{ __html: formatJSON(event.json!) }}
+                            dangerouslySetInnerHTML={{
+                              __html: highlightJSON(stringifyJSON(event.json!, true)),
+                            }}
                           />
                         ) : (
                           <pre className="font-mono text-[10px] leading-relaxed wrap-break-word whitespace-pre-wrap text-fg">
@@ -240,7 +201,7 @@ export function LogViewer({
                         )}
                       </div>
                       <div className="w-20 shrink-0 py-1 font-mono text-[10px] text-fg-muted tabular-nums">
-                        {formatTimestamp(event.ingestionTime)}
+                        {formatLogTime(event.ingestionTime)}
                       </div>
                     </div>
                   )}
