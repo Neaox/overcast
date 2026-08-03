@@ -73,10 +73,6 @@ const skipDocker = process.env.OVERCAST_COMPAT_SKIP_DOCKER === "1";
 
 const existingGroups: TestGroup[] = makeAllGroups(SUITE);
 
-// Extract impls map (name → fn) from existing groups, skipping already-skipped
-// tests. Keys are group-qualified so a name several groups declare cannot bind
-// the wrong group's implementation — see validateImpls.
-const impls: ImplMap = makeImplMap(existingGroups);
 const setup: Record<string, (ctx: TestContext) => Promise<void>> = {};
 const teardown: Record<string, (ctx: TestContext) => Promise<void>> = {};
 for (const g of existingGroups) {
@@ -85,12 +81,21 @@ for (const g of existingGroups) {
 }
 
 const registry = loadRegistry();
+
+// Extract impls map (name → fn) from existing groups, skipping already-skipped
+// tests. Keys are group-qualified so a name several groups declare cannot bind
+// the wrong group's implementation — see validateImpls. The merge refuses a key
+// two group files both produce rather than discarding one of them silently —
+// see mergeImpls.
+let impls: ImplMap;
 try {
+  impls = makeImplMap(existingGroups, SUITE);
   validateImpls(registry, impls, SUITE);
 } catch (err) {
-  // Unusable impl registrations — see validateImpls. Aborting is the point:
-  // binding a test to another group's implementation would report a result for
-  // a test that never ran. Print the message, not a stack trace.
+  // Duplicate or unusable impl registrations. Aborting is the point: an
+  // implementation that was discarded, or bound to another group's test, would
+  // report a result for a test that never ran. Print the message, not a stack
+  // trace.
   process.stderr.write(`${(err as Error).message}\n`);
   process.exit(1);
 }

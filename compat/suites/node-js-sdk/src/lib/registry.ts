@@ -273,6 +273,63 @@ export function ambiguousTestNames(registry: Registry): Set<string> {
   );
 }
 
+/** One group's contribution to the suite's impl map, labelled with where it
+ * came from so a collision can name both sides. */
+export interface ImplSource {
+  name: string;
+  impls: ImplMap;
+}
+
+/**
+ * Flatten per-group impl maps into the single map the loader resolves against,
+ * refusing any key that two sources both register.
+ *
+ * The merge used to be a plain assignment into one object — last writer wins,
+ * and silently. Two group files both producing `lambda-crud:CreateFunction`
+ * left one implementation unreachable with nothing said about it, and the run
+ * reported a result for whichever one survived. `validateImpls` cannot catch
+ * this: by the time it sees the flattened map the discarded implementation is
+ * already gone, and the surviving key resolves perfectly well.
+ *
+ * @throws if any key is registered more than once.
+ */
+export function mergeImpls(sources: ImplSource[], suite: string): ImplMap {
+  const merged: ImplMap = {};
+  const owner = new Map<string, string>(); // key → source that registered it first
+
+  const problems: string[] = [];
+  for (const source of sources) {
+    for (const [key, fn] of Object.entries(source.impls)) {
+      const first = owner.get(key);
+      if (first !== undefined) {
+        problems.push(duplicateProblem(key, first, source.name));
+        continue;
+      }
+      owner.set(key, source.name);
+      merged[key] = fn;
+    }
+  }
+
+  if (problems.length === 0) return merged;
+  throw new Error(
+    `[${suite}] ${problems.length} duplicate impl registration(s):\n  - ` +
+      problems.sort().join("\n  - "),
+  );
+}
+
+/** One collision. The two sources are the same when a single group registers
+ * the key twice. */
+function duplicateProblem(key: string, first: string, second: string): string {
+  const where =
+    first === second
+      ? `is registered twice by "${first}"`
+      : `is registered by both "${first}" and "${second}"`;
+  return (
+    `impl "${key}" ${where} — one of the two would be silently ` +
+    `discarded; remove or re-key one`
+  );
+}
+
 /**
  * Reject impl keys that cannot be bound to exactly one registry test.
  *
