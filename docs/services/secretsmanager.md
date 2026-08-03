@@ -73,7 +73,7 @@ rpc-v2-cbor`.
 
 ## Notes
 
-- **Versioning**: `PutSecretValue` honours `ClientRequestToken` (which becomes the version ID) and `VersionStages` (default `AWSCURRENT`). Taking `AWSCURRENT` off a version moves `AWSPREVIOUS` onto it. Versions carrying a staging label are never pruned.
+- **Versioning**: `PutSecretValue` honours `ClientRequestToken` (which becomes the version ID) and `VersionStages` (default `AWSCURRENT`). Taking `AWSCURRENT` off a version moves `AWSPREVIOUS` onto it. Versions carrying a staging label are never pruned. A version that exists but holds no value — the state a rotation leaves between staging `AWSPENDING` and the function writing to it — is listed by `DescribeSecret` but reported as `ResourceNotFoundException` by `GetSecretValue`, and `PutSecretValue` under that token fills it rather than answering `ResourceExistsException`.
 - **Deletion**: `ForceDeleteWithoutRecovery` is always treated as immediate deletion. Recovery window scheduling is not implemented, which is why `RestoreSecret` is still a 501.
 - **Lookup**: Secrets resolve by name, by full ARN, or by the partial ARN without the six-character random suffix — all three, as on AWS.
 
@@ -87,6 +87,12 @@ throughout. Each step must return before the next starts, so the synchronous
 invoke path is used. Automatic rotation on a `RotationRules` schedule is driven
 by one background loop over the injected clock; `NextRotationDate` and
 `LastRotatedDate` reflect what actually happened.
+
+Before the first invocation, the `ClientRequestToken` is made a version of the
+secret staged `AWSPENDING`, with no value in it — as AWS does. Every rotation
+blueprint AWS publishes opens by asserting exactly that, for every step
+including `createSecret`, so a rotation function copied from one of them works
+against Overcast unmodified.
 
 Two deliberate divergences from AWS, both chosen so a local failure is visible
 rather than silent:

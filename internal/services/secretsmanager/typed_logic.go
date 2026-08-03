@@ -260,6 +260,16 @@ func (h *Handler) getSecretValueTyped(ctx context.Context, req *getSecretValueRe
 	if aerr != nil {
 		return nil, aerr
 	}
+	if version.SecretString == "" && version.SecretBinary == "" {
+		// A version staged for a rotation whose createSecret step has not put a
+		// value in it yet. AWS reports it as not found rather than returning an
+		// empty 200, and the rotation blueprints branch on precisely that: the
+		// ResourceNotFoundException from reading their own AWSPENDING version is
+		// how they tell "I still have a password to generate" from "I already
+		// generated one and this is a retry". DescribeSecret still lists it —
+		// the version exists, it just holds nothing.
+		return nil, errNoSecretValue(version.VersionId, req.VersionStage)
+	}
 	return secretValueOut(sec, version), nil
 }
 
@@ -363,7 +373,16 @@ func (h *Handler) stageVersion(sec *Secret, token, secretString, secretBinary st
 
 	now := h.store.now()
 	if existing := sec.versionByID(token); existing != nil {
-		if existing.SecretString != secretString || existing.SecretBinary != secretBinary {
+		switch {
+		case existing.SecretString == "" && existing.SecretBinary == "":
+			// The version Secrets Manager staged AWSPENDING before it called
+			// the rotation function. Putting the generated value into it is
+			// what createSecret is *for*, so this is not the same-token
+			// collision below — the version was created empty precisely so the
+			// function could fill it under the token every step is handed.
+			existing.SecretString = secretString
+			existing.SecretBinary = secretBinary
+		case existing.SecretString != secretString || existing.SecretBinary != secretBinary:
 			return nil, &protocol.AWSError{
 				Code:       "ResourceExistsException",
 				Message:    "A version with the ClientRequestToken " + token + " already exists with different content.",

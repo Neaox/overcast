@@ -3,6 +3,8 @@ package secretsmanager
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -30,8 +32,9 @@ func newRotationTestHandler(t *testing.T) (*Handler, *clock.Mock) {
 }
 
 // fakeRotationFn stands in for a rotation Lambda built from AWS's blueprint: it
-// records each step it is handed and performs the same Secrets Manager calls
-// the blueprint makes — PutSecretValue staged AWSPENDING on createSecret, and
+// runs the blueprint's staging guard before every step, records each step it is
+// handed, and performs the same Secrets Manager calls the blueprint makes —
+// PutSecretValue staged AWSPENDING on createSecret, and
 // UpdateSecretVersionStage on finishSecret.
 type fakeRotationFn struct {
 	h *Handler
@@ -39,10 +42,68 @@ type fakeRotationFn struct {
 	steps    []string
 	tokens   []string
 	secretID string
+	// stagesAt records what DescribeSecret reported for the rotation's own
+	// token at the moment each step began, so a test can assert on what the
+	// function saw rather than on the state left behind once rotation ended.
+	stagesAt map[string][]string
 
 	failOn         string // step at which the function reports an error
 	unreachable    bool   // the function cannot be invoked at all
 	skipFinishMove bool   // finishSecret returns without moving AWSCURRENT
+}
+
+// blueprintGuard is the boilerplate that opens every AWS-published rotation
+// function. The generic SecretsManagerRotationTemplate and the RDS, MySQL,
+// PostgreSQL and Redshift blueprints all run it in lambda_handler *before*
+// dispatching to any step — createSecret included — so a rotation function
+// built from AWS's own template asserts that Secrets Manager has already made
+// the ClientRequestToken a version of the secret staged AWSPENDING by the time
+// it is first called. Reproducing it here is the point of this fixture: without
+// it the tests pass whether or not Overcast stages the token, which is exactly
+// how the gap this guard exists to catch went unnoticed.
+//
+// skip mirrors the blueprint's early `return` for a token that already carries
+// AWSCURRENT; a non-empty msg is the ValueError it raises, verbatim.
+func (f *fakeRotationFn) blueprintGuard(ctx context.Context, arn, token string) (skip bool, msg string) {
+	desc, aerr := f.h.describeSecretTyped(ctx, &secretIDRequest{SecretId: arn})
+	if aerr != nil {
+		return false, "DescribeSecret failed: " + aerr.Message
+	}
+	if !desc.RotationEnabled {
+		return false, fmt.Sprintf("Secret %s is not enabled for rotation", arn)
+	}
+	stages, staged := desc.VersionIdsToStages[token]
+	if !staged {
+		return false, fmt.Sprintf("Secret version %s has no stage for rotation of secret %s.", token, arn)
+	}
+	if containsString(stages, stageAWSCurrent) {
+		return true, ""
+	}
+	if !containsString(stages, stageAWSPending) {
+		return false, fmt.Sprintf("Secret version %s not set as AWSPENDING for rotation of secret %s.", token, arn)
+	}
+	return false, ""
+}
+
+// raise is the fixture's equivalent of the blueprint raising a ValueError: an
+// unhandled Lambda error carrying the message.
+func (f *fakeRotationFn) raise(msg string) *events.InvokeOutcome {
+	return &events.InvokeOutcome{
+		FunctionError: "Unhandled",
+		Payload:       []byte(`{"errorMessage":` + strconv.Quote(msg) + `}`),
+	}
+}
+
+// recordStages snapshots the token's staging labels as the step starts.
+func (f *fakeRotationFn) recordStages(ctx context.Context, step, arn, token string) {
+	if f.stagesAt == nil {
+		f.stagesAt = map[string][]string{}
+	}
+	desc, aerr := f.h.describeSecretTyped(ctx, &secretIDRequest{SecretId: arn})
+	if aerr != nil {
+		return
+	}
+	f.stagesAt[step] = desc.VersionIdsToStages[token]
 }
 
 func (f *fakeRotationFn) Invoke(ctx context.Context, _ string, payload []byte) (*events.InvokeOutcome, error) {
@@ -57,6 +118,14 @@ func (f *fakeRotationFn) Invoke(ctx context.Context, _ string, payload []byte) (
 	if f.unreachable {
 		return nil, nil
 	}
+	f.recordStages(ctx, req.Step, req.SecretId, req.ClientRequestToken)
+	skip, msg := f.blueprintGuard(ctx, req.SecretId, req.ClientRequestToken)
+	if msg != "" {
+		return f.raise(msg), nil
+	}
+	if skip {
+		return &events.InvokeOutcome{Payload: []byte("null")}, nil
+	}
 	if req.Step == f.failOn {
 		return &events.InvokeOutcome{
 			FunctionError: "Unhandled",
@@ -66,13 +135,34 @@ func (f *fakeRotationFn) Invoke(ctx context.Context, _ string, payload []byte) (
 
 	switch req.Step {
 	case stepCreateSecret:
-		if _, aerr := f.h.putSecretValueTyped(ctx, &putSecretValueRequest{
-			SecretId:           req.SecretId,
-			SecretString:       "rotated-value",
-			ClientRequestToken: req.ClientRequestToken,
-			VersionStages:      []string{stageAWSPending},
+		// The blueprint checks AWSCURRENT is readable, then tries to read the
+		// version it was handed. Secrets Manager stages that version before the
+		// call but puts no value in it, so the read comes back
+		// ResourceNotFoundException and the function generates the new value
+		// and puts it under the same token — which is what makes the step
+		// idempotent across a retry.
+		if _, aerr := f.h.getSecretValueTyped(ctx, &getSecretValueRequest{
+			SecretId: req.SecretId, VersionStage: stageAWSCurrent,
 		}); aerr != nil {
-			return &events.InvokeOutcome{FunctionError: "Unhandled"}, nil
+			return f.raise("createSecret: AWSCURRENT is unreadable: " + aerr.Message), nil
+		}
+		_, aerr := f.h.getSecretValueTyped(ctx, &getSecretValueRequest{
+			SecretId: req.SecretId, VersionId: req.ClientRequestToken, VersionStage: stageAWSPending,
+		})
+		switch {
+		case aerr == nil:
+			// The pending version already holds a value; leave it alone.
+		case aerr.Code != "ResourceNotFoundException":
+			return f.raise("createSecret: " + aerr.Message), nil
+		default:
+			if _, aerr := f.h.putSecretValueTyped(ctx, &putSecretValueRequest{
+				SecretId:           req.SecretId,
+				SecretString:       "rotated-value",
+				ClientRequestToken: req.ClientRequestToken,
+				VersionStages:      []string{stageAWSPending},
+			}); aerr != nil {
+				return f.raise("createSecret: PutSecretValue: " + aerr.Message), nil
+			}
 		}
 	case stepFinishSecret:
 		if f.skipFinishMove {
@@ -194,6 +284,125 @@ func TestRotateSecret_runsAllFourSteps(t *testing.T) {
 	}
 	if rotated.LastRotationAttempt == nil || rotated.LastRotationAttempt.Status != rotationSucceeded {
 		t.Errorf("LastRotationAttempt = %+v, want a Succeeded record", rotated.LastRotationAttempt)
+	}
+}
+
+func TestRotateSecret_stagesPendingVersionBeforeCreateSecret(t *testing.T) {
+	// Given: a secret and a rotation function that runs AWS's blueprint guard
+	h, _ := newRotationTestHandler(t)
+	seedSecret(t, h, "db-password", "original")
+	fake := &fakeRotationFn{h: h}
+	h.InitLambdaInvoker(fake)
+
+	// When: rotation runs under a token the test chose
+	const token = "11111111-1111-1111-1111-111111111111"
+	ctx := context.Background()
+	if _, aerr := h.rotateSecretTyped(ctx, &rotateSecretRequest{
+		SecretId:           "db-password",
+		RotationLambdaARN:  fixtureLambdaARN,
+		ClientRequestToken: token,
+	}); aerr != nil {
+		t.Fatalf("RotateSecret: %v", aerr)
+	}
+
+	// Then: by the time createSecret was invoked, the token was already a
+	// version of the secret carrying AWSPENDING. Secrets Manager stages it
+	// before it calls the function, and every AWS rotation blueprint refuses to
+	// run a step — createSecret included — for a token that is not staged.
+	got, seen := fake.stagesAt[stepCreateSecret]
+	if !seen || !containsString(got, stageAWSPending) {
+		t.Fatalf("stages on version %s at %s = %v, want %s to be attached already",
+			token, stepCreateSecret, got, stageAWSPending)
+	}
+
+	// And: the staged version held no value until createSecret put one there,
+	// which is the ResourceNotFoundException the blueprint branches on.
+	if got := currentValue(t, h, "db-password"); got != "rotated-value" {
+		t.Fatalf("AWSCURRENT value = %q, want %q", got, "rotated-value")
+	}
+}
+
+func TestGetSecretValue_stagedVersionWithNoValueIsNotFound(t *testing.T) {
+	// Given: a secret whose rotation staged a version but whose rotation
+	// function never got as far as putting a value in it
+	h, _ := newRotationTestHandler(t)
+	sec := seedSecret(t, h, "half-rotated", "original")
+	ctx := context.Background()
+	const token = "22222222-2222-2222-2222-222222222222"
+	if aerr := h.stagePendingRotationVersion(ctx, sec, token); aerr != nil {
+		t.Fatalf("stage pending version: %v", aerr)
+	}
+
+	// When: the version is read the way a rotation function reads it
+	_, aerr := h.getSecretValueTyped(ctx, &getSecretValueRequest{
+		SecretId: "half-rotated", VersionId: token, VersionStage: stageAWSPending,
+	})
+
+	// Then: AWS reports it as not found — a value-less version is what
+	// createSecret's "do I still have a password to generate?" test turns on
+	if aerr == nil {
+		t.Fatal("GetSecretValue succeeded, want ResourceNotFoundException for a version with no value")
+	}
+	if aerr.Code != "ResourceNotFoundException" {
+		t.Errorf("error code = %q, want ResourceNotFoundException", aerr.Code)
+	}
+
+	// And: DescribeSecret still lists it, staged AWSPENDING — the version
+	// exists, it just has nothing in it yet
+	desc, aerr := h.describeSecretTyped(ctx, &secretIDRequest{SecretId: "half-rotated"})
+	if aerr != nil {
+		t.Fatalf("DescribeSecret: %v", aerr)
+	}
+	if stages := desc.VersionIdsToStages[token]; !containsString(stages, stageAWSPending) {
+		t.Errorf("VersionIdsToStages[%s] = %v, want %s", token, stages, stageAWSPending)
+	}
+}
+
+func TestPutSecretValue_fillsTheVersionRotationStaged(t *testing.T) {
+	// Given: a secret with a rotation-staged, value-less AWSPENDING version
+	h, _ := newRotationTestHandler(t)
+	sec := seedSecret(t, h, "fill-pending", "original")
+	ctx := context.Background()
+	const token = "33333333-3333-3333-3333-333333333333"
+	if aerr := h.stagePendingRotationVersion(ctx, sec, token); aerr != nil {
+		t.Fatalf("stage pending version: %v", aerr)
+	}
+
+	// When: createSecret puts the new value under the same token, as the
+	// blueprint does
+	out, aerr := h.putSecretValueTyped(ctx, &putSecretValueRequest{
+		SecretId:           "fill-pending",
+		SecretString:       "generated",
+		ClientRequestToken: token,
+		VersionStages:      []string{stageAWSPending},
+	})
+
+	// Then: it fills the staged version rather than colliding with it
+	if aerr != nil {
+		t.Fatalf("PutSecretValue: %v", aerr)
+	}
+	if out.VersionId != token {
+		t.Errorf("VersionId = %q, want the ClientRequestToken %q", out.VersionId, token)
+	}
+	got, aerr := h.getSecretValueTyped(ctx, &getSecretValueRequest{
+		SecretId: "fill-pending", VersionId: token,
+	})
+	if aerr != nil {
+		t.Fatalf("GetSecretValue: %v", aerr)
+	}
+	if got.SecretString != "generated" {
+		t.Errorf("SecretString = %q, want %q", got.SecretString, "generated")
+	}
+
+	// And: a genuine token collision — same token, different content — is
+	// still ResourceExistsException
+	if _, aerr := h.putSecretValueTyped(ctx, &putSecretValueRequest{
+		SecretId:           "fill-pending",
+		SecretString:       "different",
+		ClientRequestToken: token,
+		VersionStages:      []string{stageAWSPending},
+	}); aerr == nil || aerr.Code != "ResourceExistsException" {
+		t.Errorf("re-put with different content = %v, want ResourceExistsException", aerr)
 	}
 }
 
