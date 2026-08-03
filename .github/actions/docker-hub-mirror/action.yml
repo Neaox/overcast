@@ -19,6 +19,23 @@ description: >
 # Cached pulls do not count against Docker Hub's rate limits, which is the
 # point. Authenticating as well would complement this for trusted-context jobs;
 # it does not replace it.
+#
+# ── Where this must NOT be used ──────────────────────────────────────────────
+#
+# Test and verification jobs only. Never a job that builds or pushes something
+# users pull.
+#
+# A mirror is a cache. It serves images deleted upstream for up to several
+# days, and resolves a tag to whatever it cached rather than to what Docker Hub
+# would answer now. In a job that runs tests, that is a fidelity question. In a
+# job whose output is published, the base layers of a shipped image would come
+# from a cache instead of the canonical source — a supply-chain question, and a
+# different answer.
+#
+# scripts/ci_mirror_scope_test.py enforces this, so the split stays deliberate
+# rather than a coincidence of which jobs needed it first. The obvious tidy-up
+# — "the image build pulls from Hub too, add it there for consistency" — is the
+# thing that check exists to stop.
 
 inputs:
   mirror:
