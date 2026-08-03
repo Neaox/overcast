@@ -220,6 +220,10 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [secretsmanager] a rotation function copied from AWS's published blueprints now works unmodified. Three behaviours its `createSecret` step depends on were missing: `RotateSecret` stages the `ClientRequestToken` as an empty `AWSPENDING` version before the first invocation, as AWS does — the blueprints assert that staging before every step, so one failed immediately with "Secret version … has no stage for rotation of secret …"; `GetSecretValue` reports a version holding no value as `ResourceNotFoundException` rather than an empty `200`; and `PutSecretValue` under that version's token fills it in rather than answering `ResourceExistsException`. `DescribeSecret` still lists the version throughout
 
+- [sqs] A Query-protocol request addressed by the queue's own URL — `POST /<account>/<queue>` with `Action=SendMessage` and no `QueueUrl` parameter, the shape AWS's API Reference documents — no longer fails with `MissingParameter`. The queue now comes from the request path when the body omits it. A `QueueUrl` in the body still wins, and a request to `POST /` without one is still the client error it always was.
+
+- [sqs] `ListQueueTags` renders a tag as `<Tag><Key>…</Key><Value>…</Value>` under the Query protocol, matching AWS and the rest of Overcast. It was emitting `<Name>` — the shape that belongs to `Attribute`, not `Tag`.
+
 ## [0.0.1-alpha.28] - 2026-07-31
 
 ### Added
