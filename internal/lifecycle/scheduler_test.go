@@ -156,6 +156,96 @@ func TestScheduler_After_replace_does_not_hang_Stop(t *testing.T) {
 	}
 }
 
+func TestScheduler_AdvanceAndSettle_waitsForTheCallbackToFinish(t *testing.T) {
+	// Given a transition whose callback takes longer than the millisecond a
+	// bare mock.Add yields for
+	mock := clock.NewMock()
+	s := NewScheduler(mock)
+
+	var fired atomic.Bool
+	s.After("slow", 1*time.Second, func() {
+		time.Sleep(50 * time.Millisecond)
+		fired.Store(true)
+	})
+
+	// When we advance the clock through it and settle
+	s.AdvanceAndSettle(mock, 1*time.Second)
+
+	// Then the callback has finished, not merely started
+	if !fired.Load() {
+		t.Fatal("AdvanceAndSettle returned while the callback was still running")
+	}
+	if s.PendingCount() != 0 {
+		t.Fatalf("expected 0 pending, got %d", s.PendingCount())
+	}
+}
+
+func TestScheduler_AdvanceAndSettle_transitionNotYetDue(t *testing.T) {
+	// Given one transition inside the advance and one well beyond it
+	mock := clock.NewMock()
+	s := NewScheduler(mock)
+
+	var due, later atomic.Bool
+	s.After("due", 1*time.Second, func() { due.Store(true) })
+	s.After("later", 1*time.Hour, func() { later.Store(true) })
+
+	// When we advance past the first only
+	s.AdvanceAndSettle(mock, 2*time.Second)
+
+	// Then it settled the one that came due and did not wait for the other
+	if !due.Load() {
+		t.Fatal("expected the due transition to have run")
+	}
+	if later.Load() {
+		t.Fatal("expected the later transition not to have run")
+	}
+	if s.PendingCount() != 1 {
+		t.Fatalf("expected 1 pending, got %d", s.PendingCount())
+	}
+}
+
+func TestScheduler_Settle_realClock(t *testing.T) {
+	// Given a transition on a real clock
+	s := NewScheduler(clock.New())
+
+	var fired atomic.Bool
+	s.After("real", 10*time.Millisecond, func() { fired.Store(true) })
+
+	// When we settle, which waits the delay out
+	s.Settle()
+
+	// Then the callback has run
+	if !fired.Load() {
+		t.Fatal("Settle returned before the transition ran")
+	}
+}
+
+func TestScheduler_Settle_transitionCancelled(t *testing.T) {
+	// Given a waiter on a transition that is never going to come due
+	mock := clock.NewMock()
+	s := NewScheduler(mock)
+	s.After("never", 1*time.Hour, func() {})
+
+	settled := make(chan struct{})
+	go func() {
+		s.Settle()
+		close(settled)
+	}()
+
+	// When the scheduler is stopped, cancelling it
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s.Stop(ctx)
+
+	// Then the waiter is released rather than waiting for a callback that will
+	// never run
+	select {
+	case <-settled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Settle did not return after the transition was cancelled")
+	}
+}
+
 func TestScheduler_multipleKeys(t *testing.T) {
 	mock := clock.NewMock()
 	s := NewScheduler(mock)
