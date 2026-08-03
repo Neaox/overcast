@@ -17,6 +17,15 @@
 #                                   siblings on the host daemon, not nested.
 #   COMPAT_DOCKER_SOCK=…            Host Docker socket path, if not the
 #                                   default /var/run/docker.sock.
+#   COMPAT_DOCKER_GID=…             Group that owns the Docker socket. The
+#                                   default, 0, is right for Docker Desktop
+#                                   (root:root). Native Linux needs the docker
+#                                   group's gid:
+#                                     COMPAT_DOCKER_GID=$(stat -c %g /var/run/docker.sock)
+#                                   The runner joins that group rather than
+#                                   chgrp'ing the socket, which is shared with
+#                                   the overcast container — see the group_add
+#                                   comment on the compat service.
 #   OVERCAST_LOG_LEVEL=info         Overcast log verbosity (default: warn).
 #   OVERCAST_COMPAT_FORMAT=json     Go runner output format: pretty|json
 #                                   (default: pretty).
@@ -101,6 +110,23 @@ services:
       OVERCAST_COMPAT_SUITE: ${OVERCAST_COMPAT_SUITE:-}
       # Pass the pre-built node-js-sdk image name so the Go runner can exec it.
       OVERCAST_COMPAT_NODEJS_IMAGE: overcast-compat-node-js-sdk
+    # Join the Docker socket's group rather than changing the socket to ours.
+    # This used to be `chgrp "$(id -g)" /var/run/docker.sock` in the command
+    # below, which works but mutates a bind mount **shared with the overcast
+    # container** — and the overcast entrypoint reads the socket's gid once, at
+    # its own start, to decide which group to put its user in. Since compose
+    # starts overcast first (depends_on: service_healthy), the chgrp landed
+    # after that decision and silently revoked overcast's access. Every
+    # Lambda-backed test then failed with "the function is in a failed state",
+    # nineteen tests deep and nowhere near the cause, and the only cure was
+    # restarting overcast so its entrypoint re-derived the new gid.
+    # group_add is applied by Docker at container creation, changes nothing
+    # outside this container, and cannot race anyone.
+    # 0 covers Docker Desktop, whose socket is root:root. On native Linux the
+    # socket is root:docker, so pass the gid:
+    #   COMPAT_DOCKER_GID=$(stat -c %g /var/run/docker.sock) docker compose ...
+    group_add:
+      - "${COMPAT_DOCKER_GID:-0}"
     depends_on:
       overcast:
         condition: service_healthy
@@ -137,7 +163,7 @@ services:
       - -c
       - >
         sudo -n chown vscode:vscode compat/suites/node-js-sdk/node_modules compat/suites/cdk/node_modules;
-        sudo -n chgrp "$$(id -g)" /var/run/docker.sock 2>/dev/null && sudo -n chmod g+rw /var/run/docker.sock || echo "compat: no Docker socket — java-sdk, dotnet-sdk, rust-sdk and cdk will not run" >&2;
+        test -r /var/run/docker.sock -a -w /var/run/docker.sock || echo "compat: Docker socket not usable (gid $$(stat -c %g /var/run/docker.sock 2>/dev/null || echo none), our groups $$(id -G)) — set COMPAT_DOCKER_GID to the socket's gid; java-sdk, dotnet-sdk, rust-sdk and cdk will not run" >&2;
         getent hosts overcast | awk '{print $$1 " cdk-hnb659fds-assets-000000000000-us-east-1.overcast"}' | sudo -n tee -a /etc/hosts >/dev/null || echo "compat: could not add CDK asset-bucket hosts entry" >&2;
         for d in compat/suites/node-js-sdk compat/suites/cdk; do ( if [ -z "$$(ls -A $$d/node_modules)" ]; then npm ci --prefix "$$d" --silent; else npm install --prefix "$$d" --silent --no-audit --no-fund; fi || echo "compat: $$d dependencies failed to install" >&2 ) & done;
         ( pip install --break-system-packages --quiet -r compat/suites/python-sdk/requirements.txt || echo "compat: python-sdk dependencies failed to install" >&2 ) &
@@ -185,6 +211,10 @@ services:
     environment:
       CGO_ENABLED: "0"
       OVERCAST_COMPAT_SKIP_DOCKER: ${OVERCAST_COMPAT_SKIP_DOCKER:-0}
+    # See the compat service above for why this replaces a chgrp of the shared
+    # socket. Same reasoning, same override.
+    group_add:
+      - "${COMPAT_DOCKER_GID:-0}"
     depends_on:
       overcast:
         condition: service_healthy
@@ -198,7 +228,7 @@ services:
       - -c
       - >
         sudo -n chown vscode:vscode compat/ui/node_modules compat/ui/dist compat/suites/node-js-sdk/node_modules compat/suites/cdk/node_modules;
-        sudo -n chgrp "$$(id -g)" /var/run/docker.sock 2>/dev/null && sudo -n chmod g+rw /var/run/docker.sock || echo "compat: no Docker socket — java-sdk, dotnet-sdk, rust-sdk and cdk will not run" >&2;
+        test -r /var/run/docker.sock -a -w /var/run/docker.sock || echo "compat: Docker socket not usable (gid $$(stat -c %g /var/run/docker.sock 2>/dev/null || echo none), our groups $$(id -G)) — set COMPAT_DOCKER_GID to the socket's gid; java-sdk, dotnet-sdk, rust-sdk and cdk will not run" >&2;
         getent hosts overcast | awk '{print $$1 " cdk-hnb659fds-assets-000000000000-us-east-1.overcast"}' | sudo -n tee -a /etc/hosts >/dev/null || echo "compat: could not add CDK asset-bucket hosts entry" >&2;
         touch compat/ui/dist/.gitkeep;
         for d in compat/suites/node-js-sdk compat/suites/cdk; do ( if [ -z "$$(ls -A $$d/node_modules)" ]; then npm ci --prefix "$$d" --silent; else npm install --prefix "$$d" --silent --no-audit --no-fund; fi || echo "compat: $$d dependencies failed to install" >&2 ) & done;
