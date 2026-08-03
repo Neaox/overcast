@@ -6,7 +6,8 @@
   "private": true,
   "scripts": {
     "test": "node --import tsx/esm src/runner.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:unit": "node --import tsx/esm --test src/**/*.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-api-gateway": "^3.1020.0",
