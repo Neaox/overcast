@@ -64,6 +64,11 @@ type stateError struct {
 	// aborted marks an unwind that StopExecution asked for, so the execution
 	// ends ABORTED rather than being reported as a failure or a timeout.
 	aborted bool
+	// budgetExpired marks the execution's own wall-clock budget running out,
+	// which is the only States.Timeout that ends an execution TIMED_OUT. A
+	// Task's TimeoutSeconds and a Fail state spelling States.Timeout are both
+	// ordinary failures of a still-healthy execution, exactly as on AWS.
+	budgetExpired bool
 }
 
 func (e *stateError) Error() string { return e.name + ": " + e.cause }
@@ -78,6 +83,42 @@ func newStateError(name, format string, args ...any) *stateError {
 // Overcast gap and turn it back into a silent pass-through.
 func unsupportedError(format string, args ...any) *stateError {
 	return &stateError{name: errRuntime, cause: "Overcast does not support " + fmt.Sprintf(format, args...)}
+}
+
+// isJSONPath reports whether a QueryLanguage field names the only query
+// language Overcast evaluates. An absent field inherits JSONPath, which is
+// also ASL's own default.
+func isJSONPath(queryLanguage string) bool {
+	return queryLanguage == "" || strings.EqualFold(queryLanguage, "JSONPath")
+}
+
+// unsupportedStateFields reports the first field on a state that Overcast
+// accepts structurally but cannot evaluate.
+//
+// QueryLanguage is a per-state field as well as a top-level one, so a JSONata
+// state inside a JSONPath state machine is legal ASL that the definition-level
+// check in runBranch never sees. Left unread it was accepted, ignored, and its
+// Output dropped — the execution then answered SUCCEEDED with the state's
+// input, which is exactly the silent pass-through §2.1 forbids and worse than
+// the stub this engine replaced. The same applies to Output on its own and to
+// Assign (variables), whose consumers otherwise fail later with a confusing
+// States.ParameterPathFailure about a path that was never assigned.
+//
+// This is a run-time refusal rather than a CreateStateMachine one on purpose:
+// all three are valid ASL, and validateDefinitionForCreate deliberately admits
+// valid ASL that Overcast cannot interpret so CDK and CloudFormation deploys
+// keep working. It is the same contract top-level JSONata already had.
+func unsupportedStateFields(name string, state *aslState) *stateError {
+	if !isJSONPath(state.QueryLanguage) {
+		return unsupportedError("the %s query language on state %q — only JSONPath states are interpreted", state.QueryLanguage, name)
+	}
+	if len(state.Output) > 0 {
+		return unsupportedError("the JSONata Output field on state %q", name)
+	}
+	if len(state.Assign) > 0 {
+		return unsupportedError("Assign (variables) on state %q", name)
+	}
+	return nil
 }
 
 // interpreter carries everything one execution needs. One is built per
@@ -177,7 +218,7 @@ func statusForError(serr *stateError) string {
 	switch {
 	case serr.aborted:
 		return statusAborted
-	case serr.name == errTimeout:
+	case serr.budgetExpired:
 		return statusTimedOut
 	default:
 		return statusFailed
@@ -262,7 +303,7 @@ func (in *interpreter) stateContext(name string, entered time.Time, retryCount i
 // state ends the branch. It is used for the top-level definition, for every
 // Parallel branch and for every Map iteration.
 func (in *interpreter) runBranch(ctx context.Context, branch *aslBranch, input any) (any, *stateError) {
-	if branch.QueryLanguage != "" && !strings.EqualFold(branch.QueryLanguage, "JSONPath") {
+	if !isJSONPath(branch.QueryLanguage) {
 		return nil, unsupportedError("the %s query language — only JSONPath state machines are interpreted", branch.QueryLanguage)
 	}
 	current := branch.StartAt
@@ -303,14 +344,19 @@ func (in *interpreter) unwindReason(state string) *stateError {
 	if state != "" {
 		where = fmt.Sprintf(" in state %q", state)
 	}
-	return newStateError(errTimeout,
+	budget := newStateError(errTimeout,
 		"the execution exceeded Overcast's execution budget%s — raise OVERCAST_STEPFUNCTIONS_EXECUTION_TIMEOUT (currently %s) if the workflow legitimately takes this long",
 		where, in.handler.executionTimeout(nil))
+	budget.budgetExpired = true
+	return budget
 }
 
 // runState interprets one state and reports the next transition. done means
 // the branch ends here (End: true, or a Succeed state).
 func (in *interpreter) runState(ctx context.Context, name string, state *aslState, raw any) (any, string, bool, *stateError) {
+	if serr := unsupportedStateFields(name, state); serr != nil {
+		return nil, "", false, serr
+	}
 	entered := in.handler.clk.Now()
 	ctxObj := in.stateContext(name, entered, 0, in.mapItemFromContext())
 
