@@ -121,15 +121,78 @@ func TestMatchCronDay_awsSunday(t *testing.T) {
 	}
 }
 
-func TestTargetPayload_inputPathUnsupported(t *testing.T) {
-	// Given: a target uses InputPath, which is not implemented yet.
+func TestTargetPayload_inputPathSelectsNode(t *testing.T) {
+	// Given: a target selects the event detail with InputPath.
 	target := ebTarget{InputPath: "$.detail"}
+	event := map[string]any{"detail": map[string]any{"id": "1"}}
 
 	// When: a target payload is built.
-	_, err := targetPayload(target, map[string]any{"detail": map[string]any{"id": "1"}})
+	got, err := targetPayload(ebRule{Name: "r"}, target, event)
+	if err != nil {
+		t.Fatalf("targetPayload: %v", err)
+	}
 
-	// Then: delivery fails explicitly instead of silently sending the wrong payload.
+	// Then: only the selected node is delivered.
+	if string(got) != `{"id":"1"}` {
+		t.Fatalf("payload = %s, want the selected detail node", got)
+	}
+}
+
+func TestTargetPayload_inputPathMissingNodeFailsLoudly(t *testing.T) {
+	// Given: a target whose InputPath selects nothing in this event.
+	target := ebTarget{InputPath: "$.detail.missing"}
+
+	// When: a target payload is built.
+	_, err := targetPayload(ebRule{Name: "r"}, target, map[string]any{"detail": map[string]any{}})
+
+	// Then: delivery fails explicitly rather than sending an empty payload.
 	if err == nil {
-		t.Fatal("expected InputPath error")
+		t.Fatal("expected an error for an InputPath that selects nothing")
+	}
+}
+
+func TestTargetPayload_inputTransformerRendersTemplate(t *testing.T) {
+	// Given: a target rendering a template from named paths, including one of
+	// EventBridge's reserved rule variables.
+	target := ebTarget{InputTransformer: &ebInputTransformer{
+		InputPathsMap: map[string]string{"id": "$.detail.orderId"},
+		InputTemplate: `{"order":"<id>","rule":"<aws.events.rule-name>"}`,
+	}}
+	event := map[string]any{"detail": map[string]any{"orderId": "o-1"}}
+
+	// When: a target payload is built.
+	got, err := targetPayload(ebRule{Name: "orders"}, target, event)
+	if err != nil {
+		t.Fatalf("targetPayload: %v", err)
+	}
+
+	// Then: both placeholders are substituted.
+	if string(got) != `{"order":"o-1","rule":"orders"}` {
+		t.Fatalf("payload = %s", got)
+	}
+}
+
+func TestValidateTargets_rejectsUnsupportedAndMalformed(t *testing.T) {
+	// Given: one deliverable target, one target type the emulator has no sink
+	// for, and (separately) a malformed ARN.
+	accepted, failed, aerr := validateTargets([]ebTarget{
+		{ID: "ok", ARN: "arn:aws:sqs:us-east-1:000000000000:q"},
+		{ID: "no", ARN: "arn:aws:logs:us-east-1:000000000000:log-group:/aws/events/x"},
+	})
+
+	// Then: the unsupported target is reported, not stored, and the rest is kept.
+	if aerr != nil {
+		t.Fatalf("unexpected request-level error: %v", aerr)
+	}
+	if len(accepted) != 1 || accepted[0].ID != "ok" {
+		t.Fatalf("accepted = %#v, want only the SQS target", accepted)
+	}
+	if len(failed) != 1 || failed[0].ErrorCode != unsupportedTargetCode {
+		t.Fatalf("failed = %#v, want one %s entry", failed, unsupportedTargetCode)
+	}
+
+	// And: a malformed ARN fails the whole call, as AWS's shape check does.
+	if _, _, aerr := validateTargets([]ebTarget{{ID: "bad", ARN: "nope"}}); aerr == nil {
+		t.Fatal("expected a ValidationException for a malformed target ARN")
 	}
 }

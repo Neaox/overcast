@@ -1,4 +1,5 @@
 import { awsClients } from "../aws-clients"
+import { apiFetch } from "./base"
 import {
   ListEventBusesCommand,
   CreateEventBusCommand,
@@ -9,6 +10,37 @@ import {
 } from "@aws-sdk/client-eventbridge"
 
 export type { EventBus, Rule as EventRule } from "@aws-sdk/client-eventbridge"
+
+/** A rule target with the target type the emulator resolved from its ARN. */
+export interface EventRuleTarget {
+  Id: string
+  Arn: string
+  /** "Lambda" | "SQS" | "SNS" | "Step Functions" | "Kinesis" | "Firehose" | "ECS" | "Unknown" */
+  TargetType: string
+}
+
+/** A rule paired with its targets, from the emulator's console endpoint. */
+export interface EventRuleTargets {
+  Name: string
+  State: string
+  Targets: EventRuleTarget[]
+}
+
+/** The outcome of one target delivery attempt sequence. */
+export interface EventDelivery {
+  Region: string
+  Bus: string
+  Rule: string
+  TargetId: string
+  TargetArn: string
+  TargetType: string
+  /** "delivered" | "retried" | "dlq" | "dropped" */
+  Outcome: string
+  Attempts: number
+  EventId: string
+  Error?: string
+  Time: string
+}
 
 export const eventbridge = {
   listBuses: async () => {
@@ -46,5 +78,28 @@ export const eventbridge = {
     await awsClients
       .eventbridge()
       .send(new DeleteRuleCommand({ Name: name, EventBusName: eventBusName }))
+  },
+
+  /**
+   * Each rule's targets on a bus, with the target type the emulator resolved
+   * from each ARN. Served by the emulator's console endpoint rather than the
+   * SDK, because ListTargetsByRule is per-rule and carries no resolved type.
+   */
+  listRuleTargets: async (eventBusName: string) => {
+    const res = await apiFetch<{ Rules?: EventRuleTargets[] }>(
+      `/eventbridge/rule-targets?bus=${encodeURIComponent(eventBusName)}`,
+    )
+    return res.Rules ?? []
+  },
+
+  /**
+   * Recent per-target delivery outcomes on a bus, newest first. The emulator
+   * keeps a bounded in-memory ring, so this is empty after a restart.
+   */
+  listDeliveries: async (eventBusName: string) => {
+    const res = await apiFetch<{ Deliveries?: EventDelivery[] }>(
+      `/eventbridge/deliveries?bus=${encodeURIComponent(eventBusName)}`,
+    )
+    return res.Deliveries ?? []
   },
 }

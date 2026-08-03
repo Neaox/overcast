@@ -98,8 +98,8 @@ type putTargetsRequest struct {
 }
 
 type targetsMutationResponse struct {
-	FailedEntryCount int   `json:"FailedEntryCount" cbor:"FailedEntryCount"`
-	FailedEntries    []any `json:"FailedEntries" cbor:"FailedEntries"`
+	FailedEntryCount int                 `json:"FailedEntryCount" cbor:"FailedEntryCount"`
+	FailedEntries    []failedTargetEntry `json:"FailedEntries" cbor:"FailedEntries"`
 }
 
 type listTargetsByRuleRequest struct {
@@ -288,35 +288,32 @@ func (s *Service) putTargetsTyped(ctx context.Context, req *putTargetsRequest) (
 	if req.EventBusName == "" {
 		req.EventBusName = "default"
 	}
-	key := serviceutil.RegionKey(s.region(ctx), req.EventBusName+"/"+req.Rule)
-	existing := []ebTarget{}
-	if raw, found, _ := s.store.Get(ctx, nsTargets, key); found {
-		json.Unmarshal([]byte(raw), &existing) //nolint:errcheck
+	accepted, failed, aerr := validateTargets(req.Targets)
+	if aerr != nil {
+		return nil, aerr
 	}
-	targetMap := map[string]ebTarget{}
-	for _, t := range existing {
-		targetMap[t.ID] = t
+	existing, err := s.loadTargets(ctx, req.EventBusName, req.Rule)
+	if err != nil {
+		return nil, protocol.ErrInternalError
 	}
-	for _, t := range req.Targets {
-		targetMap[t.ID] = t
-	}
-	merged := make([]ebTarget, 0, len(targetMap))
-	for _, t := range targetMap {
-		merged = append(merged, t)
-	}
+	merged := mergeTargets(existing, accepted)
 	b, _ := json.Marshal(merged)
-	s.store.Set(ctx, nsTargets, key, string(b)) //nolint:errcheck
-	return emptyTargetsMutation(), nil
+	if err := s.store.Set(ctx, nsTargets, ruleKey(s.region(ctx), req.EventBusName, req.Rule), string(b)); err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	return targetsMutation(failed), nil
 }
 
 func (s *Service) listTargetsByRuleTyped(ctx context.Context, req *listTargetsByRuleRequest) (*listTargetsByRuleResponse, *protocol.AWSError) {
 	if req.EventBusName == "" {
 		req.EventBusName = "default"
 	}
-	key := serviceutil.RegionKey(s.region(ctx), req.EventBusName+"/"+req.Rule)
-	targets := []ebTarget{}
-	if raw, found, _ := s.store.Get(ctx, nsTargets, key); found {
-		json.Unmarshal([]byte(raw), &targets) //nolint:errcheck
+	targets, err := s.loadTargets(ctx, req.EventBusName, req.Rule)
+	if err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	if targets == nil {
+		targets = []ebTarget{}
 	}
 	return &listTargetsByRuleResponse{Targets: targets}, nil
 }
@@ -325,24 +322,16 @@ func (s *Service) removeTargetsTyped(ctx context.Context, req *removeTargetsRequ
 	if req.EventBusName == "" {
 		req.EventBusName = "default"
 	}
-	key := serviceutil.RegionKey(s.region(ctx), req.EventBusName+"/"+req.Rule)
-	existing := []ebTarget{}
-	if raw, found, _ := s.store.Get(ctx, nsTargets, key); found {
-		json.Unmarshal([]byte(raw), &existing) //nolint:errcheck
+	existing, err := s.loadTargets(ctx, req.EventBusName, req.Rule)
+	if err != nil {
+		return nil, protocol.ErrInternalError
 	}
-	removeSet := map[string]bool{}
-	for _, id := range req.Ids {
-		removeSet[id] = true
-	}
-	kept := make([]ebTarget, 0, len(existing))
-	for _, t := range existing {
-		if !removeSet[t.ID] {
-			kept = append(kept, t)
-		}
-	}
+	kept := removeTargetIDs(existing, req.Ids)
 	b, _ := json.Marshal(kept)
-	s.store.Set(ctx, nsTargets, key, string(b)) //nolint:errcheck
-	return emptyTargetsMutation(), nil
+	if err := s.store.Set(ctx, nsTargets, ruleKey(s.region(ctx), req.EventBusName, req.Rule), string(b)); err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	return targetsMutation(nil), nil
 }
 
 func (s *Service) disableRuleTyped(ctx context.Context, req *setRuleStateRequest) (*struct{}, *protocol.AWSError) {
@@ -386,12 +375,13 @@ func (s *Service) deleteRuleTyped(ctx context.Context, req *deleteRuleRequest) (
 }
 
 func (s *Service) putEventsTyped(ctx context.Context, req *putEventsRequest) (*putEventsResponse, *protocol.AWSError) {
+	eventIDs := make([]string, len(req.Entries))
 	results := make([]putEventsEntryResponse, 0, len(req.Entries))
-	for _, entry := range req.Entries {
-		eventID := uuid.New().String()
-		results = append(results, putEventsEntryResponse{EventId: eventID})
-		s.deliverEvent(ctx, eventID, entry)
+	for i := range req.Entries {
+		eventIDs[i] = uuid.New().String()
+		results = append(results, putEventsEntryResponse{EventId: eventIDs[i]})
 	}
+	s.deliverEntries(ctx, eventIDs, req.Entries)
 	return &putEventsResponse{FailedEntryCount: 0, Entries: results}, nil
 }
 
@@ -401,8 +391,11 @@ func (s *Service) publishCtx(ctx context.Context, t events.Type, payload any) {
 	}
 }
 
-func emptyTargetsMutation() *targetsMutationResponse {
-	return &targetsMutationResponse{FailedEntryCount: 0, FailedEntries: []any{}}
+func targetsMutation(failed []failedTargetEntry) *targetsMutationResponse {
+	if failed == nil {
+		failed = []failedTargetEntry{}
+	}
+	return &targetsMutationResponse{FailedEntryCount: len(failed), FailedEntries: failed}
 }
 
 func ruleNotFound(message string) *protocol.AWSError {

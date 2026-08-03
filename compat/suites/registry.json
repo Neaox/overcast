@@ -1730,6 +1730,30 @@
     },
     {
       "service": "eventbridge",
+      "name": "eventbridge-target-fanout",
+      "tests": [
+        {
+          "name": "PutFanoutTargets",
+          "op": "PutTargets"
+        },
+        {
+          "name": "PutEventsToQueueTarget",
+          "op": "PutEvents",
+          "depends": [
+            "PutFanoutTargets"
+          ]
+        },
+        {
+          "name": "PutEventsWithInputTransformer",
+          "op": "PutEvents",
+          "depends": [
+            "PutFanoutTargets"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "eventbridge",
       "name": "eventbridge-events",
       "tests": [
         {

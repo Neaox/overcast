@@ -521,15 +521,49 @@ func (h *eventsRuleHandler) Create(ctx context.Context, router http.Handler, cfg
 		ruleName = eventRuleNameFromArn(resp.RuleArn)
 	}
 	if targets, _ := props["Targets"].([]any); len(targets) > 0 {
-		addBody := map[string]any{"Rule": ruleName, "Targets": targets}
-		if eventBusName, _ := body["EventBusName"].(string); eventBusName != "" {
-			addBody["EventBusName"] = eventBusName
-		}
-		if _, err := internalJSON(ctx, router, rCtx.Region, "AWSEvents.PutTargets", addBody); err != nil {
-			return "", nil, fmt.Errorf("PutTargets: %w", err)
+		eventBusName, _ := body["EventBusName"].(string)
+		if err := putEventTargets(ctx, router, rCtx.Region, ruleName, eventBusName, targets); err != nil {
+			return "", nil, err
 		}
 	}
 	return resp.RuleArn, attrs, nil
+}
+
+// putEventTargets adds targets to an EventBridge rule and fails the resource
+// when EventBridge rejects any of them.
+//
+// A rejected target names a target type this emulator cannot deliver to.
+// Ignoring the rejection would leave the stack provisioned with a rule that
+// can never fire — exactly the silent failure issue #467 removes, and what
+// docs/plans/full-emulation-priority.md §2.1 forbids.
+func putEventTargets(ctx context.Context, router http.Handler, region, ruleName, eventBusName string, targets []any) error {
+	body := map[string]any{"Rule": ruleName, "Targets": targets}
+	if eventBusName != "" {
+		body["EventBusName"] = eventBusName
+	}
+	rec, err := internalJSON(ctx, router, region, "AWSEvents.PutTargets", body)
+	if err != nil {
+		return fmt.Errorf("PutTargets: %w", err)
+	}
+	var resp struct {
+		FailedEntryCount int `json:"FailedEntryCount"`
+		FailedEntries    []struct {
+			TargetID     string `json:"TargetId"`
+			ErrorCode    string `json:"ErrorCode"`
+			ErrorMessage string `json:"ErrorMessage"`
+		} `json:"FailedEntries"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		return fmt.Errorf("PutTargets: parse response: %w", err)
+	}
+	if resp.FailedEntryCount == 0 {
+		return nil
+	}
+	if len(resp.FailedEntries) == 0 {
+		return fmt.Errorf("PutTargets: %d target(s) rejected", resp.FailedEntryCount)
+	}
+	first := resp.FailedEntries[0]
+	return fmt.Errorf("PutTargets: target %q rejected (%s): %s", first.TargetID, first.ErrorCode, first.ErrorMessage)
 }
 
 func eventRuleNameFromArn(arn string) string {
@@ -665,12 +699,8 @@ func (h *eventsRuleHandler) Update(ctx context.Context, router http.Handler, _ *
 		}
 	}
 	if len(toAdd) > 0 {
-		addBody := map[string]any{"Rule": ruleName, "Targets": toAdd}
-		if eventBusName != "" {
-			addBody["EventBusName"] = eventBusName
-		}
-		if _, err := internalJSON(ctx, router, rCtx.Region, "AWSEvents.PutTargets", addBody); err != nil {
-			return "", nil, fmt.Errorf("PutTargets: %w", err)
+		if err := putEventTargets(ctx, router, rCtx.Region, ruleName, eventBusName, toAdd); err != nil {
+			return "", nil, err
 		}
 	}
 
