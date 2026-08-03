@@ -132,7 +132,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | ACM              | [acm.md](./services/acm.md)                         | 7   | Minimal / targeted support    |
 | Athena           | [athena.md](./services/athena.md)                   | 8   | Minimal / targeted support    |
 | Bedrock          | [bedrock.md](./services/bedrock.md)                 | 2   | Minimal / targeted support    |
-| CloudWatch       | [cloudwatch.md](./services/cloudwatch.md)           | 12  | Minimal / targeted support    |
+| CloudWatch       | [cloudwatch.md](./services/cloudwatch.md)           | 17  | Minimal / targeted support    |
 | DynamoDB Streams | [dynamodbstreams.md](./services/dynamodbstreams.md) | 4   | Minimal / targeted support    |
 | Firehose         | [firehose.md](./services/firehose.md)               | 6   | Minimal / targeted support    |
 | Glue             | [glue.md](./services/glue.md)                       | 8   | Minimal / targeted support    |

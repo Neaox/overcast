@@ -2,17 +2,16 @@ import { useMemo, useState } from "react"
 import { Link } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
 import type { Datapoint, Metric, Statistic } from "@aws-sdk/client-cloudwatch"
-import { Activity, AlertTriangle, RefreshCw, ScrollText } from "lucide-react"
+import { Activity, RefreshCw, ScrollText } from "lucide-react"
 import {
-  alarmsForMetric,
   cloudwatchAlarmsQueryOptions,
   cloudwatchMetricsQueryOptions,
   cloudwatchMetricStatisticsQueryOptions,
   metricIdentity,
 } from "@/features/cloudwatch/metrics/data"
+import { AlarmsPanel } from "@/features/cloudwatch/components/alarms-panel"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { Badge } from "@/components/ui/badge"
-import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import { Button } from "@/components/ui/button"
 import { QueryListState, PageHeader } from "@/components/ui/primitives"
 import { Select } from "@/components/ui/select"
@@ -58,19 +57,6 @@ function formatDatapointValue(datapoint: Datapoint, stat: Statistic): string {
   if (value == null) return "—"
   const unit = datapoint.Unit ? ` ${datapoint.Unit}` : ""
   return `${value.toFixed(2)}${unit}`
-}
-
-function alarmVariant(state: string | undefined): "success" | "warning" | "danger" | "default" {
-  switch (state) {
-    case "OK":
-      return "success"
-    case "ALARM":
-      return "danger"
-    case "INSUFFICIENT_DATA":
-      return "warning"
-    default:
-      return "default"
-  }
 }
 
 function MetricChart({ datapoints, stat }: { datapoints: Datapoint[]; stat: Statistic }) {
@@ -145,11 +131,6 @@ export function CloudwatchDashboard() {
       period: rangeConfig.period,
       rangeHours: rangeConfig.hours,
     }),
-  )
-
-  const selectedAlarms = useMemo(
-    () => (selectedMetric ? alarmsForMetric(selectedMetric, alarmsQuery.data ?? []) : []),
-    [alarmsQuery.data, selectedMetric],
   )
 
   const refetchAll = () => {
@@ -286,7 +267,7 @@ export function CloudwatchDashboard() {
                 </div>
               </div>
 
-              <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="space-y-4">
                 <div className="space-y-4">
                   <MetricChart
                     datapoints={statisticsQuery.data?.datapoints ?? []}
@@ -345,70 +326,20 @@ export function CloudwatchDashboard() {
                     )}
                   </div>
                 </div>
-
-                <div className="rounded-lg border border-border bg-bg p-4">
-                  <div className="mb-3 flex items-center justify-between gap-2">
-                    <h3 className="font-mono text-sm font-semibold text-fg">Alarms</h3>
-                    <span className="text-xs text-fg-muted">{selectedAlarms.length} matching</span>
-                  </div>
-
-                  <QueryListState
-                    isLoading={alarmsQuery.isLoading}
-                    isEmpty={selectedAlarms.length === 0}
-                    error={alarmsQuery.error}
-                    emptyIcon={<AlertTriangle className="h-10 w-10" />}
-                    emptyTitle="No alarms target this metric"
-                    emptyDescription="Alarm state will appear here when a CloudWatch alarm is configured for the selected metric."
-                    errorTitle="Unable to load alarms"
-                  />
-
-                  {selectedAlarms.length > 0 && (
-                    <div className="space-y-3">
-                      {selectedAlarms.map((alarm) => (
-                        <div
-                          key={alarm.AlarmArn ?? alarm.AlarmName}
-                          className="rounded-lg border border-border bg-bg-elevated p-3"
-                        >
-                          <div className="mb-2 flex items-start justify-between gap-3">
-                            <div>
-                              <div className="text-sm font-medium text-fg">{alarm.AlarmName}</div>
-                              {alarm.AlarmDescription && (
-                                <div className="mt-1 text-xs text-fg-muted">
-                                  {alarm.AlarmDescription}
-                                </div>
-                              )}
-                            </div>
-                            <Badge variant={alarmVariant(alarm.StateValue)}>
-                              {alarm.StateValue ?? "UNKNOWN"}
-                            </Badge>
-                          </div>
-
-                          <DefinitionList className="gap-y-2">
-                            <Definition label="Threshold" value={alarm.Threshold} />
-                            <Definition label="Comparison" value={alarm.ComparisonOperator} />
-                            <Definition
-                              label="Evaluation Periods"
-                              value={alarm.EvaluationPeriods}
-                            />
-                            <Definition
-                              label="Last Transition"
-                              value={formatTimestamp(alarm.StateUpdatedTimestamp)}
-                            />
-                          </DefinitionList>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
               </div>
             </>
           ) : (
             <div className="flex min-h-64 items-center justify-center text-sm text-fg-muted">
-              Select a metric to inspect datapoints and alarms.
+              Select a metric to inspect its datapoints.
             </div>
           )}
         </section>
       </div>
+
+      <AlarmsPanel
+        highlightNamespace={selectedMetric?.Namespace}
+        highlightMetricName={selectedMetric?.MetricName}
+      />
     </div>
   )
 }

@@ -17,11 +17,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/alarmaction"
 	"github.com/Neaox/overcast/internal/awsapi"
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
@@ -37,25 +39,40 @@ const serviceName = "cloudwatch"
 // ─── Types ────────────────────────────────────────────────────
 
 // MetricAlarm represents a CloudWatch alarm.
+//
+// This is the persisted shape, not a wire shape — the Query and JSON
+// responses are rendered from it separately. ManualStateHoldUntil in
+// particular is Overcast's own bookkeeping and is never emitted.
 type MetricAlarm struct {
-	AlarmName                          string   `json:"AlarmName"`
-	AlarmArn                           string   `json:"AlarmArn"`
-	MetricName                         string   `json:"MetricName,omitempty"`
-	Namespace                          string   `json:"Namespace,omitempty"`
-	Statistic                          string   `json:"Statistic,omitempty"`
-	Period                             int      `json:"Period,omitempty"`
-	EvaluationPeriods                  int      `json:"EvaluationPeriods,omitempty"`
-	Threshold                          float64  `json:"Threshold,omitempty"`
-	ComparisonOperator                 string   `json:"ComparisonOperator,omitempty"`
-	ActionsEnabled                     bool     `json:"ActionsEnabled"`
-	AlarmActions                       []string `json:"AlarmActions,omitempty"`
-	OKActions                          []string `json:"OKActions,omitempty"`
-	StateValue                         string   `json:"StateValue"`
-	StateReason                        string   `json:"StateReason"`
-	AlarmDescription                   string   `json:"AlarmDescription,omitempty"`
-	TreatMissingData                   string   `json:"TreatMissingData,omitempty"`
-	StateUpdatedTimestamp              string   `json:"StateUpdatedTimestamp,omitempty"`
-	AlarmConfigurationUpdatedTimestamp string   `json:"AlarmConfigurationUpdatedTimestamp,omitempty"`
+	AlarmName                          string      `json:"AlarmName"`
+	AlarmArn                           string      `json:"AlarmArn"`
+	MetricName                         string      `json:"MetricName,omitempty"`
+	Namespace                          string      `json:"Namespace,omitempty"`
+	Statistic                          string      `json:"Statistic,omitempty"`
+	ExtendedStatistic                  string      `json:"ExtendedStatistic,omitempty"`
+	Dimensions                         []Dimension `json:"Dimensions,omitempty"`
+	Unit                               string      `json:"Unit,omitempty"`
+	Period                             int         `json:"Period,omitempty"`
+	EvaluationPeriods                  int         `json:"EvaluationPeriods,omitempty"`
+	DatapointsToAlarm                  int         `json:"DatapointsToAlarm,omitempty"`
+	Threshold                          float64     `json:"Threshold,omitempty"`
+	ComparisonOperator                 string      `json:"ComparisonOperator,omitempty"`
+	ActionsEnabled                     bool        `json:"ActionsEnabled"`
+	AlarmActions                       []string    `json:"AlarmActions,omitempty"`
+	OKActions                          []string    `json:"OKActions,omitempty"`
+	InsufficientDataActions            []string    `json:"InsufficientDataActions,omitempty"`
+	StateValue                         string      `json:"StateValue"`
+	StateReason                        string      `json:"StateReason"`
+	StateReasonData                    string      `json:"StateReasonData,omitempty"`
+	AlarmDescription                   string      `json:"AlarmDescription,omitempty"`
+	TreatMissingData                   string      `json:"TreatMissingData,omitempty"`
+	StateUpdatedTimestamp              string      `json:"StateUpdatedTimestamp,omitempty"`
+	StateTransitionedTimestamp         string      `json:"StateTransitionedTimestamp,omitempty"`
+	AlarmConfigurationUpdatedTimestamp string      `json:"AlarmConfigurationUpdatedTimestamp,omitempty"`
+
+	// ManualStateHoldUntil is when a SetAlarmState override stops being
+	// protected from the evaluator. Internal — see setAlarmStateHold.
+	ManualStateHoldUntil string `json:"ManualStateHoldUntil,omitempty"`
 }
 
 // Metric represents a CloudWatch metric entry.
@@ -96,10 +113,11 @@ func newCloudwatchStore(s state.Store, clk clock.Clock) *cloudwatchStore {
 }
 
 const (
-	nsAlarms     = "cloudwatch:alarms"
-	nsMetrics    = "cloudwatch:metrics"
-	nsMetricData = "cloudwatch:metricdata"
-	nsTags       = "cloudwatch:tags"
+	nsAlarms       = "cloudwatch:alarms"
+	nsAlarmHistory = "cloudwatch:alarmhistory"
+	nsMetrics      = "cloudwatch:metrics"
+	nsMetricData   = "cloudwatch:metricdata"
+	nsTags         = "cloudwatch:tags"
 
 	// memoryMetricDataRetention is the retention window applied to
 	// PutMetricData datapoints in every backend mode (storage-plan.md 3.4).
@@ -442,19 +460,43 @@ type Service struct {
 	clk   clock.Clock
 	ops   map[string]http.HandlerFunc
 
+	// actions delivers alarm transitions to their configured action ARNs.
+	// Nil until InitAlarmActions is called, which keeps the service usable
+	// in unit tests that wire no router.
+	actions *alarmaction.Dispatcher
+
+	// alarmTicker drives the single evaluation loop. Created in New so a
+	// mock clock has it registered before New returns (same reasoning as
+	// startMetricDataSweeper's ticker).
+	alarmTicker *clock.Ticker
+
+	// alarmCount caches how many alarms exist, so a tick with none costs one
+	// atomic load and no store I/O. -1 means "unknown, re-read next tick".
+	alarmCount atomic.Int64
+
+	// evalMemo remembers the last evaluated window per alarm so an alarm is
+	// re-evaluated only when its window advanced or its config changed.
+	evalMu   sync.Mutex
+	evalMemo map[string]evalMemo
+
 	stopOnce sync.Once
 	stopCh   chan struct{}
 	wg       sync.WaitGroup
 }
 
 // New returns a configured CloudWatch Service.
+//
+// It performs no store I/O: the alarm evaluator and the metric-data sweeper
+// only register their tickers here, and neither touches the store until its
+// first tick (AGENTS.md § startup budget).
 func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock) *Service {
 	s := &Service{
-		log:    serviceutil.NewServiceLogger(logger, serviceName),
-		store:  newCloudwatchStore(st, clk),
-		cfg:    cfg,
-		clk:    clk,
-		stopCh: make(chan struct{}),
+		log:      serviceutil.NewServiceLogger(logger, serviceName),
+		store:    newCloudwatchStore(st, clk),
+		cfg:      cfg,
+		clk:      clk,
+		evalMemo: make(map[string]evalMemo),
+		stopCh:   make(chan struct{}),
 	}
 	s.ops = map[string]http.HandlerFunc{
 		"PutMetricAlarm":          s.putMetricAlarm,
@@ -468,13 +510,25 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock
 		"TagResource":             s.tagResource,
 		"UntagResource":           s.untagResource,
 		"DescribeAlarmsForMetric": s.describeAlarmsForMetric,
+		"DescribeAlarmHistory":    s.describeAlarmHistory,
 		"SetAlarmState":           s.setAlarmState,
+		"EnableAlarmActions":      s.enableAlarmActions,
+		"DisableAlarmActions":     s.disableAlarmActions,
 	}
+	// -1 = unknown: the first tick learns the real count from the store,
+	// after construction, so a restart with existing alarms still evaluates.
+	s.alarmCount.Store(-1)
+	s.alarmTicker = s.clk.Ticker(alarmEvaluationInterval)
 	s.wg.Add(1)
 	go s.runAlarmEvaluator()
 	s.startMetricDataSweeper()
 	return s
 }
+
+// InitAlarmActions wires the dispatcher that delivers alarm state transitions
+// to their action ARNs. Called once from router.New; a Service without it
+// still evaluates alarms, it just has nowhere to send the transitions.
+func (s *Service) InitAlarmActions(d *alarmaction.Dispatcher) { s.actions = d }
 
 func (s *Service) Name() string                { return serviceName }
 func (s *Service) RegisterRoutes(_ chi.Router) {}
@@ -563,6 +617,21 @@ func (s *Service) dispatchJSON(w http.ResponseWriter, r *http.Request, action st
 		s.deleteAlarmsJSON(w, r)
 	case "DescribeAlarmsForMetric":
 		s.describeAlarmsForMetricJSON(w, r)
+	case "DescribeAlarmHistory":
+		s.describeAlarmHistoryJSON(w, r)
+	case "SetAlarmState":
+		s.setAlarmStateJSON(w, r)
+	case "EnableAlarmActions":
+		s.setAlarmActionsEnabledJSON(w, r, true)
+	case "DisableAlarmActions":
+		s.setAlarmActionsEnabledJSON(w, r, false)
+	case "PutCompositeAlarm", "PutAnomalyDetector", "DeleteAnomalyDetector", "DescribeAnomalyDetectors":
+		// Real CloudWatch operations Overcast does not emulate. They get an
+		// honest 501 rather than UnknownOperationException, which would
+		// wrongly claim AWS has no such operation — and rather than a 200,
+		// which would leave an alarm that is never evaluated (see
+		// docs/plans/full-emulation-priority.md §2.1).
+		protocol.NotImplementedJSON(w, r)
 	default:
 		protocol.WriteJSONError(w, r, &protocol.AWSError{
 			Code:       "UnknownOperationException",
@@ -624,24 +693,30 @@ func (s *Service) describeAlarmsJSON(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type metricAlarmJSON struct {
-		AlarmName                          string   `json:"AlarmName"`
-		AlarmArn                           string   `json:"AlarmArn"`
-		MetricName                         string   `json:"MetricName,omitempty"`
-		Namespace                          string   `json:"Namespace,omitempty"`
-		Statistic                          string   `json:"Statistic,omitempty"`
-		Period                             int      `json:"Period,omitempty"`
-		EvaluationPeriods                  int      `json:"EvaluationPeriods,omitempty"`
-		Threshold                          float64  `json:"Threshold,omitempty"`
-		ComparisonOperator                 string   `json:"ComparisonOperator,omitempty"`
-		ActionsEnabled                     bool     `json:"ActionsEnabled"`
-		AlarmActions                       []string `json:"AlarmActions,omitempty"`
-		OKActions                          []string `json:"OKActions,omitempty"`
-		StateValue                         string   `json:"StateValue"`
-		StateReason                        string   `json:"StateReason"`
-		AlarmDescription                   string   `json:"AlarmDescription,omitempty"`
-		TreatMissingData                   string   `json:"TreatMissingData,omitempty"`
-		StateUpdatedTimestamp              float64  `json:"StateUpdatedTimestamp,omitempty"`
-		AlarmConfigurationUpdatedTimestamp float64  `json:"AlarmConfigurationUpdatedTimestamp,omitempty"`
+		AlarmName                          string      `json:"AlarmName"`
+		AlarmArn                           string      `json:"AlarmArn"`
+		MetricName                         string      `json:"MetricName,omitempty"`
+		Namespace                          string      `json:"Namespace,omitempty"`
+		Statistic                          string      `json:"Statistic,omitempty"`
+		Dimensions                         []Dimension `json:"Dimensions,omitempty"`
+		Unit                               string      `json:"Unit,omitempty"`
+		Period                             int         `json:"Period,omitempty"`
+		EvaluationPeriods                  int         `json:"EvaluationPeriods,omitempty"`
+		DatapointsToAlarm                  int         `json:"DatapointsToAlarm,omitempty"`
+		Threshold                          float64     `json:"Threshold,omitempty"`
+		ComparisonOperator                 string      `json:"ComparisonOperator,omitempty"`
+		ActionsEnabled                     bool        `json:"ActionsEnabled"`
+		AlarmActions                       []string    `json:"AlarmActions,omitempty"`
+		OKActions                          []string    `json:"OKActions,omitempty"`
+		InsufficientDataActions            []string    `json:"InsufficientDataActions,omitempty"`
+		StateValue                         string      `json:"StateValue"`
+		StateReason                        string      `json:"StateReason"`
+		StateReasonData                    string      `json:"StateReasonData,omitempty"`
+		AlarmDescription                   string      `json:"AlarmDescription,omitempty"`
+		TreatMissingData                   string      `json:"TreatMissingData,omitempty"`
+		StateUpdatedTimestamp              float64     `json:"StateUpdatedTimestamp,omitempty"`
+		StateTransitionedTimestamp         float64     `json:"StateTransitionedTimestamp,omitempty"`
+		AlarmConfigurationUpdatedTimestamp float64     `json:"AlarmConfigurationUpdatedTimestamp,omitempty"`
 	}
 
 	out := make([]metricAlarmJSON, 0, len(alarms))
@@ -650,25 +725,33 @@ func (s *Service) describeAlarmsJSON(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		alarm := metricAlarmJSON{
-			AlarmName:          a.AlarmName,
-			AlarmArn:           a.AlarmArn,
-			MetricName:         a.MetricName,
-			Namespace:          a.Namespace,
-			Statistic:          a.Statistic,
-			Period:             a.Period,
-			EvaluationPeriods:  a.EvaluationPeriods,
-			Threshold:          a.Threshold,
-			ComparisonOperator: a.ComparisonOperator,
-			ActionsEnabled:     a.ActionsEnabled,
-			AlarmActions:       a.AlarmActions,
-			OKActions:          a.OKActions,
-			StateValue:         a.StateValue,
-			StateReason:        a.StateReason,
-			AlarmDescription:   a.AlarmDescription,
-			TreatMissingData:   a.TreatMissingData,
+			AlarmName:               a.AlarmName,
+			AlarmArn:                a.AlarmArn,
+			MetricName:              a.MetricName,
+			Namespace:               a.Namespace,
+			Statistic:               a.Statistic,
+			Dimensions:              a.Dimensions,
+			Unit:                    a.Unit,
+			Period:                  a.Period,
+			EvaluationPeriods:       a.EvaluationPeriods,
+			DatapointsToAlarm:       a.DatapointsToAlarm,
+			Threshold:               a.Threshold,
+			ComparisonOperator:      a.ComparisonOperator,
+			ActionsEnabled:          a.ActionsEnabled,
+			AlarmActions:            a.AlarmActions,
+			OKActions:               a.OKActions,
+			InsufficientDataActions: a.InsufficientDataActions,
+			StateValue:              a.StateValue,
+			StateReason:             a.StateReason,
+			StateReasonData:         a.StateReasonData,
+			AlarmDescription:        a.AlarmDescription,
+			TreatMissingData:        a.TreatMissingData,
 		}
 		if t, err := time.Parse(time.RFC3339, a.StateUpdatedTimestamp); err == nil {
 			alarm.StateUpdatedTimestamp = epochSeconds(t)
+		}
+		if t, err := time.Parse(time.RFC3339, a.StateTransitionedTimestamp); err == nil {
+			alarm.StateTransitionedTimestamp = epochSeconds(t)
 		}
 		if t, err := time.Parse(time.RFC3339, a.AlarmConfigurationUpdatedTimestamp); err == nil {
 			alarm.AlarmConfigurationUpdatedTimestamp = epochSeconds(t)
@@ -838,68 +921,18 @@ func (s *Service) putMetricDataJSON(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) putMetricAlarmJSON(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		AlarmName          string  `json:"AlarmName"`
-		MetricName         string  `json:"MetricName"`
-		Namespace          string  `json:"Namespace"`
-		Statistic          string  `json:"Statistic"`
-		Period             int     `json:"Period"`
-		EvaluationPeriods  int     `json:"EvaluationPeriods"`
-		Threshold          float64 `json:"Threshold"`
-		ComparisonOperator string  `json:"ComparisonOperator"`
-		ActionsEnabled     *bool   `json:"ActionsEnabled"`
-		AlarmDescription   string  `json:"AlarmDescription"`
-		TreatMissingData   string  `json:"TreatMissingData"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+	var body putMetricAlarmJSONBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "InvalidParameterValue", Message: "Invalid JSON body", HTTPStatus: http.StatusBadRequest})
 		return
 	}
-	if in.AlarmName == "" {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "MissingParameter", Message: "AlarmName is required", HTTPStatus: http.StatusBadRequest})
+	in := body.toInput()
+	if aerr := in.validate(); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-
-	region := middleware.RegionFromContext(r.Context(), s.cfg.Region)
-	arn := protocol.ARN(region, s.cfg.AccountID, "cloudwatch", "alarm:"+in.AlarmName)
-	now := s.clk.Now().UTC().Format(time.RFC3339)
-	actionsEnabled := true
-	if in.ActionsEnabled != nil {
-		actionsEnabled = *in.ActionsEnabled
-	}
-	alarm := &MetricAlarm{
-		AlarmName:                          in.AlarmName,
-		AlarmArn:                           arn,
-		MetricName:                         in.MetricName,
-		Namespace:                          in.Namespace,
-		Statistic:                          in.Statistic,
-		Period:                             in.Period,
-		EvaluationPeriods:                  in.EvaluationPeriods,
-		Threshold:                          in.Threshold,
-		ComparisonOperator:                 in.ComparisonOperator,
-		ActionsEnabled:                     actionsEnabled,
-		AlarmDescription:                   in.AlarmDescription,
-		TreatMissingData:                   in.TreatMissingData,
-		StateValue:                         "INSUFFICIENT_DATA",
-		StateReason:                        "Insufficient Data: awaiting datapoints",
-		StateUpdatedTimestamp:              now,
-		AlarmConfigurationUpdatedTimestamp: now,
-	}
-	if alarm.Statistic == "" {
-		alarm.Statistic = "Average"
-	}
-	if alarm.ComparisonOperator == "" {
-		alarm.ComparisonOperator = "GreaterThanThreshold"
-	}
-	if alarm.Period <= 0 {
-		alarm.Period = 60
-	}
-	if alarm.EvaluationPeriods <= 0 {
-		alarm.EvaluationPeriods = 1
-	}
-
-	if err := s.store.putAlarm(r.Context(), alarm); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+	if _, aerr := s.storeAlarmFromInput(r, in); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	writeJSONResult(w, r, struct{}{})
@@ -914,9 +947,18 @@ func (s *Service) deleteAlarmsJSON(w http.ResponseWriter, r *http.Request) {
 		if name == "" {
 			continue
 		}
-		_ = s.store.deleteAlarm(r.Context(), name)
+		s.removeAlarm(r.Context(), name)
 	}
 	writeJSONResult(w, r, struct{}{})
+}
+
+// removeAlarm deletes an alarm along with the history and evaluation memo
+// that belong to it, so a recreated alarm starts clean.
+func (s *Service) removeAlarm(ctx context.Context, name string) {
+	_ = s.store.deleteAlarm(ctx, name)
+	s.store.deleteAlarmHistory(ctx, name)
+	s.forgetAlarmMemo(name)
+	s.invalidateAlarmCount()
 }
 
 func (s *Service) describeAlarmsForMetricJSON(w http.ResponseWriter, r *http.Request) {
@@ -948,60 +990,59 @@ func (s *Service) describeAlarmsForMetricJSON(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Service) putMetricAlarm(w http.ResponseWriter, r *http.Request) {
-	name := r.FormValue("AlarmName")
-	if name == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
-			Code: "MissingParameter", Message: "AlarmName is required",
-			HTTPStatus: http.StatusBadRequest,
-		})
+	in := alarmInputFromForm(r)
+	if aerr := in.validate(); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	region := middleware.RegionFromContext(r.Context(), s.cfg.Region)
-	arn := protocol.ARN(region, s.cfg.AccountID, "cloudwatch", "alarm:"+name)
-	now := s.clk.Now().UTC().Format(time.RFC3339)
-
-	alarm := &MetricAlarm{
-		AlarmName:                          name,
-		AlarmArn:                           arn,
-		MetricName:                         r.FormValue("MetricName"),
-		Namespace:                          r.FormValue("Namespace"),
-		Statistic:                          r.FormValue("Statistic"),
-		Period:                             parseIntDefault(r.FormValue("Period"), 60),
-		EvaluationPeriods:                  parseIntDefault(r.FormValue("EvaluationPeriods"), 1),
-		Threshold:                          parseFloatDefault(r.FormValue("Threshold"), 0),
-		ComparisonOperator:                 r.FormValue("ComparisonOperator"),
-		ActionsEnabled:                     r.FormValue("ActionsEnabled") != "false",
-		AlarmDescription:                   r.FormValue("AlarmDescription"),
-		TreatMissingData:                   r.FormValue("TreatMissingData"),
-		StateValue:                         "INSUFFICIENT_DATA",
-		StateReason:                        "Insufficient Data: awaiting datapoints",
-		StateUpdatedTimestamp:              now,
-		AlarmConfigurationUpdatedTimestamp: now,
-	}
-	if alarm.Statistic == "" {
-		alarm.Statistic = "Average"
-	}
-	if alarm.ComparisonOperator == "" {
-		alarm.ComparisonOperator = "GreaterThanThreshold"
-	}
-	if alarm.Period <= 0 {
-		alarm.Period = 60
-	}
-	if alarm.EvaluationPeriods <= 0 {
-		alarm.EvaluationPeriods = 1
-	}
-
-	if err := s.store.putAlarm(r.Context(), alarm); err != nil {
-		protocol.WriteXMLError(w, r, protocol.ErrInternalError)
+	if _, aerr := s.storeAlarmFromInput(r, in); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
 	writeXMLResult(w, r, "PutMetricAlarm", "")
 }
 
+// storeAlarmFromInput persists a validated PutMetricAlarm request, recording
+// the ConfigurationUpdate history item AWS records for it.
+func (s *Service) storeAlarmFromInput(r *http.Request, in alarmInput) (*MetricAlarm, *protocol.AWSError) {
+	region := middleware.RegionFromContext(r.Context(), s.cfg.Region)
+	arn := protocol.ARN(region, s.cfg.AccountID, "cloudwatch", "alarm:"+in.AlarmName)
+	now := s.clk.Now().UTC()
+
+	previous, existed := s.store.getAlarm(r.Context(), in.AlarmName)
+	alarm := in.toAlarm(arn, now, previous)
+	if err := s.store.putAlarm(r.Context(), alarm); err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	s.invalidateAlarmCount()
+	s.forgetAlarmMemo(in.AlarmName)
+
+	summary := "Alarm " + in.AlarmName + " created"
+	if existed {
+		summary = "Alarm " + in.AlarmName + " updated"
+	}
+	_ = s.store.putAlarmHistory(r.Context(), AlarmHistoryItem{
+		AlarmName:       alarm.AlarmName,
+		AlarmType:       "MetricAlarm",
+		Timestamp:       now,
+		HistoryItemType: "ConfigurationUpdate",
+		HistorySummary:  summary,
+	})
+	return alarm, nil
+}
+
+// forgetAlarmMemo drops an alarm's evaluation memo so a reconfigured or
+// recreated alarm is evaluated on the next tick rather than skipped.
+func (s *Service) forgetAlarmMemo(name string) {
+	s.evalMu.Lock()
+	delete(s.evalMemo, name)
+	s.evalMu.Unlock()
+}
+
 func (s *Service) describeAlarms(w http.ResponseWriter, r *http.Request) {
 	alarms, err := s.store.listAlarms(r.Context())
 	if err != nil {
-		protocol.WriteXMLError(w, r, protocol.ErrInternalError)
+		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 		return
 	}
 
@@ -1046,15 +1087,37 @@ func (s *Service) describeAlarms(w http.ResponseWriter, r *http.Request) {
 		if a.EvaluationPeriods > 0 {
 			members.WriteString("<EvaluationPeriods>" + strconv.Itoa(a.EvaluationPeriods) + "</EvaluationPeriods>")
 		}
+		if a.DatapointsToAlarm > 0 {
+			members.WriteString("<DatapointsToAlarm>" + strconv.Itoa(a.DatapointsToAlarm) + "</DatapointsToAlarm>")
+		}
+		if a.Unit != "" {
+			members.WriteString("<Unit>" + xmlEscape(a.Unit) + "</Unit>")
+		}
+		if len(a.Dimensions) > 0 {
+			members.WriteString("<Dimensions>")
+			for _, d := range a.Dimensions {
+				members.WriteString("<member><Name>" + xmlEscape(d.Name) + "</Name><Value>" + xmlEscape(d.Value) + "</Value></member>")
+			}
+			members.WriteString("</Dimensions>")
+		}
 		members.WriteString("<Threshold>" + strconv.FormatFloat(a.Threshold, 'f', -1, 64) + "</Threshold>")
 		members.WriteString(fmt.Sprintf("<ActionsEnabled>%t</ActionsEnabled>", a.ActionsEnabled))
+		members.WriteString(renderActionList("AlarmActions", a.AlarmActions))
+		members.WriteString(renderActionList("OKActions", a.OKActions))
+		members.WriteString(renderActionList("InsufficientDataActions", a.InsufficientDataActions))
 		members.WriteString("<StateValue>" + a.StateValue + "</StateValue>")
 		members.WriteString("<StateReason>" + xmlEscape(a.StateReason) + "</StateReason>")
+		if a.StateReasonData != "" {
+			members.WriteString("<StateReasonData>" + xmlEscape(a.StateReasonData) + "</StateReasonData>")
+		}
 		if a.TreatMissingData != "" {
 			members.WriteString("<TreatMissingData>" + xmlEscape(a.TreatMissingData) + "</TreatMissingData>")
 		}
 		if a.StateUpdatedTimestamp != "" {
 			members.WriteString("<StateUpdatedTimestamp>" + xmlEscape(a.StateUpdatedTimestamp) + "</StateUpdatedTimestamp>")
+		}
+		if a.StateTransitionedTimestamp != "" {
+			members.WriteString("<StateTransitionedTimestamp>" + xmlEscape(a.StateTransitionedTimestamp) + "</StateTransitionedTimestamp>")
 		}
 		if a.AlarmConfigurationUpdatedTimestamp != "" {
 			members.WriteString("<AlarmConfigurationUpdatedTimestamp>" + xmlEscape(a.AlarmConfigurationUpdatedTimestamp) + "</AlarmConfigurationUpdatedTimestamp>")
@@ -1075,7 +1138,7 @@ func (s *Service) deleteAlarms(w http.ResponseWriter, r *http.Request) {
 		if name == "" {
 			break
 		}
-		_ = s.store.deleteAlarm(r.Context(), name)
+		s.removeAlarm(r.Context(), name)
 	}
 	writeXMLResult(w, r, "DeleteAlarms", "")
 }
@@ -1083,7 +1146,7 @@ func (s *Service) deleteAlarms(w http.ResponseWriter, r *http.Request) {
 func (s *Service) putMetricData(w http.ResponseWriter, r *http.Request) {
 	ns := r.FormValue("Namespace")
 	if ns == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteQueryXMLError(w, r, &protocol.AWSError{
 			Code: "MissingParameter", Message: "Namespace is required",
 			HTTPStatus: http.StatusBadRequest,
 		})
@@ -1166,7 +1229,7 @@ func (s *Service) getMetricStatistics(w http.ResponseWriter, r *http.Request) {
 	periodRaw := r.FormValue("Period")
 
 	if namespace == "" || metricName == "" || startRaw == "" || endRaw == "" || periodRaw == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteQueryXMLError(w, r, &protocol.AWSError{
 			Code: "MissingParameter", Message: "Namespace, MetricName, StartTime, EndTime, and Period are required",
 			HTTPStatus: http.StatusBadRequest,
 		})
@@ -1176,7 +1239,7 @@ func (s *Service) getMetricStatistics(w http.ResponseWriter, r *http.Request) {
 	endTime, ok2 := parseCWTime(endRaw)
 	periodSec, err := strconv.Atoi(periodRaw)
 	if !ok1 || !ok2 || err != nil || periodSec <= 0 {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteQueryXMLError(w, r, &protocol.AWSError{
 			Code: "InvalidParameterValue", Message: "Invalid StartTime, EndTime, or Period",
 			HTTPStatus: http.StatusBadRequest,
 		})
@@ -1208,7 +1271,7 @@ func (s *Service) getMetricStatistics(w http.ResponseWriter, r *http.Request) {
 
 	points, err := s.store.listMetricDataPoints(r.Context(), namespace, metricName, dimensions, startTime, endTime)
 	if err != nil {
-		protocol.WriteXMLError(w, r, protocol.ErrInternalError)
+		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 		return
 	}
 
@@ -1246,7 +1309,7 @@ func (s *Service) getMetricData(w http.ResponseWriter, r *http.Request) {
 	startRaw := r.FormValue("StartTime")
 	endRaw := r.FormValue("EndTime")
 	if startRaw == "" || endRaw == "" {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteQueryXMLError(w, r, &protocol.AWSError{
 			Code: "MissingParameter", Message: "StartTime and EndTime are required",
 			HTTPStatus: http.StatusBadRequest,
 		})
@@ -1255,7 +1318,7 @@ func (s *Service) getMetricData(w http.ResponseWriter, r *http.Request) {
 	startTime, ok1 := parseCWTime(startRaw)
 	endTime, ok2 := parseCWTime(endRaw)
 	if !ok1 || !ok2 {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
+		protocol.WriteQueryXMLError(w, r, &protocol.AWSError{
 			Code: "InvalidParameterValue", Message: "Invalid StartTime or EndTime",
 			HTTPStatus: http.StatusBadRequest,
 		})
@@ -1278,7 +1341,7 @@ func (s *Service) getMetricData(w http.ResponseWriter, r *http.Request) {
 		if expr != "" {
 			res, err := evaluateMetricExpression(strings.TrimSpace(expr), resultsByID, scanBy)
 			if err != nil {
-				protocol.WriteXMLError(w, r, &protocol.AWSError{
+				protocol.WriteQueryXMLError(w, r, &protocol.AWSError{
 					Code:       "InvalidParameterValue",
 					Message:    "Invalid expression for query id " + id + ": " + err.Error(),
 					HTTPStatus: http.StatusBadRequest,
@@ -1301,7 +1364,7 @@ func (s *Service) getMetricData(w http.ResponseWriter, r *http.Request) {
 		}
 		periodSec, err := strconv.Atoi(periodRaw)
 		if namespace == "" || metricName == "" || err != nil || periodSec <= 0 {
-			protocol.WriteXMLError(w, r, &protocol.AWSError{
+			protocol.WriteQueryXMLError(w, r, &protocol.AWSError{
 				Code: "InvalidParameterValue", Message: "Each query must include MetricStat with Metric, Period, and Stat",
 				HTTPStatus: http.StatusBadRequest,
 			})
@@ -1321,7 +1384,7 @@ func (s *Service) getMetricData(w http.ResponseWriter, r *http.Request) {
 
 		points, err := s.store.listMetricDataPoints(r.Context(), namespace, metricName, dimensions, startTime, endTime)
 		if err != nil {
-			protocol.WriteXMLError(w, r, protocol.ErrInternalError)
+			protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 			return
 		}
 		buckets := aggregateMetricBuckets(points, startTime.UTC(), endTime.UTC(), periodSec)
@@ -1543,7 +1606,7 @@ func (s *Service) listMetrics(w http.ResponseWriter, r *http.Request) {
 	ns := r.FormValue("Namespace")
 	metrics, err := s.store.listMetrics(r.Context(), ns)
 	if err != nil {
-		protocol.WriteXMLError(w, r, protocol.ErrInternalError)
+		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 		return
 	}
 	var members strings.Builder
@@ -1572,7 +1635,7 @@ func (s *Service) describeAlarmsForMetric(w http.ResponseWriter, r *http.Request
 	namespace := r.FormValue("Namespace")
 	alarms, err := s.store.listAlarms(r.Context())
 	if err != nil {
-		protocol.WriteXMLError(w, r, protocol.ErrInternalError)
+		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 		return
 	}
 	var members strings.Builder
@@ -1590,31 +1653,211 @@ func (s *Service) describeAlarmsForMetric(w http.ResponseWriter, r *http.Request
 	writeXMLResult(w, r, "DescribeAlarmsForMetric", body)
 }
 
+// setAlarmState forces an alarm's state, the way real AWS's SetAlarmState
+// does — including firing the state's actions, which is the standard way to
+// exercise an alarm's downstream wiring without waiting for a real breach.
+//
+// The forced state is protected from the evaluator for one evaluation range;
+// see setAlarmStateHold for why, and for how that differs from AWS.
 func (s *Service) setAlarmState(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("AlarmName")
+	stateValue := r.FormValue("StateValue")
+	if aerr := validateSetAlarmState(name, stateValue); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
 	alarm, found := s.store.getAlarm(r.Context(), name)
 	if !found {
-		protocol.WriteXMLError(w, r, &protocol.AWSError{
-			Code: "ResourceNotFound", Message: "Alarm " + name + " not found",
-			HTTPStatus: http.StatusNotFound,
-		})
+		protocol.WriteQueryXMLError(w, r, errAlarmNotFound(name))
 		return
 	}
-	alarm.StateValue = r.FormValue("StateValue")
-	alarm.StateReason = r.FormValue("StateReason")
-	alarm.StateUpdatedTimestamp = s.clk.Now().UTC().Format(time.RFC3339)
-	if err := s.store.putAlarm(r.Context(), alarm); err != nil {
-		protocol.WriteXMLError(w, r, protocol.ErrInternalError)
-		return
-	}
+	s.applyAlarmState(r.Context(), alarm, stateValue, r.FormValue("StateReason"), r.FormValue("StateReasonData"), true)
 	writeXMLResult(w, r, "SetAlarmState", "")
+}
+
+func (s *Service) setAlarmStateJSON(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AlarmName       string `json:"AlarmName"`
+		StateValue      string `json:"StateValue"`
+		StateReason     string `json:"StateReason"`
+		StateReasonData string `json:"StateReasonData"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "InvalidParameterValue", Message: "Invalid JSON body", HTTPStatus: http.StatusBadRequest})
+		return
+	}
+	if aerr := validateSetAlarmState(in.AlarmName, in.StateValue); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	alarm, found := s.store.getAlarm(r.Context(), in.AlarmName)
+	if !found {
+		protocol.WriteJSONError(w, r, errAlarmNotFound(in.AlarmName))
+		return
+	}
+	s.applyAlarmState(r.Context(), alarm, in.StateValue, in.StateReason, in.StateReasonData, true)
+	writeJSONResult(w, r, struct{}{})
+}
+
+// validateSetAlarmState mirrors the checks real CloudWatch applies before it
+// will force a state.
+func validateSetAlarmState(name, stateValue string) *protocol.AWSError {
+	if name == "" {
+		return errValidation("1 validation error detected: Value null at 'alarmName' failed to satisfy constraint: Member must not be null")
+	}
+	switch stateValue {
+	case stateOK, stateAlarm, stateInsufficientData:
+		return nil
+	default:
+		return errValidation(fmt.Sprintf("1 validation error detected: Value '%s' at 'stateValue' failed to satisfy constraint: "+
+			"Member must satisfy enum value set: [INSUFFICIENT_DATA, ALARM, OK]", stateValue))
+	}
+}
+
+// errAlarmNotFound is the error real CloudWatch returns for an alarm name
+// that does not exist.
+func errAlarmNotFound(name string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "ResourceNotFound",
+		Message:    "Alarm " + name + " not found",
+		HTTPStatus: http.StatusNotFound,
+	}
+}
+
+func (s *Service) enableAlarmActions(w http.ResponseWriter, r *http.Request) {
+	s.setAlarmActionsEnabled(w, r, true)
+}
+
+func (s *Service) disableAlarmActions(w http.ResponseWriter, r *http.Request) {
+	s.setAlarmActionsEnabled(w, r, false)
+}
+
+// setAlarmActionsEnabled flips ActionsEnabled on the named alarms. AWS
+// silently ignores names that do not exist, so this does too.
+func (s *Service) setAlarmActionsEnabled(w http.ResponseWriter, r *http.Request, enabled bool) {
+	action := "EnableAlarmActions"
+	if !enabled {
+		action = "DisableAlarmActions"
+	}
+	for i := 1; ; i++ {
+		name := r.FormValue(fmt.Sprintf("AlarmNames.member.%d", i))
+		if name == "" {
+			break
+		}
+		s.applyActionsEnabled(r.Context(), name, enabled)
+	}
+	writeXMLResult(w, r, action, "")
+}
+
+func (s *Service) setAlarmActionsEnabledJSON(w http.ResponseWriter, r *http.Request, enabled bool) {
+	var in struct {
+		AlarmNames []string `json:"AlarmNames"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	for _, name := range in.AlarmNames {
+		if name != "" {
+			s.applyActionsEnabled(r.Context(), name, enabled)
+		}
+	}
+	writeJSONResult(w, r, struct{}{})
+}
+
+// applyActionsEnabled persists one alarm's ActionsEnabled flag.
+func (s *Service) applyActionsEnabled(ctx context.Context, name string, enabled bool) {
+	alarm, found := s.store.getAlarm(ctx, name)
+	if !found || alarm.ActionsEnabled == enabled {
+		return
+	}
+	alarm.ActionsEnabled = enabled
+	if err := s.store.putAlarm(ctx, alarm); err != nil {
+		s.log.Error("persist alarm actions-enabled flag", zap.String("alarm", name), zap.Error(err))
+	}
+}
+
+// describeAlarmHistory answers the Query-protocol DescribeAlarmHistory.
+func (s *Service) describeAlarmHistory(w http.ResponseWriter, r *http.Request) {
+	q := historyQueryFromForm(r)
+	items, err := s.store.listAlarmHistory(r.Context(), q.AlarmName)
+	if err != nil {
+		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+		return
+	}
+	var members strings.Builder
+	for _, item := range q.filter(items) {
+		members.WriteString("<member>")
+		members.WriteString("<AlarmName>" + xmlEscape(item.AlarmName) + "</AlarmName>")
+		members.WriteString("<AlarmType>" + xmlEscape(item.AlarmType) + "</AlarmType>")
+		members.WriteString("<Timestamp>" + item.Timestamp.UTC().Format(time.RFC3339) + "</Timestamp>")
+		members.WriteString("<HistoryItemType>" + xmlEscape(item.HistoryItemType) + "</HistoryItemType>")
+		members.WriteString("<HistorySummary>" + xmlEscape(item.HistorySummary) + "</HistorySummary>")
+		if item.HistoryData != "" {
+			members.WriteString("<HistoryData>" + xmlEscape(item.HistoryData) + "</HistoryData>")
+		}
+		members.WriteString("</member>")
+	}
+	writeXMLResult(w, r, "DescribeAlarmHistory", "<AlarmHistoryItems>"+members.String()+"</AlarmHistoryItems>")
+}
+
+// describeAlarmHistoryJSON answers the JSON-protocol DescribeAlarmHistory.
+func (s *Service) describeAlarmHistoryJSON(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AlarmName       string   `json:"AlarmName"`
+		HistoryItemType string   `json:"HistoryItemType"`
+		StartDate       *float64 `json:"StartDate"`
+		EndDate         *float64 `json:"EndDate"`
+		MaxRecords      int      `json:"MaxRecords"`
+		ScanBy          string   `json:"ScanBy"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+
+	q := historyQuery{
+		AlarmName:       in.AlarmName,
+		HistoryItemType: in.HistoryItemType,
+		MaxRecords:      in.MaxRecords,
+		ScanBy:          in.ScanBy,
+	}
+	if in.StartDate != nil {
+		q.StartDate = parseEpochSeconds(*in.StartDate)
+	}
+	if in.EndDate != nil {
+		q.EndDate = parseEpochSeconds(*in.EndDate)
+	}
+
+	items, err := s.store.listAlarmHistory(r.Context(), in.AlarmName)
+	if err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	type historyItemJSON struct {
+		AlarmName       string  `json:"AlarmName"`
+		AlarmType       string  `json:"AlarmType"`
+		Timestamp       float64 `json:"Timestamp"`
+		HistoryItemType string  `json:"HistoryItemType"`
+		HistorySummary  string  `json:"HistorySummary"`
+		HistoryData     string  `json:"HistoryData,omitempty"`
+	}
+	filtered := q.filter(items)
+	out := make([]historyItemJSON, 0, len(filtered))
+	for _, item := range filtered {
+		out = append(out, historyItemJSON{
+			AlarmName:       item.AlarmName,
+			AlarmType:       item.AlarmType,
+			Timestamp:       epochSeconds(item.Timestamp),
+			HistoryItemType: item.HistoryItemType,
+			HistorySummary:  item.HistorySummary,
+			HistoryData:     item.HistoryData,
+		})
+	}
+	writeJSONResult(w, r, struct {
+		AlarmHistoryItems []historyItemJSON `json:"AlarmHistoryItems"`
+	}{AlarmHistoryItems: out})
 }
 
 func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 	arn := r.FormValue("ResourceARN")
 	tags, err := s.store.getTags(r.Context(), arn)
 	if err != nil {
-		protocol.WriteXMLError(w, r, protocol.ErrInternalError)
+		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 		return
 	}
 	var members strings.Builder
@@ -1632,7 +1875,7 @@ func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
 	arn := r.FormValue("ResourceARN")
 	tags, err := s.store.getTags(r.Context(), arn)
 	if err != nil {
-		protocol.WriteXMLError(w, r, protocol.ErrInternalError)
+		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 		return
 	}
 	for i := 1; ; i++ {
@@ -1644,7 +1887,7 @@ func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
 		tags[k] = v
 	}
 	if err := s.store.setTags(r.Context(), arn, tags); err != nil {
-		protocol.WriteXMLError(w, r, protocol.ErrInternalError)
+		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 		return
 	}
 	writeXMLResult(w, r, "TagResource", "")
@@ -1654,7 +1897,7 @@ func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
 	arn := r.FormValue("ResourceARN")
 	tags, err := s.store.getTags(r.Context(), arn)
 	if err != nil {
-		protocol.WriteXMLError(w, r, protocol.ErrInternalError)
+		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 		return
 	}
 	for i := 1; ; i++ {
@@ -1665,24 +1908,10 @@ func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
 		delete(tags, k)
 	}
 	if err := s.store.setTags(r.Context(), arn, tags); err != nil {
-		protocol.WriteXMLError(w, r, protocol.ErrInternalError)
+		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 		return
 	}
 	writeXMLResult(w, r, "UntagResource", "")
-}
-
-func (s *Service) runAlarmEvaluator() {
-	defer s.wg.Done()
-	ticker := s.clk.Ticker(1 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-s.stopCh:
-			return
-		case <-ticker.C:
-			s.evaluateAlarms()
-		}
-	}
 }
 
 // startMetricDataSweeper starts the background metric-data retention sweep.
@@ -1716,64 +1945,6 @@ func (s *Service) startMetricDataSweeper() {
 	}()
 }
 
-func (s *Service) evaluateAlarms() {
-	ctx := context.Background()
-	alarms, err := s.store.listAlarms(ctx)
-	if err != nil {
-		return
-	}
-	now := s.clk.Now().UTC()
-	for _, alarm := range alarms {
-		if alarm.MetricName == "" || alarm.Namespace == "" {
-			continue
-		}
-		period := alarm.Period
-		if period <= 0 {
-			period = 60
-		}
-		evaluationPeriods := alarm.EvaluationPeriods
-		if evaluationPeriods <= 0 {
-			evaluationPeriods = 1
-		}
-
-		windowStart := now.Add(-time.Duration(period*evaluationPeriods) * time.Second)
-		points, err := s.store.listMetricDataPoints(ctx, alarm.Namespace, alarm.MetricName, nil, windowStart, now)
-		if err != nil {
-			continue
-		}
-		buckets := aggregateMetricBuckets(points, windowStart, now, period)
-		if len(buckets) == 0 || len(buckets) < evaluationPeriods {
-			s.setAlarmEvalState(ctx, alarm, "INSUFFICIENT_DATA", "Insufficient Data: fewer datapoints than EvaluationPeriods")
-			continue
-		}
-
-		recent := buckets[len(buckets)-evaluationPeriods:]
-		breaching := true
-		for _, bucket := range recent {
-			v, ok := metricStatValue(alarm.Statistic, bucket)
-			if !ok || !compareThreshold(v, alarm.Threshold, alarm.ComparisonOperator) {
-				breaching = false
-				break
-			}
-		}
-		if breaching {
-			s.setAlarmEvalState(ctx, alarm, "ALARM", "Threshold Crossed: datapoints breaching threshold")
-		} else {
-			s.setAlarmEvalState(ctx, alarm, "OK", "Threshold Not Crossed")
-		}
-	}
-}
-
-func (s *Service) setAlarmEvalState(ctx context.Context, alarm *MetricAlarm, stateValue, stateReason string) {
-	if alarm.StateValue == stateValue && alarm.StateReason == stateReason {
-		return
-	}
-	alarm.StateValue = stateValue
-	alarm.StateReason = stateReason
-	alarm.StateUpdatedTimestamp = s.clk.Now().UTC().Format(time.RFC3339)
-	_ = s.store.putAlarm(ctx, alarm)
-}
-
 // ─── Helpers ──────────────────────────────────────────────────
 
 func writeXMLResult(w http.ResponseWriter, r *http.Request, action, body string) {
@@ -1783,6 +1954,21 @@ func writeXMLResult(w http.ResponseWriter, r *http.Request, action, body string)
 	w.Header().Set("x-amzn-requestid", protocol.RequestIDFromContext(r.Context()))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(xml))
+}
+
+// renderActionList renders one of an alarm's action ARN lists as the AWS
+// Query-protocol flattened member list, or nothing when it is empty.
+func renderActionList(name string, arns []string) string {
+	if len(arns) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("<" + name + ">")
+	for _, arn := range arns {
+		b.WriteString("<member>" + xmlEscape(arn) + "</member>")
+	}
+	b.WriteString("</" + name + ">")
+	return b.String()
 }
 
 func xmlEscape(s string) string {
