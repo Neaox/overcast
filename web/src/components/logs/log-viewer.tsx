@@ -3,6 +3,8 @@ import { useVirtualizer } from "@tanstack/react-virtual"
 import { useScrollTrigger } from "@/hooks/use-scroll-trigger"
 import { cn } from "@/lib/utils"
 import Prism from "@/lib/prism"
+import { stripAnsi } from "@/lib/ansi"
+import { AnsiText } from "./ansi-text"
 
 export interface LogViewerEvent {
   timestamp?: number
@@ -105,13 +107,16 @@ export function LogViewer({
     () =>
       events.map((event) => {
         const msg = String(event.message ?? "")
+        // Level detection and JSON parsing read the message as it *reads*: a
+        // colourised line starts with an escape sequence, not with `{`.
+        const plain = stripAnsi(msg)
         return {
           timestamp: event.timestamp,
           ingestionTime: event.ingestionTime,
           logStreamName: event.logStreamName,
           message: msg,
-          level: detectLogLevel(msg),
-          json: formatted ? tryParseJSON(msg) : null,
+          level: detectLogLevel(plain),
+          json: formatted ? tryParseJSON(plain) : null,
         }
       }),
     [events, formatted],
@@ -213,7 +218,7 @@ export function LogViewer({
                         />
                       ) : (
                         <span className="min-w-0 wrap-break-word whitespace-pre-wrap text-fg">
-                          {event.message}
+                          <AnsiText text={event.message} />
                         </span>
                       )}
                     </div>
@@ -230,7 +235,7 @@ export function LogViewer({
                           />
                         ) : (
                           <pre className="font-mono text-[10px] leading-relaxed wrap-break-word whitespace-pre-wrap text-fg">
-                            {event.message}
+                            <AnsiText text={event.message} />
                           </pre>
                         )}
                       </div>

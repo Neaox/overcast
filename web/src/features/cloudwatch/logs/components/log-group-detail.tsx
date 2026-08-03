@@ -19,6 +19,7 @@ import {
   TimeRangeFilter,
   type TimeRange,
 } from "@/features/cloudwatch/logs/components/time-range-filter"
+import { AnsiText } from "@/components/logs/ansi-text"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormField, FormRow, fieldError } from "@/components/ui/form"
@@ -305,7 +306,7 @@ export function LogGroupDetail({ groupName }: Props) {
                     </TableCell>
                     <TableCell>
                       <pre className="max-w-2xl font-mono text-xs break-all whitespace-pre-wrap">
-                        {evt.message}
+                        <AnsiText text={evt.message ?? ""} />
                       </pre>
                     </TableCell>
                   </TableRow>

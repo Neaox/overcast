@@ -1,0 +1,2 @@
+* [web] log viewers render a container's ANSI colours instead of the escape sequences around them — a colourising entrypoint (Bitnami, npm, `go test`) no longer shows `[38;5;6m` litter with an invisible control byte in front of it, and cursor moves, window titles and stray control bytes are dropped. The stored event is untouched: real CloudWatch keeps those bytes too
+* [web] filter-term highlighting in the CloudWatch Logs viewer marks every match in a line rather than every other one
