@@ -57,21 +57,63 @@ For a service, each failed placement is recorded the way AWS records it:
 
 - a service event, `(service X) was unable to place a task. Reason: …`, readable
   through `DescribeServices` and in the web UI's service row;
-- `failedTasks` on the primary deployment, reset once a task runs successfully;
-- `(service X) is unable to consistently start tasks successfully.` once
-  failures accumulate;
+- `failedTasks` on the primary deployment;
 - an `ecs:TaskStartFailed` event on the emulator's event stream.
 
-`rolloutState` moves `IN_PROGRESS` → `COMPLETED` when the service reaches its
-desired count. It moves to `FAILED` only when the service enabled a
+## When a task starts and then dies
+
+A service keeps its desired count: a task whose containers exit is replaced.
+Replacements back off as tasks keep dying (500 ms doubling to 30 s), so a
+container that exits immediately produces a crash loop that slows down rather
+than a hot loop — the same shape as AWS's service throttle logic.
+
+A task that dies on its own is a **failed task for the deployment that placed
+it**, exactly as one that never started is. AWS counts both in `failedTasks`,
+and the distinction matters: a crash-looping container is RUNNING for a moment
+on every replacement, so "a task is running right now" is not evidence the
+deployment is healthy.
+
+- `failedTasks` counts **consecutive** failures and is cleared only when the
+  deployment reaches a steady state — never merely because a replacement was
+  placed.
+- `(service X) is unable to consistently start tasks successfully. For more
+  information, see the Troubleshooting section.` is recorded once, as the count
+  crosses three — once per episode, not once per failure.
+- `(service X) has reached a steady state.` is recorded on the edge into a
+  steady state. A service replacing a dying task never crosses that edge, so it
+  never records it.
+
+A task the scheduler or the caller stopped deliberately — a scale-in, a
+`DeleteService` drain, `StopTask` — is not a failure. It keeps its
+`ServiceSchedulerInitiated`/`UserInitiated` stop code and is not replaced.
+
+Once a deployment has failed a task, a replacement has to stay `RUNNING` for ten
+seconds before the deployment counts as recovered. This applies only after a
+failure: a deployment that has failed nothing reaches its steady state as soon
+as its tasks run, so nothing is slowed down on the healthy path.
+
+## Rollout state and the deployment circuit breaker
+
+`rolloutState` moves `IN_PROGRESS` → `COMPLETED` when the service reaches a
+steady state. It moves to `FAILED` only when the service enabled a
 `deploymentCircuitBreaker`, which matches AWS: with the circuit breaker off a
 stuck deployment stays `IN_PROGRESS` and the scheduler keeps retrying, and the
 failure is reported through service events alone.
 
-A service also keeps its desired count: a task whose containers exit is
-replaced. Replacements back off as tasks keep dying (500 ms doubling to 30 s),
-so a container that exits immediately produces a crash loop that slows down
-rather than a hot loop — the same shape as AWS's service throttle logic.
+With `deploymentCircuitBreaker.enable` set, the breaker trips once `failedTasks`
+reaches AWS's documented threshold — half the desired count, clamped to
+`[3, 200]`. The deployment then reports:
+
+- `rolloutState: FAILED`, with
+  `rolloutStateReason: ECS deployment circuit breaker: task failed to start.`;
+- the service event
+  `(service X) (deployment Y) deployment failed: tasks failed to start.`;
+- no further task placements. `FAILED` is terminal — the deployment is replaced
+  by the next one, it does not recover.
+
+**Divergence:** `deploymentCircuitBreaker.rollback` is accepted and echoed but
+not acted on. Real ECS redeploys the last known-good deployment when the breaker
+trips with rollback enabled; Overcast fails the deployment and stops there.
 
 ## Container secrets
 
