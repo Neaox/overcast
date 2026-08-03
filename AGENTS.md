@@ -17,6 +17,8 @@
 > For smoke testing by hand — and for why the AWS CLI alone cannot verify an endpoint change —
 > see [docs/dev/manual-testing.md](./docs/dev/manual-testing.md).
 > For current implementation status and what to build next, see [STATUS.md](./STATUS.md).
+> For cutting a release — versioning, changelog curation, and testing the release candidate —
+> see [RELEASE.md](./RELEASE.md).
 
 ## Repo-local skills
 
@@ -32,6 +34,7 @@ opencode and Claude Code both discover them without prompting.
 - `github-issue-lifecycle`: Use for creating, triaging, updating, linking, and closing GitHub issues.
 - `new-feature`: Use for adding AWS endpoints, services, CloudFormation resources, or other product features.
 - `pull-request`: Use for preparing PRs, PR descriptions, commit hygiene, screenshots for visual changes, and CHANGELOG decisions.
+- `release`: Use for cutting a release — curating changelog fragments, bumping `VERSION`, and smoke/regression testing the release candidate before it ships.
 - `stacked-prs`: Use when a PR depends on another PR that has not merged yet — building, linking, syncing and landing a chain of dependent PRs.
 
 ---

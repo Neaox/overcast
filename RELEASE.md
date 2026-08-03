@@ -41,9 +41,11 @@ When a release is wanted:
    attached. Edit that draft into `CHANGELOG.md` in the house style, then
    delete every fragment file.
 3. **Open the PR.** CI treats any same-repo PR whose `VERSION` carries no tag
-   as a release candidate: it publishes RC images and the native binaries and
-   maintains one bot comment linking them. Smoke test those bits — they are
-   what CI built, not a local rebuild.
+   as a **release candidate** — **RC** throughout this document: it publishes
+   RC images and the native binaries and maintains one bot comment linking
+   them. Smoke test those bits — they are what CI built, not a local rebuild.
+   What to test, and how, is the `release` skill under
+   [.agents/skills/release](.agents/skills/release/SKILL.md).
 4. **Re-curate whenever `main` moves.** A PR merged after this branch last
    changed does not re-trigger anything here, and its fragments would ride
    onto `main` through a clean union merge. The changelog gate fails the PR
