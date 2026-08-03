@@ -69,6 +69,12 @@ func skipWithoutDocker(t *testing.T) *docker.Client {
 	if err := dc.Ping(t.Context()); err != nil {
 		t.Skip("Docker not available, skipping Docker-dependent ECR test")
 	}
+	// Every Docker-dependent ECR test drives the shared registry container, so
+	// fetch its image here. That warms the daemon's cache — the emulator's own
+	// pull then resolves locally instead of racing Docker Hub — and turns an
+	// unreachable registry into an honest skip rather than a bare "expected
+	// shared ECR registry container to be created" 60s later.
+	helpers.PullOrSkip(t, dc, "registry:2")
 	return dc
 }
 
