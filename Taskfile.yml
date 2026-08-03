@@ -184,6 +184,7 @@ tasks:
     desc: Run golangci-lint for Go/emulation code
     cmds:
       - go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}} run ./...
+      - bash scripts/verify-changed.sh --record go
 
   lint-web:
     desc: Run web UI linting
@@ -215,6 +216,11 @@ tasks:
   check:
     desc: Run all pre-PR checks (fmt + vet + lint + test)
     deps: [fmt, vet, lint, test]
+
+  verify:
+    desc: Run the required-CI checks this branch touches (cached — a no-op if nothing changed)
+    cmds:
+      - bash scripts/verify-changed.sh {{.CLI_ARGS}}
 
   ci-local:
     desc: Run the whole CI pipeline locally (Go via Docker — no host Go needed)
