@@ -23,6 +23,10 @@ impl DynamoDbGroup {
 }
 
 impl ServiceGroup for DynamoDbGroup {
+    fn name(&self) -> &'static str {
+        "dynamodb"
+    }
+
     fn impls(&self) -> HashMap<String, TestFn> {
         let mut impls: HashMap<String, TestFn> = HashMap::new();
 

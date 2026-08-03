@@ -24,6 +24,10 @@ impl S3Group {
 }
 
 impl ServiceGroup for S3Group {
+    fn name(&self) -> &'static str {
+        "s3"
+    }
+
     fn impls(&self) -> HashMap<String, TestFn> {
         let mut impls: HashMap<String, TestFn> = HashMap::new();
 

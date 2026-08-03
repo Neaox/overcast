@@ -19,6 +19,10 @@ impl SnsGroup {
 }
 
 impl ServiceGroup for SnsGroup {
+    fn name(&self) -> &'static str {
+        "sns"
+    }
+
     fn impls(&self) -> HashMap<String, TestFn> {
         let mut impls: HashMap<String, TestFn> = HashMap::new();
 
