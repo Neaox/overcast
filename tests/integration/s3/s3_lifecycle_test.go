@@ -118,6 +118,50 @@ func assertPutLifecycleRejected(t *testing.T, srv *helpers.TestServer, bucket, b
 	helpers.AssertXMLError(t, resp, wantCode)
 }
 
+// ---- Response shape --------------------------------------------------------
+
+// TestGetBucketLifecycleConfiguration_omitsUnsetOptionalElements asserts on the
+// raw XML rather than a decoded struct, because Go's decoder is forgiving where
+// every real SDK is not.
+//
+// Regression: the response used to serialise an empty <Date></Date> alongside a
+// Days rule. Go read it back as "", but the Node, Python, Go, Java, .NET and
+// Rust SDKs all parse that element as a timestamp and reject "" with "Invalid
+// RFC3339 timestamp format" — so the whole response failed to deserialise for
+// every real client while the Go-level round-trip test stayed green. The compat
+// suites caught it; this test is what would have caught it here.
+func TestGetBucketLifecycleConfiguration_omitsUnsetOptionalElements(t *testing.T) {
+	// Given: a bucket whose rule uses Days, not Date
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "lc-shape")
+	putLifecycleOK(t, srv, "lc-shape", `<?xml version="1.0" encoding="UTF-8"?>
+<LifecycleConfiguration>
+  <Rule><ID>days-only</ID><Filter/><Status>Enabled</Status>
+    <Expiration><Days>30</Days></Expiration>
+    <Transition><Days>7</Days><StorageClass>GLACIER</StorageClass></Transition></Rule>
+</LifecycleConfiguration>`)
+
+	// When: the configuration is read back
+	resp := getLifecycle(t, srv, "lc-shape")
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	body := helpers.ReadBody(t, resp)
+	resp.Body.Close()
+
+	// Then: no empty optional element is emitted — an SDK would fail to parse it
+	for _, element := range []string{"<Date>", "<ExpiredObjectDeleteMarker>", "<Tag>", "<And>", "<ObjectSize"} {
+		if strings.Contains(body, element) {
+			t.Errorf("response emits an unset %s element, which real SDKs reject: %s", element, body)
+		}
+	}
+
+	// And: the elements that were set are all there
+	for _, element := range []string{"<Days>30</Days>", "<Days>7</Days>", "<StorageClass>GLACIER</StorageClass>"} {
+		if !strings.Contains(body, element) {
+			t.Errorf("response is missing %s: %s", element, body)
+		}
+	}
+}
+
 // ---- Put/Get/Delete round trip ---------------------------------------------
 
 func TestPutBucketLifecycleConfiguration_roundTrip(t *testing.T) {

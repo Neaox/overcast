@@ -76,17 +76,17 @@ type lifecycleRuleXML struct {
 
 type lifecycleFilterXML struct {
 	Prefix                string           `xml:"Prefix,omitempty"`
-	Tag                   *lifecycleTagXML `xml:"Tag"`
-	ObjectSizeGreaterThan *int64           `xml:"ObjectSizeGreaterThan"`
-	ObjectSizeLessThan    *int64           `xml:"ObjectSizeLessThan"`
-	And                   *lifecycleAndXML `xml:"And"`
+	Tag                   *lifecycleTagXML `xml:"Tag,omitempty"`
+	ObjectSizeGreaterThan *int64           `xml:"ObjectSizeGreaterThan,omitempty"`
+	ObjectSizeLessThan    *int64           `xml:"ObjectSizeLessThan,omitempty"`
+	And                   *lifecycleAndXML `xml:"And,omitempty"`
 }
 
 type lifecycleAndXML struct {
 	Prefix                string            `xml:"Prefix,omitempty"`
-	Tags                  []lifecycleTagXML `xml:"Tag"`
-	ObjectSizeGreaterThan *int64            `xml:"ObjectSizeGreaterThan"`
-	ObjectSizeLessThan    *int64            `xml:"ObjectSizeLessThan"`
+	Tags                  []lifecycleTagXML `xml:"Tag,omitempty"`
+	ObjectSizeGreaterThan *int64            `xml:"ObjectSizeGreaterThan,omitempty"`
+	ObjectSizeLessThan    *int64            `xml:"ObjectSizeLessThan,omitempty"`
 }
 
 type lifecycleTagXML struct {
@@ -94,20 +94,24 @@ type lifecycleTagXML struct {
 	Value string `xml:"Value"`
 }
 
+// Date carries omitempty because a Days rule must not serialise an empty
+// <Date></Date>: every real SDK parses the element as a timestamp and rejects
+// "" as an invalid RFC3339 value, so an empty element breaks the response for
+// every client rather than being ignored. AWS omits it. Same for Transition.
 type lifecycleExpirationXML struct {
-	Days                      *int   `xml:"Days"`
-	Date                      string `xml:"Date"`
-	ExpiredObjectDeleteMarker *bool  `xml:"ExpiredObjectDeleteMarker"`
+	Days                      *int   `xml:"Days,omitempty"`
+	Date                      string `xml:"Date,omitempty"`
+	ExpiredObjectDeleteMarker *bool  `xml:"ExpiredObjectDeleteMarker,omitempty"`
 }
 
 type lifecycleTransitionXML struct {
-	Days         *int   `xml:"Days"`
-	Date         string `xml:"Date"`
+	Days         *int   `xml:"Days,omitempty"`
+	Date         string `xml:"Date,omitempty"`
 	StorageClass string `xml:"StorageClass"`
 }
 
 type lifecycleAbortMPUXML struct {
-	DaysAfterInitiation *int `xml:"DaysAfterInitiation"`
+	DaysAfterInitiation *int `xml:"DaysAfterInitiation,omitempty"`
 }
 
 type lifecycleNoncurrentExpirationXML struct {
