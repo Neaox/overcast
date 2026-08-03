@@ -210,6 +210,12 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [rds/ecs] an ECS task can connect to an RDS instance by its endpoint hostname. The instance's container is attached to the VPC network — and to the ECS network for tasks outside a VPC — advertising that hostname as a DNS alias, which is what RDS already did for the Lambda network. Without the alias the name fell through to Overcast's own address and the task connected to a port nothing was listening on
 
+- [rds] a DB instance endpoint is now a hostname a Lambda function or ECS task can actually resolve and connect to. `Endpoint.Address` is minted on the endpoint the request arrived on — `mydb.ap-southeast-2.rds.localhost.overcast.sh` when `OVERCAST_HOSTNAME` is set — the rule every other service already follows, and the engine container answers to that name on `overcast_lambda`, `overcast_ecs` and its VPC network. Previously the name was built from configuration alone (so a caller reaching Overcast on a different hostname was handed one that resolved nowhere), and once the container started it was overwritten with a raw container IP or `127.0.0.1` — an address dialable by exactly one party, which is what a `WORDPRESS_DATABASE_HOST` baked into an ECS task definition by `Fn::GetAtt` could not use
+
+- [rds] the port follows the caller for the same reason: a sibling container is given the engine's own port (3306/5432), the host the published one. A host request to a containerised Overcast arrives from the Docker bridge gateway rather than loopback, which is now recognised as the host side
+
+- [rds] any `EngineVersion` starts a container. The image map was matched exactly, so the precise versions real stacks send (`8.0.39` from CDK's `MysqlEngineVersion.VER_8_0_39`, `16.3`) started nothing at all — the instance went `available` with no database behind it and its endpoint resolved nowhere. The nearest image in the same family is used and the substitution is logged
+
 - [release] release notes are written without a second approval. `finalize-release` sat in the `release` environment and depended on the three publish jobs, so it formed a second approval wave: the maintainer approved once, the release completed and looked finished, and the job that fills in the description waited for an approval nobody knew to give. `v0.0.1-alpha.27` and `v0.0.1-alpha.28` both published with empty notes as a result. It publishes nothing — everything is already out by the time it runs — so it is no longer gated
 
 - [release] the `Changelog entry` check no longer asks the release PR to write itself a release note. A release-prep PR consumes every fragment into its version section and adds none by construction, but it also carries the new, untagged `VERSION` — the same predicate the check reads to decide which release window a PR is in — so it classified the release PR as "merged, waiting to be tagged" and posted an ask saying the release had already gone out, on the one PR that had not merged. The release PR is now exempt by shape: `VERSION` and `CHANGELOG.md` both changed, nothing touched outside those and `.changelog/`, the version untagged, and a non-empty `## [x.y.z]` section present. Push a code change onto the release branch and the check asks again, in words written for that case — the note belongs in the release section the PR already owns, the one place where editing `CHANGELOG.md` is the answer rather than the thing to avoid
@@ -243,6 +249,8 @@ can be applied mechanically rather than reconstructed from memory.
 - [web] log viewers render a container's ANSI colours instead of the escape sequences around them — a colourising entrypoint (Bitnami, npm, `go test`) no longer shows `[38;5;6m` litter with an invisible control byte in front of it, and cursor moves, window titles and stray control bytes are dropped. The stored event is untouched: real CloudWatch keeps those bytes too
 
 - [web] filter-term highlighting in the CloudWatch Logs viewer marks every match in a line rather than every other one
+
+- [docs] `docs/networking.md` gains a *Data-plane endpoints* section stating the rule across services: every hostname Overcast hands back is minted on the endpoint the request came in on, how a name that points at a container (rather than at Overcast) is made resolvable, and why the port differs by caller
 
 ## [0.0.1-alpha.28] - 2026-07-31
 
