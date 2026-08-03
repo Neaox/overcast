@@ -47,6 +47,11 @@ type Match struct {
 	Effect string
 	// Index is the statement's 0-based position within its source document.
 	Index int
+	// StartPosition/EndPosition locate the statement within its source
+	// document text; see [Position]. Nil if the statement's position could
+	// not be determined (see [Statement.StartPosition]).
+	StartPosition *Position
+	EndPosition   *Position
 }
 
 // Result is the outcome of an evaluation.
@@ -89,10 +94,12 @@ func Evaluate(in Input) Result {
 				continue
 			}
 			res.Matched = append(res.Matched, Match{
-				Source: stmt.Source,
-				Sid:    stmt.Sid,
-				Effect: stmt.Effect,
-				Index:  stmt.Index,
+				Source:        stmt.Source,
+				Sid:           stmt.Sid,
+				Effect:        stmt.Effect,
+				Index:         stmt.Index,
+				StartPosition: stmt.StartPosition,
+				EndPosition:   stmt.EndPosition,
 			})
 			if stmt.Effect == "Deny" {
 				explicitDeny = true
