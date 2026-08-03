@@ -381,6 +381,45 @@ func TestPublish_deliversToSQSSubscriber(t *testing.T) {
 	}
 }
 
+// TestPublish_deliversToSQSSubscriberAfterPurge guards the fan-out path
+// against SQS's purge window. SNS writes into the queue through the same
+// store path as SendMessage, so when that path treated the 60 seconds after a
+// PurgeQueue as "drop everything", purging a subscribed queue quietly stopped
+// SNS deliveries for a minute — with nothing failing on either side to say so.
+func TestPublish_deliversToSQSSubscriberAfterPurge(t *testing.T) {
+	// Given: a queue subscribed to a topic, purged a moment ago.
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "purged-notify-topic")
+	queueURL := sqsCreateQueue(t, srv, "purged-notify-queue")
+	subscribe(t, srv, topicArn, "sqs", "arn:aws:sqs:us-east-1:000000000000:purged-notify-queue")
+
+	purgeResp := sqsCall(t, srv, "PurgeQueue", map[string]any{"QueueUrl": queueURL})
+	defer purgeResp.Body.Close()
+	helpers.AssertStatus(t, purgeResp, http.StatusOK)
+
+	// When: the topic is published to.
+	pubResp := snsCall(t, srv, "Publish", url.Values{
+		"TopicArn": {topicArn},
+		"Message":  {"after purge"},
+	})
+	defer pubResp.Body.Close()
+	helpers.AssertStatus(t, pubResp, http.StatusOK)
+
+	// Then: the notification still lands in the queue.
+	helpers.Eventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		recvResp := sqsCall(t, srv, "ReceiveMessage", map[string]any{
+			"QueueUrl":            queueURL,
+			"MaxNumberOfMessages": 1,
+		})
+		defer recvResp.Body.Close()
+		var recv struct {
+			Messages []struct{ Body string } `json:"Messages"`
+		}
+		helpers.DecodeJSON(t, recvResp, &recv)
+		return len(recv.Messages) == 1
+	}, "timed out waiting for SNS message in a recently purged queue")
+}
+
 func TestPublish_fanOutToMultipleQueues(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	topicArn := createTopic(t, srv, "fanout-topic")

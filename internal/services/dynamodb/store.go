@@ -595,12 +595,18 @@ func (s *dynamoStore) latestStreamSeq(ctx context.Context, tableName string) (in
 	return seq, nil
 }
 
-// deleteTable removes a table descriptor and all its items.
+// deleteTable removes a table descriptor, all its items, and its stream
+// records — AWS deletes a table's stream along with the table, and a table
+// recreated under the same name gets a new, empty stream rather than the
+// deleted one's history.
 func (s *dynamoStore) deleteTable(ctx context.Context, name string) *protocol.AWSError {
 	if err := s.items.deleteAll(ctx, name); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	if err := s.items.deleteAllIndexEntriesForTable(ctx, name); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if err := s.streams.deleteAll(ctx, name); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	key := serviceutil.RegionKey(s.region(ctx), name)

@@ -2,7 +2,7 @@ service: sqs
 status: in_progress
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-07-16
+last_updated: 2026-08-04
 protocols:
   - aws_json_1_0
   - query
@@ -152,6 +152,64 @@ operations:
       - AWS API Reference documents DeduplicationScope, FifoThroughputLimit, ContentBasedDeduplication as FIFO-only attributes.
     gaps: []
     next_action: Review Tags, RedrivePolicy, and encryption attributes for fidelity.
+  PurgeQueue:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_PurgeQueue.html
+    tests:
+      - tests/integration/sqs/sqs_test.go
+      - tests/integration/sns/sns_test.go
+    scenarios:
+      - name: purge queue holding messages
+        status: reviewed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: Every message held at purge time is deleted and ApproximateNumberOfMessages returns to 0.
+      - name: second PurgeQueue inside the 60-second window
+        status: reviewed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: Rejected with PurgeQueueInProgress; a purge after the window expires succeeds.
+      - name: SendMessage inside the 60-second window
+        status: fixed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: Messages sent after the purge call are retained and receivable. The window previously discarded every write to the queue for a full minute while SendMessage still returned 200 with a MessageId.
+      - name: internal delivery inside the 60-second window
+        status: fixed
+        tests:
+          - tests/integration/sns/sns_test.go
+        notes: SNS fan-out (and every other producer sharing the store write path — EventBridge targets and Scheduler, S3 event notifications, Lambda ESM DLQ, SQS DLQ moves and redrive) still reaches a recently purged queue.
+      - name: purge window on a queue deleted and recreated by name
+        status: fixed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: DeleteQueue clears the window, so the recreated queue's first PurgeQueue succeeds instead of returning PurgeQueueInProgress.
+    evidence:
+      - AWS API Reference documents the 60-second window as the deletion's duration and the PurgeQueueInProgress rate limit ("Only one PurgeQueue operation is allowed every 60 seconds"), and says messages sent after the call *might* be deleted while the queue is purging — not that the queue stops accepting deliveries. Overcast deletes synchronously before answering the call, so nothing remains to sweep up once the caller has its response.
+    gaps: []
+    next_action: None known.
+  DeleteQueue:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteQueue.html
+    tests:
+      - tests/integration/sqs/sqs_test.go
+    scenarios:
+      - name: delete queue and its messages
+        status: reviewed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: Queue metadata and every message are removed.
+      - name: queue recreated under a deleted queue's name
+        status: fixed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+        notes: The purge window, FIFO deduplication IDs and receive-attempt replay records go with the deleted queue. The recreated queue previously inherited them, refusing its first PurgeQueue and silently swallowing a re-sent MessageDeduplicationId for the rest of the 5-minute window.
+    evidence:
+      - AWS API Reference documents DeleteQueue as deleting the queue and its contents, and a queue created afterwards under the same name as a new queue rather than a continuation of the deleted one.
+    gaps: []
+    next_action: None known.
 findings:
   fixed:
     - CreateQueue now rejects queue names outside the documented 1..80 character alphanumeric, hyphen, underscore, and period rules with InvalidParameterValue.
@@ -173,6 +231,8 @@ findings:
     - CreateQueue now rejects FIFO-only attributes (DeduplicationScope, FifoThroughputLimit, ContentBasedDeduplication) on standard queues with InvalidAttributeValue.
     - CreateQueue now returns QueueNameExists error when creating a queue with the same name but different attribute values, matching AWS behavior.
     - SendMessage now validates DelaySeconds range (0-900), rejects DelaySeconds on FIFO queues, and enforces the 1 MiB message body size limit.
+    - PurgeQueue's 60-second window no longer discards writes to the queue. It had been treated as "drop everything for a minute", which silently killed SendMessage, SNS/EventBridge/Scheduler/S3 deliveries, and DLQ moves into a recently purged queue while every producer still saw success.
+    - DeleteQueue now clears the queue's purge window, FIFO deduplication IDs, and receive-attempt replay records, so a queue recreated under the same name does not inherit the deleted queue's state.
   remaining_gaps: []
   intentionally_partial: []
 verification:

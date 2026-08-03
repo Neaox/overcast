@@ -440,6 +440,61 @@ func TestStream_GetRecords_AfterPut(t *testing.T) {
 	}
 }
 
+// TestStream_recreatedTableStartsWithAnEmptyStream pins that a table's stream
+// dies with the table. Stream records are keyed by table name, so a table
+// deleted and recreated under that name used to inherit the previous table's
+// history: DescribeStream reported a fresh stream (new ARN and label, because
+// the ARN carries a creation timestamp), but a TRIM_HORIZON read replayed
+// changes made to a table that no longer existed.
+func TestStream_recreatedTableStartsWithAnEmptyStream(t *testing.T) {
+	// Given: a streamed table that recorded a change, then was deleted.
+	srv := helpers.NewTestServer(t)
+	createStreamTable(t, srv, "recreated-items", "NEW_AND_OLD_IMAGES")
+	putItem(t, srv, "recreated-items", map[string]any{"id": map[string]string{"S": "from-old-table"}})
+
+	deleteResp := ddbCall(t, srv, "DeleteTable", map[string]any{"TableName": "recreated-items"})
+	defer deleteResp.Body.Close()
+	helpers.AssertStatus(t, deleteResp, http.StatusOK)
+
+	// When: a table with the same name is recreated, and its stream is read
+	// from the earliest point available.
+	streamArn := createStreamTable(t, srv, "recreated-items", "NEW_AND_OLD_IMAGES")
+	shardID := describeStreamShardId(t, srv, streamArn)
+	iter := getShardIterator(t, srv, streamArn, shardID, "TRIM_HORIZON", "")
+
+	resp := streamsCall(t, srv, "GetRecords", map[string]any{"ShardIterator": iter})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: the new stream carries none of the deleted table's changes.
+	var result struct {
+		Records []struct {
+			EventName string `json:"eventName"`
+			Dynamodb  struct {
+				Keys map[string]any `json:"Keys"`
+			} `json:"dynamodb"`
+		} `json:"Records"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if len(result.Records) != 0 {
+		t.Fatalf("expected an empty stream on the recreated table, got %d record(s); first: %s %v",
+			len(result.Records), result.Records[0].EventName, result.Records[0].Dynamodb.Keys)
+	}
+
+	// And: it still records changes made to the new table.
+	putItem(t, srv, "recreated-items", map[string]any{"id": map[string]string{"S": "from-new-table"}})
+	resp2 := streamsCall(t, srv, "GetRecords", map[string]any{"ShardIterator": iter})
+	defer resp2.Body.Close()
+	result.Records = nil
+	helpers.DecodeJSON(t, resp2, &result)
+	if len(result.Records) != 1 {
+		t.Fatalf("expected 1 record from the recreated table, got %d", len(result.Records))
+	}
+	if keys, _ := result.Records[0].Dynamodb.Keys["id"].(map[string]any); keys["S"] != "from-new-table" {
+		t.Errorf("expected the new table's record, got %v", result.Records[0].Dynamodb.Keys)
+	}
+}
+
 func TestStream_GetRecords_AfterDelete(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	streamArn := createStreamTable(t, srv, "items", "NEW_AND_OLD_IMAGES")

@@ -36,6 +36,13 @@ type streamBackend interface {
 	// latest returns the highest SequenceNumber stored for the table,
 	// or 0 if there are none.
 	latest(ctx context.Context, tableName string) (int64, error)
+
+	// deleteAll drops every record stored for the table. Deleting a table in
+	// AWS deletes its stream with it, and a table later recreated under the
+	// same name gets a brand-new stream — records are keyed by table name
+	// here, so without this the recreated table's stream would replay the
+	// deleted table's history from TRIM_HORIZON.
+	deleteAll(ctx context.Context, tableName string) error
 }
 
 // ─── Memory implementation ────────────────────────────────────────────────────
@@ -88,6 +95,13 @@ func (b *memStreamBackend) latest(_ context.Context, tableName string) (int64, e
 		return 0, nil
 	}
 	return all[len(all)-1].SequenceNumber, nil
+}
+
+func (b *memStreamBackend) deleteAll(_ context.Context, tableName string) error {
+	b.mu.Lock()
+	delete(b.records, tableName)
+	b.mu.Unlock()
+	return nil
 }
 
 // ─── SQLite implementation ────────────────────────────────────────────────────
@@ -227,4 +241,16 @@ func (b *sqlStreamBackend) latest(ctx context.Context, tableName string) (int64,
 		tableName,
 	).Scan(&id)
 	return id, err
+}
+
+func (b *sqlStreamBackend) deleteAll(ctx context.Context, tableName string) error {
+	if err := b.init(); err != nil {
+		return err
+	}
+	if _, err := b.db.ExecContext(ctx,
+		`DELETE FROM dynamodb_stream_records WHERE table_name = ?`, tableName,
+	); err != nil {
+		return fmt.Errorf("stream delete records for %q: %w", tableName, err)
+	}
+	return nil
 }
