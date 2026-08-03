@@ -315,6 +315,11 @@ type DeploymentConfiguration struct {
 // steady state fails. AWS leaves it off unless a service asks for it, and while
 // it is off a stuck deployment stays IN_PROGRESS indefinitely rather than
 // transitioning to FAILED — the failure is reported through service events only.
+//
+// Rollback is stored and echoed but not acted on: a tripped breaker fails the
+// deployment and stops placing tasks, where AWS would additionally redeploy the
+// last known-good deployment. Documented as a divergence in
+// docs/services/ecs.md rather than silently approximated.
 type DeploymentCircuitBreaker struct {
 	Enable   bool `json:"enable"`
 	Rollback bool `json:"rollback"`
