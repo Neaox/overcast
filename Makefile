@@ -27,7 +27,7 @@ GOLANGCI_LINT_VERSION := v2.8.0
         build-slim-windows-amd64 \
         run test test-unit test-integration test-coverage \
         ci-local ci-local-web ci-local-go \
-        bench bench-startup lint lint-go lint-web lint-actions fmt vet tidy check aws-models-check docker docker-slim docker-console docker-run clean \
+        bench bench-startup lint lint-go lint-web lint-actions fmt vet tidy check verify aws-models-check docker docker-slim docker-console docker-run clean \
         compat compat-build compat-serve compat-dev compat-docker compat-report compat-registry-check \
         generate-caps check-caps generate-aws-operations aws-models-check docs docs-index docs-check supportmeta-check check-binary-symbols
 
@@ -157,6 +157,7 @@ lint: lint-go lint-web lint-actions
 ## lint-go: run golangci-lint for Go/emulation code (pinned via go run — no install needed)
 lint-go:
 	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...
+	@bash scripts/verify-changed.sh --record go
 
 ## lint-web: run web UI linting
 lint-web:
@@ -181,6 +182,10 @@ tidy:
 
 ## check: run all pre-PR checks (fmt + vet + lint + test)
 check: fmt vet lint test
+
+## verify: run the required-CI checks this branch touches (cached — a no-op if nothing changed)
+verify:
+	bash scripts/verify-changed.sh $(ARGS)
 
 ## ci-local: run the whole CI pipeline locally (Go via Docker — no host Go needed)
 ci-local:
