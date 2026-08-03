@@ -12,9 +12,21 @@ import java.util.Map;
 /**
  * Secrets Manager compatibility test group.
  *
- * <p>Groups: secretsmanager-crud, secretsmanager-rotate.
+ * <p>Groups: secretsmanager-crud, secretsmanager-rotate, secretsmanager-policy.
  */
 public final class SecretsManagerGroup implements ServiceGroup {
+
+    /**
+     * AWS wants a ClientRequestToken of 32-64 characters, and the token becomes
+     * the version ID, so a fixed UUID keeps the assertions readable.
+     */
+    private static final String PENDING_TOKEN = "0f9c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f";
+
+    /** A minimal, well-formed secret resource policy. */
+    private static final String COMPAT_RESOURCE_POLICY =
+            "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"OvercastCompatRead\","
+            + "\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::000000000000:root\"},"
+            + "\"Action\":\"secretsmanager:GetSecretValue\",\"Resource\":\"*\"}]}";
 
     private final AwsClients clients;
 
@@ -39,8 +51,16 @@ public final class SecretsManagerGroup implements ServiceGroup {
                 Map.entry("BatchGetSecretValue", this::batchGetSecretValue),
                 Map.entry("ListSecrets",         this::listSecrets),
                 Map.entry("DeleteSecret",        this::deleteSecret),
+                Map.entry("RotateSecretWithoutLambda", this::rotateSecretWithoutLambda),
                 Map.entry("RotateSecret",        this::rotateSecret),
-                Map.entry("CancelRotateSecret",  this::cancelRotateSecret)
+                Map.entry("PutSecretValuePending", this::putSecretValuePending),
+                Map.entry("GetSecretValueByStage", this::getSecretValueByStage),
+                Map.entry("UpdateSecretVersionStage", this::updateSecretVersionStage),
+                Map.entry("CancelRotateSecret",  this::cancelRotateSecret),
+                Map.entry("ValidateResourcePolicy", this::validateResourcePolicy),
+                Map.entry("PutResourcePolicy",   this::putResourcePolicy),
+                Map.entry("GetResourcePolicy",   this::getResourcePolicy),
+                Map.entry("DeleteResourcePolicy", this::deleteResourcePolicy)
         );
     }
 
@@ -48,7 +68,8 @@ public final class SecretsManagerGroup implements ServiceGroup {
     public Map<String, TestFn> setups() {
         return Map.ofEntries(
                 Map.entry("secretsmanager-crud",   this::setupCrud),
-                Map.entry("secretsmanager-rotate", this::setupRotate)
+                Map.entry("secretsmanager-rotate", this::setupRotate),
+                Map.entry("secretsmanager-policy", this::setupPolicy)
         );
     }
 
@@ -56,7 +77,8 @@ public final class SecretsManagerGroup implements ServiceGroup {
     public Map<String, TestFn> teardowns() {
         return Map.ofEntries(
                 Map.entry("secretsmanager-crud",   ctx -> deleteSecretSilently(ctx.getString("smSecretName"))),
-                Map.entry("secretsmanager-rotate", ctx -> deleteSecretSilently(ctx.getString("smRotateSecretName")))
+                Map.entry("secretsmanager-rotate", ctx -> deleteSecretSilently(ctx.getString("smRotateSecretName"))),
+                Map.entry("secretsmanager-policy", ctx -> deleteSecretSilently(ctx.getString("smPolicySecretName")))
         );
     }
 
@@ -159,17 +181,152 @@ public final class SecretsManagerGroup implements ServiceGroup {
         ctx.set("smRotateSecretName", name);
     }
 
+    /**
+     * A placeholder rotation function. This group always sets
+     * {@code rotateImmediately(false)}, so it is never invoked: driving the
+     * four-step protocol needs a real rotation Lambda and belongs with the
+     * Docker-dependent Lambda groups.
+     */
+    private String rotationLambdaArn(TestContext ctx) {
+        return "arn:aws:lambda:" + ctx.region() + ":000000000000:function:oc-rotate-fn";
+    }
+
+    private void rotateSecretWithoutLambda(TestContext ctx) throws Exception {
+        String name = ctx.getString("smRotateSecretName");
+        try {
+            sm().rotateSecret(r -> r.secretId(name)
+                    .rotationRules(rr -> rr.automaticallyAfterDays(30L)));
+        } catch (SecretsManagerException e) {
+            String code = e.awsErrorDetails() == null ? "" : e.awsErrorDetails().errorCode();
+            Assertions.assertEquals("InvalidRequestException", code,
+                    "RotateSecretWithoutLambda: unexpected error code");
+            return;
+        }
+        throw new AssertionError(
+                "RotateSecretWithoutLambda: expected InvalidRequestException, call succeeded");
+    }
+
     private void rotateSecret(TestContext ctx) throws Exception {
         String name = ctx.getString("smRotateSecretName");
-        // Overcast may not implement rotation; the test still verifies the API call
-        // is accepted (or returns a recognisable 501).
+        String arn = rotationLambdaArn(ctx);
         sm().rotateSecret(r -> r.secretId(name)
-                .rotationRules(rr -> rr.automaticallyAfterDays(30L)));
+                .rotationLambdaARN(arn)
+                .rotationRules(rr -> rr.automaticallyAfterDays(30L))
+                .rotateImmediately(false));
+
+        var desc = sm().describeSecret(r -> r.secretId(name));
+        Assertions.assertTrue(Boolean.TRUE.equals(desc.rotationEnabled()),
+                "RotateSecret: RotationEnabled not set");
+        Assertions.assertEquals(arn, desc.rotationLambdaARN(), "RotateSecret: RotationLambdaARN mismatch");
+        Assertions.assertTrue(desc.nextRotationDate() != null, "RotateSecret: NextRotationDate not set");
+    }
+
+    private void putSecretValuePending(TestContext ctx) throws Exception {
+        String name = ctx.getString("smRotateSecretName");
+        var resp = sm().putSecretValue(r -> r.secretId(name)
+                .secretString("pending-value")
+                .clientRequestToken(PENDING_TOKEN)
+                .versionStages("AWSPENDING"));
+        Assertions.assertEquals(PENDING_TOKEN, resp.versionId(),
+                "PutSecretValuePending: VersionId should be the ClientRequestToken");
+        Assertions.assertTrue(resp.versionStages().contains("AWSPENDING"),
+                "PutSecretValuePending: AWSPENDING missing from VersionStages");
+
+        // Staging a pending version must not change AWSCURRENT.
+        var current = sm().getSecretValue(r -> r.secretId(name));
+        Assertions.assertEquals("rotate-me", current.secretString(),
+                "PutSecretValuePending: AWSCURRENT changed");
+    }
+
+    private void getSecretValueByStage(TestContext ctx) throws Exception {
+        String name = ctx.getString("smRotateSecretName");
+        var resp = sm().getSecretValue(r -> r.secretId(name).versionStage("AWSPENDING"));
+        Assertions.assertEquals("pending-value", resp.secretString(),
+                "GetSecretValueByStage: wrong value for the AWSPENDING stage");
+    }
+
+    private void updateSecretVersionStage(TestContext ctx) throws Exception {
+        String name = ctx.getString("smRotateSecretName");
+        var desc = sm().describeSecret(r -> r.secretId(name));
+        String current = desc.versionIdsToStages().entrySet().stream()
+                .filter(e -> e.getValue().contains("AWSCURRENT"))
+                .map(Map.Entry::getKey)
+                .findFirst()
+                .orElse(null);
+        Assertions.assertNotBlank(current, "UpdateSecretVersionStage: no AWSCURRENT version");
+
+        // This is what a rotation function's finishSecret step does.
+        sm().updateSecretVersionStage(r -> r.secretId(name)
+                .versionStage("AWSCURRENT")
+                .moveToVersionId(PENDING_TOKEN)
+                .removeFromVersionId(current));
+
+        var after = sm().getSecretValue(r -> r.secretId(name));
+        Assertions.assertEquals("pending-value", after.secretString(),
+                "UpdateSecretVersionStage: AWSCURRENT did not move");
+        Assertions.assertEquals(PENDING_TOKEN, after.versionId(),
+                "UpdateSecretVersionStage: AWSCURRENT version mismatch");
+
+        var post = sm().describeSecret(r -> r.secretId(name));
+        Assertions.assertTrue(post.versionIdsToStages().get(current).contains("AWSPREVIOUS"),
+                "UpdateSecretVersionStage: displaced version did not become AWSPREVIOUS");
     }
 
     private void cancelRotateSecret(TestContext ctx) throws Exception {
         String name = ctx.getString("smRotateSecretName");
         sm().cancelRotateSecret(r -> r.secretId(name));
+        var desc = sm().describeSecret(r -> r.secretId(name));
+        Assertions.assertTrue(!Boolean.TRUE.equals(desc.rotationEnabled()),
+                "CancelRotateSecret: rotation still enabled after cancel");
+        // AWS keeps the function configured so rotation can be turned back on.
+        Assertions.assertEquals(rotationLambdaArn(ctx), desc.rotationLambdaARN(),
+                "CancelRotateSecret: rotation function should stay configured");
+    }
+
+    // ── secretsmanager-policy ─────────────────────────────────────────────────
+    //
+    // Overcast stores and validates a secret's resource policy but does not
+    // evaluate it, so these assert the round-trip and the validation verdict,
+    // never an access decision.
+
+    private void setupPolicy(TestContext ctx) throws Exception {
+        String name = ctx.runId() + "-smpol";
+        sm().createSecret(r -> r.name(name).secretString("policy-value"));
+        ctx.set("smPolicySecretName", name);
+    }
+
+    private void validateResourcePolicy(TestContext ctx) throws Exception {
+        var ok = sm().validateResourcePolicy(r -> r.resourcePolicy(COMPAT_RESOURCE_POLICY));
+        Assertions.assertTrue(ok.policyValidationPassed(),
+                "ValidateResourcePolicy: valid policy rejected: " + ok.validationErrors());
+
+        var bad = sm().validateResourcePolicy(r -> r.resourcePolicy("{\"Version\":\"2012-10-17\"}"));
+        Assertions.assertTrue(!Boolean.TRUE.equals(bad.policyValidationPassed()),
+                "ValidateResourcePolicy: policy with no Statement should not pass");
+        Assertions.assertNotEmpty(bad.validationErrors(),
+                "ValidateResourcePolicy: no ValidationErrors for a failing policy");
+    }
+
+    private void putResourcePolicy(TestContext ctx) throws Exception {
+        String name = ctx.getString("smPolicySecretName");
+        var resp = sm().putResourcePolicy(r -> r.secretId(name).resourcePolicy(COMPAT_RESOURCE_POLICY));
+        Assertions.assertNotBlank(resp.arn(), "PutResourcePolicy: ARN");
+        Assertions.assertEquals(name, resp.name(), "PutResourcePolicy: name mismatch");
+    }
+
+    private void getResourcePolicy(TestContext ctx) throws Exception {
+        String name = ctx.getString("smPolicySecretName");
+        var resp = sm().getResourcePolicy(r -> r.secretId(name));
+        Assertions.assertContains(resp.resourcePolicy(), "OvercastCompatRead",
+                "GetResourcePolicy: policy does not carry the Sid that was stored");
+    }
+
+    private void deleteResourcePolicy(TestContext ctx) throws Exception {
+        String name = ctx.getString("smPolicySecretName");
+        sm().deleteResourcePolicy(r -> r.secretId(name));
+        var resp = sm().getResourcePolicy(r -> r.secretId(name));
+        Assertions.assertTrue(resp.resourcePolicy() == null || resp.resourcePolicy().isEmpty(),
+                "DeleteResourcePolicy: policy still present");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

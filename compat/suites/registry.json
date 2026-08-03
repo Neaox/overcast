@@ -1291,12 +1291,57 @@
       "name": "secretsmanager-rotate",
       "tests": [
         {
+          "name": "RotateSecretWithoutLambda",
+          "op": "RotateSecret"
+        },
+        {
           "name": "RotateSecret"
+        },
+        {
+          "name": "PutSecretValuePending",
+          "op": "PutSecretValue"
+        },
+        {
+          "name": "GetSecretValueByStage",
+          "op": "GetSecretValue",
+          "depends": [
+            "PutSecretValuePending"
+          ]
+        },
+        {
+          "name": "UpdateSecretVersionStage",
+          "depends": [
+            "GetSecretValueByStage"
+          ]
         },
         {
           "name": "CancelRotateSecret",
           "depends": [
             "RotateSecret"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "secretsmanager",
+      "name": "secretsmanager-policy",
+      "tests": [
+        {
+          "name": "ValidateResourcePolicy"
+        },
+        {
+          "name": "PutResourcePolicy"
+        },
+        {
+          "name": "GetResourcePolicy",
+          "depends": [
+            "PutResourcePolicy"
+          ]
+        },
+        {
+          "name": "DeleteResourcePolicy",
+          "depends": [
+            "GetResourcePolicy"
           ]
         }
       ]

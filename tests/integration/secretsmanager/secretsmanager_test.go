@@ -728,30 +728,10 @@ func TestDeleteSecret_notFound(t *testing.T) {
 }
 
 // ─── RotateSecret ────────────────────────────────────────────────────────────
-
-func TestRotateSecret_configOnly(t *testing.T) {
-	// Given: a secret exists
-	srv := helpers.NewTestServer(t)
-	createSecret(t, srv, "rotate-me", "val")
-
-	// When: RotateSecret is called without a Lambda ARN (config-only)
-	resp := smCall(t, srv, "RotateSecret", map[string]any{
-		"SecretId":      "rotate-me",
-		"RotationRules": map[string]any{"AutomaticallyAfterDays": 30},
-	})
-	defer resp.Body.Close()
-
-	// Then: 200 with ARN (rotation config saved, no actual rotation)
-	helpers.AssertStatus(t, resp, http.StatusOK)
-	var result struct {
-		ARN  string `json:"ARN"`
-		Name string `json:"Name"`
-	}
-	helpers.DecodeJSON(t, resp, &result)
-	if result.ARN == "" {
-		t.Error("expected ARN to be set")
-	}
-}
+//
+// RotateSecret's coverage lives in rotation_policy_test.go, which replaced the
+// "config only" test this file used to carry: rotation with no Lambda function
+// configured is an InvalidRequestException on AWS, not a 200.
 
 // ─── UntagResource ───────────────────────────────────────────────────────────
 
@@ -986,8 +966,10 @@ func TestCancelRotateSecret_success(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	createSecret(t, srv, "cancel-rot", "val")
 	resp := smCall(t, srv, "RotateSecret", map[string]any{
-		"SecretId":      "cancel-rot",
-		"RotationRules": map[string]any{"AutomaticallyAfterDays": 7},
+		"SecretId":          "cancel-rot",
+		"RotationLambdaARN": testRotationLambdaARN,
+		"RotationRules":     map[string]any{"AutomaticallyAfterDays": 7},
+		"RotateImmediately": false,
 	})
 	resp.Body.Close()
 

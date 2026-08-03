@@ -4,10 +4,10 @@ package secretsmanager
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -31,9 +31,19 @@ type Service struct {
 	store   state.Store
 	log     *serviceutil.ServiceLogger
 	handler *Handler
+
+	// Rotation engine lifecycle. One goroutine for the whole service, started
+	// from RegisterRoutes and drained by Stop.
+	engineOnce sync.Once
+	stopOnce   sync.Once
+	stopCh     chan struct{}
+	wg         sync.WaitGroup
 }
 
 // New returns a configured Secrets Manager Service.
+//
+// It does no I/O: the rotation engine starts from RegisterRoutes, and its first
+// store read happens on the goroutine, never on router.New's critical path.
 func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Clock) *Service {
 	log := serviceutil.NewServiceLogger(logger, serviceName)
 	return &Service{
@@ -41,12 +51,19 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		store:   store,
 		log:     log,
 		handler: newHandler(cfg, store, log, clk),
+		stopCh:  make(chan struct{}),
 	}
 }
 
 // InitBus wires the event bus for secret lifecycle events.
 func (s *Service) InitBus(bus *events.Bus) {
 	s.handler.bus = bus
+}
+
+// InitLambdaInvoker wires the synchronous Lambda invoker the rotation protocol
+// drives. Rotation refuses to run rather than pretending, when it is absent.
+func (s *Service) InitLambdaInvoker(invoker events.FunctionSyncInvoker) {
+	s.handler.InitLambdaInvoker(invoker)
 }
 
 // Name returns the service identifier.
@@ -62,6 +79,63 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Get("/_overcast/secretsmanager/secrets/{secretId}/value", s.adminGetSecretValue)
 	r.Put("/_overcast/secretsmanager/secrets/{secretId}/value", s.adminUpdateSecretValue)
 	r.Delete("/_overcast/secretsmanager/secrets/{secretId}", s.adminDeleteSecret)
+	r.Get("/_overcast/secretsmanager/secrets/{secretId}/rotation", s.adminRotationStatus)
+
+	s.startRotationEngine()
+}
+
+// adminRotationStatus reports the last rotation attempt for one secret.
+//
+// It exists because AWS has no API for it — real Secrets Manager surfaces
+// rotation progress through CloudTrail and the console, neither of which a
+// local emulator has. The AWS-shaped operations stay AWS-shaped; this is the
+// console's own endpoint, under the /_overcast/ prefix like every other one.
+func (s *Service) adminRotationStatus(w http.ResponseWriter, r *http.Request) {
+	raw := chi.URLParam(r, "secretId")
+	secretId, err := url.PathUnescape(raw)
+	if err != nil {
+		secretId = raw
+	}
+	sec, aerr := s.handler.store.resolveSecret(r.Context(), secretId)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
+	type versionOut struct {
+		VersionId   string   `json:"versionId"`
+		Stages      []string `json:"stages"`
+		CreatedDate float64  `json:"createdDate"`
+	}
+	versions := make([]versionOut, 0, len(sec.Versions))
+	for _, v := range sec.Versions {
+		versions = append(versions, versionOut{VersionId: v.VersionId, Stages: v.Stages, CreatedDate: v.CreatedDate})
+	}
+
+	out := map[string]any{
+		"name":              sec.Name,
+		"arn":               sec.ARN,
+		"rotationEnabled":   sec.RotationEnabled,
+		"rotationLambdaArn": sec.RotationLambdaARN,
+		"rotationRules":     sec.RotationRules,
+		"lastRotatedDate":   sec.LastRotatedDate,
+		"nextRotationDate":  sec.NextRotationDate,
+		"versions":          versions,
+		"steps":             rotationSteps,
+	}
+	if a := sec.LastRotationAttempt; a != nil {
+		out["lastAttempt"] = map[string]any{
+			"status":             a.Status,
+			"step":               a.Step,
+			"error":              a.Error,
+			"trigger":            a.Trigger,
+			"clientRequestToken": a.ClientRequestToken,
+			"startedDate":        a.StartedDate,
+			"completedDate":      a.CompletedDate,
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
 }
 
 // Dispatch routes to the correct Secrets Manager handler based on X-Amz-Target.
@@ -159,12 +233,12 @@ func (s *Service) adminCreateSecret(w http.ResponseWriter, r *http.Request) {
 
 	now := s.handler.store.now()
 	versionId := uuid.New().String()
-	arn := protocol.ARN(middleware.RegionFromContext(r.Context(), s.cfg.Region), s.cfg.AccountID, "secretsmanager", fmt.Sprintf("secret:%s", req.Name))
+	arn := secretARN(middleware.RegionFromContext(r.Context(), s.cfg.Region), s.cfg.AccountID, req.Name)
 
 	version := SecretVersion{
 		VersionId:    versionId,
 		SecretString: req.SecretString,
-		Stages:       []string{"AWSCURRENT"},
+		Stages:       []string{stageAWSCurrent},
 		CreatedDate:  float64(now.Unix()),
 	}
 	sec := &Secret{
@@ -199,22 +273,19 @@ func (s *Service) adminGetSecretValue(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	for _, v := range sec.Versions {
-		for _, st := range v.Stages {
-			if st == "AWSCURRENT" {
-				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"secretId":     sec.Name,
-					"versionId":    v.VersionId,
-					"secretString": v.SecretString,
-					"secretBinary": v.SecretBinary,
-					"stages":       v.Stages,
-				})
-				return
-			}
-		}
+	v := sec.currentVersion()
+	if v == nil {
+		protocol.WriteJSONError(w, r, errResourceNotFound(secretId))
+		return
 	}
-	protocol.WriteJSONError(w, r, errResourceNotFound(secretId))
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"secretId":     sec.Name,
+		"versionId":    v.VersionId,
+		"secretString": v.SecretString,
+		"secretBinary": v.SecretBinary,
+		"stages":       v.Stages,
+	})
 }
 
 func (s *Service) adminUpdateSecretValue(w http.ResponseWriter, r *http.Request) {
@@ -236,23 +307,11 @@ func (s *Service) adminUpdateSecretValue(w http.ResponseWriter, r *http.Request)
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	now := s.handler.store.now()
-	versionId := uuid.New().String()
-	for i := range sec.Versions {
-		for j, st := range sec.Versions[i].Stages {
-			if st == "AWSCURRENT" {
-				sec.Versions[i].Stages[j] = "AWSPREVIOUS"
-			}
-		}
+	version, aerr := s.handler.stageVersion(sec, "", req.SecretString, "", nil)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
 	}
-	sec.Versions = append(sec.Versions, SecretVersion{
-		VersionId:    versionId,
-		SecretString: req.SecretString,
-		Stages:       []string{"AWSCURRENT"},
-		CreatedDate:  float64(now.Unix()),
-	})
-	sec.CurrentVersionId = versionId
-	sec.LastChangedDate = float64(now.Unix())
 	if aerr := s.handler.store.putSecret(ctx, sec); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
@@ -260,7 +319,7 @@ func (s *Service) adminUpdateSecretValue(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"secretId":  sec.Name,
-		"versionId": versionId,
+		"versionId": version.VersionId,
 	})
 }
 

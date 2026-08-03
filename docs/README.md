@@ -119,7 +119,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | EFS              | [efs.md](./services/efs.md)                         | 31  | Core CRUD + common workflows  |
 | AppConfig        | [appconfig.md](./services/appconfig.md)             | 12  | Core CRUD + common workflows  |
 | AppConfigData    | [appconfigdata.md](./services/appconfigdata.md)     | 3   | Core CRUD + common workflows  |
-| Secrets Manager  | [secretsmanager.md](./services/secretsmanager.md)   | 21  | Core CRUD + common workflows  |
+| Secrets Manager  | [secretsmanager.md](./services/secretsmanager.md)   | 22  | Core CRUD + common workflows  |
 | SSM              | [ssm.md](./services/ssm.md)                         | 18  | Core CRUD + common workflows  |
 | CloudWatch Logs  | [cloudwatch-logs.md](./services/cloudwatch-logs.md) | 19  | Core CRUD + common workflows  |
 | SES              | [ses.md](./services/ses.md)                         | 42  | Core CRUD + common workflows  |

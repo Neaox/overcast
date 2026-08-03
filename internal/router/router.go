@@ -594,8 +594,12 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	ssmSvc.InitBus(bus)
 	// KMS: wire bus for key lifecycle events.
 	kmsSvc.InitBus(bus)
-	// Secrets Manager: wire bus for secret lifecycle events.
+	// Secrets Manager: wire bus for secret lifecycle events, and the
+	// synchronous Lambda invoker the four-step rotation protocol drives —
+	// every step has to complete before the next begins, so the fire-and-forget
+	// async path would not do.
 	smSvc.InitBus(bus)
+	smSvc.InitLambdaInvoker(lambdaSvc.SyncInvoker())
 	// SES: wire bus for email/identity/template events.
 	sesSvc.InitBus(bus)
 	// Kinesis: wire bus for stream lifecycle events.

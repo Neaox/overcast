@@ -46,7 +46,7 @@ concentrated in exactly five services that are Tier 1 end-to-end — see §5.3.
 | 6 | CloudWatch Alarms auto-evaluation ✅ shipped (#473) | Core, complete | The evaluator that existed ignored dimensions, `DatapointsToAlarm` and `TreatMissingData`, fired no actions, and left unevaluable alarm shapes sitting in `INSUFFICIENT_DATA`. Now epoch-aligned M-of-N evaluation with real transitions, actions and history |
 | 7 | Auto Scaling real reconciliation | Tier 1 (fully inert — 19/19 ops `StatusInert`) | Desired-capacity CRUD only; no instance launch/terminate loop against the existing EC2 service; pairs with #6 for alarm-driven scaling |
 | 8 | API Gateway usage-plan throttle/quota enforcement — **done 2026-08-03 (#472)** | Comprehensive, complete | Throttle and quota are now measured per (plan, API key) and readable through `GetUsage`; rejection is behind `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE`, default off |
-| 9 | Secrets Manager rotation + resource policies | Core (14/21 ops Supported) | `RotateSecret` is "Config only (no Lambda invocation)" and all four resource-policy ops are 501 stubs — rotation is the headline Secrets Manager feature |
+| 9 | Secrets Manager rotation + resource policies — **done 2026-08-03 (#476)** | Comprehensive | Was: `RotateSecret` "Config only (no Lambda invocation)" and all four resource-policy ops 501 stubs. Now runs AWS's four-step rotation protocol against the configured Lambda, and stores/validates resource policies (nothing evaluates them — #496) |
 | 10 | Pipes: sources/targets beyond DDB→SQS | **Core — done 2026-08-03 (#470)** | Was: hard-coded to "only the DynamoDB Streams → SQS path", with every other combination stored and silently inert. Now runs DynamoDB Streams / Kinesis / SQS sources, an optional Lambda enrichment, and Lambda/SQS/SNS/Step Functions/Kinesis/Firehose/EventBridge-bus targets through [internal/eventtarget](../../internal/eventtarget); anything else is refused at `CreatePipe`/`UpdatePipe` time |
 
 ## 2. Scoring rubric
@@ -387,16 +387,44 @@ than actually moving bytes to Glacier semantics (real Glacier retrieval delay em
 of scope — see §6 non-goals). This is a very common CDK default (`autoDeleteObjects: true` on log buckets,
 temp/staging buckets with TTL) that currently provisions silently and then does nothing.
 
-**10. Secrets Manager rotation + resource policies** — Core (14/21) → Comprehensive
+**10. Secrets Manager rotation + resource policies** — Core (14/21) → Comprehensive.
+**Status: done, 2026-08-03** (issue #476). Registry now reads 19 Supported / 3 Unsupported of 22.
 Score: usage 3, leverage 2, fit 4, cost M, dep-ready 5, risk low.
-`RotateSecret` is "Config only (no Lambda invocation)"; `Get/Put/Delete/ValidateResourcePolicy` are all
-501 stubs (`internal/capabilities/all.gen.go` secretsmanager rows — 14 Supported / 7 Unsupported today;
-**STATUS.md's hand-written "11 of 21" is stale**, see §6). Definition of done: `RotateSecret` actually
-invokes the configured rotation Lambda with the four-step AWS rotation protocol
+`RotateSecret` was "Config only (no Lambda invocation)"; `Get/Put/Delete/ValidateResourcePolicy` were all
+501 stubs (`internal/capabilities/all.gen.go` secretsmanager rows — 14 Supported / 7 Unsupported at the
+time of the audit; **STATUS.md's hand-written "11 of 21" was stale**, see §6). Definition of done:
+`RotateSecret` actually invokes the configured rotation Lambda with the four-step AWS rotation protocol
 (`createSecret`/`setSecret`/`testSecret`/`finishSecret` steps via `Invoke`), matching the real state
 machine AWS's rotation Lambda blueprint expects; resource-policy CRUD stored and returned (enforcement
 piggybacks on IAM work, item 5, if that lands — otherwise stored-but-not-enforced is still strictly better
 than 501).
+
+What shipped, and the three places the work went past or fell short of the sketch above:
+
+- **All four steps, or a loud failure.** `RotateSecret` invokes the rotation function once per step over
+  the synchronous invoke seam (`events.FunctionSyncInvoker`), waiting for each before starting the next,
+  and verifies that `finishSecret` actually moved `AWSCURRENT` onto the new version. A step that errors,
+  a function that cannot be invoked, or a `finishSecret` that returns without moving the label all fail
+  the call with `InvalidRequestException` naming the step, and the attempt is recorded on the secret. §2.1
+  shape 2 was the whole point: a rotation that reported success without having rotated would have been
+  worse than the honest config-only stub.
+- **Two deliberate divergences from AWS**, both recorded in `docs/services/secretsmanager.md`: rotation
+  runs inline rather than in the background, and a failed step fails the `RotateSecret` call rather than
+  answering 200 and reporting through CloudTrail — which a local emulator has no equivalent of.
+- **Enabling rotation without a function is now rejected**, matching AWS's `InvalidRequestException`. This
+  is a behaviour change to an operation that used to accept the call, and it is marked breaking in the
+  changelog. The sketch above did not anticipate it; AWS's documented error conditions did.
+- **Rotation needed more than the four steps.** `PutSecretValue` had to honour `VersionStages` and
+  `ClientRequestToken`, `GetSecretValue` had to honour `VersionStage`, and `UpdateSecretVersionStage` —
+  unregistered until now — had to exist, because that is the API surface AWS's own rotation-function
+  blueprints call. Without them a real blueprint cannot complete a rotation, so they are part of this item
+  rather than a follow-up.
+- **Resource policies are stored, validated, and not evaluated.** The four operations round-trip a policy
+  and report syntax/schema findings (`ValidateResourcePolicy`, plus `BlockPublicPolicy` on the put), and
+  nothing consults the stored policy at request time. `internal/iampolicy` is the one evaluator and was
+  deliberately not duplicated; handing stored resource policies to request-time enforcement is #496, which
+  names Secrets Manager. Docs, the capability notes, and the web console all say "stored, not enforced" in
+  as many words, so a stored policy cannot be mistaken for access control in force.
 
 **11. DynamoDB PartiQL (`ExecuteStatement`/`ExecuteTransaction`/`BatchExecuteStatement`)** — not
 registered at all today → Core addition
@@ -484,8 +512,11 @@ Per the task's instruction to triangulate 3+ independent signals — what was ac
 Per instruction, STATUS.md's hand-written tables were verified against `internal/capabilities/all.gen.go`
 and the handlers themselves rather than trusted. Findings:
 
-1. **Secrets Manager op count is stale.** STATUS.md line 44 says "11 of 21 operations." The capability
-   registry shows 14 `StatusSupported` / 7 `StatusUnsupported` out of 21 — i.e. 14/21, not 11/21.
+1. **Secrets Manager op count is stale.** STATUS.md line 44 said "11 of 21 operations." The capability
+   registry showed 14 `StatusSupported` / 7 `StatusUnsupported` out of 21 — i.e. 14/21, not 11/21.
+   *Superseded 2026-08-03:* Wave 3 item 10 shipped and the generated counts were refreshed with it, so the
+   registry now reads 19 Supported / 3 Unsupported of 22. The underlying complaint — that STATUS.md's
+   tables are hand-written and drift — still stands and is still separate work.
 2. **16 registered services are entirely absent from STATUS.md's three curated tables** (Comprehensive /
    Core / Minimal-stub), appearing only in the bottom auto-generated op-count table with no
    characterization at all: ACM, Athena, Bedrock, CloudWatch, DynamoDB Streams, Firehose, Glue, OpenSearch,
