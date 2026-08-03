@@ -388,30 +388,68 @@ Two gates cover the window, and only one is ever red at a time:
 | the release PR is open | `Breaking-change hold` (`release-hold.yml`) | breaking entries only |
 | it has merged, tag not yet published | `Check release version` (`release.yml`) | any unconsumed fragment |
 
+Both rows describe PRs merging into `main` around the release. The release PR
+itself is covered separately and by the same `Check release version` job, which
+validates it twice — as pushed, and against the tree it would produce if merged
+into `main` as it stands now. See
+[Keeping The Release PR Current](#keeping-the-release-pr-current).
+
 The hold reads the fragments a PR **adds**, so an entry already on `main` never
 holds anything, and the marker decides: `!`, or a `-` (Removed) line that does
 not say `-.`.
 
 A third check, `Changelog entry` (`changelog-required.yml`), asks every PR that
 adds no fragment to say the omission was deliberate. It is not a release gate,
-but it tracks the same two windows, because the right answer differs between
-them and a late fix is exactly what a release window attracts:
+but it tracks the same windows, because the right answer differs between them
+and a late fix is exactly what a release window attracts. There are three
+cases, not two — the release PR is one of them:
 
 - **Row 1, release PR open.** A fragment is the answer and nothing else is
   needed — the `refresh` job folds it into the `## [x.y.z]` section on the next
-  push to `main` and deletes the fragment as it goes.
-  `release-candidate-check.sh` is false here, because `main` still carries the
-  last tagged version, so the check asks for a fragment exactly as usual.
+  push to `main` and deletes the fragment as it goes. On such a PR
+  `release-candidate-check.sh` is false, because its `VERSION` comes from
+  `main`, which still carries the last tagged version. So the check asks for a
+  fragment exactly as usual. If that fragment is a **breaking** one and the
+  release in flight is not `0.x`, `Breaking-change hold` then blocks the PR
+  until the release goes out — the fragment is still right and still gets
+  folded in; it is the merge that waits, not the note.
+- **The release PR itself.** Exempt, and silently: it consumes other PRs'
+  fragments into the version section and adds none by construction, so there
+  is no fragment it could add and no reason it could give. `release_pr()` in
+  `scripts/changelog-required.py` recognises it by shape — `VERSION` and
+  `CHANGELOG.md` both changed, nothing touched outside those and `.changelog/`,
+  the new version untagged, and a non-empty `## [x.y.z]` section present. Push
+  anything else onto the release branch and the check asks again, because a
+  late fix landing there ships like any other change.
+
+  Note that `release-candidate-check.sh` **is** true on this PR — its checked-out
+  `VERSION` is the new, untagged one. That is why the exemption tests the whole
+  shape rather than the predicate alone: read on its own it puts the release PR
+  in Row 2, which was exactly the misfire on
+  [#563](https://github.com/Neaox/overcast/pull/563), where the release PR was
+  told the release had already merged.
 - **Row 2, merged and untagged.** There is no release PR left to fold into and
   an unconsumed fragment fails the release, so the ask changes wording: wait for
   the tag, or waive and add the fragment once it is out. It does not go quiet —
   this is the window where a shipping bug fix is most likely.
 
-**Neither row accepts a `CHANGELOG.md` edit**, and the check will not take one
-in place of a fragment. Only the release PR touches that file: the `refresh` job
-merges `main` into its branch on every push, and a second hand editing the same
-section aborts that merge (`conflict.md`) and stops the release PR keeping
-itself current. That is the whole reason fragments are one file per PR.
+**No PR merging into `main` may answer with a `CHANGELOG.md` edit**, and the
+check will not take one in place of a fragment. Only the release PR touches that
+file: the `refresh` job merges `main` into its branch on every push, and a second
+hand editing the same section aborts that merge (`conflict.md`) and stops the
+release PR keeping itself current. That is the whole reason fragments are one
+file per PR — and it is why the release PR's exemption is its shape and not its
+`CHANGELOG.md` diff, which any PR could produce.
+
+The release PR is the one exception, and only because there is no second hand:
+it *is* the hand that owns the file. So a change pushed onto the release branch
+that does need a note writes it into the `## [x.y.z]` section directly — a
+fragment left in `.changelog/` would fail the release the PR is trying to cut.
+That is what `changelog-missing-release-branch.md` says when the check asks. The
+`refresh` job only ever appends to the section, so nothing written there is
+rewritten under you. This is rare and it should stay rare: a fix that could go
+through `main` on its own PR gets its own fragment, its own review, and folds
+itself into the section unattended.
 
 See [.changelog/README.md § When a change needs no
 fragment](./.changelog/README.md#when-a-change-needs-no-fragment).

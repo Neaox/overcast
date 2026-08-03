@@ -233,6 +233,23 @@ Which answer *is* right depends on where the release has got to:
 | the release PR is **open** | add a fragment exactly as usual | on every push to `main` the bot merges `main` into the release branch, folds your entries into the `## [x.y.z]` section and deletes the consumed fragments. Nothing is needed from you |
 | it has **merged**, tag not out | wait for the tag, or waive and add the fragment afterwards | there is no release PR left to fold into, and `check-release-changelog.py` fails the release while any unconsumed fragment remains |
 
+An open release PR does not close the window for release notes; it is the one
+window where the answer is *most* automatic. Add the fragment, and it lands in
+the release that is going out. The only thing that can then hold your PR is a
+**breaking** entry while a non-`0.x` release is in flight — see the section
+below — and that holds the merge, not the note: the fragment is still the right
+thing to have written.
+
+The release PR itself is exempt and says nothing about it. It consumes
+fragments rather than adding one, so it is recognised by shape — `VERSION` and
+`CHANGELOG.md` changed, nothing outside those and this directory, the version
+untagged, a non-empty section present — and passed without a comment. Push a
+code change onto the release branch and it is asked like any other PR, because
+that change ships. That PR is also the one exception to the rule above: it is
+the hand that owns `CHANGELOG.md`, so its note goes into the `## [x.y.z]`
+section directly, a fragment there having nothing left to be folded into and
+failing the very release it is cutting.
+
 Only the second row is awkward, and it is meant to be rare: `main` in that state
 should be taking only what is needed to get the release out. If a change that
 belongs in the notes has to merge anyway, waive with a reason that says the

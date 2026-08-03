@@ -22,7 +22,8 @@ sentence.
 | `retarget-done.md` | `/retarget <branch>` repointed a PR | `retarget.yml` |
 | `retarget-refused.md` | `/retarget` was asked for but not carried out | `retarget.yml` |
 | `changelog-missing.md` | a PR adds no fragment under `.changelog/` and has not said that is deliberate | `changelog-required.yml` |
-| `changelog-missing-release-window.md` | the same, while `VERSION` is prepared but untagged — where a fragment would fail the release, so the ask is "wait for the tag or waive" | `changelog-required.yml` |
+| `changelog-missing-release-window.md` | the same, after the release PR merged and while `VERSION` sits untagged on `main` — where a fragment would fail the release, so the ask is "wait for the tag or waive" | `changelog-required.yml` |
+| `changelog-missing-release-branch.md` | the same, on a PR that is *itself* setting `VERSION` to the untagged version and carries something beyond the release edit — the one PR whose answer is to write the note into its own `## [x.y.z]` section | `changelog-required.yml` |
 | `changelog-waived.md` | `/no-changelog <reason>` recorded that a PR needs no fragment | `changelog-required.yml` |
 | `changelog-waiver-refused.md` | `/no-changelog` was asked for but not carried out | `changelog-waiver.yml` |
 
