@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	cborlib "github.com/fxamacker/cbor/v2"
@@ -834,6 +835,92 @@ func TestGetRandomPassword_withLength(t *testing.T) {
 	helpers.DecodeJSON(t, resp, &result)
 	if len(result.RandomPassword) != 16 {
 		t.Errorf("expected length 16, got %d", len(result.RandomPassword))
+	}
+}
+
+func TestGetRandomPassword_requiresEachIncludedTypeByDefault(t *testing.T) {
+	// Given: no setup needed
+	srv := helpers.NewTestServer(t)
+
+	// When: the shortest password that can still hold one of every character
+	// type is generated, repeatedly. Four characters drawn uniformly from the
+	// default 94-character set contain all four types under 1% of the time, so
+	// a generator that ignores RequireEachIncludedType fails this within a
+	// couple of iterations.
+	for i := 0; i < 20; i++ {
+		resp := smCall(t, srv, "GetRandomPassword", map[string]any{"PasswordLength": 4})
+		var result struct {
+			RandomPassword string `json:"RandomPassword"`
+		}
+		helpers.AssertStatus(t, resp, http.StatusOK)
+		helpers.DecodeJSON(t, resp, &result)
+		resp.Body.Close()
+
+		// Then: every character type AWS lists is present, because
+		// RequireEachIncludedType defaults to true.
+		pw := result.RandomPassword
+		for name, chars := range map[string]string{
+			"uppercase":   "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+			"lowercase":   "abcdefghijklmnopqrstuvwxyz",
+			"number":      "0123456789",
+			"punctuation": "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~",
+		} {
+			if !strings.ContainsAny(pw, chars) {
+				t.Fatalf("password %q (iteration %d) contains no %s", pw, i, name)
+			}
+		}
+	}
+}
+
+func TestGetRandomPassword_requireEachIncludedTypeRespectsExclusions(t *testing.T) {
+	// Given: no setup needed
+	srv := helpers.NewTestServer(t)
+
+	// When: punctuation and numbers are excluded and the password is only long
+	// enough for the two remaining types
+	for i := 0; i < 20; i++ {
+		resp := smCall(t, srv, "GetRandomPassword", map[string]any{
+			"PasswordLength":     2,
+			"ExcludeNumbers":     true,
+			"ExcludePunctuation": true,
+		})
+		var result struct {
+			RandomPassword string `json:"RandomPassword"`
+		}
+		helpers.AssertStatus(t, resp, http.StatusOK)
+		helpers.DecodeJSON(t, resp, &result)
+		resp.Body.Close()
+
+		// Then: the guarantee covers exactly the types the exclusions left
+		pw := result.RandomPassword
+		if !strings.ContainsAny(pw, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") || !strings.ContainsAny(pw, "abcdefghijklmnopqrstuvwxyz") {
+			t.Fatalf("password %q (iteration %d) is missing a letter case", pw, i)
+		}
+		if strings.ContainsAny(pw, "0123456789!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~") {
+			t.Fatalf("password %q (iteration %d) contains an excluded character type", pw, i)
+		}
+	}
+}
+
+func TestGetRandomPassword_requireEachIncludedTypeCanBeDisabled(t *testing.T) {
+	// Given: no setup needed
+	srv := helpers.NewTestServer(t)
+
+	// When: RequireEachIncludedType is switched off
+	resp := smCall(t, srv, "GetRandomPassword", map[string]any{
+		"PasswordLength":          8,
+		"RequireEachIncludedType": false,
+	})
+	defer resp.Body.Close()
+
+	// Then: the request is honoured rather than rejected, and the length still holds
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		RandomPassword string `json:"RandomPassword"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if len(result.RandomPassword) != 8 {
+		t.Errorf("expected length 8, got %d", len(result.RandomPassword))
 	}
 }
 
