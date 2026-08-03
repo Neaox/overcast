@@ -153,8 +153,17 @@ func (s *Service) deliverTarget(ctx context.Context, rule ebRule, target ebTarge
 	}
 
 	attempts := deliveryAttempts(target)
+	maxAge := maximumEventAge(target)
+	started := s.clk.Now()
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
+		if attempt > 1 && maxAge > 0 {
+			if age := s.eventAge(event, started); age >= maxAge {
+				lastErr = fmt.Errorf("stopped retrying after %s: the event exceeded the target's MaximumEventAgeInSeconds of %d: %w",
+					age.Round(time.Second), int(maxAge.Seconds()), lastErr)
+				break
+			}
+		}
 		rec.Attempts = attempt
 		lastErr = s.dispatchTarget(ctx, rule, target, event, payload)
 		if lastErr == nil {
@@ -214,6 +223,9 @@ func (s *Service) dispatchTarget(ctx context.Context, rule ebRule, target ebTarg
 		}
 		return dispatcher.InvokeJSONTarget(ctx, "AmazonEC2ContainerServiceV20141113.RunTask", ecsRunTaskBody(rule, target))
 	}
+	if kind == eventtarget.KindEventBus {
+		return dispatcher.Deliver(ctx, busTargetRequest(target, event, payload))
+	}
 	return dispatcher.Deliver(ctx, eventtarget.Request{
 		ARN:            target.ARN,
 		Kind:           kind,
@@ -221,6 +233,49 @@ func (s *Service) dispatchTarget(ctx context.Context, rule ebRule, target ebTarg
 		PartitionKey:   partitionKey(target, event),
 		MessageGroupID: stringValue(target.SQSParams, "MessageGroupId"),
 	})
+}
+
+// busTargetRequest builds the delivery for an event-bus target.
+//
+// AWS republishes the event on the target bus rather than wrapping it: the
+// PutEvents entry carries the original source, detail-type, resources and
+// detail. Leaving Source and DetailType empty and putting the whole upstream
+// envelope in Detail as a JSON string makes the target bus reachable only by a
+// catch-all pattern — a downstream rule filtering on source or detail-type,
+// which is virtually every real rule, could never match.
+//
+// A target that configures Input, InputPath or InputTransformer replaces the
+// forwarded detail with the transformed payload, as AWS does; the routing
+// fields still come from the event so the downstream rule can still match.
+func busTargetRequest(target ebTarget, event map[string]any, payload []byte) eventtarget.Request {
+	req := eventtarget.Request{
+		ARN:        target.ARN,
+		Kind:       eventtarget.KindEventBus,
+		Payload:    payload,
+		Source:     stringValue(event, "source"),
+		DetailType: stringValue(event, "detail-type"),
+		Resources:  stringSlice(event["resources"]),
+	}
+	if target.Input == "" && target.InputPath == "" && target.InputTransformer == nil {
+		if detail, err := json.Marshal(event["detail"]); err == nil {
+			req.Payload = detail
+		}
+	}
+	return req
+}
+
+// stringSlice renders an event envelope's resources list as the []string a
+// PutEvents entry needs.
+func stringSlice(v any) []string {
+	items, ok := v.([]any)
+	if !ok || len(items) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, fmt.Sprint(item))
+	}
+	return out
 }
 
 // deadLetter forwards an undeliverable payload to the target's dead-letter
@@ -248,6 +303,30 @@ func deliveryAttempts(target ebTarget) int {
 		attempts = maxDeliveryAttempts
 	}
 	return attempts
+}
+
+// maximumEventAge returns how long the target keeps retrying an event before
+// giving up on it, or 0 when the target sets no limit. AWS's field minimum is
+// 60 seconds and its default is 24 hours.
+func maximumEventAge(target ebTarget) time.Duration {
+	seconds := intValue(target.RetryPolicy, "MaximumEventAgeInSeconds")
+	if seconds <= 0 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+// eventAge returns how long the event has been in flight, measured from the
+// envelope's own timestamp — the same clock AWS ages an event against. An
+// envelope with no parseable time falls back to when this delivery started.
+func (s *Service) eventAge(event map[string]any, started time.Time) time.Duration {
+	from := started
+	if raw := stringValue(event, "time"); raw != "" {
+		if t, err := time.Parse(time.RFC3339, raw); err == nil {
+			from = t
+		}
+	}
+	return s.clk.Now().Sub(from)
 }
 
 // deadLetterARN returns the target's configured dead-letter queue ARN, if any.

@@ -529,6 +529,9 @@ func TestPipeDelivery_eventBridgeBusTarget(t *testing.T) {
 	if !strings.Contains(bodies[0], `"detail-type":"OrderChanged"`) {
 		t.Errorf("event = %s, want the pipe's DetailType", bodies[0])
 	}
+	if !strings.Contains(bodies[0], `"source":"com.example.pipe"`) {
+		t.Errorf("event = %s, want the pipe's Source — a rule filtering on source cannot match without it", bodies[0])
+	}
 	if !strings.Contains(bodies[0], "aws:dynamodb") {
 		t.Errorf("event = %s, want the pipe's record batch in the detail", bodies[0])
 	}
