@@ -52,26 +52,29 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"BatchGetSecretValue": op.NewTyped[batchGetSecretValueRequest, batchGetSecretValueResponse](
 			"BatchGetSecretValue", h.batchGetSecretValueTyped,
 		),
+		"UpdateSecretVersionStage": op.NewTyped[updateSecretVersionStageRequest, updateSecretVersionStageResponse](
+			"UpdateSecretVersionStage", h.updateSecretVersionStageTyped,
+		),
+		"GetResourcePolicy": op.NewTyped[secretIDRequest, getResourcePolicyResponse](
+			"GetResourcePolicy", h.getResourcePolicyTyped,
+		),
+		"PutResourcePolicy": op.NewTyped[putResourcePolicyRequest, resourcePolicyIdentityResponse](
+			"PutResourcePolicy", h.putResourcePolicyTyped,
+		),
+		"DeleteResourcePolicy": op.NewTyped[secretIDRequest, resourcePolicyIdentityResponse](
+			"DeleteResourcePolicy", h.deleteResourcePolicyTyped,
+		),
+		"ValidateResourcePolicy": op.NewTyped[validateResourcePolicyRequest, validateResourcePolicyResponse](
+			"ValidateResourcePolicy", h.validateResourcePolicyTyped,
+		),
 		"RestoreSecret": op.NewTyped[struct{}, struct{}](
 			"RestoreSecret", unsupportedOperation,
-		),
-		"GetResourcePolicy": op.NewTyped[struct{}, struct{}](
-			"GetResourcePolicy", unsupportedOperation,
-		),
-		"PutResourcePolicy": op.NewTyped[struct{}, struct{}](
-			"PutResourcePolicy", unsupportedOperation,
-		),
-		"DeleteResourcePolicy": op.NewTyped[struct{}, struct{}](
-			"DeleteResourcePolicy", unsupportedOperation,
 		),
 		"ReplicateSecretToRegions": op.NewTyped[struct{}, struct{}](
 			"ReplicateSecretToRegions", unsupportedOperation,
 		),
 		"RemoveRegionsFromReplication": op.NewTyped[struct{}, struct{}](
 			"RemoveRegionsFromReplication", unsupportedOperation,
-		),
-		"ValidateResourcePolicy": op.NewTyped[struct{}, struct{}](
-			"ValidateResourcePolicy", unsupportedOperation,
 		),
 	}
 }

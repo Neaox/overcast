@@ -21,21 +21,41 @@ public sealed class SecretsManagerGroup(AwsClients clients) : IServiceGroup
         ["BatchGetSecretValue"] = BatchGetSecretValueAsync,
         ["ListSecrets"] = ListSecretsAsync,
         ["DeleteSecret"] = DeleteSecretAsync,
+        ["RotateSecretWithoutLambda"] = RotateSecretWithoutLambdaAsync,
         ["RotateSecret"] = RotateSecretAsync,
+        ["PutSecretValuePending"] = PutSecretValuePendingAsync,
+        ["GetSecretValueByStage"] = GetSecretValueByStageAsync,
+        ["UpdateSecretVersionStage"] = UpdateSecretVersionStageAsync,
         ["CancelRotateSecret"] = CancelRotateSecretAsync,
+        ["ValidateResourcePolicy"] = ValidateResourcePolicyAsync,
+        ["PutResourcePolicy"] = PutResourcePolicyAsync,
+        ["GetResourcePolicy"] = GetResourcePolicyAsync,
+        ["DeleteResourcePolicy"] = DeleteResourcePolicyAsync,
     };
 
     public IReadOnlyDictionary<string, SetupFn> Setups() => new Dictionary<string, SetupFn>(StringComparer.Ordinal)
     {
         ["secretsmanager-crud"] = SetupCrudAsync,
         ["secretsmanager-rotate"] = SetupRotateAsync,
+        ["secretsmanager-policy"] = SetupPolicyAsync,
     };
 
     public IReadOnlyDictionary<string, SetupFn> Teardowns() => new Dictionary<string, SetupFn>(StringComparer.Ordinal)
     {
         ["secretsmanager-crud"] = context => ForceDeleteSecretAsync(context.GetString("SmSecretName")),
         ["secretsmanager-rotate"] = context => ForceDeleteSecretAsync(context.GetString("SmRotateSecretName")),
+        ["secretsmanager-policy"] = context => ForceDeleteSecretAsync(context.GetString("SmPolicySecretName")),
     };
+
+    /// <summary>
+    /// AWS wants a ClientRequestToken of 32-64 characters, and the token becomes
+    /// the version ID, so a fixed UUID keeps the assertions readable.
+    /// </summary>
+    private const string PendingToken = "0f9c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f";
+
+    /// <summary>A minimal, well-formed secret resource policy.</summary>
+    private const string CompatResourcePolicy =
+        """{"Version":"2012-10-17","Statement":[{"Sid":"OvercastCompatRead","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::000000000000:root"},"Action":"secretsmanager:GetSecretValue","Resource":"*"}]}""";
 
     // ---- helpers ----
 
@@ -284,15 +304,132 @@ public sealed class SecretsManagerGroup(AwsClients clients) : IServiceGroup
 
     // ---- secretsmanager-rotate ----
 
+    /// <summary>
+    /// A placeholder rotation function. This group always sets
+    /// RotateImmediately=false, so it is never invoked: driving the four-step
+    /// protocol needs a real rotation Lambda and belongs with the
+    /// Docker-dependent Lambda groups.
+    /// </summary>
+    private static string RotationLambdaArn(TestContext context) =>
+        $"arn:aws:lambda:{context.Region}:000000000000:function:oc-rotate-fn";
+
+    private async Task RotateSecretWithoutLambdaAsync(TestContext context)
+    {
+        var secretName = RequireSecretName(context, "SmRotateSecretName");
+        try
+        {
+            await clients.SecretsManager().RotateSecretAsync(new RotateSecretRequest
+            {
+                SecretId = secretName,
+                RotationRules = new RotationRulesType { AutomaticallyAfterDays = 30 },
+            });
+        }
+        catch (AmazonSecretsManagerException e)
+        {
+            Assertions.Equal("InvalidRequestException", e.ErrorCode,
+                $"RotateSecretWithoutLambda: expected InvalidRequestException but was {e.ErrorCode} (runId={context.RunId})");
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"RotateSecretWithoutLambda: expected InvalidRequestException, call succeeded (runId={context.RunId})");
+    }
+
     private async Task RotateSecretAsync(TestContext context)
     {
         var secretName = RequireSecretName(context, "SmRotateSecretName");
+        var lambdaArn = RotationLambdaArn(context);
         var response = await clients.SecretsManager().RotateSecretAsync(new RotateSecretRequest
         {
             SecretId = secretName,
+            RotationLambdaARN = lambdaArn,
+            RotationRules = new RotationRulesType { AutomaticallyAfterDays = 30 },
+            RotateImmediately = false,
         });
         Assertions.NotBlank(response.ARN, "RotateSecret: ARN");
-        Assertions.NotBlank(response.Name, "RotateSecret: Name");
+
+        var desc = await clients.SecretsManager().DescribeSecretAsync(new DescribeSecretRequest
+        {
+            SecretId = secretName,
+        });
+        Assertions.True(desc.RotationEnabled ?? false,
+            $"RotateSecret: RotationEnabled not set (runId={context.RunId})");
+        Assertions.Equal(lambdaArn, desc.RotationLambdaARN,
+            $"RotateSecret: RotationLambdaARN expected {lambdaArn} but was {desc.RotationLambdaARN} (runId={context.RunId})");
+        Assertions.NotNull(desc.NextRotationDate, "RotateSecret: NextRotationDate");
+    }
+
+    private async Task PutSecretValuePendingAsync(TestContext context)
+    {
+        var secretName = RequireSecretName(context, "SmRotateSecretName");
+        var response = await clients.SecretsManager().PutSecretValueAsync(new PutSecretValueRequest
+        {
+            SecretId = secretName,
+            SecretString = "pending-value",
+            ClientRequestToken = PendingToken,
+            VersionStages = ["AWSPENDING"],
+        });
+        Assertions.Equal(PendingToken, response.VersionId,
+            $"PutSecretValuePending: VersionId should be the ClientRequestToken but was {response.VersionId} (runId={context.RunId})");
+        Assertions.True(response.VersionStages.Contains("AWSPENDING"),
+            $"PutSecretValuePending: AWSPENDING missing from VersionStages (runId={context.RunId})");
+
+        // Staging a pending version must not change AWSCURRENT.
+        var current = await clients.SecretsManager().GetSecretValueAsync(new GetSecretValueRequest
+        {
+            SecretId = secretName,
+        });
+        Assertions.Equal("rotate-me", current.SecretString,
+            $"PutSecretValuePending: AWSCURRENT changed to {current.SecretString} (runId={context.RunId})");
+    }
+
+    private async Task GetSecretValueByStageAsync(TestContext context)
+    {
+        var secretName = RequireSecretName(context, "SmRotateSecretName");
+        var response = await clients.SecretsManager().GetSecretValueAsync(new GetSecretValueRequest
+        {
+            SecretId = secretName,
+            VersionStage = "AWSPENDING",
+        });
+        Assertions.Equal("pending-value", response.SecretString,
+            $"GetSecretValueByStage: expected pending-value but was {response.SecretString} (runId={context.RunId})");
+    }
+
+    private async Task UpdateSecretVersionStageAsync(TestContext context)
+    {
+        var secretName = RequireSecretName(context, "SmRotateSecretName");
+        var desc = await clients.SecretsManager().DescribeSecretAsync(new DescribeSecretRequest
+        {
+            SecretId = secretName,
+        });
+        var current = desc.VersionIdsToStages
+            .FirstOrDefault(kv => kv.Value.Contains("AWSCURRENT")).Key;
+        Assertions.NotBlank(current, "UpdateSecretVersionStage: AWSCURRENT version");
+
+        // This is what a rotation function's finishSecret step does.
+        await clients.SecretsManager().UpdateSecretVersionStageAsync(new UpdateSecretVersionStageRequest
+        {
+            SecretId = secretName,
+            VersionStage = "AWSCURRENT",
+            MoveToVersionId = PendingToken,
+            RemoveFromVersionId = current,
+        });
+
+        var after = await clients.SecretsManager().GetSecretValueAsync(new GetSecretValueRequest
+        {
+            SecretId = secretName,
+        });
+        Assertions.Equal("pending-value", after.SecretString,
+            $"UpdateSecretVersionStage: AWSCURRENT is {after.SecretString} (runId={context.RunId})");
+        Assertions.Equal(PendingToken, after.VersionId,
+            $"UpdateSecretVersionStage: AWSCURRENT version is {after.VersionId} (runId={context.RunId})");
+
+        var post = await clients.SecretsManager().DescribeSecretAsync(new DescribeSecretRequest
+        {
+            SecretId = secretName,
+        });
+        Assertions.True(post.VersionIdsToStages[current].Contains("AWSPREVIOUS"),
+            $"UpdateSecretVersionStage: displaced version did not become AWSPREVIOUS (runId={context.RunId})");
     }
 
     private async Task CancelRotateSecretAsync(TestContext context)
@@ -303,6 +440,91 @@ public sealed class SecretsManagerGroup(AwsClients clients) : IServiceGroup
             SecretId = secretName,
         });
         Assertions.NotBlank(response.ARN, "CancelRotateSecret: ARN");
-        Assertions.NotBlank(response.Name, "CancelRotateSecret: Name");
+
+        var desc = await clients.SecretsManager().DescribeSecretAsync(new DescribeSecretRequest
+        {
+            SecretId = secretName,
+        });
+        Assertions.False(desc.RotationEnabled ?? false,
+            $"CancelRotateSecret: rotation still enabled after cancel (runId={context.RunId})");
+        // AWS keeps the function configured so rotation can be turned back on.
+        Assertions.Equal(RotationLambdaArn(context), desc.RotationLambdaARN,
+            $"CancelRotateSecret: rotation function should stay configured but was {desc.RotationLambdaARN} (runId={context.RunId})");
+    }
+
+    // ---- secretsmanager-policy ----
+    //
+    // Overcast stores and validates a secret's resource policy but does not
+    // evaluate it, so these assert the round-trip and the validation verdict,
+    // never an access decision.
+
+    private async Task SetupPolicyAsync(TestContext context)
+    {
+        var secretName = $"{context.RunId}-sm-policy";
+        await clients.SecretsManager().CreateSecretAsync(new CreateSecretRequest
+        {
+            Name = secretName,
+            SecretString = "policy-value",
+        });
+        context.Set("SmPolicySecretName", secretName);
+    }
+
+    private async Task ValidateResourcePolicyAsync(TestContext context)
+    {
+        var ok = await clients.SecretsManager().ValidateResourcePolicyAsync(new ValidateResourcePolicyRequest
+        {
+            ResourcePolicy = CompatResourcePolicy,
+        });
+        Assertions.True(ok.PolicyValidationPassed ?? false,
+            $"ValidateResourcePolicy: valid policy rejected (runId={context.RunId})");
+
+        var bad = await clients.SecretsManager().ValidateResourcePolicyAsync(new ValidateResourcePolicyRequest
+        {
+            ResourcePolicy = """{"Version":"2012-10-17"}""",
+        });
+        Assertions.False(bad.PolicyValidationPassed ?? false,
+            $"ValidateResourcePolicy: policy with no Statement should not pass (runId={context.RunId})");
+        Assertions.GreaterThanOrEqual(1, bad.ValidationErrors.Count,
+            $"ValidateResourcePolicy: no ValidationErrors for a failing policy (runId={context.RunId})");
+    }
+
+    private async Task PutResourcePolicyAsync(TestContext context)
+    {
+        var secretName = RequireSecretName(context, "SmPolicySecretName");
+        var response = await clients.SecretsManager().PutResourcePolicyAsync(new PutResourcePolicyRequest
+        {
+            SecretId = secretName,
+            ResourcePolicy = CompatResourcePolicy,
+        });
+        Assertions.NotBlank(response.ARN, "PutResourcePolicy: ARN");
+        Assertions.Equal(secretName, response.Name,
+            $"PutResourcePolicy: expected {secretName} but was {response.Name} (runId={context.RunId})");
+    }
+
+    private async Task GetResourcePolicyAsync(TestContext context)
+    {
+        var secretName = RequireSecretName(context, "SmPolicySecretName");
+        var response = await clients.SecretsManager().GetResourcePolicyAsync(new GetResourcePolicyRequest
+        {
+            SecretId = secretName,
+        });
+        Assertions.NotBlank(response.ResourcePolicy, "GetResourcePolicy: ResourcePolicy");
+        Assertions.True(response.ResourcePolicy.Contains("OvercastCompatRead", StringComparison.Ordinal),
+            $"GetResourcePolicy: policy does not carry the Sid that was stored (runId={context.RunId})");
+    }
+
+    private async Task DeleteResourcePolicyAsync(TestContext context)
+    {
+        var secretName = RequireSecretName(context, "SmPolicySecretName");
+        await clients.SecretsManager().DeleteResourcePolicyAsync(new DeleteResourcePolicyRequest
+        {
+            SecretId = secretName,
+        });
+        var response = await clients.SecretsManager().GetResourcePolicyAsync(new GetResourcePolicyRequest
+        {
+            SecretId = secretName,
+        });
+        Assertions.True(string.IsNullOrEmpty(response.ResourcePolicy),
+            $"DeleteResourcePolicy: policy still present (runId={context.RunId})");
     }
 }

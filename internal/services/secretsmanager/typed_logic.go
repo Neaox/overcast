@@ -55,15 +55,19 @@ type describeSecretResponse struct {
 	LastChangedDate    float64             `json:"LastChangedDate" cbor:"LastChangedDate"`
 	Tags               []Tag               `json:"Tags" cbor:"Tags"`
 	VersionIdsToStages map[string][]string `json:"VersionIdsToStages" cbor:"VersionIdsToStages"`
-	RotationEnabled    bool                `json:"RotationEnabled,omitempty" cbor:"RotationEnabled,omitempty"`
+	RotationEnabled    bool                `json:"RotationEnabled" cbor:"RotationEnabled"`
 	RotationRules      *RotationRules      `json:"RotationRules,omitempty" cbor:"RotationRules,omitempty"`
 	RotationLambdaARN  string              `json:"RotationLambdaARN,omitempty" cbor:"RotationLambdaARN,omitempty"`
+	LastRotatedDate    float64             `json:"LastRotatedDate,omitempty" cbor:"LastRotatedDate,omitempty"`
+	NextRotationDate   float64             `json:"NextRotationDate,omitempty" cbor:"NextRotationDate,omitempty"`
 }
 
 type putSecretValueRequest struct {
-	SecretId     string `json:"SecretId" cbor:"SecretId"`
-	SecretString string `json:"SecretString" cbor:"SecretString"`
-	SecretBinary string `json:"SecretBinary" cbor:"SecretBinary"`
+	SecretId           string   `json:"SecretId" cbor:"SecretId"`
+	SecretString       string   `json:"SecretString" cbor:"SecretString"`
+	SecretBinary       string   `json:"SecretBinary" cbor:"SecretBinary"`
+	ClientRequestToken string   `json:"ClientRequestToken" cbor:"ClientRequestToken"`
+	VersionStages      []string `json:"VersionStages" cbor:"VersionStages"`
 }
 
 type putSecretValueResponse struct {
@@ -86,15 +90,22 @@ type updateSecretResponse struct {
 	VersionId string `json:"VersionId" cbor:"VersionId"`
 }
 
-type listSecretsRequest struct{}
+type listSecretsRequest struct {
+	Filters []secretFilter `json:"Filters" cbor:"Filters"`
+}
 
 type secretListEntry struct {
-	ARN             string  `json:"ARN" cbor:"ARN"`
-	Name            string  `json:"Name" cbor:"Name"`
-	Description     string  `json:"Description" cbor:"Description"`
-	CreatedDate     float64 `json:"CreatedDate" cbor:"CreatedDate"`
-	LastChangedDate float64 `json:"LastChangedDate" cbor:"LastChangedDate"`
-	Tags            []Tag   `json:"Tags,omitempty" cbor:"Tags,omitempty"`
+	ARN               string         `json:"ARN" cbor:"ARN"`
+	Name              string         `json:"Name" cbor:"Name"`
+	Description       string         `json:"Description" cbor:"Description"`
+	CreatedDate       float64        `json:"CreatedDate" cbor:"CreatedDate"`
+	LastChangedDate   float64        `json:"LastChangedDate" cbor:"LastChangedDate"`
+	Tags              []Tag          `json:"Tags,omitempty" cbor:"Tags,omitempty"`
+	RotationEnabled   bool           `json:"RotationEnabled" cbor:"RotationEnabled"`
+	RotationRules     *RotationRules `json:"RotationRules,omitempty" cbor:"RotationRules,omitempty"`
+	RotationLambdaARN string         `json:"RotationLambdaARN,omitempty" cbor:"RotationLambdaARN,omitempty"`
+	LastRotatedDate   float64        `json:"LastRotatedDate,omitempty" cbor:"LastRotatedDate,omitempty"`
+	NextRotationDate  float64        `json:"NextRotationDate,omitempty" cbor:"NextRotationDate,omitempty"`
 }
 
 type listSecretsResponse struct {
@@ -131,10 +142,11 @@ type tagResourceRequest struct {
 }
 
 type rotateSecretRequest struct {
-	SecretId          string         `json:"SecretId" cbor:"SecretId"`
-	RotationLambdaARN string         `json:"RotationLambdaARN" cbor:"RotationLambdaARN"`
-	RotationRules     *RotationRules `json:"RotationRules" cbor:"RotationRules"`
-	RotateImmediately *bool          `json:"RotateImmediately" cbor:"RotateImmediately"`
+	SecretId           string         `json:"SecretId" cbor:"SecretId"`
+	RotationLambdaARN  string         `json:"RotationLambdaARN" cbor:"RotationLambdaARN"`
+	RotationRules      *RotationRules `json:"RotationRules" cbor:"RotationRules"`
+	RotateImmediately  *bool          `json:"RotateImmediately" cbor:"RotateImmediately"`
+	ClientRequestToken string         `json:"ClientRequestToken" cbor:"ClientRequestToken"`
 }
 
 type rotateSecretResponse struct {
@@ -144,6 +156,19 @@ type rotateSecretResponse struct {
 }
 
 type cancelRotateSecretResponse struct {
+	ARN       string `json:"ARN" cbor:"ARN"`
+	Name      string `json:"Name" cbor:"Name"`
+	VersionId string `json:"VersionId,omitempty" cbor:"VersionId,omitempty"`
+}
+
+type updateSecretVersionStageRequest struct {
+	SecretId            string `json:"SecretId" cbor:"SecretId"`
+	VersionStage        string `json:"VersionStage" cbor:"VersionStage"`
+	RemoveFromVersionId string `json:"RemoveFromVersionId" cbor:"RemoveFromVersionId"`
+	MoveToVersionId     string `json:"MoveToVersionId" cbor:"MoveToVersionId"`
+}
+
+type updateSecretVersionStageResponse struct {
 	ARN  string `json:"ARN" cbor:"ARN"`
 	Name string `json:"Name" cbor:"Name"`
 }
@@ -168,7 +193,8 @@ type getRandomPasswordResponse struct {
 }
 
 type batchGetSecretValueRequest struct {
-	SecretIdList []string `json:"SecretIdList" cbor:"SecretIdList"`
+	SecretIdList []string       `json:"SecretIdList" cbor:"SecretIdList"`
+	Filters      []secretFilter `json:"Filters" cbor:"Filters"`
 }
 
 type batchGetSecretValueResponse struct {
@@ -198,7 +224,7 @@ func (h *Handler) createSecretTyped(ctx context.Context, req *createSecretReques
 
 	now := h.store.now()
 	versionId := uuid.New().String()
-	arn := protocol.ARN(h.store.region(ctx), h.cfg.AccountID, "secretsmanager", fmt.Sprintf("secret:%s", req.Name))
+	arn := secretARN(h.store.region(ctx), h.cfg.AccountID, req.Name)
 
 	sec := &Secret{
 		ARN:         arn,
@@ -209,7 +235,7 @@ func (h *Handler) createSecretTyped(ctx context.Context, req *createSecretReques
 			VersionId:    versionId,
 			SecretString: req.SecretString,
 			SecretBinary: req.SecretBinary,
-			Stages:       []string{"AWSCURRENT"},
+			Stages:       []string{stageAWSCurrent},
 			CreatedDate:  float64(now.Unix()),
 		}},
 		CurrentVersionId: versionId,
@@ -230,11 +256,44 @@ func (h *Handler) getSecretValueTyped(ctx context.Context, req *getSecretValueRe
 	if aerr != nil {
 		return nil, aerr
 	}
-	version := findSecretVersion(sec, req.VersionId)
-	if version == nil {
-		return nil, errResourceNotFound(req.SecretId)
+	version, aerr := selectSecretVersion(sec, req.VersionId, req.VersionStage)
+	if aerr != nil {
+		return nil, aerr
 	}
 	return secretValueOut(sec, version), nil
+}
+
+// selectSecretVersion resolves the VersionId/VersionStage pair the way AWS
+// does: either identifies a version, both must agree, and neither defaults to
+// "whatever is newest" — the default is the AWSCURRENT staging label.
+func selectSecretVersion(sec *Secret, versionID, stage string) (*SecretVersion, *protocol.AWSError) {
+	if versionID == "" && stage == "" {
+		stage = stageAWSCurrent
+	}
+
+	var byID, byStage *SecretVersion
+	if versionID != "" {
+		if byID = sec.versionByID(versionID); byID == nil {
+			return nil, errResourceNotFound(sec.Name)
+		}
+	}
+	if stage != "" {
+		if byStage = sec.versionByStage(stage); byStage == nil {
+			return nil, &protocol.AWSError{
+				Code:       "ResourceNotFoundException",
+				Message:    "Secrets Manager can't find the specified secret value for staging label: " + stage,
+				HTTPStatus: 400,
+			}
+		}
+	}
+	switch {
+	case byID != nil && byStage != nil && byID.VersionId != byStage.VersionId:
+		return nil, errInvalidParameter("The VersionId and VersionStage parameters refer to different versions of the secret.")
+	case byID != nil:
+		return byID, nil
+	default:
+		return byStage, nil
+	}
 }
 
 func (h *Handler) describeSecretTyped(ctx context.Context, req *secretIDRequest) (*describeSecretResponse, *protocol.AWSError) {
@@ -258,6 +317,8 @@ func (h *Handler) describeSecretTyped(ctx context.Context, req *secretIDRequest)
 		RotationEnabled:    sec.RotationEnabled,
 		RotationRules:      sec.RotationRules,
 		RotationLambdaARN:  sec.RotationLambdaARN,
+		LastRotatedDate:    sec.LastRotatedDate,
+		NextRotationDate:   sec.NextRotationDate,
 	}, nil
 }
 
@@ -266,7 +327,10 @@ func (h *Handler) putSecretValueTyped(ctx context.Context, req *putSecretValueRe
 	if aerr != nil {
 		return nil, aerr
 	}
-	versionId := h.appendCurrentVersion(sec, req.SecretString, req.SecretBinary)
+	version, aerr := h.stageVersion(sec, req.ClientRequestToken, req.SecretString, req.SecretBinary, req.VersionStages)
+	if aerr != nil {
+		return nil, aerr
+	}
 	if aerr := h.store.putSecret(ctx, sec); aerr != nil {
 		return nil, aerr
 	}
@@ -274,9 +338,112 @@ func (h *Handler) putSecretValueTyped(ctx context.Context, req *putSecretValueRe
 	return &putSecretValueResponse{
 		ARN:           sec.ARN,
 		Name:          sec.Name,
-		VersionId:     versionId,
-		VersionStages: []string{"AWSCURRENT"},
+		VersionId:     version.VersionId,
+		VersionStages: version.Stages,
 	}, nil
+}
+
+// stageVersion writes a version under the requested staging labels, which is
+// the whole of what a rotation function's createSecret step does.
+//
+// AWS's contract, and why each part matters here:
+//   - ClientRequestToken *is* the version ID. The rotation protocol relies on
+//     that: every step is handed the same token and looks the version up by it.
+//   - Re-putting the same token with the same value is idempotent; re-putting
+//     it with a different value is ResourceExistsException.
+//   - VersionStages defaults to AWSCURRENT, and taking AWSCURRENT off a version
+//     moves AWSPREVIOUS onto it.
+func (h *Handler) stageVersion(sec *Secret, token, secretString, secretBinary string, stages []string) (*SecretVersion, *protocol.AWSError) {
+	if token == "" {
+		token = uuid.New().String()
+	}
+	if len(stages) == 0 {
+		stages = []string{stageAWSCurrent}
+	}
+
+	now := h.store.now()
+	if existing := sec.versionByID(token); existing != nil {
+		if existing.SecretString != secretString || existing.SecretBinary != secretBinary {
+			return nil, &protocol.AWSError{
+				Code:       "ResourceExistsException",
+				Message:    "A version with the ClientRequestToken " + token + " already exists with different content.",
+				HTTPStatus: 400,
+			}
+		}
+	} else {
+		sec.Versions = append(sec.Versions, SecretVersion{
+			VersionId:    token,
+			SecretString: secretString,
+			SecretBinary: secretBinary,
+			Stages:       []string{},
+			CreatedDate:  float64(now.Unix()),
+		})
+	}
+
+	for _, stage := range stages {
+		displaced := sec.detachStage(stage)
+		if stage == stageAWSCurrent && displaced != "" && displaced != token {
+			sec.attachStage(stageAWSPrevious, displaced)
+		}
+		if v := sec.versionByID(token); v != nil && !containsString(v.Stages, stage) {
+			v.Stages = append(v.Stages, stage)
+		}
+	}
+
+	sec.syncCurrentVersionID()
+	sec.pruneVersions()
+	sec.LastChangedDate = float64(now.Unix())
+	return sec.versionByID(token), nil
+}
+
+func (h *Handler) updateSecretVersionStageTyped(ctx context.Context, req *updateSecretVersionStageRequest) (*updateSecretVersionStageResponse, *protocol.AWSError) {
+	if req.VersionStage == "" {
+		return nil, errInvalidParameter("You must provide a value for the VersionStage parameter.")
+	}
+	if req.MoveToVersionId == "" && req.RemoveFromVersionId == "" {
+		return nil, errInvalidParameter("You must specify either MoveToVersionId, RemoveFromVersionId, or both.")
+	}
+
+	sec, aerr := h.store.resolveSecret(ctx, req.SecretId)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if req.MoveToVersionId != "" && sec.versionByID(req.MoveToVersionId) == nil {
+		return nil, errInvalidParameter("The secret has no version with the ID " + req.MoveToVersionId + ".")
+	}
+	if req.RemoveFromVersionId != "" {
+		from := sec.versionByID(req.RemoveFromVersionId)
+		if from == nil || !containsString(from.Stages, req.VersionStage) {
+			return nil, errInvalidParameter(
+				"The staging label " + req.VersionStage + " is not attached to version " + req.RemoveFromVersionId + ".")
+		}
+	}
+
+	holder := sec.detachStage(req.VersionStage)
+	if req.MoveToVersionId != "" {
+		sec.attachStage(req.VersionStage, req.MoveToVersionId)
+		// AWS moves AWSPREVIOUS onto whatever AWSCURRENT just left.
+		if req.VersionStage == stageAWSCurrent && holder != "" && holder != req.MoveToVersionId {
+			sec.attachStage(stageAWSPrevious, holder)
+		}
+	}
+
+	sec.syncCurrentVersionID()
+	sec.pruneVersions()
+	sec.LastChangedDate = float64(h.store.now().Unix())
+	if aerr := h.store.putSecret(ctx, sec); aerr != nil {
+		return nil, aerr
+	}
+	return &updateSecretVersionStageResponse{ARN: sec.ARN, Name: sec.Name}, nil
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Handler) updateSecretTyped(ctx context.Context, req *updateSecretRequest) (*updateSecretResponse, *protocol.AWSError) {
@@ -291,7 +458,11 @@ func (h *Handler) updateSecretTyped(ctx context.Context, req *updateSecretReques
 
 	versionId := sec.CurrentVersionId
 	if req.SecretString != "" || req.SecretBinary != "" {
-		versionId = h.appendCurrentVersion(sec, req.SecretString, req.SecretBinary)
+		version, aerr := h.stageVersion(sec, "", req.SecretString, req.SecretBinary, nil)
+		if aerr != nil {
+			return nil, aerr
+		}
+		versionId = version.VersionId
 	}
 	if aerr := h.store.putSecret(ctx, sec); aerr != nil {
 		return nil, aerr
@@ -300,20 +471,28 @@ func (h *Handler) updateSecretTyped(ctx context.Context, req *updateSecretReques
 	return &updateSecretResponse{ARN: sec.ARN, Name: sec.Name, VersionId: versionId}, nil
 }
 
-func (h *Handler) listSecretsTyped(ctx context.Context, _ *listSecretsRequest) (*listSecretsResponse, *protocol.AWSError) {
+func (h *Handler) listSecretsTyped(ctx context.Context, req *listSecretsRequest) (*listSecretsResponse, *protocol.AWSError) {
 	secrets, aerr := h.store.listSecrets(ctx)
 	if aerr != nil {
 		return nil, aerr
 	}
 	out := make([]secretListEntry, 0, len(secrets))
 	for _, sec := range secrets {
+		if len(req.Filters) > 0 && !secretMatchesFilters(sec, req.Filters) {
+			continue
+		}
 		out = append(out, secretListEntry{
-			ARN:             sec.ARN,
-			Name:            sec.Name,
-			Description:     sec.Description,
-			CreatedDate:     sec.CreatedDate,
-			LastChangedDate: sec.LastChangedDate,
-			Tags:            sec.Tags,
+			ARN:               sec.ARN,
+			Name:              sec.Name,
+			Description:       sec.Description,
+			CreatedDate:       sec.CreatedDate,
+			LastChangedDate:   sec.LastChangedDate,
+			Tags:              sec.Tags,
+			RotationEnabled:   sec.RotationEnabled,
+			RotationRules:     sec.RotationRules,
+			RotationLambdaARN: sec.RotationLambdaARN,
+			LastRotatedDate:   sec.LastRotatedDate,
+			NextRotationDate:  sec.NextRotationDate,
 		})
 	}
 	return &listSecretsResponse{SecretList: out}, nil
@@ -376,39 +555,26 @@ func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest)
 	return &struct{}{}, nil
 }
 
-func (h *Handler) rotateSecretTyped(ctx context.Context, req *rotateSecretRequest) (*rotateSecretResponse, *protocol.AWSError) {
-	sec, aerr := h.store.resolveSecret(ctx, req.SecretId)
-	if aerr != nil {
-		return nil, aerr
-	}
-	sec.RotationEnabled = true
-	if req.RotationRules != nil {
-		sec.RotationRules = req.RotationRules
-	}
-	if req.RotationLambdaARN != "" {
-		sec.RotationLambdaARN = req.RotationLambdaARN
-	}
-	sec.LastChangedDate = float64(h.store.now().Unix())
-	if aerr := h.store.putSecret(ctx, sec); aerr != nil {
-		return nil, aerr
-	}
-	h.publishCtx(ctx, events.SecretRotated, events.ResourcePayload{Name: sec.Name, ARN: sec.ARN})
-	return &rotateSecretResponse{ARN: sec.ARN, Name: sec.Name, VersionId: sec.CurrentVersionId}, nil
-}
-
 func (h *Handler) cancelRotateSecretTyped(ctx context.Context, req *secretIDRequest) (*cancelRotateSecretResponse, *protocol.AWSError) {
 	sec, aerr := h.store.resolveSecret(ctx, req.SecretId)
 	if aerr != nil {
 		return nil, aerr
 	}
+	// AWS turns rotation off but leaves the function and rules configured, so
+	// that a later RotateSecret can turn it straight back on. It also warns
+	// that a cancelled in-flight rotation may leave AWSPENDING attached — we
+	// mirror that by leaving the staging labels exactly as they are.
 	sec.RotationEnabled = false
-	sec.RotationRules = nil
-	sec.RotationLambdaARN = ""
+	sec.NextRotationDate = 0
 	sec.LastChangedDate = float64(h.store.now().Unix())
 	if aerr := h.store.putSecret(ctx, sec); aerr != nil {
 		return nil, aerr
 	}
-	return &cancelRotateSecretResponse{ARN: sec.ARN, Name: sec.Name}, nil
+	out := &cancelRotateSecretResponse{ARN: sec.ARN, Name: sec.Name}
+	if pending := sec.versionByStage(stageAWSPending); pending != nil {
+		out.VersionId = pending.VersionId
+	}
+	return out, nil
 }
 
 func (h *Handler) untagResourceTyped(ctx context.Context, req *untagResourceRequest) (*struct{}, *protocol.AWSError) {
@@ -455,11 +621,33 @@ func (h *Handler) getRandomPasswordTyped(_ context.Context, req *getRandomPasswo
 }
 
 func (h *Handler) batchGetSecretValueTyped(ctx context.Context, req *batchGetSecretValueRequest) (*batchGetSecretValueResponse, *protocol.AWSError) {
+	// AWS: "You must include Filters or SecretIdList, but not both."
+	if len(req.Filters) > 0 && len(req.SecretIdList) > 0 {
+		return nil, errInvalidParameter("You must include Filters or SecretIdList, but not both.")
+	}
+
+	ids := req.SecretIdList
+	if len(req.Filters) > 0 {
+		// The filter form selects the secrets to fetch, exactly as ListSecrets
+		// does. Ignoring it would return an empty result for a request AWS
+		// answers — a successful lookup that found nothing, which is worse than
+		// a 501.
+		secrets, aerr := h.store.listSecrets(ctx)
+		if aerr != nil {
+			return nil, aerr
+		}
+		for _, sec := range secrets {
+			if secretMatchesFilters(sec, req.Filters) {
+				ids = append(ids, sec.Name)
+			}
+		}
+	}
+
 	out := &batchGetSecretValueResponse{
 		SecretValues: make([]secretValueResponse, 0),
 		Errors:       make([]batchSecretError, 0),
 	}
-	for _, id := range req.SecretIdList {
+	for _, id := range ids {
 		sec, aerr := h.store.resolveSecret(ctx, id)
 		if aerr != nil {
 			out.Errors = append(out.Errors, batchSecretError{
@@ -483,42 +671,11 @@ func (h *Handler) batchGetSecretValueTyped(ctx context.Context, req *batchGetSec
 	return out, nil
 }
 
-func (h *Handler) appendCurrentVersion(sec *Secret, secretString, secretBinary string) string {
-	now := h.store.now()
-	versionId := uuid.New().String()
-	for i := range sec.Versions {
-		for j, stage := range sec.Versions[i].Stages {
-			if stage == "AWSCURRENT" {
-				sec.Versions[i].Stages[j] = "AWSPREVIOUS"
-			}
-		}
-	}
-	sec.Versions = append(sec.Versions, SecretVersion{
-		VersionId:    versionId,
-		SecretString: secretString,
-		SecretBinary: secretBinary,
-		Stages:       []string{"AWSCURRENT"},
-		CreatedDate:  float64(now.Unix()),
-	})
-	const maxVersions = 3
-	if len(sec.Versions) > maxVersions {
-		sec.Versions = sec.Versions[len(sec.Versions)-maxVersions:]
-	}
-	sec.CurrentVersionId = versionId
-	sec.LastChangedDate = float64(now.Unix())
-	return versionId
-}
-
 func findSecretVersion(sec *Secret, versionId string) *SecretVersion {
 	if versionId == "" {
-		versionId = sec.CurrentVersionId
+		return sec.currentVersion()
 	}
-	for i := range sec.Versions {
-		if sec.Versions[i].VersionId == versionId {
-			return &sec.Versions[i]
-		}
-	}
-	return nil
+	return sec.versionByID(versionId)
 }
 
 func secretValueOut(sec *Secret, version *SecretVersion) *secretValueResponse {

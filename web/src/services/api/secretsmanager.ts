@@ -1,4 +1,5 @@
 import { awsClients } from "../aws-clients"
+import { endpointResolver } from "../discovery"
 import {
   ListSecretsCommand,
   CreateSecretCommand,
@@ -6,7 +7,62 @@ import {
   GetSecretValueCommand,
   PutSecretValueCommand,
   DeleteSecretCommand,
+  GetResourcePolicyCommand,
 } from "@aws-sdk/client-secrets-manager"
+
+/** One version of a secret, with the staging labels attached to it. */
+export interface SecretVersionSummary {
+  versionId: string
+  stages: string[]
+  createdDate: number
+}
+
+/** The outcome of the most recent rotation run. */
+export interface RotationAttempt {
+  status?: string
+  step?: string
+  error?: string
+  trigger?: string
+  clientRequestToken?: string
+  startedDate?: number
+  completedDate?: number
+}
+
+/**
+ * Rotation status for one secret.
+ *
+ * Sourced from Overcast's own `/_overcast/` endpoint rather than an AWS API:
+ * real Secrets Manager reports rotation progress through CloudTrail and the
+ * console, so there is no AWS operation that returns "which step failed".
+ */
+export interface SecretRotationStatus {
+  name: string
+  arn: string
+  rotationEnabled: boolean
+  rotationLambdaArn?: string
+  rotationRules?: {
+    AutomaticallyAfterDays?: number
+    Duration?: string
+    ScheduleExpression?: string
+  } | null
+  lastRotatedDate?: number
+  nextRotationDate?: number
+  versions: SecretVersionSummary[]
+  steps: string[]
+  lastAttempt?: RotationAttempt
+}
+
+async function overcastFetch<T>(path: string): Promise<T> {
+  const ep = endpointResolver.get()
+  const res = await fetch(`${ep.baseUrl}${path}`, {
+    headers: { "x-overcast-region": ep.region },
+  })
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string; __type?: string }
+    throw new Error(body.message ?? body.__type ?? `HTTP ${res.status}`)
+  }
+  return (await res.json()) as T
+}
 
 export const secretsmanager = {
   listSecrets: async () => {
@@ -43,4 +99,22 @@ export const secretsmanager = {
       .secretsmanager()
       .send(new DeleteSecretCommand({ SecretId: secretId, ForceDeleteWithoutRecovery: true }))
   },
+
+  /**
+   * The secret's resource policy, or null when none is attached.
+   *
+   * Overcast stores and validates this policy but does not evaluate it — see
+   * docs/services/secretsmanager.md. The UI says so where it shows it.
+   */
+  getResourcePolicy: async (secretId: string): Promise<string | null> => {
+    const res = await awsClients
+      .secretsmanager()
+      .send(new GetResourcePolicyCommand({ SecretId: secretId }))
+    return res.ResourcePolicy ?? null
+  },
+
+  getRotationStatus: (secretId: string): Promise<SecretRotationStatus> =>
+    overcastFetch<SecretRotationStatus>(
+      `/_overcast/secretsmanager/secrets/${encodeURIComponent(secretId)}/rotation`,
+    ),
 }

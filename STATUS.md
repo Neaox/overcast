@@ -41,7 +41,7 @@
 | ElastiCache     | 24  | Clusters (Docker Redis), replication groups, subnet groups, tagging                                                                                                                                        |
 | AppConfig       | 12  | Apps, environments, profiles, hosted config versions (CRUD + version counter)                                                                                                                              |
 | AppConfigData   | 3   | StartConfigurationSession, GetLatestConfiguration; poll-based delivery with "unchanged" detection                                                                                                          |
-| Secrets Manager | 21  | Secret CRUD, versioning, tags, rotation config (11 of 21 operations)                                                                                                                                       |
+| Secrets Manager | 22  | Secret CRUD, versioning, tags, rotation config (11 of 21 operations)                                                                                                                                       |
 | SSM             | 18  | Parameter Store: put, get, get-by-path, history, tags                                                                                                                                                      |
 | CloudWatch Logs | 19  | Log groups, streams, events, FilterLogEvents, DeleteLogStream                                                                                                                                              |
 | SES             | 42  | v1 + v2: SendEmail, SendRawEmail, identities, mail capture                                                                                                                                                 |
@@ -88,7 +88,7 @@
 | EFS             | 31  |
 | AppConfig       | 12  |
 | AppConfigData   | 3   |
-| Secrets Manager | 21  |
+| Secrets Manager | 22  |
 | SSM             | 18  |
 | CloudWatch Logs | 19  |
 | SES             | 42  |

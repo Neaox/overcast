@@ -6,6 +6,8 @@
  *   smKeys.secrets()                   -> [...all(), "secrets"]
  *   smKeys.secret(id)                  -> [...all(), "secret", id]
  *   smKeys.secretValue(secretId)       -> [...all(), "value", secretId]
+ *   smKeys.rotation(secretId)          -> [...all(), "rotation", secretId]
+ *   smKeys.resourcePolicy(secretId)    -> [...all(), "policy", secretId]
  */
 
 import { queryOptions, mutationOptions } from "@tanstack/react-query"
@@ -19,6 +21,8 @@ export const smKeys = {
   secrets: () => [...smKeys.all(), "secrets"] as const,
   secret: (secretId: string) => [...smKeys.all(), "secret", secretId] as const,
   secretValue: (secretId: string) => [...smKeys.all(), "value", secretId] as const,
+  rotation: (secretId: string) => [...smKeys.all(), "rotation", secretId] as const,
+  resourcePolicy: (secretId: string) => [...smKeys.all(), "policy", secretId] as const,
 }
 
 // ─── Query definitions ─────────────────────────────────────────────────────
@@ -42,6 +46,22 @@ export function secretValueQueryOptions(secretId: string) {
   return queryOptions({
     queryKey: smKeys.secretValue(secretId),
     queryFn: () => sm.getSecretValue(secretId),
+    enabled: !!secretId,
+  })
+}
+
+export function secretRotationQueryOptions(secretId: string) {
+  return queryOptions({
+    queryKey: smKeys.rotation(secretId),
+    queryFn: () => sm.getRotationStatus(secretId),
+    enabled: !!secretId,
+  })
+}
+
+export function secretResourcePolicyQueryOptions(secretId: string) {
+  return queryOptions({
+    queryKey: smKeys.resourcePolicy(secretId),
+    queryFn: () => sm.getResourcePolicy(secretId),
     enabled: !!secretId,
   })
 }
