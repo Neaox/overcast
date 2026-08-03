@@ -58,9 +58,30 @@ export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION AWS_REGION \
     AWS_PAGER AWS_EC2_METADATA_DISABLED
 
 # A profile is resolved from the config files even with no AWS_PROFILE set, so
-# point both files at nothing rather than trusting that ~/.aws is uninteresting.
-AWS_CONFIG_FILE=/dev/null
-AWS_SHARED_CREDENTIALS_FILE=/dev/null
+# point both files at an empty one rather than trusting that ~/.aws is
+# uninteresting.
+#
+# An empty temp file, not /dev/null. Under Git Bash the `aws` on PATH is the
+# native Windows build, which cannot open a POSIX path: /dev/null reaches it
+# unconverted whenever MSYS path conversion is off (MSYS_NO_PATHCONV=1, which
+# other calls on this machine need) and every command then dies with
+# "Unable to parse config file: /dev/null". cygpath gives the native form when
+# we are on Windows and is absent everywhere else, where the path is already
+# fine.
+empty_config="$(mktemp)"
+if command -v cygpath >/dev/null 2>&1; then
+    AWS_CONFIG_FILE="$(cygpath -w "$empty_config")"
+else
+    AWS_CONFIG_FILE="$empty_config"
+fi
+AWS_SHARED_CREDENTIALS_FILE="$AWS_CONFIG_FILE"
 export AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE
 
-exec aws --endpoint-url "$endpoint" "$@"
+# Not exec: the temp file has to be cleaned up after the CLI exits, so run it
+# as a child and pass its status on. `|| status=$?` rather than a bare call,
+# because `set -e` would otherwise exit here the moment the CLI returns
+# non-zero — which is every ordinary AWS error — and leak the temp file.
+status=0
+aws --endpoint-url "$endpoint" "$@" || status=$?
+rm -f "$empty_config"
+exit "$status"

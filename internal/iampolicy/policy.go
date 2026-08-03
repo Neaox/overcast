@@ -56,6 +56,13 @@ type Statement struct {
 	Source SourceRef
 	// Index is the statement's 0-based position within its source document.
 	Index int
+	// StartPosition/EndPosition locate this statement's opening `{` and
+	// closing `}` within its source document text (see [Position]). They are
+	// nil only if the statement's raw bytes could not be located in that
+	// text, which is not expected to happen for a document this evaluator
+	// parsed itself.
+	StartPosition *Position
+	EndPosition   *Position
 
 	Action      []Pattern
 	NotAction   []Pattern
@@ -129,12 +136,24 @@ func ParseDocument(raw string, src SourceRef) ([]Statement, error) {
 	}
 
 	var wires []wireStatement
+	var rawStmts []json.RawMessage
 	if err := json.Unmarshal(wd.Statement, &wires); err != nil {
 		var single wireStatement
 		if err2 := json.Unmarshal(wd.Statement, &single); err2 != nil {
 			return nil, fmt.Errorf("policy %s: Statement is neither a statement nor a list of statements: %w", sourceName(src), err)
 		}
 		wires = []wireStatement{single}
+		rawStmts = []json.RawMessage{wd.Statement}
+	} else if err := json.Unmarshal(wd.Statement, &rawStmts); err != nil || len(rawStmts) != len(wires) {
+		// Positions are a cosmetic addition to the response: if the raw byte
+		// split doesn't line up with the typed one for any reason, fall back
+		// to reporting no positions rather than failing the whole policy.
+		rawStmts = nil
+	}
+
+	var positions []positionPair
+	if len(rawStmts) == len(wires) {
+		positions = computeStatementPositions(raw, rawStmts)
 	}
 
 	out := make([]Statement, 0, len(wires))
@@ -142,6 +161,10 @@ func ParseDocument(raw string, src SourceRef) ([]Statement, error) {
 		stmt, err := compileStatement(ws, src, i)
 		if err != nil {
 			return nil, err
+		}
+		if i < len(positions) && positions[i].Start.Line > 0 {
+			start, end := positions[i].Start, positions[i].End
+			stmt.StartPosition, stmt.EndPosition = &start, &end
 		}
 		out = append(out, stmt)
 	}

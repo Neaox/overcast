@@ -44,9 +44,27 @@ type simulateCustomPolicyReq struct {
 
 // ─── Response types ──────────────────────────────────────────────────────────
 
+// positionXML is AWS's Position type: a 1-based row/column into a policy
+// document, used by statementXML's StartPosition/EndPosition.
+type positionXML struct {
+	Line   int `xml:"Line"`
+	Column int `xml:"Column"`
+}
+
+// statementXML is AWS's Statement type (the MatchedStatements member).
+// StartPosition/EndPosition point at the deciding statement's opening `{`
+// and closing `}` within the exact document text supplied on the wire
+// (PolicyInputList entry, inline/managed policy document, or ResourcePolicy).
+// A consumer can use them to tell apart two statements that share one
+// document — the gap this type closes — and, given the same document text
+// back, to locate the exact statement. They are Overcast's own byte-accurate
+// computation, not copied from any upstream source; nothing else about the
+// wire format changes.
 type statementXML struct {
-	SourcePolicyId   string `xml:"SourcePolicyId"`
-	SourcePolicyType string `xml:"SourcePolicyType"`
+	SourcePolicyId   string       `xml:"SourcePolicyId"`
+	SourcePolicyType string       `xml:"SourcePolicyType"`
+	StartPosition    *positionXML `xml:"StartPosition,omitempty"`
+	EndPosition      *positionXML `xml:"EndPosition,omitempty"`
 }
 
 type boundaryDetailXML struct {
@@ -345,6 +363,8 @@ func (e evaluation) toResourceSpecific(resource string) resourceSpecificResultXM
 		matched = append(matched, statementXML{
 			SourcePolicyId:   m.Source.ID,
 			SourcePolicyType: m.Source.Type,
+			StartPosition:    toPositionXML(m.StartPosition),
+			EndPosition:      toPositionXML(m.EndPosition),
 		})
 	}
 	return resourceSpecificResultXML{
@@ -354,6 +374,15 @@ func (e evaluation) toResourceSpecific(resource string) resourceSpecificResultXM
 		MissingContextValues:        listMembersXML[string]{Members: e.missing, Tag: "member"},
 		PermissionsBoundaryDecision: e.boundary,
 	}
+}
+
+// toPositionXML converts an internal iampolicy.Position to its wire shape,
+// or nil if the position was never computed.
+func toPositionXML(p *iampolicy.Position) *positionXML {
+	if p == nil {
+		return nil
+	}
+	return &positionXML{Line: p.Line, Column: p.Column}
 }
 
 func appendUnsupported(dst, src []string) []string {
