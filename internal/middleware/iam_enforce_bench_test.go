@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/Neaox/overcast/internal/state"
@@ -49,10 +48,9 @@ func BenchmarkEvaluateIAMDecision_SQSAllow(b *testing.B) {
 	req.Header.Set("X-Amz-Date", "20260423T000000Z")
 
 	b.ReportAllocs()
-	var cacheMu sync.RWMutex
-	var cache map[string]*iamEnforceCacheEntry
+	cache := &iamEnforceCache{}
 	for i := 0; i < b.N; i++ {
-		_ = evaluateIAMDecision(req, st, "test", "sqs:CreateQueue", "arn:aws:sqs:us-east-1:000000000000:bench-queue", &cacheMu, &cache)
+		_ = evaluateIAMDecision(req, st, "test", "sqs:CreateQueue", "arn:aws:sqs:us-east-1:000000000000:bench-queue", cache)
 	}
 }
 

@@ -772,3 +772,39 @@ func TestIAMEnforce_enabled_compilesPrincipalPoliciesOncePerPrincipal(t *testing
 			st.reads, afterFirst)
 	}
 }
+
+func TestIAMEnforce_enabled_policyChangeReachesAWarmCache(t *testing.T) {
+	// Given: a principal whose compiled policies are already cached by a
+	// running middleware instance
+	st := state.NewMemoryStore()
+	seedIAMUserWithPolicies(t, st, "AKIAWARM", []string{`{"Statement":[{"Effect":"Allow","Action":"sqs:*","Resource":"*"}]}`}, nil)
+	h := IAMEnforce(true, st, zap.NewNop())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	InvalidateIAMEnforceCache()
+
+	send := func() int {
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"QueueName":"demo"}`))
+		req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+		req.Header.Set("X-Amz-Target", "AmazonSQS.CreateQueue")
+		req.Header.Set("Authorization",
+			"AWS4-HMAC-SHA256 Credential=AKIAWARM/20260423/us-east-1/sqs/aws4_request, SignedHeaders=host;x-amz-date, Signature=abc")
+		req.Header.Set("X-Amz-Date", "20260423T000000Z")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := send(); code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d before the policy changed", code, http.StatusNoContent)
+	}
+
+	// When: the policy is replaced with one that does not allow the action,
+	// and the IAM service reports the mutation
+	seedIAMUserWithPolicies(t, st, "AKIAWARM", []string{`{"Statement":[{"Effect":"Allow","Action":"s3:*","Resource":"*"}]}`}, nil)
+	InvalidateIAMEnforceCache()
+
+	// Then: the warm cache is discarded and the new policy decides
+	if code := send(); code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d — the cache survived an invalidation", code, http.StatusForbidden)
+	}
+}

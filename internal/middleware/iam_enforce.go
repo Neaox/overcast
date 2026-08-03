@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -35,37 +36,78 @@ type iamEnforceCacheEntry struct {
 	compileErr error
 }
 
-var (
-	iamEnforceInvalidatorMu sync.Mutex
-	iamEnforceInvalidators  []func()
-)
+// iamEnforceGeneration is bumped by every IAM mutation. Each middleware
+// instance stamps its cache with the generation it was built at and discards
+// the cache when the two diverge, which is how a policy change reaches an
+// already-warm cache.
+//
+// A counter rather than a registry of invalidation callbacks: a registry has to
+// be added to when a router is built and removed from when one goes away, and
+// the removal half is easy to forget — a test binary builds hundreds of routers
+// and would accumulate one live callback (and its cache) per router, with every
+// IAM mutation walking all of them. A generation is O(1) to invalidate however
+// many routers exist, needs no registration or teardown, and lets a dead
+// router's cache be collected with the router.
+var iamEnforceGeneration atomic.Uint64
 
+// InvalidateIAMEnforceCache marks every compiled-policy cache stale. Called by
+// the IAM service after any operation that changes what a principal is allowed
+// to do.
 func InvalidateIAMEnforceCache() {
-	iamEnforceInvalidatorMu.Lock()
-	invalidators := make([]func(), len(iamEnforceInvalidators))
-	copy(invalidators, iamEnforceInvalidators)
-	iamEnforceInvalidatorMu.Unlock()
-	for _, fn := range invalidators {
-		fn()
-	}
+	iamEnforceGeneration.Add(1)
 }
 
-func registerIAMEnforceInvalidator(fn func()) {
-	iamEnforceInvalidatorMu.Lock()
-	iamEnforceInvalidators = append(iamEnforceInvalidators, fn)
-	iamEnforceInvalidatorMu.Unlock()
+// iamEnforceCache holds one middleware instance's compiled policies, valid only
+// for the generation it was built at.
+type iamEnforceCache struct {
+	mu         sync.RWMutex
+	generation uint64
+	entries    map[string]*iamEnforceCacheEntry
+}
+
+// load returns the cached entry for accessKeyID, and the generation the caller
+// must still be on for a later store to be accepted. A cache built before the
+// last invalidation is dropped here rather than consulted.
+func (c *iamEnforceCache) load(accessKeyID string) (*iamEnforceCacheEntry, uint64) {
+	generation := iamEnforceGeneration.Load()
+
+	c.mu.RLock()
+	if c.generation == generation {
+		entry := c.entries[accessKeyID]
+		c.mu.RUnlock()
+		return entry, generation
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	if c.generation != generation {
+		c.entries = nil
+		c.generation = generation
+	}
+	c.mu.Unlock()
+	return nil, generation
+}
+
+// store records an entry compiled at generation, and drops it if an IAM
+// mutation landed while it was being compiled — the entry may already describe
+// policies that no longer exist, and recompiling on the next request is
+// cheaper than reasoning about which half is stale.
+func (c *iamEnforceCache) store(generation uint64, accessKeyID string, entry *iamEnforceCacheEntry) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if iamEnforceGeneration.Load() != generation {
+		return
+	}
+	if c.generation != generation || c.entries == nil {
+		c.entries = make(map[string]*iamEnforceCacheEntry)
+		c.generation = generation
+	}
+	c.entries[accessKeyID] = entry
 }
 
 // IAMEnforce enforces opt-in IAM authorization.
 func IAMEnforce(enabled bool, st state.Store, logger *zap.Logger) func(http.Handler) http.Handler {
-	var cacheMu sync.RWMutex
-	var cache map[string]*iamEnforceCacheEntry
-	invalidate := func() {
-		cacheMu.Lock()
-		cache = nil
-		cacheMu.Unlock()
-	}
-	registerIAMEnforceInvalidator(invalidate)
+	cache := &iamEnforceCache{}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +140,7 @@ func IAMEnforce(enabled bool, st state.Store, logger *zap.Logger) func(http.Hand
 			}
 
 			resource := requestIAMResource(r)
-			result := evaluateIAMDecision(r, st, parts.AccessKey, action, resource, &cacheMu, &cache)
+			result := evaluateIAMDecision(r, st, parts.AccessKey, action, resource, cache)
 			if reason, denied := iamDenialReason(result); denied {
 				// A deny the evaluator could not reason about is a gap in
 				// Overcast, not a decision the user asked for: say so at warn
@@ -1063,8 +1105,8 @@ type iamEnforceResult struct {
 	compileErr error
 }
 
-func evaluateIAMDecision(r *http.Request, st state.Store, accessKeyID, action, resource string, cacheMu *sync.RWMutex, cache *map[string]*iamEnforceCacheEntry) iamEnforceResult {
-	cached := loadIAMEnforceCacheEntry(accessKeyID, cacheMu, cache)
+func evaluateIAMDecision(r *http.Request, st state.Store, accessKeyID, action, resource string, cache *iamEnforceCache) iamEnforceResult {
+	cached, generation := cache.load(accessKeyID)
 	if cached == nil {
 		docs, principalCtx := collectPrincipalPolicyDocumentsAndContext(r.Context(), st, accessKeyID)
 		statements, err := iampolicy.Compile(docs)
@@ -1073,7 +1115,7 @@ func evaluateIAMDecision(r *http.Request, st state.Store, accessKeyID, action, r
 			principalCtx: principalCtx,
 			compileErr:   err,
 		}
-		storeIAMEnforceCacheEntry(accessKeyID, cached, cacheMu, cache)
+		cache.store(generation, accessKeyID, cached)
 	}
 	if cached.compileErr != nil {
 		return iamEnforceResult{compileErr: cached.compileErr}
@@ -1094,24 +1136,6 @@ func evaluateIAMDecision(r *http.Request, st state.Store, accessKeyID, action, r
 		},
 		Identity: cached.statements,
 	})}
-}
-
-func loadIAMEnforceCacheEntry(accessKeyID string, mu *sync.RWMutex, cache *map[string]*iamEnforceCacheEntry) *iamEnforceCacheEntry {
-	mu.RLock()
-	defer mu.RUnlock()
-	if *cache == nil {
-		return nil
-	}
-	return (*cache)[accessKeyID]
-}
-
-func storeIAMEnforceCacheEntry(accessKeyID string, entry *iamEnforceCacheEntry, mu *sync.RWMutex, cache *map[string]*iamEnforceCacheEntry) {
-	mu.Lock()
-	defer mu.Unlock()
-	if *cache == nil {
-		*cache = make(map[string]*iamEnforceCacheEntry)
-	}
-	(*cache)[accessKeyID] = entry
 }
 
 func collectPrincipalPolicyDocumentsAndContext(ctx context.Context, st state.Store, accessKeyID string) ([]iampolicy.SourcedDocument, map[string]string) {
