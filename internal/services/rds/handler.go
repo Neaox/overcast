@@ -156,7 +156,9 @@ var auroraEngines = map[string]bool{
 	"aurora-postgresql": true,
 }
 
-// engineImages maps engine → version → Docker image tag.
+// engineImages maps engine → version → Docker image tag. The keys are the
+// versions DescribeDBEngineVersions advertises; resolveEngineImage matches
+// anything else against them, so a real EngineVersion still starts a container.
 var engineImages = map[string]map[string]string{
 	"mysql": {
 		"8.0": "mysql:8.0",
@@ -471,8 +473,9 @@ func (h *Handler) CreateDBInstance(w http.ResponseWriter, r *http.Request) {
 	arn := protocol.ARN(region, h.cfg.AccountID, "rds", "db:"+id)
 	now := h.clk.Now().UTC().Format(time.RFC3339)
 
+	// Stored canonical, re-minted for whoever reads it — see endpoint.go.
 	endpoint := &Endpoint{
-		Address: id + "." + region + ".rds." + h.cfg.ExternalHostname(),
+		Address: instanceEndpointHostname(id, region, h.externalHostname()),
 		Port:    port,
 	}
 
@@ -510,10 +513,8 @@ func (h *Handler) CreateDBInstance(w http.ResponseWriter, r *http.Request) {
 	if h.dockerReady.Load() {
 		// Pre-warm the image via the shared puller's dedup so a concurrent
 		// describe-wait has its pull coalesced with the background start.
-		if versions, ok := engineImages[inst.Engine]; ok {
-			if image, ok := versions[inst.EngineVersion]; ok && h.puller != nil {
-				h.puller.Prewarm(image)
-			}
+		if image, _, ok := resolveEngineImage(inst.Engine, inst.EngineVersion); ok && h.puller != nil {
+			h.puller.Prewarm(image)
 		}
 		h.launchDBContainerAsync(r.Context(), id)
 	}
@@ -545,7 +546,7 @@ func (h *Handler) CreateDBInstance(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateDBInstanceResponse{
 		Xmlns: rdsXMLNS,
 		Result: xmlCreateDBInstanceResult{
-			DBInstance: toXMLDBInstance(inst),
+			DBInstance: h.toXMLDBInstance(r.Context(), inst),
 		},
 		ResponseMetadata: protocol.QueryResponseMetadata(r),
 	})
@@ -566,7 +567,7 @@ func (h *Handler) DescribeDBInstances(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeDBInstancesResponse{
 			Xmlns: rdsXMLNS,
 			Result: xmlDescribeDBInstancesResult{
-				DBInstances: xmlDBInstances{Items: []xmlDBInstance{toXMLDBInstance(inst)}},
+				DBInstances: xmlDBInstances{Items: []xmlDBInstance{h.toXMLDBInstance(r.Context(), inst)}},
 			},
 			ResponseMetadata: protocol.QueryResponseMetadata(r),
 		})
@@ -581,7 +582,7 @@ func (h *Handler) DescribeDBInstances(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]xmlDBInstance, 0, len(all))
 	for _, inst := range all {
-		items = append(items, toXMLDBInstance(inst))
+		items = append(items, h.toXMLDBInstance(r.Context(), inst))
 	}
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeDBInstancesResponse{
@@ -630,7 +631,7 @@ func (h *Handler) DeleteDBInstance(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDeleteDBInstanceResponse{
 		Xmlns: rdsXMLNS,
 		Result: xmlDeleteDBInstanceResult{
-			DBInstance: toXMLDBInstance(inst),
+			DBInstance: h.toXMLDBInstance(r.Context(), inst),
 		},
 		ResponseMetadata: protocol.QueryResponseMetadata(r),
 	})
@@ -707,10 +708,16 @@ func (h *Handler) DescribeDBEngineVersions(w http.ResponseWriter, r *http.Reques
 
 // toXMLDBInstance converts a stored DBInstance to the XML response type.
 // MasterUserPassword is intentionally omitted (AWS never returns it).
-func toXMLDBInstance(inst *DBInstance) xmlDBInstance {
+//
+// The endpoint is re-minted for this caller rather than replayed from the
+// record: the stored form is canonical, and which name and port are dialable
+// depends on who is asking. Every response path goes through here, so the two
+// dispatch paths (Query XML and typed) cannot disagree.
+func (h *Handler) toXMLDBInstance(ctx context.Context, inst *DBInstance) xmlDBInstance {
 	var ep xmlEndpoint
 	if inst.Endpoint != nil {
-		ep = xmlEndpoint{Address: inst.Endpoint.Address, Port: inst.Endpoint.Port}
+		address, port := h.instanceEndpointFor(ctx, inst)
+		ep = xmlEndpoint{Address: address, Port: port}
 	}
 	return xmlDBInstance{
 		DBInstanceIdentifier: inst.DBInstanceIdentifier,
@@ -786,15 +793,22 @@ func (h *Handler) addInstanceToCluster(ctx context.Context, clusterID, instanceI
 
 // ── Docker helpers ───────────────────────────────────────────────────────────
 
-// setContainerEndpoint inspects the container after start and sets the
-// endpoint to the container's IP on the RDS Docker network (when overcast
-// is running inside a container) or to 127.0.0.1 with the host port binding
-// (when overcast is running natively).
-func (h *Handler) setContainerEndpoint(ctx context.Context, inst *DBInstance, ecfg engineEnv) {
+// setContainerDialTarget inspects the container after start and records how
+// *Overcast* reaches it: the container's IP on the RDS Docker network when
+// Overcast runs inside a container, otherwise 127.0.0.1 with the host port
+// binding.
+//
+// It deliberately leaves Endpoint alone. Endpoint is what clients are told, and
+// a raw address is dialable by exactly one party — the container IP means
+// nothing on the host, and 127.0.0.1 means "yourself" inside a sibling
+// container, which is how an ECS task ends up connecting to itself. The
+// endpoint stays the AWS-shaped hostname and is rendered per caller on the way
+// out (endpoint.go); this pair is for health checks only.
+func (h *Handler) setContainerDialTarget(ctx context.Context, inst *DBInstance, ecfg engineEnv) {
 	network := h.network()
 
-	// When overcast itself runs inside Docker, route through the Docker network
-	// so clients inside the same container / network can reach the DB.
+	// When overcast itself runs inside Docker, reach the DB over the network
+	// they share.
 	if _, err := os.Stat("/.dockerenv"); err == nil {
 		// Attach overcast's container to the RDS network (idempotent).
 		hostname, _ := os.Hostname()
@@ -805,21 +819,21 @@ func (h *Handler) setContainerEndpoint(ctx context.Context, inst *DBInstance, ec
 		info, err := h.docker.InspectContainer(ctx, inst.DockerContainerID)
 		if err == nil {
 			if ep, ok := info.NetworkSettings.Networks[network]; ok && ep.IPAddress != "" {
-				inst.Endpoint.Address = ep.IPAddress
-				inst.Endpoint.Port = ecfg.ContainerPort
+				inst.DialAddress = ep.IPAddress
+				inst.DialPort = ecfg.ContainerPort
 				return
 			}
 		}
 	}
 
 	// Native mode — use host port binding on localhost.
-	inst.Endpoint.Address = "127.0.0.1"
-	inst.Endpoint.Port = inst.HostPort
+	inst.DialAddress = "127.0.0.1"
+	inst.DialPort = inst.HostPort
 }
 
 // startDBContainer creates (or reuses) and starts a Docker container for the
-// given DB instance. Updates inst.DockerContainerID, inst.HostPort, and
-// inst.Endpoint in place.
+// given DB instance. Updates inst.DockerContainerID, inst.HostPort and the
+// health-check dial target in place.
 //
 // If a container with the expected name already exists (e.g. overcast was
 // restarted while containers were kept running), we reuse it rather than
@@ -827,18 +841,26 @@ func (h *Handler) setContainerEndpoint(ctx context.Context, inst *DBInstance, ec
 // is read from the inspect response so the stored port stays accurate.
 func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error {
 	// Resolve Docker image.
-	versions, ok := engineImages[inst.Engine]
-	if !ok {
-		return fmt.Errorf("no image map for engine %q", inst.Engine)
-	}
-	image, ok := versions[inst.EngineVersion]
+	image, matched, ok := resolveEngineImage(inst.Engine, inst.EngineVersion)
 	if !ok {
 		return fmt.Errorf("no image for engine %q version %q", inst.Engine, inst.EngineVersion)
+	}
+	if matched != inst.EngineVersion {
+		h.log.Info("RDS: engine version has no image of its own, using the nearest one",
+			zap.String("instance", inst.DBInstanceIdentifier),
+			zap.String("engine", inst.Engine),
+			zap.String("version", inst.EngineVersion),
+			zap.String("served_by", matched),
+			zap.String("image", image))
 	}
 
 	containerName := "overcast-rds-" + inst.DBInstanceIdentifier
 	ecfg := engineEnvConfig[inst.Engine]
 	containerPort := fmt.Sprintf("%d/tcp", ecfg.ContainerPort)
+
+	// The DNS names this container must answer to, on every network a caller
+	// might reach it from. Same set for each attachment below.
+	aliases := h.instanceEndpointAliases(h.store.region(ctx), inst)
 
 	// Check whether a container with this name already exists — this happens
 	// after an overcast restart when RDSKeepContainers=true (or the process
@@ -887,8 +909,8 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 
 		inst.DockerContainerID = existing.ID
 		inst.HostPort = hostPort
-		h.connectToComputeNetworks(ctx, existing.ID, h.dbInstanceEndpointAliases(inst))
-		h.setContainerEndpoint(ctx, inst, ecfg)
+		h.connectToComputeNetworks(ctx, existing.ID, aliases)
+		h.setContainerDialTarget(ctx, inst, ecfg)
 		return nil
 	}
 
@@ -952,7 +974,7 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 		},
 		NetworkingConfig: &docker.NetworkingConfig{
 			EndpointsConfig: map[string]*docker.EndpointSettings{
-				network: {Aliases: h.dbInstanceEndpointAliases(inst)},
+				network: {Aliases: aliases},
 			},
 		},
 	}
@@ -989,7 +1011,7 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 				// on it, so anything else in the VPC — an ECS task, most often
 				// — gets Overcast's own address for the endpoint name and
 				// connects to a port nothing is listening on.
-				if err := h.docker.ConnectNetworkWithAliases(ctx, netID, containerID, h.dbInstanceEndpointAliases(inst)); err != nil {
+				if err := h.docker.ConnectNetworkWithAliases(ctx, netID, containerID, aliases); err != nil {
 					h.docker.RemoveContainerForce(containerID) //nolint:errcheck
 					h.store.releasePort(ctx, hostPort)         //nolint:errcheck
 					return fmt.Errorf("connect container to VPC network %s: %w", netID, err)
@@ -1008,24 +1030,9 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 
 	inst.DockerContainerID = containerID
 	inst.HostPort = hostPort
-	h.connectToComputeNetworks(ctx, containerID, h.dbInstanceEndpointAliases(inst))
-	h.setContainerEndpoint(ctx, inst, ecfg)
+	h.connectToComputeNetworks(ctx, containerID, aliases)
+	h.setContainerDialTarget(ctx, inst, ecfg)
 	return nil
-}
-
-func (h *Handler) dbInstanceEndpointAliases(inst *DBInstance) []string {
-	if inst == nil {
-		return nil
-	}
-	var current string
-	if inst.Endpoint != nil {
-		current = inst.Endpoint.Address
-	}
-	var canonical string
-	if inst.DBInstanceIdentifier != "" {
-		canonical = fmt.Sprintf("%s.%s.rds.%s", inst.DBInstanceIdentifier, h.region(), h.externalHostname())
-	}
-	return docker.EndpointAliases(current, canonical)
 }
 
 func (h *Handler) region() string {
@@ -1165,7 +1172,8 @@ func (h *Handler) launchDBContainerAsync(ctx context.Context, instID string) {
 				_ = h.docker.StopContainer(bgCtx, fresh.DockerContainerID, 10)
 			}
 		default:
-			h.scheduleHealthCheck(region, instID, fresh.Endpoint.Address, fresh.Endpoint.Port)
+			healthHost, healthPort := dialTarget(fresh)
+			h.scheduleHealthCheck(region, instID, healthHost, healthPort)
 		}
 	}()
 }

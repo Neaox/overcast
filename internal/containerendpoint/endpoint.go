@@ -239,6 +239,30 @@ func Hostnames(cfg *config.Config) []string {
 	return names
 }
 
+// ResourceHostnames returns every base a *resource* hostname can be minted
+// under: Hostnames plus "localhost".
+//
+// The difference from Hostnames is the loopback name, and it turns on who the
+// name is for. Hostnames answers "what can a container call Overcast", where a
+// loopback name is a container's own address and therefore useless. A resource
+// name — an RDS endpoint, an ElastiCache node — only ever has one of these as a
+// *suffix* (`db.us-east-1.rds.localhost`), which is a perfectly good name for
+// something else on the network, and it is the name Overcast mints when no
+// OVERCAST_HOSTNAME is configured.
+//
+// Services registering Docker network aliases need the whole set, because which
+// name a caller holds depends on the endpoint that caller used. See
+// docs/dev/container-networking.md.
+func ResourceHostnames(cfg *config.Config) []string {
+	names := Hostnames(cfg)
+	// Not appendHostname: it drops loopback names, which is right for its own
+	// callers and wrong here — this one is a suffix, not a destination.
+	if !slices.ContainsFunc(names, func(e string) bool { return strings.EqualFold(e, "localhost") }) {
+		names = append(names, "localhost")
+	}
+	return names
+}
+
 // appendHostname adds name when it is usable and not already present.
 func appendHostname(names []string, name string) []string {
 	name = strings.TrimSpace(name)

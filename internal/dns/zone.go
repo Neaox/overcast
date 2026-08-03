@@ -21,6 +21,22 @@
 //
 // /etc/hosts entries are still written (see internal/containerendpoint): they
 // cover the apex names with no dependency on this server being reachable.
+//
+// # What this package is not
+//
+// It answers one question — "where is Overcast" — and it answers it for every
+// subdomain of the domains it claims. It is not a name server for emulated
+// resources. A hostname that points at a *container* Overcast started (an RDS
+// endpoint, an ElastiCache node) is resolved by Docker's embedded resolver from
+// that container's network aliases, which is consulted before anything reaches
+// here; the way to make such a name resolve is to attach the container to the
+// caller's network carrying the name as an alias, not to add a record here.
+//
+// This matters more than it looks, because the two overlap: an RDS endpoint
+// ends in a domain this zone owns, so a missing alias does not produce a clean
+// NXDOMAIN — it produces Overcast's own address, and the client connects to
+// Overcast on the database port and hangs. See
+// docs/dev/container-networking.md.
 package dns
 
 import (

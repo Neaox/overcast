@@ -72,11 +72,19 @@ One core implementation: `serviceutil.ClientBaseURLFromOrigin(cfg, origin)`, wit
 | **SNS** `SubscribeURL` | must be dialable when the subscriber confirms | minted during async delivery — there is no caller | **fallback branch of the rule** (canonical base), not a special case |
 | **ECR** `repositoryUri` | `docker push/pull` must reach the registry | scheme-less `host:port/name` consumed by the **docker daemon**, not the API caller — a per-caller value would churn the login/push target mid-session and the daemon is not the caller anyway | **deferred, canonical kept**: documented constraint; revisit only if remapped-port docker workflows surface |
 | **CloudFront** `DomainName` | resolvable by holder | minted as `{id}.cloudfront.{host}` on the caller's hostname already | **standard rule** |
+| **RDS** `Endpoint.Address`, Aurora `Endpoint`/`ReaderEndpoint` | resolvable *and connectable* by the holder; crosses parties constantly (`Fn::GetAtt` into ECS task env and Secrets Manager) | it names a **container Overcast started**, not Overcast, so the rule's usual "point at us" answer is wrong twice over: the name must resolve through Docker's embedded resolver (network aliases, not our DNS server), and the engine port inside the network is not the published port on the host | **standard rule for the hostname, extended for the port**: hostname per the rule; port per caller side (engine port for a sibling container, published port for the host), decided by source address since a split-horizon name cannot distinguish them. Aliases are registered for the name under *every* mintable hostname, because which one a caller holds depends on their endpoint. See docs/networking.md § Data-plane endpoints |
 | **S3** presigned / virtual-hosted URLs | — | minted client-side by SDKs from *their* endpoint; Overcast only needs to accept every arriving Host form (#371 case-folding, hostroute grammar) | out of scope — server-side accept, not minting |
 | **Web console** | browser must reach the API | browser-origin based; published port via `#328`'s BFF split | out of scope — separate plumbing |
 
 **Summary: one special case kept (SQS verbatim echo), one documented accommodation
-(Cognito path-based validation), one deferral (ECR).** Everything else is the standard rule.
+(Cognito path-based validation), one deferral (ECR), one extension for data-plane
+endpoints (RDS).** Everything else is the standard rule.
+
+**Still outstanding: ElastiCache mints the same way RDS used to** —
+`cfg.ExternalHostname()` at create time, with the address overwritten by the
+container's IP once it starts (`internal/services/elasticache/handler.go`). The
+helpers RDS now uses are service-local; lifting them into `serviceutil` and
+applying them there is the follow-up.
 
 ## The issuer, re-examined
 

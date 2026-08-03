@@ -41,9 +41,14 @@ type DBInstance struct {
 	Port                 int       `json:"Port"`
 	DockerContainerID    string    `json:"DockerContainerID,omitempty"`
 	HostPort             int       `json:"HostPort,omitempty"`
-	DBClusterIdentifier  string    `json:"DBClusterIdentifier,omitempty"`
-	DBSubnetGroupName    string    `json:"DBSubnetGroupName,omitempty"`
-	VpcID                string    `json:"VpcId,omitempty"`
+	// DialAddress/DialPort are how *Overcast* reaches the engine container
+	// (health checks), which is not what any client is told: see dialTarget and
+	// instanceEndpointFor in endpoint.go.
+	DialAddress         string `json:"DialAddress,omitempty"`
+	DialPort            int    `json:"DialPort,omitempty"`
+	DBClusterIdentifier string `json:"DBClusterIdentifier,omitempty"`
+	DBSubnetGroupName   string `json:"DBSubnetGroupName,omitempty"`
+	VpcID               string `json:"VpcId,omitempty"`
 }
 
 // DBCluster represents a stored Aurora DB cluster.

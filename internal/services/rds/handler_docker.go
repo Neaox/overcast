@@ -64,7 +64,8 @@ func (h *Handler) handleContainerStarted(_ context.Context, e events.Event) {
 
 	switch inst.DBInstanceStatus {
 	case "stopped", "starting", "creating":
-		h.scheduleHealthCheck(region, inst.DBInstanceIdentifier, inst.Endpoint.Address, inst.Endpoint.Port)
+		healthHost, healthPort := dialTarget(inst)
+		h.scheduleHealthCheck(region, inst.DBInstanceIdentifier, healthHost, healthPort)
 	}
 }
 
@@ -110,11 +111,12 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 			// changed if the container was assigned a new IP) and schedule a
 			// health check to verify DB connectivity before marking available.
 			ecfg := engineEnvConfig[inst.Engine]
-			h.setContainerEndpoint(rctx, inst, ecfg)
+			h.setContainerDialTarget(rctx, inst, ecfg)
 			h.store.putDBInstance(rctx, inst) //nolint:errcheck
 
 			if inst.DBInstanceStatus == "creating" || inst.DBInstanceStatus == "starting" || inst.DBInstanceStatus == "stopped" || inst.DBInstanceStatus == "available" {
-				h.scheduleHealthCheck(ri.Region, inst.DBInstanceIdentifier, inst.Endpoint.Address, inst.Endpoint.Port)
+				healthHost, healthPort := dialTarget(inst)
+				h.scheduleHealthCheck(ri.Region, inst.DBInstanceIdentifier, healthHost, healthPort)
 				h.log.Info("reconcile: container running — scheduling health check",
 					zap.String("instance", inst.DBInstanceIdentifier),
 					zap.String("endpoint", inst.Endpoint.Address),

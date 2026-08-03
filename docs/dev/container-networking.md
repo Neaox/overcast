@@ -6,6 +6,20 @@ Reach for these before writing anything new: the last agent to need
 container-to-container name resolution built a second DNS mechanism next to the
 one that already worked.
 
+**The one-line version.** Two resolvers answer inside a container Overcast
+started, and they answer different questions:
+
+| Question | Answered by | Mechanism |
+| --- | --- | --- |
+| Where is **Overcast**? | `internal/dns`, via `--dns` | Owns the split-horizon domains and every subdomain; answers with Overcast's own address, chosen per caller |
+| Where is **that other container**? | Docker's embedded resolver, `127.0.0.11` | Network **aliases** on containers attached to the caller's network — consulted *before* anything is forwarded to `internal/dns` |
+
+Getting these the wrong way round is the standing trap. Overcast's resolver is
+authoritative for the domains an endpoint name ends in, so it will happily
+answer for `my-db.us-east-1.rds.localhost.overcast.sh` — with **Overcast's**
+address. A missing alias therefore does not surface as an unknown host; it
+surfaces as a connection to Overcast on port 3306 that hangs.
+
 ## 1. A container calling Overcast
 
 `internal/containerendpoint` — resolves an address the container can dial,
@@ -35,16 +49,24 @@ The utilities:
 | Helper | Use |
 | --- | --- |
 | `docker.EndpointAliases(addrs...)` | Filters a set of endpoint addresses down to unique, non-IP hostnames usable as aliases |
+| `containerendpoint.ResourceHostnames(cfg)` | Every base a resource name can be minted under — the split-horizon set plus `localhost`. Build one alias per entry |
 | `docker.Client.ConnectNetworkWithAliases(ctx, network, container, aliases)` | Attaches an existing container to a network, advertising those aliases |
 | `docker.Client.ConnectNetwork(ctx, network, container)` | The same with no aliases — reachable by IP, **not resolvable by name** |
 | `NetworkingConfig.EndpointsConfig[net] = {Aliases: …}` | The same at container-create time |
 
-The established shape, as ElastiCache and RDS use it:
+The established shape, as RDS uses it
+(`internal/services/rds/endpoint.go` — ElastiCache still registers only the
+configured name):
 
 ```go
-// aliases: the endpoint hostnames the API hands callers.
-func (h *Handler) instanceEndpointAliases(inst *Instance) []string {
-    return docker.EndpointAliases(inst.Endpoint.Address, canonicalHostname)
+// aliases: every hostname the API could hand a caller for this resource.
+func (h *Handler) instanceEndpointAliases(region string, inst *Instance) []string {
+    bases := containerendpoint.ResourceHostnames(h.cfg)
+    names := make([]string, 0, len(bases))
+    for _, base := range bases {
+        names = append(names, instanceEndpointHostname(inst.ID, region, base))
+    }
+    return docker.EndpointAliases(names...)
 }
 
 // Attach to the networks emulated compute runs on, so a Lambda function or an
@@ -52,7 +74,16 @@ func (h *Handler) instanceEndpointAliases(inst *Instance) []string {
 for _, network := range []string{h.cfg.LambdaNetwork, h.cfg.ECSNetwork} { … }
 ```
 
-Three things worth knowing:
+Note the **set**, not the one name. Endpoint names are minted on the hostname
+the caller reached Overcast on (`docs/networking.md` § Data-plane endpoints), so
+the same instance is `db.us-east-1.rds.localhost.overcast.sh` to one caller and
+`db.us-east-1.rds.localhost` to another. Docker aliases are exact-match: a name
+that was not registered does not resolve — and under a split-horizon domain it
+is worse than that, because the query then reaches Overcast's own resolver,
+which answers *any* subdomain of those domains with Overcast's address. The
+caller connects to Overcast on 3306 and hangs. Register every name you can mint.
+
+Three more things worth knowing:
 
 - **Every consumer network needs its own attachment.** An alias on
   `overcast_lambda` does nothing for an ECS task; that was the bug behind a
