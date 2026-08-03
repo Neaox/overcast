@@ -43,28 +43,20 @@ func dockerForTest(t *testing.T) *docker.Client {
 	return dc
 }
 
-func TestNFSExport_realGaneshaServesNFSv4(t *testing.T) {
-	dc := dockerForTest(t)
-
-	ctx := context.Background()
-
-	// Fetch the export image up front, as setup rather than as part of what is
-	// being measured. It is a few hundred megabytes, so a cold pull on a CI
-	// runner takes minutes — folding that into the lifecycle assertion below
-	// would make a slow network look like a broken export.
-	if err := docker.NewImagePuller(dc).Ensure(ctx, config.DefaultEFSNFSImage); err != nil {
-		t.Skipf("cannot fetch the NFS export image %s: %v", config.DefaultEFSNFSImage, err)
-	}
-
-	// Log at warn so a failure below can name the emulator's own reason
-	// instead of just reporting a timeout.
+// newDockerNFSService builds a live-mode service wired to a real daemon, on
+// its own port base and export network so two tests can run back to back. It
+// returns the service and a diagnostic renderer for poll failures.
+func newDockerNFSService(t *testing.T, dc *docker.Client, portBase int, network string) (*Service, func() string) {
+	t.Helper()
+	// Log at warn so a failure can name the emulator's own reason instead of
+	// just reporting a timeout.
 	logs, logged := observer.New(zap.WarnLevel)
 
 	svc := New(&config.Config{
 		Region: "us-east-1", AccountID: "000000000000",
 		EFSMode: config.EFSModeLive, EFSNFSExport: true,
-		EFSNFSPortBase: 22600, EFSNFSImage: config.DefaultEFSNFSImage,
-		EFSNetwork: "overcast_efs_test",
+		EFSNFSPortBase: portBase, EFSNFSImage: config.DefaultEFSNFSImage,
+		EFSNetwork: network,
 	}, state.NewMemoryStore(), zap.New(logs), clock.New())
 	svc.docker = dc
 	svc.puller = docker.NewImagePuller(dc)
@@ -87,21 +79,22 @@ func TestNFSExport_realGaneshaServesNFSv4(t *testing.T) {
 		defer cancel()
 		svc.Stop(stopCtx)
 	})
+	return svc, warnings
+}
 
-	fs, aerr := svc.createFileSystemTyped(ctx, &createFileSystemRequest{CreationToken: "nfs-e2e-" + newEFSID("")})
-	if aerr != nil {
-		t.Fatalf("CreateFileSystem: %v", aerr)
-	}
-	// Reclaim the volume and any container even if an assertion below fails.
+// cleanupFileSystem reclaims a file system's export containers, its backing
+// volume and the test's own export network, even when an assertion failed.
+func cleanupFileSystem(t *testing.T, svc *Service, dc *docker.Client, fsID, network string) {
+	t.Helper()
 	t.Cleanup(func() {
 		cctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		if mts, err := svc.listMountTargetsForFileSystem(cctx, "us-east-1", fs.FileSystemId); err == nil {
+		if mts, err := svc.listMountTargetsForFileSystem(cctx, "us-east-1", fsID); err == nil {
 			for _, mt := range mts {
 				svc.stopExport(cctx, mt)
 			}
 		}
-		if err := dc.RemoveVolume(cctx, volumeName(fs.FileSystemId), true); err != nil {
+		if err := dc.RemoveVolume(cctx, volumeName(fsID), true); err != nil {
 			t.Logf("cleanup: remove volume: %v", err)
 		}
 		// The export network is this test's own; production reuses a
@@ -109,12 +102,38 @@ func TestNFSExport_realGaneshaServesNFSv4(t *testing.T) {
 		// runs in a container, exportProbeAddr attached us to the network —
 		// Docker refuses to remove a network with endpoints, so detach first.
 		if hostname, err := os.Hostname(); err == nil && hostname != "" {
-			_ = dc.DisconnectNetwork(cctx, "overcast_efs_test", hostname) //nolint:errcheck
+			_ = dc.DisconnectNetwork(cctx, network, hostname) //nolint:errcheck
 		}
-		if err := dc.RemoveNetwork(cctx, "overcast_efs_test"); err != nil {
+		if err := dc.RemoveNetwork(cctx, network); err != nil {
 			t.Logf("cleanup: remove network: %v", err)
 		}
 	})
+}
+
+// ensureExportImage fetches the export image as setup rather than as part of
+// what is being measured. It is a few hundred megabytes, so a cold pull on a
+// CI runner takes minutes — folding that into a lifecycle assertion would make
+// a slow network look like a broken export.
+func ensureExportImage(t *testing.T, dc *docker.Client, ctx context.Context) {
+	t.Helper()
+	if err := docker.NewImagePuller(dc).Ensure(ctx, config.DefaultEFSNFSImage); err != nil {
+		t.Skipf("cannot fetch the NFS export image %s: %v", config.DefaultEFSNFSImage, err)
+	}
+}
+
+func TestNFSExport_realGaneshaServesNFSv4(t *testing.T) {
+	dc := dockerForTest(t)
+
+	ctx := context.Background()
+	ensureExportImage(t, dc, ctx)
+
+	svc, warnings := newDockerNFSService(t, dc, 22600, "overcast_efs_test")
+
+	fs, aerr := svc.createFileSystemTyped(ctx, &createFileSystemRequest{CreationToken: "nfs-e2e-" + newEFSID("")})
+	if aerr != nil {
+		t.Fatalf("CreateFileSystem: %v", aerr)
+	}
+	cleanupFileSystem(t, svc, dc, fs.FileSystemId, "overcast_efs_test")
 
 	mt, aerr := svc.createMountTargetTyped(ctx, &createMountTargetRequest{
 		FileSystemId: fs.FileSystemId, SubnetId: "subnet-nfs-e2e",
@@ -161,6 +180,74 @@ func TestNFSExport_realGaneshaServesNFSv4(t *testing.T) {
 	})
 	if used, err := svc.nfsPortInUse(ctx, rec.NFSHostPort); err != nil || used {
 		t.Fatalf("expected host port %d released, inUse=%v err=%v", rec.NFSHostPort, used, err)
+	}
+}
+
+// TestNFSExport_realGaneshaWithAccessPoint is the regression test for an
+// access point taking the whole export down. Ganesha grafts each export's
+// Pseudo path onto its pseudo-filesystem and cannot create a directory inside
+// a non-PSEUDO export, so with the volume exported at "/" the access point's
+// "/fsap-…" made the daemon exit FATAL within seconds — leaving a mount target
+// that reported "available" with no export behind it at all.
+func TestNFSExport_realGaneshaWithAccessPoint(t *testing.T) {
+	dc := dockerForTest(t)
+
+	ctx := context.Background()
+	ensureExportImage(t, dc, ctx)
+
+	svc, warnings := newDockerNFSService(t, dc, 22700, "overcast_efs_ap_test")
+
+	fs, aerr := svc.createFileSystemTyped(ctx, &createFileSystemRequest{CreationToken: "nfs-ap-e2e-" + newEFSID("")})
+	if aerr != nil {
+		t.Fatalf("CreateFileSystem: %v", aerr)
+	}
+	cleanupFileSystem(t, svc, dc, fs.FileSystemId, "overcast_efs_ap_test")
+
+	uid, gid := int64(1000), int64(1000)
+	ap, aerr := svc.createAccessPointTyped(ctx, &createAccessPointRequest{
+		ClientToken:  "nfs-ap-e2e",
+		FileSystemId: fs.FileSystemId,
+		PosixUser:    &PosixUser{Uid: &uid, Gid: &gid},
+		RootDirectory: &RootDirectory{
+			Path:         "/apone",
+			CreationInfo: &CreationInfo{OwnerUid: &uid, OwnerGid: &gid, Permissions: "0777"},
+		},
+	})
+	if aerr != nil {
+		t.Fatalf("CreateAccessPoint: %v", aerr)
+	}
+
+	mt, aerr := svc.createMountTargetTyped(ctx, &createMountTargetRequest{
+		FileSystemId: fs.FileSystemId, SubnetId: "subnet-nfs-ap-e2e",
+	})
+	if aerr != nil {
+		t.Fatalf("CreateMountTarget: %v", aerr)
+	}
+
+	var rec *mountTargetRecord
+	pollUntil(t, 2*time.Minute, "mount target available with an export", warnings, func() bool {
+		got, found, err := svc.getMountTarget(ctx, "us-east-1", mt.MountTargetId)
+		if err != nil || !found || got.LifeCycleState != stateAvailable || got.NFSContainerId == "" {
+			return false
+		}
+		rec = got
+		return true
+	})
+
+	// The daemon must still be alive: a pseudo-filesystem it cannot build is a
+	// FATAL exit, not a degraded export.
+	info, err := dc.InspectContainer(ctx, rec.NFSContainerId)
+	if err != nil {
+		t.Fatalf("inspect export container: %v", err)
+	}
+	if !info.State.Running {
+		logs, _ := dc.ContainerLogs(ctx, rec.NFSContainerId, "40")
+		t.Fatalf("export container for access point %s exited (%s, code %d):\n%s",
+			ap.AccessPointId, info.State.Status, info.State.ExitCode, logs)
+	}
+	if err := nfsNullPing(ctx, svc.exportProbeAddr(ctx, rec.NFSContainerId, rec.NFSHostPort), 5*time.Second); err != nil {
+		logs, _ := dc.ContainerLogs(ctx, rec.NFSContainerId, "40")
+		t.Fatalf("NFSv4 NULL call failed with an access point exported: %v\nganesha logs:\n%s", err, logs)
 	}
 }
 

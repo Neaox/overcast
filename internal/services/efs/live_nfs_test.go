@@ -32,6 +32,8 @@ type createdContainer struct {
 	Labels       map[string]string
 	Mounts       []docker.Mount
 	PortBindings map[string][]docker.PortBinding
+	CapAdd       []string
+	Privileged   bool
 }
 
 // fakeNFSDaemon speaks enough of the Engine API for export containers, and
@@ -80,6 +82,8 @@ func newFakeNFSDaemon(t *testing.T) *fakeNFSDaemon {
 				HostConfig struct {
 					Mounts       []docker.Mount                  `json:"Mounts"`
 					PortBindings map[string][]docker.PortBinding `json:"PortBindings"`
+					CapAdd       []string                        `json:"CapAdd"`
+					Privileged   bool                            `json:"Privileged"`
 				} `json:"HostConfig"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&req)
@@ -88,6 +92,7 @@ func newFakeNFSDaemon(t *testing.T) *fakeNFSDaemon {
 			fd.created = append(fd.created, createdContainer{
 				Name: name, Image: req.Image, Cmd: req.Cmd, Labels: req.Labels,
 				Mounts: req.HostConfig.Mounts, PortBindings: req.HostConfig.PortBindings,
+				CapAdd: req.HostConfig.CapAdd, Privileged: req.HostConfig.Privileged,
 			})
 			id := "ctr-" + name
 			fd.exists[name], fd.exists[id] = true, true
@@ -193,19 +198,28 @@ func (fd *fakeNFSDaemon) removedContainers() []string {
 // tests never dial a real socket; TestNFSReadiness covers the probe itself.
 func newNFSTestService(t *testing.T, fd *fakeNFSDaemon, nfs bool) *Service {
 	t.Helper()
+	svc := newNFSTestServiceWithClock(t, fd, nfs, clock.New(), zap.NewNop())
+	svc.skipNFSReadiness = true
+	return svc
+}
+
+// newNFSTestServiceWithClock is newNFSTestService with the clock and logger
+// left to the caller, for the readiness test — it drives the retry budget on a
+// mock clock instead of waiting out 30 seconds of real retries.
+func newNFSTestServiceWithClock(t *testing.T, fd *fakeNFSDaemon, nfs bool, clk clock.Clock, log *zap.Logger) *Service {
+	t.Helper()
 	cfg := &config.Config{
 		Region: "us-east-1", AccountID: "000000000000",
 		EFSMode: config.EFSModeLive, EFSNFSExport: nfs,
 		EFSNFSPortBase: 22049, EFSNFSImage: "ganesha:test",
 	}
-	svc := New(cfg, state.NewMemoryStore(), zap.NewNop(), clock.New())
+	svc := New(cfg, state.NewMemoryStore(), log, clk)
 	if fd != nil {
 		dc := docker.NewClient("tcp://"+fd.srv.Listener.Addr().String(), zap.NewNop())
 		svc.docker = dc
 		svc.puller = docker.NewImagePuller(dc)
 		svc.dockerReady.Store(true)
 	}
-	svc.skipNFSReadiness = true
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -320,6 +334,40 @@ func TestNFSExport_mountTargetStartsAndStopsGanesha(t *testing.T) {
 		used, err := svc.nfsPortInUse(ctx, rec.NFSHostPort)
 		return err == nil && !used
 	})
+}
+
+// TestNFSExport_grantsDacReadSearch pins the one capability the export needs.
+// Ganesha's VFS FSAL resolves file handles with open_by_handle_at(), which the
+// kernel gates on CAP_DAC_READ_SEARCH. It is not in Docker's default set, so
+// without it the export mounts once and then serves nothing: readdir returns
+// an empty directory, writes fail with EPERM, and every later mount is
+// refused ("Failed to get attrs for referral ... Forbidden action").
+func TestNFSExport_grantsDacReadSearch(t *testing.T) {
+	fd := newFakeNFSDaemon(t)
+	svc := newNFSTestService(t, fd, true)
+	ctx := context.Background()
+
+	fsID := seedFileSystem(t, svc, ctx, "nfs-caps")
+	mt, aerr := svc.createMountTargetTyped(ctx, &createMountTargetRequest{
+		FileSystemId: fsID, SubnetId: "subnet-caps",
+	})
+	if aerr != nil {
+		t.Fatalf("CreateMountTarget: %v", aerr)
+	}
+	awaitExport(t, svc, ctx, "us-east-1", mt.MountTargetId)
+
+	created := fd.createdContainers()
+	if len(created) != 1 {
+		t.Fatalf("expected 1 export container, got %d: %+v", len(created), created)
+	}
+	c := created[0]
+	if len(c.CapAdd) != 1 || c.CapAdd[0] != "DAC_READ_SEARCH" {
+		t.Fatalf("export container must add exactly CAP_DAC_READ_SEARCH, got %v", c.CapAdd)
+	}
+	// One capability, not a blanket escalation: the export stays unprivileged.
+	if c.Privileged {
+		t.Fatal("export container must not be privileged")
+	}
 }
 
 func TestNFSExport_offByDefaultInLiveMode(t *testing.T) {
@@ -585,8 +633,44 @@ func TestGaneshaExports_unsafeRootDirectoryIsSkipped(t *testing.T) {
 			t.Fatalf("generated config leaked %q:\n%s", banned, cfg)
 		}
 	}
-	if got := strings.Count(ganeshaStartScript(cfg), "OVERCAST_GANESHA_EOF"); got != 2 {
+	if got := strings.Count(ganeshaStartScript(exports), "OVERCAST_GANESHA_EOF"); got != 2 {
 		t.Fatalf("expected exactly one heredoc open/close pair, got %d markers", got)
+	}
+}
+
+// TestGaneshaStartScript_anchorsAccessPointPseudoPaths reproduces the defect
+// where one access point took the whole export down. Ganesha builds its
+// pseudo-filesystem by grafting each export's Pseudo path onto the tree, and
+// it cannot create a directory inside a non-PSEUDO export: with the volume
+// exported at "/" as VFS, "/fsap-…" made it exit FATAL
+// ("can't create directory on non-PSEUDO FSAL"), so the mount target ended up
+// with no export at all. The graft succeeds when the name already exists in
+// the volume, so the start script must create one anchor directory per access
+// point before the daemon starts.
+func TestGaneshaStartScript_anchorsAccessPointPseudoPaths(t *testing.T) {
+	script := ganeshaStartScript([]ganeshaExport{
+		{ID: 1, Path: nfsExportRoot, Pseudo: "/"},
+		{ID: 2, Path: nfsExportRoot + "/app/data", Pseudo: "/fsap-1111"},
+		{ID: 3, Path: nfsExportRoot, Pseudo: "/fsap-2222"},
+	})
+
+	for _, want := range []string{
+		shQuote(nfsExportRoot + "/fsap-1111"),
+		shQuote(nfsExportRoot + "/fsap-2222"),
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("start script must anchor %s in the volume:\n%s", want, script)
+		}
+	}
+	// The anchors have to exist before ganesha.nfsd parses the config.
+	anchor := strings.Index(script, shQuote(nfsExportRoot+"/fsap-1111"))
+	start := strings.Index(script, "exec ganesha.nfsd")
+	if anchor < 0 || start < 0 || anchor > start {
+		t.Fatalf("anchors must be created before the daemon starts:\n%s", script)
+	}
+	// The root export is the volume itself and needs no anchor.
+	if strings.Contains(script, "mkdir -p '/export/'") {
+		t.Fatalf("root export must not be anchored:\n%s", script)
 	}
 }
 
@@ -619,6 +703,92 @@ func TestNFSReadiness_nullRPC(t *testing.T) {
 			t.Fatal("expected the probe to fail against a closed port")
 		}
 	})
+}
+
+// TestNFSExport_wedgedExportMarksMountTargetError covers the reporting side of
+// a broken export: a container that started and then died (a FATAL config
+// error, say) must not leave the mount target claiming "available". The
+// warning alone is too easy to miss — DescribeMountTargets has to say "error".
+func TestNFSExport_wedgedExportMarksMountTargetError(t *testing.T) {
+	fd := newFakeNFSDaemon(t)
+	mock := clock.NewMock()
+	svc := newNFSTestServiceWithClock(t, fd, true, mock, zap.NewNop())
+	ctx := context.Background()
+
+	// A mock clock leaves zero-delay lifecycle timers pending, so nudge it
+	// until the file system is available and can take a mount target.
+	fsID := seedFileSystem(t, svc, ctx, "nfs-wedged")
+	eventually(t, "file system available", func() bool {
+		mock.Add(time.Millisecond)
+		fs, found, err := svc.getFileSystem(ctx, "us-east-1", fsID)
+		return err == nil && found && fs.LifeCycleState == stateAvailable
+	})
+
+	mt, aerr := svc.createMountTargetTyped(ctx, &createMountTargetRequest{
+		FileSystemId: fsID, SubnetId: "subnet-wedged",
+	})
+	if aerr != nil {
+		t.Fatalf("CreateMountTarget: %v", aerr)
+	}
+	awaitExport(t, svc, ctx, "us-east-1", mt.MountTargetId)
+
+	// Nothing is listening on the published port, so every probe fails. Burn
+	// the retry budget on the mock clock rather than in real time.
+	var final string
+	eventually(t, "readiness budget exhausted", func() bool {
+		if svc.scheduler.PendingCount() > 0 {
+			mock.Add(nfsReadyInterval)
+		}
+		rec, found, err := svc.getMountTarget(ctx, "us-east-1", mt.MountTargetId)
+		if err != nil || !found || rec.LifeCycleState == stateCreating {
+			return false
+		}
+		final = rec.LifeCycleState
+		return true
+	})
+	if final != stateError {
+		t.Fatalf("an export that never answered must leave the mount target in %q, got %q", stateError, final)
+	}
+}
+
+// TestSettleMountTarget_transitions pins the lifecycle moves the export
+// plumbing may make. "error" has to be recoverable: reconciliation starts a
+// fresh export for a mount target whose container is gone, and a mount target
+// that failed before a restart must be able to come back.
+func TestSettleMountTarget_transitions(t *testing.T) {
+	cases := []struct{ name, from, to, want string }{
+		{"creating settles available", stateCreating, stateAvailable, stateAvailable},
+		{"creating settles error", stateCreating, stateError, stateError},
+		{"error recovers when an export finally answers", stateError, stateAvailable, stateAvailable},
+		{"available is not downgraded by a straggler", stateAvailable, stateError, stateAvailable},
+		{"deleting is left alone", stateDeleting, stateAvailable, stateDeleting},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given: a mount target in the starting state
+			svc := newNFSTestService(t, nil, true)
+			ctx := context.Background()
+			rec := &mountTargetRecord{
+				MountTargetId: "fsmt-1111111111111111a", FileSystemId: "fs-1111111111111111a",
+				LifeCycleState: tc.from,
+			}
+			if err := svc.putMountTarget(ctx, "us-east-1", rec); err != nil {
+				t.Fatalf("seed mount target: %v", err)
+			}
+
+			// When: the export plumbing settles it
+			svc.settleMountTarget(ctx, "us-east-1", rec.MountTargetId, tc.to)
+
+			// Then: only the permitted transitions took effect
+			got, found, err := svc.getMountTarget(ctx, "us-east-1", rec.MountTargetId)
+			if err != nil || !found {
+				t.Fatalf("get mount target: found=%v err=%v", found, err)
+			}
+			if got.LifeCycleState != tc.want {
+				t.Fatalf("%s → %s: want %q, got %q", tc.from, tc.to, tc.want, got.LifeCycleState)
+			}
+		})
+	}
 }
 
 // nfsNullResponder listens on a random port and, when reply is true, answers

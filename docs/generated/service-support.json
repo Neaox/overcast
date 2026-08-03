@@ -5384,7 +5384,7 @@
           "operation": "CreateMountTarget",
           "category": "Mount targets",
           "status": "✅ Supported",
-          "notes": "Metadata only — no NFS data plane. One mount target per AZ/subnet enforced; AZ and IP are synthesized deterministically from the subnet ID"
+          "notes": "Serves a real NFSv4 export with OVERCAST_EFS_NFS=true, metadata only otherwise. One mount target per AZ/subnet enforced; AZ and IP are synthesized deterministically from the subnet ID"
         },
         {
           "operation": "DescribeMountTargets",
