@@ -362,6 +362,7 @@ function getEventQueryMap(): Record<string, QueryKey[] | undefined> {
     [EventType.ecs.TaskDefinitionDeregistered]: [ecsKeys.taskDefinitions(), topologyKey],
     [EventType.ecs.TaskStarted]: [ecsKeys.clusters(), ecsKeys.all(), topologyKey],
     [EventType.ecs.TaskStopped]: [ecsKeys.clusters(), ecsKeys.all(), topologyKey],
+    [EventType.ecs.TaskStartFailed]: [ecsKeys.clusters(), ecsKeys.all(), topologyKey],
     [EventType.ecs.ServiceCreated]: [ecsKeys.clusters(), ecsKeys.all(), topologyKey],
     [EventType.ecs.ServiceUpdated]: [ecsKeys.clusters(), ecsKeys.all()],
     [EventType.ecs.ServiceDeleted]: [ecsKeys.clusters(), ecsKeys.all(), topologyKey],

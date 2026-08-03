@@ -38,11 +38,26 @@ func (p *ImagePuller) Ensure(ctx context.Context, image string) error {
 	e := v.(*pullEntry)
 	e.once.Do(func() {
 		e.err = p.client.PullImage(ctx, image)
+		if e.err != nil && p.imagePresent(ctx, image) {
+			// The pull failed but the daemon already has the image, so the
+			// container can still start. This is the difference between "you
+			// are offline" and "you cannot run anything": a registry that is
+			// unreachable, rate-limiting, or (on Docker Desktop's containerd
+			// image store) returning a stale-lease 404 must not stop a local
+			// image being used, which is the whole point of having pulled it.
+			e.err = nil
+		}
 		if e.err != nil {
 			p.pullOnce.Delete(image)
 		}
 	})
 	return e.err
+}
+
+// imagePresent reports whether the daemon already holds image locally.
+func (p *ImagePuller) imagePresent(ctx context.Context, image string) bool {
+	present, err := p.client.ImageExists(ctx, image)
+	return err == nil && present
 }
 
 // Invalidate forgets that image was pulled, so the next Ensure pulls again.

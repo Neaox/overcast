@@ -101,6 +101,9 @@ export function runTaskMutationOptions() {
       taskDefinition: string
       count?: number
       launchType?: string
+      subnets?: string[]
+      securityGroups?: string[]
+      assignPublicIp?: string
     }) => ecs.runTask(opts),
   })
 }
@@ -131,6 +134,10 @@ export function createServiceMutationOptions() {
       serviceName: string
       taskDefinition: string
       desiredCount: number
+      launchType?: string
+      subnets?: string[]
+      securityGroups?: string[]
+      assignPublicIp?: string
     }) => ecs.createService(params),
   })
 }

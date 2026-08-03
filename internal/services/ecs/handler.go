@@ -28,20 +28,24 @@ import (
 
 // Handler holds ECS handler dependencies.
 type Handler struct {
-	cfg           *config.Config
-	store         *ecsStore
-	log           *serviceutil.ServiceLogger
-	clk           clock.Clock
-	bus           *events.Bus
-	scheduler     *lifecycle.Scheduler
-	ops           map[string]http.HandlerFunc
-	typedOp       map[string]op.Operation
-	docker        *docker.Client
-	dockerReady   atomic.Bool
-	puller        *docker.ImagePuller
-	gc            *docker.GC
-	vpcResolver   VPCNetworkResolver
-	efsResolver   EFSVolumeResolver
+	cfg         *config.Config
+	store       *ecsStore
+	log         *serviceutil.ServiceLogger
+	clk         clock.Clock
+	bus         *events.Bus
+	scheduler   *lifecycle.Scheduler
+	ops         map[string]http.HandlerFunc
+	typedOp     map[string]op.Operation
+	docker      *docker.Client
+	dockerReady atomic.Bool
+	puller      *docker.ImagePuller
+	gc          *docker.GC
+	vpcResolver VPCNetworkResolver
+	efsResolver EFSVolumeResolver
+	targets     TargetRegistrar
+	// logWriter ships task container output to CloudWatch Logs for containers
+	// using the awslogs driver. Nil until InitLogWriter is called.
+	logWriter     events.LogWriter
 	seedMu        sync.Mutex      // guards seededRegions
 	seededRegions map[string]bool // regions where ensureBuiltinProviders has run
 
@@ -62,6 +66,15 @@ type EFSVolumeResolver interface {
 	// EFSVolumeForAccessPointID resolves an authorizationConfig access point,
 	// returning the access point's root directory as the volume subpath.
 	EFSVolumeForAccessPointID(ctx context.Context, accessPointID string) (volume, subpath string, ok bool)
+}
+
+// TargetRegistrar registers a service's tasks with an ELB target group, which
+// is what puts them behind a load balancer. Implemented by the elbv2 service;
+// nil when elbv2 is disabled, in which case a service's loadBalancers are
+// stored and echoed but nothing is registered.
+type TargetRegistrar interface {
+	RegisterTarget(ctx context.Context, targetGroupArn, address string, port int) error
+	DeregisterTarget(ctx context.Context, targetGroupArn, address string) error
 }
 
 // VPCNetworkResolver resolves subnet-backed ECS awsvpc placement against EC2.
@@ -361,6 +374,12 @@ func (h *Handler) RegisterTaskDefinition(w http.ResponseWriter, r *http.Request)
 		Cpu                     string                `json:"cpu"`
 		Memory                  string                `json:"memory"`
 		Volumes                 []TaskVolume          `json:"volumes"`
+		TaskRoleArn             string                `json:"taskRoleArn"`
+		ExecutionRoleArn        string                `json:"executionRoleArn"`
+		RuntimePlatform         *RuntimePlatform      `json:"runtimePlatform"`
+		EphemeralStorage        *EphemeralStorage     `json:"ephemeralStorage"`
+		PidMode                 string                `json:"pidMode"`
+		IpcMode                 string                `json:"ipcMode"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -427,6 +446,12 @@ func (h *Handler) RegisterTaskDefinition(w http.ResponseWriter, r *http.Request)
 		Memory:                  req.Memory,
 		ContainerDefinitions:    req.ContainerDefinitions,
 		Volumes:                 req.Volumes,
+		TaskRoleArn:             req.TaskRoleArn,
+		ExecutionRoleArn:        req.ExecutionRoleArn,
+		RuntimePlatform:         req.RuntimePlatform,
+		EphemeralStorage:        req.EphemeralStorage,
+		PidMode:                 req.PidMode,
+		IpcMode:                 req.IpcMode,
 	}
 	if aerr := h.store.putTaskDefinition(r.Context(), td); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)

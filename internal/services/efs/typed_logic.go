@@ -615,7 +615,7 @@ func (s *Service) createMountTargetTyped(ctx context.Context, req *createMountTa
 		return nil, errIncorrectFileSystemLifeCycleState(fmt.Sprintf("File system '%s' is in state '%s'; it must be 'available' to create mount targets.", fs.FileSystemId, fs.LifeCycleState))
 	}
 
-	azName, azID := azForSubnet(region, req.SubnetId)
+	azName, azID := s.zoneForSubnet(ctx, region, req.SubnetId)
 	if fs.AvailabilityZoneName != "" && fs.AvailabilityZoneName != azName {
 		// One Zone file systems only accept mount targets in their own zone.
 		azName, azID = fs.AvailabilityZoneName, fs.AvailabilityZoneId

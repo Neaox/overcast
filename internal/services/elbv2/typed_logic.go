@@ -40,9 +40,10 @@ type deleteTargetGroupReq struct {
 }
 
 type createListenerReq struct {
-	LoadBalancerArn string `json:"LoadBalancerArn"`
-	Protocol        string `json:"Protocol"`
-	Port            int    `json:"Port"`
+	LoadBalancerArn string   `json:"LoadBalancerArn"`
+	Protocol        string   `json:"Protocol"`
+	Port            int      `json:"Port"`
+	DefaultActions  []Action `json:"DefaultActions"`
 }
 
 type describeListenersReq struct {
@@ -219,7 +220,7 @@ func (h *Handler) createLoadBalancerTyped(ctx context.Context, req *createLoadBa
 	lbID := uuid.NewString()
 	arn := fmt.Sprintf("arn:aws:elasticloadbalancing:%s:%s:loadbalancer/%s/%s/%s",
 		region, account, lbType, name, lbID[:8])
-	dnsName := fmt.Sprintf("%s-%s.%s.elb.localhost", name, lbID[:8], region)
+	dnsName := h.loadBalancerDNSName(name, lbID, region)
 
 	lb := &LoadBalancer{
 		LoadBalancerArn:  arn,
@@ -394,6 +395,7 @@ func (h *Handler) createListenerTyped(ctx context.Context, req *createListenerRe
 		Protocol:        req.Protocol,
 		Port:            req.Port,
 		Region:          region,
+		DefaultActions:  req.DefaultActions,
 	}
 	if err := h.putListener(ctx, region, l); err != nil {
 		return nil, protocol.ErrInternalError

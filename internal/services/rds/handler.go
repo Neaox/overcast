@@ -887,7 +887,7 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 
 		inst.DockerContainerID = existing.ID
 		inst.HostPort = hostPort
-		h.connectToLambdaNetwork(ctx, existing.ID, h.dbInstanceEndpointAliases(inst))
+		h.connectToComputeNetworks(ctx, existing.ID, h.dbInstanceEndpointAliases(inst))
 		h.setContainerEndpoint(ctx, inst, ecfg)
 		return nil
 	}
@@ -983,7 +983,13 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 		switch status {
 		case "", "ok", "shared", "remapped":
 			if netID := h.vpcResolver.DockerNetworkForVpc(ctx, inst.VpcID); netID != "" {
-				if err := h.docker.ConnectNetwork(ctx, netID, containerID); err != nil {
+				// Attach with the endpoint hostname as a DNS alias, as the
+				// Lambda-network attachment below does. Without the alias the
+				// instance is reachable on the VPC network but not resolvable
+				// on it, so anything else in the VPC — an ECS task, most often
+				// — gets Overcast's own address for the endpoint name and
+				// connects to a port nothing is listening on.
+				if err := h.docker.ConnectNetworkWithAliases(ctx, netID, containerID, h.dbInstanceEndpointAliases(inst)); err != nil {
 					h.docker.RemoveContainerForce(containerID) //nolint:errcheck
 					h.store.releasePort(ctx, hostPort)         //nolint:errcheck
 					return fmt.Errorf("connect container to VPC network %s: %w", netID, err)
@@ -1002,7 +1008,7 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 
 	inst.DockerContainerID = containerID
 	inst.HostPort = hostPort
-	h.connectToLambdaNetwork(ctx, containerID, h.dbInstanceEndpointAliases(inst))
+	h.connectToComputeNetworks(ctx, containerID, h.dbInstanceEndpointAliases(inst))
 	h.setContainerEndpoint(ctx, inst, ecfg)
 	return nil
 }
@@ -1036,13 +1042,28 @@ func (h *Handler) externalHostname() string {
 	return "localhost"
 }
 
-func (h *Handler) connectToLambdaNetwork(ctx context.Context, containerID string, aliases []string) {
-	if h.cfg == nil || h.cfg.LambdaNetwork == "" || h.cfg.LambdaNetwork == h.network() || len(aliases) == 0 {
+// connectToComputeNetworks attaches the DB container to the networks emulated
+// compute runs on, advertising the instance's endpoint hostname as a DNS alias
+// on each. That alias is what lets a Lambda function or an ECS task connect to
+// the endpoint name the API handed them: Docker's embedded resolver answers
+// from the aliases on the caller's own network before forwarding anything
+// upstream to Overcast.
+//
+// A task placed in a VPC reaches the instance over the VPC network instead —
+// see the aliased attachment in startDBContainer. This covers the rest: a task
+// or function with no VPC of its own.
+func (h *Handler) connectToComputeNetworks(ctx context.Context, containerID string, aliases []string) {
+	if h.cfg == nil || len(aliases) == 0 {
 		return
 	}
-	if err := h.docker.ConnectNetworkWithAliases(ctx, h.cfg.LambdaNetwork, containerID, aliases); err != nil {
-		h.log.Warn("RDS: failed to attach container to Lambda network for DNS aliases",
-			zap.String("network", h.cfg.LambdaNetwork), zap.String("container", containerID), zap.Error(err))
+	for _, network := range []string{h.cfg.LambdaNetwork, h.cfg.ECSNetwork} {
+		if network == "" || network == h.network() {
+			continue
+		}
+		if err := h.docker.ConnectNetworkWithAliases(ctx, network, containerID, aliases); err != nil {
+			h.log.Warn("RDS: failed to attach container to compute network for DNS aliases",
+				zap.String("network", network), zap.String("container", containerID), zap.Error(err))
+		}
 	}
 }
 

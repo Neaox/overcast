@@ -84,6 +84,17 @@ func (s *Service) VpcIDForSubnet(ctx context.Context, subnetID string) string {
 	return sub.VpcID
 }
 
+// AvailabilityZoneForSubnet returns the availability zone a subnet was created
+// in. Returns empty string when the subnet is not an EC2 one, which lets a
+// caller fall back to whatever it does for synthetic subnet IDs.
+func (s *Service) AvailabilityZoneForSubnet(ctx context.Context, subnetID string) string {
+	sub, aerr := s.handler.store.getSubnet(ctx, subnetID)
+	if aerr != nil {
+		return ""
+	}
+	return sub.AvailabilityZone
+}
+
 // DockerNetworkForVpc returns the Docker network ID for the given VPC.
 // Returns empty string if the VPC is not found or has no Docker network.
 func (s *Service) DockerNetworkForVpc(ctx context.Context, vpcID string) string {

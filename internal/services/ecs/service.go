@@ -72,6 +72,20 @@ func (s *Service) SetEFSResolver(r EFSVolumeResolver) {
 	s.handler.efsResolver = r
 }
 
+// SetTargetRegistrar wires elbv2 so a service's tasks are registered with the
+// target groups named in its loadBalancers.
+func (s *Service) SetTargetRegistrar(r TargetRegistrar) {
+	s.handler.targets = r
+}
+
+// InitLogWriter wires CloudWatch Logs so task containers using the awslogs log
+// driver have their output shipped there, as they do on ECS. Applies to every
+// task regardless of launch type — the driver is a property of the container
+// definition, not of Fargate or EC2.
+func (s *Service) InitLogWriter(w events.LogWriter) {
+	s.handler.logWriter = w
+}
+
 // InitBus wires the event bus for ECS lifecycle events.
 func (s *Service) InitBus(bus *events.Bus) {
 	s.handler.bus = bus

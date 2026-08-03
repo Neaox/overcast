@@ -87,6 +87,25 @@ func (h *Handler) accountID() string {
 	return "000000000000"
 }
 
+// loadBalancerDNSName builds the client-facing name for a load balancer.
+//
+// The base is Overcast's external hostname, as every other service that hands
+// out an endpoint uses (RDS, ElastiCache, MSK, OpenSearch, ECR). That is what
+// puts the name inside the split-horizon zone, so setting OVERCAST_HOSTNAME to
+// a resolvable base makes it resolvable rather than being a dead
+// `.elb.localhost` label. It defaults to "localhost", which is the name this
+// built before.
+//
+// Resolving is not reaching: nothing listens on this name yet, because the
+// load balancer does not forward to its target groups.
+func (h *Handler) loadBalancerDNSName(name, lbID, region string) string {
+	host := "localhost"
+	if h.cfg != nil {
+		host = h.cfg.ExternalHostname()
+	}
+	return fmt.Sprintf("%s-%s.%s.elb.%s", name, lbID[:8], region, host)
+}
+
 func lbKey(region, arn string) string {
 	return serviceutil.RegionKey(region, arn)
 }
@@ -221,6 +240,36 @@ func (h *Handler) listListenersByLB(ctx context.Context, region, lbArn string) (
 	return out, nil
 }
 
+// parseActions reads a Query-protocol action list ("DefaultActions.member.N.*").
+// AWS numbers members from 1 and allows no gaps, so the first absent Type ends
+// the list.
+func parseActions(r *http.Request, prefix string) []Action {
+	var actions []Action
+	for i := 1; ; i++ {
+		typ := r.FormValue(fmt.Sprintf("%s.member.%d.Type", prefix, i))
+		if typ == "" {
+			return actions
+		}
+		actions = append(actions, Action{
+			Type:           typ,
+			TargetGroupArn: r.FormValue(fmt.Sprintf("%s.member.%d.TargetGroupArn", prefix, i)),
+			Order:          formInt(r, fmt.Sprintf("%s.member.%d.Order", prefix, i), 0),
+		})
+	}
+}
+
+// forwardTargetGroups returns the target groups a listener forwards to, in
+// action order.
+func (l *Listener) forwardTargetGroups() []string {
+	arns := make([]string, 0, len(l.DefaultActions))
+	for _, a := range l.DefaultActions {
+		if a.TargetGroupArn != "" && (a.Type == "" || a.Type == "forward") {
+			arns = append(arns, a.TargetGroupArn)
+		}
+	}
+	return arns
+}
+
 func (h *Handler) putTarget(ctx context.Context, region string, t *Target) error {
 	raw, err := json.Marshal(t)
 	if err != nil {
@@ -276,12 +325,20 @@ func toTGXML(tg *TargetGroup) xmlTG {
 }
 
 func toListenerXML(l *Listener) xmlListener {
-	return xmlListener{
+	out := xmlListener{
 		ListenerArn:     l.ListenerArn,
 		LoadBalancerArn: l.LoadBalancerArn,
 		Protocol:        l.Protocol,
 		Port:            l.Port,
 	}
+	if len(l.DefaultActions) > 0 {
+		members := make([]xmlAction, 0, len(l.DefaultActions))
+		for _, a := range l.DefaultActions {
+			members = append(members, xmlAction(a))
+		}
+		out.DefaultActions = &xmlActionMembers{Member: members}
+	}
+	return out
 }
 
 func formInt(r *http.Request, key string, defaultVal int) int {
@@ -358,7 +415,7 @@ func (h *Handler) CreateLoadBalancer(w http.ResponseWriter, r *http.Request) {
 	lbID := uuid.NewString()
 	arn := fmt.Sprintf("arn:aws:elasticloadbalancing:%s:%s:loadbalancer/%s/%s/%s",
 		region, account, lbType, name, lbID[:8])
-	dnsName := fmt.Sprintf("%s-%s.%s.elb.localhost", name, lbID[:8], region)
+	dnsName := h.loadBalancerDNSName(name, lbID, region)
 
 	lb := &LoadBalancer{
 		LoadBalancerArn:  arn,
@@ -559,6 +616,7 @@ func (h *Handler) CreateListener(w http.ResponseWriter, r *http.Request) {
 		Protocol:        proto,
 		Port:            port,
 		Region:          region,
+		DefaultActions:  parseActions(r, "DefaultActions"),
 	}
 	if err := h.putListener(r.Context(), region, l); err != nil {
 		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
