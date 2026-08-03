@@ -382,6 +382,40 @@ func TestMemoryStore_concurrentAccess(t *testing.T) {
 
 ---
 
+## Mock clocks — advancing time is not the same as waiting for it
+
+Tests drive `clock.Mock` rather than sleeping. But `mock.Add(d)` does **not**
+wait for the `AfterFunc` callbacks it fires: the mock runs each on a goroutine
+of its own and sleeps a single millisecond before returning. So this is a race,
+not a sequence:
+
+```go
+clk.Add(time.Second)              // fires the PROVISIONING → RUNNING transition
+got, _ := h.store.getTask(ctx, …) // may run before the callback does
+```
+
+It passes on an idle machine and fails on a loaded one — a flake that only ever
+reproduces in CI, and one that looks like the callback's work being broken
+rather than not having happened yet. `TestTaskTransition_nonDefaultRegion` lost
+several PRs' CI runs to exactly that, failing in 0.01 s with the task still
+`PROVISIONING`, which reads convincingly as the region-scoping bug the test was
+written for.
+
+For anything scheduled through `lifecycle.Scheduler`, advance with
+`scheduler.AdvanceAndSettle(clk, d)` — it waits for every transition that came
+due. `scheduler.Settle()` is the real-clock counterpart: it waits for what is
+pending without cancelling it. Elsewhere, wait on something the callback itself
+signals. Never on a sleep, and never by polling until the state shows up.
+
+**A mock clock also serialises callbacks**, firing due timers one at a time with
+that millisecond between them. That makes it the wrong tool for reproducing a
+race *between* two transitions — on an idle machine each callback finishes
+before the next starts. `internal/services/ecs/service_steady_state_race_test.go`
+is the worked example of the exception: it runs on a real clock, and says why at
+the top of the file.
+
+---
+
 ## Test for error responses specifically
 
 Always verify:
