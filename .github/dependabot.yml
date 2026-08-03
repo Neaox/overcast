@@ -14,6 +14,18 @@
 # Scoped to the root Dockerfile deliberately. It is the only one whose output
 # users pull; the compat suites' Dockerfiles are test harnesses, and pinning
 # them would trade a stream of review for reproducibility nobody consumes.
+#
+# The Node base is tagged `lts-alpine` rather than a major, because "stay on
+# LTS" cannot be written as an ignore rule here. Dependabot understands semver
+# ranges and update types, and an even major is not LTS until the October after
+# it ships — Node 26 was already being proposed six months before it becomes
+# LTS. A non-numeric tag has no major for Dependabot to bump, so it maintains
+# the digest and the digest follows whatever is currently LTS. Ignoring major
+# updates would work too, but freezes the base until somebody remembers it.
+#
+# The trade: the tag rolls to the next LTS on its own, as what looks like a
+# routine digest bump. Whatever the build needs from Node has to be ready
+# before that October — see issue #558 for the current instance (corepack).
 version: 2
 updates:
   - package-ecosystem: docker

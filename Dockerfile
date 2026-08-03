@@ -36,11 +36,18 @@
 # ---- Stage 1: Web UI build --------------------------------------------------
 # Builds the SPA (Vite). The compiled assets are embedded into the Go binary
 # in the next stage — Node.js is NOT present in any runtime image.
-FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS web-builder
+# The tag is `lts-alpine`, not a major, so the pin follows Node's LTS line
+# rather than whatever major is current: Dependabot has no number to bump and
+# advances only the digest. See .github/dependabot.yml for why that is the only
+# way to express "stay on LTS" here.
+FROM --platform=$BUILDPLATFORM node:lts-alpine@sha256:f70403e87646dc51b45295f4b8b70cdad0b63d2297c4c9899119b03f7af7a6b3 AS web-builder
 
 WORKDIR /web
 
 # corepack resolves the pnpm version pinned in package.json's packageManager field.
+#
+# Node stopped shipping corepack after 24, so this line breaks when the LTS tag
+# rolls to 26 at the end of October 2026 — issue #558 replaces it before then.
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable pnpm
 
