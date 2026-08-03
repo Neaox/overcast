@@ -152,8 +152,47 @@ func (s *sqsStore) deleteQueue(ctx context.Context, name string) *protocol.AWSEr
 	if err := s.store.Delete(ctx, nsQueues, key); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
+	// Every other namespace keyed by this queue name goes with it. A queue
+	// recreated under the same name is a new queue in AWS, so it must not
+	// inherit the deleted one's purge window (which would refuse its first
+	// PurgeQueue with PurgeQueueInProgress), its FIFO dedup IDs (which would
+	// silently swallow re-sent messages for the rest of the 5-minute window),
+	// or its receive-attempt replay records.
+	if err := s.store.Delete(ctx, nsPurge, key); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	// The trailing slash keeps the scan off same-prefixed names ("q" must not
+	// reach "q2/..."), matching how dedupKey and the attempt keys are built.
+	childPrefix := key + "/"
+	for _, ns := range []string{nsDedup, nsAttempts} {
+		if aerr := s.deleteNamespacePrefix(ctx, ns, childPrefix); aerr != nil {
+			return aerr
+		}
+	}
 	// Delete all messages belonging to this queue.
 	return s.deleteMessagesByQueuePrefix(ctx, name)
+}
+
+// deleteNamespacePrefix removes every key in ns under prefix, using the
+// store's ranged delete when it offers one and falling back to enumerate-then-
+// delete when it doesn't — the same shape as cfnStore.deleteStackEvents.
+func (s *sqsStore) deleteNamespacePrefix(ctx context.Context, ns, prefix string) *protocol.AWSError {
+	if deleter, ok := s.store.(state.PrefixDeleter); ok {
+		if err := deleter.DeletePrefix(ctx, ns, prefix); err != nil {
+			return protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("sqs: delete %s prefix %q: %w", ns, prefix, err))
+		}
+		return nil
+	}
+	keys, err := s.store.List(ctx, ns, prefix)
+	if err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("sqs: list %s prefix %q: %w", ns, prefix, err))
+	}
+	for _, key := range keys {
+		if err := s.store.Delete(ctx, ns, key); err != nil {
+			return protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("sqs: delete %s key %q: %w", ns, key, err))
+		}
+	}
+	return nil
 }
 
 func (s *sqsStore) listQueues(ctx context.Context, prefix string) ([]*Queue, *protocol.AWSError) {
@@ -178,14 +217,21 @@ func messageKey(queueName, messageID string) string {
 	return queueName + "/" + messageID
 }
 
+// putMessage is the single write path for every message that enters a queue —
+// SendMessage(Batch), the internal enqueuer behind SNS/EventBridge/Pipes
+// fan-out, DLQ moves and redrive, and the visibility write-back on receive.
+//
+// It deliberately does not consult the purge window. Per AWS docs
+// (https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_PurgeQueue.html)
+// that window is how long the deletion may take, and how long a second
+// PurgeQueue is refused with PurgeQueueInProgress — not a period in which the
+// queue stops accepting deliveries. Overcast deletes synchronously before
+// answering the PurgeQueue call, so once the caller has its response there is
+// nothing left for the purge to sweep up. Dropping writes for the rest of the
+// minute made a queue silently stop receiving anything shortly after a purge,
+// and because SendMessage still answered 200 with a MessageId, nothing on
+// either side reported the loss.
 func (s *sqsStore) putMessage(ctx context.Context, queueName string, msg *Message) *protocol.AWSError {
-	active, aerr := s.purgeActive(ctx, queueName)
-	if aerr != nil {
-		return aerr
-	}
-	if active {
-		return nil
-	}
 	if err := s.backend.putMessage(ctx, s.region(ctx), queueName, msg); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}

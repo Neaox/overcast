@@ -1060,20 +1060,31 @@ func TestPurgeQueue_secondRequestWithinWindow(t *testing.T) {
 	helpers.AssertStatus(t, thirdResp, http.StatusOK)
 }
 
+// TestPurgeQueue_sendDuringPurgeWindow pins the boundary of what the
+// 60-second PurgeQueue window means. Per AWS, the window is how long the
+// deletion may take and how long a second PurgeQueue is refused — not a
+// period during which the queue stops accepting deliveries. Overcast deletes
+// synchronously before answering the PurgeQueue call, so by the time the
+// caller sees a response there is nothing left for the purge to sweep up and
+// every later send must survive. This used to drop every message sent in the
+// minute after a purge: SendMessage still returned 200 with a MessageId, so
+// the loss was silent, and it took SNS/EventBridge fan-out and DLQ moves down
+// with it (they share the same store write path).
 func TestPurgeQueue_sendDuringPurgeWindow(t *testing.T) {
-	// Given: a queue is in AWS's 60-second purge window.
+	// Given: a queue was just purged, so its 60-second window is open.
 	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 	queueURL := createQueue(t, srv, "purge-send-window-queue")
+	sendMessage(t, srv, queueURL, "message before purge")
 	purgeResp := sqsCall(t, srv, "PurgeQueue", map[string]any{
 		"QueueUrl": queueURL,
 	})
 	defer purgeResp.Body.Close()
 	helpers.AssertStatus(t, purgeResp, http.StatusOK)
 
-	// When: a new message is sent while the purge is still in progress.
+	// When: a new message is sent inside that window.
 	sendMessage(t, srv, queueURL, "message during purge")
 
-	// Then: the send is accepted, but the message is deleted by the purge.
+	// Then: it is retained — only what the queue held at purge time was deleted.
 	attrResp := sqsCall(t, srv, "GetQueueAttributes", map[string]any{
 		"QueueUrl":       queueURL,
 		"AttributeNames": []string{"ApproximateNumberOfMessages"},
@@ -1083,24 +1094,83 @@ func TestPurgeQueue_sendDuringPurgeWindow(t *testing.T) {
 		Attributes map[string]string `json:"Attributes"`
 	}
 	helpers.DecodeJSON(t, attrResp, &result)
-	if result.Attributes["ApproximateNumberOfMessages"] != "0" {
-		t.Errorf("expected 0 messages during purge, got %s", result.Attributes["ApproximateNumberOfMessages"])
+	if result.Attributes["ApproximateNumberOfMessages"] != "1" {
+		t.Errorf("expected 1 message during purge window, got %s", result.Attributes["ApproximateNumberOfMessages"])
 	}
 
-	// And: sends after the purge window are retained normally.
-	srv.Clock.Add(61 * time.Second)
-	sendMessage(t, srv, queueURL, "message after purge")
-	attrResp = sqsCall(t, srv, "GetQueueAttributes", map[string]any{
-		"QueueUrl":       queueURL,
-		"AttributeNames": []string{"ApproximateNumberOfMessages"},
+	// And: it is receivable, and it is the message sent after the purge.
+	msgs := receiveAll2(t, srv, queueURL)
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 receivable message during purge window, got %d", len(msgs))
+	}
+	if body, _ := msgs[0]["Body"].(string); body != "message during purge" {
+		t.Errorf("expected the post-purge message, got %q", body)
+	}
+}
+
+// TestPurgeQueue_windowDoesNotOutliveTheQueue covers the purge window's other
+// leak: it is per-queue state keyed by name, so deleting the queue has to take
+// it along. Otherwise a same-named queue recreated inside the minute inherits
+// a purge window it was never part of.
+func TestPurgeQueue_windowDoesNotOutliveTheQueue(t *testing.T) {
+	// Given: a queue was purged and then deleted, still inside the 60-second window.
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+	queueURL := createQueue(t, srv, "purge-recreate-queue")
+	purgeResp := sqsCall(t, srv, "PurgeQueue", map[string]any{"QueueUrl": queueURL})
+	defer purgeResp.Body.Close()
+	helpers.AssertStatus(t, purgeResp, http.StatusOK)
+
+	deleteResp := sqsCall(t, srv, "DeleteQueue", map[string]any{"QueueUrl": queueURL})
+	defer deleteResp.Body.Close()
+	helpers.AssertStatus(t, deleteResp, http.StatusOK)
+
+	// When: a new queue with the same name is created and purged.
+	recreatedURL := createQueue(t, srv, "purge-recreate-queue")
+	secondPurge := sqsCall(t, srv, "PurgeQueue", map[string]any{"QueueUrl": recreatedURL})
+	defer secondPurge.Body.Close()
+
+	// Then: it is a new queue, so it is not in a purge window.
+	helpers.AssertStatus(t, secondPurge, http.StatusOK)
+}
+
+// TestDeleteQueue_clearsFifoDeduplicationHistory is the same leak in the FIFO
+// dedup namespace: a recreated queue that inherits the deleted queue's dedup
+// IDs silently swallows sends for the rest of the 5-minute window.
+func TestDeleteQueue_clearsFifoDeduplicationHistory(t *testing.T) {
+	// Given: a FIFO queue that has seen a message with dedup ID "d1", then deleted.
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "dedup-recreate.fifo")
+	firstSend := sqsCall(t, srv, "SendMessage", map[string]any{
+		"QueueUrl":               queueURL,
+		"MessageBody":            "before delete",
+		"MessageGroupId":         "group-a",
+		"MessageDeduplicationId": "d1",
 	})
-	defer attrResp.Body.Close()
-	result = struct {
-		Attributes map[string]string `json:"Attributes"`
-	}{}
-	helpers.DecodeJSON(t, attrResp, &result)
-	if result.Attributes["ApproximateNumberOfMessages"] != "1" {
-		t.Errorf("expected 1 message after purge window, got %s", result.Attributes["ApproximateNumberOfMessages"])
+	defer firstSend.Body.Close()
+	helpers.AssertStatus(t, firstSend, http.StatusOK)
+
+	deleteResp := sqsCall(t, srv, "DeleteQueue", map[string]any{"QueueUrl": queueURL})
+	defer deleteResp.Body.Close()
+	helpers.AssertStatus(t, deleteResp, http.StatusOK)
+
+	// When: a same-named queue is recreated and sent the same dedup ID.
+	recreatedURL := createQueue(t, srv, "dedup-recreate.fifo")
+	secondSend := sqsCall(t, srv, "SendMessage", map[string]any{
+		"QueueUrl":               recreatedURL,
+		"MessageBody":            "after recreate",
+		"MessageGroupId":         "group-a",
+		"MessageDeduplicationId": "d1",
+	})
+	defer secondSend.Body.Close()
+	helpers.AssertStatus(t, secondSend, http.StatusOK)
+
+	// Then: the deleted queue's dedup history does not suppress it.
+	msgs := receiveAll2(t, srv, recreatedURL)
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message on the recreated queue, got %d", len(msgs))
+	}
+	if body, _ := msgs[0]["Body"].(string); body != "after recreate" {
+		t.Errorf("expected %q, got %q", "after recreate", body)
 	}
 }
 
