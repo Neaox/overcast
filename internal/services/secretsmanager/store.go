@@ -393,6 +393,22 @@ func errResourceNotFound(name string) *protocol.AWSError {
 	}
 }
 
+// errNoSecretValue is what AWS answers for a version that exists but holds no
+// value — the state a rotation leaves behind between staging AWSPENDING and the
+// function's createSecret step putting a value there. It reports whichever of
+// the two identifiers the caller used to ask.
+func errNoSecretValue(versionID, stage string) *protocol.AWSError {
+	detail := "VersionId: " + versionID
+	if stage != "" {
+		detail = "staging label: " + stage
+	}
+	return &protocol.AWSError{
+		Code:       "ResourceNotFoundException",
+		Message:    "Secrets Manager can't find the specified secret value for " + detail,
+		HTTPStatus: 400,
+	}
+}
+
 func errResourceExists(name string) *protocol.AWSError {
 	return &protocol.AWSError{
 		Code:       "ResourceExistsException",

@@ -216,6 +216,15 @@ func (h *Handler) runRotation(ctx context.Context, secretName, token, trigger st
 	originalCurrent := sec.CurrentVersionId
 	functionName := lambdaFunctionName(sec.RotationLambdaARN)
 
+	// Stage the token before the first invocation, not after it: AWS's
+	// rotation blueprints refuse to run createSecret for a token that is not
+	// already staged AWSPENDING.
+	attempt.Step = stepCreateSecret
+	if aerr := h.stagePendingRotationVersion(ctx, sec, token); aerr != nil {
+		return h.recordRotationFailure(ctx, secretName, attempt,
+			"could not stage version "+token+" as "+stageAWSPending+": "+aerr.Message)
+	}
+
 	for _, step := range rotationSteps {
 		attempt.Step = step
 		if err := h.invokeRotationStep(ctx, functionName, sec.ARN, step, token); err != nil {
@@ -257,6 +266,44 @@ func (h *Handler) runRotation(ctx context.Context, secretName, token, trigger st
 		zap.String("trigger", trigger),
 	)
 	return nil
+}
+
+// stagePendingRotationVersion makes the rotation's ClientRequestToken a version
+// of the secret, staged AWSPENDING, before the rotation function is called.
+//
+// This is Secrets Manager's own work, not the function's. AWS stages the token
+// first and leaves the version empty; createSecret is what puts a value in it.
+// The blueprints AWS publishes — the generic SecretsManagerRotationTemplate and
+// the RDS, MySQL, PostgreSQL and Redshift ones — all open lambda_handler by
+// asserting exactly that, for *every* step including createSecret:
+//
+//	versions = describe_secret(SecretId=arn)['VersionIdsToStages']
+//	if token not in versions:      raise "…has no stage for rotation of secret…"
+//	elif "AWSPENDING" not in versions[token]: raise "…not set as AWSPENDING…"
+//
+// so a rotation function built from one of them fails on its first invocation
+// against an emulator that does not stage the token first. Two other pieces of
+// AWS's own documentation say the same thing from the other direction: a
+// RotateSecret with RotateImmediately=false "creates an AWSPENDING version of
+// the secret and then removes it" while running only testSecret, and a failed
+// rotation can leave "the AWSPENDING staging label attached to an empty secret
+// version" — neither is reachable if the function is what creates the version.
+//
+// Re-staging a token that is already pending is a no-op, so a retried rotation
+// under the same token finds the version it left behind, exactly as AWS's
+// idempotency contract intends.
+func (h *Handler) stagePendingRotationVersion(ctx context.Context, sec *Secret, token string) *protocol.AWSError {
+	if v := sec.versionByID(token); v == nil {
+		sec.Versions = append(sec.Versions, SecretVersion{
+			VersionId:   token,
+			Stages:      []string{},
+			CreatedDate: float64(h.store.now().Unix()),
+		})
+	} else if containsString(v.Stages, stageAWSPending) {
+		return nil
+	}
+	sec.attachStage(stageAWSPending, token)
+	return h.store.putSecret(ctx, sec)
 }
 
 // invokeRotationStep invokes the rotation function once, synchronously.
