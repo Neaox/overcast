@@ -36,7 +36,7 @@
 | Kinesis         | 17  | Streams, records, shards, tags, retention                                                                                                                                                                  |
 | EventBridge     | 28  | Event buses, rules, targets, PutEvents, tags                                                                                                                                                               |
 | Scheduler       | 12  | Schedule groups, schedules, tags, clock-driven Lambda/SQS target firing                                                                                                                                    |
-| CloudFormation  | 48  | Stacks, change sets, async provisioner (~55 resource types including AppSync), intrinsic functions, GetAtt                                                                                                  |
+| CloudFormation  | 52  | Stacks, change sets, async provisioner (~55 resource types including AppSync), intrinsic functions, GetAtt                                                                                                  |
 | RDS             | 33  | DB instances (Docker), start/stop, modify, subnet/parameter groups                                                                                                                                         |
 | ElastiCache     | 24  | Clusters (Docker Redis), replication groups, subnet groups, tagging                                                                                                                                        |
 | AppConfig       | 16  | Apps, environments, profiles, hosted config versions (CRUD + version counter)                                                                                                                              |
@@ -82,7 +82,7 @@
 | Kinesis         | 17  |
 | EventBridge     | 28  |
 | Scheduler       | 12  |
-| CloudFormation  | 48  |
+| CloudFormation  | 52  |
 | RDS             | 33  |
 | ElastiCache     | 24  |
 | EFS             | 31  |

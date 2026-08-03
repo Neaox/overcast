@@ -678,6 +678,14 @@ func (d *Client) ContainerLogs(ctx context.Context, id string, tail string) ([]b
 		return nil, fmt.Errorf("container logs %s: %w", id, err)
 	}
 	defer resp.Body.Close()
+	// A daemon error body is not a log stream. Callers de-frame this payload,
+	// and a stripper fed `{"message":"No such container: …"}` reads its first
+	// 8 bytes as a frame header and emits the rest as if it were output — so
+	// the status check is what keeps an error legible.
+	if resp.StatusCode != http.StatusOK {
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("container logs %s: status %d: %s", id, resp.StatusCode, strings.TrimSpace(string(errBody)))
+	}
 	return io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 }
 

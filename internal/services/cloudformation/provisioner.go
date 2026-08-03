@@ -197,10 +197,16 @@ func (p *provisioner) provisionStackResources(stack *Stack, tmpl *Template) {
 		// Emit CREATE_IN_PROGRESS before attempting provisioning.
 		p.recordEvent(ctx, stack, logicalID, "", res.Type, ResourceCreateInProgress, "")
 
-		props := resolveAllProperties(res.Properties, rCtx)
+		// An unresolvable dynamic reference fails the resource. Provisioning it
+		// anyway would persist the literal "{{resolve:...}}" text as the
+		// property's value, which every service downstream then treats as data.
+		props, provErr := p.resolveProperties(res, rCtx)
 		propsHash := hashProps(props)
 		resStart := p.clk.Now()
-		physID, provErr := p.provisionResource(ctx, logicalID, res, props, rCtx)
+		var physID string
+		if provErr == nil {
+			physID, provErr = p.provisionResource(ctx, logicalID, res, props, rCtx)
+		}
 		resElapsed := p.clk.Since(resStart)
 		now := p.clk.Now()
 		if provErr != nil {
@@ -331,7 +337,9 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 		}
 		res := tmpl.Resources[logicalID]
 
-		props := resolveAllProperties(res.Properties, rCtx)
+		// As in the create path: a reference that will not resolve fails the
+		// resource rather than being written into it verbatim.
+		props, refErr := p.resolveProperties(res, rCtx)
 		propsHash := hashProps(props)
 
 		if old, ok := existing[logicalID]; ok && old.Type == res.Type {
@@ -346,7 +354,7 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 				rCtx.Attributes[logicalID] = old.Attributes
 			}
 
-			if old.PropertiesHash == "" || old.PropertiesHash == propsHash {
+			if refErr == nil && (old.PropertiesHash == "" || old.PropertiesHash == propsHash) {
 				// No change, or legacy resource without a recorded hash —
 				// treat as unchanged. (Stacks created before property
 				// hashing was added have no recorded hash; without a
@@ -371,7 +379,10 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 
 			// Properties changed — attempt update.
 			p.recordEvent(ctx, stack, logicalID, old.PhysicalID, res.Type, ResourceUpdateInProgress, "")
-			outcome, updErr := p.updateResource(ctx, logicalID, res, props, old.PhysicalID, &old, rCtx)
+			outcome, updErr := resourceUpdateOutcome{}, refErr
+			if updErr == nil {
+				outcome, updErr = p.updateResource(ctx, logicalID, res, props, old.PhysicalID, &old, rCtx)
+			}
 			physID := outcome.PhysicalID
 			if outcome.Replaced() {
 				// Rollback must remove the replacement whether or not the
@@ -427,7 +438,11 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 		// New (or different type) — emit CREATE_IN_PROGRESS before provisioning.
 		p.recordEvent(ctx, stack, logicalID, "", res.Type, ResourceCreateInProgress, "")
 
-		physID, provErr := p.provisionResource(ctx, logicalID, res, props, rCtx)
+		var physID string
+		provErr := refErr
+		if provErr == nil {
+			physID, provErr = p.provisionResource(ctx, logicalID, res, props, rCtx)
+		}
 		now := p.clk.Now()
 		if provErr != nil {
 			newResources = append(newResources, StackResource{
@@ -865,7 +880,18 @@ func (p *provisioner) buildResolveContext(stack *Stack, tmpl *Template) *resolve
 		Conditions: evaluateConditions(tmpl.Conditions, params),
 		Mappings:   tmpl.Mappings,
 		Exports:    exports,
+		DynamicRef: p.dynamicRefResolver(region),
 	}
+}
+
+// resolveProperties resolves a resource's properties and surfaces any dynamic
+// reference that could not be resolved. The error must be taken here rather
+// than at dispatch: a resource whose properties are unchanged never dispatches
+// at all, and a failure left on the context would be blamed on the next
+// resource instead.
+func (p *provisioner) resolveProperties(res TemplateResource, rCtx *resolveContext) (map[string]any, error) {
+	props := resolveAllProperties(res.Properties, rCtx)
+	return props, rCtx.takeDynamicRefErr()
 }
 
 // collectExports gathers all cross-stack exports from completed stacks in the
@@ -891,12 +917,22 @@ func (p *provisioner) resolveOutputs(tmpl *Template, rCtx *resolveContext) []Out
 	if tmpl.Outputs == nil {
 		return nil
 	}
+	// An output is reported, not provisioned, so an unresolvable dynamic
+	// reference in one is logged and left as written rather than failing a
+	// stack whose resources all came up. Taking the error here still matters:
+	// left on the context it would be blamed on the next resource resolved.
+	defer func() {
+		if err := rCtx.takeDynamicRefErr(); err != nil {
+			p.log.Warn("cfn: unresolved dynamic reference in a stack output",
+				zap.String("stack", rCtx.StackName), zap.Error(err))
+		}
+	}()
 	outputs := make([]Output, 0, len(tmpl.Outputs))
 	for name, o := range tmpl.Outputs {
 		if o.Condition != "" && !rCtx.Conditions[o.Condition] {
 			continue
 		}
-		val := resolveIntrinsics(o.Value, rCtx)
+		val := expandDynamicRefs(resolveIntrinsics(o.Value, rCtx), rCtx)
 		out := Output{
 			Key:         name,
 			Value:       fmt.Sprintf("%v", val),

@@ -966,7 +966,11 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 			ExposedPorts: map[string]struct{}{containerPort: {}},
 			Labels:       docker.ManagedLabels("rds", inst.DBInstanceIdentifier),
 		},
-		HostConfig: &docker.HostConfig{AutoRemove: true,
+		// No AutoRemove: StopDBInstance stops this container on purpose and keeps
+		// its ID so StartDBInstance can bring it back, which AutoRemove makes
+		// impossible by deleting it the moment it exits. DeleteDBInstance owns
+		// removal instead, via the GC.
+		HostConfig: &docker.HostConfig{
 			NetworkMode: network,
 			PortBindings: map[string][]docker.PortBinding{
 				containerPort: {{HostIP: "0.0.0.0", HostPort: strconv.Itoa(hostPort)}},
