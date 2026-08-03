@@ -27,8 +27,9 @@ history.
 > [!IMPORTANT]
 > **Anything Overcast cannot interpret fails the execution loudly.** An
 > unsupported Task resource, `.waitForTaskToken`, an activity task, a
-> distributed Map or a JSONata state machine produces a `FAILED` execution whose
-> `error` is `States.Runtime` and whose `cause` names the feature — never a
+> distributed Map, or JSONata set on the definition or on a single state,
+> produces a `FAILED` execution whose `error` is `States.Runtime` and whose
+> `cause` names the feature — never a
 > silent pass-through, and never a fake `SUCCEEDED`. `States.Runtime` is
 > deliberately neither retriable nor catchable (matching AWS), so a
 > `Catch` on `States.ALL` cannot swallow an Overcast gap.
@@ -40,13 +41,14 @@ history.
 | Area | Interpreted | Fails loudly |
 | --- | --- | --- |
 | State types | `Pass`, `Task`, `Choice`, `Wait`, `Succeed`, `Fail`, `Parallel`, `Map` (inline) | — (all eight ASL state types are interpreted; an unknown `Type` is rejected at `CreateStateMachine` with `InvalidDefinition`, as on AWS) |
-| Data flow | `InputPath`, `OutputPath`, `ResultPath`, `Parameters`, `ResultSelector`, `ItemSelector`, `Result`, the `$$` context object | JSONPath wildcards, descendants, slices and filter expressions |
+| Data flow | `InputPath`, `OutputPath`, `ResultPath`, `Parameters`, `ResultSelector`, `ItemSelector`, `Result`, the `$$` context object | JSONPath wildcards, descendants, slices and filter expressions; `Assign` (variables) |
 | Intrinsics | `States.Format`, `States.Array`, `States.ArrayLength`, `States.StringToJson`, `States.JsonToString`, `States.MathAdd` | every other `States.*` intrinsic |
 | Choice | every ASL comparison operator, `And`/`Or`/`Not`, `Default` | an operator outside the language (rejected at create time) |
-| Error handling | `Retry` (`ErrorEquals`, `IntervalSeconds`, `MaxAttempts`, `BackoffRate`, `MaxDelaySeconds`), `Catch` (`ErrorEquals`, `ResultPath`, `Next`) | — |
+| Error handling | `Retry` (`ErrorEquals`, `IntervalSeconds`, `MaxAttempts`, `BackoffRate`, `MaxDelaySeconds`), `Catch` (`ErrorEquals`, `ResultPath`, `Next`). `States.ALL` and `States.TaskFailed` are both wildcards, matching any error name except `States.Runtime`; every other reserved name matches literally | `Assign` (variables) on a `Catch` |
+| Task timeouts | `TimeoutSeconds` and `TimeoutSecondsPath` really bound the attempt and raise `States.Timeout`, which `Retry`/`Catch` can match | `HeartbeatSeconds` (unread — it only governs activity tasks and `.waitForTaskToken`, which already fail loudly) |
 | Task integrations | a Lambda function ARN; `arn:aws:states:::lambda:invoke`; `sqs:sendMessage`; `sns:publish`; `dynamodb:putItem`/`getItem`/`updateItem`; `states:startExecution` and its `.sync` / `.sync:2` forms | every other service integration, all `aws-sdk:` integrations, `.waitForTaskToken`, activity ARNs |
 | Map | inline `ItemsPath` iteration with `ItemProcessor` (or the legacy `Iterator`) | `ProcessorConfig.Mode: DISTRIBUTED`, `ItemReader`, `ItemBatcher`, `ResultWriter` |
-| Query language | JSONPath | JSONata (`QueryLanguage: JSONata`) |
+| Query language | JSONPath | JSONata (`QueryLanguage: JSONata`), whether it is set on the whole definition or on a single state, and the JSONata-only `Output` field |
 
 ---
 
@@ -76,6 +78,17 @@ history.
   the execution `TIMED_OUT` with AWS's `States.Timeout`, which is also what
   stops a non-terminating `Choice` loop (alongside the 25,000-event history
   cap AWS itself applies).
+- **A `Task`'s own `TimeoutSeconds` bounds that attempt.** It is a real
+  deadline, not a value echoed into the history event: the integration is
+  dispatched under it and an over-running attempt is interrupted and raised as
+  `States.Timeout`, so `Retry`/`Catch` on a task timeout behave as they do on
+  AWS and the history carries `TaskTimedOut`. Unlike the execution budget this
+  does **not** end the execution `TIMED_OUT` — an uncaught task timeout is a
+  `FAILED` execution whose `error` is `States.Timeout`, as on AWS. An
+  integration that ignores cancellation can still run to completion; the
+  attempt is reported timed out when it fails. Note that a local cold start
+  can be slower than AWS's, so a tight `TimeoutSeconds` may fire here where it
+  would not in the cloud.
 - **Task states dispatch through Overcast's own router**, so a workflow step
   runs exactly the handler an SDK call would — there is no second code path that
   could drift from the service it targets.
