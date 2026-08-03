@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/Neaox/overcast/internal/protocol"
 )
 
@@ -49,7 +51,7 @@ func (s *Service) DispatchQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert form params → JSON body.
-	jsonBody, err := sqsFormToJSON(action, r.Form)
+	jsonBody, err := sqsFormToJSON(action, s.handler.queryForm(r))
 	if err != nil {
 		protocol.WriteQueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MalformedInput",
@@ -70,6 +72,46 @@ func (s *Service) DispatchQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Convert to Query XML.
 	writeQueryXMLFromJSON(w, r, action, rec)
+}
+
+// queryForm returns the request's form values with QueueUrl filled in from the
+// request path when the body did not carry it. It never mutates r.Form.
+//
+// Under the Query protocol the endpoint for a queue-scoped action *is* the
+// queue URL, so the queue is named by the path and the body does not repeat it.
+// AWS's API Reference documents SendMessage exactly this way:
+//
+//	POST /177715257436/MyQueue/ HTTP/1.1
+//	Content-Type: application/x-www-form-urlencoded
+//
+//	Action=SendMessage&MessageBody=This+is+a+test+message
+//
+// QueueUrl is a required member only under the JSON protocol, where every
+// request goes to "POST /" and the body is the only place the queue can be
+// named — and that is the shape the schemas below were written against, which
+// is why a path-addressed request used to be rejected for a missing parameter.
+//
+// The body still wins when it names a queue, so this only ever fills a gap; and
+// at "POST /" there is no path to read, so a genuinely absent QueueUrl is still
+// reported as the client error it is.
+func (h *Handler) queryForm(r *http.Request) url.Values {
+	if r.Form.Get("QueueUrl") != "" {
+		return r.Form
+	}
+	accountID := chi.URLParam(r, "accountID")
+	queueName := chi.URLParam(r, "queueName")
+	if accountID == "" || queueName == "" {
+		return r.Form
+	}
+
+	// Copy rather than mutate: r.Form is shared with anything else that reads
+	// the request, and a synthesised value must not leak into it.
+	form := make(url.Values, len(r.Form)+1)
+	for k, v := range r.Form {
+		form[k] = v
+	}
+	form.Set("QueueUrl", h.queueURL(r.Context(), queueName))
+	return form
 }
 
 // ── Form → JSON conversion ─────────────────────────────────────────────────
@@ -462,12 +504,22 @@ var collectionElements = map[string]string{
 	"Failed":     "BatchResultErrorEntry",
 }
 
-// mapElements lists JSON keys that represent Name→Value maps
-// and should be rendered as repeated <Attribute><Name>k</Name><Value>v</Value></Attribute>.
-var mapElements = map[string]string{
-	"Attributes":        "Attribute",
-	"Tags":              "Tag",
-	"MessageAttributes": "MessageAttribute",
+// mapElements maps a JSON string-map member to the repeated XML element its
+// entries render as, and to the element that holds each entry's key.
+//
+// Tags are the odd one out: AWS renders a tag as <Tag><Key>…</Key>, not
+// <Tag><Name>…</Name>. See the ListQueueTags query-protocol sample response in
+// the SQS API Reference, and the other services in this repo, which all emit
+// <Tag><Key>.
+var mapElements = map[string]mapElement{
+	"Attributes":        {element: "Attribute", key: "Name"},
+	"Tags":              {element: "Tag", key: "Key"},
+	"MessageAttributes": {element: "MessageAttribute", key: "Name"},
+}
+
+type mapElement struct {
+	element string // repeated wrapper element, e.g. "Tag"
+	key     string // element holding the map key, e.g. "Key" or "Name"
 }
 
 // writeXMLMap recursively converts a JSON map to XML elements.
@@ -483,9 +535,9 @@ func writeXMLMap(buf *bytes.Buffer, data map[string]any, indent string) {
 		val := data[key]
 		switch v := val.(type) {
 		case map[string]any:
-			if elemName, ok := mapElements[key]; ok {
-				// Render as repeated <elemName><Name>k</Name><Value>v</Value></elemName>.
-				writeXMLNameValueMap(buf, v, elemName, indent)
+			if shape, ok := mapElements[key]; ok {
+				// Render as repeated <element><key>k</key><Value>v</Value></element>.
+				writeXMLNameValueMap(buf, v, shape, indent)
 			} else {
 				// Nested object.
 				buf.WriteString(indent + "<" + key + ">\n")
@@ -527,8 +579,9 @@ func writeXMLMap(buf *bytes.Buffer, data map[string]any, indent string) {
 }
 
 // writeXMLNameValueMap renders a JSON map as repeated XML elements like
-// <elemName><Name>k</Name><Value>v</Value></elemName>.
-func writeXMLNameValueMap(buf *bytes.Buffer, data map[string]any, elemName, indent string) {
+// <Attribute><Name>k</Name><Value>v</Value></Attribute>, or
+// <Tag><Key>k</Key><Value>v</Value></Tag> — see mapElements for which is which.
+func writeXMLNameValueMap(buf *bytes.Buffer, data map[string]any, shape mapElement, indent string) {
 	keys := make([]string, 0, len(data))
 	for k := range data {
 		keys = append(keys, k)
@@ -536,8 +589,8 @@ func writeXMLNameValueMap(buf *bytes.Buffer, data map[string]any, elemName, inde
 	sort.Strings(keys)
 
 	for _, k := range keys {
-		buf.WriteString(indent + "<" + elemName + ">\n")
-		buf.WriteString(indent + "  <Name>" + xmlEscape(k) + "</Name>\n")
+		buf.WriteString(indent + "<" + shape.element + ">\n")
+		buf.WriteString(indent + "  <" + shape.key + ">" + xmlEscape(k) + "</" + shape.key + ">\n")
 		switch v := data[k].(type) {
 		case map[string]any:
 			// MessageAttribute: render Value sub-fields inline.
@@ -547,7 +600,7 @@ func writeXMLNameValueMap(buf *bytes.Buffer, data map[string]any, elemName, inde
 		default:
 			buf.WriteString(indent + "  <Value>" + xmlEscape(fmt.Sprint(v)) + "</Value>\n")
 		}
-		buf.WriteString(indent + "</" + elemName + ">\n")
+		buf.WriteString(indent + "</" + shape.element + ">\n")
 	}
 }
 
