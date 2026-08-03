@@ -1,0 +1,1 @@
+~ [docker] the published images pin their base images by digest, so a release is reproducible and an upstream retag of `alpine:3.20`, `node:22-alpine` or `golang:1.24-alpine` can no longer change what ships without appearing in the diff. Dependabot keeps the digests current

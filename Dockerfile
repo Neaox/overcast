@@ -19,11 +19,24 @@
 #   - GOARCH is set automatically by buildx to match the target platform
 #   - The golang:alpine builder cross-compiles natively — no QEMU in the build stage
 #   - Alpine runtime image has both amd64 and arm64 variants
+#
+# Base images are pinned by digest, with the tag kept for readability. A tag is
+# a moving target: upstream retags alpine:3.20 and the next release ships
+# different bytes than the one that was tested, with nothing in the diff to say
+# so. The digest makes the image a function of this file, which is what lets
+# the build be reproduced and lets CI pull through a registry mirror without
+# that changing what ships — a mirror cannot serve different content for a
+# digest.
+#
+# Each digest is the multi-arch index, not a platform manifest, so buildx still
+# resolves per-platform underneath. Dependabot keeps them current
+# (.github/dependabot.yml); pinning without that would freeze out base-image
+# security updates, which is worse than not pinning at all.
 
 # ---- Stage 1: Web UI build --------------------------------------------------
 # Builds the SPA (Vite). The compiled assets are embedded into the Go binary
 # in the next stage — Node.js is NOT present in any runtime image.
-FROM --platform=$BUILDPLATFORM node:22-alpine AS web-builder
+FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS web-builder
 
 WORKDIR /web
 
@@ -41,7 +54,7 @@ COPY web/ .
 RUN VITE_BUNDLED=true pnpm run build
 
 # ---- Stage 2: Go build (conditional — NOSQLITE arg controls slim vs full) --
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS go-builder
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191 AS go-builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -92,7 +105,7 @@ RUN if [ -n "$NOSQLITE" ]; then \
 
 # ---- Stage 3: shared runtime base ------------------------------------------
 # Both slim and console images share the same OS-level setup.
-FROM alpine:3.20 AS base
+FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc AS base
 
 RUN apk add --no-cache ca-certificates su-exec
 
