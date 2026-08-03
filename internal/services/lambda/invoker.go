@@ -1,18 +1,22 @@
 package lambda
 
-// invoker.go — ServiceInvoker implements events.FunctionInvoker.
+// invoker.go — ServiceInvoker implements events.FunctionInvoker,
+// events.FunctionEventInvoker and events.FunctionSyncInvoker.
 //
-// InvokeAsync is called by the S3 notification dispatcher (and in future by
-// any other service that needs to trigger a Lambda function asynchronously).
-// It looks up the function by ARN, finds a suitable runtime, executes it,
-// and records the invocation in the state store.
+// InvokeEvent is called by any service that needs to trigger a Lambda function
+// asynchronously — the S3 notification dispatcher, EventBridge/Scheduler
+// targets, SNS subscription fan-out. It looks up the function by ARN, finds a
+// suitable runtime, executes it, and records the invocation in the state store.
 //
-// If the function is not found, the call is a no-op: a warning is logged and
-// nil is returned. This matches AWS behaviour where a misconfigured notification
-// silently fails rather than breaking the originating operation.
+// InvokeAsync is the same call for callers that do not act on the outcome: it
+// swallows the error, matching AWS behaviour where a misconfigured notification
+// silently fails rather than breaking the originating operation. SNS does act
+// on it — an undeliverable notification has to reach the subscription's
+// dead-letter queue — so it calls InvokeEvent directly.
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/Neaox/overcast/internal/clock"
@@ -74,39 +78,65 @@ func (inv *ServiceInvoker) publishError(ctx context.Context, operation, message,
 
 // InvokeAsync satisfies events.FunctionInvoker.
 // It is safe to call from any goroutine.
+//
+// Delivery problems are logged and swallowed: S3 notification configs,
+// EventBridge targets and Scheduler targets all treat a misconfigured
+// destination the way AWS does — the originating operation still succeeds.
+// Callers that need the outcome use InvokeEvent instead.
 func (inv *ServiceInvoker) InvokeAsync(ctx context.Context, functionARN string, payload []byte) error {
+	if err := inv.InvokeEvent(ctx, functionARN, payload); err != nil {
+		inv.logger.Debug("lambda: invokeAsync: event not accepted",
+			zap.String("arn", functionARN),
+			zap.Error(err),
+		)
+	}
+	return nil
+}
+
+// InvokeEvent satisfies events.FunctionEventInvoker.
+// It is safe to call from any goroutine.
+//
+// The returned error mirrors what real Lambda answers synchronously to an
+// `InvocationType=Event` call, and nothing more: the function does not exist,
+// is not in an invokable state, or is throttled. Once the event is accepted,
+// anything that goes wrong while running it — no runtime for the declared
+// language, a container that will not start, a handler that raises — is logged
+// but reported as a successful delivery, because on AWS the event source has
+// already had its 202 by then and the failure belongs to Lambda's own retry and
+// dead-letter machinery.
+func (inv *ServiceInvoker) InvokeEvent(ctx context.Context, functionARN string, payload []byte) error {
 	name := functionNameFromARN(functionARN)
 
 	fn, aerr := inv.store.getFunction(ctx, name)
 	if aerr != nil {
-		inv.logger.Debug("lambda: invokeAsync: state lookup failed",
+		inv.logger.Debug("lambda: invokeEvent: state lookup failed",
 			zap.String("arn", functionARN),
 			zap.String("error", aerr.Message),
 		)
-		return nil
+		return fmt.Errorf("lambda %s: %s", name, aerr.Message)
 	}
 	if fn == nil {
-		inv.logger.Debug("lambda: invokeAsync: function not found",
+		inv.logger.Debug("lambda: invokeEvent: function not found",
 			zap.String("arn", functionARN),
 			zap.String("name", name),
 		)
-		return nil
+		return fmt.Errorf("lambda %s: function not found", name)
 	}
 	if aerr := checkInvokableState(fn); aerr != nil {
 		msg := invokableStateMessage(fn.State)
-		inv.logger.Warn("lambda: invokeAsync: function not invokable",
+		inv.logger.Warn("lambda: invokeEvent: function not invokable",
 			zap.String("function", name),
 			zap.String("state", fn.State),
 			zap.String("reason", msg),
 		)
 		inv.publishError(ctx, "Invoke", name+": "+msg, aerr.Code)
-		return nil
+		return fmt.Errorf("lambda %s: %s", name, msg)
 	}
 
 	// Record the invocation before executing. This makes delivery observable
 	// in tests even when the runtime cannot run (e.g. missing code zip).
 	if err := inv.store.addInvocation(ctx, fn, payload); err != nil {
-		inv.logger.Warn("lambda: invokeAsync: failed to record invocation",
+		inv.logger.Warn("lambda: invokeEvent: failed to record invocation",
 			zap.String("function", name),
 			zap.Error(err),
 		)
@@ -122,7 +152,7 @@ func (inv *ServiceInvoker) InvokeAsync(ctx context.Context, functionARN string, 
 		}
 	}
 	if rt == nil {
-		inv.logger.Debug("lambda: invokeAsync: no runtime for function",
+		inv.logger.Debug("lambda: invokeEvent: no runtime for function",
 			zap.String("function", name),
 			zap.String("runtime", fn.Runtime),
 		)
@@ -135,11 +165,11 @@ func (inv *ServiceInvoker) InvokeAsync(ctx context.Context, functionARN string, 
 	if err != nil {
 		tracked.Abandon(err.Error())
 		if _, throttled := asThrottle(err); throttled {
-			inv.logger.Warn("lambda: invokeAsync: throttled",
+			inv.logger.Warn("lambda: invokeEvent: throttled",
 				zap.String("function", name), zap.Error(err))
-			return nil
+			return fmt.Errorf("lambda %s: throttled: %w", name, err)
 		}
-		inv.logger.Error("lambda: invokeAsync: acquire instance failed",
+		inv.logger.Error("lambda: invokeEvent: acquire instance failed",
 			zap.String("function", name),
 			zap.Error(err),
 		)
@@ -150,7 +180,7 @@ func (inv *ServiceInvoker) InvokeAsync(ctx context.Context, functionARN string, 
 	if err := awaitRuntimeReady(ctx, inv.cfg, inst); err != nil {
 		rt.Release(ctx, inst, false)
 		tracked.Abandon(err.Error())
-		inv.logger.Error("lambda: invokeAsync: runtime init failed",
+		inv.logger.Error("lambda: invokeEvent: runtime init failed",
 			zap.String("function", name),
 			zap.Error(err),
 		)
@@ -169,7 +199,7 @@ func (inv *ServiceInvoker) InvokeAsync(ctx context.Context, functionARN string, 
 		fnCtx := middleware.ContextWithRegion(ctx, fnRegion)
 		tracked.SetLogRefs(fn.logGroupName(), inst.LogStreamName())
 		if lsErr := inv.logWriter.EnsureLogStream(fnCtx, fn.logGroupName(), inst.LogStreamName()); lsErr != nil {
-			inv.logger.Debug("lambda: invokeAsync: ensure log stream", zap.String("function", name), zap.Error(lsErr))
+			inv.logger.Debug("lambda: invokeEvent: ensure log stream", zap.String("function", name), zap.Error(lsErr))
 		}
 	}
 
@@ -180,7 +210,7 @@ func (inv *ServiceInvoker) InvokeAsync(ctx context.Context, functionARN string, 
 	tracked.Finish(invocationOutcome(err, result))
 
 	if err != nil {
-		inv.logger.Error("lambda: invokeAsync: invocation error",
+		inv.logger.Error("lambda: invokeEvent: invocation error",
 			zap.String("function", name),
 			zap.Error(err),
 		)
@@ -188,7 +218,7 @@ func (inv *ServiceInvoker) InvokeAsync(ctx context.Context, functionARN string, 
 	}
 
 	if result.FunctionError != "" {
-		inv.logger.Warn("lambda: invokeAsync: function returned error",
+		inv.logger.Warn("lambda: invokeEvent: function returned error",
 			zap.String("function", name),
 			zap.String("function_error", result.FunctionError),
 		)

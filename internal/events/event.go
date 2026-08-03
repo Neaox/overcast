@@ -68,6 +68,14 @@ const (
 	// SNSPushDelivered fires after SNS successfully captures an application (mobile push) subscription delivery in the inbox.
 	SNSPushDelivered Type = "sns:PushDelivered"
 
+	// SNSLambdaDelivered fires after SNS successfully hands a notification to a lambda-protocol subscriber.
+	SNSLambdaDelivered Type = "sns:LambdaDelivered"
+
+	// SNSDeliveryFailed fires when SNS could not deliver a notification to a subscriber.
+	// It is emitted for every protocol — including a subscription whose protocol has no
+	// delivery implementation — so an undeliverable message is never silently dropped.
+	SNSDeliveryFailed Type = "sns:DeliveryFailed"
+
 	// InboxDelivered fires after the built-in SMTP capture server stores an inbound message.
 	// Source is always "inbox".
 	InboxDelivered Type = "inbox:Delivered"
@@ -546,39 +554,73 @@ type SNSPublishPayload struct {
 
 // SNSNotificationPayload carries the details of a successful SNS→SQS delivery.
 // TopicName and QueueName are bare names (not ARNs) to match "sns::TOPIC" and "sqs::QUEUE" node IDs.
+//
+// SubscriptionARN identifies which subscription the delivery satisfied, so the
+// web UI can show a per-subscription delivery indicator rather than guessing
+// from the endpoint. Every SNS delivery payload carries it for that reason.
 type SNSNotificationPayload struct {
-	TopicName string `json:"topicName"` // SNS topic name, not full ARN
-	QueueName string `json:"queueName"` // SQS queue name, not full ARN
-	MessageID string `json:"messageId"`
+	TopicName       string `json:"topicName"` // SNS topic name, not full ARN
+	QueueName       string `json:"queueName"` // SQS queue name, not full ARN
+	MessageID       string `json:"messageId"`
+	SubscriptionARN string `json:"subscriptionArn,omitempty"`
 }
 
 // SNSEmailPayload carries the details of a successful SNS→email delivery.
 type SNSEmailPayload struct {
-	TopicName string   `json:"topicName"`
-	To        []string `json:"to"`
-	Subject   string   `json:"subject"`
-	MessageID string   `json:"messageId"`
+	TopicName       string   `json:"topicName"`
+	To              []string `json:"to"`
+	Subject         string   `json:"subject"`
+	MessageID       string   `json:"messageId"`
+	SubscriptionARN string   `json:"subscriptionArn,omitempty"`
 }
 
 // SNSSMSPayload carries the details of a successful SNS→SMS delivery.
 type SNSSMSPayload struct {
-	TopicName string `json:"topicName"`
-	To        string `json:"to"`
-	MessageID string `json:"messageId"`
+	TopicName       string `json:"topicName"`
+	To              string `json:"to"`
+	MessageID       string `json:"messageId"`
+	SubscriptionARN string `json:"subscriptionArn,omitempty"`
 }
 
 // SNSWebhookPayload carries the details of a successful SNS→http/https delivery captured in the inbox.
 type SNSWebhookPayload struct {
-	TopicName string `json:"topicName"`
-	Endpoint  string `json:"endpoint"`
-	MessageID string `json:"messageId"`
+	TopicName       string `json:"topicName"`
+	Endpoint        string `json:"endpoint"`
+	MessageID       string `json:"messageId"`
+	SubscriptionARN string `json:"subscriptionArn,omitempty"`
 }
 
 // SNSPushPayload carries the details of a successful SNS→application delivery captured in the inbox.
 type SNSPushPayload struct {
-	TopicName string `json:"topicName"`
-	Endpoint  string `json:"endpoint"`
-	MessageID string `json:"messageId"`
+	TopicName       string `json:"topicName"`
+	Endpoint        string `json:"endpoint"`
+	MessageID       string `json:"messageId"`
+	SubscriptionARN string `json:"subscriptionArn,omitempty"`
+}
+
+// SNSLambdaPayload carries the details of a successful SNS→Lambda delivery.
+// FunctionName is the bare function name (not the full ARN) so it matches the
+// "lambda::FUNCTION" node ID used by the topology map.
+type SNSLambdaPayload struct {
+	TopicName       string `json:"topicName"`
+	FunctionName    string `json:"functionName"`
+	MessageID       string `json:"messageId"`
+	SubscriptionARN string `json:"subscriptionArn,omitempty"`
+}
+
+// SNSDeliveryFailurePayload carries the details of a notification SNS could not
+// deliver. DeadLetterQueue names the SQS queue the message was redirected to
+// (from the subscription's RedrivePolicy), and is empty when the subscription
+// has no dead-letter queue — in which case the message was lost, exactly as it
+// would be on AWS.
+type SNSDeliveryFailurePayload struct {
+	TopicName       string `json:"topicName"`
+	SubscriptionARN string `json:"subscriptionArn"`
+	Protocol        string `json:"protocol"`
+	Endpoint        string `json:"endpoint"`
+	MessageID       string `json:"messageId"`
+	Reason          string `json:"reason"`
+	DeadLetterQueue string `json:"deadLetterQueue,omitempty"`
 }
 
 // PipesDeliveryPayload carries the details of a successful Pipe delivery.

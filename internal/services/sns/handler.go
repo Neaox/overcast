@@ -24,6 +24,7 @@ type Handler struct {
 	log       *serviceutil.ServiceLogger
 	clk       clock.Clock
 	enqueuer  events.MessageEnqueuer
+	invoker   events.FunctionEventInvoker
 	mailer    smtp.Mailer
 	smsSender smtp.SMSSender
 	outbound  smtp.OutboundCapture

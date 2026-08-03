@@ -48,6 +48,8 @@ export const EventType = {
     SMSDelivered: "sns:SMSDelivered",
     WebhookDelivered: "sns:WebhookDelivered",
     PushDelivered: "sns:PushDelivered",
+    LambdaDelivered: "sns:LambdaDelivered",
+    DeliveryFailed: "sns:DeliveryFailed",
     TopicCreated: "sns:TopicCreated",
     TopicDeleted: "sns:TopicDeleted",
     SubscriptionCreated: "sns:SubscriptionCreated",
