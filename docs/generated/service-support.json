@@ -5755,7 +5755,7 @@
           "operation": "GetRandomPassword",
           "category": "Password",
           "status": "✅ Supported",
-          "notes": "Configurable length + exclusions"
+          "notes": "Length, exclusions, RequireEachIncludedType"
         },
         {
           "operation": "GetResourcePolicy",

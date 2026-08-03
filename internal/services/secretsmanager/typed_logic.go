@@ -186,6 +186,9 @@ type getRandomPasswordRequest struct {
 	ExcludeUppercase   bool   `json:"ExcludeUppercase" cbor:"ExcludeUppercase"`
 	ExcludeLowercase   bool   `json:"ExcludeLowercase" cbor:"ExcludeLowercase"`
 	IncludeSpace       bool   `json:"IncludeSpace" cbor:"IncludeSpace"`
+	// RequireEachIncludedType is a pointer because AWS defaults it to true, so
+	// absent and false are different requests.
+	RequireEachIncludedType *bool `json:"RequireEachIncludedType" cbor:"RequireEachIncludedType"`
 }
 
 type getRandomPasswordResponse struct {
@@ -619,24 +622,114 @@ func (h *Handler) untagResourceTyped(ctx context.Context, req *untagResourceRequ
 }
 
 func (h *Handler) getRandomPasswordTyped(_ context.Context, req *getRandomPasswordRequest) (*getRandomPasswordResponse, *protocol.AWSError) {
+	password, aerr := generatePassword(req)
+	if aerr != nil {
+		return nil, aerr
+	}
+	return &getRandomPasswordResponse{RandomPassword: password}, nil
+}
+
+// generatePassword builds one password to the request's exclusion settings.
+// CloudFormation's AWS::SecretsManager::Secret GenerateSecretString takes the
+// same knobs, and reaches this through GetRandomPassword rather than carrying a
+// second generator.
+func generatePassword(req *getRandomPasswordRequest) (string, *protocol.AWSError) {
 	length := req.PasswordLength
 	if length <= 0 {
 		length = defaultPasswordLength
 	}
 	charset := allowedPasswordCharset(req)
 	if len(charset) == 0 {
-		return nil, errInvalidParameter("No characters available with the given exclusion settings.")
+		return "", errInvalidParameter("No characters available with the given exclusion settings.")
 	}
 
 	password := make([]rune, int(length))
 	for i := range password {
-		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		n, err := randIndex(len(charset))
 		if err != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, err)
+			return "", protocol.Wrap(protocol.ErrInternalError, err)
 		}
-		password[i] = charset[n.Int64()]
+		password[i] = charset[n]
 	}
-	return &getRandomPasswordResponse{RandomPassword: string(password)}, nil
+	// AWS defaults RequireEachIncludedType to true: "If you don't include this
+	// switch, the password contains at least one of every character type."
+	if req.RequireEachIncludedType == nil || *req.RequireEachIncludedType {
+		if err := seedEachIncludedType(password, charset); err != nil {
+			return "", protocol.Wrap(protocol.ErrInternalError, err)
+		}
+	}
+	return string(password), nil
+}
+
+// seedEachIncludedType overwrites distinct positions so the password holds at
+// least one character of every type the exclusions left available. Positions
+// are distinct so seeding one type never undoes another; if there are fewer
+// positions than types — only reachable below AWS's minimum PasswordLength of
+// 4 — the leftover types go unseeded rather than fighting over a slot.
+func seedEachIncludedType(password, charset []rune) error {
+	types := includedCharTypes(charset)
+	if len(types) == 0 {
+		return nil
+	}
+	positions := make([]int, len(password))
+	for i := range positions {
+		positions[i] = i
+	}
+	for i := len(positions) - 1; i > 0; i-- {
+		j, err := randIndex(i + 1)
+		if err != nil {
+			return err
+		}
+		positions[i], positions[j] = positions[j], positions[i]
+	}
+	for i, chars := range types {
+		if i >= len(positions) {
+			break
+		}
+		j, err := randIndex(len(chars))
+		if err != nil {
+			return err
+		}
+		password[positions[i]] = chars[j]
+	}
+	return nil
+}
+
+// includedCharTypes partitions an already-filtered charset into the four types
+// AWS names — uppercase, lowercase, number, punctuation — dropping any the
+// exclusions emptied. A space is not one of them: IncludeSpace widens the
+// alphabet without adding a type that must appear.
+func includedCharTypes(charset []rune) [][]rune {
+	var upper, lower, digit, punct []rune
+	for _, c := range charset {
+		switch {
+		case c >= 'A' && c <= 'Z':
+			upper = append(upper, c)
+		case c >= 'a' && c <= 'z':
+			lower = append(lower, c)
+		case c >= '0' && c <= '9':
+			digit = append(digit, c)
+		case c == ' ':
+		default:
+			punct = append(punct, c)
+		}
+	}
+	types := make([][]rune, 0, 4)
+	for _, chars := range [][]rune{upper, lower, digit, punct} {
+		if len(chars) > 0 {
+			types = append(types, chars)
+		}
+	}
+	return types
+}
+
+// randIndex returns a uniform random index in [0, n).
+func randIndex(n int) (int, error) {
+	v, err := rand.Int(rand.Reader, big.NewInt(int64(n)))
+	if err != nil {
+		return 0, err
+	}
+	return int(v.Int64()), nil
 }
 
 func (h *Handler) batchGetSecretValueTyped(ctx context.Context, req *batchGetSecretValueRequest) (*batchGetSecretValueResponse, *protocol.AWSError) {

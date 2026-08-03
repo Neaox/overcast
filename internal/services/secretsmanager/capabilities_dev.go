@@ -20,7 +20,7 @@ func init() {
 		capabilities.Capability{Service: "secretsmanager", Operation: "UpdateSecretVersionStage", Category: "Rotation", Status: capabilities.StatusSupported, Notes: "Moves staging labels between versions"},
 		capabilities.Capability{Service: "secretsmanager", Operation: "TagResource", Category: "Tags", Status: capabilities.StatusSupported, Notes: "Merge/overwrite tags"},
 		capabilities.Capability{Service: "secretsmanager", Operation: "UntagResource", Category: "Tags", Status: capabilities.StatusSupported, Notes: "Removes specified tag keys"},
-		capabilities.Capability{Service: "secretsmanager", Operation: "GetRandomPassword", Category: "Password", Status: capabilities.StatusSupported, Notes: "Configurable length + exclusions"},
+		capabilities.Capability{Service: "secretsmanager", Operation: "GetRandomPassword", Category: "Password", Status: capabilities.StatusSupported, Notes: "Length, exclusions, RequireEachIncludedType"},
 		capabilities.Capability{Service: "secretsmanager", Operation: "GetResourcePolicy", Category: "Policy/Misc", Status: capabilities.StatusSupported, Notes: "Stored policy; not evaluated (#496)"},
 		capabilities.Capability{Service: "secretsmanager", Operation: "PutResourcePolicy", Category: "Policy/Misc", Status: capabilities.StatusSupported, Notes: "Validated + stored; not evaluated (#496)"},
 		capabilities.Capability{Service: "secretsmanager", Operation: "DeleteResourcePolicy", Category: "Policy/Misc", Status: capabilities.StatusSupported, Notes: "Removes the stored policy"},
