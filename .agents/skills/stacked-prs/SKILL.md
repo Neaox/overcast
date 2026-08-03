@@ -144,6 +144,36 @@ their owning commands.
 
 ---
 
+## Merging — `gh pr merge` does not work on a stack
+
+A PR that belongs to a stack is refused by both `gh pr merge` (GraphQL) and the
+plain REST merge endpoint, with `403 Merging stacked PRs via this endpoint is
+not supported. Use the asynchronous merge endpoint instead.` This contradicts
+the merge instructions everywhere else in the repo, and the error gives no hint
+that stack membership is the reason.
+
+Merge the bottom PR with the asynchronous endpoint, then poll the UUID it hands
+back until it reports `merged`:
+
+```sh
+gh api -X PUT repos/Neaox/overcast/pulls/<n>/merge-async -f merge_method=squash
+# => {"status":"pending","details":{"uuid":"…","expected_head_sha":"…"}}
+
+gh api repos/Neaox/overcast/pulls/<n>/merge-async/<uuid>
+# => {"status":"merged","details":{"sha":"…"}}
+```
+
+It takes `commit_title`, `commit_message`, `sha` (guard against the head moving)
+and `merge_action` as well. Results are retained for 24 hours. `gh stack merge`
+merges a whole stack in one go and is the better choice when every layer is
+ready; the endpoint above is for landing one layer at a time, which is what this
+repo does so each squash lands as its own reviewed commit.
+
+Auto-merge and stacks do not mix: `gh stack link` refuses a PR that has
+auto-merge enabled (`cannot be added to a stack: it has auto-merge enabled`).
+Turn it off with `gh pr merge <n> --disable-auto` before linking, and merge that
+layer by hand afterwards.
+
 ## Reviewing and landing a stack
 
 - Each PR in the stack still answers the changelog question on its own — see

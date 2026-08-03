@@ -365,6 +365,15 @@ Four rules, each of which has cost this repo a recovery:
 - **After anything in the stack merges, `gh stack sync`** (or fetch and reset to
   the remote) — GitHub has already rebased the branches above, so a local
   `git rebase` replays commits the server dropped.
+- **A PR in a stack cannot be merged with `gh pr merge`.** Both it and the plain
+  REST merge endpoint answer `403 Merging stacked PRs via this endpoint is not
+  supported`. Use the asynchronous endpoint and poll the UUID it returns:
+
+  ```sh
+  gh api -X PUT repos/Neaox/overcast/pulls/<n>/merge-async -f merge_method=squash
+  gh api repos/Neaox/overcast/pulls/<n>/merge-async/<uuid>   # until "status":"merged"
+  ```
+
 - **A PR showing no checks at all is `CONFLICTING`, not queued** — GitHub
   dispatches no workflows on a conflicting PR. Check `mergeStateStatus` before
   waiting on CI.
