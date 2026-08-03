@@ -47,7 +47,7 @@ concentrated in exactly five services that are Tier 1 end-to-end — see §5.3.
 | 7 | Auto Scaling real reconciliation | Tier 1 (fully inert — 19/19 ops `StatusInert`) | Desired-capacity CRUD only; no instance launch/terminate loop against the existing EC2 service; pairs with #6 for alarm-driven scaling |
 | 8 | API Gateway usage-plan throttle/quota enforcement — **done 2026-08-03 (#472)** | Comprehensive, complete | Throttle and quota are now measured per (plan, API key) and readable through `GetUsage`; rejection is behind `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE`, default off |
 | 9 | Secrets Manager rotation + resource policies | Core (14/21 ops Supported) | `RotateSecret` is "Config only (no Lambda invocation)" and all four resource-policy ops are 501 stubs — rotation is the headline Secrets Manager feature |
-| 10 | Pipes: sources/targets beyond DDB→SQS | Minimal-stub | Hard-coded to "only the DynamoDB Streams → SQS path" ([pipes/service.go:3-5](../../internal/services/pipes/service.go)); sequenced after #1 because it needs the same target-delivery code EventBridge Rules needs |
+| 10 | Pipes: sources/targets beyond DDB→SQS | **Core — done 2026-08-03 (#470)** | Was: hard-coded to "only the DynamoDB Streams → SQS path", with every other combination stored and silently inert. Now runs DynamoDB Streams / Kinesis / SQS sources, an optional Lambda enrichment, and Lambda/SQS/SNS/Step Functions/Kinesis/Firehose/EventBridge-bus targets through [internal/eventtarget](../../internal/eventtarget); anything else is refused at `CreatePipe`/`UpdatePipe` time |
 
 ## 2. Scoring rubric
 
@@ -243,15 +243,25 @@ Dependencies: none hard-blocking, but Task integrations are only as good as the 
 why the item sits in the same wave as EventBridge fan-out (both need "invoke Lambda/SQS/SNS/DynamoDB from
 inside an event/workflow handler," which is worth building once, shared).
 
-**4. Pipes: sources/targets beyond DynamoDB Streams→SQS** — Minimal-stub → Core
-Score: usage 2, leverage 3, fit 4, cost M, dep-ready 3 (**unblocked as of 2026-08-03**), risk low.
-Sequenced last in this wave specifically because it shares the target-dispatch code Wave 1 item 1 builds
-for EventBridge Rules — building it twice is the wrong order. That code now exists as
-[internal/eventtarget](../../internal/eventtarget): `Classify` resolves an ARN to a target type,
-`Dispatcher.Deliver` reaches the Lambda/SQS/SNS/Step Functions/Kinesis/Firehose sinks, and
-`InputTransformer`/`SelectPath` cover the input shaping Pipes needs too. Definition of done: Kinesis stream and SQS queue as additional
-sources; Lambda, Step Functions, and EventBridge bus as additional targets; enrichment step (optional
-Lambda invoke between source and target).
+**4. Pipes: sources/targets beyond DynamoDB Streams→SQS** — Minimal-stub → Core — **done 2026-08-03 (#470)**
+Score: usage 2, leverage 3, fit 4, cost M, dep-ready 3 (unblocked by #467), risk low.
+Status: shipped. Sequenced last in this wave specifically because it shares the target-dispatch code Wave 1
+item 1 built for EventBridge Rules — building it twice was the wrong order. Delivery goes through
+[internal/eventtarget](../../internal/eventtarget) rather than a second copy of it: `Classify` resolves the
+target ARN, `Dispatcher.Deliver` reaches every sink, and `PathTemplate`/`SelectPath` render the Pipes
+`InputTemplate`. Pipes needed one addition to that seam — an EventBridge event-bus sink (with a hop budget
+so bus-to-bus forwarding cannot recurse) and a `RequestResponse` Lambda invocation type, both of which the
+EventBridge caller gains too.
+What shipped: Kinesis stream and SQS queue sources (polled on the injected clock in one bounded, stoppable
+loop), a Lambda enrichment whose return value replaces the batch and whose empty response drops it, and
+Lambda/SQS/SNS/Step Functions/Kinesis/Firehose/EventBridge-bus targets. Batches map onto targets AWS's way:
+a target with a batch API gets one entry per record, Lambda and Step Functions get the whole JSON array.
+Every source/target/enrichment combination the emulator cannot run is refused at `CreatePipe`/`UpdatePipe`
+with a `ValidationException` naming the field (§2.1) — including `FilterCriteria`, which is not evaluated.
+The web console gained a pipe detail view showing each leg's resolved type, recent executions, and whether
+the pipe is wired or merely stored.
+Historical current state (for the reasoning above): a pipe accepted any pair of ARNs and only the DynamoDB
+Streams → SQS path did anything.
 
 ### Wave 2 — Enforcement & guardrails
 

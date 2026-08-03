@@ -19,6 +19,7 @@ import software.amazon.awssdk.services.elasticache.ElastiCacheClient;
 import software.amazon.awssdk.services.eventbridge.EventBridgeClient;
 import software.amazon.awssdk.services.iam.IamClient;
 import software.amazon.awssdk.services.kinesis.KinesisClient;
+import software.amazon.awssdk.services.pipes.PipesClient;
 import software.amazon.awssdk.services.kms.KmsClient;
 import software.amazon.awssdk.services.lambda.LambdaAsyncClient;
 import software.amazon.awssdk.services.lambda.LambdaClient;
@@ -73,6 +74,7 @@ public final class AwsClients {
     private volatile CloudWatchLogsClient cloudWatchLogs;
     private volatile SesClient ses;
     private volatile EventBridgeClient eventBridge;
+    private volatile PipesClient pipes;
     private volatile CloudFormationClient cloudFormation;
     private volatile Ec2Client ec2;
     private volatile EcsClient ecs;
@@ -336,6 +338,22 @@ public final class AwsClients {
             }
         }
         return eventBridge;
+    }
+
+    public PipesClient pipes() {
+        if (pipes == null) {
+            synchronized (this) {
+                if (pipes == null) {
+                    pipes = PipesClient.builder()
+                            .endpointOverride(endpoint)
+                            .region(region)
+                            .credentialsProvider(credentials)
+                            .httpClient(UrlConnectionHttpClient.create())
+                            .build();
+                }
+            }
+        }
+        return pipes;
     }
 
     public CloudFormationClient cloudFormation() {

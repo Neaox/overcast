@@ -45,7 +45,27 @@ const (
 	KindKinesis       Kind = "kinesis"
 	KindFirehose      Kind = "firehose"
 	KindECS           Kind = "ecs"
+	KindEventBus      Kind = "events"
 )
+
+// Lambda invocation types, as the Invoke API spells them.
+const (
+	// InvocationEvent is an asynchronous invoke. It is the zero value, and the
+	// invocation type EventBridge rule targets use.
+	InvocationEvent = ""
+	// InvocationRequestResponse waits for the function's result, so a handled
+	// function error becomes a delivery failure. EventBridge Pipes uses it.
+	InvocationRequestResponse = "RequestResponse"
+)
+
+// maxBusHops caps how many event-bus deliveries one delivery may chain.
+//
+// A bus target whose own rules target another bus is a cycle. Real EventBridge
+// tolerates one because delivery there is asynchronous; here every hop is a
+// nested in-process call, so an unbounded cycle would exhaust the stack.
+// Beyond the budget the delivery fails and the caller reports it, which is the
+// same treatment any other undeliverable target gets.
+const maxBusHops = 4
 
 // ErrMalformedARN is returned by Classify for a value that is not an ARN at
 // all. AWS performs this shape check synchronously when a target is added.
@@ -74,6 +94,7 @@ var displayNames = map[Kind]string{
 	KindKinesis:       "Kinesis",
 	KindFirehose:      "Firehose",
 	KindECS:           "ECS",
+	KindEventBus:      "EventBridge event bus",
 }
 
 // DisplayName returns the human label for a kind ("Step Functions" for
@@ -96,7 +117,7 @@ func Classify(arn string) (Kind, error) {
 		return "", ErrMalformedARN
 	}
 	switch Kind(svc) {
-	case KindLambda, KindSQS, KindSNS, KindStepFunctions, KindKinesis, KindFirehose, KindECS:
+	case KindLambda, KindSQS, KindSNS, KindStepFunctions, KindKinesis, KindFirehose, KindECS, KindEventBus:
 		return Kind(svc), nil
 	}
 	return "", &UnsupportedKindError{Service: svc}
@@ -165,8 +186,31 @@ type Request struct {
 	ExecutionName string
 	// MessageGroupID sets the SQS FIFO message group. Optional.
 	MessageGroupID string
+	// MessageDeduplicationID sets the SQS FIFO deduplication ID. Optional.
+	MessageDeduplicationID string
 	// Subject sets the SNS message subject. Optional.
 	Subject string
+
+	// InvocationType selects how a Lambda target is invoked:
+	// InvocationRequestResponse waits for the result and turns a function error
+	// into a delivery failure, and the zero value invokes asynchronously.
+	// Ignored by every other kind.
+	InvocationType string
+
+	// Source, DetailType and Resources populate the PutEvents entry an
+	// EventBridge event-bus target receives. Ignored by every other kind.
+	Source     string
+	DetailType string
+	Resources  []string
+}
+
+// busHopKey counts nested event-bus deliveries on a delivery's context.
+type busHopKey struct{}
+
+// busHops reports how many event-bus deliveries ctx is already nested inside.
+func busHops(ctx context.Context) int {
+	hops, _ := ctx.Value(busHopKey{}).(int)
+	return hops
 }
 
 // Dispatcher delivers payloads to target ARNs through a root http.Handler.
@@ -216,6 +260,8 @@ func (d *Dispatcher) Deliver(ctx context.Context, req Request) error {
 		return d.deliverKinesis(ctx, req)
 	case KindFirehose:
 		return d.deliverFirehose(ctx, req)
+	case KindEventBus:
+		return d.deliverEventBus(ctx, req)
 	case KindECS:
 		// ECS RunTask has no generic payload shape: the caller owns the body,
 		// built from its own target parameters. EventBridge dispatches it
@@ -226,8 +272,10 @@ func (d *Dispatcher) Deliver(ctx context.Context, req Request) error {
 	}
 }
 
-// deliverLambda invokes the function asynchronously, the invocation type real
-// EventBridge uses for Lambda targets (the rule does not wait for a result).
+// deliverLambda invokes the function. The default is asynchronous, the
+// invocation type real EventBridge uses for Lambda targets (the rule does not
+// wait for a result); a caller that needs the result — EventBridge Pipes
+// invokes its Lambda target with REQUEST_RESPONSE — asks for it on the Request.
 func (d *Dispatcher) deliverLambda(ctx context.Context, req Request) error {
 	name := FunctionName(req.ARN)
 	path := "/2015-03-31/functions/" + url.PathEscape(name) + "/invocations"
@@ -235,9 +283,23 @@ func (d *Dispatcher) deliverLambda(ctx context.Context, req Request) error {
 	if err != nil {
 		return err
 	}
+	invocation := "Event"
+	if req.InvocationType == InvocationRequestResponse {
+		invocation = InvocationRequestResponse
+	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Amz-Invocation-Type", "Event")
-	return d.do(httpReq)
+	httpReq.Header.Set("X-Amz-Invocation-Type", invocation)
+
+	rec, err := d.send(httpReq)
+	if err != nil {
+		return err
+	}
+	// A handled function error answers 200 and names itself in a header, so it
+	// is invisible to the status check every other sink relies on.
+	if fnErr := rec.Header().Get("X-Amz-Function-Error"); fnErr != "" {
+		return fmt.Errorf("lambda function error (%s): %s", fnErr, strings.TrimSpace(rec.Body.String()))
+	}
+	return nil
 }
 
 func (d *Dispatcher) deliverSQS(ctx context.Context, req Request) error {
@@ -248,7 +310,29 @@ func (d *Dispatcher) deliverSQS(ctx context.Context, req Request) error {
 	if req.MessageGroupID != "" {
 		body["MessageGroupId"] = req.MessageGroupID
 	}
+	if req.MessageDeduplicationID != "" {
+		body["MessageDeduplicationId"] = req.MessageDeduplicationID
+	}
 	return d.InvokeJSONTarget(ctx, "AmazonSQS.SendMessage", body)
+}
+
+// deliverEventBus puts the payload on another EventBridge bus as one PutEvents
+// entry, carrying the payload verbatim as the entry's Detail.
+func (d *Dispatcher) deliverEventBus(ctx context.Context, req Request) error {
+	if hops := busHops(ctx); hops >= maxBusHops {
+		return fmt.Errorf("eventtarget: event-bus delivery exceeded the %d hop budget — the buses are forwarding in a cycle", maxBusHops)
+	}
+	entry := map[string]any{
+		"EventBusName": ResourceName(req.ARN),
+		"Source":       req.Source,
+		"DetailType":   req.DetailType,
+		"Detail":       string(req.Payload),
+	}
+	if len(req.Resources) > 0 {
+		entry["Resources"] = req.Resources
+	}
+	ctx = context.WithValue(ctx, busHopKey{}, busHops(ctx)+1)
+	return d.InvokeJSONTarget(ctx, "AWSEvents.PutEvents", map[string]any{"Entries": []any{entry}})
 }
 
 // deliverSNS publishes through the AWS Query protocol, the only wire format
@@ -332,10 +416,19 @@ func (d *Dispatcher) newRequest(ctx context.Context, method, path string, body [
 // do runs the request against the root router and turns any non-2xx response
 // into an error carrying the sink's own message.
 func (d *Dispatcher) do(req *http.Request) error {
+	_, err := d.send(req)
+	return err
+}
+
+// send runs the request against the root router and returns the recorded
+// response. A non-2xx status is an error carrying the sink's own message; the
+// recorder is returned as well for the one sink (Lambda) that reports failure
+// in a header rather than the status.
+func (d *Dispatcher) send(req *http.Request) (*httptest.ResponseRecorder, error) {
 	rec := httptest.NewRecorder()
 	d.router.ServeHTTP(rec, req)
 	if rec.Code >= 400 {
-		return fmt.Errorf("HTTP %d: %s", rec.Code, strings.TrimSpace(rec.Body.String()))
+		return rec, fmt.Errorf("HTTP %d: %s", rec.Code, strings.TrimSpace(rec.Body.String()))
 	}
-	return nil
+	return rec, nil
 }

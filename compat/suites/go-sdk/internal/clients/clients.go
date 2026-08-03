@@ -25,6 +25,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	"github.com/aws/aws-sdk-go-v2/service/pipes"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
@@ -59,6 +60,7 @@ type Clients struct {
 	ssmC         *ssm.Client
 	kinesisC     *kinesis.Client
 	eventbridgeC *eventbridge.Client
+	pipesC       *pipes.Client
 	cfnC         *cloudformation.Client
 	ec2C         *ec2.Client
 	ecsC         *ecs.Client
@@ -253,6 +255,17 @@ func (c *Clients) EventBridge() *eventbridge.Client {
 		c.eventbridgeC = eventbridge.NewFromConfig(cfg)
 	}
 	return c.eventbridgeC
+}
+
+// Pipes returns a lazily-initialised EventBridge Pipes client.
+func (c *Clients) Pipes() *pipes.Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.pipesC == nil {
+		cfg := c.awsCfgLocked()
+		c.pipesC = pipes.NewFromConfig(cfg)
+	}
+	return c.pipesC
 }
 
 // CloudFormation returns a lazily-initialised CloudFormation client.

@@ -17,6 +17,8 @@ export const pipeKeys = {
   all: () => [...endpointStore.getKeys(), "pipes"] as const,
   list: () => [...pipeKeys.all(), "list"] as const,
   pipe: (name: string) => [...pipeKeys.all(), "pipe", name] as const,
+  wiring: () => [...pipeKeys.all(), "wiring"] as const,
+  deliveries: (name: string) => [...pipeKeys.all(), "deliveries", name] as const,
 }
 
 // ─── Query definitions ─────────────────────────────────────────────────────
@@ -35,13 +37,38 @@ export function pipeQueryOptions(name: string) {
   })
 }
 
+/**
+ * Every pipe's resolved source/enrichment/target types and whether the
+ * emulator can actually run the combination. The list and detail views both
+ * read it, so a pipe that is stored but inert is never shown as if it were
+ * running.
+ */
+export function pipeWiringQueryOptions() {
+  return queryOptions({
+    queryKey: pipeKeys.wiring(),
+    queryFn: () => pipes.listWiring(),
+  })
+}
+
+/** Recent executions of one pipe, newest first. */
+export function pipeDeliveriesQueryOptions(name: string) {
+  return queryOptions({
+    queryKey: pipeKeys.deliveries(name),
+    queryFn: () => pipes.listDeliveries(name),
+  })
+}
+
 // ─── Mutation definitions ──────────────────────────────────────────────────
 
 export function createPipeMutationOptions() {
   return mutationOptions({
     mutationKey: [...pipeKeys.all(), "create"] as const,
-    mutationFn: (opts: { name: string; sourceArn: string; targetArn: string }) =>
-      pipes.createPipe(opts.name, opts.sourceArn, opts.targetArn),
+    mutationFn: (opts: {
+      name: string
+      sourceArn: string
+      targetArn: string
+      enrichmentArn?: string
+    }) => pipes.createPipe(opts.name, opts.sourceArn, opts.targetArn, opts.enrichmentArn),
   })
 }
 

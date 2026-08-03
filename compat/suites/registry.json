@@ -1629,6 +1629,50 @@
       ]
     },
     {
+      "service": "pipes",
+      "name": "pipes-wiring",
+      "tests": [
+        {
+          "name": "CreatePipe"
+        },
+        {
+          "name": "DescribePipe",
+          "depends": [
+            "CreatePipe"
+          ]
+        },
+        {
+          "name": "ListPipes",
+          "depends": [
+            "CreatePipe"
+          ]
+        },
+        {
+          "name": "CreatePipeRejectsUnsupportedTarget",
+          "op": "CreatePipe"
+        },
+        {
+          "name": "PipeDeliversToTarget",
+          "op": "CreatePipe",
+          "depends": [
+            "CreatePipe"
+          ]
+        },
+        {
+          "name": "UpdatePipe",
+          "depends": [
+            "CreatePipe"
+          ]
+        },
+        {
+          "name": "DeletePipe",
+          "depends": [
+            "CreatePipe"
+          ]
+        }
+      ]
+    },
+    {
       "service": "eventbridge",
       "name": "eventbridge-buses",
       "tests": [

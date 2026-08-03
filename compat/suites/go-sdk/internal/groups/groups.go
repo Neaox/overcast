@@ -41,6 +41,7 @@ func All(c *clients.Clients) []ServiceGroup {
 		CloudFront(c),
 		RDS(c),
 		StepFunctions(c),
+		Pipes(c),
 		WAF(c),
 		Shield(c),
 		ElastiCache(c),

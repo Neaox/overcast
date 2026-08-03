@@ -114,6 +114,10 @@ class Clients:
         return self._get("events")
 
     @property
+    def pipes(self):
+        return self._get("pipes")
+
+    @property
     def elasticache(self):
         return self._get("elasticache")
 

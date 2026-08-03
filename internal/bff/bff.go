@@ -160,6 +160,8 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	r.Get("/api/rds/instances/{id}/logs", handleRDSLogs)
 	r.Get("/api/eventbridge/deliveries", handleEventBridgeDeliveries)
 	r.Get("/api/eventbridge/rule-targets", handleEventBridgeRuleTargets)
+	r.Get("/api/pipes/wiring", handlePipeWiring)
+	r.Get("/api/pipes/deliveries", handlePipeDeliveries)
 
 	// ── SSE proxy ─────────────────────────────────────────────────────────
 	r.Get("/api/events", handleEvents)
@@ -1210,18 +1212,32 @@ func handleECSClusterTasks(w http.ResponseWriter, r *http.Request) {
 // outcome feed, so the bus view can say why an event did or did not reach a
 // target.
 func handleEventBridgeDeliveries(w http.ResponseWriter, r *http.Request) {
-	proxyEventBridgeConsole(w, r, "/_overcast/eventbridge/deliveries", "bus", "rule", "limit")
+	proxyConsoleFeed(w, r, "/_overcast/eventbridge/deliveries", "bus", "rule", "limit")
 }
 
 // handleEventBridgeRuleTargets proxies each rule's targets with their resolved
 // target type.
 func handleEventBridgeRuleTargets(w http.ResponseWriter, r *http.Request) {
-	proxyEventBridgeConsole(w, r, "/_overcast/eventbridge/rule-targets", "bus")
+	proxyConsoleFeed(w, r, "/_overcast/eventbridge/rule-targets", "bus")
 }
 
-// proxyEventBridgeConsole forwards a console GET to the emulator, passing
-// through only the named query parameters and the caller's region.
-func proxyEventBridgeConsole(w http.ResponseWriter, r *http.Request, path string, params ...string) {
+// ── EventBridge Pipes ──────────────────────────────────────────────────────
+
+// handlePipeWiring proxies each pipe's resolved source, enrichment and target
+// types, so the pipes view can tell a running pipe from one that is stored but
+// inert.
+func handlePipeWiring(w http.ResponseWriter, r *http.Request) {
+	proxyConsoleFeed(w, r, "/_overcast/pipes/wiring")
+}
+
+// handlePipeDeliveries proxies the console's per-pipe execution feed.
+func handlePipeDeliveries(w http.ResponseWriter, r *http.Request) {
+	proxyConsoleFeed(w, r, "/_overcast/pipes/deliveries", "pipe", "limit")
+}
+
+// proxyConsoleFeed forwards a console GET to the emulator, passing through only
+// the named query parameters and the caller's region.
+func proxyConsoleFeed(w http.ResponseWriter, r *http.Request, path string, params ...string) {
 	ep := resolveEndpoint(r)
 	query := url.Values{}
 	for _, name := range params {
