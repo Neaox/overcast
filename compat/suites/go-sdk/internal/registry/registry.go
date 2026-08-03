@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -237,8 +236,14 @@ func ValidateImpls(reg *Registry, impls ImplMap, suite string) error {
 		}
 	}
 
+	names := make([]string, 0, len(impls))
+	for name := range impls {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
 	var problems []string
-	for _, name := range slices.Sorted(maps.Keys(impls)) {
+	for _, name := range names {
 		switch {
 		case !known[name]:
 			msg := fmt.Sprintf("impl %q matches no registry entry", name)
