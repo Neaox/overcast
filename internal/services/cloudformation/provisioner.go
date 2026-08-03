@@ -709,6 +709,12 @@ func (p *provisioner) updateResource(ctx context.Context, logicalID string, res 
 			}
 			return resourceUpdateOutcome{PhysicalID: physID}, nil
 		}
+		// An update that applied and then failed is terminal — replacing the
+		// resource would neither fix it nor be what AWS does. See updateFailure.
+		var failed updateFailure
+		if errors.As(err, &failed) {
+			return resourceUpdateOutcome{}, err
+		}
 		// Sentinel: fall through to replacement (mirrors AWS "Replacement: Yes"
 		// for properties like resource Name or DynamoDB KeySchema).
 		if !errors.Is(err, errReplacementRequired) {
@@ -1627,6 +1633,22 @@ type resourceUpdater interface {
 // one — which mirrors how AWS CloudFormation handles "Replacement: Yes"
 // property changes.
 var errReplacementRequired = errors.New("cfn: replacement required")
+
+// updateFailure marks an update error the provisioner must answer by failing
+// the resource rather than by replacing it. The default for an update error is
+// replacement, which is right when the update could not be applied — but wrong
+// once it has been: a resource that applied its update and then failed to
+// settle is not fixed by building a second copy of it, and CloudFormation does
+// not try. An ECS service whose new deployment cannot start its tasks is the
+// case this exists for; replacing it would create a second service under a
+// generated name and delete the one that works.
+type updateFailure struct{ err error }
+
+func (e updateFailure) Error() string { return e.err.Error() }
+func (e updateFailure) Unwrap() error { return e.err }
+
+// failUpdate marks err as terminal for the resource — see updateFailure.
+func failUpdate(err error) error { return updateFailure{err: err} }
 
 // asBool coerces a CFN property value (which may be a real bool, a string
 // "true"/"false", or nil) to a boolean. Used in handler Update methods to

@@ -104,19 +104,36 @@ func (h *Handler) handleContainerDied(_ context.Context, e events.Event) {
 	if !ok {
 		return
 	}
-	if svc, aerr := h.store.getService(ctx, parts[0], serviceName); aerr == nil && svc != nil {
-		// Out of the load balancer's rotation first, then replaced.
-		h.deregisterTaskTargets(ctx, svc, task)
-		// The deployment counts it as a failed task, which is what makes a
-		// crash loop visible: failedTasks climbs, the deployment stops
-		// reporting a steady state it is not in, and a circuit breaker trips.
-		h.recordTaskStopFailure(svc, task)
-		if aerr := h.store.putService(ctx, parts[0], svc); aerr != nil {
-			h.log.Warn("ecs: failed to persist service after a task stopped",
-				zap.String("cluster", parts[0]),
-				zap.String("service", serviceName),
-				zap.String("error", aerr.Message))
-		}
-	}
+	h.recordServiceTaskDeath(ctx, parts[0], serviceName, task)
 	h.scheduleServiceReplacement(ctx, region, parts[0], serviceName)
+}
+
+// recordServiceTaskDeath takes a dead task out of its service's target groups
+// and counts it against the deployment that placed it.
+//
+// Under lockService, because this is a read-modify-write of the whole service
+// record and a reconcile of the same service runs concurrently — on the
+// scheduler, on the very replacement this death is about to trigger. Unguarded,
+// the reconcile's write lands on top of the increment and the failure is lost:
+// the count a crash loop is measured by then undercounts, and with it the
+// "unable to consistently start tasks" event and the circuit breaker.
+func (h *Handler) recordServiceTaskDeath(ctx context.Context, clusterName, serviceName string, task *Task) {
+	defer h.lockService(ctx, clusterName, serviceName)()
+
+	svc, aerr := h.store.getService(ctx, clusterName, serviceName)
+	if aerr != nil || svc == nil {
+		return
+	}
+	// Out of the load balancer's rotation first, then replaced.
+	h.deregisterTaskTargets(ctx, svc, task)
+	// The deployment counts it as a failed task, which is what makes a
+	// crash loop visible: failedTasks climbs, the deployment stops
+	// reporting a steady state it is not in, and a circuit breaker trips.
+	h.recordTaskStopFailure(svc, task)
+	if aerr := h.store.putService(ctx, clusterName, svc); aerr != nil {
+		h.log.Warn("ecs: failed to persist service after a task stopped",
+			zap.String("cluster", clusterName),
+			zap.String("service", serviceName),
+			zap.String("error", aerr.Message))
+	}
 }
