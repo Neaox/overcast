@@ -826,18 +826,16 @@ func (h *Handler) stopTaskTyped(ctx context.Context, req *stopTaskRequest) (*sto
 			}
 		}
 	}
-	task.LastStatus = "STOPPED"
-	task.DesiredStatus = "STOPPED"
-	task.StoppedReason = req.Reason
-	task.StopCode = "UserInitiated"
-	stoppedAt := h.clk.Now().Unix()
-	task.StoppedAt = &stoppedAt
-	task.StoppingAt = &stoppedAt
-	for i := range task.Containers {
-		task.Containers[i].LastStatus = "STOPPED"
-	}
-	if aerr := h.store.putTask(ctx, task); aerr != nil {
+	task, _, aerr = h.stopTaskRecord(ctx, clusterName, taskID, taskStop{
+		reason: req.Reason, code: "UserInitiated", stoppingAt: true,
+	})
+	if aerr != nil {
 		return nil, aerr
+	}
+	if task == nil {
+		return nil, &protocol.AWSError{
+			Code: "InvalidParameterException", Message: "The referenced task was not found.", HTTPStatus: http.StatusBadRequest,
+		}
 	}
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.ECSTaskStopped, Payload: events.ResourcePayload{Name: taskID}})

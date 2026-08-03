@@ -56,6 +56,11 @@ type Handler struct {
 	serviceLocksMu sync.Mutex
 	serviceLocks   map[string]*sync.Mutex
 
+	// taskLocks serialises the read-modify-write of one task's record — see
+	// lockTask. Striped rather than keyed, so it needs no initialisation and
+	// does not grow with the tasks a service churns through.
+	taskLocks [taskLockStripes]sync.Mutex
+
 	// endpoint maps AWS resource URLs and hostnames onto an address task
 	// containers can dial. Resolved on first task start — see containerEndpoint.
 	endpoint     *containerendpoint.Mapper

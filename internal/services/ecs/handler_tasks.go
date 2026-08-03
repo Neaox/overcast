@@ -1,6 +1,8 @@
 package ecs
 
-// handler_tasks.go — RunTask, StopTask, DescribeTasks, ListTasks handlers.
+// handler_tasks.go — RunTask, StopTask, DescribeTasks, ListTasks handlers, and
+// the locked read-modify-write of a single task record every writer goes
+// through (lockTask).
 
 import (
 	"bytes"
@@ -18,6 +20,113 @@ import (
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/protocol"
 )
+
+// taskLockStripes is how many mutexes lockTask spreads task records over.
+const taskLockStripes = 64
+
+// lockTask serialises the read-modify-write of one task's record, returning the
+// function that releases it. Same shape and same reason as lockService: a task
+// is stored as one JSON blob, so every writer reads the whole record, edits it
+// and writes the whole record back, and two of them overlapping means the
+// second silently discards the first's edit.
+//
+// The pairing that made this necessary is a stop landing on a task that is
+// still coming up. Every stop path cancels the task's pending PROVISIONING →
+// RUNNING transition before it writes STOPPED, but cancelling only stops a
+// timer that has not fired: a transition already inside its callback has read
+// the task as PROVISIONING, and its write of RUNNING lands after the STOPPED
+// one and resurrects the task. The transition's LastStatus guard narrows that
+// window and cannot close it, because the read and the write are not one step.
+// Holding this lock across both is what closes it.
+//
+// Striped, where lockService keeps one mutex per service, because the two have
+// different lifetimes: services are few and long-lived, while a service in a
+// crash loop replaces its tasks for as long as it runs, so a mutex per task ID
+// would grow for the life of the process. Two tasks that share a stripe
+// serialise needlessly; a critical section here is one read and one write of a
+// single record, with container teardown deliberately left outside it.
+//
+// Region is not part of the key. Task IDs are UUIDs, so cluster and ID identify
+// a task on their own, and leaving the region out lets the Docker exit notifier
+// take the lock before it has scanned for the region the task is stored under.
+//
+// Lock ordering is service-then-task, never the reverse: stopServiceTasks takes
+// a task lock while reconcile holds the service lock, so anything holding a
+// task lock must release it before it locks a service.
+func (h *Handler) lockTask(clusterName, taskID string) func() {
+	mu := &h.taskLocks[taskLockStripe(clusterName+"/"+taskID)]
+	mu.Lock()
+	return mu.Unlock
+}
+
+// taskLockStripe picks a task's stripe by FNV-1a. Hand-rolled rather than
+// seeded (hash/maphash) so a zero-value Handler — which several tests build —
+// needs no initialisation to be safe to lock.
+func taskLockStripe(key string) uint32 {
+	const (
+		offset32 = 2166136261
+		prime32  = 16777619
+	)
+	sum := uint32(offset32)
+	for i := 0; i < len(key); i++ {
+		sum ^= uint32(key[i])
+		sum *= prime32
+	}
+	return sum % taskLockStripes
+}
+
+// taskStop is what a stop path records on a task's record.
+type taskStop struct {
+	reason string
+	code   string
+	// stoppingAt stamps stoppingAt as well as stoppedAt. Only the
+	// caller-initiated paths do; the service scheduler's stops never have, and
+	// changing that is a wire change rather than part of closing a race.
+	stoppingAt bool
+}
+
+// stopTaskRecord writes a stop onto one task's record under lockTask, and
+// returns the stored task so the caller can tear its containers down outside
+// the lock. changed is false when there was nothing left to stop.
+//
+// It re-reads the task inside the lock rather than writing back the copy the
+// caller already had: that copy predates the lock, so it can be missing a
+// transition to RUNNING that landed in between, and writing it back would undo
+// more than the status.
+//
+// A task that is already STOPPED is left exactly as it is. One that died on its
+// own between the caller's read and this write keeps the stop code and reason
+// it died with — overwriting them would file a container that exited on its own
+// under the stopper's name and take a deployment failure off the books, which
+// is the same mistake the exit notifier avoids in the other direction.
+func (h *Handler) stopTaskRecord(ctx context.Context, clusterName, taskID string, stop taskStop) (task *Task, changed bool, aerr *protocol.AWSError) {
+	defer h.lockTask(clusterName, taskID)()
+
+	task, aerr = h.store.getTask(ctx, clusterName, taskID)
+	if aerr != nil || task == nil {
+		return nil, false, aerr
+	}
+	if task.LastStatus == "STOPPED" {
+		return task, false, nil
+	}
+
+	task.LastStatus = "STOPPED"
+	task.DesiredStatus = "STOPPED"
+	task.StoppedReason = stop.reason
+	task.StopCode = stop.code
+	stoppedAt := h.clk.Now().Unix()
+	task.StoppedAt = &stoppedAt
+	if stop.stoppingAt {
+		task.StoppingAt = &stoppedAt
+	}
+	for i := range task.Containers {
+		task.Containers[i].LastStatus = "STOPPED"
+	}
+	if aerr := h.store.putTask(ctx, task); aerr != nil {
+		return nil, false, aerr
+	}
+	return task, true, nil
+}
 
 // RunTask handles AmazonEC2ContainerServiceV20141113.RunTask.
 func (h *Handler) RunTask(w http.ResponseWriter, r *http.Request) {
@@ -417,34 +526,53 @@ func (h *Handler) scheduleRunningTransition(region, clusterName, taskID string) 
 	capturedCluster := clusterName
 	capturedTaskID := taskID
 	h.scheduler.AfterScoped(region, taskID, "pending", 200*time.Millisecond, func(ctx context.Context) {
-		got, aerr := h.store.getTask(ctx, capturedCluster, capturedTaskID)
-		if aerr != nil || got == nil {
+		started := h.applyRunningTransition(ctx, capturedCluster, capturedTaskID)
+		if started == nil {
 			return
 		}
-		if got.LastStatus != "PROVISIONING" && got.LastStatus != "PENDING" {
-			return
-		}
-		got.LastStatus = "RUNNING"
-		startedAt := h.clk.Now().Unix()
-		got.StartedAt = &startedAt
-		for i := range got.Containers {
-			got.Containers[i].LastStatus = "RUNNING"
-		}
-		// A running awsvpc task's ENI is ATTACHED, not still ATTACHING — that
-		// is the status callers wait on before treating the address as usable.
-		for i := range got.Attachments {
-			if got.Attachments[i].Type == "ElasticNetworkInterface" && got.Attachments[i].Status == "ATTACHING" {
-				got.Attachments[i].Status = "ATTACHED"
-			}
-		}
-		h.store.putTask(ctx, got) //nolint:errcheck
 		if h.bus != nil {
 			h.bus.Publish(ctx, events.Event{Type: events.ECSTaskStarted, Payload: events.ResourcePayload{Name: capturedTaskID}})
 		}
-		if serviceName, ok := serviceNameFromGroup(got.Group); ok {
+		if serviceName, ok := serviceNameFromGroup(started.Group); ok {
 			h.reconcile(ctx, capturedCluster, serviceName)
 		}
 	})
+}
+
+// applyRunningTransition moves one task from PROVISIONING/PENDING to RUNNING,
+// returning the stored task, or nil when the task is gone or has already left
+// those states — a task stopped while it was coming up must stay stopped.
+//
+// Under lockTask, and the lock is released before the caller reconciles the
+// owning service: the read and the write are one step, and the ordering stays
+// service-then-task. See lockTask.
+func (h *Handler) applyRunningTransition(ctx context.Context, clusterName, taskID string) *Task {
+	defer h.lockTask(clusterName, taskID)()
+
+	got, aerr := h.store.getTask(ctx, clusterName, taskID)
+	if aerr != nil || got == nil {
+		return nil
+	}
+	if got.LastStatus != "PROVISIONING" && got.LastStatus != "PENDING" {
+		return nil
+	}
+	got.LastStatus = "RUNNING"
+	startedAt := h.clk.Now().Unix()
+	got.StartedAt = &startedAt
+	for i := range got.Containers {
+		got.Containers[i].LastStatus = "RUNNING"
+	}
+	// A running awsvpc task's ENI is ATTACHED, not still ATTACHING — that
+	// is the status callers wait on before treating the address as usable.
+	for i := range got.Attachments {
+		if got.Attachments[i].Type == "ElasticNetworkInterface" && got.Attachments[i].Status == "ATTACHING" {
+			got.Attachments[i].Status = "ATTACHED"
+		}
+	}
+	if aerr := h.store.putTask(ctx, got); aerr != nil {
+		return nil
+	}
+	return got
 }
 
 // StopTask handles AmazonEC2ContainerServiceV20141113.StopTask.
@@ -496,19 +624,19 @@ func (h *Handler) StopTask(w http.ResponseWriter, r *http.Request) {
 	// Record the stop before touching the containers: killing them raises a
 	// Docker die event whose handler races this write, and a caller-initiated
 	// stop that loses the race is reported as a task that died on its own.
-	task.LastStatus = "STOPPED"
-	task.DesiredStatus = "STOPPED"
-	task.StoppedReason = req.Reason
-	task.StopCode = "UserInitiated"
-	stoppedAt := h.clk.Now().Unix()
-	task.StoppedAt = &stoppedAt
-	task.StoppingAt = &stoppedAt
-	for i := range task.Containers {
-		task.Containers[i].LastStatus = "STOPPED"
-	}
-
-	if aerr := h.store.putTask(r.Context(), task); aerr != nil {
+	task, _, aerr = h.stopTaskRecord(r.Context(), clusterName, taskID, taskStop{
+		reason: req.Reason, code: "UserInitiated", stoppingAt: true,
+	})
+	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if task == nil {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code:       "InvalidParameterException",
+			Message:    "The referenced task was not found.",
+			HTTPStatus: http.StatusBadRequest,
+		})
 		return
 	}
 
