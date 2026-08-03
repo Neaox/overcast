@@ -326,6 +326,13 @@ out — `scripts/release-candidate-check.sh` printing `true` is the definition o
 this window. Publishing itself always waits for the maintainer's approval of
 the `release` environment.
 
+Run it on `main`, or on a branch that has not touched `VERSION`. The script
+reads the *checked-out* `VERSION`, so on a release branch it prints `true`
+because that branch carries the new version — which says the branch is a
+release candidate, not that the window is open. Conflating the two is what put
+the wrong changelog-gate comment on
+[#563](https://github.com/Neaox/overcast/pull/563).
+
 **Never enable auto-merge on a release-prep PR.** Do not run `gh pr merge --auto`
 against a PR that changes `VERSION`, and do not enable auto-merge on it through
 the web UI. Auto-merge is fine for ordinary PRs, where letting the required

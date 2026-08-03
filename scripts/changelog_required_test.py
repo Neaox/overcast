@@ -160,6 +160,110 @@ class ExemptTest(unittest.TestCase):
 		self.assertEqual([], gate.in_scope([]))
 
 
+CHANGELOG = """\
+# Changelog
+
+## [Unreleased]
+
+## [0.0.1-alpha.29] - 2026-08-03
+
+### Fixed
+
+- **SQS** — `ReceiveMessage` returns an empty result after a long-poll timeout
+
+## [0.0.1-alpha.28] - 2026-07-30
+
+### Added
+
+- **EFS** — NFS mount targets
+"""
+
+RELEASE_PR_PATHS = [
+	"VERSION",
+	"CHANGELOG.md",
+	".changelog/20260803-sqs-long-poll.md",
+	".changelog/20260803-efs-mount-targets.md",
+]
+
+
+class ReleasePrTest(unittest.TestCase):
+	def is_release_pr(self, paths: list[str], *, candidate: bool = True, version: str = "0.0.1-alpha.29", changelog: str = CHANGELOG) -> bool:
+		return gate.release_pr(paths, candidate=candidate, version=version, changelog=changelog)
+
+	def test_the_release_pr(self) -> None:
+		self.assertTrue(self.is_release_pr(RELEASE_PR_PATHS))
+
+	def test_a_first_release_with_no_fragments_to_consume(self) -> None:
+		self.assertTrue(self.is_release_pr(["VERSION", "CHANGELOG.md"]))
+
+	def test_leading_dot_slash_is_the_same_path(self) -> None:
+		self.assertTrue(self.is_release_pr([f"./{path}" for path in RELEASE_PR_PATHS]))
+
+	# The one that matters: a release branch is an ordinary branch, and a late
+	# fix pushed onto it ships. One file outside the release's own three and
+	# the PR owes a fragment like any other.
+	def test_one_code_file_on_the_branch_puts_it_back_in_scope(self) -> None:
+		self.assertFalse(
+			self.is_release_pr([*RELEASE_PR_PATHS, "internal/services/sqs/handlers.go"])
+		)
+
+	def test_even_an_otherwise_exempt_file_puts_it_back_in_scope(self) -> None:
+		self.assertFalse(self.is_release_pr([*RELEASE_PR_PATHS, "compat/suites/registry.json"]))
+
+	def test_a_version_bump_with_no_section_is_not_a_release(self) -> None:
+		self.assertFalse(self.is_release_pr(RELEASE_PR_PATHS, version="0.0.1-alpha.30"))
+
+	def test_an_empty_section_is_not_a_release(self) -> None:
+		self.assertFalse(
+			self.is_release_pr(
+				RELEASE_PR_PATHS,
+				changelog="# Changelog\n\n## [0.0.1-alpha.29] - 2026-08-03\n\n### Fixed\n\n## [0.0.1-alpha.28]\n\n- something\n",
+			)
+		)
+
+	# A revert of VERSION to a version already tagged is not a release, however
+	# much of the changelog it touches.
+	def test_an_already_published_version_is_not_a_release(self) -> None:
+		self.assertFalse(self.is_release_pr(RELEASE_PR_PATHS, candidate=False))
+
+	def test_changelog_alone_is_not_a_release(self) -> None:
+		self.assertFalse(self.is_release_pr(["CHANGELOG.md"]))
+
+	def test_version_alone_is_not_a_release(self) -> None:
+		self.assertFalse(self.is_release_pr(["VERSION"]))
+
+	def test_an_unreadable_changelog_is_not_a_release(self) -> None:
+		self.assertFalse(self.is_release_pr(RELEASE_PR_PATHS, changelog=""))
+
+	def test_no_version_is_not_a_release(self) -> None:
+		self.assertFalse(self.is_release_pr(RELEASE_PR_PATHS, version=""))
+
+
+class HasReleaseSectionTest(unittest.TestCase):
+	def test_finds_the_section(self) -> None:
+		self.assertTrue(gate.has_release_section(CHANGELOG, "0.0.1-alpha.29"))
+		self.assertTrue(gate.has_release_section(CHANGELOG, "0.0.1-alpha.28"))
+
+	def test_unreleased_is_empty(self) -> None:
+		self.assertFalse(gate.has_release_section(CHANGELOG, "Unreleased"))
+
+	def test_a_missing_section(self) -> None:
+		self.assertFalse(gate.has_release_section(CHANGELOG, "9.9.9"))
+
+	# The version is interpolated into a regex; a dot must not match anything.
+	def test_the_version_is_not_a_pattern(self) -> None:
+		self.assertFalse(gate.has_release_section(CHANGELOG, "0.0.1-alpha.2x"))
+		self.assertFalse(gate.has_release_section(CHANGELOG, "0,0,1-alpha,29"))
+
+	def test_a_commented_out_section_is_empty(self) -> None:
+		self.assertFalse(
+			gate.has_release_section(
+				"## [1.0.0]\n\n<!--\n- a bullet nobody kept\n-->\n\n## [0.9.0]\n\n- kept\n",
+				"1.0.0",
+			)
+		)
+
+
 class LatestWaiverTest(unittest.TestCase):
 	def test_no_comments(self) -> None:
 		self.assertIsNone(gate.latest_waiver([]))
@@ -299,6 +403,55 @@ class CheckCommandTest(unittest.TestCase):
 
 	def test_an_unreadable_comments_file_asks_again(self) -> None:
 		self.assertEqual(gate.VERDICT_MISSING, self.run_check("--comments-file", "does-not-exist.json"))
+
+	def write_changelog(self, text: str = CHANGELOG) -> str:
+		path = Path(tempfile.mkdtemp()) / "CHANGELOG.md"
+		path.write_text(text, encoding="utf-8")
+		return str(path)
+
+	def release_pr_args(self, paths: list[str] = RELEASE_PR_PATHS, **overrides: str) -> list[str]:
+		args = {
+			"--changed-files-file": self.write_changed(paths),
+			"--release-candidate": "true",
+			"--version": "0.0.1-alpha.29",
+			"--changelog": self.write_changelog(),
+		}
+		args.update(overrides)
+		return [item for pair in args.items() for item in pair]
+
+	# The release PR is a release candidate by definition — its own VERSION is
+	# the untagged one — so before this exemption existed it fell through to
+	# `missing` and was told the release had already merged. It had not; it was
+	# the release.
+	def test_the_release_pr_is_not_asked(self) -> None:
+		self.assertEqual(gate.VERDICT_RELEASE_PR, self.run_check(*self.release_pr_args()))
+
+	def test_a_late_fix_pushed_onto_the_release_branch_is_asked(self) -> None:
+		self.assertEqual(
+			gate.VERDICT_MISSING,
+			self.run_check(*self.release_pr_args([*RELEASE_PR_PATHS, "internal/services/sqs/handlers.go"])),
+		)
+
+	# Row 2: main carries the untagged version and no release PR is left. An
+	# ordinary PR there is a candidate too, and it *is* asked — the exemption
+	# is the release PR's shape, not the window.
+	def test_an_ordinary_pr_in_the_release_window_is_still_asked(self) -> None:
+		self.assertEqual(
+			gate.VERDICT_MISSING,
+			self.run_check(*self.release_pr_args(["internal/services/sqs/handlers.go"])),
+		)
+
+	def test_an_unreadable_changelog_asks_again(self) -> None:
+		self.assertEqual(
+			gate.VERDICT_MISSING,
+			self.run_check(*self.release_pr_args(**{"--changelog": "does-not-exist.md"})),
+		)
+
+	# The release PR still adds nothing under .changelog/, so the exemption has
+	# to come before the scope test rather than after it: VERSION and
+	# CHANGELOG.md are both deliberately in scope.
+	def test_the_exemption_is_reached_before_the_scope_test(self) -> None:
+		self.assertNotEqual([], gate.in_scope(RELEASE_PR_PATHS))
 
 
 class ParseSubcommandTest(unittest.TestCase):
