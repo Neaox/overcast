@@ -45,6 +45,43 @@ Pseudo-parameters supported: `AWS::Region`, `AWS::AccountId`, `AWS::StackId`, `A
 
 ---
 
+## Dynamic references
+
+A dynamic reference is plain text inside a property value — not an intrinsic
+function — that CloudFormation substitutes from another service at deploy time.
+They are resolved against the emulated services, so a reference reads exactly
+what the equivalent `GetSecretValue` or `GetParameter` call would return.
+
+| Reference                                                                            | Status | Notes                                                     |
+| ------------------------------------------------------------------------------------ | ------ | --------------------------------------------------------- |
+| `{{resolve:secretsmanager:secret-id:SecretString:json-key:version-stage:version-id}}` | ✅     | `secret-id` may be a name or a full ARN                   |
+| `{{resolve:ssm:parameter-name:version}}`                                              | ✅     | Version is accepted but resolves to the current value     |
+| `{{resolve:ssm-secure:parameter-name:version}}`                                       | ✅     | Read with decryption; same version caveat                 |
+| `{{resolve:s3:...}}`                                                                  | ❌     | Not resolved                                              |
+
+Resolution happens after the intrinsic functions, so a reference built by
+`Fn::Sub` or `Fn::Join` is resolved once the surrounding value is complete. A
+resolved value is never rescanned — secret content that happens to contain
+`{{resolve:` is data, not a reference.
+
+**A reference that cannot be resolved fails the resource** with
+`CREATE_FAILED`/`UPDATE_FAILED` and a reason naming the reference, and the stack
+rolls back as it would for any other resource failure. This matters more than it
+sounds: the alternative is a resource created with the literal
+`{{resolve:...}}` text in place of a value, which every service downstream then
+treats as data — an RDS instance whose master username is a 150-character
+reference, for instance, is accepted by the API and then rejected by the
+database engine.
+
+Two divergences from AWS:
+
+- An explicit SSM parameter version is accepted but resolves to the current
+  value; Overcast's `GetParameter` has no version selector. A warning is logged.
+- `{{resolve:s3:...}}` is not supported and fails the resource rather than
+  resolving to something wrong.
+
+---
+
 ## Supported resource types
 
 The provisioner dispatches internal HTTP requests to the emulated services. Resources
@@ -168,6 +205,7 @@ with unsupported resources can still partially deploy.
 | Templates            | 3            | 1              |
 | Exports              | 2            |                |
 | Intrinsic functions  | 1            |                |
+| Dynamic references   | 3            | 1              |
 | Resource types       |              | 1              |
 | StackSets            |              | 13             |
 | Type registry        |              | 7              |
@@ -232,6 +270,15 @@ with unsupported resources can still partially deploy.
 | Operation         | Status       | Notes                            | AWS Docs                                                                                                             |
 | ----------------- | ------------ | -------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `Fn::ImportValue` | ✅ Supported | Cross-stack reference resolution | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/intrinsic-function-reference-importvalue.html) |
+
+### Dynamic references
+
+| Operation                    | Status         | Notes                                                                   | AWS Docs                                                                                                                         |
+| ---------------------------- | -------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `{{resolve:secretsmanager}}` | ✅ Supported   | Secret by name or ARN; JSON key, version stage and version ID selectors | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-secretsmanager) |
+| `{{resolve:ssm}}`            | ✅ Supported   | Plaintext parameter; an explicit version resolves to the current value  | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-ssm)            |
+| `{{resolve:ssm-secure}}`     | ✅ Supported   | Read with decryption; an explicit version resolves to the current value | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-ssm-secure)     |
+| `{{resolve:s3}}`             | ❌ Unsupported | Not resolved; fails the resource that uses it                           | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html)                                   |
 
 ### Resource types
 

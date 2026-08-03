@@ -39,6 +39,17 @@ func init() {
 		capabilities.Capability{Service: "cloudformation", Operation: "ListImports", Category: "Exports", Status: capabilities.StatusSupported, Notes: "Returns stacks that import a given export name"},
 		capabilities.Capability{Service: "cloudformation", Operation: "Fn::ImportValue", Category: "Intrinsic functions", Status: capabilities.StatusSupported, Notes: "Cross-stack reference resolution", DocOnly: true,
 			DocsURL: "[docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/intrinsic-function-reference-importvalue.html)"},
+		// Dynamic references — plain text in a property value, resolved at
+		// deploy time against another service. Not intrinsic functions, and
+		// listed separately because they are documented separately by AWS.
+		capabilities.Capability{Service: "cloudformation", Operation: "{{resolve:secretsmanager}}", Category: "Dynamic references", Status: capabilities.StatusSupported, Notes: "Secret by name or ARN; JSON key, version stage and version ID selectors", DocOnly: true,
+			DocsURL: "[docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-secretsmanager)"},
+		capabilities.Capability{Service: "cloudformation", Operation: "{{resolve:ssm}}", Category: "Dynamic references", Status: capabilities.StatusSupported, Notes: "Plaintext parameter; an explicit version resolves to the current value", DocOnly: true,
+			DocsURL: "[docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-ssm)"},
+		capabilities.Capability{Service: "cloudformation", Operation: "{{resolve:ssm-secure}}", Category: "Dynamic references", Status: capabilities.StatusSupported, Notes: "Read with decryption; an explicit version resolves to the current value", DocOnly: true,
+			DocsURL: "[docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-ssm-secure)"},
+		capabilities.Capability{Service: "cloudformation", Operation: "{{resolve:s3}}", Category: "Dynamic references", Status: capabilities.StatusUnsupported, Notes: "Not resolved; fails the resource that uses it", DocOnly: true,
+			DocsURL: "[docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html)"},
 		capabilities.Capability{Service: "cloudformation", Operation: "AWS::CloudFormation::WaitConditionHandle", Category: "Resource types", Status: capabilities.StatusUnsupported, Notes: "Stub", DocOnly: true,
 			DocsURL: "[docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-cloudformation-waitconditionhandle.html)"},
 		// StackSets

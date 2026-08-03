@@ -267,6 +267,15 @@ type resolveContext struct {
 	Mappings   map[string]any               // raw mappings from template
 	Attributes map[string]map[string]string // logical ID → attributes
 	Exports    map[string]string            // export name → value (cross-stack)
+
+	// DynamicRef resolves a {{resolve:...}} dynamic reference against the
+	// emulated services. Nil outside provisioning — a template resolved
+	// without one records a failure per reference rather than silently
+	// leaving the reference text in a property value. See dynamic_refs.go.
+	DynamicRef func(ref dynamicRef) (string, error)
+	// dynamicRefErr holds the first reference that could not be resolved,
+	// until the provisioner takes it and fails the resource.
+	dynamicRefErr error
 }
 
 // Maximum physical name lengths, per service. CloudFormation truncates a
@@ -592,12 +601,14 @@ func resolveImportValue(impVal any, ctx *resolveContext) any {
 	return name
 }
 
-// resolveAllProperties resolves all intrinsics in a resource's properties.
+// resolveAllProperties resolves all intrinsics in a resource's properties, then
+// expands the dynamic references in the result. The two are separate passes so
+// that each string is expanded exactly once — see dynamic_refs.go.
 func resolveAllProperties(props map[string]any, ctx *resolveContext) map[string]any {
 	if props == nil {
 		return nil
 	}
-	resolved := resolveIntrinsics(props, ctx)
+	resolved := expandDynamicRefs(resolveIntrinsics(props, ctx), ctx)
 	if m, ok := resolved.(map[string]any); ok {
 		return m
 	}
