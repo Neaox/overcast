@@ -141,6 +141,85 @@ class RegistryTest {
                 "iam-users/CreateUser should bind via its bare key");
     }
 
+    // ── Duplicate registrations must abort ────────────────────────────────────
+
+    /**
+     * Two service groups registering the same key must abort the run.
+     *
+     * <p>This is the gap {@code validateImpls} cannot close. The merge that
+     * builds the suite's impl map is last-writer-wins, so one of the two
+     * implementations is discarded before validation ever sees the map — and
+     * the surviving key resolves perfectly well, so nothing is reported. The
+     * discarded test then runs the other class's implementation under its own
+     * name.
+     */
+    @Test
+    void rejectsKeyRegisteredByTwoSources() {
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> Registry.mergeImpls(List.of(
+                        new Registry.ImplSource("LambdaGroup",
+                                Map.of("lambda-crud:CreateFunction", NOOP)),
+                        new Registry.ImplSource("AppSyncGroup",
+                                Map.of("lambda-crud:CreateFunction", NOOP))), "java-sdk"));
+
+        assertTrue(e.getMessage().contains("duplicate impl registration"), e.getMessage());
+        assertTrue(e.getMessage().contains("lambda-crud:CreateFunction"), e.getMessage());
+        // Both registering classes must be named: the key alone does not say
+        // where to look, and one of the two classes is in the wrong.
+        assertTrue(e.getMessage().contains("LambdaGroup"), e.getMessage());
+        assertTrue(e.getMessage().contains("AppSyncGroup"), e.getMessage());
+    }
+
+    /** "both X and Y" would be nonsense when X and Y are the same class. */
+    @Test
+    void reportsSingleSourceDuplicateAsSuch() {
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> Registry.mergeImpls(List.of(
+                        new Registry.ImplSource("IamGroup", Map.of("iam-users:CreateUser", NOOP)),
+                        new Registry.ImplSource("IamGroup", Map.of("iam-users:CreateUser", NOOP))),
+                        "java-sdk"));
+
+        assertTrue(e.getMessage().contains("registered twice by \"IamGroup\""), e.getMessage());
+    }
+
+    /** Fixing one duplicate must not merely reveal the next. */
+    @Test
+    void reportsEveryDuplicate() {
+        Map<String, TestFn> both = Map.of(
+                "iam-users:ListUsers", NOOP,
+                "iam-users:CreateUser", NOOP);
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> Registry.mergeImpls(List.of(
+                        new Registry.ImplSource("IamGroup", both),
+                        new Registry.ImplSource("CognitoGroup", both)), "java-sdk"));
+
+        assertTrue(e.getMessage().contains("2 duplicate impl registration(s)"), e.getMessage());
+        // Sorted by key, so the message is stable however the maps iterate.
+        assertTrue(e.getMessage().indexOf("iam-users:CreateUser")
+                        < e.getMessage().indexOf("iam-users:ListUsers"),
+                "problems not sorted by key: " + e.getMessage());
+    }
+
+    /** Negative control: distinct keys merge, each keeping its own impl. */
+    @Test
+    void acceptsDisjointSources() {
+        TestFn iamList = ctx -> {};
+        TestFn iamCreate = ctx -> {};
+        TestFn cognitoList = ctx -> {};
+
+        Map<String, TestFn> merged = Registry.mergeImpls(List.of(
+                new Registry.ImplSource("IamGroup", Map.of(
+                        "iam-users:ListUsers", iamList,
+                        "CreateUser", iamCreate)),
+                new Registry.ImplSource("CognitoGroup", Map.of(
+                        "cognito-userpools:ListUsers", cognitoList))), "java-sdk");
+
+        assertEquals(3, merged.size(), merged.keySet().toString());
+        assertEquals(iamList, merged.get("iam-users:ListUsers"));
+        assertEquals(iamCreate, merged.get("CreateUser"));
+        assertEquals(cognitoList, merged.get("cognito-userpools:ListUsers"));
+    }
+
     @Test
     void ambiguousTestNamesTracksOwners() {
         Registry.RegistryRoot root = twoGroupsOneName();

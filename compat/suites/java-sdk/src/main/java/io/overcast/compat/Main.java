@@ -43,14 +43,29 @@ public final class Main {
         AwsClients clients = new AwsClients(endpoint, env("OVERCAST_DEFAULT_REGION", "us-east-1"));
 
         // ── Collect impls / setups / teardowns from all service groups ─────────
-        Map<String, TestFn> impls     = new LinkedHashMap<>();
+        // The impls go through mergeImpls rather than putAll: a key two service
+        // groups both register would otherwise lose one implementation with
+        // nothing said about it.
+        List<Registry.ImplSource> implSources = new ArrayList<>();
         Map<String, TestFn> setups    = new LinkedHashMap<>();
         Map<String, TestFn> teardowns = new LinkedHashMap<>();
 
         for (ServiceGroup sg : serviceGroups(clients)) {
-            impls.putAll(sg.impls());
+            implSources.add(new Registry.ImplSource(sg.sourceName(), sg.impls()));
             setups.putAll(sg.setups());
             teardowns.putAll(sg.teardowns());
+        }
+
+        Map<String, TestFn> impls;
+        try {
+            impls = Registry.mergeImpls(implSources, SUITE);
+        } catch (IllegalStateException e) {
+            // Duplicate registrations — see Registry#mergeImpls. Aborting is
+            // the point: the discarded implementation never runs, and its test
+            // reports the surviving group's result under its own name.
+            System.err.println(e.getMessage());
+            System.exit(1);
+            return;
         }
 
         // ── Build capabilities set ─────────────────────────────────────────────
