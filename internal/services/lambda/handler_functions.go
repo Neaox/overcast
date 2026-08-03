@@ -1236,7 +1236,10 @@ func (h *Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	if invocationType == "Event" {
 		w.Header().Set("X-Amz-Executed-Version", "$LATEST")
 		w.WriteHeader(http.StatusAccepted)
-		h.startAsync(fn, rt, payload)
+		// The refusal startAsync can report is unreachable here — the HTTP
+		// server stops before StopAsync runs — and the 202 is already written
+		// either way, so there is nobody left to tell. startAsync logs it.
+		_ = h.startAsync(fn, rt, payload)
 		return
 	}
 
