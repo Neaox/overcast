@@ -132,7 +132,7 @@ func (h *Handler) CreateService(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if _, _, _, _, placementErr := h.resolveAwsvpcPlacement(r.Context(), req.NetworkConfiguration, "awsvpc services"); placementErr != nil {
+	if _, placementErr := h.resolveAwsvpcPlacement(r.Context(), req.NetworkConfiguration, "awsvpc services"); placementErr != nil {
 		protocol.WriteJSONError(w, r, placementErr)
 		return
 	}
@@ -274,7 +274,7 @@ func (h *Handler) UpdateService(w http.ResponseWriter, r *http.Request) {
 				newNetCfg = svc.NetworkConfiguration
 			}
 			// Re-validate with any updated NetworkConfiguration during deployment creation.
-			if _, _, _, _, placementErr := h.resolveAwsvpcPlacement(r.Context(), newNetCfg, "awsvpc services"); placementErr != nil {
+			if _, placementErr := h.resolveAwsvpcPlacement(r.Context(), newNetCfg, "awsvpc services"); placementErr != nil {
 				protocol.WriteJSONError(w, r, placementErr)
 				return
 			}
@@ -620,15 +620,10 @@ func (h *Handler) scaleUp(ctx context.Context, clusterName string, svc *ecsServi
 		return
 	}
 
-	var placement awsvpcPlacement
-	if svc.NetworkConfiguration != nil {
-		var placementErr *protocol.AWSError
-		placement.subnetID, _, placement.networkID, placement.subnetResolved, placementErr =
-			h.resolveAwsvpcPlacement(ctx, svc.NetworkConfiguration, "awsvpc services")
-		if placementErr != nil {
-			h.recordPlacementFailure(svc, placementErr.Message, n)
-			return
-		}
+	placement, placementErr := h.resolveAwsvpcPlacement(ctx, svc.NetworkConfiguration, "awsvpc services")
+	if placementErr != nil {
+		h.recordPlacementFailure(svc, placementErr.Message, n)
+		return
 	}
 
 	startedBy := ""

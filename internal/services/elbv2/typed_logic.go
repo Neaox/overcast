@@ -19,6 +19,7 @@ type createLoadBalancerReq struct {
 
 type describeLoadBalancersReq struct {
 	LoadBalancerArns []string `json:"LoadBalancerArns"`
+	Names            []string `json:"Names"`
 }
 
 type deleteLoadBalancerReq struct {
@@ -33,7 +34,10 @@ type createTargetGroupReq struct {
 	TargetType string `json:"TargetType"`
 }
 
-type describeTargetGroupsReq struct{}
+type describeTargetGroupsReq struct {
+	TargetGroupArns []string `json:"TargetGroupArns"`
+	Names           []string `json:"Names"`
+}
 
 type deleteTargetGroupReq struct {
 	TargetGroupArn string `json:"TargetGroupArn"`
@@ -47,7 +51,8 @@ type createListenerReq struct {
 }
 
 type describeListenersReq struct {
-	LoadBalancerArn string `json:"LoadBalancerArn"`
+	LoadBalancerArn string   `json:"LoadBalancerArn"`
+	ListenerArns    []string `json:"ListenerArns"`
 }
 
 type deleteListenerReq struct {
@@ -218,8 +223,7 @@ func (h *Handler) createLoadBalancerTyped(ctx context.Context, req *createLoadBa
 	account := h.accountID()
 
 	lbID := uuid.NewString()
-	arn := fmt.Sprintf("arn:aws:elasticloadbalancing:%s:%s:loadbalancer/%s/%s/%s",
-		region, account, lbType, name, lbID[:8])
+	arn := loadBalancerARN(region, account, lbType, name, lbID[:8])
 	dnsName := h.loadBalancerDNSName(name, lbID, region)
 
 	lb := &LoadBalancer{
@@ -250,19 +254,7 @@ func (h *Handler) describeLoadBalancersTyped(ctx context.Context, req *describeL
 	if err != nil {
 		return nil, protocol.ErrInternalError
 	}
-	if len(req.LoadBalancerArns) > 0 {
-		arnSet := make(map[string]bool, len(req.LoadBalancerArns))
-		for _, a := range req.LoadBalancerArns {
-			arnSet[a] = true
-		}
-		filtered := lbs[:0]
-		for _, lb := range lbs {
-			if arnSet[lb.LoadBalancerArn] {
-				filtered = append(filtered, lb)
-			}
-		}
-		lbs = filtered
-	}
+	lbs = selectLBs(lbs, req.LoadBalancerArns, req.Names)
 	sort.Slice(lbs, func(i, j int) bool { return lbs[i].LoadBalancerName < lbs[j].LoadBalancerName })
 
 	xmlLBs := make([]xmlLB, 0, len(lbs))
@@ -332,12 +324,13 @@ func (h *Handler) createTargetGroupTyped(ctx context.Context, req *createTargetG
 	}, nil
 }
 
-func (h *Handler) describeTargetGroupsTyped(ctx context.Context, _ *describeTargetGroupsReq) (*xmlTypedDescribeTargetGroupsResponse, *protocol.AWSError) {
+func (h *Handler) describeTargetGroupsTyped(ctx context.Context, req *describeTargetGroupsReq) (*xmlTypedDescribeTargetGroupsResponse, *protocol.AWSError) {
 	region := h.region(ctx)
 	tgs, err := h.listTGs(ctx, region)
 	if err != nil {
 		return nil, protocol.ErrInternalError
 	}
+	tgs = selectTGs(tgs, req.TargetGroupArns, req.Names)
 	sort.Slice(tgs, func(i, j int) bool { return tgs[i].TargetGroupName < tgs[j].TargetGroupName })
 
 	xmlTGs := make([]xmlTG, 0, len(tgs))
@@ -377,7 +370,6 @@ func (h *Handler) createListenerTyped(ctx context.Context, req *createListenerRe
 		return nil, errMissingParam("LoadBalancerArn")
 	}
 	region := h.region(ctx)
-	account := h.accountID()
 
 	if _, found, err := h.getLB(ctx, region, lbArn); err != nil {
 		return nil, protocol.ErrInternalError
@@ -386,11 +378,9 @@ func (h *Handler) createListenerTyped(ctx context.Context, req *createListenerRe
 	}
 
 	lID := uuid.NewString()
-	arn := fmt.Sprintf("arn:aws:elasticloadbalancing:%s:%s:listener/app/listener/%s",
-		region, account, lID[:12])
 
 	l := &Listener{
-		ListenerArn:     arn,
+		ListenerArn:     listenerARN(lbArn, lID[:12]),
 		LoadBalancerArn: lbArn,
 		Protocol:        req.Protocol,
 		Port:            req.Port,
@@ -415,8 +405,12 @@ func (h *Handler) describeListenersTyped(ctx context.Context, req *describeListe
 		return nil, protocol.ErrInternalError
 	}
 
+	f := newIdentifierFilter(req.ListenerArns)
 	xmlLs := make([]xmlListener, 0, len(listeners))
 	for _, l := range listeners {
+		if !f.matches(l.ListenerArn) {
+			continue
+		}
 		xmlLs = append(xmlLs, toListenerXML(l))
 	}
 	return &xmlTypedDescribeListenersResponse{
