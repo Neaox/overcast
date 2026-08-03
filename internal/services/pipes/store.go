@@ -45,18 +45,27 @@ type FilterCriteria struct {
 	} `json:"Filters,omitempty"`
 }
 
+// DeadLetterConfig is AWS's PipeSourceParameters DeadLetterConfig: where a
+// stream batch goes once its retries are exhausted.
+type DeadLetterConfig struct {
+	Arn string `json:"Arn,omitempty"`
+}
+
 // StreamSourceParameters covers the shared shape of AWS's
 // DynamoDBStreamParameters and KinesisStreamParameters.
+//
+// MaximumRetryAttempts is a pointer because AWS distinguishes "not set" (retry
+// until the record expires) from an explicit 0 (never retry), and the delivery
+// path honours both. The JSON shape is unchanged — a pointer marshals and
+// unmarshals identically to the int it replaced.
 type StreamSourceParameters struct {
-	BatchSize                      int    `json:"BatchSize,omitempty"`
-	MaximumBatchingWindowInSeconds int    `json:"MaximumBatchingWindowInSeconds,omitempty"`
-	StartingPosition               string `json:"StartingPosition,omitempty"`
-	MaximumRetryAttempts           int    `json:"MaximumRetryAttempts,omitempty"`
-	ParallelizationFactor          int    `json:"ParallelizationFactor,omitempty"`
-	OnPartialBatchItemFailure      string `json:"OnPartialBatchItemFailure,omitempty"`
-	DeadLetterConfig               *struct {
-		Arn string `json:"Arn,omitempty"`
-	} `json:"DeadLetterConfig,omitempty"`
+	BatchSize                      int               `json:"BatchSize,omitempty"`
+	MaximumBatchingWindowInSeconds int               `json:"MaximumBatchingWindowInSeconds,omitempty"`
+	StartingPosition               string            `json:"StartingPosition,omitempty"`
+	MaximumRetryAttempts           *int              `json:"MaximumRetryAttempts,omitempty"`
+	ParallelizationFactor          int               `json:"ParallelizationFactor,omitempty"`
+	OnPartialBatchItemFailure      string            `json:"OnPartialBatchItemFailure,omitempty"`
+	DeadLetterConfig               *DeadLetterConfig `json:"DeadLetterConfig,omitempty"`
 }
 
 // SQSSourceParameters is AWS's PipeSourceSqsQueueParameters.

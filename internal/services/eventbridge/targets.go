@@ -60,7 +60,7 @@ func validateTargets(targets []ebTarget) (accepted []ebTarget, failed []failedTa
 				ErrorCode: unsupportedTargetCode,
 				ErrorMessage: fmt.Sprintf(
 					"Overcast does not emulate EventBridge delivery to %s targets. "+
-						"Supported target types: Lambda, SQS, SNS, Step Functions, Kinesis, Firehose, ECS.",
+						"Supported target types: Lambda, SQS, SNS, Step Functions, Kinesis, Firehose, ECS, EventBridge event buses.",
 					unsupported.Service),
 			})
 			continue
