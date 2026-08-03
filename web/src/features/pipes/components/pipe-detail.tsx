@@ -37,6 +37,7 @@ const OUTCOME_LABELS: Record<
   delivered: { label: "delivered", variant: "success" },
   filtered: { label: "dropped by enrichment", variant: "warning" },
   failed: { label: "failed", variant: "danger" },
+  dlq: { label: "dead-lettered", variant: "warning" },
 }
 
 /**

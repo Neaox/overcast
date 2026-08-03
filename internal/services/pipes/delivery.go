@@ -35,13 +35,28 @@ import (
 	"github.com/Neaox/overcast/internal/middleware"
 )
 
-// execute runs one pipe execution for a batch of source records.
+// execute runs one pipe execution for a batch of source records and records the
+// outcome.
 //
 // It returns an error when the batch was not delivered, so a polling source can
-// leave the records for redelivery rather than acknowledging them.
+// leave the records for redelivery rather than acknowledging them. A stream
+// source has nothing to leave behind and goes through executeStream instead.
 func (h *Handler) execute(ctx context.Context, p *Pipe, records []map[string]any) error {
+	rec, err := h.attempt(ctx, p, records)
+	if rec.Outcome == "" {
+		return err // empty batch: nothing ran, nothing to report
+	}
+	rec.Attempts = 1
+	h.recordDelivery(rec)
+	return err
+}
+
+// attempt runs one pipe execution and returns the outcome it produced without
+// recording it, so a caller that retries reports the sequence once rather than
+// once per attempt. The returned record has a zero Outcome for an empty batch.
+func (h *Handler) attempt(ctx context.Context, p *Pipe, records []map[string]any) (deliveryRecord, error) {
 	if len(records) == 0 {
-		return nil
+		return deliveryRecord{}, nil
 	}
 	rec := deliveryRecord{
 		Region:     regionOrDefault(regionFromARN(p.SourceArn), h.store.region(ctx)),
@@ -57,28 +72,147 @@ func (h *Handler) execute(ctx context.Context, p *Pipe, records []map[string]any
 	case err != nil:
 		rec.Outcome = outcomeFailed
 		rec.Error = err.Error()
-		h.recordDelivery(rec)
 		h.log.Warn("pipes: execution failed before delivery",
 			zap.String("pipe", p.Name), zap.Error(err))
-		return err
+		return rec, err
 	case drop:
 		rec.Outcome = outcomeFiltered
-		h.recordDelivery(rec)
-		return nil
+		return rec, nil
 	}
 
 	if err := h.dispatch(ctx, p, batch); err != nil {
 		rec.Outcome = outcomeFailed
 		rec.Error = err.Error()
-		h.recordDelivery(rec)
 		h.log.Warn("pipes: target delivery failed",
 			zap.String("pipe", p.Name), zap.String("target", p.TargetArn), zap.Error(err))
-		return err
+		return rec, err
 	}
 	rec.Outcome = outcomeDelivered
-	h.recordDelivery(rec)
 	h.publishDelivered(ctx, p, len(records))
-	return nil
+	return rec, nil
+}
+
+// maxStreamDeliveryAttempts caps how many times one stream batch is attempted,
+// however many retries the source asks for. AWS's default MaximumRetryAttempts
+// for a stream source is -1 — "retry until the record expires", up to 24 hours
+// — which an emulator running the delivery inline has nowhere to put. The same
+// ceiling and the same reasoning as EventBridge's maxDeliveryAttempts.
+const maxStreamDeliveryAttempts = 6
+
+// executeStream delivers a batch that has nowhere to be redelivered from.
+//
+// An SQS source retries by leaving the message to become visible again and a
+// Kinesis source by leaving its shard cursor where it was, so both can let one
+// failed execution stand. A DynamoDB Streams record reaches the pipe through
+// the internal event bus and is gone the moment the subscriber returns, so
+// dropping a failed delivery loses it silently — the write that produced it has
+// already answered its client. AWS covers exactly this with the stream source's
+// MaximumRetryAttempts and DeadLetterConfig, which Overcast accepted, stored
+// and echoed back without ever reading. This is where they are read.
+func (h *Handler) executeStream(ctx context.Context, p *Pipe, records []map[string]any) {
+	attempts := streamDeliveryAttempts(p)
+	var rec deliveryRecord
+	var err error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		rec, err = h.attempt(ctx, p, records)
+		rec.Attempts = attempt
+		if err == nil {
+			if rec.Outcome != "" {
+				h.recordDelivery(rec)
+			}
+			return
+		}
+	}
+
+	dlq := streamDeadLetterARN(p)
+	if dlq == "" {
+		h.log.Warn("pipes: stream batch dropped after retries — configure DeadLetterConfig to keep it",
+			zap.String("pipe", p.Name), zap.String("target", p.TargetArn),
+			zap.Int("attempts", rec.Attempts), zap.Error(err))
+		h.recordDelivery(rec)
+		return
+	}
+	if dlqErr := h.deadLetter(ctx, dlq, records); dlqErr != nil {
+		rec.Error = fmt.Sprintf("%v; dead-letter delivery also failed: %v", err, dlqErr)
+		h.log.Warn("pipes: dead-letter delivery failed",
+			zap.String("pipe", p.Name), zap.String("dlq", dlq), zap.Error(dlqErr))
+		h.recordDelivery(rec)
+		return
+	}
+	rec.Outcome = outcomeDLQ
+	h.log.Warn("pipes: stream batch dead-lettered",
+		zap.String("pipe", p.Name), zap.String("target", p.TargetArn),
+		zap.String("dlq", dlq), zap.Int("attempts", rec.Attempts), zap.Error(err))
+	h.recordDelivery(rec)
+}
+
+// streamSourceParameters returns the DynamoDB Streams parameter block, or nil
+// when the pipe configured none.
+//
+// Only the DynamoDB source consults it: a Kinesis source retries by leaving its
+// shard cursor where it was, so it never runs out of attempts and never reaches
+// a dead-letter queue.
+func streamSourceParameters(p *Pipe) *StreamSourceParameters {
+	if p.SourceParameters == nil {
+		return nil
+	}
+	return p.SourceParameters.DynamoDBStreamParameters
+}
+
+// streamDeliveryAttempts returns how many times a stream batch is delivered in
+// total: one, plus the source's MaximumRetryAttempts, capped at
+// maxStreamDeliveryAttempts. An unset value takes AWS's default of retrying;
+// an explicit 0 means one attempt and no more.
+func streamDeliveryAttempts(p *Pipe) int {
+	sp := streamSourceParameters(p)
+	if sp == nil || sp.MaximumRetryAttempts == nil {
+		return maxStreamDeliveryAttempts
+	}
+	retries := *sp.MaximumRetryAttempts
+	if retries < 0 {
+		return maxStreamDeliveryAttempts
+	}
+	attempts := retries + 1
+	if attempts > maxStreamDeliveryAttempts {
+		return maxStreamDeliveryAttempts
+	}
+	return attempts
+}
+
+// streamDeadLetterARN returns the source's dead-letter target, if any.
+func streamDeadLetterARN(p *Pipe) string {
+	sp := streamSourceParameters(p)
+	if sp == nil || sp.DeadLetterConfig == nil {
+		return ""
+	}
+	return strings.TrimSpace(sp.DeadLetterConfig.Arn)
+}
+
+// deadLetter parks an undeliverable batch on the source's dead-letter target.
+//
+// AWS's own dead-letter message for a stream source is a failure envelope
+// naming the shard and sequence range rather than the records themselves —
+// shard bookkeeping this emulator does not keep, because a DynamoDB-sourced
+// pipe here is driven by the event bus rather than by a shard iterator. The
+// records are sent instead, which is what makes the batch replayable and
+// matches how EventBridge rule targets dead-letter here.
+func (h *Handler) deadLetter(ctx context.Context, arn string, records []map[string]any) error {
+	dispatcher := h.dispatcher()
+	if dispatcher == nil {
+		return fmt.Errorf("target router is not configured")
+	}
+	kind, err := eventtarget.Classify(arn)
+	if err != nil {
+		return err
+	}
+	if kind != eventtarget.KindSQS && kind != eventtarget.KindSNS {
+		return fmt.Errorf("dead-letter target %s must be an SQS queue or an SNS topic", arn)
+	}
+	payload, err := json.Marshal(records)
+	if err != nil {
+		return err
+	}
+	return dispatcher.Deliver(ctx, eventtarget.Request{ARN: arn, Kind: kind, Payload: payload})
 }
 
 // renderAndEnrich runs stages 2 to 4: the enrichment template, the enrichment
