@@ -81,7 +81,7 @@ IMPLS = {
     "CreateUserPoolClient": lambda ctx: CreateUserPoolClientFn(ctx),
     "ListUserPoolClients": lambda ctx: ListUserPoolClientsFn(ctx),
     "AdminCreateUser": AdminCreateUser,
-    "ListUsers": ListUsers,
+    "cognito-userpools:ListUsers": ListUsers,
     "AdminDeleteUser": AdminDeleteUser,
     "DeleteUserPool": DeleteUserPool,
     "CreateUserPoolClientWithTokenValidity": lambda ctx: CreateClientTokenValidity(ctx),

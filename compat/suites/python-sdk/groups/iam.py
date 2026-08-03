@@ -594,7 +594,7 @@ def SimulatePrincipalPolicyImplicitDeny(ctx: TestContext) -> None:
 IMPLS = {
     "CreateUser": CreateUser,
     "GetUser": GetUser,
-    "ListUsers": ListUsers,
+    "iam-users:ListUsers": ListUsers,
     "CreateAccessKey": CreateAccessKey,
     "DeleteAccessKey": DeleteAccessKey,
     "PutUserPolicy": PutUserPolicy,

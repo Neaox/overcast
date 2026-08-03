@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from typing import Callable, Optional
 
 from .harness import TestCase, TestGroup, TestFn
@@ -53,6 +52,7 @@ def build_groups_from_registry(
         teardown:     Dict of group_name → teardown callable.
     """
     caps = set(capabilities or [])
+    ambiguous = ambiguous_test_names(registry)
     groups: list[TestGroup] = []
 
     for rg in registry["groups"]:
@@ -89,11 +89,15 @@ def build_groups_from_registry(
                 continue
 
             # Impl lookup — look up by group-qualified key ("groupName:testName")
-            # first, then fall back to bare test name.  This avoids collisions
-            # when multiple groups share the same test name (e.g. lambda-crud
-            # and appsync-functions both have CreateFunction).
+            # first, then fall back to the bare test name.  The bare fallback is
+            # refused for a name claimed by more than one group: it would bind
+            # this group to another group's implementation and report its result
+            # as ours.  validate_impls rejects such a registration outright; this
+            # is the second line of defence, so a mis-bind cannot occur even if
+            # validation is bypassed.
             qualified_key = f"{rg['name']}:{name}"
-            has_impl = qualified_key in impls or name in impls
+            bare_usable = name not in ambiguous
+            has_impl = qualified_key in impls or (bare_usable and name in impls)
             if not has_impl:
                 tests.append(TestCase(
                     name=name, fn=_noop, op=op,
@@ -127,23 +131,78 @@ def build_groups_from_registry(
 
 # ─── Validation ───────────────────────────────────────────────────────────────
 
+def test_name_owners(registry: dict) -> dict[str, list[str]]:
+    """Map each registry test name to the sorted groups that declare it."""
+    owners: dict[str, set[str]] = {}
+    for rg in registry["groups"]:
+        for rt in rg["tests"]:
+            owners.setdefault(rt["name"], set()).add(rg["name"])
+    return {name: sorted(groups) for name, groups in owners.items()}
+
+
+def ambiguous_test_names(registry: dict) -> set[str]:
+    """
+    Test names that more than one registry group declares.
+
+    A bare-name implementation cannot serve these. ``ListUsers`` belongs to both
+    ``iam-users`` and ``cognito-userpools``, so a bare ``ListUsers`` impl binds
+    whichever group happens to resolve it — and the loser silently runs the
+    other service's test and reports the result as its own. Suites must register
+    the group-qualified key for an ambiguous name.
+    """
+    return {name for name, groups in test_name_owners(registry).items() if len(groups) > 1}
+
+
 def validate_impls(registry: dict, impls: ImplMap, suite: str) -> None:
     """
-    Warn about impl keys that don't match any registry test name.
-    Treats it as a fatal error if OVERCAST_COMPAT_STRICT=1.
+    Reject impl keys that cannot be bound to exactly one registry test.
+
+    This used to warn on stderr (fatal only under OVERCAST_COMPAT_STRICT=1),
+    which meant an unresolvable key was a line nobody read while the test it was
+    meant to implement quietly fell back to another group's implementation and
+    reported a pass. Two registrations are refused:
+
+    - a key matching no registry entry — a typo, a stale name, or the wrong
+      separator (every suite uses "group:test"; "group/test" is not accepted);
+    - a bare key for a test name that several groups declare, which cannot say
+      which group it implements.
+
+    Raises SystemExit naming every unusable key.
     """
+    owners = test_name_owners(registry)
     all_names = {
         key
         for rg in registry["groups"]
         for rt in rg["tests"]
         for key in (rt["name"], f"{rg['name']}:{rt['name']}")
     }
-    orphans = [k for k in impls if k not in all_names]
-    if not orphans:
+
+    problems: list[str] = []
+    for name in sorted(impls):
+        if name not in all_names:
+            msg = f"impl '{name}' matches no registry entry"
+            if "/" in name:
+                # The Java suite used "group/test" until the separator was
+                # unified; a key copied from it resolves to nothing here.
+                msg += (
+                    " (group-qualified keys use ':', not '/' — did you mean"
+                    f" '{name.replace('/', ':', 1)}'?)"
+                )
+            problems.append(msg)
+        elif len(owners.get(name, ())) > 1:
+            # Naming every candidate rather than guessing one: only the author
+            # knows which group this implementation is for, and binding it to
+            # the wrong one is the failure this check exists to prevent.
+            candidates = ", ".join(f"'{group}:{name}'" for group in owners[name])
+            problems.append(
+                f"impl '{name}' is ambiguous: groups {owners[name]} all declare a test"
+                f" named '{name}' — qualify it with the group it implements,"
+                f" one of: {candidates}"
+            )
+
+    if not problems:
         return
-    for o in orphans:
-        sys.stderr.write(
-            f"[compat:{suite}] WARNING: impl '{o}' has no matching registry test\n"
-        )
-    if os.environ.get("OVERCAST_COMPAT_STRICT") == "1":
-        raise SystemExit(f"[compat:{suite}] strict mode: orphaned impls found")
+    detail = "\n  - ".join(problems)
+    raise SystemExit(
+        f"[compat:{suite}] {len(problems)} unusable impl registration(s):\n  - {detail}"
+    )
