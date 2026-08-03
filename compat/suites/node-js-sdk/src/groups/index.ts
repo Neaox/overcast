@@ -6,6 +6,7 @@
  * registry.json without running anything.
  */
 import type { TestGroup } from "../lib/harness.js";
+import type { ImplMap } from "../lib/registry.js";
 import { makeS3Groups } from "./s3.js";
 import { makeSQSGroups } from "./sqs.js";
 import { makeDynamoDBGroups } from "./dynamodb.js";
@@ -75,8 +76,8 @@ export function makeAllGroups(suite: string): TestGroup[] {
  * A bare test name cannot say which group it implements when several groups
  * declare it, so every key carries its group — see `validateImpls`.
  */
-export function makeImplMap(groups: TestGroup[]): Record<string, TestGroup["tests"][number]["fn"]> {
-  const impls: Record<string, TestGroup["tests"][number]["fn"]> = {};
+export function makeImplMap(groups: TestGroup[]): ImplMap {
+  const impls: ImplMap = {};
   for (const g of groups) {
     for (const t of g.tests) {
       if (!t.skip) impls[`${g.name}:${t.name}`] = t.fn;
