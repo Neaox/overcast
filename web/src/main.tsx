@@ -6,6 +6,7 @@ import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@ta
 import { routeTree } from "./routeTree.gen"
 import { ToastContextProvider, useToast } from "@/components/ui/toast"
 import { RoutePending } from "@/components/layout/route-pending"
+import { RouteError } from "@/components/layout/route-error"
 import { DevToolsContext } from "@/hooks/use-dev-tools"
 import { preloadRouteChunksWhenIdle } from "@/lib/preload-route-chunks"
 import { endpointStore } from "@/services/endpoint-store"
@@ -49,6 +50,10 @@ const router = createRouter({
   defaultPendingComponent: RoutePending,
   defaultPendingMs: 50,
   defaultPendingMinMs: 300,
+  // Without this the router's built-in fallback prints the message and nothing
+  // else — no retry, no stack, and no hint that a dead endpoint is the usual
+  // cause. See route-error.tsx.
+  defaultErrorComponent: RouteError,
 })
 
 declare module "@tanstack/react-router" {
