@@ -114,6 +114,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [web] a route that fails now shows a proper error screen — the message, a retry that re-runs the page's data, a collapsed stack trace, and a one-click copy of route, endpoint, region and stack for a bug report. A connection failure says the emulator is unreachable and names the endpoint; a stale tab after an update is told to reload
 
+- [cloudformation] `{{resolve:...}}` dynamic references, resolved against Secrets Manager and SSM Parameter Store — a reference that cannot be resolved fails its resource rather than being written into it as literal text
+
 ### Changed
 
 - **BREAKING** [cloudwatch] alarms now evaluate their own metrics: epoch-aligned periods, `DatapointsToAlarm` M-of-N, `Dimensions`, and all four `TreatMissingData` modes
@@ -217,6 +219,10 @@ can be applied mechanically rather than reconstructed from memory.
 - [rds] the port follows the caller for the same reason: a sibling container is given the engine's own port (3306/5432), the host the published one. A host request to a containerised Overcast arrives from the Docker bridge gateway rather than loopback, which is now recognised as the host side
 
 - [rds] any `EngineVersion` starts a container. The image map was matched exactly, so the precise versions real stacks send (`8.0.39` from CDK's `MysqlEngineVersion.VER_8_0_39`, `16.3`) started nothing at all — the instance went `available` with no database behind it and its endpoint resolved nowhere. The nearest image in the same family is used and the substitution is logged
+
+- [rds] stopping a DB instance keeps its container, so `StartDBInstance` can bring the same instance back
+
+- [rds/docker] a Docker error on the container logs endpoint is reported as an error, instead of being de-framed into corrupted-looking log output
 
 - [release] release notes are written without a second approval. `finalize-release` sat in the `release` environment and depended on the three publish jobs, so it formed a second approval wave: the maintainer approved once, the release completed and looked finished, and the job that fills in the description waited for an approval nobody knew to give. `v0.0.1-alpha.27` and `v0.0.1-alpha.28` both published with empty notes as a result. It publishes nothing — everything is already out by the time it runs — so it is no longer gated
 
