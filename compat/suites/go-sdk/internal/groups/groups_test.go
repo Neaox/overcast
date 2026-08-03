@@ -28,14 +28,37 @@ func TestRegisteredImplsResolveAgainstRegistry(t *testing.T) {
 		t.Fatalf("load registry: %v", err)
 	}
 
-	impls := registry.ImplMap{}
-	for _, svc := range groups.All(clients.New("http://127.0.0.1:1", "us-east-1")) {
-		for k, v := range svc.Impls {
-			impls[k] = v
-		}
+	impls, err := mergeAll(t)
+	if err != nil {
+		t.Fatalf("go-sdk impl registrations collide:\n%v", err)
 	}
 
 	if err := registry.ValidateImpls(reg, impls, "go-sdk"); err != nil {
 		t.Fatalf("go-sdk impl registrations are not resolvable:\n%v", err)
 	}
+}
+
+// No two service files may register the same impl key. The merge is
+// last-writer-wins, so a collision discards one implementation and the test it
+// belonged to silently runs the other file's — exactly what the resolution
+// rules above prevent for registry lookups, one step earlier in the pipeline.
+func TestRegisteredImplsHaveNoDuplicateKeys(t *testing.T) {
+	if _, err := mergeAll(t); err != nil {
+		t.Fatalf("go-sdk service files register overlapping impl keys:\n%v", err)
+	}
+}
+
+// mergeAll flattens every service file's registrations the same way the runner
+// does, so both tests see exactly the map a real run would build.
+func mergeAll(t *testing.T) (registry.ImplMap, error) {
+	t.Helper()
+	svcGroups := groups.All(clients.New("http://127.0.0.1:1", "us-east-1"))
+	sources := make([]registry.ImplSource, 0, len(svcGroups))
+	for _, svc := range svcGroups {
+		if svc.Name == "" {
+			t.Errorf("service group with %d impls has no Name; a collision could not name it", len(svc.Impls))
+		}
+		sources = append(sources, registry.ImplSource{Name: svc.Name, Impls: svc.Impls})
+	}
+	return registry.MergeImpls(sources, "go-sdk")
 }

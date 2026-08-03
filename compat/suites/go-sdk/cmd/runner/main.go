@@ -29,20 +29,28 @@ func main() {
 	c := clients.New(endpoint, region)
 
 	// Assemble all impls, setup, and teardown from service group packages.
-	allImpls := registry.ImplMap{}
+	// The impls go through MergeImpls rather than a plain map assignment: a key
+	// two service files both register would otherwise lose one implementation
+	// with nothing said about it.
+	svcGroups := groups.All(c)
+	implSources := make([]registry.ImplSource, 0, len(svcGroups))
 	allSetup := map[string]func(context.Context, *harness.TestContext) error{}
 	allTeardown := map[string]func(context.Context, *harness.TestContext) error{}
 
-	for _, svc := range groups.All(c) {
-		for k, v := range svc.Impls {
-			allImpls[k] = v
-		}
+	for _, svc := range svcGroups {
+		implSources = append(implSources, registry.ImplSource{Name: svc.Name, Impls: svc.Impls})
 		for k, v := range svc.Setup {
 			allSetup[k] = v
 		}
 		for k, v := range svc.Teardown {
 			allTeardown[k] = v
 		}
+	}
+
+	allImpls, err := registry.MergeImpls(implSources, suite)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
 	}
 
 	// Load registry and build groups.
