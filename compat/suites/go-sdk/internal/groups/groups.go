@@ -10,41 +10,53 @@ import (
 
 // ServiceGroup bundles the impls, setup, and teardown maps for one service.
 type ServiceGroup struct {
+	// Name identifies the service file these registrations came from. It is
+	// what a duplicate-key error names, so a collision points at the two files
+	// to look in rather than just the key they disagree about.
+	Name     string
 	Impls    map[string]harness.TestFn
 	Setup    map[string]func(context.Context, *harness.TestContext) error
 	Teardown map[string]func(context.Context, *harness.TestContext) error
 }
 
+// named labels a service group with its source. Applied here rather than in
+// each constructor so the names sit next to the registration order they
+// describe, in one table.
+func (g ServiceGroup) named(name string) ServiceGroup {
+	g.Name = name
+	return g
+}
+
 // All returns all service groups.
 func All(c *clients.Clients) []ServiceGroup {
 	return []ServiceGroup{
-		S3(c),
-		SQS(c),
-		DynamoDB(c),
-		SNS(c),
-		Lambda(c),
-		CloudWatchLogs(c),
-		SES(c),
-		IAM(c),
-		STS(c),
-		SecretsManager(c),
-		KMS(c),
-		SSM(c),
-		Kinesis(c),
-		EventBridge(c),
-		CloudFormation(c),
-		EC2(c),
-		ECS(c),
-		Cognito(c),
-		AppSync(c),
-		APIGateway(c),
-		CloudFront(c),
-		RDS(c),
-		StepFunctions(c),
-		Pipes(c),
-		WAF(c),
-		Shield(c),
-		ElastiCache(c),
-		EFS(c),
+		S3(c).named("s3"),
+		SQS(c).named("sqs"),
+		DynamoDB(c).named("dynamodb"),
+		SNS(c).named("sns"),
+		Lambda(c).named("lambda"),
+		CloudWatchLogs(c).named("cloudwatch-logs"),
+		SES(c).named("ses"),
+		IAM(c).named("iam"),
+		STS(c).named("sts"),
+		SecretsManager(c).named("secretsmanager"),
+		KMS(c).named("kms"),
+		SSM(c).named("ssm"),
+		Kinesis(c).named("kinesis"),
+		EventBridge(c).named("eventbridge"),
+		CloudFormation(c).named("cloudformation"),
+		EC2(c).named("ec2"),
+		ECS(c).named("ecs"),
+		Cognito(c).named("cognito"),
+		AppSync(c).named("appsync"),
+		APIGateway(c).named("apigateway"),
+		CloudFront(c).named("cloudfront"),
+		RDS(c).named("rds"),
+		StepFunctions(c).named("stepfunctions"),
+		Pipes(c).named("pipes"),
+		WAF(c).named("waf"),
+		Shield(c).named("shield"),
+		ElastiCache(c).named("elasticache"),
+		EFS(c).named("efs"),
 	}
 }

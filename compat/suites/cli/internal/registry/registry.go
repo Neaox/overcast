@@ -250,6 +250,59 @@ func TestNameOwners(reg *Registry) map[string][]string {
 	return owners
 }
 
+// ImplSource is one service group's contribution to the suite's impl map,
+// labelled with the group it came from so a collision can name both sides.
+type ImplSource struct {
+	Name  string
+	Impls ImplMap
+}
+
+// MergeImpls flattens the per-service impl maps into the single map the loader
+// resolves against, refusing any key that two sources both register.
+//
+// The merge used to be `for k, v := range sg.Impls { impls[k] = v }` — last
+// writer wins, and silently. Two service files both registering
+// "lambda-crud:CreateFunction" left one implementation unreachable with nothing
+// said about it, and the run reported a result for whichever one survived.
+// ValidateImpls cannot catch this: by the time it sees the flattened map the
+// discarded implementation is already gone, and the surviving key resolves
+// perfectly well.
+func MergeImpls(sources []ImplSource, suite string) (ImplMap, error) {
+	merged := make(ImplMap)
+	owner := make(map[string]string) // key → the source that registered it first
+
+	var problems []string
+	for _, src := range sources {
+		for key, fn := range src.Impls {
+			if first, dup := owner[key]; dup {
+				problems = append(problems, duplicateProblem(key, first, src.Name))
+				continue
+			}
+			owner[key] = src.Name
+			merged[key] = fn
+		}
+	}
+	if len(problems) == 0 {
+		return merged, nil
+	}
+	// Map iteration order is random, so sort for a stable message. Every
+	// problem starts with the key, which is what a reader scans for.
+	slices.Sort(problems)
+	return nil, fmt.Errorf("[%s] %d duplicate impl registration(s):\n  - %s",
+		suite, len(problems), strings.Join(problems, "\n  - "))
+}
+
+// duplicateProblem describes one collision. The two sources are the same when a
+// single service group registers the key twice.
+func duplicateProblem(key, first, second string) string {
+	if first == second {
+		return fmt.Sprintf("impl %q is registered twice by %q"+
+			" — one of the two would be silently discarded; remove or re-key one", key, first)
+	}
+	return fmt.Sprintf("impl %q is registered by both %q and %q"+
+		" — one of the two would be silently discarded; remove or re-key one", key, first, second)
+}
+
 // ValidateImpls rejects impl keys that cannot be bound to exactly one registry
 // test. It returns an error rather than warning: an unresolvable key used to be
 // a stderr line nobody read, while the test it was meant to implement quietly

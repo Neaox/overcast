@@ -16,6 +16,10 @@ impl StsGroup {
 }
 
 impl ServiceGroup for StsGroup {
+    fn name(&self) -> &'static str {
+        "sts"
+    }
+
     fn impls(&self) -> HashMap<String, TestFn> {
         let mut impls: HashMap<String, TestFn> = HashMap::new();
         let clients = self.clients.clone();

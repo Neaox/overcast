@@ -22,6 +22,10 @@ impl LambdaGroup {
 }
 
 impl ServiceGroup for LambdaGroup {
+    fn name(&self) -> &'static str {
+        "lambda"
+    }
+
     fn impls(&self) -> HashMap<String, TestFn> {
         let mut impls: HashMap<String, TestFn> = HashMap::new();
 

@@ -34,15 +34,29 @@ async fn main() {
         Box::new(SsmGroup::new(clients.clone())),
     ];
 
-    let mut impls = HashMap::new();
     let mut setups = HashMap::new();
     let mut teardowns = HashMap::new();
 
-    for group in service_groups {
-        impls.extend(group.impls());
+    for group in &service_groups {
         setups.extend(group.setups());
         teardowns.extend(group.teardowns());
     }
+
+    // The impls go through merge_impls rather than extend: a key two service
+    // files both register would otherwise lose one implementation with nothing
+    // said about it.
+    let impls = match registry::merge_impls(
+        service_groups
+            .iter()
+            .map(|group| (group.name(), group.impls())),
+        suite,
+    ) {
+        Ok(impls) => impls,
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(1);
+        }
+    };
 
     let mut capabilities = HashSet::new();
     if !skip_docker {

@@ -210,6 +210,65 @@ fn visit(
     sorted.push(test.clone());
 }
 
+/// Flattens the per-service impl maps into the single map the loader resolves
+/// against, refusing any key that two sources both register.
+///
+/// The merge used to be `impls.extend(group.impls())` — last writer wins, and
+/// silently. Two service files both registering `lambda-crud:CreateFunction`
+/// left one implementation unreachable with nothing said about it, and the run
+/// reported a result for whichever one survived. [`validate_impls`] cannot
+/// catch this: by the time it sees the flattened map the discarded
+/// implementation is already gone, and the surviving key resolves perfectly
+/// well.
+///
+/// Sources are `(label, impls)` in registration order; the label is the service
+/// file, so a collision can name both sides.
+pub fn merge_impls<'a>(
+    sources: impl IntoIterator<Item = (&'a str, HashMap<String, TestFn>)>,
+    suite: &str,
+) -> Result<HashMap<String, TestFn>, String> {
+    let mut merged: HashMap<String, TestFn> = HashMap::new();
+    let mut owner: HashMap<String, &str> = HashMap::new(); // key → first registrant
+
+    let mut problems = Vec::new();
+    for (label, impls) in sources {
+        for (key, implementation) in impls {
+            if let Some(first) = owner.get(key.as_str()) {
+                problems.push(duplicate_problem(&key, first, label));
+                continue;
+            }
+            owner.insert(key.clone(), label);
+            merged.insert(key, implementation);
+        }
+    }
+
+    if problems.is_empty() {
+        return Ok(merged);
+    }
+    // HashMap iteration order is unspecified, so sort for a stable message.
+    // Every problem starts with the key, which is what a reader scans for.
+    problems.sort_unstable();
+    Err(format!(
+        "[{suite}] {} duplicate impl registration(s):\n  - {}",
+        problems.len(),
+        problems.join("\n  - ")
+    ))
+}
+
+/// One collision. The two sources are the same when a single service file
+/// registers the key twice.
+fn duplicate_problem(key: &str, first: &str, second: &str) -> String {
+    let where_ = if first == second {
+        format!("is registered twice by \"{first}\"")
+    } else {
+        format!("is registered by both \"{first}\" and \"{second}\"")
+    };
+    format!(
+        "impl \"{key}\" {where_} — one of the two would be silently discarded; \
+         remove or re-key one"
+    )
+}
+
 /// Rejects impl keys that cannot be bound to exactly one registry test.
 ///
 /// This used to be a stderr warning nobody read, while the test the key was
@@ -359,6 +418,86 @@ mod tests {
             "cognito-userpools:ListUsers",
         ]);
         validate_impls(&two_groups_one_name(), &impls, "rust-sdk").expect("should be accepted");
+    }
+
+    /// Merges the sources and returns the refusal message. Not `expect_err`:
+    /// the Ok type is a map of `TestFn`, which is not `Debug`.
+    fn merge_err<'a>(
+        sources: impl IntoIterator<Item = (&'a str, HashMap<String, TestFn>)>,
+    ) -> String {
+        match merge_impls(sources, "rust-sdk") {
+            Ok(_) => panic!("expected the duplicate registration to be refused"),
+            Err(err) => err,
+        }
+    }
+
+    /// Two service files registering the same key must abort the run.
+    ///
+    /// This is the gap `validate_impls` cannot close. The merge that builds the
+    /// suite's impl map is last-writer-wins, so one of the two implementations
+    /// is discarded before validation ever sees the map — and the surviving key
+    /// resolves perfectly well, so nothing is reported. The discarded test then
+    /// runs the other file's implementation under its own name.
+    #[test]
+    fn rejects_key_registered_by_two_sources() {
+        let err = merge_err([
+            ("lambda", impls_with(&["lambda-crud:CreateFunction"])),
+            ("appsync", impls_with(&["lambda-crud:CreateFunction"])),
+        ]);
+
+        assert!(err.contains("duplicate impl registration"), "{err}");
+        assert!(err.contains("lambda-crud:CreateFunction"), "{err}");
+        // Both registering files must be named: the key alone does not say
+        // where to look, and one of the two files is in the wrong.
+        assert!(err.contains("\"lambda\""), "{err}");
+        assert!(err.contains("\"appsync\""), "{err}");
+    }
+
+    /// "both X and Y" would be nonsense when X and Y are the same file.
+    #[test]
+    fn reports_single_source_duplicate_as_such() {
+        let err = merge_err([
+            ("iam", impls_with(&["iam-users:CreateUser"])),
+            ("iam", impls_with(&["iam-users:CreateUser"])),
+        ]);
+
+        assert!(err.contains("registered twice by \"iam\""), "{err}");
+    }
+
+    /// Fixing one duplicate must not merely reveal the next.
+    #[test]
+    fn reports_every_duplicate() {
+        let keys = ["iam-users:CreateUser", "iam-users:ListUsers"];
+        let err = merge_err([("iam", impls_with(&keys)), ("cognito", impls_with(&keys))]);
+
+        assert!(err.contains("2 duplicate impl registration(s)"), "{err}");
+        // Sorted by key, so the message is stable despite HashMap ordering.
+        assert!(
+            err.find("iam-users:CreateUser") < err.find("iam-users:ListUsers"),
+            "problems not sorted by key: {err}"
+        );
+    }
+
+    /// Negative control: distinct keys merge cleanly and all survive.
+    #[test]
+    fn accepts_disjoint_sources() {
+        let merged = merge_impls(
+            [
+                ("iam", impls_with(&["iam-users:ListUsers", "CreateUser"])),
+                ("cognito", impls_with(&["cognito-userpools:ListUsers"])),
+            ],
+            "rust-sdk",
+        )
+        .expect("disjoint sources should merge");
+
+        assert_eq!(merged.len(), 3);
+        for key in [
+            "iam-users:ListUsers",
+            "CreateUser",
+            "cognito-userpools:ListUsers",
+        ] {
+            assert!(merged.contains_key(key), "merged map is missing {key}");
+        }
     }
 
     fn build(keys: &[&str]) -> Vec<TestGroup> {

@@ -271,6 +271,65 @@ public final class Registry {
     }
 
     /**
+     * One service group's contribution to the suite's impl map, labelled with
+     * the class it came from so a collision can name both sides.
+     */
+    public record ImplSource(String name, Map<String, TestFn> impls) {}
+
+    /**
+     * Flattens the per-service impl maps into the single map the loader
+     * resolves against, refusing any key that two sources both register.
+     *
+     * <p>The merge used to be {@code impls.putAll(sg.impls())} — last writer
+     * wins, and silently. Two service groups both registering
+     * {@code "lambda-crud:CreateFunction"} left one implementation unreachable
+     * with nothing said about it, and the run reported a result for whichever
+     * one survived. {@link #validateImpls} cannot catch this: by the time it
+     * sees the flattened map the discarded implementation is already gone, and
+     * the surviving key resolves perfectly well.
+     *
+     * @throws IllegalStateException if any key is registered more than once.
+     */
+    public static Map<String, TestFn> mergeImpls(List<ImplSource> sources, String suite) {
+        Map<String, TestFn> merged = new LinkedHashMap<>();
+        Map<String, String> owner = new HashMap<>(); // key → first registrant
+
+        List<String> problems = new ArrayList<>();
+        for (ImplSource source : sources) {
+            for (Map.Entry<String, TestFn> entry : source.impls().entrySet()) {
+                String first = owner.get(entry.getKey());
+                if (first != null) {
+                    problems.add(duplicateProblem(entry.getKey(), first, source.name()));
+                    continue;
+                }
+                owner.put(entry.getKey(), source.name());
+                merged.put(entry.getKey(), entry.getValue());
+            }
+        }
+
+        if (problems.isEmpty()) return merged;
+        // Sorted so the message is the same however the source maps iterate.
+        // Every problem starts with the key, which is what a reader scans for.
+        java.util.Collections.sort(problems);
+        throw new IllegalStateException(String.format(
+                "[%s] %d duplicate impl registration(s):%n  - %s",
+                suite, problems.size(), String.join(String.format("%n  - "), problems)));
+    }
+
+    /**
+     * One collision. The two sources are the same when a single service group
+     * registers the key twice.
+     */
+    private static String duplicateProblem(String key, String first, String second) {
+        String where = first.equals(second)
+                ? String.format("is registered twice by \"%s\"", first)
+                : String.format("is registered by both \"%s\" and \"%s\"", first, second);
+        return String.format(
+                "impl \"%s\" %s — one of the two would be silently discarded;"
+                        + " remove or re-key one", key, where);
+    }
+
+    /**
      * Rejects impl keys that cannot be bound to exactly one registry test.
      *
      * <p>This used to be a stderr warning nobody read, while the test the key

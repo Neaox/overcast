@@ -711,7 +711,7 @@ compat/suites/
   (absent when it matches `name`). Suites may use it for display or filtering
   but must still use the `name` field as the test identifier.
 
-### Implementation keys — `group:test`, and unresolvable is fatal
+### Implementation keys — `group:test`, and a bad key aborts the run
 
 Every suite maps a key to each test implementation. The key is either the bare
 test name or the **group-qualified** form, and the separator is a **colon** in
@@ -723,7 +723,8 @@ all seven loaders:
 "lambda-crud/CreateFunction"      ← WRONG: not a separator any loader accepts
 ```
 
-Two rules are enforced by every loader, and breaking either **aborts the run**:
+Three rules are enforced by every loader, and breaking any of them **aborts the
+run**:
 
 1. **A key must resolve.** A key matching neither `test` nor `group:test` in
    `registry.json` is refused, naming the key. It used to be a stderr warning
@@ -732,14 +733,41 @@ Two rules are enforced by every loader, and breaking either **aborts the run**:
    name — `ListUsers` is in both `iam-users` and `cognito-userpools`;
    `CreateFunction` is in both `lambda-crud` and `appsync-functions` — a bare
    key cannot say which group it implements, so it is refused. Qualify it.
+3. **A key may be registered once.** Two service files registering the same key
+   are refused, naming the key and both files. Rules 1 and 2 are checked by
+   `ValidateImpls`; this one cannot be, and is checked during the merge instead
+   — see below.
 
-Both rules exist because the failure they prevent is silent. A key that did not
+All three exist because the failure they prevent is silent. A key that did not
 resolve fell through to the bare name, which for a shared name is *another
 group's implementation*: the run then reported that group's result under this
 test's name, and nothing failed. Two suites were doing exactly this — `go-sdk`
 and `python-sdk` recorded `iam-users/ListUsers` as a pass while running
 Cognito's `ListUsers`, which returned early because no user pool was in scope,
 so no IAM request was ever made.
+
+**Rule 3 is checked where the maps are merged, not where they are validated.**
+Every suite flattens its per-service impl maps into one before resolving
+anything (`allImpls[k] = v`, `all_impls.update(...)`, `impls.putAll(...)`), and
+that merge is last-writer-wins. Validation cannot see a collision: by the time
+it runs, the losing implementation has already been dropped and the surviving
+key resolves perfectly well. So each loader has a **`MergeImpls`** —
+`merge_impls` / `mergeImpls` — that takes the per-service maps as *labelled
+sources* and refuses a key two of them claim. Runners must build their impl map
+through it rather than assigning into one map, and a duplicate is reported as:
+
+```
+[go-sdk] 1 duplicate impl registration(s):
+  - impl "lambda-crud:CreateFunction" is registered by both "lambda" and "appsync" — one of the two would be silently discarded; remove or re-key one
+```
+
+Naming both sources matters: the key alone does not say where to look, and the
+whole point is that one of the two files is in the wrong. Each suite labels its
+sources from what it already has — the service name in `groups.All()` (`go-sdk`,
+`cli`), `mod.__name__` (`python-sdk`), the class name (`java-sdk`,
+`dotnet-sdk`), a `name()` on the group trait (`rust-sdk`), or `service/group`
+for `node-js-sdk`, which derives its keys from built groups rather than from
+per-service maps.
 
 This is the harness-side application of the principle in
 [docs/plans/full-emulation-priority.md](../docs/plans/full-emulation-priority.md)
@@ -750,9 +778,11 @@ an ambiguous name, so a mis-bind cannot occur even if validation is bypassed —
 such a test is reported as `not yet implemented in <suite> test suite` rather
 than bound to the wrong implementation.
 
-Each loader has unit tests pinning both rules, plus — where the suite's group
-list can be imported without starting a run — a test resolving the suite's real
-registrations against the real `registry.json`:
+Each loader has unit tests pinning all three rules, plus — where the suite's
+group list can be imported without starting a run — a test that merges the
+suite's real registrations and resolves them against the real `registry.json`.
+That test is the one that catches a collision introduced in a service file,
+because merging the real maps is itself the duplicate check:
 
 | Suite | Tests | Run with |
 | --- | --- | --- |
@@ -762,6 +792,11 @@ registrations against the real `registry.json`:
 | `node-js-sdk` | loader + real registrations | `npm run test:unit` |
 | `rust-sdk` | loader | `cargo test` |
 | `dotnet-sdk` | — (no test project) | covered by the startup abort |
+
+`dotnet-sdk` is the one gap: it has no test project, so its only guard is the
+abort at startup. Adding one is worth doing on its own — it needs a csproj, a
+test SDK package and a Dockerfile stage — and until then a duplicate there
+surfaces on the first run rather than in CI's unit tests.
 
 **Rules for modifying the registry:**
 

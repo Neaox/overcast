@@ -24,16 +24,11 @@ var serviceGroups = new IServiceGroup[]
     new IamGroup(clients),
 };
 
-var impls = new Dictionary<string, TestFn>(StringComparer.Ordinal);
 var setups = new Dictionary<string, SetupFn>(StringComparer.Ordinal);
 var teardowns = new Dictionary<string, SetupFn>(StringComparer.Ordinal);
 
 foreach (var group in serviceGroups)
 {
-    foreach (var entry in group.Impls())
-    {
-        impls[entry.Key] = entry.Value;
-    }
     foreach (var entry in group.Setups())
     {
         setups[entry.Key] = entry.Value;
@@ -42,6 +37,25 @@ foreach (var group in serviceGroups)
     {
         teardowns[entry.Key] = entry.Value;
     }
+}
+
+// The impls go through MergeImpls rather than a plain assignment: a key two
+// group classes both register would otherwise lose one implementation with
+// nothing said about it.
+Dictionary<string, TestFn> impls;
+try
+{
+    impls = RegistryLoader.MergeImpls(
+        serviceGroups.Select(group => (group.SourceName, group.Impls())), suite);
+}
+catch (InvalidOperationException ex)
+{
+    // Duplicate registrations - see RegistryLoader.MergeImpls. Aborting is the
+    // point: the discarded implementation never runs, and its test reports the
+    // surviving group's result under its own name.
+    Console.Error.WriteLine(ex.Message);
+    Environment.Exit(1);
+    return;
 }
 
 var capabilities = new HashSet<string>(StringComparer.Ordinal);

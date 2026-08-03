@@ -30,7 +30,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib.harness import TestGroup, TestContext, run_suite, run_group, make_run_id
 from lib.harness import (emit_building, emit_ready, emit_batch_complete,
                           emit_cancelled, read_commands)
-from lib.registry import load_registry, build_groups_from_registry, validate_impls
+from lib.registry import (load_registry, build_groups_from_registry, merge_impls,
+                          validate_impls)
 from groups import (
     s3,
     sqs,
@@ -109,14 +110,17 @@ _modules = [
     efs,
 ]
 
-all_impls: dict = {}
 all_setup: dict = {}
 all_teardown: dict = {}
 
 for mod in _modules:
-    all_impls.update(mod.IMPLS)
     all_setup.update(mod.SETUP)
     all_teardown.update(mod.TEARDOWN)
+
+# The impls go through merge_impls rather than dict.update: a key two group
+# modules both register would otherwise lose one implementation with nothing
+# said about it. Labelled with the module name so a collision names both files.
+all_impls = merge_impls(((mod.__name__, mod.IMPLS) for mod in _modules), SUITE)
 
 # ─── Build groups from registry ────────────────────────────────────────────────
 

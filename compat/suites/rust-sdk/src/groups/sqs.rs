@@ -20,6 +20,10 @@ impl SqsGroup {
 }
 
 impl ServiceGroup for SqsGroup {
+    fn name(&self) -> &'static str {
+        "sqs"
+    }
+
     fn impls(&self) -> HashMap<String, TestFn> {
         let mut impls: HashMap<String, TestFn> = HashMap::new();
 

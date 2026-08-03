@@ -6,7 +6,8 @@ import io.overcast.compat.harness.TestFn;
 import io.overcast.compat.registry.Registry;
 import org.junit.jupiter.api.Test;
 
-import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -25,14 +26,32 @@ class MainRegistrationTest {
 
     @Test
     void registeredImplsResolveAgainstRegistry() throws Exception {
+        // Throws IllegalStateException naming every unusable key.
+        Registry.validateImpls(mergeAll(), "java-sdk");
+    }
+
+    /**
+     * No two service group classes may register the same impl key. The merge is
+     * last-writer-wins, so a collision discards one implementation and the test
+     * it belonged to silently runs the other class's — the same mis-binding the
+     * resolution rules prevent for registry lookups, one step earlier.
+     */
+    @Test
+    void registeredImplsHaveNoDuplicateKeys() {
+        mergeAll(); // throws IllegalStateException naming every duplicated key
+    }
+
+    /**
+     * Flattens every service group's registrations the way {@code Main} does,
+     * so both tests see exactly the map a real run would build.
+     */
+    private static Map<String, TestFn> mergeAll() {
         AwsClients clients = new AwsClients("http://127.0.0.1:1", "us-east-1");
 
-        Map<String, TestFn> impls = new LinkedHashMap<>();
+        List<Registry.ImplSource> sources = new ArrayList<>();
         for (ServiceGroup sg : Main.serviceGroups(clients)) {
-            impls.putAll(sg.impls());
+            sources.add(new Registry.ImplSource(sg.sourceName(), sg.impls()));
         }
-
-        // Throws IllegalStateException naming every unusable key.
-        Registry.validateImpls(impls, "java-sdk");
+        return Registry.mergeImpls(sources, "java-sdk");
     }
 }

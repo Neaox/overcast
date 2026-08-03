@@ -7,6 +7,7 @@
  */
 import type { TestGroup } from "../lib/harness.js";
 import type { ImplMap } from "../lib/registry.js";
+import { mergeImpls } from "../lib/registry.js";
 import { makeS3Groups } from "./s3.js";
 import { makeSQSGroups } from "./sqs.js";
 import { makeDynamoDBGroups } from "./dynamodb.js";
@@ -75,13 +76,24 @@ export function makeAllGroups(suite: string): TestGroup[] {
  *
  * A bare test name cannot say which group it implements when several groups
  * declare it, so every key carries its group — see `validateImpls`.
+ *
+ * Built through `mergeImpls` rather than by assigning into one object, so a key
+ * two group files both produce is refused instead of silently discarding one
+ * implementation. Each test is its own source, which catches a group listing
+ * the same test twice as well as two group files claiming the same group name.
+ * Sources are labelled `service/group` — a bare group name would not say which
+ * file to look in when two files disagree about who owns it.
  */
-export function makeImplMap(groups: TestGroup[]): ImplMap {
-  const impls: ImplMap = {};
-  for (const g of groups) {
-    for (const t of g.tests) {
-      if (!t.skip) impls[`${g.name}:${t.name}`] = t.fn;
-    }
-  }
-  return impls;
+export function makeImplMap(groups: TestGroup[], suite: string): ImplMap {
+  return mergeImpls(
+    groups.flatMap((g) =>
+      g.tests
+        .filter((t) => !t.skip)
+        .map((t) => ({
+          name: `${g.service}/${g.name}`,
+          impls: { [`${g.name}:${t.name}`]: t.fn },
+        })),
+    ),
+    suite,
+  );
 }
