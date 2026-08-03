@@ -354,5 +354,14 @@ func (h *ecsServiceHandler) Update(ctx context.Context, router http.Handler, _ *
 	if _, err := internalJSON(ctx, router, rCtx.Region, "AmazonEC2ContainerServiceV20141113.UpdateService", body); err != nil {
 		return "", nil, fmt.Errorf("UpdateService: %w", err)
 	}
+
+	// Wait for the new deployment the same way Create does. An update that
+	// swaps in a task definition whose tasks cannot start is the single most
+	// common way a real deployment goes wrong, and without this the resource
+	// reports success while the service sits on a failed rollout — leaving the
+	// stack UPDATE_COMPLETE around a service running nothing.
+	if err := waitForServiceStable(ctx, router, rCtx.Region, cluster, physicalID); err != nil {
+		return "", nil, err
+	}
 	return physicalID, nil, nil
 }
