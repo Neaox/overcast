@@ -234,6 +234,17 @@ type Config struct {
 	// Corresponds to env var OVERCAST_CFN_SYNC_WAIT_MS. Default 1000ms.
 	CFNSyncWait time.Duration
 
+	// StepFunctionsExecutionTimeout is the ceiling on how long one Step
+	// Functions execution may run. It is a runaway guard, not a request
+	// timeout: StartExecution accepts and returns while the execution is still
+	// RUNNING, so this never sits on the wire and is set high enough not to
+	// rule out ordinary Wait states. A state machine's own top-level
+	// TimeoutSeconds can lower the budget but never raise it. Exceeding it
+	// ends the execution TIMED_OUT with AWS's States.Timeout.
+	// Corresponds to env var OVERCAST_STEPFUNCTIONS_EXECUTION_TIMEOUT.
+	// Default 15m; values below 1s are raised to 1s.
+	StepFunctionsExecutionTimeout time.Duration
+
 	// ShutdownTimeout is how long the server waits for in-flight
 	// requests to complete before forcibly closing.
 	ShutdownTimeout time.Duration
@@ -1102,6 +1113,17 @@ func Load() (*Config, error) {
 	cfg.CFNSyncWait = time.Duration(envInt("OVERCAST_CFN_SYNC_WAIT_MS", 1000)) * time.Millisecond
 	if cfg.CFNSyncWait < 0 {
 		cfg.CFNSyncWait = 0
+	}
+
+	// Step Functions runaway-execution guard. Executions run off the request
+	// path, so this bounds the run only.
+	sfnTimeoutStr := envOr("OVERCAST_STEPFUNCTIONS_EXECUTION_TIMEOUT", "15m")
+	cfg.StepFunctionsExecutionTimeout, err = time.ParseDuration(sfnTimeoutStr)
+	if err != nil {
+		return nil, fmt.Errorf("config: OVERCAST_STEPFUNCTIONS_EXECUTION_TIMEOUT %q is not a duration: %w", sfnTimeoutStr, err)
+	}
+	if cfg.StepFunctionsExecutionTimeout < time.Second {
+		cfg.StepFunctionsExecutionTimeout = time.Second
 	}
 
 	// Logging

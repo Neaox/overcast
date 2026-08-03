@@ -614,8 +614,11 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// EventBridge: wire bus for bus/rule lifecycle events.
 	ebSvc.InitBus(bus)
 	ebSvc.InitRouter(r)
-	// Step Functions: wire bus for state machine/execution lifecycle events.
+	// Step Functions: wire bus for state machine/execution lifecycle events,
+	// plus the root router so Task states reach Lambda/SQS/SNS/DynamoDB
+	// through the same handlers an SDK call would.
 	sfnSvc.InitBus(bus)
+	sfnSvc.InitRouter(r)
 	// AppSync: wire bus for API lifecycle events.
 	appsyncSvc.InitBus(bus)
 	appsyncSvc.InitLambdaInvoker(lambdaSvc.SyncInvoker())

@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1320,
+  "total_ops": 1326,
   "services": [
     {
       "service": "s3",
@@ -6468,14 +6468,14 @@
     {
       "service": "stepfunctions",
       "display_name": "Step Functions",
-      "total_ops": 5,
-      "implemented_ops": 5,
+      "total_ops": 11,
+      "implemented_ops": 11,
       "operations": [
         {
           "operation": "CreateStateMachine",
           "category": "State machines",
           "status": "✅ Supported",
-          "notes": "Idempotent — returns existing if name+def match"
+          "notes": "Validates the ASL; idempotent — returns existing if name+def match"
         },
         {
           "operation": "DescribeStateMachine",
@@ -6493,10 +6493,45 @@
           "status": "✅ Supported"
         },
         {
+          "operation": "DescribeStateMachineForExecution",
+          "category": "State machines",
+          "status": "✅ Supported"
+        },
+        {
           "operation": "StartExecution",
           "category": "Executions",
           "status": "✅ Supported",
-          "notes": "Records execution; immediately marks SUCCEEDED"
+          "notes": "Interprets the ASL; returns while the execution is RUNNING, as AWS does"
+        },
+        {
+          "operation": "StartSyncExecution",
+          "category": "Executions",
+          "status": "✅ Supported",
+          "notes": "EXPRESS only — same interpreter, run to completion before returning"
+        },
+        {
+          "operation": "DescribeExecution",
+          "category": "Executions",
+          "status": "✅ Supported",
+          "notes": "Real status, output, error and cause"
+        },
+        {
+          "operation": "ListExecutions",
+          "category": "Executions",
+          "status": "✅ Supported",
+          "notes": "statusFilter and maxResults honoured; no pagination token"
+        },
+        {
+          "operation": "GetExecutionHistory",
+          "category": "Executions",
+          "status": "✅ Supported",
+          "notes": "Real state-transition events in AWS's vocabulary; readable while RUNNING"
+        },
+        {
+          "operation": "StopExecution",
+          "category": "Executions",
+          "status": "✅ Supported",
+          "notes": "Interrupts a running execution; it reaches ABORTED asynchronously"
         }
       ]
     },

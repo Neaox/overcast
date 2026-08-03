@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/google/uuid"
-
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/protocol"
 )
@@ -72,6 +70,9 @@ func (h *Handler) createStateMachineTyped(ctx context.Context, req *createStateM
 			Message:    "Value null at 'name' failed to satisfy constraint",
 			HTTPStatus: http.StatusBadRequest,
 		}
+	}
+	if aerr := validateDefinitionForCreate(req.Definition); aerr != nil {
+		return nil, aerr
 	}
 	existing, err := h.store.GetStateMachine(ctx, req.Name)
 	if err != nil {
@@ -154,39 +155,6 @@ func (h *Handler) listStateMachinesTyped(ctx context.Context, _ *listStateMachin
 		})
 	}
 	return &listStateMachinesResponse{StateMachines: items}, nil
-}
-
-func (h *Handler) startExecutionTyped(ctx context.Context, req *startExecutionRequest) (*startExecutionResponse, *protocol.AWSError) {
-	smName := extractSMName(req.StateMachineArn)
-	sm, err := h.store.GetStateMachine(ctx, smName)
-	if err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
-	}
-	if sm == nil {
-		return nil, errSMNotFound(req.StateMachineArn)
-	}
-	execName := req.Name
-	if execName == "" {
-		execName = uuid.NewString()
-	}
-	now := h.clk.Now()
-	execArn := protocol.ARN(h.cfg.Region, h.cfg.AccountID, "states", "execution:"+smName+":"+execName)
-	exec := &Execution{
-		ExecutionArn:    execArn,
-		StateMachineArn: req.StateMachineArn,
-		Name:            execName,
-		Input:           req.Input,
-		Status:          "SUCCEEDED",
-		StartDate:       now,
-	}
-	if err := h.store.PutExecution(ctx, exec); err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
-	}
-	h.publishCtx(ctx, events.SFNExecutionStarted, events.ResourcePayload{Name: execName})
-	return &startExecutionResponse{
-		ExecutionArn: execArn,
-		StartDate:    float64(now.UnixMilli()) / 1000.0,
-	}, nil
 }
 
 func (h *Handler) deleteStateMachineTyped(ctx context.Context, req *deleteStateMachineRequest) (*struct{}, *protocol.AWSError) {

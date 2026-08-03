@@ -71,6 +71,92 @@ def DeleteStateMachine(ctx: TestContext) -> None:
     sfn.delete_state_machine(stateMachineArn=sm_arn)
 
 
+# ── sfn-executions ────────────────────────────────────────────────────────────
+#
+# The execution engine really interprets the definition, so these tests assert
+# on what the execution produced rather than just that a call succeeded.
+
+_EXEC_DEFINITION = json.dumps({
+    "Comment": "compat executions",
+    "StartAt": "Hello",
+    "States": {"Hello": {"Type": "Pass", "Result": {"greeting": "hello"}, "End": True}},
+})
+
+
+def _setup_executions(ctx: TestContext) -> None:
+    """Provision this group's own state machine — groups never share resources."""
+    resp = _sfn(ctx).create_state_machine(
+        name=f"compat-exec-{ctx.run_id}",
+        definition=_EXEC_DEFINITION,
+        roleArn=f"arn:aws:iam::000000000000:role/compat-sfn-exec-{ctx.run_id}",
+        type="EXPRESS",
+    )
+    if not resp.get("stateMachineArn"):
+        raise AssertionError("setup sfn-executions: missing stateMachineArn")
+    ctx["sfn_exec_sm_arn"] = resp["stateMachineArn"]
+
+
+def _teardown_executions(ctx: TestContext) -> None:
+    sm_arn = ctx.get("sfn_exec_sm_arn")
+    if sm_arn:
+        try:
+            _sfn(ctx).delete_state_machine(stateMachineArn=sm_arn)
+        except Exception:
+            pass
+
+
+def ExecStartExecution(ctx: TestContext) -> None:
+    sm_arn = ctx.get("sfn_exec_sm_arn")
+    if not sm_arn:
+        raise AssertionError("StartExecution: no state machine from setup")
+    resp = _sfn(ctx).start_execution(
+        stateMachineArn=sm_arn,
+        name=f"run-{ctx.run_id}",
+        input=json.dumps({"key": "value"}),
+    )
+    if not resp.get("executionArn"):
+        raise AssertionError("StartExecution: missing executionArn")
+    ctx["sfn_exec_arn"] = resp["executionArn"]
+
+
+def DescribeExecution(ctx: TestContext) -> None:
+    exec_arn = ctx.get("sfn_exec_arn")
+    if not exec_arn:
+        raise AssertionError("DescribeExecution: no execution from StartExecution")
+    resp = _sfn(ctx).describe_execution(executionArn=exec_arn)
+    if not resp.get("status"):
+        raise AssertionError("DescribeExecution: missing status")
+    if resp.get("executionArn") != exec_arn:
+        raise AssertionError("DescribeExecution: executionArn did not round-trip")
+
+
+def GetExecutionHistory(ctx: TestContext) -> None:
+    exec_arn = ctx.get("sfn_exec_arn")
+    if not exec_arn:
+        raise AssertionError("GetExecutionHistory: no execution from StartExecution")
+    resp = _sfn(ctx).get_execution_history(executionArn=exec_arn)
+    if not resp.get("events"):
+        raise AssertionError("GetExecutionHistory: no events")
+
+
+def ListExecutions(ctx: TestContext) -> None:
+    sm_arn = ctx.get("sfn_exec_sm_arn")
+    if not sm_arn:
+        raise AssertionError("ListExecutions: no state machine from setup")
+    resp = _sfn(ctx).list_executions(stateMachineArn=sm_arn)
+    exec_arn = ctx.get("sfn_exec_arn")
+    arns = [e.get("executionArn") for e in resp.get("executions", [])]
+    if exec_arn not in arns:
+        raise AssertionError(f"ListExecutions: execution {exec_arn} not listed")
+
+
+def StopExecution(ctx: TestContext) -> None:
+    exec_arn = ctx.get("sfn_exec_arn")
+    if not exec_arn:
+        raise AssertionError("StopExecution: no execution from StartExecution")
+    _sfn(ctx).stop_execution(executionArn=exec_arn)
+
+
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
@@ -79,11 +165,21 @@ IMPLS = {
     "ListStateMachines": ListStateMachines,
     "StartExecution": StartExecution,
     "DeleteStateMachine": DeleteStateMachine,
+    # sfn-executions — group-qualified so StartExecution does not collide with
+    # the sfn-statemachines test of the same name.
+    "sfn-executions:StartExecution": ExecStartExecution,
+    "sfn-executions:DescribeExecution": DescribeExecution,
+    "sfn-executions:GetExecutionHistory": GetExecutionHistory,
+    "sfn-executions:ListExecutions": ListExecutions,
+    "sfn-executions:StopExecution": StopExecution,
 }
 
-SETUP = {}
+SETUP = {
+    "sfn-executions": _setup_executions,
+}
 TEARDOWN = {
     "sfn-statemachines": lambda ctx: _teardown_state_machine(ctx),
+    "sfn-executions": _teardown_executions,
 }
 
 

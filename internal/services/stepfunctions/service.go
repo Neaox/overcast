@@ -7,6 +7,7 @@
 package stepfunctions
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -45,8 +46,21 @@ func (s *Service) InitBus(bus *events.Bus) {
 	s.handler.bus = bus
 }
 
+// InitRouter wires Overcast's root router so Task states can reach the other
+// emulated services. Storing the handle is all this does — no I/O — so it is
+// safe to call from router.New(). Until it is called, a Task state fails the
+// execution loudly rather than being skipped.
+func (s *Service) InitRouter(router http.Handler) {
+	s.handler.router = router
+}
+
 // Name satisfies router.Service.
 func (s *Service) Name() string { return serviceName }
+
+// Stop satisfies router.Stopper. Executions run on their own goroutines, so
+// shutdown cancels them and waits for each to write its terminal state, or
+// until ctx expires.
+func (s *Service) Stop(ctx context.Context) { s.handler.Stop(ctx) }
 
 // RegisterRoutes satisfies router.Service. Step Functions has no path-routed endpoints.
 func (s *Service) RegisterRoutes(_ chi.Router) {}

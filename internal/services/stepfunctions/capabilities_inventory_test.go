@@ -10,20 +10,28 @@ import (
 )
 
 // TestCapabilities_MatchDispatchInventory asserts that the capabilities
-// declared in capabilities_dev.go exactly cover the operations registered in
-// initOps — no more, no less.  This prevents the two inventories from drifting
+// declared in capabilities_dev.go exactly cover the operations Dispatch can
+// serve — no more, no less. This prevents the two inventories from drifting
 // when operations are added, promoted out of stubs, or removed.
+//
+// The dispatch surface is the union of the legacy X-Amz-Target table and the
+// typed registry: Dispatch tries the legacy handler first and falls through to
+// the typed one, so a typed-only operation (the execution plane) is served
+// just as fully as a legacy one.
 func TestCapabilities_MatchDispatchInventory(t *testing.T) {
 	t.Helper()
 
-	// Populate the dispatch table by calling initOps on a zero-value Handler.
-	// initOps only assigns method-value closures to the map; it never
+	// Populate the dispatch tables by calling initOps on a zero-value Handler.
+	// initOps only assigns method-value closures to the maps; it never
 	// dereferences h's pointer fields, so nil fields are safe here.
 	h := &Handler{}
 	h.initOps()
 
-	dispatchSet := make(map[string]struct{}, len(h.ops))
+	dispatchSet := make(map[string]struct{}, len(h.ops)+len(h.typedOp))
 	for op := range h.ops {
+		dispatchSet[op] = struct{}{}
+	}
+	for op := range h.typedOp {
 		dispatchSet[op] = struct{}{}
 	}
 
@@ -52,7 +60,7 @@ func TestCapabilities_MatchDispatchInventory(t *testing.T) {
 	}
 	sort.Strings(missing)
 	if len(missing) > 0 {
-		t.Errorf("operations in initOps but missing from capabilities_dev.go:\n  %v\nAdd a Capability entry for each.", missing)
+		t.Errorf("operations Dispatch serves but missing from capabilities_dev.go:\n  %v\nAdd a Capability entry for each.", missing)
 	}
 
 	// Every non-DocOnly capability declaration must correspond to a real
@@ -69,6 +77,6 @@ func TestCapabilities_MatchDispatchInventory(t *testing.T) {
 	}
 	sort.Strings(phantom)
 	if len(phantom) > 0 {
-		t.Errorf("operations declared in capabilities_dev.go but absent from initOps:\n  %v\nEither add them to initOps (as stubs), mark them DocOnly, or remove the capability entry.", phantom)
+		t.Errorf("operations declared in capabilities_dev.go but absent from the dispatch tables:\n  %v\nEither register them in initOps or typedOps (as stubs), mark them DocOnly, or remove the capability entry.", phantom)
 	}
 }

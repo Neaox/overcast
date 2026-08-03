@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
 import { Shuffle, Plus, Trash2, RefreshCw, Search } from "lucide-react"
 import {
   sfnStateMachinesQueryOptions,
@@ -22,7 +23,6 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { Badge } from "@/components/ui/badge"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
-import { InertBanner } from "@/components/inert-banner"
 import { CreateResourceDialog } from "@/components/create-resource-dialog"
 import { cn } from "@/lib/utils"
 import { ArnText } from "@/components/ui/arn-link"
@@ -80,8 +80,6 @@ export function StepFunctionsPage() {
           </>
         }
       />
-      <InertBanner serviceName="Step Functions" />
-
       <div className="relative">
         <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
         <Input
@@ -126,7 +124,15 @@ export function StepFunctionsPage() {
           <TableBody>
             {filtered.map((sm) => (
               <TableRow key={sm.stateMachineArn}>
-                <TableCell>{sm.name}</TableCell>
+                <TableCell>
+                  <Link
+                    className="font-medium text-accent hover:underline"
+                    to="/stepfunctions/$name"
+                    params={{ name: sm.name ?? "" }}
+                  >
+                    {sm.name}
+                  </Link>
+                </TableCell>
                 <TableCell>
                   <Badge variant="default">{sm.type}</Badge>
                 </TableCell>

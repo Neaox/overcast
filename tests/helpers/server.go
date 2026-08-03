@@ -392,6 +392,10 @@ func defaultTestConfig() *config.Config {
 		SMTPPort:             0,     // random when mock is enabled
 		SMTPFrom:             "overcast@localhost",
 		SMTPInboxMax:         500,
+		// Step Functions runaway-execution guard. Executions run on their own
+		// goroutines, so this bounds the run, not the request. Kept short so a
+		// non-terminating definition fails a test fast rather than hanging.
+		StepFunctionsExecutionTimeout: 10 * time.Second,
 	}
 }
 

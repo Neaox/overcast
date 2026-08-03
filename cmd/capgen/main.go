@@ -829,13 +829,46 @@ func collectAWSCasesFromSwitch(sw *ast.SwitchStmt) []string {
 	return cases
 }
 
+// aslChoiceOperators are the Amazon States Language Choice comparison
+// operators. They are PascalCase strings switched on in
+// internal/services/stepfunctions, so the switch-case heuristic would
+// otherwise read them as Step Functions API operations.
+var aslChoiceOperators = map[string]bool{
+	"StringEquals": true, "StringEqualsPath": true,
+	"StringLessThan": true, "StringLessThanPath": true,
+	"StringGreaterThan": true, "StringGreaterThanPath": true,
+	"StringLessThanEquals": true, "StringLessThanEqualsPath": true,
+	"StringGreaterThanEquals": true, "StringGreaterThanEqualsPath": true,
+	"StringMatches": true,
+
+	"NumericEquals": true, "NumericEqualsPath": true,
+	"NumericLessThan": true, "NumericLessThanPath": true,
+	"NumericGreaterThan": true, "NumericGreaterThanPath": true,
+	"NumericLessThanEquals": true, "NumericLessThanEqualsPath": true,
+	"NumericGreaterThanEquals": true, "NumericGreaterThanEqualsPath": true,
+
+	"BooleanEquals": true, "BooleanEqualsPath": true,
+
+	"TimestampEquals": true, "TimestampEqualsPath": true,
+	"TimestampLessThan": true, "TimestampLessThanPath": true,
+	"TimestampGreaterThan": true, "TimestampGreaterThanPath": true,
+	"TimestampLessThanEquals": true, "TimestampLessThanEqualsPath": true,
+	"TimestampGreaterThanEquals": true, "TimestampGreaterThanEqualsPath": true,
+
+	"IsNull": true, "IsPresent": true, "IsNumeric": true,
+	"IsString": true, "IsBoolean": true, "IsTimestamp": true,
+}
+
+// isKnownNonOperationCase names PascalCase switch cases that are domain
+// vocabulary rather than AWS API operations. Without it the switch-case
+// heuristic reports them as operations missing a capability declaration.
 func isKnownNonOperationCase(s string) bool {
+	// CloudWatch alarm comparison operators.
 	switch s {
 	case "GreaterThanThreshold", "GreaterThanOrEqualToThreshold", "LessThanThreshold", "LessThanOrEqualToThreshold":
 		return true
-	default:
-		return false
 	}
+	return aslChoiceOperators[s]
 }
 
 // isAWSOperation returns true if s looks like an AWS API operation name (PascalCase, 3-80 chars).
