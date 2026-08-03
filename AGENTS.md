@@ -389,6 +389,23 @@ Agents must **not** start their own test instances of Overcast on port **4566** 
 - When you want the user to look at something in a test instance, give them the **full clickable URL including the port** (e.g. `http://localhost:4570` / `http://localhost:4571`) — never say "open the web UI" and assume a port.
 - The same courtesy applies in reverse: something already listening on 4566/4567 is the user's instance — never kill it, restart it, or point tests at it without being asked.
 
+## Calling the AWS CLI — use `scripts/awslocal.sh`
+
+**Never call `aws` directly against Overcast.** Use `scripts/awslocal.sh` (or `.ps1`):
+
+```sh
+OVERCAST_PORT=4580 scripts/awslocal.sh sqs list-queues
+```
+
+A developer machine carries an ambient AWS environment — `AWS_PROFILE`, `AWS_REGION`, SSO state, a stale `AWS_ENDPOINT_URL` — and it leaks into every `aws` call without announcing itself. The wrapper unsets **every** `AWS_*` variable in its own process and sets back only the endpoint, placeholder credentials, region, and `AWS_PAGER=""` (an unset pager hangs a piped call on `less`). Your shell is left untouched.
+
+This is not hypothetical tidiness. An ambient `AWS_REGION` once made an agent's `aws` calls sign for a different region than its `curl` calls, so the two saw different SQS queues; that was written up as a severe cross-protocol state bug before the region mismatch was spotted. Region partitioning was correct behaviour all along. Exporting `AWS_ACCESS_KEY_ID` and friends by hand does not protect you — it leaves everything you did not think of in place, which is exactly the part that bites.
+
+Two things it deliberately does not cover:
+
+- **Endpoint and URL-minting tests.** It passes `--endpoint-url`, which suppresses the SQS queue-URL origin override in the JS/.NET/Java SDKs — the bug class [docs/dev/manual-testing.md](./docs/dev/manual-testing.md) exists to catch. Those need a *bare* SDK client with no endpoint configured.
+- **Region.** It defaults to `us-east-1`; pass `OVERCAST_REGION` when you mean another. Resources really are per-region, as on AWS, so a create in one region and a list in another correctly disagree.
+
 ## What agents must NOT do
 
 - **Never push directly to `main`.** Agents must not run `git push origin main`, push the current branch when it is `main`, create or move tags on `main`, or otherwise update protected release branches directly. Always work on a feature/release branch and use a pull request or explicit human-managed merge path. If a task appears to require a direct `main` push to trigger automation, stop and ask for human confirmation instead. (The compat workflow's baseline-promotion commit is the sole exception, and it belongs to the workflow — never to you: see [compat/AGENTS.md § Baseline & uniformity policy](./compat/AGENTS.md#baseline--uniformity-policy).)
