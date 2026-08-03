@@ -1236,11 +1236,7 @@ func (h *Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	if invocationType == "Event" {
 		w.Header().Set("X-Amz-Executed-Version", "$LATEST")
 		w.WriteHeader(http.StatusAccepted)
-		h.asyncWg.Add(1)
-		go func() {
-			defer h.asyncWg.Done()
-			h.invokeAsync(fn, rt, payload)
-		}()
+		h.startAsync(fn, rt, payload)
 		return
 	}
 
@@ -1654,6 +1650,34 @@ func (h *Handler) acquireForAsync(ctx context.Context, fn *Function, rt Runtime)
 			return nil, err
 		}
 	}
+}
+
+// startAsync hands an accepted event to Lambda's async machinery and returns
+// immediately. This is the only way an Event-type invocation should be started:
+// it is what makes "accepted" mean the same thing to an HTTP caller holding a
+// 202 and to an in-process caller of ServiceInvoker.InvokeEvent — the throttle
+// retry, the instance tracking and the shutdown drain all come with it.
+//
+// The goroutine is bounded by asyncWg, which StopAsync waits on, so nothing
+// started here outlives the server. It reports false once StopAsync has run,
+// because after that there is no drain left to join; callers that can tell
+// someone (InvokeEvent) report it rather than dropping the event silently.
+func (h *Handler) startAsync(fn *Function, rt Runtime, payload []byte) bool {
+	h.asyncMu.Lock()
+	if h.asyncClosed {
+		h.asyncMu.Unlock()
+		h.log.Warn("invokeAsync: refusing an event, Lambda is shutting down",
+			zap.String("function", fn.Name))
+		return false
+	}
+	h.asyncWg.Add(1)
+	h.asyncMu.Unlock()
+
+	go func() {
+		defer h.asyncWg.Done()
+		h.invokeAsync(fn, rt, payload)
+	}()
+	return true
 }
 
 // invokeAsync fires a function invocation in a goroutine, discarding the result.

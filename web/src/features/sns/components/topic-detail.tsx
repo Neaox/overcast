@@ -63,6 +63,11 @@ interface DeliveryState {
 /**
  * Event types that mean "SNS handed the message to this subscriber". One per
  * protocol, because each delivery path reports its own event.
+ *
+ * Handed over, not processed: `sqs` means enqueued and `lambda` means the
+ * function accepted the event, the same way an `InvocationType=Event` invoke
+ * returns 202 before the handler runs. What the subscriber then did with it is
+ * that service's to report.
  */
 const DELIVERED_EVENT_TYPES: readonly string[] = [
   EventType.sns.Notification,
@@ -454,6 +459,12 @@ export function TopicDetail({ topicName }: Props) {
  * The state comes from the live event stream, so it covers this session only —
  * "No deliveries yet" means nothing has been observed since the page loaded,
  * not that the subscription has never worked.
+ *
+ * "Accepted" rather than "Delivered": what SNS reports is the hand-off, and for
+ * every protocol the subscriber's own processing happens after it. For `lambda`
+ * that gap is real work — the function may still be cold-starting, and if the
+ * handler then throws, nothing here changes. The Lambda page is where the
+ * invocation's outcome lives.
  */
 function DeliveryIndicator({ state }: { state?: DeliveryState }) {
   if (!state) {
@@ -472,9 +483,12 @@ function DeliveryIndicator({ state }: { state?: DeliveryState }) {
     )
   }
   return (
-    <span className="flex items-center gap-1.5 text-xs text-green-500">
+    <span
+      className="flex items-center gap-1.5 text-xs text-green-500"
+      title="SNS handed the message to this subscriber. Whether the subscriber finished processing it is reported on that resource's own page."
+    >
       <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
-      Delivered at {when}
+      Accepted at {when}
     </span>
   )
 }

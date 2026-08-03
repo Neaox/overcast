@@ -69,6 +69,8 @@ const (
 	SNSPushDelivered Type = "sns:PushDelivered"
 
 	// SNSLambdaDelivered fires after SNS successfully hands a notification to a lambda-protocol subscriber.
+	// "Delivered" means Lambda accepted the event, not that the function has finished — the same thing it
+	// means for sqs (enqueued, not consumed). Whether the handler then succeeded is Lambda's to report.
 	SNSLambdaDelivered Type = "sns:LambdaDelivered"
 
 	// SNSDeliveryFailed fires when SNS could not deliver a notification to a subscriber.
@@ -598,9 +600,9 @@ type SNSPushPayload struct {
 	SubscriptionARN string `json:"subscriptionArn,omitempty"`
 }
 
-// SNSLambdaPayload carries the details of a successful SNS→Lambda delivery.
-// FunctionName is the bare function name (not the full ARN) so it matches the
-// "lambda::FUNCTION" node ID used by the topology map.
+// SNSLambdaPayload carries the details of an SNS→Lambda delivery Lambda
+// accepted. FunctionName is the bare function name (not the full ARN) so it
+// matches the "lambda::FUNCTION" node ID used by the topology map.
 type SNSLambdaPayload struct {
 	TopicName       string `json:"topicName"`
 	FunctionName    string `json:"functionName"`

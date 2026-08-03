@@ -160,8 +160,14 @@ wasn't new work, the existing behavior already violated the principle).
 Shipped in [sns/handler_publish.go](../../internal/services/sns/handler_publish.go):
 - `case "lambda"` invokes the subscribed function asynchronously via the new
   `events.FunctionEventInvoker`, which reports the outcome real Lambda's `InvocationType=Event` call
-  reports synchronously (missing function, non-invokable state, throttled). The invoke runs on its own
-  WaitGroup-tracked goroutine so a cold start cannot stall the topic's other subscribers.
+  reports synchronously (missing function, non-invokable state).
+  Amended 2026-08-03: `InvokeEvent` originally ran the function inline on the caller's goroutine and
+  returned a throttle to it, so SNS spawned a goroutine of its own to keep a cold start off the fan-out
+  path, and a reserved-concurrency throttle dead-lettered a notification AWS would have retried. It is now
+  a true accept — it validates, records the invocation, and hands execution to the same
+  `acquireForAsync` + `asyncWg` + `invokeAsync` machinery the HTTP `InvocationType=Event` path uses — so
+  the throttle is retried internally, the cold start is off the caller's goroutine without SNS spawning
+  anything, and the two async-invoke paths are one implementation.
 - The payload is AWS's SNS event byte-for-byte, including the `SigningCertUrl`/`UnsubscribeUrl` spelling
   that differs from the SQS/HTTP notification envelope, a `null` `Subject` when none was published, and
   `MessageAttributes` as `{Type, Value}` pairs. `RawMessageDelivery` is deliberately not applied — AWS

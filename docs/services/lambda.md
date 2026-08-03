@@ -33,7 +33,14 @@ containers, communicate with the Lambda Runtime API, and return real response pa
 
 ## Known limitations
 
-- Async invocation (`InvocationType: Event`) is not yet implemented.
+- Async invocation (`InvocationType: Event`) is accepted and executed, but the
+  machinery that runs *after* a failure is not emulated: a handler that raises on
+  an async invocation is not retried (AWS retries twice), and `DeadLetterConfig`
+  and `PutFunctionEventInvokeConfig` on-failure destinations are not applied
+  outside event source mappings. The failure reaches the function's logs and
+  nothing else. This applies equally to events arriving from S3 notifications,
+  EventBridge and Scheduler targets, and SNS `lambda` subscriptions — all of
+  which share the same async path.
 - Cold-start latency simulation is not implemented.
 - Account-wide concurrency quotas and requests-per-second limits are not
   emulated; only per-function reserved concurrency is enforced.
@@ -118,6 +125,11 @@ the caller — they were already answered 202. A throttled async invocation is
 retried internally, as on AWS, though on a much shorter budget than AWS's six
 hours. Event source mappings behave the same way: a throttled batch is left in
 flight so the messages return to the queue on the visibility timeout.
+
+This holds however the event was raised. An S3 notification, an EventBridge or
+Scheduler target, and an SNS `lambda` subscription all enter the same async path
+as an HTTP `InvocationType: Event` invoke, so none of them sees a throttle
+either — the event source is told only whether Lambda accepted the event.
 
 ### Provisioned concurrency
 
