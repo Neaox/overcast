@@ -1,0 +1,1 @@
++ [web] a route that fails now shows a proper error screen — the message, a retry that re-runs the page's data, a collapsed stack trace, and a one-click copy of route, endpoint, region and stack for a bug report. A connection failure says the emulator is unreachable and names the endpoint; a stale tab after an update is told to reload
