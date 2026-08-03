@@ -148,6 +148,66 @@ public static class RegistryLoader
             .ToHashSet(StringComparer.Ordinal);
 
     /// <summary>
+    /// Flattens the per-service impl maps into the single map the loader
+    /// resolves against, refusing any key that two sources both register.
+    /// </summary>
+    /// <remarks>
+    /// The merge used to be a plain <c>impls[entry.Key] = entry.Value</c> - last
+    /// writer wins, and silently. Two group classes both registering
+    /// "lambda-crud:CreateFunction" left one implementation unreachable with
+    /// nothing said about it, and the run reported a result for whichever one
+    /// survived. <see cref="ValidateImpls"/> cannot catch this: by the time it
+    /// sees the flattened map the discarded implementation is already gone, and
+    /// the surviving key resolves perfectly well.
+    /// <para>Sources are (label, impls) in registration order; the label is the
+    /// group class, so a collision can name both sides.</para>
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">If any key is registered more than once.</exception>
+    public static Dictionary<string, TestFn> MergeImpls(
+        IEnumerable<(string Name, IReadOnlyDictionary<string, TestFn> Impls)> sources,
+        string suite)
+    {
+        var merged = new Dictionary<string, TestFn>(StringComparer.Ordinal);
+        var owner = new Dictionary<string, string>(StringComparer.Ordinal); // key -> first registrant
+
+        var problems = new List<string>();
+        foreach (var (name, impls) in sources)
+        {
+            foreach (var entry in impls)
+            {
+                if (owner.TryGetValue(entry.Key, out var first))
+                {
+                    problems.Add(DuplicateProblem(entry.Key, first, name));
+                    continue;
+                }
+                owner[entry.Key] = name;
+                merged[entry.Key] = entry.Value;
+            }
+        }
+
+        if (problems.Count == 0) return merged;
+        // Sorted so the message is the same however the source maps iterate.
+        // Every problem starts with the key, which is what a reader scans for.
+        problems.Sort(StringComparer.Ordinal);
+        throw new InvalidOperationException(
+            $"[{suite}] {problems.Count} duplicate impl registration(s):{Environment.NewLine}  - "
+            + string.Join($"{Environment.NewLine}  - ", problems));
+    }
+
+    /// <summary>
+    /// One collision. The two sources are the same when a single group class
+    /// registers the key twice.
+    /// </summary>
+    private static string DuplicateProblem(string key, string first, string second)
+    {
+        var where = first == second
+            ? $"is registered twice by \"{first}\""
+            : $"is registered by both \"{first}\" and \"{second}\"";
+        return $"impl \"{key}\" {where} - one of the two would be silently discarded; "
+            + "remove or re-key one";
+    }
+
+    /// <summary>
     /// Rejects impl keys that cannot be bound to exactly one registry test.
     /// </summary>
     /// <remarks>
