@@ -1,8 +1,10 @@
 import {
   type CloudWatchClient,
+  DescribeAlarmHistoryCommand,
   DescribeAlarmsCommand,
   GetMetricStatisticsCommand,
   ListMetricsCommand,
+  type AlarmHistoryItem,
   type Datapoint,
   type Dimension,
   type Metric,
@@ -70,5 +72,22 @@ export const cloudwatch = {
   describeAlarms: async (): Promise<MetricAlarm[]> => {
     const response = await client().send(new DescribeAlarmsCommand({}))
     return response.MetricAlarms ?? []
+  },
+
+  /**
+   * Recent history for one alarm, newest first — the emulator returns
+   * TimestampDescending by default, matching AWS.
+   */
+  describeAlarmHistory: async (params: {
+    alarmName: string
+    maxRecords?: number
+  }): Promise<AlarmHistoryItem[]> => {
+    const response = await client().send(
+      new DescribeAlarmHistoryCommand({
+        AlarmName: params.alarmName,
+        MaxRecords: params.maxRecords ?? 20,
+      }),
+    )
+    return response.AlarmHistoryItems ?? []
   },
 }

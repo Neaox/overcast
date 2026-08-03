@@ -43,7 +43,7 @@ concentrated in exactly five services that are Tier 1 end-to-end — see §5.3.
 | 3 | ~~Step Functions execution engine~~ **DONE 2026-08-03 (#469)** | ~~Minimal-stub~~ → Core | The ASL interpreter landed: all eight state types, Retry/Catch, Lambda/SQS/SNS/DynamoDB/nested-execution Task integrations, real `GetExecutionHistory`. Unsupported ASL fails loudly with `States.Runtime` |
 | 4 | IAM policy evaluation | Core, no enforcement | `SimulatePrincipalPolicy` "Always returns allowed — no enforcement engine" ([iam/handler.go:1952](../../internal/services/iam/handler.go)) — no local signal for the single most common real-AWS failure mode (`AccessDenied`) |
 | 5 | S3 lifecycle rules | Comprehensive, stub gap | `Get/Put/DeleteBucketLifecycleConfiguration` are pure 501s ([s3 capability rows](../../internal/capabilities/all.gen.go)) despite being a default CDK bucket option (`autoDeleteObjects`, log/backup buckets) |
-| 6 | CloudWatch Alarms auto-evaluation | Core, manual-only | `SetAlarmState` is documented "Manually sets the state" — no loop evaluates `PutMetricData` against a `PutMetricAlarm` threshold; alarms never fire on their own |
+| 6 | CloudWatch Alarms auto-evaluation ✅ shipped (#473) | Core, complete | The evaluator that existed ignored dimensions, `DatapointsToAlarm` and `TreatMissingData`, fired no actions, and left unevaluable alarm shapes sitting in `INSUFFICIENT_DATA`. Now epoch-aligned M-of-N evaluation with real transitions, actions and history |
 | 7 | Auto Scaling real reconciliation | Tier 1 (fully inert — 19/19 ops `StatusInert`) | Desired-capacity CRUD only; no instance launch/terminate loop against the existing EC2 service; pairs with #6 for alarm-driven scaling |
 | 8 | API Gateway usage-plan throttle/quota enforcement — **done 2026-08-03 (#472)** | Comprehensive, complete | Throttle and quota are now measured per (plan, API key) and readable through `GetUsage`; rejection is behind `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE`, default off |
 | 9 | Secrets Manager rotation + resource policies | Core (14/21 ops Supported) | `RotateSecret` is "Config only (no Lambda invocation)" and all four resource-policy ops are 501 stubs — rotation is the headline Secrets Manager feature |
@@ -318,7 +318,7 @@ Known gaps, recorded rather than hidden: usage counters are in-memory and reset 
 them for the whole quota period), and stage- and method-level throttle overrides inside a usage plan are
 not evaluated — only the plan-level `throttle`.
 
-**7. CloudWatch Alarms auto-evaluation** — Core, manual-only → Core, complete
+**7. CloudWatch Alarms auto-evaluation** — Core, manual-only → **Core, complete — shipped (issue #473)**
 Score: usage 3, leverage 3 (mostly valuable as a dependency for item 8), fit 4, cost M, dep-ready 4, risk
 low (this one is additive — nothing currently depends on alarms staying manually-set).
 Definition of done: a clock-driven evaluator (same pattern as the DynamoDB TTL sweeper and Lambda
@@ -327,6 +327,31 @@ alarm watching that metric against its threshold/`ComparisonOperator`/`Evaluatio
 `StateValue` through `OK`/`ALARM`/`INSUFFICIENT_DATA` with a `StateReason`, publishing an `EventBridge`
 event and (if configured) an SNS notification on transition — matching real CloudWatch's actual side
 effects, not just the stored field.
+
+**Shipped.** The "current state" above was already partly stale when this was picked up: a 1-second-tick
+evaluator did exist in `internal/services/cloudwatch/service.go`. It was the §2.1 failure mode rather than
+an absence — it ignored `Dimensions` (so an alarm on a dimensioned metric could never see its own data),
+ignored `DatapointsToAlarm` and `TreatMissingData`, used an unaligned trailing window instead of
+CloudWatch's epoch-aligned periods, never parsed or fired `AlarmActions`, stomped `SetAlarmState` within a
+second, and accepted metric-math, anomaly-detection and extended-statistic alarms only to leave them
+permanently in `INSUFFICIENT_DATA`, looking armed. What landed:
+- Evaluation over epoch-aligned **closed** periods, honouring `Dimensions`, the `DatapointsToAlarm`
+  "M out of N" rule and all four `TreatMissingData` modes, with AWS's `StateReason` sentence and
+  `StateReasonData` document.
+- Transitions — and only transitions — publish the `CloudWatch Alarm State Change` event through the real
+  `PutEvents`, fire that state's actions, and write a `StateUpdate` item to the new
+  `DescribeAlarmHistory`. `EnableAlarmActions`/`DisableAlarmActions` landed with them.
+- Action dispatch lives in a standalone `internal/alarmaction` package — the shape `internal/eventtarget`
+  set in item 1 — whose `Dispatcher.Register(service, handler)` is the seam item 8 uses to claim
+  `arn:aws:autoscaling:…:scalingPolicy/…` action ARNs without either service importing the other.
+- Configurations the evaluator cannot decide are refused with a `501` at `PutMetricAlarm` instead of being
+  created; an action ARN with no sink is recorded as an `Action` history item saying it was not executed.
+- Web UI: a live alarms view on the CloudWatch page — state, reason, what is being evaluated, and recent
+  transitions from `DescribeAlarmHistory`.
+
+Deferred deliberately, tracked separately: compat-suite coverage. No suite has a CloudWatch
+metrics/alarms SDK client today — only `cloudwatch-logs` — so the group needs a new SDK dependency and
+client wiring in all seven suites, which is its own change rather than a rider on this one.
 
 **8. Auto Scaling real reconciliation** — Tier 1 (inert, 19/19 ops) → Core
 Score: usage 3, leverage 3, fit 3, cost L, dep-ready 3 (stronger once item 7 lands), risk low (adding
