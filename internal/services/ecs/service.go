@@ -72,6 +72,13 @@ func (s *Service) SetEFSResolver(r EFSVolumeResolver) {
 	s.handler.efsResolver = r
 }
 
+// SetSecretResolvers wires Secrets Manager and SSM so a container definition's
+// `secrets` are fetched and injected as environment variables at task start.
+func (s *Service) SetSecretResolvers(sm SecretsManagerResolver, ssm ParameterResolver) {
+	s.handler.secrets = sm
+	s.handler.parameters = ssm
+}
+
 // SetTargetRegistrar wires elbv2 so a service's tasks are registered with the
 // target groups named in its loadBalancers.
 func (s *Service) SetTargetRegistrar(r TargetRegistrar) {

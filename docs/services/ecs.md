@@ -73,6 +73,23 @@ replaced. Replacements back off as tasks keep dying (500 ms doubling to 30 s),
 so a container that exits immediately produces a crash loop that slows down
 rather than a hot loop — the same shape as AWS's service throttle logic.
 
+## Container secrets
+
+`containerDefinitions[].secrets` are resolved at task start and injected as
+environment variables, from either source AWS supports, told apart by the ARN:
+
+- **Secrets Manager** — `arn:aws:secretsmanager:…:secret:name-AbCdEf`, with the
+  optional `:json-key:version-stage:version-id` suffix. Naming a key reads that
+  field out of a JSON secret, which is what
+  `ecs.Secret.fromSecretsManager(secret, "password")` produces and therefore the
+  form most task definitions use.
+- **SSM Parameter Store** — `arn:aws:ssm:…:parameter/name`, or a bare parameter
+  name.
+
+A secret that cannot be resolved is named in a warning and left out, rather than
+injected as an empty value — which would be indistinguishable from a secret
+whose value really is empty.
+
 ## Load balancers
 
 A service with `loadBalancers` registers each task it places into the named
