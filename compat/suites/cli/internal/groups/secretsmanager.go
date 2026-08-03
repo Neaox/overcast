@@ -23,8 +23,6 @@ func SecretsManager() ServiceGroup {
 			"PutSecretValue":                    g.PutSecretValue,
 			"ListSecretVersionIds":              g.ListSecretVersionIds,
 			"UpdateSecret":                      g.UpdateSecret,
-			"TagResource":                       g.TagResource,
-			"UntagResource":                     g.UntagResource,
 			"secretsmanager-crud:TagResource":   g.TagResource,
 			"secretsmanager-crud:UntagResource": g.UntagResource,
 			"GetRandomPassword":                 g.GetRandomPassword,

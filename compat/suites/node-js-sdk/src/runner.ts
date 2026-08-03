@@ -33,34 +33,7 @@ import {
   validateImpls,
 } from "./lib/registry.js";
 import type { ImplMap } from "./lib/registry.js";
-import { makeS3Groups } from "./groups/s3.js";
-import { makeSQSGroups } from "./groups/sqs.js";
-import { makeDynamoDBGroups } from "./groups/dynamodb.js";
-import { makeSNSGroups } from "./groups/sns.js";
-import { makeLambdaGroups } from "./groups/lambda.js";
-import { makeCloudWatchLogsGroups } from "./groups/cloudwatch-logs.js";
-import { makeSESGroups } from "./groups/ses.js";
-import { makeIAMGroups } from "./groups/iam.js";
-import { makeSTSGroups } from "./groups/sts.js";
-import { makeSecretsManagerGroups } from "./groups/secretsmanager.js";
-import { makeKMSGroups } from "./groups/kms.js";
-import { makeSSMGroups } from "./groups/ssm.js";
-import { makeKinesisGroups } from "./groups/kinesis.js";
-import { makeEventBridgeGroups } from "./groups/eventbridge.js";
-import { makePipesGroups } from "./groups/pipes.js";
-import { makeCloudFormationGroups } from "./groups/cloudformation.js";
-import { makeEC2Groups } from "./groups/ec2.js";
-import { makeECSGroups } from "./groups/ecs.js";
-import { makeCognitoGroups } from "./groups/cognito.js";
-import { makeAppSyncGroups } from "./groups/appsync.js";
-import { makeAPIGatewayGroups } from "./groups/apigateway.js";
-import { makeCloudFrontGroups } from "./groups/cloudfront.js";
-import { makeRDSGroups } from "./groups/rds.js";
-import { makeElastiCacheGroups } from "./groups/elasticache.js";
-import { makeStepFunctionsGroups } from "./groups/stepfunctions.js";
-import { makeWAFGroups } from "./groups/waf.js";
-import { makeShieldGroups } from "./groups/shield.js";
-import { makeEFSGroups } from "./groups/efs.js";
+import { makeAllGroups, makeImplMap } from "./groups/index.js";
 
 const SUITE = "node-js-sdk";
 
@@ -98,54 +71,29 @@ const filterTestPairs: Set<string> | undefined = process.env
 
 const skipDocker = process.env.OVERCAST_COMPAT_SKIP_DOCKER === "1";
 
-const existingGroups: TestGroup[] = [
-  ...makeS3Groups(SUITE),
-  ...makeSQSGroups(SUITE),
-  ...makeDynamoDBGroups(SUITE),
-  ...makeSNSGroups(SUITE),
-  ...makeLambdaGroups(SUITE),
-  ...makeCloudWatchLogsGroups(SUITE),
-  ...makeSESGroups(SUITE),
-  ...makeIAMGroups(SUITE),
-  ...makeSTSGroups(SUITE),
-  ...makeSecretsManagerGroups(SUITE),
-  ...makeKMSGroups(SUITE),
-  ...makeSSMGroups(SUITE),
-  ...makeKinesisGroups(SUITE),
-  ...makeEventBridgeGroups(SUITE),
-  ...makePipesGroups(SUITE),
-  ...makeCloudFormationGroups(SUITE),
-  ...makeEC2Groups(SUITE),
-  ...makeECSGroups(SUITE),
-  ...makeCognitoGroups(SUITE),
-  ...makeAppSyncGroups(SUITE),
-  ...makeAPIGatewayGroups(SUITE),
-  ...makeCloudFrontGroups(SUITE),
-  ...makeRDSGroups(SUITE),
-  ...makeElastiCacheGroups(SUITE),
-  ...makeStepFunctionsGroups(SUITE),
-  ...makeWAFGroups(SUITE),
-  ...makeShieldGroups(SUITE),
-  ...makeEFSGroups(SUITE),
-];
+const existingGroups: TestGroup[] = makeAllGroups(SUITE);
 
-// Extract impls map (name → fn) from existing groups, skipping already-skipped tests.
-const impls: ImplMap = {};
+// Extract impls map (name → fn) from existing groups, skipping already-skipped
+// tests. Keys are group-qualified so a name several groups declare cannot bind
+// the wrong group's implementation — see validateImpls.
+const impls: ImplMap = makeImplMap(existingGroups);
 const setup: Record<string, (ctx: TestContext) => Promise<void>> = {};
 const teardown: Record<string, (ctx: TestContext) => Promise<void>> = {};
 for (const g of existingGroups) {
   if (g.setup) setup[g.name] = g.setup;
   if (g.teardown) teardown[g.name] = g.teardown;
-  for (const t of g.tests) {
-    // Register under the group-qualified key "groupName:testName" to avoid
-    // collisions between groups that share test names (e.g. lambda-crud and
-    // appsync-functions both have CreateFunction/GetFunction/etc.).
-    if (!t.skip) impls[`${g.name}:${t.name}`] = t.fn;
-  }
 }
 
 const registry = loadRegistry();
-validateImpls(registry, impls, SUITE);
+try {
+  validateImpls(registry, impls, SUITE);
+} catch (err) {
+  // Unusable impl registrations — see validateImpls. Aborting is the point:
+  // binding a test to another group's implementation would report a result for
+  // a test that never ran. Print the message, not a stack trace.
+  process.stderr.write(`${(err as Error).message}\n`);
+  process.exit(1);
+}
 
 const allGroups = buildGroupsFromRegistry(registry, impls, {
   suite: SUITE,

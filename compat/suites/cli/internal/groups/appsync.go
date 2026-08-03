@@ -24,7 +24,7 @@ func AppSync() ServiceGroup {
 			"StartSchemaCreation":     g.StartSchemaCreation,
 			"GetSchemaCreationStatus": g.GetSchemaCreationStatus,
 			// api-keys
-			"CreateApiKey": g.CreateApiKey,
+			"appsync-api-keys:CreateApiKey": g.CreateApiKey,
 			"ListApiKeys":  g.ListApiKeys,
 			"UpdateApiKey": g.UpdateApiKey,
 			"DeleteApiKey": g.DeleteApiKey,
@@ -35,11 +35,11 @@ func AppSync() ServiceGroup {
 			"ListDataSources":  g.ListDataSources,
 			"DeleteDataSource": g.DeleteDataSource,
 			// functions
-			"CreateFunction": g.CreateFunction,
-			"GetFunction":    g.GetFunction,
-			"UpdateFunction": g.UpdateFunction,
-			"ListFunctions":  g.ListFunctions,
-			"DeleteFunction": g.DeleteFunction,
+			"appsync-functions:CreateFunction": g.CreateFunction,
+			"appsync-functions:GetFunction":    g.GetFunction,
+			"UpdateFunction":                   g.UpdateFunction,
+			"appsync-functions:ListFunctions":  g.ListFunctions,
+			"appsync-functions:DeleteFunction": g.DeleteFunction,
 			// resolvers
 			"CreateResolver":          g.CreateResolver,
 			"GetResolver":             g.GetResolver,
@@ -54,9 +54,9 @@ func AppSync() ServiceGroup {
 			"ListTypes":  g.ListTypes,
 			"DeleteType": g.DeleteType,
 			// tags
-			"TagResource":         g.TagResource,
-			"ListTagsForResource": g.ListTagsForResource,
-			"UntagResource":       g.UntagResource,
+			"appsync-tags:TagResource":   g.TagResource,
+			"ListTagsForResource":        g.ListTagsForResource,
+			"appsync-tags:UntagResource": g.UntagResource,
 			// env-vars
 			"PutGraphqlApiEnvironmentVariables": g.PutGraphqlApiEnvironmentVariables,
 			"GetGraphqlApiEnvironmentVariables": g.GetGraphqlApiEnvironmentVariables,

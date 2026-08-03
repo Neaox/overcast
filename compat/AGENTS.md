@@ -711,6 +711,58 @@ compat/suites/
   (absent when it matches `name`). Suites may use it for display or filtering
   but must still use the `name` field as the test identifier.
 
+### Implementation keys — `group:test`, and unresolvable is fatal
+
+Every suite maps a key to each test implementation. The key is either the bare
+test name or the **group-qualified** form, and the separator is a **colon** in
+all seven loaders:
+
+```
+"lambda-crud:CreateFunction"      ← group-qualified (always correct)
+"CreateFunction"                  ← bare (only when one group declares the name)
+"lambda-crud/CreateFunction"      ← WRONG: not a separator any loader accepts
+```
+
+Two rules are enforced by every loader, and breaking either **aborts the run**:
+
+1. **A key must resolve.** A key matching neither `test` nor `group:test` in
+   `registry.json` is refused, naming the key. It used to be a stderr warning
+   nobody read.
+2. **A bare key must be unambiguous.** When more than one group declares a test
+   name — `ListUsers` is in both `iam-users` and `cognito-userpools`;
+   `CreateFunction` is in both `lambda-crud` and `appsync-functions` — a bare
+   key cannot say which group it implements, so it is refused. Qualify it.
+
+Both rules exist because the failure they prevent is silent. A key that did not
+resolve fell through to the bare name, which for a shared name is *another
+group's implementation*: the run then reported that group's result under this
+test's name, and nothing failed. Two suites were doing exactly this — `go-sdk`
+and `python-sdk` recorded `iam-users/ListUsers` as a pass while running
+Cognito's `ListUsers`, which returned early because no user pool was in scope,
+so no IAM request was ever made.
+
+This is the harness-side application of the principle in
+[docs/plans/full-emulation-priority.md](../docs/plans/full-emulation-priority.md)
+§2.1: fail loudly rather than silently do the wrong thing.
+
+`BuildGroups` (and each suite's equivalent) also refuses the bare fallback for
+an ambiguous name, so a mis-bind cannot occur even if validation is bypassed —
+such a test is reported as `not yet implemented in <suite> test suite` rather
+than bound to the wrong implementation.
+
+Each loader has unit tests pinning both rules, plus — where the suite's group
+list can be imported without starting a run — a test resolving the suite's real
+registrations against the real `registry.json`:
+
+| Suite | Tests | Run with |
+| --- | --- | --- |
+| `go-sdk`, `cli` | loader + real registrations | `scripts/docker-go.sh -C compat/suites/<suite> test ./...` |
+| `java-sdk` | loader + real registrations | `mvn test` (also runs in the image build) |
+| `python-sdk` | loader + real registrations | `python -m unittest discover -s tests` |
+| `node-js-sdk` | loader + real registrations | `npm run test:unit` |
+| `rust-sdk` | loader | `cargo test` |
+| `dotnet-sdk` | — (no test project) | covered by the startup abort |
+
 **Rules for modifying the registry:**
 
 - Adding a new group or test to `registry.json` is the first step when

@@ -47,38 +47,7 @@ public final class Main {
         Map<String, TestFn> setups    = new LinkedHashMap<>();
         Map<String, TestFn> teardowns = new LinkedHashMap<>();
 
-        List<ServiceGroup> serviceGroups = List.of(
-                new S3Group(clients),
-                new SqsGroup(clients),
-                new DynamoDbGroup(clients),
-                new SnsGroup(clients),
-                new LambdaGroup(clients),
-                new StsGroup(clients),
-                new KmsGroup(clients),
-                new SecretsManagerGroup(clients),
-                new SsmGroup(clients),
-                new IamGroup(clients),
-                new KinesisGroup(clients),
-                new CloudWatchLogsGroup(clients),
-                new SesGroup(clients),
-                new EventBridgeGroup(clients),
-                new CloudFormationGroup(clients),
-                new Ec2Group(clients),
-                new EcsGroup(clients),
-                new CognitoGroup(clients),
-                new AppSyncGroup(clients),
-                new ApiGatewayGroup(clients),
-                new CloudFrontGroup(clients),
-                new RdsGroup(clients),
-                new StepFunctionsGroup(clients),
-                new PipesGroup(clients),
-                new WafGroup(clients),
-                new ShieldGroup(clients),
-                new ElastiCacheGroup(clients),
-                new EfsGroup(clients)
-        );
-
-        for (ServiceGroup sg : serviceGroups) {
+        for (ServiceGroup sg : serviceGroups(clients)) {
             impls.putAll(sg.impls());
             setups.putAll(sg.setups());
             teardowns.putAll(sg.teardowns());
@@ -94,6 +63,13 @@ public final class Main {
         List<TestGroup> allGroups;
         try {
             allGroups = Registry.buildGroups(SUITE, impls, setups, teardowns, capabilities);
+        } catch (IllegalStateException e) {
+            // Unusable impl registrations — see Registry#validateImpls. Aborting
+            // is the point: binding a test to another group's implementation
+            // would report a result for a test that never ran.
+            System.err.println(e.getMessage());
+            System.exit(1);
+            return;
         } catch (Exception e) {
             System.err.println("[java-sdk] failed to load registry: " + e.getMessage());
             System.exit(1);
@@ -136,6 +112,45 @@ public final class Main {
         } else {
             Runner.runSuite(SUITE, endpoint, groups);
         }
+    }
+
+    /**
+     * Every service group in the suite, in registration order.
+     *
+     * <p>Package-private and separate from {@link #main} so tests can resolve
+     * the suite's real impl keys against the real {@code registry.json} without
+     * starting a run.
+     */
+    static List<ServiceGroup> serviceGroups(AwsClients clients) {
+        return List.of(
+                new S3Group(clients),
+                new SqsGroup(clients),
+                new DynamoDbGroup(clients),
+                new SnsGroup(clients),
+                new LambdaGroup(clients),
+                new StsGroup(clients),
+                new KmsGroup(clients),
+                new SecretsManagerGroup(clients),
+                new SsmGroup(clients),
+                new IamGroup(clients),
+                new KinesisGroup(clients),
+                new CloudWatchLogsGroup(clients),
+                new SesGroup(clients),
+                new EventBridgeGroup(clients),
+                new CloudFormationGroup(clients),
+                new Ec2Group(clients),
+                new EcsGroup(clients),
+                new CognitoGroup(clients),
+                new AppSyncGroup(clients),
+                new ApiGatewayGroup(clients),
+                new CloudFrontGroup(clients),
+                new RdsGroup(clients),
+                new StepFunctionsGroup(clients),
+                new PipesGroup(clients),
+                new WafGroup(clients),
+                new ShieldGroup(clients),
+                new ElastiCacheGroup(clients),
+                new EfsGroup(clients));
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────

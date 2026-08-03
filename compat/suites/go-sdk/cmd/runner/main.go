@@ -57,7 +57,10 @@ func main() {
 		caps["docker"] = true
 	}
 
-	registry.ValidateImpls(reg, allImpls, suite)
+	if err := registry.ValidateImpls(reg, allImpls, suite); err != nil {
+		fmt.Fprintf(os.Stderr, "go-sdk: %v\n", err)
+		os.Exit(1)
+	}
 
 	allGroups := registry.BuildGroups(reg, allImpls, registry.BuildGroupsOptions{
 		Suite:        suite,

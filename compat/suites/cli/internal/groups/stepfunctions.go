@@ -16,7 +16,7 @@ func StepFunctions() ServiceGroup {
 			"CreateStateMachine":   g.CreateStateMachine,
 			"DescribeStateMachine": g.DescribeStateMachine,
 			"ListStateMachines":    g.ListStateMachines,
-			"StartExecution":       g.StartExecution,
+			"sfn-statemachines:StartExecution": g.StartExecution,
 			"DeleteStateMachine":   g.DeleteStateMachine,
 
 			// sfn-executions — group-qualified so StartExecution does not

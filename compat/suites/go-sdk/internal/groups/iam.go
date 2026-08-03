@@ -17,7 +17,7 @@ func IAM(c *clients.Clients) ServiceGroup {
 		Impls: map[string]harness.TestFn{
 			"CreateUser":               g.CreateUser,
 			"GetUser":                  g.GetUser,
-			"ListUsers":                g.ListUsers,
+			"iam-users:ListUsers":      g.ListUsers,
 			"DeleteUser":               g.DeleteUser,
 			"CreateAccessKey":          g.CreateAccessKey,
 			"DeleteAccessKey":          g.DeleteAccessKey,

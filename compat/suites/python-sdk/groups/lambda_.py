@@ -412,12 +412,12 @@ def DeleteLayerVersion(ctx: TestContext) -> None:
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
-    "CreateFunction": CreateFunction,
-    "GetFunction": GetFunction,
-    "ListFunctions": ListFunctions,
+    "lambda-crud:CreateFunction": CreateFunction,
+    "lambda-crud:GetFunction": GetFunction,
+    "lambda-crud:ListFunctions": ListFunctions,
     "UpdateFunctionCode": UpdateFunctionCode,
     "UpdateFunctionConfiguration": UpdateFunctionConfiguration,
-    "DeleteFunction": DeleteFunction,
+    "lambda-crud:DeleteFunction": DeleteFunction,
     "InvokeDryRun": InvokeDryRun,
     "InvokeSync": InvokeSync,
     "InvokeAsync": InvokeAsync,

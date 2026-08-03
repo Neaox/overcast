@@ -16,7 +16,6 @@ func IAM() ServiceGroup {
 			// iam-users
 			"CreateUser":          g.CreateUser,
 			"GetUser":             g.GetUser,
-			"ListUsers":           g.ListUsers,
 			"iam-users:ListUsers": g.ListUsers, // group-qualified to avoid collision with cognito-userpools:ListUsers
 			"CreateAccessKey":     g.CreateAccessKey,
 			"DeleteAccessKey":     g.DeleteAccessKey,

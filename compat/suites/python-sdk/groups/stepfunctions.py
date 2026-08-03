@@ -163,7 +163,7 @@ IMPLS = {
     "CreateStateMachine": CreateStateMachine,
     "DescribeStateMachine": DescribeStateMachine,
     "ListStateMachines": ListStateMachines,
-    "StartExecution": StartExecution,
+    "sfn-statemachines:StartExecution": StartExecution,
     "DeleteStateMachine": DeleteStateMachine,
     # sfn-executions — group-qualified so StartExecution does not collide with
     # the sfn-statemachines test of the same name.

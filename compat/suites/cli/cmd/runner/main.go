@@ -88,7 +88,10 @@ func main() {
 		}
 	}
 
-	registry.ValidateImpls(reg, impls, suite)
+	if err := registry.ValidateImpls(reg, impls, suite); err != nil {
+		fmt.Fprintf(os.Stderr, "cli: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Detect Docker availability for tests that require it (e.g. Lambda invoke).
 	caps := map[string]bool{}

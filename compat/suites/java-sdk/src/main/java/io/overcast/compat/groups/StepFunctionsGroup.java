@@ -43,16 +43,16 @@ public final class StepFunctionsGroup implements ServiceGroup {
                 Map.entry("CreateStateMachine",  this::createStateMachine),
                 Map.entry("DescribeStateMachine",this::describeStateMachine),
                 Map.entry("ListStateMachines",   this::listStateMachines),
-                Map.entry("StartExecution",      this::startExecution),
+                Map.entry("sfn-statemachines:StartExecution", this::startExecution),
                 Map.entry("DeleteStateMachine",  this::deleteStateMachine),
-                // sfn-executions — group-qualified ("group/test", the separator this
-                // suite's registry lookup uses) so StartExecution does not
-                // collide with the sfn-statemachines test of the same name.
-                Map.entry("sfn-executions/StartExecution",      this::execStartExecution),
-                Map.entry("sfn-executions/DescribeExecution",   this::describeExecution),
-                Map.entry("sfn-executions/GetExecutionHistory", this::getExecutionHistory),
-                Map.entry("sfn-executions/ListExecutions",      this::listExecutions),
-                Map.entry("sfn-executions/StopExecution",       this::stopExecution)
+                // sfn-executions — group-qualified ("group:test", as in every
+                // suite) so StartExecution does not collide with the
+                // sfn-statemachines test of the same name.
+                Map.entry("sfn-executions:StartExecution",      this::execStartExecution),
+                Map.entry("sfn-executions:DescribeExecution",   this::describeExecution),
+                Map.entry("sfn-executions:GetExecutionHistory", this::getExecutionHistory),
+                Map.entry("sfn-executions:ListExecutions",      this::listExecutions),
+                Map.entry("sfn-executions:StopExecution",       this::stopExecution)
         );
     }
 

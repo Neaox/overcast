@@ -18,15 +18,12 @@ func Lambda() ServiceGroup {
 	g := &lambdaGroup{}
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
-			// lambda-crud — also register under group-qualified keys so these
-			// impls are not overridden by the appsync group which shares the
-			// same bare test names (CreateFunction, GetFunction, etc.).
-			"CreateFunction":                          g.CreateFunction,
-			"GetFunction":                             g.GetFunction,
-			"ListFunctions":                           g.ListFunctions,
+			// lambda-crud — CreateFunction, GetFunction, ListFunctions and
+			// DeleteFunction are also declared by appsync-functions, so they
+			// must be group-qualified: a bare key cannot say which group it
+			// implements and the loader refuses it.
 			"UpdateFunctionCode":                      g.UpdateFunctionCode,
 			"UpdateFunctionConfiguration":             g.UpdateFunctionConfiguration,
-			"DeleteFunction":                          g.DeleteFunction,
 			"lambda-crud:CreateFunction":              g.CreateFunction,
 			"lambda-crud:GetFunction":                 g.GetFunction,
 			"lambda-crud:ListFunctions":               g.ListFunctions,

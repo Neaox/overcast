@@ -144,6 +144,7 @@ export function buildGroupsFromRegistry(
   opts: BuildOptions,
 ): TestGroup[] {
   const caps = new Set(opts.capabilities ?? []);
+  const ambiguous = ambiguousTestNames(registry);
 
   const groups = registry.groups
     .filter((rg) => rg.service !== "cdk") // CDK lifecycle tests belong to the cdk suite
@@ -178,9 +179,14 @@ export function buildGroupsFromRegistry(
       }
 
       // Look up by group-qualified key first ("groupName:testName"), then fall
-      // back to the bare test name for impls that are not group-qualified.
+      // back to the bare test name.  The bare fallback is refused for a name
+      // claimed by more than one group: it would bind this group to another
+      // group's implementation and report its result as ours.  validateImpls
+      // rejects such a registration outright; this is the second line of
+      // defence, so a mis-bind cannot occur even if validation is bypassed.
       const qualifiedKey = `${rg.name}:${rt.name}`;
-      const hasImpl = qualifiedKey in impls || rt.name in impls;
+      const bareUsable = !ambiguous.has(rt.name);
+      const hasImpl = qualifiedKey in impls || (bareUsable && rt.name in impls);
       if (!hasImpl) {
         // No implementation yet — surface as skip so the dashboard shows it.
         return {
@@ -192,7 +198,7 @@ export function buildGroupsFromRegistry(
         };
       }
 
-      const fn = impls[qualifiedKey] ?? impls[rt.name];
+      const fn = impls[qualifiedKey] ?? (bareUsable ? impls[rt.name] : undefined);
       if (fn == null) {
         // Explicitly registered as null/undefined → SDK does not expose this.
         return {
@@ -235,38 +241,97 @@ export function buildGroupsFromRegistry(
 
 // ─── Validation ───────────────────────────────────────────────────────────
 
+/** Map each registry test name to the sorted groups that declare it. */
+export function testNameOwners(registry: Registry): Map<string, string[]> {
+  const owners = new Map<string, Set<string>>();
+  for (const g of registry.groups) {
+    for (const t of g.tests) {
+      let groups = owners.get(t.name);
+      if (!groups) owners.set(t.name, (groups = new Set()));
+      groups.add(g.name);
+    }
+  }
+  return new Map(
+    [...owners].map(([name, groups]) => [name, [...groups].sort()]),
+  );
+}
+
 /**
- * Check that every key in `impls` matches at least one test in the registry.
- * Prints warnings for orphaned implementations (typos, renamed tests).
- * Safe to call in development; no-ops in CI unless OVERCAST_COMPAT_STRICT=1.
+ * Test names that more than one registry group declares.
+ *
+ * A bare-name implementation cannot serve these. `ListUsers` belongs to both
+ * `iam-users` and `cognito-userpools`, so a bare `ListUsers` impl binds
+ * whichever group happens to resolve it — and the loser silently runs the
+ * other service's test and reports the result as its own. Suites must register
+ * the group-qualified key for an ambiguous name.
+ */
+export function ambiguousTestNames(registry: Registry): Set<string> {
+  return new Set(
+    [...testNameOwners(registry)]
+      .filter(([, groups]) => groups.length > 1)
+      .map(([name]) => name),
+  );
+}
+
+/**
+ * Reject impl keys that cannot be bound to exactly one registry test.
+ *
+ * This used to warn on stderr (fatal only under OVERCAST_COMPAT_STRICT=1),
+ * which meant an unresolvable key was a line nobody read while the test it was
+ * meant to implement quietly fell back to another group's implementation and
+ * reported a pass. Two registrations are refused:
+ *
+ * - a key matching no registry entry — a typo, a stale name, or the wrong
+ *   separator (every suite uses "group:test"; "group/test" is not accepted);
+ * - a bare key for a test name that several groups declare, which cannot say
+ *   which group it implements.
+ *
+ * @throws if any registration is unusable.
  */
 export function validateImpls(
   registry: Registry,
   impls: ImplMap,
   suite: string,
 ): void {
+  const owners = testNameOwners(registry);
   const registryNames = new Set(
     registry.groups.flatMap((g) => [
       ...g.tests.map((t) => t.name),
       ...g.tests.map((t) => `${g.name}:${t.name}`),
     ]),
   );
-  const orphans = Object.keys(impls).filter((name) => !registryNames.has(name));
-  if (orphans.length === 0) return;
 
-  const strict = process.env.OVERCAST_COMPAT_STRICT === "1";
-  const warn = (msg: string) => process.stderr.write(`[${suite}] ${msg}\n`);
-
-  for (const name of orphans) {
-    warn(
-      `WARNING: impl "${name}" has no matching entry in registry.json. ` +
-        `Check for a typo or add it to the registry.`,
-    );
+  const problems: string[] = [];
+  for (const name of Object.keys(impls).sort()) {
+    if (!registryNames.has(name)) {
+      let msg = `impl "${name}" matches no registry entry`;
+      if (name.includes("/")) {
+        // The Java suite used "group/test" until the separator was unified;
+        // a key copied from it resolves to nothing here.
+        msg +=
+          ` (group-qualified keys use ":", not "/" — did you mean ` +
+          `"${name.replace("/", ":")}"?)`;
+      }
+      problems.push(msg);
+      continue;
+    }
+    const claimedBy = owners.get(name) ?? [];
+    if (claimedBy.length > 1) {
+      // Naming every candidate rather than guessing one: only the author knows
+      // which group this implementation is for, and binding it to the wrong
+      // one is the failure this check exists to prevent.
+      const candidates = claimedBy.map((g) => `"${g}:${name}"`).join(", ");
+      problems.push(
+        `impl "${name}" is ambiguous: groups [${claimedBy.join(", ")}] all ` +
+          `declare a test named "${name}" — qualify it with the group it ` +
+          `implements, one of: ${candidates}`,
+      );
+    }
   }
 
-  if (strict) {
-    throw new Error(
-      `[${suite}] ${orphans.length} orphaned impl(s) found. Fix or set OVERCAST_COMPAT_STRICT=0 to suppress.`,
-    );
-  }
+  if (problems.length === 0) return;
+  throw new Error(
+    `[${suite}] ${problems.length} unusable impl registration(s):\n  - ` +
+      problems.join("\n  - "),
+  );
 }

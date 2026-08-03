@@ -52,7 +52,7 @@ public final class IamGroup implements ServiceGroup {
         return Map.ofEntries(
                 Map.entry("CreateUser",             this::createUser),
                 Map.entry("GetUser",                this::getUser),
-                Map.entry("iam-users/ListUsers",    this::listUsers),
+                Map.entry("iam-users:ListUsers",    this::listUsers),
                 Map.entry("UpdateUser",             this::updateUser),
                 Map.entry("CreateAccessKey",        this::createAccessKey),
                 Map.entry("ListAccessKeys",         this::listAccessKeys),

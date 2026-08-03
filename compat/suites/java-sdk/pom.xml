@@ -14,6 +14,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <aws.sdk.version>2.31.7</aws.sdk.version>
     <jackson.version>2.17.2</jackson.version>
+    <junit.version>5.11.3</junit.version>
   </properties>
 
   <dependencyManagement>
@@ -79,10 +80,26 @@
       <artifactId>jackson-databind</artifactId>
       <version>${jackson.version}</version>
     </dependency>
+
+    <!-- Unit tests for the registry loader (not the compat tests themselves,
+         which run against a live emulator via Main) -->
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>${junit.version}</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
     <plugins>
+      <!-- Surefire runs the registry loader unit tests during `mvn package`. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.2</version>
+      </plugin>
+
       <!-- Shade plugin: produce a single executable fat JAR -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>

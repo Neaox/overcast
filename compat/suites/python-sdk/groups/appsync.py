@@ -476,7 +476,7 @@ IMPLS = {
     "StartSchemaCreation": StartSchemaCreation,
     "GetSchemaCreationStatus": GetSchemaCreationStatus,
     # appsync-api-keys
-    "CreateApiKey": CreateApiKey,
+    "appsync-api-keys:CreateApiKey": CreateApiKey,
     "ListApiKeys": ListApiKeys,
     "UpdateApiKey": UpdateApiKey,
     "DeleteApiKey": DeleteApiKey,

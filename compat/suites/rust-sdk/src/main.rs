@@ -52,7 +52,14 @@ async fn main() {
     let mut all_groups = match build_groups(suite, &impls, &setups, &teardowns, &capabilities) {
         Ok(groups) => groups,
         Err(err) => {
-            eprintln!("[rust-sdk] failed to load registry: {err}");
+            // Covers both a registry that will not load and unusable impl
+            // registrations (see validate_impls); the latter already carries
+            // its own "[rust-sdk] N unusable impl registration(s)" heading.
+            if err.contains("unusable impl registration") {
+                eprintln!("{err}");
+            } else {
+                eprintln!("[rust-sdk] failed to load registry: {err}");
+            }
             std::process::exit(1);
         }
     };

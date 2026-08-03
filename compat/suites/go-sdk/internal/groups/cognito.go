@@ -21,7 +21,7 @@ func Cognito(c *clients.Clients) ServiceGroup {
 			"CreateUserPoolClient":                  g.CreateUserPoolClient,
 			"ListUserPoolClients":                   g.ListUserPoolClients,
 			"AdminCreateUser":                       g.AdminCreateUser,
-			"ListUsers":                             g.ListUsers,
+			"cognito-userpools:ListUsers":           g.ListUsers,
 			"AdminDeleteUser":                       g.AdminDeleteUser,
 			"DeleteUserPool":                        g.DeleteUserPool,
 			"CreateUserPoolClientWithTokenValidity": g.CreateClientTokenValidity,

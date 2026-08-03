@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/Neaox/overcast-compat-go-sdk/internal/harness"
 )
@@ -79,6 +81,7 @@ func BuildGroups(reg *Registry, impls ImplMap, opts BuildGroupsOptions) []harnes
 	if caps == nil {
 		caps = map[string]bool{}
 	}
+	ambiguous := AmbiguousTestNames(reg)
 	var groups []harness.TestGroup
 
 	for _, rg := range reg.Groups {
@@ -113,11 +116,15 @@ func BuildGroups(reg *Registry, impls ImplMap, opts BuildGroupsOptions) []harnes
 			}
 
 			// Look up by group-qualified key ("groupName:testName") first, then
-			// fall back to bare test name.  This avoids collisions when multiple
-			// groups share the same test name (e.g. lambda-crud vs appsync-functions).
+			// fall back to the bare test name.  The bare fallback is refused for
+			// a name claimed by more than one group: it would bind this group to
+			// another group's implementation and report its result as ours.
+			// ValidateImpls rejects such a registration outright; this is the
+			// second line of defence, so a mis-bind cannot occur even if
+			// validation is bypassed.
 			qualifiedKey := rg.Name + ":" + rt.Name
 			fn, ok := impls[qualifiedKey]
-			if !ok {
+			if !ok && !ambiguous[rt.Name] {
 				fn, ok = impls[rt.Name]
 			}
 			if !ok {
@@ -172,18 +179,97 @@ func BuildGroups(reg *Registry, impls ImplMap, opts BuildGroupsOptions) []harnes
 	return groups
 }
 
-// ValidateImpls warns about impl keys not present in the registry.
-func ValidateImpls(reg *Registry, impls ImplMap, suite string) {
-	all := map[string]bool{}
+// AmbiguousTestNames returns the test names that more than one registry group
+// declares.
+//
+// A bare-name implementation cannot serve these. `ListUsers` belongs to both
+// `iam-users` and `cognito-userpools`, so a bare `ListUsers` impl binds
+// whichever group happens to resolve it — and the loser silently runs the
+// other service's test and reports the result as its own. Suites must register
+// the group-qualified key for an ambiguous name.
+func AmbiguousTestNames(reg *Registry) map[string]bool {
+	owners := TestNameOwners(reg)
+	ambiguous := map[string]bool{}
+	for name, groups := range owners {
+		if len(groups) > 1 {
+			ambiguous[name] = true
+		}
+	}
+	return ambiguous
+}
+
+// TestNameOwners maps each registry test name to the sorted names of the groups
+// that declare it.
+func TestNameOwners(reg *Registry) map[string][]string {
+	owners := map[string][]string{}
 	for _, rg := range reg.Groups {
 		for _, rt := range rg.Tests {
-			all[rt.Name] = true
-			all[rg.Name+":"+rt.Name] = true
+			if !slices.Contains(owners[rt.Name], rg.Name) {
+				owners[rt.Name] = append(owners[rt.Name], rg.Name)
+			}
 		}
 	}
+	for name := range owners {
+		slices.Sort(owners[name])
+	}
+	return owners
+}
+
+// ValidateImpls rejects impl keys that cannot be bound to exactly one registry
+// test. It returns an error rather than warning: an unresolvable key used to be
+// a stderr line nobody read, while the test it was meant to implement quietly
+// fell back to another group's implementation and reported a pass.
+//
+// Two registrations are refused:
+//
+//   - a key matching no registry entry — a typo, a stale name, or the wrong
+//     separator (every suite uses "group:test"; "group/test" is not accepted);
+//   - a bare key for a test name that several groups declare, which cannot say
+//     which group it implements.
+func ValidateImpls(reg *Registry, impls ImplMap, suite string) error {
+	owners := TestNameOwners(reg)
+	known := map[string]bool{}
+	for _, rg := range reg.Groups {
+		for _, rt := range rg.Tests {
+			known[rt.Name] = true
+			known[rg.Name+":"+rt.Name] = true
+		}
+	}
+
+	names := make([]string, 0, len(impls))
 	for name := range impls {
-		if !all[name] {
-			fmt.Fprintf(os.Stderr, "registry: [%s] impl %q not found in registry (orphan)\n", suite, name)
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	var problems []string
+	for _, name := range names {
+		switch {
+		case !known[name]:
+			msg := fmt.Sprintf("impl %q matches no registry entry", name)
+			if strings.Contains(name, "/") {
+				// The Java suite used "group/test" until the separator was
+				// unified; a key copied from it resolves to nothing here.
+				msg += fmt.Sprintf(` (group-qualified keys use ":", not "/" — did you mean %q?)`,
+					strings.Replace(name, "/", ":", 1))
+			}
+			problems = append(problems, msg)
+		case len(owners[name]) > 1:
+			// Naming every candidate rather than guessing one: only the author
+			// knows which group this implementation is for, and binding it to
+			// the wrong one is the failure this check exists to prevent.
+			qualified := make([]string, 0, len(owners[name]))
+			for _, group := range owners[name] {
+				qualified = append(qualified, fmt.Sprintf("%q", group+":"+name))
+			}
+			problems = append(problems, fmt.Sprintf(
+				"impl %q is ambiguous: groups %v all declare a test named %q — qualify it with the group it implements, one of: %s",
+				name, owners[name], name, strings.Join(qualified, ", ")))
 		}
 	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return fmt.Errorf("[%s] %d unusable impl registration(s):\n  - %s",
+		suite, len(problems), strings.Join(problems, "\n  - "))
 }
