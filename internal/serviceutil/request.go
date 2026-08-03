@@ -25,6 +25,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -262,6 +263,53 @@ func ClientIP(r *http.Request) string {
 		host = r.RemoteAddr
 	}
 	return host
+}
+
+// CallerIsSiblingContainer reports whether an address belongs to a container on
+// one of Overcast's Docker networks rather than to the host.
+//
+// It exists for the one class of value the URL-minting rule cannot settle on
+// its own: an endpoint that names a *container Overcast started* — an RDS
+// instance, an ElastiCache node — rather than Overcast itself. Such a container
+// answers on its engine port (3306) inside the Docker network and on a
+// published port on the host, and no single pair is dialable from both sides.
+// The hostname is no help in choosing, since a split-horizon name is used by
+// both; the source address is, because a sibling container reaches Overcast
+// over a Docker bridge and so arrives on a private address, while the host
+// arrives on loopback.
+//
+// Loopback is the host. So is a Docker bridge *gateway* address, which is the
+// one that catches people out: when Overcast itself runs in a container, a
+// request from the host arrives through the userland proxy and is seen as
+// coming from the gateway (172.17.0.1 for the default bridge), not from
+// loopback. Docker reserves the first address of every bridge subnet for that
+// gateway and allocates containers from the second upwards, so a final octet of
+// 1 identifies the host side without enumerating interfaces — which would have
+// to be re-read as VPC networks come and go.
+//
+// A caller on the machine's LAN address is classified as a sibling. Overcast
+// binds container ports on the host, not on the LAN, so neither view is dialable
+// for them and the mistake costs nothing that was working. See
+// docs/networking.md § Data-plane endpoints.
+func CallerIsSiblingContainer(addr string) bool {
+	ip, err := netip.ParseAddr(strings.TrimSpace(addr))
+	if err != nil {
+		return false
+	}
+	ip = ip.Unmap()
+	if ip.IsLoopback() || ip.IsUnspecified() {
+		return false
+	}
+	if !ip.IsPrivate() && !ip.IsLinkLocalUnicast() {
+		return false
+	}
+	// As4 panics on anything that is not IPv4, so the check has to come first.
+	if ip.Is4() {
+		if b := ip.As4(); b[3] == 1 {
+			return false
+		}
+	}
+	return true
 }
 
 // RequestProtocol returns r.Proto, falling back to "HTTP/1.1". Used to

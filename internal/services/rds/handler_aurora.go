@@ -145,8 +145,8 @@ func (h *Handler) CreateDBCluster(w http.ResponseWriter, r *http.Request) {
 		MasterUsername:      masterUser,
 		DatabaseName:        dbName,
 		Port:                defaultPorts[engine],
-		Endpoint:            id + ".cluster-rw." + region + ".rds." + h.cfg.ExternalHostname(),
-		ReaderEndpoint:      id + ".cluster-ro." + region + ".rds." + h.cfg.ExternalHostname(),
+		Endpoint:            clusterEndpointHostname(id, "cluster-rw", region, h.externalHostname()),
+		ReaderEndpoint:      clusterEndpointHostname(id, "cluster-ro", region, h.externalHostname()),
 		MultiAZ:             multiAZ,
 		StorageType:         storageType,
 		ClusterCreateTime:   now,
@@ -174,7 +174,7 @@ func (h *Handler) CreateDBCluster(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateDBClusterResponse{
 		Xmlns: rdsXMLNS,
 		Result: xmlCreateDBClusterResult{
-			DBCluster: toXMLDBCluster(cluster),
+			DBCluster: h.toXMLDBCluster(r.Context(), cluster),
 		},
 		ResponseMetadata: protocol.QueryResponseMetadata(r),
 	})
@@ -195,7 +195,7 @@ func (h *Handler) DescribeDBClusters(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeDBClustersResponse{
 			Xmlns: rdsXMLNS,
 			Result: xmlDescribeDBClustersResult{
-				DBClusters: xmlDBClusters{Items: []xmlDBCluster{toXMLDBCluster(cluster)}},
+				DBClusters: xmlDBClusters{Items: []xmlDBCluster{h.toXMLDBCluster(r.Context(), cluster)}},
 			},
 			ResponseMetadata: protocol.QueryResponseMetadata(r),
 		})
@@ -210,7 +210,7 @@ func (h *Handler) DescribeDBClusters(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]xmlDBCluster, 0, len(all))
 	for _, c := range all {
-		items = append(items, toXMLDBCluster(c))
+		items = append(items, h.toXMLDBCluster(r.Context(), c))
 	}
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeDBClustersResponse{
@@ -249,7 +249,7 @@ func (h *Handler) DeleteDBCluster(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDeleteDBClusterResponse{
 		Xmlns: rdsXMLNS,
 		Result: xmlDeleteDBClusterResult{
-			DBCluster: toXMLDBCluster(cluster),
+			DBCluster: h.toXMLDBCluster(r.Context(), cluster),
 		},
 		ResponseMetadata: protocol.QueryResponseMetadata(r),
 	})
@@ -300,7 +300,7 @@ func (h *Handler) ModifyDBCluster(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlModifyDBClusterResponse{
 		Xmlns: rdsXMLNS,
 		Result: xmlCreateDBClusterResult{
-			DBCluster: toXMLDBCluster(cluster),
+			DBCluster: h.toXMLDBCluster(r.Context(), cluster),
 		},
 		ResponseMetadata: protocol.QueryResponseMetadata(r),
 	})
@@ -361,7 +361,7 @@ func (h *Handler) StartDBCluster(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlStartDBClusterResponse{
 		Xmlns: rdsXMLNS,
 		Result: xmlCreateDBClusterResult{
-			DBCluster: toXMLDBCluster(cluster),
+			DBCluster: h.toXMLDBCluster(r.Context(), cluster),
 		},
 		ResponseMetadata: protocol.QueryResponseMetadata(r),
 	})
@@ -420,7 +420,7 @@ func (h *Handler) StopDBCluster(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlStopDBClusterResponse{
 		Xmlns: rdsXMLNS,
 		Result: xmlCreateDBClusterResult{
-			DBCluster: toXMLDBCluster(cluster),
+			DBCluster: h.toXMLDBCluster(r.Context(), cluster),
 		},
 		ResponseMetadata: protocol.QueryResponseMetadata(r),
 	})
@@ -428,8 +428,10 @@ func (h *Handler) StopDBCluster(w http.ResponseWriter, r *http.Request) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-// toXMLDBCluster converts a stored DBCluster to the XML response type.
-func toXMLDBCluster(c *DBCluster) xmlDBCluster {
+// toXMLDBCluster converts a stored DBCluster to the XML response type, with the
+// cluster endpoints re-minted for this caller — see endpoint.go.
+func (h *Handler) toXMLDBCluster(ctx context.Context, c *DBCluster) xmlDBCluster {
+	writer, reader := h.clusterEndpointsFor(ctx, c)
 	members := make([]xmlDBClusterMember, 0, len(c.DBClusterMembers))
 	for _, m := range c.DBClusterMembers {
 		members = append(members, xmlDBClusterMember(m))
@@ -443,8 +445,8 @@ func toXMLDBCluster(c *DBCluster) xmlDBCluster {
 		MasterUsername:      c.MasterUsername,
 		DatabaseName:        c.DatabaseName,
 		Port:                c.Port,
-		Endpoint:            c.Endpoint,
-		ReaderEndpoint:      c.ReaderEndpoint,
+		Endpoint:            writer,
+		ReaderEndpoint:      reader,
 		MultiAZ:             c.MultiAZ,
 		StorageType:         c.StorageType,
 		ClusterCreateTime:   c.ClusterCreateTime,

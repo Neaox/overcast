@@ -14,6 +14,9 @@ import (
 // reach Overcast.
 type clientEndpointContextKey struct{}
 
+// clientAddrContextKey is the context key for the caller's own IP address.
+type clientAddrContextKey struct{}
+
 // awsOwnedSuffixes are hostname suffixes belonging to real AWS endpoints.
 // A request can arrive on one of these via host-based addressing (a hosts-file
 // alias, a DNS override, or a proxy), but the name is not something an
@@ -41,10 +44,28 @@ var awsOwnedSuffixes = []string{".amazonaws.com", ".on.aws", ".aws"}
 //
 // Requests arriving on a real AWS hostname fall through: the context is left
 // unset and handlers use the configured external origin (OVERCAST_HOSTNAME).
+//
+// The caller's own address is stamped alongside the origin, because a name is
+// not the whole answer for services whose resource is a *container* rather than
+// Overcast itself: an RDS instance answers on its engine port inside the Docker
+// network and on a published port on the host, so which port to hand back
+// depends on which side of that boundary the caller is. The origin cannot say —
+// a split-horizon hostname is used by both sides — but the source address can.
+// See serviceutil.CallerIsSiblingContainer.
 func ClientEndpoint(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		changed := false
 		if origin := clientOrigin(r); origin != "" {
-			r = r.WithContext(context.WithValue(r.Context(), clientEndpointContextKey{}, origin))
+			ctx = context.WithValue(ctx, clientEndpointContextKey{}, origin)
+			changed = true
+		}
+		if addr := serviceutil.ClientIP(r); addr != "" {
+			ctx = context.WithValue(ctx, clientAddrContextKey{}, addr)
+			changed = true
+		}
+		if changed {
+			r = r.WithContext(ctx)
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -91,4 +112,22 @@ func ClientEndpointFromContext(ctx context.Context) string {
 // background goroutines that mint resource URLs outside a request context.
 func ContextWithClientEndpoint(ctx context.Context, origin string) context.Context {
 	return context.WithValue(ctx, clientEndpointContextKey{}, origin)
+}
+
+// ClientAddrFromContext returns the caller's IP address as stamped by the
+// ClientEndpoint middleware, or "" when the request had none. It travels with
+// the origin through internal dispatch — CloudFormation resolving a
+// `Fn::GetAtt` runs on the deploying caller's context — so a resource attribute
+// is rendered for whoever asked for the stack, not for the emulator.
+func ClientAddrFromContext(ctx context.Context) string {
+	if addr, ok := ctx.Value(clientAddrContextKey{}).(string); ok {
+		return addr
+	}
+	return ""
+}
+
+// ContextWithClientAddr returns a child context carrying the caller's address,
+// the companion of ContextWithClientEndpoint.
+func ContextWithClientAddr(ctx context.Context, addr string) context.Context {
+	return context.WithValue(ctx, clientAddrContextKey{}, addr)
 }

@@ -67,7 +67,7 @@ func (h *Handler) StopDBInstance(w http.ResponseWriter, r *http.Request) {
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlStopDBInstanceResponse{
 		Xmlns:            rdsXMLNS,
-		Result:           xmlStopDBInstanceResult{DBInstance: toXMLDBInstance(inst)},
+		Result:           xmlStopDBInstanceResult{DBInstance: h.toXMLDBInstance(r.Context(), inst)},
 		ResponseMetadata: protocol.QueryResponseMetadata(r),
 	})
 }
@@ -106,7 +106,8 @@ func (h *Handler) StartDBInstance(w http.ResponseWriter, r *http.Request) {
 			h.log.Warn("failed to start RDS container", zap.String("instance", id), zap.Error(err))
 		}
 		// Schedule health check.
-		h.scheduleHealthCheck(region, id, inst.Endpoint.Address, inst.Endpoint.Port)
+		healthHost, healthPort := dialTarget(inst)
+		h.scheduleHealthCheck(region, id, healthHost, healthPort)
 	} else {
 		// Metadata-only: transition starting → available.  Scheduler runs
 		// 0-delay callbacks synchronously with a real clock.
@@ -127,7 +128,7 @@ func (h *Handler) StartDBInstance(w http.ResponseWriter, r *http.Request) {
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlStartDBInstanceResponse{
 		Xmlns:            rdsXMLNS,
-		Result:           xmlStartDBInstanceResult{DBInstance: toXMLDBInstance(inst)},
+		Result:           xmlStartDBInstanceResult{DBInstance: h.toXMLDBInstance(r.Context(), inst)},
 		ResponseMetadata: protocol.QueryResponseMetadata(r),
 	})
 }
@@ -198,7 +199,7 @@ func (h *Handler) ModifyDBInstance(w http.ResponseWriter, r *http.Request) {
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlModifyDBInstanceResponse{
 		Xmlns:            rdsXMLNS,
-		Result:           xmlModifyDBInstanceResult{DBInstance: toXMLDBInstance(inst)},
+		Result:           xmlModifyDBInstanceResult{DBInstance: h.toXMLDBInstance(r.Context(), inst)},
 		ResponseMetadata: protocol.QueryResponseMetadata(r),
 	})
 }

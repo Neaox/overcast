@@ -39,6 +39,30 @@ Overcast emulates the open-source RDS engines that have freely available Docker 
 | Aurora MySQL      | `aurora-mysql`      | 3.04            | `mysql:8.0` (3.x), `mysql:5.7` (2.x)       |
 | Aurora PostgreSQL | `aurora-postgresql` | 15.4            | `postgres:15` (15.x), `postgres:14` (14.x) |
 
+Any `EngineVersion` is accepted. A version with no image of its own is served by
+the nearest one in its family — `8.0.39` runs `mysql:8.0`, `16.3` runs
+`postgres:16` — and the substitution is logged. Real stacks send precise
+versions (CDK's `MysqlEngineVersion.VER_8_0_39`), and refusing them left the
+instance `available` with no database behind it.
+
+### Connecting to an instance
+
+`Endpoint.Address` is an AWS-shaped hostname,
+`{dbInstanceIdentifier}.{region}.rds.{base}`, where `{base}` is
+`OVERCAST_HOSTNAME` when set and otherwise the host the request arrived on. It
+resolves — and the port you are given is the one that works — from both sides of
+the container boundary:
+
+| Caller | Address | Port |
+| --- | --- | --- |
+| A Lambda function or ECS task | the endpoint hostname, resolved to the engine container by Docker's embedded DNS | the engine's own port (3306 / 5432) |
+| The host | the same hostname (or `127.0.0.1` when `{base}` has no wildcard DNS) | the published port, from `RDS_PORT_BASE` |
+
+So a value read from a stack output on the host and a value read inside a task
+name the same database and both connect. Full mechanism, and the one caveat
+about `Endpoint.Port` crossing into container environment, in
+[networking.md](../networking.md#data-plane-endpoints--rds-and-anything-else-that-is-a-container).
+
 ### Aurora emulation
 
 `aurora-mysql` and `aurora-postgresql` are emulated using the underlying MySQL and PostgreSQL Docker

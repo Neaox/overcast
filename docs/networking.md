@@ -267,6 +267,69 @@ The full design and per-service analysis: `docs/plans/client-facing-url-minting.
 
 ---
 
+## Data-plane endpoints — RDS, and anything else that is a container
+
+Most names Overcast hands back point at **Overcast**. A few point at a
+**container Overcast started**: an RDS instance's `Endpoint.Address`, an
+ElastiCache node's address. The hostname rule is the same one — *the name is
+minted on the endpoint your request arrived on* — but what has to happen for it
+to resolve is different, and so is the port.
+
+```
+{dbInstanceIdentifier}.{region}.rds.{base}      # RDS DB instance
+{dbClusterIdentifier}.cluster-rw.{region}.rds.{base}   # Aurora writer
+{dbClusterIdentifier}.cluster-ro.{region}.rds.{base}   # Aurora reader
+```
+
+`{base}` is `OVERCAST_HOSTNAME` when set, otherwise the host you called Overcast
+on — the same precedence every URL follows. With
+`OVERCAST_HOSTNAME=localhost.overcast.sh`, a `Fn::GetAtt Endpoint.Address` comes
+back as `mydb.ap-southeast-2.rds.localhost.overcast.sh`, and *that* is the value
+a CDK stack bakes into an ECS task definition or a Secrets Manager secret.
+
+**How it resolves inside a Lambda or ECS task.** Not through Overcast's DNS
+server — that one answers "where is Overcast" (see
+[the container-DNS notes](./dev/container-networking.md)). The engine container
+carries its endpoint name as a **Docker network alias** on every network
+emulated compute runs on (`overcast_lambda`, `overcast_ecs`, and the VPC network
+of its DB subnet group), and Docker's embedded resolver answers from those
+aliases before forwarding anything upstream. The alias set covers the name under
+*every* hostname Overcast could mint it under, because the name a caller holds
+depends on the endpoint that caller used.
+
+**The port differs by caller, and this one is not cosmetic.** The engine listens
+on 3306/5432 inside the Docker network; on the host it is reachable only through
+a published port (`OVERCAST_RDS_PORT_BASE`, 33060 upwards, since 3306 is often
+taken by a local install). So:
+
+| Caller | `Endpoint.Address` | `Endpoint.Port` |
+| --- | --- | --- |
+| Lambda function, ECS task, any sibling container | the endpoint hostname | the engine port (3306/5432), as on AWS |
+| The host (CLI, SDK, `cdk deploy`) | the endpoint hostname, or `127.0.0.1` when `{base}` has no wildcard DNS | the published host port |
+
+Both pairs connect. Which one you were given is decided by the source address of
+your request, since a split-horizon hostname is used from both sides of the
+container boundary and cannot say which side you are on.
+
+One consequence worth knowing before it looks like a bug: **a host-side deploy
+bakes the host-side port into container environment.** `cdk deploy` runs on the
+host, so `Fn::GetAtt Endpoint.Port` resolves to the published port, and a task
+started from that template later reads it from inside the network where only
+3306 is open. Applications that take a *host* and assume the standard port —
+which is most of them, including the Bitnami images — are unaffected. If you
+pass the port through explicitly, hard-code the engine's standard port rather
+than `Endpoint.Port`; it is what real AWS would have returned anyway.
+
+**When a name does not resolve, check the container first.** The alias exists
+only while the engine container does. `docker ps --filter name=overcast-rds-`
+should list it; if it is missing, the instance is `available` as metadata but
+has nothing behind it, and the endpoint name resolves nowhere. The instance's
+`EngineVersion` no longer has to be one Overcast advertises — the nearest image
+family is used and the substitution is logged — so a missing container now means
+Docker was unavailable or the image could not be pulled.
+
+---
+
 ## See also
 
 - [Using AWS SDKs and CLI](./sdk-cli.md) — endpoint configuration for every SDK
