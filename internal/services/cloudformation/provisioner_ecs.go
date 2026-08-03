@@ -205,11 +205,72 @@ func (h *ecsServiceHandler) Create(ctx context.Context, router http.Handler, cfg
 	return arn, attrs, nil
 }
 
-// waitForServiceStable blocks until an ECS service reaches its desired count,
-// so a service that cannot place its tasks fails the stack instead of leaving
-// it CREATE_COMPLETE with nothing running. This is what CloudFormation does:
-// the resource is not complete until the service stabilizes, and a service that
-// never does fails with the reason its own events give.
+// describedECSService is the DescribeServices projection the stabilization wait
+// reads. Nothing else in the response bears on whether the resource is done.
+type describedECSService struct {
+	ServiceName  string                   `json:"serviceName"`
+	DesiredCount int                      `json:"desiredCount"`
+	RunningCount int                      `json:"runningCount"`
+	Deployments  []describedECSDeployment `json:"deployments"`
+	Events       []describedECSEvent      `json:"events"`
+}
+
+type describedECSDeployment struct {
+	Status             string `json:"status"`
+	FailedTasks        int    `json:"failedTasks"`
+	RolloutState       string `json:"rolloutState"`
+	RolloutStateReason string `json:"rolloutStateReason"`
+}
+
+type describedECSEvent struct {
+	Message string `json:"message"`
+}
+
+// ecsServiceStable reports whether a service has finished rolling out, by the
+// same definition the AWS CLI's `ecs wait services-stable` uses: one deployment
+// left, running its desired count.
+//
+// The deployment count is the half that matters on an update. A service being
+// updated reports two deployments — the new one placing tasks and the one it
+// replaced, still serving — so its running count already equals its desired
+// count before the new deployment has started anything. Reading the counts
+// alone therefore calls a rollout complete the instant it begins, which is how
+// an update to a task definition whose tasks cannot start reported
+// UPDATE_COMPLETE around a service that never ran it.
+func ecsServiceStable(svc describedECSService) bool {
+	return len(svc.Deployments) <= 1 && svc.RunningCount >= svc.DesiredCount
+}
+
+// ecsServiceRolloutFailure reports the reason the deployment currently being
+// rolled out has failed, if it has. Only the PRIMARY deployment counts: the one
+// it superseded may well be the failure that prompted this update, and holding
+// its history against the new one would fail every recovery.
+func ecsServiceRolloutFailure(svc describedECSService) (string, bool) {
+	for _, d := range svc.Deployments {
+		if d.Status != "PRIMARY" {
+			continue
+		}
+		if d.RolloutState != "FAILED" && d.FailedTasks == 0 {
+			return "", false
+		}
+		if len(svc.Events) > 0 {
+			return svc.Events[0].Message, true
+		}
+		return d.RolloutStateReason, true
+	}
+	return "", false
+}
+
+// waitForServiceStable blocks until an ECS service's current deployment reaches
+// its desired count, so a service that cannot place its tasks fails the stack
+// instead of leaving it CREATE_COMPLETE or UPDATE_COMPLETE with nothing running.
+// This is what CloudFormation does: the resource is not complete until the
+// service stabilizes, and a service that never does fails with the reason its
+// own events give.
+//
+// Create and update both come through here, deliberately: they are the same
+// wait on the same definition of done, and the bug this fixes is what happens
+// when the two drift apart.
 func waitForServiceStable(ctx context.Context, router http.Handler, region, cluster, serviceArn string) error {
 	body := map[string]any{"services": []string{serviceArn}}
 	if cluster != "" {
@@ -224,20 +285,7 @@ func waitForServiceStable(ctx context.Context, router http.Handler, region, clus
 			return fmt.Errorf("DescribeServices: %w", err)
 		}
 		var resp struct {
-			Services []struct {
-				ServiceName  string `json:"serviceName"`
-				DesiredCount int    `json:"desiredCount"`
-				RunningCount int    `json:"runningCount"`
-				Deployments  []struct {
-					Status             string `json:"status"`
-					FailedTasks        int    `json:"failedTasks"`
-					RolloutState       string `json:"rolloutState"`
-					RolloutStateReason string `json:"rolloutStateReason"`
-				} `json:"deployments"`
-				Events []struct {
-					Message string `json:"message"`
-				} `json:"events"`
-			} `json:"services"`
+			Services []describedECSService `json:"services"`
 		}
 		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 			return fmt.Errorf("DescribeServices: parse response: %w", err)
@@ -246,7 +294,7 @@ func waitForServiceStable(ctx context.Context, router http.Handler, region, clus
 			return fmt.Errorf("service %s not found while waiting for it to stabilize", serviceArn)
 		}
 		svc := resp.Services[0]
-		if svc.RunningCount >= svc.DesiredCount {
+		if ecsServiceStable(svc) {
 			return nil
 		}
 		if len(svc.Events) > 0 {
@@ -255,17 +303,11 @@ func waitForServiceStable(ctx context.Context, router http.Handler, region, clus
 		// A task the scheduler could not place will not place itself on a
 		// retry here, so report it as soon as it is known rather than holding
 		// the stack open for the full timeout.
-		for _, d := range svc.Deployments {
-			if d.Status != "PRIMARY" {
-				continue
+		if reason, failed := ecsServiceRolloutFailure(svc); failed {
+			if reason == "" {
+				reason = lastReason
 			}
-			if d.RolloutState == "FAILED" || d.FailedTasks > 0 {
-				reason := d.RolloutStateReason
-				if lastReason != "" {
-					reason = lastReason
-				}
-				return fmt.Errorf("service %s did not stabilize: %s", svc.ServiceName, reason)
-			}
+			return fmt.Errorf("service %s did not stabilize: %s", svc.ServiceName, reason)
 		}
 		if time.Now().After(deadline) {
 			if lastReason == "" {
@@ -360,8 +402,12 @@ func (h *ecsServiceHandler) Update(ctx context.Context, router http.Handler, _ *
 	// common way a real deployment goes wrong, and without this the resource
 	// reports success while the service sits on a failed rollout — leaving the
 	// stack UPDATE_COMPLETE around a service running nothing.
+	//
+	// The failure is terminal for the resource: the service exists and has the
+	// new task definition on it, so replacing it would add a second service
+	// running the same broken revision rather than fix anything.
 	if err := waitForServiceStable(ctx, router, rCtx.Region, cluster, physicalID); err != nil {
-		return "", nil, err
+		return "", nil, failUpdate(err)
 	}
 	return physicalID, nil, nil
 }

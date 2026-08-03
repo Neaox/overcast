@@ -410,9 +410,10 @@ func buildContainerEnv(cd ContainerDefinition, co *ContainerOverride, endpoint *
 // container runtime is wired. region is the region the task is stored under,
 // resolved from the request context at schedule time.
 //
-// A task owned by a service settles that service when it starts, which is what
-// moves the service to its running count and, at the desired count, into a
-// steady state.
+// A task owned by a service reconciles that service when it starts, which is
+// what moves the service to its running count and, at the desired count, into
+// a steady state — and, mid-rollout, what retires the task the new one has
+// just replaced.
 func (h *Handler) scheduleRunningTransition(region, clusterName, taskID string) {
 	capturedCluster := clusterName
 	capturedTaskID := taskID
@@ -435,7 +436,7 @@ func (h *Handler) scheduleRunningTransition(region, clusterName, taskID string) 
 			h.bus.Publish(ctx, events.Event{Type: events.ECSTaskStarted, Payload: events.ResourcePayload{Name: capturedTaskID}})
 		}
 		if serviceName, ok := serviceNameFromGroup(got.Group); ok {
-			h.settleService(ctx, capturedCluster, serviceName)
+			h.reconcile(ctx, capturedCluster, serviceName)
 		}
 	})
 }

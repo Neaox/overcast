@@ -44,6 +44,28 @@ CloudFormation applies its own documented default of `DesiredCount: 1` for a new
 resource completes. A service that cannot place its tasks fails the stack rather
 than leaving it `CREATE_COMPLETE` around a service running nothing.
 
+A stack **update** waits the same way, on the same definition of done that the
+AWS CLI's `ecs wait services-stable` uses: one deployment left, running its
+desired count. An update swapping in a task definition whose tasks cannot start
+fails the resource with the reason the service's own events give, and the stack
+unwinds — rather than reporting `UPDATE_COMPLETE` around a service still
+catching up, or one sitting on a rollout that failed. The failure is terminal
+for the resource: CloudFormation does not answer it by replacing the service.
+
+## A task definition change is a rollout
+
+Changing a service's task definition starts a new deployment, and the new
+deployment places its own tasks. Each task belongs to the deployment that
+started it (`startedBy`), and a deployment's counts and `rolloutState` come from
+its own tasks alone — so a service that has not yet started the new revision is
+`IN_PROGRESS`, not `COMPLETED` on the strength of the tasks it is replacing.
+
+The tasks of the superseded deployment keep serving until the new ones are
+running, then stop with `stopCode` `ServiceSchedulerInitiated`, and the drained
+deployment is dropped once it holds no tasks. A new deployment that never starts
+anything therefore leaves the old tasks running, which is what ECS does with a
+rollout that fails.
+
 ## When a task cannot start
 
 A task whose containers fail to start is `STOPPED` with `stopCode`
@@ -69,9 +91,12 @@ stuck deployment stays `IN_PROGRESS` and the scheduler keeps retrying, and the
 failure is reported through service events alone.
 
 A service also keeps its desired count: a task whose containers exit is
-replaced. Replacements back off as tasks keep dying (500 ms doubling to 30 s),
-so a container that exits immediately produces a crash loop that slows down
-rather than a hot loop — the same shape as AWS's service throttle logic.
+replaced, and so is one whose containers never started. Replacements back off as
+tasks keep failing (500 ms doubling to 30 s), so a container that cannot be
+pulled, or exits immediately, produces a crash loop that slows down rather than
+a hot loop — the same shape as AWS's service throttle logic. A service that
+stopped retrying after the first failed launch would never recover from a
+transient one.
 
 ## Container secrets
 
@@ -223,7 +248,7 @@ to call back into the emulator:
 | `UpdateClusterSettings`         | ✅ Supported   | Accepts settings array (metadata only)                                                                                                                                                                                                                                                                                                                                                                                                            | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_UpdateClusterSettings.html)         |
 | `UpdateContainerAgent`          | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                                                                                 | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_UpdateContainerAgent.html)          |
 | `UpdateContainerInstancesState` | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                                                                                 | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_UpdateContainerInstancesState.html) |
-| `UpdateService`                 | ✅ Supported   | Update desiredCount and/or taskDefinition; new deployment on task def change; propagates networkConfiguration/platformVersion                                                                                                                                                                                                                                                                                                                     | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_UpdateService.html)                 |
+| `UpdateService`                 | ✅ Supported   | Update desiredCount and/or taskDefinition; a task def change starts a new deployment that places its own tasks and retires the superseded one's as they come up; propagates networkConfiguration/platformVersion                                                                                                                                                                                                                                  | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_UpdateService.html)                 |
 | `UpdateServicePrimaryTaskSet`   | ✅ Supported   | Promotes target to PRIMARY; demotes all other task sets to ACTIVE                                                                                                                                                                                                                                                                                                                                                                                 | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_UpdateServicePrimaryTaskSet.html)   |
 | `UpdateTaskSet`                 | ✅ Supported   | Updates Scale and recalculates ComputedDesiredCount                                                                                                                                                                                                                                                                                                                                                                                               | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_UpdateTaskSet.html)                 |
 

@@ -514,38 +514,66 @@ func usesECSController(svc *ecsService) bool {
 	return svc.DeploymentController == nil || svc.DeploymentController.Type == "" || svc.DeploymentController.Type == "ECS"
 }
 
+// deploymentCounts is one deployment's share of a service's tasks.
+type deploymentCounts struct {
+	running int
+	pending int
+}
+
 // refreshServiceCounts recounts running/pending tasks for a service from the
 // store and derives the primary deployment's rollout state from them. It
 // reports whether the deployment reached steady state on this call, which is
 // the edge the steady-state service event is emitted on — by callers that
 // persist the service, since this is also called on the read path.
+//
+// Counts are attributed per deployment, by the deployment that started each
+// task. A deployment's own tasks are the only ones that say whether it has
+// rolled out: crediting it with the tasks of the deployment it replaced makes
+// a service that has not started anything new look like it reached steady
+// state the instant the task definition changed.
 func (h *Handler) refreshServiceCounts(ctx context.Context, clusterName string, svc *ecsService) bool {
 	tasks, aerr := h.store.listTasks(ctx, clusterName)
 	if aerr != nil {
 		return false
 	}
 	running, pending := 0, 0
+	byDeployment := make(map[string]*deploymentCounts, len(svc.Deployments))
 	serviceGroup := serviceGroupPrefix + svc.ServiceName
 	for _, t := range tasks {
 		if t.Group != serviceGroup {
 			continue
 		}
+		c := byDeployment[t.StartedBy]
+		if c == nil {
+			c = &deploymentCounts{}
+			byDeployment[t.StartedBy] = c
+		}
 		switch t.LastStatus {
 		case "RUNNING":
 			running++
+			c.running++
 		case "PROVISIONING", "PENDING":
 			pending++
+			c.pending++
 		}
 	}
+	// The service's own counts span every deployment, as AWS reports them:
+	// during a rollout it is running the new tasks and the old ones together.
 	svc.RunningCount = running
 	svc.PendingCount = pending
+	for i := range svc.Deployments {
+		c := byDeployment[svc.Deployments[i].ID]
+		if c == nil {
+			c = &deploymentCounts{}
+		}
+		svc.Deployments[i].RunningCount = c.running
+		svc.Deployments[i].PendingCount = c.pending
+	}
 
 	d := primaryDeployment(svc)
 	if d == nil {
 		return false
 	}
-	d.RunningCount = running
-	d.PendingCount = pending
 	if !usesECSController(svc) {
 		return false
 	}
@@ -554,7 +582,7 @@ func (h *Handler) refreshServiceCounts(ctx context.Context, clusterName string, 
 	if d.RolloutState == rolloutFailed {
 		return false
 	}
-	if running < d.DesiredCount {
+	if d.RunningCount < d.DesiredCount {
 		d.RolloutState = rolloutInProgress
 		d.RolloutStateReason = fmt.Sprintf("ECS deployment %s in progress.", d.ID)
 		return false
@@ -563,26 +591,6 @@ func (h *Handler) refreshServiceCounts(ctx context.Context, clusterName string, 
 	d.RolloutState = rolloutCompleted
 	d.RolloutStateReason = fmt.Sprintf("ECS deployment %s completed.", d.ID)
 	return reached
-}
-
-// settleService recomputes a service's counts after one of its tasks changed
-// state, persisting the result and recording the steady-state event on the edge
-// into it. Called from the task's own RUNNING transition, because that is what
-// moves a service to its desired count once the tasks have been placed.
-func (h *Handler) settleService(ctx context.Context, clusterName, serviceName string) {
-	svc, aerr := h.store.getService(ctx, clusterName, serviceName)
-	if aerr != nil || svc == nil {
-		return
-	}
-	if h.refreshServiceCounts(ctx, clusterName, svc) {
-		h.addServiceEvent(svc, fmt.Sprintf("(service %s) has reached a steady state.", serviceName))
-	}
-	if aerr := h.store.putService(ctx, clusterName, svc); aerr != nil {
-		h.log.Warn("ecs: failed to persist service after task transition",
-			zap.String("cluster", clusterName),
-			zap.String("service", serviceName),
-			zap.String("error", aerr.Message))
-	}
 }
 
 // circuitBreakerThreshold is the number of consecutive task launch failures
@@ -636,7 +644,7 @@ func (h *Handler) scaleUp(ctx context.Context, clusterName string, svc *ecsServi
 		startedBy = d.ID
 	}
 
-	started := 0
+	started, failed := 0, 0
 	for i := 0; i < n; i++ {
 		task, aerr, startErr := h.launchTask(ctx, taskLaunchSpec{
 			clusterName:     clusterName,
@@ -657,8 +665,10 @@ func (h *Handler) scaleUp(ctx context.Context, clusterName string, svc *ecsServi
 				zap.String("service", svc.ServiceName),
 				zap.String("error", aerr.Message))
 			h.recordPlacementFailure(svc, aerr.Message, 1)
+			failed++
 		case startErr != nil:
 			h.recordPlacementFailure(svc, task.StoppedReason, 1)
+			failed++
 		default:
 			h.registerTaskTargets(ctx, svc, td, task)
 			started++
@@ -671,6 +681,15 @@ func (h *Handler) scaleUp(ctx context.Context, clusterName string, svc *ecsServi
 		if d := primaryDeployment(svc); d != nil {
 			d.FailedTasks = 0
 		}
+	}
+
+	// A task whose containers never started is retried, on the same backoff as
+	// one that started and then exited. The scheduler is what keeps trying on
+	// ECS, and a service that stops trying after the first failed launch never
+	// recovers from a transient one — nor does anything waiting on it ever see
+	// the count move again.
+	if failed > 0 {
+		h.scheduleServiceReplacement(ctx, h.store.region(ctx), clusterName, svc.ServiceName)
 	}
 }
 
@@ -772,6 +791,9 @@ func (h *Handler) recordPlacementFailure(svc *ecsService, reason string, n int) 
 		return
 	}
 	d.FailedTasks += n
+	// A deployment that is still trying says so through its timestamp; a frozen
+	// updatedAt is how a service that has given up looks.
+	d.UpdatedAt = h.clk.Now().Unix()
 
 	// AWS does not document the count behind this event; three is where its own
 	// circuit breaker threshold bottoms out, so the two agree at the low end.
@@ -838,7 +860,85 @@ func (h *Handler) scheduleServiceReplacement(ctx context.Context, region, cluste
 	})
 }
 
-// reconcile adjusts task count to match a service's desired count.
+// What the service scheduler records on a task it stops itself. The stop code
+// is AWS's; the two reasons are ours — AWS's exact wording for them has not
+// been pinned against a captured response, and callers switch on the code.
+const (
+	stopReasonScaling        = "Service scaling adjustment"
+	stopReasonSuperseded     = "Task stopped by a newer service deployment"
+	stopCodeServiceScheduler = "ServiceSchedulerInitiated"
+)
+
+// stopServiceTasks stops tasks the service scheduler has decided to retire —
+// scaled-down surplus or the tasks of a deployment that has been replaced —
+// tearing down their containers and taking them out of load balancer rotation
+// first.
+func (h *Handler) stopServiceTasks(ctx context.Context, clusterName string, svc *ecsService, tasks []Task, reason string) {
+	stopped := 0
+	for i := range tasks {
+		t := tasks[i]
+		taskID := extractTaskID(t.TaskArn)
+
+		// Cancel pending scheduler transitions.
+		h.scheduler.CancelScoped(h.store.region(ctx), taskID, "pending")
+
+		// Stop Docker containers if available.
+		if h.dockerReady.Load() {
+			for _, c := range t.Containers {
+				if c.DockerID == "" {
+					continue
+				}
+				if err := h.docker.StopContainer(ctx, c.DockerID, 5); err != nil {
+					h.log.Warn("ecs: reconcile: failed to stop container",
+						zap.String("container", c.DockerID), zap.Error(err))
+				}
+				if !h.cfg.ECSKeepContainers {
+					if err := h.docker.RemoveContainerForce(c.DockerID); err != nil {
+						h.log.Warn("ecs: reconcile: failed to remove container",
+							zap.String("container", c.DockerID), zap.Error(err))
+					}
+				}
+			}
+		}
+
+		// Take the task out of rotation before stopping it, so the load
+		// balancer is not still forwarding to a container being torn down.
+		h.deregisterTaskTargets(ctx, svc, &t)
+
+		t.LastStatus = "STOPPED"
+		t.DesiredStatus = "STOPPED"
+		t.StoppedReason = reason
+		t.StopCode = stopCodeServiceScheduler
+		stoppedAt := h.clk.Now().Unix()
+		t.StoppedAt = &stoppedAt
+		for j := range t.Containers {
+			t.Containers[j].LastStatus = "STOPPED"
+		}
+		if aerr := h.store.putTask(ctx, &t); aerr != nil {
+			h.log.Warn("ecs: reconcile: failed to persist stopped task",
+				zap.String("cluster", clusterName),
+				zap.String("service", svc.ServiceName),
+				zap.String("task", taskID),
+				zap.String("error", aerr.Message))
+			continue
+		}
+		stopped++
+	}
+	if stopped > 0 {
+		h.addServiceEvent(svc, fmt.Sprintf("(service %s) has stopped %d tasks.", svc.ServiceName, stopped))
+	}
+}
+
+// reconcile drives a service toward the state its current deployment describes:
+// that deployment's tasks placed up to the desired count, and the tasks of any
+// deployment it superseded retired as the replacements come up.
+//
+// The deployment split is what makes an update a rollout rather than a rename.
+// Treating every task in the service's group as interchangeable — as this did —
+// means a service already at its desired count has nothing to do when the task
+// definition changes, so the new deployment places nothing, the old containers
+// keep serving, and the service reports steady state on a deployment that never
+// happened.
 func (h *Handler) reconcile(ctx context.Context, clusterName, serviceName string) {
 	svc, aerr := h.store.getService(ctx, clusterName, serviceName)
 	if aerr != nil || svc == nil {
@@ -851,86 +951,54 @@ func (h *Handler) reconcile(ctx context.Context, clusterName, serviceName string
 		return
 	}
 
-	serviceGroup := "service:" + serviceName
-	activeTasks := make([]Task, 0)
+	primaryID := ""
+	if d := primaryDeployment(svc); d != nil {
+		primaryID = d.ID
+	}
+
+	serviceGroup := serviceGroupPrefix + serviceName
+	current := make([]Task, 0, len(allTasks))    // the deployment being rolled out
+	superseded := make([]Task, 0, len(allTasks)) // deployments it replaces
+	runningCurrent := 0
 	for _, t := range allTasks {
-		if t.Group != serviceGroup {
+		if t.Group != serviceGroup || t.LastStatus == "STOPPED" {
 			continue
 		}
-		if t.LastStatus != "STOPPED" {
-			activeTasks = append(activeTasks, t)
+		if primaryID != "" && t.StartedBy != primaryID {
+			superseded = append(superseded, t)
+			continue
+		}
+		current = append(current, t)
+		if t.LastStatus == "RUNNING" {
+			runningCurrent++
 		}
 	}
 
-	activeCount := len(activeTasks)
 	desired := svc.DesiredCount
 
 	// Scale up: place tasks to reach desired count.
-	if activeCount < desired {
-		h.scaleUp(ctx, clusterName, svc, desired-activeCount)
+	if len(current) < desired {
+		h.scaleUp(ctx, clusterName, svc, desired-len(current))
 	}
 
 	// Scale down: stop excess tasks.
-	if activeCount > desired {
-		excess := activeCount - desired
-		stopped := 0
-		for i := len(activeTasks) - 1; i >= 0 && stopped < excess; i-- {
-			t := activeTasks[i]
-			taskID := extractTaskID(t.TaskArn)
+	if len(current) > desired {
+		h.stopServiceTasks(ctx, clusterName, svc, current[desired:], stopReasonScaling)
+	}
 
-			// Cancel pending scheduler transitions.
-			h.scheduler.CancelScoped(h.store.region(ctx), taskID, "pending")
-
-			// Stop Docker containers if available.
-			if h.dockerReady.Load() {
-				for _, c := range t.Containers {
-					if c.DockerID == "" {
-						continue
-					}
-					if err := h.docker.StopContainer(ctx, c.DockerID, 5); err != nil {
-						h.log.Warn("ecs: reconcile: failed to stop container",
-							zap.String("container", c.DockerID), zap.Error(err))
-					}
-					if !h.cfg.ECSKeepContainers {
-						if err := h.docker.RemoveContainerForce(c.DockerID); err != nil {
-							h.log.Warn("ecs: reconcile: failed to remove container",
-								zap.String("container", c.DockerID), zap.Error(err))
-						}
-					}
-				}
-			}
-
-			// Take the task out of rotation before stopping it, so the load
-			// balancer is not still forwarding to a container being torn down.
-			h.deregisterTaskTargets(ctx, svc, &t)
-
-			t.LastStatus = "STOPPED"
-			t.DesiredStatus = "STOPPED"
-			t.StoppedReason = "Service scaling adjustment"
-			t.StopCode = "ServiceSchedulerInitiated"
-			stoppedAt := h.clk.Now().Unix()
-			t.StoppedAt = &stoppedAt
-			for j := range t.Containers {
-				t.Containers[j].LastStatus = "STOPPED"
-			}
-			if aerr := h.store.putTask(ctx, &t); aerr != nil {
-				h.log.Warn("ecs: reconcile: failed to persist stopped task",
-					zap.String("cluster", clusterName),
-					zap.String("service", serviceName),
-					zap.String("task", taskID),
-					zap.String("error", aerr.Message))
-				continue
-			}
-			stopped++
-		}
-
-		if stopped > 0 {
-			h.addServiceEvent(svc, fmt.Sprintf("(service %s) has stopped %d tasks.", serviceName, stopped))
-		}
+	// Retire the superseded deployment's tasks as the new deployment takes
+	// over, keeping enough of them to hold the desired count in the meantime.
+	// A new deployment that never starts anything therefore leaves the old
+	// tasks serving, which is what ECS does with a rollout that fails.
+	if len(superseded) > 0 {
+		retain := min(max(desired-runningCurrent, 0), len(superseded))
+		h.stopServiceTasks(ctx, clusterName, svc, superseded[retain:], stopReasonSuperseded)
 	}
 
 	// Recount from store and update service.
-	if h.refreshServiceCounts(ctx, clusterName, svc) {
+	reachedSteadyState := h.refreshServiceCounts(ctx, clusterName, svc)
+	retireDrainedDeployments(svc)
+	if reachedSteadyState {
 		h.addServiceEvent(svc, fmt.Sprintf("(service %s) has reached a steady state.", serviceName))
 	}
 	if aerr := h.store.putService(ctx, clusterName, svc); aerr != nil {
@@ -939,4 +1007,20 @@ func (h *Handler) reconcile(ctx context.Context, clusterName, serviceName string
 			zap.String("service", serviceName),
 			zap.String("error", aerr.Message))
 	}
+}
+
+// retireDrainedDeployments drops the superseded deployments that have no tasks
+// left. AWS reports a service mid-rollout with both deployments and settles
+// back to one, which is how a caller waiting on a rollout — the `services-stable`
+// waiter, CloudFormation — knows the old revision is gone. Counts must be
+// refreshed first: this reads them.
+func retireDrainedDeployments(svc *ecsService) {
+	kept := svc.Deployments[:0]
+	for _, d := range svc.Deployments {
+		if d.Status != "PRIMARY" && d.RunningCount == 0 && d.PendingCount == 0 {
+			continue
+		}
+		kept = append(kept, d)
+	}
+	svc.Deployments = kept
 }

@@ -3983,7 +3983,7 @@
           "operation": "UpdateService",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Update desiredCount and/or taskDefinition; new deployment on task def change; propagates networkConfiguration/platformVersion"
+          "notes": "Update desiredCount and/or taskDefinition; a task def change starts a new deployment that places its own tasks and retires the superseded one's as they come up; propagates networkConfiguration/platformVersion"
         },
         {
           "operation": "UpdateServicePrimaryTaskSet",
