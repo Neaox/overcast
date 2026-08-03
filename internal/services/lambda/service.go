@@ -503,7 +503,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		log:     log,
 		tracker: tracker,
 		handler: h,
-		invoker: newServiceInvoker(ls, rr, logger, tracker),
+		invoker: newServiceInvoker(h, ls, rr, logger, tracker),
 	}
 
 	// Probe Docker in the background so startup of other services is not delayed.

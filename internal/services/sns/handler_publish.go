@@ -516,11 +516,14 @@ type delivery struct {
 
 // deliverToLambda hands one notification to a lambda-protocol subscriber.
 //
-// The invoke runs on its own goroutine: a cold start means starting a
-// container, which can take seconds, and the topic's other subscribers must not
-// wait for it. The goroutine is bounded (one per matching subscription per
-// publish) and joins the same WaitGroup as fan-out itself, so Stop still waits
-// for delivery to finish or for its context to expire.
+// The invoke runs inline. InvokeEvent is an accept, not an execution: it
+// validates the function and queues the event on Lambda's own async machinery,
+// which is where the cold start is paid and where the shutdown drain waits for
+// it. This used to spawn a goroutine because the call ran the function to
+// completion on whichever goroutine made it; it no longer does, and spawning
+// one now would only add a hop — and would move the accept off the fan-out
+// WaitGroup, so a publish could return before its own subscriptions had been
+// accepted.
 func (h *Handler) deliverToLambda(ctx context.Context, d delivery, msgAttrs map[string]messageAttribute) {
 	if h.invoker == nil {
 		h.failDelivery(ctx, d, "Lambda delivery is not available on this server")
@@ -536,27 +539,26 @@ func (h *Handler) deliverToLambda(ctx context.Context, d delivery, msgAttrs map[
 		return
 	}
 
-	h.wg.Add(1)
-	go func() {
-		defer h.wg.Done()
-		if err := h.invoker.InvokeEvent(ctx, d.sub.Endpoint, payload); err != nil {
-			h.failDelivery(ctx, d, "Lambda invoke failed: "+err.Error())
-			return
-		}
-		if h.bus != nil {
-			h.bus.Publish(ctx, events.Event{
-				Type:   events.SNSLambdaDelivered,
-				Time:   h.clk.Now(),
-				Source: "sns",
-				Payload: events.SNSLambdaPayload{
-					TopicName:       d.topicName,
-					FunctionName:    functionNameFromARN(d.sub.Endpoint),
-					MessageID:       d.msgID,
-					SubscriptionARN: d.sub.SubscriptionARN,
-				},
-			})
-		}
-	}()
+	// A returned error means Lambda never took the event, so it is still SNS's
+	// to dead-letter. A throttle is not one of those — Lambda retries it
+	// internally, exactly as it does for an HTTP Event invoke.
+	if err := h.invoker.InvokeEvent(ctx, d.sub.Endpoint, payload); err != nil {
+		h.failDelivery(ctx, d, "Lambda invoke failed: "+err.Error())
+		return
+	}
+	if h.bus != nil {
+		h.bus.Publish(ctx, events.Event{
+			Type:   events.SNSLambdaDelivered,
+			Time:   h.clk.Now(),
+			Source: "sns",
+			Payload: events.SNSLambdaPayload{
+				TopicName:       d.topicName,
+				FunctionName:    functionNameFromARN(d.sub.Endpoint),
+				MessageID:       d.msgID,
+				SubscriptionARN: d.sub.SubscriptionARN,
+			},
+		})
+	}
 }
 
 // failDelivery records a notification that did not reach its subscriber. It
