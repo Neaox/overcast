@@ -100,7 +100,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | SQS              | [sqs.md](./services/sqs.md)                         | 21  | Comprehensive / broad support |
 | DynamoDB         | [dynamodb.md](./services/dynamodb.md)               | 19  | Comprehensive / broad support |
 | Lambda           | [lambda.md](./services/lambda.md)                   | 48  | Comprehensive / broad support |
-| API Gateway      | [apigateway.md](./services/apigateway.md)           | 105 | Comprehensive / broad support |
+| API Gateway      | [apigateway.md](./services/apigateway.md)           | 106 | Comprehensive / broad support |
 | AppSync          | [appsync.md](./services/appsync.md)                 | 82  | Comprehensive / broad support |
 | CloudFront       | [cloudfront.md](./services/cloudfront.md)           | 89  | Comprehensive / broad support |
 | Cognito          | [cognito.md](./services/cognito.md)                 | 67  | Comprehensive / broad support |
@@ -182,6 +182,7 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_LOG_LEVEL`             | `info`                 | `trace`, `debug`, `info`, `warn`, `error` — see [Log levels](#log-levels) below      |
 | `OVERCAST_DEBUG`                 | `false`                | Enable `/_debug/*` endpoints                                                         |
 | `OVERCAST_SIGV4_VALIDATE`        | `false`                | SigV4 verification _(not yet implemented)_                                           |
+| `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE` | `false`          | Reject API Gateway requests that exceed their usage plan's throttle or quota with AWS's `429`. Off by default: the limits are measured and reported (`GetUsage`, `apigateway:Throttled` events) but never rejected — see [API Gateway](./services/apigateway.md#usage-plan-throttling-and-quotas) |
 | `OVERCAST_CFN_SYNC_WAIT_MS`      | `1000`                 | Milliseconds CloudFormation waits for fast stack provisioning before returning (`0` disables) |
 | `OVERCAST_STEPFUNCTIONS_EXECUTION_TIMEOUT` | `15m`        | Runaway guard on one Step Functions execution. Executions run off the request path, so this never bounds `StartExecution` itself; a state machine's own `TimeoutSeconds` can lower it but not raise it. Exceeding it ends the execution `TIMED_OUT` with `States.Timeout` |
 | `OVERCAST_TLS`                   | —                      | `auto` = serve API **and** web UI over HTTPS with a certificate minted from the local overcast CA (unlocks browser HTTP/2) — see [HTTPS and HTTP/2](./https.md) |

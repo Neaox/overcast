@@ -171,6 +171,8 @@ export const EventType = {
     RestApiCreated: "apigateway:RestApiCreated",
     RestApiDeleted: "apigateway:RestApiDeleted",
     Deployed: "apigateway:Deployed",
+    /** A request reached its usage plan's throttle or quota limit. */
+    Throttled: "apigateway:Throttled",
   },
 
   // ── AppSync ─────────────────────────────────────────────────────────────

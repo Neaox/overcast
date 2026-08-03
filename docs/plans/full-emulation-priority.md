@@ -45,7 +45,7 @@ concentrated in exactly five services that are Tier 1 end-to-end — see §5.3.
 | 5 | S3 lifecycle rules | Comprehensive, stub gap | `Get/Put/DeleteBucketLifecycleConfiguration` are pure 501s ([s3 capability rows](../../internal/capabilities/all.gen.go)) despite being a default CDK bucket option (`autoDeleteObjects`, log/backup buckets) |
 | 6 | CloudWatch Alarms auto-evaluation | Core, manual-only | `SetAlarmState` is documented "Manually sets the state" — no loop evaluates `PutMetricData` against a `PutMetricAlarm` threshold; alarms never fire on their own |
 | 7 | Auto Scaling real reconciliation | Tier 1 (fully inert — 19/19 ops `StatusInert`) | Desired-capacity CRUD only; no instance launch/terminate loop against the existing EC2 service; pairs with #6 for alarm-driven scaling |
-| 8 | API Gateway usage-plan throttle/quota enforcement | Comprehensive, stub gap | Stored but never enforced — `store.go:250` carries a literal `// TODO(priority:P3): enforce throttle limits at request time` |
+| 8 | API Gateway usage-plan throttle/quota enforcement — **done 2026-08-03 (#472)** | Comprehensive, complete | Throttle and quota are now measured per (plan, API key) and readable through `GetUsage`; rejection is behind `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE`, default off |
 | 9 | Secrets Manager rotation + resource policies | Core (14/21 ops Supported) | `RotateSecret` is "Config only (no Lambda invocation)" and all four resource-policy ops are 501 stubs — rotation is the headline Secrets Manager feature |
 | 10 | Pipes: sources/targets beyond DDB→SQS | Minimal-stub | Hard-coded to "only the DynamoDB Streams → SQS path" ([pipes/service.go:3-5](../../internal/services/pipes/service.go)); sequenced after #1 because it needs the same target-delivery code EventBridge Rules needs |
 
@@ -107,7 +107,8 @@ Two shapes of "worse than inert" recur across this backlog and are called out wh
    responses it didn't get before, for reasons that may not even match what real AWS would decide (the
    evaluator is necessarily a subset of AWS's). DoD for all three: ship policy/limit *evaluation and
    reporting* first (what would happen), gate actual enforcement behind an explicit opt-in flag, default
-   OFF.
+   OFF. This rule is absolute and outranks any per-item argument that a narrower activation condition
+   makes a flag unnecessary — see §3 item 6, where that argument was made and rejected.
 2. **Partial protocol behavior that looks complete.** A Step Functions engine that handles `Task`/`Pass`/
    `Choice` but silently no-ops on `Map`/`Parallel`/`.sync` integrations is worse than today's honest
    immediate-`SUCCEEDED` stub, because it invites an application to depend on control flow that doesn't
@@ -279,13 +280,33 @@ Definition of done:
 Dependencies: none blocking; this is additive to every other service and doesn't need any of them to change.
 
 **6. API Gateway usage-plan throttle/quota enforcement** — Comprehensive, stub gap → Comprehensive, complete
+**Status: done, 2026-08-03 (#472).**
 Score: usage 3, leverage 2, fit 3, cost S, dep-ready 5, risk medium (§2.1 shape 1, smaller blast radius than
 IAM since it's scoped to API Gateway only).
-Definition of done: `store.go`'s `ThrottleSettings`/quota are read at request time in
-`ExecuteRestAPI`/`ExecuteV2API`; over-limit requests get AWS's `429 TooManyRequestsException`; default
-behavior unchanged unless a usage plan with a throttle/quota is actually attached to the calling API key
-(i.e., this is opt-in by construction — no flag needed, since the enforcement only activates on resources
-the user explicitly configured a limit for).
+Definition of done: `store.go`'s `ThrottleSettings`/quota are read at request time in `ExecuteRestAPI`;
+over-limit requests get AWS's `429`; default behavior unchanged unless the operator opts in.
+What shipped ([internal/services/apigateway/usage.go](../../internal/services/apigateway/usage.go)):
+- A per-(usage plan, API key) token bucket (`rateLimit` refill, `burstLimit` capacity) and a
+  calendar-aligned quota window (`DAY`/`WEEK`/`MONTH`, `offset` applied to the first period only), both
+  driven by the injected `clock.Clock` and held in memory — the request path takes no extra store read.
+  The hook is inside the existing API-key check, which had already resolved the key and the plan.
+- Measurement always runs and is observable: `GetUsage` (a new operation) returns AWS's daily
+  `[used, remaining]` log per key, a limit publishes an `apigateway:Throttled` bus event, and the web UI's
+  Usage Plans page shows the configured rate/burst/quota, today's per-key usage, and a live feed of limits
+  being reached.
+- **Rejection is behind `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE`, default off**, per §2.1 shape 1. The
+  original DoD argued no flag was needed because enforcement only activates on explicitly-configured
+  plans; that argument was rejected on review, because a CDK stack that already declares a throttle would
+  have started receiving `429`s it never used to. The by-construction narrowing was kept *as well*: a plan
+  with neither a throttle nor a quota never rejects anything even with the flag on.
+- Enforced rejections use the two distinct API Gateway gateway responses: `THROTTLED` →
+  `TooManyRequestsException` / `Too Many Requests`, `QUOTA_EXCEEDED` → `LimitExceededException` /
+  `Limit Exceeded`. A rejected request consumes neither quota nor a token, as on AWS.
+- `ExecuteV2API` is deliberately untouched: HTTP APIs have no API-key or usage-plan concept on real AWS,
+  so there is nothing to read there and inventing it would be a divergence.
+Known gaps, recorded rather than hidden: usage counters are in-memory and reset on restart (real AWS keeps
+them for the whole quota period), and stage- and method-level throttle overrides inside a usage plan are
+not evaluated — only the plan-level `throttle`.
 
 **7. CloudWatch Alarms auto-evaluation** — Core, manual-only → Core, complete
 Score: usage 3, leverage 3 (mostly valuable as a dependency for item 8), fit 4, cost M, dep-ready 4, risk

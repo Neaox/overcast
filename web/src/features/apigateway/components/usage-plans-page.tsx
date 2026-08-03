@@ -1,14 +1,18 @@
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { useQuery, useMutation } from "@tanstack/react-query"
-import { Plus, Trash2, RefreshCw, ChevronRight } from "lucide-react"
+import { Plus, Trash2, RefreshCw, ChevronRight, Gauge } from "lucide-react"
 import {
   usagePlansQueryOptions,
   usagePlanKeysQueryOptions,
+  usagePlanUsageQueryOptions,
   apigwKeys,
   createUsagePlanMutationOptions,
   deleteUsagePlanMutationOptions,
   removeUsagePlanKeyMutationOptions,
 } from "@/features/apigateway/data"
+import { useEventStream } from "@/hooks/use-event-stream"
+import { EventType } from "@/services/event-types"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Table,
@@ -34,13 +38,114 @@ import { cn } from "@/lib/utils"
 import { ApiKeyValue } from "@/features/apigateway/components/api-key-value"
 import type { UsagePlan, UsagePlanKey } from "@/features/apigateway/data"
 
+// ─── Limit formatting ─────────────────────────────────────────────────────
+
+/** "10/s (burst 20)" — the token bucket a plan's throttle describes. */
+function formatThrottle(plan: UsagePlan): string {
+  const rate = plan.throttle?.rateLimit
+  const burst = plan.throttle?.burstLimit
+  if (!rate && !burst) return "—"
+  const parts: string[] = []
+  if (rate) parts.push(`${rate}/s`)
+  if (burst) parts.push(`burst ${burst}`)
+  return parts.join(" · ")
+}
+
+/** "1000 / DAY" — the quota a plan configures, if any. */
+function formatQuota(plan: UsagePlan): string {
+  const limit = plan.quota?.limit
+  if (!limit) return "—"
+  return `${limit} / ${plan.quota?.period ?? "DAY"}`
+}
+
+/** Remaining is -1 when the plan sets no quota, and negative past an unenforced limit. */
+function formatRemaining(remaining: number): string {
+  return remaining < 0 && remaining === -1 ? "unlimited" : String(remaining)
+}
+
+// ─── Sub-component: throttle activity ─────────────────────────────────────
+
+/**
+ * Live feed of usage-plan limits being reached. Without this a 429 from the
+ * emulator — or a limit that was measured but deliberately not enforced — is
+ * indistinguishable from an application error.
+ */
+function ThrottleActivity({ planId }: { planId: string }) {
+  const { events } = useEventStream({ source: "apigateway" })
+
+  const throttles = useMemo(
+    () =>
+      events
+        .filter((e) => e.type === EventType.apigateway.Throttled)
+        .filter((e) => (e.payload as { usagePlanId?: string }).usagePlanId === planId)
+        .slice(-8)
+        .reverse(),
+    [events, planId],
+  )
+
+  if (throttles.length === 0) {
+    return (
+      <p className="mt-3 text-xs text-fg-muted">
+        No limits reached. Overcast measures every request against this plan; rejecting over-limit
+        requests with a <span className="font-mono">429</span> additionally requires{" "}
+        <span className="font-mono">OVERCAST_ENFORCE_APIGATEWAY_THROTTLE=true</span>.
+      </p>
+    )
+  }
+
+  return (
+    <div className="mt-3 flex flex-col gap-1">
+      <div className="text-sm font-medium text-fg-muted">Recent limit events</div>
+      {throttles.map((event, i) => {
+        const p = event.payload as {
+          reason?: string
+          enforced?: boolean
+          apiKeyName?: string
+          apiKeyId?: string
+          used?: number
+          remaining?: number
+        }
+        return (
+          <div
+            key={`${event.time}-${i}`}
+            className="flex flex-wrap items-center gap-2 rounded-md border bg-bg px-2 py-1.5 text-xs"
+          >
+            <Badge variant={p.enforced ? "danger" : "warning"}>
+              {p.enforced ? "429" : "report only"}
+            </Badge>
+            <span className="font-mono">{p.reason}</span>
+            <span className="text-fg-muted">
+              key {p.apiKeyName || p.apiKeyId} · used {p.used} · remaining{" "}
+              {formatRemaining(p.remaining ?? -1)}
+            </span>
+            <span className="ml-auto text-fg-muted">{new Date(event.time).toLocaleTimeString()}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // ─── Sub-component: keys for a selected plan ──────────────────────────────
 
-function PlanKeys({ planId, planName }: { planId: string; planName: string }) {
+function PlanKeys({ plan }: { plan: UsagePlan }) {
+  const planId = plan.id
+  const planName = plan.name
   const { toast } = useToast()
   const [removeTarget, setRemoveTarget] = useState<UsagePlanKey>()
 
   const { data: keys = [], isLoading, error } = useQuery(usagePlanKeysQueryOptions(planId))
+  const { data: usage = [] } = useQuery(usagePlanUsageQueryOptions(planId))
+
+  // GetUsage returns one [used, remaining] pair per day in the window, and the
+  // window this page asks for is today only.
+  const usageByKey = useMemo(() => {
+    const out = new Map<string, { used: number; remaining: number }>()
+    for (const row of usage) {
+      if (row.days.length > 0) out.set(row.keyId, row.days[row.days.length - 1])
+    }
+    return out
+  }, [usage])
 
   const removeMut = useMutation({
     ...removeUsagePlanKeyMutationOptions(),
@@ -63,8 +168,15 @@ function PlanKeys({ planId, planName }: { planId: string; planName: string }) {
 
   return (
     <div className="mt-2 rounded-lg border bg-bg-elevated p-4">
-      <div className="mb-3 text-sm font-medium text-fg-muted">
-        API Keys for <span className="font-semibold text-fg">{planName}</span>
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-sm font-medium text-fg-muted">
+        <span>
+          API Keys for <span className="font-semibold text-fg">{planName}</span>
+        </span>
+        <Badge variant="outline">
+          <Gauge className="mr-1 h-3 w-3" />
+          rate {formatThrottle(plan)}
+        </Badge>
+        <Badge variant="outline">quota {formatQuota(plan)}</Badge>
       </div>
       {keys.length === 0 ? (
         <QueryListState
@@ -84,6 +196,8 @@ function PlanKeys({ planId, planName }: { planId: string; planName: string }) {
               <TableHead>ID</TableHead>
               <TableHead>Value</TableHead>
               <TableHead>Type</TableHead>
+              <TableHead>Used today</TableHead>
+              <TableHead>Remaining</TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
@@ -96,6 +210,10 @@ function PlanKeys({ planId, planName }: { planId: string; planName: string }) {
                   <ApiKeyValue value={key.value} />
                 </TableCell>
                 <TableCell className="text-fg-muted">{key.type}</TableCell>
+                <TableCell className="font-mono">{usageByKey.get(key.id)?.used ?? 0}</TableCell>
+                <TableCell className="font-mono text-fg-muted">
+                  {formatRemaining(usageByKey.get(key.id)?.remaining ?? -1)}
+                </TableCell>
                 <TableCell className="text-right">
                   <Button
                     size="sm"
@@ -111,6 +229,8 @@ function PlanKeys({ planId, planName }: { planId: string; planName: string }) {
           </TableBody>
         </Table>
       )}
+
+      <ThrottleActivity planId={planId} />
 
       <ConfirmDialog
         open={!!removeTarget}
@@ -197,6 +317,8 @@ export function UsagePlansPage({
     setExpandedPlanId((prev) => (prev === planId ? undefined : planId))
   }
 
+  const expandedPlan = plans.find((p) => p.id === expandedPlanId)
+
   return (
     <div className="flex w-full max-w-5xl flex-col gap-4">
       <PageHeader
@@ -242,6 +364,8 @@ export function UsagePlansPage({
                 <TableHead>Name</TableHead>
                 <TableHead>ID</TableHead>
                 <TableHead>Description</TableHead>
+                <TableHead>Rate / burst</TableHead>
+                <TableHead>Quota</TableHead>
                 <TableHead />
               </TableRow>
             </TableHeader>
@@ -263,6 +387,8 @@ export function UsagePlansPage({
                   <TableCell className="font-medium">{plan.name}</TableCell>
                   <TableCell className="text-fg-muted">{plan.id}</TableCell>
                   <TableCellProse>{plan.description || "—"}</TableCellProse>
+                  <TableCell className="font-mono text-fg-muted">{formatThrottle(plan)}</TableCell>
+                  <TableCell className="font-mono text-fg-muted">{formatQuota(plan)}</TableCell>
                   <TableCell className="text-right">
                     <Button
                       size="sm"
@@ -281,12 +407,7 @@ export function UsagePlansPage({
             </TableBody>
           </Table>
 
-          {expandedPlanId && (
-            <PlanKeys
-              planId={expandedPlanId}
-              planName={plans.find((p) => p.id === expandedPlanId)?.name ?? expandedPlanId}
-            />
-          )}
+          {expandedPlan && <PlanKeys plan={expandedPlan} />}
         </div>
       )}
 

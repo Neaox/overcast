@@ -16,6 +16,12 @@
     },
     {
       "suite": "dotnet-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "tests": 6
+    },
+    {
+      "suite": "dotnet-sdk",
       "service": "appsync",
       "group": "appsync-api-keys",
       "tests": 4
@@ -355,6 +361,12 @@
       "service": "apigateway",
       "group": "apigateway-rest",
       "tests": 3
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "tests": 6
     },
     {
       "suite": "rust-sdk",
