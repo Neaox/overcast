@@ -50,6 +50,7 @@ field, so a pipe is never stored in a state where it would silently do nothing.
   shard cursor, so the batch is retried.
 - **Filtering is not emulated.** `SourceParameters.FilterCriteria` is rejected rather than stored
   and ignored — filter inside a Lambda enrichment instead.
+- **`UpdatePipe` is `PUT /v1/pipes/{name}`**, as AWS routes it, and requires `RoleArn`.
 - **Async state machine.** Pipe state transitions (CREATING→RUNNING, UPDATING→RUNNING,
   STOPPING→STOPPED, …) happen asynchronously with a short delay.
 - **Start/stop.** Setting `DesiredState` to `STOPPED` or `RUNNING` on update triggers the

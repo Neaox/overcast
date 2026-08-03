@@ -174,3 +174,24 @@ def DeletePipe(ctx: TestContext) -> None:
     resp = _pipes(ctx).delete_pipe(Name=ctx["pipe_name"])
     if resp.get("CurrentState") != "DELETING":
         raise AssertionError(f"DeletePipe: CurrentState {resp.get('CurrentState')!r}, want DELETING")
+
+
+# ── ImplMap ───────────────────────────────────────────────────────────────────
+
+IMPLS = {
+    "CreatePipe": CreatePipe,
+    "DescribePipe": DescribePipe,
+    "ListPipes": ListPipes,
+    "CreatePipeRejectsUnsupportedTarget": CreatePipeRejectsUnsupportedTarget,
+    "PipeDeliversToTarget": PipeDeliversToTarget,
+    "UpdatePipe": UpdatePipe,
+    "DeletePipe": DeletePipe,
+}
+
+SETUP = {
+    "pipes-wiring": setup_pipes_wiring,
+}
+
+TEARDOWN = {
+    "pipes-wiring": teardown_pipes_wiring,
+}

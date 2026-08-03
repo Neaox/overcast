@@ -19,8 +19,8 @@
 //
 //	POST   /v1/pipes/{name}   — CreatePipe
 //	GET    /v1/pipes/{name}   — DescribePipe
+//	PUT    /v1/pipes/{name}   — UpdatePipe
 //	DELETE /v1/pipes/{name}   — DeletePipe
-//	PATCH  /v1/pipes/{name}   — UpdatePipe
 //	GET    /v1/pipes          — ListPipes
 //
 // State machine:
@@ -88,7 +88,9 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 		r.Post("/{name}", s.handler.CreatePipe)
 		r.Get("/{name}", s.handler.DescribePipe)
 		r.Delete("/{name}", s.handler.DeletePipe)
-		r.Patch("/{name}", s.handler.UpdatePipe)
+		// AWS routes UpdatePipe on PUT, which is what every SDK and the CLI
+		// send — a PATCH route answered them 405. The compat suites caught it.
+		r.Put("/{name}", s.handler.UpdatePipe)
 	})
 	s.handler.registerAdminRoutes(r)
 }
@@ -192,8 +194,8 @@ type createPipeRequest struct {
 	Tags                 map[string]string     `json:"Tags"`
 }
 
-// updatePipeRequest is AWS's UpdatePipe body. Source and Target are absent by
-// design: AWS does not allow either to be changed after creation.
+// updatePipeRequest is AWS's UpdatePipe body. Source is absent by design: AWS
+// does not allow the source of a pipe to change, only its target.
 type updatePipeRequest struct {
 	Description          *string               `json:"Description,omitempty"`
 	DesiredState         PipeState             `json:"DesiredState,omitempty"`
@@ -201,6 +203,7 @@ type updatePipeRequest struct {
 	SourceParameters     *SourceParameters     `json:"SourceParameters,omitempty"`
 	Enrichment           *string               `json:"Enrichment,omitempty"`
 	EnrichmentParameters *EnrichmentParameters `json:"EnrichmentParameters,omitempty"`
+	Target               string                `json:"Target,omitempty"`
 	TargetParameters     *TargetParameters     `json:"TargetParameters,omitempty"`
 }
 
@@ -315,10 +318,10 @@ func (h *Handler) DeletePipe(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, p.mutationResponse())
 }
 
-// UpdatePipe implements PATCH /v1/pipes/{name}.
+// UpdatePipe implements PUT /v1/pipes/{name}.
 //
-// AWS allows the desired state, the description, the role and every parameter
-// block to change; Source and Target are immutable and are not part of the
+// AWS allows the desired state, the description, the role, the target and every
+// parameter block to change; the source is immutable and is not part of the
 // request. A configuration change goes through UPDATING, and a desired-state
 // change through STARTING or STOPPING.
 func (h *Handler) UpdatePipe(w http.ResponseWriter, r *http.Request) {
@@ -327,6 +330,10 @@ func (h *Handler) UpdatePipe(w http.ResponseWriter, r *http.Request) {
 
 	var req updatePipeRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	// RoleArn is a required member of UpdatePipe, as it is of CreatePipe.
+	if !serviceutil.RequireString(w, r, req.RoleArn, "RoleArn") {
 		return
 	}
 
@@ -368,6 +375,10 @@ func (h *Handler) UpdatePipe(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.SourceParameters != nil {
 		p.SourceParameters = req.SourceParameters
+		changed, reconfigured = true, true
+	}
+	if req.Target != "" && req.Target != p.TargetArn {
+		p.TargetArn = req.Target
 		changed, reconfigured = true, true
 	}
 	if req.TargetParameters != nil {

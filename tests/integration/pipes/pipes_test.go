@@ -422,10 +422,15 @@ func TestListPipes_multiple(t *testing.T) {
 
 // ---- UpdatePipe -------------------------------------------------------------
 
+// updatePipe sends an UpdatePipe request. AWS routes it on PUT, and RoleArn is
+// a required member, so both are supplied unless the caller overrides them.
 func updatePipe(t *testing.T, srv *helpers.TestServer, name string, body map[string]any) *http.Response {
 	t.Helper()
+	if _, ok := body["RoleArn"]; !ok {
+		body["RoleArn"] = "arn:aws:iam::000000000000:role/pipe-role"
+	}
 	b, _ := json.Marshal(body)
-	req, _ := http.NewRequest(http.MethodPatch, srv.URL+"/v1/pipes/"+name, bytes.NewReader(b))
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/v1/pipes/"+name, bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

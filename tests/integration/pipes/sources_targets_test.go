@@ -247,6 +247,28 @@ func TestUpdatePipe_rejectsUnsupportedEnrichment(t *testing.T) {
 	assertValidationRejection(t, resp, "Enrichment")
 }
 
+// UpdatePipe is routed on PUT by AWS — every SDK and the CLI send it that way,
+// and a PATCH-only route answered them 405. Pinned here because nothing in the
+// Go tests would notice: they build the request themselves.
+func TestUpdatePipe_isRoutedOnPut(t *testing.T) {
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+	streamARN := mustCreateStreamTable(t, srv, "orders")
+	_, queueARN := mustCreateQueue(t, srv, "q")
+	mustCreateRunningPipe(t, srv, "p", map[string]any{"Source": streamARN, "Target": queueARN})
+
+	// PUT is the AWS method.
+	resp := updatePipe(t, srv, "p", map[string]any{"DesiredState": "STOPPED"})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// And RoleArn is required, as it is on CreatePipe.
+	bad := updatePipe(t, srv, "p", map[string]any{"DesiredState": "RUNNING", "RoleArn": ""})
+	defer bad.Body.Close()
+	if bad.StatusCode != http.StatusBadRequest {
+		t.Errorf("UpdatePipe without RoleArn: status %d, want 400", bad.StatusCode)
+	}
+}
+
 // ─── how a batch maps onto a target ───────────────────────────────────────────
 
 func TestPipeDelivery_batchMapsToTheTargetsBatchAPI(t *testing.T) {
