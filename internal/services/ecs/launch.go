@@ -101,8 +101,6 @@ func (h *Handler) launchTask(ctx context.Context, spec taskLaunchSpec) (*Task, *
 				zap.Error(startErr))
 			markTaskFailedToStart(task, h.clk.Now().Unix(), startErr)
 		}
-	} else {
-		h.scheduleRunningTransition(h.store.region(ctx), spec.clusterName, taskID)
 	}
 
 	if aerr := h.store.putTask(ctx, task); aerr != nil {
@@ -117,6 +115,13 @@ func (h *Handler) launchTask(ctx context.Context, spec taskLaunchSpec) (*Task, *
 		}
 		return task, nil, startErr
 	}
+
+	// Only now, with the record persisted. The transition reads the task back
+	// and gives up if it is not there, and it is a one-shot: scheduled before
+	// this write, it can fire against a task that does not exist yet, be spent,
+	// and leave the record that lands a moment later stuck at PROVISIONING for
+	// good. Both placement paths converge here so neither can get that wrong.
+	h.scheduleRunningTransition(h.store.region(ctx), spec.clusterName, taskID)
 	return task, nil, nil
 }
 

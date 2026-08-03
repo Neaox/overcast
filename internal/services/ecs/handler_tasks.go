@@ -116,8 +116,9 @@ func (h *Handler) RunTask(w http.ResponseWriter, r *http.Request) {
 }
 
 // startTaskContainers creates and starts Docker containers for all container
-// definitions in a task. On success, task containers are updated with DockerIDs
-// and a scheduler transition to RUNNING is queued.
+// definitions in a task. On success, task containers are updated with
+// DockerIDs. The RUNNING transition is queued by launchTask once the task
+// record has been persisted, not here — see the comment there.
 func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskDefinition, clusterName, taskID string, placement awsvpcPlacement) error {
 	// Ensure the ECS network exists.
 	if _, err := h.docker.CreateNetwork(ctx, h.cfg.ECSNetwork); err != nil {
@@ -260,7 +261,6 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 		h.startLogStreaming(ctx, dockerID, taskID, cd)
 	}
 
-	h.scheduleRunningTransition(h.store.region(ctx), clusterName, taskID)
 	return nil
 }
 

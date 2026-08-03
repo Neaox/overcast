@@ -78,7 +78,10 @@ func TestTaskTransition_nonDefaultRegion(t *testing.T) {
 	}
 	taskID := extractTaskID(tasks[0].Value.TaskArn)
 
-	clk.Add(time.Second) // fire the 200ms PROVISIONING → RUNNING transition
+	// Fire the 200ms PROVISIONING → RUNNING transition and wait for it: the
+	// mock clock runs the callback on a goroutine of its own, so advancing the
+	// clock alone leaves the read below racing it.
+	h.scheduler.AdvanceAndSettle(clk, time.Second)
 
 	got, aerr := h.store.getTask(ctx, "c1", taskID)
 	if aerr != nil || got == nil {
