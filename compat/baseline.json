@@ -290,6 +290,48 @@
     },
     {
       "suite": "cli",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateApiKey",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateUsagePlanKey",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateUsagePlanWithLimits",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "DeleteUsagePlan",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "GetUsage",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "GetUsagePlan",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
       "service": "appsync",
       "group": "appsync-api-keys",
       "test": "CreateApiKey",
@@ -1585,6 +1627,41 @@
     },
     {
       "suite": "cli",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "CreateMountTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DeleteMountTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DescribeMountTargetSecurityGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DescribeMountTargets",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "ModifyMountTargetSecurityGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
       "service": "elasticache",
       "group": "elasticache-clusters",
       "test": "CreateCacheCluster",
@@ -1788,6 +1865,27 @@
     },
     {
       "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutEventsToQueueTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutEventsWithInputTransformer",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutFanoutTargets",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
       "service": "iam",
       "group": "iam-groups",
       "test": "AddUserToGroup",
@@ -1952,6 +2050,41 @@
       "service": "iam",
       "group": "iam-roles",
       "test": "PutRolePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyAllowed",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyExplicitDeny",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyImplicitDeny",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulatePrincipalPolicyAllowed",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulatePrincipalPolicyImplicitDeny",
       "status": "pass"
     },
     {
@@ -2488,6 +2621,55 @@
     },
     {
       "suite": "cli",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "CreatePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "CreatePipeRejectsUnsupportedTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "DeletePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "DescribePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "ListPipes",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "PipeDeliversToTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "UpdatePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
       "service": "rds",
       "group": "rds-instances",
       "test": "CreateDBInstance",
@@ -2685,6 +2867,34 @@
     {
       "suite": "cli",
       "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "DeleteBucketLifecycle",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "GetBucketLifecycleConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "GetBucketLifecycleConfigurationAfterDelete",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "PutBucketLifecycleConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
       "group": "s3-multipart",
       "test": "AbortMultipartUpload",
       "status": "pass"
@@ -2853,6 +3063,34 @@
     {
       "suite": "cli",
       "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "DeleteResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "GetResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "PutResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "ValidateResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
       "group": "secretsmanager-rotate",
       "test": "CancelRotateSecret",
       "status": "pass"
@@ -2861,7 +3099,35 @@
       "suite": "cli",
       "service": "secretsmanager",
       "group": "secretsmanager-rotate",
+      "test": "GetSecretValueByStage",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "PutSecretValuePending",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
       "test": "RotateSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "RotateSecretWithoutLambda",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "UpdateSecretVersionStage",
       "status": "pass"
     },
     {
@@ -2981,6 +3247,41 @@
       "service": "ses",
       "group": "ses-templates",
       "test": "UpdateTemplate",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "DescribeExecution",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "GetExecutionHistory",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "ListExecutions",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "StartExecution",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "StopExecution",
       "status": "pass"
     },
     {
@@ -3513,6 +3814,48 @@
       "service": "apigateway",
       "group": "apigateway-rest",
       "test": "GetRestApis",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateApiKey",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateUsagePlanKey",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateUsagePlanWithLimits",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "DeleteUsagePlan",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "GetUsage",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "GetUsagePlan",
       "status": "skip"
     },
     {
@@ -5057,6 +5400,41 @@
     },
     {
       "suite": "dotnet-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "CreateMountTarget",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DeleteMountTarget",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DescribeMountTargetSecurityGroups",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DescribeMountTargets",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "ModifyMountTargetSecurityGroups",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
       "service": "elasticache",
       "group": "elasticache-clusters",
       "test": "CreateCacheCluster",
@@ -5260,6 +5638,27 @@
     },
     {
       "suite": "dotnet-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutEventsToQueueTarget",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutEventsWithInputTransformer",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutFanoutTargets",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
       "service": "iam",
       "group": "iam-groups",
       "test": "AddUserToGroup",
@@ -5424,6 +5823,41 @@
       "service": "iam",
       "group": "iam-roles",
       "test": "PutRolePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyAllowed",
+      "status": "pass"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyExplicitDeny",
+      "status": "pass"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyImplicitDeny",
+      "status": "pass"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulatePrincipalPolicyAllowed",
+      "status": "pass"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulatePrincipalPolicyImplicitDeny",
       "status": "pass"
     },
     {
@@ -5960,6 +6394,55 @@
     },
     {
       "suite": "dotnet-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "CreatePipe",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "CreatePipeRejectsUnsupportedTarget",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "DeletePipe",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "DescribePipe",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "ListPipes",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "PipeDeliversToTarget",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "UpdatePipe",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
       "service": "rds",
       "group": "rds-instances",
       "test": "CreateDBInstance",
@@ -6157,6 +6640,34 @@
     {
       "suite": "dotnet-sdk",
       "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "DeleteBucketLifecycle",
+      "status": "pass"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "GetBucketLifecycleConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "GetBucketLifecycleConfigurationAfterDelete",
+      "status": "pass"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "PutBucketLifecycleConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "s3",
       "group": "s3-multipart",
       "test": "AbortMultipartUpload",
       "status": "pass"
@@ -6325,6 +6836,34 @@
     {
       "suite": "dotnet-sdk",
       "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "DeleteResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "GetResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "PutResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "ValidateResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "secretsmanager",
       "group": "secretsmanager-rotate",
       "test": "CancelRotateSecret",
       "status": "pass"
@@ -6333,7 +6872,35 @@
       "suite": "dotnet-sdk",
       "service": "secretsmanager",
       "group": "secretsmanager-rotate",
+      "test": "GetSecretValueByStage",
+      "status": "pass"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "PutSecretValuePending",
+      "status": "pass"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
       "test": "RotateSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "RotateSecretWithoutLambda",
+      "status": "pass"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "UpdateSecretVersionStage",
       "status": "pass"
     },
     {
@@ -6453,6 +7020,41 @@
       "service": "ses",
       "group": "ses-templates",
       "test": "UpdateTemplate",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "DescribeExecution",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "GetExecutionHistory",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "ListExecutions",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "StartExecution",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "StopExecution",
       "status": "skip"
     },
     {
@@ -6985,6 +7587,48 @@
       "service": "apigateway",
       "group": "apigateway-rest",
       "test": "GetRestApis",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateApiKey",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateUsagePlanKey",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateUsagePlanWithLimits",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "DeleteUsagePlan",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "GetUsage",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "GetUsagePlan",
       "status": "pass"
     },
     {
@@ -8284,6 +8928,41 @@
     },
     {
       "suite": "go-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "CreateMountTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DeleteMountTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DescribeMountTargetSecurityGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DescribeMountTargets",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "ModifyMountTargetSecurityGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
       "service": "elasticache",
       "group": "elasticache-clusters",
       "test": "CreateCacheCluster",
@@ -8487,6 +9166,27 @@
     },
     {
       "suite": "go-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutEventsToQueueTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutEventsWithInputTransformer",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutFanoutTargets",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
       "service": "iam",
       "group": "iam-groups",
       "test": "AddUserToGroup",
@@ -8651,6 +9351,41 @@
       "service": "iam",
       "group": "iam-roles",
       "test": "PutRolePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyAllowed",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyExplicitDeny",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyImplicitDeny",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulatePrincipalPolicyAllowed",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulatePrincipalPolicyImplicitDeny",
       "status": "pass"
     },
     {
@@ -9187,6 +9922,55 @@
     },
     {
       "suite": "go-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "CreatePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "CreatePipeRejectsUnsupportedTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "DeletePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "DescribePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "ListPipes",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "PipeDeliversToTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "UpdatePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
       "service": "rds",
       "group": "rds-instances",
       "test": "CreateDBInstance",
@@ -9384,6 +10168,34 @@
     {
       "suite": "go-sdk",
       "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "DeleteBucketLifecycle",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "GetBucketLifecycleConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "GetBucketLifecycleConfigurationAfterDelete",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "PutBucketLifecycleConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "s3",
       "group": "s3-multipart",
       "test": "AbortMultipartUpload",
       "status": "pass"
@@ -9552,6 +10364,34 @@
     {
       "suite": "go-sdk",
       "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "DeleteResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "GetResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "PutResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "ValidateResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "secretsmanager",
       "group": "secretsmanager-rotate",
       "test": "CancelRotateSecret",
       "status": "pass"
@@ -9560,7 +10400,35 @@
       "suite": "go-sdk",
       "service": "secretsmanager",
       "group": "secretsmanager-rotate",
+      "test": "GetSecretValueByStage",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "PutSecretValuePending",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
       "test": "RotateSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "RotateSecretWithoutLambda",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "UpdateSecretVersionStage",
       "status": "pass"
     },
     {
@@ -9680,6 +10548,41 @@
       "service": "ses",
       "group": "ses-templates",
       "test": "UpdateTemplate",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "DescribeExecution",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "GetExecutionHistory",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "ListExecutions",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "StartExecution",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "StopExecution",
       "status": "pass"
     },
     {
@@ -10212,6 +11115,48 @@
       "service": "apigateway",
       "group": "apigateway-rest",
       "test": "GetRestApis",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateApiKey",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateUsagePlanKey",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateUsagePlanWithLimits",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "DeleteUsagePlan",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "GetUsage",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "GetUsagePlan",
       "status": "pass"
     },
     {
@@ -11756,6 +12701,41 @@
     },
     {
       "suite": "java-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "CreateMountTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DeleteMountTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DescribeMountTargetSecurityGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DescribeMountTargets",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "ModifyMountTargetSecurityGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
       "service": "elasticache",
       "group": "elasticache-clusters",
       "test": "CreateCacheCluster",
@@ -11959,6 +12939,27 @@
     },
     {
       "suite": "java-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutEventsToQueueTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutEventsWithInputTransformer",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutFanoutTargets",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
       "service": "iam",
       "group": "iam-groups",
       "test": "AddUserToGroup",
@@ -12123,6 +13124,41 @@
       "service": "iam",
       "group": "iam-roles",
       "test": "PutRolePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyAllowed",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyExplicitDeny",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyImplicitDeny",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulatePrincipalPolicyAllowed",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulatePrincipalPolicyImplicitDeny",
       "status": "pass"
     },
     {
@@ -12659,6 +13695,55 @@
     },
     {
       "suite": "java-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "CreatePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "CreatePipeRejectsUnsupportedTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "DeletePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "DescribePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "ListPipes",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "PipeDeliversToTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "UpdatePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
       "service": "rds",
       "group": "rds-instances",
       "test": "CreateDBInstance",
@@ -12856,6 +13941,34 @@
     {
       "suite": "java-sdk",
       "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "DeleteBucketLifecycle",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "GetBucketLifecycleConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "GetBucketLifecycleConfigurationAfterDelete",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "PutBucketLifecycleConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "s3",
       "group": "s3-multipart",
       "test": "AbortMultipartUpload",
       "status": "pass"
@@ -13024,6 +14137,34 @@
     {
       "suite": "java-sdk",
       "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "DeleteResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "GetResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "PutResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "ValidateResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "secretsmanager",
       "group": "secretsmanager-rotate",
       "test": "CancelRotateSecret",
       "status": "pass"
@@ -13032,7 +14173,35 @@
       "suite": "java-sdk",
       "service": "secretsmanager",
       "group": "secretsmanager-rotate",
+      "test": "GetSecretValueByStage",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "PutSecretValuePending",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
       "test": "RotateSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "RotateSecretWithoutLambda",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "UpdateSecretVersionStage",
       "status": "pass"
     },
     {
@@ -13152,6 +14321,41 @@
       "service": "ses",
       "group": "ses-templates",
       "test": "UpdateTemplate",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "DescribeExecution",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "GetExecutionHistory",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "ListExecutions",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "StartExecution",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "StopExecution",
       "status": "pass"
     },
     {
@@ -13684,6 +14888,49 @@
       "service": "apigateway",
       "group": "apigateway-rest",
       "test": "GetRestApis",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateApiKey",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateUsagePlanKey",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateUsagePlanWithLimits",
+      "op": "CreateUsagePlan",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "DeleteUsagePlan",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "GetUsage",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "GetUsagePlan",
       "status": "pass"
     },
     {
@@ -14992,6 +16239,41 @@
     },
     {
       "suite": "node-js-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "CreateMountTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DeleteMountTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DescribeMountTargetSecurityGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DescribeMountTargets",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "ModifyMountTargetSecurityGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
       "service": "elasticache",
       "group": "elasticache-clusters",
       "test": "CreateCacheCluster",
@@ -15197,6 +16479,30 @@
     },
     {
       "suite": "node-js-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutEventsToQueueTarget",
+      "op": "PutEvents",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutEventsWithInputTransformer",
+      "op": "PutEvents",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutFanoutTargets",
+      "op": "PutTargets",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
       "service": "iam",
       "group": "iam-groups",
       "test": "AddUserToGroup",
@@ -15361,6 +16667,46 @@
       "service": "iam",
       "group": "iam-roles",
       "test": "PutRolePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyAllowed",
+      "op": "SimulateCustomPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyExplicitDeny",
+      "op": "SimulateCustomPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyImplicitDeny",
+      "op": "SimulateCustomPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulatePrincipalPolicyAllowed",
+      "op": "SimulatePrincipalPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulatePrincipalPolicyImplicitDeny",
+      "op": "SimulatePrincipalPolicy",
       "status": "pass"
     },
     {
@@ -15904,6 +17250,57 @@
     },
     {
       "suite": "node-js-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "CreatePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "CreatePipeRejectsUnsupportedTarget",
+      "op": "CreatePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "DeletePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "DescribePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "ListPipes",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "PipeDeliversToTarget",
+      "op": "CreatePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "UpdatePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
       "service": "rds",
       "group": "rds-instances",
       "test": "CreateDBInstance",
@@ -16103,6 +17500,34 @@
     {
       "suite": "node-js-sdk",
       "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "DeleteBucketLifecycle",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "GetBucketLifecycleConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "GetBucketLifecycleConfigurationAfterDelete",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "PutBucketLifecycleConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "s3",
       "group": "s3-multipart",
       "test": "AbortMultipartUpload",
       "status": "pass"
@@ -16271,6 +17696,34 @@
     {
       "suite": "node-js-sdk",
       "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "DeleteResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "GetResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "PutResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "ValidateResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "secretsmanager",
       "group": "secretsmanager-rotate",
       "test": "CancelRotateSecret",
       "status": "pass"
@@ -16279,7 +17732,38 @@
       "suite": "node-js-sdk",
       "service": "secretsmanager",
       "group": "secretsmanager-rotate",
+      "test": "GetSecretValueByStage",
+      "op": "GetSecretValue",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "PutSecretValuePending",
+      "op": "PutSecretValue",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
       "test": "RotateSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "RotateSecretWithoutLambda",
+      "op": "RotateSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "UpdateSecretVersionStage",
       "status": "pass"
     },
     {
@@ -16400,6 +17884,41 @@
       "service": "ses",
       "group": "ses-templates",
       "test": "UpdateTemplate",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "DescribeExecution",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "GetExecutionHistory",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "ListExecutions",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "StartExecution",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "StopExecution",
       "status": "pass"
     },
     {
@@ -16948,6 +18467,49 @@
       "service": "apigateway",
       "group": "apigateway-rest",
       "test": "GetRestApis",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateApiKey",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateUsagePlanKey",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateUsagePlanWithLimits",
+      "op": "CreateUsagePlan",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "DeleteUsagePlan",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "GetUsage",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "GetUsagePlan",
       "status": "pass"
     },
     {
@@ -18256,6 +19818,41 @@
     },
     {
       "suite": "python-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "CreateMountTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DeleteMountTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DescribeMountTargetSecurityGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DescribeMountTargets",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "ModifyMountTargetSecurityGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
       "service": "elasticache",
       "group": "elasticache-clusters",
       "test": "CreateCacheCluster",
@@ -18461,6 +20058,30 @@
     },
     {
       "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutEventsToQueueTarget",
+      "op": "PutEvents",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutEventsWithInputTransformer",
+      "op": "PutEvents",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutFanoutTargets",
+      "op": "PutTargets",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
       "service": "iam",
       "group": "iam-groups",
       "test": "AddUserToGroup",
@@ -18625,6 +20246,46 @@
       "service": "iam",
       "group": "iam-roles",
       "test": "PutRolePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyAllowed",
+      "op": "SimulateCustomPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyExplicitDeny",
+      "op": "SimulateCustomPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyImplicitDeny",
+      "op": "SimulateCustomPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulatePrincipalPolicyAllowed",
+      "op": "SimulatePrincipalPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulatePrincipalPolicyImplicitDeny",
+      "op": "SimulatePrincipalPolicy",
       "status": "pass"
     },
     {
@@ -19168,6 +20829,57 @@
     },
     {
       "suite": "python-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "CreatePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "CreatePipeRejectsUnsupportedTarget",
+      "op": "CreatePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "DeletePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "DescribePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "ListPipes",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "PipeDeliversToTarget",
+      "op": "CreatePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "UpdatePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
       "service": "rds",
       "group": "rds-instances",
       "test": "CreateDBInstance",
@@ -19367,6 +21079,34 @@
     {
       "suite": "python-sdk",
       "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "DeleteBucketLifecycle",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "GetBucketLifecycleConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "GetBucketLifecycleConfigurationAfterDelete",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "PutBucketLifecycleConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
       "group": "s3-multipart",
       "test": "AbortMultipartUpload",
       "status": "pass"
@@ -19535,6 +21275,34 @@
     {
       "suite": "python-sdk",
       "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "DeleteResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "GetResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "PutResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "ValidateResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
       "group": "secretsmanager-rotate",
       "test": "CancelRotateSecret",
       "status": "pass"
@@ -19543,7 +21311,38 @@
       "suite": "python-sdk",
       "service": "secretsmanager",
       "group": "secretsmanager-rotate",
+      "test": "GetSecretValueByStage",
+      "op": "GetSecretValue",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "PutSecretValuePending",
+      "op": "PutSecretValue",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
       "test": "RotateSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "RotateSecretWithoutLambda",
+      "op": "RotateSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "UpdateSecretVersionStage",
       "status": "pass"
     },
     {
@@ -19664,6 +21463,41 @@
       "service": "ses",
       "group": "ses-templates",
       "test": "UpdateTemplate",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "DescribeExecution",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "GetExecutionHistory",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "ListExecutions",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "StartExecution",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "StopExecution",
       "status": "pass"
     },
     {
@@ -20212,6 +22046,48 @@
       "service": "apigateway",
       "group": "apigateway-rest",
       "test": "GetRestApis",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateApiKey",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateUsagePlanKey",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateUsagePlanWithLimits",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "DeleteUsagePlan",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "GetUsage",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "GetUsagePlan",
       "status": "skip"
     },
     {
@@ -21756,6 +23632,41 @@
     },
     {
       "suite": "rust-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "CreateMountTarget",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DeleteMountTarget",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DescribeMountTargetSecurityGroups",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DescribeMountTargets",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "ModifyMountTargetSecurityGroups",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
       "service": "elasticache",
       "group": "elasticache-clusters",
       "test": "CreateCacheCluster",
@@ -21959,6 +23870,27 @@
     },
     {
       "suite": "rust-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutEventsToQueueTarget",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutEventsWithInputTransformer",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutFanoutTargets",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
       "service": "iam",
       "group": "iam-groups",
       "test": "AddUserToGroup",
@@ -22123,6 +24055,41 @@
       "service": "iam",
       "group": "iam-roles",
       "test": "PutRolePolicy",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyAllowed",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyExplicitDeny",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyImplicitDeny",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulatePrincipalPolicyAllowed",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulatePrincipalPolicyImplicitDeny",
       "status": "skip"
     },
     {
@@ -22659,6 +24626,55 @@
     },
     {
       "suite": "rust-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "CreatePipe",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "CreatePipeRejectsUnsupportedTarget",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "DeletePipe",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "DescribePipe",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "ListPipes",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "PipeDeliversToTarget",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "UpdatePipe",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
       "service": "rds",
       "group": "rds-instances",
       "test": "CreateDBInstance",
@@ -22856,6 +24872,34 @@
     {
       "suite": "rust-sdk",
       "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "DeleteBucketLifecycle",
+      "status": "pass"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "GetBucketLifecycleConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "GetBucketLifecycleConfigurationAfterDelete",
+      "status": "pass"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "PutBucketLifecycleConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "s3",
       "group": "s3-multipart",
       "test": "AbortMultipartUpload",
       "status": "pass"
@@ -23024,6 +25068,34 @@
     {
       "suite": "rust-sdk",
       "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "DeleteResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "GetResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "PutResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "ValidateResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "secretsmanager",
       "group": "secretsmanager-rotate",
       "test": "CancelRotateSecret",
       "status": "pass"
@@ -23032,7 +25104,35 @@
       "suite": "rust-sdk",
       "service": "secretsmanager",
       "group": "secretsmanager-rotate",
+      "test": "GetSecretValueByStage",
+      "status": "pass"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "PutSecretValuePending",
+      "status": "pass"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
       "test": "RotateSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "RotateSecretWithoutLambda",
+      "status": "pass"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "UpdateSecretVersionStage",
       "status": "pass"
     },
     {
@@ -23152,6 +25252,41 @@
       "service": "ses",
       "group": "ses-templates",
       "test": "UpdateTemplate",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "DescribeExecution",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "GetExecutionHistory",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "ListExecutions",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "StartExecution",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "StopExecution",
       "status": "skip"
     },
     {
