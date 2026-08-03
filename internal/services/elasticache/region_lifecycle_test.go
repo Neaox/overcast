@@ -58,7 +58,10 @@ func TestCacheClusterLifecycle_nonDefaultRegion(t *testing.T) {
 		t.Fatal("cluster unexpectedly visible under the default region")
 	}
 
-	clk.Add(time.Millisecond) // fire the 0-delay creating → available transition
+	// Fire the 0-delay creating → available transition and wait for it: the
+	// mock clock runs the callback on a goroutine of its own, so advancing the
+	// clock alone leaves the read on the next line racing it.
+	h.scheduler.AdvanceAndSettle(clk, time.Millisecond)
 	got, aerr := h.store.getCacheCluster(ctx, id)
 	if aerr != nil {
 		t.Fatalf("getCacheCluster: %s", aerr.Message)
@@ -70,7 +73,7 @@ func TestCacheClusterLifecycle_nonDefaultRegion(t *testing.T) {
 	if code := post(h.DeleteCacheCluster, url.Values{"CacheClusterId": []string{id}}); code != 200 {
 		t.Fatalf("DeleteCacheCluster: HTTP %d", code)
 	}
-	clk.Add(time.Second)
+	h.scheduler.AdvanceAndSettle(clk, time.Second)
 	if got, _ := h.store.getCacheCluster(ctx, id); got != nil {
 		t.Fatalf("after delete: record still present with status %q (deferred delete no-oped)", got.CacheClusterStatus)
 	}
