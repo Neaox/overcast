@@ -14,6 +14,7 @@ import * as Dialog from "@radix-ui/react-dialog"
 import { infiniteQueryOptions, useInfiniteQuery } from "@tanstack/react-query"
 import { X, FileText, Zap } from "lucide-react"
 import { AnsiText } from "@/components/logs/ansi-text"
+import { formatLogTime } from "@/lib/log-format"
 import { cn } from "@/lib/utils"
 import { logs } from "@/services/api"
 import type { LogEvent } from "@/types"
@@ -59,15 +60,6 @@ function logStreamPeekQueryOptions(target: LogStreamTarget | null, enabled: bool
     // Disable stale refetching — SSE handles live tail updates.
     staleTime: Infinity,
   })
-}
-
-function fmtTimestamp(ms: number): string {
-  const d = new Date(ms)
-  const hh = String(d.getHours()).padStart(2, "0")
-  const mm = String(d.getMinutes()).padStart(2, "0")
-  const ss = String(d.getSeconds()).padStart(2, "0")
-  const ms3 = String(d.getMilliseconds()).padStart(3, "0")
-  return `${hh}:${mm}:${ss}.${ms3}`
 }
 
 interface LogStreamPeekProps {
@@ -410,7 +402,7 @@ function LogsPane({
             className="flex gap-2 hover:bg-fg-muted/5"
           >
             <span className="shrink-0 font-mono text-fg-muted tabular-nums">
-              {fmtTimestamp(e.timestamp ?? 0)}
+              {formatLogTime(e.timestamp)}
             </span>
             <span className="min-w-0 wrap-break-word text-fg">
               <AnsiText text={e.message ?? ""} />
