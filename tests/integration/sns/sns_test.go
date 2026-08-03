@@ -8,6 +8,7 @@ package sns_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"io"
@@ -410,6 +411,113 @@ func TestPublish_fanOutToMultipleQueues(t *testing.T) {
 			return len(recv.Messages) == 1
 		}, "timed out waiting for SNS message in queue "+queueURL)
 	}
+}
+
+// ---- Publish → Lambda ------------------------------------------------------
+
+func TestPublish_deliversToLambdaSubscriber(t *testing.T) {
+	// Given: a topic with a lambda-protocol subscription to an existing function.
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "lambda-notify-topic")
+	fnARN := seedLambdaFunction(t, srv, "sns-handler")
+	subscribe(t, srv, topicArn, "lambda", fnARN)
+
+	// When: a message is published to the topic.
+	resp := snsCall(t, srv, "Publish", url.Values{
+		"TopicArn": {topicArn},
+		"Message":  {"hello lambda"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: the function is invoked (delivery is async — poll the store).
+	helpers.Eventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		kvs, err := srv.Store.Scan(context.Background(), "lambda:invocations", "us-east-1/sns-handler:")
+		return err == nil && len(kvs) > 0
+	}, "timed out waiting for SNS to invoke the lambda subscriber")
+}
+
+func TestPublish_lambdaSubscriberFunctionMissing_deadLetters(t *testing.T) {
+	// Given: a lambda subscription pointing at a function that does not exist,
+	// and a subscription RedrivePolicy naming a DLQ.
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "lambda-dlq-topic")
+	dlqURL := sqsCreateQueue(t, srv, "lambda-dlq")
+	subArn := subscribe(t, srv, topicArn, "lambda",
+		"arn:aws:lambda:us-east-1:000000000000:function:absent-handler")
+
+	setAttrResp := snsCall(t, srv, "SetSubscriptionAttributes", url.Values{
+		"SubscriptionArn": {subArn},
+		"AttributeName":   {"RedrivePolicy"},
+		"AttributeValue":  {`{"deadLetterTargetArn":"arn:aws:sqs:us-east-1:000000000000:lambda-dlq"}`},
+	})
+	setAttrResp.Body.Close()
+	helpers.AssertStatus(t, setAttrResp, http.StatusOK)
+
+	// When: a message is published.
+	pubResp := snsCall(t, srv, "Publish", url.Values{
+		"TopicArn": {topicArn},
+		"Message":  {"undeliverable"},
+	})
+	pubResp.Body.Close()
+	helpers.AssertStatus(t, pubResp, http.StatusOK)
+
+	// Then: the notification lands on the dead-letter queue rather than
+	// being silently dropped.
+	var body string
+	helpers.Eventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		recvResp := sqsCall(t, srv, "ReceiveMessage", map[string]any{
+			"QueueUrl":            dlqURL,
+			"MaxNumberOfMessages": 1,
+		})
+		defer recvResp.Body.Close()
+		var recv struct {
+			Messages []struct{ Body string } `json:"Messages"`
+		}
+		helpers.DecodeJSON(t, recvResp, &recv)
+		if len(recv.Messages) == 0 {
+			return false
+		}
+		body = recv.Messages[0].Body
+		return true
+	}, "timed out waiting for the failed lambda delivery to reach the DLQ")
+
+	var envelope struct {
+		Type    string `json:"Type"`
+		Message string `json:"Message"`
+	}
+	if err := decodeJSONString(body, &envelope); err != nil {
+		t.Fatalf("expected the DLQ body to be the SNS envelope: %v\nbody: %s", err, body)
+	}
+	if envelope.Message != "undeliverable" {
+		t.Errorf("DLQ Message = %q, want %q", envelope.Message, "undeliverable")
+	}
+}
+
+// seedLambdaFunction writes a Lambda function record straight into the state
+// store. Creating it over HTTP would need a real code zip and a container
+// runtime; the invoker only needs the function to exist and be Active for the
+// invocation to be recorded. Mirrors the S3 → Lambda notification tests.
+func seedLambdaFunction(t *testing.T, srv *helpers.TestServer, name string) string {
+	t.Helper()
+	arn := "arn:aws:lambda:us-east-1:000000000000:function:" + name
+	fn := map[string]any{
+		"name":        name,
+		"arn":         arn,
+		"runtime":     "nodejs20.x",
+		"handler":     "index.handler",
+		"state":       "Active",
+		"timeout":     30,
+		"memory_size": 128,
+	}
+	raw, err := json.Marshal(fn)
+	if err != nil {
+		t.Fatalf("marshal seeded function: %v", err)
+	}
+	if err := srv.Store.Set(context.Background(), "lambda:functions", "us-east-1/"+name, string(raw)); err != nil {
+		t.Fatalf("seed lambda function %q: %v", name, err)
+	}
+	return arn
 }
 
 func TestPublish_topicNotFound(t *testing.T) {

@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1318,
+  "total_ops": 1320,
   "services": [
     {
       "service": "s3",
@@ -3211,8 +3211,8 @@
     {
       "service": "sns",
       "display_name": "SNS",
-      "total_ops": 24,
-      "implemented_ops": 16,
+      "total_ops": 26,
+      "implemented_ops": 18,
       "operations": [
         {
           "operation": "CreateTopic",
@@ -3277,13 +3277,13 @@
           "operation": "SetSubscriptionAttributes",
           "category": "Subscriptions",
           "status": "✅ Supported",
-          "notes": "Stores any attribute; FilterPolicy used for message filtering"
+          "notes": "Stores any attribute; FilterPolicy drives message filtering, RedrivePolicy the subscription dead-letter queue"
         },
         {
           "operation": "Publish",
           "category": "Publishing",
           "status": "✅ Supported",
-          "notes": "Async fan-out to `sqs`, `email`, `email-json`, and `sms` subscribers"
+          "notes": "Async fan-out to `sqs`, `lambda`, `email`, `email-json`, `http`, `https`, and `sms` subscribers"
         },
         {
           "operation": "PublishBatch",
@@ -3297,6 +3297,22 @@
           "status": "✅ Supported",
           "notes": "String/Number attribute value matching via FilterPolicy on SetSubscriptionAttributes",
           "docs_url": "[docs](https://docs.aws.amazon.com/sns/latest/dg/sns-message-filtering.html)",
+          "doc_only": true
+        },
+        {
+          "operation": "Lambda subscription delivery",
+          "category": "Publishing",
+          "status": "✅ Supported",
+          "notes": "Publish invokes the subscribed function asynchronously with the AWS `Records[].Sns` event; RawMessageDelivery does not apply to `lambda`, matching AWS",
+          "docs_url": "[docs](https://docs.aws.amazon.com/sns/latest/dg/sns-lambda-as-subscriber.html)",
+          "doc_only": true
+        },
+        {
+          "operation": "Subscription dead-letter queue (RedrivePolicy)",
+          "category": "Publishing",
+          "status": "✅ Supported",
+          "notes": "A delivery that fails is redirected to the SQS queue named by the subscription's RedrivePolicy",
+          "docs_url": "[docs](https://docs.aws.amazon.com/sns/latest/dg/sns-dead-letter-queues.html)",
           "doc_only": true
         },
         {

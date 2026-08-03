@@ -56,6 +56,14 @@ func (s *Service) InitSQSDelivery(eq events.MessageEnqueuer) {
 	s.handler.setEnqueuer(eq)
 }
 
+// InitLambdaDelivery wires the Lambda invoker so that lambda-protocol
+// subscribers are invoked on Publish. Call this after both SNS and Lambda
+// services have been constructed. Without it, a lambda subscription reports a
+// delivery failure rather than quietly doing nothing.
+func (s *Service) InitLambdaDelivery(inv events.FunctionEventInvoker) {
+	s.handler.setLambdaInvoker(inv)
+}
+
 // InitEmailDelivery wires the SMTP mailer so that email/email-json subscribers
 // receive notifications. Call this after the router builds the mailer.
 func (s *Service) InitEmailDelivery(m smtp.Mailer) {

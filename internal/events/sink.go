@@ -48,6 +48,20 @@ type FunctionInvoker interface {
 	InvokeAsync(ctx context.Context, functionARN string, payload []byte) error
 }
 
+// FunctionEventInvoker is FunctionInvoker for callers that must know whether
+// delivery succeeded — SNS subscription fan-out, which has to dead-letter a
+// failed delivery instead of dropping it.
+//
+// InvokeEvent reports the outcome real Lambda's Invoke API would report
+// synchronously for an `InvocationType=Event` call: a non-nil error means the
+// event was never accepted (no such function, function not in an invokable
+// state, throttled). A function that is accepted and then fails at runtime is
+// a *successful* delivery — on AWS that failure is handled by Lambda's own
+// retry policy and dead-letter config, not by the event source's.
+type FunctionEventInvoker interface {
+	InvokeEvent(ctx context.Context, functionARN string, payload []byte) error
+}
+
 // FunctionSyncInvoker is the narrow interface used by API Gateway (and
 // future services) to invoke Lambda functions synchronously and receive
 // the response payload. It lives in the events package to avoid import

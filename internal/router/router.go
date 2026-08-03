@@ -496,8 +496,10 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	rdsSvc.SetVPCResolver(ec2Svc)
 	// SNS: wire lifecycle/publish events for topology / UI.
 	snsSvc.InitBus(bus)
-	// SNS → SQS: wire enqueuer for Publish fan-out.
+	// SNS → SQS: wire enqueuer for Publish fan-out (and subscription DLQs).
 	snsSvc.InitSQSDelivery(sqsSvc.Enqueuer())
+	// SNS → Lambda: wire the invoker for lambda-protocol subscriptions.
+	snsSvc.InitLambdaDelivery(lambdaSvc.Invoker())
 	// SNS/SES → email: wire SMTP mailer. The mock capture server (if enabled) is
 	// started as a background goroutine; its lifecycle is tied to the process.
 	mailStore := smtp.NewMailStore(cfg.SMTPInboxMax)

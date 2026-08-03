@@ -5,7 +5,6 @@ import (
 	"encoding/xml"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -612,7 +611,7 @@ func (h *Handler) publishTyped(ctx context.Context, req *publishReq) (*publishRe
 		TopicArn:         topic.ARN,
 		Subject:          req.Subject,
 		Message:          req.Message,
-		Timestamp:        h.clk.Now().UTC().Format(time.RFC3339Nano),
+		Timestamp:        h.clk.Now().UTC().Format(snsTimestampFormat),
 		SignatureVersion: "1",
 		Signature:        "EXAMPLE",
 		SigningCertURL:   "EXAMPLE",
@@ -671,7 +670,7 @@ func (h *Handler) publishBatchTyped(ctx context.Context, req *publishBatchReq) (
 			TopicArn:         topic.ARN,
 			Subject:          entry.Subject,
 			Message:          entry.Message,
-			Timestamp:        h.clk.Now().UTC().Format(time.RFC3339Nano),
+			Timestamp:        h.clk.Now().UTC().Format(snsTimestampFormat),
 			SignatureVersion: "1",
 			Signature:        "EXAMPLE",
 			SigningCertURL:   "EXAMPLE",

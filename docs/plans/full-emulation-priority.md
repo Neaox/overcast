@@ -39,7 +39,7 @@ concentrated in exactly five services that are Tier 1 end-to-end — see §5.3.
 | # | Item | Current tier | One-line why |
 |---|------|---------------|---------------|
 | 1 | EventBridge Rules target fan-out (Lambda/SNS/Step Functions/Kinesis/Firehose) | Core, delivery gap | `PutEvents`/`PutTargets` only deliver to SQS + scheduled ECS today ([eventbridge/service.go](../../internal/services/eventbridge/service.go)) — the single most common CDK pattern (`rule.addTarget(new targets.LambdaFunction(fn))`) silently no-ops |
-| 2 | SNS → Lambda delivery | Comprehensive, silent gap | `Subscribe` accepts protocol `lambda` but `Publish`'s fan-out switch has no `case "lambda"` ([sns/handler_publish.go:260-383](../../internal/services/sns/handler_publish.go)) — subscriptions that AWS would deliver are silently dropped |
+| 2 | SNS → Lambda delivery — **done 2026-08-03 (#468)** | Comprehensive | `Publish`'s fan-out switch now has a `case "lambda"` that invokes the function with AWS's `Records[].Sns` event; failed deliveries dead-letter via `RedrivePolicy` instead of vanishing ([sns/handler_publish.go](../../internal/services/sns/handler_publish.go)) |
 | 3 | Step Functions execution engine | Minimal-stub | `StartExecution` records the call and immediately marks it `SUCCEEDED` ([stepfunctions/handler.go:224](../../internal/services/stepfunctions/handler.go)) — zero of the ASL is interpreted; blocks every workflow-shaped local architecture |
 | 4 | IAM policy evaluation | Core, no enforcement | `SimulatePrincipalPolicy` "Always returns allowed — no enforcement engine" ([iam/handler.go:1952](../../internal/services/iam/handler.go)) — no local signal for the single most common real-AWS failure mode (`AccessDenied`) |
 | 5 | S3 lifecycle rules | Comprehensive, stub gap | `Get/Put/DeleteBucketLifecycleConfiguration` are pure 501s ([s3 capability rows](../../internal/capabilities/all.gen.go)) despite being a default CDK bucket option (`autoDeleteObjects`, log/backup buckets) |
@@ -151,15 +151,32 @@ Definition of done:
 Dependencies: none blocking — Lambda, SNS, SQS are all Comprehensive; Step Functions execution (this same
 wave, item 3) should land first or concurrently so the Step-Functions target type has somewhere real to go.
 
-**2. SNS → Lambda delivery** — bug-fix sized, ships independently and first
+**2. SNS → Lambda delivery** — **done, 2026-08-03** (issue #468)
 Score: usage 4, leverage 3, fit 5, cost S, dep-ready 5, risk low.
-This is not a new tier, it's closing a hole in an already-Comprehensive service: `Subscribe` documents and
-accepts protocol `lambda` but `Publish`'s delivery switch
-([sns/handler_publish.go:260-383](../../internal/services/sns/handler_publish.go)) has no case for it, so
-messages are silently dropped rather than erroring — the worst possible failure mode (§2.1 shape 2, even
-though this isn't new work, the existing behavior already violates the principle). Fix: add a `case
-"lambda"` that does an async `Invoke` against the subscribed function, matching the SNS event payload shape
-Lambda expects (`Records[].Sns`). Cheap, ships as a standalone patch, doesn't need to wait for Wave 1 item 1.
+This was not a new tier, it was closing a hole in an already-Comprehensive service: `Subscribe` documented
+and accepted protocol `lambda` but `Publish`'s delivery switch had no case for it, so messages were
+silently dropped rather than erroring — the worst possible failure mode (§2.1 shape 2, even though this
+wasn't new work, the existing behavior already violated the principle).
+Shipped in [sns/handler_publish.go](../../internal/services/sns/handler_publish.go):
+- `case "lambda"` invokes the subscribed function asynchronously via the new
+  `events.FunctionEventInvoker`, which reports the outcome real Lambda's `InvocationType=Event` call
+  reports synchronously (missing function, non-invokable state, throttled). The invoke runs on its own
+  WaitGroup-tracked goroutine so a cold start cannot stall the topic's other subscribers.
+- The payload is AWS's SNS event byte-for-byte, including the `SigningCertUrl`/`UnsubscribeUrl` spelling
+  that differs from the SQS/HTTP notification envelope, a `null` `Subject` when none was published, and
+  `MessageAttributes` as `{Type, Value}` pairs. `RawMessageDelivery` is deliberately not applied — AWS
+  does not support it for `lambda`.
+- A failed delivery is logged, published as `sns:DeliveryFailed`, and redirected to the subscription's
+  `RedrivePolicy` dead-letter queue. This applies to every protocol in the switch, not just `lambda`.
+- The switch grew a `default` that reports an undeliverable protocol the same way, so §2.1 shape 2 cannot
+  recur here silently.
+- Notification `Timestamp` now uses AWS's millisecond form (`2012-04-25T21:49:25.719Z`) instead of
+  RFC3339Nano, for every protocol.
+Web UI: the topic detail view shows each subscription's live delivery state, and `lambda` moved out of the
+subscribe dialog's "Not yet implemented" group.
+Not covered: no compat group was added — no operation changed (`Publish`/`Subscribe` are already covered by
+`sns-publish`/`sns-subscriptions`), and a black-box SNS→Lambda assertion needs Docker, so the group could
+only ever record `skip` in CI while costing an implementation in every uniform suite.
 
 **3. Step Functions execution engine** — Minimal-stub → Core
 Score: usage 4, leverage 5, fit 4, cost XL, dep-ready 4, risk medium (see §2.1 shape 2) → **second-highest
