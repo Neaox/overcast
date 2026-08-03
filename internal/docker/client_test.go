@@ -357,6 +357,63 @@ func TestImageMatchesPlatform(t *testing.T) {
 	}
 }
 
+// A daemon error on the logs endpoint must be returned as an error, not handed
+// back as if it were log content. The body of a 404 is `{"message":"No such
+// container: …"}`, and every caller runs the result through a Docker
+// multiplex-frame stripper: the stripper eats the first 8 bytes as a frame
+// header, reads `ssag` as a ~1.9 GB frame length, and emits the remainder. The
+// RDS logs pane showed users `e":"No such container: 181c85f6…"}` because of
+// this — an error message mangled into something that looked like corruption.
+func TestContainerLogs_daemonErrorIsReturned(t *testing.T) {
+	// Given: a daemon that answers the logs endpoint with 404 and an error body.
+	const body = `{"message":"No such container: 181c85f63af6"}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/logs") {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+	client := &Client{httpClient: server.Client(), host: server.URL, logger: zap.NewNop(), sem: make(chan struct{}, maxConcurrentOps)}
+
+	// When: logs are fetched for a container the daemon does not have.
+	logs, err := client.ContainerLogs(context.Background(), "181c85f63af6", "200")
+
+	// Then: the caller gets an error naming the cause, and no bytes it could
+	// mistake for log output.
+	if err == nil {
+		t.Fatalf("ContainerLogs: expected an error for a 404 response, got logs %q", logs)
+	}
+	if len(logs) != 0 {
+		t.Errorf("ContainerLogs returned %d bytes alongside the error, want none: %q", len(logs), logs)
+	}
+	if !strings.Contains(err.Error(), "No such container") {
+		t.Errorf("ContainerLogs error = %v, want it to carry the daemon's message", err)
+	}
+}
+
+func TestContainerLogs_returnsBodyOnSuccess(t *testing.T) {
+	// Given: a daemon that answers the logs endpoint with a multiplexed frame.
+	frame := append([]byte{1, 0, 0, 0, 0, 0, 0, 5}, []byte("hello")...)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(frame)
+	}))
+	defer server.Close()
+	client := &Client{httpClient: server.Client(), host: server.URL, logger: zap.NewNop(), sem: make(chan struct{}, maxConcurrentOps)}
+
+	// When: logs are fetched.
+	logs, err := client.ContainerLogs(context.Background(), "abc", "200")
+
+	// Then: the raw stream is returned untouched for the caller to de-frame.
+	if err != nil {
+		t.Fatalf("ContainerLogs: %v", err)
+	}
+	if string(logs) != string(frame) {
+		t.Errorf("ContainerLogs = %q, want %q", logs, frame)
+	}
+}
+
 func TestContainerLogsStream_doesNotStarveCreateContainer(t *testing.T) {
 	// Given: enough held log-follow streams to consume the old Docker transport limit.
 	logStreams := make(chan struct{})

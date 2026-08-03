@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1345,
+  "total_ops": 1349,
   "services": [
     {
       "service": "s3",
@@ -4694,8 +4694,8 @@
     {
       "service": "cloudformation",
       "display_name": "CloudFormation",
-      "total_ops": 48,
-      "implemented_ops": 20,
+      "total_ops": 52,
+      "implemented_ops": 23,
       "operations": [
         {
           "operation": "CreateStack",
@@ -4858,6 +4858,38 @@
           "status": "✅ Supported",
           "notes": "Cross-stack reference resolution",
           "docs_url": "[docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/intrinsic-function-reference-importvalue.html)",
+          "doc_only": true
+        },
+        {
+          "operation": "{{resolve:secretsmanager}}",
+          "category": "Dynamic references",
+          "status": "✅ Supported",
+          "notes": "Secret by name or ARN; JSON key, version stage and version ID selectors",
+          "docs_url": "[docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-secretsmanager)",
+          "doc_only": true
+        },
+        {
+          "operation": "{{resolve:ssm}}",
+          "category": "Dynamic references",
+          "status": "✅ Supported",
+          "notes": "Plaintext parameter; an explicit version resolves to the current value",
+          "docs_url": "[docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-ssm)",
+          "doc_only": true
+        },
+        {
+          "operation": "{{resolve:ssm-secure}}",
+          "category": "Dynamic references",
+          "status": "✅ Supported",
+          "notes": "Read with decryption; an explicit version resolves to the current value",
+          "docs_url": "[docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-ssm-secure)",
+          "doc_only": true
+        },
+        {
+          "operation": "{{resolve:s3}}",
+          "category": "Dynamic references",
+          "status": "❌ Unsupported",
+          "notes": "Not resolved; fails the resource that uses it",
+          "docs_url": "[docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html)",
           "doc_only": true
         },
         {
