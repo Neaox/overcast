@@ -530,16 +530,20 @@ func serviceDir(svc string) string {
 }
 
 // parseHandlerOps extracts operation names from handler source files in svcDir.
-// It detects two registration patterns:
+// It detects three registration patterns:
 //
 //  1. Map keys in map[string]http.HandlerFunc{...} literals.
-//  2. Case strings in switch statements that have 3+ PascalCase operation names.
+//  2. Map keys in map[string]op.Operation{...} literals (the typed registry a
+//     service builds in typedOps()).
+//  3. Case strings in switch statements that have 3+ PascalCase operation names.
 //
 // Stub operations are detected by finding methods that call protocol.NotImplemented*.
-// The second return value is true when at least one map-based registration was found
-// (i.e., detection is comprehensive). When false, only switch-dispatch ops were found,
-// which means the service uses REST routing for its primary dispatch and ORPHAN
-// violations should not be treated as failures.
+// The second return value is true when at least one map[string]http.HandlerFunc
+// registration was found (i.e., detection is comprehensive). When false, ops were
+// found only via switch dispatch or the typed registry, which means the service uses
+// REST routing for its primary dispatch and ORPHAN violations should not be treated
+// as failures — see isTypedOperationMap for why a typed registry is not evidence of
+// comprehensive detection.
 func parseHandlerOps(svcDir string) ([]Operation, bool, error) {
 	entries, err := os.ReadDir(svcDir)
 	if err != nil {
@@ -623,7 +627,35 @@ func parseHandlerOps(svcDir string) ([]Operation, bool, error) {
 			return true
 		})
 
-		// Pattern 2: switch statements with PascalCase string cases.
+		// Pattern 2: map[string]op.Operation{...} literals — the typed registry.
+		ast.Inspect(f, func(n ast.Node) bool {
+			cl, ok := n.(*ast.CompositeLit)
+			if !ok || !isTypedOperationMap(cl) {
+				return true
+			}
+			for _, elt := range cl.Elts {
+				kv, ok := elt.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				lit, ok := kv.Key.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					continue
+				}
+				opName := strings.Trim(lit.Value, `"`)
+				if !isAWSOperation(opName) {
+					continue
+				}
+				if _, exists := seen[opName]; exists {
+					continue
+				}
+				seen[opName] = struct{}{}
+				ops = append(ops, Operation{Name: opName, IsStub: typedOpIsStub(kv.Value, stubMethods)})
+			}
+			return true
+		})
+
+		// Pattern 3: switch statements with PascalCase string cases.
 		ast.Inspect(f, func(n ast.Node) bool {
 			sw, ok := n.(*ast.SwitchStmt)
 			if !ok {
@@ -808,6 +840,53 @@ func isHandlerFuncMap(cl *ast.CompositeLit) bool {
 		return false
 	}
 	return valSel.Sel.Name == "HandlerFunc"
+}
+
+// isTypedOperationMap reports whether cl is a map[string]op.Operation literal —
+// the Smithy-aligned typed registry a service builds in typedOps().
+//
+// Operations found here count towards MISSING but deliberately do not set the
+// comprehensive flag the way a map[string]http.HandlerFunc registration does. A
+// typed registry is a lower bound on a service's dispatch surface, not the whole
+// of it: REST-routed services such as route53 and appregistry register only the
+// operations that arrive through the protocol dispatcher and serve the rest from
+// RegisterRoutes (or, for appregistry's tag APIs, from another service's shared
+// routes). Treating the registry as comprehensive would report those as ORPHANs.
+func isTypedOperationMap(cl *ast.CompositeLit) bool {
+	mt, ok := cl.Type.(*ast.MapType)
+	if !ok {
+		return false
+	}
+	keyIdent, ok := mt.Key.(*ast.Ident)
+	if !ok || keyIdent.Name != "string" {
+		return false
+	}
+	valSel, ok := mt.Value.(*ast.SelectorExpr)
+	if !ok || valSel.Sel.Name != "Operation" {
+		return false
+	}
+	pkg, ok := valSel.X.(*ast.Ident)
+	return ok && pkg.Name == "op"
+}
+
+// typedOpIsStub reports whether a typed registry entry delegates to a stub. The
+// value is a constructor call such as op.NewTyped[in, out]("Name", s.fooTyped),
+// so the handler method reference is one of the call's arguments.
+func typedOpIsStub(value ast.Expr, stubMethods map[string]struct{}) bool {
+	call, ok := value.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	for _, arg := range call.Args {
+		sel, ok := arg.(*ast.SelectorExpr)
+		if !ok {
+			continue
+		}
+		if _, found := stubMethods[sel.Sel.Name]; found {
+			return true
+		}
+	}
+	return false
 }
 
 func collectAWSCasesFromSwitch(sw *ast.SwitchStmt) []string {

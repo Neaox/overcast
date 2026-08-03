@@ -28,11 +28,12 @@ AWS AppConfig uses the REST JSON protocol. Routes are served under the
 
 ## Summary
 
-| Category               | ✅ Supported |
-| ---------------------- | ------------ |
-| Applications           | 4            |
-| Environments           | 4            |
-| Configuration Profiles | 4            |
+| Category                      | ✅ Supported |
+| ----------------------------- | ------------ |
+| Applications                  | 4            |
+| Environments                  | 4            |
+| Configuration Profiles        | 4            |
+| Hosted Configuration Versions | 4            |
 
 ---
 
@@ -64,5 +65,14 @@ AWS AppConfig uses the REST JSON protocol. Routes are served under the
 | `GetConfigurationProfile`    | ✅ Supported | Returns configuration profile details | [docs](https://docs.aws.amazon.com/appconfig/2019-10-09/APIReference/API_GetConfigurationProfile.html)    |
 | `ListConfigurationProfiles`  | ✅ Supported | Lists configuration profiles          | [docs](https://docs.aws.amazon.com/appconfig/2019-10-09/APIReference/API_ListConfigurationProfiles.html)  |
 | `DeleteConfigurationProfile` | ✅ Supported | Deletes a configuration profile       | [docs](https://docs.aws.amazon.com/appconfig/2019-10-09/APIReference/API_DeleteConfigurationProfile.html) |
+
+### Hosted Configuration Versions
+
+| Operation                          | Status       | Notes                                                                                                                                                                                               | AWS Docs                                                                                                        |
+| ---------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `CreateHostedConfigurationVersion` | ✅ Supported | Stores configuration content against a profile; `VersionNumber` auto-increments, `ContentType` defaults to `application/octet-stream`, and content over 1 MB is rejected with `BadRequestException` | [docs](https://docs.aws.amazon.com/appconfig/2019-10-09/APIReference/API_CreateHostedConfigurationVersion.html) |
+| `GetHostedConfigurationVersion`    | ✅ Supported | Returns the raw content as the response body with the `AppConfig-*` metadata headers                                                                                                                | [docs](https://docs.aws.amazon.com/appconfig/2019-10-09/APIReference/API_GetHostedConfigurationVersion.html)    |
+| `ListHostedConfigurationVersions`  | ✅ Supported | Returns version metadata without content; no pagination (`NextToken` never returned)                                                                                                                | [docs](https://docs.aws.amazon.com/appconfig/2019-10-09/APIReference/API_ListHostedConfigurationVersions.html)  |
+| `DeleteHostedConfigurationVersion` | ✅ Supported | Deletes a single version; other versions of the profile are untouched                                                                                                                               | [docs](https://docs.aws.amazon.com/appconfig/2019-10-09/APIReference/API_DeleteHostedConfigurationVersion.html) |
 
 <!-- END overcast:capabilities -->

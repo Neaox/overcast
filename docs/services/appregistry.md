@@ -46,7 +46,7 @@ the parent stack.
 | ------------------------ | ------------ |
 | Application lifecycle    | 5            |
 | Resource associations    | 4            |
-| Attribute groups         | 7            |
+| Attribute groups         | 8            |
 | Tagging                  | 3            |
 | CloudFormation resources | 2            |
 
@@ -75,15 +75,16 @@ the parent stack.
 
 ### Attribute groups
 
-| Operation                    | Status       | Notes                                                         | AWS Docs                                                                                                      |
-| ---------------------------- | ------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `CreateAttributeGroup`       | ✅ Supported | Inert tier — attributes JSON is stored verbatim.              | [docs](https://docs.aws.amazon.com/servicecatalog/latest/dg/API_app-registry_CreateAttributeGroup.html)       |
-| `GetAttributeGroup`          | ✅ Supported | Lookup accepts name, ID, or ARN.                              | [docs](https://docs.aws.amazon.com/servicecatalog/latest/dg/API_app-registry_GetAttributeGroup.html)          |
-| `ListAttributeGroups`        | ✅ Supported | No pagination.                                                | [docs](https://docs.aws.amazon.com/servicecatalog/latest/dg/API_app-registry_ListAttributeGroups.html)        |
-| `UpdateAttributeGroup`       | ✅ Supported | Name, description, and attributes can all be patched.         | [docs](https://docs.aws.amazon.com/servicecatalog/latest/dg/API_app-registry_UpdateAttributeGroup.html)       |
-| `DeleteAttributeGroup`       | ✅ Supported | Does not cascade to associations.                             | [docs](https://docs.aws.amazon.com/servicecatalog/latest/dg/API_app-registry_DeleteAttributeGroup.html)       |
-| `AssociateAttributeGroup`    | ✅ Supported | Plus `DisassociateAttributeGroup` and listing by application. | [docs](https://docs.aws.amazon.com/servicecatalog/latest/dg/API_app-registry_AssociateAttributeGroup.html)    |
-| `DisassociateAttributeGroup` | ✅ Supported |                                                               | [docs](https://docs.aws.amazon.com/servicecatalog/latest/dg/API_app-registry_DisassociateAttributeGroup.html) |
+| Operation                       | Status       | Notes                                                                         | AWS Docs                                                                                                         |
+| ------------------------------- | ------------ | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `CreateAttributeGroup`          | ✅ Supported | Inert tier — attributes JSON is stored verbatim.                              | [docs](https://docs.aws.amazon.com/servicecatalog/latest/dg/API_app-registry_CreateAttributeGroup.html)          |
+| `GetAttributeGroup`             | ✅ Supported | Lookup accepts name, ID, or ARN.                                              | [docs](https://docs.aws.amazon.com/servicecatalog/latest/dg/API_app-registry_GetAttributeGroup.html)             |
+| `ListAttributeGroups`           | ✅ Supported | No pagination.                                                                | [docs](https://docs.aws.amazon.com/servicecatalog/latest/dg/API_app-registry_ListAttributeGroups.html)           |
+| `UpdateAttributeGroup`          | ✅ Supported | Name, description, and attributes can all be patched.                         | [docs](https://docs.aws.amazon.com/servicecatalog/latest/dg/API_app-registry_UpdateAttributeGroup.html)          |
+| `DeleteAttributeGroup`          | ✅ Supported | Does not cascade to associations.                                             | [docs](https://docs.aws.amazon.com/servicecatalog/latest/dg/API_app-registry_DeleteAttributeGroup.html)          |
+| `AssociateAttributeGroup`       | ✅ Supported | Attribute group is accepted by name, ID, or ARN.                              | [docs](https://docs.aws.amazon.com/servicecatalog/latest/dg/API_app-registry_AssociateAttributeGroup.html)       |
+| `DisassociateAttributeGroup`    | ✅ Supported |                                                                               | [docs](https://docs.aws.amazon.com/servicecatalog/latest/dg/API_app-registry_DisassociateAttributeGroup.html)    |
+| `ListAssociatedAttributeGroups` | ✅ Supported | Returns the associated attribute group IDs for an application. No pagination. | [docs](https://docs.aws.amazon.com/servicecatalog/latest/dg/API_app-registry_ListAssociatedAttributeGroups.html) |
 
 ### Tagging
 

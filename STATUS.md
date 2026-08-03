@@ -39,7 +39,7 @@
 | CloudFormation  | 48  | Stacks, change sets, async provisioner (~55 resource types including AppSync), intrinsic functions, GetAtt                                                                                                  |
 | RDS             | 33  | DB instances (Docker), start/stop, modify, subnet/parameter groups                                                                                                                                         |
 | ElastiCache     | 24  | Clusters (Docker Redis), replication groups, subnet groups, tagging                                                                                                                                        |
-| AppConfig       | 12  | Apps, environments, profiles, hosted config versions (CRUD + version counter)                                                                                                                              |
+| AppConfig       | 16  | Apps, environments, profiles, hosted config versions (CRUD + version counter)                                                                                                                              |
 | AppConfigData   | 3   | StartConfigurationSession, GetLatestConfiguration; poll-based delivery with "unchanged" detection                                                                                                          |
 | Secrets Manager | 22  | Secret CRUD, versioning, tags, rotation config (11 of 21 operations)                                                                                                                                       |
 | SSM             | 18  | Parameter Store: put, get, get-by-path, history, tags                                                                                                                                                      |
@@ -86,7 +86,7 @@
 | RDS             | 33  |
 | ElastiCache     | 24  |
 | EFS             | 31  |
-| AppConfig       | 12  |
+| AppConfig       | 16  |
 | AppConfigData   | 3   |
 | Secrets Manager | 22  |
 | SSM             | 18  |
@@ -107,7 +107,7 @@
 | Firehose        | 6   |
 | Glue            | 8   |
 | OpenSearch      | 8   |
-| AppRegistry     | 21  |
+| AppRegistry     | 22  |
 | Backup          | 9   |
 | CloudTrail      | 9   |
 | EKS             | 52  |

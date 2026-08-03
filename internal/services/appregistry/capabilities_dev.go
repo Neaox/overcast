@@ -40,9 +40,11 @@ func init() {
 		capabilities.Capability{Service: "appregistry", Operation: "DeleteAttributeGroup", Category: "Attribute groups",
 			Status: capabilities.StatusSupported, Notes: "Does not cascade to associations."},
 		capabilities.Capability{Service: "appregistry", Operation: "AssociateAttributeGroup", Category: "Attribute groups",
-			Status: capabilities.StatusSupported, Notes: "Plus `DisassociateAttributeGroup` and listing by application."},
+			Status: capabilities.StatusSupported, Notes: "Attribute group is accepted by name, ID, or ARN."},
 		capabilities.Capability{Service: "appregistry", Operation: "DisassociateAttributeGroup", Category: "Attribute groups",
 			Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "appregistry", Operation: "ListAssociatedAttributeGroups", Category: "Attribute groups",
+			Status: capabilities.StatusSupported, Notes: "Returns the associated attribute group IDs for an application. No pagination."},
 
 		// Tagging
 		capabilities.Capability{Service: "appregistry", Operation: "TagResource", Category: "Tagging",

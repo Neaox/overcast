@@ -35,5 +35,15 @@ func init() {
 			Status: capabilities.StatusSupported, Notes: "Lists configuration profiles"},
 		capabilities.Capability{Service: "appconfig", Operation: "DeleteConfigurationProfile", Category: "Configuration Profiles",
 			Status: capabilities.StatusSupported, Notes: "Deletes a configuration profile"},
+
+		// Hosted Configuration Versions
+		capabilities.Capability{Service: "appconfig", Operation: "CreateHostedConfigurationVersion", Category: "Hosted Configuration Versions",
+			Status: capabilities.StatusSupported, Notes: "Stores configuration content against a profile; `VersionNumber` auto-increments, `ContentType` defaults to `application/octet-stream`, and content over 1 MB is rejected with `BadRequestException`"},
+		capabilities.Capability{Service: "appconfig", Operation: "GetHostedConfigurationVersion", Category: "Hosted Configuration Versions",
+			Status: capabilities.StatusSupported, Notes: "Returns the raw content as the response body with the `AppConfig-*` metadata headers"},
+		capabilities.Capability{Service: "appconfig", Operation: "ListHostedConfigurationVersions", Category: "Hosted Configuration Versions",
+			Status: capabilities.StatusSupported, Notes: "Returns version metadata without content; no pagination (`NextToken` never returned)"},
+		capabilities.Capability{Service: "appconfig", Operation: "DeleteHostedConfigurationVersion", Category: "Hosted Configuration Versions",
+			Status: capabilities.StatusSupported, Notes: "Deletes a single version; other versions of the profile are untouched"},
 	)
 }

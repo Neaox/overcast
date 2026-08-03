@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1340,
+  "total_ops": 1345,
   "services": [
     {
       "service": "s3",
@@ -5530,8 +5530,8 @@
     {
       "service": "appconfig",
       "display_name": "AppConfig",
-      "total_ops": 12,
-      "implemented_ops": 12,
+      "total_ops": 16,
+      "implemented_ops": 16,
       "operations": [
         {
           "operation": "CreateApplication",
@@ -5604,6 +5604,30 @@
           "category": "Configuration Profiles",
           "status": "✅ Supported",
           "notes": "Deletes a configuration profile"
+        },
+        {
+          "operation": "CreateHostedConfigurationVersion",
+          "category": "Hosted Configuration Versions",
+          "status": "✅ Supported",
+          "notes": "Stores configuration content against a profile; `VersionNumber` auto-increments, `ContentType` defaults to `application/octet-stream`, and content over 1 MB is rejected with `BadRequestException`"
+        },
+        {
+          "operation": "GetHostedConfigurationVersion",
+          "category": "Hosted Configuration Versions",
+          "status": "✅ Supported",
+          "notes": "Returns the raw content as the response body with the `AppConfig-*` metadata headers"
+        },
+        {
+          "operation": "ListHostedConfigurationVersions",
+          "category": "Hosted Configuration Versions",
+          "status": "✅ Supported",
+          "notes": "Returns version metadata without content; no pagination (`NextToken` never returned)"
+        },
+        {
+          "operation": "DeleteHostedConfigurationVersion",
+          "category": "Hosted Configuration Versions",
+          "status": "✅ Supported",
+          "notes": "Deletes a single version; other versions of the profile are untouched"
         }
       ]
     },
@@ -7210,8 +7234,8 @@
     {
       "service": "appregistry",
       "display_name": "AppRegistry",
-      "total_ops": 21,
-      "implemented_ops": 21,
+      "total_ops": 22,
+      "implemented_ops": 22,
       "operations": [
         {
           "operation": "CreateApplication",
@@ -7299,12 +7323,18 @@
           "operation": "AssociateAttributeGroup",
           "category": "Attribute groups",
           "status": "✅ Supported",
-          "notes": "Plus `DisassociateAttributeGroup` and listing by application."
+          "notes": "Attribute group is accepted by name, ID, or ARN."
         },
         {
           "operation": "DisassociateAttributeGroup",
           "category": "Attribute groups",
           "status": "✅ Supported"
+        },
+        {
+          "operation": "ListAssociatedAttributeGroups",
+          "category": "Attribute groups",
+          "status": "✅ Supported",
+          "notes": "Returns the associated attribute group IDs for an application. No pagination."
         },
         {
           "operation": "TagResource",

@@ -117,7 +117,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | RDS              | [rds.md](./services/rds.md)                         | 33  | Core CRUD + common workflows  |
 | ElastiCache      | [elasticache.md](./services/elasticache.md)         | 24  | Core CRUD + common workflows  |
 | EFS              | [efs.md](./services/efs.md)                         | 31  | Core CRUD + common workflows  |
-| AppConfig        | [appconfig.md](./services/appconfig.md)             | 12  | Core CRUD + common workflows  |
+| AppConfig        | [appconfig.md](./services/appconfig.md)             | 16  | Core CRUD + common workflows  |
 | AppConfigData    | [appconfigdata.md](./services/appconfigdata.md)     | 3   | Core CRUD + common workflows  |
 | Secrets Manager  | [secretsmanager.md](./services/secretsmanager.md)   | 22  | Core CRUD + common workflows  |
 | SSM              | [ssm.md](./services/ssm.md)                         | 18  | Core CRUD + common workflows  |
@@ -138,7 +138,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | Firehose         | [firehose.md](./services/firehose.md)               | 6   | Minimal / targeted support    |
 | Glue             | [glue.md](./services/glue.md)                       | 8   | Minimal / targeted support    |
 | OpenSearch       | [opensearch.md](./services/opensearch.md)           | 8   | Minimal / targeted support    |
-| AppRegistry      | [appregistry.md](./services/appregistry.md)         | 21  | IaC/discovery-oriented stub   |
+| AppRegistry      | [appregistry.md](./services/appregistry.md)         | 22  | IaC/discovery-oriented stub   |
 | Backup           | [backup.md](./services/backup.md)                   | 9   | IaC/discovery-oriented stub   |
 | CloudTrail       | [cloudtrail.md](./services/cloudtrail.md)           | 9   | IaC/discovery-oriented stub   |
 | EKS              | [eks.md](./services/eks.md)                         | 52  | IaC/discovery-oriented stub   |
