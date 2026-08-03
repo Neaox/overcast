@@ -49,6 +49,20 @@
           ]
         },
         {
+          "name": "PutObjectFormContentType",
+          "op": "PutObject",
+          "depends": [
+            "CreateBucket"
+          ]
+        },
+        {
+          "name": "PutObjectPlusInKey",
+          "op": "PutObject",
+          "depends": [
+            "CreateBucket"
+          ]
+        },
+        {
           "name": "DeleteObject",
           "depends": [
             "PutObject"

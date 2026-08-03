@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -1652,4 +1653,54 @@ func TestIAMEnforceIntegration_pipesResourceScopedDeniesMismatchedPipe(t *testin
 	defer resp.Body.Close()
 
 	helpers.AssertStatus(t, resp, http.StatusForbidden)
+}
+
+// TestIAMEnforceIntegration_s3PutObjectKeepsFormEncodedBody covers the second
+// place that read a request body before routing decided who owned it. IAM
+// enforcement resolves a Query Action out of a form-encoded body, and it runs
+// on every request when enabled — so with enforcement on, an S3 PutObject sent
+// with the default content type of a bare HTTP client used to be authorized
+// correctly and then stored as zero bytes.
+func TestIAMEnforceIntegration_s3PutObjectKeepsFormEncodedBody(t *testing.T) {
+	// Given: enforcement on, and a principal allowed to write to S3
+	srv := helpers.NewTestServer(t,
+		helpers.WithEnforceIAM(true),
+	)
+	seedIAMPrincipal(t, srv, "test",
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:*","Resource":"*"}]}`,
+	)
+	const auth = "AWS4-HMAC-SHA256 Credential=test/20260423/us-east-1/s3/aws4_request, " +
+		"SignedHeaders=host;x-amz-date, Signature=abc"
+
+	createResp := s3CallWithAuth(t, srv, http.MethodPut, "/iam-bodycheck", auth)
+	createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+
+	// When: an object is written with the form content type
+	body := "hello-body-check"
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/iam-bodycheck/k1", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("build s3 put: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", auth)
+	req.Header.Set("X-Amz-Date", "20260423T000000Z")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do s3 put: %v", err)
+	}
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: the bytes survived enforcement
+	got := s3CallWithAuth(t, srv, http.MethodGet, "/iam-bodycheck/k1", auth)
+	defer got.Body.Close()
+	helpers.AssertStatus(t, got, http.StatusOK)
+	stored, err := io.ReadAll(got.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stored) != body {
+		t.Errorf("stored body = %q, want %q", stored, body)
+	}
 }
