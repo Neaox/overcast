@@ -142,6 +142,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [secretsmanager] secret ARNs carry AWS's six-character random suffix; the partial ARN without it still resolves, as on AWS
 
+- [secretsmanager] `GetRandomPassword` honours `RequireEachIncludedType`, which AWS defaults to true: a generated password now holds at least one character of every type the exclusions left available, rather than whatever the draw happened to produce
+
 ### Fixed
 
 - **BREAKING** [ecs] `networkConfiguration` is required when the task definition's `networkMode` is `awsvpc`, as on AWS, rather than when `launchType` is `FARGATE`. An awsvpc task definition launched under EC2, or under a `capacityProviderStrategy` with no launch type — the shape CDK emits — was accepted and produced a service that could never place a task
@@ -165,6 +167,8 @@ can be applied mechanically rather than reconstructed from memory.
 - [ci] a transient git failure while fetching the base revision no longer fails the compat baseline and flaky-list lints as though the PR had violated compat policy
 
 - [cloudformation/ecs] a CDK-deployed Fargate service starts its tasks. `AWS::ECS::Service` applies CloudFormation's documented default of `DesiredCount: 1` for a new service, which CDK depends on because the construct omits the property, and the resource waits for the service to reach that count so one that cannot place its tasks fails the stack instead of reaching CREATE_COMPLETE sitting at 0/0. A stack *update* now waits for the new deployment the same way a create does, so an update swapping in a task definition whose tasks cannot start fails the resource and unwinds instead of reporting UPDATE_COMPLETE around a service still catching up — or, worse, around one sitting on a failed rollout. `AWS::ECS::Cluster` and `AWS::ECS::Service` also get a generated physical name when the template gives none, as CloudFormation does: CDK never emits `ServiceName` and emits a cluster with no properties at all, so a service was rejected for having no name and every stack's cluster collided on the ECS API's default name of "default"
+
+- [cloudformation/secretsmanager] `AWS::SecretsManager::Secret` generates a value for `GenerateSecretString` instead of dropping the property. The secret was created with an `AWSCURRENT` version holding nothing, so it listed and described normally while every `GetSecretValue` answered `ResourceNotFoundException` naming that version — a value-less staged version is indistinguishable from an in-flight rotation. `SecretStringTemplate` and `GenerateStringKey` place the password inside the template's JSON object, which is the shape `new Secret(..., { generateSecretString })` synthesises, and the generation settings are honoured by dispatching to the service's own `GetRandomPassword`. As on AWS the value is generated once, at create; specifying both `SecretString` and `GenerateSecretString` now fails the resource rather than silently preferring one
 
 - [cloudwatch] Query-protocol errors use AWS's `ErrorResponse` envelope, so SDKs read the error code instead of a generic failure
 
