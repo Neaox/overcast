@@ -539,6 +539,13 @@ func (h *Handler) deliverStreamEvent(ctx context.Context, evt events.Event) {
 		return
 	}
 
+	// The bus runs subscribers on pool goroutines carrying the *publishing*
+	// request's context, so this execution outlives the DynamoDB write that
+	// triggered it. Detach from that request's cancellation — as SNS's fan-out
+	// does — or a write that has already answered its client cancels the pipe
+	// mid-delivery. The region the context pins is deliberately kept.
+	ctx = context.WithoutCancel(ctx)
+
 	pipes, aerr := h.store.listAllPipes(ctx)
 	if aerr != nil {
 		h.log.Error("pipes: delivery: list pipes failed", zap.String("error", aerr.Message))

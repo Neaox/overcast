@@ -29,6 +29,8 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/Neaox/overcast/internal/middleware"
 )
 
@@ -404,13 +406,40 @@ func (d *Dispatcher) InvokeJSONTarget(ctx context.Context, target string, body a
 
 // newRequest builds an in-process request carrying the delivery's region, so a
 // target outside the default region resolves against its own regional state.
+// Every delivery is built here, so this is also where the caller's routing
+// state is left behind — see detachRouting.
 func (d *Dispatcher) newRequest(ctx context.Context, method, path string, body []byte) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, method, path, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(detachRouting(ctx), method, path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("X-Overcast-Region", middleware.RegionFromContext(ctx, d.defaultRegion))
 	return req, nil
+}
+
+// detachRouting returns ctx with a fresh chi routing context, so re-entering
+// the router cannot touch the routing state of the request that is still in
+// flight.
+//
+// No caller owns the context it delivers on: EventBridge fans PutEvents out on
+// r.Context(), and the events bus runs a Pipes worker on a pool goroutine
+// holding the *publishing* request's context. chi reuses whatever *chi.Context
+// it finds under chi.RouteCtxKey instead of allocating one, so a synthetic
+// request built on an inherited context would route the delivery on the
+// inbound request's own routing state — giving the sink that request's URL
+// params, and letting two concurrent deliveries write to one *chi.Context at
+// once, which is a data race rather than merely a wrong answer.
+//
+// Only the routing key is replaced. Everything else the context legitimately
+// carries still applies, in particular the region newRequest propagates and
+// the event-bus hop budget.
+//
+// CloudFormation avoids the same trap by provisioning on a fresh
+// context.Background() (see internal/services/cloudformation/handler.go); this
+// package cannot, because the region it must propagate rides on the caller's
+// context.
+func detachRouting(ctx context.Context) context.Context {
+	return context.WithValue(ctx, chi.RouteCtxKey, chi.NewRouteContext())
 }
 
 // do runs the request against the root router and turns any non-2xx response

@@ -540,8 +540,15 @@ func (s *Service) deleteScheduleDefaultGroup(w http.ResponseWriter, r *http.Requ
 	s.deleteSchedule(w, r)
 }
 
-// routeScheduleWithGroup returns a new request with chi URL params overridden to
-// group and name. We store them in the request context so handlers can read them.
+// routeScheduleWithGroup adds group and name to the request's own chi route
+// params so the shared handler can read them with chi.URLParam. r is returned
+// unchanged — the params go onto the route context chi already allocated for
+// this request, which is why a later lookup wins over the matched route's own.
+//
+// Mutating that context in place is safe here, unlike an in-process dispatch
+// back through the root router (see internal/eventtarget): this runs on the
+// request's own goroutine and calls a sibling handler directly, so nothing else
+// holds the context, and chi resets and pools it when the request ends.
 func routeScheduleWithGroup(r *http.Request, group, name string) *http.Request {
 	rctx := chi.RouteContext(r.Context())
 	rctx.URLParams.Keys = append(rctx.URLParams.Keys, "group", "name")

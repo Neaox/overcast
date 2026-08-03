@@ -5,8 +5,12 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func TestClassify(t *testing.T) {
@@ -350,6 +354,89 @@ func TestInvokeJSONTarget_carriesRegion(t *testing.T) {
 	if gotRegion != "us-east-1" {
 		t.Fatalf("X-Overcast-Region = %q, want the dispatcher default", gotRegion)
 	}
+}
+
+// A delivery re-enters the emulator's own root router, and no caller owns the
+// context it delivers on: EventBridge's PutEvents fan-out passes r.Context()
+// straight through, and the events bus runs a Pipes worker on a pool goroutine
+// carrying the *publishing* request's context. chi reuses an existing
+// *chi.Context found under chi.RouteCtxKey instead of allocating one, so a
+// synthetic request built on an inherited context routes on the in-flight
+// request's own routing state.
+func TestDeliver_doesNotInheritTheCallersRoutingContext(t *testing.T) {
+	const lambdaARN = "arn:aws:lambda:us-east-1:000000000000:function:fn"
+
+	t.Run("the delivery does not see the inbound route's params", func(t *testing.T) {
+		// Given: one chi mux as the root router, serving both the inbound route
+		// a caller is still inside and the invoke route a delivery re-enters.
+		var gotFunctionName, gotPipeName string
+		var deliverErr error
+
+		mux := chi.NewMux()
+		mux.Post("/2015-03-31/functions/{functionName}/invocations", func(w http.ResponseWriter, r *http.Request) {
+			gotFunctionName = chi.URLParam(r, "functionName")
+			gotPipeName = chi.URLParam(r, "pipeName")
+			w.WriteHeader(http.StatusAccepted)
+		})
+		d := NewDispatcher(mux, "us-east-1")
+		mux.Post("/v1/pipes/{pipeName}", func(w http.ResponseWriter, r *http.Request) {
+			deliverErr = d.Deliver(r.Context(), Request{ARN: lambdaARN, Payload: []byte("{}")})
+			w.WriteHeader(http.StatusOK)
+		})
+
+		// When: a request that matched /v1/pipes/{pipeName} delivers to a target.
+		mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/pipes/orders", nil))
+
+		// Then: the delivery routed on its own path and carries none of the
+		// inbound request's route params.
+		if deliverErr != nil {
+			t.Fatalf("Deliver: %v", deliverErr)
+		}
+		if gotFunctionName != "fn" {
+			t.Fatalf("functionName = %q, want fn", gotFunctionName)
+		}
+		if gotPipeName != "" {
+			t.Fatalf("the delivery saw the inbound request's pipeName = %q — the routing context leaked", gotPipeName)
+		}
+	})
+
+	// Two deliveries sharing one inherited *chi.Context write to it
+	// concurrently, which is a data race, not just wrong params. Needs -race.
+	t.Run("concurrent deliveries from one inbound context do not race", func(t *testing.T) {
+		// Given: an inbound request still in flight, holding its routing context.
+		mux := chi.NewMux()
+		mux.Post("/2015-03-31/functions/{functionName}/invocations", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusAccepted)
+		})
+		d := NewDispatcher(mux, "us-east-1")
+
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("pipeName", "orders")
+		ctx := context.WithValue(context.Background(), chi.RouteCtxKey, rctx)
+
+		// When: several deliveries run concurrently off that one context, the
+		// way the events bus produces them — it queues one work item per
+		// subscriber, every one carrying the publishing request's context, and
+		// a worker pool runs them while that request is still in flight.
+		errs := make([]error, 8)
+		var wg sync.WaitGroup
+		for i := range errs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				errs[i] = d.Deliver(ctx, Request{ARN: lambdaARN, Payload: []byte("{}")})
+			}()
+		}
+		wg.Wait()
+
+		// Then: every delivery succeeded. That none of them wrote to the shared
+		// routing context is what -race proves.
+		for i, err := range errs {
+			if err != nil {
+				t.Fatalf("delivery %d: %v", i, err)
+			}
+		}
+	})
 }
 
 // Guard against the recorder being reused across requests, which would make
