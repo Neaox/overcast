@@ -43,12 +43,8 @@ import { Card, CardContent } from "@/components/ui/card"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { useToast } from "@/components/ui/toast"
+import { formatLogDate } from "@/lib/log-format"
 import { cn } from "@/lib/utils"
-
-function formatTimestamp(ts: number): string {
-  if (!ts) return "—"
-  return new Date(ts).toLocaleString()
-}
 
 interface Props {
   groupName: string
@@ -201,7 +197,7 @@ export function LogGroupDetail({ groupName }: Props) {
           <CardContent className="grid grid-cols-3 gap-4 py-4">
             <div>
               <p className="font-mono text-xs font-medium text-fg-muted">Created</p>
-              <p className="text-sm">{formatTimestamp(group.creationTime ?? 0)}</p>
+              <p className="text-sm">{formatLogDate(group.creationTime)}</p>
             </div>
             <div>
               <p className="font-mono text-xs font-medium text-fg-muted">Retention</p>
@@ -299,7 +295,7 @@ export function LogGroupDetail({ groupName }: Props) {
                     }
                   >
                     <TableCell className="whitespace-nowrap text-fg-muted">
-                      {formatTimestamp(evt.timestamp ?? 0)}
+                      {formatLogDate(evt.timestamp)}
                     </TableCell>
                     <TableCell className="text-fg-muted" title={evt.logStreamName}>
                       {evt.logStreamName}
@@ -417,14 +413,12 @@ export function LogGroupDetail({ groupName }: Props) {
                   <TableCell className="font-medium" title={s.logStreamName}>
                     {s.logStreamName}
                   </TableCell>
+                  <TableCell className="text-fg-muted">{formatLogDate(s.creationTime)}</TableCell>
                   <TableCell className="text-fg-muted">
-                    {formatTimestamp(s.creationTime ?? 0)}
+                    {formatLogDate(s.lastEventTimestamp)}
                   </TableCell>
                   <TableCell className="text-fg-muted">
-                    {formatTimestamp(s.lastEventTimestamp ?? 0)}
-                  </TableCell>
-                  <TableCell className="text-fg-muted">
-                    {formatTimestamp(s.lastIngestionTime ?? 0)}
+                    {formatLogDate(s.lastIngestionTime)}
                   </TableCell>
                   <TableCell>
                     <Button

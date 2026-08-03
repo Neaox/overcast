@@ -22,23 +22,22 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { cn } from "@/lib/utils"
-import Prism from "@/lib/prism"
 import { stripAnsi } from "@/lib/ansi"
+import {
+  detectLogLevel,
+  formatLogTime,
+  highlightJSON,
+  logLevelBadgeClass,
+  logLevelRowClass,
+  stringifyJSON,
+  tryParseJSON,
+  type LogLevel,
+} from "@/lib/log-format"
 import { AnsiText } from "@/components/logs/ansi-text"
 import type { FilteredLogEvent } from "@/types/logs"
 import { parseLogFilterTerms, tailLogEvents } from "@/features/cloudwatch/logs/tail"
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-
-function formatTimestampCompact(ts?: number): string {
-  if (ts == null) return "—"
-  const d = new Date(ts)
-  const hh = String(d.getHours()).padStart(2, "0")
-  const mm = String(d.getMinutes()).padStart(2, "0")
-  const ss = String(d.getSeconds()).padStart(2, "0")
-  const ms = String(d.getMilliseconds()).padStart(3, "0")
-  return `${hh}:${mm}:${ss}.${ms}`
-}
 
 /** Highlight matching filter terms in a message string. */
 function highlightMatches(message: string, filterPattern: string): React.ReactNode {
@@ -59,58 +58,6 @@ function highlightMatches(message: string, filterPattern: string): React.ReactNo
       part
     ),
   )
-}
-
-/** Try to detect and extract the log level from a message. */
-function detectLogLevel(msg: string): "error" | "warn" | "info" | "debug" | null {
-  // Check structured JSON logs first
-  const levelMatch = msg.match(/"level"\s*:\s*"(\w+)"/i)
-  if (levelMatch) {
-    const l = levelMatch[1].toLowerCase()
-    if (l === "error" || l === "fatal" || l === "critical") return "error"
-    if (l === "warn" || l === "warning") return "warn"
-    if (l === "info") return "info"
-    if (l === "debug" || l === "trace") return "debug"
-  }
-  // Check common text patterns (only at word boundaries near the start)
-  const prefix = msg.slice(0, 80).toUpperCase()
-  if (/\bERROR\b|\bFATAL\b|\bCRITICAL\b/.test(prefix)) return "error"
-  if (/\bWARN(ING)?\b/.test(prefix)) return "warn"
-  if (/\bDEBUG\b|\bTRACE\b/.test(prefix)) return "debug"
-  return null
-}
-
-const levelColors = {
-  error: "border-l-red-500/60 bg-red-500/5",
-  warn: "border-l-yellow-500/60 bg-yellow-500/5",
-  info: "",
-  debug: "border-l-fg-muted/30 bg-fg-muted/3",
-}
-
-const levelBadge = {
-  error: "bg-red-500/15 text-red-400",
-  warn: "bg-yellow-500/15 text-yellow-400",
-  info: "bg-sky-500/15 text-sky-400",
-  debug: "bg-fg-muted/15 text-fg-muted",
-}
-
-/** Try to parse a message as structured JSON. Returns null if not JSON. */
-function tryParseJSON(msg: string): object | null {
-  const trimmed = msg.trim()
-  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null
-  try {
-    return JSON.parse(trimmed) as object
-  } catch {
-    return null
-  }
-}
-
-function stringifyJSON(obj: object, pretty: boolean): string {
-  return JSON.stringify(obj, null, pretty ? 2 : 0)
-}
-
-function highlightJSON(text: string): string {
-  return Prism.highlight(text, Prism.languages.json, "json")
 }
 
 // ── Row height estimation ──────────────────────────────────────────────────
@@ -482,7 +429,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
                     ref={virtualizer.measureElement}
                     className={cn(
                       "group/row absolute top-0 left-0 flex w-full border-b border-l-2 border-border-muted border-l-transparent",
-                      meta.level && levelColors[meta.level],
+                      meta.level && logLevelRowClass[meta.level],
                     )}
                     style={{
                       transform: `translateY(${virtualRow.start}px)`,
@@ -494,7 +441,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
                           {virtualRow.index + 1}
                         </div>
                         <div className="flex w-20 shrink-0 items-start px-1 pt-1.5 font-mono text-[10px] text-fg-muted tabular-nums">
-                          {formatTimestampCompact(evt.timestamp ?? undefined)}
+                          {formatLogTime(evt.timestamp)}
                         </div>
                         {!streamName && (
                           <div className="flex w-44 shrink-0 items-start px-1 pt-1.5 font-mono text-[10px] text-fg-muted">
@@ -515,7 +462,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
                     ) : (
                       <div className="min-w-0 flex-1 px-2 py-1.5">
                         <LogMessage
-                          prefix={`${formatTimestampCompact(evt.timestamp ?? undefined)}${evt.logStreamName ? ` ${evt.logStreamName}` : ""}`}
+                          prefix={`${formatLogTime(evt.timestamp)}${evt.logStreamName ? ` ${evt.logStreamName}` : ""}`}
                           message={meta.msg}
                           formatted={formatted}
                           syntaxHighlight={enableSyntax}
@@ -576,7 +523,7 @@ function LogMessage({
   syntaxHighlight: boolean
   wrapLines: boolean
   filterPattern: string
-  level: "error" | "warn" | "info" | "debug" | null
+  level: LogLevel | null
   hideLevel?: boolean
 }) {
   const jsonText = useMemo(() => {
@@ -597,7 +544,7 @@ function LogMessage({
           <span
             className={cn(
               "mt-0.5 shrink-0 rounded px-1 py-0.5 font-mono text-[8px] font-bold uppercase",
-              levelBadge[level],
+              logLevelBadgeClass[level],
             )}
           >
             {level}
@@ -626,7 +573,7 @@ function LogMessage({
         <span
           className={cn(
             "mt-0.5 shrink-0 rounded px-1 py-0.5 font-mono text-[8px] font-bold uppercase",
-            levelBadge[level],
+            logLevelBadgeClass[level],
           )}
         >
           {level}

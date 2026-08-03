@@ -43,11 +43,7 @@ import {
 } from "@/components/ui/resource-list-page"
 import { useToast } from "@/components/ui/toast"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
-
-function formatTimestamp(ts: number): string {
-  if (!ts) return "—"
-  return new Date(ts).toLocaleString()
-}
+import { formatLogDate } from "@/lib/log-format"
 
 export function LogGroupList() {
   const navigate = useNavigate()
@@ -206,9 +202,7 @@ export function LogGroupList() {
                     <TableCell title={groupName}>
                       <ResourceName icon={FileText} name={groupName} />
                     </TableCell>
-                    <TableCell className="text-fg-muted">
-                      {formatTimestamp(g.creationTime ?? 0)}
-                    </TableCell>
+                    <TableCell className="text-fg-muted">{formatLogDate(g.creationTime)}</TableCell>
                     <TableCell className="text-fg-muted">
                       {g.retentionInDays ? `${g.retentionInDays} days` : "Never expire"}
                     </TableCell>
