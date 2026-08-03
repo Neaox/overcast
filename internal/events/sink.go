@@ -52,12 +52,20 @@ type FunctionInvoker interface {
 // delivery succeeded — SNS subscription fan-out, which has to dead-letter a
 // failed delivery instead of dropping it.
 //
-// InvokeEvent reports the outcome real Lambda's Invoke API would report
-// synchronously for an `InvocationType=Event` call: a non-nil error means the
-// event was never accepted (no such function, function not in an invokable
-// state, throttled). A function that is accepted and then fails at runtime is
-// a *successful* delivery — on AWS that failure is handled by Lambda's own
-// retry policy and dead-letter config, not by the event source's.
+// InvokeEvent accepts an event and returns; it does not run the function. It
+// reports the outcome real Lambda's Invoke API reports synchronously for an
+// `InvocationType=Event` call: a non-nil error means the event was never
+// accepted (no such function, function not in an invokable state) and the
+// caller still owns it.
+//
+// A throttle is not a refusal. AWS has already answered 202 by the time
+// concurrency is needed, so it retries internally and the event source never
+// hears about it; Overcast does the same. A caller that dead-letters on a
+// throttle would lose events AWS would have run.
+//
+// A function that is accepted and then fails at runtime is likewise a
+// *successful* delivery — on AWS that failure is handled by Lambda's own retry
+// policy and dead-letter config, not by the event source's.
 type FunctionEventInvoker interface {
 	InvokeEvent(ctx context.Context, functionARN string, payload []byte) error
 }

@@ -1,0 +1,2 @@
+* [lambda/sns] a throttled function is retried inside Lambda instead of bouncing the event back to whatever raised it — an SNS notification to a function reserved to zero concurrency reached the subscription dead-letter queue, where the same function invoked over HTTP would have retried
+* [lambda/sns] a `lambda` subscription pointing at a function Lambda cannot run — a missing layer version, or a runtime the emulator has no support for — reports the failed delivery instead of reporting success and dropping the notification
