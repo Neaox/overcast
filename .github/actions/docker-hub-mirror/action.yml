@@ -1,0 +1,82 @@
+name: Use a Docker Hub pull-through mirror
+description: >
+  Point the runner's Docker daemon at a Docker Hub mirror, so image pulls stop
+  competing for the shared anonymous rate limit on GitHub's egress IPs.
+
+# Why a daemon mirror rather than authenticating to Docker Hub:
+#
+#   * It needs no secret, so it works on pull requests from forks. GitHub
+#     withholds repository secrets from fork workflows by design, and forks are
+#     where most contributions to a public repo arrive — an authenticated pull
+#     would protect everything except the case that breaks most often.
+#   * It needs no change to any image reference. Several of the images pulled
+#     here are named inside the emulator's Go source (registry:2, postgres:16,
+#     redis:7, rancher/k3s:…), which CI cannot rewrite without changing what
+#     real users pull.
+#
+# This is a mitigation, not a guarantee: mirror.gcr.io caches frequently
+# requested public Docker Hub images and falls through to Docker Hub on a miss.
+# Cached pulls do not count against Docker Hub's rate limits, which is the
+# point. Authenticating as well would complement this for trusted-context jobs;
+# it does not replace it.
+
+inputs:
+  mirror:
+    description: Registry mirror URL.
+    required: false
+    default: https://mirror.gcr.io
+
+runs:
+  using: composite
+  steps:
+    - name: Point the Docker daemon at the mirror
+      shell: bash
+      env:
+        MIRROR: ${{ inputs.mirror }}
+      run: |
+        # Best-effort throughout: a mirror that cannot be configured is a
+        # slower, more rate-limited job, not a broken one. Failing the build
+        # over an optimisation would be worse than the flake it prevents.
+        set -u
+
+        config=/etc/docker/daemon.json
+        if [ ! -f "$config" ]; then
+          echo '{}' | sudo tee "$config" >/dev/null
+        fi
+
+        # Merge rather than overwrite: the runner image ships its own daemon
+        # settings, and clobbering them breaks things that have nothing to do
+        # with pulls.
+        if ! merged=$(sudo cat "$config" | jq --arg m "$MIRROR" '.["registry-mirrors"] = ((.["registry-mirrors"] // []) + [$m] | unique)'); then
+          echo "::warning::could not merge $config; leaving the daemon configuration alone"
+          exit 0
+        fi
+        printf '%s\n' "$merged" | sudo tee "$config" >/dev/null
+
+        if ! sudo systemctl restart docker; then
+          echo "::warning::could not restart the Docker daemon; pulls will go straight to Docker Hub"
+          exit 0
+        fi
+
+        # The restart is asynchronous; wait for the daemon rather than letting
+        # the next step race it.
+        for _ in $(seq 1 30); do
+          if docker info >/dev/null 2>&1; then
+            break
+          fi
+          sleep 1
+        done
+
+        if ! docker info >/dev/null 2>&1; then
+          echo "::warning::the Docker daemon did not come back after the restart"
+          exit 0
+        fi
+
+        # Report what actually took effect — a mirror silently not applied is
+        # indistinguishable from this step never having run.
+        mirrors=$(docker info --format '{{join .RegistryConfig.Mirrors ","}}' 2>/dev/null || echo "")
+        if [ -z "$mirrors" ]; then
+          echo "::warning::the daemon reports no registry mirrors; pulls will go straight to Docker Hub"
+        else
+          echo "Docker registry mirrors in effect: $mirrors"
+        fi
