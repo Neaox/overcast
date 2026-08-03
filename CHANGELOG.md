@@ -218,9 +218,7 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [sns] notification `Timestamp` uses AWS's millisecond form (`2012-04-25T21:49:25.719Z`)
 
-- [secretsmanager] `RotateSecret` stages the `ClientRequestToken` as an empty `AWSPENDING` version before it invokes the rotation function's `createSecret` step, as AWS does. Rotation functions copied from AWS's published blueprints assert that staging before every step, so one failed on its first invocation with "Secret version … has no stage for rotation of secret …"
-
-- [secretsmanager] `GetSecretValue` reports a version that holds no value as `ResourceNotFoundException` rather than an empty `200`, and `PutSecretValue` under that version's token fills it in rather than answering `ResourceExistsException` — the two behaviours a blueprint's `createSecret` step branches on. `DescribeSecret` still lists the version
+- [secretsmanager] a rotation function copied from AWS's published blueprints now works unmodified. Three behaviours its `createSecret` step depends on were missing: `RotateSecret` stages the `ClientRequestToken` as an empty `AWSPENDING` version before the first invocation, as AWS does — the blueprints assert that staging before every step, so one failed immediately with "Secret version … has no stage for rotation of secret …"; `GetSecretValue` reports a version holding no value as `ResourceNotFoundException` rather than an empty `200`; and `PutSecretValue` under that version's token fills it in rather than answering `ResourceExistsException`. `DescribeSecret` still lists the version throughout
 
 ## [0.0.1-alpha.28] - 2026-07-31
 
