@@ -11,16 +11,72 @@ import {
   DeleteObjectsCommand,
   GetBucketNotificationConfigurationCommand,
   PutBucketNotificationConfigurationCommand,
+  GetBucketLifecycleConfigurationCommand,
   type Event as S3Event,
   type BucketLocationConstraint,
   type FilterRuleName,
+  type LifecycleRule,
+  type LifecycleRuleFilter,
 } from "@aws-sdk/client-s3"
 import type {
   S3Bucket,
+  S3ObjectMetadata,
   ListObjectsResult,
   NotificationFilterRule,
   BucketNotificationConfig,
+  BucketLifecycleConfiguration,
+  S3LifecycleFilter,
+  S3LifecycleRule,
 } from "@/types"
+
+/**
+ * Parses S3's x-amz-expiration header, which the SDK surfaces as `Expiration`:
+ *   expiry-date="Fri, 21 Dec 2012 00:00:00 GMT", rule-id="rule-1"
+ * Returns undefined when the header is absent or in an unexpected shape —
+ * a hint that cannot be read is simply not shown.
+ */
+function parseExpirationHeader(raw?: string): S3ObjectMetadata["expiration"] {
+  if (!raw) return undefined
+  const expiryDate = /expiry-date="([^"]+)"/.exec(raw)?.[1]
+  const ruleId = /rule-id="([^"]*)"/.exec(raw)?.[1]
+  if (!expiryDate) return undefined
+  return { expiryDate, ruleId: ruleId ?? "" }
+}
+
+function toLifecycleFilter(filter?: LifecycleRuleFilter): S3LifecycleFilter | undefined {
+  if (!filter) return undefined
+  return {
+    prefix: filter.Prefix,
+    tag: filter.Tag ? { key: filter.Tag.Key ?? "", value: filter.Tag.Value ?? "" } : undefined,
+    objectSizeGreaterThan: filter.ObjectSizeGreaterThan,
+    objectSizeLessThan: filter.ObjectSizeLessThan,
+    and: filter.And
+      ? {
+          prefix: filter.And.Prefix,
+          tags: (filter.And.Tags ?? []).map((t) => ({ key: t.Key ?? "", value: t.Value ?? "" })),
+          objectSizeGreaterThan: filter.And.ObjectSizeGreaterThan,
+          objectSizeLessThan: filter.And.ObjectSizeLessThan,
+        }
+      : undefined,
+  }
+}
+
+function toLifecycleRule(rule: LifecycleRule, index: number): S3LifecycleRule {
+  return {
+    id: rule.ID ?? `rule-${index + 1}`,
+    status: rule.Status === "Disabled" ? "Disabled" : "Enabled",
+    prefix: rule.Prefix,
+    filter: toLifecycleFilter(rule.Filter),
+    expirationDays: rule.Expiration?.Days,
+    expirationDate: rule.Expiration?.Date?.toISOString(),
+    transitions: (rule.Transitions ?? []).map((t) => ({
+      days: t.Days,
+      date: t.Date?.toISOString(),
+      storageClass: t.StorageClass ?? "",
+    })),
+    abortIncompleteMultipartUploadDays: rule.AbortIncompleteMultipartUpload?.DaysAfterInitiation,
+  }
+}
 
 export const s3 = {
   listBuckets: async () => {
@@ -108,7 +164,7 @@ export const s3 = {
     } as ListObjectsResult
   },
 
-  getObjectMetadata: async (bucket: string, key: string) => {
+  getObjectMetadata: async (bucket: string, key: string): Promise<S3ObjectMetadata> => {
     const res = await awsClients.s3().send(new HeadObjectCommand({ Bucket: bucket, Key: key }))
     return {
       contentType: res.ContentType ?? "application/octet-stream",
@@ -116,6 +172,8 @@ export const s3 = {
       lastModified: res.LastModified?.toISOString() ?? "",
       etag: (res.ETag ?? "").replace(/"/g, ""),
       metadata: res.Metadata ?? {},
+      storageClass: res.StorageClass ?? "STANDARD",
+      expiration: parseExpirationHeader(res.Expiration),
     }
   },
 
@@ -248,6 +306,23 @@ export const s3 = {
       }),
     )
     return { ok: true }
+  },
+
+  /**
+   * Returns the bucket's lifecycle rules, or null when it has none.
+   * S3 answers NoSuchLifecycleConfiguration rather than an empty document, and
+   * "no rules" is a normal state rather than an error worth surfacing.
+   */
+  getBucketLifecycle: async (bucket: string): Promise<BucketLifecycleConfiguration | null> => {
+    try {
+      const res = await awsClients
+        .s3()
+        .send(new GetBucketLifecycleConfigurationCommand({ Bucket: bucket }))
+      return { rules: (res.Rules ?? []).map(toLifecycleRule) }
+    } catch (err) {
+      if ((err as { name?: string }).name === "NoSuchLifecycleConfiguration") return null
+      throw err
+    }
   },
 
   getBucketStreams: (bucket: string) =>

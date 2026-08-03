@@ -104,11 +104,11 @@ func init() {
 
 		// Lifecycle
 		capabilities.Capability{Service: "s3", Operation: "GetBucketLifecycleConfiguration", Category: "Lifecycle",
-			Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
+			Status: capabilities.StatusSupported, Notes: "NoSuchLifecycleConfiguration when none is set"},
 		capabilities.Capability{Service: "s3", Operation: "PutBucketLifecycleConfiguration", Category: "Lifecycle",
-			Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
+			Status: capabilities.StatusSupported, Notes: "Expiration, Transition, AbortIncompleteMultipartUpload and prefix/tag/size filters, applied by an hourly sweeper; version-dependent rules (NoncurrentVersion*, ExpiredObjectDeleteMarker) are rejected rather than stored"},
 		capabilities.Capability{Service: "s3", Operation: "DeleteBucketLifecycle", Category: "Lifecycle",
-			Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
+			Status: capabilities.StatusSupported},
 
 		// Notifications
 		capabilities.Capability{Service: "s3", Operation: "GetBucketNotificationConfiguration", Category: "Notifications",

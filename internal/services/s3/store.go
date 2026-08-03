@@ -79,6 +79,19 @@ type Object struct {
 	ContentLanguage    string            `json:"content_language,omitempty"`
 	CacheControl       string            `json:"cache_control,omitempty"`
 	Expires            string            `json:"expires,omitempty"`
+	// StorageClass is empty for an object that has never been given one,
+	// which reads as STANDARD. A lifecycle Transition sets it as a synthetic
+	// marker — no bytes move (docs/plans/full-emulation-priority.md §7).
+	StorageClass string `json:"storage_class,omitempty"`
+}
+
+// effectiveStorageClass returns the class S3 reports for the object, defaulting
+// to STANDARD as AWS does for an object stored without one.
+func (o *Object) effectiveStorageClass() string {
+	if o.StorageClass == "" {
+		return storageClassStandard
+	}
+	return o.StorageClass
 }
 
 // s3Store wraps state.Store with S3-specific get/put/delete helpers.
@@ -131,6 +144,13 @@ func (s *s3Store) putBucket(ctx context.Context, b *Bucket) *protocol.AWSError {
 
 func (s *s3Store) deleteBucket(ctx context.Context, name string) *protocol.AWSError {
 	if err := s.store.Delete(ctx, nsBuckets, name); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	// Drop the lifecycle configuration with the bucket. Leaving it behind
+	// would keep the sweeper visiting a bucket that no longer exists, and
+	// would silently re-apply the old rules to a bucket recreated under the
+	// same name — which is not what AWS does.
+	if err := s.store.Delete(ctx, nsLifecycle, name); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	// Remove the on-disk body directory for the bucket (and any remaining

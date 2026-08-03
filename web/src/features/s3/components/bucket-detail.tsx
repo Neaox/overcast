@@ -12,11 +12,13 @@ import {
   Upload,
   ChevronRight,
   Eye,
+  Timer,
 } from "lucide-react"
 import { Route } from "@/routes/s3/$bucket/index"
 import {
   s3ObjectsQueryOptions,
   s3ObjectMetaQueryOptions,
+  s3BucketLifecycleQueryOptions,
   s3Keys,
   deleteObjectMutationOptions,
   deleteByPrefixMutationOptions,
@@ -39,9 +41,11 @@ import { ApplicationOwnershipBanner } from "@/components/application-ownership-b
 import { useToast } from "@/components/ui/toast"
 import { RawStateLink } from "@/features/debug/raw-state-link"
 import { formatBytes, formatDate, formatStorageClass } from "@/lib/format"
+import { estimateExpiry, formatExpiryDistance } from "@/features/s3/lifecycle"
 import { BucketTabs } from "./bucket-tabs"
 import { cn } from "@/lib/utils"
 import { ObjectPreviewDialog } from "./object-preview-dialog"
+import type { S3LifecycleRule } from "@/types"
 
 export function BucketDetail() {
   "use no memo"
@@ -111,6 +115,11 @@ export function BucketDetail() {
     ...s3ObjectMetaQueryOptions(bucket, metaTarget ?? ""),
     enabled: !!metaTarget,
   })
+
+  // One request per bucket, not per row: the expiry hint on each object row is
+  // computed from these rules rather than a HeadObject apiece.
+  const { data: lifecycle } = useQuery(s3BucketLifecycleQueryOptions(bucket))
+  const lifecycleRules = lifecycle?.rules ?? []
 
   const deleteMutation = useMutation({
     ...deleteObjectMutationOptions(bucket),
@@ -369,7 +378,12 @@ export function BucketDetail() {
                             {formatDate(item.lastModified)}
                           </TableCell>
                           <TableCell className="whitespace-nowrap">
-                            <Badge variant="default">{formatStorageClass(item.storageClass)}</Badge>
+                            <div className="flex items-center gap-1">
+                              <Badge variant="default">
+                                {formatStorageClass(item.storageClass)}
+                              </Badge>
+                              <ExpiryBadge rules={lifecycleRules} object={item} />
+                            </div>
                           </TableCell>
                           <TableCell className="px-1">
                             <div className="flex items-center gap-0.5">
@@ -522,6 +536,46 @@ export function BucketDetail() {
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+// ─── Expiry hint ───────────────────────────────────────────────────────────
+
+/**
+ * ExpiryBadge — when a lifecycle rule will delete this object.
+ *
+ * The estimate is computed from the bucket's rules and the listing's own
+ * fields. A listing carries no object tags, so a tag-filtered rule cannot be
+ * decided here and says so rather than guessing; the object inspector shows
+ * the server's authoritative x-amz-expiration instead.
+ */
+function ExpiryBadge({
+  rules,
+  object,
+}: {
+  rules: S3LifecycleRule[]
+  object: { key: string; size: number; lastModified: string }
+}) {
+  if (rules.length === 0) return null
+  const estimate = estimateExpiry(rules, object)
+
+  if (estimate.kind === "none") return null
+  if (estimate.kind === "unknown") {
+    return (
+      <Badge variant="default" title="A tag-filtered lifecycle rule may expire this object">
+        <Timer className="mr-1 h-3 w-3" />
+        tag rule
+      </Badge>
+    )
+  }
+  return (
+    <Badge
+      variant="warning"
+      title={`Lifecycle rule "${estimate.ruleId}" expires this object at ${estimate.date.toUTCString()}`}
+    >
+      <Timer className="mr-1 h-3 w-3" />
+      expires {formatExpiryDistance(estimate.date)}
+    </Badge>
   )
 }
 

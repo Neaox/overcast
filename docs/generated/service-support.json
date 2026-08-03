@@ -6,7 +6,7 @@
       "service": "s3",
       "display_name": "S3",
       "total_ops": 47,
-      "implemented_ops": 36,
+      "implemented_ops": 39,
       "operations": [
         {
           "operation": "CreateBucket",
@@ -238,20 +238,19 @@
         {
           "operation": "GetBucketLifecycleConfiguration",
           "category": "Lifecycle",
-          "status": "❌ Unsupported",
-          "notes": "stub; returns 501"
+          "status": "✅ Supported",
+          "notes": "NoSuchLifecycleConfiguration when none is set"
         },
         {
           "operation": "PutBucketLifecycleConfiguration",
           "category": "Lifecycle",
-          "status": "❌ Unsupported",
-          "notes": "stub; returns 501"
+          "status": "✅ Supported",
+          "notes": "Expiration, Transition, AbortIncompleteMultipartUpload and prefix/tag/size filters, applied by an hourly sweeper; version-dependent rules (NoncurrentVersion*, ExpiredObjectDeleteMarker) are rejected rather than stored"
         },
         {
           "operation": "DeleteBucketLifecycle",
           "category": "Lifecycle",
-          "status": "❌ Unsupported",
-          "notes": "stub; returns 501"
+          "status": "✅ Supported"
         },
         {
           "operation": "GetBucketNotificationConfiguration",

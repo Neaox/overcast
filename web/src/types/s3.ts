@@ -28,6 +28,58 @@ export interface S3ObjectMetadata {
   lastModified: string
   etag: string
   metadata: Record<string, string>
+  storageClass: string
+  /**
+   * The x-amz-expiration hint, present only when a lifecycle rule will expire
+   * the object. Server-computed, so this is the authoritative answer where the
+   * object list's per-row estimate is not.
+   */
+  expiration?: { expiryDate: string; ruleId: string }
+}
+
+export interface S3LifecycleTag {
+  key: string
+  value: string
+}
+
+/**
+ * A lifecycle rule's filter. At most one of the fields is set: AWS models the
+ * filter as a union, with `and` carrying a conjunction of predicates.
+ * `undefined` means the rule used the deprecated rule-level Prefix form.
+ */
+export interface S3LifecycleFilter {
+  prefix?: string
+  tag?: S3LifecycleTag
+  objectSizeGreaterThan?: number
+  objectSizeLessThan?: number
+  and?: {
+    prefix?: string
+    tags: S3LifecycleTag[]
+    objectSizeGreaterThan?: number
+    objectSizeLessThan?: number
+  }
+}
+
+export interface S3LifecycleTransition {
+  days?: number
+  date?: string
+  storageClass: string
+}
+
+export interface S3LifecycleRule {
+  id: string
+  status: "Enabled" | "Disabled"
+  /** The deprecated rule-level Prefix form, when that is what was stored. */
+  prefix?: string
+  filter?: S3LifecycleFilter
+  expirationDays?: number
+  expirationDate?: string
+  transitions: S3LifecycleTransition[]
+  abortIncompleteMultipartUploadDays?: number
+}
+
+export interface BucketLifecycleConfiguration {
+  rules: S3LifecycleRule[]
 }
 
 export interface NotificationFilterRule {

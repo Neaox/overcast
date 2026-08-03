@@ -46,6 +46,11 @@ func S3(c *clients.Clients) ServiceGroup {
 			"GetBucketWebsite":        s.GetBucketWebsite,
 			"PutBucketCors":           s.PutBucketCors,
 			"GetBucketCors":           s.GetBucketCors,
+
+			"PutBucketLifecycleConfiguration":            s.PutBucketLifecycleConfiguration,
+			"GetBucketLifecycleConfiguration":            s.GetBucketLifecycleConfiguration,
+			"DeleteBucketLifecycle":                      s.DeleteBucketLifecycle,
+			"GetBucketLifecycleConfigurationAfterDelete": s.GetBucketLifecycleConfigurationAfterDelete,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"s3-crud":       s.setupCRUD,
@@ -55,6 +60,7 @@ func S3(c *clients.Clients) ServiceGroup {
 			"s3-tagging":    s.setupTagging,
 			"s3-website":    s.setupWebsite,
 			"s3-cors":       s.setupCors,
+			"s3-lifecycle":  s.setupLifecycle,
 		},
 		Teardown: map[string]func(context.Context, *harness.TestContext) error{
 			"s3-crud":       s.teardownBucket("s3_bucket"),
@@ -64,6 +70,7 @@ func S3(c *clients.Clients) ServiceGroup {
 			"s3-tagging":    s.teardownBucket("s3_tag_bucket"),
 			"s3-website":    s.teardownBucket("s3_web_bucket"),
 			"s3-cors":       s.teardownBucket("s3_cors_bucket"),
+			"s3-lifecycle":  s.teardownLifecycle,
 		},
 	}
 }
@@ -948,6 +955,114 @@ func (s *s3Group) DeleteBucketCors(ctx context.Context, t *harness.TestContext) 
 	_, err = s.client().GetBucketCors(ctx, &s3.GetBucketCorsInput{Bucket: aws.String(bucket)})
 	if err == nil {
 		return fmt.Errorf("DeleteBucketCors: GetBucketCors should fail after deletion")
+	}
+	return nil
+}
+
+// ── s3-lifecycle ──────────────────────────────────────────────────────────────
+
+func (s *s3Group) setupLifecycle(ctx context.Context, t *harness.TestContext) error {
+	name := fmt.Sprintf("%s-s3lifecycle", t.RunID)
+	if err := s.createBucket(ctx, name); err != nil {
+		return err
+	}
+	t.Set("s3_lifecycle_bucket", name)
+	return nil
+}
+
+func (s *s3Group) teardownLifecycle(ctx context.Context, t *harness.TestContext) error {
+	name := t.GetString("s3_lifecycle_bucket")
+	if name == "" {
+		return nil
+	}
+	//nolint:errcheck // teardown is best-effort: one failure must not block the rest
+	s.client().DeleteBucketLifecycle(ctx, &s3.DeleteBucketLifecycleInput{Bucket: aws.String(name)})
+	s.emptyAndDeleteBucket(ctx, name)
+	return nil
+}
+
+// lifecycleRule returns the stored rule with the given ID, matching on the ID
+// rather than taking the first rule back — a group must assert on its own
+// resource, not on whatever arrived first.
+func (s *s3Group) lifecycleRule(ctx context.Context, bucket, id string) (*s3types.LifecycleRule, error) {
+	resp, err := s.client().GetBucketLifecycleConfiguration(ctx, &s3.GetBucketLifecycleConfigurationInput{
+		Bucket: aws.String(bucket),
+	})
+	if err != nil {
+		return nil, err
+	}
+	for i := range resp.Rules {
+		if aws.ToString(resp.Rules[i].ID) == id {
+			return &resp.Rules[i], nil
+		}
+	}
+	return nil, fmt.Errorf("lifecycle rule %q not found among %d rules", id, len(resp.Rules))
+}
+
+func (s *s3Group) PutBucketLifecycleConfiguration(ctx context.Context, t *harness.TestContext) error {
+	bucket := t.GetString("s3_lifecycle_bucket")
+	_, err := s.client().PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{
+		Bucket: aws.String(bucket),
+		LifecycleConfiguration: &s3types.BucketLifecycleConfiguration{
+			Rules: []s3types.LifecycleRule{{
+				ID:         aws.String("expire-logs"),
+				Status:     s3types.ExpirationStatusEnabled,
+				Filter:     &s3types.LifecycleRuleFilter{Prefix: aws.String("logs/")},
+				Expiration: &s3types.LifecycleExpiration{Days: aws.Int32(30)},
+				Transitions: []s3types.Transition{{
+					Days:         aws.Int32(7),
+					StorageClass: s3types.TransitionStorageClassGlacier,
+				}},
+			}},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	rule, err := s.lifecycleRule(ctx, bucket, "expire-logs")
+	if err != nil {
+		return fmt.Errorf("PutBucketLifecycleConfiguration: verify failed: %w", err)
+	}
+	if rule.Expiration == nil || aws.ToInt32(rule.Expiration.Days) != 30 {
+		return fmt.Errorf("PutBucketLifecycleConfiguration: expiration = %v, want 30 days", rule.Expiration)
+	}
+	return nil
+}
+
+func (s *s3Group) GetBucketLifecycleConfiguration(ctx context.Context, t *harness.TestContext) error {
+	bucket := t.GetString("s3_lifecycle_bucket")
+	rule, err := s.lifecycleRule(ctx, bucket, "expire-logs")
+	if err != nil {
+		return err
+	}
+	if rule.Status != s3types.ExpirationStatusEnabled {
+		return fmt.Errorf("GetBucketLifecycleConfiguration: status = %q, want Enabled", rule.Status)
+	}
+	if rule.Filter == nil || aws.ToString(rule.Filter.Prefix) != "logs/" {
+		return fmt.Errorf("GetBucketLifecycleConfiguration: filter = %v, want prefix logs/", rule.Filter)
+	}
+	if len(rule.Transitions) != 1 || rule.Transitions[0].StorageClass != s3types.TransitionStorageClassGlacier {
+		return fmt.Errorf("GetBucketLifecycleConfiguration: transitions = %v, want one GLACIER transition", rule.Transitions)
+	}
+	return nil
+}
+
+func (s *s3Group) DeleteBucketLifecycle(ctx context.Context, t *harness.TestContext) error {
+	bucket := t.GetString("s3_lifecycle_bucket")
+	_, err := s.client().DeleteBucketLifecycle(ctx, &s3.DeleteBucketLifecycleInput{Bucket: aws.String(bucket)})
+	return err
+}
+
+func (s *s3Group) GetBucketLifecycleConfigurationAfterDelete(ctx context.Context, t *harness.TestContext) error {
+	bucket := t.GetString("s3_lifecycle_bucket")
+	resp, err := s.client().GetBucketLifecycleConfiguration(ctx, &s3.GetBucketLifecycleConfigurationInput{
+		Bucket: aws.String(bucket),
+	})
+	if err == nil {
+		return fmt.Errorf("GetBucketLifecycleConfigurationAfterDelete: expected an error, got %d rules", len(resp.Rules))
+	}
+	if !strings.Contains(err.Error(), "NoSuchLifecycleConfiguration") {
+		return fmt.Errorf("GetBucketLifecycleConfigurationAfterDelete: expected NoSuchLifecycleConfiguration, got %w", err)
 	}
 	return nil
 }

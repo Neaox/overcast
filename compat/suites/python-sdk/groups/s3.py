@@ -482,6 +482,93 @@ def GetBucketCors(ctx: TestContext) -> None:
         raise AssertionError(f"GetBucketCors: expected GET in AllowedMethods; got {rules[0]}")
 
 
+# ── s3-lifecycle ──────────────────────────────────────────────────────────────
+
+LIFECYCLE_RULES = [{
+    "ID": "expire-logs",
+    "Status": "Enabled",
+    "Filter": {"Prefix": "logs/"},
+    "Expiration": {"Days": 30},
+    "Transitions": [{"Days": 7, "StorageClass": "GLACIER"}],
+}]
+
+
+def setup_s3_lifecycle(ctx: TestContext) -> None:
+    bucket = f"{ctx.run_id}-s3-lifecycle"
+    _s3(ctx).create_bucket(Bucket=bucket)
+    ctx["s3_lifecycle_bucket"] = bucket
+
+
+def teardown_s3_lifecycle(ctx: TestContext) -> None:
+    bucket = ctx.get("s3_lifecycle_bucket")
+    if not bucket:
+        return
+    s3 = _s3(ctx)
+    try:
+        s3.delete_bucket_lifecycle(Bucket=bucket)
+    except Exception:
+        pass
+    try:
+        s3.delete_bucket(Bucket=bucket)
+    except Exception:
+        pass
+
+
+def _lifecycle_rule(s3, bucket, rule_id):
+    resp = s3.get_bucket_lifecycle_configuration(Bucket=bucket)
+    for rule in resp.get("Rules", []):
+        if rule.get("ID") == rule_id:
+            return rule
+    raise AssertionError(f"lifecycle rule {rule_id} missing from {resp.get('Rules')}")
+
+
+def PutBucketLifecycleConfiguration(ctx: TestContext) -> None:
+    s3 = _s3(ctx)
+    bucket = ctx["s3_lifecycle_bucket"]
+    s3.put_bucket_lifecycle_configuration(
+        Bucket=bucket,
+        LifecycleConfiguration={"Rules": LIFECYCLE_RULES},
+    )
+    rule = _lifecycle_rule(s3, bucket, "expire-logs")
+    if rule.get("Expiration", {}).get("Days") != 30:
+        raise AssertionError(f"PutBucketLifecycleConfiguration: unexpected expiration {rule}")
+
+
+def GetBucketLifecycleConfiguration(ctx: TestContext) -> None:
+    s3 = _s3(ctx)
+    bucket = ctx["s3_lifecycle_bucket"]
+    rule = _lifecycle_rule(s3, bucket, "expire-logs")
+    if rule.get("Status") != "Enabled":
+        raise AssertionError(f"GetBucketLifecycleConfiguration: unexpected status {rule}")
+    if rule.get("Filter", {}).get("Prefix") != "logs/":
+        raise AssertionError(f"GetBucketLifecycleConfiguration: unexpected filter {rule}")
+    transitions = rule.get("Transitions", [])
+    if not transitions or transitions[0].get("StorageClass") != "GLACIER":
+        raise AssertionError(f"GetBucketLifecycleConfiguration: unexpected transitions {rule}")
+
+
+def DeleteBucketLifecycle(ctx: TestContext) -> None:
+    s3 = _s3(ctx)
+    s3.delete_bucket_lifecycle(Bucket=ctx["s3_lifecycle_bucket"])
+
+
+def GetBucketLifecycleConfigurationAfterDelete(ctx: TestContext) -> None:
+    s3 = _s3(ctx)
+    bucket = ctx["s3_lifecycle_bucket"]
+    try:
+        resp = s3.get_bucket_lifecycle_configuration(Bucket=bucket)
+    except Exception as exc:  # botocore raises ClientError
+        code = getattr(exc, "response", {}).get("Error", {}).get("Code", "")
+        if code != "NoSuchLifecycleConfiguration":
+            raise AssertionError(
+                f"GetBucketLifecycleConfigurationAfterDelete: expected NoSuchLifecycleConfiguration, got {code}"
+            ) from exc
+        return
+    raise AssertionError(
+        f"GetBucketLifecycleConfigurationAfterDelete: expected an error, got {resp.get('Rules')}"
+    )
+
+
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
@@ -512,6 +599,10 @@ IMPLS = {
     "GetBucketWebsite": GetBucketWebsite,
     "PutBucketCors": PutBucketCors,
     "GetBucketCors": GetBucketCors,
+    "PutBucketLifecycleConfiguration": PutBucketLifecycleConfiguration,
+    "GetBucketLifecycleConfiguration": GetBucketLifecycleConfiguration,
+    "DeleteBucketLifecycle": DeleteBucketLifecycle,
+    "GetBucketLifecycleConfigurationAfterDelete": GetBucketLifecycleConfigurationAfterDelete,
 }
 
 SETUP = {
@@ -522,6 +613,7 @@ SETUP = {
     "s3-tagging": setup_s3_tagging,
     "s3-website": setup_s3_website,
     "s3-cors": setup_s3_cors,
+    "s3-lifecycle": setup_s3_lifecycle,
 }
 
 TEARDOWN = {
@@ -532,4 +624,5 @@ TEARDOWN = {
     "s3-tagging": teardown_s3_tagging,
     "s3-website": teardown_s3_website,
     "s3-cors": teardown_s3_cors,
+    "s3-lifecycle": teardown_s3_lifecycle,
 }

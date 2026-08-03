@@ -188,6 +188,33 @@
       ]
     },
     {
+      "service": "s3",
+      "name": "s3-lifecycle",
+      "tests": [
+        {
+          "name": "PutBucketLifecycleConfiguration"
+        },
+        {
+          "name": "GetBucketLifecycleConfiguration",
+          "depends": [
+            "PutBucketLifecycleConfiguration"
+          ]
+        },
+        {
+          "name": "DeleteBucketLifecycle",
+          "depends": [
+            "PutBucketLifecycleConfiguration"
+          ]
+        },
+        {
+          "name": "GetBucketLifecycleConfigurationAfterDelete",
+          "depends": [
+            "DeleteBucketLifecycle"
+          ]
+        }
+      ]
+    },
+    {
       "service": "sqs",
       "name": "sqs-queues",
       "tests": [

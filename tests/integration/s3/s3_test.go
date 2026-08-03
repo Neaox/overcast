@@ -2301,7 +2301,6 @@ func TestS3_UnimplementedOperations_return501(t *testing.T) {
 		// ---- Bucket GET sub-resources -----------------------------------
 		{"GetBucketAcl", http.MethodGet, "/stub-bucket?acl"},
 		{"GetBucketPolicyStatus", http.MethodGet, "/stub-bucket?policyStatus"},
-		{"GetBucketLifecycleConfiguration", http.MethodGet, "/stub-bucket?lifecycle"},
 		{"GetBucketLogging", http.MethodGet, "/stub-bucket?logging"},
 		{"GetBucketReplication", http.MethodGet, "/stub-bucket?replication"},
 		{"GetBucketAccelerateConfiguration", http.MethodGet, "/stub-bucket?accelerate"},
@@ -2320,7 +2319,6 @@ func TestS3_UnimplementedOperations_return501(t *testing.T) {
 
 		// ---- Bucket PUT sub-resources -----------------------------------
 		{"PutBucketAcl", http.MethodPut, "/stub-bucket?acl"},
-		{"PutBucketLifecycleConfiguration", http.MethodPut, "/stub-bucket?lifecycle"},
 		{"PutBucketLogging", http.MethodPut, "/stub-bucket?logging"},
 		{"PutBucketReplication", http.MethodPut, "/stub-bucket?replication"},
 		{"PutBucketAccelerateConfiguration", http.MethodPut, "/stub-bucket?accelerate"},
@@ -2338,7 +2336,6 @@ func TestS3_UnimplementedOperations_return501(t *testing.T) {
 
 		// ---- Bucket DELETE sub-resources --------------------------------
 		{"DeleteBucketCors", http.MethodDelete, "/stub-bucket?cors"},
-		{"DeleteBucketLifecycle", http.MethodDelete, "/stub-bucket?lifecycle"},
 		{"DeleteBucketWebsite", http.MethodDelete, "/stub-bucket?website"},
 		{"DeleteBucketReplication", http.MethodDelete, "/stub-bucket?replication"},
 		{"DeleteBucketAnalyticsConfiguration", http.MethodDelete, "/stub-bucket?analytics"},
