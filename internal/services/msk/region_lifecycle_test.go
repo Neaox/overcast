@@ -55,7 +55,10 @@ func TestClusterLifecycle_nonDefaultRegion(t *testing.T) {
 		t.Fatal("cluster unexpectedly visible under the default region")
 	}
 
-	clk.Add(time.Millisecond) // fire the 0-delay CREATING → ACTIVE transition
+	// Fire the 0-delay CREATING → ACTIVE transition and wait for it: the mock
+	// clock runs the callback on a goroutine of its own, so advancing the clock
+	// alone leaves the read on the next line racing it.
+	h.scheduler.AdvanceAndSettle(clk, time.Millisecond)
 	got, aerr := h.store.getCluster(ctx, resp.ClusterArn)
 	if aerr != nil {
 		t.Fatalf("getCluster(eu-west-1): %s", aerr.Message)
