@@ -72,10 +72,16 @@ try {
     $status = $LASTEXITCODE
 
     $lines = Get-Content $log.FullName
-    $passed = @($lines | Where-Object { $_ -match "`tpass`t" }).Count
-    # gh lists a check once per triggering workflow event, so the same failure
-    # can appear two or three times. Dedupe, or the detail below repeats.
-    $failing = @($lines | Where-Object { $_ -match "`t(fail|cancel)`t" } | Sort-Object -Unique)
+    # Watch mode redraws the WHOLE table into the log on every refresh, so the
+    # log holds one line per check per refresh — a 20-minute run reported "2356
+    # checks passed" for 42 real ones. And gh lists a check once per triggering
+    # workflow event, so a name can legitimately repeat within a single draw.
+    # Dedupe on the check name (field 1), which collapses both: the elapsed-time
+    # column differs between redraws, so deduping whole lines does not.
+    $passed = @($lines | Where-Object { $_ -match "`tpass`t" } |
+        ForEach-Object { ($_ -split "`t")[0] } | Sort-Object -Unique).Count
+    $failing = @($lines | Where-Object { $_ -match "`t(fail|cancel)`t" } |
+        Group-Object { ($_ -split "`t")[0] } | ForEach-Object { $_.Group[0] })
 
     if ($failing.Count -gt 0) {
         Write-Output "pr-wait: PR #$($view.number) — FAILING checks:"
