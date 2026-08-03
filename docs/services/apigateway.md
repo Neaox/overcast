@@ -24,9 +24,48 @@ REST API v1 is mounted at `/restapis`, HTTP API v2 at `/v2/apis`.
 
 - **No VTL template mapping.** Integration request/response templates are not evaluated as VTL — values are passed through as-is.
 - **Partial authorizer enforcement.** `COGNITO_USER_POOLS` (REST v1) and `JWT` (HTTP v2) authorizers are validated (RS256 signature + expiry + issuer/audience). Lambda (`TOKEN`, `REQUEST`) and IAM authorizers are stored but not enforced at request time.
-- **No API key validation.** API keys and usage plans are stored but not enforced at request time.
 - **No request validation.** Request validators are stored but not enforced at request time.
 - **No WebSocket execution.** WEBSOCKET protocol type is accepted on creation but execution is not implemented.
+- **Usage counters are not persisted.** Quota and throttle state lives in memory so the request path never hits the store; restarting Overcast resets it. Real API Gateway carries a quota across the whole period.
+- **Usage plans only apply to REST v1.** As on AWS, HTTP APIs (v2) have no API-key or usage-plan concept, so nothing is measured or enforced there.
+
+## Usage plan throttling and quotas
+
+A method with `apiKeyRequired: true` resolves the caller's `x-api-key` to an
+API key and to the usage plan covering `{restApiId, stage}` — a request with no
+such plan is already refused with `403 Forbidden`. Once the plan is found, its
+limits are **measured on every request**:
+
+- **Throttle** — `throttle.rateLimit` is the tokens-per-second refill and
+  `throttle.burstLimit` the bucket capacity, the token-bucket model AWS
+  documents. The bucket is per (usage plan, API key), not per plan.
+- **Quota** — `quota.limit` requests per `quota.period` (`DAY`, `WEEK`,
+  `MONTH`) in calendar-aligned UTC windows; `quota.offset` is subtracted from
+  the limit in the first period only. Windows roll over on the injected clock,
+  so tests can fast-forward them.
+
+Read the counters back with `GetUsage`, which returns AWS's daily
+`[used, remaining]` log per API key (a date range wider than 400 days is
+refused with `BadRequestException` — AWS documents no such cap, but the
+response carries one entry per day per key). Reaching a limit also logs a warning and
+publishes an `apigateway:Throttled` event — visible on the web UI's Events page
+and on the Usage Plans page — coalesced to at most one per key per second.
+
+**Rejection is opt-in and off by default.** Overcast is not a rate-limiting or
+load-testing tool, and switching enforcement on can turn a local stack that
+works today into one that gets `429`s it never used to. So by default an
+over-limit request is counted, reported, and then **served normally**. Set
+`OVERCAST_ENFORCE_APIGATEWAY_THROTTLE=true` to have over-limit requests
+rejected the way AWS rejects them:
+
+| Condition | Status | `x-amzn-ErrorType` | Body |
+| --- | --- | --- | --- |
+| Rate/burst exceeded (`THROTTLED`) | `429` | `TooManyRequestsException` | `{"message":"Too Many Requests"}` |
+| Quota exhausted (`QUOTA_EXCEEDED`) | `429` | `LimitExceededException` | `{"message":"Limit Exceeded"}` |
+
+A rejected request consumes neither quota nor a token, matching AWS — a `429`
+does not count against the usage plan quota. A plan configuring neither a
+throttle nor a quota never rejects anything, whatever the flag says.
 
 ## Invoke URLs
 
@@ -57,7 +96,7 @@ re-hosted onto a reachable origin when returned by `DescribeStacks`. See
 | ---------------------- | ------------ | -------------- |
 | REST API v1 management | 24           |                |
 | REST API v1 stages     | 7            |                |
-| REST API v1 other      | 33           | 2              |
+| REST API v1 other      | 34           | 2              |
 | HTTP API v2 management | 15           |                |
 | HTTP API v2 stages     | 6            |                |
 | HTTP API v2 other      | 17           |                |
@@ -110,43 +149,44 @@ re-hosted onto a reachable origin when returned by `DescribeStacks`. See
 
 ### REST API v1 other
 
-| Operation                | Status         | Notes                                                      | AWS Docs                                                                                  |
-| ------------------------ | -------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `CreateModel`            | ✅ Supported   | id, name, contentType, schema, description                 | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_CreateModel.html)            |
-| `GetModel`               | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetModel.html)               |
-| `GetModels`              | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetModels.html)              |
-| `DeleteModel`            | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_DeleteModel.html)            |
-| `CreateAuthorizer`       | ✅ Supported   | JWT and REQUEST types; config stored                       | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_CreateAuthorizer.html)       |
-| `GetAuthorizer`          | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetAuthorizer.html)          |
-| `GetAuthorizers`         | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetAuthorizers.html)         |
-| `DeleteAuthorizer`       | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_DeleteAuthorizer.html)       |
-| `CreateRequestValidator` | ✅ Supported   | validateRequestBody, validateRequestParams                 | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_CreateRequestValidator.html) |
-| `GetRequestValidators`   | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetRequestValidators.html)   |
-| `DeleteRequestValidator` | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_DeleteRequestValidator.html) |
-| `CreateApiKey`           | ✅ Supported   | auto-generated key value                                   | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_CreateApiKey.html)           |
-| `GetApiKey`              | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetApiKey.html)              |
-| `GetApiKeys`             | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetApiKeys.html)             |
-| `DeleteApiKey`           | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_DeleteApiKey.html)           |
-| `CreateUsagePlan`        | ✅ Supported   | throttle and quota stored (not enforced)                   | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_CreateUsagePlan.html)        |
-| `GetUsagePlan`           | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetUsagePlan.html)           |
-| `GetUsagePlans`          | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetUsagePlans.html)          |
-| `DeleteUsagePlan`        | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_DeleteUsagePlan.html)        |
-| `CreateUsagePlanKey`     | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_CreateUsagePlanKey.html)     |
-| `GetUsagePlanKeys`       | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetUsagePlanKeys.html)       |
-| `DeleteUsagePlanKey`     | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_DeleteUsagePlanKey.html)     |
-| `CreateDomainName`       | ✅ Supported   | Inert metadata; no routing effect                          | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_CreateDomainName.html)       |
-| `GetDomainNames`         | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetDomainNames.html)         |
-| `DeleteDomainName`       | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_DeleteDomainName.html)       |
-| `CreateBasePathMapping`  | ✅ Supported   | Stored under the domain name                               | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_CreateBasePathMapping.html)  |
-| `GetBasePathMappings`    | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetBasePathMappings.html)    |
-| `CreateVpcLink`          | ✅ Supported   | Status immediately AVAILABLE; no VPC connectivity enforced | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_CreateVpcLink.html)          |
-| `GetVpcLinks`            | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetVpcLinks.html)            |
-| `DeleteVpcLink`          | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_DeleteVpcLink.html)          |
-| `TagResource`            | ✅ Supported   | PUT /tags/{arn} — merges tags; ARN may contain slashes     | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_TagResource.html)            |
-| `UntagResource`          | ✅ Supported   | DELETE /tags/{arn}?tagKeys=k1,k2                           | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_UntagResource.html)          |
-| `GetTags`                | ✅ Supported   |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetTags.html)                |
-| `GetAccount`             | ❌ Unsupported |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetAccount.html)             |
-| `UpdateAccount`          | ❌ Unsupported |                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_UpdateAccount.html)          |
+| Operation                | Status         | Notes                                                                                                        | AWS Docs                                                                                  |
+| ------------------------ | -------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `CreateModel`            | ✅ Supported   | id, name, contentType, schema, description                                                                   | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_CreateModel.html)            |
+| `GetModel`               | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetModel.html)               |
+| `GetModels`              | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetModels.html)              |
+| `DeleteModel`            | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_DeleteModel.html)            |
+| `CreateAuthorizer`       | ✅ Supported   | JWT and REQUEST types; config stored                                                                         | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_CreateAuthorizer.html)       |
+| `GetAuthorizer`          | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetAuthorizer.html)          |
+| `GetAuthorizers`         | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetAuthorizers.html)         |
+| `DeleteAuthorizer`       | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_DeleteAuthorizer.html)       |
+| `CreateRequestValidator` | ✅ Supported   | validateRequestBody, validateRequestParams                                                                   | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_CreateRequestValidator.html) |
+| `GetRequestValidators`   | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetRequestValidators.html)   |
+| `DeleteRequestValidator` | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_DeleteRequestValidator.html) |
+| `CreateApiKey`           | ✅ Supported   | auto-generated key value                                                                                     | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_CreateApiKey.html)           |
+| `GetApiKey`              | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetApiKey.html)              |
+| `GetApiKeys`             | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetApiKeys.html)             |
+| `DeleteApiKey`           | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_DeleteApiKey.html)           |
+| `CreateUsagePlan`        | ✅ Supported   | throttle (token bucket) and quota measured per API key; rejection needs OVERCAST_ENFORCE_APIGATEWAY_THROTTLE | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_CreateUsagePlan.html)        |
+| `GetUsagePlan`           | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetUsagePlan.html)           |
+| `GetUsagePlans`          | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetUsagePlans.html)          |
+| `DeleteUsagePlan`        | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_DeleteUsagePlan.html)        |
+| `CreateUsagePlanKey`     | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_CreateUsagePlanKey.html)     |
+| `GetUsagePlanKeys`       | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetUsagePlanKeys.html)       |
+| `DeleteUsagePlanKey`     | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_DeleteUsagePlanKey.html)     |
+| `GetUsage`               | ✅ Supported   | daily `[used, remaining]` log per API key; counts are in-memory and reset on restart                         | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetUsage.html)               |
+| `CreateDomainName`       | ✅ Supported   | Inert metadata; no routing effect                                                                            | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_CreateDomainName.html)       |
+| `GetDomainNames`         | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetDomainNames.html)         |
+| `DeleteDomainName`       | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_DeleteDomainName.html)       |
+| `CreateBasePathMapping`  | ✅ Supported   | Stored under the domain name                                                                                 | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_CreateBasePathMapping.html)  |
+| `GetBasePathMappings`    | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetBasePathMappings.html)    |
+| `CreateVpcLink`          | ✅ Supported   | Status immediately AVAILABLE; no VPC connectivity enforced                                                   | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_CreateVpcLink.html)          |
+| `GetVpcLinks`            | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetVpcLinks.html)            |
+| `DeleteVpcLink`          | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_DeleteVpcLink.html)          |
+| `TagResource`            | ✅ Supported   | PUT /tags/{arn} — merges tags; ARN may contain slashes                                                       | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_TagResource.html)            |
+| `UntagResource`          | ✅ Supported   | DELETE /tags/{arn}?tagKeys=k1,k2                                                                             | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_UntagResource.html)          |
+| `GetTags`                | ✅ Supported   |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetTags.html)                |
+| `GetAccount`             | ❌ Unsupported |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_GetAccount.html)             |
+| `UpdateAccount`          | ❌ Unsupported |                                                                                                              | [docs](https://docs.aws.amazon.com/apigateway/latest/api/API_UpdateAccount.html)          |
 
 ### HTTP API v2 management
 

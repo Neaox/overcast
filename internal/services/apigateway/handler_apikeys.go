@@ -12,6 +12,7 @@ package apigateway
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -349,6 +350,91 @@ func (h *Handler) DeleteUsagePlan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// usageResponse mirrors AWS's Usage shape. Note the wire name of the daily
+// log map is `values`, not `items` — the AWS model names the member `items`
+// but binds it to `values` on the wire, and SDK clients read the latter.
+type usageResponse struct {
+	UsagePlanID string               `json:"usagePlanId"`
+	StartDate   string               `json:"startDate"`
+	EndDate     string               `json:"endDate"`
+	Values      map[string][][]int64 `json:"values"`
+}
+
+// GetUsage handles GET /usageplans/{usagePlanId}/usage.
+//
+// Returns the daily [used, remaining] log for every API key on the plan over
+// the requested inclusive date range, which is how a caller reads back the
+// throttle/quota accounting described in usage.go. Counts are held in memory
+// and reset when the emulator restarts.
+func (h *Handler) GetUsage(w http.ResponseWriter, r *http.Request) {
+	planID := chi.URLParam(r, "usagePlanId")
+
+	// AWS marks startDate and endDate required on the operation, so a missing
+	// one is a request-shape error and is rejected before the plan lookup.
+	q := r.URL.Query()
+	startRaw, endRaw := q.Get("startDate"), q.Get("endDate")
+	if startRaw == "" || endRaw == "" {
+		protocol.WriteJSONError(w, r, errBadRequest("startDate and endDate are required"))
+		return
+	}
+	start, err := time.Parse(usageDateLayout, startRaw)
+	if err != nil {
+		protocol.WriteJSONError(w, r, errBadRequest("Invalid startDate: expected YYYY-MM-DD"))
+		return
+	}
+	end, err := time.Parse(usageDateLayout, endRaw)
+	if err != nil {
+		protocol.WriteJSONError(w, r, errBadRequest("Invalid endDate: expected YYYY-MM-DD"))
+		return
+	}
+	if end.Before(start) {
+		protocol.WriteJSONError(w, r, errBadRequest("endDate must not be before startDate"))
+		return
+	}
+	// The response carries one entry per day per key, so an unbounded range
+	// is an unbounded response. AWS does not document a cap; this one exists
+	// to keep a query parameter from sizing the reply, and is far wider than
+	// the longest quota period.
+	if end.Sub(start) > maxUsageRange {
+		protocol.WriteJSONError(w, r, errBadRequest("The date range must not exceed 400 days"))
+		return
+	}
+
+	plan, aerr := h.store.getUsagePlan(r.Context(), planID)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
+	keyIDs := plan.KeyIDs
+	if filter := q.Get("keyId"); filter != "" {
+		keyIDs = nil
+		for _, id := range plan.KeyIDs {
+			if id == filter {
+				keyIDs = []string{filter}
+				break
+			}
+		}
+	}
+
+	values := make(map[string][][]int64, len(keyIDs))
+	for _, keyID := range keyIDs {
+		days := h.usage.usageFor(usageKey{planID: plan.ID, keyID: keyID}, plan, start, end)
+		rows := make([][]int64, 0, len(days))
+		for _, d := range days {
+			rows = append(rows, []int64{d[0], d[1]})
+		}
+		values[keyID] = rows
+	}
+
+	protocol.WriteJSON(w, r, http.StatusOK, usageResponse{
+		UsagePlanID: plan.ID,
+		StartDate:   startRaw,
+		EndDate:     endRaw,
+		Values:      values,
+	})
 }
 
 // usagePlanKeyRequest is the request body for associating a key with a usage plan.

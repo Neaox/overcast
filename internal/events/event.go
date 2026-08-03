@@ -429,6 +429,12 @@ const (
 	APIGatewayRestAPIDeleted Type = "apigateway:RestApiDeleted"
 	// APIGatewayDeployed fires after a stage deployment is created.
 	APIGatewayDeployed Type = "apigateway:Deployed"
+	// APIGatewayThrottled fires when a request exceeds its usage plan's
+	// throttle or quota limit. It fires whether or not enforcement is
+	// switched on — the payload's Enforced field says which — so a
+	// report-only emulator still shows the limit being hit. Notifications
+	// are coalesced to at most one per (plan, key) per second.
+	APIGatewayThrottled Type = "apigateway:Throttled"
 
 	// ---- CloudFormation lifecycle events ----------------------------------------.
 
@@ -648,6 +654,32 @@ type PipesStateChangedPayload struct {
 type ResourcePayload struct {
 	Name string `json:"name"`
 	ARN  string `json:"arn,omitempty"`
+}
+
+// APIGatewayThrottlePayload carries the details of a usage-plan limit being
+// hit on the REST v1 execute path.
+//
+// Enforced distinguishes the two modes this emulator runs in: false means the
+// limit was measured and the request was still served (the default), true
+// means the caller received a 429. Reason is the API Gateway gateway-response
+// type — "THROTTLED" for the rate limit, "QUOTA_EXCEEDED" for the quota.
+type APIGatewayThrottlePayload struct {
+	UsagePlanID   string `json:"usagePlanId"`
+	UsagePlanName string `json:"usagePlanName,omitempty"`
+	APIKeyID      string `json:"apiKeyId"`
+	APIKeyName    string `json:"apiKeyName,omitempty"`
+	APIID         string `json:"apiId"`
+	Stage         string `json:"stage"`
+	Reason        string `json:"reason"`
+	Enforced      bool   `json:"enforced"`
+	// Used and Remaining describe the current quota period. Remaining is -1
+	// when the plan configures no quota.
+	Used      int64 `json:"used"`
+	Remaining int64 `json:"remaining"`
+	// Throttles and QuotaRejects are cumulative counts for this
+	// (plan, key) pair since the emulator started.
+	Throttles    int64 `json:"throttles"`
+	QuotaRejects int64 `json:"quotaRejects"`
 }
 
 // InboxDeliveredPayload carries the key fields of a captured SMTP message.

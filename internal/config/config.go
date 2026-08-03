@@ -218,6 +218,15 @@ type Config struct {
 	// Default false.
 	EnforceIAM bool
 
+	// EnforceAPIGatewayThrottle turns API Gateway usage-plan throttle and
+	// quota limits from evaluate-and-report into actual rejection: an
+	// over-limit request gets AWS's 429 instead of being served. Usage is
+	// always measured and readable through GetUsage regardless — only the
+	// rejection is gated, so a stack that works today keeps working.
+	// Default false. Corresponds to env var
+	// OVERCAST_ENFORCE_APIGATEWAY_THROTTLE.
+	EnforceAPIGatewayThrottle bool
+
 	// ProtocolStrict restores strict rejection of "claimed-but-undeclared"
 	// wire protocols: when a request's identified protocol isn't one a
 	// service's SupportedProtocols() lists, the service returns 415
@@ -868,6 +877,7 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_EFS_MODE                  mock    (mock | live)
 //	OVERCAST_SIGV4_VALIDATE            false
 //	OVERCAST_ENFORCE_IAM              false
+//	OVERCAST_ENFORCE_APIGATEWAY_THROTTLE false
 //	OVERCAST_CFN_SYNC_WAIT_MS          1000
 //	OVERCAST_LOG_LEVEL                 info    (trace | debug | info | warn | error)
 //	OVERCAST_SHUTDOWN_TIMEOUT          5s
@@ -1105,6 +1115,10 @@ func Load() (*Config, error) {
 
 	// Optional IAM enforcement middleware (default off).
 	cfg.EnforceIAM = envBool("OVERCAST_ENFORCE_IAM", false)
+
+	// Optional API Gateway usage-plan throttle/quota rejection (default off:
+	// limits are measured and reported, but never turned into a 429).
+	cfg.EnforceAPIGatewayThrottle = envBool("OVERCAST_ENFORCE_APIGATEWAY_THROTTLE", false)
 
 	// Protocol drift strictness (default off — lenient "attempt anyway" posture).
 	cfg.ProtocolStrict = envBool("OVERCAST_PROTOCOL_STRICT", false)

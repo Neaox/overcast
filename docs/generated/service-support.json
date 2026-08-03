@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1326,
+  "total_ops": 1327,
   "services": [
     {
       "service": "s3",
@@ -803,8 +803,8 @@
     {
       "service": "apigateway",
       "display_name": "API Gateway",
-      "total_ops": 105,
-      "implemented_ops": 103,
+      "total_ops": 106,
+      "implemented_ops": 104,
       "operations": [
         {
           "operation": "CreateRestApi",
@@ -1057,7 +1057,7 @@
           "operation": "CreateUsagePlan",
           "category": "REST API v1 other",
           "status": "✅ Supported",
-          "notes": "throttle and quota stored (not enforced)"
+          "notes": "throttle (token bucket) and quota measured per API key; rejection needs OVERCAST_ENFORCE_APIGATEWAY_THROTTLE"
         },
         {
           "operation": "GetUsagePlan",
@@ -1088,6 +1088,12 @@
           "operation": "DeleteUsagePlanKey",
           "category": "REST API v1 other",
           "status": "✅ Supported"
+        },
+        {
+          "operation": "GetUsage",
+          "category": "REST API v1 other",
+          "status": "✅ Supported",
+          "notes": "daily `[used, remaining]` log per API key; counts are in-memory and reset on restart"
         },
         {
           "operation": "CreateDomainName",

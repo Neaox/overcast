@@ -33,6 +33,17 @@ type Handler struct {
 	cognitoValidator events.CognitoTokenValidator // nil until InitCognitoValidator is called
 	domainRegistry   *domainregistry.Registry     // nil until InitDomainRegistry is called
 	hydrateOnce      sync.Once                    // guards lazy domain-registry hydration
+
+	// usage measures usage-plan throttle and quota consumption per
+	// (usage plan, API key). In-memory only, no background goroutine —
+	// see usage.go.
+	usage *usageTracker
+}
+
+// enforceThrottle reports whether over-limit requests are rejected rather than
+// only measured. Off unless OVERCAST_ENFORCE_APIGATEWAY_THROTTLE is set.
+func (h *Handler) enforceThrottle() bool {
+	return h.cfg != nil && h.cfg.EnforceAPIGatewayThrottle
 }
 
 // ensureRegistryHydrated lazily loads persisted domain names into the
@@ -73,6 +84,10 @@ func newHandler(cfg *config.Config, store state.Store, log *serviceutil.ServiceL
 		store: newAPIGatewayStore(store, cfg.Region),
 		log:   log,
 		clk:   clk,
+		// Allocating the tracker's map is not blocking work, so it stays in
+		// the constructor rather than behind a sync.Once — see
+		// docs/dev/performance.md § Startup budget.
+		usage: newUsageTracker(),
 	}
 }
 

@@ -18,6 +18,7 @@
  *   apigwKeys.apiKeys()                      -> [..., "api-keys"]
  *   apigwKeys.usagePlans()                   -> [..., "usage-plans"]
  *   apigwKeys.usagePlanKeys(planId)          -> [..., "usage-plan", planId, "keys"]
+ *   apigwKeys.usage(planId)                  -> [..., "usage-plan", planId, "usage"]
  */
 
 import { queryOptions, mutationOptions } from "@tanstack/react-query"
@@ -27,6 +28,7 @@ import type {
   ApiKey,
   UsagePlan,
   UsagePlanKey,
+  UsageByKey,
   AuthorizerV2,
 } from "@/services/api/apigateway"
 import { endpointStore } from "@/services/endpoint-store"
@@ -56,6 +58,7 @@ export const apigwKeys = {
   apiKeys: () => [...apigwKeys.all(), "api-keys"] as const,
   usagePlans: () => [...apigwKeys.all(), "usage-plans"] as const,
   usagePlanKeys: (planId: string) => [...apigwKeys.all(), "usage-plan", planId, "keys"] as const,
+  usage: (planId: string) => [...apigwKeys.all(), "usage-plan", planId, "usage"] as const,
 }
 
 // ─── REST API queries ──────────────────────────────────────────────────────
@@ -365,6 +368,19 @@ export function usagePlanKeysQueryOptions(planId: string) {
   })
 }
 
+/**
+ * Today's usage counters for a plan. The date is computed in UTC because
+ * that is the window API Gateway aligns quota periods to.
+ */
+export function usagePlanUsageQueryOptions(planId: string) {
+  const today = new Date().toISOString().slice(0, 10)
+  return queryOptions({
+    queryKey: [...apigwKeys.usage(planId), today] as const,
+    queryFn: () => apigateway.getUsage(planId, today, today),
+    enabled: !!planId,
+  })
+}
+
 export function addUsagePlanKeyMutationOptions() {
   return mutationOptions({
     mutationKey: [...apigwKeys.all(), "add-usage-plan-key"] as const,
@@ -418,4 +434,4 @@ export function deleteV2AuthorizerMutationOptions() {
 }
 
 // Re-export types for consumers
-export type { Authorizer, ApiKey, UsagePlan, UsagePlanKey, AuthorizerV2 }
+export type { Authorizer, ApiKey, UsagePlan, UsagePlanKey, UsageByKey, AuthorizerV2 }

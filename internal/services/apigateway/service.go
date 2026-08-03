@@ -11,7 +11,7 @@
 //	  CreateAuthorizer, GetAuthorizer, GetAuthorizers, DeleteAuthorizer,
 //	  CreateApiKey, GetApiKey, GetApiKeys, DeleteApiKey,
 //	  CreateUsagePlan, GetUsagePlan, GetUsagePlans, DeleteUsagePlan,
-//	  CreateUsagePlanKey, GetUsagePlanKeys, DeleteUsagePlanKey
+//	  CreateUsagePlanKey, GetUsagePlanKeys, DeleteUsagePlanKey, GetUsage
 //	HTTP v2: CreateApi, GetApi, GetApis, UpdateApi, DeleteApi,
 //	  CreateRoute, GetRoute, GetRoutes, DeleteRoute,
 //	  CreateIntegration, GetIntegration, GetIntegrations, DeleteIntegration,
@@ -201,6 +201,7 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 		r.Get("/", h.GetUsagePlans)
 		r.Get("/{usagePlanId}", h.GetUsagePlan)
 		r.Delete("/{usagePlanId}", h.DeleteUsagePlan)
+		r.Get("/{usagePlanId}/usage", h.GetUsage)
 		r.Post("/{usagePlanId}/keys", h.CreateUsagePlanKey)
 		r.Get("/{usagePlanId}/keys", h.GetUsagePlanKeys)
 		r.Delete("/{usagePlanId}/keys/{keyId}", h.DeleteUsagePlanKey)

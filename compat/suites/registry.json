@@ -2660,6 +2660,46 @@
       ]
     },
     {
+      "service": "apigateway",
+      "name": "apigateway-usage-plans",
+      "tests": [
+        {
+          "name": "CreateUsagePlanWithLimits",
+          "op": "CreateUsagePlan"
+        },
+        {
+          "name": "GetUsagePlan",
+          "depends": [
+            "CreateUsagePlanWithLimits"
+          ]
+        },
+        {
+          "name": "CreateApiKey",
+          "depends": [
+            "CreateUsagePlanWithLimits"
+          ]
+        },
+        {
+          "name": "CreateUsagePlanKey",
+          "depends": [
+            "CreateApiKey"
+          ]
+        },
+        {
+          "name": "GetUsage",
+          "depends": [
+            "CreateUsagePlanKey"
+          ]
+        },
+        {
+          "name": "DeleteUsagePlan",
+          "depends": [
+            "GetUsage"
+          ]
+        }
+      ]
+    },
+    {
       "service": "cloudfront",
       "name": "cloudfront-oac",
       "tests": [
